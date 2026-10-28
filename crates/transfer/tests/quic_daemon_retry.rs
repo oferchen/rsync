@@ -20,23 +20,15 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use tempfile::tempdir;
+use test_support::oc_daemon::OcDaemon;
 use test_support::{DirDiff, DirDiffOptions, LogLines};
 
 /// The daemon log line written for a connection validated by a Retry.
 const RETRY_LINE: &str = "validated by Retry";
 
 /// Kills the daemon child on drop so a panicking test never leaks it.
-struct DaemonGuard(Child);
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 /// Whether the binary was built with QUIC (`--help` lists `quic://`).
 fn binary_supports_quic(oc_bin: &Path) -> bool {
     Command::new(oc_bin)
@@ -86,31 +78,14 @@ fn pull_with_retry_policy(oc_bin: &Path, retry: &str) -> Option<Vec<String>> {
     )
     .expect("write config");
 
-    let (mut child, port) = match test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(oc_bin)
-            .args([
-                "--daemon",
-                "--no-detach",
-                "--port",
-                &port.to_string(),
-                "--config",
-            ])
-            .arg(&config)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-    }) {
-        Ok(spawned) => spawned,
-        Err(e) => {
-            eprintln!("skipping: could not start oc-rsync --daemon: {e}");
-            return None;
-        }
-    };
-    let mut log = LogLines::spawn(child.stderr.take().expect("daemon stderr"));
-    let _daemon = DaemonGuard(child);
-    // The client dials 127.0.0.1, which the IPv4 wildcard socket serves.
-    log.wait_for(&format!("QUIC listener serving on 0.0.0.0:{port}"))
+    let (_daemon, stderr) = OcDaemon::builder(&config)
+        .quic()
+        .spawn_capturing_stderr()
+        .expect("start the oc-rsync daemon");
+    let port = _daemon.quic_port();
+    let mut log = LogLines::spawn(stderr);
+    // The client dials 127.0.0.1, which the pre-bound loopback socket serves.
+    log.wait_for(&format!("QUIC listener serving on 127.0.0.1:{port}"))
         .expect("QUIC listener never served IPv4");
 
     let mut dest_arg = dest.clone().into_os_string();

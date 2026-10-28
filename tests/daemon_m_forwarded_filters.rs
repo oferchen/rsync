@@ -22,13 +22,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
-use test_support::{DaemonProcess, oc_rsync_bin};
+use test_support::oc_daemon::OcDaemon;
+use test_support::oc_rsync_bin;
 
 /// A daemon module whose root holds `secret` (`- decoy`), `rules`
 /// (`- keep2`) and the files `decoy`, `keep`, `keep2` and `x`.
 struct Fixture {
     temp: TempDir,
-    daemon: DaemonProcess,
+    daemon: OcDaemon,
 }
 
 impl Fixture {
@@ -51,8 +52,7 @@ impl Fixture {
             ),
         )
         .expect("write rsyncd.conf");
-        let daemon =
-            DaemonProcess::spawn(&config, std::iter::empty::<&str>()).expect("spawn daemon");
+        let daemon = OcDaemon::builder(&config).spawn().expect("spawn daemon");
         Self { temp, daemon }
     }
 

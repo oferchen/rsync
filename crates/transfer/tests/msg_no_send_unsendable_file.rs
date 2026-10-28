@@ -69,10 +69,11 @@ use std::fs;
 use std::io::{self, Read};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use tempfile::{TempDir, tempdir};
+use test_support::oc_daemon::OcDaemon;
 
 /// Upper bound on the client run. The transfer moves a few kilobytes over
 /// loopback; anything approaching this is the hang under test, not slowness.
@@ -110,33 +111,13 @@ fn write_daemon_config(
     fs::write(config_path, body)
 }
 
-/// Kills the daemon child on drop so a panicking test never leaks the listener.
-struct DaemonGuard {
-    child: Child,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(oc_bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    Ok((DaemonGuard { child }, port))
+/// Starts the oc-rsync daemon on `config_path`, returning it with the loopback
+/// port it serves. `test_support::oc_daemon` binds the listener before the
+/// daemon starts, so the port is connectable as soon as this returns.
+fn spawn_oc_daemon(config_path: &Path) -> io::Result<(OcDaemon, u16)> {
+    let daemon = OcDaemon::builder(config_path).spawn()?;
+    let port = daemon.port();
+    Ok((daemon, port))
 }
 
 /// Run one `oc-rsync` invocation under a deadline, returning `None` if it had
@@ -273,7 +254,7 @@ fn daemon_pull_skips_a_file_the_sender_cannot_open() {
 
     write_daemon_config(&scratch.config, &scratch.pid, &scratch.log, &module_root)
         .expect("write daemon config");
-    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
+    let (_daemon, port) = match spawn_oc_daemon(&scratch.config) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("skipping: could not start oc-rsync --daemon: {e}");
@@ -349,7 +330,7 @@ fn daemon_pull_transfers_every_file_when_all_are_readable() {
 
     write_daemon_config(&scratch.config, &scratch.pid, &scratch.log, &module_root)
         .expect("write daemon config");
-    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
+    let (_daemon, port) = match spawn_oc_daemon(&scratch.config) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("skipping: could not start oc-rsync --daemon: {e}");

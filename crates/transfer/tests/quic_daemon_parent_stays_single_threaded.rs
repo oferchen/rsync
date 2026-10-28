@@ -17,21 +17,11 @@
 #![cfg(all(target_os = "linux", feature = "quic"))]
 
 use std::fs;
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
 
 use tempfile::tempdir;
-
-/// Kills the daemon on drop so a failing assertion never leaks the listener.
-struct DaemonGuard(Child);
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
+use test_support::LogLines;
+use test_support::oc_daemon::OcDaemon;
 
 /// Reads one `Name:\tvalue` field from `/proc/<pid>/status`.
 fn proc_status_field(pid: u32, field: &str) -> Option<u32> {
@@ -42,25 +32,11 @@ fn proc_status_field(pid: u32, field: &str) -> Option<u32> {
         .and_then(|value| value.trim().parse().ok())
 }
 
-/// Returns the bracketed pid of the first log line containing `needle`.
-fn logged_pid(log: &Path, needle: &str) -> Option<u32> {
-    let text = fs::read_to_string(log).ok()?;
-    let line = text.lines().find(|line| line.contains(needle))?;
+/// Returns the bracketed pid a daemon log line starts with.
+fn logged_pid(line: &str) -> Option<u32> {
     let start = line.find('[')? + 1;
     let end = start + line[start..].find(']')?;
     line[start..end].parse().ok()
-}
-
-/// Polls the daemon log until `needle` appears, or the timeout elapses.
-fn wait_for_log(log: &Path, needle: &str, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if fs::read_to_string(log).is_ok_and(|text| text.contains(needle)) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    false
 }
 
 #[test]
@@ -85,23 +61,18 @@ fn daemon_parent_has_one_thread_while_serving_quic() {
     )
     .expect("module file");
     let pem = test_support::quic_cert::localhost_self_signed();
-    let (cert, key, log) = (
-        root.join("cert.pem"),
-        root.join("key.pem"),
-        root.join("d.log"),
-    );
+    let (cert, key) = (root.join("cert.pem"), root.join("key.pem"));
     fs::write(&cert, pem.cert_pem).expect("cert");
     fs::write(&key, pem.key_pem).expect("key");
     let config = root.join("rsyncd.conf");
     fs::write(
         &config,
         format!(
-            "pid file = {pid}\nlock file = {lock}\nlog file = {log}\nuse chroot = false\n\
+            "pid file = {pid}\nlock file = {lock}\nlog file = /dev/stderr\nuse chroot = false\n\
              quic cert file = {cert}\nquic key file = {key}\n\n\
              [m]\npath = {module}\nread only = true\n",
             pid = root.join("d.pid").display(),
             lock = root.join("d.lock").display(),
-            log = log.display(),
             cert = cert.display(),
             key = key.display(),
             module = module.display(),
@@ -109,30 +80,21 @@ fn daemon_parent_has_one_thread_while_serving_quic() {
     )
     .expect("config");
 
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(&oc_bin)
-            .args([
-                "--daemon",
-                "--no-detach",
-                "--port",
-                &port.to_string(),
-                "--config",
-            ])
-            .arg(&config)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-    })
-    .expect("start oc-rsync --daemon");
-    let _daemon = DaemonGuard(child);
-    assert!(
-        wait_for_log(&log, "QUIC listener serving on", Duration::from_secs(10)),
-        "QUIC listener never reported serving"
-    );
+    let (_daemon, stderr) = OcDaemon::builder(&config)
+        .quic()
+        .spawn_capturing_stderr()
+        .expect("start the oc-rsync daemon");
+    let port = _daemon.quic_port();
+    let mut log = LogLines::spawn(stderr);
+    let front_line = log
+        .wait_for("QUIC listener serving on")
+        .expect("QUIC listener never reported serving");
+    let parent_line = log
+        .wait_for("starting, listening on port")
+        .expect("daemon parent never logged its start");
 
-    let parent = logged_pid(&log, "starting, listening on port").expect("daemon parent pid");
-    let front = logged_pid(&log, "QUIC listener serving on").expect("front pid");
+    let parent = logged_pid(&parent_line).expect("daemon parent pid");
+    let front = logged_pid(&front_line).expect("front pid");
     assert_ne!(
         front, parent,
         "QUIC must be served outside the daemon parent"

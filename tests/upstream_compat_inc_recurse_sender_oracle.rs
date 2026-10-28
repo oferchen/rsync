@@ -53,14 +53,15 @@
 
 use std::fs;
 use std::io;
+use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 
 use tempfile::{TempDir, tempdir};
+use test_support::inetd_server::{InetdCommand, InetdServer};
 use test_support::{
-    DirDiff, DirDiffOptions, UpstreamVersion, require_upstream_rsync, spawn_daemon_on_free_port,
-    upstream_compat_enabled,
+    DirDiff, DirDiffOptions, UpstreamVersion, require_upstream_rsync, upstream_compat_enabled,
 };
 
 /// upstream: rsync.h:151 `#define MIN_FILECNT_LOOKAHEAD 1000`.
@@ -346,18 +347,6 @@ fn rsh_push_no_inc_recursive_control_yields_single_segment() {
     assert_trees_equal(&src, &dest);
 }
 
-/// RAII kill-and-reap guard for the upstream daemon listener.
-struct DaemonGuard {
-    child: Child,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 /// Daemon leg fixture: an upstream `rsync --daemon` exposing one
 /// read-write module. `max verbosity = 4` lets the `-M--debug=flist2`
 /// remote option through the daemon's per-flag clamp: FLIST2 is row 3
@@ -367,7 +356,7 @@ struct UpstreamDaemon {
     _workdir: TempDir,
     module_root: PathBuf,
     port: u16,
-    _daemon: DaemonGuard,
+    _daemon: InetdServer,
 }
 
 impl UpstreamDaemon {
@@ -394,25 +383,16 @@ impl UpstreamDaemon {
             ),
         )?;
 
-        let binary = upstream.binary().to_path_buf();
-        let (child, port) = spawn_daemon_on_free_port(|port| {
-            Command::new(&binary)
-                .arg("--daemon")
-                .arg("--no-detach")
-                .arg(format!("--port={port}"))
-                .arg("--address=127.0.0.1")
-                .arg(format!("--config={}", config_path.display()))
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-        })?;
+        let stderr = fs::File::create(workdir.path().join("daemon.stderr"))?;
+        let command = InetdCommand::new(upstream.binary(), stderr)
+            .arg(format!("--config={}", config_path.display()));
+        let daemon = InetdServer::start(TcpListener::bind("127.0.0.1:0")?, command)?;
 
         Ok(Self {
             _workdir: workdir,
             module_root,
-            port,
-            _daemon: DaemonGuard { child },
+            port: daemon.port(),
+            _daemon: daemon,
         })
     }
 }

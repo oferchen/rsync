@@ -208,7 +208,7 @@ impl RollingChecksum {
         let mut scratch_len = 0usize;
 
         for slice in buffers {
-            let chunk = slice.as_ref();
+            let chunk: &[u8] = slice.as_ref();
 
             if chunk.is_empty() {
                 continue;

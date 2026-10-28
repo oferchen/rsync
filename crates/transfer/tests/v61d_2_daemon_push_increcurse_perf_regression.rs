@@ -49,11 +49,13 @@
 
 use std::fs::{self, File};
 use std::io::{self, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
+use test_support::inetd_server::{InetdCommand, InetdServer};
 
 /// Total fixture size in bytes - ~1 MiB across many files.
 ///
@@ -161,40 +163,21 @@ fn write_daemon_config(
     fs::write(config_path, body)
 }
 
-/// Guard that kills the upstream daemon on drop so a panicking test
-/// does not leak a TCP listener.
-struct DaemonGuard {
-    child: Child,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Spawn `rsync --daemon` on `port` against `config_path`. Waits for the
-/// port to accept connections before returning.
-fn spawn_upstream_daemon(rsync_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
-    // Race-free free port: upstream rsync binds SO_REUSEADDR only (socket.c:605),
-    // so a collision is a clean EADDRINUSE exit the helper retries. See
-    // `test_support::daemon_port`.
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(rsync_bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--address=127.0.0.1")
-            .arg("--config")
-            .arg(config_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    Ok((DaemonGuard { child }, port))
+/// Serves `config_path` with the upstream `rsync_bin` in inetd mode, one
+/// process per connection, on a loopback listener bound here first; see
+/// `test_support::inetd_server`. Each session's stderr is appended to
+/// `daemon.stderr` beside the config.
+fn spawn_upstream_daemon(rsync_bin: &Path, config_path: &Path) -> io::Result<(InetdServer, u16)> {
+    let stderr = fs::File::options()
+        .create(true)
+        .append(true)
+        .open(config_path.with_file_name("daemon.stderr"))?;
+    let command = InetdCommand::new(rsync_bin, stderr)
+        .arg("--config")
+        .arg(config_path);
+    let server = InetdServer::start(TcpListener::bind("127.0.0.1:0")?, command)?;
+    let port = server.port();
+    Ok((server, port))
 }
 
 /// Drive one push transfer against `rsync://127.0.0.1:<port>/push/` and

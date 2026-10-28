@@ -10,6 +10,7 @@ fn serve_connections(
     options: RuntimeOptions,
     external_signal_flags: Option<platform::signal::SignalFlags>,
     pre_bound_listener: Option<TcpListener>,
+    pre_bound_quic_sockets: Vec<std::net::UdpSocket>,
 ) -> Result<(), DaemonError> {
     // Use externally injected signal flags (from the Windows Service dispatcher)
     // when available, otherwise register platform signal handlers so SIGPIPE is
@@ -258,29 +259,35 @@ fn serve_connections(
     // QUIC front process forked just before the accept loop, which terminates
     // QUIC in its own threads so this process stays single-threaded. See
     // `start_quic_front`.
+    //
+    // Injected sockets (test infrastructure, like the pre-bound TCP listener)
+    // replace the bind outright, so the port is owned before the daemon starts.
     #[cfg(all(unix, feature = "quic"))]
     let quic_sockets: Vec<std::net::UdpSocket> =
         if let Some((quic_port, quic_address, _)) = &quic_bind {
-            let plan = resolve_quic_bind_addresses(quic_address.as_deref(), &bind_addresses);
-            match bind_quic_sockets_per_family(&plan, *quic_port, log_sink.as_ref()) {
-                Ok(sockets) => {
-                    if let Some(log) = log_sink.as_ref() {
-                        let addrs: Vec<String> = sockets
-                            .iter()
-                            .filter_map(|s| s.local_addr().ok())
-                            .map(|a| a.to_string())
-                            .collect();
-                        let text = format!("QUIC listener bound on {}", addrs.join(" and "));
-                        let message = rsync_info!(text).with_role(Role::Daemon);
-                        log_message(log, &message);
-                    }
-                    sockets
-                }
-                Err((requested_addr, error)) => return Err(bind_error(requested_addr, error)),
+            let sockets = if pre_bound_quic_sockets.is_empty() {
+                let plan = resolve_quic_bind_addresses(quic_address.as_deref(), &bind_addresses);
+                bind_quic_sockets_per_family(&plan, *quic_port, log_sink.as_ref())
+                    .map_err(|(requested_addr, error)| bind_error(requested_addr, error))?
+            } else {
+                pre_bound_quic_sockets
+            };
+            if let Some(log) = log_sink.as_ref() {
+                let addrs: Vec<String> = sockets
+                    .iter()
+                    .filter_map(|s| s.local_addr().ok())
+                    .map(|a| a.to_string())
+                    .collect();
+                let text = format!("QUIC listener bound on {}", addrs.join(" and "));
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
             }
+            sockets
         } else {
             Vec::new()
         };
+    #[cfg(not(all(unix, feature = "quic")))]
+    drop(pre_bound_quic_sockets);
 
     // CAP_NET_BIND_SERVICE is no longer needed once the listener
     // has bound. Drop it from effective, permitted, and bounding sets so a

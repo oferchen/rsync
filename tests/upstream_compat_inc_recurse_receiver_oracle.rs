@@ -66,12 +66,11 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Output, Stdio};
 
 use tempfile::{TempDir, tempdir};
 use test_support::{
-    DirDiff, DirDiffOptions, UpstreamVersion, require_upstream_rsync, spawn_daemon_on_free_port,
-    upstream_compat_enabled,
+    DirDiff, DirDiffOptions, UpstreamVersion, require_upstream_rsync, upstream_compat_enabled,
 };
 
 /// upstream: rsync.h:151 `#define MIN_FILECNT_LOOKAHEAD 1000`.
@@ -326,25 +325,13 @@ fn rsh_push_into_upstream_receiver_negotiates_inc_recurse_control() {
     assert_trees_equal(&src, &dest);
 }
 
-/// RAII kill-and-reap guard for a spawned daemon listener.
-struct DaemonGuard {
-    child: Child,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 /// Daemon leg fixture: `oc-rsync --daemon` exposing one read-write module,
 /// so an upstream sender can push into it.
 struct OcDaemon {
     _workdir: TempDir,
     module_root: PathBuf,
     port: u16,
-    _daemon: DaemonGuard,
+    _daemon: test_support::oc_daemon::OcDaemon,
 }
 
 impl OcDaemon {
@@ -365,26 +352,13 @@ impl OcDaemon {
             ),
         )?;
 
-        let binary = oc_rsync_bin();
-        let (child, port) = spawn_daemon_on_free_port(|port| {
-            Command::new(&binary)
-                .arg("--daemon")
-                .arg("--no-detach")
-                .arg(format!("--port={port}"))
-                .arg("--address=127.0.0.1")
-                .arg("--config")
-                .arg(&config_path)
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-        })?;
+        let daemon = test_support::oc_daemon::OcDaemon::builder(&config_path).spawn()?;
 
         Ok(Self {
             _workdir: workdir,
             module_root,
-            port,
-            _daemon: DaemonGuard { child },
+            port: daemon.port(),
+            _daemon: daemon,
         })
     }
 }

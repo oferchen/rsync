@@ -318,6 +318,7 @@ include!("daemon/sections/config_helpers.rs");
 pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     let external_signal_flags = config.take_signal_flags();
     let pre_bound_listener = config.take_pre_bound_listener();
+    let pre_bound_quic_sockets = config.take_pre_bound_quic_sockets();
     let options = RuntimeOptions::parse_with_brand(
         config.arguments(),
         config.brand(),
@@ -333,7 +334,12 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         return serve_inetd_session(options);
     }
 
-    serve_connections(options, external_signal_flags, pre_bound_listener)
+    serve_connections(
+        options,
+        external_signal_flags,
+        pre_bound_listener,
+        pre_bound_quic_sockets,
+    )
 }
 
 /// Seeds the thread-local [`logging::VerbosityConfig`] from the daemon's

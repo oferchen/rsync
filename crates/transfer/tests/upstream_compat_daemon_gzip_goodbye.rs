@@ -47,9 +47,10 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
 
 use tempfile::{TempDir, tempdir};
+use test_support::oc_daemon::OcDaemon;
 use test_support::{UpstreamVersion, require_upstream_rsync, upstream_compat_enabled};
 
 /// Total payload size. Picked to clear the ~615 KB cutoff observed in
@@ -60,40 +61,15 @@ const COMPRESSIBLE_BYTES: usize = 512 * 1024;
 /// compression engages.
 const INCOMPRESSIBLE_BYTES: usize = 512 * 1024;
 
-/// RAII guard that kills the oc-rsync daemon on drop so a panicking
-/// assertion does not leave a dangling listener.
-struct DaemonGuard {
-    child: Child,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Spawn `oc-rsync --daemon` on `port` against `config_path` and wait
-/// for it to accept connections.
-fn spawn_oc_rsync_daemon(bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
-    // Race-free free port: the default daemon binds SO_REUSEADDR only (upstream
-    // socket.c:605), so a collision is a clean EADDRINUSE exit the helper
-    // retries. See `test_support::daemon_port`.
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--address=127.0.0.1")
-            .arg("--config")
-            .arg(config_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    Ok((DaemonGuard { child }, port))
+/// Starts the oc-rsync daemon on `config_path`, returning it with the loopback
+/// port it serves. `test_support::oc_daemon` binds the listener before the
+/// daemon starts, so the port is connectable as soon as this returns.
+fn spawn_oc_rsync_daemon(config_path: &Path) -> io::Result<(OcDaemon, u16)> {
+    let daemon = OcDaemon::builder(config_path)
+        .arg("--address=127.0.0.1")
+        .spawn()?;
+    let port = daemon.port();
+    Ok((daemon, port))
 }
 
 /// Write an `rsyncd.conf` exposing a single read-write module rooted at
@@ -160,11 +136,11 @@ struct Fixture {
     _workdir: TempDir,
     module_root: PathBuf,
     port: u16,
-    _daemon: DaemonGuard,
+    _daemon: OcDaemon,
 }
 
 impl Fixture {
-    fn start(oc_rsync_bin: &Path) -> io::Result<Self> {
+    fn start() -> io::Result<Self> {
         let workdir = tempdir()?;
         let module_root = workdir.path().join("module");
         fs::create_dir_all(&module_root)?;
@@ -173,7 +149,7 @@ impl Fixture {
         let pid_path = workdir.path().join("rsyncd.pid");
         write_daemon_config(&config_path, &log_path, &pid_path, &module_root)?;
 
-        let (daemon, port) = spawn_oc_rsync_daemon(oc_rsync_bin, &config_path)?;
+        let (daemon, port) = spawn_oc_rsync_daemon(&config_path)?;
 
         Ok(Self {
             _workdir: workdir,
@@ -212,9 +188,7 @@ fn daemon_gzip_goodbye_does_not_truncate() {
          OC_RSYNC_UPSTREAM_BIN_3_5_1 at it",
     );
 
-    let oc_rsync = test_support::oc_rsync_bin();
-
-    let fixture = match Fixture::start(&oc_rsync) {
+    let fixture = match Fixture::start() {
         Ok(f) => f,
         Err(e) => {
             panic!("upstream-compat fixture: could not start oc-rsync daemon: {e}");
