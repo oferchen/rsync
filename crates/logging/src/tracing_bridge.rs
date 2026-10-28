@@ -27,7 +27,7 @@
 
 use super::config::VerbosityConfig;
 use super::levels::{DebugFlag, InfoFlag};
-use super::thread_local::{debug_gte, emit_debug, emit_info, info_gte};
+use super::context::{debug_gte, emit_debug, emit_info, info_gte};
 use tracing::{Level, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;
@@ -244,7 +244,7 @@ pub fn init_tracing(config: VerbosityConfig) {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    super::thread_local::init(config.clone());
+    super::context::init(config.clone());
 
     let layer = RsyncLayer::new(config);
 
@@ -273,7 +273,7 @@ where
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    super::thread_local::init(config.clone());
+    super::context::init(config.clone());
 
     let layer = RsyncLayer::new(config);
 

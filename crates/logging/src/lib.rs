@@ -87,7 +87,7 @@ mod macros;
 mod phase_timer;
 mod sequence;
 mod stream;
-mod thread_local;
+mod context;
 mod verify_failure;
 
 #[cfg(feature = "tracing")]
@@ -106,7 +106,8 @@ pub use log_code::{LogCode, ParseLogCodeError};
 pub use phase_timer::PhaseTimer;
 pub use sequence::{Sequence, Stamped};
 pub use stream::{BadLogCode, MessageStream, Msgs2Stderr, StreamContext, message_stream};
-pub use thread_local::{
+pub use context::{
+    ContextGuard, DiagnosticSink, LogContext, current, enter,
     DiagnosticEvent, apply_debug_flag, apply_info_flag, debug_gte, discard_events_from,
     drain_error_events, drain_events, drain_events_coded, drain_events_for_daemon_log,
     drain_events_for_peer, drain_stamped_events_for_client, emit_debug, emit_debug_coded,
