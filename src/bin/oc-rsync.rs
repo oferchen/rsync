@@ -74,5 +74,7 @@ fn main() -> ExitCode {
     // daemon workers need.
     let mut stdout = io::stdout();
     let mut stderr = io::stderr();
+    // This process owns its stdio, so diagnostics are written as produced.
+    cli::enable_live_stdio();
     client::run_with(env::args_os(), &mut stdout, &mut stderr)
 }

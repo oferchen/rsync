@@ -263,6 +263,15 @@ where
     }
 
     let result = {
+        // upstream: log.c:272-373 rwrite() writes each line as it is produced.
+        // A remote transfer does that here; the in-process local copy keeps its
+        // diagnostics buffered so they merge into its post-hoc listing below.
+        let _live = (is_pull || is_sender).then(|| {
+            crate::frontend::progress::diagnostic::LiveDiagnostics::install(
+                msgs_to_stderr,
+                eight_bit_output,
+            )
+        });
         let observer = live_progress
             .as_mut()
             .map(|observer| observer as &mut dyn ClientProgressObserver);
