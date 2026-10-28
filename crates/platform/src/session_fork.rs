@@ -143,10 +143,26 @@ pub fn die_with_parent(parent_pid: u32) -> io::Result<()> {
 /// for itself and the parent for the child. Whichever side runs first creates
 /// the group, so it exists before the parent can act on it. A child that has
 /// already exited cannot join a group and needs none, so `ESRCH` is success.
+///
+/// The parent's call can lose the race to the child. Once the child has
+/// exec'd, `setpgid()` answers `EACCES`; once it is exiting, has become a
+/// session leader or has left the caller's session, `EPERM` (POSIX
+/// `setpgid()`; xnu `bsd/kern/kern_prot.c` `setpgid()`). The child's own call
+/// may already have made the group, so either error is success when the child
+/// leads a group of its own id, and is returned otherwise.
 pub fn lead_process_group(pid: i32) -> io::Result<()> {
-    let pid = nix::unistd::Pid::from_raw(pid);
-    match nix::unistd::setpgid(pid, pid) {
+    let target = nix::unistd::Pid::from_raw(pid);
+    match nix::unistd::setpgid(target, target) {
         Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+        Err(errno @ (nix::errno::Errno::EPERM | nix::errno::Errno::EACCES)) if pid != 0 => {
+            match nix::unistd::getpgid(Some(target)) {
+                Ok(pgid) if pgid == target => Ok(()),
+                // Ended between the two calls: as `ESRCH` above.
+                Err(nix::errno::Errno::ESRCH) => Ok(()),
+                Ok(_) => Err(errno.into()),
+                Err(other) => Err(other.into()),
+            }
+        }
         Err(errno) => Err(errno.into()),
     }
 }
@@ -381,6 +397,41 @@ pub fn wait_for_child(child_pid: i32) -> io::Result<ChildEnd> {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    /// A child that already leads its own group - here set before its exec,
+    /// so the parent's `setpgid()` answers `EACCES` - is the group the caller
+    /// asked for.
+    #[test]
+    fn lead_process_group_accepts_a_child_that_already_leads_its_group() {
+        use std::os::unix::process::CommandExt;
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id() as i32;
+        let joined = lead_process_group(pid);
+        child.kill().expect("kill sleep");
+        child.wait().expect("reap sleep");
+        joined.expect("the child already leads its own group");
+    }
+
+    /// A child that exec'd inside the caller's group cannot be moved, and no
+    /// group of its own exists, so the refusal is returned.
+    #[test]
+    fn lead_process_group_refuses_a_child_left_in_the_callers_group() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id() as i32;
+        let joined = lead_process_group(pid);
+        child.kill().expect("kill sleep");
+        child.wait().expect("reap sleep");
+        let error = joined.expect_err("an exec'd child in our group is refused");
+        assert_eq!(error.raw_os_error(), Some(libc::EACCES));
+    }
 
     /// Both sides of one split are observed, and the child's exit code
     /// reaches the parent - i.e. `fork_session` really forked.
