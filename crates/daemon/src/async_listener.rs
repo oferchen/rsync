@@ -123,7 +123,17 @@ async fn accept_loop(
 ) -> io::Result<()> {
     let listener = TokioTcpListener::bind(bind_addr).await?;
     let permits = Arc::new(tokio::sync::Semaphore::new(max_inflight.max(1)));
+    accept_until_shutdown(listener, permits, shutdown, worker).await
+}
 
+/// Accepts on `listener` until `shutdown` is set, dispatching each connection
+/// to `worker` on its own thread once one of `permits` is free.
+async fn accept_until_shutdown(
+    listener: TokioTcpListener,
+    permits: Arc<tokio::sync::Semaphore>,
+    shutdown: Arc<AtomicBool>,
+    worker: SyncWorker,
+) -> io::Result<()> {
     loop {
         if shutdown.load(Ordering::Acquire) {
             return Ok(());
@@ -228,162 +238,167 @@ mod tests {
     //! because the `tokio::test` macro expands `core::future::Future`, which
     //! collides with the local `core` crate that shadows the standard
     //! library.
+    //!
+    //! Each test binds its listener on port 0 before the loop starts, so a
+    //! client connect queues in the backlog instead of racing the loop's bind,
+    //! and every wait is a blocking receive on an event the worker sends.
 
     use super::*;
     use std::io::Read;
-    use std::net::{IpAddr, Ipv4Addr, TcpStream as StdTcpStream};
+    use std::net::{IpAddr, Ipv4Addr, TcpListener as StdTcpListener, TcpStream as StdTcpStream};
     use std::sync::atomic::AtomicUsize;
+    use std::sync::{Mutex, mpsc};
     use std::thread;
-    use std::time::Duration;
+    use tokio::sync::Semaphore;
 
-    /// Reserves an ephemeral port by binding then dropping a std listener,
-    /// returning the address. The window between drop and rebind is short
-    /// enough that loopback test timing rarely loses the port.
-    fn reserve_port() -> SocketAddr {
-        let any = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-        let probe = std::net::TcpListener::bind(any).expect("probe bind");
-        let addr = probe.local_addr().expect("probe addr");
-        drop(probe);
-        addr
+    fn loopback_any_port() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
     }
 
-    #[test]
-    fn binds_accepts_and_dispatches_worker() {
-        let runtime = tokio::runtime::Runtime::new().expect("build runtime");
-        let local_addr = reserve_port();
-
-        let invocations = Arc::new(AtomicUsize::new(0));
-        let shutdown = Arc::new(AtomicBool::new(false));
-
-        let invocations_for_worker = Arc::clone(&invocations);
-        let worker: SyncWorker = Arc::new(move |mut stream: TcpStream, _peer| {
-            invocations_for_worker.fetch_add(1, Ordering::SeqCst);
-            // Drain so the client sees an orderly close.
-            let mut sink = Vec::new();
-            let _ = stream.read_to_end(&mut sink);
-            Ok(())
-        });
-
-        let shutdown_for_loop = Arc::clone(&shutdown);
-        let worker_for_loop = Arc::clone(&worker);
+    /// Runs `accept_until_shutdown` on its own thread over a listener bound before it starts.
+    fn spawn_server(
+        permits: Arc<Semaphore>,
+        shutdown: Arc<AtomicBool>,
+        worker: SyncWorker,
+    ) -> (SocketAddr, thread::JoinHandle<io::Result<()>>) {
+        let listener = StdTcpListener::bind(loopback_any_port()).expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        listener.set_nonblocking(true).expect("nonblocking");
         let server = thread::spawn(move || {
+            let runtime = tokio::runtime::Runtime::new().expect("build runtime");
             runtime.block_on(async move {
-                accept_loop(
-                    local_addr,
-                    DEFAULT_MAX_INFLIGHT_WORKERS,
-                    shutdown_for_loop,
-                    worker_for_loop,
+                accept_until_shutdown(
+                    TokioTcpListener::from_std(listener)?,
+                    permits,
+                    shutdown,
+                    worker,
                 )
                 .await
             })
         });
+        (addr, server)
+    }
 
-        // Brief settle while the loop reaches the first await.
-        thread::sleep(Duration::from_millis(50));
+    /// Drains `stream` to EOF, so a worker ends when its client hangs up.
+    fn drain(mut stream: TcpStream) {
+        let mut sink = Vec::new();
+        let _ = stream.read_to_end(&mut sink);
+    }
 
-        for _ in 0..3 {
-            let _ = StdTcpStream::connect(local_addr).expect("connect");
+    #[test]
+    fn binds_accepts_and_dispatches_worker() {
+        const CLIENTS: usize = 3;
+        let (done_tx, done_rx) = mpsc::channel();
+        let done_tx = Mutex::new(done_tx);
+        let worker: SyncWorker = Arc::new(move |stream: TcpStream, _peer| {
+            drain(stream);
+            done_tx
+                .lock()
+                .expect("done sender")
+                .send(())
+                .expect("report");
+            Ok(())
+        });
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let permits = Arc::new(Semaphore::new(DEFAULT_MAX_INFLIGHT_WORKERS));
+        let (addr, server) = spawn_server(permits, Arc::clone(&shutdown), worker);
+
+        for _ in 0..CLIENTS {
+            drop(StdTcpStream::connect(addr).expect("connect"));
         }
-
-        // Allow the per-connection worker threads to drain.
-        thread::sleep(Duration::from_millis(200));
+        for _ in 0..CLIENTS {
+            done_rx.recv().expect("every connection reaches a worker");
+        }
 
         shutdown.store(true, Ordering::Release);
         let result = server.join().expect("server thread");
         assert!(result.is_ok(), "accept loop error: {result:?}");
-        assert!(invocations.load(Ordering::SeqCst) >= 1);
     }
 
     #[test]
     fn worker_thread_cap_bounds_concurrency() {
-        // With a cap of 2, at most two per-connection workers may run at once
-        // even when more connections arrive together. Without the cap (raw
-        // thread-per-connection) all four would overlap.
-        let runtime = tokio::runtime::Runtime::new().expect("build runtime");
-        let local_addr = reserve_port();
-
+        // With a cap of 2, the first two workers hold both permits while they
+        // wait to be released, so the other two connections stay parked on the
+        // semaphore. Without the cap all four would run at once.
+        const CAP: usize = 2;
+        const CLIENTS: usize = 4;
         let concurrent = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
-        let total = Arc::new(AtomicUsize::new(0));
-        let shutdown = Arc::new(AtomicBool::new(false));
-
-        let concurrent_w = Arc::clone(&concurrent);
-        let peak_w = Arc::clone(&peak);
-        let total_w = Arc::clone(&total);
-        let worker: SyncWorker = Arc::new(move |mut stream: TcpStream, _peer| {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (done_tx, done_rx) = mpsc::channel();
+        let started_tx = Mutex::new(started_tx);
+        let release_rx = Mutex::new(release_rx);
+        let done_tx = Mutex::new(done_tx);
+        let (concurrent_w, peak_w) = (Arc::clone(&concurrent), Arc::clone(&peak));
+        let worker: SyncWorker = Arc::new(move |stream: TcpStream, _peer| {
             let now = concurrent_w.fetch_add(1, Ordering::SeqCst) + 1;
             peak_w.fetch_max(now, Ordering::SeqCst);
-            // Hold the worker slot long enough that concurrent connections
-            // would overlap absent the cap.
-            thread::sleep(Duration::from_millis(150));
-            let mut sink = Vec::new();
-            let _ = stream.read_to_end(&mut sink);
+            started_tx
+                .lock()
+                .expect("started sender")
+                .send(())
+                .expect("report");
+            release_rx
+                .lock()
+                .expect("release receiver")
+                .recv()
+                .expect("release");
+            drain(stream);
             concurrent_w.fetch_sub(1, Ordering::SeqCst);
-            total_w.fetch_add(1, Ordering::SeqCst);
+            done_tx
+                .lock()
+                .expect("done sender")
+                .send(())
+                .expect("report");
             Ok(())
         });
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let permits = Arc::new(Semaphore::new(CAP));
+        let (addr, server) = spawn_server(Arc::clone(&permits), Arc::clone(&shutdown), worker);
 
-        let shutdown_for_loop = Arc::clone(&shutdown);
-        let worker_for_loop = Arc::clone(&worker);
-        let server = thread::spawn(move || {
-            runtime.block_on(async move {
-                accept_loop(local_addr, 2, shutdown_for_loop, worker_for_loop).await
-            })
-        });
-
-        // Brief settle while the loop reaches the first await.
-        thread::sleep(Duration::from_millis(50));
-
-        // Fire four connections close together so workers would overlap.
-        let mut clients = Vec::new();
-        for _ in 0..4 {
-            clients.push(StdTcpStream::connect(local_addr).expect("connect"));
+        let clients: Vec<_> = (0..CLIENTS)
+            .map(|_| StdTcpStream::connect(addr).expect("connect"))
+            .collect();
+        for _ in 0..CAP {
+            started_rx.recv().expect("a worker starts");
         }
-        thread::sleep(Duration::from_millis(50));
-        drop(clients);
+        assert_eq!(
+            permits.available_permits(),
+            0,
+            "the running workers must hold every permit"
+        );
+        assert_eq!(peak.load(Ordering::SeqCst), CAP);
 
-        // Allow all four to drain through the 2-permit gate.
-        thread::sleep(Duration::from_millis(900));
+        drop(clients);
+        for _ in 0..CLIENTS {
+            release_tx.send(()).expect("release a worker");
+        }
+        for _ in 0..CLIENTS {
+            done_rx.recv().expect("every connection drains");
+        }
 
         shutdown.store(true, Ordering::Release);
         let result = server.join().expect("server thread");
         assert!(result.is_ok(), "accept loop error: {result:?}");
-
-        assert_eq!(
-            total.load(Ordering::SeqCst),
-            4,
-            "all connections should drain"
-        );
         let observed = peak.load(Ordering::SeqCst);
-        assert!(observed >= 1, "at least one worker ran");
         assert!(
-            observed <= 2,
-            "cap should bound concurrency to 2, saw {observed}"
+            observed <= CAP,
+            "cap should bound concurrency to {CAP}, saw {observed}"
         );
     }
 
     #[test]
     fn run_hybrid_listener_shuts_down_promptly() {
-        let bind_addr = reserve_port();
-        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown = Arc::new(AtomicBool::new(true));
         let worker: SyncWorker = Arc::new(|_, _| Ok(()));
-
-        let shutdown_for_thread = Arc::clone(&shutdown);
-        let worker_for_thread = Arc::clone(&worker);
-        let handle = thread::spawn(move || {
-            run_hybrid_listener(
-                bind_addr,
-                1,
-                DEFAULT_MAX_INFLIGHT_WORKERS,
-                shutdown_for_thread,
-                worker_for_thread,
-            )
-        });
-
-        thread::sleep(Duration::from_millis(150));
-        shutdown.store(true, Ordering::Release);
-
-        let result = handle.join().expect("listener thread");
+        let result = run_hybrid_listener(
+            loopback_any_port(),
+            1,
+            DEFAULT_MAX_INFLIGHT_WORKERS,
+            shutdown,
+            worker,
+        );
         assert!(result.is_ok(), "listener error: {result:?}");
     }
 }
