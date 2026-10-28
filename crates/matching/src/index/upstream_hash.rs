@@ -71,7 +71,7 @@ impl UpstreamHashTable {
     /// Records that block `block` matched at its own offset, which keeps it
     /// on its chain under `--inplace`.
     ///
-    /// upstream: match.c:301 `s->sums[i].flags |= SUMFLG_SAME_OFFSET`.
+    /// upstream: match.c:316 `s->sums[i].flags |= SUMFLG_SAME_OFFSET`.
     pub fn mark_same_offset(&mut self, block: usize, offset: u64) {
         if self.updating_basis_file && block as u64 * self.block_length == offset {
             self.same_offset[block] = true;

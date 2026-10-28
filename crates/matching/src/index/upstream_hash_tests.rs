@@ -24,7 +24,8 @@ fn probe_bytes(table: &mut UpstreamHashTable, index: &DeltaSignatureIndex, windo
     table.probe_window(index, RollingDigest::from_bytes(window), 0, window, &[]);
 }
 
-/// upstream: match.c:86-90 - `(count/8)*10 + 11`, floored at 2^16.
+/// upstream: match.c:86-90 - `tablesize = (uint32)(s->count/8) * 10 + 11`,
+/// floored at 2^16.
 #[test]
 fn table_size_follows_build_hash_table() {
     assert_eq!(upstream_table_size(0), TRADITIONAL_TABLESIZE);
@@ -33,8 +34,8 @@ fn table_size_follows_build_hash_table() {
     assert_eq!(upstream_table_size(800_000), 1_000_011);
 }
 
-/// upstream: match.c:76-78 - `(s1 + s2) & 0xFFFF` for the traditional table,
-/// the full sum modulo the size for a bigger one.
+/// upstream: match.c:73-76 - `SUM2HASH2` adds the two 16-bit halves for the
+/// traditional table; `BIG_SUM2HASH` takes the full sum modulo the size.
 #[test]
 fn bucket_follows_sum2hash() {
     let sum = 0x1234_ff10;
