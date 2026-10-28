@@ -120,11 +120,12 @@ impl SenderDeltaContext {
         // A duplicate-content basis keeps the sequential scan, as does a run
         // that reports the `-vv` match counters: only that scan visits
         // upstream's offsets, which the counters are replayed at.
-        let result = if index.has_duplicate_blocks() || matching::trace_deltasum::counters_reported() {
-            generator.generate_counted_with(io::Cursor::new(source), index, &mut self.scan)
-        } else {
-            generator.generate_chunked_counted(source, index, max_chunks)
-        };
+        let result =
+            if index.has_duplicate_blocks() || matching::trace_deltasum::counters_reported() {
+                generator.generate_counted_with(io::Cursor::new(source), index, &mut self.scan)
+            } else {
+                generator.generate_chunked_counted(source, index, max_chunks)
+            };
         result.map_err(delta_failed)
     }
 

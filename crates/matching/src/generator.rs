@@ -815,7 +815,7 @@ impl DeltaGenerator {
         }
 
         if let Some(replay) = replay.as_mut() {
-            replay_unprobed_tail(replay, index, &window, offset);
+            replay_unprobed_tail(replay, index, window, offset);
         }
 
         // EOF tail match, mirroring the three cooperating pieces of upstream's
@@ -1184,7 +1184,7 @@ impl DeltaGenerator {
         // path is opt-in on both peers (`OC_CONSECUTIVE_MATCH`) so the default
         // wire is unaffected.
         if let Some(replay) = replay.as_mut() {
-            replay_unprobed_tail(replay, index, &window, offset);
+            replay_unprobed_tail(replay, index, window, offset);
         }
         while let Some(byte) = window.pop_front() {
             pending_literals.push(byte);
