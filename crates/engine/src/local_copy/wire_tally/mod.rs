@@ -37,7 +37,8 @@ mod tests;
 
 use std::collections::HashMap;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::ffi::{OsStr, OsString};
+use std::path::Path;
 
 use protocol::codec::{NDX_DEL_STATS, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
 use protocol::flist::{FileEntry, FileListWriter, SubListPlan, compare_file_entries};
@@ -227,7 +228,9 @@ pub(crate) struct WireTally {
     entries: Vec<FileEntry>,
     /// Each entry's position in its directory's `readdir()` order.
     readdir: Vec<u32>,
-    by_path: HashMap<PathBuf, u32>,
+    /// Relative paths of the entries itemized without a transfer, resolved
+    /// to entries once the walk is complete.
+    items: Vec<OsString>,
     exchanges: Vec<(u32, Exchange)>,
     pending: Option<PendingTransfer>,
     /// Width of the whole-file sum after the tokens (`xfer_sum_len`).
@@ -265,7 +268,7 @@ impl WireTally {
             totals,
             entries: Vec::new(),
             readdir: Vec::new(),
-            by_path: HashMap::new(),
+            items: Vec::new(),
             exchanges: Vec::new(),
             pending: None,
             xfer_sum_len: options.transfer_checksum_algorithm().digest_len() as u64,
@@ -298,16 +301,30 @@ impl WireTally {
     /// Adds a file-list entry the sender would send, with its position in its
     /// directory's `readdir()` order.
     pub(crate) fn add_entry(&mut self, entry: FileEntry, readdir_index: u32) {
-        let index = self.entries.len() as u32;
-        self.by_path.insert(entry.path().to_path_buf(), index);
         self.entries.push(entry);
         self.readdir.push(readdir_index);
     }
 
     /// Records an itemize-only exchange for the entry at `relative`.
     pub(crate) fn item(&mut self, relative: &Path) {
-        if let Some(&index) = self.by_path.get(relative) {
-            self.exchanges.push((index, Exchange::Item));
+        self.items.push(relative.as_os_str().to_os_string());
+    }
+
+    /// Turns the itemized paths into exchanges on their entries.
+    fn resolve_items(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+        let index: HashMap<&OsStr, u32> = self
+            .entries
+            .iter()
+            .zip(0u32..)
+            .map(|(entry, i)| (entry.path().as_os_str(), i))
+            .collect();
+        for path in &self.items {
+            if let Some(&entry) = index.get(path.as_os_str()) {
+                self.exchanges.push((entry, Exchange::Item));
+            }
         }
     }
 
@@ -434,6 +451,7 @@ impl WireTally {
         created_root: Option<&Path>,
         delete_counts: DeleteCounts,
     ) -> (u64, u64) {
+        self.resolve_items();
         let mut order: Vec<u32> = (0..self.entries.len() as u32).collect();
         order.sort_by(|&a, &b| {
             compare_file_entries(&self.entries[a as usize], &self.entries[b as usize])
@@ -554,13 +572,9 @@ impl WireTally {
     /// then `readdir()` order, then traversal order for operands.
     fn wire_order(&self, members: &[usize], sorted: &[FileEntry], order: &[u32]) -> Vec<usize> {
         let mut wire = members.to_vec();
-        wire.sort_by_key(|&s| {
+        wire.sort_unstable_by_key(|&s| {
             let traversal = order[s] as usize;
-            (
-                sorted[s].path() != Path::new("."),
-                self.readdir[traversal],
-                traversal,
-            )
+            (!is_dot(&sorted[s]), self.readdir[traversal], traversal)
         });
         wire
     }
@@ -677,7 +691,7 @@ impl WireTally {
         let mut top = Vec::new();
         for (s, entry) in sorted.iter().enumerate() {
             let parent: &Path = entry.dirname();
-            if parent.as_os_str().is_empty() || parent == Path::new(".") {
+            if parent.as_os_str().is_empty() || parent.as_os_str() == "." {
                 top.push(s);
             } else {
                 children.entry(parent).or_default().push(s);
@@ -692,7 +706,7 @@ impl WireTally {
                 pending.pop();
                 continue;
             };
-            if !sorted[s].is_dir() || sorted[s].path() == Path::new(".") {
+            if !sorted[s].is_dir() || is_dot(&sorted[s]) {
                 continue;
             }
             if let Some(members) = children.remove(sorted[s].path().as_path()) {
@@ -744,6 +758,12 @@ impl WireTally {
                 .expect("counting never fails");
         }
     }
+}
+
+/// Whether `entry` is the transfer root `.`; compares bytes, not path
+/// components.
+fn is_dot(entry: &FileEntry) -> bool {
+    entry.path().as_os_str() == "."
 }
 
 /// Wire size of the receiver's `created directory` notice: one `MSG_INFO`
