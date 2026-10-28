@@ -712,6 +712,15 @@ impl ReceiverContext {
         let dest_arg = self.config.args.first();
         let trailing_slash = dest_arg.is_some_and(|arg| dest_arg_has_trailing_slash(arg));
         let dest_dir = dest_arg.map_or_else(|| PathBuf::from("."), PathBuf::from);
+        // upstream: main.c:720-723 get_local_name() - NS() renders a missing
+        // destination as `<NULL>`.
+        debug_log!(
+            Recv,
+            1,
+            "get_local_name count={} {}",
+            file_count,
+            dest_arg.map_or_else(|| "<NULL>".into(), |arg| arg.to_string_lossy())
+        );
 
         self.reject_daemon_excluded_destination(&dest_dir)?;
 
@@ -806,9 +815,6 @@ impl ReceiverContext {
         // created the dest root so the root entry's itemize row can OR in
         // ITEM_IS_NEW (cd+++++++++ ./) only when it was actually created.
         self.dest_root_created = created_dest_root;
-        if created_dest_root {
-            debug_log!(Recv, 1, "created destination root {}", dest_dir.display());
-        }
         // The `created directory <dest>` notice is emitted by
         // `announce_created_directory` from `setup_transfer`, where the
         // `MSG_INFO`-capable writer is in scope. Deferring it there lets a
