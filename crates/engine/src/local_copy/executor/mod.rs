@@ -22,7 +22,7 @@ pub(crate) use directory::ChecksumCache;
 pub(crate) use directory::ScanRoot;
 pub(crate) use directory::{
     capture_batch_file_entry, copy_directory_recursive, copy_directory_walk_one_level, is_device,
-    is_fifo,
+    is_fifo, wire_order_key,
 };
 #[cfg(test)]
 #[allow(unused_imports)]

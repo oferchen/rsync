@@ -258,3 +258,23 @@ fn the_file_list_is_encoded_in_readdir_order() {
     assert_eq!(sorted - wire([0, 1, 2, 3]), interleaved - wire([0, 1, 3, 2]));
     assert!(interleaved > sorted, "the interleaved order loses the shared prefix");
 }
+
+/// The sort is applied in place; every cycle shape must land each entry at
+/// the position the sorted order names, or entries would be encoded against
+/// the wrong neighbours and NDX values.
+#[test]
+fn permute_in_place_applies_the_sorted_order() {
+    for order in [
+        vec![],
+        vec![0],
+        vec![1, 0],
+        vec![2, 0, 1],
+        vec![0, 3, 1, 2, 5, 4],
+        vec![4, 3, 2, 1, 0],
+    ] {
+        let mut items: Vec<u32> = (0..order.len() as u32).map(|i| i * 10).collect();
+        permute_in_place(&mut items, &order);
+        let expected: Vec<u32> = order.iter().map(|&o| o * 10).collect();
+        assert_eq!(items, expected, "order {order:?}");
+    }
+}

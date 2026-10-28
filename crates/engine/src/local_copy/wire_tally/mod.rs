@@ -48,7 +48,7 @@ use protocol::wire::{
 };
 use protocol::{CompatibilityFlags, ProtocolVersion, write_varint};
 
-use crate::local_copy::LocalCopyOptions;
+use crate::local_copy::{LocalCopyOptions, wire_order_key};
 
 use frames::FrameSchedule;
 
@@ -456,12 +456,8 @@ impl WireTally {
         order.sort_by(|&a, &b| {
             compare_file_entries(&self.entries[a as usize], &self.entries[b as usize])
         });
-        let mut slots: Vec<Option<FileEntry>> =
-            std::mem::take(&mut self.entries).into_iter().map(Some).collect();
-        let sorted: Vec<FileEntry> = order
-            .iter()
-            .map(|&t| slots[t as usize].take().expect("each entry is sorted once"))
-            .collect();
+        let mut sorted = std::mem::take(&mut self.entries);
+        permute_in_place(&mut sorted, &order);
 
         let mut schedule = FrameSchedule::default();
         let mut sender = NdxCodecEnum::new(self.totals.protocol().as_u8());
@@ -574,7 +570,7 @@ impl WireTally {
         let mut wire = members.to_vec();
         wire.sort_unstable_by_key(|&s| {
             let traversal = order[s] as usize;
-            (!is_dot(&sorted[s]), self.readdir[traversal], traversal)
+            wire_order_key(is_dot(&sorted[s]), self.readdir[traversal], traversal)
         });
         wire
     }
@@ -756,6 +752,25 @@ impl WireTally {
             }
             list.write(out, id0_names, protocol)
                 .expect("counting never fails");
+        }
+    }
+}
+
+/// Reorders `items` so that position `i` holds what was at `order[i]`,
+/// following each permutation cycle with swaps instead of building a second
+/// copy of the list.
+fn permute_in_place<T>(items: &mut [T], order: &[u32]) {
+    let mut pending = order.to_vec();
+    for start in 0..items.len() {
+        let mut slot = start;
+        loop {
+            let source = pending[slot] as usize;
+            pending[slot] = slot as u32;
+            if source == start {
+                break;
+            }
+            items.swap(slot, source);
+            slot = source;
         }
     }
 }

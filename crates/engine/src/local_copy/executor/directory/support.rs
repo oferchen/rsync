@@ -29,6 +29,20 @@ pub(crate) struct DirectoryEntry {
     pub(crate) readdir_index: u32,
 }
 
+/// Sort key that puts one file list's members in the order upstream sends
+/// them: the transfer root `.` first, then `readdir()` order, then walk order
+/// (which separates operands, all of which carry readdir index 0).
+///
+/// upstream: flist.c:send_directory() - names go out as `readdir()` returns
+/// them; flist.c:send_file_list() sends `.` before the directory's contents.
+pub(crate) const fn wire_order_key(
+    is_root: bool,
+    readdir_index: u32,
+    walk_index: usize,
+) -> (bool, u32, usize) {
+    (!is_root, readdir_index, walk_index)
+}
+
 /// Which resolver a directory scan enumerates through.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ScanRoot<'a> {
