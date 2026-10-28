@@ -1606,22 +1606,33 @@ impl ReceiverContext {
             .push(line);
     }
 
-    /// Records a transferred file's `-v` name at its flist index and flushes
-    /// every buffered name up to and including that index, in ascending order,
-    /// so any directories that precede the file print immediately before it -
-    /// interleaved with `--progress`. Mirrors upstream `log_before_transfer`
-    /// (`receiver.c:1263-1267`, name printed per file just before its data).
-    pub(in crate::receiver) fn emit_name_in_order(
+    /// Returns the client's `-v` name line for a file about to be received,
+    /// first releasing the buffered directory names that precede it.
+    ///
+    /// The line rides on the file's begin message and the disk thread prints
+    /// it once the output opens (upstream `receiver.c:1254-1264`: a failed
+    /// open names no file). `--progress` prints the name with its bar, `-i`
+    /// prints it in the itemize row, a custom `--out-format` prints its own
+    /// templated line, and the phase-2 redo re-sends files already named.
+    pub(in crate::receiver) fn client_name_line(
         &self,
         flist_idx: usize,
-        line: String,
-    ) -> std::io::Result<()> {
-        self.name_rows
-            .borrow_mut()
-            .entry(flist_idx)
-            .or_default()
-            .push(line);
-        self.flush_names_through(flist_idx)
+        entry: &protocol::flist::FileEntry,
+        is_redo_pass: bool,
+    ) -> Option<String> {
+        if !(self.config.flags.verbose && self.config.connection.client_mode) {
+            return None;
+        }
+        let named = if self.interleave_names {
+            if is_redo_pass {
+                return None;
+            }
+            let _ = self.flush_names_through(flist_idx);
+            !self.progress_active && !self.collect_out_format_events()
+        } else {
+            !self.should_emit_itemize()
+        };
+        named.then(|| entry.path().display().to_string())
     }
 
     /// Drains buffered `-v` name lines with a flist index `<= upto`, in

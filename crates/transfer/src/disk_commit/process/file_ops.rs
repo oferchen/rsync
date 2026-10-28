@@ -246,6 +246,7 @@ pub(in crate::disk_commit) fn process_file(
             return discard_file_messages(file_rx, buf_return_tx, open_err);
         }
     };
+    log_name_after_open(&mut begin);
     // Register the temp file with the global cleanup manager so an abort that
     // bypasses Drop still removes orphaned temp files (and honours --partial
     // once literal data arrives). Only temp+rename paths produce actual temp
@@ -628,6 +629,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     let inplace_pre_transfer = inplace_pre_transfer_stat(&begin);
 
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
+    log_name_after_open(&mut begin);
     if needs_rename {
         // The coalesced path carries its whole payload inline, so the
         // `cleanup_got_literal` question is already settled: a non-empty
@@ -958,6 +960,16 @@ fn open_inplace_dest(config: &DiskCommitConfig, path: &std::path::Path) -> io::R
 #[cfg(not(unix))]
 fn open_inplace_dest(_config: &DiskCommitConfig, path: &std::path::Path) -> io::Result<fs::File> {
     fast_io::open_inplace_output(path, false, fast_io::InplaceResolution::Direct)
+}
+
+/// Prints the file's `-v` name now that its output is open.
+///
+/// upstream: receiver.c:1254-1264 - the open failure `continue`s before
+/// `log_item()`, so only a file whose output opened is named.
+fn log_name_after_open(begin: &mut BeginMessage) {
+    if let Some(name) = begin.log_name.take() {
+        logging::info_log!(Name, 1, "{name}");
+    }
 }
 
 /// Opens the output file using device write, inplace, or temp+rename strategy.

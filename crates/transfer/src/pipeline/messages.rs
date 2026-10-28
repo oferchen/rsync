@@ -176,6 +176,15 @@ pub struct BeginMessage {
     /// `None` means no metadata is applied (matches the former behavior when the
     /// index did not resolve in the shared list).
     pub file_entry: Option<protocol::flist::FileEntry>,
+    /// The client's `-v` name line, printed by the disk thread once the
+    /// output file has opened. `None` when no name is due for this file.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:1254-1264` - a failed temp or in-place open `continue`s
+    ///   before `log_item()`, so a file whose output never opened prints no
+    ///   name, only its open error.
+    pub log_name: Option<String>,
 }
 
 /// Sender's trailing whole-file checksum, carried to the disk thread for

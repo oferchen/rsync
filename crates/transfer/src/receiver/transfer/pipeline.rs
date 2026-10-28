@@ -872,6 +872,7 @@ impl ReceiverContext {
                 let xattr_list = self.resolve_xattr_list(&file_entry);
                 let is_device_target =
                     self.config.write.write_devices && destination_is_device(&file_path);
+                let log_name = self.client_name_line(file_idx, &file_entry, is_redo_pass);
                 let response = process_file_response_streaming(
                     reader,
                     &mut *ndx_read_codec,
@@ -885,6 +886,7 @@ impl ReceiverContext {
                     &file_entry,
                     is_device_target,
                     xattr_list,
+                    log_name,
                     &mut token_reader,
                 );
                 let result = match response? {
@@ -978,35 +980,7 @@ impl ReceiverContext {
                 files_transferred += 1;
                 transferred_file_size += file_entry.size();
 
-                // upstream: receiver.c:966 - log_item() after successful file transfer
                 {
-                    if self.config.flags.verbose && self.config.connection.client_mode {
-                        if self.interleave_names && !is_redo_pass {
-                            // upstream: receiver.c:1024-1028 - the client prints
-                            // each file's name per file (log_before_transfer),
-                            // in flist order, interleaved with --progress,
-                            // instead of buffering for an end-of-run block. The
-                            // phase-2 redo re-transfers already-named files, so
-                            // it must not re-emit.
-                            if self.progress_active {
-                                // The live --progress renderer already prints
-                                // this file's name before its bar; only release
-                                // the directory names that precede it (the
-                                // renderer never sees directory entries).
-                                let _ = self.flush_names_through(file_idx);
-                            } else {
-                                let _ = self.emit_name_in_order(
-                                    file_idx,
-                                    format!("{}\n", file_entry.path().display()),
-                                );
-                            }
-                        } else if !self.should_emit_itemize() {
-                            // Plain `-v`: bare name. Under `-i`/`-vi` the
-                            // itemize row already carries the name, so suppress
-                            // this to avoid a duplicate line.
-                            info_log!(Name, 1, "{}", file_entry.path().display());
-                        }
-                    }
                     // upstream: generator.c:1925-1937 - the transfer itemize is
                     // emitted right after the file request. With
                     // log_before_transfer == 0 (`am_server`) the row is logged
