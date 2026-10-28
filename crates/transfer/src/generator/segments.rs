@@ -16,16 +16,7 @@
 
 use super::ndx_map::NdxMap;
 
-/// Entries the sender keeps queued in sub-lists beyond the one the receiver is
-/// currently working through. Once the backlog reaches this many entries the
-/// sender stops emitting sub-lists and waits for the receiver to catch up, so a
-/// peer that throttles is never flooded with the whole tree up front.
-///
-/// # Upstream Reference
-///
-/// - `rsync.h:151` - `#define MIN_FILECNT_LOOKAHEAD 1000`
-/// - `sender.c:516,550` - `send_extra_file_list(f_out, MIN_FILECNT_LOOKAHEAD)`
-pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
+pub use protocol::flist::MIN_FILECNT_LOOKAHEAD;
 
 /// Ceiling on the lookahead backlog the sender will grow to while it is idle.
 ///

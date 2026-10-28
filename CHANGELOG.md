@@ -187,6 +187,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The daemon honours the `open noatime` module directive (#6850)
 
 ### Changed
+- A recursive local `--write-batch` records incremental recursion, as 3.5.1 does (header `81 ff`), and writes its file list in the incremental layout: the top level, then one sub-list per directory, placed among the file data by 3.5.1's 1000-entry lookahead. rsync 3.5.1 replays these batches, and `--delete-before`, `--delete-after`, `--delay-updates`, `-m`, `--qsort` and `--no-inc-recursive` still record a flat list
 
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down to 33 instead of refused, and a peer outside 28-40 is refused with exit 2 after `@RSYNCD: OK`, as upstream does (#7916, #8209)
@@ -244,6 +245,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Skip the sender seek between adjacent matched blocks and batch receiver signature buffers: daemon push 282K to 158K syscalls and 0.536 s to 0.472 s, pull 361K to 208K and 0.491 s to 0.419 s (#8210)
 
 ### Fixed
+- `--read-batch` replays batches of more than 1000 files recorded with incremental recursion, including 3.5.1's. It failed with "unexpected per-file NDX while fetching file-list segment", because the sub-lists of such a batch arrive among the file data
 
 **Data integrity**
 - A disk error on one file (`ENOSPC`, a failed open, backup or `--append-verify` prefix) drains that file's queued data before reporting it, so a daemon worker no longer deadlocks its network thread and a QUIC push no longer stalls into a timeout, as upstream's `discard_receive_data()` does (`receiver.c:1254-1261`) (#8229)
