@@ -103,7 +103,13 @@ where
     }
     // Ordering: callers zip results with jobs by position.
     // Preserved by par_iter().map_init().collect() (rayon preserves index order).
-    jobs.par_iter().map_init(read_buffer, hash).collect()
+    let session = logging::Session::capture();
+    jobs.par_iter()
+        .map_init(read_buffer, |buf, job| {
+            let _log = session.enter();
+            hash(buf, job)
+        })
+        .collect()
 }
 
 /// Hashes each job as a vector of `block_len` block digests, in parallel across
@@ -122,8 +128,12 @@ where
     H: FileHasher,
     F: Fn() -> H + Sync,
 {
+    let session = logging::Session::capture();
     jobs.par_iter()
-        .map(|job| hash_blocks(job, block_len.get(), &new_hasher))
+        .map(|job| {
+            let _log = session.enter();
+            hash_blocks(job, block_len.get(), &new_hasher)
+        })
         .collect()
 }
 
@@ -136,9 +146,11 @@ where
         let digest = hash_range(job.path, 0, job.len, new_hasher(), &mut read_buffer())?;
         return Ok(BlockDigests(vec![digest]));
     }
+    let session = logging::Session::capture();
     (0..job.len.div_ceil(block_len))
         .into_par_iter()
         .map_init(read_buffer, |buf, index| {
+            let _log = session.enter();
             let start = index * block_len;
             let len = block_len.min(job.len - start);
             hash_range(job.path, start, len, new_hasher(), buf)

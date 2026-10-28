@@ -670,10 +670,12 @@ impl ReceiverContext {
                         // Preserved by par_iter().map().collect() + sequential zip/send loop below.
                         // Violation sends signatures for wrong files, corrupting delta transfer.
                         let sig_results: Vec<_> = if batch.len() >= sig_threshold {
+                            let session = logging::Session::capture();
                             batch
                                 .par_iter()
                                 .zip(batch_ndxs.par_iter())
                                 .map(|((_, file_entry, file_path, base_iflags), &ndx)| {
+                                    let _log = session.enter();
                                     // A metadata-only record transfers no data,
                                     // so no basis search is needed.
                                     if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0

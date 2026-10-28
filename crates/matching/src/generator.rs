@@ -1301,9 +1301,13 @@ impl DeltaGenerator {
         let block_len = index.block_length();
         let n = source.len();
 
+        let session = logging::Session::capture();
         let stripe_results: Vec<io::Result<(Vec<CopyRun>, ScanCounters)>> = ranges
             .par_iter()
-            .map(|&(s, e)| self.scan_stripe_runs(&source[s..e], s as u64, index, e == n))
+            .map(|&(s, e)| {
+                let _log = session.enter();
+                self.scan_stripe_runs(&source[s..e], s as u64, index, e == n)
+            })
             .collect();
 
         let mut counters = ScanCounters::default();

@@ -73,14 +73,17 @@ impl WorkQueueReceiver {
             .map(|_| std::sync::Mutex::new(Vec::new()))
             .collect();
 
+        let session = logging::Session::capture();
         rayon::scope(|s| {
             while let Ok(work) = rx.recv() {
+                let session = &session;
                 let f = &f;
                 let shards = &shards;
                 // One permit per admitted item; released when this task
                 // completes or unwinds (see `PermitGuard`).
                 let permit = PermitGuard(release.clone());
                 s.spawn(move |_| {
+                    let _log = session.enter();
                     let _permit = permit;
                     let result = f(work);
                     let idx = rayon::current_thread_index().unwrap_or_else(|| {
@@ -159,8 +162,10 @@ impl WorkQueueReceiver {
         R: Send,
     {
         let WorkQueueReceiver { rx, release } = self;
+        let session = logging::Session::capture();
         rayon::scope(|s| {
             while let Ok(work) = rx.recv() {
+                let session = &session;
                 let f = &f;
                 let tx = tx.clone();
                 // One permit per admitted item. The guard drops at the end of
@@ -170,6 +175,7 @@ impl WorkQueueReceiver {
                 // on unwind keeps the pairing exact even if `f` panics.
                 let permit = PermitGuard(release.clone());
                 s.spawn(move |_| {
+                    let _log = session.enter();
                     let _permit = permit;
                     let result = f(work);
                     // If the receiver is dropped, silently stop - the consumer

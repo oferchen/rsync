@@ -288,6 +288,35 @@ impl Drop for ContextGuard {
     }
 }
 
+/// The session a thread entered, carried into work it hands to a shared pool.
+///
+/// A rayon worker serves every session in the process, so it has no session of
+/// its own: a job that logs must enter the session that queued it, or a QUIC
+/// session's lines would reach the daemon-wide context. Capture before handing
+/// work to the pool and [`enter`](Self::enter) at the top of each job. A thread
+/// on the process default captures nothing, so entering costs nothing there.
+#[derive(Clone, Debug, Default)]
+pub struct Session(Option<Arc<LogContext>>);
+
+impl Session {
+    /// Captures the calling thread's entered context, if it has one.
+    #[must_use]
+    pub fn capture() -> Self {
+        Self(VIEW.with(|view| {
+            view.borrow()
+                .as_ref()
+                .filter(|view| !Arc::ptr_eq(&view.context, &DEFAULT_CONTEXT))
+                .map(|view| Arc::clone(&view.context))
+        }))
+    }
+
+    /// Makes the calling thread use the captured context until the guard drops.
+    #[must_use = "the context is left when the guard drops"]
+    pub fn enter(&self) -> Option<ContextGuard> {
+        self.0.as_ref().map(|context| enter(Arc::clone(context)))
+    }
+}
+
 /// Installs the verbosity configuration of the calling thread's context.
 ///
 /// Every thread of the session sees the new levels, as every upstream role

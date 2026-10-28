@@ -224,7 +224,15 @@ where
     // Ordering: callers zip results with input by position.
     // Preserved by `into_par_iter().map().collect()` (rayon preserves index order).
     // Violation breaks result-to-file correspondence, applying wrong metadata.
-    items.into_par_iter().map(f).collect()
+    // A pool worker logs into the session that queued the job.
+    let session = logging::Session::capture();
+    items
+        .into_par_iter()
+        .map(|item| {
+            let _log = session.enter();
+            f(item)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -540,5 +548,55 @@ mod tests {
             let parallel = map_blocking(items, 1, |x| x * 3 + 1);
             prop_assert_eq!(sequential, parallel);
         }
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::map_blocking;
+    use logging::{DiagnosticEvent, LogContext, Stamped};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<String>>);
+
+    impl logging::DiagnosticSink for Recorder {
+        fn write(&self, event: &Stamped<DiagnosticEvent>) {
+            if let DiagnosticEvent::Info { message, .. } = event.value() {
+                self.0.lock().unwrap().push(message.clone());
+            }
+        }
+    }
+
+    /// One session of a multi-session process (a QUIC daemon) lists its files.
+    fn session(tag: &'static str) -> Vec<String> {
+        let context = LogContext::new();
+        let _session = logging::enter(Arc::clone(&context));
+        logging::apply_info_flag("name1").unwrap();
+        let recorder = Arc::new(Recorder::default());
+        context.install_sink(recorder.clone());
+        map_blocking((0..200).collect::<Vec<u32>>(), 0, move |n| {
+            logging::info_log!(Name, 1, "{tag}-{n}");
+        });
+        context.remove_sink();
+        recorder.0.lock().unwrap().clone()
+    }
+
+    /// A pool worker serves every session, so it must log into the session
+    /// that queued the job: otherwise one client's file names reach the
+    /// daemon-wide context, and from there another client or the wrong log.
+    #[test]
+    fn concurrent_sessions_keep_their_pool_lines_apart() {
+        let first = std::thread::spawn(|| session("first"));
+        let second = std::thread::spawn(|| session("second"));
+        let (first, second) = (first.join().unwrap(), second.join().unwrap());
+        for (lines, tag) in [(&first, "first-"), (&second, "second-")] {
+            assert_eq!(lines.len(), 200, "{tag} lost lines: {lines:?}");
+            assert!(lines.iter().all(|line| line.starts_with(tag)), "{tag} got: {lines:?}");
+        }
+        assert!(
+            logging::drain_events().is_empty(),
+            "no session line may reach the process-wide context"
+        );
     }
 }
