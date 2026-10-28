@@ -57,6 +57,8 @@ mod checksum_refusal;
 mod filters;
 mod local_child;
 
+pub(crate) use local_child::role_trace_requested;
+
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf, is_separator};
 use std::time::Duration;
@@ -490,7 +492,7 @@ fn run_client_internal(
     // upstream: main.c:666-667 - a local copy forks a `--server` child that
     // receives while the parent sends. oc-rsync forks only for a role trace.
     if local_child::local_copy_uses_server_child(&config) {
-        return remote::run_local_child_transfer(&config, observer, batch_writer);
+        return remote::run_local_child_transfer(config, observer, batch_writer);
     }
 
     // upstream: main.c:721 `get_local_name()` returns NULL when `list_only` is
