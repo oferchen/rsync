@@ -235,11 +235,12 @@ fn dry_run_totals_match_upstream() {
     check(Fixture::WholeFile, &["-rtn"], (58, 22));
 }
 
-/// `--delete`: each deleted name arrives as `MSG_DELETED`, and the delete
-/// statistics ride in the phase tail.
+/// `--delete`: each deleted name arrives as `MSG_DELETED` (the directory's
+/// with a trailing NUL, log.c:913-916), and the delete statistics ride in
+/// the phase tail.
 #[test]
 fn delete_totals_match_upstream() {
-    check(Fixture::Extraneous, &["-rt", "--delete"], (48, 31));
+    check(Fixture::Extraneous, &["-rt", "--delete"], (48, 32));
 }
 
 /// `--delete-after` holds the last NDX_DONE back until after the delete
