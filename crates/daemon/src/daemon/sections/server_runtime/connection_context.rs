@@ -75,6 +75,9 @@ impl ConnectionContext {
     /// upstream: socket.c:761-773 forks a child per connection, which runs
     /// clientserver.c:1414 `start_daemon()` and then `rsync_module()`.
     fn serve_session(&self, stream: DaemonStream, raw_peer_addr: SocketAddr) -> io::Result<()> {
+        // A thread-backed session shares the daemon process, so it gets its
+        // own verbosity and diagnostic sink, as a forked child would.
+        let _log = logging::enter(logging::LogContext::new());
         let peer_addr = normalize_peer_address(raw_peer_addr);
         let log_for_worker = self.log_sink.clone();
 

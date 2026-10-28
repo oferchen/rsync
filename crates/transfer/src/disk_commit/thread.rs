@@ -57,9 +57,15 @@ pub fn spawn_disk_thread(config: DiskCommitConfig) -> io::Result<DiskThreadHandl
     let (result_tx, result_rx) = spsc::channel::<io::Result<CommitResult>>(capacity * 2);
     let (buf_return_tx, buf_return_rx) = spsc::channel::<Vec<u8>>(capacity * 2);
 
+    // The commit thread logs into its session's context, so its renames,
+    // backups and warnings reach the same sink as the receiver's own lines.
+    let log_context = logging::current();
     let join_handle = thread::Builder::new()
         .name("disk-commit".into())
-        .spawn(move || disk_thread_main(file_rx, result_tx, buf_return_tx, config))?;
+        .spawn(move || {
+            let _log = logging::enter(log_context);
+            disk_thread_main(file_rx, result_tx, buf_return_tx, config)
+        })?;
 
     Ok(DiskThreadHandle {
         file_tx,

@@ -11,7 +11,7 @@ use std::path::Path;
 
 use crate::levels::InfoFlag;
 use crate::log_code::LogCode;
-use crate::thread_local::info_gte;
+use crate::context::info_gte;
 
 /// The state upstream's `case 0:` reads when a file fails verification.
 ///
@@ -171,7 +171,7 @@ pub fn verification_failure(name: &Path, state: VerifyFailure) -> Option<(LogCod
 mod tests {
     use super::*;
     use crate::config::VerbosityConfig;
-    use crate::thread_local::init;
+    use crate::context::init;
 
     /// Sets the thread-local `NAME` level the emission gate reads.
     fn set_name_level(reported: bool) {

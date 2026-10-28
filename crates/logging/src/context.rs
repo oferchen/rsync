@@ -1,44 +1,39 @@
-//! Thread-local storage for verbosity configuration and event collection.
+//! Session-scoped verbosity and the live diagnostic sink.
 //!
-//! Upstream rsync stores `info_levels[]` and `debug_levels[]` as file-scope
-//! globals (upstream: options.c:263, rsync.h:1473). In a multi-threaded Rust process each thread
-//! may run a separate transfer pipeline (sender, receiver, generator), so
-//! this module uses `thread_local!` storage instead of a global `static`.
+//! Upstream rsync keeps `info_levels[]`, `debug_levels[]` and `quiet` as
+//! process globals (upstream: options.c:263, rsync.h:1473) and writes every
+//! message the moment it is produced: `rprintf()` formats it and `rwrite()`
+//! hands it to stdout, stderr, the log file or a `MSG_*` frame
+//! (upstream: log.c:272-373). oc-rsync runs its transfer roles as threads, and
+//! a QUIC daemon serves several sessions inside one process, so the
+//! equivalent state lives in a [`LogContext`] shared by every thread of one
+//! session:
 //!
-//! The [`init`] function installs a [`VerbosityConfig`] for the calling
-//! thread. The [`info_gte`] and [`debug_gte`] functions check levels against
-//! that config - these are the Rust equivalents of upstream's `INFO_GTE()`
-//! and `DEBUG_GTE()` macros (upstream: rsync.h:1475-1477).
+//! - verbosity and `quiet`, read by [`info_gte`], [`debug_gte`] and
+//!   [`finfo_suppressed`] - the `INFO_GTE()`/`DEBUG_GTE()` macros
+//!   (upstream: rsync.h:1475-1477);
+//! - the sink every `emit_*` call writes through at once, as `rwrite()` does.
 //!
-//! Events emitted via [`emit_info`] and [`emit_debug`] are buffered in a
-//! thread-local `Vec<DiagnosticEvent>` and retrieved with [`drain_events`].
-//! The caller routes them to stderr, the multiplexed I/O stream, or a log
-//! file - mirroring upstream's `rwrite()` dispatch (upstream: log.c:rwrite()).
+//! A thread uses the context it [`enter`]ed, or the process default. A process
+//! that serves one session (the client, an rsh or forked-daemon server) needs
+//! no `enter` at all: its disk-commit and rayon threads see the same levels and
+//! the same sink as the thread that set them.
+//!
+//! Until a sink is installed, events are held in the context's buffer in
+//! production order. The in-process local copy renders that buffer with its
+//! post-hoc listing, and tests read it back through the `drain_*` functions.
 
 use super::config::VerbosityConfig;
 use super::levels::{DebugFlag, InfoFlag};
 use super::log_code::LogCode;
 use super::sequence::Stamped;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError, RwLock};
 
-thread_local! {
-    static VERBOSITY: RefCell<VerbosityConfig> = RefCell::new(VerbosityConfig::default());
-    /// upstream: log.c:345 - `quiet` is its own global, consulted in the FINFO
-    /// arm of `rwrite()`. It is NOT the same state as the verbosity level, so
-    /// folding `--quiet` into `verbose = 0` cannot express it: a notice
-    /// upstream prints at DEFAULT verbosity still has to disappear under `-q`.
-    static QUIET: Cell<bool> = const { Cell::new(false) };
-    /// Events are held stamped with their production order so a consumer that
-    /// interleaves them with another output channel can recover that order.
-    /// The buffer itself stays thread-local; only the ordering key is shared
-    /// process-wide, which is what makes keys from two threads comparable.
-    #[allow(clippy::missing_const_for_thread_local)]
-    static EVENTS: RefCell<Vec<Stamped<DiagnosticEvent>>> = RefCell::new(Vec::new());
-}
 
 /// A diagnostic event collected during execution.
 ///
-/// Events are buffered per-thread and drained by the caller for output.
 /// The two variants correspond to the info and debug flag systems. Every
 /// event additionally carries the upstream [`LogCode`] that classifies its
 /// destination (upstream: log.c:rwrite() dispatches on `enum logcode`).
@@ -102,17 +97,199 @@ impl DiagnosticEvent {
     }
 }
 
-/// Initialize verbosity configuration for the current thread.
+/// Destination for diagnostics, written at the moment each is produced.
 ///
-/// Must be called once per thread before any logging macros are used.
-/// Subsequent calls overwrite the previous configuration.
-pub fn init(config: VerbosityConfig) {
-    VERBOSITY.with(|v| {
-        *v.borrow_mut() = config;
-    });
+/// The client's sink writes to stdout/stderr, a server's frames the message
+/// for its peer. upstream: log.c:272-373 rwrite().
+pub trait DiagnosticSink: Send + Sync {
+    /// Writes one event. Called from whichever thread produced it.
+    fn write(&self, event: &Stamped<DiagnosticEvent>);
 }
 
-/// Record whether `-q` / `--quiet` was requested, for the current thread.
+/// The verbosity, `quiet` flag and diagnostic sink of one session.
+pub struct LogContext {
+    verbosity: RwLock<VerbosityConfig>,
+    quiet: AtomicBool,
+    /// Bumped on every verbosity or `quiet` change so threads refresh their
+    /// cached copy.
+    generation: AtomicU64,
+    sink: RwLock<Option<Arc<dyn DiagnosticSink>>>,
+    buffer: Mutex<Vec<Stamped<DiagnosticEvent>>>,
+    /// Open [`discard_events_from`] scopes while a sink is installed.
+    discarding: AtomicU64,
+}
+
+impl std::fmt::Debug for LogContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LogContext")
+            .field("generation", &self.generation.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for LogContext {
+    fn default() -> Self {
+        Self {
+            verbosity: RwLock::new(VerbosityConfig::default()),
+            quiet: AtomicBool::new(false),
+            generation: AtomicU64::new(1),
+            sink: RwLock::new(None),
+            buffer: Mutex::new(Vec::new()),
+            discarding: AtomicU64::new(0),
+        }
+    }
+}
+
+impl LogContext {
+    /// Creates a context with default verbosity and no sink.
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Installs `sink`, first writing every event buffered so far through it,
+    /// in production order.
+    pub fn install_sink(&self, sink: Arc<dyn DiagnosticSink>) {
+        let mut slot = self.sink.write().unwrap_or_else(PoisonError::into_inner);
+        let pending: Vec<_> = self.lock_buffer().drain(..).collect();
+        for event in &pending {
+            sink.write(event);
+        }
+        *slot = Some(sink);
+    }
+
+    /// Removes the installed sink, so later events are buffered again.
+    pub fn remove_sink(&self) -> Option<Arc<dyn DiagnosticSink>> {
+        self.sink
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+
+    /// Whether a sink is installed.
+    #[must_use]
+    pub fn has_sink(&self) -> bool {
+        self.sink
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
+
+    fn dispatch(&self, event: Stamped<DiagnosticEvent>) {
+        let sink = self.sink.read().unwrap_or_else(PoisonError::into_inner);
+        match sink.as_ref() {
+            Some(sink) => {
+                if self.discarding.load(Ordering::Acquire) == 0 {
+                    sink.write(&event);
+                }
+            }
+            None => self.lock_buffer().push(event),
+        }
+    }
+
+    fn lock_buffer(&self) -> std::sync::MutexGuard<'_, Vec<Stamped<DiagnosticEvent>>> {
+        self.buffer.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn update_verbosity(&self, f: impl FnOnce(&mut VerbosityConfig)) {
+        let mut verbosity = self.verbosity.write().unwrap_or_else(PoisonError::into_inner);
+        f(&mut verbosity);
+        self.generation.fetch_add(1, Ordering::Release);
+    }
+}
+
+static DEFAULT_CONTEXT: LazyLock<Arc<LogContext>> = LazyLock::new(LogContext::new);
+
+/// A thread's view of its context, with the levels cached so the hot
+/// `info_gte`/`debug_gte` checks cost one relaxed load when nothing changed.
+struct ThreadView {
+    context: Arc<LogContext>,
+    generation: u64,
+    verbosity: VerbosityConfig,
+    quiet: bool,
+}
+
+impl ThreadView {
+    fn new(context: Arc<LogContext>) -> Self {
+        Self {
+            context,
+            generation: 0,
+            verbosity: VerbosityConfig::default(),
+            quiet: false,
+        }
+    }
+
+    fn refreshed(&mut self) -> &Self {
+        let generation = self.context.generation.load(Ordering::Acquire);
+        if generation != self.generation {
+            self.verbosity = self
+                .context
+                .verbosity
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone();
+            self.quiet = self.context.quiet.load(Ordering::Acquire);
+            self.generation = generation;
+        }
+        self
+    }
+}
+
+thread_local! {
+    static VIEW: RefCell<Option<ThreadView>> = const { RefCell::new(None) };
+}
+
+fn with_view<R>(f: impl FnOnce(&ThreadView) -> R) -> R {
+    VIEW.with(|view| {
+        let mut view = view.borrow_mut();
+        let view = view.get_or_insert_with(|| ThreadView::new(Arc::clone(&DEFAULT_CONTEXT)));
+        f(view.refreshed())
+    })
+}
+
+/// The context the calling thread uses: the one it entered, or the process
+/// default.
+#[must_use]
+pub fn current() -> Arc<LogContext> {
+    VIEW.with(|view| {
+        view.borrow()
+            .as_ref()
+            .map_or_else(|| Arc::clone(&DEFAULT_CONTEXT), |v| Arc::clone(&v.context))
+    })
+}
+
+/// Makes the calling thread use `context` until the guard drops.
+///
+/// A thread that serves one session of a multi-session process (the QUIC
+/// daemon) enters that session's context; a thread it spawns enters the same
+/// one, captured with [`current`] before the spawn.
+#[must_use = "the context is left when the guard drops"]
+pub fn enter(context: Arc<LogContext>) -> ContextGuard {
+    let previous = VIEW.with(|view| view.borrow_mut().replace(ThreadView::new(context)));
+    ContextGuard { previous }
+}
+
+/// Restores the previously used context when dropped. See [`enter`].
+pub struct ContextGuard {
+    previous: Option<ThreadView>,
+}
+
+impl Drop for ContextGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        VIEW.with(|view| *view.borrow_mut() = previous);
+    }
+}
+
+/// Installs the verbosity configuration of the calling thread's context.
+///
+/// Every thread of the session sees the new levels, as every upstream role
+/// reads the same `info_levels[]` (upstream: options.c:263).
+pub fn init(config: VerbosityConfig) {
+    current().update_verbosity(|verbosity| *verbosity = config);
+}
+
+/// Records whether `-q` / `--quiet` was requested.
 ///
 /// Upstream keeps `quiet` as a global of its own, separate from `verbose` and
 /// from `info_levels[]`, and consults it in exactly one place: the `FINFO` arm
@@ -121,41 +298,46 @@ pub fn init(config: VerbosityConfig) {
 /// upstream prints at default verbosity and suppresses only under `-q` - the
 /// two states become indistinguishable.
 pub fn set_quiet(quiet: bool) {
-    QUIET.with(|q| q.set(quiet));
+    let context = current();
+    context.quiet.store(quiet, Ordering::Release);
+    context.generation.fetch_add(1, Ordering::Release);
 }
 
-/// Whether `FINFO` output is suppressed on this thread.
+/// Whether `FINFO` output is suppressed.
 ///
 /// The single question a producer or renderer should ask before emitting an
 /// upstream `rprintf(FINFO, ...)` that carries no `INFO_GTE` gate of its own.
 /// upstream: log.c:345 rwrite() `if (quiet)` - the FINFO arm's early return.
 #[must_use]
 pub fn finfo_suppressed() -> bool {
-    QUIET.with(Cell::get)
+    with_view(|view| view.quiet)
 }
 
 /// Check if the info flag is at or above the specified level.
 ///
 /// Equivalent to upstream's `INFO_GTE(flag, level)` macro (upstream: rsync.h:1475).
 pub fn info_gte(flag: InfoFlag, level: u8) -> bool {
-    VERBOSITY.with(|v| v.borrow().info.get(flag) >= level)
+    with_view(|view| view.verbosity.info.get(flag) >= level)
 }
 
 /// Check if the debug flag is at or above the specified level.
 ///
 /// Equivalent to upstream's `DEBUG_GTE(flag, level)` macro (upstream: rsync.h:1477).
 pub fn debug_gte(flag: DebugFlag, level: u8) -> bool {
-    VERBOSITY.with(|v| v.borrow().debug.get(flag) >= level)
+    with_view(|view| view.verbosity.debug.get(flag) >= level)
 }
 
-/// Emit an info diagnostic event into the thread-local buffer.
+fn emit(event: DiagnosticEvent) {
+    current().dispatch(Stamped::stamp(event));
+}
+
+/// Emit an info diagnostic event.
 ///
 /// The caller is responsible for checking [`info_gte`] first; the
 /// [`info_log!`](crate::info_log) macro handles this automatically.
 ///
-/// The event is tagged [`LogCode::Info`], the code whose upstream routing
-/// (client stdout, subject to verbosity) matches how the renderer treats
-/// every drained event today. Producers that mirror a different upstream
+/// The event is tagged [`LogCode::Info`], upstream's `FINFO` (client stdout,
+/// subject to verbosity). Producers that mirror a different upstream
 /// `rprintf()` code use [`emit_info_coded`].
 /// upstream: log.c:rwrite() dispatches FINFO messages
 pub fn emit_info(flag: InfoFlag, level: u8, message: String) {
@@ -168,36 +350,32 @@ pub fn emit_info(flag: InfoFlag, level: u8, message: String) {
 /// whose code is not `FINFO` (upstream: log.c:rwrite() dispatches on the
 /// code to pick the client stream versus the log file).
 pub fn emit_info_coded(flag: InfoFlag, level: u8, code: LogCode, message: String) {
-    EVENTS.with(|e| {
-        e.borrow_mut().push(Stamped::stamp(DiagnosticEvent::Info {
-            flag,
-            level,
-            code,
-            message,
-        }));
+    emit(DiagnosticEvent::Info {
+        flag,
+        level,
+        code,
+        message,
     });
 }
 
-/// Emit a byte-faithful info notice into the thread-local buffer.
+/// Emit a byte-faithful info notice.
 ///
 /// This is the byte-capable sibling of [`emit_info`]: the message is carried
 /// as raw bytes so a filename operand that is not valid UTF-8, or that holds a
-/// control byte, reaches the render boundary intact rather than being replaced
-/// with U+FFFD during `format!()`. The caller is responsible for checking
+/// control byte, reaches the sink intact rather than being replaced with
+/// U+FFFD during `format!()`. The caller is responsible for checking
 /// [`info_gte`] first; the [`info_log_bytes!`](crate::info_log_bytes) macro
 /// handles this automatically.
 ///
 /// The event is tagged [`LogCode::Info`], matching [`emit_info`]. The escaping
-/// of the bytes happens once at the render boundary, per sink
-/// (upstream: log.c:242 `filtered_fwrite`), never at this emitter.
+/// of the bytes happens once, at the sink (upstream: log.c:242
+/// `filtered_fwrite`), never at this emitter.
 pub fn emit_info_bytes(flag: InfoFlag, level: u8, message: Vec<u8>) {
-    EVENTS.with(|e| {
-        e.borrow_mut().push(Stamped::stamp(DiagnosticEvent::Bytes {
-            flag,
-            level,
-            code: LogCode::Info,
-            message,
-        }));
+    emit(DiagnosticEvent::Bytes {
+        flag,
+        level,
+        code: LogCode::Info,
+        message,
     });
 }
 
@@ -220,7 +398,7 @@ pub fn emit_warning(message: String) {
     emit_info_coded(InfoFlag::Misc, 0, LogCode::Warning, message);
 }
 
-/// Emit a debug diagnostic event into the thread-local buffer.
+/// Emit a debug diagnostic event.
 ///
 /// The caller is responsible for checking [`debug_gte`] first; the
 /// [`debug_log!`](crate::debug_log) macro handles this automatically.
@@ -239,34 +417,25 @@ pub fn emit_debug(flag: DebugFlag, level: u8, message: String) {
 /// whose code is not `FINFO` (upstream: log.c:rwrite() dispatches on the
 /// code to pick the client stream versus the log file).
 pub fn emit_debug_coded(flag: DebugFlag, level: u8, code: LogCode, message: String) {
-    EVENTS.with(|e| {
-        e.borrow_mut().push(Stamped::stamp(DiagnosticEvent::Debug {
-            flag,
-            level,
-            code,
-            message,
-        }));
+    emit(DiagnosticEvent::Debug {
+        flag,
+        level,
+        code,
+        message,
     });
 }
 
-/// Drain all collected events with their production order, clearing the buffer.
+/// Drain every buffered event with its production order, clearing the buffer.
 ///
 /// This is the drain for a consumer that has to interleave these events with
 /// another output channel: the key says which of two messages was produced
-/// first, which the buffers alone cannot say once they are drained at
-/// different times.
+/// first.
 pub fn drain_stamped_events() -> Vec<Stamped<DiagnosticEvent>> {
-    EVENTS.with(|e| e.borrow_mut().drain(..).collect())
+    current().lock_buffer().drain(..).collect()
 }
 
-/// Drain all collected events, clearing the internal buffer.
-///
-/// Returns events in emission order. After draining, the buffer is empty
-/// and ready to accumulate new events.
-///
-/// A projection of `drain_stamped_events` for the consumers that render this
-/// buffer on its own: with nothing to interleave against, the vector's own
-/// order already is the production order, and the key would be noise.
+/// Drain every buffered event, clearing the buffer. Returns events in
+/// production order.
 pub fn drain_events() -> Vec<DiagnosticEvent> {
     drain_stamped_events()
         .into_iter()
@@ -274,40 +443,36 @@ pub fn drain_events() -> Vec<DiagnosticEvent> {
         .collect()
 }
 
-/// Runs `f` and discards every diagnostic event it emits on this thread.
+/// Runs `f` and discards every diagnostic event emitted while it runs.
 ///
 /// For a pass whose side effects are not part of the run the user sees, such
 /// as the local copy's dry-run preview that sizes `--progress`: upstream makes
 /// no such pass, so each notice it would repeat must reach the output once.
-/// Events queued before `f` runs are kept.
+/// Events buffered before `f` runs are kept.
 pub fn discard_events_from<R>(f: impl FnOnce() -> R) -> R {
-    let mark = EVENTS.with(|e| e.borrow().len());
+    let context = current();
+    context.discarding.fetch_add(1, Ordering::AcqRel);
+    let mark = context.lock_buffer().len();
     let result = f();
-    EVENTS.with(|e| e.borrow_mut().truncate(mark));
+    context.lock_buffer().truncate(mark);
+    context.discarding.fetch_sub(1, Ordering::AcqRel);
     result
 }
 
-/// Drain the events whose code `accept` selects, leaving the rest queued.
-///
-/// The buffer has several independent consumers - a log-file sink, a
-/// client-stream renderer, a server's peer framer - and each must take only
-/// its own codes without disturbing the others. Keeping one retain loop here
-/// means a new consumer supplies a policy, not another copy of the traversal.
-/// Returns matches in emission order.
+/// Drain the buffered events whose code `accept` selects, leaving the rest.
 fn drain_stamped_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<Stamped<DiagnosticEvent>> {
-    EVENTS.with(|e| {
-        let mut events = e.borrow_mut();
-        let mut matched = Vec::new();
-        events.retain(|stamped| {
-            if accept(stamped.value().code()) {
-                matched.push(stamped.clone());
-                false
-            } else {
-                true
-            }
-        });
-        matched
-    })
+    let context = current();
+    let mut events = context.lock_buffer();
+    let mut matched = Vec::new();
+    events.retain(|stamped| {
+        if accept(stamped.value().code()) {
+            matched.push(stamped.clone());
+            false
+        } else {
+            true
+        }
+    });
+    matched
 }
 
 /// A projection of [`drain_stamped_events_where`] for the consumers that render
@@ -426,16 +591,18 @@ pub fn drain_events_for_daemon_log() -> Vec<DiagnosticEvent> {
     drain_events_where(|code| code != LogCode::None)
 }
 
-/// Apply an info flag token to the current thread's configuration.
+/// Apply an info flag token to the current context's configuration.
 ///
 /// Parses tokens like `"copy2"` or `"del"` and updates the corresponding
 /// flag level. This supports the `--info=FLAGS` CLI option
 /// (upstream: options.c:parse_output_words()).
 pub fn apply_info_flag(token: &str) -> Result<(), String> {
-    VERBOSITY.with(|v| v.borrow_mut().apply_info_flag(token))
+    let mut result = Ok(());
+    current().update_verbosity(|verbosity| result = verbosity.apply_info_flag(token));
+    result
 }
 
-/// Clamps the current thread's info and debug levels to what `level` `-v`
+/// Clamps the current context's info and debug levels to what `level` `-v`
 /// flags would set, so explicitly requested levels cannot exceed the cap.
 /// A `level` above [`MAX_VERBOSITY`](crate::MAX_VERBOSITY) applies no limit.
 ///
@@ -445,15 +612,18 @@ pub fn limit_output_verbosity(level: u8) {
         return;
     }
     let limit = VerbosityConfig::from_verbose_level(level);
-    VERBOSITY.with(|v| v.borrow_mut().limit_to(&limit));
+    current().update_verbosity(|verbosity| verbosity.limit_to(&limit));
 }
-/// Apply a debug flag token to the current thread's configuration.
+
+/// Apply a debug flag token to the current context's configuration.
 ///
 /// Parses tokens like `"recv2"` or `"flist"` and updates the corresponding
 /// flag level. This supports the `--debug=FLAGS` CLI option
 /// (upstream: options.c:parse_output_words()).
 pub fn apply_debug_flag(token: &str) -> Result<(), String> {
-    VERBOSITY.with(|v| v.borrow_mut().apply_debug_flag(token))
+    let mut result = Ok(());
+    current().update_verbosity(|verbosity| result = verbosity.apply_debug_flag(token));
+    result
 }
 
 #[cfg(test)]
@@ -912,5 +1082,122 @@ mod tests {
         limit_output_verbosity(crate::MAX_VERBOSITY + 1);
         assert!(debug_gte(DebugFlag::Flist, 4));
         init(VerbosityConfig::default());
+    }
+}
+
+#[cfg(test)]
+mod sink_tests {
+    use super::*;
+
+    /// Records what a live sink receives, in the order it receives it.
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<String>>);
+
+    impl DiagnosticSink for Recorder {
+        fn write(&self, event: &Stamped<DiagnosticEvent>) {
+            let text = match event.value() {
+                DiagnosticEvent::Info { message, .. } | DiagnosticEvent::Debug { message, .. } => {
+                    message.clone()
+                }
+                DiagnosticEvent::Bytes { message, .. } => {
+                    String::from_utf8_lossy(message).into_owned()
+                }
+            };
+            self.0.lock().unwrap().push(text);
+        }
+    }
+
+    impl Recorder {
+        fn lines(&self) -> Vec<String> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    /// upstream: log.c:272-373 - rwrite() writes each message as it is
+    /// produced, so a sink must see buffered lines first and later ones at once.
+    #[test]
+    fn an_installed_sink_gets_the_backlog_then_each_line_as_produced() {
+        let context = LogContext::new();
+        let _guard = enter(Arc::clone(&context));
+        emit_info(InfoFlag::Copy, 1, "before".to_owned());
+        let recorder = Arc::new(Recorder::default());
+        context.install_sink(recorder.clone());
+        assert_eq!(recorder.lines(), ["before"]);
+        emit_debug(DebugFlag::Recv, 1, "after".to_owned());
+        assert_eq!(recorder.lines(), ["before", "after"]);
+        assert!(drain_events().is_empty(), "a live sink leaves nothing buffered");
+    }
+
+    /// The disk-commit and rayon threads must log as the main thread does:
+    /// upstream's levels are process globals (options.c:263).
+    #[test]
+    fn a_spawned_thread_sees_the_session_levels_and_sink() {
+        let context = LogContext::new();
+        let _guard = enter(Arc::clone(&context));
+        let mut config = VerbosityConfig::default();
+        config.debug.recv = 2;
+        init(config);
+        let recorder = Arc::new(Recorder::default());
+        context.install_sink(recorder.clone());
+        let inherited = current();
+        std::thread::spawn(move || {
+            let _guard = enter(inherited);
+            assert!(debug_gte(DebugFlag::Recv, 2));
+            emit_debug(DebugFlag::Recv, 2, "from worker".to_owned());
+        })
+        .join()
+        .unwrap();
+        assert_eq!(recorder.lines(), ["from worker"]);
+    }
+
+    /// A thread that entered nothing uses the process default, so a
+    /// single-session process needs no explicit propagation.
+    #[test]
+    fn a_thread_without_a_context_uses_the_process_default() {
+        let mut config = VerbosityConfig::default();
+        config.info.copy = 3;
+        init(config);
+        let seen = std::thread::spawn(|| info_gte(InfoFlag::Copy, 3)).join().unwrap();
+        assert!(seen);
+    }
+
+    /// Two QUIC sessions in one process must not share levels or output.
+    #[test]
+    fn entered_contexts_are_isolated() {
+        let first = LogContext::new();
+        let second = LogContext::new();
+        {
+            let _guard = enter(Arc::clone(&first));
+            let mut config = VerbosityConfig::default();
+            config.debug.send = 1;
+            init(config);
+            emit_debug(DebugFlag::Send, 1, "first".to_owned());
+        }
+        let _guard = enter(Arc::clone(&second));
+        assert!(!debug_gte(DebugFlag::Send, 1));
+        assert!(drain_events().is_empty());
+        drop(_guard);
+        let _guard = enter(first);
+        assert_eq!(drain_events().len(), 1);
+    }
+
+    #[test]
+    fn discard_drops_lines_bound_for_a_live_sink() {
+        let context = LogContext::new();
+        let _guard = enter(Arc::clone(&context));
+        let recorder = Arc::new(Recorder::default());
+        context.install_sink(recorder.clone());
+        discard_events_from(|| emit_info(InfoFlag::Copy, 1, "preview".to_owned()));
+        emit_info(InfoFlag::Copy, 1, "real".to_owned());
+        assert_eq!(recorder.lines(), ["real"]);
+    }
+
+    #[test]
+    fn a_level_change_reaches_a_thread_that_cached_the_old_one() {
+        let context = LogContext::new();
+        let _guard = enter(Arc::clone(&context));
+        assert!(!debug_gte(DebugFlag::Genr, 1));
+        apply_debug_flag("genr").unwrap();
+        assert!(debug_gte(DebugFlag::Genr, 1));
     }
 }
