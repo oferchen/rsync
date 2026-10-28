@@ -248,6 +248,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 ### Fixed
 
 **Data integrity**
+- `--delete -x` no longer deletes inside a destination directory that sits on another filesystem; like upstream `generator.c:316-326`, a directory on a device no top directory lives on is not scanned, on local copies and on transfers (#PRNUM)
 - A local `--no-whole-file` delta hashes blocks with the checksum upstream negotiates (xxh128, or the `--checksum-choice` transfer component), seeded like `get_checksum2()`, instead of a fixed unseeded MD4; `--debug=nstr` names that checksum, including a split `a,b` choice (#8246)
 - A disk error on one file (`ENOSPC`, a failed open, backup or `--append-verify` prefix) drains that file's queued data before reporting it, so a daemon worker no longer deadlocks its network thread and a QUIC push no longer stalls into a timeout, as upstream's `discard_receive_data()` does (`receiver.c:1254-1261`) (#8229)
 - `--remove-source-files --delay-updates` no longer lets the sender delete a source whose staged copy failed its final rename; the confirmation is sent only after the rename lands, as upstream does (#8232)
