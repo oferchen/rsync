@@ -3459,10 +3459,12 @@ mod uptodate_notice_tests {
     use crate::receiver::stats::TransferStats;
     use crate::role::ServerRole;
 
-    /// Records every `MSG_INFO` frame a server-mode receiver emits.
+    /// Records every `MSG_INFO` and `MSG_ERROR_XFER` frame a server-mode
+    /// receiver emits.
     #[derive(Default)]
     struct CaptureWriter {
         lines: Vec<String>,
+        errors: Vec<String>,
     }
 
     impl io::Write for CaptureWriter {
@@ -3477,6 +3479,10 @@ mod uptodate_notice_tests {
     impl crate::writer::MsgInfoSender for CaptureWriter {
         fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
             self.lines.push(String::from_utf8_lossy(data).into_owned());
+            Ok(())
+        }
+        fn send_msg_error_xfer(&mut self, data: &[u8]) -> io::Result<()> {
+            self.errors.push(String::from_utf8_lossy(data).into_owned());
             Ok(())
         }
     }
@@ -3558,12 +3564,16 @@ mod uptodate_notice_tests {
 
     /// upstream: syscall.c:3858-3871 `held_dfd_for()` - the generator stats a
     /// regular-file destination through the held parent beneath the pinned
-    /// root, so a parent directory swapped for a symlink to a tree outside the
-    /// destination is never followed. A quick-check match out there must not
-    /// make the file look up to date: it is requested from the sender instead.
+    /// root, and its `link_stat()` fallback walks the same way, so a parent
+    /// directory swapped for a symlink to a tree outside the destination is
+    /// never followed. The refused stat is reported and the file skipped
+    /// (generator.c:2213-2223): a quick-check match out there neither makes
+    /// the file look up to date nor lets it be written through the symlink.
+    /// Measured on 3.5.1: `recv_generator: failed to stat "dest/sub/f": Too
+    /// many levels of symbolic links (40)`, exit 23.
     #[cfg(unix)]
     #[test]
-    fn sandboxed_stat_does_not_quick_check_through_a_symlinked_parent() {
+    fn sandboxed_stat_through_a_symlinked_parent_is_reported_and_skipped() {
         let dir = test_support::create_tempdir();
         let dest = dir.path().join("dest");
         let outside = dir.path().join("outside");
@@ -3581,8 +3591,9 @@ mod uptodate_notice_tests {
         let sandbox = fast_io::DirSandbox::open_root(&dest).expect("open sandbox");
         let mut errs = Vec::new();
         let mut stats = TransferStats::default();
+        let mut writer = CaptureWriter::default();
         let requested = ctx.build_files_to_transfer(
-            &mut CaptureWriter::default(),
+            &mut writer,
             &dest,
             Some(&sandbox),
             &MetadataOptions::default(),
@@ -3592,10 +3603,20 @@ mod uptodate_notice_tests {
             None,
             None,
         );
-        assert_eq!(
-            requested.iter().map(|(idx, _, _)| *idx).collect::<Vec<_>>(),
-            vec![0],
-            "the outside match must not satisfy the quick-check"
+        assert!(
+            requested.is_empty(),
+            "a refused stat is not a missing file: {requested:?}"
+        );
+        assert!(
+            writer.lines.iter().all(|l| !l.contains("is uptodate")),
+            "the outside match must not satisfy the quick-check: {:?}",
+            writer.lines
+        );
+        assert_eq!(writer.errors.len(), 1, "{:?}", writer.errors);
+        assert!(
+            writer.errors[0].starts_with("rsync: [generator] recv_generator: failed to stat \""),
+            "{:?}",
+            writer.errors
         );
     }
     /// upstream: rsync.c:828 - at NAME2 every quick-check match is reported as
