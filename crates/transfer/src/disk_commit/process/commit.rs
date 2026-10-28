@@ -1255,7 +1255,7 @@ pub(crate) fn make_backup(
 /// for every successful backup, whichever mechanism ran. Paths are displayed
 /// relative to the destination root to match upstream test assertions
 /// (`testsuite/backup.test`). The actual `info_log!` emission happens on the
-/// main thread; see `crate::pipeline::receiver::emit_backup_notice`.
+/// main thread; see `crate::pipeline::receiver::PipelinedReceiver::queue_backup_notice`.
 fn backup_notice(
     backup_config: &BackupConfig,
     file_path: &Path,
@@ -1338,7 +1338,7 @@ pub(crate) fn make_backup_copy(
     // upstream: generator.c:2448-2450 - INFO_GTE(BACKUP, 1) "backed up X to Y".
     // Paths are relative to the destination root to match test assertions; the
     // `info_log!` emission happens on the session thread (see
-    // `crate::pipeline::receiver::emit_backup_notice` for the disk-thread
+    // `crate::pipeline::receiver::PipelinedReceiver::queue_backup_notice` for the disk-thread
     // caller and the request loop for the delta-basis caller).
     let file_rel = file_path
         .strip_prefix(&backup_config.dest_dir)

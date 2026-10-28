@@ -174,30 +174,6 @@ fn sparse_enabled_for_pass(sparse: bool, append: bool, is_redo_pass: bool) -> bo
 }
 
 impl ReceiverContext {
-    /// Emits `MSG_SUCCESS(ndx)` to the sender for every file whose commit was
-    /// confirmed since the last drain, when `--remove-source-files` is active.
-    ///
-    /// The sender defers its source unlink until it receives this confirmation,
-    /// so this is what lets the sender remove a source only after the file has
-    /// safely landed at the destination. When the flag is off the confirmed
-    /// indices are drained and discarded, keeping the accumulator bounded.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `receiver.c:1079-1085` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
-    /// - `io.c:1649-1663` - sender-side `MSG_SUCCESS` handler -> `successful_send`.
-    fn emit_confirmed_source_removals<W>(
-        &self,
-        writer: &mut W,
-        pipelined_receiver: &mut crate::pipeline::receiver::PipelinedReceiver,
-    ) -> io::Result<()>
-    where
-        W: crate::writer::MsgInfoSender + ?Sized,
-    {
-        let confirmed = pipelined_receiver.drain_new_success_indices();
-        self.send_source_removals(writer, confirmed)
-    }
-
     /// Sends `MSG_SUCCESS(ndx)` for each confirmed flat index when
     /// `--remove-source-files` is active; otherwise discards them.
     ///
@@ -261,28 +237,30 @@ impl ReceiverContext {
         }
     }
 
-    /// Emits everything queued for the peer this iteration, from both sources.
+    /// Emits the per-file outcomes the last drain queued, in the order the
+    /// disk thread produced them, so a file's `MSG_SUCCESS` and the warnings
+    /// of the files around it reach the peer in file order.
     ///
-    /// The pipeline's own queue carries diagnostics the receiver raised about a
-    /// specific file - verification failures, permission errors - pushed
-    /// explicitly as it walks the batch. The thread-local diagnostic buffer
-    /// carries everything raised through `warn_log!` from outside that loop,
-    /// notably the destination-anchoring warning raised during setup.
-    ///
-    /// Upstream has no such split: `rwrite()` frames any peer-facing code from
-    /// wherever it was raised (upstream: log.c:357-366). Draining only the
-    /// pipeline queue is why a daemon receiver could lose its per-component
-    /// path confinement without the warning that says so ever reaching the
-    /// operator - the event stayed in the buffer and died with the thread.
-    fn emit_peer_messages<W>(
+    /// upstream: receiver.c:1345-1376 - each file's success or
+    /// failed-verification report is sent before the next file is received.
+    fn emit_drain_events<W>(
         &self,
         writer: &mut W,
         pipelined_receiver: &mut crate::pipeline::receiver::PipelinedReceiver,
-    ) where
+    ) -> io::Result<()>
+    where
         W: crate::writer::MsgInfoSender + ?Sized,
     {
-        let messages = pipelined_receiver.drain_warnings();
-        self.emit_pipeline_messages(writer, messages);
+        use crate::pipeline::receiver::PeerEvent;
+        for event in pipelined_receiver.drain_peer_events() {
+            match event {
+                PeerEvent::Message(code, text) => {
+                    self.emit_pipeline_messages(writer, vec![(code, text)]);
+                }
+                PeerEvent::Success(flat_idx) => self.send_source_removals(writer, vec![flat_idx])?,
+            }
+        }
+        Ok(())
     }
 
     /// Runs one commit drain, flushing whatever the drain queued for the peer
@@ -316,7 +294,8 @@ impl ReceiverContext {
     {
         let outcome = drain(pipelined_receiver);
         if outcome.is_err() {
-            self.emit_peer_messages(writer, pipelined_receiver);
+            // The drain's own error outranks a failure to report it.
+            let _ = self.emit_drain_events(writer, pipelined_receiver);
         }
         outcome
     }
@@ -768,7 +747,7 @@ impl ReceiverContext {
                             // selection. Emitted here, on the session thread,
                             // because a rayon signature worker's thread-local
                             // verbosity is never seeded (same reason as
-                            // `emit_backup_notice` for the disk thread).
+                            // `queue_backup_notice` for the disk thread).
                             if let Some(notice) = basis_result.backup_notice.take() {
                                 info_log!(
                                     Backup,
@@ -967,9 +946,7 @@ impl ReceiverContext {
                 // gets an immediate MSG_SUCCESS so the sender can unlink its
                 // --remove-source-files source. Emit for every file the drain
                 // just confirmed committed.
-                self.emit_confirmed_source_removals(writer, &mut pipelined_receiver)?;
-
-                self.emit_peer_messages(writer, &mut pipelined_receiver);
+                self.emit_drain_events(writer, &mut pipelined_receiver)?;
 
                 // upstream: io.c:838 stats.total_read only counts bytes read
                 // off the wire. Matched-from-basis bytes never traverse the
@@ -1028,9 +1005,7 @@ impl ReceiverContext {
             // upstream: receiver.c:1079-1085 - flush MSG_SUCCESS for the final
             // batch of files the blocking drain just confirmed committed, so the
             // sender unlinks their --remove-source-files sources.
-            self.emit_confirmed_source_removals(writer, &mut pipelined_receiver)?;
-
-            self.emit_peer_messages(writer, &mut pipelined_receiver);
+            self.emit_drain_events(writer, &mut pipelined_receiver)?;
 
             // upstream: generator.c:2169 finish_hard_link() itemizes every
             // follower once the leader completes, before the phase-1 NDX_DONE.
