@@ -248,7 +248,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 ### Fixed
 
 **Data integrity**
-- `--delete-excluded` on a pull or push no longer deletes destination files that a receiver-side (`-r`) rule protects; the flag only turns un-modified include/exclude rules into sender-side ones when they are parsed, as upstream `exclude.c:1479` does (#PRNUM)
+- `--delete-excluded` on a pull or push no longer deletes destination files that a receiver-side (`-r`) rule protects; the flag only turns un-modified include/exclude rules into sender-side ones when they are parsed, as upstream `exclude.c:1479` does (#8258)
 - A local `--no-whole-file` delta hashes blocks with the checksum upstream negotiates (xxh128, or the `--checksum-choice` transfer component), seeded like `get_checksum2()`, instead of a fixed unseeded MD4; `--debug=nstr` names that checksum, including a split `a,b` choice (#8246)
 - A disk error on one file (`ENOSPC`, a failed open, backup or `--append-verify` prefix) drains that file's queued data before reporting it, so a daemon worker no longer deadlocks its network thread and a QUIC push no longer stalls into a timeout, as upstream's `discard_receive_data()` does (`receiver.c:1254-1261`) (#8229)
 - `--remove-source-files --delay-updates` no longer lets the sender delete a source whose staged copy failed its final rename; the confirmation is sent only after the rename lands, as upstream does (#8232)
