@@ -437,6 +437,113 @@ fn a_failing_server_sender_exits_like_upstream() {
     assert_eq!(codes[1], codes[0], "daemon file list");
 }
 
+/// The devices-fake sequence from upstream's testsuite (devices_test.py):
+/// two placeholders copied to fresh names, then a single placeholder operand
+/// copied with `-Di` onto an existing placeholder for another device. The
+/// operand is listed through `x_lstat()`, so it takes the device branch and
+/// the destination, read the same way, is an existing device whose rdev
+/// differs: `cDc.T......`, not a creation (generator.c:2048-2063,
+/// generator.c:674-679). A final `-aiH` pass adds a hard-linked placeholder,
+/// whose follower itemizes `hD` and leaves the shared inode's `%stat` naming
+/// the device (hlink.c finish_hard_link() -> xattrs.c set_stat_xattr()).
+/// A `--link-dest` pass over the result links every placeholder as an exact
+/// match, `hD`, because the basis is read through its `%stat` too
+/// (generator.c:1254 basis_link_stat()).
+#[test]
+fn a_device_placeholder_operand_updates_an_existing_device() {
+    let Some(pair) = pair() else { return };
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path();
+    let (uid, gid) = own_ids(root);
+    let mut runs = Vec::new();
+    for binary in [&pair.upstream, &pair.oc] {
+        fresh_src_dst(root);
+        for (name, rdev) in [
+            ("block", "42,69"),
+            ("block2", "42,73"),
+            ("block3", "105,73"),
+        ] {
+            let path = root.join("src").join(name);
+            fs::write(&path, b"").expect("write placeholder");
+            let record = format!("60644 {rdev} {uid}:{gid}");
+            if xattr::set(&path, FAKE_SUPER_XATTR, record.as_bytes()).is_err() {
+                eprintln!("skipping: the filesystem refuses user xattrs");
+                return;
+            }
+        }
+        let mtime = FileTime::from_unix_time(1_546_300_800, 0);
+        for name in ["block", "block2", "block3"] {
+            filetime::set_file_mtime(root.join("src").join(name), mtime).expect("mtime");
+        }
+        filetime::set_file_mtime(
+            root.join("src/block3"),
+            FileTime::from_unix_time(1_546_300_801, 0),
+        )
+        .expect("mtime");
+        let steps: [&[&str]; 3] = [
+            &["--fake-super", "-ai", "src/block", "dst/block2"],
+            &["--fake-super", "-ai", "src/block2", "dst/block"],
+            &["--fake-super", "-Di", "src/block3", "dst/block"],
+        ];
+        let mut outcomes: Vec<Outcome> = steps.iter().map(|args| run(binary, root, args)).collect();
+        fs::hard_link(root.join("src/block3"), root.join("src/block3.5")).expect("link");
+        // Only the hard-linked pair is compared: the earlier -Di step leaves
+        // block with an owner record this cell does not cover.
+        let mut linked = run(binary, root, &["--fake-super", "-aiH", "src/", "dst/"]);
+        linked.stdout = linked
+            .stdout
+            .lines()
+            .filter(|line| line.ends_with(" block3") || line.contains(" block3.5 "))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        outcomes.push(linked);
+        let _ = fs::remove_dir_all(root.join("chk"));
+        let link_dest = format!("--link-dest={}", root.join("dst").display());
+        outcomes.push(run(
+            binary,
+            root,
+            &["--fake-super", "-aii", &link_dest, "src/", "chk/"],
+        ));
+        for name in ["block3", "block3.5"] {
+            let record = xattr::get(root.join("dst").join(name), FAKE_SUPER_XATTR)
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            outcomes.push(Outcome {
+                stdout: String::from_utf8_lossy(&record).into_owned(),
+                stderr: Vec::new(),
+                code: None,
+            });
+        }
+        runs.push(outcomes);
+    }
+    let expected = [
+        "cD+++++++++ block\n",
+        "cD+++++++++ block2\n",
+        "cDc.T...... block3\n",
+    ];
+    for (step, outcome) in runs[0].iter().take(expected.len()).enumerate() {
+        assert_eq!(
+            outcome.stdout, expected[step],
+            "upstream step {step}: {outcome:?}"
+        );
+    }
+    assert!(
+        runs[0][3].stdout.contains("hD+++++++++ block3.5 => block3"),
+        "upstream -aiH: {:?}",
+        runs[0][3]
+    );
+    let device = format!("60644 105,73 {uid}:{gid}");
+    assert!(
+        runs[0][4].stdout.contains("hD          block3.5\n"),
+        "upstream --link-dest: {:?}",
+        runs[0][4]
+    );
+    assert_eq!(runs[0][5].stdout, device, "upstream leader record");
+    assert_eq!(runs[0][6].stdout, device, "upstream follower record");
+    assert_eq!(runs[1], runs[0], "oc against upstream");
+}
+
 /// The ids of the user running the test, read off a directory it created, so
 /// a non-root run can represent the placeholders' records.
 fn own_ids(root: &Path) -> (u32, u32) {

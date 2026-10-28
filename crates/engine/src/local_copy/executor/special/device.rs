@@ -177,7 +177,7 @@ pub(crate) fn copy_device(
         }
 
         if let Some(path) = &record_path {
-            let metadata_snapshot = super::special_snapshot(metadata, &source_stat);
+            let metadata_snapshot = super::special_snapshot(metadata, &source_stat, None);
             let total_bytes = Some(metadata_snapshot.len());
             let action = if existing_hard_link_target.is_some() {
                 LocalCopyAction::HardLink
@@ -289,7 +289,7 @@ pub(crate) fn copy_device(
                     false,
                     context.options().modify_window(),
                 );
-                let metadata_snapshot = super::special_snapshot(metadata, &source_stat);
+                let metadata_snapshot = super::special_snapshot(metadata, &source_stat, None);
                 let total_bytes = Some(metadata_snapshot.len());
                 context.record(
                     LocalCopyRecord::new(
@@ -335,7 +335,7 @@ pub(crate) fn copy_device(
             .unwrap_or_else(|| Path::new(""));
         if !link_relative.as_os_str().is_empty()
             && let Some(basis) =
-                context.link_dest_special_target(link_relative, metadata, metadata_options)?
+                context.link_dest_special_target(link_relative, &source_stat, metadata_options)?
         {
             // A destination that refuses the link falls through to creating the
             // device node from the source, as upstream's `-3` return does.
@@ -344,6 +344,7 @@ pub(crate) fn copy_device(
                 source,
                 destination,
                 metadata,
+                &source_stat,
                 &basis,
                 record_path.as_deref(),
                 file_type,
@@ -396,6 +397,14 @@ pub(crate) fn copy_device(
         if existing_hard_link_target.is_none() {
             apply_file_metadata_with_options(destination, metadata, metadata_options)
                 .map_err(map_metadata_error)?;
+            // The follower shares the leader's inode, so the attribute step's
+            // record of the placeholder's own stat would replace the device's.
+            // upstream: hlink.c finish_hard_link() -> rsync.c set_file_attrs()
+            // -> xattrs.c set_stat_xattr() with the follower's flist stat.
+            #[cfg(all(unix, feature = "xattr"))]
+            if metadata_options.fake_super_enabled() {
+                store_fake_super_for_local_metadata(destination, &source_stat)?;
+            }
             #[cfg(all(unix, feature = "xattr"))]
             sync_xattrs_if_requested(
                 preserve_xattrs,
@@ -422,7 +431,8 @@ pub(crate) fn copy_device(
             if let Some(path) = &record_path {
                 let leader_display =
                     leader_display.filter(|relative| relative.as_path() != path.as_path());
-                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
+                let metadata_snapshot =
+                    super::special_snapshot(metadata, &source_stat, leader_display);
                 let total_bytes = Some(metadata_snapshot.len());
                 context.record(
                     LocalCopyRecord::new(
@@ -465,7 +475,7 @@ pub(crate) fn copy_device(
         let _ = (metadata_options, destination_previously_existed);
         eprintln!("{}", format_skip_device_message(destination));
         if let Some(path) = &record_path {
-            let metadata_snapshot = super::special_snapshot(metadata, &source_stat);
+            let metadata_snapshot = super::special_snapshot(metadata, &source_stat, None);
             let total_bytes = Some(metadata_snapshot.len());
             context.record(LocalCopyRecord::new(
                 path.clone(),
@@ -537,7 +547,7 @@ pub(crate) fn copy_device(
         context.summary_mut().record_device();
 
         if let Some(path) = &record_path {
-            let metadata_snapshot = super::special_snapshot(metadata, &source_stat);
+            let metadata_snapshot = super::special_snapshot(metadata, &source_stat, None);
             let total_bytes = Some(metadata_snapshot.len());
             let record = LocalCopyRecord::new(
                 path.clone(),

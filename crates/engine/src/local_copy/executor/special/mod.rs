@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::existence_gate::{DestinationEntry, ExistenceSkip};
@@ -54,10 +54,12 @@ fn special_destination_stat(
 }
 
 /// The record of a device or special, typed by its folded source stat so a
-/// `--fake-super` placeholder itemizes as the node it stands for.
+/// `--fake-super` placeholder itemizes as the node it stands for, including
+/// a hard-link follower that names its leader in `link_target`.
 fn special_snapshot(
     metadata: &fs::Metadata,
     source_stat: &fast_io::EntryMetadata,
+    link_target: Option<PathBuf>,
 ) -> LocalCopyMetadata {
     #[cfg(unix)]
     let recorded = Some(::metadata::FakeSuperStat::from_entry_metadata(source_stat));
@@ -66,7 +68,8 @@ fn special_snapshot(
         let _ = source_stat;
         None
     };
-    LocalCopyMetadata::from_metadata(metadata, None).virtualize_fake_super_stat(recorded.as_ref())
+    LocalCopyMetadata::from_metadata(metadata, link_target)
+        .virtualize_fake_super_stat(recorded.as_ref())
 }
 
 /// Applies the `--existing` / `--ignore-existing` gate to a symlink, FIFO,
@@ -164,6 +167,7 @@ pub(super) fn link_special_from_link_dest(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
+    source_stat: &fast_io::EntryMetadata,
     basis: &Path,
     record_path: Option<&Path>,
     file_type: fs::FileType,
@@ -183,7 +187,7 @@ pub(super) fn link_special_from_link_dest(
     }
 
     if let Some(path) = record_path {
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let metadata_snapshot = special_snapshot(metadata, source_stat, None);
         let total_bytes = Some(metadata_snapshot.len());
         // The hard-linked node shares the basis inode, so it matches the source
         // exactly: no `with_creation`, empty change-set, so log.c:773-782
