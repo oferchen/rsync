@@ -14,10 +14,11 @@ use std::io::{self, Read, Write};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use fast_io::transport::Transport;
 use protocol::iobuf::{IN_BUFFER_SIZE, InBuf};
+
+use super::timeout::IoTimeout;
 
 /// One connection's transport, input buffer and wire counters.
 pub(crate) struct Core<'a> {
@@ -33,26 +34,31 @@ pub(crate) struct Core<'a> {
     /// The peer closed its output; no more input will arrive
     /// (upstream: io.c:905-911 sets `iobuf.in_fd = -2`).
     in_eof: bool,
-    /// How long one wait may last before the connection is declared dead;
-    /// `None` waits without a bound.
-    timeout: Option<Duration>,
+    /// `--timeout`, checked whenever a wait comes back empty.
+    timeout: IoTimeout,
 }
 
 /// The handle both stacks hold. Each role runs its connection on one thread,
-/// so the core is shared without locking.
+/// so the core is shared without locking; `Rc` keeps every handle on that
+/// thread, since it is neither `Send` nor `Sync`.
 pub(crate) type SharedCore<'a> = Rc<RefCell<Core<'a>>>;
 
 impl<'a> Core<'a> {
     /// A core over `transport` in raw mode, serving `pending` (bytes an
-    /// earlier handshake reader buffered) before reading anything new.
-    pub(crate) fn new(transport: Box<dyn Transport + 'a>, pending: Vec<u8>) -> SharedCore<'a> {
+    /// earlier handshake reader buffered) before reading anything new, and
+    /// bounding its waits by `timeout`.
+    pub(crate) fn new(
+        transport: Box<dyn Transport + 'a>,
+        pending: Vec<u8>,
+        timeout: IoTimeout,
+    ) -> SharedCore<'a> {
         Rc::new(RefCell::new(Self {
             transport,
             input: InBuf::new(IN_BUFFER_SIZE),
             pending,
             read_counter: None,
             in_eof: false,
-            timeout: None,
+            timeout,
         }))
     }
 
@@ -118,6 +124,9 @@ impl<'a> Core<'a> {
             } else if self.fill_input()?.is_some() {
                 continue;
             }
+            // upstream io.c perform_io selects before every read; oc reads
+            // first and polls only on EAGAIN, which saves ~7,000 polls per
+            // push. Same wire bytes; a deliberate performance deviation.
             self.wait(false)?;
         }
     }
@@ -145,6 +154,9 @@ impl<'a> Core<'a> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         loop {
             if let Some(n) = self.transport.try_write(buf)? {
+                if self.buffering() {
+                    self.timeout.mark_io();
+                }
                 return Ok(n);
             }
             self.wait(true)?;
@@ -174,19 +186,19 @@ impl<'a> Core<'a> {
     /// and, once input is buffered, for input whenever the buffer has room
     /// (upstream: io.c:746-806), then reads what arrived. Before buffering
     /// starts a wait is for one direction only, as upstream's raw
-    /// safe_read()/safe_write() are (io.c:310, io.c:387).
+    /// safe_read()/safe_write() are (io.c:310, io.c:387). A wait that ends
+    /// with nothing ready checks `--timeout` (upstream: io.c:876, io.c:335).
     fn wait(&mut self, want_output: bool) -> io::Result<()> {
         let poll_input = if self.buffering() {
             !self.in_eof && self.input.has_room()
         } else {
             !want_output
         };
-        let ready = self.transport.wait(poll_input, want_output, self.timeout)?;
+        let ready = self
+            .transport
+            .wait(poll_input, want_output, self.timeout.wait_bound())?;
         if !ready.readable && !ready.writable {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "timed out waiting for the connection",
-            ));
+            return self.timeout.check();
         }
         if ready.readable && self.buffering() {
             self.fill_input()?;
@@ -194,9 +206,13 @@ impl<'a> Core<'a> {
         Ok(())
     }
 
-    fn count_read(&self, n: usize) {
+    /// Counts and timestamps buffered-mode input; raw reads are neither
+    /// (upstream: safe_read() touches neither `stats.total_read` nor
+    /// `last_io_in`).
+    fn count_read(&mut self, n: usize) {
         if let Some(counter) = &self.read_counter {
             counter.fetch_add(n as u64, Ordering::Relaxed);
+            self.timeout.mark_io();
         }
     }
 }
@@ -242,6 +258,8 @@ mod tests {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
 
+    use std::time::Duration;
+
     use fast_io::transport::FdTransport;
 
     use super::*;
@@ -249,7 +267,11 @@ mod tests {
     fn core_over_socket() -> (SharedCore<'static>, UnixStream, Arc<AtomicU64>) {
         let (ours, peer) = UnixStream::pair().unwrap();
         let counter = Arc::new(AtomicU64::new(0));
-        let core = Core::new(Box::new(FdTransport::socket(ours).unwrap()), Vec::new());
+        let core = Core::new(
+            Box::new(FdTransport::socket(ours).unwrap()),
+            Vec::new(),
+            IoTimeout::new(None, "sender"),
+        );
         Core::start_buffering(&core, Arc::clone(&counter));
         (core, peer, counter)
     }
@@ -308,6 +330,7 @@ mod tests {
                 waits: Rc::clone(&waits),
             }),
             Vec::new(),
+            IoTimeout::new(None, "sender"),
         );
         Core::start_buffering(&core, Arc::clone(&counter));
         assert_eq!(CoreWriter::new(&core).write(b"data").unwrap(), 4);
@@ -320,6 +343,73 @@ mod tests {
         let mut got = [0u8; 7];
         CoreReader::new(&core).read_exact(&mut got).unwrap();
         assert_eq!(&got, b"refused");
+    }
+
+    /// A peer that never answers: every wait comes back empty after the bound
+    /// it was given, which advances the fake clock by that bound.
+    struct SilentPeer {
+        clock: Rc<std::cell::Cell<Duration>>,
+        bounds: Rc<RefCell<Vec<Option<Duration>>>>,
+    }
+
+    impl Transport for SilentPeer {
+        fn try_read(&mut self, _: &mut [u8]) -> io::Result<Option<usize>> {
+            Ok(None)
+        }
+
+        fn try_write(&mut self, _: &[u8]) -> io::Result<Option<usize>> {
+            Ok(None)
+        }
+
+        fn wait(
+            &mut self,
+            _: bool,
+            _: bool,
+            timeout: Option<Duration>,
+        ) -> io::Result<fast_io::transport::Readiness> {
+            self.bounds.borrow_mut().push(timeout);
+            let bound = timeout.expect("--timeout bounds every wait");
+            self.clock.set(self.clock.get() + bound);
+            Ok(fast_io::transport::Readiness::default())
+        }
+    }
+
+    /// WHY: `--timeout` must end a connection whose peer went silent, with
+    /// upstream's message, on upstream's cadence: waits of ceil(5/2) = 3 s,
+    /// the idle clock starting at the first empty one, so the third empty
+    /// wait reports 6 idle seconds (upstream: io.c:229-268 check_timeout()).
+    /// The error kind is what maps to RERR_TIMEOUT (30).
+    #[test]
+    fn a_silent_peer_hits_the_io_timeout_in_reads_and_writes() {
+        for buffered in [false, true] {
+            let offset = Rc::new(std::cell::Cell::new(Duration::ZERO));
+            let bounds = Rc::new(RefCell::new(Vec::new()));
+            let base = std::time::Instant::now();
+            let reading = Rc::clone(&offset);
+            let clock: super::super::timeout::Clock = Rc::new(move || base + reading.get());
+            let core = Core::new(
+                Box::new(SilentPeer {
+                    clock: Rc::clone(&offset),
+                    bounds: Rc::clone(&bounds),
+                }),
+                Vec::new(),
+                IoTimeout::with_clock(Some(5), "sender", clock),
+            );
+            if buffered {
+                Core::start_buffering(&core, Arc::new(AtomicU64::new(0)));
+            }
+            let err = if buffered {
+                CoreWriter::new(&core).write(b"x").unwrap_err()
+            } else {
+                CoreReader::new(&core).read(&mut [0u8; 1]).unwrap_err()
+            };
+            assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+            assert_eq!(
+                err.to_string(),
+                "[sender] io timeout after 6 seconds -- exiting"
+            );
+            assert_eq!(*bounds.borrow(), vec![Some(Duration::from_secs(3)); 3]);
+        }
     }
 
     /// WHY: a read waits for input and returns it, and a peer that closes is
@@ -368,6 +458,7 @@ mod stream_tests {
         let core = Core::new(
             Box::new(BlockingStreams::new(source, Vec::new())),
             Vec::new(),
+            IoTimeout::new(None, "sender"),
         );
         Core::start_buffering(&core, Arc::clone(&counter));
         (core, counter)
@@ -410,6 +501,7 @@ mod stream_tests {
         let core = Core::new(
             Box::new(BlockingStreams::new(&b"tail"[..], Vec::new())),
             b"head".to_vec(),
+            IoTimeout::new(None, "sender"),
         );
         let mut reader = CoreReader::new(&core);
         let mut two = [0u8; 2];
