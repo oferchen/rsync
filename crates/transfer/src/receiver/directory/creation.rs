@@ -318,6 +318,9 @@ impl ReceiverContext {
                 }
                 true
             })
+            // upstream: generator.c:1811 - an implied parent is skipped after the
+            // daemon filter has had its say.
+            .filter(|(_, e)| !self.skips_implied_dir(e))
             .map(|(idx, entry)| {
                 let relative_path = entry.path().to_path_buf();
                 let dir_path = if relative_path.as_os_str() == "." {
@@ -970,6 +973,11 @@ impl ReceiverContext {
         if failed_dirs.is_missing_or_below(entry.path()) {
             return Ok(None);
         }
+        // upstream: generator.c:1811 - an implied parent under
+        // --no-implied-dirs is left as the destination has it.
+        if self.skips_implied_dir(entry) {
+            return Ok(None);
+        }
         // Check if parent is under a failed directory
         if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.path()) {
             if self.config.flags.verbose && self.config.connection.client_mode {
@@ -1376,7 +1384,8 @@ impl ReceiverContext {
             // final metadata pass walks a large directory tree. A strict no-op
             // unless --timeout is set (allowed_lull None).
             let _ = writer.maybe_send_keepalive();
-            if !entry.is_dir() {
+            // upstream: generator.c:2586 - implied parents are not re-timed.
+            if !entry.is_dir() || self.skips_implied_dir(entry) {
                 continue;
             }
 

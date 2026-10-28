@@ -635,6 +635,28 @@ pub struct ReceiverContext {
 }
 
 impl ReceiverContext {
+    /// Whether the generator leaves `entry` alone because it is a parent the
+    /// sender flagged as implied and `--no-implied-dirs` is in force: it is
+    /// neither created nor listed, named or re-timed, and an existing
+    /// destination entry of that name - a symlink included - is not replaced.
+    ///
+    /// oc keeps upstream's `FLAG_IMPLIED_DIR` as a directory that is a top
+    /// directory without content (`XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1480-1481` - `XMIT_TOP_DIR` with `XMIT_NO_CONTENT_DIR` sets
+    ///   `FLAG_IMPLIED_DIR`
+    /// - `generator.c:1640`, `generator.c:1811`, `generator.c:2586` -
+    ///   `!implied_dirs && file->flags & FLAG_IMPLIED_DIR` skips the entry in
+    ///   the list-only, generate and touch-up passes
+    pub(in crate::receiver) fn skips_implied_dir(&self, entry: &FileEntry) -> bool {
+        self.config.flags.no_implied_dirs
+            && entry.is_dir()
+            && entry.top_dir()
+            && !entry.content_dir()
+    }
+
     /// Renders a flist-relative name the way upstream's `full_fname()` does on
     /// the receiver, whose `curr_dir` is the destination root.
     ///
