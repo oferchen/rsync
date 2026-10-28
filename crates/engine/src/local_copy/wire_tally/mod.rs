@@ -320,20 +320,20 @@ impl WireTally {
         self.items.push(relative.as_os_str().to_os_string());
     }
 
-    /// Turns the itemized paths into exchanges on their entries.
+    /// Turns the itemized paths into exchanges on their entries, indexing
+    /// the few itemized paths rather than every entry.
     fn resolve_items(&mut self) {
         if self.items.is_empty() {
             return;
         }
-        let index: HashMap<&OsStr, u32> = self
-            .entries
-            .iter()
-            .zip(0u32..)
-            .map(|(entry, i)| (entry.path().as_os_str(), i))
-            .collect();
+        let mut itemized: HashMap<&OsStr, usize> = HashMap::with_capacity(self.items.len());
         for path in &self.items {
-            if let Some(&entry) = index.get(path.as_os_str()) {
-                self.exchanges.push((entry, Exchange::Item));
+            *itemized.entry(path.as_os_str()).or_default() += 1;
+        }
+        for (entry, index) in self.entries.iter().zip(0u32..) {
+            if let Some(&times) = itemized.get(entry.path().as_os_str()) {
+                self.exchanges
+                    .extend(std::iter::repeat_n((index, Exchange::Item), times));
             }
         }
     }
@@ -578,12 +578,15 @@ impl WireTally {
     /// Orders a list's members as `send_directory()` sent them: `.` first,
     /// then `readdir()` order, then traversal order for operands.
     fn wire_order(&self, members: &[usize], sorted: &[FileEntry], order: &[u32]) -> Vec<usize> {
-        let mut wire = members.to_vec();
-        wire.sort_unstable_by_key(|&s| {
-            let traversal = order[s] as usize;
-            wire_order_key(is_dot(&sorted[s]), self.readdir[traversal], traversal)
-        });
-        wire
+        let mut keyed: Vec<_> = members
+            .iter()
+            .map(|&s| {
+                let traversal = order[s] as usize;
+                (wire_order_key(is_dot(&sorted[s]), self.readdir[traversal], traversal), s)
+            })
+            .collect();
+        keyed.sort_unstable();
+        keyed.into_iter().map(|(_, s)| s).collect()
     }
 
     /// Encodes the file list as incremental lists and plans which lists
