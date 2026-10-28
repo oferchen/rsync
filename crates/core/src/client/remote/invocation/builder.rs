@@ -104,6 +104,28 @@ impl<'a> RemoteInvocationBuilder<'a> {
         args
     }
 
+    /// Builds the argv for a local copy's `--server` child, without the
+    /// program name.
+    ///
+    /// Upstream's forked child inherits every parsed option, including the
+    /// debug levels that `server_options()` never sends, so they travel as
+    /// `--debug=` here. No shell sits between parent and child, so the
+    /// destination is passed raw.
+    ///
+    /// upstream: main.c:666-667 do_cmd() `local_child()`, pipe.c:109-166.
+    pub(crate) fn build_local_child(&self, destination: &OsStr) -> Vec<OsString> {
+        let mut args = self.build_head_args();
+        self.append_long_form_args(&mut args);
+        for flag in self.config.debug_flags() {
+            let mut arg = OsString::from("--debug=");
+            arg.push(flag);
+            args.push(arg);
+        }
+        args.push(OsString::from("."));
+        args.push(destination.to_os_string());
+        args
+    }
+
     /// Builds an invocation with secluded-args support.
     ///
     /// When secluded args is active, the SSH command line contains only the
