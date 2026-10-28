@@ -730,3 +730,55 @@ fn delete_excluded_marks_only_later_rules_in_heredoc() {
         b"ARGV0 --filter='._-' '-r' '--delete-excluded' --read-batch='bf' ${1:-'dst/'} <<'#E#'\n- a\n-s b\n#E#\n",
     );
 }
+
+fn running_as_root() -> bool {
+    Command::new("id")
+        .arg("-u")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
+        .unwrap_or(false)
+}
+
+/// upstream: receiver.c:1015-1022 - a failed temp-file open drains that
+/// file's compressed delta off the stream (`discard_receive_data()`) and moves
+/// on, so a `-z` replay whose every `mkstemp` fails still reads each file's
+/// tokens and checksum in step and ends on the code-23 trailer with nothing
+/// written. A replay that skipped or misread one drained file would decode the
+/// next file's tokens as garbage and abort with a protocol error instead.
+#[test]
+fn compressed_replay_drains_every_file_whose_temp_open_fails() {
+    if running_as_root() {
+        eprintln!("skip: root can create files in the read-only --temp-dir");
+        return;
+    }
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        for name in ["a.txt", "sub/b.log", "sub/c.txt", "z.txt"] {
+            let body: String = (0..4000).map(|i| format!("{name} line {i}\n")).collect();
+            fs::write(fx.root.join("src").join(name), body).unwrap();
+        }
+        let out = fx.run(&record_bin, &["-rz", "--write-batch=bf", "src/", "dst/"]);
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        let temp_dir = fx.root.join("ro-temp");
+        fs::create_dir(&temp_dir).unwrap();
+        fs::set_permissions(&temp_dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let temp_arg = format!("--temp-dir={}", temp_dir.display());
+        for (replayer, replay_bin) in implementations() {
+            let dest = fx.root.join(format!("{replayer}-replay"));
+            let target = format!("{}/", dest.display());
+            let out = fx.run(&replay_bin, &["-r", &temp_arg, "--read-batch=bf", &target]);
+            assert_eq!(
+                out.status.code(),
+                Some(23),
+                "{recorder}->{replayer}: every file drained, run partial: {out:?}"
+            );
+            for name in ["a.txt", "sub/b.log", "sub/c.txt", "z.txt"] {
+                assert!(
+                    !dest.join(name).exists(),
+                    "{recorder}->{replayer}: {name} written despite its failed open"
+                );
+            }
+        }
+        fs::set_permissions(&temp_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
