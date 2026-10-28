@@ -92,7 +92,7 @@ fn delete_excluded_removes_log_files_matching_exclude_pattern() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filters = FilterSet::from_rules([FilterRule::exclude("*.log")]).expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.log").with_sides(true, false)]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .delete_excluded(true)
@@ -152,7 +152,7 @@ fn delete_excluded_with_filter_exclude_rule_removes_tmp_files() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Simulate --filter='exclude *.tmp' via FilterSet.
-    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp").with_sides(true, false)]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .delete_excluded(true)
@@ -295,9 +295,9 @@ fn delete_excluded_with_cvs_dir_merge_removes_merge_expanded_matches() {
         .inherit(false);
     let program = FilterProgram::new([
         FilterProgramEntry::DirMerge(DirMergeRule::new(".cvsignore", cvs_options)),
-        FilterProgramEntry::Rule(FilterRule::exclude("*.bak").with_perishable(true)),
-        FilterProgramEntry::Rule(FilterRule::exclude("*.old").with_perishable(true)),
-        FilterProgramEntry::Rule(FilterRule::exclude("home-cvs-exclude").with_perishable(true)),
+        FilterProgramEntry::Rule(FilterRule::exclude("*.bak").with_sides(true, false).with_perishable(true)),
+        FilterProgramEntry::Rule(FilterRule::exclude("*.old").with_sides(true, false).with_perishable(true)),
+        FilterProgramEntry::Rule(FilterRule::exclude("home-cvs-exclude").with_sides(true, false).with_perishable(true)),
     ])
     .expect("compile filter program");
 

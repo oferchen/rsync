@@ -453,7 +453,7 @@ fn delete_delay_with_delete_excluded_removes_filtered_files() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("compile filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp").with_sides(true, false)]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete_delay(true)
         .delete_excluded(true)

@@ -50,7 +50,7 @@ fn delete_excluded_removes_excluded_entries() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let filters =
-        FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")]).expect("compile filters");
+        FilterSet::from_rules([filters::FilterRule::exclude("*.tmp").with_sides(true, false)]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .delete_excluded(true)
@@ -83,7 +83,7 @@ fn delete_excluded_removes_matching_source_files() {
     let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let filters =
-        FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")]).expect("compile filters");
+        FilterSet::from_rules([filters::FilterRule::exclude("*.tmp").with_sides(true, false)]).expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .delete_excluded(true)

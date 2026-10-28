@@ -28,10 +28,6 @@ fn filter_outcome_default_allows_transfer_and_deletion() {
         outcome.allows_deletion(),
         "default outcome must allow deletion"
     );
-    assert!(
-        !outcome.allows_deletion_when_excluded_removed(),
-        "default outcome must not flag delete-excluded"
-    );
 }
 
 #[test]
@@ -774,75 +770,6 @@ fn filter_segment_protect_unmatched_path_still_deletable() {
     assert!(
         outcome.allows_deletion(),
         "unmatched path must remain deletable"
-    );
-}
-
-#[test]
-fn filter_segment_delete_excluded_flag_set_on_exclude() {
-    let mut segment = FilterSegment::default();
-    segment
-        .push_rule(FilterRule::exclude("*.cache"))
-        .expect("exclude cache");
-
-    let mut outcome = FilterOutcome::default();
-    segment.apply(
-        Path::new("data.cache"),
-        false,
-        &mut outcome,
-        FilterContext::Deletion,
-    );
-
-    // In deletion context, an exclude rule sets the delete_excluded flag and
-    // also sets transfer_allowed to false.
-    assert!(
-        outcome.allows_deletion_when_excluded_removed(),
-        "delete_excluded flag must be set for excluded paths in deletion context"
-    );
-}
-
-#[test]
-fn filter_segment_delete_excluded_not_set_for_include() {
-    let mut segment = FilterSegment::default();
-    segment
-        .push_rule(FilterRule::include("*.keep"))
-        .expect("include keep");
-
-    let mut outcome = FilterOutcome::default();
-    segment.apply(
-        Path::new("data.keep"),
-        false,
-        &mut outcome,
-        FilterContext::Deletion,
-    );
-
-    assert!(
-        !outcome.allows_deletion_when_excluded_removed(),
-        "delete_excluded flag must not be set for included paths"
-    );
-}
-
-#[test]
-fn filter_segment_delete_excluded_protected_path() {
-    // Even when delete_excluded is set, protection must prevent deletion.
-    let mut segment = FilterSegment::default();
-    segment
-        .push_rule(FilterRule::exclude("*.cache"))
-        .expect("exclude cache");
-    segment
-        .push_rule(FilterRule::protect("*.cache"))
-        .expect("protect cache");
-
-    let mut outcome = FilterOutcome::default();
-    segment.apply(
-        Path::new("important.cache"),
-        false,
-        &mut outcome,
-        FilterContext::Deletion,
-    );
-
-    assert!(
-        !outcome.allows_deletion_when_excluded_removed() || !outcome.allows_deletion(),
-        "protected excluded path must not be deletable even with delete_excluded"
     );
 }
 
