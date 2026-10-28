@@ -90,6 +90,9 @@ pub(crate) struct MultiplexWriter<W> {
     /// wire; bytes diverted to the batch file are not counted.
     /// upstream: io.c:2502 `total_data_written += len` in `write_buf()`.
     data_written: u64,
+    /// Diagnostic frames a server session queued from any thread; sent ahead of
+    /// the next bytes this writer writes. upstream: log.c:357-366.
+    outbox: Option<Arc<super::peer_sink::PeerOutbox>>,
 }
 
 /// Default buffer size - 64KB to batch ~2 wire chunks per flush.
@@ -126,7 +129,22 @@ impl<W: Write> MultiplexWriter<W> {
             last_io_out: Instant::now(),
             allowed_lull: None,
             data_written: 0,
+            outbox: super::peer_sink::session_outbox(),
         }
+    }
+
+    /// Sends the queued diagnostic frames, after the data buffered before them.
+    fn send_outbox(&mut self) -> io::Result<()> {
+        let Some(frames) = self.outbox.as_ref().and_then(|outbox| outbox.take()) else {
+            return Ok(());
+        };
+        self.flush_buffer()?;
+        for (code, payload) in frames {
+            self.write_frame(code, payload.len(), std::iter::once(payload.as_slice()))?;
+            self.dirty = true;
+            self.last_io_out = Instant::now();
+        }
+        Ok(())
     }
 
     /// Payload bytes written for the wire so far (upstream `total_data_written`).
@@ -299,6 +317,7 @@ impl<W: Write> MultiplexWriter<W> {
     /// without flushing. Latency-sensitive codes (ERROR, REDO, etc.)
     /// still flush immediately.
     pub(crate) fn send_message(&mut self, code: MessageCode, payload: &[u8]) -> io::Result<()> {
+        self.send_outbox()?;
         self.flush_buffer()?;
         self.write_frame(code, payload.len(), std::iter::once(payload))?;
         self.dirty = true;
@@ -315,6 +334,7 @@ impl<W: Write> MultiplexWriter<W> {
     /// Used for protocol exchanges like goodbye handshakes where upstream rsync
     /// writes directly without `MSG_DATA` wrapping.
     pub(crate) fn write_raw(&mut self, data: &[u8]) -> io::Result<()> {
+        self.send_outbox()?;
         self.flush_buffer()?;
         self.inner.write_all(data)?;
         self.inner.flush()?;
@@ -329,6 +349,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
         if buf.is_empty() {
             return Ok(0);
         }
+        self.send_outbox()?;
 
         // upstream: io.c:write_buf() - tee pre-mux data to batch_fd, or divert
         // to it entirely when this stream is upstream's `f_xfer`.
@@ -371,6 +392,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
         if total_len == 0 {
             return Ok(0);
         }
+        self.send_outbox()?;
 
         // upstream: io.c:write_buf() - tee pre-mux data to batch_fd, or divert
         // to it entirely when this stream is upstream's `f_xfer`.
@@ -403,6 +425,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        self.send_outbox()?;
         self.flush_buffer()?;
         if self.dirty {
             self.inner.flush()?;

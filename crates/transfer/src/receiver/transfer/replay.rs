@@ -728,7 +728,9 @@ impl ReceiverContext {
             stats.num_specials = num_specials;
             stats.io_error |= self.flist_reader_io_error() | self.flist_io_error;
         }
-        stats.got_xfer_error = reader.xfer_error_count() > 0 || self.got_xfer_error.get();
+        stats.got_xfer_error = reader.xfer_error_count() > 0
+            || logging::xfer_error_reported()
+            || self.got_xfer_error.get();
         stats.files_transferred = files_transferred;
         stats.transferred_file_size = transferred_file_size;
         stats.bytes_received = bytes_received;

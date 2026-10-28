@@ -117,6 +117,9 @@ pub struct LogContext {
     buffer: Mutex<Vec<Stamped<DiagnosticEvent>>>,
     /// Open [`discard_events_from`] scopes while a sink is installed.
     discarding: AtomicU64,
+    /// Set once an `FERROR_XFER` line is produced.
+    /// upstream: log.c:338 rwrite() `got_xfer_error = 1`.
+    xfer_error: AtomicBool,
 }
 
 impl std::fmt::Debug for LogContext {
@@ -136,6 +139,7 @@ impl Default for LogContext {
             sink: RwLock::new(None),
             buffer: Mutex::new(Vec::new()),
             discarding: AtomicU64::new(0),
+            xfer_error: AtomicBool::new(false),
         }
     }
 }
@@ -176,6 +180,9 @@ impl LogContext {
     }
 
     fn dispatch(&self, event: Stamped<DiagnosticEvent>) {
+        if event.value().code() == LogCode::ErrorXfer {
+            self.xfer_error.store(true, Ordering::Release);
+        }
         let sink = self.sink.read().unwrap_or_else(PoisonError::into_inner);
         match sink.as_ref() {
             Some(sink) => {
@@ -423,6 +430,16 @@ pub fn emit_debug_coded(flag: DebugFlag, level: u8, code: LogCode, message: Stri
         code,
         message,
     });
+}
+
+/// Whether this session has produced an `FERROR_XFER` line, which makes a
+/// finished run exit with code 23.
+///
+/// upstream: log.c:338 rwrite() sets `got_xfer_error` for every such line,
+/// whichever stream it then goes to.
+#[must_use]
+pub fn xfer_error_reported() -> bool {
+    current().xfer_error.load(Ordering::Acquire)
 }
 
 /// Drain every buffered event with its production order, clearing the buffer.
