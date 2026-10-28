@@ -29,6 +29,10 @@ impl<'a> CopyContext<'a> {
             LocalCopyAction::MetadataReused => {
                 record.change_set().has_any_change() || tally.itemize_unchanged()
             }
+            LocalCopyAction::EntryDeleted => {
+                tally.deleted(record.relative_path(), record.is_directory());
+                false
+            }
             _ => false,
         };
         if itemized {
@@ -43,7 +47,15 @@ impl<'a> CopyContext<'a> {
                 .summary
                 .destination_root_created()
                 .then_some(self.destination_root.as_path());
-            let (sent, received) = tally.finish(created_root);
+            let summary = &self.summary;
+            let deletes = [
+                summary.deleted_regular_files(),
+                summary.deleted_dirs(),
+                summary.deleted_symlinks(),
+                summary.deleted_devices(),
+                summary.deleted_specials(),
+            ];
+            let (sent, received) = tally.finish(created_root, deletes);
             self.summary.record_wire_totals(sent, received);
         }
     }

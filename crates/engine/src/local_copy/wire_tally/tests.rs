@@ -72,7 +72,7 @@ fn whole_file_copy_matches_the_upstream_frames() {
     t.literal(5000);
     t.end_transfer();
 
-    let (sent, received) = t.finish(None);
+    let (sent, received) = t.finish(None, [0; 5]);
     let flist = flist_bytes(&entries);
     assert_eq!(sent, (flist + 4) + (5046 + 4) + (1 + 4) + (2 + 4));
     assert_eq!(received, (22 + 4) + (1 + 4) + (3 + 4));
@@ -88,7 +88,7 @@ fn up_to_date_tree_costs_the_file_list_and_the_tail() {
     for (i, entry) in entries.iter().enumerate() {
         t.add_entry(entry.clone(), i as u32);
     }
-    let (sent, received) = t.finish(None);
+    let (sent, received) = t.finish(None, [0; 5]);
     assert_eq!(sent, flist_bytes(&entries) + 4 + 5 + 6);
     assert_eq!(received, 5 + 7);
 }
@@ -114,7 +114,7 @@ fn delta_transfer_counts_block_sums_and_tokens() {
         t.block_match(block);
     }
     t.end_transfer();
-    let (sent, received) = t.finish(None);
+    let (sent, received) = t.finish(None, [0; 5]);
     // 3.5.1 for this layout: reply 1027 bytes, request 451 bytes.
     assert_eq!(sent, flist_bytes(&entries) + 4 + (1027 + 4) + 5 + 6);
     assert_eq!(received, (451 + 4) + 5 + 7);
@@ -150,7 +150,7 @@ fn dry_run_transfer_is_an_echo() {
     t.begin_transfer();
     t.literal(5000);
     t.end_transfer();
-    let (sent, received) = t.finish(None);
+    let (sent, received) = t.finish(None, [0; 5]);
     assert_eq!(sent, flist_bytes(&entries) + 4 + (3 + 4) + 5 + 6);
     assert_eq!(received, (3 + 4) + 5 + 7);
 }
@@ -167,7 +167,7 @@ fn an_abandoned_transfer_is_not_counted() {
     t.literal(5000);
     t.begin_transfer();
     t.end_transfer();
-    let (sent, _) = t.finish(None);
+    let (sent, _) = t.finish(None, [0; 5]);
     assert_eq!(sent, flist_bytes(&entries) + 4 + (1 + 2 + 16 + 4 + 16 + 4) + 5 + 6);
 }
 
@@ -182,7 +182,7 @@ fn every_sub_list_adds_an_ndx_done_each_way() {
         for (i, entry) in entries.iter().enumerate() {
             t.add_entry(entry.clone(), i as u32);
         }
-        t.finish(None)
+        t.finish(None, [0; 5])
     };
     let (_, flat_received) = totals(&flat);
     let (_, nested_received) = totals(&nested);
@@ -209,7 +209,7 @@ fn flat_list_counts_id_lists_and_merges_the_list_done() {
     for (i, entry) in entries.iter().enumerate() {
         t.add_entry(entry.clone(), i as u32);
     }
-    let (sent, received) = t.finish(None);
+    let (sent, received) = t.finish(None, [0; 5]);
     // No exchanges: the list's NDX_DONE frame [00] then the phase frame.
     assert_eq!(received, (1 + 4) + (3 + 4));
     assert!(sent > (1 + 4) + (2 + 4));
@@ -228,7 +228,7 @@ fn the_created_directory_notice_is_one_info_frame() {
         for (i, entry) in entries.iter().enumerate() {
             t.add_entry(entry.clone(), i as u32);
         }
-        t.finish(Some(Path::new("dst/")))
+        t.finish(Some(Path::new("dst/")), [0; 5])
     };
     let (_, quiet) = run(totals);
     let (_, verbose) = run(totals.with_created_directory_notice(true));

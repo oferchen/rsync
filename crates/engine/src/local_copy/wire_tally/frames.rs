@@ -75,6 +75,23 @@ impl FrameSchedule {
         }
     }
 
+    /// Adds the generator's delete statistics to its phase tail.
+    ///
+    /// upstream: generator.c:2867-2871 writes them between the phase
+    /// NDX_DONEs, inside the same frame; with a late delete pass
+    /// (generator.c:2911-2916) they and the last NDX_DONE follow in a frame of
+    /// their own, after the delete pass ran.
+    pub(super) fn generator_tail_extra(&mut self, del_stats: u64, late: bool) {
+        if del_stats == 0 {
+            return;
+        }
+        if late {
+            self.received += del_stats + MESSAGE_HEADER_LEN as u64;
+        } else {
+            self.received += del_stats;
+        }
+    }
+
     /// The `(sent, received)` totals.
     pub(super) const fn totals(&self) -> (u64, u64) {
         (self.sent, self.received)

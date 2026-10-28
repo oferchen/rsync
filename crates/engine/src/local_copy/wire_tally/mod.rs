@@ -39,11 +39,11 @@ use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
+use protocol::codec::{NDX_DEL_STATS, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
 use protocol::flist::{FileEntry, FileListWriter, SubListPlan, compare_file_entries};
 use protocol::idlist::IdList;
 use protocol::wire::{SumHead, write_token_block_match, write_token_end, write_token_literal};
-use protocol::{CompatibilityFlags, ProtocolVersion};
+use protocol::{CompatibilityFlags, ProtocolVersion, write_varint};
 
 use crate::local_copy::LocalCopyOptions;
 
@@ -203,7 +203,17 @@ pub(crate) struct WireTally {
     numeric_ids: bool,
     /// `--dry-run`: the sender only echoes the request (sender.c:639-642).
     dry_run: bool,
+    /// `MSG_DELETED` frames the generator sends the client.
+    deleted: u64,
+    /// Whether the generator sends delete statistics (`--delete*`).
+    delete_mode: bool,
+    /// Whether the statistics wait for a late delete pass.
+    late_delete: bool,
 }
+
+/// Per-type deletion counts, in `write_del_stats()` order: regular files,
+/// directories, symlinks, devices, specials.
+pub(crate) type DeleteCounts = [u64; 5];
 
 impl WireTally {
     /// Creates a tally for a run with `options`.
@@ -228,6 +238,11 @@ impl WireTally {
             preserve_crtimes: options.preserve_crtimes(),
             numeric_ids: options.numeric_ids_enabled(),
             dry_run,
+            deleted: 0,
+            delete_mode: options.delete_extraneous(),
+            // upstream: generator.c:127 EARLY_DELETE_DONE_MSG() is false for
+            // `--delete-after` and `--delete-delay` (delete_during == 2).
+            late_delete: options.delete_after_enabled() || options.delete_delay_enabled(),
         }
     }
 
@@ -250,6 +265,15 @@ impl WireTally {
         if let Some(&index) = self.by_path.get(relative) {
             self.exchanges.push((index, Exchange::Item));
         }
+    }
+
+    /// Records a deletion the generator reports to the client.
+    ///
+    /// upstream: log.c:913-916 `log_delete()` - a server half sends every
+    /// deleted name as `MSG_DELETED`, a directory with its trailing NUL.
+    pub(crate) fn deleted(&mut self, relative: &Path, is_dir: bool) {
+        let name = relative.as_os_str().as_encoded_bytes().len() as u64;
+        self.deleted += protocol::MESSAGE_HEADER_LEN as u64 + name + u64::from(is_dir);
     }
 
     /// Starts counting a transfer of the entry added last.
@@ -309,7 +333,11 @@ impl WireTally {
     /// Computes the client's `(sent, received)` totals.
     ///
     /// `created_root` is the destination root when the run created it.
-    pub(crate) fn finish(mut self, created_root: Option<&Path>) -> (u64, u64) {
+    pub(crate) fn finish(
+        mut self,
+        created_root: Option<&Path>,
+        delete_counts: DeleteCounts,
+    ) -> (u64, u64) {
         let mut order: Vec<u32> = (0..self.entries.len() as u32).collect();
         order.sort_by(|&a, &b| {
             compare_file_entries(&self.entries[a as usize], &self.entries[b as usize])
@@ -343,6 +371,11 @@ impl WireTally {
         let [(received_1, sent_1), (received_2, sent_2)] = rounds;
         let mut done = ByteCounter::default();
         sender.write_ndx_done(&mut done).expect("counting never fails");
+        let del_stats = if self.delete_mode {
+            self.del_stats(&mut generator, delete_counts)
+        } else {
+            0
+        };
         schedule.exchange_rounds(
             [sent_1.0, sent_2.0],
             [received_1.0, received_2.0],
@@ -350,11 +383,27 @@ impl WireTally {
             done.0,
             self.totals.inc_recurse(),
         );
+        schedule.generator_tail_extra(del_stats, self.late_delete);
         let (sent, mut received) = schedule.totals();
+        received += self.deleted;
         if let Some(root) = created_root.filter(|_| self.totals.reports_created_directory) {
             received += created_directory_notice_len(root);
         }
         (sent, received)
+    }
+
+    /// upstream: main.c:229-242 `write_del_stats()` - `NDX_DEL_STATS` and one
+    /// varint per deleted-entry type.
+    fn del_stats(&self, codec: &mut NdxCodecEnum, counts: DeleteCounts) -> u64 {
+        let mut out = ByteCounter::default();
+        codec
+            .write_ndx(&mut out, NDX_DEL_STATS)
+            .expect("counting never fails");
+        for count in counts {
+            write_varint(&mut out, i32::try_from(count).unwrap_or(i32::MAX))
+                .expect("counting never fails");
+        }
+        out.0
     }
 
     /// Counts one exchange in one direction: the generator's request (to the
