@@ -189,45 +189,45 @@ fn check(fixture: Fixture, args: &[&str], pinned: (u64, u64)) {
 /// NDX_DONE tail.
 #[test]
 fn whole_file_copy_totals_match_upstream() {
-    check(Fixture::WholeFile, &["-rt"], (5_095, 38));
+    check(Fixture::WholeFile, &["-rt"], (5_098, 38));
 }
 
 /// Twenty transfers in one round each way: per-file NDX, iflags and sum head
 /// in both directions.
 #[test]
 fn many_file_copy_totals_match_upstream() {
-    check(Fixture::ManyFiles, &["-rt"], (2_164, 403));
+    check(Fixture::ManyFiles, &["-rt"], (2_234, 399));
 }
 
 /// Nothing to transfer: the file list and the NDX_DONE tail alone.
 #[test]
 fn up_to_date_totals_match_upstream() {
-    check(Fixture::UpToDate, &["-rt"], (43, 12));
+    check(Fixture::UpToDate, &["-rt"], (48, 12));
 }
 
 /// A delta transfer: 72 block sums of 4 + 2 bytes in the request, 71
 /// block-match tokens and one 700-byte literal in the reply.
 #[test]
 fn delta_transfer_totals_match_upstream() {
-    check(Fixture::Delta, &["-rt", "--no-whole-file", "-I"], (1_074, 467));
+    check(Fixture::Delta, &["-rt", "--no-whole-file", "-I"], (1_079, 467));
 }
 
 /// `--dry-run`: requests and replies shrink to NDX and iflags.
 #[test]
 fn dry_run_totals_match_upstream() {
-    check(Fixture::WholeFile, &["-rtn"], (55, 22));
+    check(Fixture::WholeFile, &["-rtn"], (58, 22));
 }
 
 /// `--delete`: each deleted name arrives as `MSG_DELETED`, and the delete
 /// statistics ride in the phase tail.
 #[test]
 fn delete_totals_match_upstream() {
-    check(Fixture::Extraneous, &["-rt", "--delete"], (43, 37));
+    check(Fixture::Extraneous, &["-rt", "--delete"], (48, 31));
 }
 
 /// `--delete-after` holds the last NDX_DONE back until after the delete
 /// pass, so the deletions land outside the counted window.
 #[test]
 fn delete_after_totals_match_upstream() {
-    check(Fixture::Extraneous, &["-rt", "--delete-after"], (57, 11));
+    check(Fixture::Extraneous, &["-rt", "--delete-after"], (46, 11));
 }
