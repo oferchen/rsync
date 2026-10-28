@@ -545,9 +545,9 @@ impl LocalCopySummary {
     /// `bytes_sent` via `record_file`, so it must NOT fold the enumerated path
     /// lengths on top - doing so inflated `sent` ~2x. Zeroing here matches
     /// upstream's `File list size: 0` and leaves `bytes_sent` as the data-only
-    /// figure. A local copy transmits nothing over a wire, so the residual gap
-    /// versus upstream's socketpair framing bytes is irreducible and not
-    /// synthesised.
+    /// figure. When the run prints its totals, the local wire model replaces
+    /// both byte totals with upstream's socketpair counts
+    /// (`record_wire_totals`).
     ///
     /// upstream: main.c output_summary (`File list size: 0` for local copies)
     pub fn clear_file_list_size(&mut self) {

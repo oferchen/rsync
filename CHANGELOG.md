@@ -513,6 +513,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Report the NTFS ACEs the rsync wire format cannot carry (#7267)
 
 **Output parity**
+- A local copy's `sent`/`received` totals (`--stats`, `-v`, the log-file trailer) now count what 3.5.1's forked halves exchange on their socketpair - the file list in `readdir()` order, items, sum heads, block sums, tokens, whole-file sums, deletions and the frame headers - instead of literal data alone, matching 3.5.1 exactly on single-directory trees; deeper trees can differ by one 4-byte frame header per frame, as 3.5.1 itself does between runs (#PRNUM)
 - `--quiet` suppresses the client listing, itemize rows, stats, the daemon MOTD and the module listing (#8117, #8151); MOTD lines print once (#8161)
 - The incremental file-list banner prints only under INC_RECURSE, and late itemized deletions print after the transfer rows on a pull (#8116, #8122)
 - An rsh peer that dies mid-transfer, or a receiver EOF during the sender goodbye, prints upstream's whine with the byte count on its own line (#8150, #8163, #8164, #8115)

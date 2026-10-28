@@ -94,8 +94,12 @@ enum Fixture {
     UpToDate,
     /// A 50000-byte file whose destination differs in ten bytes.
     Delta,
-    /// An up-to-date destination with two extraneous files.
+    /// An up-to-date destination with an extraneous file and an extraneous
+    /// empty directory.
     Extraneous,
+    /// Names sharing long prefixes, so the file list's size depends on the
+    /// order `readdir()` returns them in.
+    SharedPrefixes,
 }
 
 impl Fixture {
@@ -115,16 +119,22 @@ impl Fixture {
             Self::Delta => {
                 write_pinned(&src.join("alpha"), &content(1, 50_000));
             }
+            Self::SharedPrefixes => {
+                for i in 0..40 {
+                    write_pinned(&src.join(format!("shared_prefix_{i:02}")), &content(i, 10));
+                }
+            }
         }
         pin_dir(&src);
         match self {
-            Self::WholeFile | Self::ManyFiles => {}
+            Self::WholeFile | Self::ManyFiles | Self::SharedPrefixes => {}
             Self::UpToDate | Self::Extraneous => {
                 fs::create_dir(&dst).expect("mkdir dst");
                 write_pinned(&dst.join("alpha"), &content(1, 5000));
                 if matches!(self, Self::Extraneous) {
                     write_pinned(&dst.join("x1"), b"stale one");
-                    write_pinned(&dst.join("x2"), b"stale two");
+                    fs::create_dir(dst.join("x2")).expect("mkdir stale dir");
+                    pin_dir(&dst.join("x2"));
                 }
                 pin_dir(&dst);
             }
@@ -253,4 +263,20 @@ fn created_directory_notice_is_counted_as_received() {
         let up_notice = format!("created directory {}\n", up_dst.display());
         assert_eq!((up_sent, up_received), (5_098, 38 + 4 + up_notice.len() as u64));
     }
+}
+
+/// The file list goes out in `readdir()` order (flist.c:send_directory()),
+/// and with shared prefixes its size depends on that order, which is a
+/// property of the filesystem: this cell has no pinned value and runs only
+/// against a live oracle on the same filesystem.
+#[test]
+fn file_list_follows_readdir_order_like_upstream() {
+    let Some(upstream) = upstream_rsync() else {
+        eprintln!("no rsync {ORACLE_VERSION} oracle; readdir-order cell skipped");
+        return;
+    };
+    assert_eq!(
+        totals(&oc_rsync(), Fixture::SharedPrefixes, &["-rt"]),
+        totals(&upstream, Fixture::SharedPrefixes, &["-rt"]),
+    );
 }
