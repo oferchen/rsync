@@ -156,8 +156,15 @@ where
         && config
             .protocol_version()
             .is_none_or(|protocol| protocol.supports_inc_recurse());
+    // A pure-local copy (no remote operand): `is_local_sender()` reports false
+    // for the local `local_server` case and `is_pull()` is false. Only the
+    // in-process engine has its generator/sender diagnostics rendered post-hoc;
+    // a local copy over a `--server` child prints them live, as a push does.
+    let in_process_local = !config.is_pull()
+        && !is_sender
+        && !core::client::local_copy_uses_server_child(&config);
     let flist_banner =
-        if !info_gte(InfoFlag::Flist, 1) || config.quiet() || config.is_pull() || is_sender {
+        if !info_gte(InfoFlag::Flist, 1) || config.quiet() || !in_process_local {
             FlistBanner::None
         } else if inc_recurse {
             FlistBanner::Incremental
@@ -166,11 +173,6 @@ where
         } else {
             FlistBanner::None
         };
-    // A pure-local copy (no remote operand): `is_local_sender()` reports false
-    // for the local `local_server` case and `is_pull()` is false, so their
-    // conjunction uniquely identifies the in-process local-copy path whose
-    // generator/sender diagnostics oc renders post-hoc.
-    let is_local_transfer = !config.is_pull() && !is_sender;
     // upstream: main.c:666-670 forces whole_file=1 for a local transfer unless
     // the user passed --[no-]whole-file; the local-copy default is therefore
     // whole-file. This decides the `delta-transmission` wording.
@@ -186,12 +188,12 @@ where
         DeltaTransmissionState::Enabled
     };
     let delta_notice = DeltaTransmissionSummary {
-        notice: (is_local_transfer && debug_gte(DebugFlag::Flist, 1)).then_some(delta_state),
+        notice: (in_process_local && debug_gte(DebugFlag::Flist, 1)).then_some(delta_state),
         // upstream: match_report() (match.c:480-483) is gated on DEBUG_GTE(DELTASUM, 1)
         // alone - `--whole-file` does not suppress it, it just leaves the match
         // counters at zero. MEASURED against rsync 3.4.4: both `-rvv` and
         // `-rvv --no-whole-file` print the line.
-        emit_total: is_local_transfer && debug_gte(DebugFlag::Deltasum, 1),
+        emit_total: in_process_local && debug_gte(DebugFlag::Deltasum, 1),
     };
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
@@ -238,7 +240,7 @@ where
     // under `--progress` they interleave with the live progress lines instead of
     // trailing them. `--list-only`, and an `--out-format` that upstream logs
     // after the transfer, stay with the post-hoc renderer.
-    if is_local_transfer && !list_only {
+    if in_process_local && !list_only {
         let listing = match out_format_template {
             None => Some(LiveListing::Names {
                 verbosity,

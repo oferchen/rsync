@@ -13,7 +13,8 @@ use super::super::config::ClientConfig;
 /// only when one of those traces is requested; every other local copy keeps
 /// the engine. Listings and batch runs stay on the engine, which owns their
 /// output.
-pub(super) fn local_copy_uses_server_child(config: &ClientConfig) -> bool {
+#[must_use]
+pub fn local_copy_uses_server_child(config: &ClientConfig) -> bool {
     role_trace_requested() && !config.list_only() && config.batch_config().is_none()
 }
 

@@ -56,6 +56,7 @@ mod batch;
 mod filters;
 mod local_child;
 
+pub use local_child::local_copy_uses_server_child;
 pub(crate) use local_child::role_trace_requested;
 
 use std::ffi::OsStr;
