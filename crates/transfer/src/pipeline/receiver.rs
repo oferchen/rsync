@@ -82,6 +82,16 @@ struct PendingChecksum {
     is_inplace: bool,
 }
 
+/// One per-file outcome the receiver reports to its peer.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PeerEvent {
+    /// A diagnostic line, carrying the upstream `rwrite()` code so a fatal
+    /// transfer error stays `MSG_ERROR_XFER` and the peer exits 23.
+    Message(MessageCode, String),
+    /// A committed file at its final path, by flat index (`recv_ok == 1`).
+    Success(usize),
+}
+
 /// Mediator that coordinates the network ingest thread with the disk
 /// commit thread via bounded channels, including deferred checksum
 /// verification.
@@ -114,16 +124,12 @@ pub struct PipelinedReceiver {
     /// Distinct 4 KiB logical blocks written across every committed file.
     /// upstream: fileio.c:218-243 `stats.touched_blocks_4k`.
     touched_blocks_4k: u64,
-    /// Accumulated warning/error messages from checksum verification and
-    /// permission failures. Collected here instead of using `eprintln!` to
-    /// avoid deadlocking on the global stderr mutex in daemon handler threads.
-    /// The caller retrieves these via [`Self::drain_warnings`] and routes
-    /// them through the multiplexed protocol writer. Each entry carries the
-    /// upstream `rwrite()` message code so a fatal transfer error
-    /// (`MSG_ERROR_XFER`) is not downgraded to an informational message: the
-    /// peer sets `got_xfer_error` on `MSG_ERROR_XFER` receipt, yielding exit
-    /// 23 (`RERR_PARTIAL`).
-    warnings: Vec<(MessageCode, String)>,
+    /// Per-file outcomes for the peer - diagnostics from checksum
+    /// verification and commit failures, and `MSG_SUCCESS` confirmations - in
+    /// the order the disk thread produced them. The caller drains them with
+    /// [`Self::drain_peer_events`] and emits them in that order, as upstream's
+    /// receiver reports each file before moving to the next.
+    events: Vec<PeerEvent>,
     /// Files staged to `.~tmp~` partial dir when `--delay-updates` is active.
     /// The receiver performs a bulk rename sweep at the phase 2 boundary.
     ///
@@ -132,18 +138,6 @@ pub struct PipelinedReceiver {
     /// - `receiver.c:837`: `delayed_bits = bitbag_create()`
     /// - `receiver.c:875`: `handle_delayed_updates()` sweep
     delayed_updates: Vec<DelayedUpdate>,
-    /// Flat file indices whose commit was confirmed (finish_transfer succeeded,
-    /// checksum verified) and that already sit at their final path; a staged
-    /// `--delay-updates` file waits in `delayed_updates` until its rename
-    /// lands. The receiver drains these and, when
-    /// `--remove-source-files` is active, sends `MSG_SUCCESS(ndx)` to the sender
-    /// so it can unlink the confirmed source. Mirrors upstream's
-    /// `send_msg_success()` at `recv_ok == 1`.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `receiver.c:1345-1347`: `send_msg_success(fname, ndx)` on `recv_ok == 1`.
-    success_indices: Vec<usize>,
     /// Partial-retention mode for the session, captured from the disk-commit
     /// config before it is moved into the disk thread. Selects the upstream
     /// `keptstr` wording on a verification failure.
@@ -279,9 +273,8 @@ impl PipelinedReceiver {
             redo_enabled: true,
             permission_error_count: 0,
             touched_blocks_4k: 0,
-            warnings: Vec::new(),
+            events: Vec::new(),
             delayed_updates: Vec::new(),
-            success_indices: Vec::new(),
             partial_mode,
             daemon_module,
             daemon_module_root,
@@ -491,8 +484,8 @@ impl PipelinedReceiver {
         };
 
         if let Some(code) = fatal_code {
-            self.warnings
-                .push((code, self.commit_failure(&path, &error)));
+            let message = self.commit_failure(&path, &error);
+            self.events.push(PeerEvent::Message(code, message));
             return Some(error);
         }
 
@@ -506,7 +499,8 @@ impl PipelinedReceiver {
         // got_xfer_error, so the run exits 23 (RERR_PARTIAL) instead of 0
         // when mkstemp() was denied.
         let message = self.commit_failure(&path, &error);
-        self.warnings.push((MessageCode::ErrorXfer, message));
+        self.events
+            .push(PeerEvent::Message(MessageCode::ErrorXfer, message));
         meta_errors.push((path, error.to_string()));
         self.permission_error_count += 1;
         None
@@ -531,13 +525,15 @@ impl PipelinedReceiver {
         loop {
             match self.result_rx.try_recv() {
                 Ok(Ok(result)) => {
-                    Self::emit_backup_notice(&result);
+                    self.queue_backup_notice(&result);
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
                     self.record_touched_blocks(result.touched_blocks_4k);
                     if let Some(err) = result.metadata_error {
-                        self.warnings
-                            .push((MessageCode::ErrorXfer, Self::metadata_failure(&err.1)));
+                        self.events.push(PeerEvent::Message(
+                            MessageCode::ErrorXfer,
+                            Self::metadata_failure(&err.1),
+                        ));
                         meta_errors.push(err);
                     }
                     self.pending_commits = self.pending_commits.saturating_sub(1);
@@ -583,13 +579,15 @@ impl PipelinedReceiver {
         while self.pending_commits > 0 {
             match self.result_rx.recv() {
                 Ok(Ok(result)) => {
-                    Self::emit_backup_notice(&result);
+                    self.queue_backup_notice(&result);
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
                     self.record_touched_blocks(result.touched_blocks_4k);
                     if let Some(err) = result.metadata_error {
-                        self.warnings
-                            .push((MessageCode::ErrorXfer, Self::metadata_failure(&err.1)));
+                        self.events.push(PeerEvent::Message(
+                            MessageCode::ErrorXfer,
+                            Self::metadata_failure(&err.1),
+                        ));
                         meta_errors.push(err);
                     }
                     self.pending_commits -= 1;
@@ -657,13 +655,17 @@ impl PipelinedReceiver {
             && (computed.len != pending.len
                 || computed.bytes[..computed.len] != pending.expected[..pending.len])
         {
-            self.warnings.extend(verification_failure_report(
-                &pending.flist_name,
-                &self.partial_mode,
-                pending.is_inplace,
-                !self.redo_enabled,
-                self.verify_report,
-            ));
+            self.events.extend(
+                verification_failure_report(
+                    &pending.flist_name,
+                    &self.partial_mode,
+                    pending.is_inplace,
+                    !self.redo_enabled,
+                    self.verify_report,
+                )
+                .into_iter()
+                .map(|(code, text)| PeerEvent::Message(code, text)),
+            );
             if self.redo_enabled {
                 // upstream: receiver.c:1375 - `send_msg_int(MSG_REDO,
                 // ndx)` sits OUTSIDE the emit `if`, so a suppressed
@@ -692,31 +694,28 @@ impl PipelinedReceiver {
         // `recv_ok == 1`. Record it as a confirmed success so the receiver can
         // emit MSG_SUCCESS(ndx) to the sender, which drives the deferred
         // --remove-source-files unlink of the confirmed source.
-        self.success_indices.push(pending.file_index);
+        self.events.push(PeerEvent::Success(pending.file_index));
         Ok(())
     }
 
-    /// Emit the upstream `INFO_GTE(BACKUP, 1)` line for a successful
-    /// `--backup` rename produced by the disk thread.
-    ///
-    /// The disk thread cannot emit this line itself because its thread-local
-    /// [`logging::VerbosityConfig`] is never seeded with the user's
-    /// `--info=backup` selection. Instead, `crate::disk_commit::make_backup`
-    /// records destination-relative paths on the [`CommitResult`] and the
-    /// main thread surfaces them here, so the `info_log!` guard runs against
-    /// the correct verbosity configuration.
+    /// Queues the upstream `INFO_GTE(BACKUP, 1)` line for a successful
+    /// `--backup` rename produced by the disk thread, in its file's place
+    /// among the other per-file outcomes.
     ///
     /// upstream: backup.c:433 - `rprintf(FINFO, "backed up %s to %s\n",
     /// fname, buf)` on the `success:` label of `make_backup()`.
-    fn emit_backup_notice(result: &CommitResult) {
-        if let Some(ref notice) = result.backup_notice {
-            logging::info_log!(
-                Backup,
-                1,
-                "backed up {} to {}",
-                notice.original.display(),
-                notice.backup.display()
-            );
+    fn queue_backup_notice(&mut self, result: &CommitResult) {
+        if let Some(ref notice) = result.backup_notice
+            && logging::info_gte(logging::InfoFlag::Backup, 1)
+        {
+            self.events.push(PeerEvent::Message(
+                MessageCode::Info,
+                format!(
+                    "backed up {} to {}",
+                    notice.original.display(),
+                    notice.backup.display()
+                ),
+            ));
         }
     }
 
@@ -749,21 +748,21 @@ impl PipelinedReceiver {
         std::mem::take(&mut self.redo_indices)
     }
 
-    /// Drains the flat file indices whose commit has been confirmed since the
-    /// last call.
+    /// Drains the per-file outcomes queued since the last call, in production
+    /// order.
     ///
-    /// Call this after `drain_ready_results` / `drain_all_results`. When
-    /// `--remove-source-files` is active the caller maps each index to its wire
-    /// NDX and sends `MSG_SUCCESS(ndx)` to the sender so it unlinks the
-    /// confirmed source; otherwise the drained indices are simply discarded, so
-    /// this stays bounded even when the flag is off.
+    /// Call this after `drain_ready_results` / `drain_all_results`. A
+    /// `Success` becomes `MSG_SUCCESS(ndx)` when `--remove-source-files` is
+    /// active and is discarded otherwise, so the queue stays bounded either
+    /// way. A `Message` goes to the sink `rwrite()` selects.
     ///
     /// # Upstream Reference
     ///
     /// - `receiver.c:1345-1347`: `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    /// - `receiver.c:1349-1376`: the failed-verification report for that file.
     /// - `io.c:1831-1846`: sender-side `MSG_SUCCESS` handler -> `successful_send`.
-    pub fn drain_new_success_indices(&mut self) -> Vec<usize> {
-        std::mem::take(&mut self.success_indices)
+    pub fn drain_peer_events(&mut self) -> Vec<PeerEvent> {
+        std::mem::take(&mut self.events)
     }
 
     /// Returns the list of file indices that need redo (failed checksum in phase 1).
@@ -778,15 +777,6 @@ impl PipelinedReceiver {
     /// Returns the number of files queued for redo.
     pub fn redo_count(&self) -> usize {
         self.redo_indices.len()
-    }
-
-    /// Drains accumulated warning/error messages from checksum verification and
-    /// permission failures. Each is paired with the upstream `rwrite()` message
-    /// code so the caller routes it through the matching multiplex frame:
-    /// `MSG_ERROR_XFER` for fatal transfer errors (setting the peer's
-    /// `got_xfer_error`), `MSG_INFO`/`MSG_WARNING` otherwise.
-    pub fn drain_warnings(&mut self) -> Vec<(MessageCode, String)> {
-        std::mem::take(&mut self.warnings)
     }
 
     /// Sends `Shutdown` and joins the disk thread.
@@ -840,6 +830,35 @@ pub(crate) fn keep_backup_failed_line(name: &str, error: &io::Error, reason: &st
             backup.display()
         ),
         None => format!("rsync: [receiver] keep_backup failed: {name}: {reason}"),
+    }
+}
+
+#[cfg(test)]
+impl PipelinedReceiver {
+    /// Drains only the queued diagnostics, leaving confirmations queued.
+    pub fn drain_warnings(&mut self) -> Vec<(MessageCode, String)> {
+        let mut warnings = Vec::new();
+        self.events.retain(|event| match event {
+            PeerEvent::Message(code, text) => {
+                warnings.push((*code, text.clone()));
+                false
+            }
+            PeerEvent::Success(_) => true,
+        });
+        warnings
+    }
+
+    /// Drains only the queued confirmations, leaving diagnostics queued.
+    pub fn drain_new_success_indices(&mut self) -> Vec<usize> {
+        let mut confirmed = Vec::new();
+        self.events.retain(|event| match event {
+            PeerEvent::Success(index) => {
+                confirmed.push(*index);
+                false
+            }
+            PeerEvent::Message(..) => true,
+        });
+        confirmed
     }
 }
 
@@ -1105,7 +1124,7 @@ mod tests {
     /// once, so the sender is told to unlink the source exactly one time.
     ///
     /// This is the receiver half of the `--remove-source-files` crash-safety
-    /// contract: `success_indices` is populated only inside `verify_checksum`
+    /// contract: a `Success` event is queued only inside `verify_checksum`
     /// while draining a post-rename `CommitResult`, so recording an index here
     /// means the file has durably landed at the destination. A refactor that
     /// confirmed a source before the commit completed - the data-loss bug this
@@ -1171,7 +1190,7 @@ mod tests {
     ///
     /// This is the receiver-side guard against data loss on a failed commit: the
     /// mismatch branch of `verify_checksum` returns before the
-    /// `success_indices.push`, so an interrupted or corrupt transfer never
+    /// `Success` push, so an interrupted or corrupt transfer never
     /// tells the sender its source landed safely. Without this assertion a
     /// refactor could push the success before the checksum check and silently
     /// re-introduce the inline-unlink data-loss bug.
@@ -1225,6 +1244,70 @@ mod tests {
         );
 
         drop(pr);
+    }
+
+    /// A backed-up clean file, a failed verification and another clean file
+    /// must reach the peer in that order. Queuing confirmations apart from
+    /// diagnostics sent every `MSG_SUCCESS` of a drain ahead of the warning
+    /// between them, and a live backup notice jumped ahead of both.
+    /// upstream: receiver.c:1345-1376 reports each file before the next;
+    /// backup.c:433 prints the notice from that file's finish_transfer().
+    #[test]
+    fn peer_events_keep_file_order_across_success_and_warning() {
+        use crate::pipeline::messages::{BackupNotice, ComputedChecksum};
+
+        let context = logging::LogContext::new();
+        let _session = logging::enter(std::sync::Arc::clone(&context));
+        // upstream: receiver.c:1351 prints the FWARNING form only at NAME >= 1.
+        logging::apply_info_flag("backup1").unwrap();
+        logging::apply_info_flag("name1").unwrap();
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+        let mut good = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        good[0] = 0xAA;
+        let mut bad = good;
+        bad[0] = 0xBB;
+        for (index, name, computed) in [(1, "one", good), (2, "two", bad), (3, "three", good)] {
+            pr.expected_checksums.push_back(PendingChecksum {
+                expected: good,
+                len: 4,
+                file_path: PathBuf::from(format!("/dest/{name}")),
+                flist_name: PathBuf::from(name),
+                file_index: index,
+                is_inplace: false,
+            });
+            let result = CommitResult {
+                bytes_written: 4,
+                touched_blocks_4k: 0,
+                file_entry_index: index,
+                metadata_error: None,
+                computed_checksum: Some(ComputedChecksum {
+                    bytes: computed,
+                    len: 4,
+                }),
+                delayed_path: None,
+                backup_notice: (index == 1).then(|| BackupNotice {
+                    original: PathBuf::from(name),
+                    backup: PathBuf::from("one~"),
+                }),
+            };
+            pr.queue_backup_notice(&result);
+            pr.verify_checksum(&result).unwrap();
+        }
+
+        let events = pr.drain_peer_events();
+        assert!(
+            matches!(
+                events.as_slice(),
+                [
+                    PeerEvent::Message(MessageCode::Info, notice),
+                    PeerEvent::Success(1),
+                    PeerEvent::Message(_, warning),
+                    PeerEvent::Success(3),
+                ] if notice == "backed up one to one~" && warning.contains("two")
+            ),
+            "{events:?}"
+        );
+        assert!(pr.drain_peer_events().is_empty(), "a drain is not replayed");
     }
 
     #[cfg(unix)]
