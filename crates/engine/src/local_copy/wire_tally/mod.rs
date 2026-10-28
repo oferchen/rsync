@@ -221,7 +221,6 @@ impl PendingTransfer {
 /// computes the client's `sent` and `received` totals from it.
 ///
 /// Built only when the run prints its totals, so a plain copy pays nothing.
-#[derive(Debug)]
 pub(crate) struct WireTally {
     totals: WireTotals,
     /// File-list entries in traversal order.
