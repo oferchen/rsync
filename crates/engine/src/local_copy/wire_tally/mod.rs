@@ -565,7 +565,8 @@ impl WireTally {
         Layout {
             ndx,
             list_count: 1,
-            second_round_ndx: i32::MAX,
+            // `.` is sorted first, at NDX 0.
+            second_round_ndx: 1,
         }
     }
 
@@ -615,15 +616,29 @@ impl WireTally {
             .compat_flags()
             .contains(CompatibilityFlags::ID0_NAMES);
         let protocol = self.totals.protocol().as_u8();
-        let lists: [(bool, fn(&FileEntry) -> (Option<u32>, Option<&str>)); 2] = [
-            (self.preserve_uid, |e| (e.uid(), e.user_name())),
-            (self.preserve_gid, |e| (e.gid(), e.group_name())),
+        type IdOf = fn(&FileEntry) -> (Option<u32>, Option<&str>);
+        type Lookup = fn(u32) -> io::Result<Option<Vec<u8>>>;
+        let lists: [(bool, IdOf, Lookup); 2] = [
+            (
+                self.preserve_uid,
+                |e| (e.uid(), e.user_name()),
+                metadata::id_lookup::lookup_user_name_cached,
+            ),
+            (
+                self.preserve_gid,
+                |e| (e.gid(), e.group_name()),
+                metadata::id_lookup::lookup_group_name_cached,
+            ),
         ];
-        for (preserve, id_of) in lists {
+        for (preserve, id_of, lookup) in lists {
             if !preserve {
                 continue;
             }
             let mut list = IdList::new();
+            if id0_names {
+                // upstream: uidlist.c:398-405 - CF_ID0_NAMES sends id 0's name.
+                list.add_id(0, lookup(0).ok().flatten());
+            }
             for entry in sorted {
                 if let (Some(id), name) = id_of(entry) {
                     list.add_id(id, name.map(|n| n.as_bytes().to_vec()));

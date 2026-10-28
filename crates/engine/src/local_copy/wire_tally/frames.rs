@@ -52,7 +52,8 @@ impl FrameSchedule {
     /// one `read_final_goodbye()` consumes. With incremental recursion the
     /// generator declares the first list done on its own, the rest once the
     /// receiver finishes them; without it the list's NDX_DONE rides in the
-    /// same frame as the last request (generator.c:2832). `done_width` is the
+    /// same frame as the last request (generator.c:2832), and round one is
+    /// the `.` item alone. `done_width` is the
     /// encoded size of one NDX_DONE.
     pub(super) fn exchange_rounds(
         &mut self,
@@ -70,8 +71,13 @@ impl FrameSchedule {
             self.sent += done(1) + done(middle) + done(2);
             self.received += done(1) + done(middle) + done(3);
         } else {
-            self.sent += framed(sender_rounds[0] + done_width) + done(2);
-            self.received += framed(generator_rounds[0] + done_width) + done(3);
+            // The generator's `.` item goes out alone (it itemizes the root
+            // before generating the rest); the sender usually has both rounds
+            // by the time it answers.
+            self.sent += framed(sender_rounds[0] + sender_rounds[1] + done_width) + done(2);
+            self.received += framed(generator_rounds[0])
+                + framed(generator_rounds[1] + done_width)
+                + done(3);
         }
     }
 
