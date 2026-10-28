@@ -241,7 +241,7 @@ impl NegotiationBuffer {
                 break;
             }
 
-            let slice = buf.as_mut();
+            let slice: &mut [u8] = buf.as_mut();
             if slice.is_empty() {
                 continue;
             }
@@ -282,7 +282,7 @@ impl NegotiationBuffer {
                 break;
             }
 
-            let slice = buf.as_mut();
+            let slice: &mut [u8] = buf.as_mut();
             if slice.is_empty() {
                 continue;
             }
@@ -332,7 +332,7 @@ impl NegotiationBuffer {
                 break;
             }
 
-            let target = buf.as_mut();
+            let target: &mut [u8] = buf.as_mut();
             if target.is_empty() {
                 continue;
             }

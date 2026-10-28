@@ -565,8 +565,16 @@ fn test_client_incremental_transfer() {
     let summary1 = run_client(config1).expect("first transfer succeeds");
     assert!(summary1.files_copied() >= 2);
 
-    // Modify one file on daemon side
+    // Modify one file on daemon side. The new content has the same length, so
+    // backdate the copy: without -t it carries the first transfer's mtime,
+    // which a same-second rewrite would match, and the quick check would then
+    // skip the file.
     create_test_file(&daemon.module_path().join("modified.txt"), b"new content");
+    set_file_mtime(
+        dest_root.path().join("modified.txt"),
+        FileTime::from_unix_time(1_000_000_000, 0),
+    )
+    .expect("backdate the first copy");
 
     // Second transfer (incremental) - rebuild config
     let config2 = ClientConfig::builder()

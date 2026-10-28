@@ -159,7 +159,7 @@ tracing = ["dep:tracing"]
 [dev-dependencies]
 tempfile = { workspace = true }
 filetime = { workspace = true }
-test-support = { path = "../test-support" }
+test-support = { path = "../test-support", features = ["daemon"] }
 rustix = { workspace = true, features = ["fs", "process", "stdio"] }
 platform = { path = "../platform" }
 criterion = { workspace = true }

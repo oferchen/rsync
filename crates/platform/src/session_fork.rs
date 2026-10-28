@@ -135,6 +135,16 @@ pub fn die_with_parent(parent_pid: u32) -> io::Result<()> {
     Ok(())
 }
 
+/// Makes `fd` the calling process's standard error.
+///
+/// A supervisor that must read what a forked child writes to stderr - a log
+/// configured as `/dev/stderr` included, which the kernel resolves through
+/// fd 2 - hands the child a pipe's write end, and the child calls this before
+/// it writes anything.
+pub fn redirect_stderr(fd: impl std::os::fd::AsFd) -> io::Result<()> {
+    nix::unistd::dup2_stderr(fd).map_err(io::Error::from)
+}
+
 /// Makes `pid` - or the caller, for `0` - the leader of a new process group
 /// whose id is its pid.
 ///

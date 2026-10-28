@@ -550,7 +550,7 @@ fn negotiation_buffered_slices_into_iter_over_reference_yields_segments() {
 
     let collected: Vec<u8> = (&slices)
         .into_iter()
-        .flat_map(|slice| slice.as_ref().iter().copied())
+        .flat_map(|slice| slice.iter().copied())
         .collect();
 
     let mut expected = Vec::new();
@@ -567,7 +567,7 @@ fn negotiation_buffered_slices_into_iter_consumes_segments() {
 
     let lengths: Vec<usize> = slices
         .into_iter()
-        .map(|slice| slice.as_ref().len())
+        .map(|slice| slice.len())
         .collect();
 
     assert_eq!(lengths, vec![prefix.len(), remainder.len()]);
