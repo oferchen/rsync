@@ -990,6 +990,19 @@ fn apply_value_flags<Err: Write>(
     }
 
     if let Some(algo_str) = &long_flags.checksum_choice {
+        // upstream: checksum.c:548-551 - the server sender hits the same
+        // `file_checksum()` default case as a client sender.
+        if let Ok(choice) = core::client::StrongChecksumChoice::parse(algo_str)
+            && let Err(message) = choice.validate_file_checksum(config.flags.checksum)
+        {
+            write_server_error_with_code(
+                stderr,
+                brand,
+                core::exit_code::ExitCode::Unsupported,
+                message.text(),
+            );
+            return Err(core::exit_code::ExitCode::Unsupported.as_i32());
+        }
         match protocol::ChecksumAlgorithm::parse(algo_str) {
             Ok(algo) => config.checksum_choice = Some(algo),
             Err(e) => {

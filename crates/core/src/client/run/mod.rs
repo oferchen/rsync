@@ -241,6 +241,16 @@ fn run_client_internal(
 
     apply_max_alloc(&config);
 
+    // upstream: checksum.c:548-551 - only the sender reaches the
+    // `file_checksum()` default case, so a pull leaves the refusal to the
+    // remote sender and a local copy or push refuses here.
+    if !config.is_pull() {
+        config
+            .checksum_choice()
+            .validate_file_checksum(config.checksum())
+            .map_err(|message| ClientError::new(4, message))?;
+    }
+
     // upstream: main.c:1059-1074 do_recv() - the receiver validates --temp-dir
     // exists and is a directory before transferring. tmpdir is a receiver-only
     // option (options.c:2935 forwards it only when am_sender), so the check
