@@ -1211,7 +1211,10 @@ where
                 .unwrap_or(protocol::ProtocolVersion::NEWEST),
             protocol::CompatibilityFlags::from_bits(local_batch_compat_flags as u32),
         )
-        .with_itemize_unchanged(matches!(name_level, NameOutputLevel::UpdatedAndUnchanged));
+        .with_itemize_unchanged(matches!(
+            name_level,
+            crate::frontend::progress::NameOutputLevel::UpdatedAndUnchanged
+        ));
         builder = builder.wire_totals(Some(totals));
     }
 
