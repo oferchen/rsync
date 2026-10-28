@@ -4,7 +4,7 @@
 //! `poll(2)`s the input and output descriptors together, reading whatever has
 //! arrived while it waits to write (upstream: io.c:647-1042). That needs a
 //! transport that can be asked "would this read or write block?" and "wake me
-//! when either side is ready". [`Transport`] is that contract; every
+//! when either side is ready". [`Transport`](crate::transport::Transport) is that contract; every
 //! connection kind implements it once, so the loop above it has one shape.
 //!
 //! The descriptors are switched to non-blocking mode when the transport is
@@ -86,6 +86,10 @@ pub trait Transport {
 /// wait that wants output reports only writable, and one that wants only
 /// input reports readable. The loop above therefore never reads while it is
 /// waiting to write - the behaviour of a blocking connection, kept exactly.
+///
+/// For the same reason it never answers "would block": a blocking socket that
+/// reports `WouldBlock` has hit its `SO_RCVTIMEO`/`SO_SNDTIMEO` (`--timeout`),
+/// so that error reaches the caller unchanged, as it did before the core.
 pub struct BlockingStreams<R, W> {
     reader: R,
     writer: W,
@@ -100,11 +104,11 @@ impl<R: io::Read, W: io::Write> BlockingStreams<R, W> {
 
 impl<R: io::Read, W: io::Write> Transport for BlockingStreams<R, W> {
     fn try_read(&mut self, buf: &mut [u8]) -> io::Result<Option<usize>> {
-        non_blocking(|| self.reader.read(buf))
+        retry_interrupted(|| self.reader.read(buf)).map(Some)
     }
 
     fn try_write(&mut self, buf: &[u8]) -> io::Result<Option<usize>> {
-        non_blocking(|| self.writer.write(buf))
+        retry_interrupted(|| self.writer.write(buf)).map(Some)
     }
 
     fn wait(
@@ -124,15 +128,23 @@ impl<R: io::Read, W: io::Write> Transport for BlockingStreams<R, W> {
     }
 }
 
-/// Maps a would-block result to `Ok(None)` and retries an interrupted call.
-fn non_blocking<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<Option<T>> {
+/// Retries a call that a signal interrupted.
+fn retry_interrupted<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     loop {
         match op() {
-            Ok(value) => return Ok(Some(value)),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
+            other => return other,
         }
+    }
+}
+
+/// Maps a would-block result to `Ok(None)` and retries an interrupted call.
+#[cfg(any(unix, windows))]
+fn non_blocking<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<Option<T>> {
+    match retry_interrupted(&mut op) {
+        Ok(value) => Ok(Some(value)),
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
@@ -390,6 +402,26 @@ mod blocking_tests {
         let mut buf = [0u8; 2];
         assert_eq!(t.try_read(&mut buf).unwrap(), Some(2));
         assert_eq!(t.try_write(b"out").unwrap(), Some(3));
+    }
+
+    /// A reader standing in for a blocking socket whose `SO_RCVTIMEO` expired.
+    struct TimedOutSocket;
+
+    impl std::io::Read for TimedOutSocket {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::WouldBlock.into())
+        }
+    }
+
+    /// WHY: on a blocking socket `WouldBlock` is the `--timeout` firing. Read
+    /// as "not ready", the core would wait (instantly ready) and retry forever,
+    /// so a client facing a silent daemon never times out - upstream's
+    /// msg-io-timeout-zero test caught exactly that hang.
+    #[test]
+    fn a_blocking_socket_timeout_is_an_error_not_a_retry() {
+        let mut t = BlockingStreams::new(TimedOutSocket, Vec::new());
+        let err = t.try_read(&mut [0u8; 1]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
     }
 }
 
