@@ -257,7 +257,9 @@ impl ReceiverContext {
             .enumerate()
             .map(|(i, entry)| (start + i, entry))
             .filter_map(|(idx, entry)| {
-                if !entry.is_dir() {
+                // upstream: generator.c:1811 returns before itemize() for an
+                // implied parent, so it is never named.
+                if !entry.is_dir() || self.skips_implied_dir(entry) {
                     return None;
                 }
                 let rel = entry.path();
