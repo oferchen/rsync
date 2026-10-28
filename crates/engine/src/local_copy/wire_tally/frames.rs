@@ -75,20 +75,26 @@ impl FrameSchedule {
         }
     }
 
-    /// Adds the generator's delete statistics to its phase tail.
+    /// Adds the generator's deletion reports to its phase tail.
     ///
-    /// upstream: generator.c:2867-2871 writes them between the phase
-    /// NDX_DONEs, inside the same frame; with a late delete pass
-    /// (generator.c:2911-2916) they and the last NDX_DONE follow in a frame of
-    /// their own, after the delete pass ran.
-    pub(super) fn generator_tail_extra(&mut self, del_stats: u64, late: bool) {
-        if del_stats == 0 {
-            return;
-        }
+    /// upstream: generator.c:2867-2871 writes the delete statistics between
+    /// the phase NDX_DONEs, inside the same frame. A late delete pass
+    /// (`--delete-after`/`--delete-delay`, generator.c:2899-2916) holds the
+    /// last phase NDX_DONE back until after the pass, and the client caches
+    /// its totals (main.c:1401 `handle_stats()`) once the first two have
+    /// arrived: the statistics, every `MSG_DELETED` and that NDX_DONE land
+    /// outside the counted window.
+    pub(super) fn generator_deletions(
+        &mut self,
+        del_stats: u64,
+        deleted: u64,
+        late: bool,
+        done_width: u64,
+    ) {
         if late {
-            self.received += del_stats + MESSAGE_HEADER_LEN as u64;
+            self.received -= framed(3 * done_width) - framed(2 * done_width);
         } else {
-            self.received += del_stats;
+            self.received += del_stats + deleted;
         }
     }
 

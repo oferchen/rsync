@@ -383,9 +383,8 @@ impl WireTally {
             done.0,
             self.totals.inc_recurse(),
         );
-        schedule.generator_tail_extra(del_stats, self.late_delete);
+        schedule.generator_deletions(del_stats, self.deleted, self.late_delete, done.0);
         let (sent, mut received) = schedule.totals();
-        received += self.deleted;
         if let Some(root) = created_root.filter(|_| self.totals.reports_created_directory) {
             received += created_directory_notice_len(root);
         }
