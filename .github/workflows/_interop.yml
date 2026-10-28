@@ -157,6 +157,13 @@ jobs:
         env:
           OC_RSYNC_UPSTREAM_COMPAT: "1"
         run: cargo nextest run --locked --profile ci -p test-support -E 'binary(upstream_delta_token_parity)'
+      # Delta total: line oracle: the -vv `total:` line of a delta transfer -
+      # matches, hash_hits, false_alarms, data - must equal upstream 3.5.1's
+      # for a local copy, a push and a pull (match.c match_report()).
+      - name: Run delta total line oracle (oc vs upstream match_report)
+        env:
+          OC_RSYNC_UPSTREAM_COMPAT: "1"
+        run: cargo nextest run --locked --profile ci -p cli -E 'binary(delta_total_line_oracle)'
 
       - name: Run interop tests
         run: |
