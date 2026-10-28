@@ -416,7 +416,7 @@ pub struct ParsedServerFlags {
     /// nothing on the wire when the eligibility gate holds. When set, the
     /// generator may split a large, duplicate-free basis file's delta scan
     /// across multiple cores (see
-    /// [`crate::generator::generate_delta_from_signature_chunked`]). Defaults
+    /// `generator::delta_context::SenderDeltaContext::generate_chunked`). Defaults
     /// to off; the gate additionally requires a duplicate-free basis so the
     /// emitted token stream stays identical to the sequential scan for the
     /// eligible inputs (matched/literal counts and reconstruction are identical

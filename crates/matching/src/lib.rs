@@ -27,6 +27,7 @@ mod fuzzy;
 mod generator;
 mod index;
 mod ring_buffer;
+mod scan_buffers;
 mod script;
 pub mod trace_deltasum;
 
@@ -39,4 +40,5 @@ pub use index::{
     DeltaSignatureIndex, HASH_KEY_BITS, HashtableRole, ProbeCounters, trace_hashtable_created,
     trace_hashtable_destroyed, trace_hashtable_growing,
 };
+pub use scan_buffers::ScanBuffers;
 pub use script::{DeltaScript, DeltaToken, apply_delta};

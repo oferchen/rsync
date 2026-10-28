@@ -709,6 +709,19 @@ const fn signature_checksum_nstr_name(
     }
 }
 
+/// Names the checksum the NSTR summary reports for a local copy.
+///
+/// upstream: checksum.c:219-222 prints the negotiated name, else the whole
+/// `checksum_choice` string, so a split choice such as `xxh3,md4` shows both
+/// components rather than only the file sum.
+fn local_copy_checksum_nstr_name(config: &ClientConfig, negotiated: bool) -> String {
+    if negotiated {
+        signature_checksum_nstr_name(config.transfer_signature_algorithm()).to_owned()
+    } else {
+        config.checksum_choice().to_argument()
+    }
+}
+
 /// Emits the `--debug=NSTR` checksum and compress summary lines for a local
 /// copy, mirroring what upstream's forked `local_child` server prints via
 /// `parse_checksum_choice` / `parse_compress_choice`.
@@ -736,7 +749,7 @@ fn emit_local_copy_nstr_summaries(config: &ClientConfig) {
     trace_checksum_summary(
         NstrSide::Client,
         checksum_negotiated,
-        signature_checksum_nstr_name(config.checksum_signature_algorithm()),
+        &local_copy_checksum_nstr_name(config, checksum_negotiated),
     );
 
     // upstream: compat.c:200-201 calls init_compression_level() before the
@@ -1048,6 +1061,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .itemize_active(config.itemize_changes())
             .checksum(config.checksum())
             .with_checksum_algorithm(config.checksum_signature_algorithm())
+            .with_transfer_checksum_algorithm(config.transfer_signature_algorithm())
             .size_only(config.size_only())
             .ignore_times(config.ignore_times())
             .ignore_existing(config.ignore_existing())
@@ -1151,6 +1165,74 @@ pub fn build_local_copy_options(
     filter_program: Option<FilterProgram>,
 ) -> LocalCopyOptions {
     LocalCopyOptionsBuilder::new(config, filter_program).build()
+}
+
+#[cfg(test)]
+mod transfer_checksum_wiring_tests {
+    use std::ffi::OsString;
+
+    use checksums::strong::Md5Seed;
+    use engine::signature::SignatureAlgorithm;
+
+    use super::{build_local_copy_options, local_copy_checksum_nstr_name};
+    use crate::client::config::{ClientConfig, StrongChecksumChoice};
+
+    fn config(choice: Option<&str>) -> ClientConfig {
+        let builder = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .checksum_seed(Some(11));
+        match choice {
+            Some(text) => {
+                builder.checksum_choice(StrongChecksumChoice::parse(text).expect("choice"))
+            }
+            None => builder,
+        }
+        .build()
+    }
+
+    fn delta_algorithm(choice: Option<&str>) -> SignatureAlgorithm {
+        build_local_copy_options(&config(choice), None).transfer_checksum_algorithm()
+    }
+
+    /// The local delta must hash blocks with what upstream's local child
+    /// negotiates (compat.c:538) or what `--checksum-choice` forces
+    /// (checksum.c:192-207), seeded as get_checksum2 seeds it (checksum.c:322).
+    #[test]
+    fn local_copy_delta_uses_the_negotiated_or_forced_transfer_checksum() {
+        assert_eq!(
+            delta_algorithm(None),
+            SignatureAlgorithm::Xxh3_128 { seed: 11 }
+        );
+        assert_eq!(
+            delta_algorithm(Some("md4")),
+            SignatureAlgorithm::Md4Seeded { seed: 11 }
+        );
+        assert_eq!(
+            delta_algorithm(Some("md5")),
+            SignatureAlgorithm::Md5 {
+                seed_config: Md5Seed::proper(11)
+            }
+        );
+        assert_eq!(
+            delta_algorithm(Some("xxh3,md5")),
+            SignatureAlgorithm::Xxh3 { seed: 11 }
+        );
+    }
+
+    /// upstream: checksum.c:219-228 - `Client negotiated checksum: xxh128` for
+    /// an unforced local copy, else the full choice string.
+    #[test]
+    fn nstr_summary_names_the_checksum_in_use() {
+        assert_eq!(local_copy_checksum_nstr_name(&config(None), true), "xxh128");
+        assert_eq!(
+            local_copy_checksum_nstr_name(&config(Some("md5")), false),
+            "md5"
+        );
+        assert_eq!(
+            local_copy_checksum_nstr_name(&config(Some("xxh3,md4")), false),
+            "xxh3,md4"
+        );
+    }
 }
 
 #[cfg(test)]
