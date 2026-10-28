@@ -617,7 +617,7 @@ impl WireTally {
             .contains(CompatibilityFlags::ID0_NAMES);
         let protocol = self.totals.protocol().as_u8();
         type IdOf = fn(&FileEntry) -> (Option<u32>, Option<&str>);
-        type Lookup = fn(u32) -> io::Result<Option<Vec<u8>>>;
+        type Lookup = fn(u32) -> metadata::id_lookup::LookupResult<Vec<u8>>;
         let lists: [(bool, IdOf, Lookup); 2] = [
             (
                 self.preserve_uid,
