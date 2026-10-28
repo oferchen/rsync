@@ -3317,135 +3317,6 @@ mod legacy_goodbye_tests {
             .expect_err("a closed peer during the goodbye must fail");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
-    // UTS-9.REOPEN (daemon-gzip-download): the daemon-sender's `-zz` goodbye
-    // path deadlocked because the codec finalize step happened only AFTER
-    // `handle_goodbye` returned, but `handle_goodbye` could never return
-    // since it was blocked reading the receiver's final NDX_DONE while the
-    // receiver was simultaneously blocked decompressing an unterminated
-    // deflate block. The fix introduces `handle_goodbye_with_finalizer`,
-    // which runs a caller-supplied hook BETWEEN the goodbye write+flush and
-    // the goodbye read. This test asserts that ordering invariant: the hook
-    // must observe the goodbye write already in the wire buffer, AND must
-    // run before any further reader byte is consumed.
-    //
-    // upstream: token.c:370 send_deflated_token() emits the Z_FINISH-
-    // terminated stream at end of transfer; main.c:1005-1009
-    // do_server_sender() brackets read_final_goodbye() with
-    // io_flush(FULL_FLUSH).
-    #[test]
-    fn handle_goodbye_with_finalizer_runs_between_write_and_read() {
-        use std::cell::Cell;
-
-        let handshake = test_handshake_with_protocol(31);
-        let mut config = test_config();
-        config.protocol = ProtocolVersion::try_from(31u8).unwrap();
-        config.do_stats = false;
-        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
-
-        // Receiver wire: first NDX_DONE (consumed BEFORE the finalizer)
-        // followed by the final NDX_DONE (consumed AFTER). The thread-local
-        // byte counter lets the finalizer assert which side of that boundary
-        // it ran on.
-        let receiver_input = [NDX_DONE_MODERN.as_slice(), NDX_DONE_MODERN.as_slice()].concat();
-        let mut reader = TrackingReader::new(receiver_input);
-
-        let mut output = FlushTrackingWriter::default();
-        let mut ndx_read = create_ndx_codec(31);
-        let mut ndx_write = MonotonicNdxWriter::new(31);
-
-        let finalizer_called = Cell::new(false);
-        let bytes_written_when_finalizer_ran = Cell::new(0usize);
-        let bytes_read_when_finalizer_ran = Cell::new(0usize);
-
-        ctx.handle_goodbye_with_finalizer(
-            &mut reader,
-            &mut output,
-            &mut ndx_read,
-            &mut ndx_write,
-            |w: &mut FlushTrackingWriter| {
-                finalizer_called.set(true);
-                bytes_written_when_finalizer_ran.set(w.buffer.len());
-                bytes_read_when_finalizer_ran.set(reader_bytes_consumed());
-                w.flush()
-            },
-        )
-        .expect("goodbye completes");
-
-        assert!(
-            finalizer_called.get(),
-            "the finalizer must run on the proto-31+ goodbye path"
-        );
-
-        // Ordering invariant: when the finalizer runs the sender's
-        // goodbye NDX_DONE must already be in the wire buffer (this is
-        // the "after write" half).
-        assert!(
-            bytes_written_when_finalizer_ran.get() >= NDX_DONE_MODERN.len(),
-            "finalizer ran before the goodbye NDX_DONE was written: \
-             buffer had {} bytes (need >= {})",
-            bytes_written_when_finalizer_ran.get(),
-            NDX_DONE_MODERN.len(),
-        );
-
-        // Ordering invariant: when the finalizer runs the receiver's
-        // FIRST NDX_DONE must already be consumed, but the FINAL
-        // NDX_DONE must NOT yet be consumed (this is the "before read"
-        // half - the deflate stream must be closed before the receiver
-        // is asked to advance another byte).
-        assert_eq!(
-            bytes_read_when_finalizer_ran.get(),
-            NDX_DONE_MODERN.len(),
-            "finalizer must run after the first NDX_DONE is read but \
-             before the final NDX_DONE is read"
-        );
-
-        // The wire payload must still end with the NDX_DONE marker
-        // byte even with the finalizer hooked in.
-        assert!(
-            output.buffer.ends_with(&NDX_DONE_MODERN),
-            "wire output must end with NDX_DONE even after finalizer: {:?}",
-            output.buffer
-        );
-    }
-
-    /// Module-level byte counter used by the ordering test above. We expose
-    /// it via a thread-local because the test's `Read` impl needs to record
-    /// how much was consumed before the finalizer ran, and the finalizer
-    /// closure cannot borrow `reader` mutably (it already borrows `writer`).
-    fn reader_bytes_consumed() -> usize {
-        READER_BYTES_CONSUMED.with(|c| c.get())
-    }
-
-    thread_local! {
-        static READER_BYTES_CONSUMED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    }
-
-    /// `Read` implementation that tracks how many bytes have been consumed
-    /// in a thread-local so the `handle_goodbye_with_finalizer` ordering
-    /// test can detect whether the finalizer ran before or after the final
-    /// receiver NDX_DONE was read.
-    struct TrackingReader {
-        data: Vec<u8>,
-        pos: usize,
-    }
-
-    impl TrackingReader {
-        fn new(data: Vec<u8>) -> Self {
-            READER_BYTES_CONSUMED.with(|c| c.set(0));
-            Self { data, pos: 0 }
-        }
-    }
-
-    impl std::io::Read for TrackingReader {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            let remaining = self.data.len().saturating_sub(self.pos);
-            let n = remaining.min(buf.len());
-            buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
-            self.pos += n;
-            READER_BYTES_CONSUMED.with(|c| c.set(self.pos));
-            Ok(n)
-        }
-    }
 
     /// Writer that records every `write` and `flush` so tests can assert
     /// upstream's `io_flush(FULL_FLUSH)` contract is honoured before the
@@ -6740,13 +6611,7 @@ fn handshake_confirmed_source_is_still_removed_by_the_second_drain() {
     // The PRODUCTION sequence, not a copy of it: `orchestrator::run` calls this
     // same method, so deleting a phase there fails this test.
     let drains = ctx
-        .goodbye_draining_source_removals(
-            &mut reader,
-            &mut writer,
-            &mut ndx_read,
-            &mut ndx_write,
-            |_w| Ok(()),
-        )
+        .goodbye_draining_source_removals(&mut reader, &mut writer, &mut ndx_read, &mut ndx_write)
         .expect("the goodbye plus both drains must complete");
 
     // The consequence first, so a regression names the file it leaked.
@@ -8449,4 +8314,62 @@ fn inc_recurse_producers_scan_non_utf8_dirs_by_raw_path() {
             if lazy { "lazy" } else { "eager" }
         );
     }
+}
+
+/// An empty file list ends the server sender's run before the transfer loop,
+/// and the flush on that early return is the only one left to deliver the
+/// list's tail.
+///
+/// upstream: main.c:996-1001 - do_server_sender() calls exit_cleanup(0) when
+/// send_file_list() produced nothing, and cleanup.c:194-195 runs
+/// io_flush(FULL_FLUSH) on that clean exit. Below protocol 30 the io_error
+/// word follows the list as a bare int (flist.c:2757-2758) and is written
+/// without a flush, because on the normal path main.c:1398 flushes the whole
+/// list once. The multiplex writer has no flushing Drop, so dropping the
+/// barrier strands the list end and that word in user space.
+#[test]
+fn empty_file_list_early_return_flushes_the_io_error_word() {
+    let temp = create_test_files(&[("file.txt", b"alpha")]);
+    // ENOTDIR, not ENOENT: flist.c:2943-2944 raises IOERR_GENERAL only when
+    // the failed operand might be an existing file.
+    let unlistable = temp.path().join("file.txt").join("child");
+
+    let handshake = test_handshake_with_protocol(29);
+    let mut config = test_config();
+    config.protocol = ProtocolVersion::try_from(29u8).unwrap();
+    config.args = vec![OsString::from(&unlistable)];
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+    // The client's filter list: a lone zero-length terminator.
+    let reader = crate::reader::ServerReader::new_plain(Cursor::new(0i32.to_le_bytes().to_vec()));
+    let mut out = Vec::new();
+    {
+        let mut writer = crate::writer::ServerWriter::new_plain(&mut out)
+            .activate_multiplex()
+            .expect("activate output multiplex");
+        let stats = ctx
+            .run(reader, &mut writer, &[unlistable], None, None)
+            .expect("an empty file list ends the run cleanly");
+        assert_eq!(
+            stats.files_listed, 0,
+            "the unlistable operand lists nothing"
+        );
+    }
+
+    let mut data = Vec::new();
+    let mut wire = Cursor::new(&out);
+    while (wire.position() as usize) < out.len() {
+        let frame = protocol::recv_msg(&mut wire).expect("whole multiplex frames");
+        if frame.code() == protocol::MessageCode::Data {
+            data.extend_from_slice(frame.payload());
+        }
+    }
+    // Non-vacuity: a zero word would be indistinguishable from padding.
+    assert_ne!(ctx.io_error, 0, "an ENOTDIR operand must raise io_error");
+    let mut expected = vec![0u8]; // flist end marker
+    expected.extend_from_slice(&ctx.io_error.to_le_bytes());
+    assert_eq!(
+        data, expected,
+        "the list end and its io_error word must reach the wire before the writer drops"
+    );
 }

@@ -92,32 +92,20 @@ impl GeneratorContext {
     /// - `io.c:1831-1845` - `MSG_SUCCESS` dispatches `successful_send(val)` inline
     /// - `sender.c:396` - `successful_send()` performs the guarded unlink
     /// - `main.c:1006-1010` - `read_final_goodbye()` still drives `read_a_msg()`
-    pub(crate) fn goodbye_draining_source_removals<R, W, F>(
+    pub(crate) fn goodbye_draining_source_removals<R: Read, W: Write>(
         &mut self,
         reader: &mut super::super::super::reader::ServerReader<R>,
         writer: &mut super::super::super::writer::ServerWriter<W>,
         ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
         ndx_write_codec: &mut protocol::codec::MonotonicNdxWriter,
-        finalize_between_write_and_read: F,
-    ) -> io::Result<SourceRemovalDrains>
-    where
-        R: Read,
-        W: Write,
-        F: FnMut(&mut super::super::super::writer::ServerWriter<W>) -> io::Result<()>,
-    {
+    ) -> io::Result<SourceRemovalDrains> {
         let arrival = self.read_receiver_goodbye(reader, ndx_read_codec)?;
 
         let before_goodbye =
             self.drain_confirmed_source_removals(writer, reader.take_success_indices())?;
 
         if arrival == super::GoodbyeArrival::Done {
-            self.answer_goodbye_with_finalizer(
-                reader,
-                writer,
-                ndx_read_codec,
-                ndx_write_codec,
-                finalize_between_write_and_read,
-            )?;
+            self.answer_goodbye(reader, writer, ndx_read_codec, ndx_write_codec)?;
         }
 
         let during_goodbye =
@@ -279,7 +267,10 @@ impl GeneratorContext {
         // Server-side only, exactly as upstream: a client-mode sender (push)
         // runs send_files() unconditionally from client_run() (main.c:1361).
         if file_count == 0 && !self.config.connection.client_mode {
-            // upstream: exit_cleanup(0) -> io_flush(FULL_FLUSH) before _exit.
+            // upstream: cleanup.c:194-195 - exit_cleanup(0) runs
+            // io_flush(FULL_FLUSH). send_file_list() leaves its output
+            // buffered (main.c:1398 flushes it later on the normal path), so
+            // without this the peer never sees the end of the empty list.
             writer.flush_all_pending()?;
             self.pipeline
                 .advance_to(TransferPhase::Finalization)
@@ -358,30 +349,6 @@ impl GeneratorContext {
         let mut ndx_read_codec = transfer_result.ndx_read_codec;
         let mut ndx_write_codec = transfer_result.ndx_write_codec;
 
-        // UTS-9.REOPEN (daemon-gzip-download): under `-zz` daemon pull the
-        // receiver decodes the goodbye NDX_DONE through `CompressedReader`,
-        // so the deflate stream must be closed before we block on its
-        // reply. Run `finalize_compression()` BETWEEN our goodbye write and
-        // the receiver's goodbye read; finalising AFTER `handle_goodbye`
-        // returns would never happen because the read would deadlock on
-        // the unterminated deflate block.
-        //
-        // upstream: `main.c:1005-1009 do_server_sender()` brackets
-        // `read_final_goodbye()` with `io_flush(FULL_FLUSH)`. Upstream's
-        // goodbye NDX_DONE rides through `write_buf()` (`io.c:2293`) which
-        // bypasses the deflate stream entirely. Our writer-graph routes
-        // it through `CompressedWriter`, so we additionally need to drive
-        // `CompressedWriter::finish()` here (matching
-        // `token.c:370 send_deflated_token()`'s end-of-transfer
-        // `deflateEnd()` contract). `finalize_compression` downgrades the
-        // writer back to multiplex mode so any trailing diagnostic frame
-        // still rides out before FIN.
-        //
-        // Rule 12 (fail-loud): surface the flush error unless the peer has
-        // already shut down. Early close during goodbye-shutdown is rare
-        // and the transfer is over, so any other error is treated as a
-        // real failure rather than swallowed.
-        //
         // The goodbye is split in two so the deferred --remove-source-files
         // drain can run in the gap between the halves; see
         // `goodbye_draining_source_removals`.
@@ -390,44 +357,13 @@ impl GeneratorContext {
             writer,
             &mut ndx_read_codec,
             &mut ndx_write_codec,
-            |w| match w.finalize_compression() {
-                Ok(()) => Ok(()),
-                Err(e) if super::super::is_early_close_error(&e) => Ok(()),
-                Err(e) => Err(e),
-            },
         )?;
 
-        // UTS-V3.A drain barrier: explicit user-space drain after
-        // `handle_goodbye_with_finalizer` returns and before the writer
-        // graph drops. The audit traced the cluster-A wire-cutoffs
-        // (~2.25 MB on batch-mode, alt-dest, and daemon-refuse-compress;
-        // ~615 KB on daemon-gzip-download) to bytes still sitting in the
-        // multiplex BufWriter / codec trailer when the daemon's
-        // `SO_LINGER` + `shutdown(SHUT_WR)` teardown fired.
-        //
-        // `flush_all_pending` is idempotent: it re-runs
-        // `finalize_compression` (no-op on a Multiplex writer that has
-        // already been finalised inside `handle_goodbye_with_finalizer`,
-        // emits the codec trailer if any branch returned early), then
-        // flushes the multiplex BufWriter so the next byte goes straight
-        // to the kernel. Peer-already-closed is tolerated; every other
-        // I/O error surfaces.
-        //
-        // Companion call: the daemon teardown invokes
-        // `writer::shutdown_send_side` on the underlying TcpStream after
-        // the read-drain loop completes - that drains the kernel send
-        // buffer and issues the explicit `shutdown(SHUT_WR)`. The two
-        // calls together replace the implicit `Drop` + `SO_LINGER`
-        // hand-off with an observable two-stage barrier.
-        //
-        // Server-side only: client-mode keeps stdio open for the parent
-        // process to own teardown. Stdio (remote-shell daemon mode) is
-        // not server-side here, but the flush still benefits any buffered
-        // byte that needs to reach the pipe before control returns.
-        //
-        // upstream: cleanup.c::handle_cleanup() brackets the sender's
-        // final `io_flush(FULL_FLUSH)` with the process exit so every
-        // user-space byte hits the wire before the kernel queues FIN.
+        // upstream: main.c:1011 - do_server_sender() runs io_flush(FULL_FLUSH)
+        // after read_final_goodbye(), and cleanup.c:194-195 flushes again on a
+        // clean exit_cleanup(0). The multiplex writer has no flushing Drop, so
+        // a byte still buffered when the writer graph drops never reaches the
+        // peer. Peer-already-closed is tolerated; every other error surfaces.
         if !self.config.connection.client_mode {
             writer.flush_all_pending()?;
         }

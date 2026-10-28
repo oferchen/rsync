@@ -112,9 +112,8 @@ fn daemon_sender_emits_final_byte_before_fin() {
     assert_eq!(received, payload, "byte content diverged after drain");
 }
 
-/// `flush_all_pending` must be idempotent: calling it twice in a row is the
-/// orchestrator's defense-in-depth pattern when the goodbye finaliser already
-/// ran `finalize_compression` once during `handle_goodbye_with_finalizer`.
+/// `flush_all_pending` must be idempotent: the orchestrator runs it on a
+/// writer the goodbye handshake has already flushed.
 ///
 /// A second call against a plain `Vec` sink should not double-flush, double-
 /// finalise, or panic, and must report `Ok(())`.
