@@ -25,6 +25,9 @@ use test_support::{
     UpstreamVersion, oc_rsync_bin, require_upstream_rsync, upstream_compat_enabled,
 };
 
+/// Marks a fixture path that starts out in the destination.
+const DEST: &str = "@dst/";
+
 /// What one run of a binary over the fixture produced.
 #[derive(Debug, PartialEq, Eq)]
 struct Outcome {
@@ -39,12 +42,16 @@ struct Outcome {
     transferred: Vec<String>,
 }
 
-/// Lays out `src/` from `files` (path, contents) plus an empty `dst/`.
+/// Lays out `src/` from `files` (path, contents) plus `dst/`; a path under
+/// [`DEST`] is placed in `dst/` instead, as a file the run may delete.
 fn build_tree(root: &Path, files: &[(&str, &str)]) {
     fs::create_dir_all(root.join("src")).expect("source root");
     fs::create_dir_all(root.join("dst")).expect("destination root");
     for (path, contents) in files {
-        let target = root.join("src").join(path);
+        let target = match path.strip_prefix(DEST) {
+            Some(rest) => root.join("dst").join(rest),
+            None => root.join("src").join(path),
+        };
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).expect("source subdir");
         }
@@ -408,5 +415,27 @@ fn unclosed_bracket_pattern_is_kept_and_matches_nothing() {
                 assert_eq!(outcome.exit, 0, "{rule}");
             }
         }
+    }
+}
+
+/// --delete-excluded turns only an unsided include/exclude into a sender-side
+/// rule (exclude.c:1479-1481), so `-r *.keep` still protects the destination's
+/// `x.keep` while the unsided `*.tmp` exclude lets `j.tmp` go. oc's local copy
+/// used to delete both, because it let --delete-excluded override every
+/// exclude at match time.
+#[test]
+fn delete_excluded_spares_a_receiver_side_exclude() {
+    let files = [("s/a", "a"), ("@dst/s/x.keep", "k"), ("@dst/s/j.tmp", "t")];
+    for source in [Source::Local, Source::Push] {
+        assert_parity_from(
+            &files,
+            &[
+                "--delete",
+                "--filter=-r *.keep",
+                "--exclude=*.tmp",
+                "--delete-excluded",
+            ],
+            source,
+        );
     }
 }

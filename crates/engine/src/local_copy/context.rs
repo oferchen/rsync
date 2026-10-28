@@ -1151,7 +1151,6 @@ mod tests {
                 inherit: true,
             }],
             filter_set: None,
-            delete_excluded: false,
         };
 
         // A wide directory: `*.deep` and `secret` are filter-protected (must NOT

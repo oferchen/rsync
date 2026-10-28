@@ -107,9 +107,6 @@ impl FilterSegment {
                 break;
             }
             if rule_matches(rule, path, is_dir) {
-                if matches!(context, FilterContext::Deletion) && rule.applies_to_receiver() {
-                    outcome.set_delete_excluded(matches!(rule.action(), FilterAction::Exclude));
-                }
                 match context {
                     FilterContext::Transfer => {
                         if rule.applies_to_sender() {
@@ -293,7 +290,6 @@ pub(crate) struct FilterOutcome {
     transfer_decided: bool,
     protected: bool,
     protection_decided: bool,
-    excluded_for_delete_excluded: bool,
     /// Unified deletion verdict: the include-flag of the single first-matching
     /// rule across BOTH chains in source order, mirroring upstream
     /// `check_filter()` (exclude.c:1209 `rflags & FILTRULE_INCLUDE ? 1 : -1`).
@@ -309,7 +305,6 @@ impl FilterOutcome {
             transfer_decided: false,
             protected: false,
             protection_decided: false,
-            excluded_for_delete_excluded: false,
             deletion_deletable: true,
             deletion_decided: false,
         }
@@ -333,10 +328,6 @@ impl FilterOutcome {
         } else {
             self.transfer_allowed && !self.protected
         }
-    }
-
-    pub(crate) const fn allows_deletion_when_excluded_removed(self) -> bool {
-        self.excluded_for_delete_excluded && !self.protected
     }
 
     pub(crate) const fn transfer_decided(self) -> bool {
@@ -373,10 +364,6 @@ impl FilterOutcome {
     const fn unprotect(&mut self) {
         self.protected = false;
         self.protection_decided = true;
-    }
-
-    const fn set_delete_excluded(&mut self, excluded: bool) {
-        self.excluded_for_delete_excluded = excluded;
     }
 }
 
@@ -644,10 +631,6 @@ mod tests {
         assert!(
             !outcome.allows_transfer(),
             "`mid/for/foo/and` must match `- foo/*/` via tail anchor `**/foo/*`"
-        );
-        assert!(
-            outcome.allows_deletion_when_excluded_removed(),
-            "matching exclude rule must enable --delete-excluded removal"
         );
     }
 
