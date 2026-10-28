@@ -113,7 +113,13 @@ fn run(
     let tmp = test_support::create_tempdir();
     build_tree(tmp.path(), files);
     let mut command = Command::new(binary);
-    command.current_dir(tmp.path()).arg("-r").args(args);
+    // `{TREE}` in an argument names the run's own tree, for rules that spell
+    // out an absolute path.
+    let tree = tmp.path().to_string_lossy().into_owned();
+    command
+        .current_dir(tmp.path())
+        .arg("-r")
+        .args(args.iter().map(|arg| arg.replace("{TREE}", &tree)));
     if !matches!(source, Source::Local) {
         command
             .arg("-e")
@@ -133,10 +139,9 @@ fn run(
     transferred.sort();
     // A per-directory merge file is named by its absolute path
     // (exclude.c:756-775), which holds this run's own temporary tree.
-    let tree = tmp.path().to_string_lossy();
     Outcome {
         exit: output.status.code().expect("exit code"),
-        diagnostic: diagnostic(&stderr).replace(tree.as_ref(), "<tree>"),
+        diagnostic: diagnostic(&stderr).replace(&tree, "<tree>"),
         transferred,
     }
 }
@@ -437,5 +442,78 @@ fn delete_excluded_spares_a_receiver_side_exclude() {
             ],
             source,
         );
+    }
+}
+
+/// The `/` modifier matches a rule against the absolute path - the
+/// transferring side's current directory joined to the name - not as an anchor
+/// at the transfer root (exclude.c:1022-1027). So `-/ {TREE}/src/sub/a`
+/// excludes `sub/a`, `-/ /sub/a` excludes nothing, and a pattern with no slash
+/// still matches the name alone. oc used to read `-/` as `- /`.
+#[test]
+fn abs_path_rules_match_the_absolute_path() {
+    let files = [
+        ("a", "a"),
+        ("sub/a", "a"),
+        ("sub/b.tmp", "t"),
+        ("sub/x/a", "a"),
+    ];
+    for rule in [
+        "-/ {TREE}/src/sub/a",
+        "-/ /sub/a",
+        "-/ {TREE}/src/sub/*.tmp",
+        "-/ {TREE}/src/**/a",
+        "-/ sub/a",
+        "-/ a",
+        "- /sub/a",
+    ] {
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            assert_parity_from(&files, &[&format!("--filter={rule}")], source);
+        }
+    }
+}
+
+/// On the deleting side the absolute path is the destination's
+/// (exclude.c:1022-1027 with the receiver's curr_dir), so `P/ {TREE}/dst/sub/old`
+/// protects `old` from --delete. oc used to delete it.
+#[test]
+fn abs_path_protect_matches_the_destination_path() {
+    let files = [("sub/new", "n"), ("@dst/sub/old", "o"), ("@dst/sub/gone", "g")];
+    for rule in ["P/ {TREE}/dst/sub/old", "P /sub/old", "P/ /sub/old"] {
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            assert_parity_from(&files, &["--delete", &format!("--filter={rule}")], source);
+        }
+    }
+}
+
+/// A merge rule's `/` modifier passes FILTRULE_ABS_PATH to every rule it
+/// reads (exclude.c:1229, :1261), and such a rule skips the per-directory
+/// `XFLG_ANCHORED2ABS` re-anchoring (exclude.c:297-306). So `- /a` inside a
+/// `:/` dir-merge file matches the absolute path `/a`, which excludes nothing.
+#[test]
+fn a_merge_abs_path_modifier_reaches_the_merged_rules() {
+    let files = [("a", "a"), ("sub/.f", "- /a\n"), ("sub/a", "a")];
+    for rule in [":/ .f", ": .f", "./ src/sub/.f", ". src/sub/.f"] {
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            assert_parity_from(&files, &[&format!("--filter={rule}")], source);
+        }
+    }
+}
+
+/// A side named on a dir-merge rule reaches every rule its files hold
+/// (exclude.c:1229, :1261), so `- old` in a `:r`/`:sr` file protects the
+/// destination's `old` from --delete and a `:s` file's does not.
+#[test]
+fn a_merge_side_modifier_reaches_the_merged_rules() {
+    let files = [
+        ("sub/.f", "- old\n"),
+        ("sub/new", "n"),
+        ("@dst/sub/.f", "- old\n"),
+        ("@dst/sub/old", "o"),
+    ];
+    for rule in [":s .f", ":r .f", ":sr .f", ": .f"] {
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            assert_parity_from(&files, &["--delete", &format!("--filter={rule}")], source);
+        }
     }
 }

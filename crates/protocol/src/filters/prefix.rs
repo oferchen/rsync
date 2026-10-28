@@ -162,10 +162,11 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
     // its anchor rides in the pattern body (see serialize_rule). Emitting `/`
     // for that rule would make the peer match it against the absolute path
     // (exclude.c:1022) instead of anchoring on the literal leading `/`
-    // (exclude.c:1041). oc's `anchored` flag only maps to the `/` modifier on
-    // merge/dir-merge rules; a non-merge rule carrying upstream's `/` modifier
-    // is not represented.
-    if rule.anchored && matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) {
+    // (exclude.c:1041). oc keeps a merge rule's `/` in `anchored` and any other
+    // rule's in `abs_path`.
+    if rule.anchored && matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge)
+        || rule.abs_path
+    {
         prefix.push('/');
     }
 

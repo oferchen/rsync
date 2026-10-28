@@ -1117,6 +1117,9 @@ impl ReceiverContext {
         // is treated as non-existent. The gate is the module's rules ALONE, and
         // `deletion_filter_chain` below inherits it through the clone.
         self.install_daemon_merge_gate(&mut chain)?;
+        if let Some(root) = self.config.connection.daemon_module_root.as_deref() {
+            chain.set_module_root(root);
+        }
         self.filter_chain = chain;
         self.deletion_filter_chain = self
             .filter_chain

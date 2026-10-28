@@ -297,6 +297,13 @@ impl<'a> CopyContext<'a> {
                 .source_roots
                 .remember_operand(root, true, metadata.dev(), metadata.ino());
         }
+        if let Some(program) = self.filter_program.as_mut() {
+            let sender_dir = anchor.as_deref().unwrap_or(Path::new("."));
+            program.set_abs_roots(
+                current_dir_abs_root(sender_dir),
+                current_dir_abs_root(&self.destination_root),
+            );
+        }
         self.source_anchor = anchor;
     }
     /// Opens `path` beneath the pinned anchor that holds it, or `None` when no
@@ -938,4 +945,14 @@ impl<'a> CopyContext<'a> {
         }
         true
     }
+}
+
+/// The directory absolute-path rules match under when a side works in `dir`.
+///
+/// upstream: exclude.c:1022-1027 reads `curr_dir`, which change_dir() fills
+/// from getcwd() (util1.c), so the directory is resolved as the kernel sees it.
+/// A destination not yet created resolves lexically.
+fn current_dir_abs_root(dir: &Path) -> Option<Arc<Path>> {
+    let resolved = fs::canonicalize(dir).or_else(|_| std::path::absolute(dir)).ok()?;
+    filters::abs_rule_root(&resolved, None)
 }

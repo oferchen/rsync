@@ -252,22 +252,12 @@ impl DirMergeConfig {
         self.no_prefixes_include
     }
 
-    /// Reports whether this config restricts its rules to the sender side.
-    ///
-    /// Used to propagate the `s` modifier of a side-restricted per-directory
-    /// merge into any `dir-merge` directives nested inside it, mirroring
-    /// upstream `exclude.c:1447-1456` (`rflags |= template->rflags & SIDES`).
+    /// The sides the merge rule named, `(s, r)`, which every rule it loads
+    /// and every `dir-merge` nested in it inherits (exclude.c:1447-1456,
+    /// `rflags |= template->rflags & FILTRULES_SIDES`).
     #[must_use]
-    pub(super) const fn is_sender_only(&self) -> bool {
-        self.sender_only && !self.receiver_only
-    }
-
-    /// Reports whether this config restricts its rules to the receiver side.
-    ///
-    /// Mirror of [`Self::is_sender_only`] for the `r` modifier.
-    #[must_use]
-    pub(super) const fn is_receiver_only(&self) -> bool {
-        self.receiver_only && !self.sender_only
+    pub(super) const fn sides(&self) -> (bool, bool) {
+        (self.sender_only, self.receiver_only)
     }
 
     /// Reports whether the merge rule named a side (`s` or `r`), which
@@ -279,16 +269,13 @@ impl DirMergeConfig {
 
     /// Applies configured modifiers to a parsed rule.
     ///
-    /// [`anchor_root`](Self::with_anchor_root) is deliberately absent here.
-    /// Upstream's `FILTRULE_ABS_PATH` never rewrites a pattern: it is inherited
-    /// by every record the merge file yields (it is a member of
-    /// `FILTRULES_FROM_CONTAINER`, copied in `parse_rule_tok`), and its only
-    /// effect on the stored rule is to make `add_rule` skip the merge-directory
-    /// prefix. That skip is the chain's `reanchor_dir`, which reads
-    /// [`is_anchor_root`](Self::is_anchor_root) directly, so anchoring has one
-    /// owner. Prepending `/` here additionally converted every slash-free
-    /// merge-file rule into a transfer-root anchor, which upstream's basename
-    /// branch never does.
+    /// [`anchor_root`](Self::with_anchor_root) marks every rule the merge
+    /// file yields `FILTRULE_ABS_PATH` (a member of `FILTRULES_FROM_CONTAINER`,
+    /// copied in `parse_rule_tok`), which matches it against the absolute path
+    /// and makes `add_rule` skip the merge-directory prefix. That skip is the
+    /// chain's `reanchor_dir`, which reads
+    /// [`is_anchor_root`](Self::is_anchor_root) directly. The pattern is never
+    /// rewritten.
     ///
     /// upstream: exclude.c:1229-1231 FILTRULES_FROM_CONTAINER
     /// upstream: exclude.c:1261-1263 parse_rule_tok()
@@ -298,10 +285,11 @@ impl DirMergeConfig {
         if self.perishable {
             rule = rule.with_perishable(true);
         }
-        if self.sender_only && !self.receiver_only {
-            rule = rule.with_sides(true, false);
-        } else if self.receiver_only && !self.sender_only {
-            rule = rule.with_sides(false, true);
+        if self.anchor_root {
+            rule = rule.with_abs_path(true);
+        }
+        if self.specifies_side() {
+            rule = rule.with_sides(self.sender_only, self.receiver_only);
         }
         rule
     }

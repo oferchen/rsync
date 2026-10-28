@@ -3,6 +3,7 @@
 //! code constants surfaced when filter evaluation aborts a transfer.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use filters::FilterRule;
 #[cfg(all(any(unix, windows), feature = "xattr"))]
@@ -62,9 +63,34 @@ pub struct FilterProgram {
 
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     xattr_rules: Vec<XattrMatcher>,
+    /// The sender's current directory for absolute-path rules: the directory
+    /// the operand's names are relative to (exclude.c:1022-1027).
+    transfer_abs_root: Option<Arc<Path>>,
+    /// The deleting receiver's current directory, the destination.
+    deletion_abs_root: Option<Arc<Path>>,
 }
 
 impl FilterProgram {
+    /// Sets the directories absolute-path (`/` modifier) rules match under,
+    /// as [`filters::abs_rule_root`] computes them: the sender's for the
+    /// transfer decision and the destination's for deletion.
+    pub(crate) fn set_abs_roots(
+        &mut self,
+        transfer: Option<Arc<Path>>,
+        deletion: Option<Arc<Path>>,
+    ) {
+        self.transfer_abs_root = transfer;
+        self.deletion_abs_root = deletion;
+    }
+
+    /// The directory absolute-path rules match under in `context`.
+    pub(crate) fn abs_root(&self, context: FilterContext) -> Option<&Path> {
+        match context {
+            FilterContext::Transfer => self.transfer_abs_root.as_deref(),
+            FilterContext::Deletion => self.deletion_abs_root.as_deref(),
+        }
+    }
+
     /// Builds a [`FilterProgram`] from the supplied entries.
     pub fn new<I>(entries: I) -> Result<Self, FilterProgramError>
     where
@@ -161,6 +187,8 @@ impl FilterProgram {
             dir_merge_rules,
             #[cfg(all(any(unix, windows), feature = "xattr"))]
             xattr_rules,
+            transfer_abs_root: None,
+            deletion_abs_root: None,
         })
     }
 
@@ -200,12 +228,13 @@ impl FilterProgram {
         ephemeral_layers: Option<&[(usize, FilterSegment)]>,
         context: FilterContext,
     ) -> FilterOutcome {
+        let abs_root = self.abs_root(context);
         let mut outcome = FilterOutcome::default();
 
         for instruction in &self.instructions {
             match instruction {
                 FilterInstruction::Segment(segment) => {
-                    segment.apply(path, is_dir, &mut outcome, context)
+                    segment.apply(path, is_dir, &mut outcome, context, abs_root)
                 }
                 FilterInstruction::DirMerge { index } => {
                     if let Some(layers) = dir_merge_layers.get(*index) {
@@ -216,13 +245,13 @@ impl FilterProgram {
                         // `layers[index].push(segment)` in context_impl/transfer.rs,
                         // so iterate in reverse to match upstream semantics.
                         for layer in layers.iter().rev() {
-                            layer.apply(path, is_dir, &mut outcome, context);
+                            layer.apply(path, is_dir, &mut outcome, context, abs_root);
                         }
                     }
                     if let Some(ephemeral) = ephemeral_layers {
                         for (rule_index, segment) in ephemeral {
                             if *rule_index == *index {
-                                segment.apply(path, is_dir, &mut outcome, context);
+                                segment.apply(path, is_dir, &mut outcome, context, abs_root);
                             }
                         }
                     }
@@ -246,10 +275,11 @@ impl FilterProgram {
         dir_merge_layers: &[Vec<FilterSegment>],
         ephemeral_layers: Option<&[(usize, FilterSegment)]>,
     ) -> bool {
+        let abs_root = self.abs_root(FilterContext::Transfer);
         for instruction in &self.instructions {
             match instruction {
                 FilterInstruction::Segment(segment) => {
-                    if let Some(result) = segment.excluded_dir_by_non_dir_rule(path) {
+                    if let Some(result) = segment.excluded_dir_by_non_dir_rule(path, abs_root) {
                         return result;
                     }
                 }
@@ -259,7 +289,7 @@ impl FilterProgram {
                         // rules win on first match, see the matching loop in
                         // `evaluate()` above.
                         for layer in layers.iter().rev() {
-                            if let Some(result) = layer.excluded_dir_by_non_dir_rule(path) {
+                            if let Some(result) = layer.excluded_dir_by_non_dir_rule(path, abs_root) {
                                 return result;
                             }
                         }
@@ -267,7 +297,7 @@ impl FilterProgram {
                     if let Some(ephemeral) = ephemeral_layers {
                         for (rule_index, segment) in ephemeral {
                             if *rule_index == *index
-                                && let Some(result) = segment.excluded_dir_by_non_dir_rule(path)
+                                && let Some(result) = segment.excluded_dir_by_non_dir_rule(path, abs_root)
                             {
                                 return result;
                             }
