@@ -1026,6 +1026,7 @@ mod tests {
             file_name: OsString::from(name),
             path,
             metadata,
+            readdir_index: 0,
         }
     }
 

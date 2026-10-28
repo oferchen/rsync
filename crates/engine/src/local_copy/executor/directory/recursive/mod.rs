@@ -799,6 +799,7 @@ mod tests {
             path,
             file_name: OsString::from(file_name),
             metadata,
+            readdir_index: 0,
         }
     }
 

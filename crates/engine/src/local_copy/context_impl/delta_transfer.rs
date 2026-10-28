@@ -957,11 +957,14 @@ impl<'a> CopyContext<'a> {
         matched: &MatchedBlock<'_>,
         destination: &Path,
     ) -> Result<(), LocalCopyError> {
+        let block_index = matched.descriptor().index() as u32;
         if self.batch_delta_buf.is_none() {
+            if let Some(tally) = self.wire_tally.as_mut() {
+                tally.block_match(block_index);
+            }
             return Ok(());
         }
 
-        let block_index = matched.descriptor().index() as u32;
 
         // The token references a basis block by index, so the sum_head this
         // file reserved must already describe that block. Anything else is the

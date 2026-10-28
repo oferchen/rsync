@@ -200,7 +200,11 @@ fn apply_hardlink_fields(
     let _ = metadata;
 }
 
-/// Captures a file entry to the batch file using the protocol wire format.
+/// Captures a file entry to the batch file and to the wire model, using the
+/// protocol wire format.
+///
+/// `readdir_index` is the entry's position in its directory's `readdir()`
+/// order, which is the order upstream sends a file list in.
 ///
 /// When batch mode is active, encodes the file entry using the protocol
 /// flist wire encoder (same format as network transfers) and writes the
@@ -216,8 +220,10 @@ pub(crate) fn capture_batch_file_entry(
     relative_path: &Path,
     metadata: &fs::Metadata,
     is_top_dir: bool,
+    readdir_index: u32,
 ) -> Result<(), LocalCopyError> {
-    if context.batch_writer().is_none() {
+    let batch = context.batch_writer().is_some();
+    if !batch && !context.wire_tally_active() {
         return Ok(());
     }
 
@@ -225,6 +231,13 @@ pub(crate) fn capture_batch_file_entry(
     let numeric_ids = context.numeric_ids_enabled();
     #[cfg(not(unix))]
     let numeric_ids = true;
+
+    if !batch {
+        let entry =
+            build_protocol_file_entry(source_path, relative_path, metadata, is_top_dir, numeric_ids);
+        context.tally_flist_entry(entry, readdir_index);
+        return Ok(());
+    }
 
     // The stream flags recorded in the header are what the reader configures
     // itself from, so the hardlink decision has to come from the same place.
@@ -242,6 +255,9 @@ pub(crate) fn capture_batch_file_entry(
         numeric_ids,
     );
     apply_hardlink_fields(&mut entry, metadata, hlink_group, protocol_version);
+    if context.wire_tally_active() {
+        context.tally_flist_entry(entry.clone(), readdir_index);
+    }
     if context.batch_inc_recurse() {
         context.hold_batch_entry(entry);
     } else {

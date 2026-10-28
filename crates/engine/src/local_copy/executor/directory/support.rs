@@ -18,6 +18,15 @@ pub(crate) struct DirectoryEntry {
     pub(crate) file_name: OsString,
     pub(crate) path: PathBuf,
     pub(crate) metadata: fs::Metadata,
+    /// Position of the entry in its directory's `readdir` order.
+    ///
+    /// Entries are sorted after the scan, but upstream sends each file list in
+    /// the order `readdir()` returned the names and sorts only afterwards, so
+    /// any writer that reproduces the wire file list needs the original order.
+    ///
+    /// upstream: flist.c:send_directory() - `send_file_name()` per `readdir()`
+    /// entry, then flist.c:flist_sort_and_clean().
+    pub(crate) readdir_index: u32,
 }
 
 /// Which resolver a directory scan enumerates through.
@@ -120,7 +129,7 @@ fn read_directory_entries_sorted_sequential(
     let read_dir =
         fs::read_dir(path).map_err(|error| LocalCopyError::io("read directory", path, error))?;
 
-    for entry in read_dir {
+    for (readdir_index, entry) in (0u32..).zip(read_dir) {
         let entry =
             entry.map_err(|error| LocalCopyError::io("read directory entry", path, error))?;
         let entry_path = entry.path();
@@ -131,6 +140,7 @@ fn read_directory_entries_sorted_sequential(
             file_name: entry.file_name(),
             path: entry_path,
             metadata,
+            readdir_index,
         });
     }
 
@@ -168,7 +178,7 @@ fn read_directory_entries_sorted_parallel(
 
     if pending.len() < PARALLEL_THRESHOLD {
         let mut entries = Vec::with_capacity(pending.len());
-        for (file_name, entry_path) in pending.drain(..) {
+        for (readdir_index, (file_name, entry_path)) in (0u32..).zip(pending.drain(..)) {
             let metadata = fs::symlink_metadata(&entry_path).map_err(|error| {
                 LocalCopyError::io("inspect directory entry", entry_path.clone(), error)
             })?;
@@ -176,6 +186,7 @@ fn read_directory_entries_sorted_parallel(
                 file_name,
                 path: entry_path,
                 metadata,
+                readdir_index,
             });
         }
         entries.sort_unstable_by(compare_directory_entries);
@@ -193,12 +204,14 @@ fn read_directory_entries_sorted_parallel(
     pending.reserve(capacity);
     let results: Vec<Result<DirectoryEntry, (PathBuf, std::io::Error)>> = batch
         .into_par_iter()
+        .enumerate()
         .map(
-            |(file_name, entry_path)| match fs::symlink_metadata(&entry_path) {
+            |(readdir_index, (file_name, entry_path))| match fs::symlink_metadata(&entry_path) {
                 Ok(metadata) => Ok(DirectoryEntry {
                     file_name,
                     path: entry_path,
                     metadata,
+                    readdir_index: readdir_index as u32,
                 }),
                 Err(error) => Err((entry_path, error)),
             },
@@ -457,6 +470,7 @@ mod tests {
             file_name: OsString::from("test.txt"),
             path,
             metadata,
+            readdir_index: 0,
         };
 
         let debug = format!("{entry:?}");

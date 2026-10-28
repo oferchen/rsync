@@ -109,6 +109,12 @@ impl ClientConfig {
         self.render_out_format_locally
     }
 
+    /// The local wire-model parameters, when the totals will be printed.
+    #[must_use]
+    pub const fn wire_totals(&self) -> Option<engine::local_copy::WireTotals> {
+        self.wire_totals
+    }
+
     /// Returns whether the configuration requires collection of transfer events.
     #[must_use]
     pub const fn collect_events(&self) -> bool {

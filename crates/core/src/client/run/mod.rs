@@ -559,6 +559,8 @@ fn run_client_internal(
         LocalCopyExecution::Apply
     };
 
+    options = options.wire_totals(config.wire_totals());
+
     let collect_events = config.collect_events();
 
     if collect_events {

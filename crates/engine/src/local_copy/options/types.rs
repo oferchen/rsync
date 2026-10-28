@@ -263,6 +263,7 @@ pub struct LocalCopyOptions {
     pub(super) user_mapping: Option<UserMapping>,
     pub(super) group_mapping: Option<GroupMapping>,
     pub(super) batch_writer: Option<Arc<Mutex<BatchWriter>>>,
+    pub(super) wire_totals: Option<crate::local_copy::WireTotals>,
     /// When `Some(true)`, the receiving side attempts super-user activities
     /// (preserving ownership, devices, specials) even when not running as root.
     /// When `Some(false)`, explicitly disables super-user attempts.
@@ -403,6 +404,7 @@ impl LocalCopyOptions {
             user_mapping: None,
             group_mapping: None,
             batch_writer: None,
+            wire_totals: None,
             super_mode: None,
             fake_super: false,
             ignore_errors: false,

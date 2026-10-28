@@ -693,6 +693,7 @@ impl<'a> CopyContext<'a> {
                 self.record_batch_metadata_item(iflags);
             }
         }
+        self.tally_item(&record);
         if let Some(observer) = &mut self.observer {
             observer.handle(record.clone());
         }

@@ -110,6 +110,9 @@ impl<'a> CopyContext<'a> {
             batch_flist_index: 0,
             batch_ndx_codec,
             batch_token_encoder,
+            wire_tally: options
+                .get_wire_totals()
+                .map(|totals| WireTally::new(totals, &options, mode.is_dry_run())),
             readdir_buf: Vec::new(),
             adaptive_level,
         }

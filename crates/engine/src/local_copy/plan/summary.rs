@@ -554,6 +554,16 @@ impl LocalCopySummary {
         self.file_list_size = 0;
     }
 
+    /// Replaces the literal-data byte totals with the wire model's.
+    ///
+    /// `sent` and `received` are what upstream's client half would have
+    /// counted on the socketpair it shares with its forked server half
+    /// (main.c:334-335 handle_stats), as replayed by the local wire model.
+    pub(in crate::local_copy) const fn record_wire_totals(&mut self, sent: u64, received: u64) {
+        self.bytes_sent = sent;
+        self.bytes_received = received;
+    }
+
     /// Returns the time spent enumerating the file list.
     #[must_use]
     pub const fn file_list_generation_time(&self) -> Duration {

@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime};
 use std::sync::Arc;
 
 use super::ActiveCompressor;
+use super::WireTally;
 use super::buffer_pool::{BufferPool, global_buffer_pool};
 use super::deferred_sync::{DeferredSync, SyncStrategy};
 use super::filter_program::{
@@ -473,6 +474,9 @@ pub(crate) struct CopyContext<'a> {
     /// `token.c:send_token()` would have produced. `None` keeps the plain
     /// `token.c:simple_send_token()` framing byte-for-byte.
     batch_token_encoder: Option<protocol::wire::CompressedTokenEncoder>,
+    /// Wire model for the `sent`/`received` totals, built only when the run
+    /// prints them.
+    wire_tally: Option<WireTally>,
     /// Reusable buffer for directory enumeration in `read_directory_entries_sorted`.
     ///
     /// Cleared and refilled at each directory level, avoiding a fresh heap
@@ -851,6 +855,7 @@ include!("context_impl/options/transfer.rs");
 include!("context_impl/options/dirs.rs");
 include!("context_impl/options/filter.rs");
 include!("context_impl/options/batch.rs");
+include!("context_impl/wire_tally.rs");
 include!("context_impl/transfer.rs");
 include!("context_impl/delta_transfer.rs");
 include!("context_impl/reporting.rs");

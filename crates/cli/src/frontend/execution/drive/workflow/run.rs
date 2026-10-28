@@ -1202,6 +1202,19 @@ where
         Err(code) => return code,
     };
 
+    // upstream: main.c:output_summary() prints the totals at INFO_GTE(STATS, 1)
+    // (`--stats` or `-v`), and log.c:log_exit() writes them to a log file
+    // otherwise. Only then does a local copy pay for the wire model.
+    if stats_level > 0 || verbosity > 0 || log_file_path_buf.is_some() {
+        let totals = engine::local_copy::WireTotals::new(
+            protocol::ProtocolVersion::try_from(batch_protocol as u8)
+                .unwrap_or(protocol::ProtocolVersion::NEWEST),
+            protocol::CompatibilityFlags::from_bits(local_batch_compat_flags as u32),
+        )
+        .with_itemize_unchanged(matches!(name_level, NameOutputLevel::UpdatedAndUnchanged));
+        builder = builder.wire_totals(Some(totals));
+    }
+
     if let Err(conflict) = builder.validate() {
         let message = rsync_error!(1, "{}", conflict).with_role(Role::Client);
         return fail_with_message(message, stderr);
