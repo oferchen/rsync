@@ -88,7 +88,7 @@ pub(super) fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
 /// Parses a modifier run through the shared table, refusing a byte the way
 /// upstream does.
 ///
-/// The refusal is upstream's `invalid modifier` (exclude.c:1371-1380), with the
+/// The refusal is upstream's `invalid modifier` (exclude.c:1376), with the
 /// byte and its position crossing `rule_detail` and the rule crossing
 /// `rule_text`, so a merge file's line is never echoed.
 pub(super) fn table_modifiers(
