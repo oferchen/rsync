@@ -50,6 +50,7 @@ use crate::signature::SignatureBlock;
 use ::metadata::{
     MetadataOptions, apply_file_metadata_with_options, apply_symlink_metadata_with_options,
 };
+use checksums::strong::Xxh3_128;
 // Used only by the `#[cfg(unix)]` hardlink-candidate mtime compare in
 // context_impl/state.rs; on other platforms the name would be unused.
 #[cfg(unix)]
@@ -561,6 +562,7 @@ pub(crate) struct FileCopyOutcome {
     matched_bytes: u64,
     compressed_bytes: Option<u64>,
     touched_blocks: u64,
+    verification_failed: bool,
 }
 
 /// Matched-byte count for copy paths that never match a basis block.
@@ -582,7 +584,22 @@ impl FileCopyOutcome {
             matched_bytes,
             compressed_bytes,
             touched_blocks: 0,
+            verification_failed: false,
         }
+    }
+
+    /// Marks a delta pass whose output failed upstream's whole-file check.
+    ///
+    /// upstream: receiver.c:534 - `recv_ok` is 0 when the receiver's sum of
+    /// the reconstructed file differs from the sender's.
+    pub(crate) const fn with_verification_failed(mut self, failed: bool) -> Self {
+        self.verification_failed = failed;
+        self
+    }
+
+    /// Reports whether the pass failed verification and must be redone.
+    pub(crate) const fn verification_failed(self) -> bool {
+        self.verification_failed
     }
 
     /// Attaches the number of distinct 4 KiB logical blocks the copy wrote.

@@ -274,6 +274,7 @@ mod tests {
             xattrs_changed: false,
             #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls: false,
+            redoing: false,
         }
     }
 

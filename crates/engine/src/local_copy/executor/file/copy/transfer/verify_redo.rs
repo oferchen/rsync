@@ -115,19 +115,20 @@ pub(in crate::local_copy) fn execute_transfer(
                 reference_basis,
             )?
         }
-        TransferOutcome::SourceChanged => {
-            // The source shrank while the first pass was reading it, so the
-            // staged result carried a stale tail and was discarded. Warn the
-            // way upstream's receiver does when the deliberately corrupted
-            // checksum fails verification (receiver.c:1342-1371), then rerun
-            // the file once. The retry re-opens the source and sizes itself
+        TransferOutcome::SourceChanged | TransferOutcome::ChecksumMismatch => {
+            // The staged result was discarded: either the source shrank while
+            // the first pass was reading it, so it carried a stale tail, or a
+            // block the short strong sum matched was not the basis block. Warn
+            // the way upstream's receiver does when the whole-file checksum
+            // fails (receiver.c:1342-1371), then rerun the file once with
+            // full-width sums. The retry re-opens the source and sizes itself
             // from a fresh `fstat`, exactly as upstream's phase-2 resend does
             // (sender.c:730-762), so it lands bytes consistent with the file
             // as it is now. `metadata` is deliberately NOT refreshed: upstream
             // stamps the redone destination with the attributes the file list
             // recorded (`set_file_attrs` reads the flist entry), not with a
             // re-stat.
-            warn_source_changed(context, record_path, &flags);
+            report_verification_failure(context, record_path, &flags, false, false);
 
             execute_transfer_once(
                 context,
@@ -155,7 +156,8 @@ pub(in crate::local_copy) fn execute_transfer(
     // by `if (!redoing)`). Mirror that: report the discarded update and stop.
     // The exit-23 flags from `note_short_source_read` are already recorded.
     if redo_outcome != TransferOutcome::Complete {
-        note_redo_discarded(context, record_path, &flags);
+        let in_place = redo_outcome == TransferOutcome::VerificationFailed;
+        report_verification_failure(context, record_path, &flags, true, in_place);
     }
 
     Ok(())
@@ -174,56 +176,40 @@ fn source_changed_redo_flags(flags: TransferFlags) -> TransferFlags {
         append_allowed: false,
         append_verify: false,
         ignore_times_enabled: true,
+        redoing: true,
         ..flags
     }
 }
 
-/// The disposition noun upstream's verification-failure lines carry.
+/// Prints upstream's verification-failure line for a failed local pass.
 ///
-/// upstream: receiver.c:1354-1360 - `"discarded"` unless the update was kept
-/// (`keep_partial` with a partial path, or `inplace`), in which case it is
-/// `"put into partial-dir"` under `--partial-dir` and `"retained"` otherwise.
-fn kept_description(context: &CopyContext, flags: &TransferFlags) -> &'static str {
-    if !flags.partial_enabled && !flags.inplace_enabled {
-        "discarded"
-    } else if context.options().partial_directory_path().is_some() {
-        "put into partial-dir"
-    } else {
-        "retained"
+/// `redoing` selects the phase-2 `ERROR` form over the first-pass `WARNING`.
+/// `in_place` says the failed update is still where it was written. A
+/// discarded pass has no surviving `partialptr` by the time upstream reports
+/// it - receiver.c:1318-1333 nulls it once `finish_transfer()` saves the temp
+/// as the partial file, and a plain temp is simply unlinked - so it always
+/// reads "discarded", partial modes included.
+///
+/// upstream: receiver.c:1350-1371, via the shared `logging::verification_failure`.
+fn report_verification_failure(
+    context: &CopyContext,
+    record_path: &Path,
+    flags: &TransferFlags,
+    redoing: bool,
+    in_place: bool,
+) {
+    let state = logging::VerifyFailure {
+        redoing,
+        read_batch: false,
+        stdout_format_has_i: context.options().is_itemize_active(),
+        keep_partial: flags.partial_enabled,
+        has_partial_path: false,
+        partial_dir: context.options().partial_directory_path().is_some(),
+        inplace: in_place,
+    };
+    if let Some((_, line)) = logging::verification_failure(record_path, state) {
+        eprintln!("{line}");
     }
-}
-
-/// Emits upstream's first-failure warning for a source that shrank mid-read.
-///
-/// upstream: receiver.c:1350-1371 - `redoing` is still 0, so the message is
-/// `FWARNING` with `redostr = " (will try again)"`, gated behind
-/// `INFO_GTE(NAME, 1) || stdout_format_has_i` (receiver.c:1351). The wording
-/// is upstream's verbatim: on the wire this failure IS a checksum-verification
-/// failure, because the sender corrupted the whole-file checksum on the read
-/// error (match.c:454-463).
-fn warn_source_changed(context: &CopyContext, record_path: &Path, flags: &TransferFlags) {
-    if !logging::info_gte(logging::InfoFlag::Name, 1) && !context.options().is_itemize_active() {
-        return;
-    }
-    eprintln!(
-        "WARNING: {} failed verification -- update {} (will try again).",
-        record_path.display(),
-        kept_description(context, flags),
-    );
-}
-
-/// Emits upstream's second-failure error when the bounded redo also fails.
-///
-/// upstream: receiver.c:1350 - `enum logcode msgtype = redoing ? FERROR_XFER : FWARNING;`
-/// picks the error form on the second failure, and receiver.c:1361-1370 sets
-/// `errstr = "ERROR"` with an empty `redostr`. `FERROR_XFER` short-circuits the
-/// name gate at receiver.c:1351, so the line is unconditional.
-fn note_redo_discarded(context: &CopyContext, record_path: &Path, flags: &TransferFlags) {
-    eprintln!(
-        "ERROR: {} failed verification -- update {}.",
-        record_path.display(),
-        kept_description(context, flags),
-    );
 }
 
 /// The flag set upstream's generator installs around the phase-2 redo.
@@ -244,6 +230,7 @@ fn redo_flags(flags: TransferFlags, sparse_enabled: bool) -> TransferFlags {
         // stamped it with the source's mtime.
         ignore_times_enabled: true,
         use_sparse_writes: sparse_enabled,
+        redoing: true,
         ..flags
     }
 }
@@ -301,6 +288,7 @@ mod tests {
             xattrs_changed: false,
             #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls: false,
+            redoing: false,
         }
     }
 

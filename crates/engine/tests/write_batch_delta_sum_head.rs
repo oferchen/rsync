@@ -40,6 +40,8 @@ const BASIS_LEN: usize = 100 * 1024;
 const EXPECTED_COUNT: u32 = 147;
 const EXPECTED_BLENGTH: u32 = 700;
 const EXPECTED_REMAINDER: u32 = 200;
+/// Phase-1 strong-sum width for the same basis (generator.c:745-754).
+const EXPECTED_S2LENGTH: u32 = 2;
 
 fn make_writer(path: &std::path::Path) -> Arc<Mutex<BatchWriter>> {
     let compat_flags = CompatibilityFlags::SAFE_FILE_LIST
@@ -116,9 +118,10 @@ fn delta_write_batch_records_the_basis_geometry() {
     let expected = protocol::wire::SumHead::with_blocks(
         EXPECTED_COUNT,
         EXPECTED_BLENGTH,
-        // The batch carries no block sums, so `s2length` simply reports the
-        // strong-sum width the local basis signature was built with.
-        16,
+        // The batch carries no block sums, but `s2length` is still the
+        // phase-1 width `sum_sizes_sqroot()` chose; upstream 3.5.1's own
+        // `--write-batch` of this fixture records 2.
+        EXPECTED_S2LENGTH,
         EXPECTED_REMAINDER,
     )
     .expect("valid geometry")
