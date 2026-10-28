@@ -413,34 +413,50 @@ impl ReceiverContext {
                         dest_dir,
                         file_path,
                         true,
-                    )
-                    .ok();
+                    );
                     (*idx, file_path.clone(), meta)
                 })
                 .collect::<Vec<_>>()
         });
         #[cfg(not(unix))]
-        let anchored: Option<Vec<(usize, PathBuf, Option<fast_io::EntryMetadata>)>> = None;
-        let stat_results: Vec<(usize, PathBuf, Option<fast_io::EntryMetadata>)> = match anchored {
-            Some(results) => results,
-            None => crate::parallel_io::map_blocking(
-                stat_paths,
-                self.parallel_thresholds
-                    .for_op(crate::parallel_io::ParallelOp::Stat),
-                move |(idx, file_path)| {
-                    let meta = fs::metadata(&file_path)
-                        .ok()
-                        .map(fast_io::EntryMetadata::from);
-                    (idx, file_path, meta)
-                },
-            ),
-        };
+        let anchored: Option<
+            Vec<(usize, PathBuf, std::io::Result<fast_io::EntryMetadata>)>,
+        > = None;
+        let stat_results: Vec<(usize, PathBuf, std::io::Result<fast_io::EntryMetadata>)> =
+            match anchored {
+                Some(results) => results,
+                None => crate::parallel_io::map_blocking(
+                    stat_paths,
+                    self.parallel_thresholds
+                        .for_op(crate::parallel_io::ParallelOp::Stat),
+                    move |(idx, file_path)| {
+                        let meta = fs::metadata(&file_path).map(fast_io::EntryMetadata::from);
+                        (idx, file_path, meta)
+                    },
+                ),
+            };
 
         // Phase C: Sequential post-processing with stat results.
         // Pre-size for the expected minority that need transfer.
         let needs_metadata_apply = metadata_opts.requires_apply();
         let mut files_to_transfer = Vec::with_capacity(stat_results.len() / 4 + 1);
-        for (idx, file_path, mut dest_meta) in stat_results {
+        for (idx, file_path, stat_result) in stat_results {
+            let entry = &self.file_list[idx];
+            // upstream: generator.c:2213-2223 - a stat that failed for any
+            // reason but ENOENT is reported and the file skipped; only a
+            // missing destination proceeds as new.
+            let mut dest_meta = match stat_result {
+                Ok(meta) => Some(meta),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    let what = format!(
+                        "recv_generator: failed to stat {}",
+                        self.full_fname_in_dest(dest_dir, &file_path)
+                    );
+                    let _ = self.emit_generator_error_xfer(writer, &what, &error);
+                    continue;
+                }
+            };
             // upstream: generator.c:2822-2827 generate_files() - the per-file
             // generate loop pokes maybe_send_keepalive once the I/O lull has
             // elapsed so a remote sender's --timeout does not fire while the
@@ -448,7 +464,6 @@ impl ReceiverContext {
             // writing any NDX request. A strict no-op unless --timeout is set
             // (allowed_lull None), keeping the default path wire-identical.
             let _ = writer.maybe_send_keepalive();
-            let entry = &self.file_list[idx];
             if self.skip_regular_by_existence_gate(
                 writer,
                 entry,
