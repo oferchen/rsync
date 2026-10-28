@@ -106,8 +106,9 @@ impl ReceiverContext {
     ///
     /// The explicit whole-list fallback for callers that consume the entire
     /// `file_list` at once and have no per-file cursor to pull segments through:
-    /// the recorded-stream replay driver and `receive_extra_file_lists`
-    /// (`--files-from` and the wire-parity tests). The live pipelined drivers
+    /// `receive_extra_file_lists` (`--files-from` and the wire-parity tests).
+    /// The recorded-stream replay takes its sub-lists as the row reads meet
+    /// them instead, since a recording interleaves them with the file data. The live pipelined drivers
     /// walk the same segments through [`ensure_flat_idx`](Self::ensure_flat_idx).
     /// A no-op (no wire read) once `flist_eof` is set, which is always the case
     /// on a non-INC_RECURSE transfer by the time a caller reaches this.
