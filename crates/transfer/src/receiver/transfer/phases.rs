@@ -58,7 +58,7 @@ impl ReceiverContext {
             // `num_segments`, unchanged. On every non-streaming transfer the
             // counter is 0 and this loop is byte-identical to before.
             let to_emit = num_segments.saturating_sub(self.segments_released_mid_walk);
-            // The segments' heap is reclaimed by `finalize_transfer_with` once
+            // The segments' heap is reclaimed by `finalize_transfer` once
             // the late delete pass and directory touch-up have run.
             for _ in 0..to_emit {
                 ndx_write_codec.write_ndx_done(&mut *writer)?;
@@ -373,21 +373,10 @@ impl ReceiverContext {
     /// `prev_positive`, and the hardlink-follower echoes drained at the first
     /// phase boundary are diff-encoded against it - a fresh codec decodes a
     /// repeated index (diff 0) as 0xFFFFFFFF and aborts the transfer.
-    pub(in crate::receiver) fn finalize_transfer<
-        R: Read,
-        W: Write + crate::writer::MsgInfoSender + ?Sized,
-    >(
-        &mut self,
-        reader: &mut R,
-        writer: &mut W,
-        ndx_read_codec: &mut NdxCodecEnum,
-    ) -> io::Result<()> {
-        self.finalize_transfer_with(reader, writer, ndx_read_codec, |_, _, _| Ok(()))
-    }
-
-    /// [`finalize_transfer`](Self::finalize_transfer) that runs `after_phases`
-    /// once the sender's final `NDX_DONE` (and, on a client pull, its stats)
-    /// has been read, before any segment is reclaimed and before the goodbye.
+    ///
+    /// `after_phases` runs once the sender's final `NDX_DONE` (and, on a
+    /// client pull, its stats) has been read, before any segment is reclaimed
+    /// and before the goodbye.
     ///
     /// The late delete pass belongs there. The sender writes `MSG_IO_ERROR`
     /// only after its send loop, just before that final `NDX_DONE`
@@ -396,7 +385,7 @@ impl ReceiverContext {
     /// third `MSG_DONE`, sent by main.c:1111 after `recv_files()` returns and
     /// `handle_stats()` has run. The deletions' `NDX_DEL_STATS` then leads the
     /// goodbye (generator.c:2910-2915).
-    pub(in crate::receiver) fn finalize_transfer_with<
+    pub(in crate::receiver) fn finalize_transfer<
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
         F: FnOnce(&mut Self, &mut R, &mut W) -> io::Result<()>,

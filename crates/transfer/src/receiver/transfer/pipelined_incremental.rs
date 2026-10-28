@@ -475,7 +475,7 @@ impl ReceiverContext {
         self.flush_itemize_rows(writer)?;
         self.order_list_only_entries(&mut stats);
 
-        self.finalize_transfer_with(
+        self.finalize_transfer(
             reader,
             writer,
             &mut ndx_read_codec,
@@ -984,7 +984,7 @@ impl ReceiverContext {
 
         // upstream: generator.c:2899-2909 - the delayed deletions, then one
         // --max-delete report for every per-directory delete of the walk.
-        self.finalize_transfer_with(
+        self.finalize_transfer(
             reader,
             writer,
             &mut ndx_read_codec,

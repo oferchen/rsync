@@ -10,7 +10,7 @@
 //!   `receive_one_extra_segment`, and
 //!   `incremental_file_list_receiver`.
 //! - `on_demand` - lazy INC_RECURSE segment fetch (`read_next_frame`,
-//!   `ensure_flat_idx`, `ensure_all_segments_loaded`, `prefetch_for_hardlinks`).
+//!   `ensure_flat_idx`, `ensure_all_segments_loaded`).
 //! - `id_lists` - UID/GID name-to-ID mapping reception.
 //! - `sanitize` - file-list sanity validation against directory traversal.
 //! - `filter_recheck` - receiver-side re-filtering of received names against

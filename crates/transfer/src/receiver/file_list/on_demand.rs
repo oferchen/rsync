@@ -19,9 +19,7 @@
 //!   segment in one pass - the explicit whole-list fallback for the callers that
 //!   have no per-file cursor to pull segments through (the recorded-stream replay
 //!   driver and `receive_extra_file_lists`). The live pipelined drivers walk the
-//!   same segments through `ensure_flat_idx`, like the synchronous driver.
-//! - [`ReceiverContext::prefetch_for_hardlinks`] pre-reads segments so a
-//!   follower's leader in a later segment is resolved before hardlinking.
+//!   same segments through `ensure_flat_idx`.
 //!
 //! When INC_RECURSE is not negotiated, `flist_eof` is already set once
 //! `receive_file_list` returns, so every method here is an immediate no-op that
@@ -121,33 +119,6 @@ impl ReceiverContext {
                 NdxStep::Segment(_) | NdxStep::FlistEof | NdxStep::DelStats => {}
                 NdxStep::Done => self.flist_eof = true,
                 NdxStep::File(ndx) => return Err(unexpected_reply(ndx)),
-            }
-        }
-        Ok(())
-    }
-
-    /// Pre-reads segments until the list holds `hardlink_lookahead_target`
-    /// entries (or `flist_eof`), so a follower whose leader arrives in a later
-    /// segment is resolved before hardlinking.
-    ///
-    /// A no-op when `flist_eof` is already set (every non-INC_RECURSE transfer).
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `generator.c:2774-2777` - `preserve_hard_links && inc_recurse`
-    ///   pre-reads until `file_total < MIN_FILECNT_LOOKAHEAD / 2`.
-    pub(in crate::receiver) fn prefetch_for_hardlinks<R: Read + ?Sized>(
-        &mut self,
-        reader: &mut R,
-        ndx_codec: &mut NdxCodecEnum,
-    ) -> io::Result<()> {
-        while !self.flist_eof && self.file_list.len() < self.hardlink_lookahead_target {
-            match self.read_next_frame(reader, ndx_codec)? {
-                NdxStep::Segment(_) | NdxStep::FlistEof | NdxStep::DelStats => {}
-                NdxStep::Done => self.flist_eof = true,
-                // A per-file reply here means the transfer phase has started;
-                // stop prefetching rather than treat it as a desync.
-                NdxStep::File(_) => break,
             }
         }
         Ok(())

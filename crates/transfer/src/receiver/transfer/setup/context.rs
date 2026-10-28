@@ -2,7 +2,7 @@
 //!
 //! `setup_transfer` activates input multiplex, reads the filter list, receives
 //! the (possibly incremental) file list, sanitizes paths, and builds the
-//! `PipelineSetup` used by `run_sync`, `run_pipelined`, and
+//! `PipelineSetup` used by `run_pipelined` and
 //! `run_pipelined_incremental`. The single-file rename and `--files-from`
 //! forwarding helpers live alongside it.
 
@@ -198,7 +198,7 @@ impl ReceiverContext {
         // drives the per-entry itemize rows. Emit it here, after the dest-root
         // pre-flight mkdir recorded `dest_root_created` and before the drivers
         // enter their transfer loops, so the notice precedes the per-file
-        // output on every driver (`run_sync`, `run_pipelined`,
+        // output on every driver (`run_pipelined`,
         // `run_pipelined_incremental`).
         self.announce_created_directory(writer, &setup.dest_dir)?;
 
@@ -767,7 +767,7 @@ impl ReceiverContext {
         // non-existent destination over remote shell.
         //
         // This site is reachable from every `--server` receiver entry:
-        // `run_sync`, `run_pipelined`, and `run_pipelined_incremental` all
+        // `run_pipelined` and `run_pipelined_incremental` both
         // route through `setup_transfer` before per-entry dispatch, so the
         // pre-flight runs uniformly under `--copy-dest`, `--link-dest`, and
         // `--compare-dest` over remote shell. The mkdir is receiver-local;

@@ -29,10 +29,9 @@
 //!             -> ReceiverContext::run
 //!                 +-- run_pipelined_incremental    (incremental-flist feature)
 //!                 +-- run_pipelined                (default)
-//!                 +-- run_sync                     (legacy / dry-run path)
 //! ```
 //!
-//! All three of `run_sync`, `run_pipelined`, and `run_pipelined_incremental`
+//! Both `run_pipelined` and `run_pipelined_incremental`
 //! call `ReceiverContext::setup_transfer(reader)` before per-entry dispatch.
 //! `setup_transfer` is the single site that calls
 //! [`ensure_dest_root_exists`], so the fix reaches every `--server`-driven
@@ -61,7 +60,7 @@ use transfer::receiver::ensure_dest_root_exists;
 ///
 /// The `--server` receiver routes through `setup_transfer`, which calls
 /// [`ensure_dest_root_exists`] before any per-entry mkdir. Verifying the
-/// helper here is the dispatchable proof: every `run_sync`/`run_pipelined`/
+/// helper here is the dispatchable proof: every `run_pipelined`/
 /// `run_pipelined_incremental` entry point reaches this exact call. The
 /// scenario itself reproduces the alt-dest interop pattern (multi-file
 /// transfer into a missing root, with the alt-dest basis directory living

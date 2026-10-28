@@ -6,7 +6,6 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::num::NonZeroU8;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -23,7 +22,6 @@ use crate::handshake::HandshakeResult;
 use crate::shared::ChecksumFactory;
 use crate::transfer_state::TransferPipeline;
 
-use super::basis::BasisFileConfig;
 use super::file_list::{DirFlist, FileListWindow};
 use super::{
     DaemonFilterGate, NDX_CONVERT_CALLS, NDX_CONVERT_CMPS, ParallelThresholds,
@@ -380,18 +378,6 @@ pub struct ReceiverContext {
     /// - `flist.c:103` / `io.c:1788-1824` - `flist_eof` gates the generator's
     ///   on-demand `recv_file_list()` fetch loop.
     pub(in crate::receiver) flist_eof: bool,
-    /// Target `file_list` length for the INC_RECURSE hardlink look-ahead.
-    ///
-    /// Before applying hardlinks the receiver pre-reads sub-list segments until
-    /// the list holds at least this many entries (or `flist_eof` is reached), so
-    /// a follower whose leader arrives in a later segment is already resolved.
-    /// Defaults to `MIN_FILECNT_LOOKAHEAD / 2` (500).
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `generator.c:2300-2305` - `preserve_hard_links && inc_recurse` pre-reads
-    ///   until `file_total < MIN_FILECNT_LOOKAHEAD / 2`.
-    pub(in crate::receiver) hardlink_lookahead_target: usize,
     /// When set, itemize rows are buffered (keyed by flist index) instead of
     /// written to the client sink at their emit site, then drained once in
     /// flist-index order by [`Self::flush_itemize_rows`] just before
@@ -755,8 +741,6 @@ impl ReceiverContext {
             pipeline,
             dest_root_created: false,
             flist_eof: false,
-            // upstream: generator.c:2304 - MIN_FILECNT_LOOKAHEAD / 2 (1000 / 2).
-            hardlink_lookahead_target: 500,
             defer_itemize: false,
             itemize_followers_per_segment: false,
             itemize_rows: RefCell::new(BTreeMap::new()),
@@ -1050,48 +1034,6 @@ impl ReceiverContext {
             protocol::ChecksumAlgorithm::MD5
         } else {
             protocol::ChecksumAlgorithm::MD4
-        }
-    }
-
-    /// Builds a [`BasisFileConfig`] for a single file, pulling shared state from
-    /// `self` and the per-entry fields from `file_entry`.
-    ///
-    /// `relative_path`, `target_size` and `target_mtime` are all read off the
-    /// one flist entry, so the entry is passed instead of its three projections:
-    /// they cannot then disagree, and the signature stays within the argument
-    /// budget now that the wire NDX rides along for the generator's
-    /// `generating and sending sums for %d` trace.
-    pub(in crate::receiver) fn build_basis_file_config<'a>(
-        &'a self,
-        ndx: i32,
-        file_path: &'a std::path::Path,
-        dest_dir: &'a std::path::Path,
-        file_entry: &'a protocol::flist::FileEntry,
-        checksum_length: NonZeroU8,
-        checksum_algorithm: signature::SignatureAlgorithm,
-    ) -> BasisFileConfig<'a> {
-        BasisFileConfig {
-            #[cfg(unix)]
-            sandbox: None,
-            ndx,
-            file_path,
-            dest_dir,
-            relative_path: file_entry.path(),
-            target_size: file_entry.size(),
-            target_mtime: file_entry.mtime(),
-            fuzzy_level: self.config.flags.fuzzy_level,
-            reference_directories: &self.config.reference_directories,
-            partial_dir: self.config.partial_dir.as_deref(),
-            protocol: self.protocol,
-            checksum_length,
-            checksum_algorithm,
-            whole_file: self.config.flags.whole_file,
-            compat_flags: self.compat_flags,
-            block_size: self.config.block_size,
-            // Only the decoupled pipeline loop threads the `--inplace --backup`
-            // delta-basis backup (generator.c:2328-2356); this builder serves
-            // `run_sync`, which writes via temp+rename and never in place.
-            inplace_backup: None,
         }
     }
 

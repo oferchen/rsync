@@ -134,14 +134,9 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `generator.c:1318` - `list_file_entry()` renders one line per entry
-    pub(in crate::receiver) fn collect_list_only_entries(&self) -> Vec<ListOnlyEntry> {
-        self.collect_list_only_entries_in_range(0..self.file_list.len())
-    }
-
-    /// [`collect_list_only_entries`](Self::collect_list_only_entries)
-    /// restricted to the flat-index range `range`, for the per-segment
-    /// INC_RECURSE walk. Concatenating the ranges in order yields exactly the
-    /// whole-list snapshot.
+    ///
+    /// Covers the flat-index range `range`, for the per-segment INC_RECURSE
+    /// walk; concatenating the ranges in order yields the whole-list listing.
     pub(in crate::receiver) fn collect_list_only_entries_in_range(
         &self,
         range: std::ops::Range<usize>,

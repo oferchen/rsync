@@ -80,9 +80,9 @@ pub enum ResponseProgress {
 
 /// Processes a file transfer response, streaming chunks to the disk thread.
 ///
-/// Like [`super::process_file_response`], reads echoed attributes and delta tokens -
-/// but instead of writing to disk directly, sends `FileMessage::Chunk` items
-/// through `file_tx` for the disk commit thread.
+/// Reads the echoed attributes and delta tokens and, rather than writing to
+/// disk itself, sends `FileMessage::Chunk` items through `file_tx` for the
+/// disk commit thread.
 ///
 /// Checksum computation is deferred to the disk thread. The expected checksum
 /// read from the wire is returned in [`StreamingResult`] for the caller to
