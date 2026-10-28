@@ -436,3 +436,145 @@ fn a_failing_server_sender_exits_like_upstream() {
     assert_eq!(codes[0], Some(11), "daemon file list: upstream's client");
     assert_eq!(codes[1], codes[0], "daemon file list");
 }
+
+/// The ids of the user running the test, read off a directory it created, so
+/// a non-root run can represent the placeholders' records.
+fn own_ids(root: &Path) -> (u32, u32) {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(root).expect("stat root");
+    (meta.uid(), meta.gid())
+}
+
+/// Plants the special-file sources: placeholders whose `%stat` names a char
+/// device, a block device, a FIFO and a socket, beside a real FIFO and a real
+/// socket, all with a fixed mtime. Returns the socket's listener, which keeps
+/// it bound for the runs.
+fn special_tree(root: &Path) -> std::os::unix::net::UnixListener {
+    let src = root.join("src");
+    let _ = fs::remove_dir_all(&src);
+    fs::create_dir_all(&src).expect("create src");
+    let (uid, gid) = own_ids(root);
+    for (name, record) in [
+        ("cdev", "20644 1,3"),
+        ("bdev", "60640 8,1"),
+        ("pfifo", "10644 0,0"),
+        ("psock", "140755 0,0"),
+    ] {
+        let path = src.join(name);
+        fs::write(&path, b"").expect("write placeholder");
+        xattr::set(
+            &path,
+            FAKE_SUPER_XATTR,
+            format!("{record} {uid}:{gid}").as_bytes(),
+        )
+        .expect("plant %stat");
+    }
+    let status = Command::new("mkfifo")
+        .arg(src.join("rfifo"))
+        .status()
+        .expect("mkfifo");
+    assert!(status.success(), "mkfifo");
+    let listener = std::os::unix::net::UnixListener::bind(src.join("rsock")).expect("bind");
+    set_tree_times(&src, 1_577_836_800);
+    listener
+}
+
+/// Sets every entry's mtime and atime under `dir` without following links.
+fn set_tree_times(dir: &Path, secs: i64) {
+    let time = FileTime::from_unix_time(secs, 0);
+    for entry in fs::read_dir(dir).expect("read dir") {
+        let path = entry.expect("entry").path();
+        filetime::set_symlink_file_times(&path, time, time).expect("set times");
+    }
+}
+
+/// Each destination entry's real type and `%stat` record, sorted by name.
+fn special_dump(dst: &Path) -> Vec<String> {
+    let mut rows: Vec<String> = fs::read_dir(dst)
+        .expect("read dst")
+        .map(|entry| {
+            let path = entry.expect("entry").path();
+            let kind = fs::symlink_metadata(&path).expect("lstat").file_type();
+            let record = xattr::get(&path, FAKE_SUPER_XATTR)
+                .ok()
+                .flatten()
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .unwrap_or_default();
+            let name = path
+                .file_name()
+                .expect("name")
+                .to_string_lossy()
+                .into_owned();
+            format!("{name} {kind:?} {record}")
+        })
+        .collect();
+    rows.sort();
+    rows
+}
+
+/// Runs the first, rerun, backdated and rdev-changed passes with `driver`,
+/// collecting each outcome and the destination it leaves.
+fn special_sequence(root: &Path, driver: &dyn Fn(&Path) -> Outcome) -> Vec<(Outcome, Vec<String>)> {
+    let _listener = special_tree(root);
+    let _ = fs::remove_dir_all(root.join("dst"));
+    let pass = |runs: &mut Vec<(Outcome, Vec<String>)>| {
+        let outcome = driver(root);
+        runs.push((outcome, special_dump(&root.join("dst"))));
+    };
+    let mut runs = Vec::new();
+    pass(&mut runs);
+    pass(&mut runs);
+    set_tree_times(&root.join("dst"), 1_546_300_800);
+    pass(&mut runs);
+    let (uid, gid) = own_ids(root);
+    let cdev = root.join("src/cdev");
+    xattr::set(
+        &cdev,
+        FAKE_SUPER_XATTR,
+        format!("20644 1,5 {uid}:{gid}").as_bytes(),
+    )
+    .expect("change rdev");
+    filetime::set_file_mtime(&cdev, FileTime::from_unix_time(1_577_836_800, 0)).expect("mtime");
+    pass(&mut runs);
+    runs
+}
+
+/// upstream: xattrs.c:1216-1265 get_stat_xattr() folds the `%stat` type,
+/// rdev, mode and ids into every x_lstat(), on the source and on the
+/// destination alike, so placeholders follow recv_generator()'s device and
+/// special branch (generator.c:2031-2100): the same type that passes
+/// quick_check_ok() only has its attributes set (`.D..t` when backdated),
+/// another rdev is recreated as `cDc`, and the record survives every pass.
+#[test]
+fn fake_super_special_placeholders_follow_upstream_locally_and_over_a_pull() {
+    let Some(pair) = pair() else { return };
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path();
+    if !mode_tree(root) {
+        return;
+    }
+    let shell = local_shell(root);
+    let shell = shell.to_str().expect("utf-8 path");
+    let src_url = format!("localhost:{}/src/", root.display());
+    let local_args = ["-ai", "--fake-super", "src/", "dst/"];
+    let mut sequences = Vec::new();
+    for binary in [&pair.upstream, &pair.oc] {
+        let bin = binary.to_str().expect("utf-8 path");
+        let pull_args = pull_args(bin, shell, "-ai", &src_url);
+        let local = special_sequence(root, &|root: &Path| run(binary, root, &local_args));
+        let pull = special_sequence(root, &|root: &Path| run(binary, root, &pull_args));
+        sequences.push((local, pull));
+    }
+    let (upstream, oc) = (&sequences[0], &sequences[1]);
+    assert!(
+        upstream.0[1].0.stdout.is_empty(),
+        "upstream's local rerun itemizes nothing"
+    );
+    assert!(
+        upstream.0[2].0.stdout.contains(".D..t...... bdev"),
+        "upstream's backdated run only sets the time: {}",
+        upstream.0[2].0.stdout
+    );
+    assert_eq!(oc.0, upstream.0, "local -ai --fake-super specials");
+    assert_eq!(oc.1, upstream.1, "pull -ai --fake-super specials");
+}

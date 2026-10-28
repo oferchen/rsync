@@ -35,30 +35,22 @@ pub enum EntryMetadata {
     /// A `struct stat` filled by `fstatat` against the pinned root.
     #[cfg(unix)]
     At(AtMetadata),
-    /// A lookup's answer whose permission bits and ownership were replaced by
-    /// a record kept beside the entry. See [`EntryMetadata::with_overlay`].
+    /// A lookup's answer whose mode, device number and ownership were replaced
+    /// by a record kept beside the entry. See [`EntryMetadata::with_overlay`].
     #[cfg(unix)]
     Overlaid(Box<StatOverlay>),
 }
 
-/// The permission bits and ownership an [`EntryMetadata::Overlaid`] answer
-/// reports in place of the inode's own.
+/// The mode, device number and ownership an [`EntryMetadata::Overlaid`]
+/// answer reports in place of the inode's own.
 #[cfg(unix)]
 #[derive(Clone, Debug)]
 pub struct StatOverlay {
     real: EntryMetadata,
-    perms: u32,
+    mode: u32,
+    rdev: u64,
     uid: u32,
     gid: u32,
-}
-
-#[cfg(unix)]
-impl StatOverlay {
-    /// The inode's type bits with the overlaid permission bits.
-    fn mode(&self) -> u32 {
-        const S_IFMT: u32 = 0o170_000;
-        (self.real.mode() & S_IFMT) | (self.perms & 0o7777)
-    }
 }
 
 impl From<std::fs::Metadata> for EntryMetadata {
@@ -68,25 +60,26 @@ impl From<std::fs::Metadata> for EntryMetadata {
 }
 
 impl EntryMetadata {
-    /// Reports `perms` (the low twelve mode bits), `uid` and `gid` in place of
-    /// the inode's own, keeping every other field, the type bits included.
+    /// Reports `mode` (type bits included), `rdev`, `uid` and `gid` in place
+    /// of the inode's own, keeping every other field.
     ///
-    /// This is how a `--fake-super` destination reads: upstream folds the
-    /// `%stat` record into the stat the generator compares and itemizes
-    /// against, so a file stored owner-writable on disk still reports the
-    /// mode and ownership it stands for.
+    /// This is how a `--fake-super` entry reads: upstream folds the `%stat`
+    /// record into the stat it compares and itemizes against, so a regular
+    /// placeholder on disk reports the device, FIFO or socket, mode and
+    /// ownership it stands for.
     ///
     /// upstream: xattrs.c:1372-1377 x_lstat(), xattrs.c:1259-1262 get_stat_xattr()
     #[cfg(unix)]
     #[must_use]
-    pub fn with_overlay(self, perms: u32, uid: u32, gid: u32) -> Self {
+    pub fn with_overlay(self, mode: u32, rdev: u64, uid: u32, gid: u32) -> Self {
         let real = match self {
             Self::Overlaid(overlay) => overlay.real,
             other => other,
         };
         Self::Overlaid(Box::new(StatOverlay {
             real,
-            perms,
+            mode,
+            rdev,
             uid,
             gid,
         }))
@@ -114,7 +107,7 @@ impl EntryMetadata {
     pub fn file_type(&self) -> EntryFileType {
         match self {
             #[cfg(unix)]
-            Self::Overlaid(overlay) => overlay.real.file_type(),
+            Self::Overlaid(overlay) => EntryFileType::Mode(overlay.mode),
             Self::Std(metadata) => EntryFileType::Std(metadata.file_type()),
             #[cfg(unix)]
             Self::At(metadata) => EntryFileType::At(*metadata),
@@ -126,7 +119,7 @@ impl EntryMetadata {
     pub fn is_dir(&self) -> bool {
         match self {
             #[cfg(unix)]
-            Self::Overlaid(overlay) => overlay.real.is_dir(),
+            Self::Overlaid(_) => self.file_type().is_dir(),
             Self::Std(metadata) => metadata.is_dir(),
             #[cfg(unix)]
             Self::At(metadata) => metadata.is_dir(),
@@ -138,7 +131,7 @@ impl EntryMetadata {
     pub fn is_file(&self) -> bool {
         match self {
             #[cfg(unix)]
-            Self::Overlaid(overlay) => overlay.real.is_file(),
+            Self::Overlaid(_) => self.file_type().is_file(),
             Self::Std(metadata) => metadata.is_file(),
             #[cfg(unix)]
             Self::At(metadata) => metadata.is_file(),
@@ -154,7 +147,7 @@ impl EntryMetadata {
     pub fn is_symlink(&self) -> bool {
         match self {
             #[cfg(unix)]
-            Self::Overlaid(overlay) => overlay.real.is_symlink(),
+            Self::Overlaid(_) => self.file_type().is_symlink(),
             Self::Std(metadata) => metadata.is_symlink(),
             #[cfg(unix)]
             Self::At(metadata) => metadata.is_symlink(),
@@ -274,7 +267,7 @@ impl EntryMetadata {
     #[must_use]
     pub fn mode(&self) -> u32 {
         match self {
-            Self::Overlaid(overlay) => overlay.mode(),
+            Self::Overlaid(overlay) => overlay.mode,
             Self::Std(metadata) => std::os::unix::fs::MetadataExt::mode(metadata),
             Self::At(metadata) => metadata.mode(),
         }
@@ -305,7 +298,7 @@ impl EntryMetadata {
     #[must_use]
     pub fn rdev(&self) -> u64 {
         match self {
-            Self::Overlaid(overlay) => overlay.real.rdev(),
+            Self::Overlaid(overlay) => overlay.rdev,
             Self::Std(metadata) => std::os::unix::fs::MetadataExt::rdev(metadata),
             Self::At(metadata) => metadata.rdev(),
         }
@@ -429,6 +422,9 @@ pub enum EntryFileType {
     /// Type bits read out of a `struct stat`.
     #[cfg(unix)]
     At(AtMetadata),
+    /// Type bits of an overlaid `st_mode`.
+    #[cfg(unix)]
+    Mode(u32),
 }
 
 impl From<std::fs::FileType> for EntryFileType {
@@ -445,6 +441,8 @@ impl EntryFileType {
             Self::Std(file_type) => file_type.is_file(),
             #[cfg(unix)]
             Self::At(metadata) => metadata.is_file(),
+            #[cfg(unix)]
+            Self::Mode(mode) => mode_is(*mode, mode_bits::S_IFREG),
         }
     }
 
@@ -455,6 +453,8 @@ impl EntryFileType {
             Self::Std(file_type) => file_type.is_dir(),
             #[cfg(unix)]
             Self::At(metadata) => metadata.is_dir(),
+            #[cfg(unix)]
+            Self::Mode(mode) => mode_is(*mode, mode_bits::S_IFDIR),
         }
     }
 
@@ -465,6 +465,8 @@ impl EntryFileType {
             Self::Std(file_type) => file_type.is_symlink(),
             #[cfg(unix)]
             Self::At(metadata) => metadata.is_symlink(),
+            #[cfg(unix)]
+            Self::Mode(mode) => mode_is(*mode, mode_bits::S_IFLNK),
         }
     }
 }
@@ -478,6 +480,7 @@ impl EntryFileType {
         match self {
             Self::Std(file_type) => std::os::unix::fs::FileTypeExt::is_block_device(file_type),
             Self::At(metadata) => metadata.is_block_device(),
+            Self::Mode(mode) => mode_is(*mode, mode_bits::S_IFBLK),
         }
     }
 
@@ -487,6 +490,7 @@ impl EntryFileType {
         match self {
             Self::Std(file_type) => std::os::unix::fs::FileTypeExt::is_char_device(file_type),
             Self::At(metadata) => metadata.is_char_device(),
+            Self::Mode(mode) => mode_is(*mode, mode_bits::S_IFCHR),
         }
     }
 
@@ -496,6 +500,7 @@ impl EntryFileType {
         match self {
             Self::Std(file_type) => std::os::unix::fs::FileTypeExt::is_fifo(file_type),
             Self::At(metadata) => metadata.is_fifo(),
+            Self::Mode(mode) => mode_is(*mode, mode_bits::S_IFIFO),
         }
     }
 
@@ -505,8 +510,28 @@ impl EntryFileType {
         match self {
             Self::Std(file_type) => std::os::unix::fs::FileTypeExt::is_socket(file_type),
             Self::At(metadata) => metadata.is_socket(),
+            Self::Mode(mode) => mode_is(*mode, mode_bits::S_IFSOCK),
         }
     }
+}
+
+/// The `S_IFMT` values, which POSIX leaves to the platform but every Unix
+/// rsync supports shares.
+#[cfg(unix)]
+mod mode_bits {
+    pub(super) const S_IFMT: u32 = 0o170_000;
+    pub(super) const S_IFSOCK: u32 = 0o140_000;
+    pub(super) const S_IFLNK: u32 = 0o120_000;
+    pub(super) const S_IFREG: u32 = 0o100_000;
+    pub(super) const S_IFBLK: u32 = 0o060_000;
+    pub(super) const S_IFDIR: u32 = 0o040_000;
+    pub(super) const S_IFCHR: u32 = 0o020_000;
+    pub(super) const S_IFIFO: u32 = 0o010_000;
+}
+
+#[cfg(unix)]
+const fn mode_is(mode: u32, kind: u32) -> bool {
+    mode & mode_bits::S_IFMT == kind
 }
 
 /// Rebuild a [`SystemTime`] from a `struct stat` time pair.
@@ -541,20 +566,20 @@ mod tests {
     const ATIME: (i64, u32) = (1_600_000_000, 123_456_789);
     const MTIME: (i64, u32) = (1_650_000_000, 987_654_321);
 
-    /// An overlay reports the recorded permission bits and ids while every
-    /// other field, the type bits included, stays the lookup's own; `real()`
-    /// still answers with the inode as it is, and a second overlay replaces
-    /// the first instead of nesting.
+    /// An overlay reports the recorded mode, type bits included, rdev and ids
+    /// while every other field stays the lookup's own; `real()` still answers
+    /// with the inode as it is, and a second overlay replaces the first
+    /// instead of nesting. upstream: xattrs.c:1259-1262 get_stat_xattr()
     #[test]
-    fn an_overlay_replaces_perms_and_ids_and_keeps_the_rest() {
+    fn an_overlay_replaces_mode_rdev_and_ids_and_keeps_the_rest() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("f");
         std::fs::write(&path, b"payload").expect("write");
         let real = EntryMetadata::from(std::fs::symlink_metadata(&path).expect("lstat"));
         let real_mode = real.mode();
 
-        let folded = real.clone().with_overlay(0o104_755, 4242, 4343);
-        assert_eq!(folded.mode(), (real_mode & 0o170_000) | 0o4755);
+        let folded = real.clone().with_overlay(0o104_755, 0, 4242, 4343);
+        assert_eq!(folded.mode(), 0o104_755);
         assert_eq!((folded.uid(), folded.gid()), (4242, 4343));
         assert!(folded.is_file());
         assert_eq!(folded.len(), real.len());
@@ -563,10 +588,16 @@ mod tests {
         assert_eq!(folded.real().mode(), real_mode);
         assert_eq!(folded.real().uid(), real.uid());
 
-        let refolded = folded.with_overlay(0o600, 1, 2);
-        assert_eq!(refolded.mode() & 0o7777, 0o600);
+        let device = folded.with_overlay(0o060_640, 0x0801, 1, 2);
         assert!(
-            matches!(refolded.real(), EntryMetadata::Std(_)),
+            device.file_type().is_block_device(),
+            "the recorded type wins"
+        );
+        assert!(!device.is_file());
+        assert_eq!(device.rdev(), 0x0801);
+        assert!(device.real().is_file(), "the inode stays a placeholder");
+        assert!(
+            matches!(device.real(), EntryMetadata::Std(_)),
             "a second overlay must replace the first, not wrap it"
         );
     }

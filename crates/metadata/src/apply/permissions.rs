@@ -1902,7 +1902,7 @@ mod tests {
             gid,
             rdev: None,
         };
-        let folded = real.with_overlay(0o644, uid, gid);
+        let folded = real.with_overlay(0o100_644, 0, uid, gid);
         let plan = StatPlan::new(&folded, &intended);
         assert!(
             !plan.faithful,

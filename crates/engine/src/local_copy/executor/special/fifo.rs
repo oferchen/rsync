@@ -46,6 +46,13 @@ pub(crate) fn copy_fifo(
     context.enforce_timeout()?;
     let mode = context.mode();
     let file_type = metadata.file_type();
+    // upstream: flist.c make_file() -> xattrs.c:1372 x_lstat() - a
+    // --fake-super placeholder stands for the FIFO or socket its %stat records.
+    let source_stat = crate::local_copy::fake_super_source_stat(
+        source,
+        metadata,
+        metadata_options.fake_super_enabled(),
+    )?;
 
     #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
@@ -94,17 +101,8 @@ pub(crate) fn copy_fifo(
     #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let itemize_acls = false;
 
-    let mut existing_metadata = match fast_io::destination_at::symlink_metadata(destination) {
-        Ok(existing) => Some(existing),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(LocalCopyError::io(
-                "inspect existing destination",
-                destination.to_path_buf(),
-                error,
-            ));
-        }
-    };
+    let mut existing_metadata =
+        super::special_destination_stat(destination, metadata_options.fake_super_enabled())?;
 
     let destination_previously_existed = existing_metadata.is_some();
 
@@ -154,8 +152,7 @@ pub(crate) fn copy_fifo(
     // and stays a fresh creation.
     #[cfg(unix)]
     let (replaced_special, replaced_content_differs) = {
-        use std::os::unix::fs::FileTypeExt;
-        let source_type = metadata.file_type();
+        let source_type = source_stat.file_type();
         match existing_metadata.as_ref().filter(|existing| {
             let existing_type = existing.file_type();
             existing_type.is_fifo() || existing_type.is_socket()
@@ -188,7 +185,7 @@ pub(crate) fn copy_fifo(
         }
 
         if let Some(path) = &record_path {
-            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let metadata_snapshot = super::special_snapshot(metadata, &source_stat);
             let total_bytes = Some(metadata_snapshot.len());
             let action = if existing_hard_link_target.is_some() {
                 LocalCopyAction::HardLink
@@ -212,7 +209,7 @@ pub(crate) fn copy_fifo(
                 && let Some(existing) = replaced_special.as_ref()
             {
                 let change_set = LocalCopyChangeSet::for_recreated_device(
-                    metadata,
+                    &source_stat,
                     existing,
                     metadata_options,
                     context.options().modify_window(),
@@ -253,6 +250,16 @@ pub(crate) fn copy_fifo(
     {
         apply_file_metadata_with_options(destination, metadata, metadata_options)
             .map_err(map_metadata_error)?;
+        // A placeholder source carries its own record, which the attribute
+        // step does not know about.
+        // upstream: rsync.c set_file_attrs() -> xattrs.c set_stat_xattr()
+        #[cfg(all(unix, feature = "xattr"))]
+        crate::local_copy::store_effective_fake_super_if_requested(
+            metadata_options,
+            source,
+            destination,
+            metadata,
+        )?;
         #[cfg(all(unix, feature = "xattr"))]
         sync_xattrs_if_requested(
             preserve_xattrs,
@@ -280,7 +287,7 @@ pub(crate) fn copy_fifo(
             // special sets no ITEM_LOCAL_CHANGE / ITEM_IS_NEW, only the attribute
             // report bits, so the row renders `.S...p...`, not `cS`.
             let change_set = LocalCopyChangeSet::for_file(
-                metadata,
+                &source_stat,
                 Some(existing),
                 metadata_options,
                 true,
@@ -289,7 +296,7 @@ pub(crate) fn copy_fifo(
                 false,
                 context.options().modify_window(),
             );
-            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let metadata_snapshot = super::special_snapshot(metadata, &source_stat);
             let total_bytes = Some(metadata_snapshot.len());
             context.record(
                 LocalCopyRecord::new(
@@ -548,14 +555,14 @@ pub(crate) fn copy_fifo(
     // upstream: xattrs.c:set_stat_xattr() under am_root < 0
     #[cfg(all(unix, feature = "xattr"))]
     if metadata_options.fake_super_enabled() {
-        store_fake_super_for_local_metadata(destination, metadata)?;
+        store_fake_super_for_local_metadata(destination, &source_stat)?;
     }
 
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_fifo();
 
     if let Some(path) = &record_path {
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let metadata_snapshot = super::special_snapshot(metadata, &source_stat);
         let total_bytes = Some(metadata_snapshot.len());
         let record = LocalCopyRecord::new(
             path.clone(),
@@ -571,7 +578,7 @@ pub(crate) fn copy_fifo(
             // ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE, not ITEM_IS_NEW. Derive the
             // change-set from the `_S_IFMT` comparison.
             let change_set = LocalCopyChangeSet::for_recreated_device(
-                metadata,
+                &source_stat,
                 existing,
                 metadata_options,
                 context.options().modify_window(),
@@ -610,11 +617,11 @@ pub(crate) fn copy_fifo(
 #[cfg(all(unix, feature = "xattr"))]
 fn store_fake_super_for_local_metadata(
     destination: &Path,
-    metadata: &fs::Metadata,
+    source_stat: &fast_io::EntryMetadata,
 ) -> Result<(), LocalCopyError> {
     use ::metadata::{FakeSuperStat, store_fake_super};
 
-    let stat = FakeSuperStat::from_metadata(metadata);
+    let stat = FakeSuperStat::from_entry_metadata(source_stat);
     store_fake_super(destination, &stat).map_err(|error| {
         LocalCopyError::io(
             "store fake-super metadata",

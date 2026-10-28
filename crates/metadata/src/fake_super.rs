@@ -79,18 +79,26 @@ impl FakeSuperStat {
     /// since Windows metadata lacks POSIX ownership fields.
     #[cfg(unix)]
     pub fn from_metadata(metadata: &Metadata) -> Self {
-        let mode = metadata.mode();
-        let uid = metadata.uid();
-        let gid = metadata.gid();
+        Self::from_stat(
+            metadata.mode(),
+            metadata.rdev(),
+            metadata.uid(),
+            metadata.gid(),
+        )
+    }
 
+    /// Creates a `FakeSuperStat` from an entry's stat, read through its own
+    /// `%stat` record or not.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn from_entry_metadata(stat: &fast_io::EntryMetadata) -> Self {
+        Self::from_stat(stat.mode(), stat.rdev(), stat.uid(), stat.gid())
+    }
+
+    #[cfg(unix)]
+    fn from_stat(mode: u32, rdev: u64, uid: u32, gid: u32) -> Self {
         // upstream: xattrs.c:set_stat_xattr() - includes rdev for device files
-        let rdev = if is_device_file(mode) {
-            let rdev = metadata.rdev();
-            Some((major(rdev), minor(rdev)))
-        } else {
-            None
-        };
-
+        let rdev = is_device_file(mode).then(|| (major(rdev), minor(rdev)));
         Self {
             mode,
             uid,
@@ -517,13 +525,13 @@ pub fn effective_source_stat(_source: &Path, metadata: &Metadata) -> FakeSuperSt
     FakeSuperStat::from_metadata(metadata)
 }
 
-/// Reads a `--fake-super` destination the way upstream's generator does: the
-/// `%stat` record's permission bits and ownership replace the inode's own in
-/// `stat`, so the quick-check, the itemize columns and the attribute apply
-/// compare against what the file stands for rather than its owner-writable
-/// placeholder mode.
+/// Reads a `--fake-super` entry the way upstream's `x_lstat()` does: the
+/// `%stat` record's mode (type bits included), device number and ownership
+/// replace the inode's own in `stat`, so the quick-check, the itemize columns
+/// and the attribute apply compare against what the file stands for rather
+/// than its owner-writable placeholder.
 ///
-/// Devices and specials keep their real stat, and an entry without a record
+/// Real devices and specials keep their stat, and an entry without a record
 /// reads as it is. A symlink whose xattrs the filesystem refuses (`EPERM`)
 /// reads as owned by root, and an unsupported filesystem as unrecorded.
 ///
@@ -548,14 +556,22 @@ pub fn fold_fake_super_stat(
         return Ok(stat);
     }
     match load_fake_super(path) {
-        Ok(Some(recorded)) => Ok(stat.with_overlay(recorded.mode, recorded.uid, recorded.gid)),
+        Ok(Some(recorded)) => {
+            let (major, minor) = recorded.rdev.unwrap_or((0, 0));
+            Ok(stat.with_overlay(
+                recorded.mode,
+                crate::special::device_word(major, minor),
+                recorded.uid,
+                recorded.gid,
+            ))
+        }
         Ok(None) => Ok(stat),
         // upstream: xattrs.c:1240-1241 - ENOTSUP reads as no record.
         Err(error) if error.raw_os_error() == Some(libc::ENOTSUP) => Ok(stat),
         // upstream: xattrs.c:1242-1246 - an EPERM symlink reads as root's.
         Err(error) if error.raw_os_error() == Some(libc::EPERM) && stat.is_symlink() => {
-            let mode = stat.mode();
-            Ok(stat.with_overlay(mode, 0, 0))
+            let (mode, rdev) = (stat.mode(), stat.rdev());
+            Ok(stat.with_overlay(mode, rdev, 0, 0))
         }
         Err(error) => Err(error),
     }

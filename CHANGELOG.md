@@ -250,6 +250,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A destination `%stat` that does not parse ends a `--fake-super` copy or pull with upstream's `Corrupt ... xattr attached to` line and exit 11 instead of exit 0, and the local copy prints the cause and the `error in file IO` trailer as two lines with an absolute path, as upstream does (#PRNUM)
 - A remote-shell server sender that fails no longer sends `MSG_ERROR_EXIT`, so its client exits 12 like upstream's; a daemon sender over a socket still delivers its own exit code (#PRNUM)
 - A server sender honours a forwarded `--max-alloc` when it reads the receiver's block checksums, ending with exit 22 where upstream's `receive_sums()` refuses the allocation (#PRNUM)
+- `--fake-super` reads a `%stat` record's file type and device number as well as its mode and ids, on the source and the destination, so device, FIFO and socket placeholders rerun silently, itemize `.D..t......` when only the time changed and are recreated as `cDc` when the device number changes, locally and on a pull, as upstream does; a local copy no longer drops a placeholder's record (#PRNUM)
 
 **Data integrity**
 - A local `--no-whole-file` delta hashes blocks with the checksum upstream negotiates (xxh128, or the `--checksum-choice` transfer component), seeded like `get_checksum2()`, instead of a fixed unseeded MD4; `--debug=nstr` names that checksum, including a split `a,b` choice (#8246)

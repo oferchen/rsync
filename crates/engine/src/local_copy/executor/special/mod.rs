@@ -25,6 +25,50 @@ pub(crate) use symlink::{copy_symlink, symlink_target_is_safe};
 #[cfg(not(unix))]
 pub(crate) use symlink::create_symlink;
 
+/// Stats a device or special's destination the way upstream's generator
+/// does: `x_lstat()` folds a `--fake-super` placeholder's `%stat`, so it
+/// answers with the type, mode and rdev it stands for. An absent destination
+/// is `None`.
+///
+/// upstream: generator.c:1745 gen_entry_stat() -> xattrs.c:1372 x_lstat()
+fn special_destination_stat(
+    destination: &Path,
+    fake_super: bool,
+) -> Result<Option<fast_io::EntryMetadata>, LocalCopyError> {
+    let existing = match fast_io::destination_at::symlink_metadata(destination) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "inspect existing destination",
+                destination.to_path_buf(),
+                error,
+            ));
+        }
+    };
+    if fake_super {
+        crate::local_copy::fake_super_destination_stat(destination, existing).map(Some)
+    } else {
+        Ok(Some(existing))
+    }
+}
+
+/// The record of a device or special, typed by its folded source stat so a
+/// `--fake-super` placeholder itemizes as the node it stands for.
+fn special_snapshot(
+    metadata: &fs::Metadata,
+    source_stat: &fast_io::EntryMetadata,
+) -> LocalCopyMetadata {
+    #[cfg(unix)]
+    let recorded = Some(::metadata::FakeSuperStat::from_entry_metadata(source_stat));
+    #[cfg(not(unix))]
+    let recorded = {
+        let _ = source_stat;
+        None
+    };
+    LocalCopyMetadata::from_metadata(metadata, None).virtualize_fake_super_stat(recorded.as_ref())
+}
+
 /// Applies the `--existing` / `--ignore-existing` gate to a symlink, FIFO,
 /// socket or device node and records the skip, returning `true` when the entry
 /// is skipped.
