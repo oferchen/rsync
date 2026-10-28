@@ -472,15 +472,22 @@ fn dispatch_cohort<F: DeleteFs + Sync + Send>(
     #[cfg(unix)]
     let parent_fd = parent_handle.as_ref().map(std::os::fd::AsFd::as_fd);
 
+    let session = logging::Session::capture();
     #[cfg(unix)]
     let results: Vec<io::Result<Dispatched>> = ops
         .par_iter()
-        .map(|op| dispatch_one(fs.as_ref(), op, parent_fd))
+        .map(|op| {
+            let _log = session.enter();
+            dispatch_one(fs.as_ref(), op, parent_fd)
+        })
         .collect();
     #[cfg(not(unix))]
     let results: Vec<io::Result<Dispatched>> = ops
         .par_iter()
-        .map(|op| dispatch_one(fs.as_ref(), op))
+        .map(|op| {
+            let _log = session.enter();
+            dispatch_one(fs.as_ref(), op)
+        })
         .collect();
     for (result, op) in results.into_iter().zip(ops) {
         match result {

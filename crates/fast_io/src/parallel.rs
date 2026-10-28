@@ -135,6 +135,7 @@ impl ParallelExecutor {
         // Ordering: fold+reduce does NOT preserve input order - successes arrive in
         // arbitrary thread order. Errors carry their original index for identification.
         // Callers must not assume positional correspondence with input items.
+        let session = logging::Session::capture();
         let run = || -> (Vec<U>, Vec<(usize, io::Error)>) {
             items
                 .par_iter()
@@ -142,6 +143,7 @@ impl ParallelExecutor {
                 .fold(
                     || (Vec::new(), Vec::new()),
                     |(mut successes, mut errors), (idx, item)| {
+                        let _log = session.enter();
                         match process_fn(item) {
                             Ok(result) => successes.push(result),
                             Err(e) => errors.push((idx, e)),
@@ -194,6 +196,7 @@ impl ParallelExecutor {
 
         // Ordering: fold+reduce does NOT preserve input order - same as process().
         // Errors carry their original index. Callers must not assume positional order.
+        let session = logging::Session::capture();
         let run = || -> (Vec<U>, Vec<(usize, io::Error)>) {
             paths
                 .par_iter()
@@ -201,6 +204,7 @@ impl ParallelExecutor {
                 .fold(
                     || (Vec::new(), Vec::new()),
                     |(mut successes, mut errors), (idx, path)| {
+                        let _log = session.enter();
                         match process_fn(path.as_ref()) {
                             Ok((result, file_bytes)) => {
                                 bytes.fetch_add(file_bytes, AtomicOrdering::Relaxed);

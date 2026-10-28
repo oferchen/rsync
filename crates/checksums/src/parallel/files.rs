@@ -102,7 +102,13 @@ where
     }
     // Ordering: callers zip results with jobs by position.
     // Preserved by par_iter().map().collect() (rayon preserves index order).
-    jobs.par_iter().map(hash).collect()
+    let session = logging::Session::capture();
+    jobs.par_iter()
+        .map(|job| {
+            let _log = session.enter();
+            hash(job)
+        })
+        .collect()
 }
 
 /// Hashes each job as a vector of `block_len` block digests, in parallel across
@@ -123,8 +129,12 @@ where
 {
     // Ordering: callers zip results with jobs by position.
     // Preserved by par_iter().map().collect() (rayon preserves index order).
+    let session = logging::Session::capture();
     jobs.par_iter()
-        .map(|job| hash_blocks(job, block_len.get(), &new_hasher))
+        .map(|job| {
+            let _log = session.enter();
+            hash_blocks(job, block_len.get(), &new_hasher)
+        })
         .collect()
 }
 
@@ -137,9 +147,11 @@ where
         let digest = hash_range(job.path, 0, job.len, new_hasher())?;
         return Ok(BlockDigests(vec![digest]));
     }
+    let session = logging::Session::capture();
     (0..job.len.div_ceil(block_len))
         .into_par_iter()
         .map(|index| {
+            let _log = session.enter();
             let start = index * block_len;
             let len = block_len.min(job.len - start);
             hash_range(job.path, start, len, new_hasher())
