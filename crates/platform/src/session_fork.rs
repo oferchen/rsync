@@ -176,12 +176,12 @@ pub fn terminate_process(pid: i32) -> io::Result<()> {
 /// nothing (xnu `bsd/kern/kern_sig.c` `killpg1()`, the `p_stat != SZOMB`
 /// filter and `nfound > 0 ? 0 : (posix ? EPERM : ESRCH)`). A leader that has
 /// begun exiting but is not yet waitable is skipped the same way, so the
-/// `EPERM` can arrive before `waitid` reports the end. It is success only when
-/// `pgid` is this process's own child, which is then awaited until it has
-/// ended; any other `EPERM` is a real permission failure and is returned. A group that
-/// also holds a live member this process may not signal answers the same
-/// `EPERM`, so callers must own every member of the group, as a supervisor
-/// whose group holds only its own descendants does.
+/// `EPERM` can arrive before `waitid` reports the end. A group whose live
+/// leader shares it with a member of another uid answers the same `EPERM`
+/// with the leader still running. So when `pgid` is this process's own child
+/// the leader is signalled directly - always permitted on one's own child, and
+/// harmless on a zombie - and then awaited until it has ended. An `EPERM` for
+/// any other `pgid` is a real permission failure and is returned.
 pub fn kill_process_group(pgid: i32) -> io::Result<()> {
     match nix::sys::signal::killpg(
         nix::unistd::Pid::from_raw(pgid),
@@ -189,18 +189,37 @@ pub fn kill_process_group(pgid: i32) -> io::Result<()> {
     ) {
         Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
         #[cfg(target_vendor = "apple")]
-        Err(nix::errno::Errno::EPERM) if await_ended_child(pgid)? => Ok(()),
+        Err(nix::errno::Errno::EPERM) if stop_own_leader(pgid)? => Ok(()),
         Err(errno) => Err(errno.into()),
     }
 }
 
-/// Blocks until `child_pid`, a child of this process, has ended, without
-/// consuming its status, and reports `true`.
+/// Kills `child_pid` and blocks until it has ended, without consuming its
+/// status, when it is a child of this process; reports whether it was.
 ///
-/// A pid that is not this process's child answers `ECHILD`, which is `false`.
+/// The probe runs before the signal, so a pid that is not this process's
+/// child (`ECHILD`) is never signalled and answers `false`.
+#[cfg(target_vendor = "apple")]
+fn stop_own_leader(child_pid: i32) -> io::Result<bool> {
+    if !wait_child_exit(child_pid, libc::WNOHANG)? {
+        return Ok(false);
+    }
+    match nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child_pid),
+        nix::sys::signal::Signal::SIGKILL,
+    ) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+        Err(errno) => return Err(errno.into()),
+    }
+    wait_child_exit(child_pid, 0)
+}
+
+/// `waitid(WEXITED | WNOWAIT | extra)` on `child_pid`, never consuming its
+/// status: `Ok(false)` when it is not a child of this process, `Ok(true)`
+/// otherwise. With `extra == 0` the call blocks until the child has ended.
 #[cfg(target_vendor = "apple")]
 #[allow(unsafe_code)]
-fn await_ended_child(child_pid: i32) -> io::Result<bool> {
+fn wait_child_exit(child_pid: i32, extra: libc::c_int) -> io::Result<bool> {
     loop {
         // SAFETY: `waitid` writes only through `info`, a live local zeroed to
         // a valid `siginfo_t`. `WNOWAIT` leaves the child waitable for its
@@ -211,7 +230,7 @@ fn await_ended_child(child_pid: i32) -> io::Result<bool> {
                 libc::P_PID,
                 child_pid as libc::id_t,
                 &mut info,
-                libc::WEXITED | libc::WNOWAIT,
+                libc::WEXITED | libc::WNOWAIT | extra,
             )
         };
         if waited == -1 {
@@ -223,7 +242,7 @@ fn await_ended_child(child_pid: i32) -> io::Result<bool> {
                 _ => return Err(error),
             }
         }
-        return Ok(info.si_pid == child_pid);
+        return Ok(true);
     }
 }
 
