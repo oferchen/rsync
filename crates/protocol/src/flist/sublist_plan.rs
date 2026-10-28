@@ -199,7 +199,7 @@ impl SubListPlan {
     /// below that list (`ndx_start - 1`), and `.` under the initial list's:
     /// at its own NDX the generator only pre-creates it.
     ///
-    /// upstream: generator.c:1630-1633 (`is_dir < 0` below the gap),
+    /// upstream: generator.c:1632 (`ndx != cur_flist->ndx_start - 1 ? -1`: `is_dir` is -1 off the gap),
     /// generator.c:2780-2788 (the gap itemize), rsync.c:flist_for_ndx() (the
     /// receiver maps a gap NDX back to the owning directory).
     #[must_use]
