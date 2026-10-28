@@ -18,6 +18,7 @@
 //! - `connection` - SSH connection spawn and secluded-args plumbing
 //! - `server_config` - Receiver/generator server configuration construction
 //! - `exit_status` - Server-stats-to-summary and child exit-status mapping
+//! - `local_child` - Local copy over a spawned `--server` child (trace runs only)
 //! - `progress` - Progress observer adaptation
 //!
 //! # Upstream Reference
@@ -29,11 +30,13 @@
 mod connection;
 mod drive;
 mod exit_status;
+mod local_child;
 mod parse;
 mod progress;
 mod server_config;
 
 pub use drive::run_ssh_transfer;
+pub use local_child::run_local_child_transfer;
 
 #[cfg(feature = "embedded-ssh")]
 pub(super) use drive::{local_client_role, transfer_failure_error};

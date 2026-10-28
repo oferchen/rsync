@@ -59,7 +59,7 @@ pub use invocation::{
     RemoteInvocationBuilder, RemoteOperands, RemoteRole, SecludedInvocation, TransferSpec,
     determine_transfer_role, operand_is_remote,
 };
-pub use ssh_transfer::run_ssh_transfer;
+pub use ssh_transfer::{run_local_child_transfer, run_ssh_transfer};
 
 use rsync_io::ssh::SshAddressFamily;
 

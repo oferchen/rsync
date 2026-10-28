@@ -224,7 +224,7 @@ fn run_pull_transfer(
 ///
 /// In a push transfer, the local side acts as the sender/generator and the
 /// remote side acts as the receiver. We reuse the server generator infrastructure.
-fn run_push_transfer(
+pub(super) fn run_push_transfer(
     config: &ClientConfig,
     connection: SshConnection,
     local_paths: &[OsString],
