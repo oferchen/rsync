@@ -276,7 +276,6 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
         // call unambiguous with this trait method.
         match self {
             Self::Multiplex(mux) => mux.maybe_send_keepalive(),
-            Self::Compressed(compressed) => compressed.inner_mut().maybe_send_keepalive(),
             Self::Plain(_) | Self::Taken => Ok(false),
         }
     }
