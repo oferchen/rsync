@@ -1,5 +1,5 @@
 //! BitHash order-neutrality gate for the opt-in parallel delta scan
-//! ([`DeltaGenerator::generate_chunked`]).
+//! ([`DeltaGenerator::generate_chunked_counted`]).
 //!
 //! # What this suite decides
 //!

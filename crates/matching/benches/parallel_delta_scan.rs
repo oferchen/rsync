@@ -1,7 +1,7 @@
 //! Scaling benchmark for the parallel sender-scan delta generator.
 //!
 //! Compares the sequential [`DeltaGenerator::generate`] against the parallel
-//! [`DeltaGenerator::generate_chunked`] at increasing range counts, on a
+//! [`DeltaGenerator::generate_chunked_counted`] at increasing range counts, on a
 //! large delta workload (mostly-copy, the common rsync case). The parallel
 //! path's wall-clock speedup saturates at the rayon pool size; pin it with
 //! `RAYON_NUM_THREADS=N` across runs to trace the per-core scaling curve:
@@ -97,11 +97,9 @@ fn bench_parallel_delta_scan(c: &mut Criterion) {
             &max_chunks,
             |b, &max_chunks| {
                 b.iter(|| {
-                    let script = generator.generate_chunked(
-                        black_box(source.as_slice()),
-                        &index,
-                        max_chunks,
-                    );
+                    let script = generator
+                        .generate_chunked_counted(black_box(source.as_slice()), &index, max_chunks)
+                        .map(|(script, _)| script);
                     black_box(script)
                 });
             },
