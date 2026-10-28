@@ -1086,6 +1086,16 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     let counting_stdout = writer::CountingWriter::new_shared(throttled_stdout);
     let bytes_sent_counter = counting_stdout.counter();
 
+    // upstream: log.c:357-366 rwrite() - a server frames each diagnostic for
+    // its peer the moment it is produced. Installed before the writer exists
+    // so the multiplex writer it becomes sends the queue in production order.
+    let _peer_diagnostics = (!config.connection.client_mode).then(|| {
+        writer::peer_sink::PeerDiagnostics::install(
+            handshake.protocol,
+            daemon_log.as_ref().map(|dl| dl.log.clone()),
+        )
+    });
+
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
     let mut writer = writer::ServerWriter::new_plain(counting_stdout);
 

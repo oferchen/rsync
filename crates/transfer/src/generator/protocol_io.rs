@@ -430,54 +430,6 @@ impl GeneratorContext {
         for (kind, text) in std::mem::take(&mut self.pending_flist_diagnostics) {
             self.emit_sender_diagnostic(writer, kind, &text)?;
         }
-        self.flush_thread_local_diagnostics(writer)
-    }
-
-    /// Frames the diagnostics raised on this thread through the logging
-    /// facility - `--info`/`--debug` output and stray warnings - for the peer.
-    ///
-    /// Upstream's `rwrite()` sends every such line the moment it is raised
-    /// (upstream: log.c:357-366); oc buffers them per thread, so the sender
-    /// drains the buffer whenever it is about to flush. Only a server does
-    /// this: a client sender's buffer belongs to its own summary renderer.
-    /// `logging::drain_events_for_peer` applies the `--quiet` gate on FINFO.
-    ///
-    /// A daemon also logs each line, and does so before the frame is written,
-    /// as upstream's `logit()` writes and flushes it ahead of `send_msg()`
-    /// (log.c:312-332, 357-366). Logging first means a client that has read
-    /// the frame can rely on the line already being in the daemon log.
-    pub(super) fn flush_thread_local_diagnostics<W: Write>(
-        &mut self,
-        writer: &mut super::super::writer::ServerWriter<W>,
-    ) -> io::Result<()> {
-        if self.config.connection.client_mode || !writer.is_multiplexed() {
-            return Ok(());
-        }
-        for event in logging::drain_events_for_peer() {
-            let (code, mut text) = match event {
-                logging::DiagnosticEvent::Info { code, message, .. }
-                | logging::DiagnosticEvent::Debug { code, message, .. } => (code, message),
-                logging::DiagnosticEvent::Bytes { code, message, .. } => {
-                    (code, String::from_utf8_lossy(&message).into_owned())
-                }
-            };
-            if let Some(log) = &self.daemon_log_sink {
-                log.write(text.as_bytes());
-            }
-            text.push('\n');
-            match code {
-                logging::LogCode::Error
-                | logging::LogCode::ErrorSocket
-                | logging::LogCode::ErrorUtf8 => writer.send_msg_error(text.as_bytes())?,
-                logging::LogCode::ErrorXfer => {
-                    self.emit_sender_diagnostic(writer, SenderDiagnostic::ErrorXfer, &text)?;
-                }
-                logging::LogCode::Warning => {
-                    self.emit_sender_diagnostic(writer, SenderDiagnostic::Warning, &text)?;
-                }
-                _ => writer.send_msg_info(text.as_bytes())?,
-            }
-        }
         Ok(())
     }
 

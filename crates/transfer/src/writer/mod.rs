@@ -11,6 +11,7 @@
 //! - `multiplex` - Buffered writer that frames output in `MSG_DATA` multiplex frames.
 //! - `msg_info` - Trait for sending `MSG_INFO` protocol messages through multiplexed streams.
 //! - `counting` - Byte-counting writer wrapper for transfer statistics.
+//! - `peer_sink` - Live diagnostic sink framing each line for a server's peer.
 //! - `discard` - Dead-end sink for the batch local-replay receiver (no live peer).
 //!
 //! The bandwidth-pacing decorator for the sender socket, [`ThrottlingWriter`],
@@ -21,6 +22,7 @@ mod counting;
 mod discard;
 mod msg_info;
 pub(crate) mod multiplex;
+pub(crate) mod peer_sink;
 mod server;
 
 pub use self::counting::CountingWriter;

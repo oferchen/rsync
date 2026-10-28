@@ -645,7 +645,7 @@ impl ReceiverContext {
             // upstream: log.c:337-338 - every MSG_ERROR_XFER the sender framed
             // sets got_xfer_error on receipt, which is what reports a source
             // that failed to be listed (flist.c:3208 leaves io_error clear).
-            got_xfer_error: reader.xfer_error_count() > 0 || self.got_xfer_error.get(),
+            got_xfer_error: reader.xfer_error_count() > 0 || logging::xfer_error_reported() || self.got_xfer_error.get(),
             entries_received: 0,
             directories_created: 0,
             directories_failed: 0,

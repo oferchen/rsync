@@ -296,7 +296,7 @@ impl GeneratorContext {
                 ),
                 flist_first_byte_latency: self.timing.flist_first_byte_latency,
                 io_error: self.io_error,
-                got_xfer_error: self.got_xfer_error,
+                got_xfer_error: self.got_xfer_error || logging::xfer_error_reported(),
                 ..GeneratorStats::default()
             });
         }
@@ -568,7 +568,7 @@ impl GeneratorContext {
             delete_stats: self.delete_stats,
             created_stats: transfer_result.created_stats,
             io_error: self.io_error,
-            got_xfer_error: self.got_xfer_error,
+            got_xfer_error: self.got_xfer_error || logging::xfer_error_reported(),
         })
     }
 }
