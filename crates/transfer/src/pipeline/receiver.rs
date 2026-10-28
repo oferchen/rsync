@@ -902,6 +902,7 @@ mod tests {
                 xattr_list: None,
                 xattr_basis: None,
                 file_entry: None,
+                log_name: None,
             })))
             .unwrap();
 
@@ -1260,6 +1261,7 @@ mod tests {
                     xattr_list: None,
                     xattr_basis: None,
                     file_entry: None,
+                    log_name: None,
                 }),
                 data: b"test data".to_vec(),
                 expected_checksum: Default::default(),
@@ -1341,6 +1343,7 @@ mod tests {
                 xattr_list: None,
                 xattr_basis: None,
                 file_entry: None,
+                log_name: None,
             })))
             .unwrap();
         pr.file_sender()
@@ -1404,6 +1407,7 @@ mod tests {
                     xattr_list: None,
                     xattr_basis: None,
                     file_entry: None,
+                    log_name: None,
                 }),
                 data: b"next".to_vec(),
                 expected_checksum: Default::default(),
@@ -1497,6 +1501,7 @@ mod tests {
                     xattr_list: None,
                     xattr_basis: None,
                     file_entry: Some(entry),
+                    log_name: None,
                 }),
                 data: b"test data".to_vec(),
                 expected_checksum: Default::default(),
@@ -1620,6 +1625,7 @@ mod tests {
                     xattr_list: None,
                     xattr_basis: None,
                     file_entry: Some(entry),
+                    log_name: None,
                 }),
                 data: b"test data".to_vec(),
                 expected_checksum: Default::default(),
@@ -1894,6 +1900,7 @@ mod tests {
                     xattr_list: None,
                     xattr_basis: None,
                     file_entry: None,
+                    log_name: None,
                 }),
                 data: b"test data".to_vec(),
                 expected_checksum: Default::default(),
@@ -1972,6 +1979,7 @@ mod tests {
                     xattr_list: None,
                     xattr_basis: None,
                     file_entry: None,
+                    log_name: None,
                 }),
                 data: b"test data".to_vec(),
                 expected_checksum: Default::default(),
@@ -2051,6 +2059,7 @@ mod tests {
                     xattr_list: None,
                     xattr_basis: None,
                     file_entry: None,
+                    log_name: None,
                 }),
                 data: b"test data".to_vec(),
                 expected_checksum: Default::default(),
@@ -2461,6 +2470,7 @@ mod tests {
                     xattr_list: None,
                     xattr_basis: None,
                     file_entry: None,
+                    log_name: None,
                 }),
                 data: b"drop staged".to_vec(),
                 expected_checksum: Default::default(),
@@ -2524,6 +2534,7 @@ mod tests {
                     xattr_list: None,
                     xattr_basis: None,
                     file_entry: None,
+                    log_name: None,
                 }),
                 data: b"shutdown stage".to_vec(),
                 expected_checksum: Default::default(),
@@ -2577,6 +2588,7 @@ mod tests {
                     xattr_list: None,
                     xattr_basis: None,
                     file_entry: None,
+                    log_name: None,
                 }),
                 data: b"e2e staged".to_vec(),
                 expected_checksum: Default::default(),
@@ -2640,6 +2652,7 @@ mod tests {
             xattr_list: None,
             xattr_basis: None,
             file_entry: None,
+            log_name: None,
         };
         crate::disk_commit::close_fault::arm(libc::EIO);
         if chunked {

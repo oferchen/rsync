@@ -261,6 +261,7 @@ mod tests {
             xattr_list: None,
             xattr_basis: None,
             file_entry: entry,
+            log_name: None,
         }
     }
 

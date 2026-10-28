@@ -106,6 +106,7 @@ pub enum ResponseProgress {
 ///   the disk thread applies its metadata without indexing a shared flist copy
 /// * `is_device_target` - Whether the target is a device file
 /// * `xattr_list` - Optional extended attribute list for metadata application
+/// * `log_name` - The `-v` name line the disk thread prints once the output opens
 /// * `token_reader` - Reusable token reader, shared across files in a session.
 ///   For zstd, the decompression context must be preserved across files because
 ///   upstream rsync uses a single continuous zstd stream for the entire session.
@@ -124,6 +125,7 @@ pub fn process_file_response_streaming<R: Read>(
     file_entry: &protocol::flist::FileEntry,
     is_device_target: bool,
     xattr_list: Option<protocol::xattr::XattrList>,
+    log_name: Option<String>,
     token_reader: &mut TokenReader,
 ) -> io::Result<ResponseProgress> {
     let header = match read_response_header(reader, ndx_codec, pending, ctx, receiver)? {
@@ -188,6 +190,7 @@ pub fn process_file_response_streaming<R: Read>(
         // entry per in-flight file is transient (freed at commit) and immune to
         // the receiver reclaiming its own flist segments mid-transfer.
         file_entry: Some(file_entry.clone()),
+        log_name,
     });
 
     let mut basis_map = if let Some(ref path) = header.basis_path {
