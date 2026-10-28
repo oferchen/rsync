@@ -161,6 +161,34 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
     Ok(flags)
 }
 
+/// Runs `handler` on a dedicated thread the first time the process receives
+/// `SIGTERM`.
+///
+/// For a harness that must act on an external termination request, such as a
+/// test runner's timeout. The daemon's own disposition is
+/// [`register_signal_handlers`]. The thread blocks in the signal iterator, so
+/// nothing polls, and registering replaces the default action: the process is
+/// not terminated by the signal itself, `handler` decides what happens.
+///
+/// # Errors
+///
+/// Returns the error from installing the handler or spawning the thread.
+#[cfg(unix)]
+pub fn on_sigterm<F>(handler: F) -> io::Result<()>
+where
+    F: FnOnce() + Send + 'static,
+{
+    let mut signals = signal_hook::iterator::Signals::new([signal_hook::consts::SIGTERM])?;
+    std::thread::Builder::new()
+        .name("sigterm-hook".to_owned())
+        .spawn(move || {
+            if signals.forever().next().is_some() {
+                handler();
+            }
+        })?;
+    Ok(())
+}
+
 /// No-op signal registration for platforms that are neither Unix nor Windows.
 #[cfg(all(not(unix), not(windows)))]
 pub fn register_signal_handlers() -> io::Result<SignalFlags> {
@@ -192,6 +220,17 @@ mod tests {
         assert!(flags.graceful_exit.load(Ordering::Relaxed));
         flags.progress_dump.store(true, Ordering::Relaxed);
         assert!(flags.progress_dump.load(Ordering::Relaxed));
+    }
+
+    /// The hook runs on SIGTERM and the process survives it, which is what
+    /// lets a harness report before it exits.
+    #[cfg(unix)]
+    #[test]
+    fn on_sigterm_runs_the_handler_instead_of_terminating() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        on_sigterm(move || tx.send(()).expect("receiver alive")).expect("hook installs");
+        signal_hook::low_level::raise(signal_hook::consts::SIGTERM).expect("raise SIGTERM");
+        rx.recv().expect("the handler ran");
     }
 
     #[test]
