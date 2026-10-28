@@ -98,6 +98,10 @@ impl<'a> CopyContext<'a> {
             batch_delta_sum_head: protocol::wire::SumHead::WHOLE_FILE,
             batch_delta_sum_head_offset: 0,
             batch_delta_iflags_offset: None,
+            batch_report_slot: None,
+            batch_owner_ids: [Vec::new(), Vec::new()],
+            batch_listing_dir: PathBuf::from("."),
+            batch_flist_error_dirs: Vec::new(),
             batch_entry_sort_data: Vec::new(),
             batch_hlink_first_ndx: HashMap::new(),
             batch_entry_hlink_gnum: Vec::new(),
@@ -690,6 +694,17 @@ impl<'a> CopyContext<'a> {
     /// Without `--ignore-errors` it suppresses every later delete pass.
     pub(super) fn record_io_error(&mut self) {
         self.walk_io_error = true;
+        self.note_batch_flist_error();
+    }
+
+    /// Records a general I/O error the receiving side raised on the
+    /// destination (a directory chmod), which suppresses deletes like a walk
+    /// error but is not part of the sender's file-list `io_error`.
+    ///
+    /// upstream: generator.c:1907-1910 sets the generator's own `io_error`;
+    /// the sender never sees it, so a batch does not carry it.
+    pub(super) fn record_generator_io_error(&mut self) {
+        self.walk_io_error = true;
     }
 
     /// Records a general I/O error raised while sending an already-listed
@@ -710,6 +725,7 @@ impl<'a> CopyContext<'a> {
     pub(super) fn record_flist_io_error(&mut self) {
         self.flist_io_error = true;
         self.walk_io_error = true;
+        self.note_batch_flist_error();
     }
 
     /// Reports whether any source entry was dropped from the file list, so the

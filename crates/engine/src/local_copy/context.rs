@@ -419,6 +419,32 @@ pub(crate) struct CopyContext<'a> {
     /// and `sender.c:587,625` count `stats.created_files` only when
     /// `ITEM_IS_NEW` is set in that word.
     batch_delta_iflags_offset: Option<usize>,
+    /// `(entry, offset)` of the iflags word of the delta entry
+    /// `finalize_batch_file_delta()` completed last, until the file's record
+    /// ORs its `ITEM_REPORT_*` bits into it.
+    ///
+    /// upstream: `generator.c:517-548 itemize()` computes the report bits from
+    /// the destination stat; oc knows them only once the record is built,
+    /// which every executor does after finalizing the delta entry.
+    batch_report_slot: Option<(usize, usize)>,
+    /// Owner uids, then group gids, in first-seen send order, for the id lists
+    /// that follow a non-INC_RECURSE batch file list.
+    ///
+    /// upstream: `flist.c:787-797 send_file_entry()` calls `add_uid()`/
+    /// `add_gid()` per entry; `uidlist.c:388-406 send_one_list()` replays that
+    /// order with each id's name.
+    batch_owner_ids: [Vec<u32>; 2],
+    /// The directory whose listing the walk is reading, as its file-list
+    /// name (`.` for the transfer root and outside any listing).
+    batch_listing_dir: PathBuf,
+    /// Directories (file-list names) whose listing raised a sender-side
+    /// `io_error`, in the order they failed.
+    ///
+    /// upstream: `flist.c:2636-2690 send_extra_file_list()` - the error rides
+    /// the end marker of the list being built when it happened, so under
+    /// INC_RECURSE the replaying generator skips deletions from that list on
+    /// (generator.c delete_in_dir) rather than from the first one.
+    batch_flist_error_dirs: Vec<PathBuf>,
     /// Sort metadata for each flist entry in traversal order: (name_bytes, is_dir).
     /// Used to compute the traversal→sorted index mapping that upstream's
     /// `flist_sort_and_clean()` produces after reading the batch flist.
