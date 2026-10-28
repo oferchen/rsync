@@ -34,6 +34,9 @@ impl<'a> CopyContext<'a> {
         let batch_flist_writer = build_batch_flist_writer(&options);
         let batch_token_encoder = build_batch_token_encoder(&options);
         let adaptive_level = build_adaptive_level_controller(&options);
+        let wire_tally = options
+            .get_wire_totals()
+            .map(|totals| WireTally::new(totals, &options, mode.is_dry_run()));
 
         Self {
             mode,
@@ -110,9 +113,7 @@ impl<'a> CopyContext<'a> {
             batch_flist_index: 0,
             batch_ndx_codec,
             batch_token_encoder,
-            wire_tally: options
-                .get_wire_totals()
-                .map(|totals| WireTally::new(totals, &options, mode.is_dry_run())),
+            wire_tally,
             readdir_buf: Vec::new(),
             adaptive_level,
         }

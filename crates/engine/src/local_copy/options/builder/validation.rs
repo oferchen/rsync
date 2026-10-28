@@ -205,6 +205,7 @@ impl LocalCopyOptionsBuilder {
             user_mapping: self.user_mapping,
             group_mapping: self.group_mapping,
             batch_writer: self.batch_writer,
+            wire_totals: None,
             super_mode: self.super_mode,
             fake_super: self.fake_super,
             ignore_errors: self.ignore_errors,

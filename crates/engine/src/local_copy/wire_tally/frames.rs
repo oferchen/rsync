@@ -28,6 +28,11 @@ fn framed(payload: u64) -> u64 {
     payload + payload.div_ceil(FRAME_PAYLOAD) * MESSAGE_HEADER_LEN as u64
 }
 
+#[cfg(test)]
+pub(super) fn framed_for_test(payload: u64) -> u64 {
+    framed(payload)
+}
+
 impl FrameSchedule {
     /// Adds the sender's file-list rounds.
     ///

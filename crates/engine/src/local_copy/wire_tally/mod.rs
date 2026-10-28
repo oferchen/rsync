@@ -109,7 +109,7 @@ impl WireTotals {
 }
 
 /// Counts bytes written through it and discards them.
-#[derive(Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 struct ByteCounter(u64);
 
 impl io::Write for ByteCounter {
