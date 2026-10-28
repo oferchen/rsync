@@ -1215,10 +1215,15 @@ where
             name_level,
             crate::frontend::progress::NameOutputLevel::UpdatedAndUnchanged
         ))
-        // upstream: main.c:828 - `INFO_GTE(NAME, 1) || stdout_format_has_i`.
+        // upstream: main.c:828 - `INFO_GTE(NAME, 1) || stdout_format_has_i`;
+        // `-v` raises NAME to 1 unless `--info=name0` overrode it.
         .with_created_directory_notice(
             out_format_forwards_i
-                || !matches!(name_level, crate::frontend::progress::NameOutputLevel::Disabled),
+                || if name_overridden {
+                    !matches!(name_level, crate::frontend::progress::NameOutputLevel::Disabled)
+                } else {
+                    verbosity > 0
+                },
         );
         builder = builder.wire_totals(Some(totals));
     }
