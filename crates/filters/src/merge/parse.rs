@@ -8,7 +8,7 @@ use std::path::Path;
 
 use crate::RuleSource;
 use crate::clear_token::{ClearToken, classify_clear_token};
-use crate::cvs::CvsTemplate;
+use crate::cvs::{CvsSession, CvsTemplate};
 use crate::rule_source::trace_add_rule;
 use crate::{FilterRule, ModifierScope, RuleModifiers, parse_rule_modifiers_in};
 
@@ -40,15 +40,17 @@ use super::error::MergeFileError;
 ///
 /// Returns [`MergeFileError`] if any line contains unrecognised syntax.
 pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>, MergeFileError> {
-    parse_rules_in(content, source_path, false)
+    parse_rules_in(content, source_path, false, &CvsSession::default())
 }
 
 /// [`parse_rules`] for a merge file whose own rule names a side (`:s`, `:r`),
-/// which refuses any rule in it that names one too.
+/// which refuses any rule in it that names one too. A `C` rule stands for the
+/// CVS list of `cvs`, the session's.
 pub(crate) fn parse_rules_in(
     content: &str,
     source_path: &Path,
     template_sided: bool,
+    cvs: &CvsSession,
 ) -> Result<Vec<FilterRule>, MergeFileError> {
     let mut rules = Vec::new();
 
@@ -69,7 +71,7 @@ pub(crate) fn parse_rules_in(
             name: &name,
             line: line_num,
         };
-        for rule in parse_rule_line(line, source_path, line_num)?.into_rules() {
+        for rule in parse_rule_line(line, source_path, line_num)?.into_rules(cvs) {
             refuse_side_in_sided_file(&rule, template_sided, line, &source, source_path, line_num)?;
             trace_add_rule(
                 rule.action,
@@ -171,12 +173,13 @@ pub(crate) fn parse_rules_word_split(
     content: &str,
     source_path: &Path,
     template_sided: bool,
+    cvs: &CvsSession,
 ) -> Result<Vec<FilterRule>, MergeFileError> {
     let mut rules = Vec::new();
     let name = source_path.display().to_string();
     let source = RuleSource::FileWordSplit { name: &name };
     for token in content.split_whitespace() {
-        for rule in parse_rule_line(token, source_path, 0)?.into_rules() {
+        for rule in parse_rule_line(token, source_path, 0)?.into_rules(cvs) {
             refuse_side_in_sided_file(&rule, template_sided, token, &source, source_path, 0)?;
             trace_add_rule(
                 rule.action,
@@ -213,7 +216,7 @@ fn rule_file_source(name: &str, line_num: usize) -> RuleSource<'_> {
 /// template is a one-sided per-dir merge rule), so reject it." The refusal is a
 /// `filter_rule_err`, so the text goes through `rule_text` (exclude.c:133-137),
 /// and it precedes the inherit, so the template never overrides the rule's own
-/// side. oc spells "no side bit" as both sides applying.
+/// side.
 fn refuse_side_in_sided_file(
     rule: &FilterRule,
     template_sided: bool,
@@ -222,7 +225,7 @@ fn refuse_side_in_sided_file(
     source_path: &Path,
     line_num: usize,
 ) -> Result<(), MergeFileError> {
-    if !template_sided || (rule.applies_to_sender && rule.applies_to_receiver) {
+    if !template_sided || !rule.specifies_side() {
         return Ok(());
     }
     Err(MergeFileError::parse_error(
@@ -249,7 +252,7 @@ pub(crate) fn apply_modifiers(mods: RuleModifiers, rule: FilterRule) -> FilterRu
         .with_abs_path(mods.abs_path)
         .with_word_split(mods.word_split)
         .with_no_prefixes(mods.no_prefixes, mods.no_prefixes_include);
-    if mods.sender_side != mods.receiver_side {
+    if mods.sender_side || mods.receiver_side {
         rule = rule.with_sides(mods.sender_side, mods.receiver_side);
     }
     rule
@@ -347,11 +350,11 @@ impl ParsedLine {
     /// the list here is the same first-match order. The built-in defaults are
     /// marked perishable, as every protocol oc speaks at >= 30 does
     /// (exclude.c:1498-1500).
-    pub(crate) fn into_rules(self) -> Vec<FilterRule> {
+    pub(crate) fn into_rules(self, cvs: &CvsSession) -> Vec<FilterRule> {
         match self {
             Self::Rule(rule) => vec![rule],
             Self::SelfExcludingMerge { exclude, merge } => vec![exclude, merge],
-            Self::CvsIgnore(template) => crate::cvs::cvs_ignore_rules(template, true),
+            Self::CvsIgnore(template) => cvs.rules(template, true),
         }
     }
 }
