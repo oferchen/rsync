@@ -10,9 +10,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::disk_commit::LiveAclCache;
 use logging::{debug_log, info_log};
 use metadata::{AclIdMapper, MetadataOptions, apply_metadata_with_pre_transfer_stat};
-use protocol::acl::AclCache;
 use protocol::flist::FileEntry;
 use protocol::xattr::XattrList;
 
@@ -265,7 +265,7 @@ impl ReceiverContext {
         &self,
         dest_dir: &Path,
         metadata_opts: &MetadataOptions,
-        acl_cache: Option<&AclCache>,
+        acl_cache: Option<&LiveAclCache>,
         acl_id_map: Option<&AclIdMapper>,
         writer: &mut W,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
@@ -921,7 +921,7 @@ impl ReceiverContext {
         writer: &mut W,
         metadata_opts: &MetadataOptions,
         failed_dirs: &mut FailedDirectories,
-        acl_cache: Option<&AclCache>,
+        acl_cache: Option<&LiveAclCache>,
         acl_id_map: Option<&AclIdMapper>,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> io::Result<Option<(bool, u32)>> {
@@ -1128,7 +1128,7 @@ impl ReceiverContext {
         entry: &FileEntry,
         metadata_opts: &MetadataOptions,
         is_new: bool,
-        acl_cache: Option<&AclCache>,
+        acl_cache: Option<&LiveAclCache>,
         acl_id_map: Option<&AclIdMapper>,
     ) {
         // upstream: generator.c:1904-1912 - grant a transient u+rwx to a

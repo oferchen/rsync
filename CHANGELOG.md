@@ -247,6 +247,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
 
 ### Fixed
+- A local `--write-batch -A` now carries each file's own ACL, named user and group entries and a directory's default ACL included, and names those ids as upstream does, so 3.5.1 replays it like its own batch; the batch used to carry only the ACL the mode implies
+- With oc as the receiver of an incremental-recursion `-A` transfer (the default for pulls), every file listed after the first directory now gets its own ACL; it used to keep only what its parent's default ACL gave it and the run still exited 0. An oc replay of an incremental batch is fixed the same way
 - `--read-batch` replays batches of more than 1000 files recorded with incremental recursion, including 3.5.1's. It failed with "unexpected per-file NDX while fetching file-list segment", because the sub-lists of such a batch arrive among the file data (#8261)
 - A local `--write-batch` now replays in upstream rsync as upstream's own batch does: each updated file carries its itemize bits (`>f.st......`, not `>f.........`) and the transfer root its `.d`/`cd` row; protocol 28-29 batches write the `io_error` word after the id lists and sum files with seeded MD4, where 3.5.1 aborted with "File-list index ... not in -1 - N"; the id lists name every owner and group; and an unreadable source directory sets `io_error` on the list it belongs to, so a replay no longer deletes inside it (#8266)
 
@@ -696,7 +698,6 @@ user-facing work; consult the linked PRs for full detail.
 
 ### Fixed
 
-- A local `--write-batch -A` now carries each file's own ACL, named user and group entries and a directory's default ACL included, and names those ids as upstream does, so 3.5.1 replays it like its own batch; the batch used to carry only the ACL the mode implies
 **Daemon**
 - Survive transient `accept(2)` errors (`ECONNABORTED`/`EMFILE`) under load instead of treating them as fatal (#6763)
 - Enable `SO_KEEPALIVE` on accepted client sockets and align listener socket options with upstream (`SO_REUSEADDR` only by default, honor `--port 0`) (#6720, #6562)

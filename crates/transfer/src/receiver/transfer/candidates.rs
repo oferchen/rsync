@@ -192,7 +192,7 @@ impl ReceiverContext {
         failed_dirs: Option<&FailedDirectories>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         stats: &mut TransferStats,
-        acl_cache: Option<&protocol::acl::AclCache>,
+        acl_cache: Option<&crate::disk_commit::LiveAclCache>,
         acl_id_map: Option<&metadata::AclIdMapper>,
     ) -> Vec<(usize, PathBuf, u32)> {
         // Whole-list candidate build (the batch drivers). Delegates to the
@@ -233,7 +233,7 @@ impl ReceiverContext {
         failed_dirs: Option<&FailedDirectories>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         stats: &mut TransferStats,
-        acl_cache: Option<&protocol::acl::AclCache>,
+        acl_cache: Option<&crate::disk_commit::LiveAclCache>,
         acl_id_map: Option<&metadata::AclIdMapper>,
     ) -> Vec<(usize, PathBuf, u32)> {
         // upstream: generator.c:1636-1637 - "recv_generator(%s,%d)" emitted at
@@ -1472,7 +1472,7 @@ impl ReceiverContext {
         stat_meta: &fast_io::EntryMetadata,
         metadata_opts: &MetadataOptions,
         metadata_errors: &mut Vec<(PathBuf, String)>,
-        acl_cache: Option<&protocol::acl::AclCache>,
+        acl_cache: Option<&crate::disk_commit::LiveAclCache>,
         acl_id_map: Option<&metadata::AclIdMapper>,
         emit_itemize: bool,
         unchanged_iflags: u32,

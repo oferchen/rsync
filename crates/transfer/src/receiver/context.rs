@@ -140,6 +140,9 @@ pub struct ReceiverContext {
     /// (prev_name, prev_mode, prev_uid, prev_gid) between `receive_file_list()`
     /// and `receive_extra_file_lists()`.
     pub(in crate::receiver) flist_reader_cache: Option<FileListReader>,
+    /// The ACL cache the appliers read, shared once the initial list is in
+    /// and extended from `flist_reader_cache` after every sub-list.
+    pub(in crate::receiver) live_acl_cache: Option<crate::disk_commit::LiveAclCache>,
     /// UID mappings from remote to local IDs.
     pub(in crate::receiver) uid_list: IdList,
     /// GID mappings from remote to local IDs.
@@ -718,6 +721,7 @@ impl ReceiverContext {
             dir_flist: DirFlist::default(),
             served_dir_flists: HashSet::new(),
             flist_reader_cache: None,
+            live_acl_cache: None,
             uid_list: IdList::new(),
             gid_list: IdList::new(),
             daemon_filter_set,

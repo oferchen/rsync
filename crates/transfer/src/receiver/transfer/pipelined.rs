@@ -137,7 +137,7 @@ impl ReceiverContext {
         let mut metadata_errors = self.create_directories(
             &setup.dest_dir,
             &setup.metadata_opts,
-            setup.acl_cache.as_deref(),
+            setup.acl_cache.as_ref(),
             setup.acl_id_map.as_deref(),
             writer,
             #[cfg(unix)]
@@ -160,7 +160,7 @@ impl ReceiverContext {
         #[cfg(unix)]
         self.create_specials(
             &setup.dest_dir,
-            setup.acl_cache.as_deref(),
+            setup.acl_cache.as_ref(),
             setup.acl_id_map.as_deref(),
             setup.sandbox.as_deref(),
             writer,
@@ -205,7 +205,7 @@ impl ReceiverContext {
             None,
             &mut metadata_errors,
             &mut stats,
-            setup.acl_cache.as_deref(),
+            setup.acl_cache.as_ref(),
             setup.acl_id_map.as_deref(),
         );
 

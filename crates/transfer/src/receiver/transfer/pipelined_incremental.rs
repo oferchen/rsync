@@ -156,7 +156,7 @@ impl ReceiverContext {
                     &mut *writer,
                     &setup.metadata_opts,
                     &mut failed_dirs,
-                    setup.acl_cache.as_deref(),
+                    setup.acl_cache.as_ref(),
                     setup.acl_id_map.as_deref(),
                     #[cfg(unix)]
                     setup.sandbox.as_deref(),
@@ -213,7 +213,7 @@ impl ReceiverContext {
         #[cfg(unix)]
         self.create_specials(
             &setup.dest_dir,
-            setup.acl_cache.as_deref(),
+            setup.acl_cache.as_ref(),
             setup.acl_id_map.as_deref(),
             setup.sandbox.as_deref(),
             writer,
@@ -257,7 +257,7 @@ impl ReceiverContext {
             Some(&failed_dirs),
             &mut metadata_errors,
             &mut stats,
-            setup.acl_cache.as_deref(),
+            setup.acl_cache.as_ref(),
             setup.acl_id_map.as_deref(),
         );
 
@@ -791,7 +791,7 @@ impl ReceiverContext {
                 Some(&failed_dirs),
                 &mut metadata_errors,
                 &mut stats,
-                setup.acl_cache.as_deref(),
+                setup.acl_cache.as_ref(),
                 setup.acl_id_map.as_deref(),
             );
             match mode {
@@ -1129,7 +1129,7 @@ impl ReceiverContext {
             &mut *writer,
             &setup.metadata_opts,
             failed_dirs,
-            setup.acl_cache.as_deref(),
+            setup.acl_cache.as_ref(),
             setup.acl_id_map.as_deref(),
             #[cfg(unix)]
             setup.sandbox.as_deref(),
@@ -1230,7 +1230,7 @@ impl ReceiverContext {
             self.create_specials_in_range(
                 range.clone(),
                 &setup.dest_dir,
-                setup.acl_cache.as_deref(),
+                setup.acl_cache.as_ref(),
                 setup.acl_id_map.as_deref(),
                 sandbox,
                 writer,

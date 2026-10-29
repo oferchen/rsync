@@ -14,10 +14,10 @@ use protocol::flist::FileEntry;
 use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 use crate::delta_apply::ChecksumVerifier;
 
+use crate::disk_commit::LiveAclCache;
 use metadata::{
     AclIdMapper, MetadataOptions, ModifyWindow, apply_metadata_with_cached_stat, metadata_unchanged,
 };
-use protocol::acl::AclCache;
 
 use super::apply_acls_from_receiver_cache;
 
@@ -711,7 +711,7 @@ pub(super) fn try_reference_dest(
     modify_window: ModifyWindow,
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
-    acl_cache: Option<&AclCache>,
+    acl_cache: Option<&LiveAclCache>,
     acl_id_map: Option<&AclIdMapper>,
     trust: BasisTrust,
 ) -> bool {
@@ -1002,7 +1002,7 @@ fn apply_altdest_metadata(
     dest_path: &Path,
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
-    acl_cache: Option<&AclCache>,
+    acl_cache: Option<&LiveAclCache>,
     acl_id_map: Option<&AclIdMapper>,
 ) {
     let cached_meta = fs::symlink_metadata(dest_path).ok();
@@ -1041,7 +1041,7 @@ fn link_reference_file(
     dest_path: &Path,
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
-    acl_cache: Option<&AclCache>,
+    acl_cache: Option<&LiveAclCache>,
     acl_id_map: Option<&AclIdMapper>,
 ) -> bool {
     if let Some(parent) = dest_path.parent() {
@@ -1075,7 +1075,7 @@ fn copy_reference_file(
     dest_path: &Path,
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
-    acl_cache: Option<&AclCache>,
+    acl_cache: Option<&LiveAclCache>,
     acl_id_map: Option<&AclIdMapper>,
 ) -> bool {
     if let Some(parent) = dest_path.parent() {
