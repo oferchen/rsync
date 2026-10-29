@@ -191,14 +191,9 @@ where
     //    contents - a silent data-loss gap. The leaf executor recurses
     //    depth-first and calls `delete_leaf`, which backs up each file, matching
     //    upstream's per-entry recursion.
-    // 4. Filter rules: each child of an extraneous directory meets the
-    //    filters on its own, and a protected one keeps the directory
-    //    (delete.c:91-183 delete_dir_contents, through the is_excluded() check
-    //    in get_dirlist()). `remove_dir_all` would take it too.
     if context.options().max_deletion_limit().is_some()
         || context.one_file_system_enabled()
         || context.options().backup_enabled()
-        || context.deletion_filters_active()
     {
         return delete_extraneous_entries_capped(context, destination, relative, source_entries);
     }
@@ -243,6 +238,10 @@ where
     // in `delete_extraneous_entries_via_emitter`; this guard covers the deferred
     // `--delete-delay` plan, whose decided extras are consumed here rather than
     // rescanned.
+    // Filter rules route the same way: each child of an extraneous directory
+    // meets the filters on its own, and a protected one keeps the directory
+    // (delete.c:91-183 delete_dir_contents, through the is_excluded() check in
+    // get_dirlist()), where the emitter's `remove_dir_all` would take it too.
     if context.one_file_system_enabled()
         || context.options().backup_enabled()
         || context.deletion_filters_active()
