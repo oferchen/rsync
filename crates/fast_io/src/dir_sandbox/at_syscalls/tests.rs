@@ -2666,3 +2666,49 @@ fn missing_leaf_under_a_held_parent_is_not_re_resolved() {
     .expect_err("the held parent answers ENOENT");
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 }
+
+/// A leaf below 1024 parents is refused before any syscall, as upstream's
+/// secure walk refuses it; one parent fewer reaches the filesystem and gets
+/// the ordinary missing-entry answer. The parents need not exist, so the
+/// refusal is the ceiling's alone - a walk that tried them would say ENOENT.
+///
+/// upstream: rsync-3.5.1/syscall.c:3004-3010 `ds_push()`
+#[test]
+fn a_leaf_below_1024_parents_is_refused_with_enomem() {
+    let (_keep, root) = test_support::create_canonical_tempdir();
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+    let below = |parents: usize| -> std::path::PathBuf {
+        std::iter::repeat_n("d", parents).chain(["f"]).collect()
+    };
+
+    let walkable = below(crate::walk_depth::SECURE_WALK_MAX_DEPTH - 1);
+    let err =
+        lstat_via_sandbox_or_fallback(Some(&sandbox), &root, &walkable, &root.join(&walkable))
+            .expect_err("missing parents");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound, "{err}");
+
+    let too_deep = below(crate::walk_depth::SECURE_WALK_MAX_DEPTH);
+    for follow in [false, true] {
+        let full = root.join(&too_deep);
+        let err = if follow {
+            stat_via_sandbox_or_fallback(Some(&sandbox), &root, &too_deep, &full)
+        } else {
+            lstat_via_sandbox_or_fallback(Some(&sandbox), &root, &too_deep, &full)
+        }
+        .expect_err("past the ceiling");
+        assert_eq!(
+            err.raw_os_error(),
+            Some(libc::ENOMEM),
+            "follow={follow}: {err}"
+        );
+    }
+    let err = mkdirat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        &too_deep,
+        &root.join(&too_deep),
+        0o700,
+    )
+    .expect_err("past the ceiling");
+    assert_eq!(err.raw_os_error(), Some(libc::ENOMEM), "mkdir: {err}");
+}

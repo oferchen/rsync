@@ -797,7 +797,8 @@ const SECURE_OPEN_MAXSYMLINKS: u32 = 40;
 /// # Upstream Reference
 ///
 /// - `rsync-3.5.1/syscall.c:2940` `DS_MAXDEPTH`
-const DS_MAXDEPTH: usize = 1024;
+#[cfg(test)]
+const DS_MAXDEPTH: usize = crate::walk_depth::SECURE_WALK_MAX_DEPTH;
 
 impl<O: ConfinementOracle> ConfinePolicy<O> {
     /// Confine the walk, consulting `exclude` after every descended component.
@@ -872,9 +873,7 @@ impl<O: ConfinementOracle> ConfinedWalk<'_, O> {
     }
 
     fn push(&mut self, fd: OwnedFd, name: &std::ffi::OsStr) -> io::Result<()> {
-        if self.pushed.len() + 1 >= DS_MAXDEPTH {
-            return Err(io::Error::from_raw_os_error(libc::ENOMEM));
-        }
+        crate::walk_depth::check_secure_walk_depth(self.pushed.len() + 1)?;
         self.pushed.push(fd);
         if !self.abspath.as_os_str().is_empty() {
             self.abspath.push(name);

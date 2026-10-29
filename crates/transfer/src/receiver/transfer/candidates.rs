@@ -413,34 +413,50 @@ impl ReceiverContext {
                         dest_dir,
                         file_path,
                         true,
-                    )
-                    .ok();
+                    );
                     (*idx, file_path.clone(), meta)
                 })
                 .collect::<Vec<_>>()
         });
         #[cfg(not(unix))]
-        let anchored: Option<Vec<(usize, PathBuf, Option<fast_io::EntryMetadata>)>> = None;
-        let stat_results: Vec<(usize, PathBuf, Option<fast_io::EntryMetadata>)> = match anchored {
-            Some(results) => results,
-            None => crate::parallel_io::map_blocking(
-                stat_paths,
-                self.parallel_thresholds
-                    .for_op(crate::parallel_io::ParallelOp::Stat),
-                move |(idx, file_path)| {
-                    let meta = fs::metadata(&file_path)
-                        .ok()
-                        .map(fast_io::EntryMetadata::from);
-                    (idx, file_path, meta)
-                },
-            ),
-        };
+        let anchored: Option<
+            Vec<(usize, PathBuf, std::io::Result<fast_io::EntryMetadata>)>,
+        > = None;
+        let stat_results: Vec<(usize, PathBuf, std::io::Result<fast_io::EntryMetadata>)> =
+            match anchored {
+                Some(results) => results,
+                None => crate::parallel_io::map_blocking(
+                    stat_paths,
+                    self.parallel_thresholds
+                        .for_op(crate::parallel_io::ParallelOp::Stat),
+                    move |(idx, file_path)| {
+                        let meta = fs::metadata(&file_path).map(fast_io::EntryMetadata::from);
+                        (idx, file_path, meta)
+                    },
+                ),
+            };
 
         // Phase C: Sequential post-processing with stat results.
         // Pre-size for the expected minority that need transfer.
         let needs_metadata_apply = metadata_opts.requires_apply();
         let mut files_to_transfer = Vec::with_capacity(stat_results.len() / 4 + 1);
-        for (idx, file_path, mut dest_meta) in stat_results {
+        for (idx, file_path, stat_result) in stat_results {
+            let entry = &self.file_list[idx];
+            // upstream: generator.c:2213-2223 - a stat that failed for any
+            // reason but ENOENT is reported and the file skipped; only a
+            // missing destination proceeds as new.
+            let mut dest_meta = match stat_result {
+                Ok(meta) => Some(meta),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    let what = format!(
+                        "recv_generator: failed to stat {}",
+                        self.full_fname_in_dest(dest_dir, &file_path)
+                    );
+                    let _ = self.emit_generator_error_xfer(writer, &what, &error);
+                    continue;
+                }
+            };
             // upstream: generator.c:1393-1399 - under --fake-super the
             // generator's link_stat() goes through x_lstat(), which folds the
             // %stat record in; a record that does not parse is fatal
@@ -457,7 +473,6 @@ impl ReceiverContext {
             // writing any NDX request. A strict no-op unless --timeout is set
             // (allowed_lull None), keeping the default path wire-identical.
             let _ = writer.maybe_send_keepalive();
-            let entry = &self.file_list[idx];
             if self.skip_regular_by_existence_gate(
                 writer,
                 entry,
@@ -3462,10 +3477,12 @@ mod uptodate_notice_tests {
     use crate::receiver::stats::TransferStats;
     use crate::role::ServerRole;
 
-    /// Records every `MSG_INFO` frame a server-mode receiver emits.
+    /// Records every `MSG_INFO` and `MSG_ERROR_XFER` frame a server-mode
+    /// receiver emits.
     #[derive(Default)]
     struct CaptureWriter {
         lines: Vec<String>,
+        errors: Vec<String>,
     }
 
     impl io::Write for CaptureWriter {
@@ -3480,6 +3497,10 @@ mod uptodate_notice_tests {
     impl crate::writer::MsgInfoSender for CaptureWriter {
         fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
             self.lines.push(String::from_utf8_lossy(data).into_owned());
+            Ok(())
+        }
+        fn send_msg_error_xfer(&mut self, data: &[u8]) -> io::Result<()> {
+            self.errors.push(String::from_utf8_lossy(data).into_owned());
             Ok(())
         }
     }
@@ -3561,12 +3582,16 @@ mod uptodate_notice_tests {
 
     /// upstream: syscall.c:3858-3871 `held_dfd_for()` - the generator stats a
     /// regular-file destination through the held parent beneath the pinned
-    /// root, so a parent directory swapped for a symlink to a tree outside the
-    /// destination is never followed. A quick-check match out there must not
-    /// make the file look up to date: it is requested from the sender instead.
+    /// root, and its `link_stat()` fallback walks the same way, so a parent
+    /// directory swapped for a symlink to a tree outside the destination is
+    /// never followed. The refused stat is reported and the file skipped
+    /// (generator.c:2213-2223): a quick-check match out there neither makes
+    /// the file look up to date nor lets it be written through the symlink.
+    /// Measured on 3.5.1: `recv_generator: failed to stat "dest/sub/f": Too
+    /// many levels of symbolic links (40)`, exit 23.
     #[cfg(unix)]
     #[test]
-    fn sandboxed_stat_does_not_quick_check_through_a_symlinked_parent() {
+    fn sandboxed_stat_through_a_symlinked_parent_is_reported_and_skipped() {
         let dir = test_support::create_tempdir();
         let dest = dir.path().join("dest");
         let outside = dir.path().join("outside");
@@ -3584,9 +3609,10 @@ mod uptodate_notice_tests {
         let sandbox = fast_io::DirSandbox::open_root(&dest).expect("open sandbox");
         let mut errs = Vec::new();
         let mut stats = TransferStats::default();
+        let mut writer = CaptureWriter::default();
         let requested = ctx
             .build_files_to_transfer(
-                &mut CaptureWriter::default(),
+                &mut writer,
                 &dest,
                 Some(&sandbox),
                 &MetadataOptions::default(),
@@ -3597,10 +3623,20 @@ mod uptodate_notice_tests {
                 None,
             )
             .expect("candidate pass");
-        assert_eq!(
-            requested.iter().map(|(idx, _, _)| *idx).collect::<Vec<_>>(),
-            vec![0],
-            "the outside match must not satisfy the quick-check"
+        assert!(
+            requested.is_empty(),
+            "a refused stat is not a missing file: {requested:?}"
+        );
+        assert!(
+            writer.lines.iter().all(|l| !l.contains("is uptodate")),
+            "the outside match must not satisfy the quick-check: {:?}",
+            writer.lines
+        );
+        assert_eq!(writer.errors.len(), 1, "{:?}", writer.errors);
+        assert!(
+            writer.errors[0].starts_with("rsync: [generator] recv_generator: failed to stat \""),
+            "{:?}",
+            writer.errors
         );
     }
     /// upstream: rsync.c:828 - at NAME2 every quick-check match is reported as

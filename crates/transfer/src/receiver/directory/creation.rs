@@ -508,6 +508,11 @@ impl ReceiverContext {
                         failed_dir_paths.insert(dir_path.clone());
                         continue;
                     }
+                    if e.kind() == io::ErrorKind::OutOfMemory {
+                        self.report_mkdir_failure(writer, dest_dir, dir_path, &e);
+                        failed_dir_paths.insert(dir_path.clone());
+                        continue;
+                    }
                     return Err(e);
                 }
             }
@@ -883,6 +888,34 @@ impl ReceiverContext {
         }
     }
 
+    /// Reports a directory `mkdir` that failed for want of resources - the
+    /// confined walk's depth ceiling among them - and announces that its
+    /// contents are skipped.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1873-1887` - `rsyserr(FERROR_XFER, errno,
+    ///   "recv_generator: mkdir %s failed", ...)`, then `skipping_dir_contents`
+    /// - `syscall.c:3004-3010` - `ds_push()` fails with `ENOMEM` at the
+    ///   1024-level ceiling
+    fn report_mkdir_failure<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        dest_dir: &Path,
+        dir_path: &Path,
+        error: &io::Error,
+    ) {
+        let what = format!(
+            "recv_generator: mkdir {} failed",
+            self.full_fname_in_dest(dest_dir, dir_path)
+        );
+        let _ = self.emit_generator_error_xfer(writer, &what, error);
+        let _ = self.emit_error_line(
+            writer,
+            "*** Skipping any contents from this failed directory ***\n",
+        );
+    }
+
     /// Creates a single directory during incremental processing.
     ///
     /// Returns `Ok(None)` when the directory is not created: a failure marks it
@@ -1064,6 +1097,11 @@ impl ReceiverContext {
                             e
                         );
                     }
+                    failed_dirs.mark_failed(entry.path());
+                    return Ok(None);
+                }
+                if e.kind() == io::ErrorKind::OutOfMemory {
+                    self.report_mkdir_failure(writer, dest_dir, &dir_path, &e);
                     failed_dirs.mark_failed(entry.path());
                     return Ok(None);
                 }

@@ -131,6 +131,7 @@ pub(super) fn anchor_parent<'a>(
     }
 
     let (leaf, parent_names) = names.split_last().expect("len >= 2 checked above");
+    crate::walk_depth::check_secure_walk_depth(parent_names.len())?;
     let parent_rel: std::path::PathBuf = parent_names.iter().collect();
 
     #[cfg(target_os = "linux")]
@@ -245,6 +246,9 @@ pub(super) fn at_dest_leaf<T>(
     if let Some(leaf) = super::lstat::single_component_leaf(dest_dir, relative_path, full_path) {
         return op(held.current_dirfd(), leaf).map(Some);
     }
+    // upstream: syscall.c:3858-3871 held_dfd_for() gets its descriptor from
+    // the same secure walk, so a held parent never lifts the depth ceiling.
+    check_secure_walk_parents(relative_path)?;
     if let Some((dirfd, leaf)) = held_leaf(held, dest_dir, relative_path, full_path) {
         match op(dirfd.as_fd(), leaf) {
             Ok(value) => return Ok(Some(value)),
@@ -256,6 +260,13 @@ pub(super) fn at_dest_leaf<T>(
         ParentAnchor::Anchored { dirfd, name } => op(dirfd.as_fd(), name).map(Some),
         ParentAnchor::Fallback => Ok(None),
     }
+}
+
+/// Refuses a leaf whose parents lie deeper than upstream's secure walk
+/// descends: the leaf op walks every component above the leaf.
+fn check_secure_walk_parents(relative_path: &Path) -> io::Result<()> {
+    let parents = relative_path.components().count().saturating_sub(1);
+    crate::walk_depth::check_secure_walk_depth(parents)
 }
 
 /// Returns `true` when `anchor_parent` resolves a multi-component path's
