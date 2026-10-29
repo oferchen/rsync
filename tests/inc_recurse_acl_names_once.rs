@@ -11,8 +11,8 @@
 //! sender reuses one file-list writer across sub-lists, which is what keeps
 //! one sighting set for the whole transfer.
 //!
-//! Skip conditions (test passes with a printed reason): no `setfacl`, or a
-//! filesystem without POSIX ACLs.
+//! Skip conditions (test passes with a printed reason): a binary built without
+//! ACL support, no `setfacl`, or a filesystem without POSIX ACLs.
 
 #![cfg(target_os = "linux")]
 
@@ -20,6 +20,9 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use test_support::Capabilities;
+use test_support::capabilities::names;
 
 fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
@@ -74,6 +77,10 @@ fn count(haystack: &[u8], needle: &[u8]) -> usize {
 
 #[test]
 fn acl_names_cross_the_wire_once_per_id() {
+    if let Some(reason) = Capabilities::probe().skip_reason(&[names::ACLS]) {
+        eprintln!("skip: {reason}");
+        return;
+    }
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
     let src = root.join("src");
