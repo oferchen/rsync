@@ -381,16 +381,12 @@ impl GeneratorContext {
                     filter: predicate.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
                     checksum_seed: self.checksum_seed,
                 };
-                match metadata::read_xattrs_for_wire(full_path, &opts) {
-                    Ok(list) => {
-                        if !list.is_empty() {
-                            entry.set_xattr_list(list);
-                        }
-                    }
-                    Err(_) => {
-                        // Non-fatal: silently skip, matching upstream behavior
-                        // where xattr read failures don't abort the transfer
-                    }
+                // upstream: flist.c:2058-2063 - a failed get_xattr() leaves the
+                // entry out of the list; the walk reports it.
+                let list =
+                    metadata::read_xattrs_for_wire(full_path, &opts).map_err(io::Error::other)?;
+                if !list.is_empty() {
+                    entry.set_xattr_list(list);
                 }
             }
         }
