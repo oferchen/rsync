@@ -1095,7 +1095,7 @@ impl DestinationWriteGuard {
     /// Abandons an interrupted or erroring transfer.
     ///
     /// The temp is promoted onto its partial destination only when literal
-    /// data reached it ([`note_literal`](Self::note_literal)); otherwise it is
+    /// data reached it (`note_literal`); otherwise it is
     /// unlinked and an existing destination is left intact. [`Drop`] applies
     /// the same rule.
     ///

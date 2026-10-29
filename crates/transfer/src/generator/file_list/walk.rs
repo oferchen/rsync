@@ -26,6 +26,23 @@ use super::batch_stat::{StatResult, batch_stat_dir_entries};
 #[cfg(unix)]
 use super::operand_has_dotdir_marker;
 
+/// The error a failed per-directory filter scope ends the walk with.
+///
+/// upstream: exclude.c:133-137 filter_rule_err() - a rule refused out of a
+/// per-directory merge file prints the rule-text message alone and exits
+/// RERR_SYNTAX, so the class is chosen here, where the refusal is known.
+fn filter_chain_error(dir: &Path, error: filters::FilterChainError) -> io::Error {
+    match error {
+        filters::FilterChainError::Parse { message, .. } => protocol::syntax_violation(message),
+        other => io::Error::other(format!(
+            "filter chain error in \"{}\": {other} {}{}",
+            dir.display(),
+            error_location!(),
+            crate::role_trailer::sender()
+        )),
+    }
+}
+
 /// One pending step of the directory walk.
 ///
 /// The walk used to be call-stack recursion: a directory's entry was pushed,
@@ -600,14 +617,10 @@ impl GeneratorContext {
 
             // upstream: exclude.c:push_local_filters() - read per-directory
             // merge files when entering the root transfer directory.
-            let guard = self.filter_chain.enter_directory(&path).map_err(|e| {
-                io::Error::other(format!(
-                    "filter chain error in \"{}\": {e} {}{}",
-                    path.display(),
-                    error_location!(),
-                    crate::role_trailer::sender()
-                ))
-            })?;
+            let guard = self
+                .filter_chain
+                .enter_directory(&path)
+                .map_err(|e| filter_chain_error(&path, e))?;
 
             // LIFO: the scan runs before the scope is released.
             stack.push(WalkStep::LeaveDir(guard));
@@ -719,14 +732,10 @@ impl GeneratorContext {
 
             // upstream: exclude.c:push_local_filters() - read per-directory
             // merge files when entering a subdirectory during recursive walk.
-            let guard = self.filter_chain.enter_directory(&dir_path).map_err(|e| {
-                io::Error::other(format!(
-                    "filter chain error in \"{}\": {e} {}{}",
-                    dir_path.display(),
-                    error_location!(),
-                    crate::role_trailer::sender()
-                ))
-            })?;
+            let guard = self
+                .filter_chain
+                .enter_directory(&dir_path)
+                .map_err(|e| filter_chain_error(&dir_path, e))?;
 
             // LIFO: the scan runs before the scope is released.
             stack.push(WalkStep::LeaveDir(guard));
@@ -762,14 +771,10 @@ impl GeneratorContext {
         base: &Path,
         dir_path: &Path,
     ) -> io::Result<()> {
-        let guard = self.filter_chain.enter_directory(dir_path).map_err(|e| {
-            io::Error::other(format!(
-                "filter chain error in \"{}\": {e} {}{}",
-                dir_path.display(),
-                error_location!(),
-                crate::role_trailer::sender()
-            ))
-        })?;
+        let guard = self
+            .filter_chain
+            .enter_directory(dir_path)
+            .map_err(|e| filter_chain_error(dir_path, e))?;
         let result = self.scan_directory_batched(base, dir_path);
         self.filter_chain.leave_directory(guard);
         result
@@ -818,14 +823,10 @@ impl GeneratorContext {
         // upstream: exclude.c:push_local_filters() - the per-directory scope the
         // whole-tree walk enters before scanning, entered here for the same
         // reason: the children are matched against this directory's merge files.
-        let guard = self.filter_chain.enter_directory(dir_path).map_err(|e| {
-            io::Error::other(format!(
-                "filter chain error in \"{}\": {e} {}{}",
-                dir_path.display(),
-                error_location!(),
-                crate::role_trailer::sender()
-            ))
-        })?;
+        let guard = self
+            .filter_chain
+            .enter_directory(dir_path)
+            .map_err(|e| filter_chain_error(dir_path, e))?;
 
         // LIFO: the scan runs before the scope is released.
         let mut stack = vec![

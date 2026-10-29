@@ -183,3 +183,60 @@ State these so a later reader does not "fix" the omission.
   cells as non-vacuity companions (IOBUF-3b).
 - Both 3.5.0 pipe legs unchanged; both TCP rows flip in the same commit as the
   behaviour change.
+
+## Inventory: where the two halves travel apart (IOBUF-0c)
+
+Measured on master `9746b7d7f`. A site is listed when it takes, builds or
+splits a reader and a writer as two values. Data-copy helpers that happen to
+take a source and a sink (`compress`, the local-copy engine, `files_from`
+forwarding) are not transport halves and are left out.
+
+### 1. Where the pair is built
+
+| site | what it builds |
+|---|---|
+| `crates/transfer/src/lib.rs:1041-1042` | `ServerReader<IoBufReader<CountingReader<..>>>` over the chained stdin |
+| `crates/transfer/src/lib.rs:1079-1090` | `ServerWriter<CountingWriter<ThrottlingWriter<W>>>` over stdout |
+| `crates/transfer/src/lib.rs:1217`, `:1283` | hands both to the receiver `ctx.run` and the generator `ctx.run` |
+
+Every network role passes through this one function,
+`run_server_with_handshake_adopting`. That makes it the single place where one
+owner can be built.
+
+### 2. Role entry points and the functions that thread both halves
+
+| role | functions taking `reader` and `writer` separately |
+|---|---|
+| generator (oc sender) | `orchestrator.rs:95` `goodbye_draining_source_removals`, `:143` `run`; `transfer_loop.rs:464` `run_transfer_loop`; `goodbye.rs:137` `handle_goodbye`, `:175` `handle_goodbye_with_finalizer`, `:243` `answer_goodbye_with_finalizer` |
+| receiver | `receiver/transfer.rs:63` `run`, `:187` `finish_empty_client_flist`; `setup/context.rs:99` `setup_transfer`; `sync.rs:39` `run_sync`; `pipelined.rs:35` `run_pipelined`; `pipelined_incremental.rs:35`, `:586`, `:1029`, `:1170`; `pipeline.rs:402` `run_pipeline_loop_decoupled`, `:1246` `run_dry_run_loop`, `:1410` `run_only_write_batch_loop`; `phases.rs:34`, `:273`, `:375`, `:398`; `replay.rs:54`, `:716`; `mode.rs:96`, `:152` |
+
+That makes 6 generator functions and 21 receiver functions. Each one is an argument pair that a
+single `&mut IoBuf` replaces.
+
+### 3. The only coupling between the halves today
+
+`transfer_loop.rs:658` asks the reader `has_buffered_input()` before deciding
+whether to flush the writer (`reader/mod.rs:37`, `reader/server.rs:418`). This
+is the one place where oc already makes upstream's `perform_io` decision, which
+reads "input is already buffered, so do not flush" (io.c:658-742). Because the
+decision is made from outside both halves, the drain-on-write-error that
+upstream runs inside the same loop (io.c:961-967) has nowhere to live.
+
+### 4. Transport splits below the engine
+
+| site | split |
+|---|---|
+| `crates/core/src/client/remote/daemon_transfer/mod.rs:230`, `:406` | client daemon socket into `DaemonStreamReader` and `DaemonStreamWriter`, threaded through `orchestration/transfer.rs:46` `run_pull_transfer`, `:175` `run_push_transfer`, `mod.rs:317` `close_then_reap`, and `connection/mod.rs:375` `perform_daemon_handshake` |
+| `crates/core/src/client/remote/ssh_transfer/drive.rs:293` | ssh child into stdout reader, stdin writer and child handle |
+| `crates/core/src/client/remote/embedded_ssh_transfer.rs:366` | embedded ssh channel into a reader and a writer |
+| `crates/core/src/client/remote/async_ssh_transport.rs:450`, `:586` | async transport halves bridged to sync channels for `run_blocking_server` |
+| `crates/daemon/src/daemon/sections/module_access/transfer/streams.rs:163-297` | daemon socket into two `try_clone()` fds; the read clone is wrapped in `DrainingReader` (`draining_reader.rs`) |
+| `crates/daemon/src/daemon/sections/module_access/transfer/orchestration.rs:1152`, `:1191` | goodbye drain on a third clone, after the transfer halves are dropped |
+| `crates/daemon/src/daemon_stream.rs:35` | the daemon's stream wrapper, built from separate halves |
+| `crates/daemon/src/daemon/sections/server_runtime/quic_listener.rs:391-412` | the QUIC stream, cloned into a reader and relayed with `copy_chunks` |
+| `crates/core/src/client/module_list/connect/mod.rs:231` | the I/O-timeout re-apply hook, built from both halves |
+
+The transports stay split: an rsh child really does have two pipes. IoBuf owns
+the pair above the transport (section 1), so the routing in IOBUF-2b (task 427)
+is about who reads first after a write fails, not about re-joining the
+descriptors.

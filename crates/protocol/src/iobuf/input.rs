@@ -86,6 +86,40 @@ impl InBuf {
         }
     }
 
+    /// Whether the buffer has room for more input.
+    ///
+    /// upstream: io.c:752 - perform_io polls the input descriptor only while
+    /// `iobuf.in.size - iobuf.in.len` is non-zero.
+    #[must_use]
+    pub fn has_room(&self) -> bool {
+        self.len < self.capacity()
+    }
+
+    /// Fills the largest contiguous free span from `source`, which returns
+    /// the bytes it placed there, or `None` when it has none yet.
+    ///
+    /// The non-blocking sibling of [`InBuf::fill`]: a full buffer, or a source
+    /// with nothing ready, buffers nothing and returns `Ok(None)`.
+    pub fn fill_with(
+        &mut self,
+        source: impl FnOnce(&mut [u8]) -> io::Result<Option<usize>>,
+    ) -> io::Result<Option<usize>> {
+        let size = self.capacity();
+        if self.len == size {
+            return Ok(None);
+        }
+        let mut end = self.pos + self.len;
+        if end >= size {
+            end -= size;
+        }
+        let limit = if end >= self.pos { size } else { self.pos };
+        let n = source(&mut self.buf[end..limit])?;
+        if let Some(n) = n {
+            self.len += n;
+        }
+        Ok(n)
+    }
+
     /// Reads once from `reader` into the largest contiguous free span.
     ///
     /// Returns the number of bytes buffered, `0` on EOF. The buffer is never
@@ -94,79 +128,8 @@ impl InBuf {
     /// draining output (io.c:746-755 only polls for read when there is free
     /// space).
     pub fn fill<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<usize> {
-        let size = self.capacity();
-        if self.len == size {
-            return Ok(0);
-        }
-        let mut end = self.pos + self.len;
-        if end >= size {
-            end -= size;
-        }
-        let limit = if end >= self.pos { size } else { self.pos };
-        let n = reader.read(&mut self.buf[end..limit])?;
-        self.len += n;
-        Ok(n)
-    }
-}
-
-/// [`Read`] adapter that funnels a transfer descriptor through an [`InBuf`].
-///
-/// This is the seam the multiplex demultiplexer sits on: it replaces a
-/// `std::io::BufReader` whose capacity was free to differ from upstream's with
-/// a buffer of exactly `IO_BUFFER_SIZE` that can never grow.
-pub struct IoBufReader<R> {
-    inner: R,
-    buf: InBuf,
-}
-
-impl<R: Read> IoBufReader<R> {
-    /// Wraps `inner` in a fixed 32 KiB input buffer (upstream io.c:1587).
-    #[must_use]
-    pub fn new(inner: R) -> Self {
-        Self::with_capacity(IN_BUFFER_SIZE, inner)
-    }
-
-    /// Wraps `inner` in a fixed input buffer of `capacity` bytes.
-    #[must_use]
-    pub fn with_capacity(capacity: usize, inner: R) -> Self {
-        Self {
-            inner,
-            buf: InBuf::new(capacity),
-        }
-    }
-
-    /// Returns a mutable reference to the wrapped reader.
-    pub fn get_mut(&mut self) -> &mut R {
-        &mut self.inner
-    }
-
-    /// Consumes the adapter, returning the wrapped reader.
-    ///
-    /// Any bytes still buffered are discarded, so this is only valid once the
-    /// buffer is drained.
-    pub fn into_inner(self) -> R {
-        self.inner
-    }
-}
-
-impl<R: Read> Read for IoBufReader<R> {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        if self.buf.is_empty() {
-            // A request at least as large as the buffer gains nothing from
-            // staging: hand the caller's slice straight to the descriptor, the
-            // same short-circuit `std::io::BufReader` makes.
-            if out.len() >= self.buf.capacity() {
-                return self.inner.read(out);
-            }
-            if self.buf.fill(&mut self.inner)? == 0 {
-                return Ok(0);
-            }
-        }
-
-        let readable = self.buf.readable();
-        let n = readable.len().min(out.len());
-        out[..n].copy_from_slice(&readable[..n]);
-        self.buf.consume(n);
-        Ok(n)
+        Ok(self
+            .fill_with(|span| reader.read(span).map(Some))?
+            .unwrap_or(0))
     }
 }
