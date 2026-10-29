@@ -353,7 +353,6 @@ proptest! {
         ])
         .unwrap();
         let _ = set.allows_deletion(Path::new(&path), is_dir);
-        let _ = set.allows_deletion_when_excluded_removed(Path::new(&path), is_dir);
     }
 
     /// Matching arbitrary rules against arbitrary paths must not panic.
@@ -366,7 +365,6 @@ proptest! {
         if let Ok(set) = FilterSet::from_rules(rules) {
             let _ = set.allows(Path::new(&path), is_dir);
             let _ = set.allows_deletion(Path::new(&path), is_dir);
-            let _ = set.allows_deletion_when_excluded_removed(Path::new(&path), is_dir);
         }
     }
 }
@@ -787,7 +785,6 @@ fn filter_set_allows_with_path_components() {
         let _ = set.allows(Path::new(p), false);
         let _ = set.allows(Path::new(p), true);
         let _ = set.allows_deletion(Path::new(p), false);
-        let _ = set.allows_deletion_when_excluded_removed(Path::new(p), false);
     }
 }
 

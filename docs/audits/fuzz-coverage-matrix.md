@@ -39,7 +39,7 @@ ordinary builds:
 | `fuzz_legacy_greeting` | `crates/protocol/fuzz/` | `parse_legacy_daemon_greeting{,_bytes,_details,_owned}`, error/warning message parsers | raw `&[u8]` (plus UTF-8 string variants) | panic-only | none recorded | daily sweep |
 | `file_entry_roundtrip` | `crates/protocol/fuzz/` | `wire::file_entry::encode_*` + `wire::file_entry_decode::decode_*` (flags, size, mtime, mode, uid, gid, name, symlink, atime, crtime, checksum, end marker) | `Arbitrary` (typed field values + protocol selector 28-32) | per-field encode-decode equality | none recorded | daily sweep |
 | `fuzz_filter_parse` | `crates/filters/fuzz/` | `filters::parse_rules` + `FilterSet::from_rules` | raw `&[u8]` filtered to UTF-8 | panic-only | none recorded | daily sweep (seed corpus 39 files under `corpus/fuzz_filter_parse/`) |
-| `fuzz_filter_chain` | `crates/filters/fuzz/` | `parse_rules` + `FilterSet::{allows,allows_deletion,allows_deletion_when_excluded_removed,excluded_dir_by_non_dir_rule,is_empty}` | `Arbitrary` (rule text + path entries) | panic-only across every decision method | none recorded (seed corpus 10 files under `corpus/fuzz_filter_chain/`) | daily sweep |
+| `fuzz_filter_chain` | `crates/filters/fuzz/` | `parse_rules` + `FilterSet::{allows,allows_deletion,excluded_dir_by_non_dir_rule,is_empty}` | `Arbitrary` (rule text + path entries) | panic-only across every decision method | none recorded (seed corpus 10 files under `corpus/fuzz_filter_chain/`) | daily sweep |
 
 Total targets: **13** across 3 workspaces.
 
