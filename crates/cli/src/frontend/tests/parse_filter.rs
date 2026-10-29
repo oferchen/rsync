@@ -106,38 +106,24 @@ fn parse_filter_directive_accepts_shorthand_hide_show_and_protect() {
     );
 }
 
+/// upstream 3.5.1 has no `exclude-if-present` rule. `parse_rule_tok` takes the
+/// `case 'e':` arm, `RULE_STRCMP(s, "exclude")` rejects the `-` that follows
+/// the keyword, and the rule falls to `filter_rule_err("Unknown filter rule",
+/// *rulestr_ptr)` (exclude.c:1297-1299, 1362-1363): the whole rule text, exit
+/// RERR_SYNTAX (1).
 #[test]
-fn parse_filter_directive_accepts_exclude_if_present() {
-    let directive = parse_filter_directive(
-        OsStr::new("exclude-if-present marker"),
-        filters::RuleSource::Argument,
-    )
-    .expect("exclude-if-present with whitespace parses");
-    assert_eq!(
-        directive,
-        FilterDirective::Rule(FilterRuleSpec::exclude_if_present("marker".to_owned()))
-    );
-
-    let equals_variant = parse_filter_directive(
-        OsStr::new("exclude-if-present=.skip"),
-        filters::RuleSource::Argument,
-    )
-    .expect("exclude-if-present with equals parses");
-    assert_eq!(
-        equals_variant,
-        FilterDirective::Rule(FilterRuleSpec::exclude_if_present(".skip".to_owned()))
-    );
-}
-
-#[test]
-fn parse_filter_directive_rejects_exclude_if_present_without_marker() {
-    let error = parse_filter_directive(
-        OsStr::new("exclude-if-present   "),
-        filters::RuleSource::Argument,
-    )
-    .expect_err("missing marker should error");
-    let rendered = error.to_string();
-    assert!(rendered.contains("missing a marker file"));
+fn parse_filter_directive_rejects_exclude_if_present_as_unknown() {
+    for text in ["exclude-if-present marker", "exclude-if-present=.skip"] {
+        let error = parse_filter_directive(OsStr::new(text), filters::RuleSource::Argument)
+            .expect_err("exclude-if-present is not an upstream rule");
+        assert_eq!(error.code(), Some(1), "{text}");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("Unknown filter rule: {text}")),
+            "{text}: {error}"
+        );
+    }
 }
 
 #[test]
@@ -223,7 +209,7 @@ fn parse_filter_directive_accepts_merge() {
         filters::RuleSource::Argument,
     )
     .expect("merge directive");
-    let (options, _) = parse_merge_modifiers("", "merge filters.txt", false).expect("modifiers");
+    let (options, _) = parse_merge_modifiers("", "merge filters.txt").expect("modifiers");
     let expected = MergeDirective::new(OsString::from("filters.txt"), None).with_options(options);
     assert_eq!(directive, FilterDirective::Merge(expected));
 }
@@ -243,7 +229,7 @@ fn parse_filter_directive_accepts_merge_with_forced_include() {
     let directive =
         parse_filter_directive(OsStr::new("merge,+ rules"), filters::RuleSource::Argument)
             .expect("merge,+ should parse");
-    let (options, _) = parse_merge_modifiers("+", "merge,+ rules", false).expect("modifiers");
+    let (options, _) = parse_merge_modifiers("+", "merge,+ rules").expect("modifiers");
     let expected = MergeDirective::new(OsString::from("rules"), Some(FilterRuleKind::Include))
         .with_options(options);
     assert_eq!(directive, FilterDirective::Merge(expected));
@@ -254,7 +240,7 @@ fn parse_filter_directive_accepts_merge_with_forced_exclude() {
     let directive =
         parse_filter_directive(OsStr::new("merge,- rules"), filters::RuleSource::Argument)
             .expect("merge,- should parse");
-    let (options, _) = parse_merge_modifiers("-", "merge,- rules", false).expect("modifiers");
+    let (options, _) = parse_merge_modifiers("-", "merge,- rules").expect("modifiers");
     let expected = MergeDirective::new(OsString::from("rules"), Some(FilterRuleKind::Exclude))
         .with_options(options);
     assert_eq!(directive, FilterDirective::Merge(expected));
@@ -343,14 +329,19 @@ fn parse_filter_directive_still_rejects_a_redundant_side_modifier() {
     // (upstream exclude.c:1423-1432, measured: `Ps user.a` exits 1).
     let error = parse_filter_directive(OsStr::new("Ps secrets"), filters::RuleSource::Argument)
         .expect_err("s is redundant once P binds the side");
-    assert!(error.to_string().contains("unsupported modifier 's'"));
+    assert!(
+        error
+            .to_string()
+            .contains("invalid modifier 's' at position 1 in filter rule: Ps secrets"),
+        "{error}"
+    );
 }
 
 #[test]
 fn parse_filter_directive_accepts_merge_with_cvs_alias() {
     let directive = parse_filter_directive(OsStr::new("merge,C"), filters::RuleSource::Argument)
         .expect("merge,C should parse");
-    let (options, _) = parse_merge_modifiers("C", "merge,C", false).expect("modifiers");
+    let (options, _) = parse_merge_modifiers("C", "merge,C").expect("modifiers");
     let expected = MergeDirective::new(OsString::from(".cvsignore"), Some(FilterRuleKind::Exclude))
         .with_options(options);
     assert_eq!(directive, FilterDirective::Merge(expected));
@@ -360,7 +351,7 @@ fn parse_filter_directive_accepts_merge_with_cvs_alias() {
 fn parse_filter_directive_accepts_short_merge() {
     let directive = parse_filter_directive(OsStr::new(". per-dir"), filters::RuleSource::Argument)
         .expect("short merge directive parses");
-    let (options, _) = parse_merge_modifiers("", ". per-dir", false).expect("modifiers");
+    let (options, _) = parse_merge_modifiers("", ". per-dir").expect("modifiers");
     let expected = MergeDirective::new(OsString::from("per-dir"), None).with_options(options);
     assert_eq!(directive, FilterDirective::Merge(expected));
 }
@@ -369,7 +360,7 @@ fn parse_filter_directive_accepts_short_merge() {
 fn parse_filter_directive_accepts_short_merge_with_cvs_alias() {
     let directive = parse_filter_directive(OsStr::new(".C"), filters::RuleSource::Argument)
         .expect("short merge directive with 'C' parses");
-    let (options, _) = parse_merge_modifiers("C", ".C", false).expect("modifiers");
+    let (options, _) = parse_merge_modifiers("C", ".C").expect("modifiers");
     let expected = MergeDirective::new(OsString::from(".cvsignore"), Some(FilterRuleKind::Exclude))
         .with_options(options);
     assert_eq!(directive, FilterDirective::Merge(expected));
@@ -412,7 +403,10 @@ fn parse_filter_directive_rejects_merge_with_unknown_modifier() {
     let error = parse_filter_directive(OsStr::new("merge,z rules"), filters::RuleSource::Argument)
         .expect_err("merge with unsupported modifier should error");
     let rendered = error.to_string();
-    assert!(rendered.contains("uses unsupported modifier"));
+    assert!(
+        rendered.contains("invalid modifier 'z' at position 6 in filter rule: merge,z rules"),
+        "{rendered}"
+    );
 }
 
 #[test]
@@ -659,7 +653,11 @@ fn parse_filter_directive_rejects_dir_merge_with_conflicting_modifiers() {
     )
     .expect_err("conflicting modifiers should error");
     let rendered = error.to_string();
-    assert!(rendered.contains("cannot combine '+' and '-'"));
+    assert!(
+        rendered
+            .contains("invalid modifier '-' at position 11 in filter rule: dir-merge,+- per-dir"),
+        "{rendered}"
+    );
 }
 
 #[test]
