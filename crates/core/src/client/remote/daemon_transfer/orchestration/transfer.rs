@@ -333,6 +333,15 @@ fn map_server_transfer_error(
             ExitCode::Protocol.as_i32(),
         );
     }
+    // upstream: exclude.c:133-137 filter_rule_err() - a rule refused out of a
+    // per-directory merge file during the sender's walk prints its bare text
+    // and exits RERR_SYNTAX.
+    if ExitCode::from_io_error(&error) == ExitCode::Syntax {
+        return invalid_argument_error(
+            &crate::client::error::local_abort_text(&error),
+            ExitCode::Syntax.as_i32(),
+        );
+    }
     // upstream: io.c:282-304 whine_about_eof() - the peer closing the stream
     // before the transfer finished is not a per-file partial transfer.
     if error.kind() == std::io::ErrorKind::UnexpectedEof {
@@ -534,6 +543,20 @@ mod map_server_transfer_error_tests {
         );
         assert_eq!(err.exit_code(), 4);
         assert_eq!(err.code(), ExitCode::Unsupported);
+    }
+
+    /// A rule refused out of a per-directory merge file on a daemon push is
+    /// upstream's filter_rule_err(): exit 1 and the bare text
+    /// (exclude.c:133-137).
+    #[test]
+    fn maps_local_syntax_refusal_to_rerr_syntax_with_bare_text() {
+        let err = map_server_transfer_error(
+            protocol::syntax_violation("unexpected end of filter rule: <rule from /m/.f>"),
+            Role::Sender,
+            0,
+        );
+        assert_eq!(err.exit_code(), 1);
+        assert!(!err.to_string().contains("transfer failed"), "{err}");
     }
 
     /// Failures with no embedded remote code keep the prior generic

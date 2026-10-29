@@ -157,8 +157,8 @@ pub use operands::operand_change_dir_failure;
 pub(crate) use operands::{DestinationSpec, SourceSpec, operand_is_remote};
 
 pub use filter_program::{
-    DirMergeEnforcedKind, DirMergeOptions, DirMergeRule, ExcludeIfPresentRule, FilterProgram,
-    FilterProgramEntry, FilterProgramError,
+    DirMergeEnforcedKind, DirMergeOptions, DirMergeRule, FilterProgram, FilterProgramEntry,
+    FilterProgramError,
 };
 
 #[cfg(test)]

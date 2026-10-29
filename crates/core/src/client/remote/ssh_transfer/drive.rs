@@ -20,7 +20,7 @@ use rsync_io::ssh::SshConnection;
 use super::super::super::config::ClientConfig;
 use super::super::super::error::{
     ClientError, connection_unexpectedly_closed_error, invalid_argument_error,
-    invalid_argument_error_typed_with_role, remote_exit_error,
+    invalid_argument_error_typed_with_role, local_abort_text, remote_exit_error,
 };
 use super::super::super::progress::ClientProgressObserver;
 use super::super::super::summary::{ClientEvent, ClientSummary};
@@ -499,15 +499,17 @@ pub(in crate::client::remote) fn transfer_failure_error(
     // which makes the child exit with its own EOF code (12) and would
     // otherwise mask the refusal. A receiver that cannot enter its destination
     // (main.c:778-781, RERR_FILESELECT) aborts the same way, before the remote
-    // sender has finished.
-    let local_setup_abort = matches!(transfer_exit, ExitCode::Protocol | ExitCode::FileSelect);
+    // sender has finished. A rule refused out of a per-directory merge file
+    // during the sender's walk is the same: exclude.c:133-137 filter_rule_err()
+    // exits RERR_SYNTAX while the peer still waits for the file list.
+    let local_setup_abort = matches!(
+        transfer_exit,
+        ExitCode::Protocol | ExitCode::FileSelect | ExitCode::Syntax
+    );
     if !local_setup_abort && child_exit_code.as_i32() > transfer_exit.as_i32() {
         remote_exit_error(child_exit_code, local_role)
     } else {
-        invalid_argument_error(
-            &format!("transfer failed: {transfer_error}"),
-            transfer_exit.as_i32(),
-        )
+        invalid_argument_error(&local_abort_text(&transfer_error), transfer_exit.as_i32())
     }
 }
 
@@ -532,6 +534,26 @@ mod transfer_failure_error_tests {
         assert!(
             err.to_string()
                 .contains("filter rules are too modern for remote rsync."),
+            "{err}"
+        );
+    }
+
+    /// A rule refused out of a per-directory merge file keeps RERR_SYNTAX and
+    /// upstream's bare text, though the child exits with the higher
+    /// RERR_STREAMIO (exclude.c:133-137 filter_rule_err()).
+    #[test]
+    fn local_syntax_abort_keeps_its_code_and_bare_text() {
+        let err = transfer_failure_error(
+            protocol::syntax_violation("unexpected end of filter rule: <rule from /a/.f>"),
+            ExitCode::StreamIo,
+            Role::Sender,
+            0,
+        );
+        assert_eq!(err.exit_code(), 1);
+        assert!(!err.to_string().contains("transfer failed"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("unexpected end of filter rule: <rule from /a/.f>"),
             "{err}"
         );
     }

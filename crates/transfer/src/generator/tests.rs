@@ -5208,35 +5208,26 @@ fn generator_merge_filters_properly_scoped() {
     );
 }
 
+/// #224: `:e` registers `- .rsync-filter` in the global list AHEAD of the
+/// dir-merge rule (exclude.c:1558-1572), so the file is excluded in every
+/// directory whether or not it is present, and a global `+ .rsync-filter`
+/// that follows the rule cannot re-include it.
 #[test]
-fn generator_merge_filter_exclude_self() {
-    // .rsync-filter excludes itself when exclude_self is set
-    let temp_dir = TempDir::new().unwrap();
-    let base = temp_dir.path();
-    fs::write(base.join(".rsync-filter"), "- *.bak\n").unwrap();
-    fs::write(base.join("file.txt"), b"keep").unwrap();
+fn received_exclude_self_dir_merge_registers_its_exclude_first() {
+    let (_handshake, ctx) = test_generator();
+    let mut dir_merge_rule = FilterRuleWireFormat::exclude(".rsync-filter".to_owned());
+    dir_merge_rule.rule_type = protocol::filters::RuleType::DirMerge;
+    dir_merge_rule.exclude_from_merge = true;
+    let wire_rules = vec![
+        dir_merge_rule,
+        FilterRuleWireFormat::include(".rsync-filter".to_owned()),
+    ];
 
-    let (_handshake, mut ctx) = test_generator_for_dir_contents(base);
-    ctx.filter_chain
-        .add_merge_config(::filters::DirMergeConfig::new(".rsync-filter").with_exclude_self(true));
+    let (filter_set, merge_configs) = ctx.parse_received_filters(&wire_rules).unwrap();
 
-    // Trailing-slash source enters upstream's DOTDIR_NAME branch
-    // (flist.c:2823-2845) so the file list contains `.` + the base
-    // directory's children at the top level, matching `rsync <dir>/ dst/`.
-    let _count = build_file_list_for_contents(&mut ctx, base);
-    let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
-
-    // .rsync-filter itself should be excluded
-    assert!(
-        !names.contains(&".rsync-filter"),
-        ".rsync-filter should be excluded when exclude_self is true: {names:?}"
-    );
-
-    // file.txt should remain
-    assert!(
-        names.contains(&"file.txt"),
-        "file.txt should be present: {names:?}"
-    );
+    assert!(!filter_set.allows(std::path::Path::new(".rsync-filter"), false));
+    assert!(!filter_set.allows(std::path::Path::new("sub/.rsync-filter"), false));
+    assert_eq!(merge_configs.len(), 1);
 }
 
 #[test]
@@ -5280,7 +5271,7 @@ fn parse_received_filters_extracts_dir_merge_config() {
     // The DirMerge rule should produce a DirMergeConfig
     assert_eq!(merge_configs.len(), 1);
     assert_eq!(merge_configs[0].filename(), ".rsync-filter");
-    assert!(merge_configs[0].excludes_self());
+    assert!(!filter_set.allows(std::path::Path::new(".rsync-filter"), false));
     assert!(merge_configs[0].inherits()); // default
 }
 
@@ -6857,11 +6848,11 @@ fn handshake_confirmed_source_is_still_removed_by_the_second_drain() {
     protocol::send_msg(&mut wire, protocol::MessageCode::Data, &NDX_DONE_BYTE)
         .expect("frame the receiver's final NDX_DONE");
 
-    let mut reader = crate::reader::ServerReader::new_plain(Cursor::new(wire))
+    let reader = crate::reader::ServerReader::new_plain(Cursor::new(wire))
         .activate_multiplex()
         .expect("activate input multiplex");
     let mut out = Vec::new();
-    let mut writer = crate::writer::ServerWriter::new_plain(&mut out)
+    let writer = crate::writer::ServerWriter::new_plain(&mut out)
         .activate_multiplex()
         .expect("activate output multiplex");
     let mut ndx_read = protocol::codec::create_ndx_codec(31);
@@ -6869,14 +6860,9 @@ fn handshake_confirmed_source_is_still_removed_by_the_second_drain() {
 
     // The PRODUCTION sequence, not a copy of it: `orchestrator::run` calls this
     // same method, so deleting a phase there fails this test.
+    let mut io = crate::iobuf::IoBuf::new(reader, writer);
     let drains = ctx
-        .goodbye_draining_source_removals(
-            &mut reader,
-            &mut writer,
-            &mut ndx_read,
-            &mut ndx_write,
-            |_w| Ok(()),
-        )
+        .goodbye_draining_source_removals(&mut io, &mut ndx_read, &mut ndx_write, |_w| Ok(()))
         .expect("the goodbye plus both drains must complete");
 
     // The consequence first, so a regression names the file it leaked.
