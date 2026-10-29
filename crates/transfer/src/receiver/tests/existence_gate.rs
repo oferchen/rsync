@@ -240,17 +240,19 @@ fn ignore_existing_treats_dangling_symlink_as_present() {
     let mut writer = CaptureWriter::default();
     let mut errors = Vec::new();
     let mut stats = crate::receiver::stats::TransferStats::default();
-    let requested = ctx.build_files_to_transfer(
-        &mut writer,
-        dest,
-        None,
-        &MetadataOptions::default(),
-        None,
-        &mut errors,
-        &mut stats,
-        None,
-        None,
-    );
+    let requested = ctx
+        .build_files_to_transfer(
+            &mut writer,
+            dest,
+            None,
+            &MetadataOptions::default(),
+            None,
+            &mut errors,
+            &mut stats,
+            None,
+            None,
+        )
+        .expect("candidate pass");
 
     assert!(requested.is_empty(), "requested = {requested:?}");
     assert_eq!(writer.lines, vec!["file exists\n".to_owned()]);

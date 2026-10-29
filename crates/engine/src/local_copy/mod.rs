@@ -99,7 +99,9 @@ pub use options::{
     ReferenceDirectoryKind,
 };
 
-pub use error::{LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, upstream_io_error};
+pub use error::{
+    LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopySide, upstream_io_error,
+};
 
 #[cfg(test)]
 pub(crate) use plan::FilterOutcome;
@@ -143,6 +145,7 @@ pub(crate) use metadata_sync::sync_acls_if_requested;
 pub(crate) use metadata_sync::{
     ensure_fake_super_source_stat, store_effective_fake_super_if_requested,
 };
+pub(crate) use metadata_sync::{fake_super_destination_stat, fake_super_source_stat};
 
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) use metadata_sync::sync_xattrs_if_requested;

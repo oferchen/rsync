@@ -527,18 +527,20 @@ fn daemon_rules_refuse_non_utf8_names() {
 
     let mut errors = Vec::new();
     let mut stats = TransferStats::default();
-    let candidates = ctx.build_files_to_transfer(
-        &mut writer,
-        dest.path(),
-        #[cfg(unix)]
-        None,
-        &opts,
-        None,
-        &mut errors,
-        &mut stats,
-        None,
-        None,
-    );
+    let candidates = ctx
+        .build_files_to_transfer(
+            &mut writer,
+            dest.path(),
+            #[cfg(unix)]
+            None,
+            &opts,
+            None,
+            &mut errors,
+            &mut stats,
+            None,
+            None,
+        )
+        .expect("candidate pass");
     let names: Vec<&std::path::Path> = candidates
         .iter()
         .map(|&(idx, _, _)| ctx.file_list[idx].path().as_path())

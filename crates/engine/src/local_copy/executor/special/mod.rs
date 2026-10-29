@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::existence_gate::{DestinationEntry, ExistenceSkip};
@@ -24,6 +24,53 @@ pub(crate) use symlink::{copy_symlink, symlink_target_is_safe};
 // operator-path spelling (`fast_io::operator_symlink_confined`) instead.
 #[cfg(not(unix))]
 pub(crate) use symlink::create_symlink;
+
+/// Stats a device or special's destination the way upstream's generator
+/// does: `x_lstat()` folds a `--fake-super` placeholder's `%stat`, so it
+/// answers with the type, mode and rdev it stands for. An absent destination
+/// is `None`.
+///
+/// upstream: generator.c:1745 gen_entry_stat() -> xattrs.c:1372 x_lstat()
+fn special_destination_stat(
+    destination: &Path,
+    fake_super: bool,
+) -> Result<Option<fast_io::EntryMetadata>, LocalCopyError> {
+    let existing = match fast_io::destination_at::symlink_metadata(destination) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "inspect existing destination",
+                destination.to_path_buf(),
+                error,
+            ));
+        }
+    };
+    if fake_super {
+        crate::local_copy::fake_super_destination_stat(destination, existing).map(Some)
+    } else {
+        Ok(Some(existing))
+    }
+}
+
+/// The record of a device or special, typed by its folded source stat so a
+/// `--fake-super` placeholder itemizes as the node it stands for, including
+/// a hard-link follower that names its leader in `link_target`.
+fn special_snapshot(
+    metadata: &fs::Metadata,
+    source_stat: &fast_io::EntryMetadata,
+    link_target: Option<PathBuf>,
+) -> LocalCopyMetadata {
+    #[cfg(unix)]
+    let recorded = Some(::metadata::FakeSuperStat::from_entry_metadata(source_stat));
+    #[cfg(not(unix))]
+    let recorded = {
+        let _ = source_stat;
+        None
+    };
+    LocalCopyMetadata::from_metadata(metadata, link_target)
+        .virtualize_fake_super_stat(recorded.as_ref())
+}
 
 /// Applies the `--existing` / `--ignore-existing` gate to a symlink, FIFO,
 /// socket or device node and records the skip, returning `true` when the entry
@@ -120,6 +167,7 @@ pub(super) fn link_special_from_link_dest(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
+    source_stat: &fast_io::EntryMetadata,
     basis: &Path,
     record_path: Option<&Path>,
     file_type: fs::FileType,
@@ -139,7 +187,7 @@ pub(super) fn link_special_from_link_dest(
     }
 
     if let Some(path) = record_path {
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let metadata_snapshot = special_snapshot(metadata, source_stat, None);
         let total_bytes = Some(metadata_snapshot.len());
         // The hard-linked node shares the basis inode, so it matches the source
         // exactly: no `with_creation`, empty change-set, so log.c:773-782

@@ -167,15 +167,18 @@ impl<'a> CopyContext<'a> {
     /// unchanged (`generator.c:474-515` unchanged_attrs) reaches match_level 3
     /// and is hard-linked, itemizing as an exact match. `CAN_HARDLINK_SPECIAL`
     /// is defined on Linux, so devices and specials participate.
+    ///
+    /// `metadata` is the source as the sender lists it; under `--fake-super`
+    /// the basis is read the same way, so a placeholder basis compares as the
+    /// node its `%stat` records (generator.c:1254 basis_link_stat() ->
+    /// xattrs.c:1372 x_lstat()).
     #[cfg(unix)]
     pub(super) fn link_dest_special_target(
         &self,
         relative: &Path,
-        metadata: &fs::Metadata,
+        metadata: &fast_io::EntryMetadata,
         metadata_options: &MetadataOptions,
     ) -> Result<Option<PathBuf>, LocalCopyError> {
-        use std::os::unix::fs::{FileTypeExt, MetadataExt};
-
         if self.options.link_dest_entries().is_empty() {
             return Ok(None);
         }
@@ -197,6 +200,11 @@ impl<'a> CopyContext<'a> {
                 fs::symlink_metadata(&candidate).map(fast_io::EntryMetadata::from)
             else {
                 continue;
+            };
+            let candidate_metadata = if metadata_options.fake_super_enabled() {
+                crate::local_copy::fake_super_destination_stat(&candidate, candidate_metadata)?
+            } else {
+                candidate_metadata
             };
 
             let cand_type = candidate_metadata.file_type();
@@ -248,7 +256,7 @@ impl<'a> CopyContext<'a> {
     pub(super) fn link_dest_special_target(
         &self,
         _relative: &Path,
-        _metadata: &fs::Metadata,
+        _metadata: &fast_io::EntryMetadata,
         _metadata_options: &MetadataOptions,
     ) -> Result<Option<PathBuf>, LocalCopyError> {
         Ok(None)
@@ -267,12 +275,10 @@ impl<'a> CopyContext<'a> {
 /// whole-second tolerance in which "the nanoseconds do not figure".
 #[cfg(unix)]
 fn mtimes_within_window(
-    source: &fs::Metadata,
+    source: &fast_io::EntryMetadata,
     candidate: &fast_io::EntryMetadata,
     modify_window: ModifyWindow,
 ) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
     modify_window.same_time(
         source.mtime(),
         source.mtime_nsec() as u32,

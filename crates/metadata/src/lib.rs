@@ -406,9 +406,9 @@ pub use copy_as::{CopyAsIds, become_copy_as_user, parse_copy_as_spec};
 
 pub use fake_super::{
     CorruptFakeSuperStat, FAKE_SUPER_ACCESS_ACL_XATTR, FAKE_SUPER_DEFAULT_ACL_XATTR,
-    FAKE_SUPER_XATTR, FakeSuperStat, effective_source_stat, fake_super_ids, is_corrupt_fake_super,
-    load_fake_super, load_fake_super_acl, remove_fake_super, remove_fake_super_default_acl,
-    store_fake_super, store_fake_super_acl,
+    FAKE_SUPER_XATTR, FakeSuperStat, effective_source_stat, fake_super_ids, fold_fake_super_stat,
+    is_corrupt_fake_super, load_fake_super, load_fake_super_acl, remove_fake_super,
+    remove_fake_super_default_acl, store_fake_super, store_fake_super_acl,
 };
 #[cfg(unix)]
 pub use fake_super_link::{

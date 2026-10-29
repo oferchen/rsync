@@ -309,6 +309,9 @@ fn map_server_transfer_error(
         let exit = ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer);
         return remote_exit_error(exit, role);
     }
+    if let Some(error) = crate::client::error::corrupt_fake_super_destination_error(&error) {
+        return error;
+    }
     // upstream: flist.c:1365-1371 - the receiver's own file-list validation
     // (excluded / unrequested name, offset overflow) exits
     // RERR_UNSUPPORTED, not the generic partial-transfer code. Those local

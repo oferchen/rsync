@@ -175,3 +175,148 @@ fn local_copy_of_a_corrupt_fake_super_stat_exits_file_io() {
         )
     );
 }
+
+/// Copies `src/` into `dst/` with every preservation flag a `-a --fake-super`
+/// rerun uses, and returns the report.
+fn fake_super_archive_copy(
+    source: &std::path::Path,
+    dest: &std::path::Path,
+) -> Result<engine::local_copy::LocalCopyReport, engine::local_copy::LocalCopyError> {
+    let mut source_operand = source.as_os_str().to_owned();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest.as_os_str().to_owned()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .fake_super(true)
+        .owner(true)
+        .group(true)
+        .permissions(true)
+        .times(true)
+        .collect_events(true);
+    plan.execute_with_report(LocalCopyExecution::Apply, options)
+}
+
+/// A rerun compares the sender's modes against what the first run recorded,
+/// so files whose mode the owner-writable placeholder cannot carry - 0444,
+/// setuid, setgid - itemize nothing on the second run, as upstream's do.
+///
+/// upstream: generator.c:1745 gen_entry_stat() -> link_stat() ->
+/// xattrs.c:1372 x_lstat(), which folds the `%stat` record into the stat
+/// that itemize() (generator.c:553) and unchanged_attrs() compare. oc
+/// compared the real mode and reported `.f...p.....` for each such file.
+#[test]
+fn fake_super_rerun_compares_the_recorded_mode_not_the_placeholder_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempdir().expect("tempdir");
+    if !user_xattrs_supported(temp.path()) {
+        eprintln!("skipping: the filesystem rejects user xattrs");
+        return;
+    }
+    let source = temp.path().join("src");
+    let dest = temp.path().join("dst");
+    fs::create_dir_all(&source).expect("create source");
+    let modes = [("ro", 0o444), ("setuid", 0o4755), ("setgid", 0o2755)];
+    for (name, mode) in modes {
+        let path = source.join(name);
+        fs::write(&path, name).expect("write source");
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).expect("chmod source");
+    }
+
+    fake_super_archive_copy(&source, &dest).expect("first run");
+    for (name, mode) in modes {
+        let real = fs::metadata(dest.join(name))
+            .expect("stat destination")
+            .mode();
+        let recorded = metadata::load_fake_super(&dest.join(name))
+            .expect("read %stat")
+            .expect("the placeholder cannot carry the mode, so a %stat is stored");
+        assert_ne!(
+            real & 0o7777,
+            mode,
+            "{name}: the real mode must not carry {mode:o}"
+        );
+        assert_eq!(
+            recorded.mode & 0o7777,
+            mode,
+            "{name}: the %stat carries the mode"
+        );
+    }
+
+    let rerun = fake_super_archive_copy(&source, &dest).expect("rerun");
+    let reused: Vec<_> = rerun
+        .records()
+        .iter()
+        .map(|record| record.relative_path().to_path_buf())
+        .collect();
+    for (name, _) in modes {
+        assert!(
+            reused.iter().any(|path| path.ends_with(name)),
+            "the rerun must record {name}, got {reused:?}"
+        );
+    }
+    let reported: Vec<_> = rerun
+        .records()
+        .iter()
+        .filter(|record| {
+            let change = record.change_set();
+            change.permissions_changed() || change.owner_changed() || change.group_changed()
+        })
+        .map(|record| record.relative_path().to_path_buf())
+        .collect();
+    assert!(
+        reported.is_empty(),
+        "an unchanged rerun must report no attribute change, got {reported:?}"
+    );
+}
+
+/// A destination `%stat` that does not parse ends the copy with
+/// `RERR_FILEIO` (11), raised by the generator, naming the file.
+///
+/// upstream: xattrs.c:1253-1258 get_stat_xattr(), reached from the
+/// generator's link_stat() of the destination. oc ignored the record and
+/// exited 0.
+#[test]
+fn local_copy_onto_a_corrupt_fake_super_destination_exits_file_io() {
+    use engine::local_copy::{LocalCopyErrorKind, LocalCopySide};
+    let temp = tempdir().expect("tempdir");
+    if !user_xattrs_supported(temp.path()) {
+        eprintln!("skipping: the filesystem rejects user xattrs");
+        return;
+    }
+    let source = temp.path().join("src");
+    let dest = temp.path().join("dst");
+    fs::create_dir_all(&source).expect("create source");
+    fs::create_dir_all(&dest).expect("create dest");
+    fs::write(source.join("f"), b"new").expect("write source");
+    let bad = dest.join("f");
+    fs::write(&bad, b"old").expect("write destination");
+    xattr::set(&bad, FAKE_SUPER_XATTR, b"garbage").expect("plant a corrupt %stat");
+
+    let error = fake_super_archive_copy(&source, &dest)
+        .expect_err("a corrupt destination %stat must end the copy");
+    assert_eq!(error.exit_code(), 11);
+    assert!(
+        matches!(
+            error.kind(),
+            LocalCopyErrorKind::FileIo {
+                side: LocalCopySide::Generator,
+                ..
+            }
+        ),
+        "the generator raises it, got {:?}",
+        error.kind()
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "Corrupt {FAKE_SUPER_XATTR} xattr attached to \"{}\": \"garbage\"",
+            bad.display()
+        )
+    );
+    assert_eq!(
+        fs::read(&bad).expect("read destination"),
+        b"old",
+        "nothing is copied"
+    );
+}

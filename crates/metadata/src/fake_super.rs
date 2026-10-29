@@ -79,18 +79,26 @@ impl FakeSuperStat {
     /// since Windows metadata lacks POSIX ownership fields.
     #[cfg(unix)]
     pub fn from_metadata(metadata: &Metadata) -> Self {
-        let mode = metadata.mode();
-        let uid = metadata.uid();
-        let gid = metadata.gid();
+        Self::from_stat(
+            metadata.mode(),
+            metadata.rdev(),
+            metadata.uid(),
+            metadata.gid(),
+        )
+    }
 
+    /// Creates a `FakeSuperStat` from an entry's stat, read through its own
+    /// `%stat` record or not.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn from_entry_metadata(stat: &fast_io::EntryMetadata) -> Self {
+        Self::from_stat(stat.mode(), stat.rdev(), stat.uid(), stat.gid())
+    }
+
+    #[cfg(unix)]
+    fn from_stat(mode: u32, rdev: u64, uid: u32, gid: u32) -> Self {
         // upstream: xattrs.c:set_stat_xattr() - includes rdev for device files
-        let rdev = if is_device_file(mode) {
-            let rdev = metadata.rdev();
-            Some((major(rdev), minor(rdev)))
-        } else {
-            None
-        };
-
+        let rdev = is_device_file(mode).then(|| (major(rdev), minor(rdev)));
         Self {
             mode,
             uid,
@@ -341,7 +349,7 @@ fn decode_stat_xattr(
                 .and_then(|text| FakeSuperStat::decode(text).ok());
             decoded.map(Some).ok_or_else(|| {
                 io::Error::other(CorruptFakeSuperStat {
-                    path: path.to_path_buf(),
+                    path: anchored_to_cwd(path),
                     value: String::from_utf8_lossy(&value).into_owned(),
                 })
             })
@@ -352,6 +360,17 @@ fn decode_stat_xattr(
     }
 }
 
+/// Anchors a relative `path` to the working directory, as upstream's
+/// `full_fname()` names a file in a diagnostic.
+///
+/// upstream: util1.c:1540-1547 full_fname()
+#[cfg(all(unix, feature = "xattr"))]
+fn anchored_to_cwd(path: &Path) -> std::path::PathBuf {
+    if path.has_root() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir().map_or_else(|_| path.to_path_buf(), |cwd| cwd.join(path))
+}
 /// Returns `true` when `err` reports that the target xattr is already absent.
 ///
 /// Removing a non-existent xattr reports `ENODATA` on Linux and `ENOATTR` on
@@ -506,6 +525,67 @@ pub fn effective_source_stat(_source: &Path, metadata: &Metadata) -> FakeSuperSt
     FakeSuperStat::from_metadata(metadata)
 }
 
+/// Reads a `--fake-super` entry the way upstream's `x_lstat()` does: the
+/// `%stat` record's mode (type bits included), device number and ownership
+/// replace the inode's own in `stat`, so the quick-check, the itemize columns
+/// and the attribute apply compare against what the file stands for rather
+/// than its owner-writable placeholder.
+///
+/// Real devices and specials keep their stat, and an entry without a record
+/// reads as it is. A symlink whose xattrs the filesystem refuses (`EPERM`)
+/// reads as owned by root, and an unsupported filesystem as unrecorded.
+///
+/// # Errors
+///
+/// A record that does not parse is a [`CorruptFakeSuperStat`], which upstream
+/// treats as fatal (`RERR_FILEIO`). Any other read error is returned as is.
+///
+/// upstream: xattrs.c:1372-1377 x_lstat(), xattrs.c:1216-1265 get_stat_xattr()
+#[cfg(all(unix, feature = "xattr"))]
+pub fn fold_fake_super_stat(
+    path: &Path,
+    stat: fast_io::EntryMetadata,
+) -> io::Result<fast_io::EntryMetadata> {
+    let file_type = stat.file_type();
+    // upstream: xattrs.c:1222-1223 - `IS_DEVICE() || IS_SPECIAL()` returns -1.
+    if file_type.is_block_device()
+        || file_type.is_char_device()
+        || file_type.is_fifo()
+        || file_type.is_socket()
+    {
+        return Ok(stat);
+    }
+    match load_fake_super(path) {
+        Ok(Some(recorded)) => {
+            let (major, minor) = recorded.rdev.unwrap_or((0, 0));
+            Ok(stat.with_overlay(
+                recorded.mode,
+                crate::special::device_word(major, minor),
+                recorded.uid,
+                recorded.gid,
+            ))
+        }
+        Ok(None) => Ok(stat),
+        // upstream: xattrs.c:1240-1241 - ENOTSUP reads as no record.
+        Err(error) if error.raw_os_error() == Some(libc::ENOTSUP) => Ok(stat),
+        // upstream: xattrs.c:1242-1246 - an EPERM symlink reads as root's.
+        Err(error) if error.raw_os_error() == Some(libc::EPERM) && stat.is_symlink() => {
+            let (mode, rdev) = (stat.mode(), stat.rdev());
+            Ok(stat.with_overlay(mode, rdev, 0, 0))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Without xattr support there is no `%stat` record to fold.
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn fold_fake_super_stat(
+    _path: &Path,
+    stat: fast_io::EntryMetadata,
+) -> io::Result<fast_io::EntryMetadata> {
+    Ok(stat)
+}
+
 /// Checks if the file mode indicates a device file.
 #[cfg(unix)]
 const fn is_device_file(mode: u32) -> bool {
@@ -642,6 +722,80 @@ pub fn remove_fake_super_default_acl(_path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(unix, feature = "xattr"))]
+    mod fold {
+        use super::super::{FAKE_SUPER_XATTR, fold_fake_super_stat, is_corrupt_fake_super};
+        use std::fs;
+        use std::path::Path;
+
+        fn stat(path: &Path) -> fast_io::EntryMetadata {
+            fast_io::EntryMetadata::from(fs::symlink_metadata(path).expect("lstat"))
+        }
+
+        /// Plants `value` as the `%stat` of a fresh file, or returns `None`
+        /// when the filesystem refuses user xattrs.
+        fn file_with_stat(dir: &Path, value: &[u8]) -> Option<std::path::PathBuf> {
+            let path = dir.join("f");
+            fs::write(&path, b"x").expect("write");
+            xattr::set(&path, FAKE_SUPER_XATTR, value).ok()?;
+            Some(path)
+        }
+
+        /// upstream: xattrs.c:1259-1262 - the record's mode and ids replace
+        /// the inode's in the stat the generator compares.
+        #[test]
+        fn a_record_supplies_the_mode_and_ids() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file_with_stat(dir.path(), b"104755 0,0 4242:4343") else {
+                eprintln!("skipping: the filesystem rejects user xattrs");
+                return;
+            };
+            let real = stat(&path);
+            let folded = fold_fake_super_stat(&path, real.clone()).expect("fold");
+            assert_eq!(folded.mode(), (real.mode() & 0o170_000) | 0o4755);
+            assert_eq!((folded.uid(), folded.gid()), (4242, 4343));
+            assert_eq!(folded.real().mode(), real.mode());
+        }
+
+        /// An entry without a record reads as it is.
+        #[test]
+        fn no_record_leaves_the_stat_alone() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join("plain");
+            fs::write(&path, b"x").expect("write");
+            let real = stat(&path);
+            let folded = fold_fake_super_stat(&path, real.clone()).expect("fold");
+            assert_eq!(folded.mode(), real.mode());
+            assert!(matches!(folded, fast_io::EntryMetadata::Std(_)));
+        }
+
+        /// upstream: xattrs.c:1253-1258 - a record that does not parse is
+        /// fatal, and full_fname() names the file from the working directory.
+        #[test]
+        fn a_corrupt_record_names_the_file_from_the_working_directory() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file_with_stat(dir.path(), b"garbage") else {
+                eprintln!("skipping: the filesystem rejects user xattrs");
+                return;
+            };
+            let error = fold_fake_super_stat(&path, stat(&path)).expect_err("corrupt");
+            assert!(is_corrupt_fake_super(&error));
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "Corrupt {FAKE_SUPER_XATTR} xattr attached to \"{}\": \"garbage\"",
+                    path.display()
+                )
+            );
+            let relative = super::super::anchored_to_cwd(Path::new("dst/f"));
+            assert_eq!(
+                relative,
+                std::env::current_dir().expect("cwd").join("dst/f"),
+                "a relative name is anchored to the working directory"
+            );
+        }
+    }
 
     #[test]
     fn fake_super_xattr_name_matches_platform_namespace() {

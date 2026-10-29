@@ -409,6 +409,11 @@ where
         return core::exit_code::record_exit(core::exit_code::process_latch(), code);
     };
 
+    // upstream: an unprefixed rprintf(FERROR, ...) cause that precedes the
+    // log_exit() trailer, e.g. xattrs.c:1253-1258 get_stat_xattr().
+    if let Some(line) = error.cause_line() {
+        let _ = writeln!(stderr.writer_mut(), "{line}");
+    }
     // upstream: rprintf(FERROR, RSYNC_NAME ": ...") lines that precede
     // the log_exit() trailer, e.g. io.c:298-303 whine_about_eof().
     if let Some(line) = error.program_line() {
