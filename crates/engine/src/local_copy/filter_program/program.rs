@@ -289,7 +289,8 @@ impl FilterProgram {
                         // rules win on first match, see the matching loop in
                         // `evaluate()` above.
                         for layer in layers.iter().rev() {
-                            if let Some(result) = layer.excluded_dir_by_non_dir_rule(path, abs_root) {
+                            if let Some(result) = layer.excluded_dir_by_non_dir_rule(path, abs_root)
+                            {
                                 return result;
                             }
                         }
@@ -297,7 +298,8 @@ impl FilterProgram {
                     if let Some(ephemeral) = ephemeral_layers {
                         for (rule_index, segment) in ephemeral {
                             if *rule_index == *index
-                                && let Some(result) = segment.excluded_dir_by_non_dir_rule(path, abs_root)
+                                && let Some(result) =
+                                    segment.excluded_dir_by_non_dir_rule(path, abs_root)
                             {
                                 return result;
                             }

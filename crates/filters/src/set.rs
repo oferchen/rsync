@@ -169,7 +169,11 @@ impl FilterSet {
             .any(|rule| rule.abs_path);
         if has_abs_rule {
             let inner = Arc::make_mut(&mut self.inner);
-            for rule in inner.include_exclude.iter_mut().chain(&mut inner.protect_risk) {
+            for rule in inner
+                .include_exclude
+                .iter_mut()
+                .chain(&mut inner.protect_risk)
+            {
                 rule.set_abs_root(root);
             }
         }
@@ -659,6 +663,23 @@ pub fn apple_double_exclusion_rules(perishable: bool) -> impl Iterator<Item = Fi
     })
 }
 
+/// The directory an absolute-path rule's names are relative to, as
+/// rule_matches() prepends it: `curr_dir + module_dirlen + 1`
+/// (exclude.c:1022-1027).
+///
+/// `dir` is the side's current directory, absolute; `module_root` is a daemon
+/// module's directory, whose prefix upstream strips. `None` when nothing is
+/// left - the root itself, or the module root - where upstream prepends
+/// nothing (`curr_dir_len > module_dirlen + 1` fails).
+#[must_use]
+pub fn abs_rule_root(dir: &Path, module_root: Option<&Path>) -> Option<Arc<Path>> {
+    let relative = match module_root {
+        Some(module) => dir.strip_prefix(module).ok()?,
+        None => dir.strip_prefix("/").unwrap_or(dir),
+    };
+    (!relative.as_os_str().is_empty()).then(|| Arc::from(relative))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1004,21 +1025,4 @@ mod tests {
         assert!(!set.has_xattr_rules());
         assert!(set.xattr_name_allowed("user.anything", XattrSide::Receiver));
     }
-}
-
-/// The directory an absolute-path rule's names are relative to, as
-/// rule_matches() prepends it: `curr_dir + module_dirlen + 1`
-/// (exclude.c:1022-1027).
-///
-/// `dir` is the side's current directory, absolute; `module_root` is a daemon
-/// module's directory, whose prefix upstream strips. `None` when nothing is
-/// left - the root itself, or the module root - where upstream prepends
-/// nothing (`curr_dir_len > module_dirlen + 1` fails).
-#[must_use]
-pub fn abs_rule_root(dir: &Path, module_root: Option<&Path>) -> Option<Arc<Path>> {
-    let relative = match module_root {
-        Some(module) => dir.strip_prefix(module).ok()?,
-        None => dir.strip_prefix("/").unwrap_or(dir),
-    };
-    (!relative.as_os_str().is_empty()).then(|| Arc::from(relative))
 }

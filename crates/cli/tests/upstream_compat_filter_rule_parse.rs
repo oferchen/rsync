@@ -534,7 +534,11 @@ fn abs_path_rules_match_the_absolute_path() {
 /// protects `old` from --delete. oc used to delete it.
 #[test]
 fn abs_path_protect_matches_the_destination_path() {
-    let files = [("sub/new", "n"), ("@dst/sub/old", "o"), ("@dst/sub/gone", "g")];
+    let files = [
+        ("sub/new", "n"),
+        ("@dst/sub/old", "o"),
+        ("@dst/sub/gone", "g"),
+    ];
     for rule in ["P/ {TREE}/dst/sub/old", "P /sub/old", "P/ /sub/old"] {
         for source in [Source::Local, Source::Push, Source::Pull] {
             assert_parity_from(&files, &["--delete", &format!("--filter={rule}")], source);
@@ -587,11 +591,20 @@ fn a_merge_side_modifier_reaches_the_merged_rules() {
 /// receiver's `old`.
 #[test]
 fn abs_path_rules_match_below_the_daemon_module() {
-    let files = [("a", "a"), ("sub/a", "a"), ("sub/new", "n"), ("@dst/sub/old", "o")];
+    let files = [
+        ("a", "a"),
+        ("sub/a", "a"),
+        ("sub/new", "n"),
+        ("@dst/sub/old", "o"),
+    ];
     for rule in ["-/ /src/sub/a", "-/ /sub/a", "- /sub/a"] {
         assert_parity_from(&files, &[&format!("--filter={rule}")], Source::DaemonPull);
     }
     for rule in ["P/ /dst/sub/old", "P/ /sub/old", "P /sub/old"] {
-        assert_parity_from(&files, &["--delete", &format!("--filter={rule}")], Source::DaemonPush);
+        assert_parity_from(
+            &files,
+            &["--delete", &format!("--filter={rule}")],
+            Source::DaemonPush,
+        );
     }
 }

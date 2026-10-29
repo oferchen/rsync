@@ -49,7 +49,8 @@ impl RuleMatcher {
     /// `abs_root` is the receiver's directory, as for [`Self::matches`].
     #[must_use]
     pub fn matches_for_deletion(&self, path: &Path, is_dir: bool, abs_root: Option<&Path>) -> bool {
-        self.0.matches_for_deletion_in(path, is_dir, false, abs_root)
+        self.0
+            .matches_for_deletion_in(path, is_dir, false, abs_root)
     }
 
     /// The rule's action.
@@ -57,7 +58,6 @@ impl RuleMatcher {
     pub const fn action(&self) -> FilterAction {
         self.0.action
     }
-
 
     /// Whether the rule applies on the sending side.
     #[must_use]

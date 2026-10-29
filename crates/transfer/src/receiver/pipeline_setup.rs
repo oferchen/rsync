@@ -181,9 +181,7 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
             // upstream: exclude.c:1392-1394 - the `/` modifier is FILTRULE_ABS_PATH.
 
             if wire_rule.abs_path {
-
                 rule = rule.with_abs_path(true);
-
             }
             if wire_rule.perishable {
                 rule = rule.with_perishable(true);

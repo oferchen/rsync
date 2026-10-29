@@ -89,9 +89,7 @@ pub(in crate::receiver) fn parse_wire_filters_for_receiver(
         // upstream: exclude.c:1392-1394 - the `/` modifier is FILTRULE_ABS_PATH.
 
         if wire_rule.abs_path {
-
             rule = rule.with_abs_path(true);
-
         }
         if wire_rule.perishable {
             rule = rule.with_perishable(true);
