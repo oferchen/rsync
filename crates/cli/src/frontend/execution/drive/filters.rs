@@ -48,6 +48,7 @@ where
     let mut filter_rules = Vec::new();
     let mut merge_stack = Vec::new();
     let mut cvs_exclude = false;
+    let cvs = filters::CvsSession::default();
     let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let from0 = inputs.from0;
     let mut delete_excluded_at = None;
@@ -77,6 +78,7 @@ where
                 &rule,
                 merge_base.as_path(),
                 &mut merge_stack,
+                &cvs,
             ),
             FilterOrderToken::CvsExclude => {
                 cvs_exclude = true;
@@ -95,7 +97,7 @@ where
         }
     }
     if cvs_exclude {
-        append_cvs_exclude_rules(&mut filter_rules);
+        append_cvs_exclude_rules(&mut filter_rules, &cvs);
     }
 
     // upstream: exclude.c:1478-1481 parse_rule_tok() - rules parsed before
@@ -110,7 +112,7 @@ where
         builder = builder.extend_filter_rules(filter_rules);
     }
 
-    Ok(builder)
+    Ok(builder.cvs_session(cvs))
 }
 
 /// Parses one `--filter`/`-f`/`-F` directive and appends its rules.
@@ -119,6 +121,7 @@ fn push_filter_directive(
     rule: &OsString,
     merge_base: &std::path::Path,
     merge_stack: &mut Vec<PathBuf>,
+    cvs: &filters::CvsSession,
 ) -> Result<(), Message> {
     // The operator typed this `--filter` value, so its text is theirs to see:
     // `rule_text` returns an argument-sourced rule unchanged
@@ -138,11 +141,12 @@ fn push_filter_directive(
                 filter_rules,
                 merge_stack,
                 RuleSource::Argument,
+                cvs,
             )?;
         }
         FilterDirective::Clear => filter_rules.clear(),
         FilterDirective::CvsDefaults(template) => {
-            filter_rules.extend(cvs_default_exclude_rules(template));
+            filter_rules.extend(cvs_default_exclude_rules(template, cvs));
         }
         // A blank rule contributes nothing (upstream parse_rule_tok returns NULL).
         FilterDirective::Noop => {}

@@ -286,7 +286,8 @@ impl GeneratorContext {
             if !self.config.connection.filter_rules.is_empty() {
                 let (filter_set, merge_configs) =
                     self.parse_received_filters(&self.config.connection.filter_rules.clone())?;
-                self.filter_chain = FilterChain::new(filter_set);
+                self.filter_chain = FilterChain::new(filter_set)
+                    .with_cvs_session(self.config.connection.cvs_session.clone());
                 for config in merge_configs {
                     self.filter_chain.add_merge_config(config);
                 }
@@ -321,7 +322,8 @@ impl GeneratorContext {
 
         if !combined.is_empty() {
             let (filter_set, merge_configs) = self.parse_received_filters(&combined)?;
-            self.filter_chain = FilterChain::new(filter_set);
+            self.filter_chain = FilterChain::new(filter_set)
+                .with_cvs_session(self.config.connection.cvs_session.clone());
             for config in merge_configs {
                 self.filter_chain.add_merge_config(config);
             }
@@ -491,7 +493,12 @@ impl GeneratorContext {
             // (exclude.c:1201-1206). Expand it here, under the rule's own
             // prefix and modifiers, whatever pattern it carried.
             if let Some(template) = cvs_template(wire_rule) {
-                rules.extend(filters::cvs_ignore_rules(template, cvs_perishable));
+                rules.extend(
+                    self.config
+                        .connection
+                        .cvs_session
+                        .rules(template, cvs_perishable),
+                );
                 continue;
             }
             let reconstructed_pattern = reconstruct_pattern(wire_rule);

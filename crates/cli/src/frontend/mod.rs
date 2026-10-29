@@ -166,19 +166,19 @@ pub(crate) fn process_merge_directive(
     directive: &str,
     options: &DirMergeOptions,
     base_dir: &Path,
-    display: &str,
     source: filters::RuleSource<'_>,
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
+    cvs: &filters::CvsSession,
 ) -> Result<(), Message> {
     filter_rules::process_merge_directive(
         directive,
         options,
         base_dir,
-        display,
         source,
         destination,
         visited,
+        cvs,
     )
 }
 

@@ -28,6 +28,15 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Shares `cvs`, the CVS ignore list the caller's `C` rules were expanded
+    /// against, with the `C` rules read out of per-directory merge files
+    /// (exclude.c:1489-1496).
+    #[must_use]
+    pub fn with_cvs_session(mut self, cvs: filters::CvsSession) -> Self {
+        self.cvs_session = cvs;
+        self
+    }
+
     /// Attaches a filename charset converter to the local-copy options.
     ///
     /// Mirrors the SSH/daemon path's
@@ -54,6 +63,11 @@ impl LocalCopyOptions {
     /// Returns the configured filter program, if any.
     pub const fn filter_program(&self) -> Option<&FilterProgram> {
         self.filter_program.as_ref()
+    }
+
+    /// Returns the session's CVS ignore list.
+    pub const fn cvs_session(&self) -> &filters::CvsSession {
+        &self.cvs_session
     }
 
     /// Returns the configured filename charset converter, if any.

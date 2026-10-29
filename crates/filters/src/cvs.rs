@@ -31,7 +31,7 @@
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use crate::{FilterRule, RuleModifiers};
 
@@ -194,20 +194,6 @@ impl CvsTemplate {
         }
     }
 
-    /// The template the process's CVS list is built under: the first one any
-    /// non-merge `C` rule asks for, whatever later rules ask.
-    ///
-    /// upstream: exclude.c:1489-1496 get_cvs_excludes() fills `cvs_filter_list`
-    /// once (`static int initialized`) under the first `C` rule's flags, and
-    /// check_filter() evaluates that one list for every `C` rule
-    /// (exclude.c:1201-1206). So after `-C` a later `-!C` still matches plain
-    /// excludes.
-    #[must_use]
-    pub fn established(self) -> Self {
-        static FIRST: OnceLock<CvsTemplate> = OnceLock::new();
-        *FIRST.get_or_init(|| self)
-    }
-
     /// Whether `entry` is perishable under this template; `builtin_perishable`
     /// is the protocol >= 30 flag the built-in defaults carry.
     #[must_use]
@@ -215,13 +201,13 @@ impl CvsTemplate {
         self.perishable || (entry.builtin && builtin_perishable)
     }
 
-    /// The `(sender, receiver)` sides to impose, or `None` for both.
+    /// The `(sender, receiver)` sides the `C` rule named, or `None`.
     #[must_use]
     pub const fn sides(&self) -> Option<(bool, bool)> {
-        if self.sender_side == self.receiver_side {
-            None
-        } else {
+        if self.sender_side || self.receiver_side {
             Some((self.sender_side, self.receiver_side))
+        } else {
+            None
         }
     }
 
@@ -243,16 +229,49 @@ impl CvsTemplate {
     }
 }
 
-/// The global CVS ignore list a `C` rule with `template` stands for, as rules
-/// under the process's [established](CvsTemplate::established) template.
-#[must_use]
-pub fn cvs_ignore_rules(template: CvsTemplate, builtin_perishable: bool) -> Vec<FilterRule> {
-    let template = template.established();
-    cvs_ignore_list()
-        .iter()
-        .map(|entry| template.rule(entry, builtin_perishable))
-        .collect()
+/// The CVS ignore list one transfer session builds.
+///
+/// upstream: exclude.c:1489-1496 get_cvs_excludes() fills `cvs_filter_list`
+/// once (`static int initialized`) under the first `C` rule's flags, and
+/// check_filter() evaluates that one list for every `C` rule
+/// (exclude.c:1201-1206). So after `-C` a later `-!C` still matches plain
+/// excludes. The static lives as long as the process, and upstream runs one
+/// session per process (a daemon forks per connection), so the list belongs to
+/// the session: clones share it, and a new session starts empty.
+#[derive(Clone, Debug, Default)]
+pub struct CvsSession {
+    first: Arc<OnceLock<CvsTemplate>>,
 }
+
+impl CvsSession {
+    /// The template the session's list is built under: the first one any
+    /// non-merge `C` rule asked for, whatever later rules ask.
+    #[must_use]
+    pub fn established(&self, template: CvsTemplate) -> CvsTemplate {
+        *self.first.get_or_init(|| template)
+    }
+
+    /// The session's CVS ignore list, which a `C` rule with `template` stands
+    /// for, as rules under the [established](Self::established) template.
+    #[must_use]
+    pub fn rules(&self, template: CvsTemplate, builtin_perishable: bool) -> Vec<FilterRule> {
+        let template = self.established(template);
+        cvs_ignore_list()
+            .iter()
+            .map(|entry| template.rule(entry, builtin_perishable))
+            .collect()
+    }
+}
+
+/// Two sessions compare by the template their list is built under, so
+/// configurations that carry a session still compare by value.
+impl PartialEq for CvsSession {
+    fn eq(&self, other: &Self) -> bool {
+        self.first.get() == other.first.get()
+    }
+}
+
+impl Eq for CvsSession {}
 
 #[cfg(test)]
 mod tests {
@@ -366,20 +385,47 @@ mod tests {
     }
 
     /// upstream: exclude.c:1489-1496 - the list is built once, so the first
-    /// template asked for is the one every later `C` rule gets. Each nextest
-    /// test runs in its own process, which gives this one a fresh list.
+    /// template asked for is the one every later `C` rule gets.
     #[test]
     fn the_first_template_asked_for_is_the_one_every_rule_gets() {
         let negated = CvsTemplate {
             negate: true,
             ..CvsTemplate::default()
         };
-        assert_eq!(negated.established(), negated);
-        assert_eq!(CvsTemplate::default().established(), negated);
+        let session = CvsSession::default();
+        assert_eq!(session.established(negated), negated);
+        assert_eq!(session.established(CvsTemplate::default()), negated);
         assert!(
-            cvs_ignore_rules(CvsTemplate::default(), true)
+            session
+                .clone()
+                .rules(CvsTemplate::default(), true)
                 .iter()
                 .all(FilterRule::is_negated)
+        );
+    }
+
+    /// Two sessions in one process - QUIC daemon sessions share the daemon
+    /// parent - each build their own list, as two forked upstream daemon
+    /// children do.
+    #[test]
+    fn each_session_builds_its_list_under_its_own_first_template() {
+        let negated = CvsTemplate {
+            negate: true,
+            ..CvsTemplate::default()
+        };
+        let first = CvsSession::default();
+        let second = CvsSession::default();
+        assert!(
+            first
+                .rules(negated, true)
+                .iter()
+                .all(FilterRule::is_negated)
+        );
+        assert!(
+            second
+                .rules(CvsTemplate::default(), true)
+                .iter()
+                .all(|rule| !rule.is_negated())
         );
     }
 }

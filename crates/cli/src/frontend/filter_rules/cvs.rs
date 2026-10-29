@@ -1,5 +1,5 @@
 use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
-use filters::{CvsIgnorePattern, CvsTemplate};
+use filters::{CvsIgnorePattern, CvsSession, CvsTemplate};
 use protocol::SUPPORTED_PROTOCOL_BOUNDS;
 
 /// Appends the full `-C`/`--cvs-exclude` rule set to `destination`: the
@@ -10,7 +10,7 @@ use protocol::SUPPORTED_PROTOCOL_BOUNDS;
 /// upstream: exclude.c:1951-1954 send_filter_list() parses `:C` and then `-C`
 /// after every other rule, and `-C` goes through rule_template(0), so it is a
 /// plain `C` rule like any other (exclude.c:1595-1597).
-pub(crate) fn append_cvs_exclude_rules(destination: &mut Vec<FilterRuleSpec>) {
+pub(crate) fn append_cvs_exclude_rules(destination: &mut Vec<FilterRuleSpec>, cvs: &CvsSession) {
     let options = DirMergeOptions::default()
         .with_enforced_kind(Some(DirMergeEnforcedKind::Exclude))
         .use_whitespace()
@@ -18,7 +18,7 @@ pub(crate) fn append_cvs_exclude_rules(destination: &mut Vec<FilterRuleSpec>) {
         .inherit(false)
         .allow_list_clearing(true);
     let mut cvs_rules = vec![FilterRuleSpec::dir_merge(".cvsignore".to_owned(), options)];
-    cvs_rules.extend(cvs_default_exclude_rules(CvsTemplate::default()));
+    cvs_rules.extend(cvs_default_exclude_rules(CvsTemplate::default(), cvs));
 
     // upstream: exclude.c:1944-1969 send_filter_list() - the `-C` built-in
     // excludes and the `:C` per-directory merge stay local on a receiving client
@@ -30,8 +30,8 @@ pub(crate) fn append_cvs_exclude_rules(destination: &mut Vec<FilterRuleSpec>) {
     destination.extend(cvs_rules.into_iter().map(|rule| rule.with_cvs_origin(true)));
 }
 
-/// Builds the global CVS ignore list a `C` rule with `template` stands for, under
-/// the process's established template (see `CvsTemplate::established`): the built-in
+/// Builds the CVS ignore list a `C` rule with `template` stands for, under
+/// the template `cvs` was established with (see `CvsSession::established`): the built-in
 /// patterns, `$HOME/.cvsignore`, and `$CVSIGNORE`, in that order. Unlike
 /// [`append_cvs_exclude_rules`], this does NOT add the per-directory
 /// `.cvsignore` dir-merge - that layer is contributed separately by a `:C` rule.
@@ -41,8 +41,11 @@ pub(crate) fn append_cvs_exclude_rules(destination: &mut Vec<FilterRuleSpec>) {
 /// protocol >= 30 (exclude.c:1498-1500); the rules are assembled at
 /// argument-parse time, before negotiation, so the gate is keyed on the newest
 /// protocol oc supports (SUPPORTED_PROTOCOL_BOUNDS.1, currently 33).
-pub(crate) fn cvs_default_exclude_rules(template: CvsTemplate) -> Vec<FilterRuleSpec> {
-    let template = template.established();
+pub(crate) fn cvs_default_exclude_rules(
+    template: CvsTemplate,
+    cvs: &CvsSession,
+) -> Vec<FilterRuleSpec> {
+    let template = cvs.established(template);
     let builtin_perishable = SUPPORTED_PROTOCOL_BOUNDS.1 >= 30;
     filters::cvs_ignore_list()
         .iter()
@@ -65,7 +68,7 @@ fn cvs_rule(
         .with_perishable(template.perishable_for(entry, builtin_perishable))
         .with_negate(template.negate);
     match template.sides() {
-        Some((sender, receiver)) => rule.with_sender(sender).with_receiver(receiver),
+        Some((sender, receiver)) => rule.with_sides(sender, receiver),
         None => rule,
     }
 }
@@ -83,7 +86,7 @@ mod tests {
         // this path produces must carry the origin marker so build_wire_format_rules
         // can forward it to the wire projection.
         let mut rules = Vec::new();
-        append_cvs_exclude_rules(&mut rules);
+        append_cvs_exclude_rules(&mut rules, &filters::CvsSession::default());
         assert!(!rules.is_empty());
         assert!(
             rules.iter().all(FilterRuleSpec::is_cvs_origin),
@@ -101,7 +104,7 @@ mod tests {
         // cvs_default_exclude_rules() directly and does NOT forward `-C` in argv,
         // so upstream transmits those rules on the wire; they must not be tagged
         // cvs_origin (which would wrongly keep them local on a pull).
-        let rules = cvs_default_exclude_rules(CvsTemplate::default());
+        let rules = cvs_default_exclude_rules(CvsTemplate::default(), &CvsSession::default());
         assert!(!rules.is_empty());
         assert!(rules.iter().all(|r| !r.is_cvs_origin()));
     }
@@ -118,7 +121,7 @@ mod tests {
             sender_side: true,
             receiver_side: false,
         };
-        let rules = cvs_default_exclude_rules(template);
+        let rules = cvs_default_exclude_rules(template, &CvsSession::default());
         assert!(!rules.is_empty());
         for rule in &rules {
             assert_eq!(rule.kind(), FilterRuleKind::Include);

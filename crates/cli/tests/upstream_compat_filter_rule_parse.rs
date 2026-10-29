@@ -360,3 +360,37 @@ fn cvs_exclude_rules_follow_every_other_rule() {
         }
     }
 }
+
+/// `-sr` names both sides, so it counts as sided (exclude.c:1423-1432, 1448):
+/// a side-specific merge file refuses it, and a merge rule that names both
+/// sides refuses a sided rule inside it. oc used to read "both sides" as "no
+/// side".
+#[test]
+fn naming_both_sides_still_names_a_side() {
+    for (filter, contents) in [
+        (":s .f", "-sr foo\n"),
+        (":sr .f", "-s foo\n"),
+        (":sr .f", "- foo\n"),
+        (": .f", "-sr foo\n"),
+    ] {
+        let files = [("a", "a"), ("foo", "f"), (".f", contents)];
+        for source in [Source::Local, Source::Push] {
+            assert_parity_from(&files, &[&format!("--filter={filter}")], source);
+        }
+    }
+}
+
+/// A merge file named inside another merge file opens from the current
+/// directory, because parse_merge_name() joins it onto a `dirbuf` that is still
+/// empty while the options are parsed (exclude.c:696-745). oc used to open it
+/// from the naming file's own directory.
+#[test]
+fn a_nested_merge_file_opens_from_the_current_directory() {
+    for nested in ["src/r/b", "b"] {
+        let naming = format!(". {nested}\n");
+        let files = [("x", "x"), ("r/a", naming.as_str()), ("r/b", "- x\n")];
+        for source in [Source::Local, Source::Push] {
+            assert_parity_from(&files, &["--filter=. src/r/a"], source);
+        }
+    }
+}

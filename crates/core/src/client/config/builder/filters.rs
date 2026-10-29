@@ -37,6 +37,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Shares `cvs`, the CVS ignore list the caller's `C` rules were expanded
+    /// against, with the `C` rules the transfer reads out of per-directory merge
+    /// files, so the whole run uses one list (exclude.c:1489-1496).
+    #[must_use]
+    pub fn cvs_session(mut self, cvs: ::filters::CvsSession) -> Self {
+        self.cvs_session = cvs;
+        self
+    }
+
     /// Extends the builder with a collection of filter rules.
     #[must_use]
     pub fn extend_filter_rules<I>(mut self, rules: I) -> Self

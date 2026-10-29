@@ -869,7 +869,9 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         options = self.apply_reference_directories(options, config);
         options = self.apply_iconv(options, config);
         options = Self::apply_cow_policy(options, config);
-        options = self.apply_filter_program(options);
+        options = self
+            .apply_filter_program(options)
+            .with_cvs_session(config.cvs_session().clone());
         options = Self::apply_zero_copy_policy(options, config);
 
         options

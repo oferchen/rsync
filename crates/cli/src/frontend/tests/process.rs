@@ -15,10 +15,10 @@ fn process_merge_directive_excludes_the_merge_file_before_its_rules() {
         ".e sub/rules",
         &DirMergeOptions::default(),
         temp.path(),
-        "--filter",
         filters::RuleSource::Argument,
         &mut rules,
         &mut Vec::new(),
+        &filters::CvsSession::default(),
     )
     .expect("merge succeeds");
 
@@ -53,13 +53,13 @@ fn process_merge_directive_applies_parent_overrides_to_nested_merges() {
         "merge nested.rules",
         &options,
         temp.path(),
-        "parent.rules",
         filters::RuleSource::File {
             name: "parent.rules",
             line: 1,
         },
         &mut rules,
         &mut visited,
+        &filters::CvsSession::default(),
     )
     .expect("merge succeeds");
 

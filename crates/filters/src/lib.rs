@@ -151,7 +151,7 @@ pub use clean_fname::{collapse_dot_dot_dirs, per_dir_merge_report_name};
 pub use clear_token::{ClearToken, classify_clear_token};
 pub use compiled::XattrSide;
 pub use cvs::{
-    CvsIgnorePattern, CvsTemplate, DEFAULT_CVSIGNORE, cvs_ignore_list, cvs_ignore_rules,
+    CvsIgnorePattern, CvsSession, CvsTemplate, DEFAULT_CVSIGNORE, cvs_ignore_list,
     default_patterns as cvs_default_patterns,
 };
 pub use error::FilterError;

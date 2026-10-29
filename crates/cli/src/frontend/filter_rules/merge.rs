@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
 use core::message::{Message, Role};
 use core::rsync_error;
-use filters::RuleSource;
+use filters::{CvsSession, RuleSource};
 
 use super::cvs::cvs_default_exclude_rules;
 use super::directive::{
@@ -43,6 +43,7 @@ pub(crate) fn apply_merge_directive(
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
     source: RuleSource<'_>,
+    cvs: &CvsSession,
 ) -> Result<(), Message> {
     let options = directive.options().clone();
     let original_source_text = os_string_to_pattern(directive.source().to_os_string());
@@ -95,17 +96,10 @@ pub(crate) fn apply_merge_directive(
     }
     visited.push(guard_key.clone());
 
-    let next_base_storage = if is_stdin {
-        None
-    } else {
-        let resolved_for_base = canonical_path.as_ref().unwrap_or(&resolved_path);
-        Some(
-            resolved_for_base
-                .parent()
-                .map_or_else(|| base_dir.to_path_buf(), |parent| parent.to_path_buf()),
-        )
-    };
-    let next_base = next_base_storage.as_deref().unwrap_or(base_dir);
+    // upstream: exclude.c:696-745 parse_merge_name() joins a nested merge name
+    // onto `dirbuf`, which set_filter_dir() has not filled while the options
+    // are parsed, so a merge named inside a merge file opens from the current
+    // directory - not the naming file's own.
     // upstream: exclude.c:1542-1551 resolves FILTRULE_CLEAR_LIST via
     // pop_filter_list (exclude.c:671-687), which truncates only the local
     // section of the per-merge-file rule list. Mirror that by parsing the
@@ -145,11 +139,12 @@ pub(crate) fn apply_merge_directive(
         parse_merge_contents(
             &contents,
             &options,
-            next_base,
+            base_dir,
             &display,
             named_at.as_deref(),
             &mut local,
             visited,
+            cvs,
         )
     })();
     visited.pop();
@@ -167,6 +162,7 @@ fn parse_merge_contents(
     named_at: Option<&str>,
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
+    cvs: &CvsSession,
 ) -> Result<(), Message> {
     if options.uses_whitespace() {
         for token in contents.split_whitespace() {
@@ -207,13 +203,13 @@ fn parse_merge_contents(
                 token,
                 options,
                 base_dir,
-                display,
                 match named_at {
                     None => RuleSource::FileWordSplit { name: display },
                     Some(location) => RuleSource::FileNamedAt { location },
                 },
                 destination,
                 visited,
+                cvs,
             )?;
         }
         return Ok(());
@@ -265,7 +261,6 @@ fn parse_merge_contents(
             line,
             options,
             base_dir,
-            display,
             match named_at {
                 None => RuleSource::File {
                     name: display,
@@ -275,6 +270,7 @@ fn parse_merge_contents(
             },
             destination,
             visited,
+            cvs,
         )?;
     }
 
@@ -288,10 +284,10 @@ pub(crate) fn process_merge_directive(
     directive: &str,
     options: &DirMergeOptions,
     base_dir: &Path,
-    display: &str,
     source: RuleSource<'_>,
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
+    cvs: &CvsSession,
 ) -> Result<(), Message> {
     // `source` says where this line came from, and every diagnostic the parser
     // builds from it now crosses `rule_text`/`rule_detail` (exclude.c:88-131).
@@ -334,24 +330,11 @@ pub(crate) fn process_merge_directive(
             // `source` travels down: it selects upstream's redacted open-failure
             // arm (exclude.c:1708-1712) for the nested file.
             //
-            // The nested error keeps its own exit code. upstream reports a
-            // failed open as RERR_FILEIO (11) from `exit_cleanup` at
-            // exclude.c:1719 whether the name came from a file or from the
-            // command line - only the TEXT differs between the two arms, never
-            // the code. Re-wrapping at a fixed 1 here turned every nested open
-            // failure into a syntax-error exit; `code` preserves whichever the
-            // inner site chose, so RERR_SYNTAX rules still surface as 1.
-            apply_merge_directive(nested, base_dir, destination, visited, source).map_err(
-                |error| {
-                    let code = error.code().unwrap_or(1);
-                    let detail = error.to_string();
-                    rsync_error!(
-                        code,
-                        format!("failed to process merge file '{display}': {detail}")
-                    )
-                    .with_role(Role::Client)
-                },
-            )?;
+            // The nested failure is reported as the inner site raised it, code
+            // and text: upstream's open failure (exclude.c:1708-1719) and
+            // filter_rule_err() (exclude.c:133-137) exit straight away, with no
+            // word from the file that named the nested one.
+            apply_merge_directive(nested, base_dir, destination, visited, source, cvs)?;
         }
         Ok(FilterDirective::Clear) => destination.clear(),
         // A blank line inside a merge file contributes no rule.
@@ -360,7 +343,7 @@ pub(crate) fn process_merge_directive(
         // (`-C`) inside a merge file expands to the global CVS list at this
         // position in the chain.
         Ok(FilterDirective::CvsDefaults(template)) => {
-            destination.extend(cvs_default_exclude_rules(template));
+            destination.extend(cvs_default_exclude_rules(template, cvs));
         }
         Err(error) => {
             // upstream reports a syntax failure ONCE, from `filter_rule_err`

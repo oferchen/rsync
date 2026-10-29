@@ -7,6 +7,12 @@ impl ClientConfig {
         &self.filter_rules
     }
 
+    /// The CVS ignore list this run's `C` rules stand for.
+    #[must_use]
+    pub const fn cvs_session(&self) -> &::filters::CvsSession {
+        &self.cvs_session
+    }
+
     /// Reports whether `-C` / `--cvs-exclude` was requested.
     ///
     /// Forwarded to the remote peer as the compact `C` letter so it runs

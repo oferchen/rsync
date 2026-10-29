@@ -1,6 +1,9 @@
 use super::common::*;
 use super::*;
 
+/// A merge named inside a merge file resolves from the base directory, not the
+/// naming file's directory: parse_merge_name() joins it onto the still-empty
+/// `dirbuf` (exclude.c:696-745).
 #[test]
 fn apply_merge_directive_resolves_relative_paths() {
     let temp = test_support::create_tempdir();
@@ -11,7 +14,7 @@ fn apply_merge_directive_resolves_relative_paths() {
     let grand = subdir.join("grand.rules");
 
     std::fs::write(&outer, b"+ outer\nmerge nested/child.rules\n").expect("write outer");
-    std::fs::write(&child, b"+ child\nmerge grand.rules\n").expect("write child");
+    std::fs::write(&child, b"+ child\nmerge nested/grand.rules\n").expect("write child");
     std::fs::write(&grand, b"+ grand\n").expect("write grand");
 
     let mut rules = Vec::new();
@@ -24,6 +27,7 @@ fn apply_merge_directive_resolves_relative_paths() {
         &mut rules,
         &mut visited,
         filters::RuleSource::Argument,
+        &filters::CvsSession::default(),
     )
     .expect("merge succeeds");
 
@@ -52,6 +56,7 @@ fn apply_merge_directive_respects_forced_include() {
         &mut rules,
         &mut visited,
         filters::RuleSource::Argument,
+        &filters::CvsSession::default(),
     )
     .expect("merge succeeds");
 

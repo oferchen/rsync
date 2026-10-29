@@ -867,6 +867,31 @@ fn parse_received_filters_empty() {
     assert!(merge_configs.is_empty());
 }
 
+/// Two server sessions in one process - QUIC daemon sessions share the daemon
+/// parent - each build their CVS list under their own first `C` rule, as two
+/// forked upstream daemon children do (exclude.c:1489-1496). A list shared
+/// between them would hand the second session's `-C` the first one's `+C`
+/// list, which keeps `a.o`.
+#[test]
+fn each_server_session_builds_its_own_cvs_list() {
+    let cvs_rule = |rule_type| FilterRuleWireFormat {
+        rule_type,
+        cvs_exclude: true,
+        ..FilterRuleWireFormat::default()
+    };
+    let (_first_handshake, first) = test_generator();
+    let (included, _) = first
+        .parse_received_filters(&[cvs_rule(protocol::filters::RuleType::Include)])
+        .unwrap();
+    assert!(included.allows(Path::new("a.o"), false));
+
+    let (_second_handshake, second) = test_generator();
+    let (excluded, _) = second
+        .parse_received_filters(&[cvs_rule(protocol::filters::RuleType::Exclude)])
+        .unwrap();
+    assert!(!excluded.allows(Path::new("a.o"), false));
+}
+
 #[test]
 fn parse_received_filters_single_exclude() {
     let (_handshake, ctx) = test_generator();
