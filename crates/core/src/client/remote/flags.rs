@@ -648,6 +648,9 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // negotiator's checksum_override; without this the choice is silently
     // dropped at protocol >= 30 (binary negotiation).
     server_config.checksum_choice = config.checksum_protocol_override();
+    // upstream: checksum.c:548-551 - a push's local sender refuses a `none`
+    // file sum under `--checksum` at the first regular file it would sum.
+    server_config.file_checksum_choice = config.checksum_choice().file().to_protocol_algorithm();
     // upstream: compat.c:547 - `if (do_compression && !compress_choice)`
     // gates the compression vstring list, so an explicit --compress-choice (also
     // its --new-compress/--old-compress aliases) sets compress_choice and

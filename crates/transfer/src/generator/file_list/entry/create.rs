@@ -451,7 +451,7 @@ impl GeneratorContext {
         // needlessly re-transferred.
         if self.config.flags.checksum
             && entry.is_file()
-            && let Some(sum) = self.compute_flist_checksum(full_path, entry.size())
+            && let Some(sum) = self.compute_flist_checksum(full_path, entry.size())?
         {
             entry.set_checksum(sum);
         }
@@ -469,10 +469,28 @@ impl GeneratorContext {
     /// upstream's `map_file()` over `st_size`. Returns `None` on any I/O error
     /// so the transfer falls back to sending the file (upstream sets an
     /// all-zero sum on open failure, which likewise never matches).
-    fn compute_flist_checksum(&self, path: &Path, file_size: u64) -> Option<Vec<u8>> {
+    ///
+    /// # Errors
+    ///
+    /// The file opened and `--checksum-choice` named `none` for the file sum:
+    /// upstream's `file_checksum()` opens the file first (checksum.c:426-430)
+    /// and only then reaches the default case that refuses `none`
+    /// (checksum.c:548-551), so an empty source or an unreadable file is not
+    /// refused.
+    fn compute_flist_checksum(&self, path: &Path, file_size: u64) -> io::Result<Option<Vec<u8>>> {
+        let Ok(mut file) = std::fs::File::open(path) else {
+            return Ok(None);
+        };
+        if self.config.file_checksum_choice == Some(protocol::ChecksumAlgorithm::None) {
+            return Err(invalid_file_checksum());
+        }
+        Ok(self.digest_open_file(&mut file, file_size))
+    }
+
+    /// Digests the first `file_size` bytes of `file`; `None` on a short read.
+    fn digest_open_file(&self, file: &mut std::fs::File, file_size: u64) -> Option<Vec<u8>> {
         use std::io::Read;
 
-        let mut file = std::fs::File::open(path).ok()?;
         let mut verifier =
             crate::delta_apply::ChecksumVerifier::for_algorithm(self.get_checksum_algorithm());
         // upstream: rsync.h MAX_MAP_SIZE = 256*1024 - the map_file() window.
@@ -573,6 +591,34 @@ fn unsendable_reparse_point(
         format!("skipping {what}: it has no link target and is not read"),
     ))
 }
+/// The refusal of a `none` whole-file checksum under `--checksum`.
+///
+/// upstream: checksum.c:548-551 - `file_checksum()` has no `CSUM_NONE` arm, so
+/// it prints this text and exits `RERR_UNSUPPORTED`.
+#[derive(Debug)]
+struct InvalidFileChecksum;
+
+impl std::fmt::Display for InvalidFileChecksum {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Invalid checksum-choice for --checksum: none (0)")
+    }
+}
+
+impl std::error::Error for InvalidFileChecksum {}
+
+/// Builds the refusal; its `Unsupported` kind grades it as exit code 4.
+fn invalid_file_checksum() -> io::Error {
+    io::Error::new(io::ErrorKind::Unsupported, InvalidFileChecksum)
+}
+
+/// Reports whether `error` is the `none` file-checksum refusal, which ends the
+/// run instead of skipping one entry.
+pub(in crate::generator) fn is_invalid_file_checksum(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<InvalidFileChecksum>())
+}
+
 #[cfg(all(test, unix, feature = "xattr"))]
 mod fake_super_round_trip_tests {
     //! End-to-end sender override: place a fake-super xattr on a regular

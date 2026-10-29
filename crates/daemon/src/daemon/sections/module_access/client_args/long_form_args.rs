@@ -495,7 +495,16 @@ fn apply_long_form_args(
                 // about for the reverse direction.
                 } else if let Some(spec) = arg.strip_prefix("--checksum-choice=") {
                     match parse_transfer_checksum_choice(spec) {
-                        Ok(algorithm) => config.checksum_choice = Some(algorithm),
+                        Ok(algorithm) => {
+                            config.checksum_choice = Some(algorithm);
+                            // upstream: checksum.c:548-551 - the daemon's
+                            // sender refuses a `none` file sum under
+                            // `--checksum` exactly as an rsh server does.
+                            config.file_checksum_choice =
+                                ::protocol::ChecksumAlgorithm::parse_file_choice(spec)
+                                    .ok()
+                                    .flatten();
+                        }
                         Err(message) => {
                             rejection.get_or_insert(ClientArgRejection::InvalidValue(message));
                         }
@@ -615,8 +624,8 @@ pub(crate) enum ClientArgRejection {
 /// its first `,`; the part before names the transfer sum and the part after
 /// names the whole-file sum, and without a comma both take the same name. Only
 /// the transfer sum reaches the wire negotiation, which is the single thing
-/// `ServerConfig::checksum_choice` feeds, so the file half is left to the client
-/// that chose it.
+/// `ServerConfig::checksum_choice` feeds; the file half is read separately by
+/// `ChecksumAlgorithm::parse_file_choice`.
 ///
 /// upstream: `checksum.c:127-160 parse_csum_name()` - a missing name or the
 /// case-insensitive literal `auto` resolves to md5 rather than being an error,

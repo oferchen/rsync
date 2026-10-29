@@ -531,6 +531,13 @@ pub struct ServerConfig {
     /// protocol instead of using automatic negotiation. Propagated from
     /// the client configuration to ensure both sides agree on the algorithm.
     pub checksum_choice: Option<protocol::ChecksumAlgorithm>,
+    /// Whole-file checksum named by `--checksum-choice` (its second
+    /// component, or its only one), or `None` to negotiate.
+    ///
+    /// upstream: checksum.c:196-205 keeps `file_sum_nni` apart from the
+    /// transfer sum. A sender computing `--checksum` sums refuses `none`
+    /// (checksum.c:548-551).
+    pub file_checksum_choice: Option<protocol::ChecksumAlgorithm>,
     /// Fixed delta block length from `-B` / `--block-size`, when the operator
     /// set one.
     ///
@@ -857,6 +864,7 @@ impl Default for ServerConfig {
             write: WriteConfig::default(),
             checksum_seed: None,
             checksum_choice: None,
+            file_checksum_choice: None,
             block_size: None,
             trust_sender: false,
             stop_at: None,

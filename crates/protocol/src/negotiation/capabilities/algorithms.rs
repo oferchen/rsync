@@ -153,6 +153,24 @@ impl ChecksumAlgorithm {
         }
     }
 
+    /// Names the whole-file checksum a `--checksum-choice` spec selects, or
+    /// `None` when it leaves that sum to negotiation (`auto` or empty).
+    ///
+    /// upstream: checksum.c:196-205 `parse_checksum_choice()` - the spec splits
+    /// on its first `,`. The part after names the file sum; without a comma the
+    /// file sum takes the transfer sum's name.
+    ///
+    /// # Errors
+    ///
+    /// The named file sum is not a known algorithm.
+    pub fn parse_file_choice(spec: &str) -> io::Result<Option<Self>> {
+        let file = spec.split_once(',').map_or(spec, |(_, file)| file);
+        if file.is_empty() || file.eq_ignore_ascii_case("auto") {
+            return Ok(None);
+        }
+        Self::parse(file).map(Some)
+    }
+
     /// Returns the transfer digest width in bytes (`xfer_sum_len`).
     ///
     /// This is the number of strong-sum bytes a block signature carries and a

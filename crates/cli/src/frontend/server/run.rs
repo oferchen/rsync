@@ -1006,8 +1006,23 @@ fn apply_value_flags<Err: Write>(
     }
 
     if let Some(algo_str) = &long_flags.checksum_choice {
-        match protocol::ChecksumAlgorithm::parse(algo_str) {
-            Ok(algo) => config.checksum_choice = Some(algo),
+        // upstream: checksum.c:196-205 parse_checksum_choice() - the spec splits
+        // on its first `,` into the transfer sum and the whole-file sum, and
+        // checksum.c:136-141 resolves an empty or `auto` transfer name to md5.
+        let transfer = algo_str.split(',').next().unwrap_or(algo_str);
+        let parsed = if transfer.is_empty() || transfer.eq_ignore_ascii_case("auto") {
+            Ok(protocol::ChecksumAlgorithm::MD5)
+        } else {
+            protocol::ChecksumAlgorithm::parse(transfer)
+        }
+        .and_then(|transfer| {
+            protocol::ChecksumAlgorithm::parse_file_choice(algo_str).map(|file| (transfer, file))
+        });
+        match parsed {
+            Ok((transfer, file)) => {
+                config.checksum_choice = Some(transfer);
+                config.file_checksum_choice = file;
+            }
             Err(e) => {
                 write_server_error(stderr, brand, format!("invalid --checksum-choice: {e}"));
                 return Err(1);
