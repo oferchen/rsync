@@ -506,13 +506,16 @@ fn copy_directory_recursive_inner(
             }
             directory_ready.set(true);
         } else {
-            if let Some(parent) = destination.parent() {
-                context.prepare_parent_directory(parent)?;
-            }
-            let created = if context.implied_dirs_enabled() {
-                fs::create_dir_all(destination)
-            } else {
-                fs::create_dir(destination)
+            let created = match destination
+                .parent()
+                .map(|p| context.prepare_parent_directory(p))
+            {
+                Some(Err(error)) => match context.unusable_parent_cause(&error, destination) {
+                    Some(cause) => Err(cause),
+                    None => return Err(error),
+                },
+                _ if context.implied_dirs_enabled() => fs::create_dir_all(destination),
+                _ => fs::create_dir(destination),
             };
             if let Err(error) = created {
                 // upstream: generator.c:1873-1887 - the failed mkdir is the
