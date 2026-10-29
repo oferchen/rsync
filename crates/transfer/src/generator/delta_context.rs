@@ -290,7 +290,6 @@ mod tests {
 
     use super::*;
     use crate::generator::delta::{script_to_wire_delta, write_delta_with_inline_checksum};
-    use crate::generator::open_source::SourceOpen;
 
     const STRONG_LEN: u8 = 16;
 
@@ -367,8 +366,7 @@ mod tests {
             ctx.copy_buf(),
             None,
             false,
-            file.source.path(),
-            &SourceOpen::new(None, None, false, false),
+            file.source.as_file(),
             ChecksumAlgorithm::MD5,
             0,
             ProtocolVersion::NEWEST,
