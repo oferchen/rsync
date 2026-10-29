@@ -608,6 +608,11 @@ fn subtree_keeps_an_entry(context: &CopyContext, path: &Path, relative: &Path) -
     let Ok(entries) = fs::read_dir(path) else {
         return false;
     };
+    // upstream: delete.c:105 - the directory's own merge files judge its
+    // children (push_local_filters).
+    let Ok(_merge_rules) = context.enter_destination_for_deletion(path, Some(relative)) else {
+        return true;
+    };
     entries.flatten().any(|entry| {
         let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
         let child = relative.join(entry.file_name());
@@ -689,6 +694,9 @@ fn remove_children_capped(
             ));
         }
     }
+    // upstream: delete.c:105 - push_local_filters() loads this directory's
+    // own merge files before its children are judged; the guard pops them.
+    let _merge_rules = context.enter_destination_for_deletion(path, Some(entry_relative))?;
     // Peel contents in upstream's reverse-sorted delete order so the
     // prefix that survives when `--max-delete` trips matches upstream.
     children.sort_unstable_by(|a, b| cmp_child_delete_order((&a.0, a.1), (&b.0, b.1)));

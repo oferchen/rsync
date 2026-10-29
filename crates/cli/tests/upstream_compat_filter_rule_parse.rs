@@ -651,3 +651,49 @@ fn delete_keeps_protected_files_inside_an_extraneous_directory() {
         }
     }
 }
+
+/// Emptying an extraneous directory loads that directory's own per-directory
+/// merge files first (delete.c:105 push_local_filters), so a rule that lives
+/// only in the doomed directory's merge file protects its children there and
+/// below. oc evaluated the children without it and deleted them.
+#[test]
+fn delete_loads_the_merge_files_of_an_extraneous_directory() {
+    let sources = [
+        Source::Local,
+        Source::Push,
+        Source::Pull,
+        Source::DaemonPush,
+        Source::DaemonPull,
+    ];
+    // A protect rule names the receiving side, so it may only sit in an
+    // unsided merge file; a plain exclude protects through every side
+    // modifier that reaches the receiver.
+    let cases: [(&str, &[&str]); 2] = [
+        ("P", &[": .f", ":n .f", ":e .f"]),
+        ("-", &[": .f", ":n .f", ":e .f", ":r .f", ":s .f"]),
+    ];
+    for (verb, rules) in cases {
+        let top = format!("{verb} keep\n");
+        let deep = format!("{verb} also\n");
+        let files = [
+            ("keep", "k"),
+            ("@dst/sub/.f", top.as_str()),
+            ("@dst/sub/keep", "k"),
+            ("@dst/sub/gone", "g"),
+            ("@dst/sub/deep/keep", "k"),
+            ("@dst/sub/deep/.f", deep.as_str()),
+            ("@dst/sub/deep/also", "a"),
+            ("@dst/sub/deep/gone", "g"),
+        ];
+        for rule in rules {
+            for extra in [None, Some("--delete-delay"), Some("--max-delete=100")] {
+                let mut args = vec!["--delete".to_owned(), format!("--filter={rule}")];
+                args.extend(extra.map(str::to_owned));
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                for source in sources {
+                    assert_parity_from(&files, &args, source);
+                }
+            }
+        }
+    }
+}
