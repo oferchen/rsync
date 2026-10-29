@@ -283,3 +283,82 @@ fn a_recursed_operand_leaves_its_implied_parent_alone() {
         );
     }
 }
+
+/// A recursed directory operand below a symlinked parent leading out of the
+/// destination: the directory's own mkdir fails through the confined walk,
+/// is reported once with the skip line, and nothing below it is written,
+/// on every transport and both recursion modes. Measured on 3.5.1.
+///
+/// upstream: generator.c:1745-1746 stats the directory through the confined
+/// walk, generator.c:1873-1887 reports the failed mkdir and skips its
+/// contents.
+#[test]
+fn a_recursed_directory_below_a_symlinked_parent_is_reported_and_skipped() {
+    require_binaries!("oc-rsync", LSH_STUB_BIN);
+    for mode in MODES {
+        for extra in [&[][..], &["--no-inc-recursive"][..]] {
+            let tmp = create_tempdir();
+            source(tmp.path());
+            let src = tmp.path().join("src");
+            let dest = tmp.path().join("dest");
+            let outside = tmp.path().join("outside");
+            fs::create_dir_all(&outside).expect("mkdir outside");
+            fs::create_dir_all(&dest).expect("mkdir dest");
+            std::os::unix::fs::symlink(&outside, dest.join("sub")).expect("plant symlink");
+
+            let mut runner = OcRsyncCliRunner::new()
+                .cwd(&src)
+                .args(["-rR", "--no-implied-dirs"])
+                .args(extra);
+            if !matches!(mode, Mode::Local) {
+                let stub = LshRunnerStub::locate().expect("lsh-stub located");
+                runner = runner
+                    .arg(format!("--rsh={}", stub.path().display()))
+                    .arg(format!(
+                        "--rsync-path={}",
+                        test_support::oc_rsync_bin().display()
+                    ));
+            }
+            runner = match mode {
+                Mode::Local => runner.arg("sub/deep").arg(format!("{}/", dest.display())),
+                Mode::Pull => runner
+                    .arg(format!("localhost:{}/./sub/deep", src.display()))
+                    .arg(format!("{}/", dest.display())),
+                Mode::Push => runner
+                    .arg("sub/deep")
+                    .arg(format!("localhost:{}/", dest.display())),
+            };
+            let out = runner.run().expect("transfer run");
+            let cell = format!("{mode:?} {extra:?}");
+            out.assert_exit(23);
+            for (needle, lines) in [
+                ("recv_generator: mkdir \"", 1),
+                ("/dest/sub/deep\" failed: ", 1),
+                (
+                    "*** Skipping any contents from this failed directory ***",
+                    1,
+                ),
+                ("cannot replace non-directory destination", 0),
+            ] {
+                assert_eq!(
+                    count(&out, needle),
+                    lines,
+                    "{cell}: {needle}, stderr:\n{}",
+                    out.stderr_str()
+                );
+            }
+            assert!(
+                fs::symlink_metadata(dest.join("sub"))
+                    .expect("dest/sub")
+                    .file_type()
+                    .is_symlink(),
+                "{cell}: the symlinked parent must be kept"
+            );
+            assert_eq!(
+                fs::read_dir(&outside).expect("outside").count(),
+                0,
+                "{cell}: nothing may be written through the symlink"
+            );
+        }
+    }
+}

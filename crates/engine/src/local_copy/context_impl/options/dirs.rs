@@ -285,16 +285,7 @@ impl<'a> CopyContext<'a> {
         };
         match self.prepare_parent_directory(parent) {
             Ok(()) => Ok(true),
-            Err(error)
-                if self.relative_paths_enabled()
-                    && !self.implied_dirs_enabled()
-                    && matches!(
-                        error.kind(),
-                        LocalCopyErrorKind::InvalidArgument(
-                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory
-                        )
-                    ) =>
-            {
+            Err(error) if self.is_unusable_relative_parent(&error) => {
                 if self.report_unusable_relative_parent(parent, destination) {
                     Ok(false)
                 } else {
@@ -305,25 +296,67 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Whether `error` is a `--relative --no-implied-dirs` parent the copy may
+    /// neither replace nor walk through, which upstream treats as a per-entry
+    /// failure rather than the end of the run.
+    fn is_unusable_relative_parent(&self, error: &LocalCopyError) -> bool {
+        self.relative_paths_enabled()
+            && !self.implied_dirs_enabled()
+            && matches!(
+                error.kind(),
+                LocalCopyErrorKind::InvalidArgument(
+                    LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory
+                )
+            )
+    }
+
+    /// The failure of a directory entry below an unusable `--no-implied-dirs`
+    /// parent, or `None` when `error` is not that case and stands as it is.
+    ///
+    /// upstream: `generator.c:1745-1746` stats the directory through the
+    /// confined walk, and the `mkdir` that follows fails the same way
+    /// (`generator.c:1873-1887`); its parent's `make_path()` never runs,
+    /// because the parent's own following stat succeeds.
+    pub(crate) fn unusable_parent_cause(
+        &self,
+        error: &LocalCopyError,
+        destination: &Path,
+    ) -> Option<io::Error> {
+        if !self.is_unusable_relative_parent(error) {
+            return None;
+        }
+        self.confined_probe(destination, false)
+    }
+
+    /// Stats `path` through the confined walk the receiver uses, following its
+    /// final component when `follow` is set; returns the failure, if any.
+    #[cfg(unix)]
+    fn confined_probe(&self, path: &Path, follow: bool) -> Option<io::Error> {
+        let root = self.destination_root();
+        let sandbox = fast_io::DirSandbox::open_root(root).ok();
+        let relative = path.strip_prefix(root).unwrap_or(path);
+        let outcome = if follow {
+            fast_io::stat_via_sandbox_or_fallback(sandbox.as_ref(), root, relative, path)
+        } else {
+            fast_io::lstat_via_sandbox_or_fallback(sandbox.as_ref(), root, relative, path)
+        };
+        outcome.err()
+    }
+
+    /// Off Unix there is no confined walk to consult.
+    #[cfg(not(unix))]
+    fn confined_probe(&self, _path: &Path, _follow: bool) -> Option<io::Error> {
+        None
+    }
+
     /// Reports the generator's view of an entry below an unusable
     /// `--no-implied-dirs` parent, probing both through the confined walk the
     /// receiver uses. Returns `false` when neither probe fails, leaving the
     /// caller's own error to stand.
     #[cfg(unix)]
     fn report_unusable_relative_parent(&mut self, parent: &Path, destination: &Path) -> bool {
-        let root = self.destination_root().to_path_buf();
-        let sandbox = fast_io::DirSandbox::open_root(&root).ok();
-        let probe = |path: &Path, follow: bool| {
-            let relative = path.strip_prefix(&root).unwrap_or(path);
-            let outcome = if follow {
-                fast_io::stat_via_sandbox_or_fallback(sandbox.as_ref(), &root, relative, path)
-            } else {
-                fast_io::lstat_via_sandbox_or_fallback(sandbox.as_ref(), &root, relative, path)
-            };
-            outcome.err()
-        };
-        let parent_error = probe(parent, true);
-        let entry_error = probe(destination, false);
+        let parent_error = self.confined_probe(parent, true);
+        let entry_error = self.confined_probe(destination, false);
         if let Some(error) = &parent_error {
             let what = format!(
                 "recv_generator: mkdir {} failed",
