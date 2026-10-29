@@ -38,7 +38,7 @@ mod tests_touched_blocks;
 
 pub use self::config::{
     BackupConfig, DEFAULT_CHANNEL_CAPACITY, DELAY_UPDATES_PARTIAL_DIR, DiskCommitConfig,
-    ENV_CHANNEL_CAPACITY, PartialMode,
+    ENV_CHANNEL_CAPACITY, LiveAclCache, PartialMode,
 };
 pub use self::thread::{DiskThreadHandle, spawn_disk_thread};
 

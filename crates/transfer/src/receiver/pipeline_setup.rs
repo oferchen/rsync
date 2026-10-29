@@ -8,12 +8,13 @@ use std::num::NonZeroU8;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use protocol::acl::AclCache;
 use protocol::filters::FilterRuleWireFormat;
 use protocol::flist::FileEntry;
 
 use filters::FilterSet;
 use metadata::AclIdMapper;
+
+use crate::disk_commit::LiveAclCache;
 
 /// Shared configuration produced by `ReceiverContext::setup_transfer`.
 ///
@@ -25,10 +26,10 @@ pub(in crate::receiver) struct PipelineSetup {
     pub(in crate::receiver) metadata_opts: metadata::MetadataOptions,
     pub(in crate::receiver) checksum_length: NonZeroU8,
     pub(in crate::receiver) checksum_algorithm: signature::SignatureAlgorithm,
-    /// ACL cache populated during flist reception. Shared with the disk commit
-    /// thread via `Arc` so cached ACLs can be applied after file metadata.
-    /// `None` when `--acls` is not active.
-    pub(in crate::receiver) acl_cache: Option<Arc<AclCache>>,
+    /// ACL cache populated during flist reception and extended by every
+    /// sub-list. Shared with the disk commit thread so cached ACLs can be
+    /// applied after file metadata. `None` when `--acls` is not active.
+    pub(in crate::receiver) acl_cache: Option<LiveAclCache>,
     /// Cross-host id remapper for named ACL entries, built from the received
     /// uid/gid id-lists plus `--usermap`/`--groupmap`. Shared with the disk
     /// commit thread via `Arc`. `None` when `--acls` is not active.
@@ -69,7 +70,7 @@ pub(in crate::receiver) struct PipelineSetup {
 pub(in crate::receiver) fn apply_acls_from_receiver_cache(
     destination: &std::path::Path,
     entry: &FileEntry,
-    acl_cache: Option<&AclCache>,
+    acl_cache: Option<&LiveAclCache>,
     id_map: Option<&AclIdMapper>,
     follow_symlinks: bool,
     dest_root: Option<&std::path::Path>,
@@ -84,7 +85,7 @@ pub(in crate::receiver) fn apply_acls_from_receiver_cache(
     };
     metadata::apply_acls_from_cache(
         destination,
-        cache,
+        &cache.read().expect("ACL cache lock poisoned"),
         access_ndx,
         entry.def_acl_ndx(),
         follow_symlinks,

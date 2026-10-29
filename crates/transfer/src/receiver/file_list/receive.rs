@@ -489,6 +489,15 @@ impl ReceiverContext {
         );
         protocol::flist::trace_recv_file_list_done();
 
+        // upstream: acls.c:1016-1024 receive_acl() - a sub-list's new ACLs
+        // join the one list every later index names, so the appliers must see
+        // them before any entry of this list is applied.
+        if let Some(live) = &self.live_acl_cache {
+            live.write()
+                .expect("ACL cache lock poisoned")
+                .extend_from(flist_reader.acl_cache());
+        }
+
         // Restore the cached reader so the next segment continues the same
         // compression state (upstream's static recv_file_entry() variables).
         self.flist_reader_cache = Some(flist_reader);
