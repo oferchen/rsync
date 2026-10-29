@@ -245,17 +245,17 @@ fn permission_write_denied_creating_directory_in_readonly_parent() {
     // Restore permissions for cleanup
     restore_permissions(&dest_root, 0o755);
 
+    // upstream: generator.c:1873-1887 reports the mkdir and skips everything
+    // below it (`skip_dir`), so the nested file is never attempted and the run
+    // ends RERR_PARTIAL.
     let error = result.expect_err("should fail to create directory");
-    match error.kind() {
-        LocalCopyErrorKind::Io { action, source, .. } => {
-            assert!(
-                action.contains("create") || action.contains("directory"),
-                "action should mention directory creation: {action}"
-            );
-            assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
+    assert!(
+        matches!(error.kind(), LocalCopyErrorKind::PartialTransfer),
+        "unexpected error kind: {:?}",
+        error.kind()
+    );
+    assert_eq!(error.exit_code(), 23);
+    assert!(!dest_root.join("source").exists());
 }
 
 #[test]
