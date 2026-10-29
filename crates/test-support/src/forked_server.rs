@@ -247,10 +247,53 @@ impl Drop for ForkedServer {
             return;
         }
         let stopped = kill_process_group(self.pid).and_then(|()| wait_for_child(self.pid));
-        if let Err(error) = stopped
-            && !std::thread::panicking()
-        {
-            panic!("stop the test server {}: {error}", self.pid);
+        match stopped {
+            Err(error) if !std::thread::panicking() => {
+                panic!("stop the test server {}: {error}", self.pid);
+            }
+            // A test that fails while talking to the server may be failing
+            // because the server ended first, and the client's error rarely
+            // says so: a client still queued on a listener whose last holder
+            // exits reads ECONNRESET. Name how the server ended.
+            Ok(end) if std::thread::panicking() => {
+                if let Some(report) = self.early_end_report(&end) {
+                    eprintln!("{report}");
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(unix)]
+impl ForkedServer {
+    /// Describes how the server ended when it ended on its own, before the
+    /// handle stopped it: `end` is what reaping it returned.
+    ///
+    /// A server the handle had to kill records no outcome and ends by the
+    /// `SIGKILL` it was sent; anything else is an end of its own.
+    fn early_end_report(&self, end: &platform::session_fork::ChildEnd) -> Option<String> {
+        use platform::session_fork::ChildEnd;
+
+        let pid = self.pid;
+        match std::fs::read_to_string(self.outcome_dir.path().join("outcome")) {
+            Ok(text) => Some(match Outcome::decode(&text) {
+                Some(Outcome::Returned(Ok(()))) => {
+                    format!("test server {pid} had already returned Ok ({end:?})")
+                }
+                Some(Outcome::Returned(Err(failure))) => format!(
+                    "test server {pid} had already failed with exit {}: {}",
+                    failure.exit_code, failure.message
+                ),
+                Some(Outcome::Panicked(message)) => {
+                    format!("test server {pid} had already panicked: {message}")
+                }
+                None => format!("test server {pid} had already ended ({end:?}): {text:?}"),
+            }),
+            Err(_) if *end == ChildEnd::Signalled(libc::SIGKILL) => None,
+            Err(_) => Some(format!(
+                "test server {pid} had already ended without an outcome ({end:?})"
+            )),
         }
     }
 }
@@ -361,6 +404,83 @@ mod tests {
         stderr.read_to_string(&mut text).expect("read to EOF");
         assert_eq!(text, "server says hello\n");
         assert_eq!(server.join(), Ok(Ok(())));
+    }
+
+    /// A server that ended on its own is named, with its result, when the
+    /// test fails: its client may only see ECONNRESET.
+    #[cfg(unix)]
+    #[test]
+    fn a_server_that_ended_first_is_reported_with_its_result() {
+        use platform::session_fork::{ChildEnd, await_child_end};
+
+        let server = ForkedServer::spawn(|| {
+            Err(RunFailure {
+                exit_code: 5,
+                message: String::from("could not start"),
+            })
+        });
+        await_child_end(server.pid).expect("observe the end");
+        let report = server
+            .early_end_report(&ChildEnd::Exited(5))
+            .expect("an early end is reported");
+        assert!(report.contains("exit 5: could not start"), "{report}");
+    }
+
+    /// The failure the report exists for: a server that ends while a client is
+    /// still queued on its listener leaves that client reading ECONNRESET,
+    /// which says nothing about the server. The run waits until the client has
+    /// connected, then returns without accepting.
+    #[cfg(unix)]
+    #[test]
+    fn a_client_queued_on_a_server_that_ends_reads_a_reset() {
+        use platform::session_fork::{ChildEnd, await_child_end};
+        use std::io::{Read as _, Write as _};
+        use std::net::{TcpListener, TcpStream};
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        let (mut go_reader, mut go_writer) = std::io::pipe().expect("pipe");
+        let server = ForkedServer::spawn(move || {
+            let _listener = listener;
+            let mut byte = [0u8; 1];
+            go_reader
+                .read_exact(&mut byte)
+                .expect("wait for the client");
+            Err(RunFailure {
+                exit_code: 10,
+                message: String::from("ended before accepting"),
+            })
+        });
+        let mut client = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        go_writer.write_all(b"x").expect("release the server");
+        await_child_end(server.pid).expect("observe the end");
+
+        let error = client
+            .read(&mut [0u8; 16])
+            .expect_err("the queued connection is reset");
+        assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset);
+        let report = server
+            .early_end_report(&ChildEnd::Exited(10))
+            .expect("an early end is reported");
+        assert!(report.contains("ended before accepting"), "{report}");
+    }
+
+    /// A server the handle had to stop ended by the handle's `SIGKILL`, which
+    /// says nothing about the failure, so nothing is reported.
+    #[cfg(unix)]
+    #[test]
+    fn a_server_stopped_by_the_handle_is_not_reported() {
+        use platform::session_fork::ChildEnd;
+
+        let server = ForkedServer::spawn(|| {
+            loop {
+                std::thread::park();
+            }
+        });
+        assert_eq!(
+            server.early_end_report(&ChildEnd::Signalled(libc::SIGKILL)),
+            None
+        );
     }
 
     #[test]

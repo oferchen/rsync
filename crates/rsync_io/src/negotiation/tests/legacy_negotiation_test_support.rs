@@ -565,10 +565,7 @@ fn negotiation_buffered_slices_into_iter_consumes_segments() {
     let remainder = b" banner";
     let slices = NegotiationBufferedSlices::new(prefix, remainder);
 
-    let lengths: Vec<usize> = slices
-        .into_iter()
-        .map(|slice| slice.len())
-        .collect();
+    let lengths: Vec<usize> = slices.into_iter().map(|slice| slice.len()).collect();
 
     assert_eq!(lengths, vec![prefix.len(), remainder.len()]);
 }
