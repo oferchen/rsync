@@ -49,13 +49,15 @@ impl<'a> CopyContext<'a> {
         // that gate.
         let io_error = self.batch_flist_io_error();
         let mut buf = Vec::with_capacity(4);
-        flist_writer.write_end(&mut buf, (io_error != 0).then_some(io_error)).map_err(|e| {
-            crate::local_copy::LocalCopyError::io(
-                "write batch flist end marker",
-                std::path::PathBuf::new(),
-                e,
-            )
-        })?;
+        flist_writer
+            .write_end(&mut buf, (io_error != 0).then_some(io_error))
+            .map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch flist end marker",
+                    std::path::PathBuf::new(),
+                    e,
+                )
+            })?;
 
         let batch_writer_arc = match self.options.get_batch_writer() {
             Some(w) => w.clone(),
@@ -242,7 +244,8 @@ impl<'a> CopyContext<'a> {
         if self.batch_delta_buf.is_some()
             && self.batch_flist_error_dirs.last() != Some(&self.batch_listing_dir)
         {
-            self.batch_flist_error_dirs.push(self.batch_listing_dir.clone());
+            self.batch_flist_error_dirs
+                .push(self.batch_listing_dir.clone());
         }
     }
 
@@ -641,7 +644,10 @@ impl<'a> CopyContext<'a> {
                 .expect("batch writer set on the write-batch path")
                 .lock()
                 .expect("batch writer mutex poisoned");
-            (writer.config().protocol_version, writer.config().checksum_seed)
+            (
+                writer.config().protocol_version,
+                writer.config().checksum_seed,
+            )
         };
         // upstream: match.c:403-452 - sum the source file content.
         let file_sum = {

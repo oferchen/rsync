@@ -22,6 +22,7 @@ fn batch_recording_context(dir: &Path, options: LocalCopyOptions) -> CopyContext
     )
 }
 
+#[cfg(unix)]
 #[test]
 fn batch_flist_io_error_counts_sender_walk_errors_only() {
     let temp = create_tempdir();

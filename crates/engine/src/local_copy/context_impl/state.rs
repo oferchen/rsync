@@ -703,6 +703,7 @@ impl<'a> CopyContext<'a> {
     ///
     /// upstream: generator.c:1907-1910 sets the generator's own `io_error`;
     /// the sender never sees it, so a batch does not carry it.
+    #[cfg(unix)]
     pub(super) fn record_generator_io_error(&mut self) {
         self.walk_io_error = true;
     }
