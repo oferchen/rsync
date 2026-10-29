@@ -26,6 +26,12 @@ enum Mode {
 
 const MODES: [Mode; 3] = [Mode::Local, Mode::Pull, Mode::Push];
 
+/// How 3.5.1 prints a confinement refusal.
+const ELOOP_TEXT: &str = ": Too many levels of symbolic links (40)";
+
+/// How the same refusal printed before oc mapped its internal escape signal.
+const EXDEV_TEXT: &str = ": Invalid cross-device link (18)";
+
 /// `src/sub/f` and `src/sub/deep/g`, the parents dated in the past so a
 /// re-timed destination parent is visible.
 fn source(root: &Path) {
@@ -126,6 +132,10 @@ fn a_symlinked_parent_leading_out_is_kept_and_its_entries_are_reported() {
         for (needle, lines) in [
             ("recv_generator: failed to stat \"", 2),
             ("recv_generator: mkdir \"", 1),
+            // upstream: syscall.c:2920-2931 - the portable walk refuses an
+            // escape with ELOOP; oc's EXDEV escape signal must not leak out.
+            (ELOOP_TEXT, 3),
+            (EXDEV_TEXT, 0),
         ] {
             assert_eq!(
                 count(&out, needle),
@@ -339,6 +349,8 @@ fn a_recursed_directory_below_a_symlinked_parent_is_reported_and_skipped() {
                     1,
                 ),
                 ("cannot replace non-directory destination", 0),
+                (ELOOP_TEXT, 1),
+                (EXDEV_TEXT, 0),
             ] {
                 assert_eq!(
                     count(&out, needle),
