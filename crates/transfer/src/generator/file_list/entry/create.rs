@@ -354,14 +354,13 @@ impl GeneratorContext {
         // upstream: flist.c:make_file() -> get_xattr() reads xattrs for -X mode
         #[cfg(any(unix, windows))]
         if self.config.flags.xattrs {
-            // upstream: xattrs.c:319-352 - get_xattr() only reads for regular files,
-            // dirs, symlinks (if preserve_links), specials (if preserve_specials),
-            // and devices (if preserve_devices).
-            let should_read = file_type.is_file()
-                || file_type.is_dir()
-                || (file_type.is_symlink() && self.config.flags.links);
-
-            if should_read {
+            let flags = &self.config.flags;
+            if protocol::xattr::entry_carries_xattrs(
+                &entry,
+                flags.links,
+                flags.devices,
+                flags.specials,
+            ) {
                 // Follow symlinks only for non-symlink entries (lgetxattr for symlinks)
                 let follow = !file_type.is_symlink();
                 let xattr_filter = self.xattr_name_filter();

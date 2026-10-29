@@ -296,8 +296,7 @@ pub(crate) fn capture_batch_file_entry(
 /// receiver can apply it.
 ///
 /// upstream: `flist.c:2058-2068 send_file_name()` - `get_xattr()` reads the
-/// list (`xattrs.c:322-345` gates links, specials and devices on their
-/// preserve options); `generator.c:571-582 itemize()` sets ITEM_REPORT_XATTR
+/// list; `generator.c:571-582 itemize()` sets ITEM_REPORT_XATTR
 /// when `xattr_diff()` finds a difference, marking each long value the
 /// destination lacks XSTATE_TODO; `sender.c:482-484` then writes those values
 /// after the iflags (`xattrs.c:651-703 send_xattr_request()`), which the batch
@@ -310,20 +309,20 @@ fn capture_batch_xattrs(
     entry: &mut protocol::flist::FileEntry,
 ) -> Option<Vec<u8>> {
     let options = context.options();
-    let readable = entry.is_file()
-        || entry.is_dir()
-        || (entry.is_symlink() && options.links_enabled())
-        || (entry.is_device() && options.devices_enabled())
-        || (entry.is_special() && options.specials_enabled());
+    let readable = protocol::xattr::entry_carries_xattrs(
+        entry,
+        options.links_enabled(),
+        options.devices_enabled(),
+        options.specials_enabled(),
+    );
     if !context.batch_preserve_xattrs() || !readable {
         return None;
     }
     let rules = context
         .filter_program()
         .filter(|program| program.has_xattr_rules());
-    let sender_filter = rules.map(|program| {
-        move |name: &str| program.allows_xattr(name, ::filters::XattrSide::Sender)
-    });
+    let sender_filter = rules
+        .map(|program| move |name: &str| program.allows_xattr(name, ::filters::XattrSide::Sender));
     let receiver_filter = rules.map(|program| {
         move |name: &str| program.allows_xattr(name, ::filters::XattrSide::Receiver)
     });
