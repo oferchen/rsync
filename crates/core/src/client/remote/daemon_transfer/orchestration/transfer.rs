@@ -14,9 +14,7 @@ use protocol::ProtocolVersion;
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
 use super::stats::convert_server_stats_to_summary;
 use crate::client::config::ClientConfig;
-use crate::client::error::{
-    ClientError, connection_unexpectedly_closed_error, invalid_argument_error, remote_exit_error,
-};
+use crate::client::error::{ClientError, remote_exit_error};
 use crate::client::module_list::{
     DaemonStreamReader, DaemonStreamWriter, build_io_timeout_reapply, register_shutdown_wake,
 };
@@ -25,6 +23,7 @@ use crate::client::remote::batch_support::{BatchContext, build_batch_recording};
 use crate::client::remote::flags;
 use crate::client::remote::implied_source::implied_source_args_for_pull;
 use crate::client::remote::itemize_sink::ItemizeEventSink;
+use crate::client::remote::reporting_side::{ReportingSide, local_failure_error};
 use crate::client::summary::ClientSummary;
 use crate::exit_code::ExitCode;
 use crate::message::Role;
@@ -62,7 +61,10 @@ pub(crate) fn run_pull_transfer(
     let mut handshake = build_daemon_handshake(config, protocol);
     handshake.buffered = buffered;
     let bytes_read = Arc::new(AtomicU64::new(0));
+    // upstream: io.c:259-266 check_timeout() names the --timeout in force.
+    let io_timeout = config.timeout().as_seconds().map(|s| s.get());
 
+    let fork_point = Arc::new(crate::server::ForkPoint::default());
     let mut server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
 
     // upstream: main.c:1428-1431 - when pulling with --files-from pointing to a
@@ -144,10 +146,16 @@ pub(crate) fn run_pull_transfer(
             // module log; that is the remote daemon's own FLOG sink.
             daemon_log: None,
             bytes_read: Some(Arc::clone(&bytes_read)),
+            fork_point: Some(Arc::clone(&fork_point)),
         },
     )
     .map_err(|e| {
-        map_server_transfer_error(e, Role::Receiver, bytes_read.load(Ordering::Relaxed))
+        map_server_transfer_error(
+            e,
+            ReportingSide::of(Role::PreForkReceiver, &fork_point),
+            bytes_read.load(Ordering::Relaxed),
+            io_timeout,
+        )
     })?;
     let elapsed = start.elapsed();
 
@@ -189,6 +197,8 @@ pub(crate) fn run_push_transfer(
     let mut handshake = build_daemon_handshake(config, protocol);
     handshake.buffered = buffered;
     let bytes_read = Arc::new(AtomicU64::new(0));
+    // upstream: io.c:259-266 check_timeout() names the --timeout in force.
+    let io_timeout = config.timeout().as_seconds().map(|s| s.get());
 
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
     let dry_run = config.dry_run();
@@ -267,8 +277,9 @@ pub(crate) fn run_push_transfer(
         }
         Err(e) => Err(map_server_transfer_error(
             e,
-            Role::Sender,
+            ReportingSide::Sender,
             bytes_read.load(Ordering::Relaxed),
+            io_timeout,
         )),
     }
 }
@@ -295,59 +306,27 @@ pub(crate) fn run_push_transfer(
 /// `_exit_cleanup(val)`, so the client's final exit code is the peer's code.
 fn map_server_transfer_error(
     error: std::io::Error,
-    role: Role,
+    side: ReportingSide,
     bytes_received: u64,
+    io_timeout: Option<u64>,
 ) -> ClientError {
     // An interrupted transfer surfaces as whatever I/O failure the teardown
     // produced (a truncated multiplex frame, a closed socket). Upstream never
     // reports that: `rsync.c:843-874 sig_int()` short-circuits to
     // `exit_cleanup(RERR_SIGNAL)`, so the one diagnostic is the signal itself.
     if crate::signal::is_shutdown_requested() {
-        return crate::client::error::signal_interrupt_error(role);
+        return crate::client::error::signal_interrupt_error(side.local_role());
     }
     if let Some(code) = remote_exit_code(&error) {
         let exit = ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer);
-        return remote_exit_error(exit, role);
+        return remote_exit_error(exit, side.exit_role());
     }
     if let Some(error) = crate::client::error::corrupt_fake_super_destination_error(&error) {
         return error;
     }
-    // upstream: flist.c:1365-1371 - the receiver's own file-list validation
-    // (excluded / unrequested name, offset overflow) exits
-    // RERR_UNSUPPORTED, not the generic partial-transfer code. Those local
-    // rejects surface here as `ErrorKind::Unsupported` (filter_recheck.rs,
-    // sanitize.rs, restrictions.rs all mirror an upstream
-    // `exit_cleanup(RERR_UNSUPPORTED)` site), so keep upstream's exit code.
-    if error.kind() == std::io::ErrorKind::Unsupported {
-        return invalid_argument_error(
-            &format!("transfer failed: {error}"),
-            ExitCode::Unsupported.as_i32(),
-        );
-    }
-    // A local wire-protocol violation is upstream's RERR_PROTOCOL (2), e.g.
-    // exclude.c:1924-1926 send_rules() "filter rules are too modern for remote
-    // rsync." - the same mapping the remote-shell path applies.
-    if ExitCode::from_io_error(&error) == ExitCode::Protocol {
-        return invalid_argument_error(
-            &format!("transfer failed: {error}"),
-            ExitCode::Protocol.as_i32(),
-        );
-    }
-    // upstream: exclude.c:133-137 filter_rule_err() - a rule refused out of a
-    // per-directory merge file during the sender's walk prints its bare text
-    // and exits RERR_SYNTAX.
-    if ExitCode::from_io_error(&error) == ExitCode::Syntax {
-        return invalid_argument_error(
-            &crate::client::error::local_abort_text(&error),
-            ExitCode::Syntax.as_i32(),
-        );
-    }
-    // upstream: io.c:282-304 whine_about_eof() - the peer closing the stream
-    // before the transfer finished is not a per-file partial transfer.
-    if error.kind() == std::io::ErrorKind::UnexpectedEof {
-        return connection_unexpectedly_closed_error(bytes_received, ExitCode::StreamIo, role);
-    }
-    invalid_argument_error(&format!("transfer failed: {error}"), 23)
+    // The class mapping is the remote-shell transport's: a daemon socket has
+    // no child status to weigh against the local code.
+    local_failure_error(&error, None, side, bytes_received, io_timeout)
 }
 
 /// Walks the source chain of an `io::Error` looking for a
@@ -509,7 +488,7 @@ mod map_server_transfer_error_tests {
     /// daemon's message to stderr in wire order.
     #[test]
     fn maps_remote_reject_to_daemon_code_without_transfer_failed_prefix() {
-        let err = map_server_transfer_error(remote_exit_io(1), Role::Sender, 0);
+        let err = map_server_transfer_error(remote_exit_io(1), ReportingSide::Sender, 0, None);
         assert_eq!(err.exit_code(), 1);
         assert_eq!(err.code(), ExitCode::Syntax);
         let rendered = err.to_string();
@@ -517,12 +496,17 @@ mod map_server_transfer_error_tests {
         assert!(rendered.contains("[sender="), "{rendered}");
     }
 
-    /// A pull tags the diagnostic with the receiver role.
+    /// A pull rejected before the fork is reported by the lone `Receiver`
+    /// (rsync.c:987-995 who_am_i()); after it, by the generator, the last
+    /// process to exit.
     #[test]
-    fn maps_remote_reject_pull_uses_receiver_role() {
-        let err = map_server_transfer_error(remote_exit_io(1), Role::Receiver, 0);
+    fn maps_remote_reject_pull_uses_the_phase_role() {
+        let err = map_server_transfer_error(remote_exit_io(1), ReportingSide::PreFork, 0, None);
         assert_eq!(err.exit_code(), 1);
-        assert!(err.to_string().contains("[receiver="), "{err}");
+        assert!(err.to_string().contains("[Receiver="), "{err}");
+        let side = ReportingSide::PostFork { generator_read: 79 };
+        let err = map_server_transfer_error(remote_exit_io(1), side, 0, None);
+        assert!(err.to_string().contains("[generator="), "{err}");
     }
 
     /// A receiver-side file-list validation rejection (implied-include or
@@ -538,8 +522,9 @@ mod map_server_transfer_error_tests {
                 std::io::ErrorKind::Unsupported,
                 "ERROR: rejecting unrequested file-list name: ab.txt",
             ),
-            Role::Receiver,
+            ReportingSide::PreFork,
             0,
+            None,
         );
         assert_eq!(err.exit_code(), 4);
         assert_eq!(err.code(), ExitCode::Unsupported);
@@ -552,24 +537,27 @@ mod map_server_transfer_error_tests {
     fn maps_local_syntax_refusal_to_rerr_syntax_with_bare_text() {
         let err = map_server_transfer_error(
             protocol::syntax_violation("unexpected end of filter rule: <rule from /m/.f>"),
-            Role::Sender,
+            ReportingSide::Sender,
             0,
+            None,
         );
         assert_eq!(err.exit_code(), 1);
         assert!(!err.to_string().contains("transfer failed"), "{err}");
     }
 
-    /// Failures with no embedded remote code keep the prior generic
-    /// `transfer failed: ...` (23) behaviour.
+    /// A failure with no embedded remote code exits by its class, as on the
+    /// remote-shell transport: a broken socket is RERR_SOCKETIO, not a per-file
+    /// partial transfer.
     #[test]
-    fn maps_plain_failure_to_generic_partial_transfer() {
+    fn maps_plain_failure_by_its_class() {
         let err = map_server_transfer_error(
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe"),
-            Role::Receiver,
+            ReportingSide::PreFork,
             0,
+            None,
         );
-        assert_eq!(err.exit_code(), 23);
-        assert!(err.to_string().contains("transfer failed"), "{err}");
+        assert_eq!(err.exit_code(), 10);
+        assert!(err.to_string().contains("[Receiver="), "{err}");
     }
 
     /// A local protocol violation exits RERR_PROTOCOL (2) like upstream, e.g.
@@ -579,8 +567,9 @@ mod map_server_transfer_error_tests {
     fn maps_local_protocol_violation_to_rerr_protocol() {
         let err = map_server_transfer_error(
             protocol::protocol_violation("filter rules are too modern for remote rsync."),
-            Role::Sender,
+            ReportingSide::Sender,
             0,
+            None,
         );
         assert_eq!(err.exit_code(), 2);
         assert!(
@@ -601,8 +590,9 @@ mod map_server_transfer_error_tests {
         crate::signal::request_shutdown(crate::signal::ShutdownReason::Terminated);
         let err = map_server_transfer_error(
             std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "multiplex truncated"),
-            Role::Receiver,
+            ReportingSide::PreFork,
             0,
+            None,
         );
         crate::signal::reset_for_testing();
         assert_eq!(err.exit_code(), 20);
@@ -623,8 +613,9 @@ mod map_server_transfer_error_tests {
     fn maps_mid_transfer_eof_to_the_end_of_stream_whine() {
         let err = map_server_transfer_error(
             std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "multiplex truncated"),
-            Role::Receiver,
+            ReportingSide::PostFork { generator_read: 79 },
             112,
+            None,
         );
         assert_eq!(err.exit_code(), 12);
         let rendered = err.to_string();
@@ -634,7 +625,103 @@ mod map_server_transfer_error_tests {
         );
         assert_eq!(
             err.program_line(),
+            Some("connection unexpectedly closed (79 bytes received so far) [generator]")
+        );
+        let receiver = err.preceding().expect("the receiver reports first");
+        assert_eq!(
+            receiver.program_line(),
             Some("connection unexpectedly closed (112 bytes received so far) [receiver]")
         );
+    }
+
+    /// upstream: io.c:259-266 check_timeout() - a daemon that stops sending
+    /// for longer than --timeout ends the run with RERR_TIMEOUT (30). Measured
+    /// against a 3.5.1 daemon stalled by `pre-xfer exec = sleep 5` under
+    /// `--timeout=1`: "[Receiver] io timeout after 1 seconds -- exiting".
+    #[test]
+    fn maps_a_read_timeout_to_rerr_timeout() {
+        let err = map_server_transfer_error(
+            std::io::Error::from(std::io::ErrorKind::WouldBlock),
+            ReportingSide::PreFork,
+            0,
+            Some(1),
+        );
+        assert_eq!(err.code(), ExitCode::Timeout);
+        assert_eq!(
+            err.cause_line(),
+            Some("[Receiver] io timeout after 1 seconds -- exiting")
+        );
+        assert!(err.to_string().contains("[Receiver="), "{err}");
+    }
+
+    /// After the fork the receiver never times out; the generator does, and its
+    /// exit SIGUSR1s the receiver, whose trailer prints last (io.c:256-266,
+    /// cleanup.c:202-203). Measured against a 3.5.1 client fed a stalled
+    /// replayed stream after its file list, 12 runs of 12: the generator's
+    /// line and code-30 trailer, then `received SIGUSR1 (code 19) [receiver=`.
+    #[test]
+    fn a_timeout_after_the_fork_is_the_generators() {
+        let err = map_server_transfer_error(
+            std::io::Error::from(std::io::ErrorKind::WouldBlock),
+            ReportingSide::PostFork { generator_read: 26 },
+            26,
+            Some(1),
+        );
+        assert_eq!(err.code(), ExitCode::Timeout);
+        let rendered = err.to_string();
+        assert!(rendered.contains("(code 19)"), "{rendered}");
+        assert!(rendered.contains("[receiver="), "{rendered}");
+        let generator = err.preceding().expect("the generator reports first");
+        assert_eq!(
+            generator.cause_line(),
+            Some("[generator] io timeout after 1 seconds -- exiting")
+        );
+        assert_eq!(generator.code(), ExitCode::Timeout);
+        assert!(generator.to_string().contains("[generator="), "{generator}");
+    }
+
+    /// Without a --timeout a would-block read is no timeout: it keeps its
+    /// file-I/O class rather than claiming RERR_TIMEOUT.
+    #[test]
+    fn a_would_block_read_without_a_timeout_is_not_a_timeout() {
+        let err = map_server_transfer_error(
+            std::io::Error::from(std::io::ErrorKind::WouldBlock),
+            ReportingSide::PreFork,
+            0,
+            None,
+        );
+        assert_ne!(err.code(), ExitCode::Timeout);
+        assert!(err.cause_line().is_none());
+    }
+
+    /// upstream: io.c:930-946 perform_io() - a reset socket after the fork is
+    /// the receiver's `read error` (RERR_SOCKETIO), then the generator's
+    /// end-of-file whine and RERR_STREAMIO. Measured against a 3.5.1 daemon
+    /// whose stream a proxy resets after 2000 bytes: rc 12.
+    #[test]
+    fn a_reset_socket_after_the_fork_ends_on_the_generator_whine() {
+        let err = map_server_transfer_error(
+            std::io::Error::from_raw_os_error(libc_econnreset()),
+            ReportingSide::PostFork { generator_read: 79 },
+            1905,
+            None,
+        );
+        assert_eq!(err.code(), ExitCode::StreamIo);
+        let receiver = err.preceding().expect("the receiver reports first");
+        assert_eq!(receiver.code(), ExitCode::SocketIo);
+        let line = receiver.program_line().expect("read error line");
+        assert!(line.starts_with("[receiver] read error: "), "{line}");
+        assert!(receiver.to_string().contains("[receiver="), "{receiver}");
+    }
+
+    /// `ECONNRESET` (`WSAECONNRESET` on Windows) as the platform numbers it.
+    const fn libc_econnreset() -> i32 {
+        if cfg!(windows) {
+            10054
+        } else if cfg!(target_os = "linux") {
+            104
+        } else {
+            54
+        }
     }
 }

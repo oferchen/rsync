@@ -409,6 +409,25 @@ where
         return core::exit_code::record_exit(core::exit_code::process_latch(), code);
     };
 
+    emit_error_report(&error, stderr);
+    // 430: latch the decided error code at the site that maps it, so a
+    // second interrupt during unwinding cannot overwrite it with
+    // RERR_SIGNAL (upstream: cleanup.c:113-117).
+    core::exit_code::record_exit(core::exit_code::process_latch(), error.exit_code())
+}
+
+/// Prints a failed run's report: any report another process printed first,
+/// then this one's cause line and exit trailer.
+///
+/// upstream: a forked pull client's receiver reports and exits before the
+/// generator, its parent, does (main.c:1077 do_recv()).
+fn emit_error_report<Err>(error: &core::client::ClientError, stderr: &mut MessageSink<Err>)
+where
+    Err: Write,
+{
+    if let Some(earlier) = error.preceding() {
+        emit_error_report(earlier, stderr);
+    }
     // upstream: an unprefixed rprintf(FERROR, ...) cause that precedes the
     // log_exit() trailer, e.g. xattrs.c:1253-1258 get_stat_xattr().
     if let Some(line) = error.cause_line() {
@@ -426,10 +445,6 @@ where
         "rsync error: client functionality is unavailable in this build (code 1)",
         stderr,
     );
-    // 430: latch the decided error code at the site that maps it, so a
-    // second interrupt during unwinding cannot overwrite it with
-    // RERR_SIGNAL (upstream: cleanup.c:113-117).
-    core::exit_code::record_exit(core::exit_code::process_latch(), error.exit_code())
 }
 
 /// Prints the closing `rsync error: ... (code N)` line a remote transfer owes

@@ -261,6 +261,9 @@ pub struct ReceiverContext {
     /// bytes - multiplex frame headers included - not decoded entry bytes.
     /// This handle is the same counter that feeds `bytes_received`.
     pub(in crate::receiver) raw_read_counter: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Marked when a pulling client reaches upstream's receiver/generator
+    /// fork (main.c:1077); `None` when no caller asked for it.
+    fork_point: Option<Arc<crate::ForkPoint>>,
     /// Accumulated `File list size` in raw wire bytes across every received
     /// file-list span (initial list plus INC_RECURSE sub-list segments).
     ///
@@ -730,6 +733,7 @@ impl ReceiverContext {
             flist_io_error: 0,
             peer_flist_io_error: 0,
             raw_read_counter: None,
+            fork_point: None,
             flist_size: 0,
             received_files_total: 0,
             received_type_counts: (0, 0, 0, 0),
@@ -913,6 +917,51 @@ impl ReceiverContext {
     /// before [`run`](Self::run) for `File list size` to be reported.
     pub fn set_raw_read_counter(&mut self, counter: Arc<std::sync::atomic::AtomicU64>) {
         self.raw_read_counter = Some(counter);
+    }
+
+    /// Attaches the marker the receiver sets when it reaches the point where
+    /// an upstream pull client forks into receiver and generator.
+    pub fn set_fork_point(&mut self, point: Arc<crate::ForkPoint>) {
+        self.fork_point = Some(point);
+    }
+
+    /// Marks upstream's receiver/generator fork, carrying the raw read count
+    /// both halves inherit.
+    ///
+    /// upstream: main.c:1077 `do_recv()` forks once the file list is in and
+    /// `get_local_name()` has prepared the destination (main.c:1439-1441).
+    pub(in crate::receiver) fn mark_fork(&self) {
+        if let Some(point) = &self.fork_point {
+            point.mark(self.flist_span_start());
+        }
+    }
+
+    /// The fork marker, when a caller asked for one.
+    pub(in crate::receiver) fn fork_point(&self) -> Option<&Arc<crate::ForkPoint>> {
+        self.fork_point.as_ref()
+    }
+
+    /// Counts the notice upstream's receiver sends its generator once a
+    /// file's data is in.
+    ///
+    /// upstream: receiver.c:1341-1347 - `send_msg_success()` when
+    /// `remove_source_files || inc_recurse || F_IS_HLINKED(file)`, unless
+    /// `--delay-updates` defers the file (`recv_ok == 2`). A failed
+    /// verification sends `MSG_REDO` or `MSG_NO_SEND` in its place
+    /// (receiver.c:1372-1385), the same 8 bytes, which the model does not
+    /// tell apart.
+    pub(in crate::receiver) fn note_generator_notice(&self, entry: &protocol::flist::FileEntry) {
+        let Some(point) = &self.fork_point else {
+            return;
+        };
+        let inc_recurse = self
+            .compat_flags
+            .is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE));
+        if !self.config.write.delay_updates
+            && (inc_recurse || self.config.flags.remove_source_files || entry.hlinked())
+        {
+            point.send_int_message();
+        }
     }
 
     /// Returns the accumulated `File list size` in raw wire bytes.
