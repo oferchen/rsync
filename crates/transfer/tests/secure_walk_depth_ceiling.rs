@@ -19,6 +19,13 @@ use test_support::{
     CliOutput, LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binaries,
 };
 
+/// The `ENOMEM` text the refusals carry, rendered by the formatter the product
+/// uses from this platform's C library: upstream prints `strerror()`, which is
+/// "Cannot allocate memory" on glibc and "Out of memory" on musl.
+fn enomem_text() -> String {
+    engine::local_copy::upstream_io_error(&std::io::Error::from_raw_os_error(libc::ENOMEM))
+}
+
 /// Builds `src/d/d/.../d` `levels` deep with a file `f` in every level, so
 /// the file at level `n` lies below `n` directories.
 fn deep_chain(root: &Path, levels: usize) -> PathBuf {
@@ -119,7 +126,7 @@ fn stops_the_sender_at_the_1024th_level(direction: Direction) {
         out.stderr_str()
     );
     assert!(
-        out.stderr_contains("/d\" failed: Cannot allocate memory (12)"),
+        out.stderr_contains(&format!("/d\" failed: {}", enomem_text())),
         "upstream's ENOMEM wording, stderr:\n{}",
         out.stderr_str()
     );
@@ -158,7 +165,7 @@ fn stops_the_receiver_below_1024_parents(direction: Direction) {
         );
     }
     assert_eq!(
-        count_lines(&out, "Cannot allocate memory (12)"),
+        count_lines(&out, &enomem_text()),
         2,
         "both refusals carry upstream's ENOMEM wording, stderr:\n{}",
         out.stderr_str()
