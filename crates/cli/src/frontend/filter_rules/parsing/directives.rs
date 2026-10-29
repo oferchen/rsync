@@ -24,7 +24,7 @@ pub(super) fn parse_long_merge_directive(
     // upstream: exclude.c:1218-1227 `rule_strcmp` requires a separator after the
     // keyword and exclude.c:1444-1445 consumes exactly ONE of them.
     let (modifiers, remainder) = split_long_keyword_tail(after)?;
-    let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, line, false) {
+    let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, line) {
         Ok(result) => result,
         Err(error) => return Some(Err(error)),
     };
@@ -75,7 +75,7 @@ pub(super) fn parse_dir_merge_alias(
     // keyword and exclude.c:1444-1445 consumes exactly ONE of them.
     let (modifiers, remainder) = split_long_keyword_tail(after)?;
 
-    let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, line, true) {
+    let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, line) {
         Ok(result) => result,
         Err(error) => return Some(Err(error)),
     };

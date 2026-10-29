@@ -1,5 +1,6 @@
 use super::types::FilterParseError;
 use crate::local_copy::filter_program::{DirMergeEnforcedKind, DirMergeOptions};
+use filters::{ModifierScope, RuleModifiers, RuleSource};
 
 /// Consumes exactly one separator byte from the front of the remainder.
 ///
@@ -84,193 +85,74 @@ pub(super) fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
     (text, "")
 }
 
-/// Splits the modifier prefix of a short-form merge directive (`.`/`:`).
+/// Parses a modifier run through the shared table, refusing a byte the way
+/// upstream does.
 ///
-/// Only the characters valid as merge modifiers are consumed. The base set is
-/// `+`, `-`, `c`, `w`, `s`, `r`, `p`, `/`; passing `allow_extended` true
-/// additionally accepts `e` and `n` (the `dir-merge`-only modifiers). Stops
-/// at the first non-modifier character, separator, or end of input.
-pub(super) fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (&str, &str) {
-    if text.is_empty() {
-        return ("", "");
-    }
-
-    let text = text.strip_prefix(',').unwrap_or(text);
-
-    let mut end = 0usize;
-    for (idx, ch) in text.char_indices() {
-        if ch == '_' || ch == ' ' {
-            return (&text[..end], consume_rule_separator(&text[idx..]));
-        }
-
-        // upstream: exclude.c:1370 switches on the RAW byte, so the modifier
-        // alphabet is case-sensitive. `C` (:1402) is the CVS modifier and `c` is
-        // not a modifier at all - folding case here made `:c f` parse as a CVS
-        // dir-merge where upstream exits 1.
-        //
-        // upstream: exclude.c:1438 - `x` is unguarded and legal on every prefix,
-        // so it must be consumed here or it terminates the scan and the
-        // remainder is misread as the merge filename.
-        let base_modifier = matches!(ch, '+' | '-' | 'C' | 'w' | 's' | 'r' | 'p' | '/' | 'x');
-        let extended_modifier = matches!(ch, 'e' | 'n');
-
-        if base_modifier || (allow_extended && extended_modifier) {
-            end = idx + ch.len_utf8();
-            continue;
-        }
-
-        return (&text[..end], consume_rule_separator(&text[idx..]));
-    }
-
-    (&text[..end], "")
+/// The refusal is upstream's `invalid modifier` (exclude.c:1376), with the
+/// byte and its position crossing `rule_detail` and the rule crossing
+/// `rule_text`, so a merge file's line is never echoed.
+pub(super) fn table_modifiers(
+    modifiers: &str,
+    text: &str,
+    source: RuleSource<'_>,
+    scope: ModifierScope,
+) -> Result<RuleModifiers, FilterParseError> {
+    filters::parse_rule_modifiers_in(text, modifiers, scope).map_err(|invalid| {
+        let detail = format!(" '{}' at position {}", invalid.ch, invalid.offset);
+        FilterParseError::new(format!(
+            "invalid modifier{} in filter rule: {}",
+            source.rule_detail(&detail),
+            source.rule_text(text)
+        ))
+    })
 }
 
-/// Parses the modifier characters of a `merge` or `dir-merge` directive into
-/// concrete `DirMergeOptions` plus an `assume_cvsignore` flag.
+/// Parses the modifier run of a `.`/`:`/`merge`/`dir-merge` rule into the
+/// options its merged rules inherit, plus whether `C` defaults the file name to
+/// `.cvsignore`.
 ///
-/// `allow_extended` selects between plain `merge` semantics (only `+`, `-`,
-/// `c` accepted) and `dir-merge` semantics (all modifiers accepted). Errors
-/// on unsupported characters and on conflicting `+`/`-` or `+`/`c`
-/// combinations. Plain `merge` directives implicitly enable list-clearing to
-/// match upstream behaviour.
+/// upstream: exclude.c:1365-1443 parse_rule_tok() - one modifier table for every
+/// merge rule, eager or per-directory alike, so `.e`, `.n` and `.p` are as legal
+/// as their `:` spellings.
 pub(super) fn parse_merge_modifiers(
     modifiers: &str,
-    directive: &str,
-    allow_extended: bool,
+    text: &str,
+    source: RuleSource<'_>,
 ) -> Result<(DirMergeOptions, bool), FilterParseError> {
-    let label = if allow_extended { "dir-merge" } else { "merge" };
-    let mut options = if allow_extended {
-        DirMergeOptions::default()
-    } else {
-        DirMergeOptions::default().allow_list_clearing(true)
-    };
-    let mut enforced: Option<DirMergeEnforcedKind> = None;
-    let mut saw_include = false;
-    let mut saw_exclude = false;
-    let mut assume_cvsignore = false;
-
-    for modifier in modifiers.chars() {
-        let lower = modifier.to_ascii_lowercase();
-        match lower {
-            '-' => {
-                if saw_include {
-                    let message = format!(
-                        "{label} directive '{directive}' cannot combine '+' and '-' modifiers"
-                    );
-
-                    return Err(FilterParseError::new(message));
-                }
-                saw_exclude = true;
-                enforced = Some(DirMergeEnforcedKind::Exclude);
-            }
-            '+' => {
-                if saw_exclude {
-                    let message = format!(
-                        "{label} directive '{directive}' cannot combine '+' and '-' modifiers"
-                    );
-                    return Err(FilterParseError::new(message));
-                }
-                saw_include = true;
-                enforced = Some(DirMergeEnforcedKind::Include);
-            }
-            'c' => {
-                if saw_include {
-                    let message = format!(
-                        "{label} directive '{directive}' cannot combine 'C' with '+' or '-'"
-                    );
-                    return Err(FilterParseError::new(message));
-                }
-                saw_exclude = true;
-                enforced = Some(DirMergeEnforcedKind::Exclude);
-                options = options
-                    .use_whitespace()
-                    .allow_comments(false)
-                    .allow_list_clearing(true)
-                    .inherit(false);
-                assume_cvsignore = true;
-            }
-            'e' => {
-                if allow_extended {
-                    options = options.exclude_filter_file(true);
-                } else {
-                    let message = format!(
-                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
-                    );
-                    return Err(FilterParseError::new(message));
-                }
-            }
-            'n' => {
-                if allow_extended {
-                    options = options.inherit(false);
-                } else {
-                    let message = format!(
-                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
-                    );
-                    return Err(FilterParseError::new(message));
-                }
-            }
-            'w' => {
-                if allow_extended {
-                    options = options.use_whitespace().allow_comments(false);
-                } else {
-                    let message = format!(
-                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
-                    );
-                    return Err(FilterParseError::new(message));
-                }
-            }
-            's' => {
-                if allow_extended {
-                    options = options.sender_modifier();
-                } else {
-                    let message = format!(
-                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
-                    );
-                    return Err(FilterParseError::new(message));
-                }
-            }
-            'r' => {
-                if allow_extended {
-                    options = options.receiver_modifier();
-                } else {
-                    let message = format!(
-                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
-                    );
-                    return Err(FilterParseError::new(message));
-                }
-            }
-            '/' => {
-                if allow_extended {
-                    options = options.anchor_root(true);
-                } else {
-                    let message = format!(
-                        "merge directive '{directive}' uses unsupported modifier '{modifier}'"
-                    );
-                    return Err(FilterParseError::new(message));
-                }
-            }
-            // upstream: exclude.c:1438 - `x` carries no guard and is legal on
-            // every prefix. Consumed and then deliberately dropped:
-            // FILTRULES_FROM_CONTAINER (exclude.c:1229) is
-            // ABS_PATH|INCLUDE|DIRECTORY|NEGATE|PERISHABLE, so XATTR is NOT
-            // inherited by the merged rules - marking the container xattr-only
-            // would silently turn every rule in the file into an xattr rule.
-            'x' => {}
-            _ => {
-                let message = format!(
-                    "{label} directive '{directive}' uses unsupported modifier '{modifier}'"
-                );
-                return Err(FilterParseError::new(message));
-            }
-        }
+    let mods = table_modifiers(modifiers, text, source, ModifierScope::MERGE)?;
+    let mut options = DirMergeOptions::default();
+    if mods.no_prefixes {
+        options = options.with_enforced_kind(Some(if mods.no_prefixes_include {
+            DirMergeEnforcedKind::Include
+        } else {
+            DirMergeEnforcedKind::Exclude
+        }));
     }
-
-    options = options.with_enforced_kind(enforced);
-    if !allow_extended && !options.list_clear_allowed() {
-        options = options.allow_list_clearing(true);
+    if mods.word_split {
+        options = options.use_whitespace().allow_comments(false);
     }
-
-    Ok((options, assume_cvsignore))
+    if mods.no_inherit {
+        options = options.inherit(false);
+    }
+    if mods.exclude_self {
+        options = options.exclude_filter_file(true);
+    }
+    if mods.sender_side {
+        options = options.sender_modifier();
+    }
+    if mods.receiver_side {
+        options = options.receiver_modifier();
+    }
+    if mods.abs_path {
+        options = options.anchor_root(true);
+    }
+    if mods.perishable {
+        options = options.mark_perishable();
+    }
+    // `x` is consumed by the table and deliberately dropped: it is not in
+    // FILTRULES_FROM_CONTAINER (exclude.c:1229), so it never reaches the merged
+    // rules.
+    Ok((options, mods.cvs_ignore))
 }
 
 #[cfg(test)]
@@ -389,161 +271,52 @@ mod tests {
             assert_eq!(rest, "");
         }
     }
+}
 
-    mod split_short_merge_modifiers_tests {
-        use super::*;
+#[cfg(test)]
+mod merge_modifier_tests {
+    use super::*;
 
-        #[test]
-        fn empty_string() {
-            assert_eq!(split_short_merge_modifiers("", false), ("", ""));
-        }
-
-        #[test]
-        fn basic_modifiers() {
-            let (mods, rest) = split_short_merge_modifiers("+-C filename", true);
-            assert_eq!(mods, "+-C");
-            assert_eq!(rest, "filename");
-        }
-
-        #[test]
-        fn extended_modifiers_allowed() {
-            let (mods, rest) = split_short_merge_modifiers("en filename", true);
-            assert_eq!(mods, "en");
-            assert_eq!(rest, "filename");
-        }
-
-        #[test]
-        fn extended_modifiers_disallowed() {
-            let (mods, rest) = split_short_merge_modifiers("en filename", false);
-            assert_eq!(mods, "");
-            assert_eq!(rest, "en filename");
-        }
-
-        #[test]
-        fn path_modifier() {
-            let (mods, rest) = split_short_merge_modifiers("/ pattern", true);
-            assert_eq!(mods, "/");
-            assert_eq!(rest, "pattern");
-        }
-
-        #[test]
-        fn comma_prefix() {
-            // 'f' is not a valid modifier, so ",filename" should return no modifiers
-            let (mods, rest) = split_short_merge_modifiers(",filename", true);
-            assert_eq!(mods, "");
-            assert_eq!(rest, "filename");
-        }
-
-        #[test]
-        fn an_interior_comma_stops_the_merge_scan_without_being_consumed() {
-            // The merge scanner stops at the first non-modifier byte, and `,` is one
-            // - it is NOT a separator (exclude.c:1365), so it must stay at the front
-            // of the remainder rather than being eaten. Leaving it visible is what
-            // lets the caller report it instead of silently reading `pattern` as the
-            // merge filename.
-            let (mods, rest) = split_short_merge_modifiers("+-,pattern", true);
-            assert_eq!(mods, "+-");
-            assert_eq!(rest, ",pattern");
-        }
-
-        #[test]
-        fn w_modifier_allowed_when_extended() {
-            let (mods, rest) = split_short_merge_modifiers("w filename", true);
-            assert_eq!(mods, "w");
-            assert_eq!(rest, "filename");
-        }
-
-        #[test]
-        fn all_modifiers_no_remainder() {
-            let (mods, rest) = split_short_merge_modifiers("+-Cwsrp/", true);
-            assert_eq!(mods, "+-Cwsrp/");
-            assert_eq!(rest, "");
-        }
+    fn parse(modifiers: &str) -> Result<(DirMergeOptions, bool), String> {
+        parse_merge_modifiers(modifiers, modifiers, RuleSource::Argument)
+            .map_err(|error| error.to_string())
     }
 
-    mod parse_merge_modifiers_tests {
-        use super::*;
+    /// #224: upstream's table takes `e`, `n`, `w` and `p` on any merge rule,
+    /// eager or per-directory (exclude.c:1410-1422, 1433-1437); oc refused them
+    /// on `.`/`merge`, so `.e inner` in a per-directory file was a fatal error.
+    #[test]
+    fn eager_merge_accepts_every_merge_modifier() {
+        let (options, cvs) = parse("enwp").unwrap();
+        assert!(options.excludes_self() && !options.inherit_rules() && options.perishable());
+        assert!(!cvs);
+    }
 
-        #[test]
-        fn empty_modifiers() {
-            let (options, assume_cvsignore) = parse_merge_modifiers("", ".", true).unwrap();
-            assert!(!assume_cvsignore);
-            assert!(options.list_clear_allowed());
-        }
+    #[test]
+    fn prefix_modifiers_set_the_enforced_kind() {
+        let kind = |m| parse(m).unwrap().0.enforced_kind();
+        assert_eq!(kind("-"), Some(DirMergeEnforcedKind::Exclude));
+        assert_eq!(kind("+"), Some(DirMergeEnforcedKind::Include));
+        assert_eq!(kind("C"), Some(DirMergeEnforcedKind::Exclude));
+        assert_eq!(kind(""), None);
+    }
 
-        #[test]
-        fn exclude_modifier() {
-            let (options, _) = parse_merge_modifiers("-", ".", true).unwrap();
-            assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
-        }
+    #[test]
+    fn c_defaults_the_file_and_word_splits_without_inheriting() {
+        let (options, cvs) = parse("C").unwrap();
+        assert!(cvs && !options.inherit_rules());
+    }
 
-        #[test]
-        fn include_modifier() {
-            let (options, _) = parse_merge_modifiers("+", ".", true).unwrap();
-            assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Include));
-        }
-
-        #[test]
-        fn conflicting_plus_minus_error() {
-            let result = parse_merge_modifiers("+-", ".", true);
-            assert!(result.is_err());
-        }
-
-        #[test]
-        fn conflicting_minus_plus_error() {
-            let result = parse_merge_modifiers("-+", ".", true);
-            assert!(result.is_err());
-        }
-
-        #[test]
-        fn c_modifier_sets_cvsignore() {
-            let (options, assume_cvsignore) = parse_merge_modifiers("C", ".", true).unwrap();
-            assert!(assume_cvsignore);
-            assert!(!options.inherit_rules());
-        }
-
-        #[test]
-        fn c_with_plus_is_error() {
-            let result = parse_merge_modifiers("+C", ".", true);
-            assert!(result.is_err());
-        }
-
-        #[test]
-        fn n_modifier_disables_inherit() {
-            let (options, _) = parse_merge_modifiers("n", ".", true).unwrap();
-            assert!(!options.inherit_rules());
-        }
-
-        #[test]
-        fn n_modifier_without_extended_is_error() {
-            let result = parse_merge_modifiers("n", ".", false);
-            assert!(result.is_err());
-        }
-
-        #[test]
-        fn e_modifier_sets_exclude_filter() {
-            let (options, _) = parse_merge_modifiers("e", ".", true).unwrap();
-            assert!(options.excludes_self());
-        }
-
-        #[test]
-        fn e_modifier_without_extended_is_error() {
-            let result = parse_merge_modifiers("e", ".", false);
-            assert!(result.is_err());
-        }
-
-        #[test]
-        fn unknown_modifier_is_error() {
-            // `z` is outside upstream's modifier set `- + / ! C e n p r s w x`
-            // (exclude.c:1381-1441); `x` is in it and must parse.
-            let result = parse_merge_modifiers("z", ".", true);
-            assert!(result.is_err());
-        }
-
-        #[test]
-        fn slash_modifier_sets_anchor_root() {
-            let (options, _) = parse_merge_modifiers("/", ".", true).unwrap();
-            assert!(options.anchor_root_enabled());
+    /// upstream: exclude.c:1381-1404 - after `-`/`+`/`C` none of the three may
+    /// follow, and `!` never applies to a merge rule.
+    #[test]
+    fn refused_bytes_report_their_position() {
+        assert_eq!(
+            parse("-C").unwrap_err(),
+            "invalid modifier 'C' at position 1 in filter rule: -C"
+        );
+        for modifiers in ["C-", "++", "+-", "!", "c", "z"] {
+            assert!(parse(modifiers).is_err(), "{modifiers}");
         }
     }
 }

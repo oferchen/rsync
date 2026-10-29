@@ -7,19 +7,12 @@ pub enum FilterRuleKind {
     Include,
     /// Exclude matching paths.
     Exclude,
-    /// Clear all previously defined filter rules.
-    Clear,
     /// Protect matching destination paths from deletion.
     Protect,
     /// Remove protection for matching destination paths.
     Risk,
     /// Merge per-directory filter rules from `.rsync-filter` style files.
     DirMerge,
-    /// Exclude directories containing a specific marker file.
-    ///
-    /// Deviation from upstream: rsync 3.5.1 has no exclude-if-present rule;
-    /// this kind is an oc-only extension.
-    ExcludeIfPresent,
 }
 
 /// Filter rule supplied by the caller.
@@ -96,24 +89,6 @@ impl FilterRuleSpec {
         }
     }
 
-    /// Creates a rule that clears previously defined filter rules.
-    #[must_use]
-    pub const fn clear() -> Self {
-        Self {
-            kind: FilterRuleKind::Clear,
-            pattern: String::new(),
-            dir_merge_options: None,
-            applies_to_sender: true,
-            applies_to_receiver: true,
-            perishable: false,
-            xattr_only: false,
-            negate: false,
-            cvs_origin: false,
-            abs_path: false,
-            implied_partial_dir: false,
-        }
-    }
-
     /// Creates a protection rule for deletion passes.
     #[must_use]
     pub fn protect(pattern: impl Into<String>) -> Self {
@@ -158,25 +133,6 @@ impl FilterRuleSpec {
             kind: FilterRuleKind::DirMerge,
             pattern: pattern.into(),
             dir_merge_options: Some(options),
-            applies_to_sender: true,
-            applies_to_receiver: true,
-            perishable: false,
-            xattr_only: false,
-            negate: false,
-            cvs_origin: false,
-            abs_path: false,
-            implied_partial_dir: false,
-        }
-    }
-
-    /// Creates an `exclude-if-present` rule mirroring `--filter='H {FILE}'`.
-    #[must_use]
-    #[doc(alias = "H")]
-    pub fn exclude_if_present(pattern: impl Into<String>) -> Self {
-        Self {
-            kind: FilterRuleKind::ExcludeIfPresent,
-            pattern: pattern.into(),
-            dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -314,10 +270,6 @@ impl FilterRuleSpec {
 
     /// Applies dir-merge style overrides (anchor, side modifiers) to the rule.
     pub fn apply_dir_merge_overrides(&mut self, options: &DirMergeOptions) {
-        if matches!(self.kind, FilterRuleKind::Clear) {
-            return;
-        }
-
         if self.xattr_only {
             // Xattr-only rules are not subject to per-directory overrides.
             return;
@@ -545,9 +497,6 @@ mod tests {
 
         let mut risk = FilterRuleSpec::risk("scratch");
         assert!(!risk.apply_implicit_sender_side_for_delete_excluded());
-
-        let mut clear = FilterRuleSpec::clear();
-        assert!(!clear.apply_implicit_sender_side_for_delete_excluded());
 
         // DirMerge wrappers are unchanged at compile_filter_program time so
         // they are forwarded to the engine unmodified. The engine's

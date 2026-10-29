@@ -97,7 +97,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --exclude-from=FILE  Read exclude patterns from FILE.\n",
             "      --include=PATTERN  Re-include files matching PATTERN after exclusions.\n",
             "      --include-from=FILE  Read include patterns from FILE.\n",
-            "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'risk PATTERN'/'R PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' or '.[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', 'p', '/', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', 'p', '/', and 'C').\n",
+            "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'risk PATTERN'/'R PATTERN', 'merge[,MODS] FILE' or '.[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', 'p', '/', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', 'p', '/', and 'C').\n",
             "  -F            Alias for per-directory .rsync-filter handling (repeat to also load receiver-side files).\n",
             "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",
             "\n",

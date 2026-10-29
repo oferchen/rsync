@@ -141,81 +141,32 @@ fn execute_respects_include_filter_override() {
     assert!(summary.files_copied() >= 1);
 }
 
+/// upstream 3.5.1 has no `exclude-if-present` rule: `parse_rule_tok` reaches
+/// the `case 'e':` arm, `RULE_STRCMP(s, "exclude")` fails on the trailing `-`
+/// and the line falls to `filter_rule_err("Unknown filter rule")`
+/// (exclude.c:1297-1299, 1362-1363), which exits RERR_SYNTAX. A merge file
+/// holding one must therefore refuse the run rather than exclude anything.
 #[test]
-fn execute_skips_directories_with_exclude_if_present_marker() {
+fn dir_merge_exclude_if_present_line_is_an_unknown_rule() {
     let temp = tempdir().expect("tempdir");
-    let source_root = temp.path().join("source");
-    let destination_root = temp.path().join("dest");
-    fs::create_dir_all(&source_root).expect("create source root");
-    fs::create_dir_all(&destination_root).expect("create dest root");
+    let filter = temp.path().join(".rsync-filter");
+    fs::write(&filter, b"exclude-if-present=.git\n").expect("write filter");
 
-    fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
-    let marker_dir = source_root.join("skip");
-    fs::create_dir_all(&marker_dir).expect("create marker dir");
-    fs::write(marker_dir.join(".rsyncignore"), b"marker").expect("write marker");
-    fs::write(marker_dir.join("data.txt"), b"ignored").expect("write data");
-
-    let operands = vec![
-        source_root.into_os_string(),
-        destination_root.clone().into_os_string(),
-    ];
-    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-
-    let program = FilterProgram::new([FilterProgramEntry::ExcludeIfPresent(
-        ExcludeIfPresentRule::new(".rsyncignore"),
-    )])
-    .expect("compile filter program");
-
-    let options = LocalCopyOptions::default().with_filter_program(Some(program));
-
-    plan.execute_with_options(LocalCopyExecution::Apply, options)
-        .expect("copy succeeds");
-
-    let target_root = destination_root.join("source");
-    assert!(target_root.join("keep.txt").exists());
-    assert!(!target_root.join("skip").exists());
-}
-
-#[test]
-fn dir_merge_exclude_if_present_from_filter_file() {
-    let temp = tempdir().expect("tempdir");
-    let source_root = temp.path().join("source");
-    let destination_root = temp.path().join("dest");
-    fs::create_dir_all(&source_root).expect("create source");
-    fs::create_dir_all(&destination_root).expect("create dest");
-
-    fs::write(
-        source_root.join(".rsync-filter"),
-        b"exclude-if-present=.git\n",
-    )
-    .expect("write filter");
-    fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
-
-    let project = source_root.join("project");
-    fs::create_dir_all(&project).expect("create project");
-    fs::write(project.join(".git"), b"marker").expect("write marker");
-    fs::write(project.join("data.txt"), b"ignored").expect("write data");
-
-    let operands = vec![
-        source_root.into_os_string(),
-        destination_root.clone().into_os_string(),
-    ];
-    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-
-    let program = FilterProgram::new([FilterProgramEntry::DirMerge(DirMergeRule::new(
-        PathBuf::from(".rsync-filter"),
-        DirMergeOptions::default(),
-    ))])
-    .expect("compile filter program");
-
-    let options = LocalCopyOptions::default().with_filter_program(Some(program));
-
-    plan.execute_with_options(LocalCopyExecution::Apply, options)
-        .expect("copy succeeds");
-
-    let target_root = destination_root.join("source");
-    assert!(target_root.join("keep.txt").exists());
-    assert!(!target_root.join("project").exists());
+    let mut visited = Vec::new();
+    let error = match load_dir_merge_rules_recursive(
+        &filter,
+        &DirMergeOptions::default(),
+        false,
+        &mut visited,
+        MergeFileOrigin::Argument,
+    ) {
+        Ok(_) => panic!("exclude-if-present must not parse as a rule"),
+        Err(error) => error,
+    };
+    assert!(
+        error.to_string().contains("Unknown filter rule"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
@@ -261,7 +212,7 @@ fn filter_program_clear_discards_previous_rules() {
 fn dir_merge_clear_keyword_discards_previous_rules() {
     let temp = tempdir().expect("tempdir");
     let filter = temp.path().join("filter.rules");
-    fs::write(&filter, b"exclude-if-present=.git\nclear\n- skip\n").expect("write filter");
+    fs::write(&filter, b"- keep\nclear\n- skip\n").expect("write filter");
 
     let mut visited = Vec::new();
     let options = DirMergeOptions::default();
@@ -278,7 +229,6 @@ fn dir_merge_clear_keyword_discards_previous_rules() {
     assert!(entries.rules.iter().any(|rule| {
         rule.pattern() == b"skip" && matches!(rule.action(), filters::FilterAction::Exclude)
     }));
-    assert!(entries.exclude_if_present.is_empty());
 }
 
 #[test]
@@ -290,7 +240,7 @@ fn dir_merge_clear_keyword_discards_rules_in_whitespace_mode() {
     // MEASURED against rsync 3.5.0 - `--filter='-skip'` exits 1 with
     // "invalid modifier 'k' at position 2", while `--filter='-_skip'` excludes
     // `skip`. The old fixture spelled a rule upstream rejects.
-    fs::write(&filter, b"exclude-if-present=.git clear -_skip").expect("write filter");
+    fs::write(&filter, b"-_keep clear -_skip").expect("write filter");
 
     let mut visited = Vec::new();
     let options = DirMergeOptions::default()
@@ -306,7 +256,6 @@ fn dir_merge_clear_keyword_discards_rules_in_whitespace_mode() {
     .expect("parse filter");
 
     assert_eq!(entries.rules.len(), 1);
-    assert!(entries.exclude_if_present.is_empty());
 }
 
 /// The two list-clear checks in `load_dir_merge_rules_recursive` short-circuit

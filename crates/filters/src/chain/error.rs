@@ -19,7 +19,8 @@ pub enum FilterChainError {
     Parse {
         /// Path to the file that caused the error.
         path: PathBuf,
-        /// Description of the parse error.
+        /// The parse error as upstream's `filter_rule_err` words it, with the
+        /// rule already redacted to `<rule from ...>` (exclude.c:133-137).
         message: String,
     },
     /// A parsed rule could not be compiled into a glob matcher.

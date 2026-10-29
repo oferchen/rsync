@@ -23,7 +23,9 @@ mod pipelined_incremental;
 mod replay;
 mod setup;
 
-pub(in crate::receiver) use setup::{dir_merge_config_from_wire, parse_wire_filters_for_receiver};
+pub(in crate::receiver) use setup::{
+    dir_merge_config_from_wire, dir_merge_self_exclude, parse_wire_filters_for_receiver,
+};
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};

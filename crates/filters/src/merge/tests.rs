@@ -4,10 +4,9 @@ use std::path::Path;
 
 use crate::FilterAction;
 
-use super::parse::{
-    RuleModifiers, parse_modifiers, parse_rules, parse_rules_no_prefixes, parse_rules_word_split,
-};
+use super::parse::{parse_modifiers, parse_rules, parse_rules_no_prefixes, parse_rules_word_split};
 use super::read::{read_rules, read_rules_recursive};
+use crate::RuleModifiers;
 
 /// Asserts a rule was rejected for an invalid modifier without echoing the rule
 /// text or naming the offending character.
@@ -490,9 +489,9 @@ fn rule_modifiers_default() {
     let mods = RuleModifiers::default();
     assert!(!mods.negate);
     assert!(!mods.perishable);
-    assert!(!mods.sender_only);
-    assert!(!mods.receiver_only);
-    assert!(!mods.xattr_only);
+    assert!(!mods.sender_side);
+    assert!(!mods.receiver_side);
+    assert!(!mods.xattr);
 }
 
 #[test]
@@ -525,13 +524,13 @@ fn parse_modifiers_all_flags() {
     )
     .unwrap();
     assert!(mods.perishable);
-    assert!(mods.sender_only);
-    assert!(mods.receiver_only);
-    assert!(mods.xattr_only);
+    assert!(mods.sender_side);
+    assert!(mods.receiver_side);
+    assert!(mods.xattr);
     assert!(mods.exclude_self);
     assert!(mods.no_inherit);
     assert!(mods.word_split);
-    assert!(mods.cvs_mode);
+    assert!(mods.cvs_ignore);
     assert_eq!(pattern, "pattern");
 }
 
@@ -550,10 +549,10 @@ fn parse_modifiers_non_merge_flags() {
     .unwrap();
     assert!(mods.negate);
     assert!(mods.perishable);
-    assert!(mods.sender_only);
-    assert!(mods.receiver_only);
-    assert!(mods.xattr_only);
-    assert!(mods.cvs_mode);
+    assert!(mods.sender_side);
+    assert!(mods.receiver_side);
+    assert!(mods.xattr);
+    assert!(mods.cvs_ignore);
     assert_eq!(pattern, "pattern");
 }
 
@@ -577,24 +576,25 @@ fn parse_exclude_self_modifier_rejected_with_word_split() {
     assert_modifier_rejected_without_echo(&err.to_string(), "-ew foo bar");
 }
 
-/// `e` is accepted on a dir-merge rule (upstream sets `FILTRULE_EXCLUDE_SELF`
-/// there). The rule parses successfully as a dir-merge; exclude-self plumbing
-/// is applied at the chain layer via `DirMergeConfig::with_exclude_self`.
+/// #224: `e` on a merge rule adds an exclude of the merge file's basename, with
+/// none of the rule's modifiers, AHEAD of the rule (exclude.c:1558-1572).
 #[test]
-fn parse_exclude_self_modifier_accepted_on_dir_merge_rule() {
-    let rules = parse_rules(":e .rsync-filter", Path::new("test")).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), b".rsync-filter");
-}
-
-/// `e` is likewise accepted on a plain merge rule.
-#[test]
-fn parse_exclude_self_modifier_accepted_on_merge_rule() {
-    let rules = parse_rules(".e rules.txt", Path::new("test")).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::Merge);
-    assert_eq!(rules[0].pattern(), b"rules.txt");
+fn parse_exclude_self_modifier_excludes_the_basename_first() {
+    for (line, action) in [
+        (":se dir/.rsync-filter", FilterAction::DirMerge),
+        (".e dir/.rsync-filter", FilterAction::Merge),
+    ] {
+        let rules = parse_rules(line, Path::new("test")).unwrap();
+        assert_eq!(rules.len(), 2, "{line}");
+        assert_eq!(rules[0].action(), FilterAction::Exclude, "{line}");
+        assert_eq!(rules[0].pattern(), b".rsync-filter", "{line}");
+        assert!(
+            rules[0].applies_to_receiver(),
+            "{line}: no `s` on the exclude"
+        );
+        assert_eq!(rules[1].action(), action, "{line}");
+        assert_eq!(rules[1].pattern(), b"dir/.rsync-filter", "{line}");
+    }
 }
 
 /// `n` (FILTRULE_NO_INHERIT) is valid only on a merge-file rule. On an
@@ -659,7 +659,7 @@ fn parse_cvs_mode_modifier() {
         1,
     )
     .unwrap();
-    assert!(mods.cvs_mode);
+    assert!(mods.cvs_ignore);
     assert_eq!(pattern, "pattern");
 }
 
@@ -1032,7 +1032,8 @@ fn parse_dir_merge_w_modifier_sets_word_split_on_rule() {
 // each token as a rule; `_` separates a token's prefix from its pattern.
 #[test]
 fn parse_rules_word_split_splits_on_any_whitespace() {
-    let rules = parse_rules_word_split("-_*.log\t-_*.tmp -_*.bak\n", Path::new("test")).unwrap();
+    let rules =
+        parse_rules_word_split("-_*.log\t-_*.tmp -_*.bak\n", Path::new("test"), false).unwrap();
     assert_eq!(rules.len(), 3);
     for rule in &rules {
         assert_eq!(rule.action(), FilterAction::Exclude);
@@ -1046,7 +1047,7 @@ fn parse_rules_word_split_splits_on_any_whitespace() {
 // "Unknown filter rule" error, same as the non-word-split parser.
 #[test]
 fn parse_rules_word_split_rejects_bare_token() {
-    assert!(parse_rules_word_split("*.log", Path::new("test")).is_err());
+    assert!(parse_rules_word_split("*.log", Path::new("test"), false).is_err());
 }
 
 // upstream: exclude.c:1273-1275, 1772-1773 - `:w-` tokenises on whitespace with each
@@ -1104,18 +1105,6 @@ fn long_form_keyword_tab_separator() {
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Include);
     assert_eq!(rules[0].pattern(), b"*.txt");
-}
-
-// upstream: rule_strcmp accepts end-of-string (`!str[rule_len]`), so a bare
-// keyword with no pattern is a valid rule whose pattern is empty.
-#[test]
-fn long_form_keyword_alone_is_empty_pattern() {
-    let rules = parse_rules("hide", Path::new("test")).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::Exclude);
-    assert!(rules[0].applies_to_sender());
-    assert!(!rules[0].applies_to_receiver());
-    assert_eq!(rules[0].pattern(), b"");
 }
 
 // upstream: rule_strcmp returns `str + rule_len` for a comma, so the modifier
@@ -1278,4 +1267,90 @@ fn no_prefixes_clear_token_never_reports_trailing_characters() {
         FilterAction::Clear,
         "`!` is literal without the C modifier"
     );
+}
+
+/// #223: a non-merge `C` rule stands for the CVS ignore list. upstream accepts
+/// it with no pattern (exclude.c:1474), never matches its own pattern
+/// (exclude.c:1201-1206 check_filter) and builds the list from the rule's flags
+/// (exclude.c:1595-1597). MEASURED against rsync 3.5.1: a `.rsync-filter`
+/// holding `-C` excludes `a.o` and keeps `b.c`.
+#[test]
+fn non_merge_cvs_rule_expands_to_the_cvs_ignore_list() {
+    let rules = parse_rules("-C\n", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), crate::cvs_ignore_list().len());
+    assert!(
+        rules
+            .iter()
+            .all(|rule| rule.action() == FilterAction::Exclude)
+    );
+    assert!(rules.iter().any(|rule| rule.pattern() == b"*.o"));
+}
+
+/// The `C` rule's prefix and modifiers reach every pattern of the list, as
+/// `rule_template(rflags)` does in get_cvs_excludes() (exclude.c:1263,
+/// 1447-1456). MEASURED against rsync 3.5.1: `+C` then `- *.o` keeps `a.o`,
+/// and `-rC` excludes nothing on the sender.
+///
+/// The list is built once per process under the first `C` rule's flags
+/// (exclude.c:1489-1496), so each template gets its own test, and so its own
+/// nextest process.
+#[test]
+fn cvs_rule_prefix_reaches_every_cvs_pattern() {
+    let include = parse_rules("+C\n", Path::new("test")).unwrap();
+    assert!(
+        include
+            .iter()
+            .all(|rule| rule.action() == FilterAction::Include)
+    );
+}
+
+/// The `s` half of [`cvs_rule_prefix_reaches_every_cvs_pattern`].
+#[test]
+fn cvs_rule_side_reaches_every_cvs_pattern() {
+    let sender = parse_rules("-sC foo\n", Path::new("test")).unwrap();
+    assert!(!sender.is_empty());
+    assert!(
+        sender
+            .iter()
+            .all(|rule| rule.applies_to_sender() && !rule.applies_to_receiver())
+    );
+    assert!(
+        sender.iter().all(|rule| rule.pattern() != b"foo"),
+        "the C rule's own pattern is never matched"
+    );
+}
+
+/// #227: an empty pattern is "unexpected end of filter rule" for every prefix
+/// spelling unless the rule has `C` (exclude.c:1474-1476), and the error names
+/// the line rather than echoing it (exclude.c:133-137). oc used to return an
+/// empty-pattern rule for a bare keyword and "Unknown filter rule" for `-`.
+#[test]
+fn parse_rule_with_no_pattern_is_an_unexpected_end() {
+    for line in [
+        "exclude",
+        "hide",
+        "merge",
+        "exclude ",
+        "-",
+        "+",
+        ":",
+        "dir-merge",
+    ] {
+        let err = parse_rules(line, Path::new("test")).unwrap_err();
+        assert_eq!(
+            err.message, "unexpected end of filter rule: <rule from test line 1>",
+            "{line:?}"
+        );
+    }
+}
+
+/// #227: a `C` merge rule with no name merges `.cvsignore`, for the long
+/// keyword as for `:C` (exclude.c:1553-1557).
+#[test]
+fn parse_cvs_merge_rule_with_no_name_merges_cvsignore() {
+    for line in ["dir-merge,C", ":C", "merge,C", ".C"] {
+        let rules = parse_rules(line, Path::new("test")).unwrap();
+        assert_eq!(rules.len(), 1, "{line}");
+        assert_eq!(rules[0].pattern(), b".cvsignore", "{line}");
+    }
 }

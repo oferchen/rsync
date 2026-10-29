@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::local_copy::filter_program::{DirMergeOptions, ExcludeIfPresentRule};
+use crate::local_copy::filter_program::DirMergeOptions;
 use filters::{FilterRule, RuleSource};
 
 /// AST node produced by parsing a single line of a per-directory merge file.
@@ -38,9 +38,9 @@ pub(crate) enum ParsedFilterDirective {
         /// Parser configuration for the registered per-directory merge rule.
         options: DirMergeOptions,
     },
-    /// An `exclude-if-present` directive naming a marker file whose presence
-    /// excludes the containing directory.
-    ExcludeIfPresent(ExcludeIfPresentRule),
+    /// A non-merge `C` rule, which stands for the CVS ignore list built from
+    /// its flags (upstream exclude.c:1595-1597).
+    CvsIgnore(filters::CvsTemplate),
     /// A list-clearing directive (`!` or `clear`) that wipes inherited rules.
     Clear,
 }

@@ -5,7 +5,7 @@
 //! phase of upstream `main.c` where CLI filter flags are compiled before
 //! the transfer begins.
 
-use engine::local_copy::{DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry};
+use engine::local_copy::{DirMergeRule, FilterProgram, FilterProgramEntry};
 use filters::FilterRule as EngineFilterRule;
 
 use super::super::config::{FilterRuleKind, FilterRuleSpec};
@@ -44,7 +44,6 @@ pub(crate) fn compile_filter_program(
                     .with_xattr_only(rule.is_xattr_only())
                     .with_negate(rule.is_negated()),
             )),
-            FilterRuleKind::Clear => entries.push(FilterProgramEntry::Clear),
             // `P`/`R` carry the `x` modifier exactly as `-`/`+` do: upstream's
             // modifier loop runs for EVERY prefix (exclude.c:1365-1443) and
             // `x` (:1438) has no side guard. Dropping the flag here turned
@@ -74,9 +73,6 @@ pub(crate) fn compile_filter_program(
                     rule.dir_merge_options().cloned().unwrap_or_default(),
                 )))
             }
-            FilterRuleKind::ExcludeIfPresent => entries.push(FilterProgramEntry::ExcludeIfPresent(
-                ExcludeIfPresentRule::new(rule.pattern().to_owned()),
-            )),
         }
     }
 
