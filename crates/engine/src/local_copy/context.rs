@@ -895,10 +895,11 @@ struct LoadedNestedDirMerge {
 /// `parse_filter_file` with `XFLG_ANCHORED2ABS`, a leading-`/` pattern gets the
 /// directory prefix `dirbuf + module_dirlen` (length
 /// `dirbuf_len - module_dirlen - 1`) prepended, so `- /file1` in `foo/.filt`
-/// matches `foo/file1`. Unanchored patterns and rules with no directory context
-/// are returned unchanged.
+/// matches `foo/file1`. Unanchored patterns, rules with no directory context and
+/// FILTRULE_ABS_PATH rules (exclude.c:297, which matches them against the
+/// absolute path instead) are returned unchanged.
 fn anchor_dir_merge_rule(rule: FilterRule, relative_dir: Option<&Path>) -> FilterRule {
-    let Some(dir) = relative_dir else {
+    let Some(dir) = relative_dir.filter(|_| !rule.is_abs_path()) else {
         return rule;
     };
     if dir.as_os_str().is_empty() {
@@ -1151,7 +1152,6 @@ mod tests {
                 inherit: true,
             }],
             filter_set: None,
-            delete_excluded: false,
         };
 
         // A wide directory: `*.deep` and `secret` are filter-protected (must NOT

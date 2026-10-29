@@ -8,6 +8,7 @@
 //! - `clear` - bulk clear-rule application over rule vectors
 
 mod clear;
+mod matcher;
 mod pattern;
 mod rule;
 mod xattr;
@@ -17,6 +18,7 @@ use std::collections::HashSet;
 use crate::{FilterAction, FilterError, FilterRule};
 
 pub(crate) use clear::apply_clear_rule;
+pub use matcher::{RuleMatcher, XattrMatcher};
 use pattern::{compile_patterns, has_wild3_suffix, normalise_pattern};
 pub(crate) use rule::CompiledRule;
 pub(crate) use xattr::CompiledXattrRule;
@@ -48,7 +50,7 @@ impl CompiledRule {
             exclude_only: _,
             no_inherit: _,
             cvs_mode: _,
-            abs_path: _,
+            abs_path,
             word_split: _,
             no_prefixes: _,
             no_prefixes_include: _,
@@ -143,6 +145,8 @@ impl CompiledRule {
                 trailing_slash,
                 order: 0,
                 source,
+                abs_path,
+                abs_root: None,
             });
         }
 
@@ -269,6 +273,8 @@ impl CompiledRule {
             trailing_slash,
             order: 0,
             source,
+            abs_path,
+            abs_root: None,
         })
     }
 }

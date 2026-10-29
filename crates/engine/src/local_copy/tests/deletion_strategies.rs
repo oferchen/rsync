@@ -243,7 +243,8 @@ fn delete_excluded_removes_filtered_files() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).expect("filters");
+    let filters = FilterSet::from_rules([FilterRule::exclude("*.tmp").with_sides(true, false)])
+        .expect("filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .delete_excluded(true)

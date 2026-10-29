@@ -205,7 +205,6 @@ fn perishable_rule_protects_from_deletion_at_top_level() {
 
     assert!(!set.allows(Path::new("note.tmp"), false));
     assert!(!set.allows_deletion(Path::new("note.tmp"), false));
-    assert!(set.allows_deletion_when_excluded_removed(Path::new("note.tmp"), false));
 }
 
 /// Regression (D2): a plain exclude that matches a destination entry protects
@@ -270,14 +269,6 @@ fn risk_rule_applies_to_descendants() {
     let set = FilterSet::from_rules(rules).expect("compiled");
     assert!(set.allows_deletion(Path::new("backup/snap/info"), false));
     assert!(set.allows_deletion(Path::new("sub/backup/snap"), true));
-}
-
-#[test]
-fn delete_excluded_only_removes_excluded_matches() {
-    let rules = [FilterRule::include("keep/**"), FilterRule::exclude("*.tmp")];
-    let set = FilterSet::from_rules(rules).expect("compiled");
-    assert!(set.allows_deletion_when_excluded_removed(Path::new("skip.tmp"), false));
-    assert!(!set.allows_deletion_when_excluded_removed(Path::new("keep/file.txt"), false));
 }
 
 #[test]

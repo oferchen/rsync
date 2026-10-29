@@ -24,7 +24,7 @@
 //!   per-directory merge decision without the sender's directory context.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use filters::{FilterSet, ImpliedIncludeOptions, ImpliedIncludes};
 use protocol::flist::FileEntry;
@@ -110,6 +110,29 @@ impl ReceiverContext {
         } else {
             return Ok(());
         };
+
+        // upstream: exclude.c:1022-1027 - an absolute-path rule matches under
+        // `curr_dir`, which recv_file_list() sees before any chdir to the
+        // destination on a pull (main.c client_run) and after
+        // do_server_recv()'s change_dir(argv[0]) on a server.
+        let receiving_dir = if self.config.connection.client_mode {
+            PathBuf::from(".")
+        } else {
+            self.config
+                .args
+                .first()
+                .map_or_else(|| PathBuf::from("."), PathBuf::from)
+        };
+        let module_root = self
+            .config
+            .connection
+            .daemon_module_root
+            .as_deref()
+            .and_then(|root| std::fs::canonicalize(root).ok());
+        let abs_root = std::fs::canonicalize(&receiving_dir)
+            .ok()
+            .and_then(|dir| filters::abs_rule_root(&dir, module_root.as_deref()));
+        let filter_set = filter_set.clone().with_abs_root(abs_root.as_ref());
 
         for entry in entries {
             let path = entry.path().as_path();

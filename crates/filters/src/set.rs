@@ -152,6 +152,34 @@ impl FilterSet {
         })
     }
 
+    /// Gives the set's absolute-path (`/` modifier) rules the directory their
+    /// names are relative to, as [`abs_rule_root`] computes it.
+    ///
+    /// upstream: exclude.c:1022-1027 - such a rule matches `curr_dir +
+    /// module_dirlen + 1`, `/` and the name. The sender's `curr_dir` is the
+    /// directory its file-list names are relative to; the deleting receiver's
+    /// is the destination.
+    #[must_use]
+    pub fn with_abs_root(mut self, root: Option<&Arc<Path>>) -> Self {
+        let has_abs_rule = self
+            .inner
+            .include_exclude
+            .iter()
+            .chain(&self.inner.protect_risk)
+            .any(|rule| rule.abs_path);
+        if has_abs_rule {
+            let inner = Arc::make_mut(&mut self.inner);
+            for rule in inner
+                .include_exclude
+                .iter_mut()
+                .chain(&mut inner.protect_risk)
+            {
+                rule.set_abs_root(root);
+            }
+        }
+        self
+    }
+
     /// Returns `true` if the set contains no compiled rules of any kind.
     ///
     /// An empty filter set allows all paths and all deletions.
@@ -344,21 +372,6 @@ impl FilterSet {
         self.inner
             .decision_with_traversal(path, is_dir, DecisionContext::Deletion, true)
             .allows_deletion()
-    }
-
-    /// Returns `true` if the path may be removed during `--delete-excluded`
-    /// processing.
-    ///
-    /// Unlike [`allows_deletion`](Self::allows_deletion), this method checks
-    /// whether the path is *excluded* (rather than included) by receiver-side
-    /// rules while still honouring protect directives.  It is used to implement
-    /// rsync's `--delete-excluded` flag, which removes destination files that
-    /// the filter list would have excluded from transfer.
-    #[must_use]
-    pub fn allows_deletion_when_excluded_removed(&self, path: &Path, is_dir: bool) -> bool {
-        self.inner
-            .decision(path, is_dir, DecisionContext::Deletion)
-            .allows_deletion_when_excluded_removed()
     }
 
     /// Builds a [`FilterSet`] from the supplied rules with CVS exclusions appended.
@@ -633,6 +646,23 @@ pub fn apple_double_exclusion_rules(perishable: bool) -> impl Iterator<Item = Fi
         }
         rule
     })
+}
+
+/// The directory an absolute-path rule's names are relative to, as
+/// rule_matches() prepends it: `curr_dir + module_dirlen + 1`
+/// (exclude.c:1022-1027).
+///
+/// `dir` is the side's current directory, absolute; `module_root` is a daemon
+/// module's directory, whose prefix upstream strips. `None` when nothing is
+/// left - the root itself, or the module root - where upstream prepends
+/// nothing (`curr_dir_len > module_dirlen + 1` fails).
+#[must_use]
+pub fn abs_rule_root(dir: &Path, module_root: Option<&Path>) -> Option<Arc<Path>> {
+    let relative = match module_root {
+        Some(module) => dir.strip_prefix(module).ok()?,
+        None => dir.strip_prefix("/").unwrap_or(dir),
+    };
+    (!relative.as_os_str().is_empty()).then(|| Arc::from(relative))
 }
 
 #[cfg(test)]

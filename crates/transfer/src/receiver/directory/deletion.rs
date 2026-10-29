@@ -904,7 +904,11 @@ impl ReceiverContext {
         // per-directory merge configs exist so workers only pay the reload cost
         // when the chain actually has per-dir merges.
         let dir_children = Arc::new(dir_children);
-        let flat_chain = Arc::new(deletion_chain.clone());
+        let flat_chain = Arc::new({
+            let mut chain = deletion_chain.clone();
+            chain.set_transfer_root(dest_dir.to_path_buf());
+            chain
+        });
         let merge_chain = Arc::new({
             let mut chain = deletion_chain.clone();
             chain.set_transfer_root(dest_dir.to_path_buf());

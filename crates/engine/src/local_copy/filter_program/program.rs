@@ -3,12 +3,11 @@
 //! code constants surfaced when filter evaluation aborts a transfer.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use filters::FilterRule;
 #[cfg(all(any(unix, windows), feature = "xattr"))]
-use filters::{FilterAction, XattrSide};
-#[cfg(all(any(unix, windows), feature = "xattr"))]
-use globset::{GlobBuilder, GlobMatcher};
+use filters::{FilterAction, XattrMatcher, XattrSide};
 use thiserror::Error;
 
 use super::rules::DirMergeRule;
@@ -63,10 +62,35 @@ pub struct FilterProgram {
     dir_merge_rules: Vec<DirMergeRule>,
 
     #[cfg(all(any(unix, windows), feature = "xattr"))]
-    xattr_rules: Vec<XattrRule>,
+    xattr_rules: Vec<XattrMatcher>,
+    /// The sender's current directory for absolute-path rules: the directory
+    /// the operand's names are relative to (exclude.c:1022-1027).
+    transfer_abs_root: Option<Arc<Path>>,
+    /// The deleting receiver's current directory, the destination.
+    deletion_abs_root: Option<Arc<Path>>,
 }
 
 impl FilterProgram {
+    /// Sets the directories absolute-path (`/` modifier) rules match under,
+    /// as [`filters::abs_rule_root`] computes them: the sender's for the
+    /// transfer decision and the destination's for deletion.
+    pub(crate) fn set_abs_roots(
+        &mut self,
+        transfer: Option<Arc<Path>>,
+        deletion: Option<Arc<Path>>,
+    ) {
+        self.transfer_abs_root = transfer;
+        self.deletion_abs_root = deletion;
+    }
+
+    /// The directory absolute-path rules match under in `context`.
+    pub(crate) fn abs_root(&self, context: FilterContext) -> Option<&Path> {
+        match context {
+            FilterContext::Transfer => self.transfer_abs_root.as_deref(),
+            FilterContext::Deletion => self.deletion_abs_root.as_deref(),
+        }
+    }
+
     /// Builds a [`FilterProgram`] from the supplied entries.
     pub fn new<I>(entries: I) -> Result<Self, FilterProgramError>
     where
@@ -97,7 +121,7 @@ impl FilterProgram {
                     #[cfg(all(any(unix, windows), feature = "xattr"))]
                     {
                         if rule.is_xattr_only() {
-                            if let Some(compiled) = XattrRule::new(&rule)? {
+                            if let Some(compiled) = compile_xattr_rule(rule)? {
                                 xattr_rules.push(compiled);
                             }
                         } else {
@@ -163,6 +187,8 @@ impl FilterProgram {
             dir_merge_rules,
             #[cfg(all(any(unix, windows), feature = "xattr"))]
             xattr_rules,
+            transfer_abs_root: None,
+            deletion_abs_root: None,
         })
     }
 
@@ -202,12 +228,13 @@ impl FilterProgram {
         ephemeral_layers: Option<&[(usize, FilterSegment)]>,
         context: FilterContext,
     ) -> FilterOutcome {
+        let abs_root = self.abs_root(context);
         let mut outcome = FilterOutcome::default();
 
         for instruction in &self.instructions {
             match instruction {
                 FilterInstruction::Segment(segment) => {
-                    segment.apply(path, is_dir, &mut outcome, context)
+                    segment.apply(path, is_dir, &mut outcome, context, abs_root)
                 }
                 FilterInstruction::DirMerge { index } => {
                     if let Some(layers) = dir_merge_layers.get(*index) {
@@ -218,13 +245,13 @@ impl FilterProgram {
                         // `layers[index].push(segment)` in context_impl/transfer.rs,
                         // so iterate in reverse to match upstream semantics.
                         for layer in layers.iter().rev() {
-                            layer.apply(path, is_dir, &mut outcome, context);
+                            layer.apply(path, is_dir, &mut outcome, context, abs_root);
                         }
                     }
                     if let Some(ephemeral) = ephemeral_layers {
                         for (rule_index, segment) in ephemeral {
                             if *rule_index == *index {
-                                segment.apply(path, is_dir, &mut outcome, context);
+                                segment.apply(path, is_dir, &mut outcome, context, abs_root);
                             }
                         }
                     }
@@ -248,10 +275,11 @@ impl FilterProgram {
         dir_merge_layers: &[Vec<FilterSegment>],
         ephemeral_layers: Option<&[(usize, FilterSegment)]>,
     ) -> bool {
+        let abs_root = self.abs_root(FilterContext::Transfer);
         for instruction in &self.instructions {
             match instruction {
                 FilterInstruction::Segment(segment) => {
-                    if let Some(result) = segment.excluded_dir_by_non_dir_rule(path) {
+                    if let Some(result) = segment.excluded_dir_by_non_dir_rule(path, abs_root) {
                         return result;
                     }
                 }
@@ -261,7 +289,8 @@ impl FilterProgram {
                         // rules win on first match, see the matching loop in
                         // `evaluate()` above.
                         for layer in layers.iter().rev() {
-                            if let Some(result) = layer.excluded_dir_by_non_dir_rule(path) {
+                            if let Some(result) = layer.excluded_dir_by_non_dir_rule(path, abs_root)
+                            {
                                 return result;
                             }
                         }
@@ -269,7 +298,8 @@ impl FilterProgram {
                     if let Some(ephemeral) = ephemeral_layers {
                         for (rule_index, segment) in ephemeral {
                             if *rule_index == *index
-                                && let Some(result) = segment.excluded_dir_by_non_dir_rule(path)
+                                && let Some(result) =
+                                    segment.excluded_dir_by_non_dir_rule(path, abs_root)
                             {
                                 return result;
                             }
@@ -300,7 +330,7 @@ impl FilterProgram {
                 continue;
             }
             if rule.matches(name) {
-                return matches!(rule.action, FilterAction::Include);
+                return matches!(rule.action(), FilterAction::Include);
             }
         }
 
@@ -326,11 +356,11 @@ pub enum FilterProgramEntry {
 pub struct FilterProgramError {
     pattern: String,
     #[source]
-    source: globset::Error,
+    source: filters::FilterError,
 }
 
 impl FilterProgramError {
-    pub(crate) const fn new(pattern: String, source: globset::Error) -> Self {
+    pub(crate) const fn new(pattern: String, source: filters::FilterError) -> Self {
         Self { pattern, source }
     }
 
@@ -341,70 +371,15 @@ impl FilterProgramError {
     }
 }
 
+/// Compiles an xattr-only rule through the filters crate's matcher. Returns
+/// `Ok(None)` for an action with no xattr decision.
+///
+/// upstream: exclude.c:1013 - an xattr rule goes through the same
+/// rule_matches() as a path rule, `!` and sides included.
 #[cfg(all(any(unix, windows), feature = "xattr"))]
-#[derive(Clone, Debug)]
-struct XattrRule {
-    action: FilterAction,
-    matcher: GlobMatcher,
-    /// Mirrors `FILTRULE_SENDER_SIDE` / `FILTRULE_RECEIVER_SIDE`. A rule with no
-    /// side prefix carries both, matching an upstream rule whose `elide` stays 0
-    /// and therefore never equals `cur_elide_value` (exclude.c:1010).
-    applies_to_sender: bool,
-    applies_to_receiver: bool,
-    /// upstream: exclude.c:1005 - `ret_match = FILTRULE_NEGATE ? 0 : 1`, so `!`
-    /// inverts the verdict on an xattr chain exactly as on a path chain. The
-    /// filters crate's `CompiledXattrRule` already carried this; omitting it
-    /// here made `-x! user.keep` mean the opposite on the two chains.
-    negate: bool,
-}
-
-#[cfg(all(any(unix, windows), feature = "xattr"))]
-impl XattrRule {
-    /// Returns `Ok(None)` for a meta action, which carries no xattr decision.
-    fn new(rule: &FilterRule) -> Result<Option<Self>, FilterProgramError> {
-        debug_assert!(rule.is_xattr_only());
-
-        // upstream: exclude.c:1345-1358 via `FilterAction::xattr_decision` - the
-        // shared owner of the (include|exclude) x (sender|receiver) table. Left
-        // un-normalised, `risk,x` fell through `matches!(.., Include)` below and
-        // was treated as an EXCLUDE, inverting upstream's
-        // `R = FILTRULE_INCLUDE|RECEIVER_SIDE`.
-        let Some(action) = rule.action().xattr_decision() else {
-            return Ok(None);
-        };
-
-        let pattern = String::from_utf8_lossy(rule.pattern()).into_owned();
-        let glob = GlobBuilder::new(&pattern)
-            .literal_separator(true)
-            .backslash_escape(true)
-            .build()
-            .map_err(|error| FilterProgramError::new(pattern.clone(), error))?;
-
-        Ok(Some(Self {
-            action,
-            matcher: glob.compile_matcher(),
-            applies_to_sender: rule.applies_to_sender(),
-            applies_to_receiver: rule.applies_to_receiver(),
-            negate: rule.is_negated(),
-        }))
-    }
-
-    /// Whether this rule participates on `side`.
-    ///
-    /// upstream: exclude.c:1010 - `if (!*name || ex->elide == cur_elide_value)
-    /// return 0;`, which sits two lines above the `NAME_IS_XATTR` test at
-    /// :1013. The side is decided BEFORE the pattern is consulted.
-    const fn applies_to(&self, side: XattrSide) -> bool {
-        match side {
-            XattrSide::Sender => self.applies_to_sender,
-            XattrSide::Receiver => self.applies_to_receiver,
-        }
-    }
-
-    /// upstream: exclude.c:1005 - the `!` modifier inverts the verdict.
-    fn matches(&self, name: &str) -> bool {
-        self.matcher.is_match(name) ^ self.negate
-    }
+fn compile_xattr_rule(rule: FilterRule) -> Result<Option<XattrMatcher>, FilterProgramError> {
+    let pattern = String::from_utf8_lossy(rule.pattern()).into_owned();
+    XattrMatcher::new(rule).map_err(|error| FilterProgramError::new(pattern, error))
 }
 
 #[cfg(test)]
@@ -451,17 +426,6 @@ mod tests {
         ];
         let program = FilterProgram::new(entries).unwrap();
         assert_eq!(program.dir_merge_rules().len(), 2);
-    }
-
-    #[test]
-    fn filter_program_error_pattern_accessor() {
-        let error = FilterProgramError::new(
-            "bad[pattern".to_owned(),
-            globset::GlobBuilder::new("bad[pattern")
-                .build()
-                .unwrap_err(),
-        );
-        assert_eq!(error.pattern(), "bad[pattern");
     }
 
     #[test]
@@ -715,9 +679,7 @@ mod tests {
     ///
     /// upstream: exclude.c:1005 - `ret_match = FILTRULE_NEGATE ? 0 : 1` is
     /// applied before the xattr/path partition at :1013, so the flag is not
-    /// specific to either chain. The filters crate's `CompiledXattrRule`
-    /// carried it while this one did not, which made `-x! user.keep` mean
-    /// opposite things on the network and local-copy chains.
+    /// specific to either chain.
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     #[test]
     fn the_negate_modifier_inverts_an_xattr_rule() {

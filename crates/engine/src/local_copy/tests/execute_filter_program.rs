@@ -28,10 +28,6 @@ fn filter_outcome_default_allows_transfer_and_deletion() {
         outcome.allows_deletion(),
         "default outcome must allow deletion"
     );
-    assert!(
-        !outcome.allows_deletion_when_excluded_removed(),
-        "default outcome must not flag delete-excluded"
-    );
 }
 
 #[test]
@@ -47,6 +43,7 @@ fn filter_outcome_after_exclude_blocks_transfer() {
         false,
         &mut outcome,
         FilterContext::Transfer,
+        None,
     );
 
     assert!(
@@ -72,6 +69,7 @@ fn filter_outcome_exclude_does_not_affect_unmatched_paths() {
         false,
         &mut outcome,
         FilterContext::Transfer,
+        None,
     );
 
     assert!(
@@ -93,6 +91,7 @@ fn filter_segment_include_glob_pattern() {
         false,
         &mut outcome,
         FilterContext::Transfer,
+        None,
     );
     assert!(outcome.allows_transfer(), "*.rs must match main.rs");
 
@@ -102,6 +101,7 @@ fn filter_segment_include_glob_pattern() {
         false,
         &mut outcome2,
         FilterContext::Transfer,
+        None,
     );
     // An include rule that doesn't match leaves the outcome unchanged (still
     // at default = allowed).
@@ -126,6 +126,7 @@ fn filter_segment_include_restores_after_exclude() {
         false,
         &mut outcome,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         outcome.allows_transfer(),
@@ -139,6 +140,7 @@ fn filter_segment_include_restores_after_exclude() {
         false,
         &mut outcome2,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !outcome2.allows_transfer(),
@@ -168,6 +170,7 @@ fn filter_segment_exclude_glob_patterns() {
             false,
             &mut outcome,
             FilterContext::Transfer,
+            None,
         );
         assert_eq!(
             !outcome.allows_transfer(),
@@ -190,6 +193,7 @@ fn filter_segment_exclude_with_subdirectory_path() {
         false,
         &mut outcome,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !outcome.allows_transfer(),
@@ -215,6 +219,7 @@ fn filter_segment_first_match_wins_exclude_then_include() {
         false,
         &mut outcome,
         FilterContext::Transfer,
+        None,
     );
     // secret.txt matches the exclude secret.txt rule first.
     // First match wins: blocked.
@@ -240,6 +245,7 @@ fn filter_segment_first_match_wins_include_then_exclude() {
         false,
         &mut outcome,
         FilterContext::Transfer,
+        None,
     );
     // important.txt matches the include important.txt rule first.
     // First match wins: allowed.
@@ -266,6 +272,7 @@ fn filter_segment_include_specific_then_exclude_all() {
         false,
         &mut outcome,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         outcome.allows_transfer(),
@@ -279,6 +286,7 @@ fn filter_segment_include_specific_then_exclude_all() {
         false,
         &mut outcome2,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !outcome2.allows_transfer(),
@@ -311,6 +319,7 @@ fn filter_segment_include_glob_then_exclude_all() {
             false,
             &mut outcome,
             FilterContext::Transfer,
+            None,
         );
         assert_eq!(
             outcome.allows_transfer(),
@@ -431,6 +440,7 @@ fn filter_segment_directory_only_pattern_matches_dirs() {
         true, // is_dir
         &mut dir_outcome,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !dir_outcome.allows_transfer(),
@@ -444,6 +454,7 @@ fn filter_segment_directory_only_pattern_matches_dirs() {
         false, // not a directory
         &mut file_outcome,
         FilterContext::Transfer,
+        None,
     );
     // A directory-only pattern still generates descendant matchers for excludes.
     // For a file named "cache" (not in a cache/ tree), the direct matcher
@@ -475,6 +486,7 @@ fn filter_segment_directory_only_excludes_via_traversal_pruning() {
         true,
         &mut dir_outcome,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !dir_outcome.allows_transfer(),
@@ -487,6 +499,7 @@ fn filter_segment_directory_only_excludes_via_traversal_pruning() {
         false,
         &mut outcome,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         outcome.allows_transfer(),
@@ -508,6 +521,7 @@ fn filter_segment_non_directory_pattern_matches_both() {
         true,
         &mut dir_outcome,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !dir_outcome.allows_transfer(),
@@ -520,6 +534,7 @@ fn filter_segment_non_directory_pattern_matches_both() {
         false,
         &mut file_outcome,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !file_outcome.allows_transfer(),
@@ -547,6 +562,7 @@ fn filter_segment_glob_star_matches_extension() {
             false,
             &mut outcome,
             FilterContext::Transfer,
+            None,
         );
         assert_eq!(
             !outcome.allows_transfer(),
@@ -570,6 +586,7 @@ fn filter_segment_glob_double_star_pattern() {
         false,
         &mut outcome_inside,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !outcome_inside.allows_transfer(),
@@ -582,6 +599,7 @@ fn filter_segment_glob_double_star_pattern() {
         false,
         &mut outcome_outside,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         outcome_outside.allows_transfer(),
@@ -603,6 +621,7 @@ fn filter_segment_anchored_pattern() {
         false,
         &mut outcome_root,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !outcome_root.allows_transfer(),
@@ -615,6 +634,7 @@ fn filter_segment_anchored_pattern() {
         false,
         &mut outcome_nested,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         outcome_nested.allows_transfer(),
@@ -635,6 +655,7 @@ fn filter_segment_unanchored_pattern_matches_anywhere() {
         false,
         &mut outcome_root,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !outcome_root.allows_transfer(),
@@ -647,6 +668,7 @@ fn filter_segment_unanchored_pattern_matches_anywhere() {
         false,
         &mut outcome_deep,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !outcome_deep.allows_transfer(),
@@ -692,6 +714,7 @@ fn filter_segment_protect_blocks_deletion_but_allows_transfer() {
         false,
         &mut transfer_outcome,
         FilterContext::Transfer,
+        None,
     );
     // Protect rules have applies_to_sender=false so they don't fire in
     // Transfer context.
@@ -707,6 +730,7 @@ fn filter_segment_protect_blocks_deletion_but_allows_transfer() {
         false,
         &mut deletion_outcome,
         FilterContext::Deletion,
+        None,
     );
     assert!(
         !deletion_outcome.allows_deletion(),
@@ -737,6 +761,7 @@ fn filter_segment_risk_removes_protection() {
         false,
         &mut protected_outcome,
         FilterContext::Deletion,
+        None,
     );
     assert!(
         !protected_outcome.allows_deletion(),
@@ -750,6 +775,7 @@ fn filter_segment_risk_removes_protection() {
         false,
         &mut risked_outcome,
         FilterContext::Deletion,
+        None,
     );
     assert!(
         risked_outcome.allows_deletion(),
@@ -770,79 +796,11 @@ fn filter_segment_protect_unmatched_path_still_deletable() {
         false,
         &mut outcome,
         FilterContext::Deletion,
+        None,
     );
     assert!(
         outcome.allows_deletion(),
         "unmatched path must remain deletable"
-    );
-}
-
-#[test]
-fn filter_segment_delete_excluded_flag_set_on_exclude() {
-    let mut segment = FilterSegment::default();
-    segment
-        .push_rule(FilterRule::exclude("*.cache"))
-        .expect("exclude cache");
-
-    let mut outcome = FilterOutcome::default();
-    segment.apply(
-        Path::new("data.cache"),
-        false,
-        &mut outcome,
-        FilterContext::Deletion,
-    );
-
-    // In deletion context, an exclude rule sets the delete_excluded flag and
-    // also sets transfer_allowed to false.
-    assert!(
-        outcome.allows_deletion_when_excluded_removed(),
-        "delete_excluded flag must be set for excluded paths in deletion context"
-    );
-}
-
-#[test]
-fn filter_segment_delete_excluded_not_set_for_include() {
-    let mut segment = FilterSegment::default();
-    segment
-        .push_rule(FilterRule::include("*.keep"))
-        .expect("include keep");
-
-    let mut outcome = FilterOutcome::default();
-    segment.apply(
-        Path::new("data.keep"),
-        false,
-        &mut outcome,
-        FilterContext::Deletion,
-    );
-
-    assert!(
-        !outcome.allows_deletion_when_excluded_removed(),
-        "delete_excluded flag must not be set for included paths"
-    );
-}
-
-#[test]
-fn filter_segment_delete_excluded_protected_path() {
-    // Even when delete_excluded is set, protection must prevent deletion.
-    let mut segment = FilterSegment::default();
-    segment
-        .push_rule(FilterRule::exclude("*.cache"))
-        .expect("exclude cache");
-    segment
-        .push_rule(FilterRule::protect("*.cache"))
-        .expect("protect cache");
-
-    let mut outcome = FilterOutcome::default();
-    segment.apply(
-        Path::new("important.cache"),
-        false,
-        &mut outcome,
-        FilterContext::Deletion,
-    );
-
-    assert!(
-        !outcome.allows_deletion_when_excluded_removed() || !outcome.allows_deletion(),
-        "protected excluded path must not be deletable even with delete_excluded"
     );
 }
 
@@ -860,6 +818,7 @@ fn filter_segment_perishable_exclude_protects_top_level_deletion() {
         false,
         &mut transfer_outcome,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !transfer_outcome.allows_transfer(),
@@ -875,6 +834,7 @@ fn filter_segment_perishable_exclude_protects_top_level_deletion() {
         false,
         &mut deletion_outcome,
         FilterContext::Deletion,
+        None,
     );
     assert!(
         !deletion_outcome.allows_deletion(),
@@ -895,6 +855,7 @@ fn filter_segment_perishable_protect_applies_in_deletion() {
         false,
         &mut outcome,
         FilterContext::Deletion,
+        None,
     );
     // A perishable protect is honoured at the top-level delete scan (upstream
     // exclude.c:1193 / delete.c:208), so the path is protected.
@@ -919,6 +880,7 @@ fn filter_segment_sender_only_rule_does_not_affect_deletion() {
         false,
         &mut transfer_outcome,
         FilterContext::Transfer,
+        None,
     );
     assert!(
         !transfer_outcome.allows_transfer(),
@@ -932,6 +894,7 @@ fn filter_segment_sender_only_rule_does_not_affect_deletion() {
         false,
         &mut deletion_outcome,
         FilterContext::Deletion,
+        None,
     );
     assert!(
         deletion_outcome.allows_deletion(),
@@ -953,6 +916,7 @@ fn filter_segment_receiver_only_rule_does_not_affect_transfer() {
         false,
         &mut transfer_outcome,
         FilterContext::Transfer,
+        None,
     );
     // Protect has applies_to_sender=false, so in Transfer context it does nothing.
     assert!(
@@ -1136,15 +1100,23 @@ fn filter_program_include_only_specific_extensions() {
     }
 }
 
+/// upstream: exclude.c add_rule() stores every pattern and lib/wildmatch.c
+/// fails an unclosed `[` instead of rejecting it, so `bad[pattern` compiles
+/// and matches nothing. MEASURED: `rsync --exclude='['` transfers a file
+/// named `[`. The old globset matcher refused the pattern outright.
 #[test]
-fn filter_program_invalid_pattern_returns_error() {
-    let result = FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("bad[pattern"))]);
-    assert!(
-        result.is_err(),
-        "invalid glob pattern must produce an error"
+fn filter_program_unclosed_bracket_compiles_and_matches_nothing() {
+    let program =
+        FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("bad[pattern"))])
+            .expect("upstream rejects no pattern");
+    let outcome = program.evaluate(
+        Path::new("bad[pattern"),
+        false,
+        &[],
+        None,
+        FilterContext::Transfer,
     );
-    let err = result.unwrap_err();
-    assert_eq!(err.pattern(), "bad[pattern");
+    assert!(outcome.allows_transfer());
 }
 
 #[test]

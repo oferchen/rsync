@@ -57,9 +57,9 @@ fn apply_rule_modifiers(
     modifiers: RuleModifiers,
     directive: &str,
 ) -> Result<FilterRule, FilterParseError> {
-    if modifiers.abs_path {
-        rule = rule.anchor_to_root();
-    }
+    // upstream: exclude.c:1392-1394 - FILTRULE_ABS_PATH, matched against the
+    // absolute path (exclude.c:1022-1027), not an anchor at the root.
+    rule = rule.with_abs_path(modifiers.abs_path);
 
     if modifiers.sender_side || modifiers.receiver_side {
         rule = rule.with_sides(modifiers.sender_side, modifiers.receiver_side);

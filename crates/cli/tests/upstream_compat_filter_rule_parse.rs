@@ -19,11 +19,14 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 
 use test_support::{
     UpstreamVersion, oc_rsync_bin, require_upstream_rsync, upstream_compat_enabled,
 };
+
+/// Marks a fixture path that starts out in the destination.
+const DEST: &str = "@dst/";
 
 /// What one run of a binary over the fixture produced.
 #[derive(Debug, PartialEq, Eq)]
@@ -39,16 +42,22 @@ struct Outcome {
     transferred: Vec<String>,
 }
 
-/// Lays out `src/` from `files` (path, contents) plus an empty `dst/`.
+/// Lays out `src/` from `files` (path, contents) plus `dst/`; a path under
+/// [`DEST`] is placed in `dst/` instead, as a file the run may delete. `{TREE}`
+/// in the contents names the run's own tree.
 fn build_tree(root: &Path, files: &[(&str, &str)]) {
     fs::create_dir_all(root.join("src")).expect("source root");
     fs::create_dir_all(root.join("dst")).expect("destination root");
     for (path, contents) in files {
-        let target = root.join("src").join(path);
+        let target = match path.strip_prefix(DEST) {
+            Some(rest) => root.join("dst").join(rest),
+            None => root.join("src").join(path),
+        };
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).expect("source subdir");
         }
-        fs::write(target, contents).expect("source file");
+        let tree = root.to_string_lossy();
+        fs::write(target, contents.replace("{TREE}", &tree)).expect("source file");
     }
 }
 
@@ -84,6 +93,55 @@ enum Source {
     /// `src/` to `localhost:<tree>/dst/` through the same remote shell, so the
     /// client is the sender and its own per-directory merge parser runs.
     Push,
+    /// `rsync://<daemon>/m/src/`, a module rooted at the tree, so the daemon
+    /// sender runs below a module directory (`module_dirlen`). The daemon is
+    /// the client's own binary, so these cells reach oc's server side.
+    DaemonPull,
+    /// `src/` to `rsync://<daemon>/m/dst/`, the daemon as the receiver.
+    DaemonPush,
+}
+
+/// A daemon serving the tree as module `m`, killed when dropped.
+struct Daemon {
+    child: Child,
+    port: u16,
+}
+
+impl Daemon {
+    fn start(binary: &Path, tree: &Path) -> Self {
+        let config = tree.join("rsyncd.conf");
+        fs::write(
+            &config,
+            format!(
+                "use chroot = no\npid file = {0}/rsyncd.pid\n[m]\npath = {0}\nread only = no\n",
+                tree.display()
+            ),
+        )
+        .expect("write rsyncd.conf");
+        let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
+            Command::new(binary)
+                .args(["--daemon", "--no-detach", "--address=127.0.0.1"])
+                .arg(format!("--port={port}"))
+                .arg(format!("--config={}", config.display()))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+        })
+        .expect("start daemon");
+        Self { child, port }
+    }
+
+    fn url(&self, dir: &str) -> String {
+        format!("rsync://127.0.0.1:{}/m/{dir}/", self.port)
+    }
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 /// Writes a remote shell that drops the host argument and runs the rest here.
@@ -106,30 +164,40 @@ fn run(
     let tmp = test_support::create_tempdir();
     build_tree(tmp.path(), files);
     let mut command = Command::new(binary);
-    command.current_dir(tmp.path()).arg("-r").args(args);
-    if !matches!(source, Source::Local) {
+    // `{TREE}` in an argument names the run's own tree, for rules that spell
+    // out an absolute path.
+    let tree = tmp.path().to_string_lossy().into_owned();
+    command
+        .current_dir(tmp.path())
+        .arg("-r")
+        .args(args.iter().map(|arg| arg.replace("{TREE}", &tree)));
+    if matches!(source, Source::Pull | Source::Push) {
         command
             .arg("-e")
             .arg(local_rsh(tmp.path()))
             .arg(format!("--rsync-path={}", server.display()));
     }
     let remote = |dir: &str| format!("localhost:{}/{dir}/", tmp.path().display());
-    let (from, to) = match source {
-        Source::Local => ("src/".to_owned(), "dst/".to_owned()),
-        Source::Pull => (remote("src"), "dst/".to_owned()),
-        Source::Push => ("src/".to_owned(), remote("dst")),
+    let daemon = matches!(source, Source::DaemonPull | Source::DaemonPush)
+        .then(|| Daemon::start(binary, tmp.path()));
+    let (from, to) = match (source, &daemon) {
+        (Source::Pull, _) => (remote("src"), "dst/".to_owned()),
+        (Source::Push, _) => ("src/".to_owned(), remote("dst")),
+        (Source::DaemonPull, Some(daemon)) => (daemon.url("src"), "dst/".to_owned()),
+        (Source::DaemonPush, Some(daemon)) => ("src/".to_owned(), daemon.url("dst")),
+        _ => ("src/".to_owned(), "dst/".to_owned()),
     };
     let output = command.arg(from).arg(to).output().expect("run rsync");
+    drop(daemon);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let mut transferred = Vec::new();
     listing(&tmp.path().join("dst"), "", &mut transferred);
     transferred.sort();
     // A per-directory merge file is named by its absolute path
     // (exclude.c:756-775), which holds this run's own temporary tree.
-    let tree = tmp.path().to_string_lossy();
     Outcome {
         exit: output.status.code().expect("exit code"),
-        diagnostic: diagnostic(&stderr).replace(tree.as_ref(), "<tree>"),
+        diagnostic: diagnostic(&stderr).replace(&tree, "<tree>"),
         transferred,
     }
 }
@@ -392,5 +460,151 @@ fn a_nested_merge_file_opens_from_the_current_directory() {
         for source in [Source::Local, Source::Push] {
             assert_parity_from(&files, &["--filter=. src/r/a"], source);
         }
+    }
+}
+
+/// The local copy matches through the same wildmatch port as the transfer
+/// roles. upstream rejects no pattern (exclude.c add_rule) and lib/wildmatch.c
+/// fails an unclosed `[`, so `-[` transfers a file named `[`. The local copy's
+/// old globset matcher refused the pattern and failed the run.
+#[test]
+fn unclosed_bracket_pattern_is_kept_and_matches_nothing() {
+    let files = [("[", "a"), ("b[c", "b"), ("d", "d")];
+    for rule in ["--exclude=[", "--exclude=b[c", "--filter=- *["] {
+        for source in [Source::Local, Source::Push] {
+            if let Some(outcome) = assert_parity_from(&files, &[rule], source) {
+                assert_eq!(outcome.exit, 0, "{rule}");
+            }
+        }
+    }
+}
+
+/// --delete-excluded turns only an unsided include/exclude into a sender-side
+/// rule (exclude.c:1479-1481), so `-r *.keep` still protects the destination's
+/// `x.keep` while the unsided `*.tmp` exclude lets `j.tmp` go. oc's local copy
+/// used to delete both, because it let --delete-excluded override every
+/// exclude at match time.
+#[test]
+fn delete_excluded_spares_a_receiver_side_exclude() {
+    let files = [("s/a", "a"), ("@dst/s/x.keep", "k"), ("@dst/s/j.tmp", "t")];
+    for source in [Source::Local, Source::Push] {
+        assert_parity_from(
+            &files,
+            &[
+                "--delete",
+                "--filter=-r *.keep",
+                "--exclude=*.tmp",
+                "--delete-excluded",
+            ],
+            source,
+        );
+    }
+}
+
+/// The `/` modifier matches a rule against the absolute path - the
+/// transferring side's current directory joined to the name - not as an anchor
+/// at the transfer root (exclude.c:1022-1027). So `-/ {TREE}/src/sub/a`
+/// excludes `sub/a`, `-/ /sub/a` excludes nothing, and a pattern with no slash
+/// still matches the name alone. oc used to read `-/` as `- /`.
+#[test]
+fn abs_path_rules_match_the_absolute_path() {
+    let files = [
+        ("a", "a"),
+        ("sub/a", "a"),
+        ("sub/b.tmp", "t"),
+        ("sub/x/a", "a"),
+    ];
+    for rule in [
+        "-/ {TREE}/src/sub/a",
+        "-/ /sub/a",
+        "-/ {TREE}/src/sub/*.tmp",
+        "-/ {TREE}/src/**/a",
+        "-/ sub/a",
+        "-/ a",
+        "- /sub/a",
+    ] {
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            assert_parity_from(&files, &[&format!("--filter={rule}")], source);
+        }
+    }
+}
+
+/// On the deleting side the absolute path is the destination's
+/// (exclude.c:1022-1027 with the receiver's curr_dir), so `P/ {TREE}/dst/sub/old`
+/// protects `old` from --delete. oc used to delete it.
+#[test]
+fn abs_path_protect_matches_the_destination_path() {
+    let files = [
+        ("sub/new", "n"),
+        ("@dst/sub/old", "o"),
+        ("@dst/sub/gone", "g"),
+    ];
+    for rule in ["P/ {TREE}/dst/sub/old", "P /sub/old", "P/ /sub/old"] {
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            assert_parity_from(&files, &["--delete", &format!("--filter={rule}")], source);
+        }
+    }
+}
+
+/// A merge rule's `/` modifier passes FILTRULE_ABS_PATH to every rule it
+/// reads (exclude.c:1229, :1261), and such a rule skips the per-directory
+/// `XFLG_ANCHORED2ABS` re-anchoring (exclude.c:297-306). So `- /a` inside a
+/// `:/` dir-merge file matches the absolute path `/a`, which excludes nothing,
+/// and `- {TREE}/src/sub/b` excludes `sub/b`.
+#[test]
+fn a_merge_abs_path_modifier_reaches_the_merged_rules() {
+    let files = [
+        ("a", "a"),
+        ("sub/.f", "- /a\n- {TREE}/src/sub/b\n"),
+        ("sub/a", "a"),
+        ("sub/b", "b"),
+    ];
+    for rule in [":/ .f", ": .f", "./ src/sub/.f", ". src/sub/.f"] {
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            assert_parity_from(&files, &[&format!("--filter={rule}")], source);
+        }
+    }
+}
+
+/// A side named on a dir-merge rule reaches every rule its files hold
+/// (exclude.c:1229, :1261), so `- old` in a `:r`/`:sr` file protects the
+/// destination's `old` from --delete and a `:s` file's does not.
+#[test]
+fn a_merge_side_modifier_reaches_the_merged_rules() {
+    let files = [
+        ("sub/.f", "- old\n"),
+        ("sub/new", "n"),
+        ("@dst/sub/.f", "- old\n"),
+        ("@dst/sub/old", "o"),
+    ];
+    for rule in [":s .f", ":r .f", ":sr .f", ": .f"] {
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            assert_parity_from(&files, &["--delete", &format!("--filter={rule}")], source);
+        }
+    }
+}
+
+/// A daemon's absolute-path rules match below the module directory, which
+/// upstream strips from `curr_dir` (`curr_dir + module_dirlen + 1`,
+/// exclude.c:1022-1027). So on a module rooted at the tree `-/ /src/sub/a`
+/// excludes `src/sub/a` from a pull, and `P/ /dst/sub/old` protects the push
+/// receiver's `old`.
+#[test]
+fn abs_path_rules_match_below_the_daemon_module() {
+    let files = [
+        ("a", "a"),
+        ("sub/a", "a"),
+        ("sub/new", "n"),
+        ("@dst/sub/old", "o"),
+    ];
+    for rule in ["-/ /src/sub/a", "-/ /sub/a", "- /sub/a"] {
+        assert_parity_from(&files, &[&format!("--filter={rule}")], Source::DaemonPull);
+    }
+    for rule in ["P/ /dst/sub/old", "P/ /sub/old", "P /sub/old"] {
+        assert_parity_from(
+            &files,
+            &["--delete", &format!("--filter={rule}")],
+            Source::DaemonPush,
+        );
     }
 }

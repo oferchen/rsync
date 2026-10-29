@@ -2,12 +2,9 @@
 //! protect/risk rules sequentially with first-match
 //! semantics, mirroring upstream `exclude.c` rule traversal.
 
-use std::borrow::Cow;
-use std::collections::HashSet;
 use std::path::Path;
 
-use filters::{FilterAction, FilterRule, OwnedRuleSource};
-use globset::{GlobBuilder, GlobMatcher};
+use filters::{FilterAction, FilterRule, RuleMatcher};
 use logging::debug_log;
 
 /// Compiled list of rules evaluated sequentially.
@@ -59,11 +56,15 @@ impl FilterSegment {
     ///
     /// Returns `Some(true)` if excluded by a non-dir-only rule, `Some(false)` if
     /// excluded by a dir-only rule or included, and `None` if no rule matched.
-    pub(crate) fn excluded_dir_by_non_dir_rule(&self, path: &Path) -> Option<bool> {
+    pub(crate) fn excluded_dir_by_non_dir_rule(
+        &self,
+        path: &Path,
+        abs_root: Option<&Path>,
+    ) -> Option<bool> {
         for rule in &self.include_exclude {
-            if rule.applies_to_sender && rule.matches(path, true, false) {
-                if matches!(rule.action, FilterAction::Exclude) {
-                    return Some(!rule.directory_only);
+            if rule.applies_to_sender() && rule.matcher.matches(path, true, abs_root) {
+                if matches!(rule.action(), FilterAction::Exclude) {
+                    return Some(!rule.matcher.is_directory_only());
                 }
                 return Some(false);
             }
@@ -71,20 +72,23 @@ impl FilterSegment {
         None
     }
 
+    ///
+    /// `abs_root` is the side's directory for absolute-path rules, as
+    /// [`FilterProgram::abs_root`](super::FilterProgram::abs_root) gives it.
     pub(crate) fn apply(
         &self,
         path: &Path,
         is_dir: bool,
         outcome: &mut FilterOutcome,
         context: FilterContext,
+        abs_root: Option<&Path>,
     ) {
         // upstream: exclude.c:rule_matches() has NO descendant matching at all.
         // The sender's traversal prunes excluded directories so children are
         // never examined; the receiver's deletion scan only enters dirs that
-        // exist in the file list. Skipping descendants here mirrors upstream's
-        // literal name-match semantics and prevents anchored patterns like
-        // `- /bar` from over-matching deep paths (UTS-V3-B exclude-lsh).
-        let check_descendants = false;
+        // exist in the file list. `RuleMatcher` skips descendants for that
+        // reason, so anchored patterns like `- /bar` do not over-match deep
+        // paths (UTS-V3-B exclude-lsh).
         // upstream: an excluded directory protects its descendants from
         // deletion because the generator never descends into it. On the
         // deletion scan a directory-only unanchored wildcard exclude (`foo/*/`)
@@ -101,9 +105,9 @@ impl FilterSegment {
         // the local-copy delete pass removes such directories en masse.
         let rule_matches = |rule: &CompiledRule, path: &Path, is_dir: bool| {
             if for_deletion {
-                rule.matches_for_deletion(path, is_dir, check_descendants)
+                rule.matcher.matches_for_deletion(path, is_dir, abs_root)
             } else {
-                rule.matches(path, is_dir, check_descendants)
+                rule.matcher.matches(path, is_dir, abs_root)
             }
         };
         for rule in &self.include_exclude {
@@ -111,23 +115,24 @@ impl FilterSegment {
                 break;
             }
             if rule_matches(rule, path, is_dir) {
-                if matches!(context, FilterContext::Deletion) && rule.applies_to_receiver {
-                    outcome.set_delete_excluded(matches!(rule.action, FilterAction::Exclude));
-                }
                 match context {
                     FilterContext::Transfer => {
-                        if rule.applies_to_sender {
+                        if rule.applies_to_sender() {
                             report_filter_result(rule, path, is_dir, "sender");
-                            outcome
-                                .set_transfer_allowed(matches!(rule.action, FilterAction::Include));
+                            outcome.set_transfer_allowed(matches!(
+                                rule.action(),
+                                FilterAction::Include
+                            ));
                             outcome.decide_transfer();
                         }
                     }
                     FilterContext::Deletion => {
-                        if rule.applies_to_receiver {
+                        if rule.applies_to_receiver() {
                             report_filter_result(rule, path, is_dir, "generator");
-                            outcome
-                                .set_transfer_allowed(matches!(rule.action, FilterAction::Include));
+                            outcome.set_transfer_allowed(matches!(
+                                rule.action(),
+                                FilterAction::Include
+                            ));
                             outcome.decide_transfer();
                         }
                     }
@@ -145,8 +150,8 @@ impl FilterSegment {
             }
             if rule_matches(rule, path, is_dir) {
                 let applies = match context {
-                    FilterContext::Transfer => rule.applies_to_sender,
-                    FilterContext::Deletion => rule.applies_to_receiver,
+                    FilterContext::Transfer => rule.applies_to_sender(),
+                    FilterContext::Deletion => rule.applies_to_receiver(),
                 };
                 if applies {
                     let who = match context {
@@ -154,7 +159,7 @@ impl FilterSegment {
                         FilterContext::Deletion => "generator",
                     };
                     report_filter_result(rule, path, is_dir, who);
-                    match rule.action {
+                    match rule.action() {
                         FilterAction::Protect => outcome.protect(),
                         FilterAction::Risk => outcome.unprotect(),
                         FilterAction::Include | FilterAction::Exclude => {}
@@ -184,11 +189,11 @@ impl FilterSegment {
             let ie_hit = self
                 .include_exclude
                 .iter()
-                .find(|rule| rule.applies_to_receiver && rule_matches(rule, path, is_dir));
+                .find(|rule| rule.applies_to_receiver() && rule_matches(rule, path, is_dir));
             let pr_hit = self
                 .protect_risk
                 .iter()
-                .find(|rule| rule.applies_to_receiver && rule_matches(rule, path, is_dir));
+                .find(|rule| rule.applies_to_receiver() && rule_matches(rule, path, is_dir));
             let winner = match (ie_hit, pr_hit) {
                 (Some(ie), Some(pr)) => Some(if ie.order <= pr.order { ie } else { pr }),
                 (Some(ie), None) => Some(ie),
@@ -197,7 +202,7 @@ impl FilterSegment {
             };
             if let Some(rule) = winner {
                 outcome.decide_deletion(matches!(
-                    rule.action,
+                    rule.action(),
                     FilterAction::Include | FilterAction::Risk
                 ));
             }
@@ -223,7 +228,7 @@ impl FilterSegment {
 /// plain `-vv` reaches it with no `--debug` at all - which is why an unredacted
 /// pattern here echoes a peer-chosen merge file's contents to any client.
 fn report_filter_result(rule: &CompiledRule, path: &Path, is_dir: bool, who: &str) {
-    let verb = match rule.action {
+    let verb = match rule.action() {
         FilterAction::Include => "including",
         FilterAction::Exclude => "excluding",
         FilterAction::Protect => "protecting",
@@ -260,10 +265,15 @@ fn report_filter_result(rule: &CompiledRule, path: &Path, is_dir: bool, who: &st
 /// `directory_only` from it, so without this strip a directory-only rule
 /// renders `sub//` where upstream renders `sub/` (measured against 3.5.0).
 fn match_trace_pattern(rule: &CompiledRule) -> String {
-    let pattern = rule.pattern.strip_suffix('/').unwrap_or(&rule.pattern);
-    let source = rule.source.as_source();
+    let written = String::from_utf8_lossy(rule.matcher.pattern());
+    let pattern = written.strip_suffix('/').unwrap_or(&written);
+    let source = rule.matcher.source().as_source();
     let shown = source.rule_text(pattern);
-    let slash = source.rule_detail(if rule.directory_only { "/" } else { "" });
+    let slash = source.rule_detail(if rule.matcher.is_directory_only() {
+        "/"
+    } else {
+        ""
+    });
     format!("{shown}{slash}")
 }
 
@@ -288,7 +298,6 @@ pub(crate) struct FilterOutcome {
     transfer_decided: bool,
     protected: bool,
     protection_decided: bool,
-    excluded_for_delete_excluded: bool,
     /// Unified deletion verdict: the include-flag of the single first-matching
     /// rule across BOTH chains in source order, mirroring upstream
     /// `check_filter()` (exclude.c:1209 `rflags & FILTRULE_INCLUDE ? 1 : -1`).
@@ -304,7 +313,6 @@ impl FilterOutcome {
             transfer_decided: false,
             protected: false,
             protection_decided: false,
-            excluded_for_delete_excluded: false,
             deletion_deletable: true,
             deletion_decided: false,
         }
@@ -328,10 +336,6 @@ impl FilterOutcome {
         } else {
             self.transfer_allowed && !self.protected
         }
-    }
-
-    pub(crate) const fn allows_deletion_when_excluded_removed(self) -> bool {
-        self.excluded_for_delete_excluded && !self.protected
     }
 
     pub(crate) const fn transfer_decided(self) -> bool {
@@ -369,10 +373,6 @@ impl FilterOutcome {
         self.protected = false;
         self.protection_decided = true;
     }
-
-    const fn set_delete_excluded(&mut self, excluded: bool) {
-        self.excluded_for_delete_excluded = excluded;
-    }
 }
 
 impl Default for FilterOutcome {
@@ -381,344 +381,43 @@ impl Default for FilterOutcome {
     }
 }
 
+/// A rule of a [`FilterSegment`]: the filters crate's matcher plus its place in
+/// the segment's source order.
 #[derive(Clone, Debug)]
 struct CompiledRule {
-    action: FilterAction,
-    /// The source pattern, retained for `--debug=FILTER` reporting
-    /// (upstream: exclude.c:report_filter_result() logs `ent->pattern`).
-    pattern: String,
-    directory_only: bool,
-    direct_matchers: Vec<GlobMatcher>,
-    descendant_matchers: Vec<GlobMatcher>,
-    /// Descendant matchers (`{core}/**`) consulted ONLY on the deletion path.
-    /// Populated for directory-only unanchored wildcard excludes (`foo/*/`) so
-    /// the receiver keeps `foo/sub/file1` off the delete pass while the
-    /// Transfer path never sees `foo/*/**` (mirrors the filters-crate
-    /// `CompiledRule`; preserves the `foo/*/` over-exclusion fix).
-    deletion_descendant_matchers: Vec<GlobMatcher>,
-    applies_to_sender: bool,
-    applies_to_receiver: bool,
-    /// upstream: exclude.c:1005 - `ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1`.
-    /// When set, the rule fires on paths that do NOT match the pattern.
-    negate: bool,
+    matcher: RuleMatcher,
     /// Source-definition order within the owning segment, assigned by
     /// [`FilterSegment::push_rule`]. Lets the deletion decision merge the
     /// include/exclude and protect/risk chains back into the single
     /// first-match-wins pass upstream `check_filter()` runs (exclude.c:1192-1212).
     order: usize,
-    /// Provenance of [`Self::pattern`], carried from the parse.
-    ///
-    /// upstream: `ent->rflags & FILTRULE_FROM_FILE` (`exclude.c:259-275`). The
-    /// match trace below runs long after the merge file was read and closed, so
-    /// the redaction has to travel on the rule rather than in parser scope.
-    source: OwnedRuleSource,
 }
 
 impl CompiledRule {
     fn new(rule: FilterRule) -> Result<Self, super::FilterProgramError> {
-        let action = rule.action();
-        let applies_to_sender = rule.applies_to_sender();
-        let applies_to_receiver = rule.applies_to_receiver();
-        let negate = rule.is_negated();
         let pattern = String::from_utf8_lossy(rule.pattern()).into_owned();
-        let source = rule.source().clone();
-
-        // upstream: exclude.c:259-275 add_rule() logs every parsed rule at
-        // `DEBUG_GTE(FILTER, 2)`. That trace is emitted by the *parsers* -
-        // `DirMergeEntries::push_rule` for merge-file contents and
-        // `FilterProgram::compile` for the operator's own arguments - because
-        // that is where the rule's provenance is still in hand, and provenance
-        // is what decides whether the text may be shown. Emitting it here,
-        // downstream of every parse, echoed merged-file contents verbatim.
-
-        let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
-
-        let mut direct_patterns = HashSet::new();
-        direct_patterns.insert(core_pattern.clone());
-        if !anchored {
-            direct_patterns.insert(format!("**/{core_pattern}"));
-        }
-
-        let mut descendant_patterns = HashSet::new();
-        // upstream: exclude.c - excluding a directory excludes its contents,
-        // but including a directory does NOT include its contents (they must
-        // match their own rules). Only Exclude/Protect/Risk get descendants.
-        //
-        // Anchored wildcard patterns (e.g., `/*`, `/*.txt`) must NOT generate
-        // descendant matchers because `*/**` would incorrectly match nested
-        // paths like `down/file.txt`. Traversal control on the sender side
-        // handles directory exclusion for those cases.
-        let has_glob_wildcard =
-            core_pattern.contains('*') || core_pattern.contains('?') || core_pattern.contains('[');
-        let slash_anchored = pattern.starts_with('/');
-        let is_directory_only_unanchored_wildcard =
-            directory_only && !slash_anchored && has_glob_wildcard;
-        let is_anchored_wildcard = slash_anchored && has_glob_wildcard;
-        let mut deletion_descendant_patterns = HashSet::new();
-        if matches!(
-            action,
-            FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
-        ) {
-            if !(is_anchored_wildcard || is_directory_only_unanchored_wildcard) {
-                descendant_patterns.insert(format!("{core_pattern}/**"));
-                if !anchored {
-                    descendant_patterns.insert(format!("**/{core_pattern}/**"));
-                }
-            } else if is_directory_only_unanchored_wildcard {
-                // upstream: a directory-only unanchored wildcard (`foo/*/`)
-                // emits no `foo/*/**` transfer rule; the sender walk
-                // prunes the matched directory. The receiver's per-candidate
-                // deletion scan has no such pruning, so route `{core}/**` into
-                // a deletion-only set so excluded-directory children stay off
-                // the delete pass without re-exposing `foo/*/**` to transfer.
-                deletion_descendant_patterns.insert(format!("{core_pattern}/**"));
-                if !anchored {
-                    deletion_descendant_patterns.insert(format!("**/{core_pattern}/**"));
-                }
-            }
-        }
-
-        Ok(Self {
-            action,
-            directory_only,
-            direct_matchers: compile_patterns(direct_patterns, &pattern)?,
-            descendant_matchers: compile_patterns(descendant_patterns, &pattern)?,
-            deletion_descendant_matchers: compile_patterns(deletion_descendant_patterns, &pattern)?,
-            applies_to_sender,
-            applies_to_receiver,
-            negate,
-            pattern,
-            order: 0,
-            source,
-        })
+        let matcher = RuleMatcher::new(rule)
+            .map_err(|error| super::FilterProgramError::new(pattern, error))?;
+        Ok(Self { matcher, order: 0 })
     }
 
-    fn matches(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
-        let pattern_matched = self.pattern_matches(path, is_dir, check_descendants);
-        // upstream: exclude.c:1005 - `ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1`.
-        // A negated rule fires when the pattern does NOT match.
-        if self.negate {
-            !pattern_matched
-        } else {
-            pattern_matched
-        }
+    const fn action(&self) -> FilterAction {
+        self.matcher.action()
     }
 
-    /// Like [`Self::matches`] but additionally consults the deletion-only
-    /// descendant matchers. An excluded directory protects its descendants
-    /// from deletion regardless of `check_descendants`, because the receiver
-    /// scan evaluates each candidate in isolation with no traversal-pruning
-    /// side effect.
-    ///
-    /// upstream: exclude.c:rule_matches() / name_is_excluded() subtree pruning
-    fn matches_for_deletion(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
-        let pattern_matched = self.pattern_matches(path, is_dir, check_descendants)
-            || self
-                .deletion_descendant_matchers
-                .iter()
-                .any(|matcher| matcher.is_match(path));
-        if self.negate {
-            !pattern_matched
-        } else {
-            pattern_matched
-        }
+    const fn applies_to_sender(&self) -> bool {
+        self.matcher.applies_to_sender()
     }
 
-    fn pattern_matches(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
-        for matcher in &self.direct_matchers {
-            if matcher.is_match(path) && (!self.directory_only || is_dir) {
-                return true;
-            }
-        }
-
-        // upstream: exclude.c:rule_matches() does not expand patterns into
-        // descendant matchers. Descendants are only consulted when a caller
-        // explicitly opts in.
-        if check_descendants {
-            for matcher in &self.descendant_matchers {
-                if matcher.is_match(path) {
-                    return true;
-                }
-            }
-        }
-
-        false
+    const fn applies_to_receiver(&self) -> bool {
+        self.matcher.applies_to_receiver()
     }
-}
-
-fn compile_patterns(
-    patterns: HashSet<String>,
-    original: &str,
-) -> Result<Vec<GlobMatcher>, super::FilterProgramError> {
-    // upstream: lib/wildmatch.c:dowild() - bare `**` always matches across
-    // `/`. globset's `literal_separator(true)` only treats `**` as recursive
-    // when bounded by `/`, so each pattern expands into two variants: the
-    // original (covers in-segment `*`-like behaviour) and a slash-bounded
-    // rewrite (covers cross-segment matches). Both are added so either form
-    // can satisfy upstream parity.
-    let mut expanded: HashSet<String> = HashSet::with_capacity(patterns.len() * 2);
-    for pattern in patterns {
-        if let Cow::Owned(rewritten) = normalise_recursive_wildcards(&pattern) {
-            expanded.insert(rewritten);
-        }
-        expanded.insert(pattern);
-    }
-
-    let mut unique: Vec<_> = expanded.into_iter().collect();
-    unique.sort();
-
-    let mut matchers = Vec::with_capacity(unique.len());
-    for pattern in unique {
-        let glob = GlobBuilder::new(&pattern)
-            .literal_separator(true)
-            .backslash_escape(true)
-            .build()
-            .map_err(|error| super::FilterProgramError::new(original.to_owned(), error))?;
-        matchers.push(glob.compile_matcher());
-    }
-
-    Ok(matchers)
-}
-
-/// Rewrites bare interior `**` sequences into slash-delimited `/**/` so
-/// globset treats them as recursive wildcards.
-///
-/// upstream: `lib/wildmatch.c:dowild()` - when `**` is encountered, the
-/// `special` flag is set and the wildcard matches across `/` boundaries
-/// regardless of surrounding characters. A pattern like `foo**too` must be
-/// rewritten to `foo/**/too` so globset matches `bar/down/to/foo/too`.
-///
-/// Runs of three or more `*` characters collapse to `**` first, matching
-/// upstream's `while (*++p == '*') {}` consumption.
-fn normalise_recursive_wildcards(pattern: &str) -> Cow<'_, str> {
-    if !pattern.contains("**") {
-        return Cow::Borrowed(pattern);
-    }
-
-    let bytes = pattern.as_bytes();
-    let mut out = String::with_capacity(bytes.len() + 4);
-    let mut cut = 0;
-    let mut i = 0;
-    let mut changed = false;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == b'\\' && i + 1 < bytes.len() {
-            i += 2;
-            continue;
-        }
-        if b == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-            let run_start = i;
-            let mut j = i + 2;
-            while j < bytes.len() && bytes[j] == b'*' {
-                j += 1;
-            }
-
-            out.push_str(&pattern[cut..run_start]);
-
-            if j - run_start > 2 {
-                changed = true;
-            }
-            let at_start = run_start == 0;
-            let at_end = j == bytes.len();
-            let prev_is_slash = run_start > 0 && bytes[run_start - 1] == b'/';
-            let next_is_slash = j < bytes.len() && bytes[j] == b'/';
-
-            let need_leading_slash = !at_start && !prev_is_slash;
-            let need_trailing_slash = !at_end && !next_is_slash;
-
-            if need_leading_slash {
-                out.push('/');
-                changed = true;
-            }
-            out.push_str("**");
-            if need_trailing_slash {
-                out.push('/');
-                changed = true;
-            }
-            i = j;
-            cut = j;
-            continue;
-        }
-        i += 1;
-    }
-
-    if !changed {
-        return Cow::Borrowed(pattern);
-    }
-
-    out.push_str(&pattern[cut..]);
-    Cow::Owned(out)
-}
-
-/// Normalizes a pattern by stripping leading `/` (anchored) and trailing `/`
-/// or `/***` (directory-only).
-///
-/// upstream: `exclude.c:rule_matches()` - `FILTRULE_ABS_PATH` is set only for
-/// patterns starting with `/`. A pattern with internal slashes but no leading
-/// `/` is NOT anchored; upstream tail-matches it against the last N+1 path
-/// components. The glob equivalent is `**/pattern`, which the caller adds for
-/// unanchored patterns.
-fn normalise_pattern(pattern: &str) -> (bool, bool, String) {
-    let starts_with_slash = pattern.starts_with('/');
-
-    // upstream: exclude.c:340-345 + 1034-1036 - a trailing `/***` (FILTRULE_WILD3_SUFFIX)
-    // means "match both the directory and everything inside it". Normalize
-    // by stripping `/***` and treating the result as directory-only.
-    let (stripped, directory_only) = if pattern.ends_with("/***") && pattern.len() > 4 {
-        (&pattern[..pattern.len() - 4], true)
-    } else if pattern.ends_with('/') && pattern.len() > 1 {
-        (&pattern[..pattern.len() - 1], true)
-    } else if pattern == "/" {
-        (pattern, true)
-    } else {
-        (pattern, false)
-    };
-
-    let core_pattern = if starts_with_slash {
-        stripped.strip_prefix('/').unwrap_or(stripped)
-    } else {
-        stripped
-    };
-
-    (starts_with_slash, directory_only, core_pattern.to_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn normalise_pattern_basic() {
-        let (anchored, directory_only, core) = normalise_pattern("*.txt");
-        assert!(!anchored);
-        assert!(!directory_only);
-        assert_eq!(core, "*.txt");
-    }
-
-    #[test]
-    fn normalise_pattern_anchored() {
-        let (anchored, directory_only, core) = normalise_pattern("/foo");
-        assert!(anchored);
-        assert!(!directory_only);
-        assert_eq!(core, "foo");
-    }
-
-    #[test]
-    fn normalise_pattern_directory_only() {
-        let (anchored, directory_only, core) = normalise_pattern("bar/");
-        assert!(!anchored);
-        assert!(directory_only);
-        assert_eq!(core, "bar");
-    }
-
-    #[test]
-    fn normalise_pattern_anchored_and_directory() {
-        let (anchored, directory_only, core) = normalise_pattern("/baz/");
-        assert!(anchored);
-        assert!(directory_only);
-        assert_eq!(core, "baz");
-    }
+    use filters::OwnedRuleSource;
 
     #[test]
     fn filter_outcome_default() {
@@ -826,12 +525,20 @@ mod tests {
     #[test]
     fn include_directory_only_no_descendant_match() {
         let rule = CompiledRule::new(FilterRule::include("*/".to_owned())).unwrap();
-        assert!(rule.matches(Path::new("subdir"), true, true));
+        assert!(rule.matcher.matches(Path::new("subdir"), true, None));
         // Files inside an included directory must still match a separate rule;
-        // include never expands to descendants. See `CompiledRule::new`.
-        assert!(!rule.matches(Path::new("file.txt"), false, true));
-        assert!(!rule.matches(Path::new("subdir/debug.log"), false, true));
-        assert!(!rule.matches(Path::new("subdir/report.csv"), false, true));
+        // include never expands to descendants, not even on the deletion scan.
+        assert!(!rule.matcher.matches(Path::new("file.txt"), false, None));
+        assert!(
+            !rule
+                .matcher
+                .matches_for_deletion(Path::new("subdir/debug.log"), false, None)
+        );
+        assert!(
+            !rule
+                .matcher
+                .matches_for_deletion(Path::new("subdir/report.csv"), false, None)
+        );
     }
 
     /// `--exclude '*/'` (a directory-only unanchored wildcard) routes its
@@ -844,26 +551,29 @@ mod tests {
     fn exclude_directory_only_descendant_gated_by_context() {
         let rule = CompiledRule::new(FilterRule::exclude("*/".to_owned())).unwrap();
         // Directory entry matches directly in both contexts.
-        assert!(rule.matches(Path::new("subdir"), true, false));
-        // Transfer path never matches a child via a synthetic descendant, even
-        // with check_descendants requested.
-        assert!(!rule.matches(Path::new("subdir/debug.log"), false, true));
-        assert!(!rule.matches(Path::new("subdir/debug.log"), false, false));
-        // Deletion path protects the child regardless of check_descendants.
-        assert!(rule.matches_for_deletion(Path::new("subdir/debug.log"), false, false));
-        assert!(rule.matches_for_deletion(Path::new("subdir/debug.log"), false, true));
+        assert!(rule.matcher.matches(Path::new("subdir"), true, None));
+        // Transfer path never matches a child via a synthetic descendant.
+        assert!(
+            !rule
+                .matcher
+                .matches(Path::new("subdir/debug.log"), false, None)
+        );
+        // Deletion path protects the child.
+        assert!(
+            rule.matcher
+                .matches_for_deletion(Path::new("subdir/debug.log"), false, None)
+        );
     }
 
     /// Verifies patterns with internal `/` but no leading `/` are NOT
-    /// anchored - upstream sets `FILTRULE_ABS_PATH` only for a leading `/`.
-    /// Internal slashes drive tail-matching via the `**/pattern` direct
-    /// variant added in `CompiledRule::new`.
+    /// anchored: only a leading `/` anchors (exclude.c:1041-1044), and an
+    /// internal one matches the trailing name elements (exclude.c:1046-1050).
     #[test]
-    fn normalise_pattern_internal_slash_is_unanchored() {
-        let (anchored, directory_only, core) = normalise_pattern("src/lib/");
-        assert!(!anchored);
-        assert!(directory_only);
-        assert_eq!(core, "src/lib");
+    fn internal_slash_is_unanchored() {
+        let rule = CompiledRule::new(FilterRule::exclude("src/lib/".to_owned())).unwrap();
+        assert!(rule.matcher.is_directory_only());
+        assert!(rule.matcher.matches(Path::new("a/src/lib"), true, None));
+        assert!(!rule.matcher.matches(Path::new("a/src/lib"), false, None));
     }
 
     /// `- /bar` is anchored and must NOT match `bar/down` (or deeper paths)
@@ -884,6 +594,7 @@ mod tests {
             true,
             &mut bar_outcome,
             FilterContext::Transfer,
+            None,
         );
         assert!(!bar_outcome.allows_transfer(), "the dir `bar` is excluded");
 
@@ -893,6 +604,7 @@ mod tests {
             true,
             &mut child_outcome,
             FilterContext::Transfer,
+            None,
         );
         assert!(
             child_outcome.allows_transfer(),
@@ -905,6 +617,7 @@ mod tests {
             false,
             &mut deep_outcome,
             FilterContext::Transfer,
+            None,
         );
         assert!(
             deep_outcome.allows_transfer(),
@@ -929,14 +642,11 @@ mod tests {
             true,
             &mut outcome,
             FilterContext::Deletion,
+            None,
         );
         assert!(
             !outcome.allows_transfer(),
             "`mid/for/foo/and` must match `- foo/*/` via tail anchor `**/foo/*`"
-        );
-        assert!(
-            outcome.allows_deletion_when_excluded_removed(),
-            "matching exclude rule must enable --delete-excluded removal"
         );
     }
 
@@ -957,7 +667,7 @@ mod tests {
         let child = Path::new("foo/sub/file1");
 
         let mut del = FilterOutcome::default();
-        segment.apply(child, false, &mut del, FilterContext::Deletion);
+        segment.apply(child, false, &mut del, FilterContext::Deletion, None);
         assert!(
             !del.allows_deletion(),
             "`foo/sub/file1` must be protected from deletion by `- foo/*/`",
@@ -966,7 +676,7 @@ mod tests {
         // The transfer path must NOT exclude the child via a synthetic
         // descendant - the sender walk prunes the directory instead.
         let mut xfer = FilterOutcome::default();
-        segment.apply(child, false, &mut xfer, FilterContext::Transfer);
+        segment.apply(child, false, &mut xfer, FilterContext::Transfer, None);
         assert!(
             xfer.allows_transfer(),
             "`foo/sub/file1` must not be excluded on the transfer path (#6015)",
@@ -979,10 +689,13 @@ mod tests {
     #[test]
     fn bare_double_star_matches_across_segments() {
         let rule = CompiledRule::new(FilterRule::include("foo**too".to_owned())).unwrap();
-        assert!(rule.matches(Path::new("bar/down/to/foo/too"), true, false));
-        assert!(rule.matches(Path::new("foo/too"), true, false));
-        assert!(rule.matches(Path::new("fooxytoo"), false, false));
-        assert!(!rule.matches(Path::new("foo/bar"), false, false));
+        assert!(
+            rule.matcher
+                .matches(Path::new("bar/down/to/foo/too"), true, None)
+        );
+        assert!(rule.matcher.matches(Path::new("foo/too"), true, None));
+        assert!(rule.matcher.matches(Path::new("fooxytoo"), false, None));
+        assert!(!rule.matcher.matches(Path::new("foo/bar"), false, None));
     }
 
     #[test]
