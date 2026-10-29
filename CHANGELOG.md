@@ -246,7 +246,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
 
 ### Fixed
-- Under incremental recursion a sender names each user and group once per transfer, as a file owner or in a named ACL entry, as 3.5.1 does; oc named a returning id again in every sub-list
+- Under incremental recursion a sender names each user and group once per transfer, as a file owner or in a named ACL entry, as 3.5.1 does; oc named a returning id again in every sub-list (#8274)
 
 **Data integrity**
 - A local `--no-whole-file` delta hashes blocks with the checksum upstream negotiates (xxh128, or the `--checksum-choice` transfer component), seeded like `get_checksum2()`, instead of a fixed unseeded MD4; `--debug=nstr` names that checksum, including a split `a,b` choice (#8246)
