@@ -159,7 +159,6 @@ impl ReceiverContext {
         ListLineStyle {
             atimes: self.config.flags.atimes,
             crtimes: self.config.flags.crtimes,
-            preserve_links: self.config.flags.links,
             delete_missing_args: self.config.file_selection.delete_missing_args,
         }
     }

@@ -21,8 +21,6 @@ pub(in crate::receiver) struct ListLineStyle {
     pub(in crate::receiver) atimes: bool,
     /// `-N`/`--crtimes`: a creation-time column (upstream `crtimes_ndx`).
     pub(in crate::receiver) crtimes: bool,
-    /// `-l`: a symlink is followed by ` -> target` (upstream `preserve_links`).
-    pub(in crate::receiver) preserve_links: bool,
     /// `--delete-missing-args`: a missing operand is listed as `*missing`
     /// (upstream `missing_args == 2`).
     pub(in crate::receiver) delete_missing_args: bool,
@@ -64,8 +62,10 @@ impl ListLineStyle {
             .into_bytes()
         };
         line.extend_from_slice(name);
-        if self.preserve_links
-            && entry.is_symlink
+        // upstream: generator.c:1340-1348 gates the arrow on `preserve_links`.
+        // Without `-l` the sender sends no target (flist.c:send_file_entry), so
+        // a stored target already implies it.
+        if entry.is_symlink
             && let Some(target) = &entry.symlink_target
         {
             line.extend_from_slice(b" -> ");
@@ -116,7 +116,6 @@ mod tests {
     const PLAIN: ListLineStyle = ListLineStyle {
         atimes: false,
         crtimes: false,
-        preserve_links: false,
         delete_missing_args: false,
     };
 
@@ -135,20 +134,17 @@ mod tests {
         );
     }
 
-    /// upstream: generator.c:1340-1348 - the arrow needs `preserve_links`.
+    /// upstream: generator.c:1340-1348 - a symlink lists ` -> target` when a
+    /// target was received, and bare otherwise.
     #[test]
-    fn symlink_target_follows_only_under_preserve_links() {
+    fn symlink_lists_its_received_target() {
         let mut link = entry("link", 0o120_777, 5);
         link.is_symlink = true;
-        link.symlink_target = Some(PathBuf::from("a.txt"));
         let t = timestring(MTIME);
         let base = format!("lrwxrwxrwx              5 {t} link");
         assert_eq!(render(PLAIN, &link), format!("{base}\n"));
-        let links = ListLineStyle {
-            preserve_links: true,
-            ..PLAIN
-        };
-        assert_eq!(render(links, &link), format!("{base} -> a.txt\n"));
+        link.symlink_target = Some(PathBuf::from("a.txt"));
+        assert_eq!(render(PLAIN, &link), format!("{base} -> a.txt\n"));
     }
 
     /// upstream: generator.c:1336 - a directory keeps the atime column's width
