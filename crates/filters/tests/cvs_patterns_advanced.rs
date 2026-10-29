@@ -310,10 +310,6 @@ fn perishable_cvs_delete_excluded_behavior() {
 
     // Transfer: .o excluded
     assert!(!set.allows(Path::new("main.o"), false));
-
-    // Delete-excluded removes an excluded entry: the excluded-removed decision
-    // already considers perishable rules, so `--delete-excluded` clears it.
-    assert!(set.allows_deletion_when_excluded_removed(Path::new("main.o"), false));
 }
 
 #[test]

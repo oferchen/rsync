@@ -37,6 +37,7 @@ mod tests;
 
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use crate::merge::parse::{parse_rules_in, parse_rules_no_prefixes, parse_rules_word_split};
 use crate::{CvsSession, FilterAction, FilterRule, FilterSet};
@@ -125,6 +126,12 @@ pub struct FilterChain {
     /// The session's CVS ignore list, which every `C` rule read out of a
     /// per-directory merge file stands for (exclude.c:1489-1496).
     cvs: CvsSession,
+    /// The directory absolute-path rules match under, global and per-directory
+    /// alike (exclude.c:1022-1027).
+    abs_root: Option<Arc<Path>>,
+    /// A daemon module's directory, which upstream strips from `curr_dir`
+    /// before an absolute-path rule matches (`module_dirlen`).
+    module_root: Option<PathBuf>,
 }
 
 impl FilterChain {
@@ -145,6 +152,8 @@ impl FilterChain {
             daemon_gate: None,
             daemon_gate_root: None,
             cvs: CvsSession::default(),
+            abs_root: None,
+            module_root: None,
         }
     }
 
@@ -198,6 +207,16 @@ impl FilterChain {
         self
     }
 
+    /// Matches absolute-path (`/` modifier) rules under `root`, as
+    /// [`crate::abs_rule_root`] computes it from the side's current directory.
+    pub fn set_abs_root(&mut self, root: Option<Arc<Path>>) {
+        self.global = std::mem::take(&mut self.global).with_abs_root(root.as_ref());
+        for scope in &mut self.scopes {
+            scope.filter_set = std::mem::take(&mut scope.filter_set).with_abs_root(root.as_ref());
+        }
+        self.abs_root = root;
+    }
+
     /// Reports whether implicit per-token sender-side promotion is active.
     #[must_use]
     pub const fn delete_excluded(&self) -> bool {
@@ -212,8 +231,34 @@ impl FilterChain {
     /// [`allows`](Self::allows). With the root set, a `- /file1` rule inside
     /// `<root>/foo/.filt` is rewritten to match `foo/file1`, mirroring upstream
     /// rsync's `XFLG_ANCHORED2ABS` handling in `exclude.c:add_rule`.
+    ///
+    /// The root is also the side's current directory, so absolute-path rules
+    /// match under it (exclude.c:1022-1027).
     pub fn set_transfer_root(&mut self, root: impl Into<PathBuf>) {
-        self.transfer_root = Some(root.into());
+        let root = root.into();
+        if self.transfer_root.as_ref() == Some(&root) {
+            return;
+        }
+        self.transfer_root = Some(root);
+        self.refresh_abs_root();
+    }
+
+    /// Records a daemon module's directory, which upstream strips from the
+    /// current directory before an absolute-path rule matches
+    /// (`curr_dir + module_dirlen + 1`, exclude.c:1022-1027).
+    pub fn set_module_root(&mut self, root: impl Into<PathBuf>) {
+        self.module_root = Some(root.into());
+        self.refresh_abs_root();
+    }
+
+    /// Re-derives [`Self::abs_root`] from the transfer and module roots, each
+    /// resolved as upstream's getcwd()-filled `curr_dir` is (util1.c).
+    fn refresh_abs_root(&mut self) {
+        let Some(dir) = self.transfer_root.as_deref().and_then(resolve_dir) else {
+            return;
+        };
+        let module = self.module_root.as_deref().and_then(resolve_dir);
+        self.set_abs_root(crate::abs_rule_root(&dir, module.as_deref()));
     }
 
     /// Installs the daemon module's filter rules as a merge-file open gate.
@@ -580,14 +625,10 @@ impl FilterChain {
             // side-restricted too. Without this, a nested `dir-merge .filt2`
             // declared inside a `:s` merge stays two-sided and its `- *.deep`
             // wrongly protects flist-absent files from receiver-side deletion.
-            if config.is_sender_only() {
-                for descriptor in &mut dir_merge_descriptors {
-                    descriptor.sender_only = true;
-                }
-            } else if config.is_receiver_only() {
-                for descriptor in &mut dir_merge_descriptors {
-                    descriptor.receiver_only = true;
-                }
+            let (sender, receiver) = config.sides();
+            for descriptor in &mut dir_merge_descriptors {
+                descriptor.sender_only |= sender;
+                descriptor.receiver_only |= receiver;
             }
 
             // upstream: exclude.c:297-306 add_rule - FILTRULE_ABS_PATH keeps a
@@ -635,7 +676,7 @@ impl FilterChain {
             if !filter_set.is_empty() {
                 self.scopes.push(DirScope {
                     depth,
-                    filter_set,
+                    filter_set: filter_set.with_abs_root(self.abs_root.as_ref()),
                     inherits: config_inherits,
                     config_index: Some(config_index),
                     directive_order: config_directive_order,
@@ -830,7 +871,7 @@ impl FilterChain {
         // preserve their explicit no-inherit setting.
         self.scopes.push(DirScope {
             depth,
-            filter_set,
+            filter_set: filter_set.with_abs_root(self.abs_root.as_ref()),
             inherits: !descriptor.no_inherit,
             config_index,
             directive_order,
@@ -983,7 +1024,7 @@ impl FilterChain {
         if !is_empty {
             self.scopes.push(DirScope {
                 depth,
-                filter_set,
+                filter_set: filter_set.with_abs_root(self.abs_root.as_ref()),
                 inherits: true,
                 config_index: None,
                 directive_order: 0,
@@ -1051,11 +1092,7 @@ fn apply_dir_merge_inherited_side(rule: FilterRule, descriptor: &InlineDirMerge)
     if rule.specifies_side() {
         return rule;
     }
-    if descriptor.sender_only {
-        rule.with_sides(true, false)
-    } else {
-        rule.with_sides(false, true)
-    }
+    rule.with_sides(descriptor.sender_only, descriptor.receiver_only)
 }
 
 /// Description of a dir-merge directive parsed from another merge file.
@@ -1097,6 +1134,13 @@ impl InlineDirMerge {
     const fn specifies_side(&self) -> bool {
         self.sender_only || self.receiver_only
     }
+}
+
+/// `dir` as the kernel resolves it, or made absolute when it does not exist.
+fn resolve_dir(dir: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(dir)
+        .or_else(|_| std::path::absolute(dir))
+        .ok()
 }
 
 /// Joins a relative path's normal components with `/`, ignoring any leading

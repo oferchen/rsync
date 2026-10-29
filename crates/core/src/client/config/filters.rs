@@ -304,16 +304,24 @@ impl FilterRuleSpec {
             self.perishable = true;
         }
 
-        if options.anchor_root_enabled() && !self.pattern.starts_with('/') {
-            self.pattern.insert(0, '/');
+        // upstream: exclude.c:1229, :1261 - ABS_PATH and the sides are in
+        // FILTRULES_FROM_CONTAINER, so every rule the merge file yields, a
+        // nested merge rule included, inherits them; no pattern is rewritten.
+        if options.anchor_root_enabled() {
+            match self.dir_merge_options.take() {
+                Some(nested) => self.dir_merge_options = Some(nested.anchor_root(true)),
+                None => self.abs_path = true,
+            }
         }
 
         if let Some(sender) = options.sender_side_override() {
             self.applies_to_sender = sender;
+            self.sides_named = true;
         }
 
         if let Some(receiver) = options.receiver_side_override() {
             self.applies_to_receiver = receiver;
+            self.sides_named = true;
         }
     }
 
@@ -411,13 +419,14 @@ impl FilterRuleSpec {
         self.cvs_origin
     }
 
-    /// Applies the `/` modifier: anchors the pattern to the root of the
-    /// transfer and records the modifier for the wire (see [`Self::is_abs_path`]).
+    /// Applies the `/` modifier, FILTRULE_ABS_PATH: the rule matches the
+    /// absolute path of each name, its pattern kept as written (see
+    /// [`Self::is_abs_path`]).
+    ///
+    /// upstream: exclude.c:1392-1394 sets the flag; rule_matches() then
+    /// prepends the side's current directory (exclude.c:1022-1027).
     #[must_use]
-    pub fn with_anchor(mut self) -> Self {
-        if !self.pattern.starts_with('/') {
-            self.pattern.insert(0, '/');
-        }
+    pub const fn with_anchor(mut self) -> Self {
         self.abs_path = true;
         self
     }

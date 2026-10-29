@@ -77,9 +77,11 @@ pub(crate) fn compile_filter_program(
         .map_err(|error| compile_filter_error(error.pattern(), &error))
 }
 
-/// Carries a spec's sides onto its engine rule, keeping whether the rule's text
-/// named them (exclude.c:1423-1432): `-sr` stays sided, a plain rule does not.
+/// Carries a spec's sides and `/` modifier onto its engine rule, keeping
+/// whether the rule's text named its sides (exclude.c:1423-1432): `-sr` stays
+/// sided, a plain rule does not.
 fn with_spec_sides(rule: EngineFilterRule, spec: &FilterRuleSpec) -> EngineFilterRule {
+    let rule = rule.with_abs_path(spec.is_abs_path());
     if spec.names_sides() {
         rule.with_sides(spec.applies_to_sender(), spec.applies_to_receiver())
     } else {

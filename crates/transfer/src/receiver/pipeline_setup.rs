@@ -177,6 +177,12 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
             if wire_rule.sender_side || wire_rule.receiver_side {
                 rule = rule.with_sides(wire_rule.sender_side, wire_rule.receiver_side);
             }
+
+            // upstream: exclude.c:1392-1394 - the `/` modifier is FILTRULE_ABS_PATH.
+
+            if wire_rule.abs_path {
+                rule = rule.with_abs_path(true);
+            }
             if wire_rule.perishable {
                 rule = rule.with_perishable(true);
             }

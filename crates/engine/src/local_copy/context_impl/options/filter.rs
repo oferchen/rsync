@@ -61,19 +61,18 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Evaluates filter rules to determine whether a destination entry may be
-    /// deleted. Respects `--delete-excluded` when enabled.
+    /// deleted.
+    ///
+    /// `--delete-excluded` is not consulted here: upstream applies it once, when
+    /// a rule is parsed, by making an unsided include/exclude sender-side
+    /// (exclude.c:1479-1481), and rule_matches() has no delete_excluded term.
     pub(super) fn allows_deletion(&self, relative: &Path, is_dir: bool) -> bool {
-        let delete_excluded = self.options.delete_excluded_enabled();
         if let Some(program) = &self.filter_program {
             if let Some(outcome) =
                 self.evaluate_dynamic_segments(relative, is_dir, FilterContext::Deletion)
                 && outcome.transfer_decided()
             {
-                return if delete_excluded {
-                    outcome.allows_deletion() || outcome.allows_deletion_when_excluded_removed()
-                } else {
-                    outcome.allows_deletion()
-                };
+                return outcome.allows_deletion();
             }
             let layers = self.delete_dir_merge.layers.borrow();
             let ephemeral = self.delete_dir_merge.ephemeral.borrow();
@@ -85,18 +84,9 @@ impl<'a> CopyContext<'a> {
                 temp_layers,
                 FilterContext::Deletion,
             );
-            if delete_excluded {
-                outcome.allows_deletion() || outcome.allows_deletion_when_excluded_removed()
-            } else {
-                outcome.allows_deletion()
-            }
+            outcome.allows_deletion()
         } else if let Some(filters) = self.options.filter_set() {
-            if delete_excluded {
-                filters.allows_deletion(relative, is_dir)
-                    || filters.allows_deletion_when_excluded_removed(relative, is_dir)
-            } else {
-                filters.allows_deletion(relative, is_dir)
-            }
+            filters.allows_deletion(relative, is_dir)
         } else {
             true
         }
@@ -128,7 +118,6 @@ impl<'a> CopyContext<'a> {
             ephemeral_last: self.delete_dir_merge.ephemeral.borrow().last().cloned(),
             dynamic_loaded_segments,
             filter_set: self.options.filter_set().cloned(),
-            delete_excluded: self.options.delete_excluded_enabled(),
         }
     }
 
@@ -163,9 +152,13 @@ impl<'a> CopyContext<'a> {
             if outcome.transfer_decided() {
                 break;
             }
+            let abs_root = self
+                .filter_program
+                .as_ref()
+                .and_then(|program| program.abs_root(context));
             loaded
                 .segment
-                .apply(relative, is_dir, &mut outcome, context);
+                .apply(relative, is_dir, &mut outcome, context, abs_root);
         }
         Some(outcome)
     }
@@ -174,7 +167,14 @@ impl<'a> CopyContext<'a> {
         let stack = self.dir_merge.dynamic.borrow();
         let frame = stack.last()?;
         for loaded in frame.loaded_segments.iter().rev() {
-            if let Some(result) = loaded.segment.excluded_dir_by_non_dir_rule(relative) {
+            let abs_root = self
+                .filter_program
+                .as_ref()
+                .and_then(|program| program.abs_root(FilterContext::Transfer));
+            if let Some(result) = loaded
+                .segment
+                .excluded_dir_by_non_dir_rule(relative, abs_root)
+            {
                 return Some(result);
             }
         }
@@ -202,7 +202,6 @@ pub(crate) struct DeletionFilterSnapshot {
     ephemeral_last: Option<Vec<(usize, FilterSegment)>>,
     dynamic_loaded_segments: Vec<LoadedDynamicSegment>,
     filter_set: Option<filters::FilterSet>,
-    delete_excluded: bool,
 }
 
 impl DeletionFilterSnapshot {
@@ -210,16 +209,11 @@ impl DeletionFilterSnapshot {
     /// against the frozen chain. Byte-for-byte equivalent to
     /// [`CopyContext::allows_deletion`].
     pub(crate) fn allows_deletion(&self, relative: &Path, is_dir: bool) -> bool {
-        let delete_excluded = self.delete_excluded;
         if let Some(program) = &self.program {
             if let Some(outcome) = self.evaluate_dynamic_segments(relative, is_dir)
                 && outcome.transfer_decided()
             {
-                return if delete_excluded {
-                    outcome.allows_deletion() || outcome.allows_deletion_when_excluded_removed()
-                } else {
-                    outcome.allows_deletion()
-                };
+                return outcome.allows_deletion();
             }
             let temp_layers = self.ephemeral_last.as_deref();
             let outcome = program.evaluate(
@@ -229,18 +223,9 @@ impl DeletionFilterSnapshot {
                 temp_layers,
                 FilterContext::Deletion,
             );
-            if delete_excluded {
-                outcome.allows_deletion() || outcome.allows_deletion_when_excluded_removed()
-            } else {
-                outcome.allows_deletion()
-            }
+            outcome.allows_deletion()
         } else if let Some(filters) = &self.filter_set {
-            if delete_excluded {
-                filters.allows_deletion(relative, is_dir)
-                    || filters.allows_deletion_when_excluded_removed(relative, is_dir)
-            } else {
-                filters.allows_deletion(relative, is_dir)
-            }
+            filters.allows_deletion(relative, is_dir)
         } else {
             true
         }
@@ -258,9 +243,17 @@ impl DeletionFilterSnapshot {
             if outcome.transfer_decided() {
                 break;
             }
-            loaded
-                .segment
-                .apply(relative, is_dir, &mut outcome, FilterContext::Deletion);
+            let abs_root = self
+                .program
+                .as_ref()
+                .and_then(|program| program.abs_root(FilterContext::Deletion));
+            loaded.segment.apply(
+                relative,
+                is_dir,
+                &mut outcome,
+                FilterContext::Deletion,
+                abs_root,
+            );
         }
         Some(outcome)
     }

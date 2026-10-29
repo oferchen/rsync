@@ -48,7 +48,7 @@ Audit date: 2026-05-28
 | # | Target | Type | Protocol Layer | Coverage Scope |
 |---|--------|------|---------------|----------------|
 | 30 | `fuzz_filter_parse` | Parser-only | Filter rules | `parse_rules` + `FilterSet::from_rules`; no-panic on arbitrary UTF-8 |
-| 31 | `fuzz_filter_chain` | Behavioral | Filter evaluation | `FilterSet::allows`, `allows_deletion`, `allows_deletion_when_excluded_removed`, `excluded_dir_by_non_dir_rule` |
+| 31 | `fuzz_filter_chain` | Behavioral | Filter evaluation | `FilterSet::allows`, `allows_deletion`, `excluded_dir_by_non_dir_rule` |
 
 **Total: 31 fuzz targets across 3 fuzz workspaces.**
 

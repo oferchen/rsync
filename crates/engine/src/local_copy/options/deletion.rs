@@ -72,6 +72,14 @@ impl LocalCopyOptions {
     }
 
     /// Requests that excluded destination entries be removed during deletion sweeps.
+    ///
+    /// Like upstream, this acts when rules are parsed, not when they match:
+    /// exclude.c:1479-1481 makes an unsided include/exclude sender-side, and
+    /// rule_matches() never consults delete_excluded. Per-directory merge files
+    /// are converted as they load; rules handed to
+    /// [`with_filter_program`](Self::with_filter_program) or
+    /// [`with_filters`](Self::with_filters) must arrive converted, as the client
+    /// builds them.
     #[must_use]
     #[doc(alias = "--delete-excluded")]
     pub const fn delete_excluded(mut self, delete: bool) -> Self {

@@ -212,10 +212,6 @@ fn complex_clear_scenario() {
     // so excluded files are never deletable via allows_deletion
     assert!(!set.allows(Path::new("important.tmp"), false));
     assert!(!set.allows_deletion(Path::new("important.tmp"), false));
-
-    // But if we check delete-excluded behavior, the file can be removed
-    // since it's excluded and not protected
-    assert!(set.allows_deletion_when_excluded_removed(Path::new("important.tmp"), false));
 }
 
 /// Verifies clear removes show rules.

@@ -69,6 +69,7 @@ fn filter_segment_apply_updates_transfer_and_deletion_outcomes() {
         false,
         &mut allowed,
         FilterContext::Transfer,
+        None,
     );
     assert!(allowed.allows_transfer());
 
@@ -78,6 +79,7 @@ fn filter_segment_apply_updates_transfer_and_deletion_outcomes() {
         false,
         &mut blocked,
         FilterContext::Transfer,
+        None,
     );
     assert!(!blocked.allows_transfer());
 
@@ -87,6 +89,7 @@ fn filter_segment_apply_updates_transfer_and_deletion_outcomes() {
         false,
         &mut deletion,
         FilterContext::Deletion,
+        None,
     );
     assert!(!deletion.allows_deletion());
 
@@ -99,6 +102,7 @@ fn filter_segment_apply_updates_transfer_and_deletion_outcomes() {
         false,
         &mut override_outcome,
         FilterContext::Deletion,
+        None,
     );
     assert!(override_outcome.allows_deletion());
 }
@@ -116,6 +120,7 @@ fn perishable_rules_protect_top_level_deletion_context() {
         false,
         &mut transfer,
         FilterContext::Transfer,
+        None,
     );
     assert!(!transfer.allows_transfer());
 
@@ -128,6 +133,7 @@ fn perishable_rules_protect_top_level_deletion_context() {
         false,
         &mut deletion,
         FilterContext::Deletion,
+        None,
     );
     assert!(!deletion.allows_deletion());
 }

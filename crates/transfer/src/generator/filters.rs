@@ -342,6 +342,9 @@ impl GeneratorContext {
                     self.filter_chain.set_daemon_gate_root(root);
                 }
             }
+            if let Some(root) = self.config.connection.daemon_module_root.as_deref() {
+                self.filter_chain.set_module_root(root);
+            }
         }
 
         Ok(())
@@ -556,6 +559,10 @@ impl GeneratorContext {
             // Apply modifiers
             if wire_rule.sender_side || wire_rule.receiver_side {
                 rule = rule.with_sides(wire_rule.sender_side, wire_rule.receiver_side);
+            }
+            // upstream: exclude.c:1392-1394 - the `/` modifier is FILTRULE_ABS_PATH.
+            if wire_rule.abs_path {
+                rule = rule.with_abs_path(true);
             }
 
             if wire_rule.perishable {

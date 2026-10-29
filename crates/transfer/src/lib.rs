@@ -413,24 +413,15 @@ fn wire_rule_crosses_wire(
             return false;
         }
     }
-    let side_local = if client_is_sender {
-        rule.sender_side
-    } else {
-        rule.receiver_side
-    };
-    if side_local {
-        return false;
+    // upstream: exclude.c:1904-1914 - a rule naming only this side is
+    // LOCAL_RULE and stays home; naming both sides cancels the elision.
+    if rule.sender_side != rule.receiver_side {
+        return rule.sender_side != client_is_sender;
     }
-    if client_is_sender
+    !(client_is_sender
         && delete_excluded
-        && matches!(rule.rule_type, protocol::filters::RuleType::DirMerge)
-        && rule.no_prefixes
-        && !rule.sender_side
         && !rule.receiver_side
-    {
-        return false;
-    }
-    true
+        && (!matches!(rule.rule_type, protocol::filters::RuleType::DirMerge) || rule.no_prefixes))
 }
 
 /// Fatal diagnostic emitted when a filter rule cannot be represented on a

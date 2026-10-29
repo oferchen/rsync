@@ -90,26 +90,6 @@ fn perishable_and_non_perishable_includes() {
     assert!(set.allows_deletion(Path::new("temporary/file.txt"), false));
 }
 
-/// Verifies perishable affects delete-excluded behavior.
-#[test]
-fn perishable_delete_excluded() {
-    let rule = FilterRule::exclude("*.tmp").with_perishable(true);
-    let set = FilterSet::from_rules([rule]).unwrap();
-
-    // For allows_deletion_when_excluded_removed, perishable is included
-    // (it checks with include_perishable=true)
-    assert!(set.allows_deletion_when_excluded_removed(Path::new("scratch.tmp"), false));
-}
-
-/// Verifies non-perishable exclude with delete-excluded.
-#[test]
-fn non_perishable_delete_excluded() {
-    let set = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).unwrap();
-
-    // For delete-excluded, the excluded file can be deleted
-    assert!(set.allows_deletion_when_excluded_removed(Path::new("scratch.tmp"), false));
-}
-
 /// Verifies perishable exclude before non-perishable include.
 #[test]
 fn perishable_exclude_before_include() {

@@ -50,7 +50,6 @@ fuzz_target!(|input: FuzzInput| {
         let path = Path::new(&entry.path);
         let _ = set.allows(path, entry.is_dir);
         let _ = set.allows_deletion(path, entry.is_dir);
-        let _ = set.allows_deletion_when_excluded_removed(path, entry.is_dir);
         let _ = set.excluded_dir_by_non_dir_rule(path);
     }
 

@@ -149,7 +149,7 @@ pub use byte_path::{path_pattern_bytes, pattern_path};
 pub use chain::{DirFilterGuard, DirMergeConfig, FilterChain, FilterChainError};
 pub use clean_fname::{collapse_dot_dot_dirs, per_dir_merge_report_name};
 pub use clear_token::{ClearToken, classify_clear_token};
-pub use compiled::XattrSide;
+pub use compiled::{RuleMatcher, XattrMatcher, XattrSide};
 pub use cvs::{
     CvsIgnorePattern, CvsSession, CvsTemplate, DEFAULT_CVSIGNORE, cvs_ignore_list,
     default_patterns as cvs_default_patterns,
@@ -167,7 +167,9 @@ pub use rule_modifiers::{
     InvalidModifier, ModifierScope, RuleModifiers, parse_rule_modifiers, parse_rule_modifiers_in,
 };
 pub use rule_source::{OwnedRuleSource, RuleSource, trace_add_rule};
-pub use set::{FilterSet, FilterSetError, apple_double_exclusion_rules, cvs_exclusion_rules};
+pub use set::{
+    FilterSet, FilterSetError, abs_rule_root, apple_double_exclusion_rules, cvs_exclusion_rules,
+};
 pub use wildmatch::{iwildmatch, wildmatch};
 
 #[cfg(test)]

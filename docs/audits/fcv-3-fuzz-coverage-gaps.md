@@ -102,7 +102,7 @@ Coverage labels:
 | Entry point | File:fn | Coverage | Recommended target |
 |---|---|---|---|
 | Filter rule text grammar | `merge/parse.rs:38` (`parse_rules`) | COVERED | `fuzz_filter_parse`, `fuzz_filter_chain`, `filter_differential`, `filter_rules_vs_upstream` |
-| Filter chain evaluator | `set.rs` via `FilterSet::{allows,allows_deletion,allows_deletion_when_excluded_removed,excluded_dir_by_non_dir_rule,is_empty}` | COVERED | `fuzz_filter_chain`, `filter_differential`, `filter_rules_vs_upstream` |
+| Filter chain evaluator | `set.rs` via `FilterSet::{allows,allows_deletion,excluded_dir_by_non_dir_rule,is_empty}` | COVERED | `fuzz_filter_chain`, `filter_differential`, `filter_rules_vs_upstream` |
 
 ### crates/checksums/src
 

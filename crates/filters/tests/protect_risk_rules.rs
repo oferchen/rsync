@@ -376,31 +376,3 @@ fn protect_risk_order_matters() {
     let set2 = FilterSet::from_rules(rules2).unwrap();
     assert!(!set2.allows_deletion(Path::new("file"), false)); // Protected (first wins)
 }
-
-/// Verifies allows_deletion_when_excluded_removed behavior.
-#[test]
-fn delete_excluded_respects_protection() {
-    let rules = [
-        FilterRule::exclude("*.tmp"),
-        FilterRule::protect("keep.tmp"),
-    ];
-    let set = FilterSet::from_rules(rules).unwrap();
-
-    // Regular tmp file can be deleted when excluded are removed
-    assert!(set.allows_deletion_when_excluded_removed(Path::new("scratch.tmp"), false));
-
-    // Protected tmp file cannot be deleted even when excluded are removed
-    assert!(!set.allows_deletion_when_excluded_removed(Path::new("keep.tmp"), false));
-}
-
-/// Verifies non-excluded files are not affected by delete-excluded.
-#[test]
-fn delete_excluded_non_excluded_files() {
-    let set = FilterSet::from_rules([FilterRule::exclude("*.bak")]).unwrap();
-
-    // Non-excluded file should not be deleted by delete-excluded
-    assert!(!set.allows_deletion_when_excluded_removed(Path::new("important.txt"), false));
-
-    // Excluded file can be deleted
-    assert!(set.allows_deletion_when_excluded_removed(Path::new("backup.bak"), false));
-}

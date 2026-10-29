@@ -621,7 +621,10 @@ fn parse_wire_rule_modern(buf: &[u8]) -> io::Result<FilterRuleWireFormat> {
                 }
                 // upstream: exclude.c:1392-1394 - FILTRULE_ABS_PATH. There is no
                 // position gate: `/` is legal anywhere in the run, not only first.
-                b'/' => rule.anchored = true,
+                // oc keeps a merge rule's `/` in `anchored`; on any other rule it
+                // is `abs_path`, which matches the absolute path (exclude.c:1022).
+                b'/' if merge_file => rule.anchored = true,
+                b'/' => rule.abs_path = true,
                 // upstream: exclude.c:1395-1400 - negation belongs to the
                 // pattern, so it is invalid as a merge-file default.
                 b'!' if !merge_file => rule.negate = true,
