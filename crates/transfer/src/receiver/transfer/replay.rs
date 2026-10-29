@@ -133,7 +133,7 @@ impl ReceiverContext {
             #[cfg(unix)]
             self.create_symlinks(dest_dir, sandbox.as_deref(), writer)?;
             #[cfg(not(unix))]
-            self.create_symlinks(&dest_dir, writer)?;
+            self.create_symlinks(dest_dir, writer)?;
             #[cfg(unix)]
             self.create_specials(
                 dest_dir,
@@ -143,7 +143,7 @@ impl ReceiverContext {
                 writer,
             )?;
             #[cfg(not(unix))]
-            self.create_specials(&dest_dir, writer)?;
+            self.create_specials(dest_dir, writer)?;
             self.process_missing_args_sentinels(
                 dest_dir,
                 #[cfg(unix)]
@@ -668,13 +668,13 @@ impl ReceiverContext {
             writer,
             ndx_write_codec.inner_mut(),
             0..self.file_list.len(),
-            &dest_dir,
+            dest_dir,
         )?;
 
         #[cfg(unix)]
         self.create_hardlinks(dest_dir, sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]
-        self.create_hardlinks(&dest_dir, writer)?;
+        self.create_hardlinks(dest_dir, writer)?;
 
         // Drain the recorded stream's accumulated io_error before the late
         // sweep consults `stats.io_error`, mirroring the network drivers

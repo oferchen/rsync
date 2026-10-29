@@ -248,6 +248,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 ### Fixed
 - `--read-batch` replays batches of more than 1000 files recorded with incremental recursion, including 3.5.1's. It failed with "unexpected per-file NDX while fetching file-list segment", because the sub-lists of such a batch arrive among the file data (#8261)
+- A local `--write-batch` now replays in upstream rsync as upstream's own batch does: each updated file carries its itemize bits (`>f.st......`, not `>f.........`) and the transfer root its `.d`/`cd` row; protocol 28-29 batches write the `io_error` word after the id lists and sum files with seeded MD4, where 3.5.1 aborted with "File-list index ... not in -1 - N"; the id lists name every owner and group; and an unreadable source directory sets `io_error` on the list it belongs to, so a replay no longer deletes inside it (#8266)
 
 **Data integrity**
 - `--delete-excluded` on a pull or push no longer deletes destination files that a receiver-side (`-r`) rule protects; the flag only turns un-modified include/exclude rules into sender-side ones when they are parsed, as upstream `exclude.c:1479` does (#8258)
