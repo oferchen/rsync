@@ -362,12 +362,12 @@ impl FilterChain {
     /// [`allows`](Self::allows).
     #[must_use]
     pub fn allows_deletion(&self, path: &Path, is_dir: bool) -> bool {
-        // upstream: exclude.c:rule_matches() with the `delete_excluded` global -
-        // an entry that an exclude rule would normally protect from deletion
-        // becomes deletable under `--delete-excluded` (a `protect`/`P` rule
-        // still protects it). Mirror that by OR-ing in the
-        // "excluded-removed" decision whenever `delete_excluded` is set, on
-        // whichever scope (or the global set) decides the path.
+        // upstream: rule_matches() has no `delete_excluded` term. The flag acts
+        // once, when a rule is parsed: exclude.c:1479-1481 parse_rule_tok()
+        // turns an un-modified include/exclude into a sender-side rule, which
+        // the receiver then ignores. CLI rules get that at wire build time and
+        // merge-file rules in `apply_merge_implicit_sender_side`, so a rule the
+        // user scoped to the receiver (`-r`, `P`) still protects here.
         // upstream: exclude.c:1195-1200 - as on the transfer path, a global rule
         // preceding the dir-merge directive wins over the merge file's rules. The
         // scope decides only when its directive position is at or before the
@@ -379,21 +379,11 @@ impl FilterChain {
                     .deletion_match_order_during_traversal(path, is_dir)
                     .is_none_or(|global_order| scope.directive_order <= global_order) =>
             {
-                let base = scope
+                scope
                     .filter_set
-                    .allows_deletion_during_traversal(path, is_dir);
-                base || (self.delete_excluded
-                    && scope
-                        .filter_set
-                        .allows_deletion_when_excluded_removed(path, is_dir))
+                    .allows_deletion_during_traversal(path, is_dir)
             }
-            _ => {
-                let base = self.global.allows_deletion(path, is_dir);
-                base || (self.delete_excluded
-                    && self
-                        .global
-                        .allows_deletion_when_excluded_removed(path, is_dir))
-            }
+            _ => self.global.allows_deletion(path, is_dir),
         };
 
         logging::debug_log!(
