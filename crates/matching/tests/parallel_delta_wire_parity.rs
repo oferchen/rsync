@@ -1,5 +1,5 @@
 //! Wire-byte parity regression tests for the opt-in parallel delta scan
-//! ([`DeltaGenerator::generate_chunked`]).
+//! ([`DeltaGenerator::generate_chunked_counted`]).
 //!
 //! # Why this file exists
 //!
@@ -132,7 +132,7 @@ const BLOCK_LEN: u32 = 700;
 /// chunk-2 boundaries are a subset of the chunk-8 boundaries) and by
 /// `BLOCK_LEN` (no trailing partial block), while `n/8` is **not** a multiple
 /// of `BLOCK_LEN` - so each chunk boundary straddles a block. Large enough
-/// that `generate_chunked` actually splits into 8 ranges (the internal floor
+/// that `generate_chunked_counted` actually splits into 8 ranges (the internal floor
 /// is `max(1 MiB, block_len * 64)` per range).
 const DUP_FREE_LEN: usize = 8_390_200;
 
@@ -181,8 +181,9 @@ fn parallel_delta_dup_free_is_wire_identical() {
 
     for &chunks in &[2usize, 4, 8] {
         let chunked = generator
-            .generate_chunked(&source, &index, chunks)
-            .expect("chunked");
+            .generate_chunked_counted(&source, &index, chunks)
+            .expect("chunked")
+            .0;
         let chunked_wire = script_to_wire_bytes(&chunked, index.block_length());
 
         assert_eq!(
@@ -241,8 +242,9 @@ fn parallel_delta_dup_free_shifted_content_is_wire_identical() {
 
     for &chunks in &[2usize, 4, 8] {
         let chunked = generator
-            .generate_chunked(&source, &index, chunks)
-            .expect("chunked");
+            .generate_chunked_counted(&source, &index, chunks)
+            .expect("chunked")
+            .0;
         let chunked_wire = script_to_wire_bytes(&chunked, index.block_length());
 
         assert_eq!(
@@ -285,8 +287,9 @@ fn parallel_delta_identical_source_is_wire_identical() {
 
     for &chunks in &[2usize, 4, 8] {
         let chunked = generator
-            .generate_chunked(&source, &index, chunks)
-            .expect("chunked");
+            .generate_chunked_counted(&source, &index, chunks)
+            .expect("chunked")
+            .0;
         let chunked_wire = script_to_wire_bytes(&chunked, index.block_length());
 
         assert_eq!(
@@ -344,8 +347,9 @@ fn parallel_delta_dup_heavy_diverges() {
     let seq_wire = script_to_wire_bytes(&sequential, index.block_length());
 
     let chunked = generator
-        .generate_chunked(&source, &index, 4)
-        .expect("chunked");
+        .generate_chunked_counted(&source, &index, 4)
+        .expect("chunked")
+        .0;
     let chunked_wire = script_to_wire_bytes(&chunked, index.block_length());
 
     // Both still reconstruct the source: divergence is in the token shape, not

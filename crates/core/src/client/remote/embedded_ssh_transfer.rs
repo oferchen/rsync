@@ -792,9 +792,6 @@ fn build_server_config_for_generator(
     server_config.flags.devices = config.preserve_devices();
     server_config.flags.specials = config.preserve_specials();
     server_config.flags.drop_devices = config.drop_devices();
-    // Local-only sender optimization; never emitted onto the wire, so it is
-    // carried directly onto the in-process generator's ParsedServerFlags.
-    server_config.flags.parallel_delta_scan = config.parallel_delta_scan();
     // upstream: --chmod is parsed into `chmod_modes` (options.c:1875) and is
     // never placed in server_options, so it is never forwarded to the remote
     // receiver. On a push the local client IS the sender and applies the
@@ -985,6 +982,18 @@ mod tests {
     /// itemize row per logged entry so the client renders the template - parity
     /// with `ssh_transfer::build_server_config_for_generator`. Regression guard
     /// for the `ssh://` push that dropped every custom `--out-format` row.
+    // WHY: --parallel-delta-scan never goes on the wire, so a push only scans
+    // in parallel if this transport's in-process sender config carries it.
+    // The remote-shell path once dropped it silently while the daemon and
+    // embedded-ssh paths kept it.
+    #[test]
+    fn embedded_ssh_push_sender_config_carries_parallel_delta_scan() {
+        let config = ClientConfig::builder().parallel_delta_scan(true).build();
+        let server_config =
+            build_server_config_for_generator(&config, &[OsString::from("src")]).unwrap();
+        assert!(server_config.flags.parallel_delta_scan);
+    }
+
     #[test]
     fn embedded_generator_config_propagates_out_format_active() {
         let config = ClientConfig::builder()

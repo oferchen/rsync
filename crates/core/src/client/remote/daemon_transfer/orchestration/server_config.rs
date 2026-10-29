@@ -241,9 +241,6 @@ fn apply_common_daemon_config(
     server_config.flags.devices = config.preserve_devices();
     server_config.flags.specials = config.preserve_specials();
     server_config.flags.drop_devices = config.drop_devices();
-    // Local-only sender optimization; never emitted onto the wire, so it is
-    // carried directly onto the in-process generator's ParsedServerFlags.
-    server_config.flags.parallel_delta_scan = config.parallel_delta_scan();
 
     server_config.write.fsync = config.fsync();
     server_config.write.io_uring_policy = config.io_uring_policy();

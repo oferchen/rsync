@@ -87,14 +87,14 @@ impl SenderDeltaContext {
     /// [`Self::generate`], then:
     ///
     /// - **Duplicate-free basis** ([`DeltaSignatureIndex::has_duplicate_blocks`]
-    ///   is `false`): run [`DeltaGenerator::generate_chunked`], which scans the
+    ///   is `false`): run [`DeltaGenerator::generate_chunked_counted`], which scans the
     ///   ranges across rayon workers. Reconstruction and the total/literal byte
     ///   counts match the sequential scan on every input. For the eligible
     ///   inputs (matches never straddle a range boundary) the emitted token
     ///   stream also matches, and the wire bytes match in the common case; a
     ///   rare literal-run segmentation seam at a range boundary can still shift
     ///   the literal-token length framing by a few bytes (never the counts or
-    ///   the reconstructed data). See [`DeltaGenerator::generate_chunked`] for
+    ///   the reconstructed data). See [`DeltaGenerator::generate_chunked_counted`] for
     ///   the exact contract.
     /// - **Duplicate-content basis**: fall back to the sequential scan over the
     ///   same slice, because each parallel stripe starts its `want_i` hint fresh

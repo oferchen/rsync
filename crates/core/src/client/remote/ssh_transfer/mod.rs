@@ -57,6 +57,18 @@ mod tests {
     use super::super::super::config::ClientConfig;
     use crate::server::ServerRole;
 
+    // WHY: --parallel-delta-scan never goes on the wire, so a push only scans
+    // in parallel if this transport's in-process sender config carries it.
+    // The remote-shell path once dropped it silently while the daemon and
+    // embedded-ssh paths kept it.
+    #[test]
+    fn rsh_push_sender_config_carries_parallel_delta_scan() {
+        let config = ClientConfig::builder().parallel_delta_scan(true).build();
+        let server_config = build_server_config_for_generator(&config, &[OsString::from("src")])
+            .expect("generator config builds");
+        assert!(server_config.flags.parallel_delta_scan);
+    }
+
     #[test]
     fn builds_receiver_server_config() {
         let config = ClientConfig::builder().recursive(true).times(true).build();

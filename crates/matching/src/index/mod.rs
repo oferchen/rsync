@@ -156,7 +156,7 @@ pub struct DeltaSignatureIndex {
     ///
     /// Computed once at construction ([`Self::from_signature_with_role`] and
     /// [`Self::rebuild`]) so callers can query it in O(1). The parallel
-    /// delta scan ([`crate::DeltaGenerator::generate_chunked`]) starts each
+    /// delta scan ([`crate::DeltaGenerator::generate_chunked_counted`]) starts each
     /// stripe with a fresh `want_i` hint; on a basis with duplicate-content
     /// blocks that can change which sibling a source window resolves to (and
     /// therefore the emitted `Copy{index}`) relative to the sequential
@@ -294,7 +294,7 @@ impl DeltaSignatureIndex {
     /// identical content (equal rolling and strong checksums).
     ///
     /// A duplicate-free basis (`false`) is the precondition for engaging the
-    /// parallel scan in [`crate::DeltaGenerator::generate_chunked`] without
+    /// parallel scan in [`crate::DeltaGenerator::generate_chunked_counted`] without
     /// diverging from the sequential [`crate::DeltaGenerator::generate`]: with
     /// every content unique there is exactly one matching basis block per
     /// source window, so the per-stripe `want_i` hint cannot change which

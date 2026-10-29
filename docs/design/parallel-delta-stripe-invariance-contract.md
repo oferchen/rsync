@@ -31,8 +31,8 @@ The striped scan has a live production caller. Reading from the top:
   It reconstructs the signature index through the shared
   `build_signature_index`, then either falls back to the sequential
   `DeltaGenerator::generate` (duplicate-content basis) or calls
-  `DeltaGenerator::generate_chunked`.
-- `crates/matching/src/generator.rs:1101-1229` is `generate_chunked`
+  `DeltaGenerator::generate_chunked_counted`.
+- `crates/matching/src/generator.rs:1101-1229` is `generate_chunked_counted`
   itself: four bail-outs to sequential, then the overlapping spatial
   split, the per-stripe scan, and `merge_copy_runs`.
 
@@ -170,7 +170,7 @@ oracle.
 
 ## 4. The four routes back to sequential
 
-`generate_chunked` is not always parallel. Every one of these is a
+`generate_chunked_counted` is not always parallel. Every one of these is a
 precondition of the contract, and each has a test row that must prove the
 route is actually taken rather than assumed.
 
@@ -181,8 +181,8 @@ route is actually taken rather than assumed.
 | 3 | `chunks <= 1` or `block_len == 0` | `crates/matching/src/generator.rs:1143-1146` | Too small to split; also the degenerate arm PDS-2c pins | PDS-2c |
 | 4 | `index.has_duplicate_blocks()` | `crates/transfer/src/generator/delta.rs:408-413` | Duplicate content makes block resolution history-dependent (see section 5, row B) | PDS-2e (task 936) |
 
-Bail-out 4 is decided by the CALLER, one level above `generate_chunked`.
-A test that drives `generate_chunked` directly will not exercise it. That
+Bail-out 4 is decided by the CALLER, one level above `generate_chunked_counted`.
+A test that drives `generate_chunked_counted` directly will not exercise it. That
 is a live vacuity risk for PDS-2e: the test must enter through
 `generate_delta_from_signature_chunked`, or it will pass while proving
 nothing.
@@ -219,7 +219,7 @@ structure is immutable during the scan.
 
 The bit array is populated once at index-build time, from the set of
 basis rolling sums, and `insert` is only reachable from the builder. The
-probe path (`contains`) is a pure read. `generate_chunked` shares one
+probe path (`contains`) is a pure read. `generate_chunked_counted` shares one
 `&DeltaSignatureIndex` across all rayon workers
 (`crates/matching/src/generator.rs:1176-1180`), and Rust's borrow rules
 make a `&` shared reference to a non-interior-mutable field unwritable,
@@ -268,7 +268,7 @@ it, not to re-derive it. Two things the pin must cover:
    within one. `DeltaSignatureIndex` can outlive a `generate()` call, and
    a pruned sequential scan leaves bits set. A test that builds a fresh
    index per scan cannot see a regression here. The fixture must run a
-   pruned sequential `generate()` and THEN a `generate_chunked()` on the
+   pruned sequential `generate()` and THEN a `generate_chunked_counted()` on the
    same index, and assert the second one still matches.
 2. Prune-off changes which basis block a duplicate resolves to, which is
    why bail-out 4 exists. The two are one decision and must be pinned
@@ -382,19 +382,19 @@ decide whether to aggregate them.
    tie-break at `crates/matching/src/generator.rs:194-198` exists because
    that situation arises. PDS-2b should assert on it directly.
 3. Whether `should_parallel_delta`'s threshold interacts with the
-   `min_chunk` floor inside `generate_chunked`
+   `min_chunk` floor inside `generate_chunked_counted`
    (`crates/matching/src/generator.rs:1136-1142`) such that some
    file-size band passes the outer gate and then silently takes bail-out
    3. Not a correctness risk (bail-out 3 is the sequential path) but it
    is a coverage risk: a benchmark or test in that band measures the
    sequential scan while believing it measures the striped one.
 
-## 7. Verdict on `generate_chunked`'s callers
+## 7. Verdict on `generate_chunked_counted`'s callers
 
 Asked as part of PDS-0b, answered by reading, and it CONTRADICTS the way
 tasks 131 and 272 are worded.
 
-`generate_chunked` has exactly one non-test caller:
+`generate_chunked_counted` has exactly one non-test caller:
 `generate_delta_from_signature_chunked`
 (`crates/transfer/src/generator/delta.rs:413`), which itself has exactly
 one non-test caller: the network sender loop at
@@ -430,7 +430,7 @@ Recorded per the task instruction: observed, not fixed.
   plus `--parallel-delta-scan` is a reachable flag combination, and the
   guard silently disables striping.
 - PDS-2e has a vacuity hazard: bail-out 4 lives in the caller, so a test
-  entering at `generate_chunked` cannot observe it (section 4).
+  entering at `generate_chunked_counted` cannot observe it (section 4).
 
 ## References
 
@@ -450,7 +450,7 @@ oc-rsync sources:
 - `crates/matching/src/generator.rs:189-237` - `merge_copy_runs`
 - `crates/matching/src/generator.rs:433` - `generate_with_prune`
 - `crates/matching/src/generator.rs:867` - `generate_gated`
-- `crates/matching/src/generator.rs:1101-1229` - `generate_chunked`
+- `crates/matching/src/generator.rs:1101-1229` - `generate_chunked_counted`
 - `crates/matching/src/index/mod.rs:162`, `:535`, `:560`, `:576` - the
   consumed bitset
 - `crates/matching/src/index/mod.rs:357` - `has_duplicate_blocks`

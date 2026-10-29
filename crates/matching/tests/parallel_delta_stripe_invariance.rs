@@ -1,5 +1,5 @@
 //! Stripe-invariance gate suite for the opt-in parallel delta scan
-//! ([`DeltaGenerator::generate_chunked`]).
+//! ([`DeltaGenerator::generate_chunked_counted`]).
 //!
 //! # What this suite decides
 //!
@@ -12,7 +12,7 @@
 //! and wire-transparent versus the sequential scan. This suite is the gate that
 //! decides that: it asserts the merged output is invariant to the stripe count.
 //!
-//! The production entry point [`DeltaGenerator::generate_chunked`] derives its
+//! The production entry point [`DeltaGenerator::generate_chunked_counted`] derives its
 //! stripe count from the source size, so it cannot be driven at a chosen count
 //! on a modest fixture. These tests use the test-only
 //! [`DeltaGenerator::generate_chunked_forced`], which runs the identical
@@ -294,7 +294,7 @@ fn shifted_content_crossing_boundaries_is_stripe_invariant() {
 }
 
 /// Fixture (a): a source below the production parallel threshold. The production
-/// [`DeltaGenerator::generate_chunked`] must collapse to the sequential scan
+/// [`DeltaGenerator::generate_chunked_counted`] must collapse to the sequential scan
 /// (the `chunks <= 1` shortcut), and forcing a single stripe through the merge
 /// must also equal the sequential scan.
 #[test]
@@ -326,8 +326,9 @@ fn small_source_collapses_and_single_stripe_equals_sequential() {
 
     // The unforced production path collapses this small source to one range.
     let chunked = generator
-        .generate_chunked(&source, &index, 8)
-        .expect("chunked");
+        .generate_chunked_counted(&source, &index, 8)
+        .expect("chunked")
+        .0;
     assert_eq!(
         canonical(&chunked, block_len),
         seq_canon,
