@@ -15,9 +15,8 @@ use crate::frontend::defaults::APPLE_DOUBLE_EXCLUDE_PATTERNS;
 
 /// Appends AppleDouble sidecar exclusion rules to the destination chain.
 ///
-/// The function is infallible today but returns [`Result`] to keep its
-/// signature aligned with [`super::cvs::append_cvs_exclude_rules`] in case
-/// future patterns require I/O.
+/// The function is infallible today but returns [`Result`] so it slots into
+/// the filter-token dispatch beside the fallible rule sources.
 pub(crate) fn append_apple_double_exclude_rules(
     destination: &mut Vec<FilterRuleSpec>,
 ) -> Result<(), Message> {

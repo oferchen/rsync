@@ -62,6 +62,19 @@ pub fn collapse_dot_dot_dirs(path: &Path) -> PathBuf {
     out.iter().collect()
 }
 
+/// The name a per-directory merge file is reported under in `<rule from ...>`:
+/// its absolute, cleaned path.
+///
+/// upstream: exclude.c:756-775 set_filter_dir() joins a relative directory onto
+/// `curr_dir` and cleans it with `CFN_COLLAPSE_DOT_DOT_DIRS`, and
+/// push_local_filters() names the merge file from that `dirbuf`. oc never
+/// changes directory, so the process working directory stands in for
+/// `curr_dir`, which upstream points at the same place.
+#[must_use]
+pub fn per_dir_merge_report_name(path: &Path) -> PathBuf {
+    std::path::absolute(path).map_or_else(|_| path.to_path_buf(), |abs| collapse_dot_dot_dirs(&abs))
+}
+
 #[cfg(test)]
 mod tests {
     use super::collapse_dot_dot_dirs;

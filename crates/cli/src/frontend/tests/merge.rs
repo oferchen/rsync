@@ -24,44 +24,28 @@ fn merge_directive_options_inherit_parent_configuration() {
 }
 
 #[test]
-fn apply_merge_directive_parses_whitespace_risk_and_exclude_if_present() {
-    use std::collections::HashSet;
-    use tempfile::tempdir;
-
+fn apply_merge_directive_rejects_exclude_if_present_in_whitespace_file() {
     let temp = test_support::create_tempdir();
     let merge_file = temp.path().join("rules.txt");
-    std::fs::write(
-        &merge_file,
-        "risk logs/** exclude-if-present marker exclude-if-present=.skip\n",
-    )
-    .expect("write merge rules");
+    // A word-split file ends each rule at whitespace (exclude.c:1772), so the
+    // rules use `_` as their separator.
+    std::fs::write(&merge_file, "risk_logs/** exclude-if-present_marker\n")
+        .expect("write merge rules");
 
     let options = DirMergeOptions::default().use_whitespace();
     let directive = MergeDirective::new(merge_file.into_os_string(), None).with_options(options);
 
     let mut rules = Vec::new();
     let mut visited = Vec::new();
-    apply_merge_directive(
+    let error = apply_merge_directive(
         directive,
         temp.path(),
         &mut rules,
         &mut visited,
         filters::RuleSource::Argument,
     )
-    .expect("apply merge");
-
-    assert!(visited.is_empty());
-    assert!(
-        rules
-            .iter()
-            .any(|rule| { rule.kind() == FilterRuleKind::Risk && rule.pattern() == "logs/**" })
-    );
-    assert!(rules.iter().any(|rule| {
-        rule.kind() == FilterRuleKind::ExcludeIfPresent && rule.pattern() == "marker"
-    }));
-    assert!(rules.iter().any(|rule| {
-        rule.kind() == FilterRuleKind::ExcludeIfPresent && rule.pattern() == ".skip"
-    }));
+    .expect_err("upstream has no exclude-if-present rule");
+    assert!(error.to_string().contains("Unknown filter rule"), "{error}");
 }
 
 #[test]

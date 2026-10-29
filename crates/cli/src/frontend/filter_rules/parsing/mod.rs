@@ -28,12 +28,10 @@ pub(crate) use entry::{parse_filter_directive, parse_old_prefix_rule};
 pub(crate) fn parse_merge_modifiers_from_argument(
     modifiers: &str,
     directive: &str,
-    is_dir_merge: bool,
 ) -> Result<(core::client::DirMergeOptions, bool), core::message::Message> {
     merge::parse_merge_modifiers(
         modifiers,
         rule_line::RuleLine::new(directive, filters::RuleSource::Argument),
-        is_dir_merge,
     )
 }
 
@@ -51,8 +49,6 @@ use super::directive::FilterDirective;
 #[cfg(test)]
 use directives::{parse_dir_merge_alias, parse_long_merge_directive};
 #[cfg(test)]
-use entry::{is_cvs_convenience_rule, parse_rule_directive};
+use entry::parse_rule_directive;
 #[cfg(test)]
-use rules::{
-    parse_exclude_if_present, parse_keyword_rule, parse_short_include_rule, parse_shorthand_rules,
-};
+use rules::{parse_keyword_rule, parse_short_include_rule, parse_shorthand_rules};

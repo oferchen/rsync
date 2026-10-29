@@ -62,15 +62,16 @@ fn dir_merge_exclude_self_modifier() {
     let rules_path = dir.path().join("rules.txt");
 
     // The `e` modifier (FILTRULE_EXCLUDE_SELF) is valid on a dir-merge rule.
-    // upstream: exclude.c:1410-1414 - `e` requires FILTRULE_MERGE_FILE and makes
-    // the merge file's own name be excluded; exclude-self plumbing is applied at
-    // the chain layer, so parsing simply yields a well-formed dir-merge rule.
-    fs::write(&rules_path, ":e .rsync-filter\n").unwrap();
+    // upstream: exclude.c:1558-1572 - it adds an exclude of the merge file's
+    // basename to the list ahead of the dir-merge rule itself.
+    fs::write(&rules_path, ":e sub/.rsync-filter\n").unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rules[0].action(), FilterAction::Exclude);
     assert_eq!(rules[0].pattern(), b".rsync-filter");
+    assert_eq!(rules[1].action(), FilterAction::DirMerge);
+    assert_eq!(rules[1].pattern(), b"sub/.rsync-filter");
 }
 
 #[test]

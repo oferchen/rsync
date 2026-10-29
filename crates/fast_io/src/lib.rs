@@ -191,6 +191,8 @@ pub mod source_roots;
 pub mod temp_file_strategy;
 /// Core traits for file I/O abstraction.
 pub mod traits;
+/// Non-blocking transfer transports with a readiness wait (upstream perform_io's poll).
+pub mod transport;
 /// SIMD-accelerated zero-byte detection for sparse file writing.
 pub mod zero_detect;
 

@@ -28,6 +28,7 @@ use super::super::{
     is_early_close_error,
 };
 use crate::delta_config::DeltaGeneratorConfig;
+use crate::iobuf::IoBuf;
 use crate::reader::BufferedInputHint;
 use crate::receiver::SumHead;
 use crate::writer::{BatchRoute, MsgInfoSender};
@@ -463,8 +464,7 @@ impl GeneratorContext {
     /// - `io.c:read_ndx/write_ndx` - NDX protocol encoding
     pub(super) fn run_transfer_loop<R: Read + BufferedInputHint, W: Write>(
         &mut self,
-        reader: &mut R,
-        writer: &mut super::super::super::writer::ServerWriter<W>,
+        io: &mut IoBuf<R, W>,
         progress: &mut Option<&mut dyn super::super::super::TransferProgressCallback>,
         itemize: &mut Option<&mut dyn super::super::super::ItemizeCallback>,
     ) -> io::Result<TransferLoopResult> {
@@ -631,7 +631,7 @@ impl GeneratorContext {
             // upstream: sender.c:516 - send extra file lists at top of loop
             if inc_recurse {
                 self.send_extra_file_lists(
-                    &mut *writer,
+                    io.output(),
                     &mut scheduler,
                     &mut flist_writer,
                     &mut ndx_write_codec,
@@ -639,7 +639,7 @@ impl GeneratorContext {
                 )?;
 
                 self.send_flist_eof_if_exhausted(
-                    &mut *writer,
+                    io.output(),
                     &scheduler,
                     ndx_write_codec.inner_mut(),
                 )?;
@@ -656,7 +656,7 @@ impl GeneratorContext {
             // it lets the writer coalesce per-file deltas up to its buffer bound
             // - ~24 files per socket write, matching upstream's iobuf.out
             // batching instead of one write() per file.
-            if !reader.has_buffered_input() {
+            if !io.input_buffered() {
                 // upstream: io.c:869-875 - a poll that finds nothing to read is
                 // the sender's cue to queue one more sub-list before it parks,
                 // which is what grows the lookahead past the floor. Emitting it
@@ -664,20 +664,20 @@ impl GeneratorContext {
                 // write as the deltas already buffered.
                 if inc_recurse {
                     self.grow_lookahead_while_idle(
-                        &mut *writer,
+                        io.output(),
                         &mut scheduler,
                         &mut flist_writer,
                         &mut ndx_write_codec,
                         &mut flist_done_remaining,
                     )?;
                     self.send_flist_eof_if_exhausted(
-                        &mut *writer,
+                        io.output(),
                         &scheduler,
                         ndx_write_codec.inner_mut(),
                     )?;
                 }
-                self.flush_thread_local_diagnostics(&mut *writer)?;
-                flush_with_count(writer)?;
+                self.flush_thread_local_diagnostics(io.output())?;
+                flush_with_count(io.output())?;
             }
 
             // upstream: generator.c:2610-2616 - during the send loop, emit a
@@ -685,12 +685,12 @@ impl GeneratorContext {
             // does not fire while the sender is sifting files without writing.
             // A no-op unless --timeout is set (maybe_send_keepalive gates on the
             // configured allowed_lull), keeping the default path wire-identical.
-            writer.maybe_send_keepalive()?;
+            io.output().maybe_send_keepalive()?;
 
             // upstream: sender.c:521 - read_ndx_and_attrs() has no EOF
             // tolerance; a receiver that vanishes in any phase ends the run
             // through io.c:whine_about_eof() with RERR_STREAMIO.
-            let ndx = ndx_read_codec.read_ndx(&mut *reader)?;
+            let ndx = ndx_read_codec.read_ndx(io.input())?;
 
             // upstream: io.c:1774-1788, sender.c:524-546 - handle control NDX values
             if ndx < 0 {
@@ -713,10 +713,8 @@ impl GeneratorContext {
                             // reading it, before sender.c:535-536 freed the
                             // list; confirm them now, while their entries still
                             // name their sources.
-                            self.drain_confirmed_source_removals(
-                                writer,
-                                reader.take_success_indices(),
-                            )?;
+                            let confirmed = io.input().take_success_indices();
+                            self.drain_confirmed_source_removals(io.output(), confirmed)?;
                             self.reclaim_oldest_segment();
                             // upstream: sender.c:539 - `file_old_total =
                             // cur_flist->used`. The freed list drops out of the
@@ -748,8 +746,8 @@ impl GeneratorContext {
                             // desynced, and the receiver reported "connection
                             // unexpectedly closed (io.c 232)".
                             if let Err(e) = ndx_write_codec
-                                .write_ndx_done(&mut *writer)
-                                .and_then(|()| flush_with_count(&mut *writer))
+                                .write_ndx_done(io.output())
+                                .and_then(|()| flush_with_count(io.output()))
                             {
                                 if tolerant && is_early_close_error(&e) {
                                     break;
@@ -770,8 +768,8 @@ impl GeneratorContext {
                         // rprintf(FINFO, "send_files phase=%d\n", phase)
                         debug_log!(Send, 1, "send_files phase={}", phase);
                         if let Err(e) = ndx_write_codec
-                            .write_ndx_done(&mut *writer)
-                            .and_then(|()| flush_with_count(&mut *writer))
+                            .write_ndx_done(io.output())
+                            .and_then(|()| flush_with_count(io.output()))
                         {
                             if tolerant && is_early_close_error(&e) {
                                 break;
@@ -782,7 +780,7 @@ impl GeneratorContext {
                     }
                     NDX_DEL_STATS => {
                         // Deletion statistics (upstream main.c:238-247).
-                        let stats = DeleteStats::read_from(&mut *reader)?;
+                        let stats = DeleteStats::read_from(io.input())?;
                         self.accumulate_delete_stats(&stats);
                         debug_log!(
                             Flist,
@@ -794,8 +792,8 @@ impl GeneratorContext {
                         // counters so the client's receiver can report them.
                         if !self.config.connection.client_mode
                             && let Err(e) = ndx_write_codec
-                                .write_ndx(&mut *writer, NDX_DEL_STATS)
-                                .and_then(|()| stats.write_to(&mut *writer))
+                                .write_ndx(io.output(), NDX_DEL_STATS)
+                                .and_then(|()| stats.write_to(io.output()))
                         {
                             if tolerant && is_early_close_error(&e) {
                                 break;
@@ -835,7 +833,7 @@ impl GeneratorContext {
             let wire_ndx = ndx;
 
             // upstream: rsync.c:227 - read_ndx_and_attrs() reads iflags
-            let iflags = ItemFlags::read(&mut *reader, self.protocol.as_u8())?;
+            let iflags = ItemFlags::read(io.input(), self.protocol.as_u8())?;
             if self.protocol.supports_iflags() {
                 self.timing.total_bytes_read += 2;
             }
@@ -855,7 +853,7 @@ impl GeneratorContext {
                 && wire_ndx as usize == self.file_list.len()
                 && iflags.raw() == ItemFlags::ITEM_IS_NEW
             {
-                writer.answer_keepalive()?;
+                io.output().answer_keepalive()?;
                 continue;
             }
 
@@ -865,14 +863,14 @@ impl GeneratorContext {
             // directory (sender.c:552-558).
             let ndx = self.flist_for_ndx(wire_ndx)?;
 
-            let (fnamecmp_type, xname, trailing_bytes) = iflags.read_trailing(&mut *reader)?;
+            let (fnamecmp_type, xname, trailing_bytes) = iflags.read_trailing(io.input())?;
             // upstream: rsync.c:403-418 - the basis-type byte plus the xname
             // vstring (1- or 2-byte prefix + payload). read_trailing reports the
             // exact wire bytes consumed so this count never drifts from the wire.
             self.timing.total_bytes_read += trailing_bytes;
             // upstream: sender.c:637 remember_initial_stats() - `%b`/`%c`
             // count from here, so the echoed attributes are included.
-            let initial_written = writer.data_written();
+            let initial_written = io.output().data_written();
             let initial_read = self.timing.total_bytes_read;
             self.daemon_log_byte_counts.set((0, 0));
 
@@ -903,7 +901,7 @@ impl GeneratorContext {
             // the indices the generator requested, ready for write_ndx_and_attrs
             // to echo the full values back via send_sender_xattr_response.
             let mut pending_xattr_response =
-                self.read_generator_xattr_request_if_any(&mut *reader, ndx, &iflags)?;
+                self.read_generator_xattr_request_if_any(io.input(), ndx, &iflags)?;
 
             // upstream: sender.c:578-579
             // rprintf(FINFO, "send_files(%d, %s%s%s)\n", ndx, path,slash,fname)
@@ -931,9 +929,9 @@ impl GeneratorContext {
                 // so the receiver can pair the response with its outstanding
                 // request and apply xattr-only updates. Without this echo the
                 // wire stream stalls when ITEM_REPORT_XATTR is the only delta.
-                self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, false)?;
+                self.emit_client_item(io.output(), &iflags, ndx, xname.as_deref(), itemize, false)?;
                 self.write_ndx_iflags_and_xattr_response(
-                    &mut *writer,
+                    io.output(),
                     &mut ndx_write_codec,
                     &NdxAttrs {
                         ndx: wire_ndx,
@@ -970,7 +968,7 @@ impl GeneratorContext {
             if self.config.flags.dry_run {
                 let file_entry = &self.file_list[ndx];
                 self.write_ndx_iflags_and_xattr_response(
-                    &mut *writer,
+                    io.output(),
                     &mut ndx_write_codec,
                     &NdxAttrs {
                         ndx: wire_ndx,
@@ -991,10 +989,10 @@ impl GeneratorContext {
                 // upstream: sender.c:640-643 - a dry run logs the transfer item
                 // via log_item(FCLIENT) without sending data: the `-i` itemize
                 // row or, under plain `-v`, the bare `%n%L` name line.
-                self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
+                self.emit_client_item(io.output(), &iflags, ndx, xname.as_deref(), itemize, true)?;
                 files_transferred += 1;
                 transferred_file_size += file_entry.size();
-                flush_with_count(writer)?;
+                flush_with_count(io.output())?;
                 continue;
             }
 
@@ -1009,7 +1007,7 @@ impl GeneratorContext {
             // xfer_sum_len (checksum.c:232 csum_len_for_type()).
             let xfer_sum_len = self.get_checksum_algorithm().digest_len() as u32;
             let sum_head =
-                SumHead::read_negotiated(&mut *reader, self.protocol.as_u8(), xfer_sum_len)?;
+                SumHead::read_negotiated(io.input(), self.protocol.as_u8(), xfer_sum_len)?;
             self.timing.total_bytes_read += 16;
 
             let file_entry = &self.file_list[ndx];
@@ -1059,9 +1057,10 @@ impl GeneratorContext {
                 // sender pokes a keepalive every `allowed_lull * 5` blocks so a
                 // large/slow checksum read does not trip the peer's --timeout.
                 // Newer protocols multiplex the stream and set lull_mod = 0.
-                let lull_mod = signature_read_lull_mod(self.protocol, writer.allowed_lull());
-                delta_ctx.receive_sums(&mut *reader, &sum_head, lull_mod, || {
-                    writer.maybe_send_keepalive().map(|_| ())
+                let lull_mod = signature_read_lull_mod(self.protocol, io.output().allowed_lull());
+                let (input, output) = io.halves();
+                delta_ctx.receive_sums(input, &sum_head, lull_mod, || {
+                    output.maybe_send_keepalive().map(|_| ())
                 })?;
                 let bytes_per_block = 4 + sum_head.s2length as u64;
                 self.timing.total_bytes_read += sum_head.count as u64 * bytes_per_block;
@@ -1086,7 +1085,7 @@ impl GeneratorContext {
             // stat failure (e.g. the source vanished) is left to the per-branch
             // open, which routes it through record_open_failure.
             if is_append && source_diminished_below_flist(&source_path, file_size) {
-                self.record_diminished_skip(&mut *writer, wire_ndx, &source_path_display)?;
+                self.record_diminished_skip(io.output(), wire_ndx, &source_path_display)?;
                 continue;
             }
 
@@ -1113,13 +1112,13 @@ impl GeneratorContext {
                     // MSG_NO_SEND skip.
                     Err(e) if is_sender_fstat_error(&e) => return Err(e),
                     Err(e) => {
-                        self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
+                        self.record_open_failure(io.output(), wire_ndx, &e, &source_path_display)?;
                         continue;
                     }
                 };
 
                 self.write_ndx_attrs_and_sum_head(
-                    &mut *writer,
+                    io.output(),
                     &mut ndx_write_codec,
                     &NdxAttrs {
                         ndx: wire_ndx,
@@ -1136,10 +1135,8 @@ impl GeneratorContext {
                 let flength = sum_head.flength().min(file_size);
                 let append_verify = self.config.flags.append_verify;
                 let wire_bytes = {
-                    let mut cw = crate::writer::CountingWriter::new(XferSink::new(
-                        &mut *writer,
-                        divert_xfer,
-                    ));
+                    let mut cw =
+                        crate::writer::CountingWriter::new(XferSink::new(io.output(), divert_xfer));
                     let result = stream_append_transfer(
                         &mut cw,
                         source,
@@ -1197,7 +1194,7 @@ impl GeneratorContext {
                         Ok(r) => Some(r),
                         Err(e) => {
                             self.record_open_failure(
-                                &mut *writer,
+                                io.output(),
                                 wire_ndx,
                                 &e,
                                 &source_path_display,
@@ -1277,7 +1274,7 @@ impl GeneratorContext {
                 read_error = scan_source.and_then(ScanSource::into_read_error);
 
                 self.write_ndx_attrs_and_sum_head(
-                    &mut *writer,
+                    io.output(),
                     &mut ndx_write_codec,
                     &NdxAttrs {
                         ndx: wire_ndx,
@@ -1309,10 +1306,8 @@ impl GeneratorContext {
                 // (reconstructed size) trips the testsuite's "delta did not
                 // engage" assertion on delta pushes.
                 let wire_bytes = {
-                    let mut cw = crate::writer::CountingWriter::new(XferSink::new(
-                        &mut *writer,
-                        divert_xfer,
-                    ));
+                    let mut cw =
+                        crate::writer::CountingWriter::new(XferSink::new(io.output(), divert_xfer));
                     let result = write_delta_with_inline_checksum(
                         &mut cw,
                         wire_ops,
@@ -1364,7 +1359,7 @@ impl GeneratorContext {
                         self,
                         ndx,
                         file_size,
-                        reader.buffered_input(),
+                        io.buffered_input(),
                         &ndx_read_codec,
                         request_shape,
                         if inc_recurse { flist_done_remaining } else { 0 },
@@ -1388,13 +1383,13 @@ impl GeneratorContext {
                     // MSG_NO_SEND skip.
                     Err(e) if is_sender_fstat_error(&e) => return Err(e),
                     Err(e) => {
-                        self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
+                        self.record_open_failure(io.output(), wire_ndx, &e, &source_path_display)?;
                         continue;
                     }
                 };
 
                 self.write_ndx_attrs_and_sum_head(
-                    &mut *writer,
+                    io.output(),
                     &mut ndx_write_codec,
                     &NdxAttrs {
                         ndx: wire_ndx,
@@ -1434,10 +1429,8 @@ impl GeneratorContext {
                     None::<super::super::delta::ServeFds>
                 };
                 let wire_bytes = {
-                    let mut cw = crate::writer::CountingWriter::new(XferSink::new(
-                        &mut *writer,
-                        divert_xfer,
-                    ));
+                    let mut cw =
+                        crate::writer::CountingWriter::new(XferSink::new(io.output(), divert_xfer));
                     let result = stream_whole_file_transfer(
                         &mut cw,
                         source,
@@ -1497,10 +1490,10 @@ impl GeneratorContext {
 
             // upstream: sender.c:787 - log_item(log_code, file, iflags, xname)
             self.daemon_log_byte_counts.set((
-                writer.data_written() - initial_written,
+                io.output().data_written() - initial_written,
                 self.timing.total_bytes_read - initial_read,
             ));
-            self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
+            self.emit_client_item(io.output(), &iflags, ndx, xname.as_deref(), itemize, true)?;
 
             if let Some(cb) = progress.as_mut() {
                 // upstream: progress.c:80 - "to" once the final sub-list has been
@@ -1525,13 +1518,13 @@ impl GeneratorContext {
             // errno: set IOERR_GENERAL (exit 23), report it, and move on to the
             // next file rather than aborting the run.
             if let Some(err) = read_error.take() {
-                self.record_read_errors(&mut *writer, &err, &source_path_display)?;
+                self.record_read_errors(io.output(), &err, &source_path_display)?;
             }
 
             // upstream: sender.c:550 - send extra file lists at bottom of loop
             if inc_recurse {
                 self.send_extra_file_lists(
-                    &mut *writer,
+                    io.output(),
                     &mut scheduler,
                     &mut flist_writer,
                     &mut ndx_write_codec,
@@ -1572,13 +1565,13 @@ impl GeneratorContext {
                     break;
                 };
                 self.encode_and_send_segment(
-                    &mut *writer,
+                    io.output(),
                     seg,
                     &mut flist_writer,
                     ndx_write_codec.inner_mut(),
                 )?;
             }
-            self.send_flist_eof(&mut *writer, ndx_write_codec.inner_mut())?;
+            self.send_flist_eof(io.output(), ndx_write_codec.inner_mut())?;
         }
 
         // Cache flist_writer back for potential reuse (e.g., phase 2).
@@ -1586,7 +1579,7 @@ impl GeneratorContext {
 
         // Diagnostics the loop raised go out first: upstream wrote each the
         // moment it was raised, before the closing sequence below.
-        self.flush_thread_local_diagnostics(&mut *writer)?;
+        self.flush_thread_local_diagnostics(io.output())?;
         // upstream: sender.c:811-812 - if (io_error != save_io_error &&
         // protocol_version >= 30) send_msg_int(MSG_IO_ERROR, io_error); - the
         // first frame of the closing sequence, so a remote receiver learns of
@@ -1594,7 +1587,7 @@ impl GeneratorContext {
         // only skips the file; it does not carry the exit-code bits.
         if self.io_error != save_io_error && self.protocol.supports_generator_messages() {
             let io_error = self.io_error;
-            if let Err(e) = writer.send_io_error(io_error)
+            if let Err(e) = io.output().send_io_error(io_error)
                 && !(tolerant && is_early_close_error(&e))
             {
                 return Err(e);
@@ -1603,19 +1596,19 @@ impl GeneratorContext {
         // upstream: sender.c:814-815
         // rprintf(FINFO, "send files finished\n")
         debug_log!(Send, 1, "send files finished");
-        self.flush_thread_local_diagnostics(&mut *writer)?;
+        self.flush_thread_local_diagnostics(io.output())?;
         // upstream: sender.c:818 match_report() - the once-per-run delta totals,
         // printed after the send loop has finished every file. `data` is
         // `stats.literal_data` (match.c:486), the cumulative literal-byte count.
         // Upstream prints it whether or not any delta ran, leaving the counters
         // at zero for a whole-file transfer.
-        self.emit_match_totals_report(&mut *writer, &run_scan_counters, literal_data);
+        self.emit_match_totals_report(io.output(), &run_scan_counters, literal_data);
         // upstream: sender.c:820 - the final NDX_DONE is the "goodbye" that
         // tells the client's generator to proceed with its own goodbye
         // handshake. Without it, the client hangs waiting for this marker.
         if let Err(e) = ndx_write_codec
-            .write_ndx_done(&mut *writer)
-            .and_then(|()| flush_with_count(&mut *writer))
+            .write_ndx_done(io.output())
+            .and_then(|()| flush_with_count(io.output()))
             && !(tolerant && is_early_close_error(&e))
         {
             return Err(e);
@@ -2068,6 +2061,24 @@ fn stat_identity(metadata: &std::fs::Metadata) -> (u64, i64, u32) {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or((0, 0), |d| (d.as_secs() as i64, d.subsec_nanos()));
         (metadata.len(), secs, nsec)
+    }
+}
+
+/// Test seam: drives [`GeneratorContext::run_transfer_loop`] over a reader and
+/// writer held apart, as the loop's unit tests build them.
+#[cfg(test)]
+impl GeneratorContext {
+    pub(super) fn run_transfer_loop_split<R: Read + BufferedInputHint, W: Write>(
+        &mut self,
+        reader: &mut R,
+        writer: &mut crate::writer::ServerWriter<W>,
+        progress: &mut Option<&mut dyn crate::TransferProgressCallback>,
+        itemize: &mut Option<&mut dyn crate::ItemizeCallback>,
+    ) -> io::Result<TransferLoopResult> {
+        let mut io = IoBuf::new(reader, writer.take());
+        let result = self.run_transfer_loop(&mut io, progress, itemize);
+        *writer = io.into_output();
+        result
     }
 }
 
@@ -2600,7 +2611,7 @@ mod phase2_guard_tests {
         let mut writer = ServerWriter::new_plain(Vec::new());
         let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
         let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
-        ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
+        ctx.run_transfer_loop_split(&mut reader, &mut writer, &mut progress, &mut itemize)
             .map(|_| ())
     }
 
@@ -2769,7 +2780,7 @@ mod phase2_guard_tests {
         let mut writer = ServerWriter::new_plain(&mut out);
         let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
         let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
-        ctx.run_transfer_loop(
+        ctx.run_transfer_loop_split(
             &mut Cursor::new(wire),
             &mut writer,
             &mut progress,
@@ -2951,7 +2962,7 @@ mod non_regular_request_guard_tests {
         let mut writer = ServerWriter::new_plain(Vec::new());
         let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
         let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
-        ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
+        ctx.run_transfer_loop_split(&mut reader, &mut writer, &mut progress, &mut itemize)
             .map(|result| result.files_transferred)
     }
 
@@ -3093,7 +3104,7 @@ mod proto29_keepalive_tests {
             let mut writer = ServerWriter::new_plain(&mut out).activate_multiplex()?;
             let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
             let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
-            ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)?;
+            ctx.run_transfer_loop_split(&mut reader, &mut writer, &mut progress, &mut itemize)?;
             writer.flush()?;
         }
         Ok(out)
@@ -3314,7 +3325,7 @@ mod append_redo_tests {
         let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
         let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
         let result =
-            ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)?;
+            ctx.run_transfer_loop_split(&mut reader, &mut writer, &mut progress, &mut itemize)?;
         Ok((
             result.files_transferred,
             result.transferred_file_size,
@@ -3496,7 +3507,7 @@ mod inc_recurse_lookahead_tests {
 
         let mut ctx = generator_with_segmented_tree();
         let before = segment_dispatch_totals().0;
-        ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
+        ctx.run_transfer_loop_split(&mut reader, &mut writer, &mut progress, &mut itemize)
             .expect("sender loop must run to completion");
         let after = segment_dispatch_totals().0;
 
@@ -3762,7 +3773,7 @@ mod sender_batch_flush_tests {
         let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
 
         let result = ctx
-            .run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
+            .run_transfer_loop_split(&mut reader, &mut writer, &mut progress, &mut itemize)
             .expect("sender loop completes with batched writes");
 
         assert_eq!(
@@ -3976,7 +3987,7 @@ mod io_uring_read_ahead_tests {
         let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
         let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
         let result = ctx
-            .run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
+            .run_transfer_loop_split(&mut reader, &mut writer, &mut progress, &mut itemize)
             .expect("sender loop completes");
         assert_eq!(result.files_transferred, files);
         drop(writer);
