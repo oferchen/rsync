@@ -178,11 +178,10 @@ fn copy_directory_recursive_inner(
             // whose failure is reported and the directory's contents skipped.
             Err(error) if error.is_io_error() => {
                 if let crate::local_copy::LocalCopyErrorKind::Io { source, .. } = error.kind() {
-                    let shown = fast_io::refusal_errno::reported_refusal(source);
                     report_generator_failure(
                         context,
                         &format!("recv_generator: mkdir {} failed", full_fname(destination)),
-                        shown.as_ref().unwrap_or(source),
+                        source,
                     );
                     eprintln!("*** Skipping any contents from this failed directory ***");
                 }
