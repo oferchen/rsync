@@ -23,6 +23,7 @@ use crate::delta_apply::ChecksumVerifier;
 use crate::receiver::stats::TransferStats;
 use crate::receiver::wire::{SenderAttrs, SumHead};
 use crate::receiver::{PipelineSetup, ReceiverContext, apply_acls_from_receiver_cache};
+use crate::temp_guard::TempFileGuard;
 #[cfg(not(unix))]
 use crate::temp_guard::open_tmpfile;
 #[cfg(unix)]
@@ -73,121 +74,140 @@ impl ReceiverContext {
             return self.finish_empty_client_flist(reader, writer);
         }
 
-        // Materialize any INC_RECURSE sub-list segments up front so the
-        // generator-half passes below see the complete list. The recorded
-        // stream carries the segments exactly where the tee captured them,
-        // ahead of the delta rows. upstream: generator.c:2770-2841.
-        let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
-        self.ensure_all_segments_loaded(reader, &mut flist_ndx_codec)?;
-
+        let inc_recurse = self
+            .compat_flags
+            .is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE));
         let PipelineSetup {
             dest_dir,
             metadata_opts,
-            checksum_length: _,
-            checksum_algorithm: _,
             acl_cache,
             acl_id_map,
             #[cfg(unix)]
             sandbox,
-        } = setup;
-
+            ..
+        } = &setup;
         debug_log!(Recv, 1, "recv_files({}) starting", file_count);
-
-        // Generator half: create directories, symlinks and specials, then the
-        // quick-check walk that applies metadata-only fixes for up-to-date
-        // entries. upstream runs the real generator locally on --read-batch
-        // (main.c:652-664); only its outbound requests go to the dead pipe.
-        let mut metadata_errors = self.create_directories(
-            &dest_dir,
-            &metadata_opts,
-            acl_cache.as_deref(),
-            acl_id_map.as_deref(),
-            writer,
-            #[cfg(unix)]
-            sandbox.as_deref(),
-        )?;
-        self.ensure_relative_parents(
-            &dest_dir,
-            #[cfg(unix)]
-            sandbox.as_deref(),
-        );
-        #[cfg(unix)]
-        self.create_symlinks(&dest_dir, sandbox.as_deref(), writer)?;
-        #[cfg(not(unix))]
-        self.create_symlinks(&dest_dir, writer)?;
-        #[cfg(unix)]
-        self.create_specials(
-            &dest_dir,
-            acl_cache.as_deref(),
-            acl_id_map.as_deref(),
-            sandbox.as_deref(),
-            writer,
-        )?;
-        #[cfg(not(unix))]
-        self.create_specials(&dest_dir, writer)?;
-        self.process_missing_args_sentinels(
-            &dest_dir,
-            #[cfg(unix)]
-            sandbox.as_deref(),
-            writer,
-        )?;
-
-        let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
-        let mut stats = TransferStats {
-            files_listed: file_count,
-            num_dirs,
-            num_symlinks,
-            num_devices,
-            num_specials,
-            entries_received: file_count as u64,
-            io_error: self.flist_reader_io_error() | self.flist_io_error,
-            ..Default::default()
-        };
-
-        // upstream: generator.c:2753-2754 - `do_delete_pass()` runs regardless
-        // of read_batch (the replaying generator forks and runs locally,
-        // main.c:652-664). --delete-before / --delete-during sweep here, before
-        // the row loop, exactly as the network drivers do (pipelined.rs Early);
-        // --delete-after / --delete-delay defer to the late site below.
-        if self.delete_pass_is_early() {
-            self.run_receiver_delete_pass(
-                super::DeletePassPhase::Early,
-                &dest_dir,
-                #[cfg(unix)]
-                sandbox.as_ref(),
+        let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
+        let mut generated_segments = 0usize;
+        let (mut metadata_errors, mut stats) = if inc_recurse {
+            // upstream: under INC_RECURSE the replaying generator takes each
+            // file list as it arrives (generator.c:2770-2841), and the recorded
+            // stream carries the sub-lists among the data rows wherever the
+            // sender's lookahead put them (sender.c:515-547). The generator
+            // half therefore runs per list: the initial list now, each later
+            // one as the row loop below receives it.
+            let mut metadata_errors = Vec::new();
+            let mut stats = TransferStats {
+                files_listed: file_count,
+                entries_received: file_count as u64,
+                ..Default::default()
+            };
+            self.generate_replay_segments(
+                &mut generated_segments,
+                &setup,
+                &mut failed_dirs,
                 writer,
+                &mut metadata_errors,
                 &mut stats,
             )?;
-        }
-
-        // Quick-check walk for its side effects only (metadata-only fixes,
-        // upstream generator.c:2246 set_file_attrs for identical files). The
-        // returned request list is discarded: the recorded stream, not the
-        // local plan, decides what is transferred.
-        drop(self.build_files_to_transfer(
-            writer,
-            &dest_dir,
+            (metadata_errors, stats)
+        } else {
+            // Generator half: create directories, symlinks and specials, then the
+            // quick-check walk that applies metadata-only fixes for up-to-date
+            // entries. upstream runs the real generator locally on --read-batch
+            // (main.c:652-664); only its outbound requests go to the dead pipe.
+            let mut metadata_errors = self.create_directories(
+                dest_dir,
+                metadata_opts,
+                acl_cache.as_deref(),
+                acl_id_map.as_deref(),
+                writer,
+                #[cfg(unix)]
+                sandbox.as_deref(),
+            )?;
+            self.ensure_relative_parents(
+                dest_dir,
+                #[cfg(unix)]
+                sandbox.as_deref(),
+            );
             #[cfg(unix)]
-            sandbox.as_deref(),
-            &metadata_opts,
-            None,
-            &mut metadata_errors,
-            &mut stats,
-            acl_cache.as_deref(),
-            acl_id_map.as_deref(),
-        ));
-        self.server_no_transfer_itemize.borrow_mut().clear();
-        // The generator half above itemizes against the LOCAL quick-check (it
-        // classifies which files it would transfer), but on a replay the
-        // recorded stream - not the local plan - decides what is itemized and
-        // transferred (upstream drives itemize off the stream iflags:
-        // receiver.c:919 maybe_log_item for non-transfer rows, receiver.c:1290
-        // log_item for transfer rows). Drop the speculative rows so only the
-        // recorded rows emitted in the loop below survive; this is the itemize
-        // counterpart of the server_no_transfer_itemize clear above.
-        self.itemize_rows.borrow_mut().clear();
-        self.event_rows.borrow_mut().clear();
+            self.create_symlinks(dest_dir, sandbox.as_deref(), writer)?;
+            #[cfg(not(unix))]
+            self.create_symlinks(dest_dir, writer)?;
+            #[cfg(unix)]
+            self.create_specials(
+                dest_dir,
+                acl_cache.as_deref(),
+                acl_id_map.as_deref(),
+                sandbox.as_deref(),
+                writer,
+            )?;
+            #[cfg(not(unix))]
+            self.create_specials(dest_dir, writer)?;
+            self.process_missing_args_sentinels(
+                dest_dir,
+                #[cfg(unix)]
+                sandbox.as_deref(),
+                writer,
+            )?;
 
+            let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
+            let mut stats = TransferStats {
+                files_listed: file_count,
+                num_dirs,
+                num_symlinks,
+                num_devices,
+                num_specials,
+                entries_received: file_count as u64,
+                io_error: self.flist_reader_io_error() | self.flist_io_error,
+                ..Default::default()
+            };
+
+            // upstream: generator.c:2753-2754 - `do_delete_pass()` runs regardless
+            // of read_batch (the replaying generator forks and runs locally,
+            // main.c:652-664). --delete-before / --delete-during sweep here, before
+            // the row loop, exactly as the network drivers do (pipelined.rs Early);
+            // --delete-after / --delete-delay defer to the late site below.
+            if self.delete_pass_is_early() {
+                self.run_receiver_delete_pass(
+                    super::DeletePassPhase::Early,
+                    dest_dir,
+                    #[cfg(unix)]
+                    sandbox.as_ref(),
+                    writer,
+                    &mut stats,
+                )?;
+            }
+
+            // Quick-check walk for its side effects only (metadata-only fixes,
+            // upstream generator.c:2246 set_file_attrs for identical files). The
+            // returned request list is discarded: the recorded stream, not the
+            // local plan, decides what is transferred.
+            drop(self.build_files_to_transfer(
+                writer,
+                dest_dir,
+                #[cfg(unix)]
+                sandbox.as_deref(),
+                metadata_opts,
+                None,
+                &mut metadata_errors,
+                &mut stats,
+                acl_cache.as_deref(),
+                acl_id_map.as_deref(),
+            ));
+            self.server_no_transfer_itemize.borrow_mut().clear();
+            // The generator half above itemizes against the LOCAL quick-check (it
+            // classifies which files it would transfer), but on a replay the
+            // recorded stream - not the local plan - decides what is itemized and
+            // transferred (upstream drives itemize off the stream iflags:
+            // receiver.c:919 maybe_log_item for non-transfer rows, receiver.c:1290
+            // log_item for transfer rows). Drop the speculative rows so only the
+            // recorded rows emitted in the loop below survive; this is the itemize
+            // counterpart of the server_no_transfer_itemize clear above.
+            self.itemize_rows.borrow_mut().clear();
+            self.event_rows.borrow_mut().clear();
+            (metadata_errors, stats)
+        };
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
         // upstream: compat.c:413-415 getenv_nstr() pins every batch to the zlib
@@ -216,25 +236,13 @@ impl ReceiverContext {
         let max_phase: i32 = if self.protocol.as_u8() >= 29 { 2 } else { 1 };
         let mut phase: i32 = 0;
 
-        // upstream: receiver.c:875-886 - with INC_RECURSE the recorded stream
-        // carries one NDX_DONE per flist segment ahead of the phase markers
-        // (the recording sender echoed each, sender.c:534-542). The receiver
-        // consumes each by freeing first_flist and, while more segments
-        // remain, continues WITHOUT advancing the phase; the DONE that frees
-        // the last segment falls through to the phase transition. Every
-        // segment is already materialized above, so the pending count is the
-        // segment total. The entries themselves are kept (upstream's forked
-        // generator holds its own copy for touch-up work; this single-process
-        // replay reuses the list for the generator half below).
-        let inc_recurse = self
-            .compat_flags
-            .is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE));
-        let mut flists_pending = if inc_recurse {
-            self.ndx_segments.len()
-        } else {
-            0
-        };
-        let gap_heads = self.gap_ndx_heads();
+        // upstream: receiver.c:875-886 - with INC_RECURSE each NDX_DONE frees
+        // the oldest list still held and, while another remains, does not
+        // advance the phase. The lists counted are those received so far: the
+        // recording sender echoes a DONE as each list is freed, which can be
+        // before the later sub-lists arrive (sender.c:525-545).
+        let mut freed_lists = 0usize;
+        let mut gap_heads = self.gap_ndx_heads();
 
         loop {
             let row = crate::receiver::ndx_stream::read_ndx_and_attrs(
@@ -244,14 +252,23 @@ impl ReceiverContext {
                 preserve_xattrs,
                 want_xattr_optim,
             )?;
-
+            // A sub-list read with this row is generated before the row is
+            // obeyed, as upstream's generator handles a list ahead of its data.
+            if inc_recurse && generated_segments < self.ndx_segments.len() {
+                self.generate_replay_segments(
+                    &mut generated_segments,
+                    &setup,
+                    &mut failed_dirs,
+                    writer,
+                    &mut metadata_errors,
+                    &mut stats,
+                )?;
+                gap_heads = self.gap_ndx_heads();
+            }
             let Some((ndx, attrs)) = row else {
-                // upstream: receiver.c:875-886 - free one INC_RECURSE segment
-                // per NDX_DONE; while more remain the marker does not advance
-                // the phase.
-                if flists_pending > 0 {
-                    flists_pending -= 1;
-                    if flists_pending > 0 {
+                if inc_recurse && freed_lists < self.ndx_segments.len() {
+                    freed_lists += 1;
+                    if freed_lists < self.ndx_segments.len() {
                         continue;
                     }
                 }
@@ -349,17 +366,43 @@ impl ReceiverContext {
             // strong sums themselves are not needed to resolve COPY offsets.
             let layout_signature = sum_head.block_signature();
 
-            #[cfg(unix)]
-            let open_result = open_tmpfile_sandboxed(
-                &file_path,
-                self.config.temp_dir.as_deref(),
-                sandbox.as_ref(),
-                Some(dest_dir.as_path()),
-            );
-            #[cfg(not(unix))]
-            let open_result = open_tmpfile(&file_path, self.config.temp_dir.as_deref());
+            // upstream: receiver.c:1212-1241 - under --inplace the destination
+            // itself is opened (never truncated: it is the delta basis) and the
+            // pre-image is backed up by copy first (generator.c:2281-2301);
+            // otherwise a temp file is staged and renamed over it.
+            let inplace = self.config.write.inplace;
+            if inplace {
+                self.backup_existing_dest_by_copy(
+                    dest_dir,
+                    &file_path,
+                    metadata_opts,
+                    #[cfg(unix)]
+                    sandbox.as_deref(),
+                )?;
+            }
+            let open_result = if inplace {
+                open_inplace_dest(
+                    &file_path,
+                    relative_path,
+                    dest_dir,
+                    #[cfg(unix)]
+                    sandbox.as_deref(),
+                )
+                .map(|file| (file, TempFileGuard::keep_dest(file_path.clone())))
+            } else {
+                #[cfg(unix)]
+                let staged = open_tmpfile_sandboxed(
+                    &file_path,
+                    self.config.temp_dir.as_deref(),
+                    sandbox.as_ref(),
+                    Some(dest_dir.as_path()),
+                );
+                #[cfg(not(unix))]
+                let staged = open_tmpfile(&file_path, self.config.temp_dir.as_deref());
+                staged
+            };
 
-            // upstream: receiver.c:1015-1022 - a failed temp open drains this
+            // upstream: receiver.c:1015-1022 - a failed open drains this
             // file's delta off the stream and continues (see sync.rs for the
             // full rationale).
             let (file, mut temp_guard) = match open_result {
@@ -379,14 +422,18 @@ impl ReceiverContext {
                         u64::from(sum_head.count),
                         checksum_len,
                     )?;
-                    metadata_errors
-                        .push((file_path.clone(), format!("mkstemp failed: {open_err}")));
+                    // upstream: receiver.c:1243 "open %s failed" (inplace) vs
+                    // receiver.c:466 "mkstemp %s failed" (temp file).
+                    let what = if inplace { "open" } else { "mkstemp" };
+                    metadata_errors.push((file_path.clone(), format!("{what} failed: {open_err}")));
                     self.flist_io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
                     continue;
                 }
             };
-            CleanupManager::global().register_temp_file(temp_guard.path().to_path_buf());
-            temp_guard.mark_registered();
+            if !inplace {
+                CleanupManager::global().register_temp_file(temp_guard.path().to_path_buf());
+                temp_guard.mark_registered();
+            }
 
             let file_verifier = ChecksumVerifier::new(
                 self.negotiated_algorithms.as_ref(),
@@ -404,9 +451,8 @@ impl ReceiverContext {
             token_reader.reset();
 
             // upstream: receiver.c:1156-1157 - `updating_basis_or_equiv = ... ||
-            // (inplace && fnamecmp == fname ...)`. This replay always stages a temp,
-            // so the flag only keeps in-place-matched blocks out of the
-            // touched-block count, as upstream's skip_matched() does.
+            // (inplace && fnamecmp == fname ...)`: a block already at its offset
+            // in the file being rewritten is skipped, as skip_matched() does.
             let updating_basis =
                 self.config.write.inplace && basis_path.as_deref() == Some(file_path.as_path());
             let mut applicator = crate::delta_apply::DeltaApplicator::new(
@@ -439,6 +485,16 @@ impl ReceiverContext {
 
             let literal_bytes = result.literal_bytes;
 
+            // upstream: receiver.c:664-671 receive_data() - an in-place write
+            // truncates the destination to the length it reconstructed; a
+            // failure is reported, not fatal.
+            if inplace
+                && result.final_pos.is_none()
+                && let Err(e) = file.set_len(file_entry.size())
+            {
+                metadata_errors.push((file_path.clone(), format!("ftruncate failed: {e}")));
+            }
+
             if self.config.write.fsync {
                 file.sync_all().map_err(|e| {
                     io::Error::new(
@@ -455,70 +511,72 @@ impl ReceiverContext {
             // exit_cleanup(RERR_FILEIO).
             crate::disk_commit::close_received_file(Some(file), temp_guard.path())?;
 
-            // upstream: generator.c:2280-2288 - read_batch with make_backups>0
-            // still resolves the backup name and preserves the pre-image before
-            // the destination is overwritten. Routed through the same
-            // commit-tier owner the network commit uses (see
-            // `ReceiverContext::backup_existing_dest`).
-            self.backup_existing_dest(
-                &dest_dir,
-                &file_path,
-                &metadata_opts,
-                #[cfg(unix)]
-                sandbox.as_deref(),
-            )?;
+            if !inplace {
+                // upstream: generator.c:2280-2288 - read_batch with make_backups>0
+                // still resolves the backup name and preserves the pre-image before
+                // the destination is overwritten. Routed through the same
+                // commit-tier owner the network commit uses (see
+                // `ReceiverContext::backup_existing_dest`).
+                self.backup_existing_dest(
+                    dest_dir,
+                    &file_path,
+                    metadata_opts,
+                    #[cfg(unix)]
+                    sandbox.as_deref(),
+                )?;
 
-            // Commit: rename the temp file over the destination. Mirrors the
-            // SEC-1.j routing of sync.rs (the sandbox-anchored renameat with
-            // the io_uring fast path first). A `--temp-dir` on another
-            // filesystem takes robust_rename's copy fallback (util1.c:599).
-            #[cfg(unix)]
-            crate::robust_rename::robust_rename(
-                crate::robust_rename::CommitAnchor {
-                    sandbox: sandbox.as_deref(),
-                    root: &dest_dir,
-                    fsync: self.config.write.fsync,
-                },
-                temp_guard.path(),
-                &file_path,
-                None,
-                |old, new| {
-                    if let Some(result) = fast_io::try_rename_via_io_uring(old, new) {
-                        return result;
+                // Commit: rename the temp file over the destination. Mirrors the
+                // SEC-1.j routing of sync.rs (the sandbox-anchored renameat with
+                // the io_uring fast path first). A `--temp-dir` on another
+                // filesystem takes robust_rename's copy fallback (util1.c:599).
+                #[cfg(unix)]
+                crate::robust_rename::robust_rename(
+                    crate::robust_rename::CommitAnchor {
+                        sandbox: sandbox.as_deref(),
+                        root: dest_dir,
+                        fsync: self.config.write.fsync,
+                    },
+                    temp_guard.path(),
+                    &file_path,
+                    None,
+                    |old, new| {
+                        if let Some(result) = fast_io::try_rename_via_io_uring(old, new) {
+                            return result;
+                        }
+                        let old_rel = old.strip_prefix(dest_dir).unwrap_or(old);
+                        fast_io::renameat_via_sandbox_or_fallback(
+                            sandbox.as_deref(),
+                            dest_dir,
+                            old_rel,
+                            old,
+                            dest_dir,
+                            relative_path,
+                            new,
+                            true,
+                        )
+                    },
+                )?;
+                #[cfg(not(unix))]
+                if let Some(rename_result) =
+                    fast_io::try_rename_via_io_uring(temp_guard.path(), &file_path)
+                {
+                    rename_result?;
+                } else {
+                    #[cfg(windows)]
+                    {
+                        crate::temp_guard::commit_rename_no_follow(temp_guard.path(), &file_path)?;
                     }
-                    let old_rel = old.strip_prefix(&dest_dir).unwrap_or(old);
-                    fast_io::renameat_via_sandbox_or_fallback(
-                        sandbox.as_deref(),
-                        &dest_dir,
-                        old_rel,
-                        old,
-                        &dest_dir,
-                        relative_path,
-                        new,
-                        true,
-                    )
-                },
-            )?;
-            #[cfg(not(unix))]
-            if let Some(rename_result) =
-                fast_io::try_rename_via_io_uring(temp_guard.path(), &file_path)
-            {
-                rename_result?;
-            } else {
-                #[cfg(windows)]
-                {
-                    crate::temp_guard::commit_rename_no_follow(temp_guard.path(), &file_path)?;
+                    #[cfg(all(not(unix), not(windows)))]
+                    {
+                        std::fs::rename(temp_guard.path(), &file_path)?;
+                    }
                 }
-                #[cfg(all(not(unix), not(windows)))]
-                {
-                    std::fs::rename(temp_guard.path(), &file_path)?;
-                }
+                CleanupManager::global().unregister_temp_file(temp_guard.path());
+                temp_guard.keep();
             }
-            CleanupManager::global().unregister_temp_file(temp_guard.path());
-            temp_guard.keep();
 
             if let Err(meta_err) =
-                apply_metadata_with_cached_stat(&file_path, &file_entry, &metadata_opts, None)
+                apply_metadata_with_cached_stat(&file_path, &file_entry, metadata_opts, None)
             {
                 metadata_errors.push((file_path.clone(), meta_err.to_string()));
             } else if let Some(ref xattr_list) = self.resolve_xattr_list(&file_entry) {
@@ -602,7 +660,7 @@ impl ReceiverContext {
             writer,
             ndx_write_codec.inner_mut(),
             0..self.file_list.len(),
-            &dest_dir,
+            dest_dir,
             sandbox.as_deref(),
         )?;
         #[cfg(not(unix))]
@@ -610,13 +668,13 @@ impl ReceiverContext {
             writer,
             ndx_write_codec.inner_mut(),
             0..self.file_list.len(),
-            &dest_dir,
+            dest_dir,
         )?;
 
         #[cfg(unix)]
-        self.create_hardlinks(&dest_dir, sandbox.as_deref(), writer)?;
+        self.create_hardlinks(dest_dir, sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]
-        self.create_hardlinks(&dest_dir, writer)?;
+        self.create_hardlinks(dest_dir, writer)?;
 
         // Drain the recorded stream's accumulated io_error before the late
         // sweep consults `stats.io_error`, mirroring the network drivers
@@ -633,7 +691,7 @@ impl ReceiverContext {
         if self.delete_pass_is_late() {
             self.run_receiver_delete_pass(
                 super::DeletePassPhase::Late,
-                &dest_dir,
+                dest_dir,
                 #[cfg(unix)]
                 sandbox.as_ref(),
                 writer,
@@ -644,7 +702,7 @@ impl ReceiverContext {
         // upstream: generator.c:2565-2618 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(
-            &dest_dir,
+            dest_dir,
             #[cfg(unix)]
             sandbox.as_deref(),
             writer,
@@ -660,6 +718,15 @@ impl ReceiverContext {
         self.finalize_replay(reader, writer)?;
 
         stats.io_error |= reader.take_io_error();
+        if inc_recurse {
+            // The list is complete only now that every sub-list has arrived.
+            let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
+            stats.num_dirs = num_dirs;
+            stats.num_symlinks = num_symlinks;
+            stats.num_devices = num_devices;
+            stats.num_specials = num_specials;
+            stats.io_error |= self.flist_reader_io_error() | self.flist_io_error;
+        }
         stats.got_xfer_error = reader.xfer_error_count() > 0 || self.got_xfer_error.get();
         stats.files_transferred = files_transferred;
         stats.transferred_file_size = transferred_file_size;
@@ -696,6 +763,94 @@ impl ReceiverContext {
     /// (`main.c:921`) - so any recorded goodbye bytes (written only when the
     /// recording sender teed them, protocol >= 31) are left unread exactly as
     /// upstream leaves them. A protocol-29/30 recording carries none at all.
+    /// Runs the replay's generator half over every file list received since
+    /// the last call, one list at a time, in the order the streaming network
+    /// driver walks a segment.
+    ///
+    /// The generator half's itemize rows are speculative - the recorded rows
+    /// rule a replay - so each list's are dropped again here, leaving the
+    /// recorded rows already buffered by the row loop untouched.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2770-2841` - each list's directory, `delete_in_dir()`,
+    ///   then `recv_generator()` over its entries, as the list arrives.
+    /// - `main.c:652-664` - on `--read-batch` that generator runs locally and
+    ///   its requests go to a pipe nothing reads.
+    #[allow(clippy::too_many_arguments)]
+    fn generate_replay_segments<W: Write + crate::writer::MsgInfoSender + ?Sized>(
+        &mut self,
+        generated: &mut usize,
+        setup: &PipelineSetup,
+        failed_dirs: &mut crate::receiver::directory::FailedDirectories,
+        writer: &mut W,
+        metadata_errors: &mut Vec<(std::path::PathBuf, String)>,
+        stats: &mut TransferStats,
+    ) -> io::Result<()> {
+        let walk_dirs = !self.config.flags.dry_run;
+        while *generated < self.ndx_segments.len() {
+            let segment_idx = *generated;
+            *generated += 1;
+            let range = self.ndx_segments[segment_idx].0..self.segment_end(segment_idx);
+            // The rows already buffered are recorded ones; set them aside so
+            // this list's speculative rows land in empty buffers and are
+            // dropped, then put them back.
+            let recorded_rows = std::mem::take(&mut *self.itemize_rows.borrow_mut());
+            let recorded_events = std::mem::take(&mut *self.event_rows.borrow_mut());
+            let recorded_no_transfer =
+                std::mem::take(&mut *self.server_no_transfer_itemize.borrow_mut());
+            stats.io_error |= self.flist_reader_io_error() | self.flist_io_error;
+            let head = if walk_dirs {
+                self.segment_root_head(segment_idx)
+            } else {
+                None
+            };
+            if let Some(flist_idx) = head {
+                self.walk_streamed_directory(flist_idx, setup, &mut *writer, failed_dirs, stats)?;
+            }
+            self.delete_in_segment(
+                segment_idx,
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_ref(),
+                failed_dirs,
+                writer,
+                stats,
+            )?;
+            if walk_dirs {
+                for flist_idx in range.clone() {
+                    if head != Some(flist_idx) && self.file_list[flist_idx].is_dir() {
+                        self.walk_streamed_directory(
+                            flist_idx,
+                            setup,
+                            &mut *writer,
+                            failed_dirs,
+                            stats,
+                        )?;
+                    }
+                }
+            }
+            self.run_segment_post_passes(range.clone(), setup, writer)?;
+            drop(self.build_files_to_transfer_in_range(
+                range,
+                writer,
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_deref(),
+                &setup.metadata_opts,
+                Some(failed_dirs),
+                metadata_errors,
+                stats,
+                setup.acl_cache.as_deref(),
+                setup.acl_id_map.as_deref(),
+            ));
+            *self.itemize_rows.borrow_mut() = recorded_rows;
+            *self.event_rows.borrow_mut() = recorded_events;
+            *self.server_no_transfer_itemize.borrow_mut() = recorded_no_transfer;
+        }
+        Ok(())
+    }
+
     fn finalize_replay<R: Read, W: Write + ?Sized>(
         &mut self,
         reader: &mut crate::reader::ServerReader<R>,
@@ -718,5 +873,33 @@ impl ReceiverContext {
             .advance_to(crate::transfer_state::TransferPhase::Complete)
             .map_err(crate::fsm_error)?;
         Ok(())
+    }
+}
+
+/// Opens the replay destination for an in-place write, anchored beneath the
+/// destination sandbox when one is held.
+///
+/// upstream: receiver.c:1212-1241 - the three-arm in-place open; never
+/// truncates, since the destination is the delta basis.
+fn open_inplace_dest(
+    file_path: &std::path::Path,
+    relative_path: &std::path::Path,
+    dest_dir: &std::path::Path,
+    #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+) -> io::Result<std::fs::File> {
+    #[cfg(unix)]
+    {
+        fast_io::open_inplace_output_via_sandbox_or_fallback(
+            sandbox,
+            dest_dir,
+            relative_path,
+            file_path,
+            false,
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (relative_path, dest_dir);
+        fast_io::open_inplace_output(file_path, false, fast_io::InplaceResolution::Direct)
     }
 }

@@ -786,14 +786,14 @@ pub(crate) fn copy_sources(
                 }
             }
 
-            // Write the flist end-of-list marker, ID lists, then delta data.
-            // upstream: flist.c:3063-3064 - without INC_RECURSE, send_id_lists()
-            // writes uid/gid name mappings after the flist end marker.
-            // Since names are already embedded inline via XMIT_USER_NAME_FOLLOWS,
-            // the ID lists are empty (just varint30(0) terminators), but they
-            // must be present for upstream's recv_id_list() to consume.
+            // Write the flist end-of-list marker, ID lists, the pre-30
+            // io_error word, then delta data.
+            // upstream: flist.c:3063-3067 - without INC_RECURSE, send_id_lists()
+            // writes uid/gid name mappings after the flist end marker, and
+            // protocol < 30 follows them with write_int(io_error).
             context.finalize_batch_flist()?;
             context.write_batch_id_lists()?;
+            context.write_batch_flist_io_error()?;
             context.flush_batch_delta_to_batch()?;
             // Stats are written by core::client::run::batch::finalize_batch()
             // after the engine returns, using actual transfer byte counts.

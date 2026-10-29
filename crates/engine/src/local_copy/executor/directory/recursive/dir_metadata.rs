@@ -248,7 +248,7 @@ pub(super) fn keep_preexisting_directory_writable(
             destination.display(),
             crate::local_copy::upstream_io_error(&error)
         );
-        context.record_io_error();
+        context.record_generator_io_error();
     }
 }
 
@@ -340,7 +340,7 @@ pub(super) fn enforce_transfer_root_self_lock(
         Err(error) => error,
         Ok(()) => io::Error::new(io::ErrorKind::PermissionDenied, "Permission denied"),
     };
-    context.record_io_error();
+    context.record_generator_io_error();
     Ok(Some(LocalCopyError::io(
         "modify permissions on",
         dot,

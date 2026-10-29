@@ -149,14 +149,25 @@ def _targeted(have: set[str]) -> list[Cell]:
         role="oc-client", fixture="filters",
         opts=("-am", "--protocol=28", "--include=*/", "--include=*.txt", "--exclude=*"))
     # A batch written by oc while pushing must replay with the peer's release,
-    # and so must a local batch written with --protocol set to the reader's
-    # newest protocol, which upstream records in the batch header.
-    for v, proto in (("3.1.3", 31), ("3.4.4", 32), ("3.5.0", 32), ("3.5.1", 33)):
+    # and so must a local batch written with --protocol set to the newest
+    # protocol whose batch that release can read; upstream records it in the
+    # batch header. For 3.1.3 that is 29: at 30+ a 3.5.1 writer sets
+    # CF_VARINT_FLIST_FLAGS (compat.c), which 3.1.3 cannot parse, so 3.5.1's
+    # own protocol-31 local batch fails there with "buffer overflow in
+    # recv_file_entry" exactly as oc's did.
+    for v, proto in (("3.1.3", 29), ("3.4.4", 32), ("3.5.0", 32), ("3.5.1", 33)):
         add(v, case="batch", transport="rsh", direction="push", role="oc-client",
             fixture="delta", opts=("-a",), batch_reader=True)
         add(v, case="batch-local", transport="local", direction="push", role="oc-client",
             fixture="delta", opts=("-a",), extra_args=(f"--protocol={proto}",),
             batch_reader=True)
+    # The pre-30 batch layouts: protocol 29 adds the iflags words and the
+    # write_int(io_error) after the id lists (flist.c:3065-3067); 28 has
+    # neither. Both sum each file with seeded MD4 (checksum.c:142-144).
+    for proto in (29, 28):
+        add("3.5.1", case=f"batch-local-protocol-{proto}", transport="local",
+            direction="push", role="oc-client", fixture="delta", opts=("-a",),
+            extra_args=(f"--protocol={proto}",), batch_reader=True)
     return cells
 
 

@@ -187,6 +187,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The daemon honours the `open noatime` module directive (#6850)
 
 ### Changed
+- A recursive local `--write-batch` records incremental recursion, as 3.5.1 does (header `81 ff`), and writes its file list in the incremental layout: the top level, then one sub-list per directory, placed among the file data by 3.5.1's 1000-entry lookahead. rsync 3.5.1 replays these batches, and `--delete-before`, `--delete-after`, `--delay-updates`, `-m`, `--qsort` and `--no-inc-recursive` still record a flat list (#8261)
 
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down to 33 instead of refused, and a peer outside 28-40 is refused with exit 2 after `@RSYNCD: OK`, as upstream does (#7916, #8209)
@@ -246,9 +247,13 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
 
 ### Fixed
+- `--read-batch` replays batches of more than 1000 files recorded with incremental recursion, including 3.5.1's. It failed with "unexpected per-file NDX while fetching file-list segment", because the sub-lists of such a batch arrive among the file data (#8261)
+- A local `--write-batch` now replays in upstream rsync as upstream's own batch does: each updated file carries its itemize bits (`>f.st......`, not `>f.........`) and the transfer root its `.d`/`cd` row; protocol 28-29 batches write the `io_error` word after the id lists and sum files with seeded MD4, where 3.5.1 aborted with "File-list index ... not in -1 - N"; the id lists name every owner and group; and an unreadable source directory sets `io_error` on the list it belongs to, so a replay no longer deletes inside it (#8266)
 - Under incremental recursion a sender names each user and group once per transfer, as a file owner or in a named ACL entry, as 3.5.1 does; oc named a returning id again in every sub-list (#8274)
 
 **Data integrity**
+- `--delete-excluded` on a pull or push no longer deletes destination files that a receiver-side (`-r`) rule protects; the flag only turns un-modified include/exclude rules into sender-side ones when they are parsed, as upstream `exclude.c:1479` does (#8258)
+- A local `--no-whole-file` delta sizes its block strong sums like upstream `sum_sizes_sqroot()` (2 bytes on the first pass for most files) instead of a fixed 16, checks each file with whole-file sums, and resends a file whose short sum matched the wrong block once with full sums, printing upstream wording such as `failed verification -- update discarded (will try again)`; `--stats` and the `-vv` lines count both passes as 3.5.1 does, and a discarded pass reads "discarded" under `--partial` and `--partial-dir` too (#8265)
 - A local `--no-whole-file` delta hashes blocks with the checksum upstream negotiates (xxh128, or the `--checksum-choice` transfer component), seeded like `get_checksum2()`, instead of a fixed unseeded MD4; `--debug=nstr` names that checksum, including a split `a,b` choice (#8246)
 - A disk error on one file (`ENOSPC`, a failed open, backup or `--append-verify` prefix) drains that file's queued data before reporting it, so a daemon worker no longer deadlocks its network thread and a QUIC push no longer stalls into a timeout, as upstream's `discard_receive_data()` does (`receiver.c:1254-1261`) (#8229)
 - `--remove-source-files --delay-updates` no longer lets the sender delete a source whose staged copy failed its final rename; the confirmation is sent only after the rename lands, as upstream does (#8232)
@@ -423,6 +428,12 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A local `--write-batch` below protocol 31 ends at the stats trailer, so upstream `--read-batch` accepts it (#8036)
 - `--write-batch` records itemize flags for created and metadata-changed non-regular entries, so an upstream `--read-batch` replays them (#7929, #7957, #7970)
 - Quote the injected `--filter` value in the batch replay script like upstream `write_arg()` (#7972)
+- `--write-batch` and `--only-write-batch` create no batch files under `--dry-run`, as upstream does (#8250)
+- The batch `.sh` here-doc spells each filter rule as upstream's `get_rule_prefix()` (`-r`/`+r` for `P`/`R`, dir-merge modifiers kept), and lists upstream's rule list at script time: no `-C` defaults, a clear empties it, `:e` becomes an exclude ahead of the merge (#8250)
+- `--read-batch` reconciles options as upstream `check_batch_flags()` does: options a protocol-29/28 header cannot record keep the invocation's value, `-d` follows `-r` below 29, notices print under `--info=misc`, only the destination is checked for a host; `--write-batch` with `--only-write-batch` is accepted (the later wins) and either with `--read-batch` is refused with upstream's text (#8250)
+- `--write-batch` creates the `.sh` and batch file up front and writes the script at protocol setup, so a failed run keeps it (open errors exit 3 and 11 as upstream); the `.sh` argv is byte-exact (non-UTF-8 kept, `--files-from` operands elided); remote batches record `--iconv` in the header (#8250)
+- A batch filter rule containing a newline is refused as upstream does, leaving its partial `.sh`; batch open errors name the file through upstream's `full_fname()`; local batches record CF_ID0_NAMES; `--read-batch --inplace` rewrites the destination in place (#8250)
+- Under `--delete-excluded`, only filter rules given after the option carry the `s` modifier on the wire and in the batch `.sh`, as upstream parses them (#8250)
 - Resolve a relative `--temp-dir` against the destination (#7397)
 - Keep an absolute `--partial-dir` through the delayed sweep, clear a non-directory at its name, reuse its leaf as a basis, and stage a resume in place (#7499, #7500, #7556, #7557, #7599, #7868)
 - Recover a read-only in-place destination (#7485)
@@ -544,6 +555,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `inplace_partial` stays negotiated on the sender (#8156)
 - `--existing` and `--ignore-existing` apply to non-regular entries (#8168)
 - `-z` is detected only in the server flag cluster, not inside an `-e` string (#8188)
+- Public rustdoc no longer links private items in `batch`, `test-support` and `transfer`, so the strict "rustdoc links" job passes (#8276)
 
 ### Removed
 - The unreachable `engine::AsyncBatchCopier` and its `RSYNC_MAX_CONCURRENT` environment read (#8236)

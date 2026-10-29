@@ -21,6 +21,6 @@ pub(crate) mod wire;
 mod tests;
 
 pub use file_entry::FileEntry;
-pub use flags::{BatchFlags, check_batch_flags};
+pub use flags::{BatchFlags, ReconciledFlags, check_batch_flags};
 pub use header::BatchHeader;
 pub use stats::BatchStats;
