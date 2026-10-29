@@ -211,13 +211,18 @@ fn list_only_omits_implied_parents() {
     }
 }
 
-/// Recursion takes the incremental receiver: the implied `sub` above a
-/// recursed `sub/deep` is left alone and is not counted as a failure, so the
-/// run succeeds while `sub/deep` itself is created and re-timed as usual.
+/// Recursion takes the incremental receiver: the implied `sub` above the
+/// operand is left alone and is not counted as a failure, so the run
+/// succeeds. A recursed directory operand (`sub/deep`) streams its sub-lists;
+/// a file operand (`sub/f`) has nothing to recurse into, so the whole list
+/// arrives at once and the receiver's batch body walks it.
 #[test]
 fn a_recursed_operand_leaves_its_implied_parent_alone() {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
-    for mode in MODES {
+    for (mode, operand) in MODES
+        .into_iter()
+        .flat_map(|mode| [(mode, "sub/deep"), (mode, "sub/f")])
+    {
         let tmp = create_tempdir();
         source(tmp.path());
         let src = tmp.path().join("src");
@@ -244,33 +249,37 @@ fn a_recursed_operand_leaves_its_implied_parent_alone() {
                 ));
         }
         runner = match mode {
-            Mode::Local => runner.arg("sub/deep").arg(format!("{}/", dest.display())),
+            Mode::Local => runner.arg(operand).arg(format!("{}/", dest.display())),
             Mode::Pull => runner
-                .arg(format!("localhost:{}/./sub/deep", src.display()))
+                .arg(format!("localhost:{}/./{operand}", src.display()))
                 .arg(format!("{}/", dest.display())),
             Mode::Push => runner
-                .arg("sub/deep")
+                .arg(operand)
                 .arg(format!("localhost:{}/", dest.display())),
         };
         let out = runner.run().expect("transfer run");
         let rows = format!("{}{}", out.stdout_str(), out.stderr_str());
-        assert_eq!(out.status, Some(0), "{mode:?}:\n{rows}");
+        assert_eq!(out.status, Some(0), "{mode:?} {operand}:\n{rows}");
         assert!(
             !rows.lines().any(|l| l.ends_with(" sub/")),
-            "{mode:?}: the implied parent must not be itemized:\n{rows}"
+            "{mode:?} {operand}: the implied parent must not be itemized:\n{rows}"
         );
-        assert!(rows.contains("cd+++++++++ sub/deep/"), "{mode:?}:\n{rows}");
-        let deep = fs::metadata(dest.join("sub/deep"))
-            .expect("dest/sub/deep")
-            .mtime();
-        assert_eq!(
-            deep, 1_600_000_000,
-            "{mode:?}: sub/deep takes the source time"
-        );
+        if operand == "sub/deep" {
+            assert!(rows.contains("cd+++++++++ sub/deep/"), "{mode:?}:\n{rows}");
+            let deep = fs::metadata(dest.join("sub/deep"))
+                .expect("dest/sub/deep")
+                .mtime();
+            assert_eq!(
+                deep, 1_600_000_000,
+                "{mode:?}: sub/deep takes the source time"
+            );
+        } else {
+            assert!(dest.join("sub/f").is_file(), "{mode:?}:\n{rows}");
+        }
         let sub = fs::metadata(&dest_sub).expect("dest/sub").mtime();
         assert_ne!(
             sub, 1_600_000_000,
-            "{mode:?}: sub must not take the source time"
+            "{mode:?} {operand}: sub must not take the source time"
         );
     }
 }
