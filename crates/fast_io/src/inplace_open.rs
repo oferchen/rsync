@@ -106,11 +106,14 @@ impl InplaceResolution {
             // wears only while it is being written.
             return crate::owner_walk::operator_open_recv(path, create, truncate, 0o600);
         }
-        fs::OpenOptions::new()
-            .create(create)
-            .write(true)
-            .truncate(truncate)
-            .open(path)
+        let mut options = fs::OpenOptions::new();
+        options.create(create).write(true).truncate(truncate);
+        // upstream: receiver.c:1224 - `do_open(fnametmp, O_WRONLY|O_CREAT,
+        // 0600)`. A file this open creates stays owner-only until
+        // `set_file_attrs()` applies its final mode.
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        options.open(path)
     }
 }
 

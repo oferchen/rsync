@@ -108,9 +108,9 @@ pub struct PipelinedReceiver {
     /// Whether the redo mechanism is active (phase 1). When false (phase 2),
     /// checksum mismatches are hard errors.
     redo_enabled: bool,
-    /// Count of files skipped due to permission-denied errors during disk commit.
-    /// Used to accumulate `IOERR_GENERAL` for exit code 23.
-    permission_error_count: u32,
+    /// Count of files skipped because their output could not be opened or
+    /// renamed into place. Each one is an `FERROR_XFER`, so the run exits 23.
+    skipped_file_count: u32,
     /// Distinct 4 KiB logical blocks written across every committed file.
     /// upstream: fileio.c:218-243 `stats.touched_blocks_4k`.
     touched_blocks_4k: u64,
@@ -277,7 +277,7 @@ impl PipelinedReceiver {
             expected_checksums: VecDeque::new(),
             redo_indices: Vec::new(),
             redo_enabled: true,
-            permission_error_count: 0,
+            skipped_file_count: 0,
             touched_blocks_4k: 0,
             warnings: Vec::new(),
             delayed_updates: Vec::new(),
@@ -345,6 +345,10 @@ impl PipelinedReceiver {
             // upstream: rsync-3.5.1/receiver.c:465-466
             Some(crate::temp_guard::CommitOp::Mkstemp) | None => {
                 format!("rsync: [receiver] mkstemp {name} failed: {reason}")
+            }
+            // upstream: rsync-3.5.1/receiver.c:1243-1244
+            Some(crate::temp_guard::CommitOp::Open) => {
+                format!("rsync: [receiver] open {name} failed: {reason}")
             }
             Some(crate::temp_guard::CommitOp::Backup) => {
                 keep_backup_failed_line(&name, error, &reason)
@@ -447,12 +451,13 @@ impl PipelinedReceiver {
     /// Returns `None` when the file was skipped and the transfer may continue,
     /// or `Some(error)` for the caller to propagate.
     ///
-    /// Upstream answers the two commit failures differently, and the
-    /// discriminator is the operation, not the errno:
+    /// Upstream answers commit failures by the operation that failed, never by
+    /// the errno - see [`CommitDisposition`]:
     ///
-    /// - a denied `mkstemp()` is per-file. `receiver.c:465-468` reports it and
-    ///   `recv_files()` moves to the next file, so the run ends at
-    ///   `RERR_PARTIAL` (23) through `io_error`.
+    /// - a failed temp create, in-place open or rename into place is per-file.
+    ///   `receiver.c:465-468`, `receiver.c:1242-1261` and `rsync.c:918-927`
+    ///   report it as `FERROR_XFER` and `recv_files()` moves to the next file,
+    ///   so the run ends at `RERR_PARTIAL` (23).
     /// - a failed backup is fatal. `finish_transfer()` answers
     ///   `!make_backup(fname, False)` with `exit_cleanup(RERR_FILEIO)`, which
     ///   does not return. Continuing would let every later file overwrite the
@@ -482,34 +487,23 @@ impl PipelinedReceiver {
     ) -> Option<io::Error> {
         let pending = self.expected_checksums.pop_front();
         let path = pending.map(|p| p.file_path).unwrap_or_default();
-        // upstream: rsync.c:897-900 (backup, FERROR_XFER) and receiver.c:1296-1300
-        // (close, FERROR) - both are exit_cleanup(RERR_FILEIO).
-        let fatal_code = match crate::temp_guard::commit_op_failure(&error) {
-            Some((crate::temp_guard::CommitOp::Backup, _)) => Some(MessageCode::ErrorXfer),
-            Some((crate::temp_guard::CommitOp::Close, _)) => Some(MessageCode::Error),
-            _ => None,
-        };
-
-        if let Some(code) = fatal_code {
-            self.warnings
-                .push((code, self.commit_failure(&path, &error)));
-            return Some(error);
+        match CommitDisposition::of(&error) {
+            CommitDisposition::SkipFile => {
+                // FERROR_XFER, not FINFO: the peer's rwrite() sets
+                // got_xfer_error, so the run exits 23 (RERR_PARTIAL).
+                let message = self.commit_failure(&path, &error);
+                self.warnings.push((MessageCode::ErrorXfer, message));
+                meta_errors.push((path, error.to_string()));
+                self.skipped_file_count += 1;
+                None
+            }
+            CommitDisposition::Abort(code) => {
+                self.warnings
+                    .push((code, self.commit_failure(&path, &error)));
+                Some(error)
+            }
+            CommitDisposition::Propagate => Some(error),
         }
-
-        if !is_permission_error(&error) {
-            return Some(error);
-        }
-
-        // upstream: receiver.c:465-466 - rsyserr(FERROR_XFER, errno,
-        // "mkstemp %s failed", full_fname(fnametmp)). Emitting this as
-        // FERROR_XFER (not FINFO) makes the peer's rwrite() set
-        // got_xfer_error, so the run exits 23 (RERR_PARTIAL) instead of 0
-        // when mkstemp() was denied.
-        let message = self.commit_failure(&path, &error);
-        self.warnings.push((MessageCode::ErrorXfer, message));
-        meta_errors.push((path, error.to_string()));
-        self.permission_error_count += 1;
-        None
     }
 
     /// Non-blockingly drains all available commit results.
@@ -627,12 +621,12 @@ impl PipelinedReceiver {
         self.touched_blocks_4k
     }
 
-    /// Returns the number of files skipped due to permission-denied errors.
+    /// Returns the number of files skipped because their output could not be
+    /// opened or renamed into place.
     ///
-    /// Used by the receiver to accumulate `IOERR_GENERAL` in `TransferStats.io_error`,
-    /// which maps to exit code 23 (`RERR_PARTIAL`).
-    pub fn permission_error_count(&self) -> u32 {
-        self.permission_error_count
+    /// Each skip is an `FERROR_XFER`, which maps to exit code 23 (`RERR_PARTIAL`).
+    pub fn skipped_file_count(&self) -> u32 {
+        self.skipped_file_count
     }
 
     /// Verifies a commit result's computed checksum against the expected value.
@@ -807,18 +801,41 @@ impl PipelinedReceiver {
     }
 }
 
-/// Returns `true` if the I/O error represents a permission-denied condition
-/// (EACCES or EPERM) that should be treated as a recoverable per-file error.
-///
-/// Upstream rsync continues the transfer when individual files cannot be
-/// opened due to insufficient privileges, setting `io_error |= IOERR_GENERAL`
-/// and returning exit code 23 (`RERR_PARTIAL`) at the end.
-///
-/// # Upstream Reference
-///
-/// - `receiver.c:1242-1244` - `do_open()` failure handling logs and continues
-fn is_permission_error(err: &io::Error) -> bool {
-    err.kind() == io::ErrorKind::PermissionDenied
+/// How the receiver answers a failed commit, decided by the operation that
+/// failed - never by the errno. The one place the split is made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommitDisposition {
+    /// Report an `FERROR_XFER` line, skip the file and keep going (exit 23).
+    SkipFile,
+    /// Report the line with this code, then stop with `RERR_FILEIO` (11).
+    Abort(MessageCode),
+    /// Not a commit-path operation: hand the error back untouched.
+    Propagate,
+}
+
+impl CommitDisposition {
+    /// Classifies `error` by the [`CommitOp`](crate::temp_guard::CommitOp) its
+    /// raising site attached.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:465-468` - `mkstemp %s failed`, `return -1`: per-file.
+    /// - `receiver.c:1242-1261` - `open %s failed`, then
+    ///   `discard_receive_data()` and `continue`: per-file.
+    /// - `rsync.c:918-927` - `rename %s -> "%s"`, `finish_transfer()` returns
+    ///   0 and `recv_files()` moves on: per-file.
+    /// - `rsync.c:897-900` - a failed backup is `exit_cleanup(RERR_FILEIO)`.
+    /// - `receiver.c:1296-1300` - a failed `close()` is
+    ///   `rsyserr(FERROR, ...)` then `exit_cleanup(RERR_FILEIO)`.
+    fn of(error: &io::Error) -> Self {
+        use crate::temp_guard::CommitOp;
+        match crate::temp_guard::commit_op_failure(error) {
+            Some((CommitOp::Mkstemp | CommitOp::Open | CommitOp::Rename, _)) => Self::SkipFile,
+            Some((CommitOp::Backup, _)) => Self::Abort(MessageCode::ErrorXfer),
+            Some((CommitOp::Close, _)) => Self::Abort(MessageCode::Error),
+            None => Self::Propagate,
+        }
+    }
 }
 /// Renders upstream's `keep_backup failed` diagnostic, naming both operands of
 /// the failing move when the raising site attached the second one.
@@ -1284,7 +1301,7 @@ mod tests {
             "error should mention permission denied: {}",
             errors[0].1
         );
-        assert_eq!(pr.permission_error_count(), 1);
+        assert_eq!(pr.skipped_file_count(), 1);
 
         // Restore permissions for cleanup
         let _ = std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o755));
@@ -1378,7 +1395,7 @@ mod tests {
             1,
             "the drained multi-chunk file yields exactly one per-file error"
         );
-        assert_eq!(pr.permission_error_count(), 1);
+        assert_eq!(pr.skipped_file_count(), 1);
 
         // The failed file sets IOERR_GENERAL, which maps to RERR_PARTIAL (23),
         // matching upstream's FERROR_XFER -> got_xfer_error -> _exit(RERR_PARTIAL).
@@ -1429,7 +1446,7 @@ mod tests {
     #[test]
     fn permission_error_count_starts_at_zero() {
         let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
-        assert_eq!(pr.permission_error_count(), 0);
+        assert_eq!(pr.skipped_file_count(), 0);
         drop(pr);
     }
 
@@ -2718,5 +2735,129 @@ mod tests {
                 "a file whose close failed must not be renamed into place (chunked={chunked})"
             );
         }
+    }
+
+    /// The skip-or-abort split follows the failed operation, whatever the
+    /// errno: a full disk, a read-only mount or an over-long name while
+    /// creating, opening or renaming the output skips that one file, as
+    /// upstream's per-site `FERROR_XFER` + `continue` does.
+    ///
+    /// upstream: receiver.c:465-468, receiver.c:1242-1261, rsync.c:918-927
+    /// (per-file); rsync.c:897-900 and receiver.c:1296-1300 (RERR_FILEIO).
+    #[cfg(unix)]
+    #[test]
+    fn commit_disposition_is_decided_by_the_operation_not_the_errno() {
+        use crate::temp_guard::{CommitOp, attach_commit_op};
+        let tagged = |op, errno| {
+            attach_commit_op(
+                op,
+                std::path::Path::new("/dest/f"),
+                io::Error::from_raw_os_error(errno),
+            )
+        };
+        for errno in [
+            libc::EACCES,
+            libc::ENOSPC,
+            libc::EROFS,
+            libc::ENAMETOOLONG,
+            libc::EISDIR,
+            libc::ENOENT,
+        ] {
+            for op in [CommitOp::Mkstemp, CommitOp::Open, CommitOp::Rename] {
+                assert_eq!(
+                    CommitDisposition::of(&tagged(op, errno)),
+                    CommitDisposition::SkipFile,
+                    "{op:?} errno {errno}"
+                );
+            }
+            assert_eq!(
+                CommitDisposition::of(&tagged(CommitOp::Backup, errno)),
+                CommitDisposition::Abort(MessageCode::ErrorXfer)
+            );
+            assert_eq!(
+                CommitDisposition::of(&tagged(CommitOp::Close, errno)),
+                CommitDisposition::Abort(MessageCode::Error)
+            );
+            assert_eq!(
+                CommitDisposition::of(&io::Error::from_raw_os_error(errno)),
+                CommitDisposition::Propagate,
+                "an untagged error is not a commit-path failure"
+            );
+        }
+    }
+
+    /// An `--inplace` output that cannot be created is skipped with upstream's
+    /// `open %s failed` line and the next file still lands.
+    ///
+    /// The destination directory is 0555 and the file does not exist yet, so
+    /// the create fails `EACCES`, the no-create retry then finds no file, and
+    /// the error that reaches the report is the last arm's `ENOENT` - exactly
+    /// what rsync 3.5.1 prints for the same fixture:
+    /// `rsync: [receiver] open "<dir>/a" failed: No such file or directory (2)`.
+    /// Treating that non-`EACCES` errno as fatal was the defect: oc exited 3.
+    ///
+    /// upstream: receiver.c:1221-1244, receiver.c:1255-1261 (`continue`).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_inplace_open_failure_skips_the_file_with_the_open_wording() {
+        use std::os::unix::fs::PermissionsExt;
+        if std::env::var("USER").is_ok_and(|u| u == "root") {
+            return;
+        }
+        let dir = test_support::create_tempdir();
+        let readonly_dir = dir.path().join("readonly");
+        std::fs::create_dir(&readonly_dir).unwrap();
+        std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o555)).unwrap();
+        let blocked = readonly_dir.join("a");
+        let landed = dir.path().join("b");
+
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+        for (index, path) in [&blocked, &landed].into_iter().enumerate() {
+            pr.file_sender()
+                .send(FileMessage::WholeFile {
+                    begin: Box::new(BeginMessage {
+                        file_path: path.clone(),
+                        target_size: 7,
+                        file_entry_index: index,
+                        checksum_verifier: None,
+                        is_device_target: false,
+                        is_inplace: true,
+                        append_offset: 0,
+                        xattr_list: None,
+                        xattr_basis: None,
+                        file_entry: None,
+                    }),
+                    data: b"payload".to_vec(),
+                    expected_checksum: Default::default(),
+                })
+                .unwrap();
+            pr.note_commit_sent(
+                [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+                0,
+                path.clone(),
+                PathBuf::from(path.file_name().unwrap()),
+                index,
+                true,
+            );
+        }
+
+        let (bytes, errors) = pr
+            .drain_all_results()
+            .expect("a failed in-place open is per-file, not fatal");
+
+        assert_eq!(bytes, 7, "only the second file is written");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(pr.skipped_file_count(), 1);
+        assert_eq!(
+            pr.drain_warnings(),
+            vec![(
+                MessageCode::ErrorXfer,
+                format!(
+                    "rsync: [receiver] open \"{}\" failed: No such file or directory (2)",
+                    blocked.display()
+                )
+            )]
+        );
+        assert_eq!(std::fs::read(&landed).unwrap(), b"payload");
     }
 }
