@@ -73,7 +73,17 @@
 //!   sum), surfaced - not caused - by this trace. Changing it would change local
 //!   block matching, so it is reported rather than adjusted here.
 
-use logging::debug_log;
+use logging::{DebugFlag, debug_gte, debug_log};
+
+/// Whether the match counters are reported, the only time a scan replays
+/// upstream's hash table to produce them.
+///
+/// upstream: match.c:480 `match_report()` prints them at `DEBUG_GTE(DELTASUM, 1)`.
+#[inline]
+#[must_use]
+pub fn counters_reported() -> bool {
+    debug_gte(DebugFlag::Deltasum, 1)
+}
 
 /// Level 2 `hash search b=%ld len=%s` - scan start with block length and the
 /// source length the scan was sized from.

@@ -19,6 +19,7 @@ mod bithash;
 mod builder;
 mod compact_lookup;
 mod trace;
+mod upstream_hash;
 
 #[cfg(test)]
 mod bithash_tests;
@@ -45,6 +46,7 @@ pub use trace::{
     HASH_KEY_BITS, HashtableRole, trace_created as trace_hashtable_created,
     trace_destroyed as trace_hashtable_destroyed, trace_growing as trace_hashtable_growing,
 };
+pub use upstream_hash::UpstreamHashTable;
 
 /// Size of the tag table for quick rolling checksum rejection (2^16 entries).
 ///
@@ -84,28 +86,17 @@ const MAX_CHAIN_LEN: u32 = 1024;
 /// itself a `u32` and one slot is consumed by the sentinel.
 const NEXT_MATCH_NONE: u32 = u32::MAX;
 
-/// Per-run tally of the delta matcher's probe diagnostics, mirroring the two
-/// counters upstream reports on the `-vv` `total:` line.
+/// The two probe counters upstream reports on the `-vv` `total:` line, as
+/// [`UpstreamHashTable`] replays them.
 ///
-/// Semantics are oc-native. Upstream (`match.c:228`) increments `hash_hits`
-/// once per source offset whose `SUM2HASH` bucket is non-empty, and
-/// (`match.c:271`) `false_alarms` once per candidate whose weak sum matches but
-/// whose strong sum does not. oc has no such hashed-bucket table: instead
-/// `hash_hits` counts positives of the zsync bithash prefilter (the coarse gate
-/// analogous to a bucket hit) and `false_alarms` counts bithash positives that
-/// then fail the exact rolling-sum + strong-sum verify. Because upstream's
-/// counts are inflated by `SUM2HASH` collisions that oc's structure does not
-/// have, the two numbers are NOT expected to equal the upstream oracle; they
-/// carry genuine signal about oc's own bithash false-positive rate. The
-/// `matches` count and the `data` byte total on the same line DO match upstream
-/// exactly.
+/// upstream: match.c:228 `hash_hits++` once per offset whose `hash_table`
+/// bucket is non-empty, and match.c:271 `false_alarms++` once per chain
+/// candidate whose weak sum matches but whose strong sum does not.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ProbeCounters {
-    /// Source offsets that passed the bithash prefilter (the coarse gate; some
-    /// will still fail the exact verify and count as false alarms).
+    /// Offsets whose upstream `hash_table` bucket was non-empty.
     pub hash_hits: u64,
-    /// Bithash positives that produced no confirmed match (exact rolling-sum or
-    /// strong-sum verify rejected them).
+    /// Chain candidates rejected by the strong-sum compare.
     pub false_alarms: u64,
 }
 
@@ -465,23 +456,6 @@ impl DeltaSignatureIndex {
     /// Attempts to locate a matching block for a contiguous byte slice.
     #[inline]
     pub fn find_match_bytes(&self, digest: RollingDigest, window: &[u8]) -> Option<usize> {
-        self.probe_bytes(digest, window, None)
-    }
-
-    /// Shared probe core behind [`Self::find_match_bytes`] and the
-    /// counted [`Self::find_match_window_counted`].
-    ///
-    /// When `counters` is `Some`, tallies upstream-style
-    /// `hash_hits`/`false_alarms` (see [`ProbeCounters`]) as a side effect; the
-    /// returned match index is identical either way, so the counted probe can
-    /// never change which bytes the matcher reuses.
-    #[inline]
-    fn probe_bytes(
-        &self,
-        digest: RollingDigest,
-        window: &[u8],
-        mut counters: Option<&mut ProbeCounters>,
-    ) -> Option<usize> {
         if window.len() != self.block_length {
             return None;
         }
@@ -494,31 +468,13 @@ impl DeltaSignatureIndex {
 
         // zsync-style bithash prefilter: rejects ~7/8 of post-tag misses using
         // both sum halves before the hash-table probe. One-sided (no false
-        // negatives) but it does admit false positives. A positive here is oc's
-        // analogue of upstream's coarse hash-bucket hit (match.c:228
-        // `hash_hits++`): it still has to pass the exact rolling-sum +
-        // strong-sum verify below, and a positive that fails that verify is a
-        // false alarm (match.c:271). oc counts bithash positives rather than
-        // upstream's SUM2HASH bucket hits, so these two diagnostics are
-        // oc-native - see [`ProbeCounters`].
+        // negatives), so a positive still has to pass the exact verify below.
         if !self.bithash.contains(digest.value()) {
             return None;
         }
-        if let Some(counters) = counters.as_mut() {
-            counters.hash_hits = counters.hash_hits.saturating_add(1);
-        }
 
         let strong = self.algorithm.compute_truncated(window, self.strong_length);
-        if let Some(index) = self.walk_chain(digest, strong.as_slice()) {
-            return Some(index);
-        }
-        // A bithash positive that produced no confirmed match: the exact
-        // rolling-sum / strong-sum verify rejected it. upstream: match.c:271
-        // `false_alarms++`.
-        if let Some(counters) = counters.as_mut() {
-            counters.false_alarms = counters.false_alarms.saturating_add(1);
-        }
-        None
+        self.walk_chain(digest, strong.as_slice())
     }
 
     /// Attempts to locate a matching block for a possibly non-contiguous window
@@ -712,30 +668,6 @@ impl DeltaSignatureIndex {
         scratch.extend_from_slice(front);
         scratch.extend_from_slice(back);
         self.find_match_bytes(digest, scratch.as_slice())
-    }
-
-    /// [`Self::find_match_window`] that also tallies upstream-style
-    /// `hash_hits`/`false_alarms` into `counters` for the `-vv` `total:` line.
-    ///
-    /// upstream: `match.c:163-378 hash_search()` maintains the same two counters
-    /// while scanning a file; the local-copy delta loop calls this in place of
-    /// the uncounted probe so it can reproduce `match_report()` (`match.c:480`).
-    pub fn find_match_window_counted(
-        &self,
-        digest: RollingDigest,
-        window: &VecDeque<u8>,
-        scratch: &mut Vec<u8>,
-        counters: &mut ProbeCounters,
-    ) -> Option<usize> {
-        if window.len() != self.block_length {
-            return None;
-        }
-
-        scratch.clear();
-        let (front, back) = window.as_slices();
-        scratch.extend_from_slice(front);
-        scratch.extend_from_slice(back);
-        self.probe_bytes(digest, scratch.as_slice(), Some(counters))
     }
 
     /// Attempts to match a short trailing [`VecDeque`] window against a basis
