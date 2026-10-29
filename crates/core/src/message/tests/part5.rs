@@ -178,6 +178,7 @@ fn role_all_lists_every_variant_once_in_canonical_order() {
         [
             Role::Sender,
             Role::Receiver,
+            Role::PreForkReceiver,
             Role::Generator,
             Role::Server,
             Role::Client,

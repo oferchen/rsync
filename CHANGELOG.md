@@ -282,6 +282,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 **Interop**
 - A remote shell that dies before the protocol handshake exits 12 with upstream's message in either ordering; a failed version write exited 5 (#8283)
+- A failed pull reports from the process upstream would: `[Receiver]` before the file list is in, then the receiver and the generator, each with its own byte count. A daemon pull exits by error class (end of stream 12, reset socket 10, `--timeout` 30, an uncreatable destination root 11 with upstream's `mkdir ... failed` line) instead of 23 (#PRNUM)
 - A receiver refuses a peer file-list index that no live list owns, including one in an incremental-recursion sub-list it has already freed, with upstream's `File-list index %d not in %d - %d (read_ndx_and_attrs)` error and exit 2 (#8240)
 - A `-m` push to an upstream daemon sends the filter list the receiver reads, so 3.5.1 no longer aborts with `buffer overflow: recv_rules` (#8232)
 - A basis block matches every repeat of its content, as upstream does: repeated data (zero runs in sparse or VM images) went out as literals where upstream sends copy tokens, changing the wire and the `--stats` Literal/Matched split (#8009)

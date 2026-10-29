@@ -18,10 +18,7 @@ use engine::batch::BatchWriter;
 use rsync_io::ssh::SshConnection;
 
 use super::super::super::config::ClientConfig;
-use super::super::super::error::{
-    ClientError, connection_unexpectedly_closed_error, invalid_argument_error, local_abort_text,
-    remote_exit_error,
-};
+use super::super::super::error::{ClientError, invalid_argument_error, remote_exit_error};
 use super::super::super::progress::ClientProgressObserver;
 use super::super::super::summary::{ClientEvent, ClientSummary};
 use super::super::batch_support::{BatchContext, build_batch_context, build_batch_recording};
@@ -31,6 +28,7 @@ use super::super::implied_source::implied_source_args_for_pull;
 use super::super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 use super::super::itemize_sink::ItemizeEventSink;
 use super::super::operand_split::split_transfer_operands;
+use super::super::reporting_side::{ReportingSide, local_failure_error};
 use super::super::version_exchange::version_exchange_failure;
 use super::connection::build_ssh_connection;
 use super::exit_status::{
@@ -46,14 +44,15 @@ use crate::server::{ServerConfig, ServerRole, TransferProgressCallback};
 /// Maps the local client's server-infrastructure role to its trailer role.
 ///
 /// upstream: who_am_i() (rsync.c:987) - a client push runs under `am_sender`
-/// (`[sender]`), a client pull is the pre-forked receiver (`[Receiver]`). The
+/// (`[sender]`), a client pull is the pre-forked receiver (`[Receiver]`) until
+/// the [`ReportingSide`] says it crossed the fork. The
 /// client drives the server flow as a `ServerRole::Generator` on a push (local
 /// sends) and as a `ServerRole::Receiver` on a pull (local receives), matching
 /// the `is_sender = role == Generator` split used for batch recording.
 pub(in crate::client::remote) const fn local_client_role(server_role: ServerRole) -> Role {
     match server_role {
         ServerRole::Generator => Role::Sender,
-        ServerRole::Receiver => Role::Receiver,
+        ServerRole::Receiver => Role::PreForkReceiver,
     }
 }
 
@@ -375,6 +374,7 @@ fn run_server_over_ssh_connection(
     // upstream: io.c:299-301 whine_about_eof() names stats.total_read, the raw
     // bytes perform_io() read once buffered input started (io.c:938).
     let bytes_read = Arc::new(AtomicU64::new(0));
+    let fork_point = Arc::new(crate::server::ForkPoint::default());
     let transfer_result = crate::server::run_server_with_handshake_adopting(
         config,
         handshake,
@@ -389,9 +389,11 @@ fn run_server_over_ssh_connection(
                 None
             },
             bytes_read: Some(Arc::clone(&bytes_read)),
+            fork_point: Some(Arc::clone(&fork_point)),
             ..Default::default()
         },
     );
+    let side = ReportingSide::of(local_role, &fork_point);
 
     // Close the writer to signal EOF so the remote process can exit.
     drop(writer);
@@ -411,14 +413,14 @@ fn run_server_over_ssh_connection(
                 Ok((stats, negotiated_protocol, collected_events))
             } else {
                 // upstream: log.c:937 log_exit() renders the winning child code
-                // by its rerr_name tagged with the local role, not "client".
-                Err(remote_exit_error(child_exit_code, local_role))
+                // by its rerr_name tagged with the exiting process's role.
+                Err(remote_exit_error(child_exit_code, side.exit_role()))
             }
         }
         Err(transfer_error) => Err(transfer_failure_error(
             transfer_error,
             child_status.map_or(ExitCode::WaitChild, map_cleanup_child_exit_status),
-            local_role,
+            side,
             bytes_read.load(Ordering::Relaxed),
         )),
     }
@@ -429,7 +431,7 @@ fn run_server_over_ssh_connection(
 pub(in crate::client::remote) fn transfer_failure_error(
     transfer_error: std::io::Error,
     child_exit_code: ExitCode,
-    local_role: Role,
+    side: ReportingSide,
     bytes_received: u64,
 ) -> ClientError {
     // upstream: io.c:1930 - a received `MSG_ERROR_EXIT` ends in the
@@ -439,44 +441,19 @@ pub(in crate::client::remote) fn transfer_failure_error(
     // local `ConnectionAborted` and reports RERR_SOCKETIO (10) whatever
     // the server actually exited with.
     if let Some(code) = crate::server::remote_exit_code(&transfer_error) {
-        return remote_exit_error(ExitCode::from_raw(code), local_role);
+        return remote_exit_error(ExitCode::from_raw(code), side.exit_role());
     }
     if let Some(error) = crate::client::error::corrupt_fake_super_destination_error(&transfer_error)
     {
         return error;
     }
-    // upstream: io.c:282-304 whine_about_eof() - the peer closing the stream
-    // mid-transfer prints the whine, then exit_cleanup(RERR_STREAMIO) takes the
-    // worse of that and the child's raw status (cleanup.c:150-152).
-    if transfer_error.kind() == std::io::ErrorKind::UnexpectedEof {
-        let exit = if child_exit_code.as_i32() > ExitCode::StreamIo.as_i32() {
-            child_exit_code
-        } else {
-            ExitCode::StreamIo
-        };
-        return connection_unexpectedly_closed_error(bytes_received, exit, local_role);
-    }
-    let transfer_exit = ExitCode::from_io_error(&transfer_error);
-    // upstream: cleanup.c:146-153 - _exit_cleanup() polls the child with
-    // WNOHANG. When the client itself aborts with RERR_PROTOCOL (e.g.
-    // exclude.c:1924-1926 refusing a filter rule a pre-29 peer cannot read),
-    // the remote side is still blocked on its input, so its status is not yet
-    // available and the local code stands. oc closes the pipes and waits,
-    // which makes the child exit with its own EOF code (12) and would
-    // otherwise mask the refusal. A receiver that cannot enter its destination
-    // (main.c:778-781, RERR_FILESELECT) aborts the same way, before the remote
-    // sender has finished. A rule refused out of a per-directory merge file
-    // during the sender's walk is the same: exclude.c:133-137 filter_rule_err()
-    // exits RERR_SYNTAX while the peer still waits for the file list.
-    let local_setup_abort = matches!(
-        transfer_exit,
-        ExitCode::Protocol | ExitCode::FileSelect | ExitCode::Syntax
-    );
-    if !local_setup_abort && child_exit_code.as_i32() > transfer_exit.as_i32() {
-        remote_exit_error(child_exit_code, local_role)
-    } else {
-        invalid_argument_error(&local_abort_text(&transfer_error), transfer_exit.as_i32())
-    }
+    local_failure_error(
+        &transfer_error,
+        Some(child_exit_code),
+        side,
+        bytes_received,
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -493,7 +470,7 @@ mod transfer_failure_error_tests {
         let err = transfer_failure_error(
             protocol::protocol_violation("filter rules are too modern for remote rsync."),
             ExitCode::StreamIo,
-            Role::Sender,
+            ReportingSide::Sender,
             0,
         );
         assert_eq!(err.exit_code(), 2);
@@ -512,7 +489,7 @@ mod transfer_failure_error_tests {
         let err = transfer_failure_error(
             protocol::syntax_violation("unexpected end of filter rule: <rule from /a/.f>"),
             ExitCode::StreamIo,
-            Role::Sender,
+            ReportingSide::Sender,
             0,
         );
         assert_eq!(err.exit_code(), 1);
@@ -531,7 +508,7 @@ mod transfer_failure_error_tests {
         let err = transfer_failure_error(
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe"),
             ExitCode::StreamIo,
-            Role::Sender,
+            ReportingSide::Sender,
             0,
         );
         assert_eq!(err.exit_code(), 12);

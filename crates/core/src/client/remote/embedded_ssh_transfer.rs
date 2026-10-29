@@ -45,6 +45,7 @@ use super::invocation::{
 };
 use super::itemize_sink::ItemizeEventSink;
 use super::operand_split::split_transfer_operands;
+use super::reporting_side::{ReportingSide, local_failure_error};
 use super::ssh_transfer::{
     convert_server_stats_to_summary, local_client_role, map_remote_exit, transfer_failure_error,
 };
@@ -415,6 +416,7 @@ fn run_transfer_over_embedded_ssh(
     // upstream: io.c:299-301 whine_about_eof() names stats.total_read, the raw
     // bytes read once buffered input started (io.c:938).
     let bytes_read = Arc::new(AtomicU64::new(0));
+    let fork_point = Arc::new(crate::server::ForkPoint::default());
 
     let transfer_result = crate::server::run_server_with_handshake_adopting(
         server_config,
@@ -430,9 +432,11 @@ fn run_transfer_over_embedded_ssh(
                 None
             },
             bytes_read: Some(Arc::clone(&bytes_read)),
+            fork_point: Some(Arc::clone(&fork_point)),
             ..Default::default()
         },
     );
+    let side = ReportingSide::of(local_role, &fork_point);
 
     // Goodbye phase: drop the writer to signal EOF to the russh bridge
     // task, then bound how long we wait for the remote to ack the close.
@@ -469,7 +473,7 @@ fn run_transfer_over_embedded_ssh(
         }),
         goodbye_outcome,
         remote_exit,
-        local_role,
+        side,
         bytes_read.load(Ordering::Relaxed),
     )
 }
@@ -486,13 +490,13 @@ fn resolve_embedded_outcome(
     transfer: std::io::Result<ClientSummary>,
     goodbye: Result<(), rsync_io::ssh::embedded::SshError>,
     remote_exit: Option<ExitCode>,
-    local_role: crate::message::Role,
+    side: ReportingSide,
     bytes_received: u64,
 ) -> Result<ClientSummary, ClientError> {
     match transfer {
         Ok(summary) => match goodbye {
             Ok(()) => match remote_exit {
-                Some(code) if !code.is_success() => Err(remote_exit_error(code, local_role)),
+                Some(code) if !code.is_success() => Err(remote_exit_error(code, side.exit_role())),
                 _ => Ok(summary),
             },
             Err(e) => Err(invalid_argument_error(
@@ -502,14 +506,8 @@ fn resolve_embedded_outcome(
         },
         // Same worst-wins resolution as the subprocess transport.
         Err(e) => match remote_exit {
-            Some(code) => Err(transfer_failure_error(e, code, local_role, bytes_received)),
-            None => {
-                let exit = ExitCode::from_io_error(&e);
-                Err(invalid_argument_error(
-                    &format!("transfer failed: {e}"),
-                    exit.as_i32(),
-                ))
-            }
+            Some(code) => Err(transfer_failure_error(e, code, side, bytes_received)),
+            None => Err(local_failure_error(&e, None, side, bytes_received, None)),
         },
     }
 }
@@ -1720,7 +1718,6 @@ mod tests {
 #[cfg(test)]
 mod outcome_tests {
     use super::*;
-    use crate::message::Role;
     use rsync_io::ssh::embedded::RemoteExit;
 
     fn ok_summary() -> std::io::Result<ClientSummary> {
@@ -1735,7 +1732,7 @@ mod outcome_tests {
             transfer,
             Ok(()),
             remote.map(map_remote_exit),
-            Role::Sender,
+            ReportingSide::Sender,
             0,
         )
     }

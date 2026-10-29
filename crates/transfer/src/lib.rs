@@ -129,6 +129,7 @@ pub mod delta_transfer;
 pub mod error;
 pub mod flags;
 mod flist_banner;
+pub mod fork_point;
 pub(crate) mod full_fname;
 pub mod generator;
 pub mod handshake;
@@ -175,6 +176,7 @@ pub use self::config::{
 };
 pub use self::delta_config::DeltaGeneratorConfig;
 pub use self::flags::{InfoFlags, NumericIds, ParseFlagError, ParsedServerFlags};
+pub use self::fork_point::ForkPoint;
 pub use self::generator::{GeneratorContext, GeneratorStats, io_error_flags};
 pub use self::handshake::{
     HandshakeResult, IoTimeoutReapply, VersionExchangeError, VersionExchangeStep,
@@ -182,7 +184,9 @@ pub use self::handshake::{
     perform_server_handshake,
 };
 pub use self::reader::RemoteExitError;
-pub use self::receiver::{ListOnlyEntry, ReceiverContext, SumHead, TransferStats};
+pub use self::receiver::{
+    DestRootMkdirError, ListOnlyEntry, ReceiverContext, SumHead, TransferStats,
+};
 pub use self::role::ServerRole;
 pub use self::shared::{ChecksumFactory, TransferDeadline};
 pub use self::temp_cleanup::cleanup_stale_temp_files;
@@ -715,6 +719,7 @@ pub fn run_server_with_handshake<W: Write>(
             io_timeout_reapply: None,
             daemon_log: None,
             bytes_read: None,
+            fork_point: None,
         },
     )
 }
@@ -763,6 +768,10 @@ pub struct ServerTransferHooks<'p, 'i> {
     /// upstream: io.c:938 counts `stats.total_read` only through perform_io,
     /// which setup_protocol's reads bypass (io.c:2158-2161, main.c:1308).
     pub bytes_read: Option<Arc<std::sync::atomic::AtomicU64>>,
+    /// Marked when a pulling client crosses upstream's receiver/generator
+    /// fork, so the caller can name the role that reports a failure.
+    /// upstream: main.c:1077 `do_recv()`.
+    pub fork_point: Option<Arc<ForkPoint>>,
 }
 
 /// Runs a server transfer that may adopt a daemon-advertised `MSG_IO_TIMEOUT`.
@@ -818,6 +827,7 @@ pub fn run_server_over_transport<'a>(
         io_timeout_reapply,
         daemon_log,
         bytes_read,
+        fork_point,
     } = hooks;
     // upstream: options.c:2551-2561 - `--append` implies `--inplace`, applied by the
     // same parse_arguments() every peer runs. This is the one path shared by
@@ -1233,6 +1243,9 @@ pub fn run_server_over_transport<'a>(
                 // upstream: flist.c:3130/3334 - recv_file_list() measures its span
                 // against the raw read counter to accumulate stats.flist_size.
                 ctx.set_raw_read_counter(std::sync::Arc::clone(&bytes_received_counter));
+                if let Some(point) = fork_point {
+                    ctx.set_fork_point(point);
+                }
                 // upstream: io.c:977 - stats.total_written tracking
                 let mut counting_writer = writer::CountingWriter::new(&mut writer);
                 let mut stats = match ctx.run(chained_reader, &mut counting_writer, progress) {

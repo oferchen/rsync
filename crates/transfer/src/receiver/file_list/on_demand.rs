@@ -1273,4 +1273,81 @@ mod tests {
             "marker-aware read must consume the whole [segment][echo] frame, no under/over-read"
         );
     }
+
+    /// upstream: rsync.c:359 and rsync.c:377-381 - once forked, the receiver
+    /// writes each sub-list on to its generator (the dir index as a 4-byte
+    /// int, then every byte the decoder consumed, io.c:1669-1672 and
+    /// io.c:2167-2188) and then NDX_FLIST_EOF as one more int. Back to back,
+    /// they share one MSG_DATA frame.
+    #[test]
+    fn a_forked_receiver_forwards_sub_lists_and_the_eof_marker() {
+        let segments = vec![vec![("s0/a", 1u64)], vec![("s1/b", 2), ("s1/c", 3)]];
+        let (wire, _) = encode_segments(&segments);
+        let mut markers = Vec::new();
+        let mut marker_codec = create_ndx_codec(PROTOCOL);
+        for dir_ndx in 0..segments.len() as i32 {
+            marker_codec
+                .write_ndx(&mut markers, NDX_FLIST_OFFSET - dir_ndx)
+                .unwrap();
+        }
+        marker_codec.write_ndx(&mut markers, NDX_FLIST_EOF).unwrap();
+        let payload = (wire.len() - markers.len()) as u64;
+
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist = DirFlist::with_active((0..segments.len()).map(|i| format!("s{i}")));
+        let point = std::sync::Arc::new(crate::ForkPoint::default());
+        ctx.set_fork_point(std::sync::Arc::clone(&point));
+        point.mark(0);
+        ctx.ensure_all_segments_loaded(&mut Cursor::new(wire), &mut create_ndx_codec(PROTOCOL))
+            .unwrap();
+
+        let frame_header = 4;
+        let ints = 4 * (segments.len() as u64 + 1);
+        assert_eq!(
+            point.total_read_at_fork(),
+            Some(frame_header + ints + payload)
+        );
+    }
+
+    /// Nothing is forwarded before the fork: the lone pre-fork receiver has no
+    /// generator to write to.
+    #[test]
+    fn an_unforked_receiver_forwards_nothing() {
+        let segments = vec![vec![("s0/a", 1u64)]];
+        let (wire, _) = encode_segments(&segments);
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist = DirFlist::with_active(["s0".to_owned()]);
+        let point = std::sync::Arc::new(crate::ForkPoint::default());
+        ctx.set_fork_point(std::sync::Arc::clone(&point));
+        ctx.ensure_all_segments_loaded(&mut Cursor::new(wire), &mut create_ndx_codec(PROTOCOL))
+            .unwrap();
+        assert_eq!(point.total_read_at_fork(), None);
+    }
+
+    /// upstream: receiver.c:1341-1347 - a received file costs the generator one
+    /// MSG_SUCCESS when `remove_source_files || inc_recurse || F_IS_HLINKED`,
+    /// and none when --delay-updates holds it back (`recv_ok == 2`).
+    #[test]
+    fn each_received_file_notifies_the_generator_like_upstream() {
+        let plain = FileEntry::new_file(PathBuf::from("a"), 1, 0o100644);
+        let mut linked = plain.clone();
+        linked.set_hlinked(true);
+        let notices = |mut ctx: ReceiverContext, entry: &FileEntry| {
+            let point = std::sync::Arc::new(crate::ForkPoint::default());
+            ctx.set_fork_point(std::sync::Arc::clone(&point));
+            point.mark(0);
+            ctx.note_generator_notice(entry);
+            point.total_read_at_fork()
+        };
+        let no_ir = || ReceiverContext::new_for_test(&test_handshake(), test_config());
+        assert_eq!(notices(inc_recurse_receiver(), &plain), Some(8));
+        assert_eq!(notices(no_ir(), &plain), Some(0));
+        assert_eq!(notices(no_ir(), &linked), Some(8));
+        let mut removing = no_ir();
+        removing.config.flags.remove_source_files = true;
+        assert_eq!(notices(removing, &plain), Some(8));
+        let mut delayed = inc_recurse_receiver();
+        delayed.config.write.delay_updates = true;
+        assert_eq!(notices(delayed, &plain), Some(0));
+    }
 }
