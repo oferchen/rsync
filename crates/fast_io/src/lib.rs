@@ -174,6 +174,8 @@ pub mod pinned_root;
 pub mod readiness;
 #[cfg(unix)]
 pub mod readonly_inplace;
+/// The errno a confinement refusal is reported with.
+pub mod refusal_errno;
 /// Same-filesystem (device) detection for reflink / copy-on-write gating.
 pub mod same_fs;
 /// Strict-resolution directory open for the SEC-1 dirfd sandbox.
