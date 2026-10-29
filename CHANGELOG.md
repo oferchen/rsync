@@ -550,6 +550,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `inplace_partial` stays negotiated on the sender (#8156)
 - `--existing` and `--ignore-existing` apply to non-regular entries (#8168)
 - `-z` is detected only in the server flag cluster, not inside an `-e` string (#8188)
+- Public rustdoc no longer links private items in `batch`, `test-support` and `transfer`, so the strict "rustdoc links" job passes (#8276)
 
 ### Removed
 - The unreachable `engine::AsyncBatchCopier` and its `RSYNC_MAX_CONCURRENT` environment read (#8236)
