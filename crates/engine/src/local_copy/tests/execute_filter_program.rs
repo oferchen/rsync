@@ -1068,41 +1068,6 @@ fn filter_program_clear_entry_resets_all_rules() {
 }
 
 #[test]
-fn filter_program_exclude_if_present_with_marker() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let dir = temp.path();
-
-    std::fs::write(dir.join(".nobackup"), b"").expect("write marker");
-
-    let program = FilterProgram::new([FilterProgramEntry::ExcludeIfPresent(
-        ExcludeIfPresentRule::new(".nobackup"),
-    )])
-    .expect("compile program");
-
-    assert!(
-        program.should_exclude_directory(dir).expect("marker check"),
-        "directory with .nobackup marker must be excluded"
-    );
-}
-
-#[test]
-fn filter_program_exclude_if_present_without_marker() {
-    let temp = tempfile::tempdir().expect("tempdir");
-
-    let program = FilterProgram::new([FilterProgramEntry::ExcludeIfPresent(
-        ExcludeIfPresentRule::new(".nobackup"),
-    )])
-    .expect("compile program");
-
-    assert!(
-        !program
-            .should_exclude_directory(temp.path())
-            .expect("marker check"),
-        "directory without marker must not be excluded"
-    );
-}
-
-#[test]
 fn filter_program_upstream_typical_pattern() {
     // A typical upstream rsync invocation:
     //   rsync -avz --filter='- *.o' --filter='- *.tmp' --filter='P *.db' src/ dst/
@@ -1254,14 +1219,5 @@ fn filter_program_is_empty_false_with_dir_merge() {
         DirMergeOptions::default(),
     ))])
     .expect("program with dir merge");
-    assert!(!program.is_empty());
-}
-
-#[test]
-fn filter_program_is_empty_false_with_exclude_if_present() {
-    let program = FilterProgram::new([FilterProgramEntry::ExcludeIfPresent(
-        ExcludeIfPresentRule::new(".nobackup"),
-    )])
-    .expect("program with exclude-if-present");
     assert!(!program.is_empty());
 }

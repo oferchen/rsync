@@ -26,6 +26,18 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Selects the block strong checksum the delta transfer computes over the
+    /// basis and the source windows.
+    ///
+    /// upstream: checksum.c:192-207 `parse_checksum_choice()` keeps this
+    /// (`xfer_sum_nni`) apart from the `--checksum` file sum (`file_sum_nni`).
+    #[must_use]
+    #[doc(alias = "--checksum-choice")]
+    pub const fn with_transfer_checksum_algorithm(mut self, algorithm: SignatureAlgorithm) -> Self {
+        self.transfer_checksum_algorithm = algorithm;
+        self
+    }
+
     /// Enables size-only change detection.
     #[must_use]
     #[doc(alias = "--size-only")]
@@ -110,6 +122,12 @@ impl LocalCopyOptions {
         self.checksum_algorithm
     }
 
+    /// Returns the block strong checksum used by the delta transfer.
+    #[must_use]
+    pub const fn transfer_checksum_algorithm(&self) -> SignatureAlgorithm {
+        self.transfer_checksum_algorithm
+    }
+
     /// Reports whether size-only change detection has been requested.
     #[must_use]
     pub const fn size_only_enabled(&self) -> bool {
@@ -178,6 +196,22 @@ mod tests {
     fn checksum_disables() {
         let opts = LocalCopyOptions::new().checksum(true).checksum(false);
         assert!(!opts.checksum_enabled());
+    }
+
+    #[test]
+    fn transfer_checksum_algorithm_defaults_to_xxh128_and_is_independent() {
+        let opts = LocalCopyOptions::new()
+            .with_checksum_algorithm(SignatureAlgorithm::Md4)
+            .with_transfer_checksum_algorithm(SignatureAlgorithm::Xxh3 { seed: 3 });
+        assert_eq!(
+            LocalCopyOptions::new().transfer_checksum_algorithm(),
+            SignatureAlgorithm::Xxh3_128 { seed: 0 }
+        );
+        assert_eq!(
+            opts.transfer_checksum_algorithm(),
+            SignatureAlgorithm::Xxh3 { seed: 3 }
+        );
+        assert_eq!(opts.checksum_algorithm(), SignatureAlgorithm::Md4);
     }
 
     #[test]

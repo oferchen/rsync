@@ -222,6 +222,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Daemon logging follows upstream: timestrings, per-file `%b`, `%c` and `%C`, deletions, module-relative file names, server diagnostics, the contents of a directory cleared to make room, a peer `MSG_INFO`, a syslog fallback when the log file cannot be opened, and the reverse-DNS name in its original case, and width, alignment and human-readable modifiers in `log format` (#7892, #8135, #8136, #8138, #8147, #8160, #8159, #8165, #8123, #8155)
 
 ### Performance
+- Local `--checksum` compares source and destination through the parallel checksum service: same-size pairs of a directory are hashed in one rayon batch, and files of 8 MiB or more as 4 MiB block vectors in parallel; decisions and output are unchanged against rsync 3.5.1 (#8249)
 
 - Probe OpenSSL MD4 once per process, as upstream does, instead of on every hasher; on OpenSSL 3 builds without the legacy provider this drops a failing `EVP_DigestInit_ex` per block (#8231)
 - Batch network sender writes to match upstream's cadence (#7009)
@@ -242,10 +243,12 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Hold the per-file parent dirfd on the receiver and sender (#8067)
 - SHA-256 and SHA-512 use the ARMv8 hardware path on macOS aarch64 again (#8064)
 - Skip the sender seek between adjacent matched blocks and batch receiver signature buffers: daemon push 282K to 158K syscalls and 0.536 s to 0.472 s, pull 361K to 208K and 0.491 s to 0.419 s (#8210)
+- Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
 
 ### Fixed
 
 **Data integrity**
+- A local `--no-whole-file` delta hashes blocks with the checksum upstream negotiates (xxh128, or the `--checksum-choice` transfer component), seeded like `get_checksum2()`, instead of a fixed unseeded MD4; `--debug=nstr` names that checksum, including a split `a,b` choice (#8246)
 - A disk error on one file (`ENOSPC`, a failed open, backup or `--append-verify` prefix) drains that file's queued data before reporting it, so a daemon worker no longer deadlocks its network thread and a QUIC push no longer stalls into a timeout, as upstream's `discard_receive_data()` does (`receiver.c:1254-1261`) (#8229)
 - `--remove-source-files --delay-updates` no longer lets the sender delete a source whose staged copy failed its final rename; the confirmation is sent only after the rename lands, as upstream does (#8232)
 - A received file whose `close()` fails (where NFS-like filesystems report a failed write) now aborts with exit 11 and upstream's `close failed on` message instead of being committed (#8232)
@@ -366,6 +369,15 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Open the daemon-wide log from the global `log file`, log refusals in upstream's words, open operator path parameters verbatim, and log the banner before readiness (#7677, #7679, #7680)
 
 **Filters**
+- A rule refused out of a per-directory merge file on a push ends the run with exit 1 and upstream's bare message, where the oc sender exited 11 inside a `transfer failed` wrapper (`exclude.c:133-137`), and `<rule from ...>` names a per-directory file by its absolute path, as upstream builds it (`exclude.c:756-775`) (#8239)
+- Every `C` rule matches one CVS ignore list built under the first `C` rule's flags, as upstream's `get_cvs_excludes` builds it once (`exclude.c:1489-1496`), so a later `-!C` no longer inverts the list a `-C` already chose (#8239)
+- `-C`/`--cvs-exclude` adds its `:C` and `-C` rules after every other filter rule, as upstream's `send_filter_list` does (`exclude.c:1951-1954`), so `-C --filter=+_*.o` keeps `*.o` files (#8239)
+- A merge-file rule with no pattern, such as a bare `exclude`, `hide`, `merge` or `-`, is refused with upstream's `unexpected end of filter rule` and exit 1 instead of becoming an empty-pattern rule or an `Unknown filter rule` (`exclude.c:1474-1476`); a word-split (`w`, `C`) file ends every rule at whitespace, so `exclude foo` there is refused too rather than glued into one rule (`exclude.c:1772`); and `dir-merge,C` with no name merges `.cvsignore` in per-directory files, as `:C` already did (`exclude.c:1553-1557`) (#8239)
+- A rule that names a side (`S`, `H`, `P`, `R`, `s`, `r`, or a merge rule with them) inside a `:s`/`:r` merge file is refused with upstream's `specified-side merge file contains specified-side filter` and exit 1 on a push too, where the sender silently gave it the file's side; the message names the file and line instead of echoing the rule, and covers nested merge rules in local copies (`exclude.c:1447-1456`) (#8239)
+- A merge rule's `e` modifier excludes the merge file's basename once, with none of the rule's modifiers, ahead of the rule and the rules it merges, as upstream's `parse_filter_str` does (`exclude.c:1558-1572`). A `+` naming the file inside it, or after a `:e` rule, no longer re-includes it; the exclude now uses the basename for `.e dir/file` too, and `.e`, `.n` and `.p` are accepted in per-directory files, where they were refused (#8239)
+- The `C` modifier is accepted on non-merge rules (`-C`, `+C`, `-sC`, `-pC`, `-!C`, `-C pattern`) in `--filter`, merge files and per-directory files, as upstream's `parse_rule_tok` accepts it (`exclude.c:1402-1409, 1474`). Such a rule stands for the CVS ignore list under its own prefix and modifiers, so `+C` makes the list includes and `-sC` sender-only (`exclude.c:1263, 1595-1597`), and its own pattern is never matched (`exclude.c:1201-1206`). One builder now owns the list for every caller; an unreadable `$HOME/.cvsignore` is skipped as upstream skips it (#8239)
+- Merge rules refuse `:-C`, `:C-`, `:--`, `:++` and `:+-` with upstream's `invalid modifier` error and exit 1, instead of accepting the first two and misreporting the rest. Modifier validity now comes from one table shared by the rule parsers, mirroring upstream's single modifier `switch` (`exclude.c:1365-1443`) (#8239)
+- `--exclude='!'` and `--include='!'` empty the rule list while it is parsed instead of becoming a clear rule, so nothing is sent for them; a `--protocol=28` pull with such a rule no longer fails with `filter rules are too modern for remote rsync`, matching upstream's `parse_filter_str` (`exclude.c:1541-1551`) (#8239)
 - Match patterns as bytes end to end (#7918)
 - Match upstream for negated dir-only and long-star `***` rules (#7987)
 - Keep `/***` reach under a negated rule (#7907)
@@ -549,6 +561,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Exit code 6 ("daemon unable to append to log-file"), which upstream does not define; a raw exit 6 renders as upstream's "unexplained error (code 6)" (#8197)
 - The `ssh-socketpair-stderr` build feature and the captured-stderr API (`SshConnection::stderr_output`, `wait_with_stderr`, `AsyncSshTransport::stderr_capture`); builds passing `--features ssh-socketpair-stderr` must drop it (#8224)
 - The macOS kqueue bandwidth-limit sleeper and its `OC_RSYNC_BWLIMIT_BACKEND` selector; `--bwlimit` sleeps with `nanosleep` on every platform, matching upstream's `select()` sleep for its 100 ms minimum delay (#8229)
+- The oc-only `exclude-if-present` filter rule, in `--filter` and in merge files. Upstream has no such rule, so it is now refused as `Unknown filter rule` with exit 1, exactly as rsync 3.5.1 refuses it (`exclude.c:1297-1299, 1362-1363`); it also no longer goes to a remote peer as an `-e` rule (#8239)
 - The `parallel-receive-delta` Cargo feature and the parallel receive-delta pipeline it named (`engine::concurrent_delta` applier, consumer, reorder and strategy modules, and `transfer::delta_pipeline`). The feature gated no code and the pipeline was never wired into the receiver; it measured 1.7-3.3x slower than the sequential path in isolation. Builds that pass `--features parallel-receive-delta` must drop it. A false `--debug=recv` notice claiming the path was active is gone with it (#8220)
 
 - The unused `checksums::strong::strategy` runtime selector and the uncalled generic parallel hashing helpers; `checksums::parallel` is now the one parallel `--checksum` service (`hash_files`, `hash_files_blocked`) (#8238)

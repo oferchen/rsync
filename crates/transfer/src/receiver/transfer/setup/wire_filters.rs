@@ -9,7 +9,7 @@ use std::io;
 
 use protocol::filters::{FilterRuleWireFormat, RuleType};
 
-use filters::{DirMergeConfig, FilterSet};
+use filters::{DirMergeConfig, FilterRule, FilterSet};
 
 /// Parses wire-format filter rules into a `FilterSet` and `DirMergeConfig` list for the receiver.
 ///
@@ -25,8 +25,6 @@ use filters::{DirMergeConfig, FilterSet};
 pub(in crate::receiver) fn parse_wire_filters_for_receiver(
     wire_rules: &[FilterRuleWireFormat],
 ) -> io::Result<(FilterSet, Vec<DirMergeConfig>)> {
-    use ::filters::FilterRule;
-
     let mut rules = Vec::with_capacity(wire_rules.len());
     let mut merge_configs = Vec::new();
 
@@ -77,6 +75,7 @@ pub(in crate::receiver) fn parse_wire_filters_for_receiver(
                 continue;
             }
             RuleType::DirMerge => {
+                rules.extend(dir_merge_self_exclude(wire_rule));
                 merge_configs.push(dir_merge_config_from_wire(wire_rule));
                 continue;
             }
@@ -108,6 +107,37 @@ pub(in crate::receiver) fn parse_wire_filters_for_receiver(
     Ok((filter_set, merge_configs))
 }
 
+/// The per-directory merge filename a `DirMerge` wire rule names: the basename
+/// after its last `/` (see [`dir_merge_config_from_wire`]).
+fn dir_merge_filename(wire_rule: &FilterRuleWireFormat) -> String {
+    let lossy = wire_rule.pattern.to_string_lossy();
+    // upstream: exclude.c:1553-1557 - a patternless CVS merge rule (`:C`)
+    // means `.cvsignore`. The daemon parse substitutes it before the rule is
+    // built, but a peer's wire rule may still arrive bare.
+    if wire_rule.cvs_exclude && lossy.is_empty() {
+        return ".cvsignore".to_owned();
+    }
+    lossy
+        .rsplit('/')
+        .next()
+        .unwrap_or(lossy.as_ref())
+        .to_owned()
+}
+
+/// The exclude a `DirMerge` wire rule with the `e` modifier adds ahead of
+/// itself: its merge file's basename, with none of the rule's modifiers.
+///
+/// upstream: exclude.c:1558-1572 parse_filter_str() - added once, at
+/// registration, to the list that holds the rule. Both receiver lists (the
+/// client's rules and a daemon module's) register it here.
+pub(in crate::receiver) fn dir_merge_self_exclude(
+    wire_rule: &FilterRuleWireFormat,
+) -> Option<FilterRule> {
+    wire_rule
+        .exclude_from_merge
+        .then(|| FilterRule::exclude(dir_merge_filename(wire_rule)))
+}
+
 /// Decodes one `DirMerge` wire rule into the receiver's per-directory merge
 /// configuration.
 ///
@@ -134,21 +164,9 @@ pub(in crate::receiver) fn parse_wire_filters_for_receiver(
 pub(in crate::receiver) fn dir_merge_config_from_wire(
     wire_rule: &FilterRuleWireFormat,
 ) -> DirMergeConfig {
-    let lossy = wire_rule.pattern.to_string_lossy();
-    // upstream: exclude.c:1553-1557 - a patternless CVS merge rule (`:C`)
-    // means `.cvsignore`. The daemon parse substitutes it before the rule is
-    // built, but a peer's wire rule may still arrive bare.
-    let filename = if wire_rule.cvs_exclude && lossy.is_empty() {
-        ".cvsignore"
-    } else {
-        lossy.rsplit('/').next().unwrap_or(lossy.as_ref())
-    };
-    let mut config = DirMergeConfig::new(filename);
+    let mut config = DirMergeConfig::new(dir_merge_filename(wire_rule));
     if wire_rule.no_inherit {
         config = config.with_inherit(false);
-    }
-    if wire_rule.exclude_from_merge {
-        config = config.with_exclude_self(true);
     }
     if wire_rule.sender_side {
         config = config.with_sender_only(true);
@@ -260,7 +278,7 @@ mod tests {
         assert!(config.no_prefixes(), "records are bare patterns");
         assert!(!config.no_prefixes_include(), "CVS records are excludes");
         assert!(
-            !config.excludes_self(),
+            dir_merge_self_exclude(&wire).is_none(),
             "only `e` hides the merge file itself"
         );
     }

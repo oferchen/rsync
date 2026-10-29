@@ -32,9 +32,11 @@ pub(crate) struct FilterInputs {
 ///
 /// Rules are appended in command-line order so the filter engine's
 /// first-match-wins evaluation matches upstream rsync, where each
-/// `--include`/`--exclude`/`--filter`/`--include-from`/`--exclude-from`/`-C`/
-/// `-F` is fed to the rule list at its argv position (exclude.c:parse_filter_str
-/// appends in encounter order).
+/// `--include`/`--exclude`/`--filter`/`--include-from`/`--exclude-from`/`-F` is
+/// fed to the rule list at its argv position (exclude.c:parse_filter_str
+/// appends in encounter order). `-C` is the exception: it only sets
+/// `cvs_exclude`, and send_filter_list() appends its rules after all of them
+/// (exclude.c:1951-1954).
 pub(crate) fn apply_filters<Err>(
     mut builder: ClientConfigBuilder,
     inputs: FilterInputs,
@@ -45,6 +47,7 @@ where
 {
     let mut filter_rules = Vec::new();
     let mut merge_stack = Vec::new();
+    let mut cvs_exclude = false;
     let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let from0 = inputs.from0;
     let mut delete_excluded_at = None;
@@ -75,7 +78,10 @@ where
                 merge_base.as_path(),
                 &mut merge_stack,
             ),
-            FilterOrderToken::CvsExclude => append_cvs_exclude_rules(&mut filter_rules),
+            FilterOrderToken::CvsExclude => {
+                cvs_exclude = true;
+                Ok(())
+            }
             FilterOrderToken::AppleDoubleSkip => {
                 append_apple_double_exclude_rules(&mut filter_rules)
             }
@@ -87,6 +93,9 @@ where
         if let Err(message) = result {
             return Err(fail_with_message(message, stderr));
         }
+    }
+    if cvs_exclude {
+        append_cvs_exclude_rules(&mut filter_rules);
     }
 
     // upstream: exclude.c:1478-1481 parse_rule_tok() - rules parsed before
@@ -132,7 +141,9 @@ fn push_filter_directive(
             )?;
         }
         FilterDirective::Clear => filter_rules.clear(),
-        FilterDirective::CvsDefaults => filter_rules.extend(cvs_default_exclude_rules()?),
+        FilterDirective::CvsDefaults(template) => {
+            filter_rules.extend(cvs_default_exclude_rules(template));
+        }
         // A blank rule contributes nothing (upstream parse_rule_tok returns NULL).
         FilterDirective::Noop => {}
     }
@@ -155,12 +166,32 @@ fn push_old_prefix_rule(
     // Likewise for a `--exclude`/`--include` value given on the command line.
     match parse_old_prefix_rule(&text, default_kind, RuleSource::Argument)? {
         FilterDirective::Rule(rule) => destination.push(rule),
-        FilterDirective::Clear => destination.push(FilterRuleSpec::clear()),
+        // upstream: exclude.c:1541-1551 parse_filter_str - a clear pops the
+        // list as it is parsed; no clear rule survives to be sent.
+        FilterDirective::Clear => destination.clear(),
         // A blank `--exclude`/`--include` value contributes nothing.
         FilterDirective::Noop => {}
-        FilterDirective::Merge(_) | FilterDirective::CvsDefaults => {
+        FilterDirective::Merge(_) | FilterDirective::CvsDefaults(_) => {
             unreachable!("parse_old_prefix_rule only emits Rule, Clear, or Noop")
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// upstream: exclude.c:1541-1551 parse_filter_str - `--exclude=!` pops the
+    /// list while parsing, so no clear rule exists afterwards. A surviving one
+    /// would be sent to the peer, and a pre-29 peer cannot carry it at all.
+    #[test]
+    fn old_prefix_clear_empties_the_list_instead_of_adding_a_rule() {
+        let mut rules = Vec::new();
+        for value in ["*.tmp", "!", "keep"] {
+            push_old_prefix_rule(&mut rules, OsString::from(value), FilterRuleKind::Exclude)
+                .expect("rule parses");
+        }
+        assert_eq!(rules, [FilterRuleSpec::exclude("keep")]);
+    }
 }

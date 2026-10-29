@@ -49,19 +49,16 @@ take_stdin	crates/rsync_io/src/ssh/async_transport.rs	2026-11-07	unreviewed base
 take_stdout	crates/rsync_io/src/ssh/async_transport.rs	2026-11-07	unreviewed baseline row
 into_sync_halves	crates/rsync_io/src/ssh/embedded/sync_bridge.rs	2026-11-07	unreviewed baseline row
 strong_digest	crates/signature/src/block.rs	2026-11-07	unreviewed baseline row
-with_remainder	crates/transfer/src/delta_config.rs	2026-11-07	unreviewed baseline row
 with_negotiated_algorithms	crates/transfer/src/delta_config.rs	2026-11-07	unreviewed baseline row
 wire_bits	crates/transfer/src/generator/item_flags.rs	2026-11-07	unreviewed baseline row
 drain_new_redo_indices	crates/transfer/src/pipeline/receiver.rs	2026-11-07	unreviewed baseline row
 match_uid	crates/transfer/src/receiver/context.rs	2026-11-07	unreviewed baseline row
 match_gid	crates/transfer/src/receiver/context.rs	2026-11-07	unreviewed baseline row
 set_deletion_filter_chain	crates/transfer/src/receiver/context.rs	2026-11-07	unreviewed baseline row
-run_sync	crates/transfer/src/receiver/transfer/sync.rs	2026-11-07	staged for the lazy-flist / INC_RECURSE-on-pull epic (tasks 297-300)
 exchange_compat_flags_direct	crates/transfer/src/setup/compat.rs	2026-11-07	unreviewed baseline row
 with_flag_string	crates/transfer/src/setup/types.rs	2026-11-07	unreviewed baseline row
 with_crtimes	crates/transfer/src/setup/types.rs	2026-11-07	unreviewed baseline row
 as_full_mut_slice	crates/transfer/src/token_buffer.rs	2026-11-07	unreviewed baseline row
-process_file_response	crates/transfer/src/transfer_ops/response.rs	2026-11-07	unreviewed baseline row
 print_summary	xtask/src/commands/interop/exit_codes/runner.rs	2026-11-07	unreviewed baseline row
 run_and_extract_messages	xtask/src/commands/interop/messages/extractor.rs	2026-11-07	unreviewed baseline row
 get_messages_for_scenario	xtask/src/commands/interop/messages/golden.rs	2026-11-07	unreviewed baseline row

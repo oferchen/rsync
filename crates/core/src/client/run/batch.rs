@@ -257,7 +257,8 @@ pub(crate) fn finalize_batch(
 ///
 /// - `-C` rules are absent: `send_filter_list()` adds them after the script
 ///   is written (exclude.c:1951-1955, 1962-1967; compat.c:838).
-/// - `!` empties the list instead of being listed (exclude.c:1540-1551).
+/// - `!` never reaches it: the parser drops the rules it clears
+///   (exclude.c:1540-1551).
 /// - a merge rule's `e` modifier becomes an exclude of the merge file's
 ///   basename ahead of the merge rule, which loses the modifier
 ///   (exclude.c:1558-1572).
@@ -281,7 +282,6 @@ fn batch_filter_lines(
     let mut filter_list = Vec::new();
     for rule in remote::flags::build_wire_format_rules(&listed, delete_excluded)? {
         match rule.rule_type {
-            RuleType::Clear => filter_list.clear(),
             RuleType::DirMerge if rule.exclude_from_merge => {
                 if let Some(name) = Path::new(&rule.pattern).file_name() {
                     filter_list.push(FilterRuleWireFormat {
@@ -1400,22 +1400,14 @@ mod tests {
         assert_eq!(lines, [b"- a".to_vec(), b"-s b".to_vec()]);
     }
 
-    /// option list: a clear empties it, `-C` rules join only later, and a
+    /// option list: `-C` rules join only later, and a
     /// merge's `e` modifier is an exclude of the file ahead of the merge.
     ///
-    /// upstream: exclude.c:1540-1551 (clear), exclude.c:1951-1967 and
+    /// upstream: exclude.c:1951-1967 and
     /// compat.c:838 (-C rules after the script), exclude.c:1558-1572 (`e`).
     #[test]
     fn batch_filter_lines_follow_upstream_filter_list() {
         assert!(listed(&[]).is_empty());
-        assert_eq!(
-            listed(&[
-                FilterRuleSpec::exclude("gone"),
-                FilterRuleSpec::clear(),
-                FilterRuleSpec::exclude("kept"),
-            ]),
-            vec!["- kept".to_owned()]
-        );
         assert_eq!(
             listed(&[
                 FilterRuleSpec::exclude("RCS").with_cvs_origin(true),
