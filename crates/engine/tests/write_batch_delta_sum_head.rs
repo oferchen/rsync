@@ -31,6 +31,34 @@ use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
 use protocol::CompatibilityFlags;
 use tempfile::tempdir;
 
+/// Appends what core's `finalize_batch` writes once the transfer ends, which
+/// the `--read-batch` receiver reads: the stats (upstream: main.c:374-383)
+/// and the goodbye `NDX_DONE` (main.c:933-935 read_final_goodbye()).
+fn write_trailer(writer: &Mutex<BatchWriter>) {
+    let mut w = writer.lock().expect("writer mutex not poisoned");
+    w.write_stats(&batch::BatchStats {
+        total_read: 0,
+        total_written: 0,
+        total_size: 0,
+        flist_buildtime: Some(0),
+        flist_xfertime: Some(0),
+    })
+    .expect("write batch stats");
+    w.write_data(&[0x00]).expect("write goodbye NDX_DONE");
+}
+
+/// Replays `batch` into `dest` through the live `--read-batch` path (core
+/// `ReceiverContext::for_batch_replay`), the code upstream-compatible replay
+/// runs.
+fn read_batch(batch: &std::path::Path, dest: &std::path::Path) {
+    let out = std::process::Command::new(test_support::oc_rsync_bin())
+        .arg(format!("--read-batch={}", batch.display()))
+        .arg(format!("{}/", dest.display()))
+        .output()
+        .expect("spawn oc-rsync");
+    assert!(out.status.success(), "--read-batch failed: {out:?}");
+}
+
 /// Basis size chosen so upstream's square-root block sizing is fully
 /// determined: below `700 * 700` every basis uses the default 700-byte block.
 const BASIS_LEN: usize = 100 * 1024;
@@ -98,6 +126,7 @@ fn record_delta_batch() -> Vec<u8> {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("delta write-batch succeeds");
 
+    write_trailer(&writer);
     Arc::try_unwrap(writer)
         .expect("writer uniquely owned")
         .into_inner()
@@ -166,12 +195,7 @@ fn delta_write_batch_replays_through_the_strict_reader() {
     let basis = vec![b'A'; BASIS_LEN];
     fs::write(replay_root.join("large.dat"), &basis).expect("seed basis");
 
-    let read_cfg = BatchConfig::new(
-        BatchMode::Read,
-        batch_path.to_string_lossy().into_owned(),
-        32,
-    );
-    batch::replay::replay(&read_cfg, &replay_root, 0).expect("replay accepts the batch");
+    read_batch(&batch_path, &replay_root);
 
     let mut expected = basis;
     expected[50_000..50_008].copy_from_slice(b"MODIFIED");

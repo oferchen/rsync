@@ -37,7 +37,6 @@
 //! - `receiver.c:recv_files()` - Receives deltas, applies them
 
 mod request;
-mod response;
 mod streaming;
 mod token_loop;
 pub mod wire_basis;
@@ -52,14 +51,13 @@ use crate::reader::ServerReader;
 use crate::receiver::SumHead;
 
 pub use self::request::{send_file_request, send_file_request_xattr};
-pub use self::response::process_file_response;
 pub use self::streaming::{ResponseProgress, StreamingResult, process_file_response_streaming};
 pub use crate::token_reader::TokenReader;
 
 /// Configuration for sending file transfer requests and processing responses.
 ///
 /// Groups protocol version, checksum parameters, and write options into a
-/// single struct shared between [`send_file_request`] and [`process_file_response`].
+/// single struct shared between [`send_file_request`] and [`process_file_response_streaming`].
 #[derive(Debug)]
 pub struct RequestConfig {
     /// Protocol version for encoding.
@@ -192,7 +190,7 @@ impl RequestConfig {
 
 /// Context for processing a file transfer response from the sender.
 ///
-/// Wraps a [`RequestConfig`] reference so that [`process_file_response`] can
+/// Wraps a [`RequestConfig`] reference so that [`process_file_response_streaming`] can
 /// access protocol parameters, checksum settings, and sparse-write options
 /// without requiring them as individual function arguments.
 pub struct ResponseContext<'a> {
@@ -212,7 +210,7 @@ pub struct ResponseContext<'a> {
     pub sandbox: Option<&'a std::sync::Arc<fast_io::DirSandbox>>,
     /// Destination tree root anchor for the SEC-1.j leaf-rename detector.
     ///
-    /// `process_file_response` uses this together with `sandbox` to route
+    /// `process_file_response_streaming` uses this together with `sandbox` to route
     /// the temp -> final rename through `renameat(dirfd, leaf, dirfd,
     /// leaf)` when both the temp and final names are single-component
     /// leaves beneath this root, so a TOCTOU symlink swap on either leaf

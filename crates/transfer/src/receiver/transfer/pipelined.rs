@@ -380,7 +380,7 @@ impl ReceiverContext {
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
 
-        self.finalize_transfer_with(
+        self.finalize_transfer(
             reader,
             writer,
             &mut ndx_read_codec,

@@ -1,5 +1,5 @@
 use super::{
-    modifiers::{parse_merge_modifiers, split_long_keyword_tail, split_short_merge_modifiers},
+    modifiers::{parse_merge_modifiers, split_long_keyword_tail, split_short_rule_modifiers},
     types::{FilterParseError, ParsedFilterDirective},
 };
 use filters::RuleSource;
@@ -36,7 +36,7 @@ pub(super) fn parse_merge_directive(
         return Ok(None);
     };
 
-    let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, text, false)?;
+    let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, text, source)?;
 
     if remainder == "-" {
         return Err(FilterParseError::new(
@@ -91,17 +91,19 @@ pub(super) fn parse_short_merge_directive_line(
         return Ok(None);
     };
 
-    let allow_extended = match first {
+    let per_dir = match first {
         '.' => false,
         ':' => true,
         _ => return Ok(None),
     };
 
-    let remainder = chars.as_str();
-    let (modifiers, rest) = split_short_merge_modifiers(remainder, allow_extended);
-    let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, text, allow_extended)?;
+    // upstream: exclude.c:1365 - the modifier run ends only at ' ', '_' or the
+    // end of the rule, so `:n.rsync-filter` is an invalid modifier '.', not a
+    // dir-merge of `.rsync-filter`.
+    let (modifiers, rest) = split_short_rule_modifiers(chars.as_str());
+    let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, text, source)?;
 
-    // `split_short_merge_modifiers` already consumed the ONE separator that ends
+    // `split_short_rule_modifiers` already consumed the ONE separator that ends
     // the modifier run (upstream exclude.c:1444-1445, `if (*s) s++`), and the
     // merge FILENAME is then the rest of the rule verbatim (`len = strlen(s)`,
     // exclude.c:1465). `parse_merge_name` (exclude.c:696-752) only runs
@@ -128,7 +130,7 @@ pub(super) fn parse_short_merge_directive_line(
         pattern
     };
 
-    if allow_extended {
+    if per_dir {
         // upstream: exclude.c:1332-1339 - ':' short form is a per-directory
         // merge that registers a filename to look up in each subdirectory,
         // not an eager merge of the parent file's adjacent rule file.

@@ -1,10 +1,9 @@
 //! Transfer orchestration for the receiver role.
 //!
-//! Provides the `run`, `run_sync`, `run_pipelined`, and `run_pipelined_incremental`
+//! Provides the `run`, `run_pipelined`, and `run_pipelined_incremental`
 //! entry points plus the common `setup_transfer` initialization. The driving
 //! loops live in their own submodules:
 //!
-//! - `sync` - sequential per-file transfer used by `run_sync`.
 //! - `pipelined` - decoupled two-phase pipeline used by `run_pipelined`.
 //! - `pipelined_incremental` - same as `pipelined` plus incremental directory
 //!   creation and failed-dir tracking.
@@ -23,16 +22,17 @@ mod pipelined;
 mod pipelined_incremental;
 mod replay;
 mod setup;
-mod sync;
 
-pub(in crate::receiver) use setup::{dir_merge_config_from_wire, parse_wire_filters_for_receiver};
+pub(in crate::receiver) use setup::{
+    dir_merge_config_from_wire, dir_merge_self_exclude, parse_wire_filters_for_receiver,
+};
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
 
-use crate::disk_commit::{BackupConfig, BackupEnv, make_backup};
+use crate::disk_commit::{BackupConfig, BackupEnv, make_backup, make_backup_copy};
 use crate::pipeline::receiver::DelayedUpdate;
 use crate::receiver::ReceiverContext;
 use crate::receiver::stats::TransferStats;
@@ -323,8 +323,8 @@ impl ReceiverContext {
     }
 
     /// Backs up an existing destination file before the commit overwrites it,
-    /// routing through the shared [`make_backup`] tier so the synchronous
-    /// (`run_sync`) and local-replay (`run_replay`) commits reuse the one owner
+    /// routing through the shared [`make_backup`] tier so the local-replay
+    /// (`run_replay`) commit reuses the one owner
     /// the pipelined/delayed-update commit already uses, instead of each holding
     /// its own copy of the backup-then-rename block.
     ///
@@ -348,6 +348,32 @@ impl ReceiverContext {
         if !self.config.flags.backup {
             return Ok(());
         }
+        let (backup_config, env) = self.backup_target(
+            dest_dir,
+            metadata_opts,
+            #[cfg(unix)]
+            sandbox,
+        );
+        if let Some(notice) = make_backup(file_path, &backup_config, env)? {
+            // upstream: backup.c:432-433 - INFO_GTE(BACKUP, 1) "backed up X to Y".
+            info_log!(
+                Backup,
+                1,
+                "backed up {} to {}",
+                notice.original.display(),
+                notice.backup.display()
+            );
+        }
+        Ok(())
+    }
+
+    /// The backup naming and commit environment shared by both backup forms.
+    fn backup_target<'a>(
+        &self,
+        dest_dir: &'a Path,
+        metadata_opts: &'a metadata::MetadataOptions,
+        #[cfg(unix)] sandbox: Option<&'a fast_io::DirSandbox>,
+    ) -> (BackupConfig, BackupEnv<'a>) {
         let backup_config = BackupConfig {
             dir_cache: std::sync::Arc::clone(&self.backup_dir_cache),
             dest_dir: dest_dir.to_path_buf(),
@@ -362,8 +388,33 @@ impl ReceiverContext {
             metadata_opts: Some(metadata_opts),
             fsync: self.config.write.fsync,
         };
-        if let Some(notice) = make_backup(file_path, &backup_config, env)? {
-            // upstream: backup.c:432-433 - INFO_GTE(BACKUP, 1) "backed up X to Y".
+        (backup_config, env)
+    }
+
+    /// Preserves the pre-image of an in-place destination by copying it to its
+    /// backup name before the first write, so the destination inode itself is
+    /// rewritten.
+    ///
+    /// upstream: generator.c:2281-2301 - with `--inplace` the backup is a
+    /// copy (`make_backup(fname, True)`), not the rename the temp-file path
+    /// uses; backup.c:432-433 prints "backed up X to Y" under INFO(BACKUP).
+    pub(in crate::receiver) fn backup_existing_dest_by_copy(
+        &self,
+        dest_dir: &Path,
+        file_path: &Path,
+        metadata_opts: &metadata::MetadataOptions,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    ) -> io::Result<()> {
+        if !self.config.flags.backup {
+            return Ok(());
+        }
+        let (backup_config, env) = self.backup_target(
+            dest_dir,
+            metadata_opts,
+            #[cfg(unix)]
+            sandbox,
+        );
+        if let Some((_, notice)) = make_backup_copy(file_path, &backup_config, env)? {
             info_log!(
                 Backup,
                 1,
@@ -588,7 +639,7 @@ impl ReceiverContext {
     /// Runs the late delete site and the directory touch-up that follows it.
     ///
     /// Must run after the sender's final `NDX_DONE` has been read (see
-    /// `finalize_transfer_with`): `sender_io_error` carries the sender's
+    /// `finalize_transfer`): `sender_io_error` carries the sender's
     /// `MSG_IO_ERROR` bits, which it writes just before that `NDX_DONE`
     /// (sender.c:811-820) and which the receiver folds into `io_error`
     /// (io.c:1740-1747) before the generator's late sweep consults
@@ -1167,7 +1218,7 @@ mod tests {
     /// through the batch reader's own [`BatchHeader::read_from`] so the parse is
     /// the single source of truth, then asserted on the built context: the seed
     /// lands in the field every basis/signature site reads
-    /// (context.rs `build_flist_reader` / `build_basis_file_config`), the
+    /// (context.rs `build_flist_reader`), the
     /// protocol is pinned, and each compat bit is applied.
     #[test]
     fn for_batch_replay_pins_protocol_seed_and_compat_from_header() {

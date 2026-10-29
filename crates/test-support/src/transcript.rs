@@ -234,6 +234,25 @@ impl std::error::Error for TranscriptError {
     }
 }
 
+/// An `oc-rsync` client [`Command`] carrying the module's normalization set,
+/// for a transport the caller wires itself (a remote shell or a daemon URL).
+///
+/// Every variable the module contract lists is pinned or removed; the caller
+/// appends its own flags and operands.
+#[must_use]
+pub fn normalized_client(client: &Path) -> Command {
+    let mut cmd = Command::new(client);
+    cmd.arg(format!("--checksum-seed={FIXED_CHECKSUM_SEED}"))
+        .env("RSYNC_CHECKSUM_LIST", FIXED_CHECKSUM_LIST)
+        .env_remove("RSYNC_COMPRESS_LIST")
+        .env_remove("RSYNC_RSH")
+        .env_remove("RSYNC_PROTECT_ARGS")
+        .env_remove("OC_CONSECUTIVE_MATCH")
+        .env_remove("OC_RSYNC_LAZY_FLIST")
+        .env_remove("OC_RSYNC_PULL_INC_RECURSE");
+    cmd
+}
+
 /// One capture slot: a pair of capture-file paths plus the command wiring
 /// that routes an oc-rsync client's remote shell through `capture-rsh`.
 pub struct TranscriptRecorder {
@@ -267,21 +286,13 @@ impl TranscriptRecorder {
     /// this call (later `env` calls win).
     #[must_use]
     pub fn command(&self, client: &Path, server: &Path, capture_rsh: &Path) -> Command {
-        let mut cmd = Command::new(client);
+        let mut cmd = normalized_client(client);
         cmd.arg("--rsh")
             .arg(capture_rsh)
             .arg("--rsync-path")
             .arg(server)
-            .arg(format!("--checksum-seed={FIXED_CHECKSUM_SEED}"))
             .env(TRANSCRIPT_C2S_ENV, &self.c2s)
-            .env(TRANSCRIPT_S2C_ENV, &self.s2c)
-            .env("RSYNC_CHECKSUM_LIST", FIXED_CHECKSUM_LIST)
-            .env_remove("RSYNC_COMPRESS_LIST")
-            .env_remove("RSYNC_RSH")
-            .env_remove("RSYNC_PROTECT_ARGS")
-            .env_remove("OC_CONSECUTIVE_MATCH")
-            .env_remove("OC_RSYNC_LAZY_FLIST")
-            .env_remove("OC_RSYNC_PULL_INC_RECURSE");
+            .env(TRANSCRIPT_S2C_ENV, &self.s2c);
         cmd
     }
 

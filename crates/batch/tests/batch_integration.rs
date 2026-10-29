@@ -1617,7 +1617,7 @@ mod script_generation {
 
         let filter_rules = "- *.tmp\n- *.log\n+ */\n+ *.rs\n- *\n";
 
-        script::generate_script_with_filters(&config, Some(filter_rules), None).unwrap();
+        script::generate_script_with_filters(&config, Some(filter_rules.as_bytes()), None).unwrap();
 
         let script_path = config.script_file_path();
         let content = fs::read_to_string(&script_path).unwrap();
