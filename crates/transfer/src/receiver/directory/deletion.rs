@@ -316,7 +316,7 @@ fn record_doomed_dir_descendants(
     rel: &Path,
     path: &Path,
     capture_mode: bool,
-    allows: &dyn Fn(&Path, bool) -> bool,
+    filter: &mut DeletionFilter<'_>,
     kept: &mut Vec<PathBuf>,
     out: &mut Vec<DeletedEntry>,
 ) -> bool {
@@ -333,11 +333,12 @@ fn record_doomed_dir_descendants(
         // get_dirlist() could enumerate.
         Err(_) => return true,
     };
+    let guard = filter.enter(path);
     let mut emptied = true;
     for (name, is_dir, is_symlink) in children {
         let child_rel = rel.join(&name);
         let child_path = path.join(&name);
-        if !allows(&child_rel, is_dir) {
+        if !filter.allows(&child_rel, is_dir) {
             emptied = false;
             continue;
         }
@@ -350,7 +351,7 @@ fn record_doomed_dir_descendants(
                 &child_rel,
                 &child_path,
                 capture_mode,
-                allows,
+                filter,
                 kept,
                 out,
             )
@@ -376,7 +377,43 @@ fn record_doomed_dir_descendants(
             mode,
         });
     }
+    filter.leave(guard);
     emptied
+}
+
+/// The deletion filter a doomed subtree is judged by.
+///
+/// upstream: delete.c:105 - delete_dir_contents() calls push_local_filters()
+/// for each directory it empties, so that directory's own per-directory merge
+/// files take part in judging its children. `PerDir` loads them on the way
+/// down; `Flat` is a chain with no per-directory merge configs.
+enum DeletionFilter<'a> {
+    PerDir(&'a mut filters::FilterChain),
+    Flat(&'a filters::FilterChain),
+}
+
+impl DeletionFilter<'_> {
+    fn allows(&self, rel: &Path, is_dir: bool) -> bool {
+        match self {
+            Self::PerDir(chain) => chain.allows_deletion(rel, is_dir),
+            Self::Flat(chain) => chain.allows_deletion(rel, is_dir),
+        }
+    }
+
+    /// Loads `path`'s merge files. A merge file that cannot be read is
+    /// skipped, as the transfer-side walk skips it.
+    fn enter(&mut self, path: &Path) -> Option<filters::DirFilterGuard> {
+        match self {
+            Self::PerDir(chain) => chain.enter_directory(path).ok(),
+            Self::Flat(_) => None,
+        }
+    }
+
+    fn leave(&mut self, guard: Option<filters::DirFilterGuard>) {
+        if let (Self::PerDir(chain), Some(guard)) = (self, guard) {
+            chain.leave_directory(guard);
+        }
+    }
 }
 
 /// Removes the recorded victims of a directory a protected descendant keeps,
@@ -1079,7 +1116,7 @@ impl ReceiverContext {
                     // flat global chain is consulted directly.
                     // `reload_for_directory` takes `&mut self`, so each worker
                     // reloads onto its own clone of the merge chain.
-                    let local_chain = if needs_perdir_merge {
+                    let mut local_chain = if needs_perdir_merge {
                         let mut chain = (*merge_chain).clone();
                         chain.reload_for_directory(&dest_dir_owned, &dir_relative);
                         Some(chain)
@@ -1190,9 +1227,9 @@ impl ReceiverContext {
                         // unchanged.
                         let mut subtree: Vec<DeletedEntry> = Vec::new();
                         let mut kept: Vec<PathBuf> = Vec::new();
-                        let allows_child = |rel: &Path, dir: bool| match &local_chain {
-                            Some(chain) => chain.allows_deletion(rel, dir),
-                            None => flat_chain.allows_deletion(rel, dir),
+                        let mut filter = match local_chain.as_mut() {
+                            Some(chain) => DeletionFilter::PerDir(chain),
+                            None => DeletionFilter::Flat(&flat_chain),
                         };
                         let emptied = !is_dir
                             || is_symlink
@@ -1203,7 +1240,7 @@ impl ReceiverContext {
                                 &entry_rel,
                                 &path,
                                 capture_mode,
-                                &allows_child,
+                                &mut filter,
                                 &mut kept,
                                 &mut subtree,
                             );
@@ -1625,7 +1662,7 @@ impl ReceiverContext {
             // Reload this destination directory's per-directory merge rules so
             // dir-merge self-exclusion and merge-driven excludes stay active,
             // mirroring the parallel worker.
-            let local_chain = if needs_perdir_merge {
+            let mut local_chain = if needs_perdir_merge {
                 let mut chain = deletion_chain.clone();
                 chain.set_transfer_root(dest_dir.to_path_buf());
                 chain.reload_for_directory(dest_dir, dir_relative);
@@ -1698,7 +1735,10 @@ impl ReceiverContext {
                     &path,
                     candidate.is_dir,
                     candidate.is_symlink,
-                    local_chain.as_ref().unwrap_or(deletion_chain),
+                    &mut match local_chain.as_mut() {
+                        Some(chain) => DeletionFilter::PerDir(chain),
+                        None => DeletionFilter::Flat(deletion_chain),
+                    },
                 )?;
             }
         }
@@ -1806,7 +1846,11 @@ impl ReceiverContext {
             logged: self.captures_victim_modes().then(Vec::new),
             writer,
         };
-        let emptied = state.remove_dir_contents(relative, path, &self.deletion_filter_chain)?;
+        let emptied = state.remove_dir_contents(
+            relative,
+            path,
+            &mut DeletionFilter::Flat(&self.deletion_filter_chain),
+        )?;
         // upstream: delete.c:217-218 - a capped child bumps the same
         // `skipped_deletes` the delete sweeps do.
         self.add_skipped_deletes(state.skipped);
@@ -1947,7 +1991,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         &mut self,
         rel: &Path,
         path: &Path,
-        filter: &filters::FilterChain,
+        filter: &mut DeletionFilter<'_>,
     ) -> io::Result<bool> {
         let mut children = match self.scan_dir(rel, path) {
             Ok(children) => children,
@@ -1962,13 +2006,14 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         children.sort_by(|a, b| f_name_cmp_full(Path::new(&a.0), a.1, Path::new(&b.0), b.1));
         children.reverse();
 
+        let guard = filter.enter(path);
         let mut all_removed = true;
         for (child_name, child_is_dir, child_is_symlink) in children {
             let child_rel = rel.join(&child_name);
             let child_path = path.join(&child_name);
             // upstream: delete.c:108-110 - get_dirlist() leaves out a child the
             // filters protect, which keeps the directory.
-            if !filter.allows_deletion(&child_rel, child_is_dir) {
+            if !filter.allows(&child_rel, child_is_dir) {
                 all_removed = false;
                 continue;
             }
@@ -1982,6 +2027,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                 all_removed = false;
             }
         }
+        filter.leave(guard);
         Ok(all_removed)
     }
 
@@ -1994,7 +2040,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         path: &Path,
         is_dir: bool,
         is_symlink: bool,
-        filter: &filters::FilterChain,
+        filter: &mut DeletionFilter<'_>,
     ) -> io::Result<bool> {
         if is_dir && !is_symlink {
             // upstream: generator.c:331-336 delete_in_dir() skips a dest dir
@@ -2648,7 +2694,7 @@ mod tests {
             Path::new("stale_dir"),
             &stale,
             false,
-            &|_, _| true,
+            &mut DeletionFilter::Flat(&filters::FilterChain::empty()),
             &mut Vec::new(),
             &mut out,
         );
