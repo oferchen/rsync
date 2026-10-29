@@ -97,11 +97,15 @@ impl ReceiverContext {
         // quick-check walk that applies metadata-only fixes for up-to-date
         // entries. upstream runs the real generator locally on --read-batch
         // (main.c:652-664); only its outbound requests go to the dead pipe.
+        // upstream: generator.c:1648-1658 - `skip_dir` outlives the directory
+        // pass: the files below a directory that could not be made are skipped.
+        let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
         let mut metadata_errors = self.create_directories(
             &dest_dir,
             &metadata_opts,
             acl_cache.as_deref(),
             acl_id_map.as_deref(),
+            &mut failed_dirs,
             writer,
             #[cfg(unix)]
             sandbox.as_deref(),
@@ -171,7 +175,7 @@ impl ReceiverContext {
             #[cfg(unix)]
             sandbox.as_deref(),
             &metadata_opts,
-            None,
+            Some(&failed_dirs),
             &mut metadata_errors,
             &mut stats,
             acl_cache.as_deref(),
