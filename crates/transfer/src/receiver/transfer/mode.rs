@@ -21,6 +21,7 @@ use std::path::PathBuf;
 
 use protocol::codec::{MonotonicNdxWriter, NdxCodecEnum, create_ndx_codec};
 
+use crate::receiver::list_line::ListLineStyle;
 use crate::receiver::stats::TransferStats;
 use crate::receiver::{PipelineSetup, ReceiverContext};
 
@@ -121,17 +122,46 @@ impl ReceiverContext {
         )
     }
 
-    /// Puts a `--list-only` listing, collected in flat-index order from index 0,
-    /// into the order upstream's generator lists it.
+    /// Delivers a `--list-only` listing, collected in flat-index order from
+    /// index 0, in the order upstream's generator lists it.
+    ///
+    /// A client receiver (a pull) hands the ordered entries back in `stats` for
+    /// the client to print. A server receiver (a push) is upstream's generator:
+    /// it renders each line and sends it to the client as `MSG_INFO`, leaving
+    /// `stats` empty.
     ///
     /// upstream: generator.c:1637-1643 - `list_file_entry()` runs as
     /// recv_generator() reaches each entry, so under INC_RECURSE a directory is
-    /// listed at the head of its own sub-list, not inside its parent's.
-    pub(in crate::receiver) fn order_list_only_entries(&self, stats: &mut TransferStats) {
+    /// listed at the head of its own sub-list, not inside its parent's; its
+    /// `rprintf(FINFO, ...)` reaches the client through log.c:355-366 `rwrite()`.
+    pub(in crate::receiver) fn publish_list_only_entries<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        stats: &mut TransferStats,
+        writer: &mut W,
+    ) -> io::Result<()> {
         let entries = std::mem::take(&mut stats.list_only_entries);
-        stats.list_only_entries = self
-            .in_generator_walk_order(entries.into_iter().enumerate())
-            .collect();
+        let ordered = self.in_generator_walk_order(entries.into_iter().enumerate());
+        if self.config.connection.client_mode {
+            stats.list_only_entries = ordered.collect();
+            return Ok(());
+        }
+        let style = self.list_line_style();
+        for entry in ordered {
+            self.emit_info_bytes(writer, &style.render(&entry))?;
+        }
+        Ok(())
+    }
+
+    /// The options a listing line depends on.
+    const fn list_line_style(&self) -> ListLineStyle {
+        ListLineStyle {
+            atimes: self.config.flags.atimes,
+            crtimes: self.config.flags.crtimes,
+            preserve_links: self.config.flags.links,
+            delete_missing_args: self.config.file_selection.delete_missing_args,
+        }
     }
 
     /// Drives one non-transfer mode over the flat-index range `range`, which

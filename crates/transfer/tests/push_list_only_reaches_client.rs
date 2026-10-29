@@ -253,7 +253,11 @@ fn daemon_push_lists_through_the_oc_daemon() {
     let oc = oc_rsync_bin();
     let daemon = spawn_daemon(&oc, tmp.path());
     let out = run(&oc, &daemon_args(tmp.path(), &daemon));
-    assert_listing(&out, LISTING_RL, "oc -> oc daemon push");
+    // A `use chroot = no` module munges symlinks by default (rsyncd.conf.5
+    // `munge symlinks`), and the receiver lists the target as it stores it,
+    // prefix included (upstream: flist.c:1521-1524, generator.c:1345).
+    let munged = LISTING_RL.replace("-> a.txt", "-> /rsyncd-munged/a.txt");
+    assert_listing(&out, &munged, "oc -> oc daemon push");
     assert_destination_untouched(tmp.path());
 
     let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {

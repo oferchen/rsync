@@ -161,8 +161,12 @@ impl ReceiverContext {
                     atime_nsec: entry.atime_nsec(),
                     crtime: entry.crtime(),
                     crtime_nsec: 0,
+                    // upstream: generator.c:1345 lists `F_SYMLINK(f)`, the target
+                    // as recv_file_entry() stored it, munge prefix and
+                    // sanitizing included (flist.c:1521-1524, :1553).
                     symlink_target: if is_symlink {
-                        entry.link_target().cloned()
+                        self.stored_symlink_target(entry)
+                            .map(std::borrow::Cow::into_owned)
                     } else {
                         None
                     },

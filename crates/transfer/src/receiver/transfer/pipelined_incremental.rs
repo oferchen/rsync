@@ -478,7 +478,7 @@ impl ReceiverContext {
         // matching upstream's single-pass emission ordering.
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
-        self.order_list_only_entries(&mut stats);
+        self.publish_list_only_entries(&mut stats, writer)?;
 
         self.finalize_transfer(
             reader,
@@ -985,7 +985,7 @@ impl ReceiverContext {
 
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
-        self.order_list_only_entries(&mut stats);
+        self.publish_list_only_entries(&mut stats, writer)?;
 
         // upstream: generator.c:2899-2909 - the delayed deletions, then one
         // --max-delete report for every per-directory delete of the walk.
