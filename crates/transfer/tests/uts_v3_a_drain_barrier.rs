@@ -73,7 +73,7 @@ fn daemon_sender_emits_final_byte_before_fin() {
     // around the stream and a `ServerWriter::Plain` around that. For the
     // drain-barrier contract we only need the outermost `ServerWriter`
     // wired against the socket, since the barrier traverses through
-    // `Write::flush` and `finalize_compression`. Plain mode is the
+    // `Write::flush`. Plain mode is the
     // minimum surface where `flush_all_pending` and the subsequent
     // `shutdown_send_side` produce an observable wire effect.
     let mut writer: ServerWriter<TcpStream> =
@@ -112,9 +112,8 @@ fn daemon_sender_emits_final_byte_before_fin() {
     assert_eq!(received, payload, "byte content diverged after drain");
 }
 
-/// `flush_all_pending` must be idempotent: calling it twice in a row is the
-/// orchestrator's defense-in-depth pattern when the goodbye finaliser already
-/// ran `finalize_compression` once during `handle_goodbye_with_finalizer`.
+/// `flush_all_pending` must be idempotent: the orchestrator runs it on a
+/// writer the goodbye handshake has already flushed.
 ///
 /// A second call against a plain `Vec` sink should not double-flush, double-
 /// finalise, or panic, and must report `Ok(())`.

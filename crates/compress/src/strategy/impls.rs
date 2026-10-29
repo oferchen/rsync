@@ -98,7 +98,6 @@ impl CompressionStrategy for ZlibStrategy {
 #[derive(Clone, Copy, Debug)]
 pub struct ZstdStrategy {
     level: CompressionLevel,
-    workers: Option<std::num::NonZeroU8>,
 }
 
 #[cfg(feature = "zstd")]
@@ -106,24 +105,13 @@ impl ZstdStrategy {
     /// Creates a zstd strategy at the given compression level.
     #[must_use]
     pub const fn new(level: CompressionLevel) -> Self {
-        Self {
-            level,
-            workers: None,
-        }
+        Self { level }
     }
 
     /// Creates a Zstd strategy with default compression level.
     #[must_use]
     pub const fn with_default_level() -> Self {
         Self::new(CompressionLevel::Default)
-    }
-
-    /// Applies a `--compress-threads=N` request, forwarded to
-    /// `ZSTD_c_nbWorkers`. upstream: token.c:752 `send_zstd_token()`.
-    #[must_use]
-    pub const fn with_workers(mut self, workers: Option<std::num::NonZeroU8>) -> Self {
-        self.workers = workers;
-        self
     }
 }
 
@@ -138,7 +126,7 @@ impl Default for ZstdStrategy {
 impl CompressionStrategy for ZstdStrategy {
     fn compress(&self, input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
         let initial_len = output.len();
-        let mut encoder = CountingZstdEncoder::with_sink_workers(output, self.level, self.workers)?;
+        let mut encoder = CountingZstdEncoder::with_sink(output, self.level)?;
         encoder.write(input)?;
         let (returned_output, _bytes_written) = encoder.finish_into_inner()?;
 

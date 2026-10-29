@@ -1,7 +1,7 @@
 //! Goodbye handshake handling for the generator role.
 //!
 //! The handshake is split into `read_receiver_goodbye` and
-//! `answer_goodbye_with_finalizer` so a caller can act in the gap between the
+//! `answer_goodbye` so a caller can act in the gap between the
 //! two - the last point at which the sender can still write a diagnostic the
 //! peer will read. Helpers: `should_send_del_stats`,
 //! `read_ndx_skipping_del_stats`, and `accumulate_delete_stats`.
@@ -146,58 +146,8 @@ impl GeneratorContext {
         ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
         ndx_write_codec: &mut MonotonicNdxWriter,
     ) -> io::Result<()> {
-        self.handle_goodbye_with_finalizer(
-            reader,
-            writer,
-            ndx_read_codec,
-            ndx_write_codec,
-            |_writer| Ok(()),
-        )
-    }
-
-    /// Variant of `handle_goodbye` that runs an
-    /// arbitrary finalizer between writing the sender's goodbye NDX_DONE and
-    /// blocking on the receiver's final NDX_DONE reply.
-    ///
-    /// The finalizer is the hook that lets the daemon-sender flush codec
-    /// state (e.g. emit the zlib `Z_FINISH` end-of-stream trailer under `-zz`
-    /// daemon pull) before the read side blocks. Without this hook, a
-    /// receiver running through `CompressedReader` can deadlock waiting on a
-    /// closing deflate block that the sender has not yet emitted, while the
-    /// sender simultaneously waits on the receiver's final NDX_DONE.
-    ///
-    /// upstream: `main.c:1005-1009 do_server_sender()` runs
-    /// `io_flush(FULL_FLUSH)` immediately before `read_final_goodbye()` so
-    /// the FIN is preceded by every buffered byte. Under `-zz` upstream's
-    /// `write_buf()` bypasses the deflate stream entirely (see
-    /// `io.c:2293 write_buf()`), so no codec finalisation is required there.
-    /// In our writer-graph the goodbye NDX_DONE rides through
-    /// `CompressedWriter`, so we additionally need the finalizer to emit
-    /// `Z_FINISH` (`token.c:370 send_deflated_token()` performs the matching
-    /// `deflateEnd()` at end of transfer) before the receiver tries to
-    /// decompress past the in-flight block.
-    #[cfg(test)]
-    pub(in crate::generator) fn handle_goodbye_with_finalizer<R, W, F>(
-        &mut self,
-        reader: &mut R,
-        writer: &mut W,
-        ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
-        ndx_write_codec: &mut MonotonicNdxWriter,
-        finalize_between_write_and_read: F,
-    ) -> io::Result<()>
-    where
-        R: Read,
-        W: Write,
-        F: FnMut(&mut W) -> io::Result<()>,
-    {
         if self.read_receiver_goodbye(reader, ndx_read_codec)? == GoodbyeArrival::Done {
-            self.answer_goodbye_with_finalizer(
-                reader,
-                writer,
-                ndx_read_codec,
-                ndx_write_codec,
-                finalize_between_write_and_read,
-            )?;
+            self.answer_goodbye(reader, writer, ndx_read_codec, ndx_write_codec)?;
         }
         Ok(())
     }
@@ -245,19 +195,17 @@ impl GeneratorContext {
     /// reported [`GoodbyeArrival::Done`]. Writing the sender's `NDX_DONE` here
     /// is the point after which the peer stops reading, so anything the sender
     /// still owes the peer must already be on the wire.
-    pub(in crate::generator) fn answer_goodbye_with_finalizer<R, W, F>(
+    ///
+    /// The flush after the sender's `NDX_DONE` is the only barrier the
+    /// handshake needs: upstream's blocking `read_ndx_and_attrs()` drains the
+    /// output buffer in `perform_io()` before it waits for input.
+    pub(in crate::generator) fn answer_goodbye<R: Read, W: Write>(
         &mut self,
         reader: &mut R,
         writer: &mut W,
         ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
         ndx_write_codec: &mut MonotonicNdxWriter,
-        mut finalize_between_write_and_read: F,
-    ) -> io::Result<()>
-    where
-        R: Read,
-        W: Write,
-        F: FnMut(&mut W) -> io::Result<()>,
-    {
+    ) -> io::Result<()> {
         // For protocol 31+: conditionally send del_stats, echo NDX_DONE, read final NDX_DONE.
         //
         // The del_stats gate follows upstream 3.4.3 (INFO_GTE(STATS, 2), i.e. --stats)
@@ -294,24 +242,6 @@ impl GeneratorContext {
             // blocked write, so the run ends in whine_about_eof(), not a
             // write error.
             if let Err(e) = write_result
-                && !is_early_close_error(&e)
-            {
-                return Err(e);
-            }
-
-            // UTS-9.REOPEN: under -zz daemon pull the receiver's
-            // CompressedReader cannot decode past an unterminated deflate
-            // block while we block on read_ndx below, producing a deadlock
-            // that surfaces to the user as "connection unexpectedly closed
-            // (N bytes received so far) [receiver]" once the daemon times
-            // out and FINs. Drive the finalizer here, between the goodbye
-            // write and the goodbye read, so the codec can emit its
-            // end-of-stream trailer before the receiver tries to advance.
-            //
-            // upstream: token.c:370 send_deflated_token() emits the
-            // Z_FINISH-terminated stream at end of transfer; main.c:1008
-            // read_final_goodbye() is bracketed by io_flush(FULL_FLUSH).
-            if let Err(e) = finalize_between_write_and_read(writer)
                 && !is_early_close_error(&e)
             {
                 return Err(e);
