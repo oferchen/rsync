@@ -1672,37 +1672,41 @@ mod touch_up_dirs_tests {
         );
     }
 
-    /// The twin of `surfaces_non_permission_error_from_mkdir`, for the BATCH
-    /// pass: a stat failure is not an obstruction refusal, and the two must not
-    /// share an arm.
+    /// A directory whose stat fails with anything but ENOENT is not fatal: the
+    /// mkdir that follows fails, is reported, and the directory joins the
+    /// failed set so its contents are skipped.
     ///
-    /// `classify_dir_destination` can fail for two unrelated reasons, and only
-    /// one of them is upstream's `skipping_dir_contents` case:
-    ///
-    /// - the confined unlink of an obstructing symlink was refused - upstream
-    ///   `generator.c:1841-1842` `goto skipping_dir_contents`, pinned by
-    ///   `a_refused_obstruction_removal_is_reported_not_reclassified` above;
-    /// - the destination could not be stat'd at all - upstream
-    ///   `generator.c:1745` just records `statret = -1`, and because
-    ///   `generator.c:1840` gates `delete_item()` on `statret == 0`, the entry
-    ///   falls through to `gen_entry_mkdir()` and that mkdir's error is what
-    ///   gets reported.
-    ///
-    /// Collapsing the second into the first turns a hard failure into a silent
-    /// "directory skipped": ENOTDIR from a plain file sitting where a parent
-    /// directory belongs stopped propagating and was folded into the failed-dir
-    /// set instead. This fixture shapes exactly that - `afile` is a regular
-    /// file, so stat'ing `afile/sub` fails ENOTDIR, which is neither NotFound
-    /// (the parent-walk retry) nor PermissionDenied (upstream's non-fatal
-    /// class) - and pins the hard error to `Err`.
+    /// upstream: generator.c:1745-1746 leaves the entry to `gen_entry_mkdir()`
+    /// and generator.c:1873-1887 reports `recv_generator: mkdir %s failed`,
+    /// sets `skip_dir` and continues; only the end-of-run exit is 23. The
+    /// fixture puts a regular file where a parent belongs, so the stat and the
+    /// mkdir of `afile/sub` both fail ENOTDIR.
     #[cfg(unix)]
     #[test]
-    fn a_stat_failure_is_not_an_obstruction_refusal_and_still_fails_loud() {
+    fn a_failed_directory_stat_marks_it_failed_instead_of_aborting() {
+        /// Captures the error frames a server-mode receiver sends.
+        #[derive(Default)]
+        struct ErrorCapture(Vec<String>);
+        impl std::io::Write for ErrorCapture {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl crate::writer::MsgInfoSender for ErrorCapture {
+            fn send_msg_error_xfer(&mut self, data: &[u8]) -> std::io::Result<()> {
+                self.0.push(String::from_utf8_lossy(data).into_owned());
+                Ok(())
+            }
+            fn send_msg_error(&mut self, data: &[u8]) -> std::io::Result<()> {
+                self.0.push(String::from_utf8_lossy(data).into_owned());
+                Ok(())
+            }
+        }
         let dir = test_support::create_tempdir();
         let dest = dir.path();
-
-        // A regular file where a parent directory is expected forces ENOTDIR
-        // when the receiver stats and then creates `afile/sub` beneath it.
         fs::write(dest.join("afile"), b"not a directory").expect("plant regular file");
 
         let hs = handshake();
@@ -1710,31 +1714,35 @@ mod touch_up_dirs_tests {
         ctx.file_list = vec![FileEntry::new_directory("afile/sub".into(), 0o755)].into();
 
         let opts = metadata::MetadataOptions::default();
-        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
-        let result = ctx.create_directories(
+        let mut writer = ErrorCapture::default();
+        let mut failed = crate::receiver::directory::FailedDirectories::new();
+        ctx.create_directories(
             dest,
             &opts,
             None,
             None,
-            &mut crate::receiver::directory::FailedDirectories::new(),
+            &mut failed,
             &mut writer,
             #[cfg(unix)]
             None,
+        )
+        .expect("a failed mkdir is reported per directory, not propagated");
+        let errors = writer.0.concat();
+        assert!(
+            errors.contains("recv_generator: mkdir ")
+                && errors.contains("afile/sub\" failed: Not a directory (20)"),
+            "the mkdir failure must be reported, not silently folded: {errors:?}"
+        );
+        assert!(
+            errors.contains("*** Skipping any contents from this failed directory ***"),
+            "{errors:?}"
         );
 
-        let err = result.expect_err(
-            "a non-EACCES mkdir failure must propagate as Err from the batch pass, \
-             not be laundered into the failed-directory set",
-        );
-        assert_ne!(
-            err.kind(),
-            std::io::ErrorKind::PermissionDenied,
-            "EACCES takes upstream's non-fatal branch; this fixture avoids it"
-        );
-        assert_ne!(
-            err.kind(),
-            std::io::ErrorKind::NotFound,
-            "NotFound would take the parent-walk retry, not the hard-error path"
+        assert!(
+            failed
+                .failed_ancestor(std::path::Path::new("afile/sub/child"))
+                .is_some(),
+            "entries below the failed directory must be skipped"
         );
     }
 
