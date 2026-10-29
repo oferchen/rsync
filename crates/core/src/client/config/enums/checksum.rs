@@ -155,6 +155,27 @@ impl StrongChecksumChoice {
         }
     }
 
+    /// Refuses `--checksum` when the file checksum (second component) is
+    /// `none`.
+    ///
+    /// upstream: checksum.c:548-551 `file_checksum()` - `CSUM_NONE` falls to
+    /// the default case, which prints `Invalid checksum-choice for --checksum:
+    /// %s (%d)` and exits `RERR_UNSUPPORTED`.
+    ///
+    /// # Errors
+    ///
+    /// Returns upstream's message with exit code 4 when `always_checksum` is
+    /// set and the file checksum is `none`.
+    pub fn validate_file_checksum(self, always_checksum: bool) -> Result<(), Message> {
+        if always_checksum && matches!(self.file, StrongChecksumAlgorithm::None) {
+            return Err(
+                rsync_error!(4, "Invalid checksum-choice for --checksum: none (0)")
+                    .with_role(Role::Sender),
+            );
+        }
+        Ok(())
+    }
+
     /// Returns the transfer-algorithm selection (first component).
     #[must_use]
     pub const fn transfer(self) -> StrongChecksumAlgorithm {
@@ -389,6 +410,35 @@ mod tests {
                 choice.transfer_protocol_override(),
                 Some(protocol::ChecksumAlgorithm::None),
             );
+        }
+
+        /// upstream: checksum.c:548-551 - only a `none` FILE checksum reaches
+        /// the default case, and only when `--checksum` computes one.
+        #[test]
+        fn validate_file_checksum_refuses_only_a_none_file_sum_under_checksum() {
+            for (spec, always_checksum, refused) in [
+                ("none", true, true),
+                ("md5,none", true, true),
+                ("none,md5", true, false),
+                ("none", false, false),
+                ("auto", true, false),
+            ] {
+                let result = StrongChecksumChoice::parse(spec)
+                    .unwrap()
+                    .validate_file_checksum(always_checksum);
+                assert_eq!(
+                    result.is_err(),
+                    refused,
+                    "{spec} checksum={always_checksum}"
+                );
+                if let Err(message) = result {
+                    assert_eq!(message.code(), Some(4));
+                    assert_eq!(
+                        message.text(),
+                        "Invalid checksum-choice for --checksum: none (0)"
+                    );
+                }
+            }
         }
 
         #[test]

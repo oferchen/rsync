@@ -74,6 +74,7 @@ pub struct ServerConfigBuilder {
     write: WriteConfig,
     checksum_seed: Option<i32>,
     checksum_choice: Option<protocol::ChecksumAlgorithm>,
+    file_checksum_choice: Option<protocol::ChecksumAlgorithm>,
     block_size: Option<NonZeroU32>,
     trust_sender: bool,
     stop_at: Option<SystemTime>,
@@ -117,6 +118,7 @@ impl ServerConfigBuilder {
             write: WriteConfig::default(),
             checksum_seed: None,
             checksum_choice: None,
+            file_checksum_choice: None,
             block_size: None,
             trust_sender: false,
             stop_at: None,
@@ -358,6 +360,15 @@ impl ServerConfigBuilder {
     /// Sets an optional checksum algorithm override.
     pub fn checksum_choice(&mut self, choice: Option<protocol::ChecksumAlgorithm>) -> &mut Self {
         self.checksum_choice = choice;
+        self
+    }
+
+    /// Sets the whole-file checksum named by `--checksum-choice`.
+    pub fn file_checksum_choice(
+        &mut self,
+        choice: Option<protocol::ChecksumAlgorithm>,
+    ) -> &mut Self {
+        self.file_checksum_choice = choice;
         self
     }
 
@@ -647,6 +658,7 @@ impl ServerConfigBuilder {
             write: self.write.clone(),
             checksum_seed: self.checksum_seed,
             checksum_choice: self.checksum_choice,
+            file_checksum_choice: self.file_checksum_choice,
             block_size: self.block_size,
             trust_sender: self.trust_sender,
             stop_at: self.stop_at,
