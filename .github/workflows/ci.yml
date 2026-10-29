@@ -1,14 +1,18 @@
 name: CI
 
-# Trigger policy. A push to master runs ONLY the jobs behind required contexts
-# (fmt + clippy, and the stable cells of nextest, Windows, macOS and Linux
-# musl, plus interop) and the `changes` classifier they need. The matrix jobs
-# drop their beta/nightly cells on push; every other job carries
-# `github.event_name != 'push'` (or a narrower event test) in its `if:`. Pull
-# requests, the nightly schedule and workflow_dispatch run the rest as before.
+# Trigger policy. Master pushes AND pull requests run only the jobs behind
+# required contexts (fmt + clippy, the stable cells of nextest, Windows, macOS
+# and Linux musl, interop, unsafe-safety-comment-audit), the `changes`
+# classifier they need, and a few cheap non-required checks (rustdoc links,
+# no-default clippy, tools tests, surface diff, Windows GNU cross-check, fuzz
+# workspace check). The matrix jobs drop their beta/nightly cells on both
+# events. The heavy non-required jobs (feature-flag matrix, QUIC, Windows
+# IOCP/ACL/daemon, macOS and Windows interop, SSH throughput) run only on the
+# nightly schedule and workflow_dispatch; a failure there is triaged on master.
+# Pull requests merge on required checks through a sequential merge train, so
+# PR runner time goes to the checks that gate a merge.
 # The upstream testsuite gate
 # (upstream-testsuite-3.5.1.yml) has no push trigger at all.
-
 on:
   push:
     branches: [ master, main ]
@@ -47,10 +51,11 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    # Nightly run of the whole matrix on master. The beta and nightly toolchain
-    # cells of nextest, Windows, macOS and Linux musl run here AND on every pull
-    # request; they are non-blocking there (continue-on-error), so a churning
-    # compiler shows up without holding up a merge.
+    # Nightly run of the whole matrix on master: the beta and nightly toolchain
+    # cells of nextest, Windows, macOS and Linux musl, and every heavy
+    # non-required job. They are non-blocking (continue-on-error on the
+    # toolchain cells), so a churning compiler shows up without holding up a
+    # merge.
     - cron: '30 3 * * *'
 
 concurrency:
@@ -502,11 +507,12 @@ jobs:
       fail-fast: false
       matrix:
         toolchain: [stable, beta, nightly]
-        # Master pushes run the required stable cell only. An exclude value of
-        # '' matches no cell, so other events keep all three.
+        # Master pushes and pull requests run the required stable cell only.
+        # An exclude value of '' matches no cell, so the nightly schedule and
+        # workflow_dispatch keep all three.
         exclude:
-          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
-          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
+          - toolchain: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'beta' || '' }}
+          - toolchain: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'nightly' || '' }}
 
     steps:
       - name: Free disk space
@@ -606,7 +612,7 @@ jobs:
     name: SSH throughput (SSR-1, release)
     runs-on: ubuntu-latest
     needs: [changes, lint]
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.lint.result == 'success' && github.event_name != 'push' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.lint.result == 'success' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -651,7 +657,7 @@ jobs:
   feature-flags:
     name: Feature flag combinations
     needs: lint
-    if: github.event_name != 'push'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     uses: ./.github/workflows/_test-features.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
@@ -688,7 +694,7 @@ jobs:
     name: Linux QUIC (--features quic)
     runs-on: ubuntu-latest
     needs: lint
-    if: github.event_name != 'push'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     timeout-minutes: 30
 
     env:
@@ -759,7 +765,7 @@ jobs:
     name: Linux musl QUIC (--features quic)
     runs-on: ubuntu-latest
     needs: lint
-    if: github.event_name != 'push'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     timeout-minutes: 30
     env:
       CARGO_TERM_COLOR: always
@@ -799,11 +805,12 @@ jobs:
       fail-fast: false
       matrix:
         toolchain: [stable, beta, nightly]
-        # Master pushes run the required stable cell only. An exclude value of
-        # '' matches no cell, so other events keep all three.
+        # Master pushes and pull requests run the required stable cell only.
+        # An exclude value of '' matches no cell, so the nightly schedule and
+        # workflow_dispatch keep all three.
         exclude:
-          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
-          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
+          - toolchain: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'beta' || '' }}
+          - toolchain: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'nightly' || '' }}
 
     steps:
       - name: Checkout
@@ -920,7 +927,7 @@ jobs:
     name: Windows IOCP (--features iocp)
     runs-on: windows-latest
     needs: lint
-    if: github.event_name != 'push'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     timeout-minutes: 30
 
     steps:
@@ -988,7 +995,7 @@ jobs:
     name: Windows ACL/xattr
     runs-on: windows-latest
     needs: lint
-    if: github.event_name != 'push'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     timeout-minutes: 30
 
     steps:
@@ -1056,7 +1063,7 @@ jobs:
     name: Windows daemon
     runs-on: windows-latest
     needs: lint
-    if: github.event_name != 'push'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     timeout-minutes: 30
 
     steps:
@@ -1204,11 +1211,12 @@ jobs:
       fail-fast: false
       matrix:
         toolchain: [stable, beta, nightly]
-        # Master pushes run the required stable cell only. An exclude value of
-        # '' matches no cell, so other events keep all three.
+        # Master pushes and pull requests run the required stable cell only.
+        # An exclude value of '' matches no cell, so the nightly schedule and
+        # workflow_dispatch keep all three.
         exclude:
-          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
-          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
+          - toolchain: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'beta' || '' }}
+          - toolchain: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'nightly' || '' }}
 
     steps:
       - name: Checkout
@@ -1316,11 +1324,12 @@ jobs:
       fail-fast: false
       matrix:
         toolchain: [stable, beta, nightly]
-        # Master pushes run the required stable cell only. An exclude value of
-        # '' matches no cell, so other events keep all three.
+        # Master pushes and pull requests run the required stable cell only.
+        # An exclude value of '' matches no cell, so the nightly schedule and
+        # workflow_dispatch keep all three.
         exclude:
-          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
-          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
+          - toolchain: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'beta' || '' }}
+          - toolchain: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'nightly' || '' }}
 
     steps:
       - name: Checkout
@@ -1435,7 +1444,7 @@ jobs:
   interop-upstream-macos:
     name: interop (macOS)
     needs: lint
-    if: github.event_name != 'push'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     uses: ./.github/workflows/_interop-macos.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
@@ -1452,7 +1461,7 @@ jobs:
   interop-upstream-windows:
     name: interop (Windows, best-effort)
     needs: lint
-    if: github.event_name != 'push'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     uses: ./.github/workflows/_interop-windows.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
