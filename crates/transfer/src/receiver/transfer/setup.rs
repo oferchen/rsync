@@ -2,7 +2,7 @@
 //!
 //! `setup_transfer` activates input multiplex, reads the filter list, receives
 //! the (possibly incremental) file list, sanitizes paths, and builds the
-//! `PipelineSetup` used by `run_sync`, `run_pipelined`, and
+//! `PipelineSetup` used by `run_pipelined` and
 //! `run_pipelined_incremental`. Filter-list wire parsing lives alongside it in
 //! `parse_wire_filters_for_receiver`.
 
@@ -10,7 +10,7 @@ mod context;
 mod wire_filters;
 
 pub(in crate::receiver) use wire_filters::{
-    dir_merge_config_from_wire, parse_wire_filters_for_receiver,
+    dir_merge_config_from_wire, dir_merge_self_exclude, parse_wire_filters_for_receiver,
 };
 
 #[cfg(unix)]

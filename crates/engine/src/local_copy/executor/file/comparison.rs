@@ -1,7 +1,7 @@
 //! File comparison and skip-decision logic for local copies.
 
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 use std::num::{NonZeroU8, NonZeroU32};
 use std::path::Path;
 use std::time::SystemTime;
@@ -9,7 +9,8 @@ use std::time::SystemTime;
 use metadata::ModifyWindow;
 
 use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signature_layout};
-use crate::local_copy::{COPY_BUFFER_SIZE, LocalCopyError};
+use crate::local_copy::LocalCopyError;
+use crate::local_copy::executor::directory::pair_checksums_match;
 use crate::signature::{
     PARALLEL_THRESHOLD_BYTES, SignatureAlgorithm, SignatureError, generate_file_signature,
     generate_file_signature_windowed,
@@ -109,6 +110,9 @@ pub(crate) fn destination_is_newer(
 
 /// Builds a delta signature index from an existing destination file.
 ///
+/// `algorithm` is the block strong checksum (upstream `xfer_sum_nni`); the
+/// strong sum is capped at its digest width.
+///
 /// Returns `None` for empty files or when signature generation fails
 /// for non-I/O reasons. Used by the delta transfer path to compute
 /// block matches against the existing content.
@@ -116,6 +120,7 @@ pub(crate) fn build_delta_signature(
     destination: &Path,
     metadata: &fast_io::EntryMetadata,
     block_size_override: Option<NonZeroU32>,
+    algorithm: SignatureAlgorithm,
 ) -> Result<Option<DeltaSignatureIndex>, LocalCopyError> {
     let length = metadata.len();
     if length == 0 {
@@ -123,12 +128,16 @@ pub(crate) fn build_delta_signature(
     }
 
     let checksum_len = NonZeroU8::new(16).expect("strong checksum length must be non-zero");
+    // upstream: generator.c:711 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`
+    let digest_len = NonZeroU8::new(algorithm.digest_len().min(16) as u8)
+        .expect("strong checksum digest length must be non-zero");
     let params = SignatureLayoutParams::new(
         length,
         block_size_override,
         ProtocolVersion::NEWEST,
         checksum_len,
-    );
+    )
+    .with_transfer_digest_length(digest_len);
     let Ok(layout) = calculate_signature_layout(params) else {
         return Ok(None);
     };
@@ -149,9 +158,9 @@ pub(crate) fn build_delta_signature(
     // sequential path; below the threshold the rayon overhead would dominate,
     // so stay sequential there.
     let signature_result = if length >= PARALLEL_THRESHOLD_BYTES {
-        generate_file_signature_windowed(basis, layout, SignatureAlgorithm::Md4)
+        generate_file_signature_windowed(basis, layout, algorithm)
     } else {
-        generate_file_signature(basis, layout, SignatureAlgorithm::Md4)
+        generate_file_signature(basis, layout, algorithm)
     };
     let signature = match signature_result {
         Ok(signature) => signature,
@@ -199,7 +208,7 @@ pub(crate) fn build_delta_signature(
         );
     }
 
-    match DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4) {
+    match DeltaSignatureIndex::from_signature(&signature, algorithm) {
         Some(index) => Ok(Some(index)),
         None => Ok(None),
     }
@@ -376,62 +385,21 @@ pub(crate) fn system_time_within_window(
     window.same_time(a_sec, a_nsec, b_sec, b_nsec)
 }
 
-enum LockstepCheck {
-    Continue,
-    Diverged,
-}
-
-fn compare_files_lockstep<F>(source: &Path, destination: &Path, mut on_chunk: F) -> io::Result<bool>
-where
-    F: FnMut(&[u8], &[u8]) -> LockstepCheck,
-{
-    let mut source_file = fs::File::open(source)?;
-    let mut destination_file = fs::File::open(destination)?;
-    let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
-    let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
-
-    loop {
-        let source_read = source_file.read(&mut source_buffer)?;
-        let destination_read = destination_file.read(&mut destination_buffer)?;
-
-        if source_read != destination_read {
-            return Ok(false);
-        }
-
-        if source_read == 0 {
-            break;
-        }
-
-        match on_chunk(
-            &source_buffer[..source_read],
-            &destination_buffer[..destination_read],
-        ) {
-            LockstepCheck::Continue => {}
-            LockstepCheck::Diverged => return Ok(false),
-        }
-    }
-
-    Ok(true)
-}
-
-/// Compares two local files for content equality.
+/// Compares two local files for content equality under `--checksum`.
 ///
-/// Uses lockstep byte comparison which is both faster and more accurate than
-/// hashing for local files. Upstream rsync uses checksum comparison because
-/// source and destination are on different machines, but for local copies
-/// we can compare bytes directly.
+/// upstream: generator.c:quick_check_ok() compares `file_checksum()` sums of
+/// both sides; this hashes both in parallel through the shared checksum
+/// service. Files of different sizes differ without being read.
 pub(crate) fn files_checksum_match(
     source: &Path,
     destination: &Path,
-    _algorithm: SignatureAlgorithm,
+    algorithm: SignatureAlgorithm,
 ) -> io::Result<bool> {
-    compare_files_lockstep(source, destination, |src_chunk, dst_chunk| {
-        if src_chunk == dst_chunk {
-            LockstepCheck::Continue
-        } else {
-            LockstepCheck::Diverged
-        }
-    })
+    let len = fs::metadata(source)?.len();
+    if fs::metadata(destination)?.len() != len {
+        return Ok(false);
+    }
+    Ok(pair_checksums_match(source, destination, len, algorithm))
 }
 
 #[cfg(test)]
@@ -505,11 +473,49 @@ mod tests {
             &path,
             &fast_io::EntryMetadata::from(metadata.clone()),
             Some(override_size),
+            default_checksum_algorithm(),
         )
         .expect("signature")
         .expect("index");
 
         assert_eq!(index.block_length(), override_size.get() as usize);
+    }
+
+    /// The basis block sums must be computed with the negotiated `xfer_sum`
+    /// (seed included), capped at its digest width, or the delta matches
+    /// against a different hash than upstream's local child would use.
+    #[test]
+    fn build_delta_signature_hashes_blocks_with_the_selected_algorithm() {
+        use checksums::strong::Md5Seed;
+
+        let temp = TempDir::new().expect("tempdir");
+        let path = temp.path().join("basis.bin");
+        let data: Vec<u8> = (0..5000u32).map(|i| (i * 31 % 251) as u8).collect();
+        fs::write(&path, &data).expect("write basis");
+        let metadata = fast_io::EntryMetadata::from(fs::metadata(&path).expect("metadata"));
+
+        for algorithm in [
+            SignatureAlgorithm::Xxh3_128 { seed: 7 },
+            SignatureAlgorithm::Xxh3 { seed: 7 },
+            SignatureAlgorithm::Md5 {
+                seed_config: Md5Seed::proper(7),
+            },
+            SignatureAlgorithm::Md4,
+        ] {
+            let index = build_delta_signature(&path, &metadata, None, algorithm)
+                .expect("signature")
+                .expect("index");
+            let strong_len = index.strong_length();
+            assert_eq!(strong_len, algorithm.digest_len().min(16), "{algorithm:?}");
+            let first_block = &data[..index.block_length()];
+            assert_eq!(
+                index.block(0).strong(),
+                algorithm
+                    .compute_truncated(first_block, strong_len)
+                    .as_slice(),
+                "{algorithm:?}"
+            );
+        }
     }
 
     #[test]

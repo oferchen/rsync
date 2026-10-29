@@ -132,6 +132,7 @@ mod flist_banner;
 pub(crate) mod full_fname;
 pub mod generator;
 pub mod handshake;
+pub mod iobuf;
 mod reader;
 pub mod receiver;
 pub mod role;
@@ -174,9 +175,7 @@ pub use self::config::{
 };
 pub use self::delta_config::DeltaGeneratorConfig;
 pub use self::flags::{InfoFlags, NumericIds, ParseFlagError, ParsedServerFlags};
-pub use self::generator::{
-    GeneratorContext, GeneratorStats, generate_delta_from_signature, io_error_flags,
-};
+pub use self::generator::{GeneratorContext, GeneratorStats, io_error_flags};
 pub use self::handshake::{
     HandshakeResult, IoTimeoutReapply, perform_handshake, perform_handshake_with_max,
     perform_legacy_handshake, perform_server_handshake,
@@ -777,10 +776,38 @@ pub struct ServerTransferHooks<'p, 'i> {
 /// wire-identical.
 #[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, hooks), fields(role = ?config.role, protocol = %handshake.protocol)))]
 pub fn run_server_with_handshake_adopting<W: Write>(
+    config: ServerConfig,
+    handshake: HandshakeResult,
+    stdin: &mut dyn Read,
+    stdout: W,
+    hooks: ServerTransferHooks<'_, '_>,
+) -> ServerResult {
+    run_server_over_transport(
+        config,
+        handshake,
+        Box::new(fast_io::transport::BlockingStreams::new(stdin, stdout)),
+        hooks,
+    )
+}
+
+/// Runs a server transfer over `transport`, the connection every later byte
+/// crosses.
+///
+/// The handshake has already happened; whatever its reader buffered past the
+/// greeting travels in `handshake.buffered` and is served first. Protocol
+/// setup reads exactly what it parses, then input buffering starts (upstream:
+/// main.c:1308 start_server() -> setup_protocol(), io.c:1573
+/// io_start_buffering_in()), and from there every read and write goes through
+/// one transport core (upstream: io.c:647 perform_io()).
+///
+/// # Errors
+///
+/// As [`run_server_with_handshake_adopting`].
+#[cfg_attr(feature = "tracing", instrument(skip(transport, hooks), fields(role = ?config.role, protocol = %handshake.protocol)))]
+pub fn run_server_over_transport<'a>(
     mut config: ServerConfig,
     mut handshake: HandshakeResult,
-    stdin: &mut dyn Read,
-    mut stdout: W,
+    transport: Box<dyn fast_io::transport::Transport + 'a>,
     hooks: ServerTransferHooks<'_, '_>,
 ) -> ServerResult {
     let ServerTransferHooks {
@@ -804,15 +831,12 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // (already set by @RSYNCD greeting or SSH handshake).
     let buffered_data = std::mem::take(&mut handshake.buffered);
 
-    // Chain any buffered data from the handshake BufReader ahead of raw stdin.
-    // In daemon mode, the BufReader used for argument reading may buffer compat
-    // exchange bytes (TCP coalescing). Discarding them breaks protocol negotiation.
-    let mut chained_stdin: Box<dyn std::io::Read> = if buffered_data.is_empty() {
-        Box::new(stdin)
-    } else {
-        let buffered = std::io::Cursor::new(buffered_data);
-        Box::new(buffered.chain(stdin))
-    };
+    // The handshake BufReader may have buffered compat exchange bytes (TCP
+    // coalescing in daemon mode); the core serves them before reading more,
+    // since discarding them breaks protocol negotiation.
+    let core = iobuf::Core::new(transport, buffered_data);
+    let mut stdin = iobuf::CoreReader::new(&core);
+    let mut stdout = iobuf::CoreWriter::new(&core);
 
     // upstream: main.c:1308 start_server() → setup_protocol(f_out, f_in)
     // Performs compat flags exchange + capability negotiation in RAW mode,
@@ -945,7 +969,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             ..Default::default()
         },
     )?;
-    let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
+    let setup_result = setup::setup_protocol(&mut stdout, &mut stdin, &setup_config)?;
 
     // upstream: main.c:1356-1364 start_server() - fd 2 is set blocking only
     // after setup_protocol(), once ssh is done twiddling its descriptors. Like
@@ -1026,20 +1050,14 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // Flush raw-mode data before wrapping in multiplexed writer.
     stdout.flush()?;
 
-    // upstream: io.c:1587 iobuf.in is a fixed 32KB circular buffer that is never
-    // resized (io.c:663). IoBufReader is that buffer, and it sits beneath the
-    // multiplex demuxer so no decoder ever touches the descriptor - the layering
-    // upstream enforces with `assert(fd != iobuf.in_fd)` (io.c:314).
-    // The CountingReader wraps the raw transport (below the multiplex demuxer and
-    // token decompression) so the running total reflects compressed wire bytes,
-    // matching upstream's `stats.total_read` (io.c:938).
-    let counting_stdin = match bytes_read {
-        Some(counter) => reader::CountingReader::with_counter(chained_stdin, counter),
-        None => reader::CountingReader::new(chained_stdin),
-    };
-    let bytes_received_counter = counting_stdin.counter();
-    let mut reader =
-        reader::ServerReader::new_plain(protocol::iobuf::IoBufReader::new(counting_stdin));
+    // upstream: io.c:647 perform_io() - every byte in or out crosses one core,
+    // which owns the fixed 32KB iobuf.in (io.c:1587, never resized: io.c:663)
+    // beneath the multiplex demuxer, so no decoder touches the descriptor
+    // (io.c:314), and which counts raw transport reads below the demuxer and
+    // token decompression, as upstream's `stats.total_read` (io.c:938).
+    let bytes_received_counter = bytes_read.unwrap_or_default();
+    iobuf::Core::start_buffering(&core, std::sync::Arc::clone(&bytes_received_counter));
+    let mut reader = reader::ServerReader::new_plain(stdin);
 
     // upstream: io.c:1750-1751 - only the client receiver adopts a
     // daemon-advertised MSG_IO_TIMEOUT (`am_server || am_generator` treat it as
@@ -1280,7 +1298,13 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                     std::sync::Arc::clone(&bytes_sent_counter),
                     std::sync::Arc::clone(&bytes_received_counter),
                 );
-                let stats = match ctx.run(chained_reader, &mut writer, &paths, progress, itemize) {
+                // upstream: io.c:101-110 - one `iobuf` owns both directions. The
+                // output comes back after the role ends, for the error report
+                // `announce_error_exit` sends on it.
+                let mut io = iobuf::IoBuf::new(chained_reader, writer.take());
+                let result = ctx.run(&mut io, &paths, progress, itemize);
+                writer = io.into_output();
+                let stats = match result {
                     Ok(stats) => stats,
                     Err(error) => break 'dispatch Err(error),
                 };

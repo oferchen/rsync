@@ -25,6 +25,8 @@ pub mod quic_cert;
 pub mod reap;
 pub mod skip;
 pub mod transcript;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod transcript_cells;
 #[cfg(unix)]
 pub mod umask;
 pub mod upstream_compat;
