@@ -324,50 +324,65 @@ fn plant_mid_delta(root: &Path) {
     }
 }
 
-/// Pulls `src/` from a daemon serving it as module `m`, the daemon run in
-/// inetd mode on the one connection the client makes to a listener this test
-/// already bound, so there is no port race and no readiness poll.
+/// Runs `client` against `daemon`, which serves module `m` in inetd mode on
+/// the one connection the client makes to a listener this test already bound,
+/// so there is no port race and no readiness poll. `URL` in `args` stands for
+/// the module's URL.
 ///
-/// The daemon's stdout is a pipe of its own, as under inetd setups that hand
-/// over only the socket on stdin: upstream serves stdin alone
-/// (clientserver.c:1759 `start_daemon(STDIN_FILENO, STDIN_FILENO)`), so the
-/// pipe must stay empty.
-fn daemon_pull(binary: &Path, root: &Path) -> Outcome {
-    let config = root.join("rsyncd.conf");
-    fs::write(
-        &config,
-        format!(
-            "use chroot = false\nfake super = yes\n[m]\npath = {}/src\n",
-            root.display()
-        ),
-    )
-    .expect("write rsyncd.conf");
+/// The daemon's stdout and stderr are pipes of its own, as under inetd setups
+/// that hand over only the socket on stdin: upstream serves stdin alone
+/// (clientserver.c:1759 `start_daemon(STDIN_FILENO, STDIN_FILENO)`) and first
+/// points stdout and stderr at /dev/null (clientserver.c:1749-1757), so both
+/// pipes must stay empty.
+fn inetd_session(
+    client: &Path,
+    daemon: &Path,
+    root: &Path,
+    config: &str,
+    args: &[&str],
+) -> Outcome {
+    let config_path = root.join("rsyncd.conf");
+    fs::write(&config_path, config).expect("write rsyncd.conf");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let url = format!(
         "rsync://127.0.0.1:{}/m/",
         listener.local_addr().expect("addr").port()
     );
-    let daemon_binary = binary.to_path_buf();
+    let daemon_binary = daemon.to_path_buf();
     let server = std::thread::spawn(move || {
         let (stream, _) = listener.accept().expect("accept");
         Command::new(daemon_binary)
             .arg("--daemon")
-            .arg(format!("--config={}", config.display()))
+            .arg(format!("--config={}", config_path.display()))
             .stdin(std::os::fd::OwnedFd::from(stream))
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .output()
             .expect("spawn daemon")
     });
-    let client = run(binary, root, &["-a", &url, "dst/"]);
-    let daemon = server.join().expect("daemon thread");
+    let args: Vec<&str> = args
+        .iter()
+        .map(|arg| if *arg == "URL" { url.as_str() } else { arg })
+        .collect();
+    let outcome = run(client, root, &args);
+    let output = server.join().expect("daemon thread");
     assert!(
-        daemon.stdout.is_empty(),
-        "{}: the daemon wrote to stdout: {:?}",
-        binary.display(),
-        String::from_utf8_lossy(&daemon.stdout)
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{}: the daemon wrote to its own stdout {:?} or stderr {:?}",
+        daemon.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
-    client
+    outcome
+}
+
+/// Pulls `src/` from a `--fake-super` daemon module.
+fn daemon_pull(binary: &Path, root: &Path) -> Outcome {
+    let config = format!(
+        "use chroot = false\nfake super = yes\n[m]\npath = {}/src\n",
+        root.display()
+    );
+    inetd_session(binary, binary, root, &config, &["-a", "URL", "dst/"])
 }
 
 /// upstream: cleanup.c:244-253 exit_cleanup() queues MSG_ERROR_EXIT and then
@@ -565,6 +580,178 @@ fn a_device_placeholder_operand_updates_an_existing_device() {
     assert_eq!(runs[0][5].stdout, device, "upstream leader record");
     assert_eq!(runs[0][6].stdout, device, "upstream follower record");
     assert_eq!(runs[1], runs[0], "oc against upstream");
+}
+
+/// A daemon sender that fails while building the file list closes the socket
+/// cleanly: the client has sent nothing it has not read, so a 3.5.1 client
+/// prints the cause and trailer only, with no `Connection reset by peer`.
+/// Both daemons serve the same upstream client, so the cell tells a clean
+/// close from the abrupt one a failing daemon receiver makes.
+#[test]
+fn a_failing_daemon_sender_closes_cleanly_for_an_upstream_client() {
+    let Some(pair) = pair() else { return };
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path();
+    let config = format!(
+        "use chroot = false\nfake super = yes\n[m]\npath = {}/src\n",
+        root.display()
+    );
+    let mut outcomes = Vec::new();
+    for daemon in [&pair.upstream, &pair.oc] {
+        plant_flist(root);
+        outcomes.push(inetd_session(
+            &pair.upstream,
+            daemon,
+            root,
+            &config,
+            &["-a", "URL", "dst/"],
+        ));
+    }
+    assert_eq!(
+        outcomes[0].code,
+        Some(11),
+        "upstream's daemon: {:?}",
+        outcomes[0]
+    );
+    assert!(
+        !outcomes[0]
+            .stderr
+            .iter()
+            .any(|line| line.contains("Connection reset by peer")),
+        "upstream's daemon: {:?}",
+        outcomes[0]
+    );
+    assert_eq!(outcomes[1], outcomes[0], "oc's daemon");
+}
+
+/// A daemon receiver's generator reads the destination through `x_lstat()`,
+/// so a corrupt record there is fatal on the daemon side, and the socket
+/// daemon forwards its cause and `[generator]` trailer to the client as
+/// MSG_ERROR frames (log.c:357-367, log.c:937-963). Both daemons serve the
+/// same upstream client, so only the daemon differs between the runs. The
+/// source is a regular file in one cell and a FIFO in the other, which reach
+/// the generator's regular-file and special-file branches
+/// (generator.c:1393-1399, generator.c:2048-2063).
+///
+/// The client then reports `read error: Connection reset by peer`: the
+/// daemon's generator never reads the socket (main.c:1150-1157), so it closes
+/// it with the client's `MSG_ERROR_EXIT` echo unread (cleanup.c:262-265).
+#[test]
+fn a_failing_daemon_receiver_reports_like_upstream() {
+    let Some(pair) = pair() else { return };
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path();
+    let expected = Outcome {
+        stdout: String::new(),
+        stderr: vec![
+            "Corrupt user.rsync.%stat xattr attached to \"f\" (in m): \"garbage\"".to_owned(),
+            "rsync error: error in file IO (code 11) [generator]".to_owned(),
+            "rsync: [sender] read error: Connection reset by peer (104)".to_owned(),
+        ],
+        code: Some(11),
+    };
+    for fifo in [false, true] {
+        for daemon in [&pair.upstream, &pair.oc] {
+            fresh_src_dst(root);
+            let source = root.join("src/f");
+            if fifo {
+                let made = Command::new("mkfifo").arg(&source).status();
+                assert!(made.is_ok_and(|status| status.success()), "mkfifo");
+            } else {
+                fs::write(&source, b"z\n").expect("write source");
+            }
+            let dest = root.join("dst/f");
+            fs::write(&dest, b"old\n").expect("write destination");
+            if xattr::set(&dest, FAKE_SUPER_XATTR, b"garbage").is_err() {
+                eprintln!("skipping: the filesystem refuses user xattrs");
+                return;
+            }
+            backdate(&root.join("dst"));
+            let config = format!(
+                "use chroot = false\nfake super = yes\n[m]\npath = {}/dst\nread only = false\n",
+                root.display()
+            );
+            let outcome = inetd_session(
+                &pair.upstream,
+                daemon,
+                root,
+                &config,
+                &["-a", "src/", "URL"],
+            );
+            assert_eq!(outcome, expected, "{}, fifo {fifo}", daemon.display());
+        }
+    }
+}
+
+/// An inetd daemon's config diagnostics go nowhere: upstream redirects stdout
+/// and stderr to /dev/null before it reads rsyncd.conf, so an unknown
+/// parameter and a badly formed line reach neither descriptor
+/// (clientserver.c:1749-1757). `inetd_session` asserts both stay empty.
+#[test]
+fn an_inetd_daemon_keeps_config_diagnostics_off_its_descriptors() {
+    let Some(pair) = pair() else { return };
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path();
+    let mut codes = Vec::new();
+    for daemon in [&pair.upstream, &pair.oc] {
+        fresh_src_dst(root);
+        fs::write(root.join("src/f"), b"z\n").expect("write source");
+        let config = format!(
+            "use chroot = false\nbogus parameter = 1\nbadly formed line\n[m]\npath = {}/src\n",
+            root.display()
+        );
+        codes.push(inetd_session(daemon, daemon, root, &config, &["-a", "URL", "dst/"]).code);
+    }
+    assert_eq!(codes, [Some(0), Some(0)]);
+}
+
+/// An inetd daemon parses its options before it redirects stderr, so a bad
+/// option is still reported there and exits 1 (main.c:1911 runs before
+/// clientserver.c:1749-1757).
+#[test]
+fn an_inetd_daemon_reports_a_bad_option_on_stderr() {
+    let Some(pair) = pair() else { return };
+    let dir = tempdir().expect("tempdir");
+    let root = dir.path();
+    let config = root.join("rsyncd.conf");
+    fs::write(
+        &config,
+        format!("use chroot = false\n[m]\npath = {}\n", root.display()),
+    )
+    .expect("write rsyncd.conf");
+    let mut outcomes = Vec::new();
+    for daemon in [&pair.upstream, &pair.oc] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let _client =
+            std::net::TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        let (stream, _) = listener.accept().expect("accept");
+        let output = Command::new(daemon)
+            .arg("--daemon")
+            .arg(format!("--config={}", config.display()))
+            .arg("--no-such-option")
+            .stdin(std::os::fd::OwnedFd::from(stream))
+            .output()
+            .expect("spawn daemon");
+        let stderr = String::from_utf8_lossy(&output.stderr).replace("\"oc-rsync ", "\"rsync ");
+        outcomes.push(Outcome {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: normalise(stderr.as_bytes(), root),
+            code: output.status.code(),
+        });
+    }
+    assert_eq!(
+        outcomes[0].code,
+        Some(1),
+        "upstream's daemon: {:?}",
+        outcomes[0]
+    );
+    assert_eq!(
+        outcomes[0].stderr.len(),
+        3,
+        "upstream's daemon: {:?}",
+        outcomes[0]
+    );
+    assert_eq!(outcomes[1], outcomes[0], "oc's daemon");
 }
 
 /// The ids of the user running the test, read off a directory it created, so
