@@ -21,6 +21,64 @@ use protocol::{
     get_subprotocol_version, select_highest_mutual,
 };
 
+/// The half of the protocol-version exchange that failed.
+///
+/// upstream: compat.c:606-607 setup_protocol() - `write_int(f_out,
+/// protocol_version)` then `remote_protocol = read_int(f_in)`. Buffered I/O
+/// has not started, so both go through io.c safe_write()/safe_read(), whose
+/// diagnostics name the step and the 4-byte length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VersionExchangeStep {
+    /// Writing our protocol version failed.
+    Write,
+    /// Reading the peer's protocol version failed or hit end of stream.
+    Read,
+}
+
+/// An I/O failure of the protocol-version exchange, tagged with its step.
+///
+/// Carried inside the returned [`io::Error`], which keeps the source's
+/// [`io::ErrorKind`], so callers that only test the kind are unaffected.
+/// [`crate::error::rerr_for_io_error`] grades it `RERR_STREAMIO`: every
+/// safe_write()/safe_read() failure and whine_about_eof() exit with it
+/// (io.c:299-303, io.c:401-405, io.c:356-358), whatever the errno.
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+pub struct VersionExchangeError {
+    step: VersionExchangeStep,
+    #[source]
+    source: io::Error,
+}
+
+impl VersionExchangeError {
+    /// Bytes each step moves: one little-endian `int` (io.c write_int/read_int).
+    pub const LEN: usize = 4;
+
+    /// The step that failed.
+    #[must_use]
+    pub const fn step(&self) -> VersionExchangeStep {
+        self.step
+    }
+
+    /// The underlying I/O error.
+    #[must_use]
+    pub const fn source_error(&self) -> &io::Error {
+        &self.source
+    }
+
+    /// Finds the tag on an error returned by the version exchange.
+    #[must_use]
+    pub fn of(error: &io::Error) -> Option<&Self> {
+        error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<Self>())
+    }
+
+    fn wrap(step: VersionExchangeStep, source: io::Error) -> io::Error {
+        io::Error::new(source.kind(), Self { step, source })
+    }
+}
+
 /// Re-applies an adopted daemon `MSG_IO_TIMEOUT` to the live client socket.
 ///
 /// Upstream `io.c:set_io_timeout` updates the global `io_timeout` so the select
@@ -222,8 +280,9 @@ pub fn perform_handshake_with_max(
     // upstream: compat.c:606-607 - write our max version first, then read.
     // Both sides do this simultaneously; reversing the order deadlocks when
     // both ends are oc-rsync (each waits for the other to write first).
-    write_server_version(stdout, max_version)?;
-    stdout.flush()?;
+    write_server_version(stdout, max_version)
+        .and_then(|()| stdout.flush())
+        .map_err(|e| VersionExchangeError::wrap(VersionExchangeStep::Write, e))?;
 
     let remote_version = read_client_version(stdin)?;
 
@@ -256,8 +315,10 @@ pub fn perform_handshake_with_max(
 
 /// Reads the client's protocol version from a 4-byte binary advertisement.
 fn read_client_version(stdin: &mut dyn Read) -> io::Result<ProtocolVersion> {
-    let mut buf = [0u8; 4];
-    stdin.read_exact(&mut buf)?;
+    let mut buf = [0u8; VersionExchangeError::LEN];
+    stdin
+        .read_exact(&mut buf)
+        .map_err(|e| VersionExchangeError::wrap(VersionExchangeStep::Read, e))?;
 
     // upstream: io.c read_int() - the version advertisement is a 4-byte
     // little-endian int, not a version byte plus padding.
@@ -377,6 +438,47 @@ mod tests {
     use std::io::Cursor;
 
     const NEWEST: i32 = ProtocolVersion::NEWEST.as_u8() as i32;
+
+    /// A peer that closed its read end makes the version write fail; the
+    /// error must say it was the write, so the client reports upstream's
+    /// safe_write() line and RERR_STREAMIO instead of a startup failure.
+    #[test]
+    fn version_write_failure_is_tagged_with_the_write_step() {
+        struct ClosedPipe;
+        impl Write for ClosedPipe {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::from(io::ErrorKind::BrokenPipe))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let err = perform_handshake_with_max(
+            &mut Cursor::new(Vec::new()),
+            &mut ClosedPipe,
+            ProtocolVersion::NEWEST,
+        )
+        .expect_err("a closed pipe fails the write");
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        let tag = VersionExchangeError::of(&err).expect("tagged");
+        assert_eq!(tag.step(), VersionExchangeStep::Write);
+        assert_eq!(crate::error::rerr_for_io_error(&err), 12);
+    }
+
+    /// End of stream before the peer's version keeps its kind (the EOF whine)
+    /// and is tagged as the read.
+    #[test]
+    fn version_read_eof_is_tagged_with_the_read_step() {
+        let err = perform_handshake_with_max(
+            &mut Cursor::new(Vec::new()),
+            &mut Vec::new(),
+            ProtocolVersion::NEWEST,
+        )
+        .expect_err("no peer version");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        let tag = VersionExchangeError::of(&err).expect("tagged");
+        assert_eq!(tag.step(), VersionExchangeStep::Read);
+    }
 
     #[test]
     fn binary_handshake_negotiates_version() {

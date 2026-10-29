@@ -262,6 +262,9 @@ pub fn flush_retry<W: Write>(writer: &mut W) -> io::Result<()> {
 ///
 /// - a tagged [`protocol::ProtocolViolation`] - `RERR_PROTOCOL` (2)
 /// - a tagged [`protocol::SyntaxViolation`] - `RERR_SYNTAX` (1)
+/// - a tagged [`crate::VersionExchangeError`] - `RERR_STREAMIO` (12), whatever
+///   the errno: the version exchange runs through io.c safe_write()/safe_read()
+///   (io.c:401-405, io.c:356-358), not perform_io()'s `RERR_SOCKETIO` arm
 /// - a failed commit-path backup or received-file close - `RERR_FILEIO` (11),
 ///   whatever the errno
 /// - `NotFound`, `PermissionDenied`, `AlreadyExists` - `RERR_FILESELECT` (3)
@@ -297,6 +300,13 @@ pub fn rerr_for_io_error(error: &io::Error) -> i32 {
         .is_some_and(|inner| inner.is::<protocol::SyntaxViolation>())
     {
         return 1;
+    }
+
+    // upstream: io.c:401-405 safe_write() / io.c:356-358 safe_read() - before
+    // buffered I/O starts, a failed version write or read is RERR_STREAMIO, so
+    // a BrokenPipe must not reach the connection-class RERR_SOCKETIO arm.
+    if crate::VersionExchangeError::of(error).is_some() {
+        return 12;
     }
 
     // upstream: errcode.h RERR_MALLOC=22 - my_alloc() refusing a request at

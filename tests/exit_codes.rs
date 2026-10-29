@@ -346,31 +346,86 @@ mod exit_code_12_stream_io {
     #[cfg(unix)]
     use super::*;
 
-    /// upstream: io.c:299-303 whine_about_eof() exits RERR_STREAMIO when the
-    /// remote shell dies before the handshake, and cleanup.c:146-152 folds in
-    /// only `WEXITSTATUS(status)` - 0 for a signalled child - so the signal
-    /// never outranks the stream error. RERR_TERMINATED (16) belongs to the
-    /// clean-finish reap (main.c:198-226 wait_process_with_flush()) alone.
-    /// Upstream 3.5.1 exits 12 in both directions.
+    /// Runs each named direction (`"push"`, `"pull"`) through `rsh` and
+    /// returns its output.
     #[cfg(unix)]
-    #[test]
-    fn remote_shell_killed_by_signal_before_handshake_returns_stream_io() {
+    fn run_directions(rsh: &str, directions: &[&'static str]) -> Vec<(Output, &'static str)> {
         let temp = tempfile::TempDir::new().expect("tempdir");
         let src = temp.path().join("src");
         fs::create_dir(&src).expect("mkdir src");
         fs::write(src.join("a"), b"a").expect("write");
         let src_arg = format!("{}/", src.display());
         let dest_arg = format!("{}/", temp.path().join("dest").display());
-        let rsh = "sh -c 'kill -TERM $$'";
-        for (args, context) in [
+        [
             (["-a", "-e", rsh, &src_arg, "host:dest/"], "push"),
             (["-a", "-e", rsh, "host:src/", &dest_arg], "pull"),
-        ] {
-            let output = run_rsync(&args);
+        ]
+        .into_iter()
+        .filter(|(_, direction)| directions.contains(direction))
+        .map(|(args, direction)| (run_rsync(&args), direction))
+        .collect()
+    }
+
+    /// upstream: io.c:299-303 whine_about_eof() exits RERR_STREAMIO when the
+    /// remote shell dies before the handshake, and cleanup.c:146-152 folds in
+    /// only `WEXITSTATUS(status)` - 0 for a signalled child - so the signal
+    /// never outranks the stream error. RERR_TERMINATED (16) belongs to the
+    /// clean-finish reap (main.c:198-226 wait_process_with_flush()) alone.
+    ///
+    /// The stub closes its stdout but keeps reading stdin until the client
+    /// lets go, then kills itself. So the client's version write always lands
+    /// and its read always sees EOF: one ordering, no race. Upstream 3.5.1
+    /// exits 12 in both directions.
+    #[cfg(unix)]
+    #[test]
+    fn remote_shell_killed_by_signal_before_handshake_returns_stream_io() {
+        let rsh = "sh -c 'exec 1>&-; read -r _; kill -TERM $$'";
+        for (output, context) in run_directions(rsh, &["push", "pull"]) {
             assert_exit_code(&output, ExitCode::StreamIo, context);
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 stderr.contains("connection unexpectedly closed (0 bytes received so far)"),
+                "{context}: {stderr}"
+            );
+        }
+    }
+
+    /// The EOF arm of a remote shell that is gone before the handshake, pinned
+    /// to upstream's text. The stub closes its stdout and drains stdin, so the
+    /// version write always lands and the read always sees EOF: one ordering,
+    /// no race. The write-EPIPE arm cannot be forced without timing (oc writes
+    /// its version right after spawning the shell), so in-memory unit tests in
+    /// `core::client::remote::version_exchange` pin that text instead.
+    ///
+    /// Expected lines are 3.5.1's (tarball build) for the same stub, with the
+    /// program name and the trailer's source location left out:
+    /// upstream: io.c:299-303 whine_about_eof(), log.c:937-963 log_exit().
+    #[cfg(unix)]
+    #[test]
+    fn remote_shell_closing_stdout_before_handshake_prints_upstream_eof_whine() {
+        let rsh = "sh -c 'exec 1>&-; cat >/dev/null'";
+        // The pull arm belongs to task 268: 3.5.1 names the pre-fork client
+        // receiver "[Receiver]", which oc does not render yet.
+        let role = "sender";
+        for (output, context) in run_directions(rsh, &["push"]) {
+            assert_exit_code(&output, ExitCode::StreamIo, context);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let lines: Vec<&str> = stderr.lines().collect();
+            assert_eq!(lines.len(), 2, "{context}: {stderr}");
+            assert_eq!(
+                lines[0].split_once(": ").map(|(_, text)| text),
+                Some(
+                    format!("connection unexpectedly closed (0 bytes received so far) [{role}]")
+                        .as_str()
+                ),
+                "{context}: {stderr}"
+            );
+            let trailer = lines[1].split_once(" error: ").map(|(_, text)| text);
+            assert!(
+                trailer.is_some_and(|text| {
+                    text.starts_with("error in rsync protocol data stream (code 12) at ")
+                        && text.ends_with(&format!("[{role}={}]", env!("CARGO_PKG_VERSION")))
+                }),
                 "{context}: {stderr}"
             );
         }

@@ -47,6 +47,8 @@ pub(crate) mod safe_arg;
 /// Remote-to-remote transfer via local proxy relay.
 /// SSH transfer orchestration for `ssh://` and `host:path` targets.
 pub mod ssh_transfer;
+/// Exit status of a failed protocol-version exchange.
+pub(crate) mod version_exchange;
 #[cfg(feature = "async-ssh")]
 pub use async_ssh_transport::{
     ENV_OPT_IN as ASYNC_SSH_ENV_OPT_IN, is_enabled_by_env as async_ssh_enabled,
