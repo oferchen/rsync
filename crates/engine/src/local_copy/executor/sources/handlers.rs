@@ -111,7 +111,14 @@ pub(super) fn handle_directory_contents_copy(
     // upstream: flist.c:send_file_list() - a trailing-slash source becomes
     // "." (DOTDIR_NAME) as the first flist entry. Capture this root entry
     // so the batch file matches upstream's wire format.
-    capture_batch_file_entry(context, source_path, &target_root, Path::new("."), metadata, true)?;
+    capture_batch_file_entry(
+        context,
+        source_path,
+        &target_root,
+        Path::new("."),
+        metadata,
+        true,
+    )?;
 
     // upstream: flist.c:2992 - trailing-slash sources (DOTDIR_NAME /
     // SLASH_ENDING_NAME) walk their immediate children even when global

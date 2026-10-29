@@ -49,11 +49,11 @@ pub use cache::XattrCache;
 pub use diff::{mark_xattr_requests, xattr_diff};
 pub use entry::{XattrEntry, XattrState};
 pub use list::XattrList;
-pub use scope::entry_carries_xattrs;
 pub use prefix::{
     is_fake_super_store_attr, is_rsync_internal, local_to_wire, rsync_internal_suffix,
     wire_to_local,
 };
+pub use scope::entry_carries_xattrs;
 pub use wire::{
     RecvXattrResult, XattrDefinition, XattrSet, checksum_matches, compute_xattr_checksum,
     read_xattr_definitions, recv_xattr, recv_xattr_request, recv_xattr_values,
