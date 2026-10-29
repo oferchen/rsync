@@ -23,6 +23,7 @@ use crate::delta_apply::ChecksumVerifier;
 use crate::receiver::stats::TransferStats;
 use crate::receiver::wire::{SenderAttrs, SumHead};
 use crate::receiver::{PipelineSetup, ReceiverContext, apply_acls_from_receiver_cache};
+use crate::temp_guard::TempFileGuard;
 #[cfg(not(unix))]
 use crate::temp_guard::open_tmpfile;
 #[cfg(unix)]
@@ -349,17 +350,43 @@ impl ReceiverContext {
             // strong sums themselves are not needed to resolve COPY offsets.
             let layout_signature = sum_head.block_signature();
 
-            #[cfg(unix)]
-            let open_result = open_tmpfile_sandboxed(
-                &file_path,
-                self.config.temp_dir.as_deref(),
-                sandbox.as_ref(),
-                Some(dest_dir.as_path()),
-            );
-            #[cfg(not(unix))]
-            let open_result = open_tmpfile(&file_path, self.config.temp_dir.as_deref());
+            // upstream: receiver.c:1212-1241 - under --inplace the destination
+            // itself is opened (never truncated: it is the delta basis) and the
+            // pre-image is backed up by copy first (generator.c:2281-2301);
+            // otherwise a temp file is staged and renamed over it.
+            let inplace = self.config.write.inplace;
+            if inplace {
+                self.backup_existing_dest_by_copy(
+                    &dest_dir,
+                    &file_path,
+                    &metadata_opts,
+                    #[cfg(unix)]
+                    sandbox.as_deref(),
+                )?;
+            }
+            let open_result = if inplace {
+                open_inplace_dest(
+                    &file_path,
+                    relative_path,
+                    &dest_dir,
+                    #[cfg(unix)]
+                    sandbox.as_deref(),
+                )
+                .map(|file| (file, TempFileGuard::keep_dest(file_path.clone())))
+            } else {
+                #[cfg(unix)]
+                let staged = open_tmpfile_sandboxed(
+                    &file_path,
+                    self.config.temp_dir.as_deref(),
+                    sandbox.as_ref(),
+                    Some(dest_dir.as_path()),
+                );
+                #[cfg(not(unix))]
+                let staged = open_tmpfile(&file_path, self.config.temp_dir.as_deref());
+                staged
+            };
 
-            // upstream: receiver.c:1015-1022 - a failed temp open drains this
+            // upstream: receiver.c:1015-1022 - a failed open drains this
             // file's delta off the stream and continues (see sync.rs for the
             // full rationale).
             let (file, mut temp_guard) = match open_result {
@@ -379,14 +406,18 @@ impl ReceiverContext {
                         u64::from(sum_head.count),
                         checksum_len,
                     )?;
-                    metadata_errors
-                        .push((file_path.clone(), format!("mkstemp failed: {open_err}")));
+                    // upstream: receiver.c:1243 "open %s failed" (inplace) vs
+                    // receiver.c:466 "mkstemp %s failed" (temp file).
+                    let what = if inplace { "open" } else { "mkstemp" };
+                    metadata_errors.push((file_path.clone(), format!("{what} failed: {open_err}")));
                     self.flist_io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
                     continue;
                 }
             };
-            CleanupManager::global().register_temp_file(temp_guard.path().to_path_buf());
-            temp_guard.mark_registered();
+            if !inplace {
+                CleanupManager::global().register_temp_file(temp_guard.path().to_path_buf());
+                temp_guard.mark_registered();
+            }
 
             let file_verifier = ChecksumVerifier::new(
                 self.negotiated_algorithms.as_ref(),
@@ -404,9 +435,8 @@ impl ReceiverContext {
             token_reader.reset();
 
             // upstream: receiver.c:1156-1157 - `updating_basis_or_equiv = ... ||
-            // (inplace && fnamecmp == fname ...)`. This replay always stages a temp,
-            // so the flag only keeps in-place-matched blocks out of the
-            // touched-block count, as upstream's skip_matched() does.
+            // (inplace && fnamecmp == fname ...)`: a block already at its offset
+            // in the file being rewritten is skipped, as skip_matched() does.
             let updating_basis =
                 self.config.write.inplace && basis_path.as_deref() == Some(file_path.as_path());
             let mut applicator = crate::delta_apply::DeltaApplicator::new(
@@ -439,6 +469,16 @@ impl ReceiverContext {
 
             let literal_bytes = result.literal_bytes;
 
+            // upstream: receiver.c:664-671 receive_data() - an in-place write
+            // truncates the destination to the length it reconstructed; a
+            // failure is reported, not fatal.
+            if inplace
+                && result.final_pos.is_none()
+                && let Err(e) = file.set_len(file_entry.size())
+            {
+                metadata_errors.push((file_path.clone(), format!("ftruncate failed: {e}")));
+            }
+
             if self.config.write.fsync {
                 file.sync_all().map_err(|e| {
                     io::Error::new(
@@ -455,67 +495,69 @@ impl ReceiverContext {
             // exit_cleanup(RERR_FILEIO).
             crate::disk_commit::close_received_file(Some(file), temp_guard.path())?;
 
-            // upstream: generator.c:2280-2288 - read_batch with make_backups>0
-            // still resolves the backup name and preserves the pre-image before
-            // the destination is overwritten. Routed through the same
-            // commit-tier owner the network commit uses (see
-            // `ReceiverContext::backup_existing_dest`).
-            self.backup_existing_dest(
-                &dest_dir,
-                &file_path,
-                &metadata_opts,
-                #[cfg(unix)]
-                sandbox.as_deref(),
-            )?;
+            if !inplace {
+                // upstream: generator.c:2280-2288 - read_batch with make_backups>0
+                // still resolves the backup name and preserves the pre-image before
+                // the destination is overwritten. Routed through the same
+                // commit-tier owner the network commit uses (see
+                // `ReceiverContext::backup_existing_dest`).
+                self.backup_existing_dest(
+                    &dest_dir,
+                    &file_path,
+                    &metadata_opts,
+                    #[cfg(unix)]
+                    sandbox.as_deref(),
+                )?;
 
-            // Commit: rename the temp file over the destination. Mirrors the
-            // SEC-1.j routing of sync.rs (the sandbox-anchored renameat with
-            // the io_uring fast path first). A `--temp-dir` on another
-            // filesystem takes robust_rename's copy fallback (util1.c:599).
-            #[cfg(unix)]
-            crate::robust_rename::robust_rename(
-                crate::robust_rename::CommitAnchor {
-                    sandbox: sandbox.as_deref(),
-                    root: &dest_dir,
-                    fsync: self.config.write.fsync,
-                },
-                temp_guard.path(),
-                &file_path,
-                None,
-                |old, new| {
-                    if let Some(result) = fast_io::try_rename_via_io_uring(old, new) {
-                        return result;
+                // Commit: rename the temp file over the destination. Mirrors the
+                // SEC-1.j routing of sync.rs (the sandbox-anchored renameat with
+                // the io_uring fast path first). A `--temp-dir` on another
+                // filesystem takes robust_rename's copy fallback (util1.c:599).
+                #[cfg(unix)]
+                crate::robust_rename::robust_rename(
+                    crate::robust_rename::CommitAnchor {
+                        sandbox: sandbox.as_deref(),
+                        root: &dest_dir,
+                        fsync: self.config.write.fsync,
+                    },
+                    temp_guard.path(),
+                    &file_path,
+                    None,
+                    |old, new| {
+                        if let Some(result) = fast_io::try_rename_via_io_uring(old, new) {
+                            return result;
+                        }
+                        let old_rel = old.strip_prefix(&dest_dir).unwrap_or(old);
+                        fast_io::renameat_via_sandbox_or_fallback(
+                            sandbox.as_deref(),
+                            &dest_dir,
+                            old_rel,
+                            old,
+                            &dest_dir,
+                            relative_path,
+                            new,
+                            true,
+                        )
+                    },
+                )?;
+                #[cfg(not(unix))]
+                if let Some(rename_result) =
+                    fast_io::try_rename_via_io_uring(temp_guard.path(), &file_path)
+                {
+                    rename_result?;
+                } else {
+                    #[cfg(windows)]
+                    {
+                        crate::temp_guard::commit_rename_no_follow(temp_guard.path(), &file_path)?;
                     }
-                    let old_rel = old.strip_prefix(&dest_dir).unwrap_or(old);
-                    fast_io::renameat_via_sandbox_or_fallback(
-                        sandbox.as_deref(),
-                        &dest_dir,
-                        old_rel,
-                        old,
-                        &dest_dir,
-                        relative_path,
-                        new,
-                        true,
-                    )
-                },
-            )?;
-            #[cfg(not(unix))]
-            if let Some(rename_result) =
-                fast_io::try_rename_via_io_uring(temp_guard.path(), &file_path)
-            {
-                rename_result?;
-            } else {
-                #[cfg(windows)]
-                {
-                    crate::temp_guard::commit_rename_no_follow(temp_guard.path(), &file_path)?;
+                    #[cfg(all(not(unix), not(windows)))]
+                    {
+                        std::fs::rename(temp_guard.path(), &file_path)?;
+                    }
                 }
-                #[cfg(all(not(unix), not(windows)))]
-                {
-                    std::fs::rename(temp_guard.path(), &file_path)?;
-                }
+                CleanupManager::global().unregister_temp_file(temp_guard.path());
+                temp_guard.keep();
             }
-            CleanupManager::global().unregister_temp_file(temp_guard.path());
-            temp_guard.keep();
 
             if let Err(meta_err) =
                 apply_metadata_with_cached_stat(&file_path, &file_entry, &metadata_opts, None)
@@ -718,5 +760,33 @@ impl ReceiverContext {
             .advance_to(crate::transfer_state::TransferPhase::Complete)
             .map_err(crate::fsm_error)?;
         Ok(())
+    }
+}
+
+/// Opens the replay destination for an in-place write, anchored beneath the
+/// destination sandbox when one is held.
+///
+/// upstream: receiver.c:1212-1241 - the three-arm in-place open; never
+/// truncates, since the destination is the delta basis.
+fn open_inplace_dest(
+    file_path: &std::path::Path,
+    relative_path: &std::path::Path,
+    dest_dir: &std::path::Path,
+    #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+) -> io::Result<std::fs::File> {
+    #[cfg(unix)]
+    {
+        fast_io::open_inplace_output_via_sandbox_or_fallback(
+            sandbox,
+            dest_dir,
+            relative_path,
+            file_path,
+            false,
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (relative_path, dest_dir);
+        fast_io::open_inplace_output(file_path, false, fast_io::InplaceResolution::Direct)
     }
 }

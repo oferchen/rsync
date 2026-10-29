@@ -20,7 +20,6 @@ recording a transfer to a file and replaying it later on a different machine.
 - `reader` - batch file reading and validation
 - `writer` - batch file creation
 - `script` - companion shell script generation for replay
-- `replay` - replay orchestration
 
 ## Dependencies
 
