@@ -27,6 +27,10 @@ const MODES: [Mode; 3] = [Mode::Local, Mode::Pull, Mode::Push];
 /// receiver creates every directory in one pass before any file.
 const RECURSION: [&[&str]; 2] = [&[], &["--no-inc-recursive"]];
 
+/// The recursion modes again under `--prune-empty-dirs`, where a local copy
+/// creates a directory lazily, once per child that needs it.
+const PRUNED: [&[&str]; 2] = [&["-m"], &["-m", "--no-inc-recursive"]];
+
 /// `src/afile/sub/f` and `src/other`; the destination holds a regular file
 /// `afile`, so `afile/sub` fails ENOTDIR. `--no-implied-dirs` leaves the
 /// implied `afile` alone, as upstream's generator.c:1811 does.
@@ -125,7 +129,8 @@ fn a_failed_mkdir_is_reported_once_with_its_errno_and_its_contents_skipped() {
 }
 
 /// EACCES from a read-only destination: the mkdir of `src` is reported once,
-/// not once per child, and its three children are never attempted.
+/// not once per child, and its three children are never attempted. 3.5.1
+/// prints the same two lines with and without `-m`.
 #[test]
 fn a_permission_denied_mkdir_is_reported_once_for_all_its_children() {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
@@ -134,7 +139,7 @@ fn a_permission_denied_mkdir_is_reported_once_for_all_its_children() {
         return;
     }
     for mode in MODES {
-        for extra in RECURSION {
+        for extra in RECURSION.into_iter().chain(PRUNED) {
             let tmp = create_tempdir();
             let src = tmp.path().join("src");
             fs::create_dir_all(src.join("d")).expect("mkdir src");
