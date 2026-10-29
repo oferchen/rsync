@@ -191,6 +191,7 @@ fn scenario_1_lstat_race_does_not_follow_swapped_symlink_outside_sandbox() {
                  sensitive target"
             );
         }
+        Ok(EntryMetadata::Overlaid(_)) => panic!("an lstat never answers with an overlay"),
         Err(err) => {
             // ENOENT is acceptable: it means the attacker raced
             // between the receiver's unlink-replace pair and we
@@ -385,6 +386,7 @@ fn scenario_3_repeated_race_keeps_sensitive_tree_untouched() {
                     "iter fallback lstat must describe the leaf, never the sensitive target"
                 );
             }
+            Ok(EntryMetadata::Overlaid(_)) => panic!("an lstat never answers with an overlay"),
             Err(err) => assert_eq!(
                 err.kind(),
                 std::io::ErrorKind::NotFound,

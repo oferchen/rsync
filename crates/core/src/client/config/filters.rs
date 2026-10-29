@@ -48,6 +48,9 @@ pub struct FilterRuleSpec {
     /// upstream: compat.c:803-807 - `FILTRULE_PERISHABLE` is set only when
     /// `!am_sender || protocol_version >= 30`.
     implied_partial_dir: bool,
+    /// Set on a rule that appears before `--delete-excluded` on the command
+    /// line (see [`Self::mark_parsed_before_delete_excluded`]).
+    parsed_before_delete_excluded: bool,
 }
 
 impl FilterRuleSpec {
@@ -67,6 +70,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -86,6 +90,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -104,6 +109,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -122,6 +128,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -141,6 +148,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -159,6 +167,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -177,6 +186,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -352,6 +362,23 @@ impl FilterRuleSpec {
     pub const fn with_cvs_origin(mut self, cvs_origin: bool) -> Self {
         self.cvs_origin = cvs_origin;
         self
+    }
+
+    /// Records that the rule appears before `--delete-excluded` on the
+    /// command line.
+    ///
+    /// upstream: exclude.c:1478-1481 parse_rule_tok() adds the implicit
+    /// `FILTRULE_SENDER_SIDE` only once `delete_excluded` is set, so such a
+    /// rule is still sender-only (send_rules() elides it, exclude.c:1908-1911)
+    /// but its transmitted and listed prefix carries no `s`.
+    pub const fn mark_parsed_before_delete_excluded(&mut self) {
+        self.parsed_before_delete_excluded = true;
+    }
+
+    /// Reports whether [`Self::mark_parsed_before_delete_excluded`] was called.
+    #[must_use]
+    pub const fn is_parsed_before_delete_excluded(&self) -> bool {
+        self.parsed_before_delete_excluded
     }
 
     /// Reports whether the rule came from the `-C`/`--cvs-exclude` expansion.

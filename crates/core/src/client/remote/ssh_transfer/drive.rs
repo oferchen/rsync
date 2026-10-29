@@ -475,6 +475,10 @@ pub(in crate::client::remote) fn transfer_failure_error(
     if let Some(code) = crate::server::remote_exit_code(&transfer_error) {
         return remote_exit_error(ExitCode::from_raw(code), local_role);
     }
+    if let Some(error) = crate::client::error::corrupt_fake_super_destination_error(&transfer_error)
+    {
+        return error;
+    }
     // upstream: io.c:282-304 whine_about_eof() - the peer closing the stream
     // mid-transfer prints the whine, then exit_cleanup(RERR_STREAMIO) takes the
     // worse of that and the child's raw status (cleanup.c:150-152).

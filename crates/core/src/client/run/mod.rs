@@ -52,7 +52,7 @@
 //! ```
 
 pub(crate) mod alt_basis;
-mod batch;
+pub(crate) mod batch;
 mod filters;
 
 use std::ffi::OsStr;
@@ -275,7 +275,7 @@ fn run_client_internal(
         if let Some(result) = batch::handle_batch_read(batch_cfg, &config) {
             return result;
         }
-        Some(batch::create_batch_writer(batch_cfg)?)
+        Some(batch::create_batch_writer(batch_cfg, &config)?)
     } else {
         None
     };
@@ -370,7 +370,7 @@ fn run_client_internal(
         if let Some(ref writer_arc) = batch_writer
             && let Some(batch_cfg) = config.batch_config()
         {
-            batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, false)?;
+            batch::finalize_batch(writer_arc, batch_cfg, &summary, false)?;
         }
 
         return Ok(summary);
@@ -398,7 +398,7 @@ fn run_client_internal(
                 if let Some(ref writer_arc) = batch_writer
                     && let Some(batch_cfg) = config.batch_config()
                 {
-                    batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, false)?;
+                    batch::finalize_batch(writer_arc, batch_cfg, &summary, false)?;
                 }
 
                 return Ok(summary);
@@ -440,7 +440,7 @@ fn run_client_internal(
         if let Some(ref writer_arc) = batch_writer
             && let Some(batch_cfg) = config.batch_config()
         {
-            batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, false)?;
+            batch::finalize_batch(writer_arc, batch_cfg, &summary, false)?;
         }
 
         return Ok(summary);
@@ -630,7 +630,7 @@ fn run_client_internal(
     if let Some(ref writer_arc) = batch_writer
         && let Some(batch_cfg) = config.batch_config()
     {
-        batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, true)?;
+        batch::finalize_batch(writer_arc, batch_cfg, &summary, true)?;
     }
     match exit_error {
         None => Ok(summary),

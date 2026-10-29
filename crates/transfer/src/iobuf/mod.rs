@@ -22,7 +22,7 @@ use crate::writer::ServerWriter;
 
 /// The input and output halves of one connection, owned together.
 ///
-/// `I` is the input stack (a [`ServerReader`] in production); the output stack
+/// `I` is the input stack (a `ServerReader` in production); the output stack
 /// is always a [`ServerWriter`]. Reads go to the input and writes to the
 /// output, through [`Read`] and [`Write`] on the owner itself.
 pub struct IoBuf<I, W: Write> {

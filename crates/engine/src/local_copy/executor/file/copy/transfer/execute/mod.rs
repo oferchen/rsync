@@ -40,7 +40,7 @@ use crate::local_copy::{
 };
 
 use super::super::super::append::{AppendMode, determine_append_mode};
-use super::super::super::comparison::build_delta_signature;
+use super::super::super::comparison::{block_sum_length, build_delta_signature};
 use super::super::super::compute_backup_path;
 use super::super::super::guard::{DestinationWriteGuard, remove_incomplete_destination};
 use super::super::super::preallocate::{Reservation, maybe_preallocate_destination};
@@ -105,6 +105,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
             preserve_xattrs: _,
         #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,
+        redoing,
     } = flags;
 
     // upstream: flist.c:1790-1796 - stream a `--copy-devices` device as a
@@ -176,13 +177,16 @@ pub(in crate::local_copy) fn execute_transfer_once(
     let delta_signature = if !whole_file_enabled {
         let block_size = context.block_size_override();
         let algorithm = context.options().transfer_checksum_algorithm();
+        let sum_length = block_sum_length(redoing);
         match partial_dir_basis {
             // upstream: generator.c:2270-2274 `prepare_to_open` - `partialptr`
             // overrides both the destination and any fuzzy basis as `fnamecmp`.
-            Some((leaf, ref meta)) => build_delta_signature(leaf, meta, block_size, algorithm)?,
+            Some((leaf, ref meta)) => {
+                build_delta_signature(leaf, meta, block_size, algorithm, sum_length)?
+            }
             None => match existing_metadata {
                 Some(existing) if existing.is_file() => {
-                    build_delta_signature(destination, existing, block_size, algorithm)?
+                    build_delta_signature(destination, existing, block_size, algorithm, sum_length)?
                 }
                 _ => match fuzzy_basis {
                     Some((ref path, ref meta)) => build_delta_signature(
@@ -190,6 +194,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
                         &fast_io::EntryMetadata::from(meta.clone()),
                         block_size,
                         algorithm,
+                        sum_length,
                     )?,
                     None => None,
                 },
@@ -917,6 +922,21 @@ pub(in crate::local_copy) fn execute_transfer_once(
             remove_incomplete_destination(destination);
         }
         return Err(timeout_error);
+    }
+
+    // upstream: receiver.c:1335-1360 - a pass that failed verification unlinks
+    // its temp file ("discarded") but leaves an in-place update where it is
+    // ("retained"); both are resent in phase 2 with full-width sums.
+    if outcome.verification_failed() {
+        if let Some(guard) = guard.take() {
+            drop(writer_for_metadata.take());
+            guard.discard();
+            if existing_metadata.is_none() && !partial_enabled {
+                remove_incomplete_destination(destination);
+            }
+            return Ok(TransferOutcome::ChecksumMismatch);
+        }
+        verify_failed = true;
     }
 
     finalize_guard_and_metadata(

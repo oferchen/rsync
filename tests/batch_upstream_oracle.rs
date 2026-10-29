@@ -1,0 +1,1426 @@
+//! Byte-level oracle for the files `--write-batch` produces.
+//!
+//! Each cell records the same fixture with oc and with upstream rsync 3.5.1,
+//! running both from the same working directory with the same relative
+//! operands, and compares what lands on disk: whether the batch and its `.sh`
+//! exist, the batch header bytes, and the `.sh` text with only `argv[0]`
+//! masked (it is the path of whichever binary ran).
+//!
+//! Every cell also asserts a pinned expectation recorded from rsync 3.5.1, so
+//! the cell still fails on a regression where no oracle is installed. When
+//! the oracle resolves, the live comparison runs as well; it is located like
+//! the other root oracle suites: `OC_RSYNC_UPSTREAM_RSYNC`, then
+//! `target/interop/upstream-install/3.5.1/bin/rsync`, then the
+//! `upstream-src` build tree, then `/usr/bin/rsync` - each banner-verified
+//! as 3.5.1, since only that release defines the expected bytes.
+
+#![cfg(unix)]
+
+use std::ffi::OsStr;
+use std::fs;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+const ORACLE_VERSION: &str = "3.5.1";
+
+/// The binary under test (`env!`: the variable exists only at compile time).
+fn oc_rsync() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
+}
+
+/// Resolves an rsync whose `--version` banner names [`ORACLE_VERSION`].
+fn upstream_rsync() -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(explicit) = std::env::var_os("OC_RSYNC_UPSTREAM_RSYNC") {
+        candidates.push(PathBuf::from(explicit));
+    }
+    if let Some(installed) = test_support::upstream_install_bin(ORACLE_VERSION) {
+        candidates.push(installed);
+    }
+    if let Some(root) = test_support::workspace_root() {
+        candidates.push(root.join(format!(
+            "target/interop/upstream-src/rsync-{ORACLE_VERSION}/rsync"
+        )));
+    }
+    candidates.push(PathBuf::from("/usr/bin/rsync"));
+    let found = candidates.into_iter().find(|candidate| {
+        Command::new(candidate)
+            .arg("--version")
+            .output()
+            .ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .and_then(|banner| banner.lines().next().map(str::to_owned))
+            .is_some_and(|first| {
+                first.starts_with("rsync") && first.contains(&format!(" version {ORACLE_VERSION}"))
+            })
+    });
+    if found.is_none() {
+        eprintln!("no rsync {ORACLE_VERSION} oracle; checking pinned expectations only");
+    }
+    found
+}
+
+/// What one `--write-batch` invocation left behind.
+struct Recording {
+    output: Output,
+    batch: Option<Vec<u8>>,
+    script: Option<Vec<u8>>,
+}
+
+impl Recording {
+    /// The `.sh` with its leading quoted `argv[0]` replaced by `ARGV0`.
+    fn masked_script(&self) -> Option<Vec<u8>> {
+        let script = self.script.as_ref()?;
+        let rest = script.strip_prefix(b"'")?;
+        let close = rest.iter().position(|&b| b == b'\'')?;
+        let mut masked = b"ARGV0".to_vec();
+        masked.extend_from_slice(&rest[close + 1..]);
+        Some(masked)
+    }
+}
+
+/// A fresh source tree plus an empty destination, both relative to `root`.
+struct Fixture {
+    _temp: tempfile::TempDir,
+    root: PathBuf,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().to_path_buf();
+        fs::create_dir_all(root.join("src/sub")).unwrap();
+        fs::create_dir_all(root.join("dst")).unwrap();
+        fs::write(root.join("src/a.txt"), b"alpha\n").unwrap();
+        fs::write(root.join("src/sub/b.log"), b"beta\n").unwrap();
+        fs::write(root.join("src/sub/c.txt"), b"gamma\n").unwrap();
+        Self { _temp: temp, root }
+    }
+
+    /// Runs `bin` with `args` from the fixture root.
+    fn run(&self, bin: &Path, args: &[&str]) -> Output {
+        Command::new(bin)
+            .args(args)
+            .current_dir(&self.root)
+            .output()
+            .unwrap_or_else(|e| panic!("spawn {}: {e}", bin.display()))
+    }
+
+    /// Runs `bin` from the fixture root and collects `bf` and `bf.sh`.
+    fn record(&self, bin: &Path, args: &[&str]) -> Recording {
+        let output = self.run(bin, args);
+        Recording {
+            output,
+            batch: fs::read(self.root.join("bf")).ok(),
+            script: fs::read(self.root.join("bf.sh")).ok(),
+        }
+    }
+}
+
+/// Records `args` with oc and, when present, with the oracle - each in its
+/// own fresh fixture so neither run can see the other's files.
+fn record_both(args: &[&str]) -> (Recording, Option<Recording>) {
+    let oc = Fixture::new().record(&oc_rsync(), args);
+    let upstream = upstream_rsync().map(|bin| Fixture::new().record(&bin, args));
+    (oc, upstream)
+}
+
+/// Asserts oc's masked `.sh` equals both the pinned 3.5.1 text and, when an
+/// oracle is installed, what the oracle writes for the same invocation.
+fn assert_script_matches_upstream(args: &[&str], pinned: &[u8]) {
+    let (oc, upstream) = record_both(args);
+    assert!(oc.output.status.success(), "{args:?}: {:?}", oc.output);
+    let oc_script = oc.masked_script().expect("oc wrote a .sh");
+    assert_eq!(
+        String::from_utf8_lossy(&oc_script),
+        String::from_utf8_lossy(pinned),
+        "{args:?}: oc .sh differs from the pinned rsync {ORACLE_VERSION} text"
+    );
+    if let Some(up) = upstream {
+        assert!(
+            up.output.status.success(),
+            "{args:?}: oracle {:?}",
+            up.output
+        );
+        assert_eq!(
+            up.masked_script().as_deref(),
+            Some(pinned),
+            "{args:?}: the pinned text no longer matches the oracle"
+        );
+    }
+}
+
+/// upstream: batch.c:213-240 write_filter_rules() lists every filter_list
+/// entry through get_rule_prefix(for_xfer = 0) (exclude.c:1824-1885). `P` and
+/// `R` are `-r`/`+r`, and dir-merge, side, negate and directory modifiers all
+/// survive; a here-doc that drops one replays a different rule set than the
+/// recording run used.
+#[test]
+fn filter_heredoc_matches_upstream_get_rule_prefix() {
+    assert_script_matches_upstream(
+        &[
+            "-a",
+            "--checksum-seed=7",
+            "--write-batch=bf",
+            "-f",
+            "- gone",
+            "-f",
+            "!",
+            "--exclude=/x",
+            "--include=*/",
+            "-f",
+            "P keep",
+            "-f",
+            "R junk",
+            "-f",
+            ":n .rules",
+            "-f",
+            "- dir/",
+            "-f",
+            "-! neg",
+            "-f",
+            "H hid",
+            "-f",
+            "S sh",
+            "-f",
+            ":e .m",
+            "-f",
+            "-x xa",
+            "-f",
+            "-p per",
+            "-f",
+            ":C",
+            "-f",
+            "dir-merge,- .d",
+            "-C",
+            "--exclude=*.log",
+            "src/",
+            "dst/",
+        ],
+        b"ARGV0 --filter='._-' '-a' --checksum-seed='7' --read-batch='bf' '-C' \
+${1:-'dst/'} <<'#E#'\n- /x\n+ */\n-r keep\n+r junk\n:n .rules\n- dir/\n-! neg\n\
+-s hid\n+s sh\n- .m\n: .m\n-x xa\n-p per\n:C .cvsignore\n:- .d\n- *.log\n#E#\n",
+    );
+}
+
+/// upstream: batch.c:231-238 - under `--from0` each rule ends in NUL and the
+/// block gains a trailing `;\n`, so the replay's `--filter=._-` reads the
+/// rules with the same `-0` parsing the recording used.
+#[test]
+fn filter_heredoc_under_from0_matches_upstream() {
+    assert_script_matches_upstream(
+        &[
+            "-a",
+            "-0",
+            "--checksum-seed=7",
+            "--write-batch=bf",
+            "--exclude=x",
+            "-f",
+            "P keep",
+            "src/",
+            "dst/",
+        ],
+        b"ARGV0 --filter='._-' '-a' '-0' --checksum-seed='7' --read-batch='bf' \
+${1:-'dst/'} <<'#E#'\n- x\0-r keep\0;\n#E#\n",
+    );
+}
+
+/// upstream: options.c:2280-2283 - `--dry-run` zeroes `write_batch` for both
+/// write forms, so rsync 3.5.1 leaves neither the batch nor its `.sh` behind.
+/// A batch written under `-n` would also be a lie: no update was applied, yet
+/// the replay script claims to reproduce one.
+#[test]
+fn dry_run_write_batch_creates_no_files() {
+    for option in ["--write-batch=bf", "--only-write-batch=bf"] {
+        let args = ["-a", "-n", option, "src/", "dst/"];
+        let (oc, upstream) = record_both(&args);
+        assert!(oc.output.status.success(), "{option}: {:?}", oc.output);
+        assert!(oc.batch.is_none(), "{option}: oc wrote a batch under -n");
+        assert!(oc.script.is_none(), "{option}: oc wrote a .sh under -n");
+        if let Some(up) = upstream {
+            assert!(
+                up.output.status.success(),
+                "{option}: oracle {:?}",
+                up.output
+            );
+            assert_eq!(
+                (up.batch.is_some(), up.script.is_some()),
+                (false, false),
+                "{option}: oracle unexpectedly wrote batch files"
+            );
+        }
+    }
+}
+
+/// Every implementation available to record or replay a cell: oc always,
+/// the oracle when installed.
+fn implementations() -> Vec<(&'static str, PathBuf)> {
+    let mut all = vec![("oc", oc_rsync())];
+    all.extend(upstream_rsync().map(|bin| ("upstream", bin)));
+    all
+}
+
+/// upstream: batch.c:143-147 - the reconcile notice is `INFO_GTE(MISC, 1)`
+/// output, so `--info=misc1` prints it without `-v` and `--info=misc0`
+/// silences it under `-v`. A `-v`-only gate gets both wrong. (`-r` stays on
+/// the replay: an inc-recursive batch refuses a replay without it,
+/// compat.c:780-785.)
+#[test]
+fn read_batch_reconcile_notice_follows_info_misc() {
+    const NOTICE: &str = "Setting the --checksum (-c) option to match the batchfile.";
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(
+            &record_bin,
+            &["-r", "-c", "--write-batch=bf", "src/", "dst/"],
+        );
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        for (replayer, replay_bin) in implementations() {
+            for (args, printed) in [
+                (["-r", "--info=misc1", "-n"].as_slice(), true),
+                (["-r", "-v", "--info=misc0", "-n"].as_slice(), false),
+            ] {
+                let mut argv = vec!["--read-batch=bf"];
+                argv.extend_from_slice(args);
+                argv.push("dst/");
+                let out = fx.run(&replay_bin, &argv);
+                assert!(
+                    out.status.success(),
+                    "{recorder}->{replayer} {args:?}: {out:?}"
+                );
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                assert_eq!(
+                    stdout.lines().any(|line| line == NOTICE),
+                    printed,
+                    "{recorder}->{replayer} {args:?}: {stdout}"
+                );
+            }
+        }
+    }
+}
+
+/// upstream: main.c:1538-1546 - `--read-batch` checks only the destination
+/// (`argv[argc-1]`) for a host spec; earlier operands are discarded, so a
+/// remote-looking source is not an error.
+#[test]
+fn read_batch_ignores_remote_looking_source_operand() {
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(&record_bin, &["-r", "--write-batch=bf", "src/", "dst/"]);
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        for (replayer, replay_bin) in implementations() {
+            let dest = format!("{replayer}-replay/");
+            let out = fx.run(
+                &replay_bin,
+                &["--read-batch=bf", "-r", "host::mod/src", &dest],
+            );
+            assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
+            assert_eq!(
+                fs::read(fx.root.join(&dest).join("a.txt")).unwrap(),
+                b"alpha\n"
+            );
+
+            let out = fx.run(&replay_bin, &["--read-batch=bf", "-r", "host:dst/"]);
+            assert_eq!(
+                out.status.code(),
+                Some(1),
+                "{recorder}->{replayer}: {out:?}"
+            );
+            assert!(
+                String::from_utf8_lossy(&out.stderr)
+                    .contains("remote destination is not allowed with --read-batch"),
+                "{recorder}->{replayer}: {out:?}"
+            );
+        }
+    }
+}
+
+/// upstream: options.c:1780-1792, 2265-2269 - the two write forms share one
+/// `write_batch` mode, so combining them is legal and the later one decides;
+/// only a write form with `--read-batch` is refused, with upstream's text.
+#[test]
+fn batch_option_combinations_match_upstream() {
+    for (name, bin) in implementations() {
+        // --only-write-batch last: no destination writes.
+        let fx = Fixture::new();
+        let out = fx.run(
+            &bin,
+            &[
+                "-r",
+                "--write-batch=bf",
+                "--only-write-batch=bf",
+                "src/",
+                "dst/",
+            ],
+        );
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert!(fx.root.join("bf").is_file(), "{name}: no batch");
+        assert!(
+            !fx.root.join("dst/a.txt").exists(),
+            "{name}: only-write wrote dst"
+        );
+
+        // --write-batch last: the destination is updated too.
+        let fx = Fixture::new();
+        let out = fx.run(
+            &bin,
+            &[
+                "-r",
+                "--only-write-batch=bf",
+                "--write-batch=bf",
+                "src/",
+                "dst/",
+            ],
+        );
+        assert!(out.status.success(), "{name}: {out:?}");
+        assert!(fx.root.join("bf").is_file(), "{name}: no batch");
+        assert!(
+            fx.root.join("dst/a.txt").is_file(),
+            "{name}: write-batch skipped dst"
+        );
+
+        for write in ["--write-batch=x", "--only-write-batch=x"] {
+            let fx = Fixture::new();
+            let out = fx.run(&bin, &["-r", write, "--read-batch=bf", "dst/"]);
+            assert_eq!(out.status.code(), Some(1), "{name} {write}: {out:?}");
+            assert!(
+                String::from_utf8_lossy(&out.stderr)
+                    .contains("--write-batch and --read-batch can not be used together"),
+                "{name} {write}: {out:?}"
+            );
+        }
+    }
+}
+
+/// Runs `args` with oc and the oracle from fresh fixtures prepared by
+/// `prepare`, returning both recordings.
+fn record_both_with(args: &[&OsStr], prepare: impl Fn(&Fixture)) -> (Recording, Option<Recording>) {
+    let run = |bin: &Path| {
+        let fx = Fixture::new();
+        prepare(&fx);
+        let output = Command::new(bin)
+            .args(args)
+            .current_dir(&fx.root)
+            .output()
+            .unwrap_or_else(|e| panic!("spawn {}: {e}", bin.display()));
+        Recording {
+            output,
+            batch: fs::read(fx.root.join("bf")).ok(),
+            script: fs::read(fx.root.join("bf.sh")).ok(),
+        }
+    };
+    (run(&oc_rsync()), upstream_rsync().map(|bin| run(&bin)))
+}
+
+/// Asserts the masked `.sh` of each recording equals `pinned`.
+fn assert_scripts(oc: &Recording, upstream: Option<&Recording>, pinned: &[u8], what: &str) {
+    assert_eq!(
+        oc.masked_script().as_deref(),
+        Some(pinned),
+        "{what}: oc .sh {:?} differs from rsync {ORACLE_VERSION}",
+        oc.masked_script()
+            .map(|s| String::from_utf8_lossy(&s).into_owned())
+    );
+    if let Some(up) = upstream {
+        assert_eq!(
+            up.masked_script().as_deref(),
+            Some(pinned),
+            "{what}: oracle drifted"
+        );
+    }
+}
+
+/// upstream: batch.c:164-198 write_arg() copies each `char *` argument
+/// byte for byte, so a non-UTF-8 destination lands in `${1:-...}` unchanged.
+/// A lossy conversion would write U+FFFD and the replay would target a
+/// different directory.
+#[test]
+fn script_keeps_non_utf8_arguments_byte_exact() {
+    use std::os::unix::ffi::OsStrExt;
+    let dest = OsStr::from_bytes(b"d\xffst/");
+    let args: [&OsStr; 4] = [
+        "-r".as_ref(),
+        "--write-batch=bf".as_ref(),
+        "src/".as_ref(),
+        dest,
+    ];
+    let (oc, upstream) = record_both_with(&args, |_| {});
+    assert!(oc.output.status.success(), "{:?}", oc.output);
+    assert_scripts(
+        &oc,
+        upstream.as_ref(),
+        b"ARGV0 '-r' --read-batch='bf' ${1:-'d\xffst/'}\n",
+        "non-UTF-8 destination",
+    );
+}
+
+/// upstream: batch.c:305-311 elides `cooked_argv` - the operands as typed -
+/// from the replay command. Under `--files-from` the source directory is one
+/// of them even though the transfer list comes from the file, so it must not
+/// survive into the script either.
+#[test]
+fn script_elides_operands_under_files_from() {
+    let args: [&OsStr; 5] = [
+        "-r".as_ref(),
+        "--write-batch=bf".as_ref(),
+        "--files-from=list".as_ref(),
+        "src/".as_ref(),
+        "dst/".as_ref(),
+    ];
+    let (oc, upstream) = record_both_with(&args, |fx| {
+        fs::write(fx.root.join("list"), b"a.txt\n").unwrap();
+    });
+    assert!(oc.output.status.success(), "{:?}", oc.output);
+    assert_scripts(
+        &oc,
+        upstream.as_ref(),
+        b"ARGV0 '-r' --read-batch='bf' ${1:-'dst/'}\n",
+        "--files-from",
+    );
+}
+
+/// upstream: batch.c:247-258 opens the `.sh` at startup and compat.c:838-839
+/// writes it during protocol setup, so a run that fails afterwards (here: the
+/// destination's parent is a regular file) still leaves a complete script.
+#[test]
+fn script_survives_a_run_that_fails_after_setup() {
+    let args: [&OsStr; 4] = [
+        "-r".as_ref(),
+        "--write-batch=bf".as_ref(),
+        "src/".as_ref(),
+        "file/sub/".as_ref(),
+    ];
+    let (oc, upstream) = record_both_with(&args, |fx| {
+        fs::write(fx.root.join("file"), b"not a directory\n").unwrap();
+    });
+    assert!(!oc.output.status.success(), "the transfer itself must fail");
+    assert_scripts(
+        &oc,
+        upstream.as_ref(),
+        b"ARGV0 '-r' --read-batch='bf' ${1:-'file/sub/'}\n",
+        "failed run",
+    );
+}
+
+/// upstream: batch.c:255-258 - the `.sh` is created first and its open
+/// failure exits RERR_FILESELECT (3) before any batch file exists.
+#[test]
+fn script_open_failure_exits_rerr_fileselect() {
+    let args: [&OsStr; 4] = [
+        "-r".as_ref(),
+        "--write-batch=nodir/bf".as_ref(),
+        "src/".as_ref(),
+        "dst/".as_ref(),
+    ];
+    let (oc, upstream) = record_both_with(&args, |_| {});
+    for (name, rec) in std::iter::once(("oc", &oc)).chain(upstream.iter().map(|r| ("upstream", r)))
+    {
+        assert_eq!(
+            rec.output.status.code(),
+            Some(3),
+            "{name}: {:?}",
+            rec.output
+        );
+        assert!(
+            String::from_utf8_lossy(&rec.output.stderr).contains("bf.sh\" open error"),
+            "{name}: {:?}",
+            rec.output
+        );
+    }
+}
+
+/// upstream: batch.c:97-114 write_stream_flags() sets bit 9 (`tweaked_iconv`)
+/// whenever `--iconv` is given, on a remote transfer as on a local one; a
+/// replay of a batch whose header lacks it would decode the recorded names
+/// without converting them. Pulled over a remote shell that runs the same
+/// binary as its server.
+#[test]
+fn remote_batch_header_records_iconv() {
+    let fx = Fixture::new();
+    let shim = fx.root.join("rsh");
+    fs::write(&shim, "#!/bin/sh\nshift\nexec \"$@\"\n").unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    for (name, bin) in implementations() {
+        let batch = format!("bf-{name}");
+        let rsync_path = format!("--rsync-path={}", bin.display());
+        let out = fx.run(
+            &bin,
+            &[
+                "-r",
+                "--iconv=UTF-8,ISO-8859-1",
+                "-e",
+                "./rsh",
+                &rsync_path,
+                &format!("--write-batch={batch}"),
+                "localhost:src/",
+                &format!("{name}-dst/"),
+            ],
+        );
+        assert!(out.status.success(), "{name}: {out:?}");
+        let header = fs::read(fx.root.join(&batch)).unwrap();
+        // -r (bit 0), -d implied by -r (bit 7), --iconv (bit 9).
+        assert_eq!(header[..4], 0x281i32.to_le_bytes(), "{name}: stream flags");
+    }
+}
+
+/// upstream: batch.c:217-229 write_filter_rules() refuses a pattern holding
+/// a newline only after writing the here-doc opener and the rules before it,
+/// then exits RERR_SYNTAX; start_write_batch() never runs, so the batch file
+/// holds just the stream flags written at open (main.c:1944). A NUL-separated
+/// `--exclude-from` is how a newline reaches a pattern.
+#[test]
+fn newline_rule_leaves_upstreams_partial_script() {
+    let args: [&OsStr; 6] = [
+        "-r".as_ref(),
+        "-0".as_ref(),
+        "--write-batch=bf".as_ref(),
+        "--exclude-from=rules".as_ref(),
+        "src/".as_ref(),
+        "dst/".as_ref(),
+    ];
+    let prepare = |fx: &Fixture| {
+        fs::write(fx.root.join("rules"), b"- *.log\0- x\n#E#\ntouch PWNED\0").unwrap();
+    };
+    let (oc, upstream) = record_both_with(&args, prepare);
+    let pinned: &[u8] =
+        b"ARGV0 --filter='._-' '-r' '-0' --read-batch='bf' ${1:-'dst/'} <<'#E#'\n- *.log\0";
+    for (name, rec) in std::iter::once(("oc", &oc)).chain(upstream.iter().map(|r| ("upstream", r)))
+    {
+        assert_eq!(
+            rec.output.status.code(),
+            Some(1),
+            "{name}: {:?}",
+            rec.output
+        );
+        assert!(
+            String::from_utf8_lossy(&rec.output.stderr).contains(
+                "cannot write a filter rule containing a newline to the batch replay script"
+            ),
+            "{name}: {:?}",
+            rec.output
+        );
+        assert_eq!(
+            rec.batch.as_ref().map(Vec::len),
+            Some(4),
+            "{name}: only the stream flags"
+        );
+    }
+    assert_scripts(&oc, upstream.as_ref(), pinned, "newline rule");
+}
+
+/// upstream: batch.c:255-258 - the `.sh` open error names the file through
+/// full_fname(), which prefixes a relative name with the working directory.
+#[test]
+fn script_open_error_names_the_full_path() {
+    for (name, bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(&bin, &["-r", "--write-batch=nodir/bf", "src/", "dst/"]);
+        let expected = format!(
+            "Batch file \"{}/nodir/bf.sh\" open error",
+            fs::canonicalize(&fx.root).unwrap().display()
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(&expected),
+            "{name}: expected {expected:?} in {out:?}"
+        );
+    }
+}
+
+/// upstream: compat.c:739-740 sets CF_ID0_NAMES for a local transfer (its
+/// child advertises 'u'), and with no INC_RECURSE (no `-r`) the header's
+/// compat varint is `81 fe`.
+/// The id lists then end with the name of id 0 (uidlist.c:398-405), so each
+/// implementation must also replay the other's batch.
+#[test]
+fn local_batch_compat_flags_match_upstream() {
+    let args = ["-lptgo", "--write-batch=bf", "src/a.txt", "dst/"];
+    let (oc, upstream) = record_both(&args);
+    assert!(oc.output.status.success(), "{:?}", oc.output);
+    let oc_header = oc.batch.as_ref().expect("oc batch");
+    assert_eq!(
+        oc_header[4..10],
+        [0x21, 0, 0, 0, 0x81, 0xfe],
+        "oc protocol + compat"
+    );
+    if let Some(up) = upstream.as_ref() {
+        assert_eq!(
+            up.batch.as_ref().expect("oracle batch")[4..10],
+            oc_header[4..10]
+        );
+    }
+
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(&record_bin, &args);
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        for (replayer, replay_bin) in implementations() {
+            let dest = format!("{replayer}-replay/");
+            let out = fx.run(&replay_bin, &["--read-batch=bf", "-lptgo", &dest]);
+            assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
+            assert_eq!(
+                fs::read(fx.root.join(&dest).join("a.txt")).unwrap(),
+                b"alpha\n",
+                "{recorder}->{replayer}"
+            );
+        }
+    }
+}
+
+/// upstream: receiver.c:1212-1241 - `--inplace` opens the destination itself,
+/// and receiver.c:664-671 truncates it to the reconstructed length, so a
+/// replay keeps the destination's inode; a temp-file replay would rename a
+/// new inode over it.
+#[test]
+fn read_batch_inplace_rewrites_the_destination_inode() {
+    use std::os::unix::fs::MetadataExt;
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(
+            &record_bin,
+            &["-r", "--inplace", "--write-batch=bf", "src/", "dst/"],
+        );
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        for (replayer, replay_bin) in implementations() {
+            let dest = fx.root.join(format!("{replayer}-replay"));
+            fs::create_dir_all(&dest).unwrap();
+            let target = dest.join("a.txt");
+            fs::write(&target, b"stale contents that are longer\n").unwrap();
+            let inode = fs::metadata(&target).unwrap().ino();
+            let out = fx.run(
+                &replay_bin,
+                &[
+                    "--read-batch=bf",
+                    "-r",
+                    "--inplace",
+                    &format!("{replayer}-replay/"),
+                ],
+            );
+            assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
+            assert_eq!(
+                fs::read(&target).unwrap(),
+                b"alpha\n",
+                "{recorder}->{replayer}"
+            );
+            assert_eq!(
+                fs::metadata(&target).unwrap().ino(),
+                inode,
+                "{recorder}->{replayer}: --inplace replay replaced the inode"
+            );
+        }
+    }
+}
+
+/// upstream: exclude.c:1478-1481 parse_rule_tok() adds the implicit
+/// FILTRULE_SENDER_SIDE only while `delete_excluded` is already set, so the
+/// here-doc lists `s` on the rules after `--delete-excluded` and not on those
+/// before it (get_rule_prefix(for_xfer = 0), exclude.c:1864-1866).
+#[test]
+fn delete_excluded_marks_only_later_rules_in_heredoc() {
+    assert_script_matches_upstream(
+        &[
+            "-r",
+            "--exclude=a",
+            "--delete-excluded",
+            "--exclude=b",
+            "--write-batch=bf",
+            "src/",
+            "dst/",
+        ],
+        b"ARGV0 --filter='._-' '-r' '--delete-excluded' --read-batch='bf' ${1:-'dst/'} <<'#E#'\n- a\n-s b\n#E#\n",
+    );
+}
+
+fn running_as_root() -> bool {
+    Command::new("id")
+        .arg("-u")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
+        .unwrap_or(false)
+}
+
+/// upstream: receiver.c:1015-1022 - a failed temp-file open drains that
+/// file's compressed delta off the stream (`discard_receive_data()`) and moves
+/// on, so a `-z` replay whose every `mkstemp` fails still reads each file's
+/// tokens and checksum in step and ends on the code-23 trailer with nothing
+/// written. A replay that skipped or misread one drained file would decode the
+/// next file's tokens as garbage and abort with a protocol error instead.
+#[test]
+fn compressed_replay_drains_every_file_whose_temp_open_fails() {
+    if running_as_root() {
+        eprintln!("skip: root can create files in the read-only --temp-dir");
+        return;
+    }
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        for name in ["a.txt", "sub/b.log", "sub/c.txt", "z.txt"] {
+            let body: String = (0..4000).map(|i| format!("{name} line {i}\n")).collect();
+            fs::write(fx.root.join("src").join(name), body).unwrap();
+        }
+        let out = fx.run(&record_bin, &["-rz", "--write-batch=bf", "src/", "dst/"]);
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        let temp_dir = fx.root.join("ro-temp");
+        fs::create_dir(&temp_dir).unwrap();
+        fs::set_permissions(&temp_dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let temp_arg = format!("--temp-dir={}", temp_dir.display());
+        for (replayer, replay_bin) in implementations() {
+            let dest = fx.root.join(format!("{replayer}-replay"));
+            let target = format!("{}/", dest.display());
+            let out = fx.run(&replay_bin, &["-r", &temp_arg, "--read-batch=bf", &target]);
+            assert_eq!(
+                out.status.code(),
+                Some(23),
+                "{recorder}->{replayer}: every file drained, run partial: {out:?}"
+            );
+            for name in ["a.txt", "sub/b.log", "sub/c.txt", "z.txt"] {
+                assert!(
+                    !dest.join(name).exists(),
+                    "{recorder}->{replayer}: {name} written despite its failed open"
+                );
+            }
+        }
+        fs::set_permissions(&temp_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+/// Adds a nested directory and an empty one, so an incremental file list has
+/// a sub-list per depth and an empty sub-list.
+fn deepen(fx: &Fixture) {
+    fs::create_dir_all(fx.root.join("src/sub/deep")).unwrap();
+    fs::create_dir_all(fx.root.join("src/empty")).unwrap();
+    fs::write(fx.root.join("src/sub/deep/d.txt"), b"delta\n").unwrap();
+}
+
+/// upstream: compat.c:162-180 set_allow_inc_recurse() keeps CF_INC_RECURSE
+/// for a recursive local recording, so 3.5.1 writes `81 ff` and lays the file
+/// list out incrementally: the top level first, then one sub-list per
+/// directory (flist.c send_extra_file_list()). Each implementation must
+/// replay the other's batch into the same tree.
+#[test]
+fn recursive_local_batch_is_inc_recurse_like_upstream() {
+    let args = ["-r", "--write-batch=bf", "src/", "dst/"];
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        deepen(&fx);
+        let out = fx.run(&record_bin, &args);
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        let batch = fs::read(fx.root.join("bf")).unwrap();
+        assert_eq!(
+            batch[4..10],
+            [0x21, 0, 0, 0, 0x81, 0xff],
+            "{recorder}: protocol + compat"
+        );
+        for (replayer, replay_bin) in implementations() {
+            let dest = format!("{replayer}-replay");
+            let out = fx.run(&replay_bin, &["-r", "--read-batch=bf", &format!("{dest}/")]);
+            assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
+            for file in ["a.txt", "sub/b.log", "sub/c.txt", "sub/deep/d.txt"] {
+                assert_eq!(
+                    fs::read(fx.root.join(&dest).join(file)).unwrap(),
+                    fs::read(fx.root.join("src").join(file)).unwrap(),
+                    "{recorder}->{replayer}: {file}"
+                );
+            }
+            assert!(
+                fx.root.join(&dest).join("empty").is_dir(),
+                "{recorder}->{replayer}: empty dir"
+            );
+        }
+    }
+}
+
+/// upstream: compat.c:162-180 set_allow_inc_recurse() - recursion without
+/// `--qsort` records CF_INC_RECURSE unless the receiving side deletes before or
+/// after the transfer, delays updates or prunes empty directories, and
+/// `--no-inc-recursive` (options.c:634) clears it. The header's last compat
+/// byte is `ff` with the bit and `fe` without it; every row is checked against
+/// 3.5.1 too, so the table cannot drift from upstream.
+#[test]
+fn local_batch_inc_recurse_bit_follows_set_allow_inc_recurse() {
+    let rows: [(&[&str], u8); 9] = [
+        (&["-r"], 0xff),
+        (&["-r", "--delete"], 0xff),
+        (&["-r", "--delete-delay"], 0xff),
+        (&["-d"], 0xfe),
+        (&["-r", "--no-inc-recursive"], 0xfe),
+        (&["-r", "--qsort"], 0xfe),
+        (&["-r", "--delete-before"], 0xfe),
+        (&["-r", "--delete-after"], 0xfe),
+        (&["-r", "--delay-updates"], 0xfe),
+    ];
+    for (recorder, record_bin) in implementations() {
+        for (opts, compat) in rows {
+            let fx = Fixture::new();
+            let mut args = opts.to_vec();
+            args.extend(["--write-batch=bf", "src/", "dst/"]);
+            let out = fx.run(&record_bin, &args);
+            assert!(out.status.success(), "{recorder} {opts:?}: {out:?}");
+            let batch = fs::read(fx.root.join("bf")).unwrap();
+            assert_eq!(batch[9], compat, "{recorder} {opts:?}: compat byte");
+        }
+    }
+    // `-m` is its own row: it needs a directory it can prune to matter.
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(
+            &record_bin,
+            &["-r", "-m", "--write-batch=bf", "src/", "dst/"],
+        );
+        assert!(out.status.success(), "{recorder} -m: {out:?}");
+        assert_eq!(
+            fs::read(fx.root.join("bf")).unwrap()[9],
+            0xfe,
+            "{recorder} -m"
+        );
+    }
+}
+
+/// upstream: flist.c:824-850 - under INC_RECURSE a hard-link follower names
+/// its leader by the leader's NDX, which counts the one-slot gap before every
+/// sub-list (flist.c:3511). A follower in a later sub-list than its leader
+/// therefore carries an NDX that a flat numbering would get wrong, and the
+/// replay would link it to the wrong file or reject it.
+#[test]
+fn hard_links_across_sub_lists_replay_like_upstream() {
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        deepen(&fx);
+        fs::create_dir_all(fx.root.join("src/z")).unwrap();
+        fs::hard_link(fx.root.join("src/sub/c.txt"), fx.root.join("src/z/c1")).unwrap();
+        fs::hard_link(fx.root.join("src/sub/c.txt"), fx.root.join("src/c0")).unwrap();
+        fs::hard_link(fx.root.join("src/sub/deep/d.txt"), fx.root.join("src/z/d1")).unwrap();
+        // A top-level pair the walk may capture in either order: the member
+        // sent first must lead, whichever was captured first.
+        fs::write(fx.root.join("src/zzz_holder"), b"pair\n").unwrap();
+        fs::hard_link(
+            fx.root.join("src/zzz_holder"),
+            fx.root.join("src/aaa_leader"),
+        )
+        .unwrap();
+        let out = fx.run(&record_bin, &["-rH", "--write-batch=bf", "src/", "dst/"]);
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        assert_eq!(fs::read(fx.root.join("bf")).unwrap()[9], 0xff, "{recorder}");
+        for (replayer, replay_bin) in implementations() {
+            let dest = fx.root.join(format!("{replayer}-replay"));
+            let target = format!("{}/", dest.display());
+            let out = fx.run(&replay_bin, &["-rH", "--read-batch=bf", &target]);
+            assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
+            for (leader, followers) in [
+                ("sub/c.txt", ["z/c1", "c0"].as_slice()),
+                ("sub/deep/d.txt", ["z/d1"].as_slice()),
+                ("zzz_holder", ["aaa_leader"].as_slice()),
+            ] {
+                let ino = fs::metadata(dest.join(leader)).unwrap().ino();
+                for follower in followers {
+                    assert_eq!(
+                        fs::metadata(dest.join(follower)).unwrap().ino(),
+                        ino,
+                        "{recorder}->{replayer}: {follower} links to {leader}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Fills `src/` with `dirs` directories of `files` files each.
+fn widen(fx: &Fixture, dirs: usize, files: usize) {
+    for d in 1..=dirs {
+        let dir = fx.root.join(format!("src/d{d:02}"));
+        fs::create_dir_all(&dir).unwrap();
+        for f in 1..=files {
+            fs::write(dir.join(format!("f{f:03}")), format!("file {d}/{f}\n")).unwrap();
+        }
+    }
+}
+
+/// Every path under `dir` with its contents, `None` for a directory.
+fn tree_snapshot(dir: &Path) -> std::collections::BTreeMap<PathBuf, Option<Vec<u8>>> {
+    fn walk(
+        base: &Path,
+        dir: &Path,
+        out: &mut std::collections::BTreeMap<PathBuf, Option<Vec<u8>>>,
+    ) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let rel = path.strip_prefix(base).unwrap().to_path_buf();
+            if path.is_dir() {
+                out.insert(rel, None);
+                walk(base, &path, out);
+            } else {
+                out.insert(rel, Some(fs::read(&path).unwrap()));
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+/// The order in which 3.5.1's receiver meets the sub-lists and the file data
+/// of a replayed batch, from its `--debug=flist2,recv1` trace. Only the
+/// receiver process's lines are kept: the generator process reports the same
+/// lists at points that depend on scheduling. The root `.` record is dropped:
+/// oc does not itemize the transfer root (task 279).
+fn replay_trace(fx: &Fixture, upstream: &Path, batch: &str, dest: &str) -> Vec<String> {
+    let out = fx.run(
+        upstream,
+        &[
+            "-r",
+            "--debug=flist2,recv1",
+            &format!("--read-batch={batch}"),
+            dest,
+        ],
+    );
+    assert!(out.status.success(), "3.5.1 replay of {batch}: {out:?}");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|line| {
+            line.starts_with("[receiver] receiving flist for dir")
+                || (line.starts_with("recv_files(") && *line != "recv_files(.)")
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Records `dirs` x `files` with every implementation and replays each batch
+/// with every implementation into an identical tree; with 3.5.1 installed,
+/// also checks that oc's batch places every sub-list where 3.5.1's does.
+fn inc_recurse_batch_round_trips(dirs: usize, files: usize) {
+    let fx = Fixture::new();
+    widen(&fx, dirs, files);
+    let source = tree_snapshot(&fx.root.join("src"));
+    for (recorder, record_bin) in implementations() {
+        let batch = format!("bf-{recorder}");
+        let out = fx.run(
+            &record_bin,
+            &[
+                "-r",
+                &format!("--write-batch={batch}"),
+                "src/",
+                &format!("rec-{recorder}/"),
+            ],
+        );
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        assert_eq!(
+            fs::read(fx.root.join(&batch)).unwrap()[4..10],
+            [0x21, 0, 0, 0, 0x81, 0xff],
+            "{recorder}: protocol + compat"
+        );
+        for (replayer, replay_bin) in implementations() {
+            let dest = format!("{recorder}-by-{replayer}");
+            let out = fx.run(
+                &replay_bin,
+                &["-r", &format!("--read-batch={batch}"), &format!("{dest}/")],
+            );
+            assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
+            assert!(
+                tree_snapshot(&fx.root.join(&dest)) == source,
+                "{recorder}->{replayer}: replayed tree differs from the source"
+            );
+        }
+    }
+    let Some(upstream) = upstream_rsync() else {
+        eprintln!("skip placement: no rsync {ORACLE_VERSION} oracle installed");
+        return;
+    };
+    assert_eq!(
+        replay_trace(&fx, &upstream, "bf-oc", "trace-oc/"),
+        replay_trace(&fx, &upstream, "bf-upstream", "trace-upstream/"),
+        "sub-list placement between file data"
+    );
+    // upstream: receiver.c:919 maybe_log_item / :1290 log_item - a replay
+    // itemizes from the recorded rows alone, in stream order, so both
+    // replayers print the same rows for the same batch.
+    for batch in ["bf-oc", "bf-upstream"] {
+        let itemize = |bin: &Path, dest: &str| {
+            let out = fx.run(bin, &["-r", "-i", &format!("--read-batch={batch}"), dest]);
+            assert!(out.status.success(), "-i replay of {batch}: {out:?}");
+            // The first line names the per-run destination.
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|line| !line.starts_with("created directory "))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            itemize(&oc_rsync(), &format!("items-oc-{batch}/")),
+            itemize(&upstream, &format!("items-upstream-{batch}/")),
+            "{batch}: itemized rows"
+        );
+    }
+}
+
+/// upstream: sender.c:515-547 - past the 1000-entry lookahead (rsync.h:151)
+/// 3.5.1 sends sub-lists between file-data records: the first lists up to
+/// the lookahead, then one more each time the records reach the next list
+/// (rsync.c:396-401, flist.c:2651). The replaying receiver must take them
+/// as they come (receiver.c:1012 read_ndx_and_attrs). Its NDX_DONE echoes
+/// are timing-bound in 3.5.1 (generator.c:2691-2698), so the bytes as a whole
+/// are not compared.
+#[test]
+fn large_inc_recurse_batch_places_sub_lists_like_upstream() {
+    inc_recurse_batch_round_trips(12, 150);
+}
+
+/// Below the lookahead every sub-list precedes the file data, so the replay
+/// generates the whole list before the first row, as before.
+#[test]
+fn small_inc_recurse_batch_round_trips_like_upstream() {
+    inc_recurse_batch_round_trips(4, 50);
+}
+
+/// upstream: generator.c:2780-2801 - with --delete under INC_RECURSE the
+/// replaying generator deletes in each list's directory as that list
+/// arrives, mid-stream once the lists interleave with the file data. The
+/// extraneous entries sit in early, middle and late lists, and in the last.
+#[test]
+fn inc_recurse_replay_deletes_per_list_like_upstream() {
+    let fx = Fixture::new();
+    widen(&fx, 12, 150);
+    let source = tree_snapshot(&fx.root.join("src"));
+    let mut deleted = Vec::new();
+    for (recorder, record_bin) in implementations() {
+        let batch = format!("bf-{recorder}");
+        let out = fx.run(
+            &record_bin,
+            &[
+                "-r",
+                "--delete",
+                &format!("--write-batch={batch}"),
+                "src/",
+                &format!("rec-{recorder}/"),
+            ],
+        );
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        for (replayer, replay_bin) in implementations() {
+            let dest = fx.root.join(format!("{recorder}-by-{replayer}"));
+            for d in ["d01", "d07", "d12", "sub"] {
+                fs::create_dir_all(dest.join(d).join("stale-dir")).unwrap();
+                fs::write(dest.join(d).join("stale-file"), b"stale\n").unwrap();
+            }
+            let target = format!("{}/", dest.display());
+            let out = fx.run(
+                &replay_bin,
+                &[
+                    "-r",
+                    "--delete",
+                    "-v",
+                    &format!("--read-batch={batch}"),
+                    &target,
+                ],
+            );
+            assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
+            assert!(
+                tree_snapshot(&dest) == source,
+                "{recorder}->{replayer}: extraneous entries survived the replay"
+            );
+            let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|line| line.starts_with("deleting "))
+                .map(str::to_owned)
+                .collect();
+            lines.sort();
+            deleted.push((format!("{recorder}->{replayer}"), lines));
+        }
+    }
+    let (first, want) = &deleted[0];
+    assert_eq!(
+        want.len(),
+        8,
+        "{first}: one row per extraneous entry: {want:?}"
+    );
+    for (pair, lines) in &deleted {
+        assert_eq!(lines, want, "{pair} deletes what {first} deletes");
+    }
+}
+
+/// Backdates the default fixture's source so a replay's mtime drift is fixed.
+fn backdate_source(fx: &Fixture) {
+    let when = filetime::FileTime::from_unix_time(1_262_304_000, 0);
+    for path in [
+        "src/a.txt",
+        "src/sub/b.log",
+        "src/sub/c.txt",
+        "src/sub",
+        "src",
+    ] {
+        filetime::set_file_mtime(fx.root.join(path), when).unwrap();
+    }
+}
+
+/// Seeds `dest` with an older, shorter `a.txt`, so a batch carries a delta
+/// against an existing file and an existing transfer root.
+fn seed_basis(dest: &Path) {
+    fs::create_dir_all(dest).unwrap();
+    fs::write(dest.join("a.txt"), b"old\n").unwrap();
+    let when = filetime::FileTime::from_unix_time(978_307_200, 0);
+    filetime::set_file_mtime(dest.join("a.txt"), when).unwrap();
+    filetime::set_file_mtime(dest, when).unwrap();
+}
+
+/// The itemize rows of a `-i` replay, without the root-creation notice.
+fn itemize_rows(out: &Output) -> Vec<String> {
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with("created directory"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// upstream: flist.c:3065-3067 - below protocol 30 the file list is followed
+/// by the id lists and `write_int(io_error)`; checksum.c:142-144 sums each
+/// file with seeded MD4; generator.c:517-548 itemize() fills the iflags the
+/// batch replays (protocol 29), the transfer root's `.d..t......` included.
+/// A batch missing the io_error word misaligns every later read ("File-list
+/// index ... not in -1 - N"), so 3.5.1 must replay oc's batch into the tree
+/// and the rows its own batch gives.
+#[test]
+fn pre30_local_batch_replays_like_upstream() {
+    for proto in ["29", "28"] {
+        let mut replays: Vec<(&str, &str, Vec<String>)> = Vec::new();
+        for (recorder, record_bin) in implementations() {
+            let fx = Fixture::new();
+            backdate_source(&fx);
+            seed_basis(&fx.root.join("rec"));
+            let out = fx.run(
+                &record_bin,
+                &[
+                    "-a",
+                    &format!("--protocol={proto}"),
+                    "--write-batch=bf",
+                    "src/",
+                    "rec/",
+                ],
+            );
+            assert!(out.status.success(), "{proto} {recorder} record: {out:?}");
+            let source = tree_snapshot(&fx.root.join("src"));
+            for (replayer, replay_bin) in implementations() {
+                let dest = fx.root.join(format!("by-{replayer}"));
+                seed_basis(&dest);
+                let target = format!("{}/", dest.display());
+                let out = fx.run(&replay_bin, &["-a", "-i", "--read-batch=bf", &target]);
+                assert!(
+                    out.status.success(),
+                    "{proto} {recorder}->{replayer}: {out:?}"
+                );
+                assert!(
+                    tree_snapshot(&dest) == source,
+                    "{proto} {recorder}->{replayer}: replay did not rebuild the source"
+                );
+                replays.push((recorder, replayer, itemize_rows(&out)));
+            }
+        }
+        if proto == "29" {
+            let want = [
+                ".d..t...... ./",
+                ">f.st...... a.txt",
+                "cd+++++++++ sub/",
+                ">f+++++++++ sub/b.log",
+                ">f+++++++++ sub/c.txt",
+            ];
+            for (recorder, replayer, rows) in &replays {
+                assert_eq!(rows, &want, "29 {recorder}->{replayer}: rows 3.5.1 prints");
+            }
+        }
+        for (recorder, replayer, rows) in &replays {
+            let (_, _, oc_rows) = replays
+                .iter()
+                .find(|(r, p, _)| *r == "oc" && p == replayer)
+                .expect("oc recorded for every replayer");
+            assert_eq!(
+                rows, oc_rows,
+                "{proto} {recorder}->{replayer} vs oc->{replayer}"
+            );
+        }
+    }
+}
+
+fn id_name(flag: &str) -> String {
+    let out = Command::new("id").arg(flag).output().expect("run id");
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// upstream: flist.c:787-797 add_uid()/add_gid() collect each owner the file
+/// list carries, and uidlist.c:388-406 send_one_list() names them after a
+/// non-incremental list; inline names exist only under INC_RECURSE
+/// (flist.c:791). Below protocol 30 the id lists are the batch's only copy of
+/// the names, so a replay as root could not map the owners without them.
+#[test]
+fn pre30_local_batch_names_owners_like_upstream() {
+    if running_as_root() {
+        eprintln!("skip: id 0 is never named below protocol 30 (uidlist.c:391)");
+        return;
+    }
+    let names = [id_name("-un"), id_name("-gn")];
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(
+            &record_bin,
+            &["-a", "--protocol=29", "--write-batch=bf", "src/", "rec/"],
+        );
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        let batch = fs::read(fx.root.join("bf")).unwrap();
+        for name in &names {
+            let mut entry = vec![name.len() as u8];
+            entry.extend_from_slice(name.as_bytes());
+            assert!(
+                batch.windows(entry.len()).any(|w| w == entry.as_slice()),
+                "{recorder}: the id lists name {name}"
+            );
+        }
+    }
+}
+
+/// upstream: flist.c:2205-2210 send_directory() sets IOERR_GENERAL when a
+/// listing fails, and the end marker of the list being built carries it
+/// (flist.c:2683-2690, :3024-3031; below 30 the write_int after the id
+/// lists). The replaying generator then refuses deletions from that list on
+/// (generator.c delete_in_dir), so a batch that drops the error lets a replay
+/// delete inside a directory the recording could not read.
+#[test]
+fn batch_carries_an_unreadable_directory_io_error_like_upstream() {
+    if running_as_root() {
+        eprintln!("skip: root reads a 0000 directory");
+        return;
+    }
+    const STALE: [&str; 4] = ["stale", "a0/stale", "m5/stale", "z9/stale"];
+    let seed = |dest: &Path| {
+        for stale in STALE {
+            let stale = dest.join(stale);
+            fs::create_dir_all(stale.parent().unwrap()).unwrap();
+            fs::write(stale, b"stale\n").unwrap();
+        }
+    };
+    // Protocol 31 without INC_RECURSE carries it on the varint end marker.
+    for (proto, inc) in [
+        ("29", "--inc-recursive"),
+        ("31", "--no-inc-recursive"),
+        ("33", "--inc-recursive"),
+    ] {
+        let mut survivors: Vec<(&str, &str, Vec<&str>)> = Vec::new();
+        for (recorder, record_bin) in implementations() {
+            let fx = Fixture::new();
+            for dir in ["a0", "m5", "z9"] {
+                fs::create_dir_all(fx.root.join("src").join(dir)).unwrap();
+                fs::write(fx.root.join("src").join(dir).join("f"), dir).unwrap();
+            }
+            let locked = fx.root.join("src/m5");
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+            seed(&fx.root.join("rec"));
+            let out = fx.run(
+                &record_bin,
+                &[
+                    "-r",
+                    "--delete",
+                    inc,
+                    &format!("--protocol={proto}"),
+                    "--write-batch=bf",
+                    "src/",
+                    "rec/",
+                ],
+            );
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(23),
+                "{proto} {recorder} record: {out:?}"
+            );
+            for (replayer, replay_bin) in implementations() {
+                let dest = fx.root.join(format!("by-{replayer}"));
+                seed(&dest);
+                let target = format!("{}/", dest.display());
+                let out = fx.run(&replay_bin, &["-r", "--delete", "--read-batch=bf", &target]);
+                assert_eq!(
+                    out.status.code(),
+                    Some(23),
+                    "{proto} {recorder}->{replayer}: {out:?}"
+                );
+                let kept: Vec<&str> = STALE
+                    .into_iter()
+                    .filter(|stale| dest.join(stale).exists())
+                    .collect();
+                for after in ["m5/stale", "z9/stale"] {
+                    assert!(
+                        kept.contains(&after),
+                        "{proto} {recorder}->{replayer}: {after} deleted past the io_error"
+                    );
+                }
+                survivors.push((recorder, replayer, kept));
+            }
+        }
+        for (recorder, replayer, kept) in &survivors {
+            let (_, _, oc_kept) = survivors
+                .iter()
+                .find(|(r, p, _)| *r == "oc" && p == replayer)
+                .expect("oc recorded for every replayer");
+            assert_eq!(
+                kept, oc_kept,
+                "{proto} {recorder}->{replayer} vs oc->{replayer}"
+            );
+        }
+    }
+}
+
+/// upstream: main.c:808-810 creates a missing destination root and
+/// generator.c:1869-1871 itemizes it, so a 3.5.1 batch recorded into a new
+/// directory carries `cd+++++++++ ./` and every replay prints it, whatever
+/// already exists at the replay target.
+#[test]
+fn batch_into_a_new_root_itemizes_the_created_root_like_upstream() {
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(&record_bin, &["-a", "--write-batch=bf", "src/", "new/"]);
+        assert!(out.status.success(), "{recorder} record: {out:?}");
+        for (replayer, replay_bin) in implementations() {
+            let target = format!("{}/", fx.root.join(format!("by-{replayer}")).display());
+            let out = fx.run(&replay_bin, &["-a", "-i", "--read-batch=bf", &target]);
+            assert!(out.status.success(), "{recorder}->{replayer}: {out:?}");
+            assert_eq!(
+                itemize_rows(&out).first().map(String::as_str),
+                Some("cd+++++++++ ./"),
+                "{recorder}->{replayer}: {out:?}"
+            );
+        }
+    }
+}
+
+/// upstream: generator.c:1904-1910 - `--chmod=Du-x` self-locks a new root,
+/// and the failed chmod sets the generator's io_error. The forked sender
+/// never sees it, so the batch reports no error and a `--delete` replay
+/// still deletes.
+#[test]
+fn receiver_chmod_failure_stays_out_of_the_batch_io_error() {
+    if running_as_root() {
+        eprintln!("skip: root's chmod cannot self-lock the root");
+        return;
+    }
+    for (recorder, record_bin) in implementations() {
+        let fx = Fixture::new();
+        let out = fx.run(
+            &record_bin,
+            &[
+                "-r",
+                "--delete",
+                "--protocol=29",
+                "--chmod=Du-x",
+                "--write-batch=bf",
+                "src/",
+                "new/",
+            ],
+        );
+        fs::set_permissions(fx.root.join("new"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(out.status.code(), Some(23), "{recorder} record: {out:?}");
+        for (replayer, replay_bin) in implementations() {
+            let dest = fx.root.join(format!("by-{replayer}"));
+            fs::create_dir_all(&dest).unwrap();
+            fs::write(dest.join("stale"), b"stale\n").unwrap();
+            let target = format!("{}/", dest.display());
+            let out = fx.run(&replay_bin, &["-r", "--delete", "--read-batch=bf", &target]);
+            assert!(
+                !dest.join("stale").exists(),
+                "{recorder}->{replayer}: the replay skipped deletion: {out:?}"
+            );
+        }
+    }
+}

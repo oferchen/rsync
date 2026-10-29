@@ -456,6 +456,11 @@ where
         }
     };
 
+    // upstream: batch.c:305-311 elides `cooked_argv`, the operands as parsed,
+    // from the replay script; keep them before any expansion or
+    // `--files-from` merging rewrites the list.
+    let cooked_operands = remainder.clone();
+
     // A POSIX shell expands wildcards before upstream rsync sees its argv;
     // cmd.exe and PowerShell do not, so the client does it here instead.
     #[cfg(windows)]
@@ -680,38 +685,37 @@ where
     // files_from is active. This is the implied level, not an explicit `-d`.
     let dirs = if files_from_active { Some(true) } else { dirs };
 
-    // upstream: compat.c:722-750 - local transfers negotiate compat_flags
-    // between sender and receiver. For protocol 32 with full capability
-    // string (`.LsfxCIvu`), the flags include SAFE_FILE_LIST,
-    // AVOID_XATTR_OPTIMIZATION, CHECKSUM_SEED_FIX, INPLACE_PARTIAL_DIR,
-    // ID0_NAMES, and VARINT_FLIST_FLAGS. These flags must be written to
-    // the batch header so upstream rsync can decode the file list and
-    // delta stream.
+    // upstream: compat.c:722-750 - a local transfer negotiates compat_flags
+    // between its sender and receiving child, and batch.c records them in the
+    // batch header so a reader decodes the file list and delta stream the
+    // same way.
     //
-    // upstream: batch.c - batch files record the compat_flags used during the
-    // transfer. INC_RECURSE must be set: without it, upstream's reader calls
-    // recv_id_list() after the flist end marker, consuming delta bytes as ID
-    // list data and causing "File-list index N not in range" errors. With
-    // INC_RECURSE, recv_id_list() is skipped (names are inline in flist).
-    // Our flat flist (all entries in the initial segment) is compatible with
-    // INC_RECURSE - the reader simply finds no sub-list segments.
-    // upstream: compat.c:724-750 - compat_flags written to batch header.
-    // CF_INC_RECURSE is deliberately omitted because upstream's --read-batch
-    // calls set_allow_inc_recurse() which may disable inc_recurse, causing
-    // "Incompatible options specified for inc-recursive batch file" (compat.c:781-784).
-    // Upstream's own -a --write-batch produces unreadable batches for this reason.
-    // Match upstream --no-inc-recursive --write-batch behavior.
+    // CF_INC_RECURSE follows set_allow_inc_recurse() (compat.c:162-180); the
+    // engine then writes the file list in the incremental layout the bit
+    // promises, which an inc-recursive reader requires (flist.c:3230).
     let local_batch_compat_flags = {
         use protocol::CompatibilityFlags;
-        // ID0_NAMES is omitted because without INC_RECURSE, uid/gid name
-        // mappings go through post-flist ID lists (uidlist.c:send_id_lists).
-        // Empty ID lists with simple varint30(0) terminators are written;
-        // keeping ID0_NAMES off avoids the need to look up id=0 names.
+        // upstream: compat.c:739-740 - a local transfer's child advertises 'u',
+        // so CF_ID0_NAMES is set and the post-flist id lists carry the name of
+        // id 0 (uidlist.c:398-405).
         let flags = CompatibilityFlags::SAFE_FILE_LIST
             | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
             | CompatibilityFlags::CHECKSUM_SEED_FIX
             | CompatibilityFlags::INPLACE_PARTIAL_DIR
+            | CompatibilityFlags::ID0_NAMES
             | CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let flags = if local_batch_inc_recurse(
+            recursive_effective,
+            inc_recursive,
+            qsort,
+            &delete_mode,
+            delay_updates,
+            prune_empty_dirs.unwrap_or(false),
+        ) {
+            flags | CompatibilityFlags::INC_RECURSE
+        } else {
+            flags
+        };
         #[cfg(unix)]
         let flags = flags | CompatibilityFlags::SYMLINK_TIMES;
         // upstream: compat.c:728-730 - CF_SYMLINK_ICONV is gated on
@@ -732,13 +736,10 @@ where
     let batch_checksum_seed = explicit_batch_seed(checksum_seed).unwrap_or_else(derive_batch_seed);
 
     // upstream: batch.c:297 - write_arg(raw_argv[0]) writes the exact binary
-    // path the user invoked into the generated BATCH.sh. Mirror that by
-    // capturing argv[0] now so the replay script does not require oc-rsync
-    // on PATH (e.g. test harnesses and CI invoke by absolute path).
+    // path the user invoked into the generated BATCH.sh, byte for byte.
     let invoker = std::env::args_os()
         .next()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| String::from("oc-rsync"));
+        .unwrap_or_else(|| std::ffi::OsString::from("oc-rsync"));
 
     // upstream: io.c:2754 write_int(batch_fd, protocol_version) - the header
     // records the protocol the run speaks, which `--protocol` lowers on a local
@@ -876,14 +877,8 @@ where
         // into the batch config for both write and read modes.
         let cfg = cfg.with_numeric_ids(numeric_ids);
         if cfg.is_write_mode() {
-            let replay_args: Vec<String> = std::env::args_os()
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect();
-            let operands: Vec<String> = transfer_operands
-                .iter()
-                .map(|op| op.to_string_lossy().into_owned())
-                .collect();
-            cfg.with_replay_args(replay_args).with_operands(operands)
+            cfg.with_replay_args(std::env::args_os())
+                .with_operands(cooked_operands)
         } else {
             cfg
         }
@@ -1292,6 +1287,29 @@ fn resolve_old_args(explicit: Option<u8>, protect_args: Option<bool>) -> Option<
         }
         _ => None,
     }
+}
+
+/// Reports whether a local recording sets `CF_INC_RECURSE`.
+///
+/// upstream: compat.c:162-180 set_allow_inc_recurse() - recursion without
+/// `--qsort` allows it, unless the receiving child deletes before or after the
+/// transfer, delays updates or prunes empty directories; `--no-inc-recursive`
+/// clears it outright (options.c:634).
+fn local_batch_inc_recurse(
+    recursive: bool,
+    inc_recursive: Option<bool>,
+    qsort: bool,
+    delete_mode: &core::client::DeleteMode,
+    delay_updates: bool,
+    prune_empty_dirs: bool,
+) -> bool {
+    use core::client::DeleteMode;
+    recursive
+        && inc_recursive != Some(false)
+        && !qsort
+        && !matches!(delete_mode, DeleteMode::Before | DeleteMode::After)
+        && !delay_updates
+        && !prune_empty_dirs
 }
 
 /// Returns the explicit checksum seed to record in a batch header, or `None`
