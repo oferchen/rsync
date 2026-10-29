@@ -27,6 +27,7 @@ use super::super::{
     GeneratorContext, SegmentScheduler, SenderFstatError, TransferLoopResult, flush_with_count,
     is_early_close_error,
 };
+use crate::adaptive_buffer::adaptive_buffer_size;
 use crate::delta_config::DeltaGeneratorConfig;
 use crate::iobuf::IoBuf;
 use crate::reader::BufferedInputHint;
@@ -160,24 +161,6 @@ fn should_parallel_delta(file_size: u64, block_length: u32, cores: usize) -> boo
         .max(u64::from(block_length).saturating_mul(64))
         .max(1);
     file_size / effective_min_chunk >= 2
-}
-
-/// Opens the source file (honouring `--open-noatime`) and memory-maps it.
-///
-/// Returns an error when the file cannot be opened or mapped (NFS, FUSE,
-/// procfs, or a zero-length file on some platforms); the caller treats that as
-/// a signal to fall back to the streaming sequential reader, so wire output is
-/// unaffected.
-fn open_source_mmap(
-    path: &std::path::Path,
-    source_open: &super::super::open_source::SourceOpen,
-) -> io::Result<fast_io::MmapReader> {
-    // The mmap reader wraps the fd opened under the sender's symlink-race
-    // policy (confined / O_NOFOLLOW), so the parallel-delta scan reads the
-    // same protected inode as the sequential path. upstream: sender.c maps
-    // the fd returned by secure_relative_open / do_open_checklinks.
-    let file = source_open.open(path)?;
-    fast_io::MmapReader::from_file(file)
 }
 
 /// Formats the sender-side re-lstat/remove failure diagnostic.
@@ -1019,13 +1002,6 @@ impl GeneratorContext {
             let source_path = self.reconstruct_source_path(ndx);
             let source_path_display = source_path.display().to_string();
 
-            // The sender's per-connection source-open policy (confinement for
-            // a non-chroot daemon, O_NOFOLLOW otherwise). Threaded into the
-            // free-function read paths (mmap scan, inline-checksum re-read) so
-            // every open of this source applies the same symlink-race defence.
-            // upstream: sender.c:360-384.
-            let source_open = self.source_open();
-
             // upstream: sender.c:618-634 - when a file arrives again on the redo
             // pass (`file->flags & FLAG_FILE_SENT`), the sender negates
             // append_mode and make_backups so the resend is a full-content
@@ -1166,6 +1142,24 @@ impl GeneratorContext {
                 bytes_sent += wire_bytes;
                 literal_data += file_size.saturating_sub(flength);
             } else if has_basis {
+                // upstream: sender.c:656-745 - one open per file, fstat'd for the
+                // device guard and the send length; map_file() over that fd
+                // (sender.c:759) then serves the scan, the matched-block reads
+                // and the file checksum alike.
+                let (source, file_size) = match self.open_delta_source(&source_path) {
+                    Ok(opened) => opened,
+                    // upstream: sender.c:738-742 - a device source without
+                    // --copy-devices aborts with exit_cleanup(RERR_PROTOCOL).
+                    Err(e) if is_protocol_violation(&e) => return Err(e),
+                    // upstream: sender.c:730-736 - a failed fstat on the opened
+                    // fd aborts with exit_cleanup(RERR_FILEIO).
+                    Err(e) if is_sender_fstat_error(&e) => return Err(e),
+                    Err(e) => {
+                        self.record_open_failure(io.output(), wire_ndx, &e, &source_path_display)?;
+                        continue;
+                    }
+                };
+
                 // Opt-in parallel sender-side delta scan: only when the flag is
                 // set and the file is large enough to split usefully across
                 // cores. The source is memory-mapped rather than read into a
@@ -1182,27 +1176,7 @@ impl GeneratorContext {
                 let want_parallel = self.config.flags.parallel_delta_scan
                     && should_parallel_delta(file_size, block_length, cores);
                 let source_mmap = if want_parallel {
-                    open_source_mmap(&source_path, &source_open).ok()
-                } else {
-                    None
-                };
-
-                // For the sequential path only, open the streaming reader; this
-                // borrows `self` mutably, so it must happen before `config`
-                // (which borrows `self` immutably) is constructed.
-                let source_reader: Option<Box<dyn Read>> = if source_mmap.is_none() {
-                    match self.open_source_reader(&source_path, file_size) {
-                        Ok(r) => Some(r),
-                        Err(e) => {
-                            self.record_open_failure(
-                                io.output(),
-                                wire_ndx,
-                                &e,
-                                &source_path_display,
-                            )?;
-                            continue;
-                        }
-                    }
+                    fast_io::MmapReader::from_file(&source).ok()
                 } else {
                     None
                 };
@@ -1240,7 +1214,12 @@ impl GeneratorContext {
                 // zero-fill-and-continue behaviour (fileio.c:403-410). The mmap
                 // path has no io::Error to catch - a bad page raises SIGBUS -
                 // so it is left alone.
-                let mut scan_source = source_reader.map(|r| ScanSource::new(r, file_size));
+                let mut scan_source = source_mmap.is_none().then(|| {
+                    ScanSource::new(
+                        io::BufReader::with_capacity(adaptive_buffer_size(file_size), &source),
+                        file_size,
+                    )
+                });
                 // upstream: sender.c:762-765 then :768-769 - the source map and
                 // the match_sums() entry are announced per file, before the
                 // scan runs.
@@ -1319,8 +1298,7 @@ impl GeneratorContext {
                             None
                         },
                         is_zlib,
-                        &source_path,
-                        &source_open,
+                        &source,
                         checksum_algorithm,
                         self.checksum_seed,
                         self.protocol,
@@ -3401,6 +3379,288 @@ mod append_redo_tests {
         assert_eq!(
             consumed, total,
             "resend left the redo block signature unread -> wire desync"
+        );
+    }
+}
+
+#[cfg(test)]
+mod delta_single_open_tests {
+    //! The delta path's single source open.
+    //!
+    //! upstream: sender.c:656-800 - `send_files()` opens each source once,
+    //! fstats that fd, refuses a device without `--copy-devices`, then
+    //! `map_file()`s the same fd, so the token scan and the whole-file checksum
+    //! read one inode. Each test swaps the source between the file-list stat
+    //! and the sender's open through the `before_source_open` seam (a rename,
+    //! never a race) and pins the outcome 3.5.1 produces for that swap.
+
+    use std::ffi::OsString;
+    use std::io::{self, Cursor, Write};
+    use std::num::{NonZeroU8, NonZeroU32};
+    use std::path::Path;
+
+    use protocol::ProtocolVersion;
+    use protocol::codec::{NdxCodec, create_ndx_codec};
+    use signature::{SignatureLayoutParams, calculate_signature_layout, generate_file_signature};
+
+    use crate::config::ServerConfig;
+    use crate::delta_apply::ChecksumVerifier;
+    use crate::flags::ParsedServerFlags;
+    use crate::generator::GeneratorContext;
+    use crate::generator::io_error_flags::IOERR_VANISHED;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::SumHead;
+    use crate::role::ServerRole;
+    use crate::shared::ChecksumFactory;
+    use crate::writer::ServerWriter;
+
+    const PROTOCOL: u8 = 32;
+    /// `ITEM_TRANSFER` (0x8000) as its 2-byte little-endian wire encoding.
+    const ITEM_TRANSFER_LE: [u8; 2] = [0x00, 0x80];
+    /// Multiplex tag of a `MSG_DATA` frame (`MPLEX_BASE + MSG_DATA`).
+    const MSG_DATA_TAG: u32 = 7;
+    /// Files the swap hook renames over the source, one per open, in order.
+    const REPLACEMENTS: [&str; 2] = ["first-open", "second-open"];
+
+    fn lcg_bytes(seed: u64, len: usize) -> Vec<u8> {
+        let mut state = seed;
+        (0..len)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                (state >> 33) as u8
+            })
+            .collect()
+    }
+
+    /// Renames the next pending replacement over `path`, so every open of the
+    /// source lands on a different inode and a second open is observable.
+    fn swap_on_each_open(path: &Path) {
+        if let Some(next) = REPLACEMENTS
+            .iter()
+            .map(|name| path.with_extension(name))
+            .find(|candidate| candidate.exists())
+        {
+            std::fs::rename(next, path).expect("swap the source");
+        }
+    }
+
+    fn remove_the_source(path: &Path) {
+        std::fs::remove_file(path).expect("remove the source");
+    }
+
+    #[cfg(unix)]
+    fn swap_for_a_device_link(path: &Path) {
+        std::fs::remove_file(path).expect("remove the source");
+        std::os::unix::fs::symlink("/dev/null", path).expect("link the source to a device");
+    }
+
+    fn generator(source: &Path, flags: ParsedServerFlags, hook: fn(&Path)) -> GeneratorContext {
+        let protocol = ProtocolVersion::try_from(PROTOCOL).unwrap();
+        let handshake = HandshakeResult {
+            protocol,
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol,
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(source)],
+            flags,
+            ..Default::default()
+        };
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.build_file_list(&[source.to_path_buf()])
+            .expect("build file list");
+        ctx.before_source_open = Some(hook);
+        ctx
+    }
+
+    /// A delta request for entry 0 carrying the block sums of `basis`, then
+    /// the `NDX_DONE`s that drain every phase.
+    fn delta_request(basis: &[u8]) -> Vec<u8> {
+        let protocol = ProtocolVersion::try_from(PROTOCOL).unwrap();
+        let algorithm =
+            ChecksumFactory::from_negotiation(None, protocol, 0, None).signature_algorithm();
+        let layout = calculate_signature_layout(SignatureLayoutParams::new(
+            basis.len() as u64,
+            NonZeroU32::new(1024),
+            protocol,
+            NonZeroU8::new(16).expect("strong length"),
+        ))
+        .expect("layout");
+        let signature =
+            generate_file_signature(Cursor::new(basis), layout, algorithm).expect("signature");
+        let block_length = layout.block_length().get();
+        let mut ndx = create_ndx_codec(PROTOCOL);
+        let mut wire = Vec::new();
+        ndx.write_ndx(&mut wire, 0).expect("request ndx");
+        wire.extend_from_slice(&ITEM_TRANSFER_LE);
+        SumHead::new(
+            signature.blocks().len() as u32,
+            block_length,
+            u32::from(layout.strong_sum_length().get()),
+            (basis.len() % block_length as usize) as u32,
+        )
+        .write(&mut wire)
+        .expect("sum head");
+        for block in signature.blocks() {
+            wire.extend_from_slice(&block.rolling().value().to_le_bytes());
+            wire.extend_from_slice(block.strong());
+        }
+        for _ in 0..3 {
+            ndx.write_ndx_done(&mut wire).expect("done");
+        }
+        wire
+    }
+
+    /// What one sender run reports, plus the `MSG_DATA` stream it wrote.
+    struct Sent {
+        files: usize,
+        matched: u64,
+        literal: u64,
+        data: Vec<u8>,
+    }
+
+    /// Drives the sender over the production multiplexed writer and returns
+    /// the demultiplexed `MSG_DATA` payload.
+    fn send(ctx: &mut GeneratorContext, incoming: Vec<u8>) -> io::Result<Sent> {
+        let mut out: Vec<u8> = Vec::new();
+        let result = {
+            let mut reader = Cursor::new(incoming);
+            let mut writer = ServerWriter::new_plain(&mut out).activate_multiplex()?;
+            let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
+            let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
+            let result =
+                ctx.run_transfer_loop_split(&mut reader, &mut writer, &mut progress, &mut itemize)?;
+            writer.flush()?;
+            result
+        };
+        let mut data = Vec::new();
+        let mut rest = out.as_slice();
+        while let Some((header, tail)) = rest.split_first_chunk::<4>() {
+            let header = u32::from_le_bytes(*header);
+            let (payload, next) = tail.split_at((header & 0x00ff_ffff) as usize);
+            if header >> 24 == MSG_DATA_TAG {
+                data.extend_from_slice(payload);
+            }
+            rest = next;
+        }
+        Ok(Sent {
+            files: result.files_transferred,
+            matched: result.matched_data,
+            literal: result.literal_data,
+            data,
+        })
+    }
+
+    fn file_sum(ctx: &GeneratorContext, content: &[u8]) -> Vec<u8> {
+        let mut verifier = ChecksumVerifier::for_algorithm_seeded(
+            ctx.get_checksum_algorithm(),
+            ctx.checksum_seed,
+            ctx.protocol,
+        );
+        verifier.update(content);
+        let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let len = verifier.finalize_into(&mut buf);
+        buf[..len].to_vec()
+    }
+
+    // WHY: upstream maps the one fd it opened (sender.c:759), so a source
+    // renamed over between the file-list stat and the open is sent whole as
+    // the inode that was opened, with its fstat length - no refusal, exit 0.
+    // A second open (the matched-block re-read) would land on the NEXT
+    // replacement: the file sum would then cover bytes the scan never read,
+    // the receiver's verify would fail, and the hook's second replacement
+    // would be consumed. Both are asserted.
+    #[test]
+    fn a_source_replaced_before_the_open_is_sent_from_the_one_descriptor() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("data.bin");
+        std::fs::write(&source, lcg_bytes(1, 10 * 1024)).expect("file-list source");
+        let opened = lcg_bytes(2, 16 * 1024);
+        std::fs::write(source.with_extension(REPLACEMENTS[0]), &opened).expect("replacement");
+        let later: Vec<u8> = opened.iter().map(|byte| !byte).collect();
+        std::fs::write(source.with_extension(REPLACEMENTS[1]), &later).expect("later");
+
+        let mut ctx = generator(&source, ParsedServerFlags::default(), swap_on_each_open);
+        let sent = send(&mut ctx, delta_request(&opened))
+            .expect("a replaced regular file is sent, as 3.5.1 sends it");
+
+        assert!(
+            source.with_extension(REPLACEMENTS[1]).exists(),
+            "the sender opened the source a second time"
+        );
+        assert_eq!(
+            (sent.files, sent.matched, sent.literal),
+            (1, opened.len() as u64, 0),
+            "the opened inode is matched block for block at its fstat length"
+        );
+        let sum = file_sum(&ctx, &opened);
+        assert!(
+            sent.data.windows(sum.len()).any(|window| window == sum),
+            "the file checksum must cover the inode the scan read"
+        );
+    }
+
+    // WHY: upstream fstats the opened fd and aborts with RERR_PROTOCOL on a
+    // device without --copy-devices (sender.c:738-742). -L follows a leaf
+    // symlink, so a source swapped for a link to /dev/null opens a char
+    // device; without the guard the sender streams it as an empty file.
+    #[cfg(unix)]
+    #[test]
+    fn a_source_swapped_for_a_device_is_refused_without_copy_devices() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("data.bin");
+        let basis = lcg_bytes(3, 8 * 1024);
+        std::fs::write(&source, &basis).expect("file-list source");
+        let flags = ParsedServerFlags {
+            copy_links: true,
+            ..Default::default()
+        };
+
+        let mut ctx = generator(&source, flags, swap_for_a_device_link);
+        let err = send(&mut ctx, delta_request(&basis))
+            .err()
+            .expect("a device source must abort the transfer");
+
+        assert!(
+            super::is_protocol_violation(&err),
+            "not RERR_PROTOCOL: {err}"
+        );
+        assert!(
+            err.to_string()
+                .contains("attempt to copy device contents without --copy-devices"),
+            "upstream's refusal text: {err}"
+        );
+    }
+
+    // WHY: a source gone before the open is upstream's "file has vanished"
+    // (sender.c:711-726): IOERR_VANISHED, MSG_NO_SEND, and the run goes on.
+    // The single open must keep that per-file skip, not turn it into an abort.
+    #[test]
+    fn a_source_removed_before_the_open_is_skipped_as_vanished() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("data.bin");
+        let basis = lcg_bytes(4, 8 * 1024);
+        std::fs::write(&source, &basis).expect("file-list source");
+
+        let mut ctx = generator(&source, ParsedServerFlags::default(), remove_the_source);
+        let sent = send(&mut ctx, delta_request(&basis))
+            .expect("a vanished source is a per-file skip, not an abort");
+
+        assert_eq!(sent.files, 0, "nothing was sent for the vanished file");
+        assert_ne!(
+            ctx.io_error & IOERR_VANISHED,
+            0,
+            "IOERR_VANISHED was not raised"
         );
     }
 }
