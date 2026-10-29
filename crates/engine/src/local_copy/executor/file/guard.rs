@@ -11,6 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering as AtomicOrdering;
 
+use crate::commit_failure::{CommitOp, attach_commit_op, attach_commit_op_between};
 use crate::local_copy::LocalCopyError;
 
 use super::super::super::NEXT_TEMP_FILE_ID;
@@ -609,7 +610,9 @@ impl DestinationWriteGuard {
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     continue;
                 }
+                // upstream: receiver.c:465-468 - `mkstemp %s failed`, per file.
                 Err(error) => {
+                    let error = attach_commit_op(CommitOp::Mkstemp, &temp_path, error);
                     return Err(LocalCopyError::io("copy file", temp_path, error));
                 }
             }
@@ -659,7 +662,12 @@ impl DestinationWriteGuard {
             truncate,
             fast_io::InplaceResolution::OperatorWalk,
         )
-        .map_err(|error| LocalCopyError::io("copy file", partial_file, error))?;
+        // upstream: receiver.c:1242-1244 - the `one_inplace` target is
+        // `partialptr`, reported as `open %s failed`.
+        .map_err(|error| {
+            let error = attach_commit_op(CommitOp::Open, partial_file, error);
+            LocalCopyError::io("copy file", partial_file, error)
+        })?;
 
         // upstream: `handle_partial_dir()` only removes a *relative* partial
         // dir; an absolute one is a reserved location.
@@ -932,25 +940,27 @@ impl DestinationWriteGuard {
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(&self.final_path)?;
                     hardened_rename(&temp_path, &self.final_path, self.dest_root.as_deref())
-                        .map_err(|rename_error| {
-                            LocalCopyError::io(
-                                self.finalise_action(),
-                                temp_path.clone(),
-                                rename_error,
-                            )
-                        })?;
+                        .map_err(|rename_error| self.rename_failure(&temp_path, rename_error))?;
                     return Ok(false);
                 }
                 Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => {
                     tries -= 1;
                     if tries == 0 {
-                        return Err(LocalCopyError::io(self.finalise_action(), temp_path, error));
+                        return Err(self.rename_failure(&temp_path, error));
                     }
                     remove_existing_destination(&self.final_path)?;
                 }
                 Err(error) if fast_io::is_cross_device(&error) => {
                     cross_device_move(&temp_path, &self.final_path, self.dest_root.as_deref())
                         .map_err(|copy_error| {
+                            // upstream: rsync.c:919-921 - `copy %s -> "%s"`
+                            // when robust_rename() fell back to a copy.
+                            let copy_error = attach_commit_op_between(
+                                CommitOp::Copy,
+                                &temp_path,
+                                Some(&self.final_path),
+                                copy_error,
+                            );
                             LocalCopyError::io(
                                 self.finalise_action(),
                                 self.final_path.clone(),
@@ -959,11 +969,20 @@ impl DestinationWriteGuard {
                         })?;
                     return Ok(true);
                 }
-                Err(error) => {
-                    return Err(LocalCopyError::io(self.finalise_action(), temp_path, error));
-                }
+                Err(error) => return Err(self.rename_failure(&temp_path, error)),
             }
         }
+    }
+
+    /// Wraps a failed rename of `temp_path` onto the destination, tagged so the
+    /// receiver reports it as upstream's per-file `rename %s -> "%s"` line.
+    ///
+    /// upstream: rsync.c:918-927 - `finish_transfer()` reports the rename and
+    /// returns 0; `recv_files()` moves on to the next file.
+    fn rename_failure(&self, temp_path: &Path, error: io::Error) -> LocalCopyError {
+        let error =
+            attach_commit_op_between(CommitOp::Rename, temp_path, Some(&self.final_path), error);
+        LocalCopyError::io(self.finalise_action(), temp_path.to_path_buf(), error)
     }
 
     /// Commits an anonymous `O_TMPFILE` via `linkat(2)`.

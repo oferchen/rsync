@@ -207,17 +207,17 @@ fn permission_write_denied_destination_directory() {
     // Restore permissions for cleanup
     restore_permissions(&dest_root, 0o755);
 
+    // upstream: receiver.c:465-468 reports the failed mkstemp beside the
+    // destination as a per-file FERROR_XFER and moves on, so the run ends with
+    // RERR_PARTIAL (23) rather than aborting on the I/O error.
     let error = result.expect_err("should fail with permission denied");
-    match error.kind() {
-        LocalCopyErrorKind::Io { source, .. } => {
-            assert_eq!(
-                source.kind(),
-                io::ErrorKind::PermissionDenied,
-                "expected PermissionDenied"
-            );
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
+    assert!(
+        matches!(error.kind(), LocalCopyErrorKind::PartialTransfer),
+        "a write-denied destination ends the run with the RERR_PARTIAL summary, got {:?}",
+        error.kind()
+    );
+    assert_eq!(error.exit_code(), 23);
+    assert!(!dest_root.join("file.txt").exists(), "the file may not land");
 }
 
 #[test]

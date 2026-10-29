@@ -25,6 +25,7 @@ use crate::delta_apply::ChecksumVerifier;
 use crate::disk_commit::{DiskCommitConfig, PartialMode, spawn_disk_thread};
 use crate::full_fname::full_fname_path;
 use crate::pipeline::messages::{CommitResult, FileMessage};
+use engine::commit_failure::CommitDisposition;
 
 /// A file `--delay-updates` staged in its partial dir, awaiting the phase-2
 /// rename onto its final path.
@@ -341,46 +342,24 @@ impl PipelinedReceiver {
         };
         let name = full_fname_path(named, self.full_fname_paths());
         let reason = logging::upstream_errno_text(error);
-        match op {
-            // upstream: rsync-3.5.1/receiver.c:465-466
-            Some(crate::temp_guard::CommitOp::Mkstemp) | None => {
-                format!("rsync: [receiver] mkstemp {name} failed: {reason}")
-            }
-            // upstream: rsync-3.5.1/receiver.c:1243-1244
-            Some(crate::temp_guard::CommitOp::Open) => {
-                format!("rsync: [receiver] open {name} failed: {reason}")
-            }
-            Some(crate::temp_guard::CommitOp::Backup) => {
-                keep_backup_failed_line(&name, error, &reason)
-            }
-            // upstream: rsync-3.5.1/receiver.c:1297-1298
-            Some(crate::temp_guard::CommitOp::Close) => {
-                format!("rsync: [receiver] close failed on {name}: {reason}")
-            }
-            // upstream: rsync-3.5.1/rsync.c:919-921 `"%s %s -> \"%s\""` over
-            // full_fname(fnametmp) and fname, the target relative to the
-            // receiver's destination root; `copy` when robust_rename() fell
-            // back to copying across devices and that failed.
-            Some(
-                op @ (crate::temp_guard::CommitOp::Rename | crate::temp_guard::CommitOp::Copy),
-            ) => {
+        let op = op.unwrap_or(crate::temp_guard::CommitOp::Mkstemp);
+        // upstream: rsync-3.5.1/rsync.c:919-921 names the rename/copy target
+        // relative to the receiver's destination root; backup.c:402-403 names
+        // the backup as chosen.
+        let target = match op {
+            crate::temp_guard::CommitOp::Rename | crate::temp_guard::CommitOp::Copy => {
                 let target = crate::temp_guard::commit_op_destination(error).unwrap_or(dest);
-                let target = self
-                    .dest_dir
-                    .as_deref()
-                    .and_then(|root| target.strip_prefix(root).ok())
-                    .unwrap_or(target);
-                let verb = if op == crate::temp_guard::CommitOp::Copy {
-                    "copy"
-                } else {
-                    "rename"
-                };
-                format!(
-                    "rsync: [receiver] {verb} {name} -> \"{}\": {reason}",
-                    target.display()
+                Some(
+                    self.dest_dir
+                        .as_deref()
+                        .and_then(|root| target.strip_prefix(root).ok())
+                        .unwrap_or(target),
                 )
             }
-        }
+            crate::temp_guard::CommitOp::Backup => crate::temp_guard::commit_op_destination(error),
+            _ => None,
+        };
+        op.failure_line(&name, target, &reason)
     }
 
     /// Formats a failed metadata apply the way upstream reports it.
@@ -809,44 +788,6 @@ impl PipelinedReceiver {
     }
 }
 
-/// How the receiver answers a failed commit, decided by the operation that
-/// failed - never by the errno. The one place the split is made.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CommitDisposition {
-    /// Report an `FERROR_XFER` line, skip the file and keep going (exit 23).
-    SkipFile,
-    /// Report the line with this code, then stop with `RERR_FILEIO` (11).
-    Abort(MessageCode),
-    /// Not a commit-path operation: hand the error back untouched.
-    Propagate,
-}
-
-impl CommitDisposition {
-    /// Classifies `error` by the [`CommitOp`](crate::temp_guard::CommitOp) its
-    /// raising site attached.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `receiver.c:465-468` - `mkstemp %s failed`, `return -1`: per-file.
-    /// - `receiver.c:1242-1261` - `open %s failed`, then
-    ///   `discard_receive_data()` and `continue`: per-file.
-    /// - `rsync.c:918-927` - `rename %s -> "%s"`, `finish_transfer()` returns
-    ///   0 and `recv_files()` moves on: per-file.
-    /// - `rsync.c:897-900` - a failed backup is `exit_cleanup(RERR_FILEIO)`.
-    /// - `receiver.c:1296-1300` - a failed `close()` is
-    ///   `rsyserr(FERROR, ...)` then `exit_cleanup(RERR_FILEIO)`.
-    fn of(error: &io::Error) -> Self {
-        use crate::temp_guard::CommitOp;
-        match crate::temp_guard::commit_op_failure(error) {
-            Some((CommitOp::Mkstemp | CommitOp::Open | CommitOp::Rename | CommitOp::Copy, _)) => {
-                Self::SkipFile
-            }
-            Some((CommitOp::Backup, _)) => Self::Abort(MessageCode::ErrorXfer),
-            Some((CommitOp::Close, _)) => Self::Abort(MessageCode::Error),
-            None => Self::Propagate,
-        }
-    }
-}
 /// Renders upstream's `keep_backup failed` diagnostic, naming both operands of
 /// the failing move when the raising site attached the second one.
 ///
@@ -861,13 +802,11 @@ impl CommitDisposition {
 /// upstream: `rsync-3.5.1/backup.c:402-403` - `rsyserr(FERROR, errno,
 /// "keep_backup failed: %s -> \"%s\"", full_fname(fname), buf)`.
 pub(crate) fn keep_backup_failed_line(name: &str, error: &io::Error, reason: &str) -> String {
-    match crate::temp_guard::commit_op_destination(error) {
-        Some(backup) => format!(
-            "rsync: [receiver] keep_backup failed: {name} -> \"{}\": {reason}",
-            backup.display()
-        ),
-        None => format!("rsync: [receiver] keep_backup failed: {name}: {reason}"),
-    }
+    crate::temp_guard::CommitOp::Backup.failure_line(
+        name,
+        crate::temp_guard::commit_op_destination(error),
+        reason,
+    )
 }
 
 impl Drop for PipelinedReceiver {
