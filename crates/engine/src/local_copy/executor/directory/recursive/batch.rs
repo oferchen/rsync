@@ -242,10 +242,15 @@ pub(crate) fn capture_batch_file_entry(
         numeric_ids,
     );
     apply_hardlink_fields(&mut entry, metadata, hlink_group, protocol_version);
-    if context.batch_inc_recurse() {
-        context.hold_batch_entry(entry);
+    let acl = if context.batch_preserve_acls() {
+        read_batch_source_acl(source_path, &entry, context.options().fake_super_enabled())
     } else {
-        write_batch_entry(context, &entry, relative_path)?;
+        None
+    };
+    if context.batch_inc_recurse() {
+        context.hold_batch_entry(entry, acl);
+    } else {
+        write_batch_entry(context, &entry, acl, relative_path)?;
         context.note_batch_entry_owner(entry.uid(), entry.gid());
     }
 
@@ -278,16 +283,50 @@ pub(crate) fn capture_batch_file_entry(
     Ok(())
 }
 
-/// Encodes one flist entry straight into a flat batch file list.
+/// Reads a source entry's access ACL and, for a directory, its default ACL -
+/// what the generator reads for a network send (`prepare_pending_acl`).
+///
+/// Returns `None` for a symlink, which carries no ACL. Under `--fake-super`
+/// an ACL stashed in the source's `%aacl`/`%dacl` xattr wins over the real
+/// one, as on the network path.
+///
+/// upstream: `flist.c:2048-2055 send_file_name()` calls `get_acl()` for every
+/// non-symlink under `preserve_acls`, and `flist.c:2077-2081` sends it right
+/// after the entry.
+fn read_batch_source_acl(
+    source_path: &Path,
+    entry: &protocol::flist::FileEntry,
+    fake_super: bool,
+) -> Option<crate::local_copy::context::BatchSourceAcl> {
+    if entry.is_symlink() {
+        return None;
+    }
+    let read = |is_default: bool| {
+        if fake_super
+            && let Ok(Some(acl)) = ::metadata::load_fake_super_acl(source_path, !is_default)
+        {
+            return acl;
+        }
+        ::metadata::get_rsync_acl(source_path, entry.mode(), is_default)
+    };
+    Some((read(false), entry.is_dir().then(|| read(true))))
+}
+
+/// Encodes one flist entry, and its ACL when one was read, straight into a
+/// flat batch file list.
 fn write_batch_entry(
     context: &mut CopyContext,
     entry: &protocol::flist::FileEntry,
+    acl: Option<crate::local_copy::context::BatchSourceAcl>,
     relative_path: &Path,
 ) -> Result<(), LocalCopyError> {
     let mut buf = Vec::with_capacity(128);
     let flist_writer = context
         .batch_flist_writer_mut()
         .expect("batch_flist_writer must exist when batch_writer is set");
+    if let Some((access, default)) = acl {
+        flist_writer.set_pending_acl(access, default);
+    }
     flist_writer.write_entry(&mut buf, entry).map_err(|e| {
         LocalCopyError::io("encode batch flist entry", relative_path.to_path_buf(), e)
     })?;

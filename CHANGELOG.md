@@ -696,6 +696,7 @@ user-facing work; consult the linked PRs for full detail.
 
 ### Fixed
 
+- A local `--write-batch -A` now carries each file's own ACL, named user and group entries and a directory's default ACL included, and names those ids as upstream does, so 3.5.1 replays it like its own batch; the batch used to carry only the ACL the mode implies
 **Daemon**
 - Survive transient `accept(2)` errors (`ECONNABORTED`/`EMFILE`) under load instead of treating them as fatal (#6763)
 - Enable `SO_KEEPALIVE` on accepted client sockets and align listener socket options with upstream (`SO_REUSEADDR` only by default, honor `--port 0`) (#6720, #6562)
