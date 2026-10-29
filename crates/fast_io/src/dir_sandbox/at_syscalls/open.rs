@@ -244,7 +244,9 @@ pub fn open_inplace_output_via_sandbox_or_fallback(
             crate::inplace_open::inplace_chain(
                 |create| {
                     let create = if create { libc::O_CREAT } else { 0 };
-                    openat(dirfd, leaf, write_flags | create, 0o666)
+                    // upstream: receiver.c:1222 - created 0600 until
+                    // set_file_attrs() applies the final mode.
+                    openat(dirfd, leaf, write_flags | create, 0o600)
                 },
                 || {
                     openat(

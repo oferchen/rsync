@@ -22,6 +22,7 @@ use std::sync::Arc;
 ///
 /// Upstream emits one message per site, each naming its own operation:
 /// `mkstemp %s failed` (`rsync-3.5.1/receiver.c:465-466`),
+/// `open %s failed` (`rsync-3.5.1/receiver.c:1242-1244`),
 /// `rename %s -> "%s"` (`rsync-3.5.1/rsync.c:919-921`),
 /// `keep_backup failed: %s -> "%s"` (`rsync-3.5.1/backup.c:402-403`) and
 /// `close failed on %s` (`rsync-3.5.1/receiver.c:1297-1298`). oc runs
@@ -31,6 +32,9 @@ use std::sync::Arc;
 pub enum CommitOp {
     /// Creating the `.name.XXXXXX` temp file.
     Mkstemp,
+    /// Opening the destination itself for an in-place or device write. The
+    /// operand is the destination (upstream's `fnametmp` is `fname` there).
+    Open,
     /// Moving the pre-image aside under `--backup`.
     Backup,
     /// Renaming the finished temp file onto its destination. The operand is
@@ -345,20 +349,13 @@ fn open_tmpfile_inner(
                 return Ok((file, guard));
             }
             Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                // upstream: receiver.c:453-462 - the ENOENT-recovery that
-                // called `make_path(fnametmp, ...)` before re-`do_mkstemp()`
-                // is compiled out (`#if 0`). Upstream never creates a missing
-                // parent chain at temp-file open time; a missing destination
-                // ancestor is a hard error (`mkstemp %s failed`). In-tree
-                // subdirectories are created up-front by the receiver's
-                // directory pass (`create_directories`),
-                // and the dest-arg path is created only under `--mkpath` in
-                // `ensure_dest_root_exists` (upstream main.c:759). Auto-creating
-                // here would resurrect the no-`--mkpath` deep-path bug, so we
-                // surface the ENOENT verbatim to match upstream.
-                return Err(io::Error::new(e.kind(), e.to_string()));
-            }
+            // upstream: receiver.c:453-462 - the ENOENT-recovery that called
+            // `make_path(fnametmp, ...)` before re-`do_mkstemp()` is compiled
+            // out (`#if 0`), so a missing parent is reported like any other
+            // failure (`mkstemp %s failed`) rather than created here. In-tree
+            // subdirectories come from the receiver's directory pass, and the
+            // dest-arg path only from `--mkpath` (upstream main.c:759).
+            //
             // Carry the attempted name so the receiver's diagnostic can print
             // `fnametmp` the way receiver.c:465-466 does. The wrapper keeps both
             // `kind()` and the Display text of the original error.
@@ -377,11 +374,14 @@ fn open_tmpfile_inner(
         }
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        format!(
-            "failed to create temp file after {MAX_OPEN_ATTEMPTS} attempts: {}",
-            template.display()
+    // upstream: mkstemp(3) gives up with EEXIST once its names run out, which
+    // receiver.c:465-466 reports as any other `mkstemp %s failed`.
+    Err(attach_commit_op(
+        CommitOp::Mkstemp,
+        &template,
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("failed to create temp file after {MAX_OPEN_ATTEMPTS} attempts"),
         ),
     ))
 }
@@ -1635,5 +1635,30 @@ mod confined_temp_create {
 
         try_create_new(&inside, None, None).expect("an in-root temp path must still be created");
         assert!(inside.exists(), "the in-root temp file must exist");
+    }
+
+    /// A temp create under a missing parent is a `mkstemp` failure like any
+    /// other: tagged with the attempted name and carrying the real `ENOENT`,
+    /// so the receiver skips the file with upstream's line instead of
+    /// aborting on an untagged error.
+    ///
+    /// upstream: receiver.c:453-468 - the `make_path()` retry is `#if 0`, so
+    /// the `ENOENT` reaches `mkstemp %s failed` and `return -1`.
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_temp_parent_is_a_tagged_mkstemp_failure() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path().join("missing").join("file.txt");
+
+        let error = super::open_tmpfile(&dest, None).expect_err("the parent does not exist");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(
+            logging::upstream_errno_text(&error),
+            "No such file or directory (2)",
+            "the report carries the real errno, not a rewrapped string"
+        );
+        let attempted = super::attempted_temp_path(&error).expect("tagged as mkstemp");
+        assert_eq!(attempted.parent(), dest.parent());
     }
 }

@@ -2712,3 +2712,30 @@ fn a_leaf_below_1024_parents_is_refused_with_enomem() {
     .expect_err("past the ceiling");
     assert_eq!(err.raw_os_error(), Some(libc::ENOMEM), "mkdir: {err}");
 }
+
+/// The sandbox-anchored in-place create uses upstream's 0600 too, so the
+/// anchored and path arms leave the same mode on a fresh target.
+///
+/// upstream: receiver.c:1221-1226 - `O_WRONLY|O_CREAT, 0600`.
+#[test]
+fn inplace_create_beneath_the_sandbox_is_owner_only() {
+    let (_keep, root) = test_support::create_canonical_tempdir();
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+    let full = root.join("fresh");
+
+    drop(
+        open_inplace_output_via_sandbox_or_fallback(
+            Some(&sandbox),
+            &root,
+            std::path::Path::new("fresh"),
+            &full,
+            false,
+        )
+        .expect("created beneath the sandbox"),
+    );
+
+    assert_eq!(
+        std::fs::metadata(&full).unwrap().permissions().mode() & 0o7777,
+        test_support::umask_masked(0o600)
+    );
+}
