@@ -38,7 +38,7 @@ fn send_recv_empty_acl() {
     let mut cache = AclCache::new();
     let mut buf = Vec::new();
 
-    send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+    send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
     let mut cursor = Cursor::new(buf);
     let result = recv_rsync_acl(&mut cursor, AclType::Access).unwrap();
@@ -61,7 +61,7 @@ fn send_recv_acl_with_entries() {
     let mut cache = AclCache::new();
     let mut buf = Vec::new();
 
-    send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+    send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
     let mut cursor = Cursor::new(buf);
     let result = recv_rsync_acl(&mut cursor, AclType::Access).unwrap();
@@ -86,12 +86,12 @@ fn cache_hit_on_second_send() {
     let mut buf = Vec::new();
 
     // First send - should be literal
-    send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+    send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
     let first_len = buf.len();
 
     // Second send of same ACL - should be cache hit (shorter)
     buf.clear();
-    send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+    send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
     assert!(buf.len() < first_len, "Cache hit should be shorter");
 
@@ -113,7 +113,7 @@ fn send_recv_ida_entries_roundtrip() {
     entries.push(IdAccess::group(100, 0x05));
 
     let mut buf = Vec::new();
-    send_ida_entries(&mut buf, &entries, false).unwrap();
+    send_ida_entries(&mut buf, &entries, None).unwrap();
 
     let mut cursor = Cursor::new(buf);
     let (received, mask) = recv_ida_entries(&mut cursor).unwrap();
@@ -135,7 +135,12 @@ fn send_ida_entries_ships_name_only_when_include_names() {
 
     // include_names = true: the name rides the wire and round-trips.
     let mut with_names = Vec::new();
-    send_ida_entries(&mut with_names, &entries, true).unwrap();
+    send_ida_entries(
+        &mut with_names,
+        &entries,
+        Some(&mut crate::idlist::IdSightings::default()),
+    )
+    .unwrap();
     let mut cursor = Cursor::new(with_names);
     let (received, _mask) = recv_ida_entries(&mut cursor).unwrap();
     assert_eq!(received.len(), 1);
@@ -146,7 +151,7 @@ fn send_ida_entries_ships_name_only_when_include_names() {
 
     // include_names = false: no name on the wire (non-inc_recurse default).
     let mut without_names = Vec::new();
-    send_ida_entries(&mut without_names, &entries, false).unwrap();
+    send_ida_entries(&mut without_names, &entries, None).unwrap();
     let mut cursor = Cursor::new(without_names);
     let (received, _mask) = recv_ida_entries(&mut cursor).unwrap();
     assert_eq!(received.len(), 1);
@@ -180,7 +185,7 @@ fn send_recv_directory_acl() {
         Some(&default_acl),
         true,
         &mut cache,
-        false,
+        None,
     )
     .unwrap();
 
@@ -304,7 +309,7 @@ fn recv_ida_entries_five_thousand_entries_decodes() {
     }
 
     let mut buf = Vec::new();
-    send_ida_entries(&mut buf, &entries, false).unwrap();
+    send_ida_entries(&mut buf, &entries, None).unwrap();
 
     let mut cursor = Cursor::new(buf);
     let (received, mask) = recv_ida_entries(&mut cursor).expect("5000 entries must decode");
@@ -491,11 +496,11 @@ fn separate_caches_for_access_and_default() {
 
     // Send as access ACL first
     let mut buf1 = Vec::new();
-    send_rsync_acl(&mut buf1, &acl, AclType::Access, &mut cache, false).unwrap();
+    send_rsync_acl(&mut buf1, &acl, AclType::Access, &mut cache, None).unwrap();
 
     // Send same ACL as default - should NOT hit cache (different type)
     let mut buf2 = Vec::new();
-    send_rsync_acl(&mut buf2, &acl, AclType::Default, &mut cache, false).unwrap();
+    send_rsync_acl(&mut buf2, &acl, AclType::Default, &mut cache, None).unwrap();
 
     // Both should be full literals (not cache hits)
     let mut cursor1 = Cursor::new(buf1);
@@ -521,7 +526,7 @@ fn send_recv_file_acl_no_default() {
     let mut buf = Vec::new();
 
     // File (not directory) - no default ACL sent
-    send_acl(&mut buf, &access_acl, None, false, &mut cache, false).unwrap();
+    send_acl(&mut buf, &access_acl, None, false, &mut cache, None).unwrap();
 
     let mut cursor = Cursor::new(buf);
     let (access_result, default_result) = recv_acl(&mut cursor, false).unwrap();
@@ -571,7 +576,7 @@ fn send_recv_acl_with_mask_obj() {
     let mut cache = AclCache::new();
     let mut buf = Vec::new();
 
-    send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+    send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
     let mut cursor = Cursor::new(buf);
     let result = recv_rsync_acl(&mut cursor, AclType::Access).unwrap();

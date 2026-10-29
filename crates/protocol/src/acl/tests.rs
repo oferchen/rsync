@@ -420,7 +420,7 @@ mod wire_roundtrip_tests {
 
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let result = recv_rsync_acl(&mut cursor, AclType::Access).unwrap();
@@ -445,7 +445,7 @@ mod wire_roundtrip_tests {
 
             let mut cache = AclCache::new();
             let mut buf = Vec::new();
-            send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+            send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
             let mut cursor = Cursor::new(buf);
             if let RecvAclResult::Literal(received) =
@@ -468,7 +468,7 @@ mod wire_roundtrip_tests {
 
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
-        send_acl(&mut buf, &access_acl, None, false, &mut cache, false).unwrap();
+        send_acl(&mut buf, &access_acl, None, false, &mut cache, None).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let (access_result, default_result) = recv_acl(&mut cursor, false).unwrap();
@@ -502,7 +502,7 @@ mod wire_roundtrip_tests {
             Some(&default_acl),
             true,
             &mut cache,
-            false,
+            None,
         )
         .unwrap();
 
@@ -534,12 +534,12 @@ mod wire_roundtrip_tests {
         let mut buf = Vec::new();
 
         // First send
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         // Second and third sends should all be cache hits
         for expected_idx in [0u32, 0, 0] {
             buf.clear();
-            send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+            send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
             let mut cursor = Cursor::new(&buf);
             match recv_rsync_acl(&mut cursor, AclType::Access).unwrap() {
@@ -565,13 +565,13 @@ mod wire_roundtrip_tests {
         };
 
         let mut buf = Vec::new();
-        send_rsync_acl(&mut buf, &acl1, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl1, AclType::Access, &mut cache, None).unwrap();
         buf.clear();
-        send_rsync_acl(&mut buf, &acl2, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl2, AclType::Access, &mut cache, None).unwrap();
 
         // Now both should hit cache with different indices
         buf.clear();
-        send_rsync_acl(&mut buf, &acl1, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl1, AclType::Access, &mut cache, None).unwrap();
         let mut cursor = Cursor::new(&buf);
         if let RecvAclResult::CacheHit(idx) = recv_rsync_acl(&mut cursor, AclType::Access).unwrap()
         {
@@ -579,7 +579,7 @@ mod wire_roundtrip_tests {
         }
 
         buf.clear();
-        send_rsync_acl(&mut buf, &acl2, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl2, AclType::Access, &mut cache, None).unwrap();
         let mut cursor = Cursor::new(&buf);
         if let RecvAclResult::CacheHit(idx) = recv_rsync_acl(&mut cursor, AclType::Access).unwrap()
         {
@@ -636,7 +636,7 @@ mod edge_cases {
     fn empty_ida_entries_roundtrip() {
         let entries = IdaEntries::new();
         let mut buf = Vec::new();
-        send_ida_entries(&mut buf, &entries, false).unwrap();
+        send_ida_entries(&mut buf, &entries, None).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let (received, mask) = recv_ida_entries(&mut cursor).unwrap();
@@ -652,7 +652,7 @@ mod edge_cases {
 
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         let mut cursor = Cursor::new(buf);
         if let RecvAclResult::Literal(received) =
@@ -675,7 +675,7 @@ mod edge_cases {
 
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         let mut cursor = Cursor::new(buf);
         if let RecvAclResult::Literal(received) =
@@ -695,7 +695,7 @@ mod edge_cases {
         entries.push(IdAccess::group(u32::MAX - 2, 0x05));
 
         let mut buf = Vec::new();
-        send_ida_entries(&mut buf, &entries, false).unwrap();
+        send_ida_entries(&mut buf, &entries, None).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let (received, _) = recv_ida_entries(&mut cursor).unwrap();
@@ -748,7 +748,7 @@ mod wire_format_compatibility {
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
 
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         // ndx=-1 encoded as ndx+1=0 (varint 0x00), flags=0x00
         assert_eq!(buf, vec![0x00, 0x00]);
@@ -768,7 +768,7 @@ mod wire_format_compatibility {
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
 
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         assert_eq!(buf, vec![0x00, 0x01, 0x07]);
     }
@@ -793,7 +793,7 @@ mod wire_format_compatibility {
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
 
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         assert_eq!(buf, vec![0x00, 0x0f, 0x07, 0x05, 0x07, 0x04]);
     }
@@ -811,11 +811,11 @@ mod wire_format_compatibility {
         let mut buf = Vec::new();
 
         // First send - stores in cache
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         // Second send - should be cache hit
         buf.clear();
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         // Cache index 0: ndx+1 = 1
         assert_eq!(buf, vec![0x01]);
@@ -834,7 +834,7 @@ mod wire_format_compatibility {
         entries.push(IdAccess::group(100, 0x05)); // r-x
 
         let mut buf = Vec::new();
-        send_ida_entries(&mut buf, &entries, false).unwrap();
+        send_ida_entries(&mut buf, &entries, None).unwrap();
 
         // count=2 (0x02)
         // user 1000: id as varint, access=(7<<2)|2 = 0x1E
@@ -867,7 +867,7 @@ mod wire_format_compatibility {
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
 
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         // ndx+1=0, flags=USER_OBJ|NAME_LIST (0x11), user_obj, then ida_entries
         assert_eq!(buf[0], 0x00); // ndx+1
@@ -898,7 +898,7 @@ mod wire_format_compatibility {
         let mut buf = Vec::new();
         let mut entries = IdaEntries::new();
         entries.push(entry);
-        send_ida_entries(&mut buf, &entries, false).unwrap();
+        send_ida_entries(&mut buf, &entries, None).unwrap();
 
         // Find the access byte (after count and id varints)
         // The access should be (0x07 << 2) | 0x02 = 0x1E (no name follows)
@@ -932,7 +932,7 @@ mod wire_format_compatibility {
             Some(&default_acl),
             true,
             &mut cache,
-            false,
+            None,
         )
         .unwrap();
 
@@ -960,7 +960,7 @@ mod wire_format_compatibility {
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
 
-        send_acl(&mut buf, &access_acl, None, false, &mut cache, false).unwrap();
+        send_acl(&mut buf, &access_acl, None, false, &mut cache, None).unwrap();
 
         // Only access ACL sent
         let mut cursor = Cursor::new(&buf);
@@ -996,7 +996,7 @@ mod computed_mask_and_names {
 
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         let mut cursor = Cursor::new(buf);
         if let RecvAclResult::Literal(received) =
@@ -1028,7 +1028,7 @@ mod computed_mask_and_names {
 
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
-        send_rsync_acl(&mut buf, &acl, AclType::Default, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Default, &mut cache, None).unwrap();
 
         let mut cursor = Cursor::new(buf);
         if let RecvAclResult::Literal(received) =
@@ -1052,7 +1052,7 @@ mod computed_mask_and_names {
 
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, None).unwrap();
 
         let mut cursor = Cursor::new(buf);
         if let RecvAclResult::Literal(received) =
@@ -1071,7 +1071,12 @@ mod computed_mask_and_names {
         entries.push(IdAccess::group_with_name(100, 0x05, b"staff".to_vec()));
 
         let mut buf = Vec::new();
-        send_ida_entries(&mut buf, &entries, true).unwrap();
+        send_ida_entries(
+            &mut buf,
+            &entries,
+            Some(&mut crate::idlist::IdSightings::default()),
+        )
+        .unwrap();
 
         let mut cursor = Cursor::new(buf);
         let (received, mask) = recv_ida_entries(&mut cursor).unwrap();
@@ -1096,10 +1101,15 @@ mod computed_mask_and_names {
         entries.push(IdAccess::user_with_name(1000, 0x07, b"testuser".to_vec()));
 
         let mut buf_with_names = Vec::new();
-        send_ida_entries(&mut buf_with_names, &entries, true).unwrap();
+        send_ida_entries(
+            &mut buf_with_names,
+            &entries,
+            Some(&mut crate::idlist::IdSightings::default()),
+        )
+        .unwrap();
 
         let mut buf_without_names = Vec::new();
-        send_ida_entries(&mut buf_without_names, &entries, false).unwrap();
+        send_ida_entries(&mut buf_without_names, &entries, None).unwrap();
 
         // With names should be longer (includes name length + bytes)
         assert!(buf_with_names.len() > buf_without_names.len());
@@ -1125,7 +1135,7 @@ mod receive_acl_cached_tests {
 
         let mut send_cache = AclCache::new();
         let mut buf = Vec::new();
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, None).unwrap();
 
         let mut recv_cache = AclCache::new();
         let mut cursor = Cursor::new(buf);
@@ -1151,10 +1161,10 @@ mod receive_acl_cached_tests {
         let mut buf = Vec::new();
 
         // First send - literal
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, None).unwrap();
 
         // Second send - cache hit (index 0)
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, None).unwrap();
 
         let mut recv_cache = AclCache::new();
         let mut cursor = Cursor::new(buf);
@@ -1196,7 +1206,7 @@ mod receive_acl_cached_tests {
             Some(&default_acl),
             true,
             &mut send_cache,
-            false,
+            None,
         )
         .unwrap();
 
@@ -1253,8 +1263,8 @@ mod receive_acl_cached_tests {
 
         let mut send_cache = AclCache::new();
         let mut buf = Vec::new();
-        send_rsync_acl(&mut buf, &acl1, AclType::Access, &mut send_cache, false).unwrap();
-        send_rsync_acl(&mut buf, &acl2, AclType::Access, &mut send_cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl1, AclType::Access, &mut send_cache, None).unwrap();
+        send_rsync_acl(&mut buf, &acl2, AclType::Access, &mut send_cache, None).unwrap();
 
         let mut recv_cache = AclCache::new();
         let mut cursor = Cursor::new(buf);
@@ -1282,7 +1292,7 @@ mod receive_acl_cached_tests {
 
         let mut send_cache = AclCache::new();
         let mut buf = Vec::new();
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, None).unwrap();
 
         let mut recv_cache = AclCache::new();
         let mut cursor = Cursor::new(buf);
@@ -1300,7 +1310,7 @@ mod receive_acl_cached_tests {
 
         let mut send_cache = AclCache::new();
         let mut buf = Vec::new();
-        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut send_cache, None).unwrap();
 
         let mut recv_cache = AclCache::new();
         let mut cursor = Cursor::new(buf);
@@ -2042,7 +2052,7 @@ mod strip_perms_for_send_tests {
 
         let mut buf = Vec::new();
         let mut cache = AclCache::new();
-        send_rsync_acl(&mut buf, &acl, wire::AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, wire::AclType::Access, &mut cache, None).unwrap();
 
         let mut reader = Cursor::new(&buf);
         let result = recv_rsync_acl(&mut reader, wire::AclType::Access).unwrap();
@@ -2075,7 +2085,7 @@ mod strip_perms_for_send_tests {
 
         let mut buf = Vec::new();
         let mut cache = AclCache::new();
-        send_rsync_acl(&mut buf, &acl, wire::AclType::Access, &mut cache, false).unwrap();
+        send_rsync_acl(&mut buf, &acl, wire::AclType::Access, &mut cache, None).unwrap();
 
         let mut reader = Cursor::new(&buf);
         let result = recv_rsync_acl(&mut reader, wire::AclType::Access).unwrap();

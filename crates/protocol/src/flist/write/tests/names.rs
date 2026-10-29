@@ -166,3 +166,33 @@ fn write_names_omitted_for_protocol_29() {
     assert_eq!(read_entry.user_name(), None);
     assert_eq!(read_entry.group_name(), None);
 }
+
+/// upstream: flist.c:783-791 - `add_uid()` names a uid only on its first
+/// sighting (uidlist.c:340-354), so an owner that comes back after another
+/// one is sent without its name, in a later sub-list as in the same one.
+#[test]
+fn returning_owner_is_not_named_again() {
+    let protocol = ProtocolVersion::try_from(32u8).unwrap();
+    let mut writer = FileListWriter::new(protocol)
+        .with_preserve_uid(true)
+        .with_name_follows(true);
+    let mut named = Vec::new();
+    for (name, uid, user) in [
+        ("a", 1000, "alice"),
+        ("b", 1001, "bob"),
+        ("c", 1000, "alice"),
+    ] {
+        let mut entry = FileEntry::new_file(name.into(), 1, 0o644);
+        entry.set_uid(uid);
+        entry.set_user_name(user.to_string());
+        let mut buf = Vec::new();
+        writer.write_entry(&mut buf, &entry).unwrap();
+        if name == "b" {
+            // A new segment: the sightings belong to the transfer, not the list.
+            writer.write_end(&mut Vec::new(), None).unwrap();
+        }
+        let user_bytes = user.as_bytes();
+        named.push(buf.windows(user_bytes.len()).any(|w| w == user_bytes));
+    }
+    assert_eq!(named, [true, true, false]);
+}

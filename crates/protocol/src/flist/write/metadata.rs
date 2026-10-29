@@ -139,6 +139,9 @@ impl FileListWriter {
                 self.write_owner_name(writer, entry.user_name())?;
             }
         }
+        if self.name_follows {
+            self.id_sightings.first_uid(entry_uid);
+        }
         self.state.update_uid(entry_uid);
         Ok(())
     }
@@ -163,6 +166,9 @@ impl FileListWriter {
             if (xflags & ((XMIT_GROUP_NAME_FOLLOWS as u32) << 8)) != 0 {
                 self.write_owner_name(writer, entry.group_name())?;
             }
+        }
+        if self.name_follows {
+            self.id_sightings.first_gid(entry_gid);
         }
         self.state.update_gid(entry_gid);
         Ok(())

@@ -1919,7 +1919,7 @@ mod acl_integration {
         acl.group_obj = 0x04;
         acl.other_obj = 0x04;
         let mut acl_cache = AclCache::new();
-        send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
+        send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, None).unwrap();
 
         let mut cursor = Cursor::new(&data[..]);
         let mut reader = FileListReader::new(protocol).with_preserve_acls(true);
@@ -1971,7 +1971,7 @@ mod acl_integration {
             Some(&default_acl),
             true,
             &mut acl_cache,
-            false,
+            None,
         )
         .unwrap();
 
@@ -2061,7 +2061,7 @@ mod acl_integration {
             let mut entry = FileEntry::new_file((*name).into(), 100, 0o100644);
             entry.set_mtime(1700000000, 0);
             writer.write_entry(&mut data, &entry).unwrap();
-            send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
+            send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, None).unwrap();
         }
 
         let mut cursor = Cursor::new(&data[..]);
@@ -2106,12 +2106,12 @@ mod acl_integration {
         let mut entry = FileEntry::new_file("a.txt".into(), 100, 0o100644);
         entry.set_mtime(1700000000, 0);
         writer.write_entry(&mut data, &entry).unwrap();
-        send_rsync_acl(&mut data, &acl1, AclType::Access, &mut acl_cache, false).unwrap();
+        send_rsync_acl(&mut data, &acl1, AclType::Access, &mut acl_cache, None).unwrap();
 
         let mut entry = FileEntry::new_file("b.txt".into(), 200, 0o100600);
         entry.set_mtime(1700000000, 0);
         writer.write_entry(&mut data, &entry).unwrap();
-        send_rsync_acl(&mut data, &acl2, AclType::Access, &mut acl_cache, false).unwrap();
+        send_rsync_acl(&mut data, &acl2, AclType::Access, &mut acl_cache, None).unwrap();
 
         let mut cursor = Cursor::new(&data[..]);
         let mut reader = FileListReader::new(protocol).with_preserve_acls(true);
@@ -2153,7 +2153,7 @@ mod acl_integration {
         acl.names.push(IdAccess::group(100, 0x05));
 
         let mut acl_cache = AclCache::new();
-        send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
+        send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, None).unwrap();
 
         let mut cursor = Cursor::new(&data[..]);
         let mut reader = FileListReader::new(protocol).with_preserve_acls(true);
@@ -2203,7 +2203,7 @@ mod acl_integration {
                 Some(&default_acl),
                 true,
                 &mut acl_cache,
-                false,
+                None,
             )
             .unwrap();
         }
@@ -2245,7 +2245,7 @@ mod acl_integration {
         acl.group_obj = 0x04;
         acl.other_obj = 0x04;
         let mut acl_cache = AclCache::new();
-        send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
+        send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, None).unwrap();
 
         // Wire format carries the full Linux xattr name verbatim, including
         // the "user." namespace prefix. upstream: xattrs.c:rsync_xal_get()
@@ -2316,7 +2316,7 @@ mod acl_integration {
             Some(&default_acl),
             true,
             &mut acl_cache,
-            false,
+            None,
         )
         .unwrap();
 
@@ -2622,7 +2622,7 @@ mod xattr_integration {
         acl.group_obj = 0x04;
         acl.other_obj = 0x04;
         let mut acl_cache = AclCache::new();
-        send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
+        send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, None).unwrap();
 
         let key_wire = user_wire_name(b"key");
         write_literal_xattr(&mut data, &[(&key_wire, b"val")]);

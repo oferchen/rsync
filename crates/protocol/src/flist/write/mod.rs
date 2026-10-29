@@ -22,6 +22,7 @@ use crate::ProtocolVersion;
 use crate::acl::{AclCache, RsyncAcl, send_acl};
 use crate::codec::{ProtocolCodecEnum, create_protocol_codec};
 use crate::iconv::FilenameConverter;
+use crate::idlist::IdSightings;
 use crate::xattr::{XattrCache, send_xattr};
 
 use super::entry::FileEntry;
@@ -140,6 +141,12 @@ pub struct FileListWriter {
     /// well diverges from upstream's wire encoding. Defaults to `false`; the
     /// generator sets it to the negotiated `inc_recurse` value.
     name_follows: bool,
+    /// Owner ids already named on the wire, shared by the inline owner names
+    /// and the named ACL entries.
+    ///
+    /// upstream: uidlist.c:340-371 add_uid()/add_gid() - one list per
+    /// transfer, so a name crosses the wire once even across sub-lists.
+    id_sightings: IdSightings,
     /// Xattr cache for sender-side deduplication across entries.
     /// upstream: xattrs.c - `find_matching_xattr()` + `rsync_xal_store()`
     xattr_cache: XattrCache,
@@ -169,6 +176,7 @@ impl FileListWriter {
             pending_acl: None,
             acl_send_names: false,
             name_follows: false,
+            id_sightings: IdSightings::default(),
             xattr_cache: XattrCache::new(),
             checksum_seed: 0,
         }
@@ -195,6 +203,7 @@ impl FileListWriter {
             pending_acl: None,
             acl_send_names: false,
             name_follows: false,
+            id_sightings: IdSightings::default(),
             xattr_cache: XattrCache::new(),
             checksum_seed: 0,
         }
@@ -517,7 +526,7 @@ impl FileListWriter {
                 default_acl.as_ref(),
                 entry.is_dir(),
                 &mut self.acl_cache,
-                self.acl_send_names,
+                self.acl_send_names.then_some(&mut self.id_sightings),
             )?;
         } else {
             self.pending_acl = None;

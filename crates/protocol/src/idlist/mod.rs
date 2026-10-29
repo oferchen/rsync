@@ -29,7 +29,7 @@ pub mod trace;
 
 pub use trace::{IdKind, trace_id_maps_to, trace_process_gids, trace_set_gid, trace_set_uid};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 
 /// Defence-in-depth cap on the number of UID/GID mapping entries from the wire.
@@ -438,6 +438,44 @@ impl IdList {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.order.clear();
+    }
+}
+
+/// The uids and gids a sender has already named on the wire.
+///
+/// Under INC_RECURSE a sender names an owner inline only the first time its id
+/// is seen, whether as a file's owner or in a named ACL entry: upstream's
+/// `add_uid()` / `add_gid()` return a name only when they insert the id into
+/// the one shared list (uidlist.c:340-371), and both `send_file_entry()`
+/// (flist.c:783-800) and `send_ida_entries()` (acls.c:821-826) send only what
+/// they return.
+#[derive(Debug, Default, Clone)]
+pub struct IdSightings {
+    uids: HashSet<u32>,
+    gids: HashSet<u32>,
+}
+
+impl IdSightings {
+    /// Records `uid`, returning `true` on its first sighting.
+    pub fn first_uid(&mut self, uid: u32) -> bool {
+        self.uids.insert(uid)
+    }
+
+    /// Records `gid`, returning `true` on its first sighting.
+    pub fn first_gid(&mut self, gid: u32) -> bool {
+        self.gids.insert(gid)
+    }
+
+    /// Reports whether `uid` has been seen.
+    #[must_use]
+    pub fn has_uid(&self, uid: u32) -> bool {
+        self.uids.contains(&uid)
+    }
+
+    /// Reports whether `gid` has been seen.
+    #[must_use]
+    pub fn has_gid(&self, gid: u32) -> bool {
+        self.gids.contains(&gid)
     }
 }
 
