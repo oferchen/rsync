@@ -1553,3 +1553,99 @@ fn local_batch_carries_named_acl_entries_like_upstream() {
         }
     }
 }
+
+/// `getfattr` dump of every path under `dir`, keyed by path, values hex-encoded.
+fn xattr_snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
+    let out = Command::new("getfattr")
+        .args(["-R", "-d", "-e", "hex", "--absolute-names", "."])
+        .current_dir(dir)
+        .output()
+        .expect("run getfattr");
+    assert!(out.status.success(), "getfattr {}: {out:?}", dir.display());
+    let mut xattrs = std::collections::BTreeMap::new();
+    for block in String::from_utf8_lossy(&out.stdout).split("\n\n") {
+        let mut lines = block.lines().filter(|l| !l.is_empty());
+        let Some(file) = lines.next() else { continue };
+        xattrs.insert(file.to_owned(), lines.map(str::to_owned).collect());
+    }
+    xattrs
+}
+
+/// upstream: io.c:2747 start_write_batch() tees the sender's stream, so a
+/// batch carries each entry's xattrs in the file list (flist.c:2058-2068
+/// get_xattr(), send_xattr()) and, for a value longer than MAX_FULL_DATUM
+/// (xattrs.c:49), only its digest there: the full value follows the entry's
+/// iflags under ITEM_REPORT_XATTR (sender.c:482-484 send_xattr_request()).
+/// A batch without them replays every file, directory and nested entry with
+/// no xattrs at all.
+#[test]
+fn local_batch_carries_xattrs_like_upstream() {
+    if let Some(reason) = test_support::Capabilities::probe()
+        .skip_reason(&[test_support::capabilities::names::XATTRS])
+    {
+        eprintln!("skip: {reason}");
+        return;
+    }
+    if !test_support::skip::require_command_on_path("setfattr")
+        || !test_support::skip::require_command_on_path("getfattr")
+    {
+        return;
+    }
+    let long = "v".repeat(64);
+    let decorate = |fx: &Fixture| -> bool {
+        [
+            ("user.short", "blue", "src/a.txt"),
+            ("user.long", long.as_str(), "src/a.txt"),
+            ("user.deep", "yes", "src/sub/b.log"),
+            ("user.long", long.as_str(), "src/sub/c.txt"),
+            // No long value on a directory: 3.5.1 replays its own batch of
+            // one with "stat ... failed" (exit 23), as the receiver asks for
+            // the value before the generator has made the directory.
+            ("user.dir", "d", "src/sub"),
+        ]
+        .into_iter()
+        .all(|(name, value, path)| {
+            Command::new("setfattr")
+                .args(["-n", name, "-v", value])
+                .arg(fx.root.join(path))
+                .status()
+                .is_ok_and(|s| s.success())
+        })
+    };
+    if !decorate(&Fixture::new()) {
+        eprintln!("skip: the temp filesystem does not take user xattrs");
+        return;
+    }
+    for mode in [&["-rX"][..], &["-rX", "--no-inc-recursive"]] {
+        for (recorder, record_bin) in implementations() {
+            let fx = Fixture::new();
+            assert!(decorate(&fx));
+            let want = xattr_snapshot(&fx.root.join("src"));
+            let mut args = mode.to_vec();
+            args.extend(["--write-batch=bf", "src/", "rec/"]);
+            let out = fx.run(&record_bin, &args);
+            assert!(out.status.success(), "{mode:?} {recorder} record: {out:?}");
+            assert_eq!(
+                xattr_snapshot(&fx.root.join("rec")),
+                want,
+                "{mode:?} {recorder}: the recording run's own copy"
+            );
+            for (replayer, replay_bin) in implementations() {
+                let dest = format!("by-{replayer}");
+                let target = format!("{dest}/");
+                let mut args = mode.to_vec();
+                args.extend(["--read-batch=bf", target.as_str()]);
+                let out = fx.run(&replay_bin, &args);
+                assert!(
+                    out.status.success(),
+                    "{mode:?} {recorder}->{replayer}: {out:?}"
+                );
+                assert_eq!(
+                    xattr_snapshot(&fx.root.join(&dest)),
+                    want,
+                    "{mode:?} {recorder}->{replayer}: replayed xattrs"
+                );
+            }
+        }
+    }
+}
