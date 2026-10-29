@@ -31,7 +31,7 @@ mod out;
 #[cfg(test)]
 mod tests;
 
-pub use input::{IN_BUFFER_SIZE, InBuf, IoBufReader};
+pub use input::{IN_BUFFER_SIZE, InBuf};
 pub use out::{OUT_BUFFER_SIZE, OutBuf};
 
 /// Rounds `size` up to a whole number of 1024-byte units.

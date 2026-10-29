@@ -21,7 +21,7 @@ use crate::config::ServerConfig;
 use crate::flags::{NumericIds, ParsedServerFlags};
 use crate::role::ServerRole;
 
-/// Raw-level counting shim mirroring the production `CountingReader`
+/// Raw-level counting shim mirroring the production core's read counter
 /// (upstream: io.c:938 `stats.total_read += n`).
 struct CountingRead<'a> {
     inner: Cursor<&'a [u8]>,

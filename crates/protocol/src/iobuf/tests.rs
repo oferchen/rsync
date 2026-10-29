@@ -4,9 +4,9 @@
 //! is back-filled in place, a circular drain that resumes exactly where a short
 //! write stopped, and buffers that never grow.
 
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 
-use super::{IN_BUFFER_SIZE, InBuf, IoBufReader, OUT_BUFFER_SIZE, OutBuf, round_up_1024};
+use super::{IN_BUFFER_SIZE, InBuf, OUT_BUFFER_SIZE, OutBuf, round_up_1024};
 use crate::envelope::{HEADER_LEN, MessageCode, MessageHeader};
 
 /// Writer that accepts at most `chunk` bytes per call and records every call.
@@ -325,47 +325,4 @@ fn input_buffer_is_fixed_and_circular() {
     assert_eq!(buf.readable(), &more[..], "then the wrapped tail");
     buf.consume(100);
     assert!(buf.is_empty());
-}
-
-/// Reader that yields one byte per call, so the adapter's buffering is the only
-/// thing keeping syscall count sane.
-struct DribbleReader<'a> {
-    data: &'a [u8],
-}
-
-impl Read for DribbleReader<'_> {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        if self.data.is_empty() || out.is_empty() {
-            return Ok(0);
-        }
-        out[0] = self.data[0];
-        self.data = &self.data[1..];
-        Ok(1)
-    }
-}
-
-/// The `Read` adapter delivers the stream unchanged regardless of how the
-/// underlying descriptor fragments it.
-#[test]
-fn iobuf_reader_delivers_the_stream_unchanged() {
-    let source: Vec<u8> = (0..5000u16).map(|i| (i * 3) as u8).collect();
-    let mut reader = IoBufReader::with_capacity(1024, DribbleReader { data: &source });
-    let mut got = Vec::new();
-    reader.read_to_end(&mut got).unwrap();
-    assert_eq!(got, source);
-}
-
-/// A request at least as large as the buffer bypasses staging, matching
-/// `std::io::BufReader`; the bytes delivered must be identical either way.
-#[test]
-fn iobuf_reader_bypasses_for_large_requests() {
-    let source: Vec<u8> = (0..4096u16).map(|i| i as u8).collect();
-    let mut reader = IoBufReader::with_capacity(1024, &source[..]);
-    let mut out = vec![0u8; 4096];
-    let n = reader.read(&mut out).unwrap();
-    assert_eq!(
-        n, 4096,
-        "the whole slice is served straight from the source"
-    );
-    assert_eq!(out, source);
 }

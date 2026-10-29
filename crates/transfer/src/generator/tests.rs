@@ -6820,11 +6820,11 @@ fn handshake_confirmed_source_is_still_removed_by_the_second_drain() {
     protocol::send_msg(&mut wire, protocol::MessageCode::Data, &NDX_DONE_BYTE)
         .expect("frame the receiver's final NDX_DONE");
 
-    let mut reader = crate::reader::ServerReader::new_plain(Cursor::new(wire))
+    let reader = crate::reader::ServerReader::new_plain(Cursor::new(wire))
         .activate_multiplex()
         .expect("activate input multiplex");
     let mut out = Vec::new();
-    let mut writer = crate::writer::ServerWriter::new_plain(&mut out)
+    let writer = crate::writer::ServerWriter::new_plain(&mut out)
         .activate_multiplex()
         .expect("activate output multiplex");
     let mut ndx_read = protocol::codec::create_ndx_codec(31);
@@ -6832,14 +6832,9 @@ fn handshake_confirmed_source_is_still_removed_by_the_second_drain() {
 
     // The PRODUCTION sequence, not a copy of it: `orchestrator::run` calls this
     // same method, so deleting a phase there fails this test.
+    let mut io = crate::iobuf::IoBuf::new(reader, writer);
     let drains = ctx
-        .goodbye_draining_source_removals(
-            &mut reader,
-            &mut writer,
-            &mut ndx_read,
-            &mut ndx_write,
-            |_w| Ok(()),
-        )
+        .goodbye_draining_source_removals(&mut io, &mut ndx_read, &mut ndx_write, |_w| Ok(()))
         .expect("the goodbye plus both drains must complete");
 
     // The consequence first, so a regression names the file it leaked.

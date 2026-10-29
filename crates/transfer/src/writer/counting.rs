@@ -20,7 +20,7 @@ pub struct CountingWriter<W> {
     /// transport counter that feeds `stats.total_written` (io.c:977) but is read
     /// at the sender's `handle_stats` point (main.c:1007-1008), after the writer
     /// has been moved into the protocol stack. The handle stays valid after the
-    /// writer is moved or dropped, exactly like the read-side `CountingReader`.
+    /// writer is moved or dropped, exactly like the core's read counter (`iobuf::Core`).
     shared: Option<Arc<AtomicU64>>,
 }
 
@@ -37,7 +37,7 @@ impl<W> CountingWriter<W> {
     /// Creates a counting writer that also publishes its running total through a
     /// shared [`Arc<AtomicU64>`] obtainable via [`CountingWriter::counter`].
     ///
-    /// Mirrors the read-side `CountingReader`: the shared handle lets a caller
+    /// Mirrors the core's read counter (`iobuf::Core`): the shared handle lets a caller
     /// sample the raw wire byte total after the writer has been moved into the
     /// protocol stack, matching upstream's raw descriptor counter
     /// `stats.total_written` (io.c:977).

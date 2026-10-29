@@ -44,6 +44,12 @@ impl<W: Write> ServerWriter<W> {
         Self::Plain(writer)
     }
 
+    /// Moves the writer out, leaving the transient [`ServerWriter::Taken`]
+    /// state behind until the caller puts it back.
+    pub(crate) fn take(&mut self) -> Self {
+        std::mem::replace(self, Self::Taken)
+    }
+
     /// Activates multiplex mode (mirrors upstream `io_start_multiplex_out`).
     pub fn activate_multiplex(self) -> io::Result<Self> {
         match self {
