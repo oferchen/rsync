@@ -27,8 +27,8 @@ pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
 
 /// Generate a shell script for replaying a batch file with optional filter rules.
 ///
-/// Creates the `.sh` companion (see [`create_script_file`]) and writes it
-/// with [`write_script`]. `filter_rules` is newline-separated rule text.
+/// Creates the `.sh` companion (see `create_script_file`) and writes it
+/// with `write_script`. `filter_rules` is newline-separated rule text.
 pub fn generate_script_with_filters(
     config: &BatchConfig,
     filter_rules: Option<&[u8]>,
