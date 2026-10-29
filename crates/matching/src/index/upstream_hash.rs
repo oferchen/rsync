@@ -88,7 +88,7 @@ impl UpstreamHashTable {
     ///
     /// upstream: match.c:214-271 `hash_search()` - `hash_hits++` for a
     /// non-empty bucket, then the chain walk that counts `false_alarms` and
-    /// stops at the first strong match or past [`MAX_CHAIN_LEN`].
+    /// stops at the first strong match or past `MAX_CHAIN_LEN`.
     pub fn probe(
         &mut self,
         index: &DeltaSignatureIndex,
