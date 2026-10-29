@@ -297,6 +297,40 @@ impl ReceiverContext {
                     .or_else(|| gap_heads.get(&ndx).copied())
                 {
                     let entry = self.file_list[flat_idx].clone();
+                    // upstream: xattrs.c:779-794 recv_xattr_request() - the
+                    // full values this row carries complete the entry's
+                    // abbreviated xattrs, which the generator half could only
+                    // apply as digests.
+                    if !attrs.xattr_values.is_empty()
+                        && let Some(mut xattr_list) = self.resolve_xattr_list(&entry)
+                    {
+                        crate::receiver::apply_xattr_abbreviation_values(
+                            &mut xattr_list,
+                            &attrs.xattr_values,
+                        );
+                        let path = if entry.path().as_os_str() == "." {
+                            dest_dir.clone()
+                        } else {
+                            dest_dir.join(entry.path())
+                        };
+                        let filter = self.xattr_name_filter().map(|set| {
+                            move |name: &str| {
+                                set.xattr_name_allowed(name, filters::XattrSide::Receiver)
+                            }
+                        });
+                        let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
+                        if let Err(e) = metadata::apply_xattrs_from_list(
+                            &path,
+                            &xattr_list,
+                            !entry.is_symlink(),
+                            Some(&path),
+                            filter_ref,
+                            Some(dest_dir.as_path()),
+                            self.config.fake_super,
+                        ) {
+                            metadata_errors.push((path, e.to_string()));
+                        }
+                    }
                     let iflags = crate::generator::ItemFlags::from_raw(u32::from(attrs.iflags));
                     self.emit_or_record_itemize(writer, flat_idx, &iflags, &entry)?;
                 }
@@ -579,7 +613,15 @@ impl ReceiverContext {
                 apply_metadata_with_cached_stat(&file_path, &file_entry, metadata_opts, None)
             {
                 metadata_errors.push((file_path.clone(), meta_err.to_string()));
-            } else if let Some(ref xattr_list) = self.resolve_xattr_list(&file_entry) {
+            } else if let Some(mut xattr_list) = self.resolve_xattr_list(&file_entry) {
+                // upstream: xattrs.c:779-794 recv_xattr_request() - the full
+                // values the row carried under ITEM_REPORT_XATTR replace the
+                // digests the file list holds for them.
+                crate::receiver::apply_xattr_abbreviation_values(
+                    &mut xattr_list,
+                    &attrs.xattr_values,
+                );
+                let xattr_list = &xattr_list;
                 let filter = self.xattr_name_filter().map(|set| {
                     move |name: &str| set.xattr_name_allowed(name, filters::XattrSide::Receiver)
                 });

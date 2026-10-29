@@ -21,7 +21,7 @@
 //! - `xattrs.c:61-64, 268-269` - permitted-namespace policy on Linux.
 
 use crate::dest_pin::{DestPin, pin_destination};
-use crate::error::MetadataError;
+use crate::error::{LIST_XATTR_CONTEXT, MetadataError, NamedXattrError, READ_XATTR_CONTEXT};
 use crate::xattr_send::XattrSendOptions;
 use crate::xattr_send::XattrSyncFilters;
 use protocol::xattr::XattrList;
@@ -100,6 +100,20 @@ fn map_xattr_error(context: &'static str, path: &Path, error: io::Error) -> Meta
     MetadataError::new(context, path, error)
 }
 
+/// Whether a listing failed only because the filesystem has no xattrs.
+///
+/// upstream: `xattrs.c:get_xattr_names()` - `errno == ENOTSUP` lists nothing.
+#[cfg(unix)]
+fn is_xattr_unsupported(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(libc::ENOTSUP)
+}
+
+/// No ENOTSUP outside Unix: every listing failure is a real one.
+#[cfg(not(unix))]
+fn is_xattr_unsupported(_error: &io::Error) -> bool {
+    false
+}
+
 /// How [`list_attributes`] screens namespaces.
 ///
 /// Upstream evaluates the namespace rule only as the `else` of the
@@ -123,7 +137,7 @@ fn list_attributes(
 ) -> Result<Vec<Vec<u8>>, MetadataError> {
     backend::list_attributes(path, follow_symlinks)
         .map(|names| screen_names(names, screen))
-        .map_err(|error| map_xattr_error("list extended attributes", path, error))
+        .map_err(|error| map_xattr_error(LIST_XATTR_CONTEXT, path, error))
 }
 
 /// Byte-encodes listed xattr names and screens them per `screen` by
@@ -167,8 +181,14 @@ fn read_attribute(
     name: &[u8],
     follow_symlinks: bool,
 ) -> Result<Option<Vec<u8>>, MetadataError> {
-    backend::read_attribute(path, name, follow_symlinks)
-        .map_err(|error| map_xattr_error("read extended attribute", path, error))
+    backend::read_attribute(path, name, follow_symlinks).map_err(|error| {
+        let kind = error.kind();
+        let named = NamedXattrError {
+            name: name.to_vec(),
+            source: error,
+        };
+        map_xattr_error(READ_XATTR_CONTEXT, path, io::Error::new(kind, named))
+    })
 }
 
 fn write_attribute(
@@ -220,7 +240,13 @@ pub fn read_xattrs_for_wire(
     // reading the destination to diff it keeps user.* alone, so a namespace it
     // could never store cannot flip the itemize `x` column.
     let screen = namespace_screen(opts.filter.is_some(), opts.user_only());
-    let attrs = list_attributes(path, opts.follow_symlinks, screen)?;
+    let attrs = match list_attributes(path, opts.follow_symlinks, screen) {
+        Ok(attrs) => attrs,
+        // upstream: xattrs.c:get_xattr_names() - a filesystem without xattrs
+        // has none to send; every other failure fails the read.
+        Err(error) if is_xattr_unsupported(error.source_error()) => Vec::new(),
+        Err(error) => return Err(error),
+    };
     let mut entries = Vec::with_capacity(attrs.len());
 
     for name in &attrs {

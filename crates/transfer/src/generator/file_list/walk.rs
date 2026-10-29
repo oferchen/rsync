@@ -656,12 +656,27 @@ impl GeneratorContext {
             // upstream: xattrs.c:1253-1258 - a corrupt %stat ends the run.
             Err(e) if metadata::is_corrupt_fake_super(&e) => return Err(e),
             Err(e) => {
-                // upstream: flist.c - rsyserr for make_file() failures
-                let text = format!(
-                    "rsync: [sender] make_file failed for \"{}\": {}\n",
-                    path.display(),
-                    engine::local_copy::upstream_io_error(&e),
-                );
+                // upstream: flist.c:2058-2063 - a failed get_xattr() drops the
+                // entry under IOERR_GENERAL after get_xattr_names() or
+                // get_xattr_data() named the call; any other failure is
+                // make_file()'s.
+                let xattr_text = e
+                    .get_ref()
+                    .and_then(|inner| inner.downcast_ref::<metadata::MetadataError>())
+                    .and_then(|error| {
+                        error.get_xattr_text(&full_fname_path(&path, self.full_fname_paths()))
+                    });
+                let text = match xattr_text {
+                    Some((call, source)) => format!(
+                        "rsync: [sender] {call}: {}\n",
+                        engine::local_copy::upstream_io_error(source),
+                    ),
+                    None => format!(
+                        "rsync: [sender] make_file failed for \"{}\": {}\n",
+                        path.display(),
+                        engine::local_copy::upstream_io_error(&e),
+                    ),
+                };
                 self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
                 self.add_io_error(io_error_flags::IOERR_GENERAL);
                 return Ok(());

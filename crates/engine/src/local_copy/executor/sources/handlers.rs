@@ -111,7 +111,14 @@ pub(super) fn handle_directory_contents_copy(
     // upstream: flist.c:send_file_list() - a trailing-slash source becomes
     // "." (DOTDIR_NAME) as the first flist entry. Capture this root entry
     // so the batch file matches upstream's wire format.
-    capture_batch_file_entry(context, source_path, Path::new("."), metadata, true)?;
+    capture_batch_file_entry(
+        context,
+        source_path,
+        &target_root,
+        Path::new("."),
+        metadata,
+        true,
+    )?;
 
     // upstream: flist.c:2992 - trailing-slash sources (DOTDIR_NAME /
     // SLASH_ENDING_NAME) walk their immediate children even when global
@@ -209,7 +216,7 @@ pub(super) fn handle_directory_copy(
     // upstream: flist.c:send_file_list() - the source directory is sent as
     // the first flist entry with FLAG_TOP_DIR | FLAG_CONTENT_DIR. Capture
     // it so the batch file matches upstream's wire format.
-    capture_batch_file_entry(context, source_path, &relative, metadata, true)?;
+    capture_batch_file_entry(context, source_path, &target, &relative, metadata, true)?;
 
     copy_directory_recursive(
         context,
@@ -425,7 +432,14 @@ pub(super) fn handle_non_directory_source(
         // upstream: batch.c - single-file transfers emit flist entry + delta
         // data just like recursive directory transfers.
         if let Some(rel) = record_path {
-            capture_batch_file_entry(context, source_path, rel, &effective_metadata, false)?;
+            capture_batch_file_entry(
+                context,
+                source_path,
+                &target,
+                rel,
+                &effective_metadata,
+                false,
+            )?;
         }
         context.begin_batch_file_delta()?;
         // upstream: a multi-source `--delete-during` sweep keys off the shared

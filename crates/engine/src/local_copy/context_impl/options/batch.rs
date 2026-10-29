@@ -1,3 +1,7 @@
+/// upstream: rsync.h ITEM_REPORT_XATTR - set when the entry's xattrs differ
+/// from the destination's, promising the value block after the iflags.
+const ITEM_REPORT_XATTR: u16 = 1 << 8;
+
 impl<'a> CopyContext<'a> {
     /// Access the batch writer for recording transfer operations.
     ///
@@ -252,6 +256,25 @@ impl<'a> CopyContext<'a> {
         })
     }
 
+    /// Reports whether the batch header records `--xattrs`, so each flist
+    /// entry carries its source xattrs.
+    pub(crate) fn batch_preserve_xattrs(&self) -> bool {
+        self.options.get_batch_writer().is_some_and(|w| {
+            w.lock()
+                .expect("batch writer mutex poisoned")
+                .stream_flags()
+                .preserve_xattrs
+        })
+    }
+
+    /// Sets the `ITEM_REPORT_XATTR` value block for the entry just captured.
+    ///
+    /// upstream: `sender.c:482-484 write_ndx_and_attrs()` - the block follows
+    /// the entry's iflags whenever they carry `ITEM_REPORT_XATTR`.
+    pub(crate) fn set_batch_xattr_report(&mut self, report: Option<Vec<u8>>) {
+        self.batch_xattr_report = report;
+    }
+
     /// Records the owner and group of a flat-list entry for the id lists.
     ///
     /// upstream: `flist.c:787-797 send_file_entry()` - `add_uid()`/`add_gid()`
@@ -471,9 +494,16 @@ impl<'a> CopyContext<'a> {
             .protocol_version;
         if proto >= 29 {
             const ITEM_TRANSFER: u16 = 0x8000;
+            let xattr_report = self.batch_xattr_report.take();
+            let iflags = if xattr_report.is_some() {
+                ITEM_TRANSFER | ITEM_REPORT_XATTR
+            } else {
+                ITEM_TRANSFER
+            };
             self.batch_delta_iflags_offset = Some(delta_file.get_ref().len());
             delta_file
-                .write_all(&ITEM_TRANSFER.to_le_bytes())
+                .write_all(&iflags.to_le_bytes())
+                .and_then(|()| delta_file.write_all(xattr_report.as_deref().unwrap_or_default()))
                 .map_err(|e| {
                     crate::local_copy::LocalCopyError::io(
                         "write batch iflags",
@@ -617,18 +647,25 @@ impl<'a> CopyContext<'a> {
         // emit gate - only these bits (or ITEM_REPORT_XATTR) reach the wire;
         // ITEM_LOCAL_CHANGE, ITEM_BASIS_TYPE_FOLLOWS and ITEM_XNAME_FOLLOWS do
         // not qualify an entry on their own.
-        const ITEM_REPORT_XATTR: u16 = 1 << 8;
         const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11;
         const ITEM_XNAME_FOLLOWS: u16 = 1 << 12;
         const ITEM_LOCAL_CHANGE: u16 = 1 << 14;
         const SIGNIFICANT_ITEM_FLAGS: u16 =
             !(ITEM_BASIS_TYPE_FOLLOWS | ITEM_XNAME_FOLLOWS | ITEM_LOCAL_CHANGE);
+        // The bit promises the value block that follows the iflags, so only the
+        // capture, which built that block, may set it.
+        let xattr_report = self.batch_xattr_report.take();
+        let iflags = match xattr_report {
+            Some(_) => iflags | ITEM_REPORT_XATTR,
+            None => iflags & !ITEM_REPORT_XATTR,
+        };
         if iflags & (SIGNIFICANT_ITEM_FLAGS | ITEM_REPORT_XATTR) == 0 {
             return;
         }
         let idx = self.batch_flist_index - 1;
-        self.batch_delta_entries
-            .push((idx, iflags.to_le_bytes().to_vec()));
+        let mut record = iflags.to_le_bytes().to_vec();
+        record.extend(xattr_report.unwrap_or_default());
+        self.batch_delta_entries.push((idx, record));
     }
 
     /// Resolves a basis block index against the current file's recorded
@@ -786,6 +823,9 @@ impl<'a> CopyContext<'a> {
         let Some((entry, offset)) = self.batch_report_slot.take() else {
             return;
         };
+        // `begin_batch_file_delta` already decided ITEM_REPORT_XATTR together
+        // with the value block it wrote after the word.
+        let report = report & !ITEM_REPORT_XATTR;
         if let Some(word) = self
             .batch_delta_entries
             .get_mut(entry)
