@@ -373,30 +373,41 @@ impl LocalCopyError {
         }
     }
 
-    /// Prints upstream's per-file line when this is a receiver-stage failure
-    /// that skips only its own file, and marks the error reported.
+    /// Reports a commit-path failure the way upstream's receiver does and
+    /// decides whether the walk carries on.
     ///
-    /// A local copy runs upstream's receiver, so a failed temp create, in-place
-    /// open or rename into place prints the same `FERROR_XFER` line a network
-    /// receiver does and the run goes on to exit 23. Any other error, or one
-    /// already printed, is returned unchanged.
+    /// A failed temp create, open or rename into place prints the same
+    /// `FERROR_XFER` line a network receiver does and comes back as a reported
+    /// error, so the run goes on to exit 23. A failed staging-dir create prints
+    /// its plain `FERROR` line and the file is dropped with no error at all
+    /// (`T::default()`). Any other error, or one already printed, is returned
+    /// unchanged.
     ///
     /// `destination_root` is the receiver's working directory, which upstream's
-    /// rename and copy lines name their target relative to.
+    /// rename, copy and partial-dir lines name their file relative to.
     ///
     /// # Upstream Reference
     ///
     /// - `receiver.c:465-468`, `receiver.c:1242-1261`, `rsync.c:918-927`.
-    #[must_use]
-    pub(crate) fn report_skipped_commit(self, destination_root: &Path) -> Self {
+    /// - `receiver.c:1319-1325` - the staging-dir arm.
+    pub(crate) fn report_commit_failure<T: Default>(
+        self,
+        destination_root: &Path,
+    ) -> Result<T, Self> {
         let LocalCopyErrorKind::Io { source, .. } = &self.kind else {
-            return self;
+            return Err(self);
         };
-        if self.reported || CommitDisposition::of(source) != CommitDisposition::SkipFile {
-            return self;
+        let disposition = CommitDisposition::of(source);
+        if self.reported
+            || !matches!(
+                disposition,
+                CommitDisposition::SkipFile | CommitDisposition::Discard
+            )
+        {
+            return Err(self);
         }
         let Some((op, operand)) = commit_op_failure(source) else {
-            return self;
+            return Err(self);
         };
         let target = commit_op_destination(source)
             .map(|target| target.strip_prefix(destination_root).unwrap_or(target));
@@ -408,7 +419,10 @@ impl LocalCopyError {
                 &upstream_io_error(source)
             )
         );
-        self.reported()
+        match disposition {
+            CommitDisposition::Discard => Ok(T::default()),
+            _ => Err(self.reported()),
+        }
     }
 
     /// Reports whether this is a failed initial `link_stat` of a source
@@ -982,7 +996,7 @@ mod tests {
     /// upstream: receiver.c:465-468, receiver.c:1242-1261, rsync.c:918-927 are
     /// per-file; rsync.c:897-900 and receiver.c:1296-1300 exit RERR_FILEIO.
     #[test]
-    fn report_skipped_commit_marks_only_per_file_commit_failures_reported() {
+    fn report_commit_failure_marks_only_per_file_commit_failures_reported() {
         use crate::commit_failure::{CommitOp, attach_commit_op};
         let root = Path::new("/dst");
         let path = Path::new("/dst/a");
@@ -999,22 +1013,33 @@ mod tests {
             CommitOp::Rename,
             CommitOp::Copy,
         ] {
-            assert!(
-                tagged(op).report_skipped_commit(root).is_reported(),
-                "{op:?} skips the file"
-            );
+            let error = tagged(op)
+                .report_commit_failure::<()>(root)
+                .expect_err("a skipped file is a transfer error");
+            assert!(error.is_reported(), "{op:?} skips the file");
         }
         for op in [CommitOp::Backup, CommitOp::Close] {
-            assert!(
-                !tagged(op).report_skipped_commit(root).is_reported(),
-                "{op:?} aborts the run"
-            );
+            let error = tagged(op)
+                .report_commit_failure::<()>(root)
+                .expect_err("an abort stays an error");
+            assert!(!error.is_reported(), "{op:?} aborts the run");
         }
         let untagged = LocalCopyError::io(
             "copy file",
             path,
             io::Error::from(ErrorKind::PermissionDenied),
         );
-        assert!(!untagged.report_skipped_commit(root).is_reported());
+        assert!(
+            !untagged
+                .report_commit_failure::<()>(root)
+                .expect_err("untagged stays an error")
+                .is_reported()
+        );
+        // upstream: receiver.c:1319-1325 - the file is dropped, the run is not
+        // failed.
+        assert!(matches!(
+            tagged(CommitOp::PartialDir).report_commit_failure::<bool>(root),
+            Ok(false)
+        ));
     }
 }

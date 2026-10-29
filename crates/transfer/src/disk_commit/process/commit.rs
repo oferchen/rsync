@@ -205,11 +205,23 @@ pub(super) fn commit_file(
         // `--delay-updates` succeeded. aarch64 has no legacy `mkdir(2)` for
         // glibc to lower to, which is why the defect was architecture-only.
         if let Some(parent) = staging_path.parent() {
+            // upstream: receiver.c:1319-1325 - a staging dir that cannot be
+            // made discards this file with a plain FERROR line and the run
+            // goes on.
+            let tag_partial_dir = |e| {
+                crate::temp_guard::attach_commit_op_between(
+                    crate::temp_guard::CommitOp::PartialDir,
+                    parent,
+                    Some(&begin.file_path),
+                    e,
+                )
+            };
             #[cfg(unix)]
-            crate::robust_rename::clear_partial_dir_obstruction(commit_anchor(config), parent)?;
+            crate::robust_rename::clear_partial_dir_obstruction(commit_anchor(config), parent)
+                .map_err(tag_partial_dir)?;
             #[cfg(not(unix))]
-            engine::clear_partial_dir_obstruction(parent)?;
-            create_dir_all_sandboxed(config.backup_env(), parent)?;
+            engine::clear_partial_dir_obstruction(parent).map_err(tag_partial_dir)?;
+            create_dir_all_sandboxed(config.backup_env(), parent).map_err(tag_partial_dir)?;
         }
         let result =
             stage_into_partial_dir(config, cleanup_guard.path(), &staging_path).map_err(|e| {

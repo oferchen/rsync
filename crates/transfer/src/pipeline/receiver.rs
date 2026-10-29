@@ -347,7 +347,9 @@ impl PipelinedReceiver {
         // relative to the receiver's destination root; backup.c:402-403 names
         // the backup as chosen.
         let target = match op {
-            crate::temp_guard::CommitOp::Rename | crate::temp_guard::CommitOp::Copy => {
+            crate::temp_guard::CommitOp::Rename
+            | crate::temp_guard::CommitOp::Copy
+            | crate::temp_guard::CommitOp::PartialDir => {
                 let target = crate::temp_guard::commit_op_destination(error).unwrap_or(dest);
                 Some(
                     self.dest_dir
@@ -488,6 +490,14 @@ impl PipelinedReceiver {
                 self.warnings
                     .push((code, self.commit_failure(&path, &error)));
                 Some(error)
+            }
+            CommitDisposition::Discard => {
+                // Plain FERROR: the peer prints the line without setting
+                // got_xfer_error, so the file is dropped and the exit code is
+                // left alone (receiver.c:1319-1325).
+                let message = self.commit_failure(&path, &error);
+                self.warnings.push((MessageCode::Error, message));
+                None
             }
             CommitDisposition::Propagate => Some(error),
         }

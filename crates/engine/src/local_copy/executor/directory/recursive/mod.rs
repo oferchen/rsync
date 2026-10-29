@@ -665,7 +665,7 @@ fn copy_directory_recursive_inner(
             &mut ensure_directory,
             root_device,
         )
-        .map_err(|error| error.report_skipped_commit(context.destination_root()));
+        .or_else(|error| error.report_commit_failure(context.destination_root()));
         match result {
             Ok(entry_kept) => {
                 if entry_kept {
