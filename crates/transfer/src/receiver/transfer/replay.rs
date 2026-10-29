@@ -114,6 +114,7 @@ impl ReceiverContext {
             &dest_dir,
             #[cfg(unix)]
             sandbox.as_deref(),
+            &failed_dirs,
             writer,
         );
         #[cfg(unix)]

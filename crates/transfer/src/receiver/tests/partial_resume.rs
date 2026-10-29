@@ -223,6 +223,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &crate::receiver::directory::FailedDirectories::new(),
             &mut TestDeletionWriter,
         );
 
@@ -247,6 +248,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &crate::receiver::directory::FailedDirectories::new(),
             &mut TestDeletionWriter,
         );
 
@@ -267,6 +269,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &crate::receiver::directory::FailedDirectories::new(),
             &mut TestDeletionWriter,
         );
 
@@ -288,6 +291,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &crate::receiver::directory::FailedDirectories::new(),
             &mut TestDeletionWriter,
         );
     }
@@ -304,6 +308,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &crate::receiver::directory::FailedDirectories::new(),
             &mut TestDeletionWriter,
         );
 
@@ -329,6 +334,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &crate::receiver::directory::FailedDirectories::new(),
             &mut TestDeletionWriter,
         );
 
@@ -369,6 +375,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &crate::receiver::directory::FailedDirectories::new(),
             &mut TestDeletionWriter,
         );
 
@@ -387,6 +394,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &crate::receiver::directory::FailedDirectories::new(),
             &mut TestDeletionWriter,
         );
 

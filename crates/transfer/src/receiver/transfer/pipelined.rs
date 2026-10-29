@@ -156,6 +156,7 @@ impl ReceiverContext {
             &setup.dest_dir,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
+            &failed_dirs,
             writer,
         );
         #[cfg(unix)]

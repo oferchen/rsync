@@ -795,6 +795,7 @@ impl ReceiverContext {
         &self,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        failed_dirs: &FailedDirectories,
         writer: &mut W,
     ) {
         self.ensure_relative_parents_in_range(
@@ -802,6 +803,7 @@ impl ReceiverContext {
             dest_dir,
             #[cfg(unix)]
             sandbox,
+            failed_dirs,
             writer,
         );
     }
@@ -817,6 +819,7 @@ impl ReceiverContext {
         range: std::ops::Range<usize>,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        failed_dirs: &FailedDirectories,
         writer: &mut W,
     ) {
         if !self.config.flags.relative || self.config.flags.skip_dest_writes() {
@@ -828,6 +831,11 @@ impl ReceiverContext {
         for entry in &self.file_list[range] {
             let relative_path = entry.path();
             if relative_path.as_os_str() == "." {
+                continue;
+            }
+            // upstream: generator.c:1648-1658 - an entry below a directory that
+            // could not be made returns before its parent is made.
+            if failed_dirs.failed_ancestor(relative_path).is_some() {
                 continue;
             }
 
