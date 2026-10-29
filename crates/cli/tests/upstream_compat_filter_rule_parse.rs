@@ -632,34 +632,16 @@ fn delete_keeps_protected_files_inside_an_extraneous_directory() {
         Source::DaemonPush,
         Source::DaemonPull,
     ];
-    let cells = [
-        ("P /sub/a", true),
-        ("P c", true),
-        ("- /sub/a", true),
-        ("-r b", false),
-        ("P *", true),
-        ("+ *", true),
-    ];
-    for (rule, also_delete_excluded) in cells {
+    for rule in ["P /sub/a", "P c", "- /sub/a", "-r b", "P *", "+ *"] {
         // Each delete timing and the --max-delete cap take their own path
         // through the delete pass.
-        let extras: &[Option<&str>] = if also_delete_excluded {
-            &[
-                None,
-                Some("--delete-excluded"),
-                Some("--delete-delay"),
-                Some("--delete-after"),
-                Some("--max-delete=100"),
-            ]
-        } else {
-            &[
-                None,
-                Some("--delete-delay"),
-                Some("--delete-after"),
-                Some("--max-delete=100"),
-            ]
-        };
-        for extra in extras {
+        for extra in [
+            None,
+            Some("--delete-excluded"),
+            Some("--delete-delay"),
+            Some("--delete-after"),
+            Some("--max-delete=100"),
+        ] {
             let mut args = vec!["--delete".to_owned(), format!("--filter={rule}")];
             args.extend(extra.map(str::to_owned));
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
