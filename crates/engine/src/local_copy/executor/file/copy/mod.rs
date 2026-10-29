@@ -95,6 +95,15 @@ pub(crate) fn copy_file(
         },
     };
 
+    if context.options().fake_super_enabled()
+        && let Some(existing) = existing_metadata.take()
+    {
+        existing_metadata = Some(crate::local_copy::fake_super_destination_stat(
+            destination,
+            existing,
+        )?);
+    }
+
     let mut destination_previously_existed = existing_metadata.is_some();
 
     // upstream: generator.c:1757-1806 - the `--existing` / `--ignore-existing`

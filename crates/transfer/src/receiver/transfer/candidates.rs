@@ -12,7 +12,7 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use engine::append_gate::append_skips;
@@ -194,7 +194,7 @@ impl ReceiverContext {
         stats: &mut TransferStats,
         acl_cache: Option<&protocol::acl::AclCache>,
         acl_id_map: Option<&metadata::AclIdMapper>,
-    ) -> Vec<(usize, PathBuf, u32)> {
+    ) -> io::Result<Vec<(usize, PathBuf, u32)>> {
         // Whole-list candidate build (the batch drivers). Delegates to the
         // range-scoped core over the full list, so the batch behaviour is
         // byte-identical (range = 0..len). The per-segment streaming
@@ -235,7 +235,7 @@ impl ReceiverContext {
         stats: &mut TransferStats,
         acl_cache: Option<&protocol::acl::AclCache>,
         acl_id_map: Option<&metadata::AclIdMapper>,
-    ) -> Vec<(usize, PathBuf, u32)> {
+    ) -> io::Result<Vec<(usize, PathBuf, u32)>> {
         // upstream: generator.c:1636-1637 - "recv_generator(%s,%d)" emitted at
         // the top of recv_generator() for every file the generator considers
         // (regular files, directories, symlinks, devices, specials). Skipping
@@ -319,7 +319,7 @@ impl ReceiverContext {
             // upstream: generator.c:2376-2377 - dry-run still itemizes with
             // ITEM_TRANSFER; the dry-run loop writes the bare ITEM_TRANSFER
             // attrs over the wire and does not consume this precomputed value.
-            return candidates
+            return Ok(candidates
                 .into_iter()
                 .filter(|(_, entry)| {
                     // upstream: generator.c:1757-1806 - the existence gate runs
@@ -356,7 +356,7 @@ impl ReceiverContext {
                         crate::generator::ItemFlags::ITEM_TRANSFER,
                     )
                 })
-                .collect();
+                .collect());
         }
 
         // upstream: generator.c:648 - the quick-check mtime gate keys on
@@ -441,6 +441,15 @@ impl ReceiverContext {
         let needs_metadata_apply = metadata_opts.requires_apply();
         let mut files_to_transfer = Vec::with_capacity(stat_results.len() / 4 + 1);
         for (idx, file_path, mut dest_meta) in stat_results {
+            // upstream: generator.c:1393-1399 - under --fake-super the
+            // generator's link_stat() goes through x_lstat(), which folds the
+            // %stat record in; a record that does not parse is fatal
+            // (xattrs.c:1253-1258).
+            if self.config.fake_super
+                && let Some(meta) = dest_meta.take()
+            {
+                dest_meta = Some(metadata::fold_fake_super_stat(&file_path, meta)?);
+            }
             // upstream: generator.c:2822-2827 generate_files() - the per-file
             // generate loop pokes maybe_send_keepalive once the I/O lull has
             // elapsed so a remote sender's --timeout does not fire while the
@@ -634,7 +643,7 @@ impl ReceiverContext {
             }
             files_to_transfer.push((idx, file_path, base_iflags));
         }
-        files_to_transfer
+        Ok(files_to_transfer)
     }
 
     /// Reports a `--dry-run` receive and returns the items whose NDX + iflags
@@ -1704,18 +1713,20 @@ mod itemize_order_tests {
             let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
             let mut metadata_errors = Vec::new();
             let mut stats = TransferStats::default();
-            let files = ctx.build_files_to_transfer(
-                &mut writer,
-                dest,
-                #[cfg(unix)]
-                None,
-                &metadata::MetadataOptions::default(),
-                None,
-                &mut metadata_errors,
-                &mut stats,
-                None,
-                None,
-            );
+            let files = ctx
+                .build_files_to_transfer(
+                    &mut writer,
+                    dest,
+                    #[cfg(unix)]
+                    None,
+                    &metadata::MetadataOptions::default(),
+                    None,
+                    &mut metadata_errors,
+                    &mut stats,
+                    None,
+                    None,
+                )
+                .expect("candidate pass");
             assert!(
                 files.is_empty(),
                 "a quick-check match must not request a transfer"
@@ -1788,6 +1799,7 @@ mod itemize_order_tests {
                 None,
                 None,
             )
+            .expect("candidate pass")
             .len()
         };
 
@@ -1876,18 +1888,20 @@ mod itemize_order_tests {
             let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
             let mut metadata_errors = Vec::new();
             let mut stats = TransferStats::default();
-            let files = ctx.build_files_to_transfer(
-                &mut writer,
-                dest,
-                #[cfg(unix)]
-                None,
-                &metadata::MetadataOptions::default(),
-                None,
-                &mut metadata_errors,
-                &mut stats,
-                None,
-                None,
-            );
+            let files = ctx
+                .build_files_to_transfer(
+                    &mut writer,
+                    dest,
+                    #[cfg(unix)]
+                    None,
+                    &metadata::MetadataOptions::default(),
+                    None,
+                    &mut metadata_errors,
+                    &mut stats,
+                    None,
+                    None,
+                )
+                .expect("candidate pass");
             assert!(files.is_empty(), "an identical file must not transfer");
             std::fs::metadata(&path).unwrap().mtime_nsec()
         };
@@ -1975,17 +1989,19 @@ mod itemize_order_tests {
             .preserve_times(times)
             .preserve_atimes(true);
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
-        let files = ctx.build_files_to_transfer(
-            &mut writer,
-            dir.path(),
-            None,
-            &opts,
-            None,
-            &mut Vec::new(),
-            &mut TransferStats::default(),
-            None,
-            None,
-        );
+        let files = ctx
+            .build_files_to_transfer(
+                &mut writer,
+                dir.path(),
+                None,
+                &opts,
+                None,
+                &mut Vec::new(),
+                &mut TransferStats::default(),
+                None,
+                None,
+            )
+            .expect("candidate pass");
         assert!(files.is_empty(), "an identical file must not transfer");
         let meta = std::fs::metadata(&path).unwrap();
         (meta.atime(), meta.atime_nsec())
@@ -2862,18 +2878,20 @@ mod itemize_order_tests {
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
         let mut stats = TransferStats::default();
         let mut metadata_errors = Vec::new();
-        let candidates = ctx.build_files_to_transfer(
-            &mut writer,
-            dest,
-            #[cfg(unix)]
-            None,
-            &metadata::MetadataOptions::default(),
-            None,
-            &mut metadata_errors,
-            &mut stats,
-            None,
-            None,
-        );
+        let candidates = ctx
+            .build_files_to_transfer(
+                &mut writer,
+                dest,
+                #[cfg(unix)]
+                None,
+                &metadata::MetadataOptions::default(),
+                None,
+                &mut metadata_errors,
+                &mut stats,
+                None,
+                None,
+            )
+            .expect("candidate pass");
         let plan =
             ctx.plan_dry_run_in_range(&mut writer, 0..ctx.file_list.len(), dest, &candidates);
         let rows = ctx
@@ -3566,17 +3584,19 @@ mod uptodate_notice_tests {
         let sandbox = fast_io::DirSandbox::open_root(&dest).expect("open sandbox");
         let mut errs = Vec::new();
         let mut stats = TransferStats::default();
-        let requested = ctx.build_files_to_transfer(
-            &mut CaptureWriter::default(),
-            &dest,
-            Some(&sandbox),
-            &MetadataOptions::default(),
-            None,
-            &mut errs,
-            &mut stats,
-            None,
-            None,
-        );
+        let requested = ctx
+            .build_files_to_transfer(
+                &mut CaptureWriter::default(),
+                &dest,
+                Some(&sandbox),
+                &MetadataOptions::default(),
+                None,
+                &mut errs,
+                &mut stats,
+                None,
+                None,
+            )
+            .expect("candidate pass");
         assert_eq!(
             requested.iter().map(|(idx, _, _)| *idx).collect::<Vec<_>>(),
             vec![0],
@@ -3808,18 +3828,20 @@ mod hlink_wire_flag_tests {
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
         let mut metadata_errors = Vec::new();
         let mut stats = TransferStats::default();
-        let files = ctx.build_files_to_transfer(
-            &mut writer,
-            dest,
-            #[cfg(unix)]
-            None,
-            &MetadataOptions::default(),
-            None,
-            &mut metadata_errors,
-            &mut stats,
-            None,
-            None,
-        );
+        let files = ctx
+            .build_files_to_transfer(
+                &mut writer,
+                dest,
+                #[cfg(unix)]
+                None,
+                &MetadataOptions::default(),
+                None,
+                &mut metadata_errors,
+                &mut stats,
+                None,
+                None,
+            )
+            .expect("candidate pass");
         assert_eq!(
             files.len(),
             1,
@@ -3914,6 +3936,7 @@ mod append_gate_tests {
             None,
             None,
         )
+        .expect("candidate pass")
         .iter()
         .map(|(idx, _, _)| ctx.file_list[*idx].name().to_owned())
         .collect()

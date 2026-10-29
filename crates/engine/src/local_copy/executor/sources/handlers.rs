@@ -404,8 +404,9 @@ pub(super) fn handle_non_directory_source(
 
     let record_path = non_empty_path(relative.as_path());
     let metadata_options = context.metadata_options();
+    let placeholder = placeholder_kind(context, source_path, effective_type)?;
 
-    if effective_type.is_file() {
+    if effective_type.is_file() && placeholder.is_none() {
         let target = compute_target_path(
             proc_ctx.destination_path,
             &proc_ctx.destination_base,
@@ -475,7 +476,7 @@ pub(super) fn handle_non_directory_source(
             proc_ctx.destination_behaves_like_directory,
             prefer_root_destination,
         )?;
-    } else if is_fifo(effective_type) {
+    } else if is_fifo(effective_type) || placeholder == Some(Placeholder::Special) {
         if handle_fifo_copy(
             context,
             source_path,
@@ -490,7 +491,7 @@ pub(super) fn handle_non_directory_source(
         )? {
             return Ok(());
         }
-    } else if is_device(effective_type) {
+    } else if is_device(effective_type) || placeholder == Some(Placeholder::Device) {
         if handle_device_copy(
             context,
             source_path,
@@ -512,4 +513,48 @@ pub(super) fn handle_non_directory_source(
     }
 
     Ok(())
+}
+
+/// The node a regular `--fake-super` placeholder stands for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Placeholder {
+    Device,
+    Special,
+}
+
+/// Classifies a regular operand by the file type its `%stat` records, so a
+/// placeholder for a device, FIFO or socket takes the device or special
+/// branch, as the directory planner's entries do. `--list-only` and
+/// `--copy-devices` keep a device placeholder on the file path.
+///
+/// upstream: flist.c make_file() -> xattrs.c:1372 x_lstat(),
+/// generator.c:2031-2034
+fn placeholder_kind(
+    context: &CopyContext,
+    source: &Path,
+    effective_type: std::fs::FileType,
+) -> Result<Option<Placeholder>, LocalCopyError> {
+    #[cfg(all(unix, feature = "xattr"))]
+    {
+        const S_IFMT: u32 = 0o170_000;
+        if !effective_type.is_file() || context.list_only_enabled() {
+            return Ok(None);
+        }
+        let recorded = crate::local_copy::ensure_fake_super_source_stat(
+            context.options().fake_super_enabled(),
+            source,
+        )?;
+        Ok(recorded.and_then(|recorded| match recorded.mode & S_IFMT {
+            0o010_000 | 0o140_000 => Some(Placeholder::Special),
+            0o060_000 | 0o020_000 if !context.copy_devices_as_files_enabled() => {
+                Some(Placeholder::Device)
+            }
+            _ => None,
+        }))
+    }
+    #[cfg(not(all(unix, feature = "xattr")))]
+    {
+        let _ = (context, source, effective_type);
+        Ok(None)
+    }
 }

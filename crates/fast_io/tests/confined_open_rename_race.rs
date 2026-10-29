@@ -153,6 +153,7 @@ fn a_nested_parent_anchor_through_dotdot_survives_a_rename_load() {
             Ok(EntryMetadata::Std(_)) => {
                 panic!("lstat {attempt} of xy/leaf degraded to a path-based op")
             }
+            Ok(EntryMetadata::Overlaid(_)) => panic!("an lstat never answers with an overlay"),
             Err(err) => panic!("lstat {attempt} of xy/leaf failed under a rename load: {err}"),
         }
     }

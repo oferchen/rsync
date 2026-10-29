@@ -20,9 +20,30 @@ fn emitted(error: &io::Error, protocol_version: u8) -> Vec<u8> {
         let mut writer = ServerWriter::new_plain(&mut wire)
             .activate_multiplex()
             .expect("activate multiplex");
-        announce_error_exit(&mut writer, error, protocol_version);
+        announce_error_exit(&mut writer, error, protocol_version, true);
     }
     wire
+}
+
+/// upstream: cleanup.c:244-253 + io.c:1066-1075 - a sender queues the frame
+/// but only a socket daemon's `noop_io_until_death()` drains it, so over a
+/// remote shell nothing reaches the peer and it sees the connection close.
+#[test]
+fn a_sender_announces_only_over_a_daemon_socket() {
+    use crate::{ServerRole, error_exit_reaches_peer};
+    assert!(!error_exit_reaches_peer(ServerRole::Generator, false));
+    assert!(error_exit_reaches_peer(ServerRole::Generator, true));
+    assert!(error_exit_reaches_peer(ServerRole::Receiver, false));
+    assert!(error_exit_reaches_peer(ServerRole::Receiver, true));
+    let error = io::Error::from(io::ErrorKind::PermissionDenied);
+    let mut wire = Vec::new();
+    {
+        let mut writer = ServerWriter::new_plain(&mut wire)
+            .activate_multiplex()
+            .expect("activate multiplex");
+        announce_error_exit(&mut writer, &error, 32, false);
+    }
+    assert!(wire.is_empty(), "an unreachable frame is not written");
 }
 
 /// The frame upstream's `send_msg_int(MSG_ERROR_EXIT, code)` produces: the

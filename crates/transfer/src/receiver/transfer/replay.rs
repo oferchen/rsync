@@ -183,7 +183,7 @@ impl ReceiverContext {
             // upstream generator.c:2246 set_file_attrs for identical files). The
             // returned request list is discarded: the recorded stream, not the
             // local plan, decides what is transferred.
-            drop(self.build_files_to_transfer(
+            self.build_files_to_transfer(
                 writer,
                 dest_dir,
                 #[cfg(unix)]
@@ -194,7 +194,7 @@ impl ReceiverContext {
                 &mut stats,
                 acl_cache.as_deref(),
                 acl_id_map.as_deref(),
-            ));
+            )?;
             self.server_no_transfer_itemize.borrow_mut().clear();
             // The generator half above itemizes against the LOCAL quick-check (it
             // classifies which files it would transfer), but on a replay the
@@ -831,7 +831,7 @@ impl ReceiverContext {
                 }
             }
             self.run_segment_post_passes(range.clone(), setup, writer)?;
-            drop(self.build_files_to_transfer_in_range(
+            let walked = self.build_files_to_transfer_in_range(
                 range,
                 writer,
                 &setup.dest_dir,
@@ -843,10 +843,11 @@ impl ReceiverContext {
                 stats,
                 setup.acl_cache.as_deref(),
                 setup.acl_id_map.as_deref(),
-            ));
+            );
             *self.itemize_rows.borrow_mut() = recorded_rows;
             *self.event_rows.borrow_mut() = recorded_events;
             *self.server_no_transfer_itemize.borrow_mut() = recorded_no_transfer;
+            walked?;
         }
         Ok(())
     }

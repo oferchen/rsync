@@ -247,6 +247,11 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
 
 ### Fixed
+- A `--fake-super` rerun compares the destination's `%stat` record, not its owner-writable real mode, so 0444, setuid and setgid files no longer itemize `.f...p.....`, locally or on a pull (#8251)
+- A destination `%stat` that does not parse ends a `--fake-super` copy or pull with upstream's `Corrupt ... xattr attached to` line and exit 11 instead of exit 0, and the local copy prints the cause and the `error in file IO` trailer as two lines with an absolute path, as upstream does (#8251)
+- A remote-shell server sender that fails no longer sends `MSG_ERROR_EXIT`, so its client exits 12 like upstream's; a daemon sender over a socket still delivers its own exit code (#8251)
+- A server sender honours a forwarded `--max-alloc` when it reads the receiver's block checksums, ending with exit 22 where upstream's `receive_sums()` refuses the allocation (#8251)
+- `--fake-super` reads a `%stat` record's file type and device number as well as its mode and ids, on the source and the destination, so device, FIFO and socket placeholders rerun silently, itemize `.D..t......` when only the time changed and are recreated as `cDc` when the device number changes, locally and on a pull, as upstream does; a local copy no longer drops a placeholder's record (#8251)
 - `--read-batch` replays batches of more than 1000 files recorded with incremental recursion, including 3.5.1's. It failed with "unexpected per-file NDX while fetching file-list segment", because the sub-lists of such a batch arrive among the file data (#8261)
 - A local `--write-batch` now replays in upstream rsync as upstream's own batch does: each updated file carries its itemize bits (`>f.st......`, not `>f.........`) and the transfer root its `.d`/`cd` row; protocol 28-29 batches write the `io_error` word after the id lists and sum files with seeded MD4, where 3.5.1 aborted with "File-list index ... not in -1 - N"; the id lists name every owner and group; and an unreadable source directory sets `io_error` on the list it belongs to, so a replay no longer deletes inside it (#8266)
 
