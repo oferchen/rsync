@@ -121,6 +121,7 @@ impl ReceiverContext {
                 metadata_opts,
                 acl_cache.as_deref(),
                 acl_id_map.as_deref(),
+                &mut failed_dirs,
                 writer,
                 #[cfg(unix)]
                 sandbox.as_deref(),
@@ -190,7 +191,7 @@ impl ReceiverContext {
                 #[cfg(unix)]
                 sandbox.as_deref(),
                 metadata_opts,
-                None,
+                Some(&failed_dirs),
                 &mut metadata_errors,
                 &mut stats,
                 acl_cache.as_deref(),
