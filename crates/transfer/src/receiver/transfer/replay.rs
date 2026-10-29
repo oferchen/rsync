@@ -579,7 +579,15 @@ impl ReceiverContext {
                 apply_metadata_with_cached_stat(&file_path, &file_entry, metadata_opts, None)
             {
                 metadata_errors.push((file_path.clone(), meta_err.to_string()));
-            } else if let Some(ref xattr_list) = self.resolve_xattr_list(&file_entry) {
+            } else if let Some(mut xattr_list) = self.resolve_xattr_list(&file_entry) {
+                // upstream: xattrs.c:779-794 recv_xattr_request() - the full
+                // values the row carried under ITEM_REPORT_XATTR replace the
+                // digests the file list holds for them.
+                crate::receiver::apply_xattr_abbreviation_values(
+                    &mut xattr_list,
+                    &attrs.xattr_values,
+                );
+                let xattr_list = &xattr_list;
                 let filter = self.xattr_name_filter().map(|set| {
                     move |name: &str| set.xattr_name_allowed(name, filters::XattrSide::Receiver)
                 });

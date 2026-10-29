@@ -213,6 +213,7 @@ fn apply_hardlink_fields(
 pub(crate) fn capture_batch_file_entry(
     context: &mut CopyContext,
     source_path: &Path,
+    destination: &Path,
     relative_path: &Path,
     metadata: &fs::Metadata,
     is_top_dir: bool,
@@ -242,6 +243,8 @@ pub(crate) fn capture_batch_file_entry(
         numeric_ids,
     );
     apply_hardlink_fields(&mut entry, metadata, hlink_group, protocol_version);
+    let xattr_report = capture_batch_xattrs(context, source_path, destination, &mut entry);
+    context.set_batch_xattr_report(xattr_report);
     let acl = if context.batch_preserve_acls() {
         read_batch_source_acl(source_path, &entry, context.options().fake_super_enabled())
     } else {
@@ -281,6 +284,104 @@ pub(crate) fn capture_batch_file_entry(
     context.increment_batch_flist_index();
 
     Ok(())
+}
+
+/// Reads a source entry's xattrs into its batch flist entry and returns the
+/// `ITEM_REPORT_XATTR` value block its iflags carry when the destination's
+/// xattrs differ.
+///
+/// The list goes into the file list whole; the flist writer abbreviates each
+/// value over `MAX_FULL_DATUM` to its digest. Every such value the destination
+/// lacks is marked to be sent in full after the iflags, so the replaying
+/// receiver can apply it.
+///
+/// upstream: `flist.c:2058-2068 send_file_name()` - `get_xattr()` reads the
+/// list (`xattrs.c:322-345` gates links, specials and devices on their
+/// preserve options); `generator.c:571-582 itemize()` sets ITEM_REPORT_XATTR
+/// when `xattr_diff()` finds a difference, marking each long value the
+/// destination lacks XSTATE_TODO; `sender.c:482-484` then writes those values
+/// after the iflags (`xattrs.c:651-703 send_xattr_request()`), which the batch
+/// records (`io.c:2747 start_write_batch()`).
+#[cfg(all(any(unix, windows), feature = "xattr"))]
+fn capture_batch_xattrs(
+    context: &CopyContext,
+    source_path: &Path,
+    destination: &Path,
+    entry: &mut protocol::flist::FileEntry,
+) -> Option<Vec<u8>> {
+    let options = context.options();
+    let readable = entry.is_file()
+        || entry.is_dir()
+        || (entry.is_symlink() && options.links_enabled())
+        || (entry.is_device() && options.devices_enabled())
+        || (entry.is_special() && options.specials_enabled());
+    if !context.batch_preserve_xattrs() || !readable {
+        return None;
+    }
+    let rules = context
+        .filter_program()
+        .filter(|program| program.has_xattr_rules());
+    let sender_filter = rules.map(|program| {
+        move |name: &str| program.allows_xattr(name, ::filters::XattrSide::Sender)
+    });
+    let receiver_filter = rules.map(|program| {
+        move |name: &str| program.allows_xattr(name, ::filters::XattrSide::Receiver)
+    });
+    let sender_opts = ::metadata::XattrSendOptions {
+        role: ::metadata::XattrRole::Sender,
+        follow_symlinks: !entry.is_symlink(),
+        // upstream: xattrs.c:249 - the sender reads every namespace but
+        // system.*, whoever it runs as.
+        am_root: false,
+        // The local-copy options carry `-X` as a bool. upstream: xattrs.c:274.
+        preserve_xattrs: 1,
+        fake_super: context.options().fake_super_enabled(),
+        filter: sender_filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
+        checksum_seed: 0,
+    };
+    let list = ::metadata::read_xattrs_for_wire(source_path, &sender_opts).ok()?;
+    let dest_opts = ::metadata::XattrSendOptions {
+        role: ::metadata::XattrRole::Generator,
+        am_root: ::metadata::am_root(),
+        filter: receiver_filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
+        ..sender_opts
+    };
+    // upstream: generator.c:581 - an absent destination compares against an
+    // empty list (xattr_diff(file, NULL, 1)).
+    let dest = ::metadata::read_xattrs_for_wire(destination, &dest_opts).unwrap_or_default();
+    let report = protocol::xattr::xattr_diff(&list, &dest, 0).then(|| {
+        let mut request = list.clone();
+        for value in request.entries_mut() {
+            // upstream: xattrs.c:612-618 - only a long value is ever requested,
+            // and only when the destination does not hold the same one.
+            let held = dest
+                .entries()
+                .iter()
+                .any(|d| d.name() == value.name() && d.datum() == value.datum());
+            if value.should_abbreviate() && !held {
+                value.mark_todo();
+            }
+        }
+        let mut block = Vec::new();
+        protocol::xattr::send_sender_xattr_response(&mut block, &mut request)
+            .expect("writing to a Vec cannot fail");
+        block
+    });
+    if !list.is_empty() {
+        entry.set_xattr_list(list);
+    }
+    report
+}
+
+/// No xattrs are captured in a build without xattr support.
+#[cfg(not(all(any(unix, windows), feature = "xattr")))]
+fn capture_batch_xattrs(
+    _context: &CopyContext,
+    _source_path: &Path,
+    _destination: &Path,
+    _entry: &mut protocol::flist::FileEntry,
+) -> Option<Vec<u8>> {
+    None
 }
 
 /// Reads a source entry's access ACL and, for a directory, its default ACL -
