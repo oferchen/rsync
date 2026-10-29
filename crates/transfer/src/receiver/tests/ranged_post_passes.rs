@@ -66,7 +66,13 @@ fn sentinel(name: &str) -> FileEntry {
 /// Runs every post-pass over `range`, in the batch driver's order.
 fn run_range(ctx: &mut ReceiverContext, dest: &Path, range: std::ops::Range<usize>) {
     let mut w = TestDeletionWriter;
-    ctx.ensure_relative_parents_in_range(range.clone(), dest, None, &mut TestDeletionWriter);
+    ctx.ensure_relative_parents_in_range(
+        range.clone(),
+        dest,
+        None,
+        &crate::receiver::directory::FailedDirectories::new(),
+        &mut TestDeletionWriter,
+    );
     ctx.create_symlinks_in_range(range.clone(), dest, None, &mut w)
         .unwrap();
     ctx.create_specials_in_range(range.clone(), dest, None, None, None, &mut w)
@@ -80,7 +86,12 @@ fn run_range(ctx: &mut ReceiverContext, dest: &Path, range: std::ops::Range<usiz
 /// Runs every whole-list post-pass (the entry points the drivers call today).
 fn run_whole(ctx: &mut ReceiverContext, dest: &Path) {
     let mut w = TestDeletionWriter;
-    ctx.ensure_relative_parents(dest, None, &mut TestDeletionWriter);
+    ctx.ensure_relative_parents(
+        dest,
+        None,
+        &crate::receiver::directory::FailedDirectories::new(),
+        &mut TestDeletionWriter,
+    );
     ctx.create_symlinks(dest, None, &mut w).unwrap();
     ctx.create_specials(dest, None, None, None, &mut w).unwrap();
     ctx.process_missing_args_sentinels(dest, None, &mut w)
@@ -156,10 +167,22 @@ fn relative_parents_in_range_touch_only_their_segment() {
         &[0, 1],
     );
 
-    ctx.ensure_relative_parents_in_range(0..1, dest, None, &mut TestDeletionWriter);
+    ctx.ensure_relative_parents_in_range(
+        0..1,
+        dest,
+        None,
+        &crate::receiver::directory::FailedDirectories::new(),
+        &mut TestDeletionWriter,
+    );
     assert!(!dest.join("x").exists());
 
-    ctx.ensure_relative_parents_in_range(1..2, dest, None, &mut TestDeletionWriter);
+    ctx.ensure_relative_parents_in_range(
+        1..2,
+        dest,
+        None,
+        &crate::receiver::directory::FailedDirectories::new(),
+        &mut TestDeletionWriter,
+    );
     assert!(dest.join("x/y").is_dir());
 }
 

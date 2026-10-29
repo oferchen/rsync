@@ -511,6 +511,7 @@ fn daemon_rules_refuse_non_utf8_names() {
         &opts,
         None,
         None,
+        &mut crate::receiver::directory::FailedDirectories::new(),
         &mut writer,
         #[cfg(unix)]
         None,

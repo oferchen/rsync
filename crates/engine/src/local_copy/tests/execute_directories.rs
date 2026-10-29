@@ -1048,13 +1048,17 @@ fn execute_directory_fails_on_permission_denied_when_creating() {
     // Restore permissions for cleanup
     fs::set_permissions(&dest_root, PermissionsExt::from_mode(0o755)).expect("restore perms");
 
-    let error = result.expect_err("should fail with permission denied");
-    match error.kind() {
-        LocalCopyErrorKind::Io { source, .. } => {
-            assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
+    // upstream: generator.c:1873-1887 - the failed mkdir is reported where it
+    // happens, its contents are skipped, and the run ends RERR_PARTIAL rather
+    // than aborting with the mkdir's own errno.
+    let error = result.expect_err("a failed mkdir must still fail the run");
+    assert!(
+        matches!(error.kind(), LocalCopyErrorKind::PartialTransfer),
+        "unexpected error kind: {:?}",
+        error.kind()
+    );
+    assert_eq!(error.exit_code(), 23);
+    assert!(!dest_root.join("source").exists());
 }
 
 #[test]

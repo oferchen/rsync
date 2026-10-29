@@ -19,7 +19,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::super::create_failure::full_fname;
+use super::super::create_failure::{full_fname, report as report_generator_failure};
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, DeleteTiming, LocalCopyAction, LocalCopyChangeSet,
@@ -172,7 +172,23 @@ fn copy_directory_recursive_inner(
     let destination_state = if list_only {
         DestinationState::Ready(None)
     } else {
-        check_destination_state(context, destination, relative)?
+        match check_destination_state(context, destination, relative) {
+            // upstream: generator.c:1745-1746 + 1873-1887 - a stat that fails
+            // for any reason but ENOENT leaves the directory to the mkdir,
+            // whose failure is reported and the directory's contents skipped.
+            Err(error) if error.is_io_error() => {
+                if let crate::local_copy::LocalCopyErrorKind::Io { source, .. } = error.kind() {
+                    report_generator_failure(
+                        context,
+                        &format!("recv_generator: mkdir {} failed", full_fname(destination)),
+                        source,
+                    );
+                    eprintln!("*** Skipping any contents from this failed directory ***");
+                }
+                return Err(error.reported());
+            }
+            other => other?,
+        }
     };
     if let DestinationState::Skipped(skip) = destination_state {
         record_existence_skip(context, skip, metadata, relative);
@@ -307,6 +323,8 @@ fn copy_directory_recursive_inner(
     let _dir_merge_guard = dir_merge_guard;
 
     let directory_ready = Cell::new(!destination_missing && !list_only);
+    // Set once this directory's mkdir has failed and been reported.
+    let directory_failed = Cell::new(false);
     let mut created_directory_on_disk = false;
     let creation_record_pending = destination_missing && relative.is_some();
     let mut record_emitted = false;
@@ -488,15 +506,30 @@ fn copy_directory_recursive_inner(
             }
             directory_ready.set(true);
         } else {
-            if let Some(parent) = destination.parent() {
-                context.prepare_parent_directory(parent)?;
-            }
-            if context.implied_dirs_enabled() {
-                fs::create_dir_all(destination)
-                    .map_err(|error| LocalCopyError::io("create directory", destination, error))?;
-            } else {
-                fs::create_dir(destination)
-                    .map_err(|error| LocalCopyError::io("create directory", destination, error))?;
+            let created = match destination
+                .parent()
+                .map(|p| context.prepare_parent_directory(p))
+            {
+                Some(Err(error)) => match context.unusable_parent_cause(&error, destination) {
+                    Some(cause) => Err(cause),
+                    None => return Err(error),
+                },
+                _ if context.implied_dirs_enabled() => fs::create_dir_all(destination),
+                _ => fs::create_dir(destination),
+            };
+            if let Err(error) = created {
+                // upstream: generator.c:1873-1887 - the failed mkdir is the
+                // directory's own error, reported once; every entry below it
+                // is skipped (`skip_dir`) and the run ends RERR_PARTIAL.
+                if !directory_failed.replace(true) {
+                    report_generator_failure(
+                        context,
+                        &format!("recv_generator: mkdir {} failed", full_fname(destination)),
+                        &error,
+                    );
+                    eprintln!("*** Skipping any contents from this failed directory ***");
+                }
+                return Err(LocalCopyError::io("create directory", destination, error).reported());
             }
             context.register_progress();
             context.register_created_path(destination, CreatedEntryKind::Directory, false);

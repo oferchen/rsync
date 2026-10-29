@@ -2809,6 +2809,7 @@ mod itemize_order_tests {
             &opts,
             None,
             None,
+            &mut crate::receiver::directory::FailedDirectories::new(),
             &mut writer,
             #[cfg(unix)]
             None,
