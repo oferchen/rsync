@@ -1045,9 +1045,10 @@ fn process_approved_module(
     // discards anyway. Joining before that loop prevents two readers competing
     // for the same socket. `Drop` on `streams` is a backstop for early-return
     // paths above that never reach this point.
-    if let Some(drain) = streams.drain_handle.take() {
+    let drain_holds_unread = streams.drain_handle.take().is_some_and(|drain| {
         drain.stop();
-    }
+        drain.holds_unread()
+    });
 
     // Graceful TCP shutdown: drain peer's goodbye, then linger + close.
     //
@@ -1126,7 +1127,23 @@ fn process_approved_module(
     // For stdio streams (remote-shell daemon mode), TCP shutdown is not
     // applicable - the pipe/fd closes naturally when dropped.
 
-    if supports_tcp_shutdown {
+    // upstream: a failing daemon receiver closes without the drain. Its
+    // generator reads only the receiver child's pipe (main.c:1150-1157), so
+    // noop_io_until_death() (io.c:1066-1085) never consumes the client's
+    // socket data; cleanup.c:262-265 sleeps 100 ms and close_all() closes the
+    // socket with that data unread, which the client sees as a reset.
+    // Bytes the drain thread read but the transfer never consumed are that
+    // same unread data, so a zero linger gives the close the reset the kernel
+    // gives a socket closed with data still queued.
+    let abortive_close = role == ServerRole::Receiver && exit_status != 0;
+    if abortive_close {
+        std::thread::sleep(Duration::from_millis(100));
+        if drain_holds_unread && let Some(tcp) = ctx.reader.get_mut().tcp_stream() {
+            let _ = socket2::SockRef::from(tcp).set_linger(Some(Duration::ZERO));
+        }
+    }
+
+    if supports_tcp_shutdown && !abortive_close {
         let stream = ctx.reader.get_mut();
 
         // SO_LINGER ensures the final goodbye TX bytes the engine wrote

@@ -1204,9 +1204,6 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     let negotiated_protocol = handshake.protocol.as_u8();
     let error_exit_reaches_peer =
         error_exit_reaches_peer(config.role, config.connection.is_daemon_connection);
-    // Only the daemon sender's report is forwarded; a daemon receiver keeps
-    // reporting through its own message paths.
-    let fatal_report = fatal_report.filter(|_| config.role == ServerRole::Generator);
 
     let outcome: ServerResult = 'dispatch: {
         match config.role {

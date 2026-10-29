@@ -448,7 +448,12 @@ impl ReceiverContext {
             if self.config.fake_super
                 && let Some(meta) = dest_meta.take()
             {
-                dest_meta = Some(metadata::fold_fake_super_stat(&file_path, meta)?);
+                dest_meta = Some(metadata::fold_fake_super_stat(&file_path, meta).map_err(
+                    |error| {
+                        let name = self.full_fname_in_dest(dest_dir, &file_path);
+                        metadata::rename_corrupt_fake_super(error, name)
+                    },
+                )?);
             }
             // upstream: generator.c:2822-2827 generate_files() - the per-file
             // generate loop pokes maybe_send_keepalive once the I/O lull has
