@@ -849,7 +849,9 @@ impl GeneratorContext {
                 .dir_flist_growth
                 .expand(FLIST_START_LARGE, ProcessRole::Sender)?;
         }
-        for i in 0..count {
+        // upstream: flist.c:2988-3009 - entries go out in the order the walk made
+        // them; the list is sorted only afterwards (flist.c:3059).
+        for i in self.send_order(0..count) {
             let entry = &self.file_list[i];
             self.prepare_pending_acl(entry, i, &mut flist_writer);
             flist_writer.write_entry(&mut probed, entry)?;
@@ -988,10 +990,12 @@ impl GeneratorContext {
         flist_writer.set_first_ndx(seg_ndx_start);
 
         // Write file entries from the reordered file_list. Each sub-list is a
-        // fresh list (flist.c:2657 flist_new) grown one entry at a time.
+        // fresh list (flist.c:2657 flist_new) grown one entry at a time, in
+        // readdir order (send_directory(), flist.c:2397-2421), and sorted only
+        // once sent (flist.c:2702).
         let end = segment.flist_start + segment.count;
         let mut growth = FlistGrowth::default();
-        for i in segment.flist_start..end {
+        for i in self.send_order(segment.flist_start..end) {
             let entry = &self.file_list[i];
             self.prepare_pending_acl(entry, i, flist_writer);
             flist_writer.write_entry(writer, entry)?;

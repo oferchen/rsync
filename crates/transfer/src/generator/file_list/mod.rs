@@ -163,19 +163,23 @@ impl GeneratorContext {
             // carried as a second, unexercised spelling of the same rule.
             // `non_relative_walk_base` is where the spelling does its work.
             let operand_is_dotdir = operand_has_dotdir_marker(base_path);
+            // upstream: flist.c:2928-2932 - the first operand whose relative
+            // name begins with a bare `./` sends the synthetic `.` once its
+            // containing directory is entered, ahead of the operand's own
+            // link_stat. It is dropped when directories are not transferred
+            // (send_file1(), flist.c:2931 "skipping directory .").
+            if relative_paths && !implied_dot_dir && operand_sets_implied_dot(base_path) {
+                implied_dot_dir = true;
+                self.emit_implied_dot_dir()?;
+            }
+            let operand_start = self.file_list.len();
             // upstream: flist.c:2491-2511 - pre-stat each top-level source and
             // apply missing_args handling. Separates "source never existed" from
             // "source vanished during recursive walk".
             if !self.try_walk_source_entry(&base, &path, operand_is_dotdir)? {
                 continue;
             }
-            // upstream: flist.c:2608-2609 - the first operand whose relative
-            // name begins with a bare `./` arms `implied_dot_dir` (set after
-            // the operand's containing dir is validated, mirrored here by the
-            // successful walk above).
-            if relative_paths && !implied_dot_dir && operand_sets_implied_dot(base_path) {
-                implied_dot_dir = true;
-            }
+            let walked = self.file_list.len() - operand_start;
             // upstream: flist.c:2769 - `if (relative_paths &&
             // protocol_version >= 30) implied_dirs = 1;` forces the sender to
             // emit flagged implied parent dirs at protocol >= 30 regardless of
@@ -185,38 +189,15 @@ impl GeneratorContext {
             // receiver recreates them via make_path (generator.c:1718) without
             // their source metadata. Mirror both: emit when implied dirs are on
             // OR the protocol forces them.
+            //
+            // upstream: flist.c:2972-2987 - send_implied_dirs() runs before the
+            // operand's send_file_name(), so the parents go out first. The
+            // operand is stat'd before them, which is why they are emitted after
+            // the walk and rotated ahead of its entries.
             if relative_paths && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
             {
                 self.emit_implied_parents(&base, &path, &mut implied_ancestors)?;
-            }
-        }
-
-        // upstream: flist.c:2897-2899 - a positional operand beginning with a
-        // bare `./` (implied_dot_dir) makes send_file_list() emit a single
-        // synthetic `.` transfer-root entry via
-        // send_file_name(".", ..., (flags | FLAG_IMPLIED_DIR) & ~FLAG_CONTENT_DIR).
-        // Upstream routes that call through send_file1(), which drops a
-        // directory when xfer_dirs is off (flist.c:2931, printing "skipping
-        // directory ."), so the `.` rides the wire ONLY when directories are
-        // transferred (`-r` / `-d` / list-only; --files-from forces xfer_dirs on
-        // and takes the build_file_list_with_base path instead). Mirror both:
-        // emit exactly once, gated on the same xfer_dirs condition. The `.` maps
-        // to the sender's current directory (the transfer root); mark it
-        // FLAG_IMPLIED_DIR with FLAG_CONTENT_DIR cleared so a real receiver does
-        // not scope `--delete` over the destination root. The post-loop sort
-        // orders it ahead of every other entry (flist.c f_name_cmp).
-        let xfer_dirs =
-            self.config.flags.recursive || self.config.flags.dirs || self.config.flags.list_only;
-        if implied_dot_dir && xfer_dirs {
-            let dot_root = Path::new(".");
-            if let Ok(meta) = std::fs::symlink_metadata(dot_root).map(EntryMetadata::from)
-                && meta.is_dir()
-            {
-                // upstream: flist.c:2996 - the implied dot dir is sent with
-                // NO_FILTERS (0).
-                let mut dot_entry = self.create_entry(dot_root, PathBuf::from("."), &meta, 0)?;
-                mark_implied_dir(&mut dot_entry);
-                self.push_file_item(dot_entry, dot_root.to_path_buf());
+                self.move_tail_ahead_of(operand_start, walked);
             }
         }
 
@@ -225,26 +206,8 @@ impl GeneratorContext {
         // INC_RECURSE segmentation, so sender/receiver ndx values stay aligned.
         self.drop_unconvertible_entries();
 
-        // upstream: flist.c:f_name_cmp() - sort both arrays via indirect permutation.
-        // --qsort uses unstable sort (flist.c:3803). flist.c:3803 - below
-        // protocol 29 a directory sorts as a plain item.
-        {
-            let pre29 = self.protocol.as_u8() < 29;
-            let _t = PhaseTimer::new("file-list-sort");
-            self.file_list
-                .sort_with_parallel(&mut self.source_bases, self.config.qsort, pre29);
-        }
-
-        // upstream: flist.c:3274-3285 flist_sort_and_clean() - a non-incremental
-        // sender does NOT run the duplicate-clean pass; it transmits every entry
-        // as-is so the receiver's in-place tombstones keep both sides' NDX
-        // numbering aligned with this full array. Only under INC_RECURSE does the
-        // sender clean each sub-list (matching the receiver's identical pass).
-        // A list with no duplicate names is unchanged either way, so this is a
-        // no-op for normal transfers.
+        self.sort_and_clean_file_list();
         let inc_recurse = self.inc_recurse();
-        self.file_list
-            .dedup_with_parallel(&mut self.source_bases, true, inc_recurse);
 
         // upstream: flist.c:824-831 - numbered in send order. Under INC_RECURSE
         // the send order only exists once the list is partitioned, so
@@ -386,6 +349,12 @@ impl GeneratorContext {
         // considered, so the main loop reports the refusal without walking the
         // entry - and printing upstream's untrusted-symlink notice - twice.
         let mut refused: HashMap<PathBuf, io::Error> = HashMap::new();
+        // upstream: flist.c:2983-2986 sends an argument's implied parents just
+        // before the argument itself, so each entry's parents are held here and
+        // pushed when the main loop reaches that entry.
+        let mut implied: Vec<Vec<(FileEntry, PathBuf)>> = std::iter::repeat_with(Vec::new)
+            .take(entries.len())
+            .collect();
         // upstream: options.c:2216-2217 - `if (!relative_paths) implied_dirs = 0;`.
         // Under --no-relative (relative_paths == 0) the sender FLATTENS every
         // --files-from entry to its transmitted name and emits NO implied parent
@@ -406,7 +375,7 @@ impl GeneratorContext {
         if self.config.flags.relative
             && (!self.config.flags.no_implied_dirs || self.protocol.as_u8() >= 30)
         {
-            for entry in entries {
+            for (entry, parents) in entries.iter().zip(implied.iter_mut()) {
                 // upstream: flist.c:2937-2946 - an entry whose stat fails is
                 // dropped before flist.c:2983 sends its implied parents, so a
                 // parent the ownership walk refuses is never listed either.
@@ -447,7 +416,7 @@ impl GeneratorContext {
                         // FLAG_CONTENT_DIR so a real upstream receiver does
                         // not scan them for --delete (over-delete data loss).
                         mark_implied_dir(&mut file_entry);
-                        self.push_file_item(file_entry, full);
+                        parents.push((file_entry, full));
                         // Record the ancestor only once an entry has actually been
                         // emitted. Marking a skipped ancestor as handled suppresses
                         // every later retry AND adds it to `implied_only_dirs`, which
@@ -476,7 +445,7 @@ impl GeneratorContext {
         // wire-side relative name reflects the `/./` anchor split (e.g.
         // `from/./dir/subdir` transmits as `dir/subdir`, not
         // `from/dir/subdir`).
-        for entry in entries {
+        for (entry, parents) in entries.iter().zip(implied) {
             // upstream: flist.c:2491-2511 - pre-stat each --files-from entry
             // and apply missing_args handling before walk_path. This separates
             // "source never existed" (ENOENT at flist time) from "source vanished
@@ -484,6 +453,9 @@ impl GeneratorContext {
             if let Some(error) = refused.get(&entry.path) {
                 self.report_files_from_refusal(&entry.path, error);
                 continue;
+            }
+            for (parent, full) in parents {
+                self.push_file_item(parent, full);
             }
             let scoped: HashSet<PathBuf> = implied_only_dirs
                 .iter()
@@ -530,22 +502,8 @@ impl GeneratorContext {
         // like the recursive walk, so the same strict drop applies here.
         self.drop_unconvertible_entries();
 
-        // upstream: flist.c:f_name_cmp() - sort via indirect permutation
-        {
-            let pre29 = self.protocol.as_u8() < 29;
-            let _t = PhaseTimer::new("file-list-sort");
-            self.file_list
-                .sort_with_parallel(&mut self.source_bases, self.config.qsort, pre29);
-        }
-
-        // upstream: flist.c:3274-3285 flist_sort_and_clean() - the --files-from
-        // build path. A non-incremental sender transmits duplicates as-is so the
-        // receiver's in-place tombstones keep NDX aligned; only under INC_RECURSE
-        // does the sender clean each sub-list. No-op when there are no duplicate
-        // names.
+        self.sort_and_clean_file_list();
         let inc_recurse = self.inc_recurse();
-        self.file_list
-            .dedup_with_parallel(&mut self.source_bases, true, inc_recurse);
 
         // upstream: flist.c:824-831 - numbered in send order. Under INC_RECURSE
         // the send order only exists once the list is partitioned, so
@@ -559,6 +517,87 @@ impl GeneratorContext {
         self.collect_id_mappings()?;
 
         Ok(self.file_list.len())
+    }
+
+    /// Sorts the built list into NDX order and, under INC_RECURSE, cleans it,
+    /// keeping `source_bases` and `send_positions` aligned with it.
+    ///
+    /// The list arrives in send order, so the sort's permutation is the send
+    /// position of every entry.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:3059` - `flist_sort_and_clean(flist, 0)` runs after the
+    ///   entries are written.
+    /// - `flist.c:3803` - `--qsort` sorts unstably; below protocol 29 a
+    ///   directory sorts as a plain item.
+    /// - `flist.c:3274-3285` - a non-incremental sender skips the clean pass and
+    ///   transmits every entry, so the receiver's tombstones keep both sides'
+    ///   NDX numbering aligned. Only under INC_RECURSE does the sender clean.
+    fn sort_and_clean_file_list(&mut self) {
+        let pre29 = self.protocol.as_u8() < 29;
+        {
+            let _t = PhaseTimer::new("file-list-sort");
+            self.send_positions =
+                self.file_list
+                    .sort_with_parallel(&mut self.source_bases, self.config.qsort, pre29);
+        }
+        if self.inc_recurse() {
+            let mut columns: Vec<_> = std::mem::take(&mut self.source_bases)
+                .into_iter()
+                .zip(std::mem::take(&mut self.send_positions))
+                .collect();
+            self.file_list.dedup_with_parallel(&mut columns, true, true);
+            (self.source_bases, self.send_positions) = columns.into_iter().unzip();
+        }
+    }
+
+    /// Moves the last `tail` entries ahead of the `len` entries before them,
+    /// which start at `start`, keeping `source_bases` aligned.
+    ///
+    /// The list is still in send order when this runs, so this reorders what
+    /// goes out on the wire.
+    fn move_tail_ahead_of(&mut self, start: usize, len: usize) {
+        let tail = self.file_list.len() - start - len;
+        if tail == 0 || len == 0 {
+            return;
+        }
+        self.file_list.as_mut_vec()[start..].rotate_right(tail);
+        self.source_bases[start..].rotate_right(tail);
+    }
+
+    /// Emits the synthetic `.` transfer root that a `--relative` operand
+    /// beginning with a bare `./` implies.
+    ///
+    /// The `.` maps to the sender's current directory. It carries
+    /// FLAG_IMPLIED_DIR with FLAG_CONTENT_DIR cleared so a real receiver does
+    /// not scope `--delete` over the destination root.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2929-2931` - `send_file_name(".", ..., (flags |
+    ///   FLAG_IMPLIED_DIR) & ~FLAG_CONTENT_DIR, ...)`. It goes through
+    ///   send_file1(), which drops a directory when `xfer_dirs` is off
+    ///   ("skipping directory ."), so the `.` rides the wire only with `-r`,
+    ///   `-d` or list-only (--files-from forces `xfer_dirs` and builds through
+    ///   `build_file_list_with_base` instead).
+    fn emit_implied_dot_dir(&mut self) -> io::Result<()> {
+        let xfer_dirs =
+            self.config.flags.recursive || self.config.flags.dirs || self.config.flags.list_only;
+        if !xfer_dirs {
+            return Ok(());
+        }
+        let dot_root = Path::new(".");
+        if let Ok(meta) = std::fs::symlink_metadata(dot_root).map(EntryMetadata::from)
+            && meta.is_dir()
+        {
+            // upstream: flist.c:2996 - the implied dot dir is sent with
+            // NO_FILTERS (0).
+            let mut dot_entry = self.create_entry(dot_root, PathBuf::from("."), &meta, 0)?;
+            mark_implied_dir(&mut dot_entry);
+            self.push_file_item(dot_entry, dot_root.to_path_buf());
+        }
+        Ok(())
     }
 
     /// Emits a directory entry for every implied ancestor of a `--relative`

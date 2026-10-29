@@ -106,9 +106,11 @@ impl GeneratorContext {
             .into_iter()
             .map(Some)
             .collect();
+        let positions = std::mem::take(&mut self.send_positions);
         let total = file_entries.len();
         self.file_list = protocol::flist::DualFileList::with_capacity(total);
         self.source_bases = Vec::with_capacity(total);
+        self.send_positions = Vec::with_capacity(positions.len());
         let mut flat_of = vec![usize::MAX; total];
         let mut place = |ctx: &mut Self, i: usize| -> usize {
             let flat = ctx.file_list.len();
@@ -122,6 +124,7 @@ impl GeneratorContext {
                     .take()
                     .expect("each source base is planned exactly once"),
             );
+            ctx.send_positions.extend(positions.get(i).copied());
             flat
         };
         for &i in &plan.initial {
@@ -217,11 +220,15 @@ impl GeneratorContext {
             Err(e) => return Err(e),
         }
         self.scan_one_directory(base, dir_path)?;
-        self.file_list.sort_tail_with_parallel(
+        let positions = self.file_list.sort_tail_with_parallel(
             flist_start,
             &mut self.source_bases,
             self.config.qsort,
         );
+        // Only the order within this sub-list matters, so the tail's own
+        // offsets serve as its send positions.
+        self.send_positions.resize(flist_start, 0);
+        self.send_positions.extend(positions);
         let count = self.file_list.len() - flist_start;
         Ok(PendingSegment {
             parent_dir_ndx,
