@@ -1,39 +1,31 @@
-//! Mode-switching writer enum dispatching plain, multiplex, and compressed I/O.
+//! Mode-switching writer enum dispatching plain and multiplex I/O.
 //!
 //! Mirrors upstream rsync's `io_start_multiplex_out()` / `io_start_buffering_out()`
 //! transitions where the global I/O buffer state is modified at runtime.
 
 use std::io::{self, IoSlice, Write};
 use std::net::{Shutdown, TcpStream};
-use std::num::NonZeroU8;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use compress::algorithm::CompressionAlgorithm;
-use compress::zlib::CompressionLevel;
 use protocol::MessageCode;
 
 use super::multiplex::{BatchRoute, MultiplexWriter};
-use crate::compressed_writer::CompressedWriter;
 use crate::is_early_close_error;
 
 /// Writer that can switch from plain to multiplex mode after protocol setup.
 ///
 /// Upstream rsync modifies global I/O buffer state via `io_start_multiplex_out()`.
 /// We achieve the same by wrapping the writer and delegating based on mode.
-#[allow(clippy::large_enum_variant)]
 #[allow(private_interfaces)]
 pub enum ServerWriter<W: Write> {
     /// Plain mode - write data directly without framing.
     Plain(W),
     /// Multiplex mode - wrap data in MSG_DATA frames.
     Multiplex(MultiplexWriter<W>),
-    /// Compressed+Multiplex mode - compress then multiplex.
-    Compressed(CompressedWriter<MultiplexWriter<W>>),
-    /// Temporary sentinel state used during in-place transformations
-    /// (e.g. `mem::replace` in [`Self::activate_multiplex_in_place`] and
-    /// [`Self::finalize_compression`]). Any I/O operation while in this
-    /// state returns an `InvalidInput` error.
+    /// Temporary sentinel state used during the in-place transformation in
+    /// [`Self::activate_multiplex_in_place`]. Any I/O operation while in
+    /// this state returns an `InvalidInput` error.
     Taken,
 }
 
@@ -58,64 +50,6 @@ impl<W: Write> ServerWriter<W> {
                 io::ErrorKind::AlreadyExists,
                 "multiplex already active",
             )),
-            Self::Compressed(_) => Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "compression already active",
-            )),
-            Self::Taken => Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "ServerWriter in invalid Taken state",
-            )),
-        }
-    }
-
-    /// Activates compression on top of multiplex mode.
-    ///
-    /// This must be called AFTER `activate_multiplex()` to match upstream behavior.
-    /// Upstream rsync activates compression in `io.c:io_start_buffering_out()`
-    /// which wraps the already-multiplexed stream.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The writer is not in multiplex mode (compression requires multiplex first)
-    /// - Compression is already active
-    /// - The compression algorithm is not supported in this build
-    pub fn activate_compression(
-        self,
-        algorithm: CompressionAlgorithm,
-        level: CompressionLevel,
-    ) -> io::Result<Self> {
-        self.activate_compression_with_workers(algorithm, level, None)
-    }
-
-    /// Like [`activate_compression`](Self::activate_compression) but plumbs
-    /// `--compress-threads=N` into `ZSTD_c_nbWorkers`. upstream: `token.c:752`.
-    pub fn activate_compression_with_workers(
-        self,
-        algorithm: CompressionAlgorithm,
-        level: CompressionLevel,
-        workers: Option<NonZeroU8>,
-    ) -> io::Result<Self> {
-        match self {
-            Self::Multiplex(mux) => {
-                // upstream: io.c:write_buf() tees data to batch_fd at the
-                // write_buf level, which is AFTER compression. Keep the
-                // batch recorder on MultiplexWriter so it captures the
-                // compressed wire bytes, matching upstream behavior. The
-                // batch header records do_compression=true so replay knows
-                // to decompress.
-                let compressed = CompressedWriter::with_workers(mux, algorithm, level, workers)?;
-                Ok(Self::Compressed(compressed))
-            }
-            Self::Plain(_) => Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "compression requires multiplex mode first",
-            )),
-            Self::Compressed(_) => Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "compression already active",
-            )),
             Self::Taken => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "ServerWriter in invalid Taken state",
@@ -126,7 +60,7 @@ impl<W: Write> ServerWriter<W> {
     /// Returns true if multiplex is active.
     #[inline]
     pub const fn is_multiplexed(&self) -> bool {
-        matches!(self, Self::Multiplex(_) | Self::Compressed(_))
+        matches!(self, Self::Multiplex(_))
     }
 
     /// Payload bytes written for the wire so far (upstream `total_data_written`).
@@ -136,7 +70,6 @@ impl<W: Write> ServerWriter<W> {
     pub fn data_written(&self) -> u64 {
         match self {
             Self::Multiplex(mux) => mux.data_written(),
-            Self::Compressed(compressed) => compressed.inner_ref().data_written(),
             Self::Plain(_) | Self::Taken => 0,
         }
     }
@@ -176,8 +109,7 @@ impl<W: Write> ServerWriter<W> {
 
     /// Sends a control message (non-DATA message) through the multiplexed stream.
     ///
-    /// Control messages bypass the compression layer (if active) to match upstream
-    /// rsync behavior where they go directly through the multiplex layer.
+    /// Control messages go straight through the multiplex layer, as in upstream.
     ///
     /// # Errors
     ///
@@ -187,7 +119,6 @@ impl<W: Write> ServerWriter<W> {
     pub fn send_message(&mut self, code: MessageCode, payload: &[u8]) -> io::Result<()> {
         match self {
             Self::Multiplex(mux) => mux.send_message(code, payload),
-            Self::Compressed(compressed) => compressed.inner_mut().send_message(code, payload),
             Self::Plain(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "cannot send control messages in plain mode",
@@ -209,7 +140,6 @@ impl<W: Write> ServerWriter<W> {
     pub fn set_allowed_lull(&mut self, lull: Option<Duration>) {
         match self {
             Self::Multiplex(mux) => mux.set_allowed_lull(lull),
-            Self::Compressed(compressed) => compressed.inner_mut().set_allowed_lull(lull),
             Self::Plain(_) | Self::Taken => {}
         }
     }
@@ -225,7 +155,6 @@ impl<W: Write> ServerWriter<W> {
     pub fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         match self {
             Self::Multiplex(mux) => mux.maybe_send_keepalive(),
-            Self::Compressed(compressed) => compressed.inner_mut().maybe_send_keepalive(),
             Self::Plain(_) | Self::Taken => Ok(false),
         }
     }
@@ -240,7 +169,6 @@ impl<W: Write> ServerWriter<W> {
     pub fn answer_keepalive(&mut self) -> io::Result<bool> {
         match self {
             Self::Multiplex(mux) => mux.answer_keepalive(),
-            Self::Compressed(compressed) => compressed.inner_mut().answer_keepalive(),
             Self::Plain(_) | Self::Taken => Ok(false),
         }
     }
@@ -253,7 +181,6 @@ impl<W: Write> ServerWriter<W> {
     pub fn allowed_lull(&self) -> Option<Duration> {
         match self {
             Self::Multiplex(mux) => mux.allowed_lull(),
-            Self::Compressed(compressed) => compressed.inner_ref().allowed_lull(),
             Self::Plain(_) | Self::Taken => None,
         }
     }
@@ -367,27 +294,18 @@ impl<W: Write> ServerWriter<W> {
         self.send_message(MessageCode::ErrorExit, &exit_code.to_le_bytes())
     }
 
-    /// Attaches a batch recorder for capturing compressed protocol data.
+    /// Attaches a batch recorder for capturing protocol data.
     ///
-    /// The recorder is always attached to the `MultiplexWriter` so it captures
-    /// data at the same level as upstream rsync's `write_buf()` tee to `batch_fd`.
-    /// When compression is active, this means capturing **post-compression**
-    /// (compressed) wire bytes. The batch header records `do_compression: true`
-    /// so replay knows to decompress the tokens.
+    /// The recorder is attached to the `MultiplexWriter` so it captures data at
+    /// the same level as upstream rsync's `write_buf()` tee to `batch_fd`, before
+    /// multiplex framing. Compressed tokens are already compressed by the token
+    /// encoder when they reach this layer.
     ///
-    /// upstream: io.c:write_buf() tees to batch_fd after compression but before
-    /// multiplex framing.
+    /// upstream: io.c:write_buf() tees to batch_fd before multiplex framing.
     pub fn set_batch_recorder(&mut self, recorder: Arc<Mutex<dyn Write + Send>>) -> io::Result<()> {
         match self {
             Self::Multiplex(mux) => {
                 mux.batch_recorder = Some(recorder);
-                Ok(())
-            }
-            Self::Compressed(compressed) => {
-                // upstream: io.c:write_buf() tees at the write_buf level, which
-                // is the MultiplexWriter's input (compressed data). Attach to the
-                // inner MultiplexWriter to capture compressed wire bytes.
-                compressed.inner_mut().batch_recorder = Some(recorder);
                 Ok(())
             }
             _ => Err(io::Error::new(
@@ -406,66 +324,14 @@ impl<W: Write> ServerWriter<W> {
     pub fn set_batch_route(&mut self, route: BatchRoute) {
         match self {
             Self::Multiplex(mux) => mux.batch_route = route,
-            Self::Compressed(compressed) => compressed.inner_mut().batch_route = route,
             Self::Plain(_) | Self::Taken => {}
-        }
-    }
-
-    /// Finalises an active compression stream so the inner codec emits any
-    /// trailing bytes (zlib Z_FINISH end-of-stream marker, lz4 frame footer,
-    /// zstd end-of-frame epilogue) before the connection is closed.
-    ///
-    /// In Plain or Multiplex mode this is a plain [`flush`](Self::flush). In
-    /// Compressed mode it consumes the `CompressedWriter`, calls its
-    /// `finish()` to emit the end-of-stream trailer, and downgrades the
-    /// `ServerWriter` back to [`Self::Multiplex`]. After this the underlying
-    /// multiplex stream is fully drained and any subsequent writes go through
-    /// the plain multiplex path.
-    ///
-    /// Deviation from upstream: upstream never finalises the stream;
-    /// `token.c:send_deflated_token()` ends each file with `Z_SYNC_FLUSH`
-    /// (token.c:446-447) and zstd with `ZSTD_e_flush` (token.c:799). Without
-    /// this finalisation, the receiver's
-    /// `CompressedReader` (`crate::compressed_reader::CompressedReader`) may be
-    /// waiting on the closing block of the deflate stream while the daemon
-    /// has already shut down the socket, producing the "connection
-    /// unexpectedly closed (N bytes received so far)" error mid-goodbye.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the codec or the underlying writer report one
-    /// while emitting trailer bytes. Early-close errors are surfaced to the
-    /// caller; callers that tolerate dry-run / daemon-killed scenarios should
-    /// inspect them via `is_early_close_error`.
-    pub fn finalize_compression(&mut self) -> io::Result<()> {
-        let old_self = std::mem::replace(self, Self::Taken);
-
-        match old_self {
-            Self::Compressed(compressed) => match compressed.finish() {
-                Ok(mut mux) => {
-                    mux.flush()?;
-                    *self = Self::Multiplex(mux);
-                    Ok(())
-                }
-                Err(e) => {
-                    *self = Self::Taken;
-                    Err(e)
-                }
-            },
-            other => {
-                *self = other;
-                self.flush()
-            }
         }
     }
 
     /// Drains every user-space buffer in the writer graph so the next byte
     /// any caller emits goes straight to the kernel.
     ///
-    /// Idempotent. Calls [`finalize_compression`](Self::finalize_compression)
-    /// to emit the codec end-of-stream trailer (zlib `Z_FINISH`, lz4 footer,
-    /// zstd epilogue), which itself flushes the multiplex `BufWriter`. In
-    /// Multiplex / Plain mode it degrades to a plain [`flush`](Self::flush).
+    /// Idempotent: a [`flush`](Self::flush) that tolerates a closed peer.
     ///
     /// Peer-already-closed errors are downgraded to `Ok(())` because the
     /// transfer is finished by the time this barrier runs - the peer has
@@ -477,9 +343,9 @@ impl<W: Write> ServerWriter<W> {
     /// The audit traced the cluster-A wire-cutoffs (~2.25 MB on batch-mode,
     /// alt-dest, and `daemon-refuse-compress`; ~615 KB on
     /// `daemon-gzip-download`) to user-space bytes still sitting in the
-    /// multiplex `BufWriter` / codec trailer when the daemon's
+    /// multiplex buffer when the daemon's
     /// `SO_LINGER` + `shutdown(SHUT_WR)` teardown fired. Driving
-    /// `flush_all_pending` after `handle_goodbye_with_finalizer` returns
+    /// `flush_all_pending` after the goodbye handshake returns
     /// makes the drain observable and error-surfacing instead of relying
     /// on the implicit `Drop` + `SO_LINGER` hand-off.
     ///
@@ -493,10 +359,10 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// # Errors
     ///
-    /// Returns an error if a non-early-close I/O error fires during codec
-    /// finalisation or multiplex flush.
+    /// Returns an error if a non-early-close I/O error fires during the
+    /// flush.
     pub fn flush_all_pending(&mut self) -> io::Result<()> {
-        match self.finalize_compression() {
+        match self.flush() {
             Ok(()) => Ok(()),
             Err(e) if is_early_close_error(&e) => Ok(()),
             Err(e) => Err(e),
@@ -522,7 +388,6 @@ impl<W: Write> ServerWriter<W> {
                 w.flush()
             }
             Self::Multiplex(mux) => mux.write_raw(data),
-            Self::Compressed(compressed) => compressed.inner_mut().write_raw(data),
             Self::Taken => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "ServerWriter in invalid Taken state",
@@ -536,7 +401,6 @@ impl<W: Write> Write for ServerWriter<W> {
         match self {
             Self::Plain(w) => w.write(buf),
             Self::Multiplex(w) => w.write(buf),
-            Self::Compressed(w) => w.write(buf),
             Self::Taken => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "ServerWriter in invalid Taken state",
@@ -548,7 +412,6 @@ impl<W: Write> Write for ServerWriter<W> {
         match self {
             Self::Plain(w) => w.write_vectored(bufs),
             Self::Multiplex(w) => w.write_vectored(bufs),
-            Self::Compressed(w) => w.write_vectored(bufs),
             Self::Taken => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "ServerWriter in invalid Taken state",
@@ -560,7 +423,6 @@ impl<W: Write> Write for ServerWriter<W> {
         match self {
             Self::Plain(w) => w.flush(),
             Self::Multiplex(w) => w.flush(),
-            Self::Compressed(w) => w.flush(),
             Self::Taken => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "ServerWriter in invalid Taken state",
