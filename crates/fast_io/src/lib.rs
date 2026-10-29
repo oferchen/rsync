@@ -193,6 +193,8 @@ pub mod temp_file_strategy;
 pub mod traits;
 /// Non-blocking transfer transports with a readiness wait (upstream perform_io's poll).
 pub mod transport;
+/// The depth ceiling of upstream's confined path resolver.
+pub mod walk_depth;
 /// SIMD-accelerated zero-byte detection for sparse file writing.
 pub mod zero_detect;
 

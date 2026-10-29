@@ -328,6 +328,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 **Remote pulls and pushes**
 - `--parallel-delta-scan` now engages on remote-shell (ssh) pushes; the flag was accepted and silently ignored there (#8263)
+- A pull or push of a tree deeper than 1023 levels stops where rsync 3.5.1 stops, at its secure-walk depth (`syscall.c:2940` `DS_MAXDEPTH`): the sender refuses the 1024th level with `opendir ... failed: Cannot allocate memory (12)`, and under `-L` the receiver refuses a file or directory below 1024 parents with `recv_generator: failed to stat` / `mkdir ... failed`, both exit 23. oc used to copy every level (#8269)
 - A remote shell killed by a signal before the handshake exits 12 like upstream, not 16 (#8231)
 - Apply receiver options on remote pulls: `--link-dest`, `--backup-dir`, `--chmod`, `--ignore-existing`, `--temp-dir`, `--omit-dir-times`, `-J`, `-E`, `--mkpath` (#6792, #6794, #6798, #6799, #6805, #6810, #6811, #6820)
 - Remote output fidelity: `--progress`, `-v` / `-vi` names, banners, `--stats` breakdown and dry-run itemize (#6786, #6789, #6791, #6793, #6802, #6814, #7062, #7172)
