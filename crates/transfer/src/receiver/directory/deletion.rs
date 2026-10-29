@@ -1321,6 +1321,27 @@ impl ReceiverContext {
         Ok((combined, 0, io_err_bits, all_deleted))
     }
 
+    /// Devices of the transfer's top directories in the destination, the
+    /// filesystems `--one-file-system` lets the delete pass scan.
+    ///
+    /// upstream: generator.c:316-326 delete_in_dir() records each
+    /// FLAG_TOP_DIR directory's device in `dev_tbl` and skips any other
+    /// directory whose device is not in it. `root_dev` is the destination
+    /// root's device, which the transfer root always lives on.
+    #[cfg(unix)]
+    fn top_dir_devices(&self, dest_dir: &Path, root_dev: u64) -> std::collections::HashSet<u64> {
+        use std::os::unix::fs::MetadataExt;
+        let mut devs = std::collections::HashSet::from([root_dev]);
+        for (_, entry) in self.dir_entries_indexed() {
+            if entry.top_dir()
+                && let Ok(meta) = std::fs::symlink_metadata(dest_dir.join(entry.path()))
+            {
+                devs.insert(meta.dev());
+            }
+        }
+        devs
+    }
+
     /// Scan set of a whole-list sweep: every content directory in `file_list`,
     /// each keyed to the names listed under it anywhere in the list.
     fn whole_list_scan_set(&self) -> ScanSet {
@@ -1505,6 +1526,9 @@ impl ReceiverContext {
             writer,
         };
 
+        #[cfg(unix)]
+        let top_devs = boundary_dev.map(|root| self.top_dir_devices(dest_dir, root));
+
         for dir_relative in dirs_to_scan {
             // upstream: generator.c:295-296 - poke a keepalive at the start of
             // each per-directory scan, matching delete_in_dir()'s cadence
@@ -1518,6 +1542,16 @@ impl ReceiverContext {
             } else {
                 dest_dir.join(dir_relative)
             };
+            // upstream: generator.c:316-326 delete_in_dir() - under `-x` a
+            // directory on a filesystem no top directory lives on is not
+            // scanned at all, so nothing inside a foreign mount is deleted.
+            #[cfg(unix)]
+            if top_devs
+                .as_ref()
+                .is_some_and(|devs| outside_filesystems(&dest_path, devs))
+            {
+                continue;
+            }
             let Some(keep) = dir_children.get(dir_relative) else {
                 continue;
             };
@@ -2091,6 +2125,16 @@ fn fail_loud_unlink_error(e: io::Error) -> Option<io::Error> {
     } else {
         Some(e)
     }
+}
+
+/// Whether `path` exists on a filesystem outside `devs`.
+///
+/// A missing directory is inside: upstream gives a directory it failed to stat
+/// the current boundary device (generator.c:1915-1916).
+#[cfg(unix)]
+fn outside_filesystems(path: &Path, devs: &std::collections::HashSet<u64>) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(path).is_ok_and(|meta| !devs.contains(&meta.dev()))
 }
 
 /// Whether a destination directory sits on a different filesystem than the
