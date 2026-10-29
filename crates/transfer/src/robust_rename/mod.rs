@@ -107,12 +107,22 @@ pub(crate) fn robust_rename(
             }
             None => to,
         };
+        // upstream: util1.c:654-656 - a failed copy_file() returns -2, which
+        // finish_transfer() reports as `copy %s -> "%s"` (rsync.c:919-921).
         fast_io::confined_copy_then_unlink(
             anchor.sandbox.map(|_| anchor.root),
             from,
             target,
             anchor.fsync,
-        )?;
+        )
+        .map_err(|error| {
+            crate::temp_guard::attach_commit_op_between(
+                crate::temp_guard::CommitOp::Copy,
+                from,
+                Some(to),
+                error,
+            )
+        })?;
         return Ok(Renamed::Copied(target.to_path_buf()));
     }
 }

@@ -359,16 +359,24 @@ impl PipelinedReceiver {
             }
             // upstream: rsync-3.5.1/rsync.c:919-921 `"%s %s -> \"%s\""` over
             // full_fname(fnametmp) and fname, the target relative to the
-            // receiver's destination root.
-            Some(crate::temp_guard::CommitOp::Rename) => {
+            // receiver's destination root; `copy` when robust_rename() fell
+            // back to copying across devices and that failed.
+            Some(
+                op @ (crate::temp_guard::CommitOp::Rename | crate::temp_guard::CommitOp::Copy),
+            ) => {
                 let target = crate::temp_guard::commit_op_destination(error).unwrap_or(dest);
                 let target = self
                     .dest_dir
                     .as_deref()
                     .and_then(|root| target.strip_prefix(root).ok())
                     .unwrap_or(target);
+                let verb = if op == crate::temp_guard::CommitOp::Copy {
+                    "copy"
+                } else {
+                    "rename"
+                };
                 format!(
-                    "rsync: [receiver] rename {name} -> \"{}\": {reason}",
+                    "rsync: [receiver] {verb} {name} -> \"{}\": {reason}",
                     target.display()
                 )
             }
@@ -830,7 +838,9 @@ impl CommitDisposition {
     fn of(error: &io::Error) -> Self {
         use crate::temp_guard::CommitOp;
         match crate::temp_guard::commit_op_failure(error) {
-            Some((CommitOp::Mkstemp | CommitOp::Open | CommitOp::Rename, _)) => Self::SkipFile,
+            Some((CommitOp::Mkstemp | CommitOp::Open | CommitOp::Rename | CommitOp::Copy, _)) => {
+                Self::SkipFile
+            }
             Some((CommitOp::Backup, _)) => Self::Abort(MessageCode::ErrorXfer),
             Some((CommitOp::Close, _)) => Self::Abort(MessageCode::Error),
             None => Self::Propagate,
@@ -2763,7 +2773,12 @@ mod tests {
             libc::EISDIR,
             libc::ENOENT,
         ] {
-            for op in [CommitOp::Mkstemp, CommitOp::Open, CommitOp::Rename] {
+            for op in [
+                CommitOp::Mkstemp,
+                CommitOp::Open,
+                CommitOp::Rename,
+                CommitOp::Copy,
+            ] {
                 assert_eq!(
                     CommitDisposition::of(&tagged(op, errno)),
                     CommitDisposition::SkipFile,
@@ -2859,5 +2874,38 @@ mod tests {
             )]
         );
         assert_eq!(std::fs::read(&landed).unwrap(), b"payload");
+    }
+
+    /// The copy fallback's failure reads `copy`, not `rename`, and the outer
+    /// rename tag does not overwrite the inner copy tag.
+    ///
+    /// upstream: rsync.c:919-921 - `ret == -2 ? "copy" : "rename"`.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_copy_fallback_is_reported_as_copy() {
+        use crate::temp_guard::{CommitOp, attach_commit_op_between};
+        let pr = PipelinedReceiver::new(DiskCommitConfig {
+            dest_dir: Some(PathBuf::from("/srv/dest")),
+            ..DiskCommitConfig::default()
+        })
+        .unwrap();
+        let temp = std::path::Path::new("/srv/tmp/.f.AbC123");
+        let dest = std::path::Path::new("/srv/dest/sub/f");
+        let copy = attach_commit_op_between(
+            CommitOp::Copy,
+            temp,
+            Some(dest),
+            io::Error::from_raw_os_error(libc::ENOSPC),
+        );
+        let rewrapped = attach_commit_op_between(CommitOp::Rename, temp, Some(dest), copy);
+
+        assert_eq!(
+            CommitDisposition::of(&rewrapped),
+            CommitDisposition::SkipFile
+        );
+        assert_eq!(
+            pr.commit_failure(dest, &rewrapped),
+            "rsync: [receiver] copy \"/srv/tmp/.f.AbC123\" -> \"sub/f\": No space left on device (28)"
+        );
     }
 }
