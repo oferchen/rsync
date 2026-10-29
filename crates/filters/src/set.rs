@@ -374,21 +374,6 @@ impl FilterSet {
             .allows_deletion()
     }
 
-    /// Returns `true` if the path may be removed during `--delete-excluded`
-    /// processing.
-    ///
-    /// Unlike [`allows_deletion`](Self::allows_deletion), this method checks
-    /// whether the path is *excluded* (rather than included) by receiver-side
-    /// rules while still honouring protect directives.  It is used to implement
-    /// rsync's `--delete-excluded` flag, which removes destination files that
-    /// the filter list would have excluded from transfer.
-    #[must_use]
-    pub fn allows_deletion_when_excluded_removed(&self, path: &Path, is_dir: bool) -> bool {
-        self.inner
-            .decision(path, is_dir, DecisionContext::Deletion)
-            .allows_deletion_when_excluded_removed()
-    }
-
     /// Builds a [`FilterSet`] from the supplied rules with CVS exclusions appended.
     ///
     /// CVS exclusions are added at the end of the rule list, giving them lower

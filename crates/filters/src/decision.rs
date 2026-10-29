@@ -177,20 +177,6 @@ impl FilterSetInner {
             ),
         };
 
-        if matches!(context, DecisionContext::Deletion)
-            && let Some(rule) = first_matching_rule(
-                &self.include_exclude,
-                path,
-                is_dir,
-                |rule| rule.applies_to_receiver,
-                true,
-                check_descendants,
-                for_deletion,
-            )
-        {
-            decision.excluded_for_delete_excluded = matches!(rule.action, FilterAction::Exclude);
-        }
-
         if let Some(rule) = transfer_rule {
             let allowed = matches!(rule.action, FilterAction::Include);
             decision.transfer_allowed = allowed;
@@ -590,7 +576,6 @@ pub(crate) enum DecisionContext {
 pub(crate) struct FilterDecision {
     transfer_allowed: bool,
     protected: bool,
-    excluded_for_delete_excluded: bool,
     /// Unified deletion verdict for decisions produced in the
     /// [`Deletion`](DecisionContext::Deletion) context, computed as a single
     /// source-ordered first-match over both rule chains (upstream
@@ -621,14 +606,6 @@ impl FilterDecision {
         }
     }
 
-    /// Returns `true` if the path may be removed during `--delete-excluded`.
-    ///
-    /// Unlike `allows_deletion`, this checks whether the path is excluded
-    /// rather than included, supporting the `--delete-excluded` flag.
-    pub(crate) const fn allows_deletion_when_excluded_removed(self) -> bool {
-        self.excluded_for_delete_excluded && !self.protected
-    }
-
     /// Marks this path as protected from deletion.
     pub(crate) const fn protect(&mut self) {
         self.protected = true;
@@ -645,7 +622,6 @@ impl Default for FilterDecision {
         Self {
             transfer_allowed: true,
             protected: false,
-            excluded_for_delete_excluded: false,
             deletion_override: None,
         }
     }
@@ -661,7 +637,6 @@ mod tests {
         let decision = FilterDecision::default();
         assert!(decision.allows_transfer());
         assert!(decision.allows_deletion());
-        assert!(!decision.allows_deletion_when_excluded_removed());
     }
 
     #[test]
@@ -686,33 +661,10 @@ mod tests {
         let decision = FilterDecision {
             transfer_allowed: false,
             protected: false,
-            excluded_for_delete_excluded: false,
             deletion_override: None,
         };
         assert!(!decision.allows_transfer());
         assert!(!decision.allows_deletion());
-    }
-
-    #[test]
-    fn filter_decision_excluded_for_delete_excluded() {
-        let decision = FilterDecision {
-            transfer_allowed: false,
-            protected: false,
-            excluded_for_delete_excluded: true,
-            deletion_override: None,
-        };
-        assert!(decision.allows_deletion_when_excluded_removed());
-    }
-
-    #[test]
-    fn filter_decision_protected_blocks_excluded_removal() {
-        let decision = FilterDecision {
-            transfer_allowed: false,
-            protected: true,
-            excluded_for_delete_excluded: true,
-            deletion_override: None,
-        };
-        assert!(!decision.allows_deletion_when_excluded_removed());
     }
 
     #[test]

@@ -80,7 +80,7 @@ The single gate is in `crates/filters/src/decision.rs`:
 - `DecisionContext` is a private enum (lines 170-174) so the
   perishable axis is not part of the public API; callers select the
   context indirectly via `FilterSet::allows_transfer()` vs
-  `FilterSet::allows_deletion()` / `allows_deletion_when_excluded_removed()`.
+  `FilterSet::allows_deletion()`.
 
 The chain pattern is "first match wins"; perishable filtering happens
 inside the predicate so a perishable rule never preempts a
@@ -184,7 +184,7 @@ case. The contract:
 | Rule | Mode | Path matches? | Result |
 |------|------|---------------|--------|
 | `-p *.log` | `--delete` only | yes | NOT deleted: perishable rule does not protect, and without `--delete-excluded` we only delete missing-from-source paths. The exclude is invisible to the delete-walk, so `*.log` files on the receiver are left alone (treated as "not excluded" for deletion purposes). |
-| `-p *.log` | `--delete --delete-excluded` | yes | DELETED: the `--delete-excluded` scan re-runs with `include_perishable=true`, finds the exclude, and `allows_deletion_when_excluded_removed()` returns true. |
+| `-p *.log` | `--delete --delete-excluded` | yes | DELETED: `--delete-excluded` makes the unsided exclude sender-side when it is parsed (`exclude.c:1479-1481`), so it no longer protects the receiver's `*.log`. |
 | `-  *.log` (no `p`) | `--delete` only | yes | NOT deleted: same as perishable case; receiver-side excludes don't drive deletion without `--delete-excluded`. |
 | `-  *.log` (no `p`) | `--delete --delete-excluded` | yes | DELETED: the standard scan finds the exclude. |
 | `P *.log` | any delete mode | yes | NOT deleted: protect rule wins (perishable does not apply to protect; protect rules are evaluated as `Risk`/`Protect` regardless of perishable flag). |
@@ -327,9 +327,8 @@ exercised. The new delete-walk test pulls coverage on
 - Should `DecisionContext` move from `pub(crate)` to `pub` so external
   callers can request a specific context? Current answer: no - the
   public `allows_deletion()` / `allows_transfer()` methods are the
-  intended surface and adding a third method
-  `allows_deletion_when_excluded_removed()` already covers the
-  `--delete-excluded` branch.
+  intended surface; `--delete-excluded` acts when rules are parsed, so it
+  needs no method of its own.
 - Should `FilterSet::compile()` reject combinations that upstream
   rejects (e.g., `Pp` is technically valid but rare)? Current answer:
   no - upstream accepts the combination silently and so do we.
