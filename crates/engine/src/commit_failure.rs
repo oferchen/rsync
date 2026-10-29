@@ -20,8 +20,10 @@ use protocol::MessageCode;
 /// `mkstemp %s failed` (`rsync-3.5.1/receiver.c:465-466`),
 /// `open %s failed` (`rsync-3.5.1/receiver.c:1242-1244`),
 /// `rename %s -> "%s"` and `copy %s -> "%s"` (`rsync-3.5.1/rsync.c:919-921`),
-/// `keep_backup failed: %s -> "%s"` (`rsync-3.5.1/backup.c:402-403`) and
-/// `close failed on %s` (`rsync-3.5.1/receiver.c:1297-1298`). oc runs
+/// `keep_backup failed: %s -> "%s"` (`rsync-3.5.1/backup.c:402-403`),
+/// `close failed on %s` (`rsync-3.5.1/receiver.c:1297-1298`) and
+/// `Unable to create partial-dir for %s -- discarding %s.`
+/// (`rsync-3.5.1/receiver.c:1319-1323`). oc runs
 /// these stages behind one `Result`, so the operation identity has to ride on
 /// the error to survive the trip back to the reporting thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +45,10 @@ pub enum CommitOp {
     /// reports a failed write. The operand is the file that was written: the
     /// temp file, or the destination itself for an in-place update.
     Close,
+    /// Creating the `--partial-dir` (or `--delay-updates`' `.~tmp~`) a
+    /// completed file is staged into. The operand is that directory and the
+    /// destination is the file's final path.
+    PartialDir,
 }
 
 impl CommitOp {
@@ -60,6 +66,11 @@ impl CommitOp {
     /// - `rsync.c:919-921` - `"%s %s -> \"%s\""` with `copy` or `rename`.
     /// - `backup.c:402-403` - `keep_backup failed: %s -> "%s"`.
     /// - `receiver.c:1297-1298` - `close failed on %s`.
+    /// - `receiver.c:1319-1323` - `Unable to create partial-dir for %s --
+    ///   discarding %s.`, a plain `rprintf(FERROR)` naming the file by its
+    ///   transfer name (`target`) with no errno. oc stages only a completed
+    ///   file, the `--delay-updates` arm, so the second `%s` is always
+    ///   `completed file`.
     #[must_use]
     pub fn failure_line(self, name: &str, target: Option<&Path>, reason: &str) -> String {
         match (self, target) {
@@ -78,6 +89,10 @@ impl CommitOp {
             (Self::Backup, None) => {
                 format!("rsync: [receiver] keep_backup failed: {name}: {reason}")
             }
+            (Self::PartialDir, target) => format!(
+                "Unable to create partial-dir for {} -- discarding completed file.",
+                target.map_or_else(String::new, |t| t.display().to_string())
+            ),
         }
     }
 }
@@ -182,6 +197,9 @@ pub enum CommitDisposition {
     SkipFile,
     /// Report the line with this code, then stop with `RERR_FILEIO` (11).
     Abort(MessageCode),
+    /// Report a plain `FERROR` line and drop the file, which is not a transfer
+    /// error: the run's exit code is unchanged.
+    Discard,
     /// Not a commit-path operation: hand the error back untouched.
     Propagate,
 }
@@ -200,6 +218,9 @@ impl CommitDisposition {
     /// - `rsync.c:897-900` - a failed backup is `exit_cleanup(RERR_FILEIO)`.
     /// - `receiver.c:1296-1300` - a failed `close()` is
     ///   `rsyserr(FERROR, ...)` then `exit_cleanup(RERR_FILEIO)`.
+    /// - `receiver.c:1319-1325` - a failed staging-dir create is
+    ///   `rprintf(FERROR, ...)`, `do_unlink_at(fnametmp)` and `recv_ok = -1`;
+    ///   plain FERROR never sets `got_xfer_error`, so the run can still exit 0.
     #[must_use]
     pub fn of(error: &io::Error) -> Self {
         match commit_op_failure(error) {
@@ -208,6 +229,7 @@ impl CommitDisposition {
             }
             Some((CommitOp::Backup, _)) => Self::Abort(MessageCode::ErrorXfer),
             Some((CommitOp::Close, _)) => Self::Abort(MessageCode::Error),
+            Some((CommitOp::PartialDir, _)) => Self::Discard,
             None => Self::Propagate,
         }
     }
@@ -247,6 +269,33 @@ mod tests {
                 format!("rsync: [receiver] {body}: {reason}")
             );
         }
+        assert_eq!(
+            CommitOp::PartialDir.failure_line(name, Some(Path::new("sub/a")), reason),
+            "Unable to create partial-dir for sub/a -- discarding completed file."
+        );
+    }
+
+    /// A staging-dir failure discards the file without a transfer error; every
+    /// other commit stage is skip-or-abort.
+    ///
+    /// upstream: receiver.c:1319-1325.
+    #[test]
+    fn a_partial_dir_failure_discards_without_a_transfer_error() {
+        let tagged = |op| {
+            attach_commit_op(
+                op,
+                Path::new("/d/.~tmp~"),
+                io::Error::from(io::ErrorKind::PermissionDenied),
+            )
+        };
+        assert_eq!(
+            CommitDisposition::of(&tagged(CommitOp::PartialDir)),
+            CommitDisposition::Discard
+        );
+        assert_eq!(
+            CommitDisposition::of(&tagged(CommitOp::Rename)),
+            CommitDisposition::SkipFile
+        );
     }
 
     /// The innermost stage names the failure: a copy fallback wrapped by the
