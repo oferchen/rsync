@@ -1578,6 +1578,13 @@ fn xattr_snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<String>>
 /// iflags under ITEM_REPORT_XATTR (sender.c:482-484 send_xattr_request()).
 /// A batch without them replays every file, directory and nested entry with
 /// no xattrs at all.
+///
+/// A directory's xattrs replay through oc only. 3.5.1 replaying any batch
+/// whose new directory carries xattrs, its own included, races its forked
+/// receiver against its generator: the receiver acts on the directory's
+/// ITEM_REPORT_XATTR row before the generator has made it, and fails
+/// "stat ... failed" (exit 23) whenever it wins. With a value over
+/// MAX_FULL_DATUM it always wins.
 #[test]
 fn local_batch_carries_xattrs_like_upstream() {
     if let Some(reason) = test_support::Capabilities::probe()
@@ -1592,34 +1599,37 @@ fn local_batch_carries_xattrs_like_upstream() {
         return;
     }
     let long = "v".repeat(64);
-    let decorate = |fx: &Fixture| -> bool {
-        [
+    let decorate = |fx: &Fixture, directory: bool| -> bool {
+        let files = [
             ("user.short", "blue", "src/a.txt"),
             ("user.long", long.as_str(), "src/a.txt"),
             ("user.deep", "yes", "src/sub/b.log"),
             ("user.long", long.as_str(), "src/sub/c.txt"),
-            // No long value on a directory: 3.5.1 replays its own batch of
-            // one with "stat ... failed" (exit 23), as the receiver asks for
-            // the value before the generator has made the directory.
+        ];
+        let dirs = [
             ("user.dir", "d", "src/sub"),
-        ]
-        .into_iter()
-        .all(|(name, value, path)| {
-            Command::new("setfattr")
-                .args(["-n", name, "-v", value])
-                .arg(fx.root.join(path))
-                .status()
-                .is_ok_and(|s| s.success())
-        })
+            ("user.long", long.as_str(), "src/sub"),
+        ];
+        files
+            .into_iter()
+            .chain(dirs.into_iter().filter(|_| directory))
+            .all(|(name, value, path)| {
+                Command::new("setfattr")
+                    .args(["-n", name, "-v", value])
+                    .arg(fx.root.join(path))
+                    .status()
+                    .is_ok_and(|s| s.success())
+            })
     };
-    if !decorate(&Fixture::new()) {
+    if !decorate(&Fixture::new(), true) {
         eprintln!("skip: the temp filesystem does not take user xattrs");
         return;
     }
-    for mode in [&["-rX"][..], &["-rX", "--no-inc-recursive"]] {
+    let modes = [&["-rX"][..], &["-rX", "--no-inc-recursive"]];
+    for (mode, directory) in modes.into_iter().flat_map(|m| [(m, false), (m, true)]) {
         for (recorder, record_bin) in implementations() {
             let fx = Fixture::new();
-            assert!(decorate(&fx));
+            assert!(decorate(&fx, directory));
             let want = xattr_snapshot(&fx.root.join("src"));
             let mut args = mode.to_vec();
             args.extend(["--write-batch=bf", "src/", "rec/"]);
@@ -1630,7 +1640,10 @@ fn local_batch_carries_xattrs_like_upstream() {
                 want,
                 "{mode:?} {recorder}: the recording run's own copy"
             );
-            for (replayer, replay_bin) in implementations() {
+            let replayers = implementations()
+                .into_iter()
+                .filter(|(replayer, _)| !directory || *replayer == "oc");
+            for (replayer, replay_bin) in replayers {
                 let dest = format!("by-{replayer}");
                 let target = format!("{dest}/");
                 let mut args = mode.to_vec();
