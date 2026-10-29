@@ -187,6 +187,9 @@ impl ReceiverContext {
                     // upstream: generator.c:1755-1761 - an --existing skip
                     // is not an error.
                     None if failed_dirs.is_missing_or_below(file_entry.path()) => {}
+                    // upstream: generator.c:1811 - an implied parent left alone
+                    // under --no-implied-dirs is not an error either.
+                    None if self.skips_implied_dir(file_entry) => {}
                     None => {
                         stats.directories_failed += 1;
                     }
@@ -1146,6 +1149,9 @@ impl ReceiverContext {
             // upstream: generator.c:1755-1761 - an --existing skip
             // is not an error.
             None if failed_dirs.is_missing_or_below(file_entry.path()) => {}
+            // upstream: generator.c:1811 - an implied parent left alone
+            // under --no-implied-dirs is not an error either.
+            None if self.skips_implied_dir(file_entry) => {}
             None => {
                 stats.directories_failed += 1;
             }
