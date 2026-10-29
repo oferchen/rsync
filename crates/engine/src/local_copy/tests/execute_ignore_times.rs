@@ -444,6 +444,144 @@ fn delta_transfer_reconstructs_source_with_every_transfer_checksum() {
     }
 }
 
+/// Seeded MD5 in upstream's proper seed order, as `--checksum-seed=1
+/// --checksum-choice=md5` selects for a local copy.
+fn seeded_md5() -> SignatureAlgorithm {
+    SignatureAlgorithm::Md5 {
+        seed_config: checksums::strong::Md5Seed::proper(1),
+    }
+}
+
+/// Returns a 700-byte block and a different window with the same rolling sum
+/// and the same first two bytes of [`seeded_md5`] - a false match under the
+/// 2-byte phase-1 strong sum that the full digest rejects.
+///
+/// Raising one byte and lowering its neighbour at two places keeps both
+/// rolling-sum halves unchanged, so only the strong-sum prefix is searched.
+fn block_with_short_sum_collision() -> (Vec<u8>, Vec<u8>) {
+    let block: Vec<u8> = (0..700u32).map(|i| (i * 89 % 241 + 5) as u8).collect();
+    let target = seeded_md5().compute_truncated(&block, 2);
+    for i in 0..block.len() - 1 {
+        for j in i + 2..block.len() - 1 {
+            let mut window = block.clone();
+            window[i] += 1;
+            window[i + 1] -= 1;
+            window[j] -= 1;
+            window[j + 1] += 1;
+            if seeded_md5().compute_truncated(&window, 2) == target {
+                return (block, window);
+            }
+        }
+    }
+    panic!("a 2-byte strong-sum collision exists for some pair");
+}
+
+/// Runs a delta whose first block false-matches under the short sums.
+fn copy_with_short_sum_collision(inplace: bool) -> (Vec<u8>, Vec<u8>, LocalCopySummary) {
+    let (block, window) = block_with_short_sum_collision();
+    let tail: Vec<u8> = (0..1400u32).map(|i| (i * 7 % 253) as u8).collect();
+    let basis = [block.as_slice(), tail.as_slice()].concat();
+    let source_content = [window.as_slice(), tail.as_slice()].concat();
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("src.bin");
+    let destination = temp.path().join("dst.bin");
+    fs::write(&source, &source_content).expect("write source");
+    fs::write(&destination, &basis).expect("write basis");
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&source, timestamp, timestamp).expect("set source times");
+    set_file_times(&destination, timestamp, timestamp).expect("set dest times");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let summary = LocalCopyPlan::from_operands(&operands)
+        .expect("plan")
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .ignore_times(true)
+                .whole_file(false)
+                .inplace(inplace)
+                .with_transfer_checksum_algorithm(seeded_md5()),
+        )
+        .expect("copy succeeds");
+    let written = fs::read(&destination).expect("read dest");
+    (written, source_content, summary)
+}
+
+/// upstream 3.5.1 on this fixture (`-I --no-whole-file --checksum-seed=1
+/// --checksum-choice=md5 --stats`): pass one matches all three blocks with
+/// `s2length=2`, fails verification, and the phase-2 resend with
+/// `s2length=16` sends the first block as literal data. The stats count both
+/// passes: 2 files transferred, 4,200 bytes transferred, 700 literal, 3,500
+/// matched, 2 blocks touched.
+#[test]
+fn short_sum_false_match_is_redone_with_full_sums() {
+    let (written, source_content, summary) = copy_with_short_sum_collision(false);
+
+    assert_eq!(written, source_content);
+    assert_eq!(summary.files_copied(), 2);
+    assert_eq!(summary.transferred_file_size(), 4200);
+    assert_eq!(summary.bytes_copied(), 700);
+    assert_eq!(summary.matched_bytes(), 3500);
+    assert_eq!(summary.touched_blocks_4k(), 2);
+}
+
+/// upstream 3.5.1 with `--inplace`: the same two passes, the first update
+/// "retained" in place, and only the resend's literal block touched.
+#[test]
+fn short_sum_false_match_in_place_is_redone_with_full_sums() {
+    let (written, source_content, summary) = copy_with_short_sum_collision(true);
+
+    assert_eq!(written, source_content);
+    assert_eq!(summary.files_copied(), 2);
+    assert_eq!(summary.transferred_file_size(), 4200);
+    assert_eq!(summary.bytes_copied(), 700);
+    assert_eq!(summary.matched_bytes(), 3500);
+    assert_eq!(summary.touched_blocks_4k(), 1);
+}
+
+/// A pass whose matches are all genuine must verify on its first attempt.
+///
+/// In place, a block already at its offset is never rewritten, so the
+/// receiving sum has to read it back from the basis (upstream sums it through
+/// its map). Skipping it would fail every in-place delta and redo it.
+#[test]
+fn in_place_delta_with_genuine_matches_is_not_redone() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("src.bin");
+    let destination = temp.path().join("dst.bin");
+    let basis: Vec<u8> = (0..7000u32).map(|i| (i * 13 % 251) as u8).collect();
+    let mut source_content = basis.clone();
+    source_content[6500..6510].copy_from_slice(b"0123456789");
+    fs::write(&source, &source_content).expect("write source");
+    fs::write(&destination, &basis).expect("write basis");
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(&source, timestamp, timestamp).expect("set source times");
+    set_file_times(&destination, timestamp, timestamp).expect("set dest times");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let summary = LocalCopyPlan::from_operands(&operands)
+        .expect("plan")
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .ignore_times(true)
+                .whole_file(false)
+                .inplace(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(fs::read(&destination).expect("read dest"), source_content);
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.matched_bytes(), 6300);
+}
+
 #[test]
 fn ignore_times_delta_transfer_with_matching_content() {
     let temp = tempdir().expect("tempdir");
