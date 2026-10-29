@@ -104,6 +104,12 @@ fn rsh_wrapper(dir: &Path) -> PathBuf {
 /// entries must keep their own ACLs exactly as they do without it.
 #[test]
 fn inc_recurse_receiver_applies_sub_list_acls() {
+    if let Some(reason) =
+        test_support::Capabilities::probe().skip_reason(&[test_support::capabilities::names::ACLS])
+    {
+        eprintln!("skip: {reason}");
+        return;
+    }
     let temp = tempfile::tempdir().unwrap();
     let Some(src) = acl_tree(temp.path()) else {
         return;

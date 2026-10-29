@@ -1466,6 +1466,12 @@ fn acl_snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
 /// default ACL.
 #[test]
 fn local_batch_carries_named_acl_entries_like_upstream() {
+    if let Some(reason) =
+        test_support::Capabilities::probe().skip_reason(&[test_support::capabilities::names::ACLS])
+    {
+        eprintln!("skip: {reason}");
+        return;
+    }
     if !test_support::skip::require_command_on_path("setfacl")
         || !test_support::skip::require_command_on_path("getfacl")
     {
