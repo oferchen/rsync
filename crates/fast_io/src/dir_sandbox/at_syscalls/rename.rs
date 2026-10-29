@@ -380,7 +380,7 @@ pub fn confined_rename(
 /// the copy is confined wherever that rename was. With an `anchor`, a side
 /// beneath it takes the confined walk and an absolute side outside it - an
 /// operator `--temp-dir` or `--partial-dir` - takes the ownership walk (see
-/// [`anchor_confined_endpoint`]). Without one, each side follows upstream's
+/// `anchor_confined_endpoint`). Without one, each side follows upstream's
 /// three-arm contract through [`ConfinedFallback`](crate::ConfinedFallback).
 ///
 /// The source is opened `O_NOFOLLOW`. The destination is unlinked, then

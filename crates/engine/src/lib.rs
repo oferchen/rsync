@@ -64,9 +64,8 @@
 //!
 //! ## Async I/O (optional)
 //!
-//! When compiled with the `async` feature, [`AsyncFileCopier`] provides
-//! tokio-based async file copy with progress
-//! reporting via [`CopyProgress`].
+//! When compiled with the `async` feature, `AsyncFileCopier` provides
+//! tokio-based async file copy with progress reporting via `CopyProgress`.
 //!
 //! # Dependency position
 //!

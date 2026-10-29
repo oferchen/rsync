@@ -143,10 +143,26 @@ pub fn die_with_parent(parent_pid: u32) -> io::Result<()> {
 /// for itself and the parent for the child. Whichever side runs first creates
 /// the group, so it exists before the parent can act on it. A child that has
 /// already exited cannot join a group and needs none, so `ESRCH` is success.
+///
+/// The parent's call can lose the race to the child. Once the child has
+/// exec'd, `setpgid()` answers `EACCES`; once it is exiting, has become a
+/// session leader or has left the caller's session, `EPERM` (POSIX
+/// `setpgid()`; xnu `bsd/kern/kern_prot.c` `setpgid()`). The child's own call
+/// may already have made the group, so either error is success when the child
+/// leads a group of its own id, and is returned otherwise.
 pub fn lead_process_group(pid: i32) -> io::Result<()> {
-    let pid = nix::unistd::Pid::from_raw(pid);
-    match nix::unistd::setpgid(pid, pid) {
+    let target = nix::unistd::Pid::from_raw(pid);
+    match nix::unistd::setpgid(target, target) {
         Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+        Err(errno @ (nix::errno::Errno::EPERM | nix::errno::Errno::EACCES)) if pid != 0 => {
+            match nix::unistd::getpgid(Some(target)) {
+                Ok(pgid) if pgid == target => Ok(()),
+                // Ended between the two calls: as `ESRCH` above.
+                Err(nix::errno::Errno::ESRCH) => Ok(()),
+                Ok(_) => Err(errno.into()),
+                Err(other) => Err(other.into()),
+            }
+        }
         Err(errno) => Err(errno.into()),
     }
 }
@@ -174,12 +190,14 @@ pub fn terminate_process(pid: i32) -> io::Result<()> {
 /// answers `EPERM`, not `ESRCH`: XNU's `killpg1()` skips zombies when it walks
 /// the group and then returns `EPERM` for a POSIX caller that signalled
 /// nothing (xnu `bsd/kern/kern_sig.c` `killpg1()`, the `p_stat != SZOMB`
-/// filter and `nfound > 0 ? 0 : (posix ? EPERM : ESRCH)`). That `EPERM` is
-/// success only when `pgid` is this process's own ended, unreaped child; any
-/// other `EPERM` is a real permission failure and is returned. A group that
-/// also holds a live member this process may not signal answers the same
-/// `EPERM`, so callers must own every member of the group, as a supervisor
-/// whose group holds only its own descendants does.
+/// filter and `nfound > 0 ? 0 : (posix ? EPERM : ESRCH)`). A leader that has
+/// begun exiting but is not yet waitable is skipped the same way, so the
+/// `EPERM` can arrive before `waitid` reports the end. A group whose live
+/// leader shares it with a member of another uid answers the same `EPERM`
+/// with the leader still running. So when `pgid` is this process's own child
+/// the leader is signalled directly - always permitted on one's own child, and
+/// harmless on a zombie - and then awaited until it has ended. An `EPERM` for
+/// any other `pgid` is a real permission failure and is returned.
 pub fn kill_process_group(pgid: i32) -> io::Result<()> {
     match nix::sys::signal::killpg(
         nix::unistd::Pid::from_raw(pgid),
@@ -187,29 +205,48 @@ pub fn kill_process_group(pgid: i32) -> io::Result<()> {
     ) {
         Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
         #[cfg(target_vendor = "apple")]
-        Err(nix::errno::Errno::EPERM) if child_has_ended(pgid)? => Ok(()),
+        Err(nix::errno::Errno::EPERM) if stop_own_leader(pgid)? => Ok(()),
         Err(errno) => Err(errno.into()),
     }
 }
 
-/// Reports whether `child_pid`, a child of this process, has ended and is
-/// still unreaped, without blocking and without consuming its status.
+/// Kills `child_pid` and blocks until it has ended, without consuming its
+/// status, when it is a child of this process; reports whether it was.
 ///
-/// A pid that is not this process's child answers `ECHILD`, which is `false`.
+/// The probe runs before the signal, so a pid that is not this process's
+/// child (`ECHILD`) is never signalled and answers `false`.
+#[cfg(target_vendor = "apple")]
+fn stop_own_leader(child_pid: i32) -> io::Result<bool> {
+    if !wait_child_exit(child_pid, libc::WNOHANG)? {
+        return Ok(false);
+    }
+    match nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child_pid),
+        nix::sys::signal::Signal::SIGKILL,
+    ) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+        Err(errno) => return Err(errno.into()),
+    }
+    wait_child_exit(child_pid, 0)
+}
+
+/// `waitid(WEXITED | WNOWAIT | extra)` on `child_pid`, never consuming its
+/// status: `Ok(false)` when it is not a child of this process, `Ok(true)`
+/// otherwise. With `extra == 0` the call blocks until the child has ended.
 #[cfg(target_vendor = "apple")]
 #[allow(unsafe_code)]
-fn child_has_ended(child_pid: i32) -> io::Result<bool> {
+fn wait_child_exit(child_pid: i32, extra: libc::c_int) -> io::Result<bool> {
     loop {
         // SAFETY: `waitid` writes only through `info`, a live local zeroed to
-        // a valid `siginfo_t`, so `si_pid` stays 0 when `WNOHANG` finds no
-        // ended child. `WNOWAIT` leaves the child waitable for its reaper.
+        // a valid `siginfo_t`. `WNOWAIT` leaves the child waitable for its
+        // reaper.
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         let waited = unsafe {
             libc::waitid(
                 libc::P_PID,
                 child_pid as libc::id_t,
                 &mut info,
-                libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+                libc::WEXITED | libc::WNOWAIT | extra,
             )
         };
         if waited == -1 {
@@ -221,7 +258,7 @@ fn child_has_ended(child_pid: i32) -> io::Result<bool> {
                 _ => return Err(error),
             }
         }
-        return Ok(info.si_pid == child_pid);
+        return Ok(true);
     }
 }
 
@@ -360,6 +397,41 @@ pub fn wait_for_child(child_pid: i32) -> io::Result<ChildEnd> {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    /// A child that already leads its own group - here set before its exec,
+    /// so the parent's `setpgid()` answers `EACCES` - is the group the caller
+    /// asked for.
+    #[test]
+    fn lead_process_group_accepts_a_child_that_already_leads_its_group() {
+        use std::os::unix::process::CommandExt;
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id() as i32;
+        let joined = lead_process_group(pid);
+        child.kill().expect("kill sleep");
+        child.wait().expect("reap sleep");
+        joined.expect("the child already leads its own group");
+    }
+
+    /// A child that exec'd inside the caller's group cannot be moved, and no
+    /// group of its own exists, so the refusal is returned.
+    #[test]
+    fn lead_process_group_refuses_a_child_left_in_the_callers_group() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id() as i32;
+        let joined = lead_process_group(pid);
+        child.kill().expect("kill sleep");
+        child.wait().expect("reap sleep");
+        let error = joined.expect_err("an exec'd child in our group is refused");
+        assert_eq!(error.raw_os_error(), Some(libc::EACCES));
+    }
 
     /// Both sides of one split are observed, and the child's exit code
     /// reaches the parent - i.e. `fork_session` really forked.

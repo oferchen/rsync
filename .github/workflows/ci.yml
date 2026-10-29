@@ -288,12 +288,14 @@ jobs:
   rustdoc-links:
     name: rustdoc links
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && github.event_name != 'push' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
 
+    # A public item's docs linking a private item is `private_intra_doc_links`,
+    # a lint separate from `broken_intra_doc_links`, so it is denied here too.
     env:
-      RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
+      RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links"
 
     steps:
       - name: Checkout
@@ -322,6 +324,77 @@ jobs:
       # is what the all-features step is for. Neither subsumes the other.
       - name: Build rustdoc (workspace, default features, no deps)
         run: cargo doc --workspace --no-deps --locked
+
+      # A THIRD question. A workspace build unifies features across members,
+      # so a crate's link to an item behind one of its own optional features
+      # resolves there whenever any other member enables that feature - and is
+      # unresolvable when the crate is documented alone, as docs.rs and
+      # `cargo doc -p` do. `engine`'s crate docs linked `async`-only items this
+      # way while both steps above were green. Every member is documented on
+      # its own, so no list of "feature-gated crates" can go stale.
+      - name: Build rustdoc (each crate alone, default features, no deps)
+        run: |
+          set -euo pipefail
+          failed=()
+          for crate in $(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[].name' | sort); do
+            echo "::group::cargo doc -p ${crate}"
+            if ! cargo doc --locked -p "${crate}" --no-deps; then
+              failed+=("${crate}")
+            fi
+            echo "::endgroup::"
+          done
+          if [ "${#failed[@]}" -ne 0 ]; then
+            echo "::error::rustdoc failed for: ${failed[*]}"
+            exit 1
+          fi
+
+  # ===========================================================================
+  # Clippy without default features, per crate
+  # ---------------------------------------------------------------------------
+  # `fmt + clippy` lints the workspace with --all-features, and the feature
+  # rows in _test-features.yml run nextest, where a warning does not fail the
+  # build. Code compiled only when a default feature is OFF - cfg(not(feature
+  # = "...")) fallbacks and the tests that cover them - was therefore never
+  # linted. Each member runs alone: a workspace-wide --no-default-features run
+  # unifies features across members and re-enables the very features this job
+  # exists to turn off. RUSTFLAGS="-D warnings" comes from the workflow env.
+  # ===========================================================================
+  clippy-no-default-features:
+    name: clippy (no default features)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && github.event_name != 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          components: clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-no-default-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Clippy (each crate alone, no default features)
+        run: |
+          set -euo pipefail
+          failed=()
+          for crate in $(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[].name' | sort); do
+            echo "::group::cargo clippy -p ${crate} --no-default-features"
+            if ! cargo clippy --locked -p "${crate}" --no-default-features --all-targets --no-deps; then
+              failed+=("${crate}")
+            fi
+            echo "::endgroup::"
+          done
+          if [ "${#failed[@]}" -ne 0 ]; then
+            echo "::error::clippy --no-default-features failed for: ${failed[*]}"
+            exit 1
+          fi
 
   # ===========================================================================
   # tools/ Unit Tests
