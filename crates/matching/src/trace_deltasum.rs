@@ -43,7 +43,7 @@
 //!
 //! - `match.c:210-213` (level 4 `offset=... sum=...`) is emitted by the
 //!   sequential scan only; the opt-in parallel chunked scan
-//!   (`DeltaGenerator::generate_chunked`) runs its stripes on rayon workers
+//!   (`DeltaGenerator::generate_chunked_counted`) runs its stripes on rayon workers
 //!   whose thread-local diagnostic buffers are not collected, so per-match
 //!   trace lines from those stripes are not printed. Counters still reach the
 //!   merged [`crate::DeltaScript`].

@@ -39,7 +39,7 @@ const DEFAULT_BUFFER_LEN: usize = 128 * 1024;
 /// upstream: rsync.h:158, match.c:372 `hash_search()`
 const CHUNK_SIZE: usize = 32 * 1024;
 
-/// Minimum bytes per parallel stripe in [`DeltaGenerator::generate_chunked`].
+/// Minimum bytes per parallel stripe in [`DeltaGenerator::generate_chunked_counted`].
 ///
 /// Stripes below this size are not worth a rayon task: the per-stripe task
 /// overhead and the `block_len` scan overlap would outweigh the scan
@@ -140,7 +140,7 @@ fn push_split_literal_slice<'a>(out: &mut Vec<DeltaToken<'a>>, slice: &'a [u8], 
 
 /// A `Copy` token lifted to an absolute source offset for the parallel merge.
 ///
-/// [`DeltaGenerator::generate_chunked`] scans overlapping stripes on separate
+/// [`DeltaGenerator::generate_chunked_counted`] scans overlapping stripes on separate
 /// workers; each worker's tokens carry only a basis index, so the merge tags
 /// every `Copy` with the source offset it reconstructs to reason about them in
 /// one global order.
@@ -487,7 +487,7 @@ impl DeltaGenerator {
     ///
     /// Performs only read-only lookups on `index`, so a shared `&index` is
     /// safe to scan from multiple rayon workers concurrently
-    /// ([`Self::generate_chunked`]). A basis block stays matchable for the
+    /// ([`Self::generate_chunked_counted`]). A basis block stays matchable for the
     /// whole scan, however many source windows it matches, exactly as
     /// upstream's `hash_search()` leaves its hash chains intact outside
     /// `--inplace` (`match.c:229-345`).
@@ -1219,24 +1219,14 @@ impl DeltaGenerator {
     /// * `source` - The full source buffer to delta-encode.
     /// * `index` - Pre-built signature index from the basis file.
     /// * `max_chunks` - Upper bound on parallel stripes (clamped to `>= 1`).
-    pub fn generate_chunked<'a>(
-        &self,
-        source: &'a [u8],
-        index: &DeltaSignatureIndex,
-        max_chunks: usize,
-    ) -> io::Result<DeltaScript<'a>> {
-        self.generate_chunked_counted(source, index, max_chunks)
-            .map(|(script, _)| script)
-    }
-
-    /// Like [`Self::generate_chunked`], additionally returning the summed
-    /// per-stripe [`ScanCounters`].
     ///
-    /// Counters are summed across stripes, so they describe the same work the
-    /// sequential scan would have done. The per-match `--debug=deltasum` trace
-    /// lines, however, are emitted on the rayon workers, whose thread-local
-    /// diagnostic buffers are never drained - see this module's note on the
-    /// parallel path in `trace_deltasum`.
+    /// # Counters
+    ///
+    /// The returned [`ScanCounters`] are summed across stripes, so they
+    /// describe the same work the sequential scan would have done. The
+    /// per-match `--debug=deltasum` trace lines, however, are emitted on the
+    /// rayon workers, whose thread-local diagnostic buffers are never drained -
+    /// see this module's note on the parallel path in `trace_deltasum`.
     pub fn generate_chunked_counted<'a>(
         &self,
         source: &'a [u8],
@@ -1681,8 +1671,9 @@ mod tests {
             .generate(Cursor::new(&data[..]), &index)
             .expect("sequential");
         let chunked = generator
-            .generate_chunked(&data, &index, 8)
-            .expect("chunked");
+            .generate_chunked_counted(&data, &index, 8)
+            .expect("chunked")
+            .0;
 
         // Both must reconstruct the source byte-for-byte even though the
         // chunked token stream differs at range boundaries.
@@ -1713,8 +1704,9 @@ mod tests {
             .generate(Cursor::new(&full[..]), &index)
             .expect("sequential");
         let chunked = generator
-            .generate_chunked(&full, &index, 6)
-            .expect("chunked");
+            .generate_chunked_counted(&full, &index, 6)
+            .expect("chunked")
+            .0;
 
         assert_eq!(reconstruct(&basis, &index, &sequential), full);
         assert_eq!(reconstruct(&basis, &index, &chunked), full);
@@ -1735,8 +1727,9 @@ mod tests {
         let source = basis.clone();
 
         let chunked = DeltaGenerator::new()
-            .generate_chunked(&source, &index, 8)
-            .expect("chunked");
+            .generate_chunked_counted(&source, &index, 8)
+            .expect("chunked")
+            .0;
 
         assert_eq!(reconstruct(&basis, &index, &chunked), source);
         assert_eq!(chunked.total_bytes(), source.len() as u64);
@@ -1753,8 +1746,9 @@ mod tests {
             .generate(Cursor::new(&source[..]), &index)
             .expect("sequential");
         let chunked = generator
-            .generate_chunked(&source, &index, 8)
-            .expect("chunked");
+            .generate_chunked_counted(&source, &index, 8)
+            .expect("chunked")
+            .0;
 
         // Below the split threshold the chunked path delegates to the
         // sequential scan, so the scripts must be byte-identical.
@@ -1775,8 +1769,9 @@ mod tests {
             .expect("sequential");
         // max_chunks == 1 must force the sequential path verbatim.
         let single = generator
-            .generate_chunked(&data, &index, 1)
-            .expect("single");
+            .generate_chunked_counted(&data, &index, 1)
+            .expect("single")
+            .0;
 
         assert_eq!(sequential.tokens().len(), single.tokens().len());
         assert_eq!(sequential.total_bytes(), single.total_bytes());

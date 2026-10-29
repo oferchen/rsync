@@ -62,23 +62,51 @@ fn crosses_mount_boundary(boundary_dev: u64, entry_dev: u64) -> bool {
 }
 
 /// The transfer-root device that bounds a `--one-file-system` delete pass, or
-/// `None` when `-x` is off (or the boundary cannot be stat'd). The copy walk
-/// never recurses across a mount, so every scanned destination directory sits
-/// on this device and a child whose device differs is a mount point.
+/// `None` when `-x` is off (or the boundary cannot be stat'd).
+///
+/// It is the destination root's device, not the scanned directory's: a
+/// destination directory can sit on another filesystem even when its source
+/// does not, and upstream measures every directory against the top
+/// directory's device (generator.c:316-326 delete_in_dir()).
 #[cfg(unix)]
-fn delete_boundary_device(context: &CopyContext, destination: &Path) -> Option<u64> {
+fn delete_boundary_device(context: &CopyContext) -> Option<u64> {
     if !context.one_file_system_enabled() {
         return None;
     }
-    let metadata = fs::symlink_metadata(destination).ok()?;
-    crate::local_copy::overrides::device_identifier(destination, &metadata)
+    let root = context.destination_root();
+    let metadata = fs::symlink_metadata(root).ok()?;
+    crate::local_copy::overrides::device_identifier(root, &metadata)
 }
 
 /// Non-unix platforms lack POSIX device ids; `--one-file-system` mount-point
 /// protection is a unix concept, so the boundary is always absent.
 #[cfg(not(unix))]
-fn delete_boundary_device(_context: &CopyContext, _destination: &Path) -> Option<u64> {
+fn delete_boundary_device(_context: &CopyContext) -> Option<u64> {
     None
+}
+
+/// Whether `destination` lies on another filesystem than the transfer root
+/// under `-x`, in which case the delete pass must not scan it at all.
+///
+/// upstream: generator.c:316-326 delete_in_dir() returns before get_dirlist()
+/// for a directory whose device is not a top directory's.
+#[cfg(unix)]
+fn scans_foreign_filesystem(context: &CopyContext, destination: &Path) -> bool {
+    let Some(boundary) = delete_boundary_device(context) else {
+        return false;
+    };
+    fs::symlink_metadata(destination)
+        .ok()
+        .and_then(|metadata| {
+            crate::local_copy::overrides::device_identifier(destination, &metadata)
+        })
+        .is_some_and(|dev| crosses_mount_boundary(boundary, dev))
+}
+
+/// Non-unix: no device ids, so no directory is ever on a foreign filesystem.
+#[cfg(not(unix))]
+fn scans_foreign_filesystem(_context: &CopyContext, _destination: &Path) -> bool {
+    false
 }
 
 /// Whether `path` (a destination entry of type `file_type`) is a mount point the
@@ -239,7 +267,7 @@ where
     // `--delete-delay` plan, whose decided extras are consumed here rather than
     // rescanned.
     if context.one_file_system_enabled() || context.options().backup_enabled() {
-        let boundary_dev = delete_boundary_device(context, destination);
+        let boundary_dev = delete_boundary_device(context);
         let mut skipped = 0u64;
         for entry in &plan.extras {
             let name_path = PathBuf::from(entry.name.as_os_str());
@@ -403,7 +431,7 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
     // mount point nested inside a doomed subtree is preserved and pins its
     // parent, matching upstream delete.c:144-152. `build_plan_for_directory`
     // already excluded direct-child mounts, so this guards the deeper levels.
-    let boundary_dev = delete_boundary_device(context, destination);
+    let boundary_dev = delete_boundary_device(context);
 
     // Entries are visited in upstream `delete_in_dir` emission order (the
     // reverse-sorted order `sort_by_name` locks in) so the prefix that
@@ -689,7 +717,7 @@ pub(crate) fn clear_make_room_contents_capped(
     destination: &Path,
     relative: &Path,
 ) -> Result<bool, LocalCopyError> {
-    let boundary_dev = delete_boundary_device(context, destination);
+    let boundary_dev = delete_boundary_device(context);
     let mut skipped = 0u64;
     let cleared =
         remove_children_capped(context, destination, relative, &mut skipped, boundary_dev)?
@@ -839,6 +867,10 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
     // matching upstream, hence the manual's `--delete-after` recommendation.
     context.sync_delete_filter_chain(destination, relative)?;
 
+    if scans_foreign_filesystem(context, destination) {
+        return Ok(None);
+    }
+
     let mut keep: HashSet<OsString> = source_entries
         .iter()
         .map(|s| normalize_filename_for_compare(s.as_ref()))
@@ -876,7 +908,7 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
 
     // --one-file-system boundary device (see `delete_boundary_device`). `None`
     // unless `-x` is active, so the common delete pass is unaffected.
-    let boundary_dev = delete_boundary_device(context, destination);
+    let boundary_dev = delete_boundary_device(context);
 
     // Phase A (serial): scan the destination in readdir order and collect the
     // candidates that survive the cheap keep / partial-dir filters. The filter

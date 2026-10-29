@@ -1,5 +1,5 @@
 //! Pins bail-out 2 of the parallel delta scan: `--inplace`
-//! (`updating_basis_file`) must route [`DeltaGenerator::generate_chunked`]
+//! (`updating_basis_file`) must route [`DeltaGenerator::generate_chunked_counted`]
 //! back to the sequential scan.
 //!
 //! # Why this route exists
@@ -12,7 +12,7 @@
 //! against the GLOBAL source cursor. A parallel stripe knows only a
 //! stripe-local cursor, so a mid-file stripe would trust backward matches the
 //! sequential scan suppresses - out-of-order copies that are unsafe to apply
-//! in place. `generate_chunked` therefore falls back to the sequential scan
+//! in place. `generate_chunked_counted` therefore falls back to the sequential scan
 //! whenever `updating_basis_file` is set (`crates/matching/src/generator.rs`,
 //! the `self.updating_basis_file` bail-out).
 //!
@@ -91,7 +91,7 @@ fn assert_monotonic_basis_offsets(script: &DeltaScript, block_len: usize) {
 const BLOCK_LEN: u32 = 700;
 
 /// Fixture length: 6000 full blocks (~4 MiB), no short final block, and large
-/// enough that `generate_chunked`'s internal floor (`max(1 MiB, 64 blocks)`
+/// enough that `generate_chunked_counted`'s internal floor (`max(1 MiB, 64 blocks)`
 /// per stripe) still yields 4 stripes - so bail-out 3 ("too small to split")
 /// cannot mask bail-out 2.
 const N: usize = BLOCK_LEN as usize * 6000;
@@ -99,7 +99,7 @@ const N: usize = BLOCK_LEN as usize * 6000;
 /// Block-aligned midpoint of the fixture.
 const HALF: usize = N / 2;
 
-/// Chunk count requested from `generate_chunked`; the fixture admits it.
+/// Chunk count requested from `generate_chunked_counted`; the fixture admits it.
 const CHUNKS: usize = 4;
 
 /// Source whose entire second half equals the basis's FIRST half: every match
@@ -137,13 +137,14 @@ fn inplace_chunked_matches_guarded_sequential_on_backward_fixture() {
     );
 
     let chunked = guarded
-        .generate_chunked(&source, &index, CHUNKS)
-        .expect("guarded chunked");
+        .generate_chunked_counted(&source, &index, CHUNKS)
+        .expect("guarded chunked")
+        .0;
     assert_monotonic_basis_offsets(&chunked, index.block_length());
     assert_eq!(
         chunked.tokens(),
         sequential.tokens(),
-        "--inplace must route generate_chunked onto the guarded sequential \
+        "--inplace must route generate_chunked_counted onto the guarded sequential \
          scan's exact token stream"
     );
     assert_eq!(
@@ -157,8 +158,9 @@ fn inplace_chunked_matches_guarded_sequential_on_backward_fixture() {
     // so the fixture genuinely separates the two routes - the parity above is
     // the bail-out working, not the fixture failing to discriminate.
     let unguarded_chunked = DeltaGenerator::new()
-        .generate_chunked(&source, &index, CHUNKS)
-        .expect("unguarded chunked");
+        .generate_chunked_counted(&source, &index, CHUNKS)
+        .expect("unguarded chunked")
+        .0;
     assert!(
         unguarded_chunked.copy_bytes() >= (HALF as u64) * 9 / 10,
         "the unguarded striped scan must match the bulk of the backward half \

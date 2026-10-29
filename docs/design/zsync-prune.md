@@ -36,7 +36,7 @@ changed:
 - the transfer size, most visibly on sparse or VM-like images, where
   many zero blocks in the source map onto a few zero blocks in the basis.
 
-The parallel scan (`generate_chunked`) already ran with the prune off,
+The parallel scan (`generate_chunked_counted`) already ran with the prune off,
 so the sequential and parallel paths also disagreed on such inputs.
 
 ## What replaced it

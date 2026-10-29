@@ -236,7 +236,7 @@ fn striped_scan_places_the_short_block_only_at_the_true_tail() {
     let index = build_index(&basis);
 
     // 6 MiB of source: comfortably above the 1 MiB-per-stripe floor, so
-    // `generate_chunked` really splits.
+    // `generate_chunked_counted` really splits.
     let source_len = 6 * 1024 * 1024;
     let mut source: Vec<u8> = (0..source_len)
         .map(|i| ((i * 31 + 7) % 253) as u8)
@@ -248,8 +248,9 @@ fn striped_scan_places_the_short_block_only_at_the_true_tail() {
     source[source_len - TAIL_LEN..].copy_from_slice(tail_block);
 
     let script = DeltaGenerator::new()
-        .generate_chunked(&source, &index, 8)
-        .expect("chunked scan");
+        .generate_chunked_counted(&source, &index, 8)
+        .expect("chunked scan")
+        .0;
 
     let shorts = short_copies(&script, BLOCK_LEN);
     for &(offset, _, _) in &shorts {

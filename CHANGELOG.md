@@ -259,6 +259,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 **Data integrity**
 - `--delete-excluded` on a pull or push no longer deletes destination files that a receiver-side (`-r`) rule protects; the flag only turns un-modified include/exclude rules into sender-side ones when they are parsed, as upstream `exclude.c:1479` does (#8258)
 - A local `--no-whole-file` delta sizes its block strong sums like upstream `sum_sizes_sqroot()` (2 bytes on the first pass for most files) instead of a fixed 16, checks each file with whole-file sums, and resends a file whose short sum matched the wrong block once with full sums, printing upstream wording such as `failed verification -- update discarded (will try again)`; `--stats` and the `-vv` lines count both passes as 3.5.1 does, and a discarded pass reads "discarded" under `--partial` and `--partial-dir` too (#8265)
+- `--delete -x` no longer deletes inside a destination directory that sits on another filesystem; like upstream `generator.c:316-326`, a directory on a device no top directory lives on is not scanned, on local copies and on transfers (#8267)
 - A local `--no-whole-file` delta hashes blocks with the checksum upstream negotiates (xxh128, or the `--checksum-choice` transfer component), seeded like `get_checksum2()`, instead of a fixed unseeded MD4; `--debug=nstr` names that checksum, including a split `a,b` choice (#8246)
 - A disk error on one file (`ENOSPC`, a failed open, backup or `--append-verify` prefix) drains that file's queued data before reporting it, so a daemon worker no longer deadlocks its network thread and a QUIC push no longer stalls into a timeout, as upstream's `discard_receive_data()` does (`receiver.c:1254-1261`) (#8229)
 - `--remove-source-files --delay-updates` no longer lets the sender delete a source whose staged copy failed its final rename; the confirmation is sent only after the rename lands, as upstream does (#8232)
@@ -326,6 +327,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Flush the file list once, after the id lists and the end marker, as upstream `send_file_list()` does (#8206)
 
 **Remote pulls and pushes**
+- `--parallel-delta-scan` now engages on remote-shell (ssh) pushes; the flag was accepted and silently ignored there (#8263)
 - A pull or push of a tree deeper than 1023 levels stops where rsync 3.5.1 stops, at its secure-walk depth (`syscall.c:2940` `DS_MAXDEPTH`): the sender refuses the 1024th level with `opendir ... failed: Cannot allocate memory (12)`, and under `-L` the receiver refuses a file or directory below 1024 parents with `recv_generator: failed to stat` / `mkdir ... failed`, both exit 23. oc used to copy every level (#8269)
 - A remote shell killed by a signal before the handshake exits 12 like upstream, not 16 (#8231)
 - Apply receiver options on remote pulls: `--link-dest`, `--backup-dir`, `--chmod`, `--ignore-existing`, `--temp-dir`, `--omit-dir-times`, `-J`, `-E`, `--mkpath` (#6792, #6794, #6798, #6799, #6805, #6810, #6811, #6820)

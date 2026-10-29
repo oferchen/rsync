@@ -657,7 +657,7 @@ search - is **already implemented and shipped** as the opt-in, default-off
 `--parallel-delta-scan`:
 
 - Parallel range-split scan: `crates/matching/src/generator.rs:986`
-  `DeltaGenerator::generate_chunked`, `par_iter` over overlapping stripes at
+  `DeltaGenerator::generate_chunked_counted`, `par_iter` over overlapping stripes at
   `crates/matching/src/generator.rs:1051`, merged back into source order by
   `merge_copy_runs` (`crates/matching/src/generator.rs:173`).
 - Engaged only for a large, duplicate-free basis: gated at
@@ -685,7 +685,7 @@ search - is **already implemented and shipped** as the opt-in, default-off
 Note the attribution correction versus the exploratory body: the
 `has_duplicate_blocks` eligibility check lives in the transfer-crate wrapper
 `generate_delta_from_signature_chunked` (`delta.rs:411`), not inside
-`generate_chunked` itself; and the matcher crate is `crates/matching`, not the
+`generate_chunked_counted` itself; and the matcher crate is `crates/matching`, not the
 `crates/match` path used in the older prose above.
 
 ### Ruled out as not wire-compatible

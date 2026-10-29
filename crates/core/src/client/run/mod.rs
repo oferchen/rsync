@@ -53,6 +53,7 @@
 
 pub(crate) mod alt_basis;
 pub(crate) mod batch;
+mod checksum_refusal;
 mod filters;
 
 use std::ffi::OsStr;
@@ -468,6 +469,24 @@ fn run_client_internal(
             )
         })?;
     }
+    // upstream: checksum.c:548-551 - the local sender refuses a `none` file
+    // checksum under `--checksum` while it builds the file list, so only when
+    // that list sums a file, and before anything is copied. A push refuses in
+    // its own sender and a pull leaves it to the remote one.
+    let args = config.transfer_args();
+    let sources = if args.len() > 1 {
+        &args[..args.len() - 1]
+    } else {
+        args
+    };
+    if let Err(message) = config
+        .checksum_choice()
+        .validate_file_checksum(config.checksum())
+        && checksum_refusal::reaches_summed_file(sources, config.recursive(), config.dirs())
+    {
+        return Err(ClientError::new(4, message));
+    }
+
     // upstream: main.c:721 `get_local_name()` returns NULL when `list_only` is
     // set, so a local listing needs no destination operand. oc-rsync's local
     // plan always requires source+destination, so for `--list-only` with a
