@@ -47,6 +47,17 @@ enum ServerReaderInner<R: Read> {
     Multiplex(MultiplexReader<R>),
     /// Compressed+Multiplex mode - decompress then demultiplex.
     Compressed(CompressedReader<MultiplexReader<R>>),
+    /// Transient state while [`ServerReader::activate_multiplex_in_place`]
+    /// moves the transport between modes; every read in it is an error.
+    Taken,
+}
+
+/// The error a read in the transient [`ServerReaderInner::Taken`] state returns.
+fn taken_error() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "ServerReader in invalid Taken state",
+    )
 }
 
 impl<R: Read> ServerReader<R> {
@@ -91,7 +102,9 @@ impl<R: Read> ServerReader<R> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.accept_block_stats(),
             ServerReaderInner::Compressed(compressed) => compressed.get_mut().accept_block_stats(),
-            ServerReaderInner::Plain(_) => self.pending_block_stats_accept = true,
+            ServerReaderInner::Plain(_) | ServerReaderInner::Taken => {
+                self.pending_block_stats_accept = true
+            }
         }
     }
 
@@ -108,7 +121,7 @@ impl<R: Read> ServerReader<R> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.set_local_role(role),
             ServerReaderInner::Compressed(compressed) => compressed.get_mut().set_local_role(role),
-            ServerReaderInner::Plain(_) => self.pending_role = role,
+            ServerReaderInner::Plain(_) | ServerReaderInner::Taken => self.pending_role = role,
         }
     }
 
@@ -120,7 +133,7 @@ impl<R: Read> ServerReader<R> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.touched_blocks_4k(),
             ServerReaderInner::Compressed(compressed) => compressed.get_mut().touched_blocks_4k(),
-            ServerReaderInner::Plain(_) => 0,
+            ServerReaderInner::Plain(_) | ServerReaderInner::Taken => 0,
         }
     }
 
@@ -163,7 +176,7 @@ impl<R: Read> ServerReader<R> {
                 // the inner MultiplexReader to capture compressed wire bytes.
                 compressed.get_mut().batch_recorder = Some(recorder);
             }
-            ServerReaderInner::Plain(_) => {
+            ServerReaderInner::Plain(_) | ServerReaderInner::Taken => {
                 self.pending_batch_recorder = Some(recorder);
             }
         }
@@ -208,6 +221,35 @@ impl<R: Read> ServerReader<R> {
                 io::ErrorKind::AlreadyExists,
                 "compression already active",
             )),
+            ServerReaderInner::Taken => Err(taken_error()),
+        }
+    }
+
+    /// [`ServerReader::activate_multiplex`] for a reader held in place, as the
+    /// one connection owner holds it (upstream: io.c:2699 io_start_multiplex_in()
+    /// switches the global `iobuf` without replacing it).
+    ///
+    /// # Errors
+    ///
+    /// As [`ServerReader::activate_multiplex`]; the reader is left unusable
+    /// then, since every such error is a mode-sequencing bug.
+    pub(crate) fn activate_multiplex_in_place(&mut self) -> io::Result<()> {
+        let current = std::mem::replace(self, Self::taken());
+        *self = current.activate_multiplex()?;
+        Ok(())
+    }
+
+    /// The transient value [`ServerReader::activate_multiplex_in_place`]
+    /// leaves behind while it moves the transport.
+    fn taken() -> Self {
+        Self {
+            inner: ServerReaderInner::Taken,
+            pending_batch_recorder: None,
+            pending_io_timeout_adoption: None,
+            pending_deleted_render: None,
+            pending_block_stats_accept: false,
+            pending_role: LocalRole::Client,
+            data_read: 0,
         }
     }
 
@@ -250,6 +292,7 @@ impl<R: Read> ServerReader<R> {
                 io::ErrorKind::AlreadyExists,
                 "compression already active",
             )),
+            ServerReaderInner::Taken => Err(taken_error()),
         }
     }
 
@@ -300,7 +343,7 @@ impl<R: Read> ServerReader<R> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.take_io_error(),
             ServerReaderInner::Compressed(compressed) => compressed.get_mut().take_io_error(),
-            ServerReaderInner::Plain(_) => 0,
+            ServerReaderInner::Plain(_) | ServerReaderInner::Taken => 0,
         }
     }
 
@@ -319,7 +362,7 @@ impl<R: Read> ServerReader<R> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.xfer_error_count(),
             ServerReaderInner::Compressed(compressed) => compressed.get_mut().xfer_error_count(),
-            ServerReaderInner::Plain(_) => 0,
+            ServerReaderInner::Plain(_) | ServerReaderInner::Taken => 0,
         }
     }
 
@@ -341,7 +384,7 @@ impl<R: Read> ServerReader<R> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.take_redo_indices(),
             ServerReaderInner::Compressed(compressed) => compressed.get_mut().take_redo_indices(),
-            ServerReaderInner::Plain(_) => Vec::new(),
+            ServerReaderInner::Plain(_) | ServerReaderInner::Taken => Vec::new(),
         }
     }
 
@@ -365,7 +408,7 @@ impl<R: Read> ServerReader<R> {
             ServerReaderInner::Compressed(compressed) => {
                 compressed.get_mut().take_success_indices()
             }
-            ServerReaderInner::Plain(_) => Vec::new(),
+            ServerReaderInner::Plain(_) | ServerReaderInner::Taken => Vec::new(),
         }
     }
 }
@@ -401,6 +444,7 @@ impl<R: Read> Read for UnframedReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match &mut self.inner.inner {
             ServerReaderInner::Plain(r) => r.read(buf),
+            ServerReaderInner::Taken => Err(taken_error()),
             ServerReaderInner::Multiplex(r) => r.read_unframed(buf),
             ServerReaderInner::Compressed(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -418,14 +462,18 @@ impl<R: Read> super::BufferedInputHint for ServerReader<R> {
     fn has_buffered_input(&self) -> bool {
         match &self.inner {
             ServerReaderInner::Multiplex(mux) => mux.has_buffered_payload(),
-            ServerReaderInner::Plain(_) | ServerReaderInner::Compressed(_) => false,
+            ServerReaderInner::Plain(_)
+            | ServerReaderInner::Compressed(_)
+            | ServerReaderInner::Taken => false,
         }
     }
 
     fn buffered_input(&self) -> &[u8] {
         match &self.inner {
             ServerReaderInner::Multiplex(mux) => mux.buffered_payload(),
-            ServerReaderInner::Plain(_) | ServerReaderInner::Compressed(_) => &[],
+            ServerReaderInner::Plain(_)
+            | ServerReaderInner::Compressed(_)
+            | ServerReaderInner::Taken => &[],
         }
     }
 
@@ -440,6 +488,7 @@ impl<R: Read> Read for ServerReader<R> {
             ServerReaderInner::Plain(r) => r.read(buf),
             ServerReaderInner::Multiplex(r) => r.read(buf),
             ServerReaderInner::Compressed(r) => r.read(buf),
+            ServerReaderInner::Taken => Err(taken_error()),
         }?;
         self.data_read += n as u64;
         Ok(n)

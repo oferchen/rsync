@@ -52,7 +52,7 @@
 //! ```
 
 pub(crate) mod alt_basis;
-mod batch;
+pub(crate) mod batch;
 mod checksum_refusal;
 mod filters;
 
@@ -276,7 +276,7 @@ fn run_client_internal(
         if let Some(result) = batch::handle_batch_read(batch_cfg, &config) {
             return result;
         }
-        Some(batch::create_batch_writer(batch_cfg)?)
+        Some(batch::create_batch_writer(batch_cfg, &config)?)
     } else {
         None
     };
@@ -371,7 +371,7 @@ fn run_client_internal(
         if let Some(ref writer_arc) = batch_writer
             && let Some(batch_cfg) = config.batch_config()
         {
-            batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, false)?;
+            batch::finalize_batch(writer_arc, batch_cfg, &summary, false)?;
         }
 
         return Ok(summary);
@@ -399,7 +399,7 @@ fn run_client_internal(
                 if let Some(ref writer_arc) = batch_writer
                     && let Some(batch_cfg) = config.batch_config()
                 {
-                    batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, false)?;
+                    batch::finalize_batch(writer_arc, batch_cfg, &summary, false)?;
                 }
 
                 return Ok(summary);
@@ -441,7 +441,7 @@ fn run_client_internal(
         if let Some(ref writer_arc) = batch_writer
             && let Some(batch_cfg) = config.batch_config()
         {
-            batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, false)?;
+            batch::finalize_batch(writer_arc, batch_cfg, &summary, false)?;
         }
 
         return Ok(summary);
@@ -649,7 +649,7 @@ fn run_client_internal(
     if let Some(ref writer_arc) = batch_writer
         && let Some(batch_cfg) = config.batch_config()
     {
-        batch::finalize_batch(writer_arc, batch_cfg, &config, &summary, true)?;
+        batch::finalize_batch(writer_arc, batch_cfg, &summary, true)?;
     }
     match exit_error {
         None => Ok(summary),
@@ -1535,33 +1535,6 @@ mod run_client_tests {
 
         assert!(dest_root.join("source").join("keep.txt").exists());
         assert!(!dest_root.join("source").join("skip.tmp").exists());
-        assert!(summary.files_copied() >= 1);
-    }
-
-    #[test]
-    fn run_client_filter_clear_resets_previous_rules() {
-        let tmp = test_support::create_tempdir();
-        let source_root = tmp.path().join("source");
-        let dest_root = tmp.path().join("dest");
-        fs::create_dir_all(&source_root).expect("create source root");
-        fs::create_dir_all(&dest_root).expect("create dest root");
-        fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
-        fs::write(source_root.join("skip.tmp"), b"skip").expect("write skip");
-
-        let config = ClientConfig::builder()
-            .transfer_args([source_root.clone(), dest_root.clone()])
-            .extend_filter_rules([
-                FilterRuleSpec::exclude("*.tmp".to_string()),
-                FilterRuleSpec::clear(),
-                FilterRuleSpec::exclude("keep.txt".to_string()),
-            ])
-            .build();
-
-        let summary = run_client(config).expect("copy succeeds");
-
-        let copied_root = dest_root.join("source");
-        assert!(copied_root.join("skip.tmp").exists());
-        assert!(!copied_root.join("keep.txt").exists());
         assert!(summary.files_copied() >= 1);
     }
 

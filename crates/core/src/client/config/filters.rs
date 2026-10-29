@@ -7,19 +7,12 @@ pub enum FilterRuleKind {
     Include,
     /// Exclude matching paths.
     Exclude,
-    /// Clear all previously defined filter rules.
-    Clear,
     /// Protect matching destination paths from deletion.
     Protect,
     /// Remove protection for matching destination paths.
     Risk,
     /// Merge per-directory filter rules from `.rsync-filter` style files.
     DirMerge,
-    /// Exclude directories containing a specific marker file.
-    ///
-    /// Deviation from upstream: rsync 3.5.1 has no exclude-if-present rule;
-    /// this kind is an oc-only extension.
-    ExcludeIfPresent,
 }
 
 /// Filter rule supplied by the caller.
@@ -55,6 +48,9 @@ pub struct FilterRuleSpec {
     /// upstream: compat.c:803-807 - `FILTRULE_PERISHABLE` is set only when
     /// `!am_sender || protocol_version >= 30`.
     implied_partial_dir: bool,
+    /// Set on a rule that appears before `--delete-excluded` on the command
+    /// line (see [`Self::mark_parsed_before_delete_excluded`]).
+    parsed_before_delete_excluded: bool,
 }
 
 impl FilterRuleSpec {
@@ -74,6 +70,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -93,24 +90,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
-        }
-    }
-
-    /// Creates a rule that clears previously defined filter rules.
-    #[must_use]
-    pub const fn clear() -> Self {
-        Self {
-            kind: FilterRuleKind::Clear,
-            pattern: String::new(),
-            dir_merge_options: None,
-            applies_to_sender: true,
-            applies_to_receiver: true,
-            perishable: false,
-            xattr_only: false,
-            negate: false,
-            cvs_origin: false,
-            abs_path: false,
-            implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -129,6 +109,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -147,6 +128,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -166,25 +148,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
-        }
-    }
-
-    /// Creates an `exclude-if-present` rule mirroring `--filter='H {FILE}'`.
-    #[must_use]
-    #[doc(alias = "H")]
-    pub fn exclude_if_present(pattern: impl Into<String>) -> Self {
-        Self {
-            kind: FilterRuleKind::ExcludeIfPresent,
-            pattern: pattern.into(),
-            dir_merge_options: None,
-            applies_to_sender: true,
-            applies_to_receiver: true,
-            perishable: false,
-            xattr_only: false,
-            negate: false,
-            cvs_origin: false,
-            abs_path: false,
-            implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -203,6 +167,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -221,6 +186,7 @@ impl FilterRuleSpec {
             cvs_origin: false,
             abs_path: false,
             implied_partial_dir: false,
+            parsed_before_delete_excluded: false,
         }
     }
 
@@ -314,10 +280,6 @@ impl FilterRuleSpec {
 
     /// Applies dir-merge style overrides (anchor, side modifiers) to the rule.
     pub fn apply_dir_merge_overrides(&mut self, options: &DirMergeOptions) {
-        if matches!(self.kind, FilterRuleKind::Clear) {
-            return;
-        }
-
         if self.xattr_only {
             // Xattr-only rules are not subject to per-directory overrides.
             return;
@@ -400,6 +362,23 @@ impl FilterRuleSpec {
     pub const fn with_cvs_origin(mut self, cvs_origin: bool) -> Self {
         self.cvs_origin = cvs_origin;
         self
+    }
+
+    /// Records that the rule appears before `--delete-excluded` on the
+    /// command line.
+    ///
+    /// upstream: exclude.c:1478-1481 parse_rule_tok() adds the implicit
+    /// `FILTRULE_SENDER_SIDE` only once `delete_excluded` is set, so such a
+    /// rule is still sender-only (send_rules() elides it, exclude.c:1908-1911)
+    /// but its transmitted and listed prefix carries no `s`.
+    pub const fn mark_parsed_before_delete_excluded(&mut self) {
+        self.parsed_before_delete_excluded = true;
+    }
+
+    /// Reports whether [`Self::mark_parsed_before_delete_excluded`] was called.
+    #[must_use]
+    pub const fn is_parsed_before_delete_excluded(&self) -> bool {
+        self.parsed_before_delete_excluded
     }
 
     /// Reports whether the rule came from the `-C`/`--cvs-exclude` expansion.
@@ -545,9 +524,6 @@ mod tests {
 
         let mut risk = FilterRuleSpec::risk("scratch");
         assert!(!risk.apply_implicit_sender_side_for_delete_excluded());
-
-        let mut clear = FilterRuleSpec::clear();
-        assert!(!clear.apply_implicit_sender_side_for_delete_excluded());
 
         // DirMerge wrappers are unchanged at compile_filter_program time so
         // they are forwarded to the engine unmodified. The engine's

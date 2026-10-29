@@ -214,6 +214,20 @@ pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError 
     ClientError::with_code(code, message)
 }
 
+#[cold]
+/// The diagnostic a locally aborted transfer prints.
+///
+/// upstream: exclude.c:133-137 filter_rule_err() prints its message alone, so
+/// a `RERR_SYNTAX` refusal keeps its text unwrapped; any other local failure
+/// says the transfer failed.
+pub(crate) fn local_abort_text(error: &std::io::Error) -> String {
+    if ExitCode::from_io_error(error) == ExitCode::Syntax {
+        error.to_string()
+    } else {
+        format!("transfer failed: {error}")
+    }
+}
+
 /// Maps a remote-operand parse failure to a syntax error prefixed by `context`.
 ///
 /// A dash-led host keeps upstream's bare refusal text (main.c:1636-1639), so

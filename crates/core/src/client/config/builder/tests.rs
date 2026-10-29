@@ -245,12 +245,6 @@ fn add_filter_rule_protect() {
 }
 
 #[test]
-fn add_filter_rule_clear() {
-    let config = builder().add_filter_rule(FilterRuleSpec::clear()).build();
-    assert_eq!(config.filter_rules()[0].kind(), FilterRuleKind::Clear);
-}
-
-#[test]
 fn extend_filter_rules_appends_collection() {
     let rules = vec![
         FilterRuleSpec::exclude("*.tmp"),

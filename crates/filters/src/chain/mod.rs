@@ -38,7 +38,7 @@ mod tests;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use crate::merge::parse::{parse_rules, parse_rules_no_prefixes, parse_rules_word_split};
+use crate::merge::parse::{parse_rules_in, parse_rules_no_prefixes, parse_rules_word_split};
 use crate::{FilterAction, FilterRule, FilterSet};
 
 pub use config::DirMergeConfig;
@@ -362,12 +362,12 @@ impl FilterChain {
     /// [`allows`](Self::allows).
     #[must_use]
     pub fn allows_deletion(&self, path: &Path, is_dir: bool) -> bool {
-        // upstream: exclude.c:rule_matches() with the `delete_excluded` global -
-        // an entry that an exclude rule would normally protect from deletion
-        // becomes deletable under `--delete-excluded` (a `protect`/`P` rule
-        // still protects it). Mirror that by OR-ing in the
-        // "excluded-removed" decision whenever `delete_excluded` is set, on
-        // whichever scope (or the global set) decides the path.
+        // upstream: rule_matches() has no `delete_excluded` term. The flag acts
+        // once, when a rule is parsed: exclude.c:1479-1481 parse_rule_tok()
+        // turns an un-modified include/exclude into a sender-side rule, which
+        // the receiver then ignores. CLI rules get that at wire build time and
+        // merge-file rules in `apply_merge_implicit_sender_side`, so a rule the
+        // user scoped to the receiver (`-r`, `P`) still protects here.
         // upstream: exclude.c:1195-1200 - as on the transfer path, a global rule
         // preceding the dir-merge directive wins over the merge file's rules. The
         // scope decides only when its directive position is at or before the
@@ -379,21 +379,11 @@ impl FilterChain {
                     .deletion_match_order_during_traversal(path, is_dir)
                     .is_none_or(|global_order| scope.directive_order <= global_order) =>
             {
-                let base = scope
+                scope
                     .filter_set
-                    .allows_deletion_during_traversal(path, is_dir);
-                base || (self.delete_excluded
-                    && scope
-                        .filter_set
-                        .allows_deletion_when_excluded_removed(path, is_dir))
+                    .allows_deletion_during_traversal(path, is_dir)
             }
-            _ => {
-                let base = self.global.allows_deletion(path, is_dir);
-                base || (self.delete_excluded
-                    && self
-                        .global
-                        .allows_deletion_when_excluded_removed(path, is_dir))
-            }
+            _ => self.global.allows_deletion(path, is_dir),
         };
 
         logging::debug_log!(
@@ -489,6 +479,7 @@ impl FilterChain {
             // separated tokens with every token implicitly an exclude.
             // Standard parse_rules would reject names like `one-in-one-out`
             // as "Unknown filter rule", aborting the walk.
+            let report_name = crate::per_dir_merge_report_name(&merge_path);
             let rules = if config.no_prefixes() {
                 // upstream: exclude.c:1273-1275 - the `-`/`+` modifier on the
                 // dir-merge template skips short-prefix dispatch, so each
@@ -498,7 +489,7 @@ impl FilterChain {
                 // (e.g. `:w-`) tokenises on whitespace instead of per line.
                 parse_rules_no_prefixes(
                     &content,
-                    &merge_path,
+                    &report_name,
                     config.no_prefixes_include(),
                     config.cvs_mode(),
                     config.word_split(),
@@ -509,26 +500,26 @@ impl FilterChain {
                 // upstream: exclude.c:1772-1773 - the `w` modifier splits the merge
                 // file on any whitespace and parses every token as its own
                 // rule (comments are not stripped, line 1806).
-                match parse_rules_word_split(&content, &merge_path) {
+                match parse_rules_word_split(&content, &report_name, config.specifies_side()) {
                     Ok(rules) => rules,
                     Err(e) => {
                         self.pop_scopes_at_depth(depth);
                         self.current_depth -= 1;
                         return Err(FilterChainError::Parse {
                             path: merge_path,
-                            message: e.to_string(),
+                            message: e.message,
                         });
                     }
                 }
             } else {
-                match parse_rules(&content, &merge_path) {
+                match parse_rules_in(&content, &report_name, config.specifies_side()) {
                     Ok(rules) => rules,
                     Err(e) => {
                         self.pop_scopes_at_depth(depth);
                         self.current_depth -= 1;
                         return Err(FilterChainError::Parse {
                             path: merge_path,
-                            message: e.to_string(),
+                            message: e.message,
                         });
                     }
                 }
@@ -558,7 +549,7 @@ impl FilterChain {
                     .iter()
                     .any(|r| matches!(r.action(), FilterAction::Clear));
 
-            if rules.is_empty() && dir_merge_descriptors.is_empty() && !config.excludes_self() {
+            if rules.is_empty() && dir_merge_descriptors.is_empty() {
                 continue;
             }
 
@@ -590,17 +581,12 @@ impl FilterChain {
             } else {
                 rel_dir_prefix.as_deref()
             };
-            let mut modified_rules: Vec<FilterRule> = rules
+            let modified_rules: Vec<FilterRule> = rules
                 .into_iter()
                 .map(|rule| config.apply_modifiers(rule))
                 .map(|rule| reanchor_merge_rule(rule, reanchor_dir))
                 .map(|rule| apply_merge_implicit_sender_side(rule, delete_excluded))
                 .collect();
-
-            // upstream: exclude.c - FILTRULE_EXCLUDE_SELF handling
-            if config.excludes_self() {
-                modified_rules.push(FilterRule::exclude(config.filename().to_owned()));
-            }
 
             // Capture before the mutable-borrow clear below drops the `config`
             // reference into `self.merge_configs`.
@@ -738,10 +724,11 @@ impl FilterChain {
         // upstream: exclude.c:1273-1275 - a dir-merge template carrying
         // FILTRULE_NO_PREFIXES (`-`/`+`) skips the short-prefix dispatch and
         // consumes each line as a literal exclude (or include for `+`).
+        let report_name = crate::per_dir_merge_report_name(&merge_path);
         let rules = if descriptor.no_prefixes {
             parse_rules_no_prefixes(
                 &content,
-                &merge_path,
+                &report_name,
                 descriptor.no_prefixes_include,
                 descriptor.cvs_mode,
                 descriptor.word_split,
@@ -749,26 +736,26 @@ impl FilterChain {
         } else if descriptor.cvs_mode {
             parse_cvs_ignore_tokens(&content)
         } else if descriptor.word_split {
-            match parse_rules_word_split(&content, &merge_path) {
+            match parse_rules_word_split(&content, &report_name, descriptor.specifies_side()) {
                 Ok(rules) => rules,
                 Err(e) => {
                     self.pop_scopes_at_depth(depth);
                     self.current_depth -= 1;
                     return Err(FilterChainError::Parse {
                         path: merge_path,
-                        message: e.to_string(),
+                        message: e.message,
                     });
                 }
             }
         } else {
-            match parse_rules(&content, &merge_path) {
+            match parse_rules_in(&content, &report_name, descriptor.specifies_side()) {
                 Ok(rules) => rules,
                 Err(e) => {
                     self.pop_scopes_at_depth(depth);
                     self.current_depth -= 1;
                     return Err(FilterChainError::Parse {
                         path: merge_path,
-                        message: e.to_string(),
+                        message: e.message,
                     });
                 }
             }
@@ -1076,6 +1063,13 @@ struct InlineDirMerge {
     /// `w` modifier (FILTRULE_WORD_SPLIT): tokenise the merge file on any
     /// whitespace instead of one rule per line.
     word_split: bool,
+}
+
+impl InlineDirMerge {
+    /// See [`DirMergeConfig::specifies_side`].
+    const fn specifies_side(&self) -> bool {
+        self.sender_only || self.receiver_only
+    }
 }
 
 /// Joins a relative path's normal components with `/`, ignoring any leading

@@ -59,14 +59,13 @@
 //! ## Batch mode
 //!
 //! The re-exported `batch` module supports offline transfer workflows: write a
-//! batch file with [`BatchWriter`], replay it later with [`BatchReader`] /
-//! `batch::replay::replay`.
+//! batch file with [`BatchWriter`] and read it back with [`BatchReader`];
+//! `--read-batch` replays it through the transfer receiver.
 //!
 //! ## Async I/O (optional)
 //!
-//! When compiled with the `async` feature, [`AsyncFileCopier`] provides
-//! tokio-based async file copy with progress
-//! reporting via [`CopyProgress`].
+//! When compiled with the `async` feature, `AsyncFileCopier` provides
+//! tokio-based async file copy with progress reporting via `CopyProgress`.
 //!
 //! # Dependency position
 //!
@@ -149,13 +148,8 @@ pub mod batch {
     //! Re-exports from the [`batch`] crate for backward compatibility.
     pub use batch::{
         BatchConfig, BatchError, BatchFlags, BatchHeader, BatchMode, BatchReader, BatchResult,
-        BatchStats, BatchWriter, DeltaOp, FileEntry, ReplayResult, check_batch_flags,
+        BatchStats, BatchWriter, DeltaOp, FileEntry, check_batch_flags,
     };
-
-    /// Batch replay functions for applying recorded delta operations.
-    pub mod replay {
-        pub use batch::replay::{apply_delta_ops, replay};
-    }
 
     /// Script generation for batch replay.
     pub mod script {
