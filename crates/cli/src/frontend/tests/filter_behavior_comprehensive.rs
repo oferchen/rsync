@@ -1096,3 +1096,31 @@ fn transfer_with_anchored_pattern_only_matches_root() {
     assert!(!dest_root.join("skip.txt").exists());
     assert!(dest_root.join("sub/skip.txt").exists());
 }
+
+/// upstream: exclude.c:1478-1481 parse_rule_tok() - `--delete-excluded` makes
+/// only the rules parsed after it sender-side, so its argv position is kept
+/// in the filter stream.
+#[test]
+fn filter_order_records_delete_excluded_position() {
+    use crate::frontend::filter_rules::FilterOrderToken;
+
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("-r"),
+        OsString::from("--exclude=a"),
+        OsString::from("--delete-excluded"),
+        OsString::from("--exclude=b"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed.filter_order,
+        vec![
+            FilterOrderToken::Exclude(OsString::from("a")),
+            FilterOrderToken::DeleteExcluded,
+            FilterOrderToken::Exclude(OsString::from("b")),
+        ]
+    );
+}

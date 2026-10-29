@@ -15,6 +15,7 @@ use crate::signature::{
     PARALLEL_THRESHOLD_BYTES, SignatureAlgorithm, SignatureError, generate_file_signature,
     generate_file_signature_windowed,
 };
+use ::signature::{MAX_SUM_LENGTH, SHORT_SUM_LENGTH};
 
 use protocol::ProtocolVersion;
 
@@ -108,10 +109,28 @@ pub(crate) fn destination_is_newer(
     }
 }
 
-/// Builds a delta signature index from an existing destination file.
+/// The strong-sum length a pass starts `sum_sizes_sqroot()` from.
 ///
-/// `algorithm` is the block strong checksum (upstream `xfer_sum_nni`); the
-/// strong sum is capped at its digest width.
+/// upstream: io.c:82 starts `csum_length` at `SHORT_SUM_LENGTH`; the phase-2
+/// resend switches it to `SUM_LENGTH` (generator.c:2650, receiver.c:955) and
+/// the first pass after it switches back (generator.c:2677, receiver.c:965).
+pub(crate) fn block_sum_length(redoing: bool) -> NonZeroU8 {
+    let length = if redoing {
+        MAX_SUM_LENGTH
+    } else {
+        SHORT_SUM_LENGTH
+    };
+    NonZeroU8::new(length).expect("strong sum lengths are non-zero")
+}
+
+/// Builds a delta signature from an existing destination file.
+///
+/// `algorithm` is the block strong checksum (upstream `xfer_sum_nni`) and
+/// `csum_length` the pass's starting strong-sum length (see
+/// [`block_sum_length`]). The block sums are truncated to the `s2length`
+/// upstream's `sum_sizes_sqroot()` picks, exactly as upstream sends them, so a
+/// short sum can match the wrong block; the delta loop's whole-file sums
+/// catch that the way upstream's receiver does.
 ///
 /// Returns `None` for empty files or when signature generation fails
 /// for non-I/O reasons. Used by the delta transfer path to compute
@@ -121,21 +140,21 @@ pub(crate) fn build_delta_signature(
     metadata: &fast_io::EntryMetadata,
     block_size_override: Option<NonZeroU32>,
     algorithm: SignatureAlgorithm,
+    csum_length: NonZeroU8,
 ) -> Result<Option<DeltaSignatureIndex>, LocalCopyError> {
     let length = metadata.len();
     if length == 0 {
         return Ok(None);
     }
 
-    let checksum_len = NonZeroU8::new(16).expect("strong checksum length must be non-zero");
     // upstream: generator.c:711 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`
-    let digest_len = NonZeroU8::new(algorithm.digest_len().min(16) as u8)
+    let digest_len = NonZeroU8::new(algorithm.digest_len().min(usize::from(MAX_SUM_LENGTH)) as u8)
         .expect("strong checksum digest length must be non-zero");
     let params = SignatureLayoutParams::new(
         length,
         block_size_override,
         ProtocolVersion::NEWEST,
-        checksum_len,
+        csum_length,
     )
     .with_transfer_digest_length(digest_len);
     let Ok(layout) = calculate_signature_layout(params) else {
@@ -208,10 +227,7 @@ pub(crate) fn build_delta_signature(
         );
     }
 
-    match DeltaSignatureIndex::from_signature(&signature, algorithm) {
-        Some(index) => Ok(Some(index)),
-        None => Ok(None),
-    }
+    Ok(DeltaSignatureIndex::from_signature(&signature, algorithm))
 }
 
 /// Parameters for deciding whether to skip copying a file.
@@ -474,6 +490,7 @@ mod tests {
             &fast_io::EntryMetadata::from(metadata.clone()),
             Some(override_size),
             default_checksum_algorithm(),
+            block_sum_length(false),
         )
         .expect("signature")
         .expect("index");
@@ -502,9 +519,10 @@ mod tests {
             },
             SignatureAlgorithm::Md4,
         ] {
-            let index = build_delta_signature(&path, &metadata, None, algorithm)
-                .expect("signature")
-                .expect("index");
+            let index =
+                build_delta_signature(&path, &metadata, None, algorithm, block_sum_length(true))
+                    .expect("signature")
+                    .expect("index");
             let strong_len = index.strong_length();
             assert_eq!(strong_len, algorithm.digest_len().min(16), "{algorithm:?}");
             let first_block = &data[..index.block_length()];
@@ -516,6 +534,35 @@ mod tests {
                 "{algorithm:?}"
             );
         }
+    }
+
+    /// A first pass sizes the strong sum like upstream's `sum_sizes_sqroot()`
+    /// from `SHORT_SUM_LENGTH` (2 bytes for this file, as 3.5.1 prints
+    /// `s2length=2`); the phase-2 resend uses the full 16.
+    #[test]
+    fn first_pass_signature_uses_short_sums() {
+        let temp = TempDir::new().expect("tempdir");
+        let path = temp.path().join("basis.bin");
+        let data: Vec<u8> = (0..2100u32).map(|i| (i * 31 % 251) as u8).collect();
+        fs::write(&path, &data).expect("write basis");
+        let metadata = fast_io::EntryMetadata::from(fs::metadata(&path).expect("metadata"));
+        let algorithm = default_checksum_algorithm();
+
+        let short =
+            build_delta_signature(&path, &metadata, None, algorithm, block_sum_length(false))
+                .expect("signature")
+                .expect("index");
+        assert_eq!(short.strong_length(), 2);
+        let block = &data[..short.block_length()];
+        assert_eq!(
+            short.block(0).strong(),
+            algorithm.compute_truncated(block, 2).as_slice()
+        );
+
+        let full = build_delta_signature(&path, &metadata, None, algorithm, block_sum_length(true))
+            .expect("signature")
+            .expect("index");
+        assert_eq!(full.strong_length(), 16);
     }
 
     #[test]

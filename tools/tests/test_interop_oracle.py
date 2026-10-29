@@ -238,6 +238,8 @@ class CatalogueTest(unittest.TestCase):
                        "prune-empty-dirs/3.5.1/rsh/push/oc-client",
                        "prune-empty-dirs/3.5.1/daemon/push/oc-client",
                        "batch-local/3.4.4/local/push/oc-client",
+                       "batch-local-protocol-29/3.5.1/local/push/oc-client",
+                       "batch-local-protocol-28/3.5.1/local/push/oc-client",
                        "max-delete/3.5.1/rsh/push/oc-server",
                        "delete/3.5.1/rsh/pull/oc-server",
                        "inc-recurse-dirs/3.5.1/rsh/push/oc-client"):
