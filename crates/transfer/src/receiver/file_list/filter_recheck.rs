@@ -118,7 +118,10 @@ impl ReceiverContext {
         let receiving_dir = if self.config.connection.client_mode {
             PathBuf::from(".")
         } else {
-            self.config.args.first().map_or_else(|| PathBuf::from("."), PathBuf::from)
+            self.config
+                .args
+                .first()
+                .map_or_else(|| PathBuf::from("."), PathBuf::from)
         };
         let module_root = self
             .config

@@ -553,7 +553,11 @@ mod tests {
         // Directory entry matches directly in both contexts.
         assert!(rule.matcher.matches(Path::new("subdir"), true, None));
         // Transfer path never matches a child via a synthetic descendant.
-        assert!(!rule.matcher.matches(Path::new("subdir/debug.log"), false, None));
+        assert!(
+            !rule
+                .matcher
+                .matches(Path::new("subdir/debug.log"), false, None)
+        );
         // Deletion path protects the child.
         assert!(
             rule.matcher
@@ -685,7 +689,10 @@ mod tests {
     #[test]
     fn bare_double_star_matches_across_segments() {
         let rule = CompiledRule::new(FilterRule::include("foo**too".to_owned())).unwrap();
-        assert!(rule.matcher.matches(Path::new("bar/down/to/foo/too"), true, None));
+        assert!(
+            rule.matcher
+                .matches(Path::new("bar/down/to/foo/too"), true, None)
+        );
         assert!(rule.matcher.matches(Path::new("foo/too"), true, None));
         assert!(rule.matcher.matches(Path::new("fooxytoo"), false, None));
         assert!(!rule.matcher.matches(Path::new("foo/bar"), false, None));
