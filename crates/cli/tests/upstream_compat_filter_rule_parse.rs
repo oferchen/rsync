@@ -83,7 +83,7 @@ fn diagnostic(stderr: &str) -> String {
 }
 
 /// How the client reaches the source tree.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Source {
     /// A local `src/`.
     Local,
@@ -217,7 +217,10 @@ fn assert_parity_from(files: &[(&str, &str)], args: &[&str], source: Source) -> 
     let server = upstream.binary();
     let expected = run(server, server, files, args, source);
     let actual = run(&oc_rsync_bin(), server, files, args, source);
-    assert_eq!(actual, expected, "oc vs upstream 3.5.1 for {args:?}");
+    assert_eq!(
+        actual, expected,
+        "oc vs upstream 3.5.1 for {args:?} ({source:?})"
+    );
     Some(actual)
 }
 
@@ -606,5 +609,63 @@ fn abs_path_rules_match_below_the_daemon_module() {
             &["--delete", &format!("--filter={rule}")],
             Source::DaemonPush,
         );
+    }
+}
+
+/// Deleting an extraneous directory empties it first, and each child it holds
+/// meets the filters on its own (delete.c:91-183 delete_dir_contents): a
+/// protected or excluded child stays, so the directory stays too, and
+/// upstream only prints `cannot delete non-empty directory`. oc used to remove
+/// the whole tree, protected files and all.
+#[test]
+fn delete_keeps_protected_files_inside_an_extraneous_directory() {
+    let files = [
+        ("keep", "k"),
+        ("@dst/sub/a", "a"),
+        ("@dst/sub/b", "b"),
+        ("@dst/sub/deep/c", "c"),
+    ];
+    let sources = [
+        Source::Local,
+        Source::Push,
+        Source::Pull,
+        Source::DaemonPush,
+        Source::DaemonPull,
+    ];
+    let cells = [
+        ("P /sub/a", true),
+        ("P c", true),
+        ("- /sub/a", true),
+        ("-r b", false),
+        ("P *", true),
+        ("+ *", true),
+    ];
+    for (rule, also_delete_excluded) in cells {
+        // Each delete timing and the --max-delete cap take their own path
+        // through the delete pass.
+        let extras: &[Option<&str>] = if also_delete_excluded {
+            &[
+                None,
+                Some("--delete-excluded"),
+                Some("--delete-delay"),
+                Some("--delete-after"),
+                Some("--max-delete=100"),
+            ]
+        } else {
+            &[
+                None,
+                Some("--delete-delay"),
+                Some("--delete-after"),
+                Some("--max-delete=100"),
+            ]
+        };
+        for extra in extras {
+            let mut args = vec!["--delete".to_owned(), format!("--filter={rule}")];
+            args.extend(extra.map(str::to_owned));
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            for source in sources {
+                assert_parity_from(&files, &args, source);
+            }
+        }
     }
 }

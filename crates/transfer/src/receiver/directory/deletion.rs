@@ -303,14 +303,23 @@ fn push_post_order(
 ///   directory; a subdirectory is expanded before it is itself deleted.
 /// - `delete.c:178-181 delete_item()` -> `log.c:845 log_delete()` - one
 ///   `deleting` line per removed entry.
+/// - `delete.c:108-110` - get_dirlist() leaves out a child the filters
+///   protect, which keeps its directory. `allows` is that check; such a child
+///   is not recorded, and every directory it keeps lands in `kept`.
+///
+/// Returns whether the subtree holds nothing the filters keep, so it may be
+/// removed wholesale.
+#[allow(clippy::too_many_arguments)]
 fn record_doomed_dir_descendants(
     #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     dest_dir: &Path,
     rel: &Path,
     path: &Path,
     capture_mode: bool,
+    allows: &dyn Fn(&Path, bool) -> bool,
+    kept: &mut Vec<PathBuf>,
     out: &mut Vec<DeletedEntry>,
-) {
+) -> bool {
     let children = match read_dir_children(
         #[cfg(unix)]
         sandbox,
@@ -322,21 +331,33 @@ fn record_doomed_dir_descendants(
         // A read failure leaves the itemize list short but never blocks the
         // wholesale removal below; upstream likewise only logs what
         // get_dirlist() could enumerate.
-        Err(_) => return,
+        Err(_) => return true,
     };
+    let mut emptied = true;
     for (name, is_dir, is_symlink) in children {
         let child_rel = rel.join(&name);
         let child_path = path.join(&name);
-        if is_dir && !is_symlink {
-            record_doomed_dir_descendants(
+        if !allows(&child_rel, is_dir) {
+            emptied = false;
+            continue;
+        }
+        if is_dir
+            && !is_symlink
+            && !record_doomed_dir_descendants(
                 #[cfg(unix)]
                 sandbox,
                 dest_dir,
                 &child_rel,
                 &child_path,
                 capture_mode,
+                allows,
+                kept,
                 out,
-            );
+            )
+        {
+            kept.push(child_rel);
+            emptied = false;
+            continue;
         }
         let mode = victim_mode(
             capture_mode,
@@ -355,6 +376,50 @@ fn record_doomed_dir_descendants(
             mode,
         });
     }
+    emptied
+}
+
+/// Removes the recorded victims of a directory a protected descendant keeps,
+/// deepest first, and leaves in `victims` only those actually removed.
+///
+/// upstream: delete.c:141-164 delete_dir_contents() deletes each listed child
+/// and leaves the directory itself when anything stayed.
+fn remove_recorded_victims(
+    #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &Path,
+    victims: &mut Vec<DeletedEntry>,
+) -> io::Result<()> {
+    for victim in order_deletions_upstream(std::mem::take(victims)) {
+        let path = dest_dir.join(&victim.rel);
+        #[cfg(unix)]
+        let result = fast_io::unlink_via_sandbox_or_fallback(
+            sandbox,
+            dest_dir,
+            &victim.rel,
+            &path,
+            if victim.is_dir {
+                fast_io::UnlinkFlags::Dir
+            } else {
+                fast_io::UnlinkFlags::File
+            },
+        );
+        #[cfg(not(unix))]
+        let result = if victim.is_dir {
+            std::fs::remove_dir(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        match result {
+            Ok(()) => victims.push(victim),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                if let Some(error) = fail_loud_unlink_error(error) {
+                    return Err(error);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Lists the immediate children of a directory as `(name, is_dir, is_symlink)`,
@@ -1124,16 +1189,37 @@ impl ReceiverContext {
                         // is a leaf. Empty for files, so the common path is
                         // unchanged.
                         let mut subtree: Vec<DeletedEntry> = Vec::new();
-                        if is_dir && !is_symlink {
-                            record_doomed_dir_descendants(
+                        let mut kept: Vec<PathBuf> = Vec::new();
+                        let allows_child = |rel: &Path, dir: bool| match &local_chain {
+                            Some(chain) => chain.allows_deletion(rel, dir),
+                            None => flat_chain.allows_deletion(rel, dir),
+                        };
+                        let emptied = !is_dir
+                            || is_symlink
+                            || record_doomed_dir_descendants(
                                 #[cfg(unix)]
                                 sandbox_ref,
                                 &dest_dir_owned,
                                 &entry_rel,
                                 &path,
                                 capture_mode,
+                                &allows_child,
+                                &mut kept,
                                 &mut subtree,
                             );
+                        if !emptied {
+                            // upstream: delete.c:178-180 - FINFO for each
+                            // directory a protected child keeps; neither
+                            // counted nor an I/O error.
+                            kept.push(entry_rel.clone());
+                            for dir in &kept {
+                                info_log!(
+                                    Nonreg,
+                                    1,
+                                    "cannot delete non-empty directory: {}",
+                                    dir.display().to_string().replace('\\', "/")
+                                );
+                            }
                         }
 
                         let mode = victim_mode(
@@ -1156,6 +1242,13 @@ impl ReceiverContext {
                         // the physical removal runs later in do_delayed_deletions().
                         let result = if collect_only || dry_run {
                             Ok(())
+                        } else if !emptied {
+                            remove_recorded_victims(
+                                #[cfg(unix)]
+                                sandbox_ref,
+                                &dest_dir_owned,
+                                &mut subtree,
+                            )
                         } else if is_dir {
                             // SEC-1.q2 audit row #6
                             #[cfg(unix)]
@@ -1220,6 +1313,9 @@ impl ReceiverContext {
                                     }
                                 }
                                 deleted_paths.extend(subtree);
+                                if !emptied {
+                                    continue;
+                                }
                                 if is_dir {
                                     stats.dirs += 1;
                                 } else if is_symlink {
@@ -1602,6 +1698,7 @@ impl ReceiverContext {
                     &path,
                     candidate.is_dir,
                     candidate.is_symlink,
+                    local_chain.as_ref().unwrap_or(deletion_chain),
                 )?;
             }
         }
@@ -1709,7 +1806,7 @@ impl ReceiverContext {
             logged: self.captures_victim_modes().then(Vec::new),
             writer,
         };
-        let emptied = state.remove_dir_contents(relative, path)?;
+        let emptied = state.remove_dir_contents(relative, path, &self.deletion_filter_chain)?;
         // upstream: delete.c:217-218 - a capped child bumps the same
         // `skipped_deletes` the delete sweeps do.
         self.add_skipped_deletes(state.skipped);
@@ -1846,7 +1943,12 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
     /// # Upstream Reference
     ///
     /// - `delete.c:91-181` - `delete_dir_contents()`
-    fn remove_dir_contents(&mut self, rel: &Path, path: &Path) -> io::Result<bool> {
+    fn remove_dir_contents(
+        &mut self,
+        rel: &Path,
+        path: &Path,
+        filter: &filters::FilterChain,
+    ) -> io::Result<bool> {
         let mut children = match self.scan_dir(rel, path) {
             Ok(children) => children,
             Err(e) => {
@@ -1864,7 +1966,19 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         for (child_name, child_is_dir, child_is_symlink) in children {
             let child_rel = rel.join(&child_name);
             let child_path = path.join(&child_name);
-            if !self.remove_entry(&child_rel, &child_path, child_is_dir, child_is_symlink)? {
+            // upstream: delete.c:108-110 - get_dirlist() leaves out a child the
+            // filters protect, which keeps the directory.
+            if !filter.allows_deletion(&child_rel, child_is_dir) {
+                all_removed = false;
+                continue;
+            }
+            if !self.remove_entry(
+                &child_rel,
+                &child_path,
+                child_is_dir,
+                child_is_symlink,
+                filter,
+            )? {
                 all_removed = false;
             }
         }
@@ -1880,6 +1994,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         path: &Path,
         is_dir: bool,
         is_symlink: bool,
+        filter: &filters::FilterChain,
     ) -> io::Result<bool> {
         if is_dir && !is_symlink {
             // upstream: generator.c:331-336 delete_in_dir() skips a dest dir
@@ -1903,7 +2018,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
             }
             // Peel the directory's contents depth-first before considering the
             // directory itself (upstream delete_dir_contents, reverse order).
-            if !self.remove_dir_contents(rel, path)? {
+            if !self.remove_dir_contents(rel, path, filter)? {
                 // upstream: delete.c:117 - one notice per non-empty directory,
                 // not counted and not an I/O error.
                 info_log!(
@@ -2527,7 +2642,16 @@ mod tests {
         std::fs::write(sub.join("deep.txt"), b"y").unwrap();
 
         let mut out = Vec::new();
-        record_doomed_dir_descendants(None, base, Path::new("stale_dir"), &stale, false, &mut out);
+        record_doomed_dir_descendants(
+            None,
+            base,
+            Path::new("stale_dir"),
+            &stale,
+            false,
+            &|_, _| true,
+            &mut Vec::new(),
+            &mut out,
+        );
 
         let mut got: Vec<String> = out
             .iter()

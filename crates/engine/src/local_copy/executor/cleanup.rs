@@ -191,9 +191,14 @@ where
     //    contents - a silent data-loss gap. The leaf executor recurses
     //    depth-first and calls `delete_leaf`, which backs up each file, matching
     //    upstream's per-entry recursion.
+    // 4. Filter rules: each child of an extraneous directory meets the
+    //    filters on its own, and a protected one keeps the directory
+    //    (delete.c:91-183 delete_dir_contents, through the is_excluded() check
+    //    in get_dirlist()). `remove_dir_all` would take it too.
     if context.options().max_deletion_limit().is_some()
         || context.one_file_system_enabled()
         || context.options().backup_enabled()
+        || context.deletion_filters_active()
     {
         return delete_extraneous_entries_capped(context, destination, relative, source_entries);
     }
@@ -238,7 +243,10 @@ where
     // in `delete_extraneous_entries_via_emitter`; this guard covers the deferred
     // `--delete-delay` plan, whose decided extras are consumed here rather than
     // rescanned.
-    if context.one_file_system_enabled() || context.options().backup_enabled() {
+    if context.one_file_system_enabled()
+        || context.options().backup_enabled()
+        || context.deletion_filters_active()
+    {
         let boundary_dev = delete_boundary_device(context, destination);
         let mut skipped = 0u64;
         for entry in &plan.extras {
@@ -650,9 +658,15 @@ fn remove_children_capped(
     children.reverse();
 
     let mut all_children_removed = true;
-    for (child_name, _) in children {
+    for (child_name, is_dir) in children {
         let child_path = path.join(&child_name);
         let child_relative = entry_relative.join(&child_name);
+        // upstream: delete.c:108-110 - get_dirlist() leaves out a child the
+        // filters protect, and counts it so the directory stays non-empty.
+        if !context.allows_deletion(&child_relative, is_dir) {
+            all_children_removed = false;
+            continue;
+        }
         // Children are reached via the recursion, mirroring upstream's
         // `delete_item(..., DEL_DIR_IS_EMPTY)` at delete.c:162; mark them
         // `nested` so a cap-saturated non-empty subdir is counted.
