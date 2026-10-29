@@ -97,6 +97,11 @@ fn a_symlinked_parent_leading_out_is_kept_and_its_entries_are_reported() {
         let outside = tmp.path().join("outside");
         fs::create_dir_all(&outside).expect("mkdir outside");
         fs::write(outside.join("f"), b"bait").expect("write bait");
+        // upstream's make_path() runs when the confined stat of `sub/deep`
+        // fails, so it is reported even though the symlink's target holds a
+        // `deep` a following stat would find.
+        fs::create_dir_all(outside.join("deep")).expect("mkdir outside/deep");
+        fs::write(outside.join("deep/g"), b"deep bait").expect("write deep bait");
         fs::create_dir_all(tmp.path().join("dest")).expect("mkdir dest");
         std::os::unix::fs::symlink(&outside, tmp.path().join("dest/sub")).expect("plant symlink");
 
@@ -113,9 +118,10 @@ fn a_symlinked_parent_leading_out_is_kept_and_its_entries_are_reported() {
             b"bait",
             "{mode:?}"
         );
-        assert!(
-            !outside.join("deep").exists(),
-            "{mode:?}: nothing created outside"
+        assert_eq!(
+            fs::read(outside.join("deep/g")).expect("deep bait"),
+            b"deep bait",
+            "{mode:?}: nothing written through the symlink"
         );
         for (needle, lines) in [
             ("recv_generator: failed to stat \"", 2),
@@ -202,5 +208,69 @@ fn list_only_omits_implied_parents() {
             .filter_map(|l| l.split_whitespace().last())
             .collect();
         assert_eq!(names, ["sub/f", "sub/deep/g"], "{mode:?}:\n{stdout}");
+    }
+}
+
+/// Recursion takes the incremental receiver: the implied `sub` above a
+/// recursed `sub/deep` is left alone and is not counted as a failure, so the
+/// run succeeds while `sub/deep` itself is created and re-timed as usual.
+#[test]
+fn a_recursed_operand_leaves_its_implied_parent_alone() {
+    require_binaries!("oc-rsync", LSH_STUB_BIN);
+    for mode in MODES {
+        let tmp = create_tempdir();
+        source(tmp.path());
+        let src = tmp.path().join("src");
+        let dest = tmp.path().join("dest");
+        let dest_sub = dest.join("sub");
+        fs::create_dir_all(&dest_sub).expect("mkdir dest/sub");
+        filetime::set_file_mtime(
+            &dest_sub,
+            filetime::FileTime::from_unix_time(1_500_000_000, 0),
+        )
+        .expect("date dest/sub");
+
+        let mut runner =
+            OcRsyncCliRunner::new()
+                .cwd(&src)
+                .args(["-rR", "--no-implied-dirs", "-t", "-i"]);
+        if !matches!(mode, Mode::Local) {
+            let stub = LshRunnerStub::locate().expect("lsh-stub located");
+            runner = runner
+                .arg(format!("--rsh={}", stub.path().display()))
+                .arg(format!(
+                    "--rsync-path={}",
+                    test_support::oc_rsync_bin().display()
+                ));
+        }
+        runner = match mode {
+            Mode::Local => runner.arg("sub/deep").arg(format!("{}/", dest.display())),
+            Mode::Pull => runner
+                .arg(format!("localhost:{}/./sub/deep", src.display()))
+                .arg(format!("{}/", dest.display())),
+            Mode::Push => runner
+                .arg("sub/deep")
+                .arg(format!("localhost:{}/", dest.display())),
+        };
+        let out = runner.run().expect("transfer run");
+        let rows = format!("{}{}", out.stdout_str(), out.stderr_str());
+        assert_eq!(out.status, Some(0), "{mode:?}:\n{rows}");
+        assert!(
+            !rows.lines().any(|l| l.ends_with(" sub/")),
+            "{mode:?}: the implied parent must not be itemized:\n{rows}"
+        );
+        assert!(rows.contains("cd+++++++++ sub/deep/"), "{mode:?}:\n{rows}");
+        let deep = fs::metadata(dest.join("sub/deep"))
+            .expect("dest/sub/deep")
+            .mtime();
+        assert_eq!(
+            deep, 1_600_000_000,
+            "{mode:?}: sub/deep takes the source time"
+        );
+        let sub = fs::metadata(&dest_sub).expect("dest/sub").mtime();
+        assert_ne!(
+            sub, 1_600_000_000,
+            "{mode:?}: sub must not take the source time"
+        );
     }
 }
