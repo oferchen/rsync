@@ -250,13 +250,15 @@ pub(crate) fn sender_super_stats_args(config: &ClientConfig) -> impl Iterator<It
 /// upstream: exclude.c:1864-1870 (`get_rule_prefix`) emits `s` iff
 /// `FILTRULE_SENDER_SIDE` and `r` iff `FILTRULE_RECEIVER_SIDE`; a both-sides
 /// rule has neither bit set (exclude.c:1479-1481 tests `FILTRULES_SIDES`).
+/// A rule that [names its sides](FilterRuleSpec::names_sides) carries
+/// exactly the bits it named, so `-sr` stays `-sr` on the wire.
 fn wire_sender_side(spec: &FilterRuleSpec) -> bool {
-    spec.applies_to_sender() && !spec.applies_to_receiver()
+    spec.applies_to_sender() && (spec.names_sides() || !spec.applies_to_receiver())
 }
 
 /// Receiver-side counterpart of [`wire_sender_side`].
 fn wire_receiver_side(spec: &FilterRuleSpec) -> bool {
-    spec.applies_to_receiver() && !spec.applies_to_sender()
+    spec.applies_to_receiver() && (spec.names_sides() || !spec.applies_to_sender())
 }
 
 pub(crate) fn build_wire_format_rules(
@@ -347,12 +349,10 @@ pub(crate) fn build_wire_format_rules(
             // hardcodes both true). Without carrying it here, a `:s .filt`
             // serializes with no side flag, so the receiver's --delete pass loads
             // it (and any nested dir-merge) as two-sided and wrongly protects
-            // flist-absent files from deletion. Mirror the both-sides==no-flag
-            // convention exactly.
-            let dm_sender = options.applies_to_sender();
-            let dm_receiver = options.applies_to_receiver();
-            wire_rule.sender_side = dm_sender && !dm_receiver;
-            wire_rule.receiver_side = dm_receiver && !dm_sender;
+            // flist-absent files from deletion. A side the rule named is an
+            // enabled override, so `:sr` carries both bits.
+            wire_rule.sender_side = options.sender_side_override() == Some(true);
+            wire_rule.receiver_side = options.receiver_side_override() == Some(true);
         }
 
         wire_rules.push(wire_rule);

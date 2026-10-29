@@ -272,6 +272,11 @@ pub struct ConnectionConfig {
     pub confine_root: Option<PathBuf>,
     /// Filter rules to send to remote daemon (client_mode only).
     pub filter_rules: Vec<FilterRuleWireFormat>,
+    /// The session's CVS ignore list, which every `C` rule this side expands
+    /// stands for. A client hands in the list its own arguments were expanded
+    /// against; a server starts a fresh one per session, as each forked
+    /// upstream daemon child does (exclude.c:1489-1496).
+    pub cvs_session: filters::CvsSession,
     /// Optional filename encoding converter for `--iconv` support.
     pub iconv: Option<FilenameConverter>,
     /// Optional compression level for zlib compression (0-9).

@@ -61,6 +61,11 @@ pub struct FilterRule {
     pub(crate) pattern: Vec<u8>,
     pub(crate) applies_to_sender: bool,
     pub(crate) applies_to_receiver: bool,
+    /// Whether the rule's text named its side(s) with `s`/`r`, upstream's
+    /// `rflags & FILTRULES_SIDES`. Kept apart from the two booleans because
+    /// `-sr` names both sides, which applies like an unsided rule but still
+    /// counts as sided (exclude.c:1448, 1480).
+    pub(crate) sides_named: bool,
     pub(crate) perishable: bool,
     pub(crate) xattr_only: bool,
     pub(crate) negate: bool,
@@ -127,6 +132,7 @@ impl std::fmt::Debug for FilterRule {
             .field("pattern", &String::from_utf8_lossy(&self.pattern))
             .field("applies_to_sender", &self.applies_to_sender)
             .field("applies_to_receiver", &self.applies_to_receiver)
+            .field("sides_named", &self.sides_named)
             .field("perishable", &self.perishable)
             .field("xattr_only", &self.xattr_only)
             .field("negate", &self.negate)
@@ -165,6 +171,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: true,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -201,6 +208,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: true,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -237,6 +245,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: false,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -263,6 +272,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: false,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -290,6 +300,7 @@ impl FilterRule {
             pattern: Vec::new(),
             applies_to_sender: true,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -320,6 +331,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: true,
             applies_to_receiver: false,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -350,6 +362,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: true,
             applies_to_receiver: false,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -384,6 +397,7 @@ impl FilterRule {
             pattern: file_path.into(),
             applies_to_sender: true,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -418,6 +432,7 @@ impl FilterRule {
             pattern: filename.into(),
             applies_to_sender: true,
             applies_to_receiver: true,
+            sides_named: false,
             perishable: false,
             xattr_only: false,
             negate: false,
@@ -489,12 +504,25 @@ impl FilterRule {
         self
     }
 
-    /// Updates both side flags at once.
+    /// Names the rule's sides, as the `s`/`r` modifiers do.
+    ///
+    /// upstream: exclude.c:1423-1432 set `FILTRULE_RECEIVER_SIDE` /
+    /// `FILTRULE_SENDER_SIDE`; naming both (`-sr`) applies to both sides yet
+    /// still counts as [sided](Self::specifies_side).
     #[must_use]
     pub const fn with_sides(mut self, sender: bool, receiver: bool) -> Self {
         self.applies_to_sender = sender;
         self.applies_to_receiver = receiver;
+        self.sides_named = true;
         self
+    }
+
+    /// Whether the rule carries a side bit, upstream's
+    /// `rflags & FILTRULES_SIDES`: it named one with `s`/`r`, or its action
+    /// implies one (`H`/`S` are sender-side, `P`/`R` receiver-side).
+    #[must_use]
+    pub const fn specifies_side(&self) -> bool {
+        self.sides_named || !(self.applies_to_sender && self.applies_to_receiver)
     }
 
     /// Marks the rule as perishable.

@@ -64,10 +64,8 @@ pub(super) fn apply_rule_modifiers(
         rule = rule.with_anchor();
     }
 
-    if modifiers.sender_side != modifiers.receiver_side {
-        rule = rule
-            .with_sender(modifiers.sender_side)
-            .with_receiver(modifiers.receiver_side);
+    if modifiers.sender_side || modifiers.receiver_side {
+        rule = rule.with_sides(modifiers.sender_side, modifiers.receiver_side);
     }
 
     if modifiers.perishable {

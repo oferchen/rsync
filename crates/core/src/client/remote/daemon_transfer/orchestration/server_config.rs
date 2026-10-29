@@ -213,6 +213,7 @@ fn apply_common_daemon_config(
     filter_rules: Vec<FilterRuleWireFormat>,
 ) {
     server_config.connection.client_mode = true;
+    server_config.connection.cvs_session = config.cvs_session().clone();
     server_config.connection.is_daemon_connection = true;
     server_config.connection.filter_rules = filter_rules;
 

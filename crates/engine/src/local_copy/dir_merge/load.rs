@@ -195,16 +195,13 @@ pub(crate) fn dir_merge_file_present(
 /// ```
 ///
 /// The refusal sits ABOVE the inherit, so the conflicting side is never
-/// applied, and it covers every rule the file holds, merge rules included. oc
-/// spells "the rule has no side bit" as *both* sides applying, so any rule that
-/// is not both-sided has named one - `P`/`R` included, matching measured rsync
-/// 3.5.0 behaviour. A `C` rule's side lives on its template.
+/// applied, and it covers every rule the file holds, merge rules included -
+/// `P`/`R` too, matching measured rsync 3.5.0 behaviour. A `C` rule's side
+/// lives on its template.
 fn directive_side_conflict(directive: &ParsedFilterDirective, options: &DirMergeOptions) -> bool {
     options.specifies_side()
         && match directive {
-            ParsedFilterDirective::Rule(rule) => {
-                !(rule.applies_to_sender() && rule.applies_to_receiver())
-            }
+            ParsedFilterDirective::Rule(rule) => rule.specifies_side(),
             ParsedFilterDirective::CvsIgnore(template) => template.sides().is_some(),
             ParsedFilterDirective::Merge {
                 options: Some(merge),
@@ -254,8 +251,7 @@ pub(crate) fn apply_dir_merge_rule_defaults(
     if delete_excluded
         && sender_override.is_none()
         && receiver_override.is_none()
-        && rule.applies_to_sender()
-        && rule.applies_to_receiver()
+        && !rule.specifies_side()
         && matches!(
             rule.action(),
             filters::FilterAction::Include | filters::FilterAction::Exclude
@@ -396,6 +392,8 @@ impl DirMergeEntries {
 /// already on the stack the function returns an error rather than recursing
 /// infinitely. On success the visited entry is popped before returning.
 ///
+/// A `C` rule in the file stands for `cvs`, the session's CVS ignore list.
+///
 /// `delete_excluded` propagates upstream's per-token implicit SENDER_SIDE
 /// flag (`exclude.c:1478-1481 parse_rule_tok`) onto every rule produced from
 /// this merge file when neither side modifier was specified on the dir-merge
@@ -408,6 +406,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
     delete_excluded: bool,
     visited: &mut Vec<PathBuf>,
     origin: MergeFileOrigin,
+    cvs: &filters::CvsSession,
 ) -> Result<DirMergeEntries, LocalCopyError> {
     // upstream: exclude.c:1619-1627 parse_filter_file() bounds the nesting
     // DEPTH at MAX_MERGE_DEPTH (exclude.c:168) rather than detecting a cycle.
@@ -524,7 +523,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         ));
                     }
                     Ok(Some(ParsedFilterDirective::CvsIgnore(template))) => {
-                        for rule in filters::cvs_ignore_rules(template, true) {
+                        for rule in cvs.rules(template, true) {
                             entries.push_rule(apply_dir_merge_rule_defaults(
                                 rule,
                                 options,
@@ -564,6 +563,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                                 delete_excluded,
                                 visited,
                                 MergeFileOrigin::NamedByFile,
+                                cvs,
                             )?;
                             entries.extend(nested_entries);
                         } else {
@@ -573,6 +573,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                                 delete_excluded,
                                 visited,
                                 MergeFileOrigin::NamedByFile,
+                                cvs,
                             )?;
                             entries.extend(nested_entries);
                         }
@@ -688,6 +689,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                                 delete_excluded,
                                 visited,
                                 MergeFileOrigin::NamedByFile,
+                                cvs,
                             )?;
                             entries.extend(nested_entries);
                         } else {
@@ -697,6 +699,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                                 delete_excluded,
                                 visited,
                                 MergeFileOrigin::NamedByFile,
+                                cvs,
                             )?;
                             entries.extend(nested_entries);
                         }
@@ -721,7 +724,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         });
                     }
                     Ok(Some(ParsedFilterDirective::CvsIgnore(template))) => {
-                        for rule in filters::cvs_ignore_rules(template, true) {
+                        for rule in cvs.rules(template, true) {
                             entries.push_rule(apply_dir_merge_rule_defaults(
                                 rule,
                                 options,
