@@ -43,7 +43,8 @@ struct Outcome {
 }
 
 /// Lays out `src/` from `files` (path, contents) plus `dst/`; a path under
-/// [`DEST`] is placed in `dst/` instead, as a file the run may delete.
+/// [`DEST`] is placed in `dst/` instead, as a file the run may delete. `{TREE}`
+/// in the contents names the run's own tree.
 fn build_tree(root: &Path, files: &[(&str, &str)]) {
     fs::create_dir_all(root.join("src")).expect("source root");
     fs::create_dir_all(root.join("dst")).expect("destination root");
@@ -55,7 +56,8 @@ fn build_tree(root: &Path, files: &[(&str, &str)]) {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).expect("source subdir");
         }
-        fs::write(target, contents).expect("source file");
+        let tree = root.to_string_lossy();
+        fs::write(target, contents.replace("{TREE}", &tree)).expect("source file");
     }
 }
 
@@ -489,10 +491,16 @@ fn abs_path_protect_matches_the_destination_path() {
 /// A merge rule's `/` modifier passes FILTRULE_ABS_PATH to every rule it
 /// reads (exclude.c:1229, :1261), and such a rule skips the per-directory
 /// `XFLG_ANCHORED2ABS` re-anchoring (exclude.c:297-306). So `- /a` inside a
-/// `:/` dir-merge file matches the absolute path `/a`, which excludes nothing.
+/// `:/` dir-merge file matches the absolute path `/a`, which excludes nothing,
+/// and `- {TREE}/src/sub/b` excludes `sub/b`.
 #[test]
 fn a_merge_abs_path_modifier_reaches_the_merged_rules() {
-    let files = [("a", "a"), ("sub/.f", "- /a\n"), ("sub/a", "a")];
+    let files = [
+        ("a", "a"),
+        ("sub/.f", "- /a\n- {TREE}/src/sub/b\n"),
+        ("sub/a", "a"),
+        ("sub/b", "b"),
+    ];
     for rule in [":/ .f", ": .f", "./ src/sub/.f", ". src/sub/.f"] {
         for source in [Source::Local, Source::Push, Source::Pull] {
             assert_parity_from(&files, &[&format!("--filter={rule}")], source);
