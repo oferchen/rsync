@@ -150,17 +150,26 @@ impl<'a> CopyContext<'a> {
         });
 
         let mut buf = Vec::new();
-        let [owner_uids, owner_gids] = std::mem::take(&mut self.batch_owner_ids);
+        let [mut owner_uids, mut owner_gids] = std::mem::take(&mut self.batch_owner_ids);
+        if !preserve_uid {
+            owner_uids.clear();
+        }
+        if !preserve_gid {
+            owner_gids.clear();
+        }
+        if preserve_acls {
+            self.add_batch_acl_named_ids([&mut owner_uids, &mut owner_gids]);
+        }
         let lists = [
             (
                 send_uid_list,
-                if preserve_uid { owner_uids } else { Vec::new() },
+                owner_uids,
                 "write batch uid list",
                 metadata::id_lookup::lookup_user_name_cached as fn(u32) -> _,
             ),
             (
                 send_gid_list,
-                if preserve_gid { owner_gids } else { Vec::new() },
+                owner_gids,
                 "write batch gid list",
                 metadata::id_lookup::lookup_group_name_cached,
             ),
@@ -203,6 +212,44 @@ impl<'a> CopyContext<'a> {
         })?;
 
         Ok(())
+    }
+
+    /// Appends the user and group ids the written ACLs name to the owner
+    /// lists, each id once.
+    ///
+    /// upstream: `acls.c:821-826 send_ida_entries()` - `add_uid()`/`add_gid()`
+    /// every named entry, so the replaying receiver maps it through the same
+    /// id lists as the file owners (`uidlist.c:483-484 match_acl_ids()`).
+    fn add_batch_acl_named_ids(&self, ids: [&mut Vec<u32>; 2]) {
+        let Some(writer) = self.batch_flist_writer.as_ref() else {
+            return;
+        };
+        let [uids, gids] = ids;
+        for ida in writer
+            .acl_cache()
+            .iter_acls()
+            .flat_map(|acl| acl.names.iter())
+        {
+            let list = if ida.is_user() {
+                &mut *uids
+            } else {
+                &mut *gids
+            };
+            if !list.contains(&ida.id) {
+                list.push(ida.id);
+            }
+        }
+    }
+
+    /// Reports whether the batch header records `--acls`, so each flist entry
+    /// carries its source ACL.
+    pub(crate) fn batch_preserve_acls(&self) -> bool {
+        self.options.get_batch_writer().is_some_and(|w| {
+            w.lock()
+                .expect("batch writer mutex poisoned")
+                .stream_flags()
+                .preserve_acls
+        })
     }
 
     /// Records the owner and group of a flat-list entry for the id lists.
@@ -1153,9 +1200,19 @@ impl<'a> CopyContext<'a> {
         })
     }
 
-    /// Holds an incremental-layout flist entry until the walk ends.
-    pub(crate) fn hold_batch_entry(&mut self, entry: protocol::flist::FileEntry) {
+    /// Holds an incremental-layout flist entry, with its source ACL when the
+    /// batch records `--acls`, until the walk ends.
+    pub(crate) fn hold_batch_entry(
+        &mut self,
+        entry: protocol::flist::FileEntry,
+        acl: Option<crate::local_copy::context::BatchSourceAcl>,
+    ) {
         self.batch_pending_entries.push(entry);
+        if acl.is_some() {
+            self.batch_pending_acls
+                .resize(self.batch_pending_entries.len() - 1, None);
+            self.batch_pending_acls.push(acl);
+        }
     }
 
     /// Writes the held entries as upstream's incremental file lists: the top
@@ -1196,6 +1253,7 @@ impl<'a> CopyContext<'a> {
                 .into_iter()
                 .map(Some)
                 .collect();
+        let mut acls = std::mem::take(&mut self.batch_pending_acls);
         let sorted: Vec<protocol::flist::FileEntry> = sorted_to_traversal
             .iter()
             .map(|&t| entries[t].take().expect("each entry is sorted once"))
@@ -1264,13 +1322,16 @@ impl<'a> CopyContext<'a> {
             flist_writer.set_first_ndx(start);
             for &s in members {
                 let mut entry = sorted[s].clone();
+                let traversal = sorted_to_traversal[s];
+                if let Some((access, default)) = acls.get_mut(traversal).and_then(Option::take) {
+                    flist_writer.set_pending_acl(access, default);
+                }
                 if let Some(idx) = entry.hardlink_idx() {
                     // upstream: flist.c:824-850 - the group's first member in
                     // send order is its leader (XMIT_HLINK_FIRST) and every
                     // later one names that NDX; a receiver rejects a follower
                     // whose leader it has not yet read (flist.c:1103-1107).
                     // The walk captured another member first, so re-elect.
-                    let traversal = sorted_to_traversal[s];
                     let group = if idx == u32::MAX {
                         traversal as u32
                     } else {

@@ -1424,3 +1424,126 @@ fn receiver_chmod_failure_stays_out_of_the_batch_io_error() {
         }
     }
 }
+
+/// The user name `id` reports for `uid`.
+fn id_name_for(uid: &str) -> String {
+    let out = Command::new("id")
+        .args(["-nu", uid])
+        .output()
+        .expect("run id");
+    assert!(out.status.success(), "id -nu {uid}: {out:?}");
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// `getfacl` entries of every path under `dir`, keyed by path. The owner
+/// header lines are dropped: a non-root replay cannot chown.
+fn acl_snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
+    let out = Command::new("getfacl")
+        .args(["-R", "-p", "."])
+        .current_dir(dir)
+        .output()
+        .expect("run getfacl");
+    assert!(out.status.success(), "getfacl {}: {out:?}", dir.display());
+    let mut acls = std::collections::BTreeMap::new();
+    for block in String::from_utf8_lossy(&out.stdout).split("\n\n") {
+        let mut lines = block.lines().filter(|l| !l.is_empty());
+        let Some(file) = lines.next() else { continue };
+        let entries = lines
+            .filter(|l| !l.starts_with("# owner:") && !l.starts_with("# group:"))
+            .map(str::to_owned)
+            .collect();
+        acls.insert(file.to_owned(), entries);
+    }
+    acls
+}
+
+/// upstream: flist.c:2050-2066 send_file_entry() reads each file's ACL with
+/// get_acl() and send_acl() writes it into the file list, so a batch carries
+/// every named entry; acls.c:821-826 send_ida_entries() adds each named id to
+/// the id lists (non-incremental lists) or names it inline (inc_recurse,
+/// acls.c:827). A batch that falls back to the mode-only ACL replays every
+/// file without its named user and group entries and without a directory's
+/// default ACL.
+#[test]
+fn local_batch_carries_named_acl_entries_like_upstream() {
+    if !test_support::skip::require_command_on_path("setfacl")
+        || !test_support::skip::require_command_on_path("getfacl")
+    {
+        return;
+    }
+    let probe = Fixture::new();
+    let named = |args: &[&str], path: &str| {
+        Command::new("setfacl")
+            .args(args)
+            .arg(probe.root.join(path))
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+    if !named(&["-m", "u:65534:r-x"], "src/a.txt") {
+        eprintln!("skip: the temp filesystem does not take a named ACL entry");
+        return;
+    }
+    let decorate = |fx: &Fixture| {
+        for (args, path) in [
+            (&["-m", "u:65534:r-x,g:65534:rw-"][..], "src/a.txt"),
+            (&["-m", "g:65534:r--"], "src/sub/b.log"),
+            (&["-m", "u:65534:rwx"], "src/sub"),
+            (&["-d", "-m", "u:65534:r-x,g:65534:rwx"], "src/sub"),
+        ] {
+            let status = Command::new("setfacl")
+                .args(args)
+                .arg(fx.root.join(path))
+                .status()
+                .expect("run setfacl");
+            assert!(status.success(), "setfacl {args:?} {path}");
+        }
+    };
+    let user = id_name_for("65534");
+    let mut named = vec![user.len() as u8];
+    named.extend_from_slice(user.as_bytes());
+    // INC_RECURSE names ACL ids inline; without it (and below protocol 30)
+    // the id lists after the file list name them.
+    for mode in [
+        &["-rA"][..],
+        &["-rA", "--no-inc-recursive"],
+        &["-rA", "--protocol=29"],
+    ] {
+        for (recorder, record_bin) in implementations() {
+            let fx = Fixture::new();
+            decorate(&fx);
+            let want = acl_snapshot(&fx.root.join("src"));
+            let mut args = mode.to_vec();
+            args.extend(["--write-batch=bf", "src/", "rec/"]);
+            let out = fx.run(&record_bin, &args);
+            assert!(out.status.success(), "{mode:?} {recorder} record: {out:?}");
+            // An inline ACL name and an id-list entry both spell the user as
+            // a length byte and the name.
+            let batch = fs::read(fx.root.join("bf")).unwrap();
+            assert!(
+                batch.windows(named.len()).any(|w| w == named.as_slice()),
+                "{mode:?} {recorder}: the batch names the ACL ids"
+            );
+            assert_eq!(
+                acl_snapshot(&fx.root.join("rec")),
+                want,
+                "{mode:?} {recorder}: the recording run's own copy"
+            );
+            for (replayer, replay_bin) in implementations() {
+                let dest = format!("by-{replayer}");
+                let mut args = mode.to_vec();
+                let target = format!("{dest}/");
+                args.extend(["--read-batch=bf", target.as_str()]);
+                let out = fx.run(&replay_bin, &args);
+                assert!(
+                    out.status.success(),
+                    "{mode:?} {recorder}->{replayer}: {out:?}"
+                );
+                assert_eq!(
+                    acl_snapshot(&fx.root.join(&dest)),
+                    want,
+                    "{mode:?} {recorder}->{replayer}: replayed ACLs"
+                );
+            }
+        }
+    }
+}
