@@ -49,6 +49,7 @@ use crate::signature::SignatureBlock;
 use ::metadata::{
     MetadataOptions, apply_file_metadata_with_options, apply_symlink_metadata_with_options,
 };
+use checksums::strong::Xxh3_128;
 // Used only by the `#[cfg(unix)]` hardlink-candidate mtime compare in
 // context_impl/state.rs; on other platforms the name would be unused.
 #[cfg(unix)]
@@ -419,6 +420,32 @@ pub(crate) struct CopyContext<'a> {
     /// and `sender.c:587,625` count `stats.created_files` only when
     /// `ITEM_IS_NEW` is set in that word.
     batch_delta_iflags_offset: Option<usize>,
+    /// `(entry, offset)` of the iflags word of the delta entry
+    /// `finalize_batch_file_delta()` completed last, until the file's record
+    /// ORs its `ITEM_REPORT_*` bits into it.
+    ///
+    /// upstream: `generator.c:517-548 itemize()` computes the report bits from
+    /// the destination stat; oc knows them only once the record is built,
+    /// which every executor does after finalizing the delta entry.
+    batch_report_slot: Option<(usize, usize)>,
+    /// Owner uids, then group gids, in first-seen send order, for the id lists
+    /// that follow a non-INC_RECURSE batch file list.
+    ///
+    /// upstream: `flist.c:787-797 send_file_entry()` calls `add_uid()`/
+    /// `add_gid()` per entry; `uidlist.c:388-406 send_one_list()` replays that
+    /// order with each id's name.
+    batch_owner_ids: [Vec<u32>; 2],
+    /// The directory whose listing the walk is reading, as its file-list
+    /// name (`.` for the transfer root and outside any listing).
+    batch_listing_dir: PathBuf,
+    /// Directories (file-list names) whose listing raised a sender-side
+    /// `io_error`, in the order they failed.
+    ///
+    /// upstream: `flist.c:2636-2690 send_extra_file_list()` - the error rides
+    /// the end marker of the list being built when it happened, so under
+    /// INC_RECURSE the replaying generator skips deletions from that list on
+    /// (generator.c delete_in_dir) rather than from the first one.
+    batch_flist_error_dirs: Vec<PathBuf>,
     /// Sort metadata for each flist entry in traversal order: (name_bytes, is_dir).
     /// Used to compute the traversal→sorted index mapping that upstream's
     /// `flist_sort_and_clean()` produces after reading the batch flist.
@@ -439,6 +466,20 @@ pub(crate) struct CopyContext<'a> {
     /// sorted-first member of each group, so the batch must carry delta data
     /// for that member alone.
     batch_entry_hlink_gnum: Vec<Option<i32>>,
+    /// Flist entries in traversal order, held back when the batch records
+    /// `CF_INC_RECURSE`: the incremental layout groups entries by directory,
+    /// so none can be written before the walk ends.
+    batch_pending_entries: Vec<protocol::flist::FileEntry>,
+    /// Traversal index to wire NDX once an incremental batch file list has
+    /// been written; `None` for a flat list, whose NDX is the sorted index.
+    batch_traversal_to_ndx: Option<Vec<i32>>,
+    /// Number of file lists in the batch: 1 for a flat list.
+    batch_list_count: usize,
+    /// Encoded sub-lists of an incremental batch file list not yet written,
+    /// in send order; the last carries `NDX_FLIST_EOF`.
+    batch_pending_sublists: Vec<Vec<u8>>,
+    /// The incremental layout of the batch file list, once planned.
+    batch_list_plan: Option<protocol::flist::SubListPlan>,
     /// Traversal index of the current file being delta-captured.
     batch_current_delta_idx: i32,
     /// Zero-based file-list index counter for batch NDX framing.
@@ -560,6 +601,7 @@ pub(crate) struct FileCopyOutcome {
     matched_bytes: u64,
     compressed_bytes: Option<u64>,
     touched_blocks: u64,
+    verification_failed: bool,
 }
 
 /// Matched-byte count for copy paths that never match a basis block.
@@ -581,7 +623,22 @@ impl FileCopyOutcome {
             matched_bytes,
             compressed_bytes,
             touched_blocks: 0,
+            verification_failed: false,
         }
+    }
+
+    /// Marks a delta pass whose output failed upstream's whole-file check.
+    ///
+    /// upstream: receiver.c:534 - `recv_ok` is 0 when the receiver's sum of
+    /// the reconstructed file differs from the sender's.
+    pub(crate) const fn with_verification_failed(mut self, failed: bool) -> Self {
+        self.verification_failed = failed;
+        self
+    }
+
+    /// Reports whether the pass failed verification and must be redone.
+    pub(crate) const fn verification_failed(self) -> bool {
+        self.verification_failed
     }
 
     /// Attaches the number of distinct 4 KiB logical blocks the copy wrote.

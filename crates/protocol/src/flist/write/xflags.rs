@@ -227,9 +227,12 @@ impl FileListWriter {
             return xflags;
         }
 
+        // upstream: flist.c:787-790 - add_uid() returns the name only on the
+        // id's first sighting in this transfer (uidlist.c:340-354).
         if self.preserve.uid
             && entry.user_name().is_some()
             && (current_flags & (XMIT_SAME_UID as u32)) == 0
+            && !self.id_sightings.has_uid(entry.uid().unwrap_or(0))
         {
             xflags |= (XMIT_USER_NAME_FOLLOWS as u32) << 8;
         }
@@ -237,6 +240,7 @@ impl FileListWriter {
         if self.preserve.gid
             && entry.group_name().is_some()
             && (current_flags & (XMIT_SAME_GID as u32)) == 0
+            && !self.id_sightings.has_gid(entry.gid().unwrap_or(0))
         {
             xflags |= (XMIT_GROUP_NAME_FOLLOWS as u32) << 8;
         }

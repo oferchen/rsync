@@ -83,6 +83,41 @@ pub(crate) struct DirectoryPlan<'a> {
     pub(crate) delete_timing: Option<DeleteTiming>,
 }
 
+/// Re-decides a regular `--fake-super` placeholder by the file type its
+/// `%stat` records. The sender lists it through `x_lstat()`, so a record
+/// naming a device, FIFO or socket takes recv_generator()'s device or special
+/// branch, under the same gates as a real node. `--list-only` keeps the file
+/// path, which already reports the recorded type.
+///
+/// upstream: flist.c make_file() -> xattrs.c:1372 x_lstat(),
+/// generator.c:2031-2034
+#[cfg(all(unix, feature = "xattr"))]
+fn placeholder_action(
+    context: &CopyContext,
+    action: EntryAction,
+    recorded_mode: u32,
+    keep_name: &mut bool,
+) -> EntryAction {
+    const S_IFMT: u32 = 0o170_000;
+    if !matches!(action, EntryAction::CopyFile) || context.list_only_enabled() {
+        return action;
+    }
+    let special = match recorded_mode & S_IFMT {
+        0o010_000 | 0o140_000 => (context.may_create_specials(), EntryAction::CopyFifo),
+        0o060_000 | 0o020_000 if !context.copy_devices_as_files_enabled() => {
+            (context.may_create_devices(), EntryAction::CopyDevice)
+        }
+        _ => return action,
+    };
+    match special {
+        (true, special) => special,
+        (false, _) => {
+            *keep_name = false;
+            EntryAction::SkipNonRegular
+        }
+    }
+}
+
 /// Centralized decision policy for how to treat a directory entry.
 ///
 /// This encapsulates the "strategy" for turning the entry type + context
@@ -311,7 +346,7 @@ pub(crate) fn plan_directory_entries<'a>(
         // upstream: flist.c make_file() reads the %stat through x_lstat()
         // before any filter, and a corrupt one ends the run.
         #[cfg(all(unix, feature = "xattr"))]
-        crate::local_copy::ensure_fake_super_source_stat(
+        let recorded = crate::local_copy::ensure_fake_super_source_stat(
             context.options().fake_super_enabled(),
             &entry.path,
         )?;
@@ -324,6 +359,10 @@ pub(crate) fn plan_directory_entries<'a>(
             effective_type,
             &mut keep_name,
         )?;
+        #[cfg(all(unix, feature = "xattr"))]
+        if let Some(recorded) = &recorded {
+            action = placeholder_action(context, action, recorded.mode, &mut keep_name);
+        }
 
         // When --copy-unsafe-links is active, the planner must dereference
         // unsafe symlinks before the executor sees them.  When only
@@ -735,7 +774,7 @@ fn plan_directory_entries_with_prefetch<'a>(
         // upstream: flist.c make_file() reads the %stat through x_lstat()
         // before any filter, and a corrupt one ends the run.
         #[cfg(all(unix, feature = "xattr"))]
-        crate::local_copy::ensure_fake_super_source_stat(
+        let recorded = crate::local_copy::ensure_fake_super_source_stat(
             context.options().fake_super_enabled(),
             &entry.path,
         )?;
@@ -748,6 +787,10 @@ fn plan_directory_entries_with_prefetch<'a>(
             effective_type,
             &mut keep_name,
         )?;
+        #[cfg(all(unix, feature = "xattr"))]
+        if let Some(recorded) = &recorded {
+            action = placeholder_action(context, action, recorded.mode, &mut keep_name);
+        }
 
         // Handle --copy-unsafe-links with prefetched symlink target.
         // When only --safe-links is active (no --copy-unsafe-links), we

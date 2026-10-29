@@ -36,19 +36,28 @@ impl<'a> CopyContext<'a> {
     /// - `flist.c:send_file_list()` writes the end-of-list marker after all
     ///   entries via `write_byte(f, 0)` (pre-varint) or the varint equivalent.
     pub(crate) fn finalize_batch_flist(&mut self) -> Result<(), crate::local_copy::LocalCopyError> {
+        if self.batch_inc_recurse() {
+            return self.write_incremental_batch_flist();
+        }
         let flist_writer = match self.batch_flist_writer.as_ref() {
             Some(w) => w,
             None => return Ok(()),
         };
 
+        // upstream: flist.c:3024-3031 - a nonzero io_error rides the end
+        // marker only for a peer with a safe file list; write_end() applies
+        // that gate.
+        let io_error = self.batch_flist_io_error();
         let mut buf = Vec::with_capacity(4);
-        flist_writer.write_end(&mut buf, None).map_err(|e| {
-            crate::local_copy::LocalCopyError::io(
-                "write batch flist end marker",
-                std::path::PathBuf::new(),
-                e,
-            )
-        })?;
+        flist_writer
+            .write_end(&mut buf, (io_error != 0).then_some(io_error))
+            .map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch flist end marker",
+                    std::path::PathBuf::new(),
+                    e,
+                )
+            })?;
 
         let batch_writer_arc = match self.options.get_batch_writer() {
             Some(w) => w.clone(),
@@ -68,12 +77,12 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
-    /// Writes empty uid/gid ID lists to the batch file.
+    /// Writes the uid/gid ID lists to the batch file.
     ///
     /// upstream: uidlist.c:send_id_lists() - without INC_RECURSE, ID lists
-    /// are written between the flist end marker and the delta data. Since
-    /// user/group names are already embedded inline via XMIT_USER_NAME_FOLLOWS,
-    /// the post-flist ID lists are empty (just varint30(0) terminators).
+    /// are written between the flist end marker and the delta data, naming
+    /// every owner and group the file list carried (inline names ride the
+    /// entries only under INC_RECURSE, flist.c:791).
     ///
     /// upstream: flist.c:3063 - `if (numeric_ids <= 0 && !inc_recurse)
     /// send_id_lists(f)`. ID lists are only emitted when INC_RECURSE is
@@ -115,13 +124,10 @@ impl<'a> CopyContext<'a> {
         }
 
         // upstream: flist.c:3063 - skip send_id_lists() under INC_RECURSE.
-        let inc_recurse = compat_flags
-            .map(|cf| {
-                protocol::CompatibilityFlags::from_bits(cf as u32)
-                    .contains(protocol::CompatibilityFlags::INC_RECURSE)
-            })
-            .unwrap_or(false);
-        if inc_recurse {
+        if compat_flags.is_some_and(|cf| {
+            protocol::CompatibilityFlags::from_bits(cf as u32)
+                .contains(protocol::CompatibilityFlags::INC_RECURSE)
+        }) {
             return Ok(());
         }
 
@@ -129,10 +135,10 @@ impl<'a> CopyContext<'a> {
         // when (preserve_uid || preserve_acls), and the gid list only when
         // (preserve_gid || preserve_acls). The matching reader gates on the
         // same predicates, so emitting a list it does not expect would drift
-        // the stream cursor and corrupt the subsequent NDX reads. Owner names
-        // already ride inline in each entry, so each list holds only its
-        // terminator - followed, under CF_ID0_NAMES, by the name of id 0
-        // (uidlist.c:398-405 send_one_name(f, 0, name)).
+        // the stream cursor and corrupt the subsequent NDX reads. Each list
+        // names the file owners in send order (flist.c:787-797 add_uid() only
+        // under preserve_uid/preserve_gid), then its terminator - followed,
+        // under CF_ID0_NAMES, by the name of id 0 (uidlist.c:398-405).
         let send_uid_list = preserve_uid || preserve_acls;
         let send_gid_list = preserve_gid || preserve_acls;
         if !send_uid_list && !send_gid_list {
@@ -144,25 +150,37 @@ impl<'a> CopyContext<'a> {
         });
 
         let mut buf = Vec::new();
+        let [owner_uids, owner_gids] = std::mem::take(&mut self.batch_owner_ids);
         let lists = [
             (
                 send_uid_list,
+                if preserve_uid { owner_uids } else { Vec::new() },
                 "write batch uid list",
                 metadata::id_lookup::lookup_user_name_cached as fn(u32) -> _,
             ),
             (
                 send_gid_list,
+                if preserve_gid { owner_gids } else { Vec::new() },
                 "write batch gid list",
                 metadata::id_lookup::lookup_group_name_cached,
             ),
         ];
-        for (send, action, lookup) in lists {
+        for (send, owners, action, lookup) in lists {
             if !send {
                 continue;
             }
             let id_error =
                 |e| crate::local_copy::LocalCopyError::io(action, std::path::PathBuf::new(), e);
             let mut list = protocol::idlist::IdList::new();
+            for id in owners {
+                // upstream: uidlist.c:388-394 - id 0 is named only by the
+                // CF_ID0_NAMES trailer below.
+                if id != 0 {
+                    let name = metadata::id_lookup::no_id_unless_converter_failed(lookup(id))
+                        .map_err(id_error)?;
+                    list.add_id(id, name);
+                }
+            }
             if id0_names {
                 // upstream: uidlist.c:400-402 - uid_to_user(0)/gid_to_group(0).
                 let name = metadata::id_lookup::no_id_unless_converter_failed(lookup(0))
@@ -185,6 +203,80 @@ impl<'a> CopyContext<'a> {
         })?;
 
         Ok(())
+    }
+
+    /// Records the owner and group of a flat-list entry for the id lists.
+    ///
+    /// upstream: `flist.c:787-797 send_file_entry()` - `add_uid()`/`add_gid()`
+    /// keep the first sighting of each id (uidlist.c:340-371).
+    pub(crate) fn note_batch_entry_owner(&mut self, uid: Option<u32>, gid: Option<u32>) {
+        for (ids, id) in self.batch_owner_ids.iter_mut().zip([uid, gid]) {
+            if let Some(id) = id
+                && !ids.contains(&id)
+            {
+                ids.push(id);
+            }
+        }
+    }
+
+    /// Returns the `io_error` bits the file list reports to the replaying peer.
+    ///
+    /// upstream: flist.c:3024 / :3066 - `ignore_errors` zeroes the value; a
+    /// walk error is `IOERR_GENERAL`.
+    pub(in crate::local_copy) fn batch_flist_io_error(&self) -> i32 {
+        if !self.batch_flist_error_dirs.is_empty() && !self.options.ignore_errors_enabled() {
+            protocol::io_error::IOERR_GENERAL
+        } else {
+            0
+        }
+    }
+
+    /// Names the directory whose listing the walk reads next (`None`: the
+    /// listing is done, so later errors belong to the top-level list).
+    pub(crate) fn set_batch_listing_dir(&mut self, dir: Option<&std::path::Path>) {
+        if self.batch_delta_buf.is_some() {
+            self.batch_listing_dir = dir.unwrap_or(std::path::Path::new(".")).to_path_buf();
+        }
+    }
+
+    /// Attributes a sender-side walk error to the listing being read.
+    pub(in crate::local_copy) fn note_batch_flist_error(&mut self) {
+        if self.batch_delta_buf.is_some()
+            && self.batch_flist_error_dirs.last() != Some(&self.batch_listing_dir)
+        {
+            self.batch_flist_error_dirs
+                .push(self.batch_listing_dir.clone());
+        }
+    }
+
+    /// Writes the protocol 28-29 `io_error` word that follows the id lists.
+    ///
+    /// upstream: flist.c:3065-3067 - `if (protocol_version < 30)
+    /// write_int(f, ignore_errors ? 0 : io_error)`. Without it a 3.x reader
+    /// takes the first file's NDX as the error word and every later read is
+    /// misaligned ("File-list index ... not in -1 - N").
+    pub(crate) fn write_batch_flist_io_error(
+        &mut self,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        let Some(batch_writer_arc) = self.options.get_batch_writer().cloned() else {
+            return Ok(());
+        };
+        let io_error = self.batch_flist_io_error();
+        let mut writer_guard = batch_writer_arc
+            .lock()
+            .expect("batch writer mutex poisoned");
+        if writer_guard.config().protocol_version >= 30 {
+            return Ok(());
+        }
+        writer_guard
+            .write_data(&io_error.to_le_bytes())
+            .map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch io_error",
+                    std::path::PathBuf::new(),
+                    std::io::Error::other(e),
+                )
+            })
     }
 
     /// Appends a literal token for the current file to the batch delta buffer.
@@ -305,6 +397,7 @@ impl<'a> CopyContext<'a> {
 
         delta_file.get_mut().clear();
         delta_file.set_position(0);
+        self.batch_report_slot = None;
 
         // upstream: token.c:390 - send_deflated_token() reinitialises the
         // deflate context at the start of every file, so the batch's per-file
@@ -522,13 +615,14 @@ impl<'a> CopyContext<'a> {
     ///
     /// Each file's delta data is terminated by write_int(0), matching upstream
     /// `token.c:simple_send_token()` with token=-1. After the token end, a
-    /// file-level MD5 checksum of `s2length` bytes (16) is written, computed
-    /// over the source file contents.
+    /// 16-byte file-level checksum of the source file contents is written:
+    /// MD5 for protocol 30+, seeded MD4 below it.
     ///
     /// upstream: match.c:403 sum_init(xfer_sum_nni, checksum_seed) then
     /// sum_update on file content then sum_end(sender_file_sum). For MD5
-    /// (protocol >= 30), sum_init ignores the seed - the checksum is plain
-    /// MD5 of the file bytes.
+    /// (protocol >= 30), sum_init ignores the seed; protocol 28-29 use
+    /// CSUM_MD4_OLD (checksum.c:142-144), whose sum_init() feeds the 4-byte LE
+    /// seed ahead of the data (checksum.c:622-628).
     ///
     /// upstream: receiver.c:687 - read_buf(f_in, sender_file_sum, xfer_sum_len)
     pub(crate) fn finalize_batch_file_delta(
@@ -543,8 +637,19 @@ impl<'a> CopyContext<'a> {
 
         self.write_batch_token_end(source)?;
 
-        // upstream: match.c:403-452 - compute MD5 of source file content.
-        // For MD5 (protocol >= 30), sum_init() ignores checksum_seed.
+        let (proto, seed) = {
+            let writer = self
+                .options
+                .get_batch_writer()
+                .expect("batch writer set on the write-batch path")
+                .lock()
+                .expect("batch writer mutex poisoned");
+            (
+                writer.config().protocol_version,
+                writer.config().checksum_seed,
+            )
+        };
+        // upstream: match.c:403-452 - sum the source file content.
         let file_sum = {
             let mut reader = std::fs::File::open(source).map_err(|e| {
                 crate::local_copy::LocalCopyError::io(
@@ -553,7 +658,13 @@ impl<'a> CopyContext<'a> {
                     e,
                 )
             })?;
-            let mut hasher = checksums::strong::Md5::new();
+            let mut hasher = if proto < 30 {
+                let mut md4 = checksums::strong::Md4::new();
+                md4.update(&seed.to_le_bytes());
+                FileSum::Md4(md4)
+            } else {
+                FileSum::Md5(checksums::strong::Md5::new())
+            };
             let mut chunk = [0u8; 32 * 1024];
             loop {
                 let n = reader.read(&mut chunk).map_err(|e| {
@@ -611,8 +722,31 @@ impl<'a> CopyContext<'a> {
 
         let idx = self.batch_current_delta_idx;
         self.batch_delta_entries.push((idx, data));
+        self.batch_report_slot = self
+            .batch_delta_iflags_offset
+            .map(|offset| (self.batch_delta_entries.len() - 1, offset));
 
         Ok(())
+    }
+
+    /// ORs a regular file's `ITEM_REPORT_*` bits into the iflags word of the
+    /// delta entry just completed for it. A no-op when no such entry waits
+    /// (batch mode inactive, protocol < 29, or no transfer for this file).
+    ///
+    /// upstream: `generator.c:517-548 itemize()` sets these bits in the word
+    /// `sender.c:469 write_ndx_and_attrs()` echoes into the batch.
+    pub(crate) fn record_batch_transfer_report(&mut self, report: u16) {
+        let Some((entry, offset)) = self.batch_report_slot.take() else {
+            return;
+        };
+        if let Some(word) = self
+            .batch_delta_entries
+            .get_mut(entry)
+            .and_then(|(_, data)| data.get_mut(offset..offset + 2))
+        {
+            let iflags = u16::from_le_bytes([word[0], word[1]]) | report;
+            word.copy_from_slice(&iflags.to_le_bytes());
+        }
     }
 
     /// Captures whole-file content to the batch delta buffer as token-format
@@ -694,7 +828,10 @@ impl<'a> CopyContext<'a> {
         // upstream: flist.c:flist_sort_and_clean() sorts after recv_file_list().
         // We replicate the same sort on our entry names to determine where each
         // traversal-order entry ends up in the sorted flist.
-        let traversal_to_sorted = self.build_batch_sort_mapping();
+        let traversal_to_sorted = match &self.batch_traversal_to_ndx {
+            Some(map) => map.clone(),
+            None => self.build_batch_sort_mapping(),
+        };
 
         // upstream: hlink.c:113-208 match_gnums() - one member per hardlink
         // cluster is transferred and the rest are linked to it, so the batch
@@ -737,8 +874,38 @@ impl<'a> CopyContext<'a> {
         // Sort entries by their post-sort NDX so the delta stream is in
         // ascending NDX order, matching what upstream's recv_files() expects.
         entries.sort_by_key(|(sorted_idx, _)| *sorted_idx);
-        for (sorted_idx, data) in &entries {
+        // upstream: sender.c:515-547 - under INC_RECURSE the sub-lists go out
+        // between file-data records, as far ahead as the lookahead allows.
+        let mut pending_sublists = std::mem::take(&mut self.batch_pending_sublists).into_iter();
+        let schedule = self.batch_list_plan.as_ref().map(|plan| {
+            let ndxs: Vec<i32> = entries.iter().map(|(ndx, _)| *ndx).collect();
+            plan.lookahead_schedule(&ndxs)
+        });
+        let mut sublists_sent = 0usize;
+        let write_raw = |bytes: &[u8], what: &'static str| {
+            batch_writer_arc
+                .lock()
+                .expect("batch writer mutex poisoned")
+                .write_data(bytes)
+                .map_err(|e| {
+                    crate::local_copy::LocalCopyError::io(
+                        what,
+                        std::path::PathBuf::new(),
+                        std::io::Error::other(e),
+                    )
+                })
+        };
+        for (record, (sorted_idx, data)) in entries.iter().enumerate() {
             let sorted_idx = *sorted_idx;
+            if let Some(schedule) = &schedule {
+                for chunk in pending_sublists
+                    .by_ref()
+                    .take(schedule[record] - sublists_sent)
+                {
+                    write_raw(&chunk, "write batch sub-list")?;
+                }
+                sublists_sent = schedule[record];
+            }
 
             let mut ndx_buf = Vec::with_capacity(4);
             protocol::codec::NdxCodec::write_ndx(codec, &mut ndx_buf, sorted_idx).map_err(|e| {
@@ -767,20 +934,29 @@ impl<'a> CopyContext<'a> {
             })?;
         }
 
+        for chunk in pending_sublists {
+            write_raw(&chunk, "write batch sub-list")?;
+        }
+
         // Write NDX_DONE markers for phase transitions.
         //
         // upstream: receiver.c:recv_files() reads NDX_DONEs to transition
-        // phases. With INC_RECURSE (protocol >= 30), the first NDX_DONE
-        // frees the flist and falls through to phase increment. For
-        // protocol >= 29, max_phase=2, so recv_files needs 3 NDX_DONEs
-        // to break (phase 0->1->2->3, breaks when phase > max_phase).
+        // phases. For protocol >= 29, max_phase=2, so recv_files needs 3
+        // NDX_DONEs to break (phase 0->1->2->3, breaks when phase > max_phase).
         // For protocol < 29, max_phase=1, needs 2 NDX_DONEs.
+        //
+        // upstream: sender.c:525-545 - under INC_RECURSE every NDX_DONE before
+        // the last list only frees a list, so each extra list adds one.
         let proto = batch_writer_arc
             .lock()
             .expect("batch writer mutex poisoned")
             .config()
             .protocol_version;
-        let ndx_done_count = if proto >= 29 { 3 } else { 2 };
+        let ndx_done_count = if proto >= 29 {
+            self.batch_list_count + 2
+        } else {
+            2
+        };
 
         for _ in 0..ndx_done_count {
             let mut done_buf = Vec::with_capacity(4);
@@ -962,6 +1138,186 @@ impl<'a> CopyContext<'a> {
             .collect()
     }
 
+    /// Reports whether the batch header records `CF_INC_RECURSE`, so the file
+    /// list is written in the incremental layout.
+    pub(crate) fn batch_inc_recurse(&self) -> bool {
+        self.options.get_batch_writer().is_some_and(|w| {
+            w.lock()
+                .expect("batch writer mutex poisoned")
+                .config()
+                .compat_flags
+                .is_some_and(|cf| {
+                    protocol::CompatibilityFlags::from_bits(cf as u32)
+                        .contains(protocol::CompatibilityFlags::INC_RECURSE)
+                })
+        })
+    }
+
+    /// Holds an incremental-layout flist entry until the walk ends.
+    pub(crate) fn hold_batch_entry(&mut self, entry: protocol::flist::FileEntry) {
+        self.batch_pending_entries.push(entry);
+    }
+
+    /// Writes the held entries as upstream's incremental file lists: the top
+    /// level, then one sub-list per directory announced as
+    /// `NDX_FLIST_OFFSET - dir_ndx`, then `NDX_FLIST_EOF`.
+    ///
+    /// A recording sends every sub-list before any file data, as 3.5.1 does
+    /// for a tree inside its `MIN_FILECNT_LOOKAHEAD`, so the replaying
+    /// receiver has each list before an NDX names one of its files. Each list
+    /// goes out sorted, so its send position is its sorted position and
+    /// `ndx_start + position` is both the NDX a file's data goes under and the
+    /// index a hardlink follower names its leader by. Upstream sends each list
+    /// in readdir order and sorts it afterwards, so its list bytes can differ
+    /// in order while every NDX agrees.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send_extra_file_list()` - per-directory sub-lists and
+    ///   `NDX_FLIST_EOF` (flist.c:2662-2730)
+    /// - `flist.c:3503,3511` - `ndx_start` of each list
+    /// - `flist.c:824-850 send_file_entry()` - the first member sent leads its
+    ///   hardlink group and a follower carries the leader's NDX
+    fn write_incremental_batch_flist(&mut self) -> Result<(), crate::local_copy::LocalCopyError> {
+        let err = |e: std::io::Error| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch incremental file list",
+                std::path::PathBuf::new(),
+                e,
+            )
+        };
+        let traversal_to_sorted = self.build_batch_sort_mapping();
+        let mut sorted_to_traversal = vec![0usize; traversal_to_sorted.len()];
+        for (traversal, &sorted) in traversal_to_sorted.iter().enumerate() {
+            sorted_to_traversal[sorted as usize] = traversal;
+        }
+        let mut entries: Vec<Option<protocol::flist::FileEntry>> =
+            std::mem::take(&mut self.batch_pending_entries)
+                .into_iter()
+                .map(Some)
+                .collect();
+        let sorted: Vec<protocol::flist::FileEntry> = sorted_to_traversal
+            .iter()
+            .map(|&t| entries[t].take().expect("each entry is sorted once"))
+            .collect();
+        let plan = protocol::flist::SubListPlan::new(&sorted);
+        if let Some(&orphan) = plan.orphans.first() {
+            return Err(err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "parent directory is missing from the file list: {}",
+                    sorted[orphan].path().display()
+                ),
+            )));
+        }
+        let starts = plan.ndx_starts();
+        let lists = std::iter::once((None, plan.initial.as_slice())).chain(
+            plan.sublists
+                .iter()
+                .map(|s| (Some(s.parent_dir_ndx), s.members.as_slice())),
+        );
+        let mut traversal_to_ndx = vec![0i32; sorted.len()];
+        for (s, ndx) in plan.wire_ndx(&sorted).into_iter().enumerate() {
+            traversal_to_ndx[sorted_to_traversal[s]] = ndx;
+        }
+        // upstream: flist.c:2683-2690 - a list whose scan raised an error ends
+        // with it; the transfer root's listing is the initial list, and a
+        // directory without a sub-list falls back to it rather than lose it.
+        let io_error = self.batch_flist_io_error();
+        let mut carries_error = vec![false; plan.list_count()];
+        if io_error != 0 {
+            for dir in &self.batch_flist_error_dirs {
+                let list = plan
+                    .sublists
+                    .iter()
+                    .position(|s| sorted[s.parent].path() == dir.as_path())
+                    .map_or(0, |k| k + 1);
+                carries_error[list] = true;
+            }
+        }
+
+        let flist_writer = self
+            .batch_flist_writer
+            .as_mut()
+            .expect("batch flist writer exists on the write-batch path");
+        let codec = self
+            .batch_ndx_codec
+            .as_mut()
+            .expect("batch NDX codec exists on the write-batch path");
+        // One encoded chunk per list, in send order; the initial list goes out
+        // now and the sub-lists wait for the lookahead schedule.
+        let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(plan.list_count());
+        // Hardlink group (keyed by the traversal index of the member captured
+        // first) to the wire NDX of the member sent first.
+        let mut group_leader: std::collections::HashMap<u32, i32> =
+            std::collections::HashMap::new();
+        for (list, ((parent_dir_ndx, members), &start)) in lists.zip(&starts).enumerate() {
+            let mut buf = Vec::new();
+            if let Some(dir_ndx) = parent_dir_ndx {
+                protocol::codec::NdxCodec::write_ndx(
+                    codec,
+                    &mut buf,
+                    protocol::codec::NDX_FLIST_OFFSET - dir_ndx,
+                )
+                .map_err(err)?;
+            }
+            flist_writer.set_first_ndx(start);
+            for &s in members {
+                let mut entry = sorted[s].clone();
+                if let Some(idx) = entry.hardlink_idx() {
+                    // upstream: flist.c:824-850 - the group's first member in
+                    // send order is its leader (XMIT_HLINK_FIRST) and every
+                    // later one names that NDX; a receiver rejects a follower
+                    // whose leader it has not yet read (flist.c:1103-1107).
+                    // The walk captured another member first, so re-elect.
+                    let traversal = sorted_to_traversal[s];
+                    let group = if idx == u32::MAX {
+                        traversal as u32
+                    } else {
+                        idx
+                    };
+                    match group_leader.entry(group) {
+                        std::collections::hash_map::Entry::Vacant(slot) => {
+                            slot.insert(traversal_to_ndx[traversal]);
+                            entry.set_hardlink_idx(u32::MAX);
+                        }
+                        std::collections::hash_map::Entry::Occupied(leader) => {
+                            entry.set_hardlink_idx(*leader.get() as u32);
+                        }
+                    }
+                }
+                flist_writer.write_entry(&mut buf, &entry).map_err(err)?;
+            }
+            flist_writer
+                .write_end(&mut buf, carries_error[list].then_some(io_error))
+                .map_err(err)?;
+            chunks.push(buf);
+        }
+        // upstream: flist.c:2718-2719 - NDX_FLIST_EOF follows the last sub-list
+        // in the same send_extra_file_list() call (flist.c:3090-3091 when the
+        // initial list is the only one).
+        let last = chunks
+            .last_mut()
+            .expect("the initial list is always planned");
+        protocol::codec::NdxCodec::write_ndx(codec, last, protocol::codec::NDX_FLIST_EOF)
+            .map_err(err)?;
+
+        self.batch_list_count = plan.list_count();
+        self.batch_traversal_to_ndx = Some(traversal_to_ndx);
+        let initial = chunks.remove(0);
+        self.batch_pending_sublists = chunks;
+        self.batch_list_plan = Some(plan);
+        let batch_writer_arc = match self.options.get_batch_writer() {
+            Some(w) => w.clone(),
+            None => return Ok(()),
+        };
+        batch_writer_arc
+            .lock()
+            .expect("batch writer mutex poisoned")
+            .write_data(&initial)
+            .map_err(|e| err(std::io::Error::other(e)))
+    }
+
     /// Increments the batch flist index counter.
     ///
     /// Called after each flist entry is captured to the batch file.
@@ -1084,4 +1440,26 @@ fn batch_hlink_key(metadata: &fs::Metadata, preserve_hard_links: bool) -> Option
 fn batch_hlink_key(metadata: &fs::Metadata, preserve_hard_links: bool) -> Option<(u64, u64)> {
     let _ = (metadata, preserve_hard_links);
     None
+}
+
+/// The whole-file checksum a batch records after each file's tokens.
+enum FileSum {
+    Md4(checksums::strong::Md4),
+    Md5(checksums::strong::Md5),
+}
+
+impl FileSum {
+    fn update(&mut self, data: &[u8]) {
+        match self {
+            Self::Md4(h) => h.update(data),
+            Self::Md5(h) => h.update(data),
+        }
+    }
+
+    fn finalize(self) -> [u8; 16] {
+        match self {
+            Self::Md4(h) => h.finalize(),
+            Self::Md5(h) => h.finalize(),
+        }
+    }
 }

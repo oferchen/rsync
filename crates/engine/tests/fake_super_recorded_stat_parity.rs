@@ -51,6 +51,11 @@ fn copy_archive(source: &Path, dest: &Path) {
         .group(true)
         .permissions(true)
         .times(true)
+        // `-a`'s `-D`: the sender lists a placeholder as the node its `%stat`
+        // records, so without it a special placeholder is skipped as
+        // non-regular (flist.c make_file() -> x_lstat(), generator.c:2031).
+        .devices(true)
+        .specials(true)
         .fake_super(true);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("local copy succeeds");

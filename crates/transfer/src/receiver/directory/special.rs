@@ -188,11 +188,28 @@ impl ReceiverContext {
                 let _ = super::dest_create_dir_all(sandbox, dest_dir, parent);
             }
 
-            // upstream: generator.c:2048-2063 - an existing node of the same
-            // type (and, for devices, the same rdev) is treated as up-to-date;
-            // only its metadata is refreshed.
-            let up_to_date =
-                existing_special_matches(sandbox, dest_dir, &node_path, entry, is_device);
+            // upstream: generator.c:2048-2063 - the destination is read through
+            // x_lstat(), so a --fake-super placeholder answers with its %stat
+            // type and rdev.
+            let existing =
+                existing_special_stat(sandbox, dest_dir, &node_path, self.config.fake_super)?;
+            let disposition = SpecialDisposition::of(existing.as_ref(), entry);
+            let up_to_date = disposition == SpecialDisposition::UpToDate;
+            // upstream: generator.c:2055/2094 - itemize() compares the stat
+            // taken before set_file_attrs() refreshes it.
+            let iflags = match disposition {
+                SpecialDisposition::UpToDate => {
+                    self.itemize_existing_flags(entry, &node_path, existing.as_ref(), 0)
+                }
+                SpecialDisposition::Recreate => self.itemize_existing_flags(
+                    entry,
+                    &node_path,
+                    existing.as_ref(),
+                    ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_REPORT_CHANGE,
+                ),
+                SpecialDisposition::Create => ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW,
+            };
+            let iflags = ItemFlags::from_raw(iflags);
 
             // Whether the destination already existed before this create. Only a
             // truly absent destination is ITEM_IS_NEW and bumps
@@ -392,15 +409,10 @@ impl ReceiverContext {
             if up_to_date {
                 // upstream: rsync.c:823-828 set_file_attrs() - "%s is uptodate" at
                 // INFO_GTE(NAME, 2)
-                let iflags = ItemFlags::from_raw(0);
                 let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
                 self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                 info_log!(Name, 2, "{} is uptodate", relative_path.display());
             } else {
-                // upstream: generator.c:584 itemize() sets ITEM_IS_NEW when the
-                // receiver newly materialises the node via do_mknod().
-                let iflags =
-                    ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
                 let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
                 self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                 if !dest_existed {
@@ -456,38 +468,93 @@ impl ReceiverContext {
     }
 }
 
-/// Returns `true` when an on-disk node at `path` already matches the wire
-/// entry: same node type, and for devices the same rdev. Any read failure
-/// (including a missing path) reports `false` so the caller (re)creates it.
+/// The destination as upstream's generator reads it: `x_lstat()` folds a
+/// `--fake-super` placeholder's `%stat` record into its stat. A destination
+/// that cannot be stat'ed reads as absent.
 ///
-/// upstream: generator.c:2048-2063 - the receiver's quick-check leaves a
-/// matching special/device node in place instead of recreating it.
+/// # Errors
+///
+/// A `%stat` record that does not parse, which upstream treats as fatal.
+///
+/// upstream: xattrs.c:1372-1377 x_lstat()
 #[cfg(unix)]
-fn existing_special_matches(
+fn existing_special_stat(
     sandbox: Option<&fast_io::DirSandbox>,
     dest_dir: &Path,
     path: &Path,
-    entry: &FileEntry,
-    is_device: bool,
-) -> bool {
-    let Ok(meta) = super::dest_lstat(sandbox, dest_dir, path, false) else {
-        return false;
+    fake_super: bool,
+) -> std::io::Result<Option<fast_io::EntryMetadata>> {
+    let Ok(stat) = super::dest_lstat(sandbox, dest_dir, path, false) else {
+        return Ok(None);
     };
-    if is_device {
-        let type_ok = if entry.is_block_device() {
-            meta.file_type().is_block_device()
-        } else {
-            meta.file_type().is_char_device()
-        };
-        type_ok
-            && meta.rdev()
-                == metadata::device_word(
-                    entry.rdev_major().unwrap_or(0),
-                    entry.rdev_minor().unwrap_or(0),
-                )
-    } else if entry.file_type() == FileType::Socket {
-        meta.file_type().is_socket()
+    if fake_super {
+        metadata::fold_fake_super_stat(path, stat).map(Some)
     } else {
-        meta.file_type().is_fifo()
+        Ok(Some(stat))
+    }
+}
+
+/// What the generator does with a device or special whose destination it
+/// has stat'ed.
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SpecialDisposition {
+    /// Same file type and `quick_check_ok()`: only the attributes are set.
+    UpToDate,
+    /// Same file type that fails `quick_check_ok()`: recreated in place.
+    Recreate,
+    /// Absent, or another file type (`statret = -1`): created as new.
+    Create,
+}
+
+#[cfg(unix)]
+impl SpecialDisposition {
+    /// upstream: generator.c:2048-2052 compares `ftype` with `stype`, then
+    /// quick_check_ok() (generator.c:670-680) compares `st_rdev` for a device
+    /// and the `_S_IFMT` bits for a special.
+    fn of(existing: Option<&fast_io::EntryMetadata>, entry: &FileEntry) -> Self {
+        const S_IFMT: u32 = 0o170_000;
+        let Some(existing) = existing else {
+            return Self::Create;
+        };
+        let wanted = entry.mode() & S_IFMT;
+        let found = existing.mode() & S_IFMT;
+        let quick_check_ok = match special_kind(wanted) {
+            Some(SpecialKind::Device) => {
+                existing.rdev()
+                    == metadata::device_word(
+                        entry.rdev_major().unwrap_or(0),
+                        entry.rdev_minor().unwrap_or(0),
+                    )
+            }
+            Some(SpecialKind::Special) => found == wanted,
+            None => false,
+        };
+        if special_kind(found) != special_kind(wanted) {
+            Self::Create
+        } else if quick_check_ok {
+            Self::UpToDate
+        } else {
+            Self::Recreate
+        }
+    }
+}
+
+/// Upstream's `FT_DEVICE` and `FT_SPECIAL` buckets.
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SpecialKind {
+    Device,
+    Special,
+}
+
+/// upstream: generator.c:614-627 get_file_type() - block and character devices share
+/// `FT_DEVICE`, FIFOs and sockets share `FT_SPECIAL`.
+#[cfg(unix)]
+const fn special_kind(file_type: u32) -> Option<SpecialKind> {
+    match file_type {
+        0o060_000 | 0o020_000 => Some(SpecialKind::Device),
+        0o010_000 | 0o140_000 => Some(SpecialKind::Special),
+        _ => None,
     }
 }

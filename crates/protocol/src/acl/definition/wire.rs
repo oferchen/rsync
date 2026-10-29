@@ -176,7 +176,7 @@ pub fn write_acl_definition<W: io::Write>(
         write_varint(writer, i32::from(perms))?;
     }
     if !named.is_empty() {
-        send_ida_entries(writer, &named, false)?;
+        send_ida_entries(writer, &named, None)?;
     }
 
     Ok(())

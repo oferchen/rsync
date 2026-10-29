@@ -17,8 +17,8 @@ impl LocalCopyChangeSet {
     /// [`for_file_with_checksum`](Self::for_file_with_checksum) and pass
     /// `checksum_enabled = true`.
     #[allow(clippy::too_many_arguments)]
-    pub fn for_file(
-        metadata: &fs::Metadata,
+    pub(crate) fn for_file(
+        metadata: &impl StatFields,
         existing: Option<&fast_io::EntryMetadata>,
         metadata_options: &MetadataOptions,
         destination_previously_existed: bool,
@@ -56,8 +56,8 @@ impl LocalCopyChangeSet {
     /// `xattrs_differ_from_source`
     /// before anything writes the source attributes onto the destination.
     #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
-    pub fn for_file_with_checksum(
-        metadata: &fs::Metadata,
+    pub(crate) fn for_file_with_checksum(
+        metadata: &impl StatFields,
         existing: Option<&fast_io::EntryMetadata>,
         metadata_options: &MetadataOptions,
         destination_previously_existed: bool,
@@ -76,7 +76,7 @@ impl LocalCopyChangeSet {
         if !destination_previously_existed {
             change_set = change_set.with_size_changed(true);
         } else if let Some(existing_metadata) = existing
-            && metadata.len() != existing_metadata.len()
+            && metadata.size() != existing_metadata.len()
         {
             change_set = change_set.with_size_changed(true);
         }
@@ -99,7 +99,7 @@ impl LocalCopyChangeSet {
         // `#ifndef` block at generator.c:548-552 then compiles out. On Linux
         // the const is false and a link's `st_mode` is a fixed 0777, so nothing
         // is reported or applied. Mirrors the receiver itemize guard.
-        let is_symlink = metadata.file_type().is_symlink();
+        let is_symlink = metadata.is_symlink();
         let symlink_perms_ok = !is_symlink || ::metadata::CAN_CHMOD_SYMLINK;
 
         // upstream: generator.c:537-539 - itemize() sets ITEM_REPORT_ATIME when
@@ -336,8 +336,8 @@ impl LocalCopyChangeSet {
     /// `ITEM_REPORT_PERMS`, and owner/group. Size is never reported because
     /// `S_ISREG` is false for device and special nodes (`generator.c:527`).
     #[allow(clippy::too_many_arguments)]
-    pub fn for_recreated_device(
-        source: &fs::Metadata,
+    pub(crate) fn for_recreated_device(
+        source: &impl StatFields,
         existing: &fast_io::EntryMetadata,
         metadata_options: &MetadataOptions,
         modify_window: ModifyWindow,
@@ -413,7 +413,7 @@ impl LocalCopyChangeSet {
 /// and the relationship between new and existing file metadata.
 fn determine_time_change(
     metadata_options: &MetadataOptions,
-    metadata: &fs::Metadata,
+    metadata: &impl StatFields,
     existing: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
     wrote_data: bool,
@@ -448,7 +448,7 @@ fn determine_time_change(
 
 /// Returns `true` when the permission bits differ between the new and existing metadata.
 fn permissions_changed(
-    metadata: &fs::Metadata,
+    metadata: &impl StatFields,
     existing: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
 ) -> bool {
@@ -468,7 +468,7 @@ fn permissions_changed(
 /// Returns `true` when the owner (uid) differs or an override is in effect.
 fn owner_changed(
     metadata_options: &MetadataOptions,
-    metadata: &fs::Metadata,
+    metadata: &impl StatFields,
     existing: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
 ) -> bool {
@@ -495,7 +495,7 @@ fn owner_changed(
 /// Returns `true` when the group (gid) differs or an override is in effect.
 fn group_changed(
     metadata_options: &MetadataOptions,
-    metadata: &fs::Metadata,
+    metadata: &impl StatFields,
     existing: Option<&fast_io::EntryMetadata>,
     destination_previously_existed: bool,
 ) -> bool {
@@ -520,8 +520,11 @@ fn group_changed(
 }
 
 /// The stat fields change detection compares, read the same way off the
-/// source's `std::fs::Metadata` and the destination's anchored stat.
-trait StatFields {
+/// source's `std::fs::Metadata`, the destination's anchored stat and either
+/// one folded through its `--fake-super` record.
+pub(crate) trait StatFields {
+    fn size(&self) -> u64;
+    fn is_symlink(&self) -> bool;
     fn modified_time(&self) -> Option<SystemTime>;
     #[cfg(unix)]
     fn access_secs(&self) -> i64;
@@ -533,6 +536,12 @@ trait StatFields {
     fn group(&self) -> u32;
 }
 impl StatFields for fs::Metadata {
+    fn size(&self) -> u64 {
+        self.len()
+    }
+    fn is_symlink(&self) -> bool {
+        self.file_type().is_symlink()
+    }
     fn modified_time(&self) -> Option<SystemTime> {
         self.modified().ok()
     }
@@ -554,6 +563,12 @@ impl StatFields for fs::Metadata {
     }
 }
 impl StatFields for fast_io::EntryMetadata {
+    fn size(&self) -> u64 {
+        self.len()
+    }
+    fn is_symlink(&self) -> bool {
+        self.file_type().is_symlink()
+    }
     fn modified_time(&self) -> Option<SystemTime> {
         self.modified().ok()
     }

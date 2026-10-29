@@ -1161,6 +1161,36 @@ impl GeneratorContext {
     }
 }
 
+/// Refuses a signature whose arrays upstream's allocator would not grant.
+///
+/// `receive_sums()` allocates the block array and then the strong-sum array
+/// from the peer-declared count; `my_alloc()` exits `RERR_MALLOC` (22) once
+/// `num >= max_alloc / size`, naming the allocation's line. An empty
+/// signature allocates nothing.
+///
+/// upstream: sender.c:364-365 receive_sums(), util2.c:73-80 my_alloc(),
+/// rsync.h:999-1005 struct sum_buf
+pub(crate) fn refuse_sum_allocation(sum_head: &SumHead, xfer_sum_len: u32) -> io::Result<()> {
+    // sizeof (struct sum_buf): OFF_T, int32, uint32, int32 and short, padded
+    // to the OFF_T alignment.
+    const SUM_BUF_SIZE: usize = 24;
+    let count = sum_head.count as usize;
+    if count == 0 {
+        return Ok(());
+    }
+    let max_alloc = protocol::effective_max_alloc();
+    let line = if count >= max_alloc / SUM_BUF_SIZE {
+        364
+    } else if count.saturating_mul(xfer_sum_len as usize) >= max_alloc {
+        365
+    } else {
+        return Ok(());
+    };
+    Err(protocol::malloc_failure(format!(
+        "[sender] exceeded --max-alloc={max_alloc} setting (file=sender.c, line={line})"
+    )))
+}
+
 /// Reads signature blocks from the receiver.
 ///
 /// After reading sum_head, this reads the rolling and strong checksums for each block.

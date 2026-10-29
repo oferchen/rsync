@@ -152,7 +152,7 @@ fn filler(seed: u64, len: usize) -> Vec<u8> {
 }
 
 /// Builds the cell fixture under `root`: files at three depths, every entry
-/// backdated to [`FIXED_MTIME_SECS`].
+/// backdated to `FIXED_MTIME_SECS`.
 ///
 /// `mutation` flips byte 0 of `a.bin` without changing its length or mtime,
 /// so a gate can prove it sees a one-byte content change.

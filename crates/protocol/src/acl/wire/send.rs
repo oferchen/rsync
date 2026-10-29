@@ -13,6 +13,7 @@ use super::super::constants::{
 use super::super::entry::{AclCache, IdaEntries, RsyncAcl};
 use super::encoding::encode_access;
 use super::types::AclType;
+use crate::idlist::IdSightings;
 
 /// Sends the ida_entries list over the wire.
 ///
@@ -31,24 +32,32 @@ use super::types::AclType;
 ///
 /// * `writer` - Output stream
 /// * `entries` - The named user/group entries to send
-/// * `include_names` - Whether to include user/group name strings
+/// * `names` - The ids already named on the wire, when names are sent at all;
+///   `None` sends none
 ///
 /// # Upstream Reference
 ///
-/// Mirrors `send_ida_entries()` in `acls.c` lines 811-835. The caller decides
-/// `include_names`; upstream sends a name only when `inc_recurse` is set and
-/// the id resolves to a name (`numeric_ids` off).
+/// Mirrors `send_ida_entries()` in `acls.c` lines 811-835. Upstream sends a
+/// name only under `inc_recurse` with `numeric_ids` off, and only when
+/// `add_uid()` / `add_gid()` see the id for the first time (uidlist.c:340-371).
 pub fn send_ida_entries<W: Write>(
     writer: &mut W,
     entries: &IdaEntries,
-    include_names: bool,
+    mut names: Option<&mut IdSightings>,
 ) -> io::Result<()> {
     write_varint(writer, entries.len() as i32)?;
 
     for entry in entries.iter() {
         write_varint(writer, entry.id as i32)?;
 
-        let has_name = include_names && entry.name.is_some();
+        let first = names.as_deref_mut().is_some_and(|seen| {
+            if entry.is_user() {
+                seen.first_uid(entry.id)
+            } else {
+                seen.first_gid(entry.id)
+            }
+        });
+        let has_name = first && entry.name.is_some();
         let encoded = encode_access(entry.access, has_name);
         write_varint(writer, encoded as i32)?;
 
@@ -89,7 +98,7 @@ pub fn send_rsync_acl<W: Write>(
     acl: &RsyncAcl,
     acl_type: AclType,
     cache: &mut AclCache,
-    include_names: bool,
+    names: Option<&mut IdSightings>,
 ) -> io::Result<()> {
     let cached_index = match acl_type {
         AclType::Access => cache.find_access(acl),
@@ -126,7 +135,7 @@ pub fn send_rsync_acl<W: Write>(
         write_varint(writer, i32::from(acl.other_obj))?;
     }
     if flags & XMIT_NAME_LIST != 0 {
-        send_ida_entries(writer, &acl.names, include_names)?;
+        send_ida_entries(writer, &acl.names, names)?;
     }
 
     Ok(())
@@ -143,9 +152,10 @@ pub fn send_rsync_acl<W: Write>(
 /// * `default_acl` - The directory's default ACL (ignored for non-directories)
 /// * `is_directory` - Whether this entry is a directory
 /// * `cache` - ACL cache for deduplication
-/// * `include_names` - Whether to write user/group name strings after each
-///   named entry. Upstream sends names only when `inc_recurse && !numeric_ids`
-///   (`acls.c:823-827`); the receiver otherwise remaps ids through the id-list.
+/// * `names` - The ids already named on the wire, shared with the file
+///   list's owner names; `None` sends no names. Upstream sends names only when
+///   `inc_recurse && !numeric_ids` (`acls.c:823-827`); the receiver otherwise
+///   remaps ids through the id-list.
 ///
 /// # Upstream Reference
 ///
@@ -158,13 +168,19 @@ pub fn send_acl<W: Write>(
     default_acl: Option<&RsyncAcl>,
     is_directory: bool,
     cache: &mut AclCache,
-    include_names: bool,
+    mut names: Option<&mut IdSightings>,
 ) -> io::Result<()> {
-    send_rsync_acl(writer, access_acl, AclType::Access, cache, include_names)?;
+    send_rsync_acl(
+        writer,
+        access_acl,
+        AclType::Access,
+        cache,
+        names.as_deref_mut(),
+    )?;
 
     if is_directory {
         let def_acl = default_acl.cloned().unwrap_or_default();
-        send_rsync_acl(writer, &def_acl, AclType::Default, cache, include_names)?;
+        send_rsync_acl(writer, &def_acl, AclType::Default, cache, names)?;
     }
 
     Ok(())

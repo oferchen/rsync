@@ -245,10 +245,12 @@ impl LocalCopyError {
     }
 
     /// Constructs a fatal file I/O error (exit code 11, `RERR_FILEIO`) whose
-    /// `message` is already worded as upstream prints it.
+    /// `message` is already worded as upstream prints it, raised by the half
+    /// of the copy that `side` names.
     #[must_use]
-    pub fn file_io(message: impl Into<String>) -> Self {
+    pub fn file_io(side: LocalCopySide, message: impl Into<String>) -> Self {
         Self::new(LocalCopyErrorKind::FileIo {
+            side,
             message: message.into(),
         })
     }
@@ -394,6 +396,19 @@ impl LocalCopyError {
     }
 }
 
+/// The half of upstream's local copy a fatal error belongs to, which names
+/// the role in its exit trailer.
+///
+/// upstream: main.c:1412 - a local copy's client process is the sender; its
+/// forked generator stats and compares the destination (generator.c:1745).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalCopySide {
+    /// The half that reads and lists the source.
+    Sender,
+    /// The half that stats and compares the destination.
+    Generator,
+}
+
 /// Classification of local copy failures.
 #[derive(Debug, Error)]
 pub enum LocalCopyErrorKind {
@@ -472,6 +487,8 @@ pub enum LocalCopyErrorKind {
     /// upstream: xattrs.c:1253-1258 - `exit_cleanup(RERR_FILEIO)`.
     #[error("{message}")]
     FileIo {
+        /// The half of the copy that hit the error.
+        side: LocalCopySide,
         /// Human-readable error message (already formatted to match upstream).
         message: String,
     },
