@@ -14,6 +14,35 @@ pub(crate) const CHOWN_CONTEXT: &str = "preserve ownership";
 /// Context of a failed ownership change that alters only the group.
 pub(crate) const CHGRP_CONTEXT: &str = "preserve group";
 
+/// Context of a failed xattr name listing.
+pub(crate) const LIST_XATTR_CONTEXT: &str = "list extended attributes";
+
+/// Context of a failed xattr value read; the source error is a
+/// [`NamedXattrError`] carrying the attribute's name.
+pub(crate) const READ_XATTR_CONTEXT: &str = "read extended attribute";
+
+/// A failed read of one named extended attribute.
+///
+/// Displays as the underlying error, so a [`MetadataError`] wrapping it reads
+/// as before; the name is kept for the sender's diagnostic.
+#[derive(Debug)]
+pub(crate) struct NamedXattrError {
+    pub(crate) name: Vec<u8>,
+    pub(crate) source: io::Error,
+}
+
+impl std::fmt::Display for NamedXattrError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.source.fmt(f)
+    }
+}
+
+impl std::error::Error for NamedXattrError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
 /// Error produced when metadata preservation fails.
 #[derive(Debug, Error)]
 #[error("failed to {context} '{}': {source}", path.display())]
@@ -57,6 +86,39 @@ impl MetadataError {
     pub(crate) fn with_context(mut self, context: &'static str) -> Self {
         self.context = context;
         self
+    }
+
+    /// Renders the call upstream's sender names when reading a source's xattrs
+    /// fails, given the caller's `full_fname()` rendering of the path, with the
+    /// error whose `strerror`/errno the caller appends.
+    ///
+    /// Returns `None` for any failure other than an xattr listing or read.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `xattrs.c:get_xattr_names()` - `"get_xattr_names: llistxattr(%s,%s)
+    ///   failed"` with the 1024-byte first buffer
+    /// - `xattrs.c:get_xattr_data()` - `"get_xattr_data: lgetxattr(%s,\"%s\",0)
+    ///   failed"`
+    #[must_use]
+    pub fn get_xattr_text(&self, full_fname: &str) -> Option<(String, &io::Error)> {
+        match self.context {
+            LIST_XATTR_CONTEXT => Some((
+                format!("get_xattr_names: llistxattr({full_fname},1024) failed"),
+                &self.source,
+            )),
+            READ_XATTR_CONTEXT => {
+                let named = self.source.get_ref()?.downcast_ref::<NamedXattrError>()?;
+                Some((
+                    format!(
+                        "get_xattr_data: lgetxattr({full_fname},\"{}\",0) failed",
+                        String::from_utf8_lossy(&named.name)
+                    ),
+                    &named.source,
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// Renders the `rsyserr()` text upstream's `set_file_attrs()` prints for
