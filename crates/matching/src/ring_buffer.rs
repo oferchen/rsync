@@ -126,6 +126,18 @@ impl RingBuffer {
         self.len = 0;
     }
 
+    /// Empties the buffer and changes its capacity to `capacity`, keeping the
+    /// backing allocation whenever it is already large enough.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `capacity` is zero.
+    pub fn reset(&mut self, capacity: usize) {
+        assert!(capacity > 0, "ring buffer capacity must be non-zero");
+        self.buffer.resize(capacity, 0);
+        self.clear();
+    }
+
     /// Returns a contiguous slice view of the buffer contents.
     ///
     /// When the buffer hasn't wrapped (head == 0), this returns a direct slice

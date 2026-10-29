@@ -154,8 +154,13 @@ fn finalize_transfer_proto28_flushes_after_goodbye() {
     let mut reader = Cursor::new(proto28_sender_bytes());
     let mut writer = FlushTrackingWriter::default();
 
-    ctx.finalize_transfer(&mut reader, &mut writer, &mut create_ndx_codec(28))
-        .expect("finalize_transfer completes");
+    ctx.finalize_transfer(
+        &mut reader,
+        &mut writer,
+        &mut create_ndx_codec(28),
+        |_, _, _| Ok(()),
+    )
+    .expect("finalize_transfer completes");
 
     // 2 NDX_DONEs from `exchange_phase_done` + 1 NDX_DONE from
     // `handle_goodbye` = 12 wire bytes.
@@ -206,8 +211,13 @@ fn finalize_transfer_tolerates_broken_pipe_on_tail_flush() {
     let mut reader = Cursor::new(proto28_sender_bytes());
     let mut writer = TailFlushFailingWriter::new(3, io::ErrorKind::BrokenPipe);
 
-    ctx.finalize_transfer(&mut reader, &mut writer, &mut create_ndx_codec(28))
-        .expect("BrokenPipe on tail flush is tolerated");
+    ctx.finalize_transfer(
+        &mut reader,
+        &mut writer,
+        &mut create_ndx_codec(28),
+        |_, _, _| Ok(()),
+    )
+    .expect("BrokenPipe on tail flush is tolerated");
     assert_eq!(
         writer.flushes, 4,
         "expected exactly 4 flush attempts (phases x2 + goodbye + tail), got {}",
@@ -228,7 +238,12 @@ fn finalize_transfer_surfaces_non_close_errors_on_tail_flush() {
     let mut writer = TailFlushFailingWriter::new(3, io::ErrorKind::Other);
 
     let err = ctx
-        .finalize_transfer(&mut reader, &mut writer, &mut create_ndx_codec(28))
+        .finalize_transfer(
+            &mut reader,
+            &mut writer,
+            &mut create_ndx_codec(28),
+            |_, _, _| Ok(()),
+        )
         .expect_err("non-close tail flush failure surfaces");
     assert_eq!(
         err.kind(),
@@ -294,7 +309,7 @@ fn finalize_transfer_decodes_follower_echo_against_the_transfer_loop_state() {
 
     let mut reader = Cursor::new(wire);
     let mut writer = FlushTrackingWriter::default();
-    ctx.finalize_transfer(&mut reader, &mut writer, &mut loop_codec)
+    ctx.finalize_transfer(&mut reader, &mut writer, &mut loop_codec, |_, _, _| Ok(()))
         .expect("the follower echo must decode against the transfer-loop NDX state");
     assert_eq!(
         reader.position() as usize,

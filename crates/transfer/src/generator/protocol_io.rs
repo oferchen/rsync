@@ -20,7 +20,9 @@ use protocol::CompatibilityFlags;
 use protocol::ProtocolVersion;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
 use protocol::flist::{FLIST_START_LARGE, FlistGrowth, ProcessRole};
-use protocol::wire::SignatureBlock;
+
+use checksums::RollingDigest;
+use signature::{DigestBuf, SignatureBlock};
 
 use super::GeneratorContext;
 use super::item_flags::ItemFlags;
@@ -1164,9 +1166,9 @@ impl GeneratorContext {
 /// After reading sum_head, this reads the rolling and strong checksums for each block.
 /// When sum_head.count is 0, returns an empty Vec (whole-file transfer).
 ///
-/// This is the keepalive-free path used for whole-file transfers and unit tests.
-/// The live sender loop uses [`read_signature_blocks_keepalive`] so a slow read on
-/// an older protocol does not trip the peer's `--timeout`.
+/// This is the keepalive-free form of [`read_signature_blocks_keepalive`], which
+/// the live sender loop uses so a slow read on an older protocol does not trip
+/// the peer's `--timeout`.
 ///
 /// # Upstream Reference
 ///
@@ -1176,11 +1178,19 @@ pub fn read_signature_blocks<R: Read>(
     reader: &mut R,
     sum_head: &SumHead,
 ) -> io::Result<Vec<SignatureBlock>> {
-    read_signature_blocks_keepalive(reader, sum_head, 0, || Ok(()))
+    let mut blocks = Vec::new();
+    read_signature_blocks_keepalive(reader, sum_head, 0, &mut blocks, || Ok(()))?;
+    Ok(blocks)
 }
 
-/// Reads signature blocks from the receiver, poking a keepalive every `lull_mod`
-/// blocks so a large/slow checksum read does not exceed the peer's I/O timeout.
+/// Reads signature blocks from the receiver into `blocks`, poking a keepalive
+/// every `lull_mod` blocks so a large/slow checksum read does not exceed the
+/// peer's I/O timeout.
+///
+/// `blocks` is cleared first, so a sender can pass the same buffer for every
+/// file. Each block is stored with its final length, the last one taking the
+/// `sum_head` remainder when it is non-zero, and with its strong sum inline:
+/// no per-block allocation is made.
 ///
 /// `on_lull` is invoked once every `lull_mod` blocks (starting at block 0), or
 /// never when `lull_mod` is 0. It maps to upstream's `maybe_send_keepalive()`,
@@ -1191,6 +1201,8 @@ pub fn read_signature_blocks<R: Read>(
 /// # Upstream Reference
 ///
 /// - `sender.c:341` - `receive_sums()`; `lull_mod = protocol_version >= 31 ? 0 : allowed_lull * 5`
+/// - `sender.c:364-376` - one `sums` array plus one flat `sum2_array` per file,
+///   with `sums[i].len` set as each block is read
 /// - `sender.c:384-385` - `if (lull_mod && !(i % lull_mod)) maybe_send_keepalive(time(NULL), True)`
 /// - `io.c:1665` - `maybe_send_keepalive()` gates the actual emission on `allowed_lull`
 /// - `match.c:395` - Block format: rolling_sum (4 bytes) + strong_sum (s2length bytes)
@@ -1198,8 +1210,9 @@ pub fn read_signature_blocks_keepalive<R, F>(
     reader: &mut R,
     sum_head: &SumHead,
     lull_mod: u32,
+    blocks: &mut Vec<SignatureBlock>,
     mut on_lull: F,
-) -> io::Result<Vec<SignatureBlock>>
+) -> io::Result<()>
 where
     R: Read,
     F: FnMut() -> io::Result<()>,
@@ -1212,12 +1225,26 @@ where
         sum_head.remainder,
     );
 
+    blocks.clear();
     if sum_head.is_empty() {
         // No basis file (count=0), whole-file transfer - no blocks to read
-        return Ok(Vec::new());
+        return Ok(());
     }
 
-    let mut blocks = Vec::with_capacity(sum_head.count as usize);
+    blocks.reserve(sum_head.count as usize);
+    let mut strong_buf = [0u8; DigestBuf::MAX_LEN];
+    let strong_sum = strong_buf
+        .get_mut(..sum_head.s2length as usize)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "strong sum length {} exceeds {}",
+                    sum_head.s2length,
+                    DigestBuf::MAX_LEN
+                ),
+            )
+        })?;
     // upstream: sender.c:378-381 - the per-block offset the trace reports is
     // the running sum of block lengths, with the remainder applying to the
     // last block only.
@@ -1229,9 +1256,7 @@ where
         reader.read_exact(&mut rolling_bytes)?;
         let rolling_sum = u32::from_le_bytes(rolling_bytes);
 
-        // Read strong checksum (s2length bytes)
-        let mut strong_sum = vec![0u8; sum_head.s2length as usize];
-        reader.read_exact(&mut strong_sum)?;
+        reader.read_exact(strong_sum)?;
 
         // upstream: sender.c:374-375 - the last block takes the remainder when
         // it is non-zero; every other block spans a full blength.
@@ -1249,11 +1274,11 @@ where
         );
         block_offset += block_len as u64;
 
-        blocks.push(SignatureBlock {
-            index: i,
-            rolling_sum,
+        blocks.push(SignatureBlock::from_raw_parts(
+            u64::from(i),
+            RollingDigest::from_value(rolling_sum, block_len),
             strong_sum,
-        });
+        ));
 
         // upstream: sender.c:380 - if (lull_mod && !(i % lull_mod))
         //     maybe_send_keepalive(time(NULL), True);
@@ -1264,7 +1289,7 @@ where
         }
     }
 
-    Ok(blocks)
+    Ok(())
 }
 
 /// Derives upstream's signature-read keepalive cadence for a sender.

@@ -312,11 +312,10 @@ fn serialize_filter_rules(rules: &[FilterRuleSpec]) -> Result<String, ClientErro
         // upstream: exclude.c:1532-1541 - action prefix
         let action_char = match rule.kind() {
             FilterRuleKind::Include => '+',
-            FilterRuleKind::Exclude | FilterRuleKind::ExcludeIfPresent => '-',
+            FilterRuleKind::Exclude => '-',
             FilterRuleKind::Protect => 'P',
             FilterRuleKind::Risk => 'R',
             FilterRuleKind::DirMerge => ':',
-            FilterRuleKind::Clear => '!',
         };
         output.push(action_char);
 
@@ -1404,13 +1403,6 @@ mod tests {
         let output = serialize_filter_rules(&rules).expect("rules must serialize");
         // upstream: risk is 'R', receiver-only gets 'r' modifier
         assert_eq!(output, "Rr /temp\n");
-    }
-
-    #[test]
-    fn serialize_clear_rule() {
-        let rules = [FilterRuleSpec::clear()];
-        let output = serialize_filter_rules(&rules).expect("rules must serialize");
-        assert_eq!(output, "! \n");
     }
 
     #[test]

@@ -63,6 +63,14 @@ impl FileSignature {
     pub fn release_blocks(&mut self) {
         self.blocks = Vec::new();
     }
+
+    /// Consumes the signature and returns its block list, so a caller that
+    /// builds one signature per file can refill the same allocation.
+    #[inline]
+    #[must_use]
+    pub fn into_blocks(self) -> Vec<SignatureBlock> {
+        self.blocks
+    }
 }
 
 #[cfg(test)]
@@ -108,6 +116,21 @@ mod tests {
         assert_eq!(sig.layout(), layout);
         assert_eq!(sig.total_bytes(), 1400);
     }
+
+    // WHY: the sender hands one block buffer through a signature per file;
+    // getting a different allocation back would reintroduce the per-file
+    // allocation the round trip exists to remove.
+    #[test]
+    fn into_blocks_returns_the_same_allocation() {
+        let rolling = checksums::RollingDigest::from_bytes(b"block");
+        let blocks = vec![SignatureBlock::from_raw_parts(0, rolling, &[1; 16])];
+        let ptr = blocks.as_ptr();
+        let sig = FileSignature::from_raw_parts(test_layout(), blocks, 700);
+        let back = sig.into_blocks();
+        assert_eq!(back.as_ptr(), ptr);
+        assert_eq!(back.len(), 1);
+    }
+
     #[test]
     fn clone_signature() {
         let layout = test_layout();
