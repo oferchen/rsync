@@ -1067,3 +1067,4 @@ include!("execute_dry_run.rs");
 include!("files_from_vanished.rs");
 include!("link_stat_operand_name.rs");
 include!("change_dir_operand.rs");
+include!("batch_flist_io_error.rs");

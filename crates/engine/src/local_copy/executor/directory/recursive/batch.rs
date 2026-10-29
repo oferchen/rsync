@@ -246,6 +246,7 @@ pub(crate) fn capture_batch_file_entry(
         context.hold_batch_entry(entry);
     } else {
         write_batch_entry(context, &entry, relative_path)?;
+        context.note_batch_entry_owner(entry.uid(), entry.gid());
     }
 
     // Record sort metadata for this entry so flush_batch_delta_to_batch()

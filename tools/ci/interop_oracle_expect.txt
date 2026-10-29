@@ -5,10 +5,6 @@
 # that fails is XFAIL. A listed cell that passes is XPASS and fails the run:
 # the fix that makes a cell match upstream deletes its row in the same change.
 # An unlisted failure fails the run. Regenerate only from a measured run.
-batch-local/3.1.3/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
-batch-local/3.4.4/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
-batch-local/3.5.0/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
-batch-local/3.5.1/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
 delete/3.1.3/daemon/push/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
 hardlinks/2.6.9/daemon/pull/oc-client task-2597 hard-link leader choice differs, so itemize names the other file
 hardlinks/2.6.9/daemon/push/oc-server task-2597 hard-link leader choice differs, so itemize names the other file

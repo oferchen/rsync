@@ -230,6 +230,7 @@ fn copy_directory_recursive_inner(
     // (flist.c:325-329), reported through the `opendir` arm below.
     let pinned_root_error = context.pinned_anchor_error(source);
     let scans_operand_root = relative.is_none() && context.source_anchor() == Some(source);
+    context.set_batch_listing_dir(Some(relative.unwrap_or(Path::new("."))));
     let (readdir_buf, scan_root) = context.readdir_buf_with_confined_anchor();
     // Seeded here rather than at the entry loop so a failed enumeration can
     // carry its error to the same end-of-frame re-raise the per-entry failures
@@ -608,6 +609,7 @@ fn copy_directory_recursive_inner(
     }
 
     let mut plan = plan_directory_entries(context, &entries, relative, root_device)?;
+    context.set_batch_listing_dir(None);
     // upstream: hlink.c:match_gnums / generator.c:2214-2215 - the last name-sorted
     // member of a hard-link cohort is the transferred data-holder; earlier members
     // follow it as `hf ... => <holder>` aliases. Reorder the plan so the executor's
