@@ -514,9 +514,9 @@ impl ReceiverContext {
     ///
     /// Same routing as [`Self::emit_error_line`]: a server receiver frames the
     /// text as `MSG_WARNING` so the client on the far end renders it, while a
-    /// client receiver (pull) owns its own stderr and writes there. Below
-    /// protocol 30 the frame downgrades to `MSG_INFO`, which is the only code
-    /// the older peer understands.
+    /// client receiver (pull) owns its own stderr and writes there. The server
+    /// writer routes the line and, below protocol 30, frames it as `MSG_INFO`,
+    /// the only code the older peer understands.
     ///
     /// `line` carries its trailing newline, as upstream's payload does.
     ///
@@ -535,11 +535,7 @@ impl ReceiverContext {
             return std::io::stderr().write_all(line.as_bytes());
         }
         self.log_daemon_message(line.as_bytes());
-        if self.protocol.supports_generator_messages() {
-            writer.send_msg_warning(line.as_bytes())
-        } else {
-            writer.send_msg_info(line.as_bytes())
-        }
+        writer.send_msg_warning(line.as_bytes())
     }
 
     /// Routes an already-formatted `FERROR` diagnostic to the correct sink.

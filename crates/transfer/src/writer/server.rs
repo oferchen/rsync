@@ -199,6 +199,56 @@ impl<W: Write> ServerWriter<W> {
         }
     }
 
+    /// Sets where this server's diagnostic lines go and the peer protocol their
+    /// frame codes are chosen for. A no-op in plain mode, where nothing is
+    /// framed.
+    ///
+    /// upstream: options.c:103 `msgs2stderr`, compat.c:653-654.
+    pub fn set_message_routing(
+        &mut self,
+        route: super::MessageRoute,
+        protocol: protocol::ProtocolVersion,
+    ) {
+        match self {
+            Self::Multiplex(mux) => mux.set_message_routing(route, protocol),
+            Self::Compressed(compressed) => {
+                compressed.inner_mut().set_message_routing(route, protocol);
+            }
+            Self::Plain(_) | Self::Taken => {}
+        }
+    }
+
+    /// The routing set by [`Self::set_message_routing`], if any.
+    fn message_routing(&self) -> Option<(super::MessageRoute, protocol::ProtocolVersion)> {
+        match self {
+            Self::Multiplex(mux) => mux.message_routing(),
+            Self::Compressed(compressed) => compressed.inner_ref().message_routing(),
+            Self::Plain(_) | Self::Taken => None,
+        }
+    }
+
+    /// Delivers one diagnostic line the way upstream's `rwrite()` does on a
+    /// server: to this process's stderr when the route keeps it local, else as
+    /// a frame whose code is downgraded for a pre-30 peer. Nothing is sent in
+    /// plain mode.
+    ///
+    /// upstream: log.c:357-366; the local write escapes like log.c:425
+    /// `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0, ..)`.
+    pub(crate) fn send_diagnostic(&mut self, code: MessageCode, line: &[u8]) -> io::Result<()> {
+        if !self.is_multiplexed() {
+            return Ok(());
+        }
+        let Some((route, protocol)) = self.message_routing() else {
+            return self.send_message(code, line);
+        };
+        if route.writes_locally(code) {
+            let escaped =
+                crate::reader::escape_terminal_line(line, logging::escape::terminal_style());
+            return io::stderr().lock().write_all(&escaped);
+        }
+        self.send_message(super::frame_code(code, protocol), line)
+    }
+
     /// Configures the keep-alive lull interval on the active multiplex writer.
     ///
     /// A no-op in plain mode (keepalives only apply once the multiplexed stream

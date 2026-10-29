@@ -1115,6 +1115,14 @@ pub fn run_server_over_transport<'a>(
     );
     if mplex_out {
         writer = writer.activate_multiplex()?;
+        // upstream: log.c:357 - a server routes its diagnostic lines by
+        // msgs2stderr, resolved once the protocol is known (compat.c:653-654).
+        if !config.connection.client_mode {
+            writer.set_message_routing(
+                writer::MessageRoute::resolve(config.connection.msgs2stderr, handshake.protocol),
+                handshake.protocol,
+            );
+        }
     }
 
     // upstream: io.c:set_io_timeout() derives allowed_lull = (io_timeout + 1) / 2

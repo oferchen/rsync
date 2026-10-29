@@ -446,7 +446,7 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
 
     let stdin = io::stdin();
     let stdout = io::stdout();
-    let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
+    let pair = crate::daemon_stream::StdioPair::remote_shell(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
     let peer_addr = remote_shell_session_peer()?;

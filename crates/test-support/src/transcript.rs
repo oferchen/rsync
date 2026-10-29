@@ -105,40 +105,17 @@ impl WireTranscript {
     /// Anything else is refused rather than guessed at, so a layout change
     /// fails loudly instead of masking the wrong bytes.
     pub fn mask_pull_flist_times(&mut self) -> Result<(), TranscriptError> {
-        let stream = &mut self.server_to_client;
         let malformed = |reason: &'static str| TranscriptError::Malformed {
             direction: "server-to-client",
             reason,
         };
-        let seed = FIXED_CHECKSUM_SEED.to_le_bytes();
-        let mux_start = stream
-            .windows(seed.len())
-            .position(|w| w == seed)
-            .ok_or_else(|| malformed("fixed checksum seed not found"))?
-            + seed.len();
-
-        let mut data: Vec<(usize, usize)> = Vec::new();
-        let mut pos = mux_start;
-        while pos < stream.len() {
-            let header: [u8; 4] = stream
-                .get(pos..pos + 4)
-                .and_then(|h| h.try_into().ok())
-                .ok_or_else(|| malformed("truncated multiplex header"))?;
-            let header = u32::from_le_bytes(header);
-            let tag = (header >> 24) as u8;
-            let len = (header & 0x00ff_ffff) as usize;
-            if tag < MPLEX_BASE {
-                return Err(malformed("multiplex tag below MPLEX_BASE"));
-            }
-            pos += 4;
-            if pos + len > stream.len() {
-                return Err(malformed("multiplex frame runs past end of stream"));
-            }
-            if tag == MPLEX_BASE {
-                data.push((pos, len));
-            }
-            pos += len;
-        }
+        let mut data: Vec<(usize, usize)> = self
+            .server_frame_spans()?
+            .into_iter()
+            .filter(|&(code, _, _)| code == 0)
+            .map(|(_, start, len)| (start, len))
+            .collect();
+        let stream = &mut self.server_to_client;
 
         // The sender blocks reading the client's NDX_DONE before writing its
         // own, and that read flushes the stats first (upstream: io.c
@@ -165,6 +142,66 @@ impl WireTranscript {
             stream[offset] = 0;
         }
         Ok(())
+    }
+}
+
+impl WireTranscript {
+    /// Every non-data multiplex frame the server sent, as `(MSG_* code,
+    /// payload)` in wire order.
+    ///
+    /// The stream is demultiplexed from the end of the unmultiplexed handshake,
+    /// the fixed checksum seed (upstream: compat.c setup_protocol()); a frame
+    /// header is `(MPLEX_BASE + code) << 24 | len` (upstream: io.c:1173
+    /// send_msg()).
+    ///
+    /// # Errors
+    ///
+    /// [`TranscriptError::Malformed`] when the seed is missing or a frame does
+    /// not parse.
+    pub fn server_messages(&self) -> Result<Vec<(u8, Vec<u8>)>, TranscriptError> {
+        Ok(self
+            .server_frame_spans()?
+            .into_iter()
+            .filter(|&(code, _, _)| code != 0)
+            .map(|(code, start, len)| (code, self.server_to_client[start..start + len].to_vec()))
+            .collect())
+    }
+
+    /// `(code, payload start, payload len)` for every server frame.
+    fn server_frame_spans(&self) -> Result<Vec<(u8, usize, usize)>, TranscriptError> {
+        let stream = &self.server_to_client;
+        let malformed = |reason: &'static str| TranscriptError::Malformed {
+            direction: "server-to-client",
+            reason,
+        };
+        let seed = FIXED_CHECKSUM_SEED.to_le_bytes();
+        let mux_start = stream
+            .windows(seed.len())
+            .position(|w| w == seed)
+            .ok_or_else(|| malformed("fixed checksum seed not found"))?
+            + seed.len();
+
+        let mut frames = Vec::new();
+        let mut pos = mux_start;
+        while pos < stream.len() {
+            let header: [u8; 4] = stream
+                .get(pos..pos + 4)
+                .and_then(|h| h.try_into().ok())
+                .ok_or_else(|| malformed("truncated multiplex header"))?;
+            let header = u32::from_le_bytes(header);
+            let tag = (header >> 24) as u8;
+            let len = (header & 0x00ff_ffff) as usize;
+            if tag < MPLEX_BASE {
+                return Err(malformed("multiplex tag below MPLEX_BASE"));
+            }
+            pos += 4;
+            if pos + len > stream.len() {
+                return Err(malformed("multiplex frame runs past end of stream"));
+            }
+            frames.push((tag - MPLEX_BASE, pos, len));
+            pos += len;
+        }
+        Ok(frames)
     }
 }
 

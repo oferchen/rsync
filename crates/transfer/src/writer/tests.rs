@@ -1273,3 +1273,92 @@ fn server_writer_finalize_compression_round_trips_with_subsequent_raw_write() {
     compressed_reader.read_exact(&mut decompressed).unwrap();
     assert_eq!(&decompressed, payload);
 }
+
+/// Every frame a multiplexed writer produced, as `(MSG_* code, payload)`.
+fn message_frames(bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
+    let mut frames = Vec::new();
+    let mut pos = 0;
+    while pos + 4 <= bytes.len() {
+        let header = u32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap());
+        let len = (header & 0x00ff_ffff) as usize;
+        let code = (header >> 24) as u8 - 7;
+        frames.push((code, bytes[pos + 4..pos + 4 + len].to_vec()));
+        pos += 4 + len;
+    }
+    frames
+}
+
+/// Sends one line of each diagnostic code through a server writer routed by
+/// `route` for a peer speaking `protocol`, and returns the frames that hit
+/// the wire.
+fn routed_frames(
+    route: super::MessageRoute,
+    protocol: protocol::ProtocolVersion,
+) -> Vec<(u8, Vec<u8>)> {
+    let mut buf = Vec::new();
+    {
+        let mut writer = ServerWriter::new_plain(&mut buf)
+            .activate_multiplex()
+            .unwrap();
+        writer.set_message_routing(route, protocol);
+        writer.send_msg_error_xfer(b"xfer\n").unwrap();
+        writer.send_msg_error(b"error\n").unwrap();
+        writer.send_msg_warning(b"warning\n").unwrap();
+        writer.send_msg_info(b"info\n").unwrap();
+        writer.flush().unwrap();
+    }
+    message_frames(&buf)
+}
+
+/// upstream: log.c:357 - by default a server keeps its error and warning
+/// lines off the wire (they go to its own stderr) and frames only FINFO.
+#[test]
+fn errors_to_stderr_route_frames_only_info() {
+    let frames = routed_frames(
+        super::MessageRoute::ErrorsToStderr,
+        protocol::ProtocolVersion::V31,
+    );
+    assert_eq!(frames, vec![(2, b"info\n".to_vec())]);
+}
+
+/// upstream: log.c:357 - `msgs2stderr == 1` keeps every line off the wire.
+#[test]
+fn all_to_stderr_route_frames_nothing() {
+    let frames = routed_frames(
+        super::MessageRoute::AllToStderr,
+        protocol::ProtocolVersion::V31,
+    );
+    assert!(frames.is_empty(), "{frames:?}");
+}
+
+/// upstream: log.c:357-366 - `msgs2stderr == 0` frames every line with its
+/// own code at protocol 30 and later.
+#[test]
+fn frames_route_frames_every_line_with_its_code() {
+    let frames = routed_frames(super::MessageRoute::Frames, protocol::ProtocolVersion::V31);
+    assert_eq!(
+        frames,
+        vec![
+            (1, b"xfer\n".to_vec()),
+            (3, b"error\n".to_vec()),
+            (4, b"warning\n".to_vec()),
+            (2, b"info\n".to_vec()),
+        ]
+    );
+}
+
+/// upstream: log.c:359-364 - a pre-30 peer receives MSG_ERROR as
+/// MSG_ERROR_XFER and MSG_WARNING as MSG_INFO.
+#[test]
+fn frames_route_downgrades_codes_for_a_pre_30_peer() {
+    let frames = routed_frames(super::MessageRoute::Frames, protocol::ProtocolVersion::V29);
+    assert_eq!(
+        frames,
+        vec![
+            (1, b"xfer\n".to_vec()),
+            (1, b"error\n".to_vec()),
+            (2, b"warning\n".to_vec()),
+            (2, b"info\n".to_vec()),
+        ]
+    );
+}

@@ -111,7 +111,11 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
 
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
+    let pair = if is_rsh_daemon {
+        crate::daemon_stream::StdioPair::remote_shell(Box::new(stdin), Box::new(stdout))
+    } else {
+        crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout))
+    };
     let stream = DaemonStream::stdio(pair);
 
     let peer_addr = remote_shell_session_peer()?;

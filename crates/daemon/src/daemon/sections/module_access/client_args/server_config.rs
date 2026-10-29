@@ -178,6 +178,27 @@ fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerC
 /// operator paths are sanitized against.
 ///
 /// Returns the configuration on success, or sends an error and returns `None`.
+/// The diagnostic route a daemon's transfer runs with.
+///
+/// upstream: clientserver.c:1177-1178 - a daemon not run over a remote shell
+/// (`am_daemon > 0`) has no stderr the client can see, so it frames every
+/// line; a remote-shell daemon keeps the client's forwarded `--msgs2stderr` /
+/// `--no-msgs2stderr` (options.c:619-620), the last one winning, and otherwise
+/// the default.
+fn daemon_message_route(
+    remote_shell: bool,
+    client_args: &[String],
+) -> Option<core::server::writer::MessageRoute> {
+    use core::server::writer::MessageRoute;
+    if !remote_shell {
+        return Some(MessageRoute::Frames);
+    }
+    client_args
+        .iter()
+        .rev()
+        .find_map(|arg| MessageRoute::from_server_flag(arg))
+}
+
 fn build_server_config(
     ctx: &mut ModuleRequestContext<'_>,
     client_args: &[String],
@@ -520,6 +541,9 @@ fn build_server_config(
             // that fall-back is what reopened the chdir-symlink-race attack
             // window once the original CVE-2026-29518 fix landed.
             cfg.connection.is_daemon_connection = true;
+
+            cfg.connection.msgs2stderr =
+                daemon_message_route(ctx.reader.get_ref().is_remote_shell(), client_args);
 
             // upstream: options.c:2543-2549 - the daemon sender paces its own
             // outbound socket writes (io.c:952-953,979-980) at the client's forwarded

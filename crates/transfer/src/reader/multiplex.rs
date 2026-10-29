@@ -193,7 +193,7 @@ fn peer_log_line(buf: &[u8]) -> String {
 /// through `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0, ..)`
 /// (log.c:425). This helper reproduces that sequence so a malicious peer cannot
 /// forge output lines or drive the operator's terminal (CWE-150 / CWE-117).
-fn escape_terminal_line(buf: &[u8], style: EscapeStyle) -> Vec<u8> {
+pub(crate) fn escape_terminal_line(buf: &[u8], style: EscapeStyle) -> Vec<u8> {
     // upstream: log.c:380 - peel one trailing CR/NL; it is re-appended raw.
     let mut body = buf;
     let mut trailing: Option<u8> = None;

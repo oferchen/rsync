@@ -28,12 +28,30 @@ use std::time::Duration;
 pub struct StdioPair {
     reader: Box<dyn Read + Send>,
     writer: Box<dyn Write + Send>,
+    /// Whether a remote shell spawned this daemon (upstream `am_daemon < 0`)
+    /// rather than inetd (`am_daemon > 0`).
+    remote_shell: bool,
 }
 
 impl StdioPair {
-    /// Creates a new stdio pair from the given reader and writer.
+    /// Creates a new stdio pair from the given reader and writer, for a daemon
+    /// that was not spawned by a remote shell (inetd).
     pub fn new(reader: Box<dyn Read + Send>, writer: Box<dyn Write + Send>) -> Self {
-        Self { reader, writer }
+        Self {
+            reader,
+            writer,
+            remote_shell: false,
+        }
+    }
+
+    /// Creates a stdio pair for a daemon a remote shell spawned with
+    /// `--server --daemon` (upstream `am_daemon < 0`), whose stderr reaches
+    /// the client through that shell.
+    pub fn remote_shell(reader: Box<dyn Read + Send>, writer: Box<dyn Write + Send>) -> Self {
+        Self {
+            remote_shell: true,
+            ..Self::new(reader, writer)
+        }
     }
 }
 
@@ -154,6 +172,15 @@ impl DaemonStream {
             #[cfg(all(unix, feature = "quic"))]
             Self::QuicRelay(_) => None,
         }
+    }
+
+    /// Returns `true` if a remote shell spawned this daemon (upstream
+    /// `am_daemon < 0`), so its stderr reaches the client.
+    ///
+    /// upstream: clientserver.c:1177-1178 - only `am_daemon > 0` (a listener or
+    /// inetd) forces `msgs2stderr = 0`.
+    pub fn is_remote_shell(&self) -> bool {
+        matches!(self, Self::Stdio(pair) if pair.remote_shell)
     }
 
     /// Returns `true` if this is a stdio-based connection.
@@ -310,6 +337,17 @@ mod tests {
         let (_client, server) = connected_pair();
         let daemon = DaemonStream::plain(server);
         daemon.set_nodelay(true).unwrap();
+    }
+
+    /// Only a daemon a remote shell spawned keeps a stderr the client sees;
+    /// inetd and the listener do not (clientserver.c:1177-1178).
+    #[test]
+    fn only_a_remote_shell_stdio_pair_reports_a_remote_shell() {
+        let pair = || (Box::new(io::Cursor::new(Vec::new())), Box::new(Vec::new()));
+        let (r, w) = pair();
+        assert!(DaemonStream::stdio(StdioPair::remote_shell(r, w)).is_remote_shell());
+        let (r, w) = pair();
+        assert!(!DaemonStream::stdio(StdioPair::new(r, w)).is_remote_shell());
     }
 
     #[test]

@@ -90,6 +90,10 @@ pub(crate) struct MultiplexWriter<W> {
     /// wire; bytes diverted to the batch file are not counted.
     /// upstream: io.c:2502 `total_data_written += len` in `write_buf()`.
     data_written: u64,
+    /// Where this server's diagnostic lines go, and the peer protocol their
+    /// frame codes are chosen for. `None` until a server sets it: a client
+    /// writer frames what it is given unchanged.
+    message_routing: Option<(super::MessageRoute, protocol::ProtocolVersion)>,
 }
 
 /// Default buffer size - 64KB to batch ~2 wire chunks per flush.
@@ -126,12 +130,30 @@ impl<W: Write> MultiplexWriter<W> {
             last_io_out: Instant::now(),
             allowed_lull: None,
             data_written: 0,
+            message_routing: None,
         }
     }
 
     /// Payload bytes written for the wire so far (upstream `total_data_written`).
     pub(crate) const fn data_written(&self) -> u64 {
         self.data_written
+    }
+
+    /// Sets where this server's diagnostic lines go and the peer protocol their
+    /// frame codes are chosen for. upstream: options.c:103, compat.c:653-654.
+    pub(crate) fn set_message_routing(
+        &mut self,
+        route: super::MessageRoute,
+        protocol: protocol::ProtocolVersion,
+    ) {
+        self.message_routing = Some((route, protocol));
+    }
+
+    /// The routing set by [`Self::set_message_routing`], if any.
+    pub(crate) const fn message_routing(
+        &self,
+    ) -> Option<(super::MessageRoute, protocol::ProtocolVersion)> {
+        self.message_routing
     }
 
     /// Configures the keep-alive lull interval.

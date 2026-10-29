@@ -786,3 +786,37 @@ mod daemon_files_from_sanitize_tests {
         assert_eq!(got, PathBuf::from("/srv/mod/etc/passwd"));
     }
 }
+
+#[cfg(test)]
+mod message_route_tests {
+    use super::daemon_message_route;
+    use core::server::writer::MessageRoute;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// clientserver.c:1177-1178 - a listener or inetd daemon frames every
+    /// line, whatever the client asked for: it has no stderr the client sees.
+    #[test]
+    fn a_socket_daemon_always_frames() {
+        for client in [args(&[]), args(&["--msgs2stderr"])] {
+            assert_eq!(daemon_message_route(false, &client), Some(MessageRoute::Frames));
+        }
+    }
+
+    /// A remote-shell daemon keeps the client's last forwarded choice, or
+    /// leaves the default to the protocol (options.c:619-620, 2059-2060).
+    #[test]
+    fn a_remote_shell_daemon_keeps_the_clients_choice() {
+        assert_eq!(daemon_message_route(true, &args(&["-r"])), None);
+        assert_eq!(
+            daemon_message_route(true, &args(&["--msgs2stderr", "--no-msgs2stderr"])),
+            Some(MessageRoute::Frames)
+        );
+        assert_eq!(
+            daemon_message_route(true, &args(&["--no-msgs2stderr", "--msgs2stderr"])),
+            Some(MessageRoute::AllToStderr)
+        );
+    }
+}

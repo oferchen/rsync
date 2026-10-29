@@ -534,6 +534,9 @@ where
     // by the client tells the server to render the flist without writing to the
     // destination (`TransferFlags::skip_dest_writes`).
     config.flags.list_only = long_flags.list_only;
+    // upstream: options.c:2958-2961, log.c:357 - where this server's error and
+    // warning lines go; resolved against the protocol once it is known.
+    config.connection.msgs2stderr = long_flags.msgs2stderr;
     // upstream: options.c:3026-3027 / main.c:1946-1947 - a push sender forwards
     // `--only-write-batch=X`; on the receiver, `write_batch < 0` forces
     // `dry_run = 1` (no destination writes) while `do_xfers` stays 1 so the

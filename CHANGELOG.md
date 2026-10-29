@@ -247,6 +247,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
 
 ### Fixed
+- A server over a remote shell writes its error and warning lines to its own stderr, which the remote shell hands to the client, instead of framing them into the protocol stream; it frames them, as rsync 3.5.1 does, under `--no-msgs2stderr`, at protocol 28 and older, and from a daemon not run over a remote shell. `--msgs2stderr` now also takes info lines off the wire, and a protocol 29 peer receives `MSG_ERROR` as `MSG_ERROR_XFER` (#PRNUM)
 - A `--fake-super` rerun compares the destination's `%stat` record, not its owner-writable real mode, so 0444, setuid and setgid files no longer itemize `.f...p.....`, locally or on a pull (#8251)
 - A destination `%stat` that does not parse ends a `--fake-super` copy or pull with upstream's `Corrupt ... xattr attached to` line and exit 11 instead of exit 0, and the local copy prints the cause and the `error in file IO` trailer as two lines with an absolute path, as upstream does (#8251)
 - A remote-shell server sender that fails no longer sends `MSG_ERROR_EXIT`, so its client exits 12 like upstream's; a daemon sender over a socket still delivers its own exit code (#8251)
