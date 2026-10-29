@@ -238,13 +238,14 @@ where
     // in `delete_extraneous_entries_via_emitter`; this guard covers the deferred
     // `--delete-delay` plan, whose decided extras are consumed here rather than
     // rescanned.
-    // Filter rules route the same way: each child of an extraneous directory
-    // meets the filters on its own, and a protected one keeps the directory
-    // (delete.c:91-183 delete_dir_contents, through the is_excluded() check in
-    // get_dirlist()), where the emitter's `remove_dir_all` would take it too.
+    // A filter that keeps something inside an extraneous directory routes the
+    // same way: each child meets the filters on its own and a protected one
+    // keeps the directory (delete.c:91-183 delete_dir_contents, through the
+    // is_excluded() check in get_dirlist()), where the emitter's
+    // `remove_dir_all` would take it too.
     if context.one_file_system_enabled()
         || context.options().backup_enabled()
-        || context.deletion_filters_active()
+        || plan_keeps_a_descendant(context, destination, relative, &plan)
     {
         let boundary_dev = delete_boundary_device(context, destination);
         let mut skipped = 0u64;
@@ -578,6 +579,43 @@ fn remove_entry_capped(
     }
     delete_leaf(context, path, entry_relative, file_type)
 }
+/// Whether a filter keeps an entry inside one of `plan`'s extraneous
+/// directories. Only then must they be emptied one checked child at a time;
+/// otherwise the wholesale removal deletes exactly what upstream would.
+fn plan_keeps_a_descendant(
+    context: &CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+    plan: &DeletePlan,
+) -> bool {
+    if !context.deletion_filters_active() {
+        return false;
+    }
+    plan.extras
+        .iter()
+        .filter(|entry| matches!(entry.kind, DeleteEntryKind::Dir))
+        .any(|entry| {
+            let name = Path::new(&entry.name);
+            let entry_relative =
+                relative.map_or_else(|| name.to_path_buf(), |base| base.join(name));
+            subtree_keeps_an_entry(context, &destination.join(name), &entry_relative)
+        })
+}
+
+/// Whether a filter keeps any entry below `path`, named `relative` for
+/// filter matching.
+fn subtree_keeps_an_entry(context: &CopyContext, path: &Path, relative: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        let child = relative.join(entry.file_name());
+        !context.allows_deletion(&child, is_dir)
+            || (is_dir && subtree_keeps_an_entry(context, &entry.path(), &child))
+    })
+}
+
 /// Reports a removal the capped delete pass could not make and records it
 /// for the exit code; the pass keeps deleting siblings and the transfer goes
 /// on (upstream: delete.c:264-267, `DR_FAILURE` never aborts the pass).
