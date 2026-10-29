@@ -40,6 +40,7 @@ fn plain_flags() -> TransferFlags {
         xattrs_changed: false,
         #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls: false,
+        redoing: false,
     }
 }
 
@@ -622,6 +623,7 @@ fn delta_copy_outcome_with(
         &fast_io::EntryMetadata::from(basis_metadata.clone()),
         None,
         crate::signature::SignatureAlgorithm::Xxh3_128 { seed: 0 },
+        super::super::super::comparison::block_sum_length(false),
     )
     .expect("build the basis signature")
     .expect("a non-empty basis always yields an index");

@@ -366,6 +366,7 @@ pub(crate) fn copy_file(
         xattrs_changed,
         #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,
+        redoing: false,
     };
 
     execute_transfer(

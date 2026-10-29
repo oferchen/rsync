@@ -5,6 +5,76 @@ pub(super) struct SparseCopy<'state> {
     state: &'state mut SparseWriteState,
 }
 
+/// The two whole-file sums that decide whether a delta pass verified.
+///
+/// upstream: the sender sums every byte of the file it sends (match.c:395-463
+/// `sum_update()`), the receiver every byte it puts in the output
+/// (receiver.c:300-371 `receive_data()`), and receiver.c:534 fails the file
+/// when they differ. On a local copy literals are the source's own bytes, so
+/// the sums differ only when a block the truncated strong sum matched holds
+/// different basis bytes - upstream's false match.
+///
+/// The digests never leave the process, so their algorithm is unobservable;
+/// XXH3-128 is the cheapest collision-resistant choice.
+pub(super) struct WholeFileSums {
+    sent: Xxh3_128,
+    received: Xxh3_128,
+}
+
+impl WholeFileSums {
+    fn new() -> Self {
+        Self {
+            sent: Xxh3_128::new(0),
+            received: Xxh3_128::new(0),
+        }
+    }
+
+    fn sent(&mut self, bytes: &[u8]) {
+        self.sent.update(bytes);
+    }
+
+    fn received(&mut self, bytes: &[u8]) {
+        self.received.update(bytes);
+    }
+
+    /// Sums the basis bytes a matched block leaves in the output.
+    ///
+    /// Needed where the block reaches the output without passing through a
+    /// buffer: a reflinked extent, or an in-place block already at its offset.
+    /// upstream reads them through its map for the same `sum_update()`.
+    fn received_from_basis(
+        &mut self,
+        basis: &mut fs::File,
+        offset: u64,
+        len: usize,
+        buffer: &mut [u8],
+        destination: &Path,
+    ) -> Result<(), LocalCopyError> {
+        let read_error = |error| {
+            LocalCopyError::io(
+                "read existing destination",
+                destination.to_path_buf(),
+                error,
+            )
+        };
+        basis.seek(SeekFrom::Start(offset)).map_err(read_error)?;
+        let mut remaining = len;
+        while remaining > 0 {
+            let len = remaining.min(buffer.len());
+            let chunk = &mut buffer[..len];
+            basis.read_exact(chunk).map_err(read_error)?;
+            self.received(chunk);
+            remaining -= chunk.len();
+        }
+        Ok(())
+    }
+
+    /// Reports whether the output reproduces the source.
+    fn agree(self) -> bool {
+        self.sent.finalize() == self.received.finalize()
+    }
+}
+
 /// Derives the `sum_head` describing the basis a delta body is matched against.
 ///
 /// The three geometry fields are read straight off the index the matcher uses,
@@ -122,6 +192,7 @@ impl<'a> CopyContext<'a> {
         basis_separate_from_writer: bool,
         updating_in_place: bool,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
+        let mut sums = WholeFileSums::new();
         // upstream: receiver.c:receive_data() - the matched-block path mirrors
         // upstream's two-condition optimization. When `updating_basis_or_equiv
         // && offset == offset2` (inplace + basis at the same offset as where
@@ -276,6 +347,7 @@ impl<'a> CopyContext<'a> {
                     break;
                 }
                 source_bytes_read = source_bytes_read.saturating_add(buffer_len as u64);
+                sums.sent(&read_buffer[..buffer_len]);
             }
 
             let byte = read_buffer[buffer_pos];
@@ -323,6 +395,7 @@ impl<'a> CopyContext<'a> {
                     if inplace_mode && !sparse {
                         seek_inplace_writer(writer, output_position, destination)?;
                     }
+                    sums.received(&pending_literals);
                     let flushed = self.flush_literal_chunk(
                         writer,
                         pending_literals.as_slice(),
@@ -377,6 +450,15 @@ impl<'a> CopyContext<'a> {
                 // writer keeps stale basis bytes at the new position and the
                 // final ftruncate clips the file off at the wrong length.
                 if inplace_mode && basis_offset == output_position {
+                    sums.received_from_basis(
+                        destination_reader
+                            .as_mut()
+                            .expect("destination reader is always open"),
+                        basis_offset,
+                        block_len,
+                        buffer,
+                        destination,
+                    )?;
                     consume_matched_in_place(
                         writer,
                         &mut sparse_state,
@@ -397,6 +479,9 @@ impl<'a> CopyContext<'a> {
                         seek_inplace_writer(writer, output_position, destination)?;
                     }
                     let matched_bytes = &scratch[..block_len];
+                    // These source bytes, not the basis block, are what lands in the
+                    // output, so they are what the receiving sum covers.
+                    sums.received(matched_bytes);
                     if sparse {
                         let _ = write_sparse_chunk(
                             writer,
@@ -429,6 +514,7 @@ impl<'a> CopyContext<'a> {
                             enabled: sparse,
                             state: &mut sparse_state,
                         },
+                        &mut sums,
                     )?;
                     if !sparse {
                         touched.record(total_bytes, block_len as u64);
@@ -560,6 +646,7 @@ impl<'a> CopyContext<'a> {
                 if inplace_mode && !sparse {
                     seek_inplace_writer(writer, output_position, destination)?;
                 }
+                sums.received(&pending_literals);
                 let flushed = self.flush_literal_chunk(
                     writer,
                     pending_literals.as_slice(),
@@ -601,6 +688,15 @@ impl<'a> CopyContext<'a> {
             );
 
             if inplace_mode && basis_offset == output_position {
+                sums.received_from_basis(
+                    destination_reader
+                        .as_mut()
+                        .expect("destination reader is always open"),
+                    basis_offset,
+                    block_len,
+                    buffer,
+                    destination,
+                )?;
                 consume_matched_in_place(
                     writer,
                     &mut sparse_state,
@@ -614,6 +710,9 @@ impl<'a> CopyContext<'a> {
                     seek_inplace_writer(writer, output_position, destination)?;
                 }
                 let matched_bytes = &scratch[..block_len];
+                // These source bytes, not the basis block, are what lands in the
+                // output, so they are what the receiving sum covers.
+                sums.received(matched_bytes);
                 if sparse {
                     let _ =
                         write_sparse_chunk(writer, &mut sparse_state, matched_bytes, destination)?;
@@ -642,6 +741,7 @@ impl<'a> CopyContext<'a> {
                         enabled: sparse,
                         state: &mut sparse_state,
                     },
+                    &mut sums,
                 )?;
                 if !sparse {
                     touched.record(total_bytes, block_len as u64);
@@ -664,6 +764,7 @@ impl<'a> CopyContext<'a> {
             if inplace_mode && !sparse {
                 seek_inplace_writer(writer, output_position, destination)?;
             }
+            sums.received(&pending_literals);
             let flushed = self.flush_literal_chunk(
                 writer,
                 pending_literals.as_slice(),
@@ -777,7 +878,9 @@ impl<'a> CopyContext<'a> {
             touched.total()
         };
 
-        Ok(outcome.with_touched_blocks(touched_blocks))
+        Ok(outcome
+            .with_touched_blocks(touched_blocks)
+            .with_verification_failed(!sums.agree()))
     }
 
     /// Writes a literal (unmatched) chunk to `writer`, applying sparse
@@ -897,6 +1000,7 @@ impl<'a> CopyContext<'a> {
         destination: &Path,
         matched: MatchedBlock<'_>,
         sparse: SparseCopy<'_>,
+        sums: &mut WholeFileSums,
     ) -> Result<(), LocalCopyError> {
         let offset = matched.offset();
         let block_length = matched.descriptor().len();
@@ -921,7 +1025,7 @@ impl<'a> CopyContext<'a> {
                 destination,
             )?
         {
-            return Ok(());
+            return sums.received_from_basis(existing, offset, block_length, buffer, destination);
         }
 
         existing.seek(SeekFrom::Start(offset)).map_err(|error| {
@@ -955,6 +1059,7 @@ impl<'a> CopyContext<'a> {
                 ));
             }
 
+            sums.received(&buffer[..read]);
             if sparse.enabled {
                 let _ = write_sparse_chunk(writer, sparse.state, &buffer[..read], destination)?;
             } else {

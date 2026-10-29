@@ -54,6 +54,13 @@ pub(in crate::local_copy) enum TransferOutcome {
     /// (receiver.c:1335,1342-1379 `send_msg_int(MSG_REDO, ndx)`), and the
     /// resend re-opens and re-fstats the shrunken file (sender.c:730-762).
     SourceChanged,
+    /// A block the truncated strong sum matched was not the basis block, so
+    /// the staged result was discarded instead of committed. The caller must
+    /// rerun the file once with full-width sums.
+    ///
+    /// upstream: receiver.c:534 fails `recv_ok`, receiver.c:1335 unlinks the
+    /// temp file and receiver.c:1372-1375 queues the phase-2 resend.
+    ChecksumMismatch,
 }
 
 /// Boolean flags controlling file transfer behavior.
@@ -100,6 +107,10 @@ pub(super) struct TransferFlags {
     /// Whether to preserve ACLs (Unix only).
     #[cfg(all(any(unix, windows), feature = "acl"))]
     pub preserve_acls: bool,
+    /// Whether this pass is the phase-2 resend, which matches with full-width
+    /// strong sums (upstream: generator.c:2650, receiver.c:955
+    /// `csum_length = SUM_LENGTH`).
+    pub redoing: bool,
 }
 
 impl TransferFlags {
