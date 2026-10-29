@@ -902,7 +902,9 @@ impl ReceiverContext {
                         "recv_generator: mkdir {} failed",
                         self.full_fname_in_dest(dest_dir, &dest_dir.join(target))
                     );
-                    let _ = self.emit_generator_error_xfer(writer, &what, &e);
+                    let shown = fast_io::refusal_errno::reported_refusal(&e);
+                    let _ =
+                        self.emit_generator_error_xfer(writer, &what, shown.as_ref().unwrap_or(&e));
                     break;
                 }
                 created.insert(dir_path);
@@ -931,7 +933,8 @@ impl ReceiverContext {
             "recv_generator: mkdir {} failed",
             self.full_fname_in_dest(dest_dir, dir_path)
         );
-        let _ = self.emit_generator_error_xfer(writer, &what, error);
+        let shown = fast_io::refusal_errno::reported_refusal(error);
+        let _ = self.emit_generator_error_xfer(writer, &what, shown.as_ref().unwrap_or(error));
         let _ = self.emit_error_line(
             writer,
             "*** Skipping any contents from this failed directory ***\n",

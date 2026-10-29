@@ -522,10 +522,11 @@ fn copy_directory_recursive_inner(
                 // directory's own error, reported once; every entry below it
                 // is skipped (`skip_dir`) and the run ends RERR_PARTIAL.
                 if !directory_failed.replace(true) {
+                    let shown = fast_io::refusal_errno::reported_refusal(&error);
                     report_generator_failure(
                         context,
                         &format!("recv_generator: mkdir {} failed", full_fname(destination)),
-                        &error,
+                        shown.as_ref().unwrap_or(&error),
                     );
                     eprintln!("*** Skipping any contents from this failed directory ***");
                 }

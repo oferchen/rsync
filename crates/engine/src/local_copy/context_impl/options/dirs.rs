@@ -362,14 +362,16 @@ impl<'a> CopyContext<'a> {
                 "recv_generator: mkdir {} failed",
                 super::executor::full_fname(parent)
             );
-            super::executor::report_generator_failure(self, &what, error);
+            let shown = fast_io::refusal_errno::reported_refusal(error);
+            super::executor::report_generator_failure(self, &what, shown.as_ref().unwrap_or(error));
         }
         if let Some(error) = &entry_error {
             let what = format!(
                 "recv_generator: failed to stat {}",
                 super::executor::full_fname(destination)
             );
-            super::executor::report_generator_failure(self, &what, error);
+            let shown = fast_io::refusal_errno::reported_refusal(error);
+            super::executor::report_generator_failure(self, &what, shown.as_ref().unwrap_or(error));
         }
         parent_error.is_some() || entry_error.is_some()
     }

@@ -455,7 +455,14 @@ impl ReceiverContext {
                         "recv_generator: failed to stat {}",
                         self.full_fname_in_dest(dest_dir, &file_path)
                     );
-                    let _ = self.emit_generator_error_xfer(writer, &what, &error);
+                    // upstream: syscall.c:2920-2931 - a confinement refusal
+                    // prints as ELOOP; EXDEV is oc's internal escape signal.
+                    let shown = fast_io::refusal_errno::reported_refusal(&error);
+                    let _ = self.emit_generator_error_xfer(
+                        writer,
+                        &what,
+                        shown.as_ref().unwrap_or(&error),
+                    );
                     continue;
                 }
             };
