@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
 
-use crate::disk_commit::{BackupConfig, BackupEnv, make_backup};
+use crate::disk_commit::{BackupConfig, BackupEnv, make_backup, make_backup_copy};
 use crate::pipeline::receiver::DelayedUpdate;
 use crate::receiver::ReceiverContext;
 use crate::receiver::stats::TransferStats;
@@ -348,6 +348,32 @@ impl ReceiverContext {
         if !self.config.flags.backup {
             return Ok(());
         }
+        let (backup_config, env) = self.backup_target(
+            dest_dir,
+            metadata_opts,
+            #[cfg(unix)]
+            sandbox,
+        );
+        if let Some(notice) = make_backup(file_path, &backup_config, env)? {
+            // upstream: backup.c:432-433 - INFO_GTE(BACKUP, 1) "backed up X to Y".
+            info_log!(
+                Backup,
+                1,
+                "backed up {} to {}",
+                notice.original.display(),
+                notice.backup.display()
+            );
+        }
+        Ok(())
+    }
+
+    /// The backup naming and commit environment shared by both backup forms.
+    fn backup_target<'a>(
+        &self,
+        dest_dir: &'a Path,
+        metadata_opts: &'a metadata::MetadataOptions,
+        #[cfg(unix)] sandbox: Option<&'a fast_io::DirSandbox>,
+    ) -> (BackupConfig, BackupEnv<'a>) {
         let backup_config = BackupConfig {
             dir_cache: std::sync::Arc::clone(&self.backup_dir_cache),
             dest_dir: dest_dir.to_path_buf(),
@@ -362,8 +388,33 @@ impl ReceiverContext {
             metadata_opts: Some(metadata_opts),
             fsync: self.config.write.fsync,
         };
-        if let Some(notice) = make_backup(file_path, &backup_config, env)? {
-            // upstream: backup.c:432-433 - INFO_GTE(BACKUP, 1) "backed up X to Y".
+        (backup_config, env)
+    }
+
+    /// Preserves the pre-image of an in-place destination by copying it to its
+    /// backup name before the first write, so the destination inode itself is
+    /// rewritten.
+    ///
+    /// upstream: generator.c:2281-2301 - with `--inplace` the backup is a
+    /// copy (`make_backup(fname, True)`), not the rename the temp-file path
+    /// uses; backup.c:432-433 prints "backed up X to Y" under INFO(BACKUP).
+    pub(in crate::receiver) fn backup_existing_dest_by_copy(
+        &self,
+        dest_dir: &Path,
+        file_path: &Path,
+        metadata_opts: &metadata::MetadataOptions,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    ) -> io::Result<()> {
+        if !self.config.flags.backup {
+            return Ok(());
+        }
+        let (backup_config, env) = self.backup_target(
+            dest_dir,
+            metadata_opts,
+            #[cfg(unix)]
+            sandbox,
+        );
+        if let Some((_, notice)) = make_backup_copy(file_path, &backup_config, env)? {
             info_log!(
                 Backup,
                 1,

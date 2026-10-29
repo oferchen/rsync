@@ -24,6 +24,7 @@ logging = { path = "../logging" }
 filetime = { workspace = true }
 
 [dev-dependencies]
+checksums = { path = "../checksums" }
 test-support = { path = "../test-support" }
 tempfile = { workspace = true }
 protocol = { path = "../protocol" }

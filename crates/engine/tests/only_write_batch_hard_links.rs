@@ -32,6 +32,34 @@ use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
 use protocol::CompatibilityFlags;
 use tempfile::tempdir;
 
+/// Appends what core's `finalize_batch` writes once the transfer ends, which
+/// the `--read-batch` receiver reads: the stats (upstream: main.c:374-383)
+/// and the goodbye `NDX_DONE` (main.c:933-935 read_final_goodbye()).
+fn write_trailer(writer: &Mutex<BatchWriter>) {
+    let mut w = writer.lock().expect("writer mutex not poisoned");
+    w.write_stats(&batch::BatchStats {
+        total_read: 0,
+        total_written: 0,
+        total_size: 0,
+        flist_buildtime: Some(0),
+        flist_xfertime: Some(0),
+    })
+    .expect("write batch stats");
+    w.write_data(&[0x00]).expect("write goodbye NDX_DONE");
+}
+
+/// Replays `batch` into `dest` through the live `--read-batch` path (core
+/// `ReceiverContext::for_batch_replay`), the code upstream-compatible replay
+/// runs.
+fn read_batch(batch: &std::path::Path, dest: &std::path::Path) {
+    let out = std::process::Command::new(test_support::oc_rsync_bin())
+        .arg(format!("--read-batch={}", batch.display()))
+        .arg(format!("{}/", dest.display()))
+        .output()
+        .expect("spawn oc-rsync");
+    assert!(out.status.success(), "--read-batch failed: {out:?}");
+}
+
 /// Builds an `--only-write-batch` writer whose recorded stream flags say
 /// `-rH`, since the reader and the flist encoder both configure themselves
 /// from the header rather than from the live options.
@@ -109,6 +137,7 @@ fn only_write_batch_replay_rebuilds_hard_link_clusters() {
     plan.execute_with_options(LocalCopyExecution::DryRun, options)
         .expect("only-write-batch dry-run succeeds");
 
+    write_trailer(&writer);
     Arc::try_unwrap(writer)
         .expect("writer uniquely owned")
         .into_inner()
@@ -162,7 +191,7 @@ fn only_write_batch_replay_rebuilds_hard_link_clusters() {
     );
     drop(reader);
 
-    batch::replay::replay(&read_cfg, &dest_replay, 0).expect("replay succeeds");
+    read_batch(&batch_path, &dest_replay);
 
     for name in ["a-twin", "b-leader", "m-middle", "z-trailer"] {
         assert_eq!(

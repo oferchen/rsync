@@ -29,6 +29,34 @@ use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
 use protocol::CompatibilityFlags;
 use tempfile::tempdir;
 
+/// Appends what core's `finalize_batch` writes once the transfer ends, which
+/// the `--read-batch` receiver reads: the stats (upstream: main.c:374-383)
+/// and the goodbye `NDX_DONE` (main.c:933-935 read_final_goodbye()).
+fn write_trailer(writer: &Mutex<BatchWriter>) {
+    let mut w = writer.lock().expect("writer mutex not poisoned");
+    w.write_stats(&batch::BatchStats {
+        total_read: 0,
+        total_written: 0,
+        total_size: 0,
+        flist_buildtime: Some(0),
+        flist_xfertime: Some(0),
+    })
+    .expect("write batch stats");
+    w.write_data(&[0x00]).expect("write goodbye NDX_DONE");
+}
+
+/// Replays `batch` into `dest` through the live `--read-batch` path (core
+/// `ReceiverContext::for_batch_replay`), the code upstream-compatible replay
+/// runs.
+fn read_batch(batch: &std::path::Path, dest: &std::path::Path) {
+    let out = std::process::Command::new(test_support::oc_rsync_bin())
+        .arg(format!("--read-batch={}", batch.display()))
+        .arg(format!("{}/", dest.display()))
+        .output()
+        .expect("spawn oc-rsync");
+    assert!(out.status.success(), "--read-batch failed: {out:?}");
+}
+
 /// Build a writer for `--only-write-batch` with `recurse` and
 /// `preserve_links` set so the encoded flist matches a `-rl --only-write-batch`
 /// invocation. The header is written eagerly so the executor can append
@@ -108,6 +136,7 @@ fn only_write_batch_replay_reconstructs_regular_files() {
         .expect("only-write-batch dry-run succeeds");
 
     // Release the writer so the buffered output reaches disk before replay.
+    write_trailer(&writer);
     Arc::try_unwrap(writer)
         .expect("writer uniquely owned")
         .into_inner()
@@ -153,12 +182,7 @@ fn only_write_batch_replay_reconstructs_regular_files() {
     // Drop the reader so the file handle is closed before replay reopens it.
     drop(reader);
 
-    let result = batch::replay::replay(&read_cfg, &dest_replay, 0).expect("replay succeeds");
-    assert!(
-        result.file_count >= 3,
-        "replay must report at least 3 entries; got {}",
-        result.file_count
-    );
+    read_batch(&batch_path, &dest_replay);
 
     let replay_empty = dest_replay.join("empty");
     assert!(
@@ -225,6 +249,7 @@ fn only_write_batch_replay_reconstructs_symlinks() {
     plan.execute_with_options(LocalCopyExecution::DryRun, options)
         .expect("only-write-batch dry-run succeeds");
 
+    write_trailer(&writer);
     Arc::try_unwrap(writer)
         .expect("writer uniquely owned")
         .into_inner()
@@ -232,18 +257,9 @@ fn only_write_batch_replay_reconstructs_symlinks() {
         .finalize()
         .expect("finalize batch writer");
 
-    let read_cfg = BatchConfig::new(
-        BatchMode::Read,
-        batch_path.to_string_lossy().into_owned(),
-        32,
-    );
     let replay_dst = temp.path().join("replay");
     fs::create_dir_all(&replay_dst).expect("create replay dst");
-    let result = batch::replay::replay(&read_cfg, &replay_dst, 0).expect("replay succeeds");
-    assert!(
-        result.symlinks_created >= 1,
-        "replay must create the symlink"
-    );
+    read_batch(&batch_path, &replay_dst);
 
     let link_path = replay_dst.join("link");
     let link_meta = std::fs::symlink_metadata(&link_path).expect("symlink stat");
@@ -291,6 +307,7 @@ fn only_write_batch_replay_reconstructs_subdirectory_files() {
     plan.execute_with_options(LocalCopyExecution::DryRun, options)
         .expect("only-write-batch dry-run succeeds");
 
+    write_trailer(&writer);
     Arc::try_unwrap(writer)
         .expect("writer uniquely owned")
         .into_inner()
@@ -298,14 +315,9 @@ fn only_write_batch_replay_reconstructs_subdirectory_files() {
         .finalize()
         .expect("finalize batch writer");
 
-    let read_cfg = BatchConfig::new(
-        BatchMode::Read,
-        batch_path.to_string_lossy().into_owned(),
-        32,
-    );
     let replay_dst = temp.path().join("replay");
     fs::create_dir_all(&replay_dst).expect("create replay dst");
-    batch::replay::replay(&read_cfg, &replay_dst, 0).expect("replay succeeds");
+    read_batch(&batch_path, &replay_dst);
 
     let dir_text = replay_dst.join("dir/text");
     assert!(dir_text.exists(), "dir/text must materialise");

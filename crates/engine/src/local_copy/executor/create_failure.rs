@@ -13,7 +13,10 @@
 //! - `log.c:337-338` - `FERROR_XFER` sets `got_xfer_error`
 
 use std::io;
-use std::path::{Component, Path};
+use std::path::Path;
+
+pub(crate) use logging::full_fname;
+use logging::slash_path;
 
 use crate::local_copy::{CopyContext, upstream_io_error};
 
@@ -77,38 +80,4 @@ pub(crate) fn report_link_failure(
 fn report(context: &mut CopyContext, what: &str, error: &io::Error) {
     eprintln!("rsync: [generator] {what}: {}", upstream_io_error(error));
     context.record_create_error();
-}
-
-/// Renders `path` as upstream `full_fname()` does outside a daemon module:
-/// double quoted, with a relative name prefixed by the working directory.
-///
-/// upstream: util1.c:1528 full_fname()
-pub(crate) fn full_fname(path: &Path) -> String {
-    let name = slash_path(path);
-    if path.has_root() {
-        return format!("\"{name}\"");
-    }
-    match std::env::current_dir() {
-        Ok(cwd) => format!("\"{}/{name}\"", cwd.display()),
-        Err(_) => format!("\"{name}\""),
-    }
-}
-
-/// Joins `path` with `/`, dropping `.` components as upstream's cleaned
-/// flist names never carry them.
-fn slash_path(path: &Path) -> String {
-    let mut out = String::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::RootDir => out.push('/'),
-            other => {
-                if !out.is_empty() && !out.ends_with('/') {
-                    out.push('/');
-                }
-                out.push_str(&other.as_os_str().to_string_lossy());
-            }
-        }
-    }
-    out
 }

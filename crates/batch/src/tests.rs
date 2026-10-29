@@ -8,6 +8,55 @@ mod integration {
     use crate::{BatchConfig, BatchMode};
     use std::fs;
 
+    /// Replays `batch` into `dest` through the live `--read-batch` path,
+    /// which runs the real receiver (core `ReceiverContext::for_batch_replay`).
+    fn read_batch_output(batch: &std::path::Path, dest: &std::path::Path) -> std::process::Output {
+        std::process::Command::new(test_support::oc_rsync_bin())
+            .arg(format!("--read-batch={}", batch.display()))
+            .arg(format!("{}/", dest.display()))
+            .output()
+            .expect("spawn oc-rsync")
+    }
+
+    /// The whole-file sum a protocol 30+ sender writes after a file's delta
+    /// tokens: plain MD5 of the reconstructed file, since sum_init() never
+    /// seeds MD5 (upstream: checksum.c:576-617). The receiver verifies it.
+    fn file_sum(content: &[u8]) -> [u8; 16] {
+        checksums::strong::Md5::digest(content)
+    }
+
+    /// Ends a hand-built batch the way a recording does: the sender's closing
+    /// `NDX_DONE` after its phase loop (upstream: sender.c send_files()), the
+    /// stats (main.c:374-383) and, at protocol 31+, the goodbye `NDX_DONE`
+    /// that read_final_goodbye() consumes (main.c:933-935).
+    fn write_trailer(writer: &mut BatchWriter, protocol_version: i32) {
+        use protocol::codec::{NdxCodec, NdxCodecEnum};
+
+        let mut done = Vec::new();
+        NdxCodecEnum::new(protocol_version as u8)
+            .write_ndx_done(&mut done)
+            .unwrap();
+        writer.write_data(&done).unwrap();
+        writer
+            .write_stats(&crate::BatchStats {
+                total_read: 0,
+                total_written: 0,
+                total_size: 0,
+                flist_buildtime: Some(0),
+                flist_xfertime: Some(0),
+            })
+            .unwrap();
+        if protocol_version >= 31 {
+            writer.write_data(&done).unwrap();
+        }
+    }
+
+    /// [`read_batch_output`] for a batch that must replay cleanly.
+    fn read_batch(batch: &std::path::Path, dest: &std::path::Path) {
+        let out = read_batch_output(batch, dest);
+        assert!(out.status.success(), "--read-batch failed: {out:?}");
+    }
+
     #[test]
     #[allow(clippy::field_reassign_with_default)]
     fn test_batch_roundtrip() {
@@ -889,7 +938,7 @@ mod integration {
 
             // File-level checksum (16 bytes) - upstream always writes this after delta stream
             // upstream: receiver.c - sender writes xfer_sum_len bytes of file checksum
-            writer.write_data(&[0u8; 16]).unwrap();
+            writer.write_data(&file_sum(b"Hello, batch!")).unwrap();
 
             // NDX_DONE for phase 1 -> phase 2 transition
             ndx_buf.clear();
@@ -902,19 +951,11 @@ mod integration {
             writer.write_data(&ndx_buf).unwrap();
         }
 
+        write_trailer(&mut writer, protocol_version);
         writer.finalize().unwrap();
 
-        let read_config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            protocol_version,
-        );
+        read_batch(&batch_path, &dest_dir);
 
-        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
-
-        // 1 directory + 1 regular file.
-        assert_eq!(result.file_count, 2);
-        assert!(result.recurse);
         assert!(dest_dir.join("subdir").is_dir());
         assert!(dest_dir.join("subdir/hello.txt").exists());
 
@@ -1095,7 +1136,11 @@ mod integration {
 
             encoder.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-            writer.write_data(&[0u8; 16]).unwrap();
+            writer
+                .write_data(&file_sum(
+                    &[&basis_data[0..1400], &patch[..], &basis_data[1400..2000]].concat(),
+                ))
+                .unwrap();
 
             // NDX_DONE for phase 1 -> phase 2
             ndx_buf.clear();
@@ -1108,17 +1153,11 @@ mod integration {
             writer.write_data(&ndx_buf).unwrap();
         }
 
+        write_trailer(&mut writer, protocol_version);
         writer.finalize().unwrap();
-        let read_config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            protocol_version,
-        );
 
-        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
+        read_batch(&batch_path, &dest_dir);
 
-        // 1 directory + 1 regular file.
-        assert_eq!(result.file_count, 2);
         assert!(dest_dir.join("data.bin").exists());
 
         let content = fs::read(dest_dir.join("data.bin")).unwrap();
@@ -1203,7 +1242,7 @@ mod integration {
             encoder.send_literal(&mut token_buf, file_data).unwrap();
             encoder.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-            writer.write_data(&[0u8; 16]).unwrap();
+            writer.write_data(&file_sum(&file_data[..])).unwrap();
 
             // NDX_DONE for phase 1 -> phase 2 transition
             ndx_buf.clear();
@@ -1216,17 +1255,11 @@ mod integration {
             writer.write_data(&ndx_buf).unwrap();
         }
 
+        write_trailer(&mut writer, protocol_version);
         writer.finalize().unwrap();
-        let read_config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            protocol_version,
-        );
 
-        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
+        read_batch(&batch_path, &dest_dir);
 
-        assert_eq!(result.file_count, 2); // 1 dir + 1 file
-        assert!(result.recurse);
         assert!(dest_dir.join("test.txt").exists());
 
         let content = fs::read(dest_dir.join("test.txt")).unwrap();
@@ -1313,7 +1346,7 @@ mod integration {
             encoder.send_literal(&mut token_buf, file_data).unwrap();
             encoder.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-            writer.write_data(&[0u8; 16]).unwrap();
+            writer.write_data(&file_sum(&file_data[..])).unwrap();
 
             // NDX_DONE for phase 1 -> phase 2
             ndx_buf.clear();
@@ -1326,22 +1359,21 @@ mod integration {
             writer.write_data(&ndx_buf).unwrap();
         }
 
+        write_trailer(&mut writer, protocol_version);
         writer.finalize().unwrap();
-        let read_config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            protocol_version,
-        );
 
         // The pinned zlib inflater rejects the zstd frame; replay must fail
         // rather than auto-switch to a zstd decoder. A successful replay here
         // would mean the removed magic-byte auto-detect had come back.
-        let err = crate::replay::replay(&read_config, &dest_dir, 0)
-            .expect_err("zstd-framed batch body must not be auto-detected as zstd");
-        let msg = err.to_string();
+        let out = read_batch_output(&batch_path, &dest_dir);
         assert!(
-            msg.contains("delta token") || msg.contains("delta operations"),
-            "expected a delta-token decode failure, got: {msg}"
+            !out.status.success(),
+            "zstd-framed batch body must not be auto-detected as zstd: {out:?}"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("deflate decompression error"),
+            "the zlib inflater must be what rejects the zstd frame: {stderr}"
         );
         assert!(
             !dest_dir.join("zstd_test.txt").exists(),
@@ -1356,9 +1388,6 @@ mod integration {
     /// context at the start of each file (r_init flag). If the decoder is
     /// not reset between files, the inflate state from the first file's
     /// compressed stream leaks into the second, corrupting decompression.
-    ///
-    /// This test exercises the exact code path in `replay.rs` where
-    /// `decoder.reset()` is called before each file's token reading loop.
     ///
     /// upstream: token.c:592 - inflateReset per file
     /// upstream: token.c:recv_deflated_token() - r_init resets state
@@ -1434,7 +1463,7 @@ mod integration {
             encoder.send_literal(&mut token_buf, file1_data).unwrap();
             encoder.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-            writer.write_data(&[0u8; 16]).unwrap(); // file checksum
+            writer.write_data(&file_sum(&file1_data[..])).unwrap();
 
             // File 2: NDX=2, compressed literal
             ndx_buf.clear();
@@ -1452,7 +1481,7 @@ mod integration {
             encoder2.send_literal(&mut token_buf, file2_data).unwrap();
             encoder2.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-            writer.write_data(&[0u8; 16]).unwrap(); // file checksum
+            writer.write_data(&file_sum(&file2_data[..])).unwrap();
 
             // NDX_DONE phase 1 -> phase 2
             ndx_buf.clear();
@@ -1465,16 +1494,10 @@ mod integration {
             writer.write_data(&ndx_buf).unwrap();
         }
 
+        write_trailer(&mut writer, protocol_version);
         writer.finalize().unwrap();
-        let read_config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            protocol_version,
-        );
 
-        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
-
-        assert_eq!(result.file_count, 3); // 1 dir + 2 files
+        read_batch(&batch_path, &dest_dir);
 
         let content1 = fs::read(dest_dir.join("file1.txt")).unwrap();
         assert_eq!(
@@ -1597,7 +1620,11 @@ mod integration {
 
             enc1.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-            writer.write_data(&[0u8; 16]).unwrap();
+            writer
+                .write_data(&file_sum(
+                    &[&basis1[0..700], &patch1[..], &basis1[700..2000]].concat(),
+                ))
+                .unwrap();
 
             // --- File 2: copy block0 + copy block1 + literal + copy block2 ---
             ndx_buf.clear();
@@ -1626,7 +1653,11 @@ mod integration {
 
             enc2.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-            writer.write_data(&[0u8; 16]).unwrap();
+            writer
+                .write_data(&file_sum(
+                    &[&basis2[0..1400], &patch2[..], &basis2[1400..2000]].concat(),
+                ))
+                .unwrap();
 
             // NDX_DONE phase 1 -> phase 2
             ndx_buf.clear();
@@ -1639,16 +1670,10 @@ mod integration {
             writer.write_data(&ndx_buf).unwrap();
         }
 
+        write_trailer(&mut writer, protocol_version);
         writer.finalize().unwrap();
-        let read_config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            protocol_version,
-        );
 
-        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
-
-        assert_eq!(result.file_count, 3); // 1 dir + 2 files
+        read_batch(&batch_path, &dest_dir);
 
         // Verify file 1: block0(700) + patch1(16) + block1(700) + block2(600)
         let content1 = fs::read(dest_dir.join("alpha.dat")).unwrap();
@@ -1673,11 +1698,9 @@ mod integration {
     /// Verifies that compressed batch replay handles a mix of new files
     /// (no basis) and delta files (with basis) in the same batch.
     ///
-    /// When a file has no pre-existing basis at the destination, the replay
-    /// path uses `read_compressed_delta_tokens()` (eager mode, no dictionary
-    /// sync needed) instead of the streaming CPRES_ZLIB path. This test
-    /// verifies the transition between these two paths within a single
-    /// batch file.
+    /// A file with no basis at the destination carries only literals, while
+    /// a delta file's matched blocks feed the inflate dictionary, so one
+    /// batch exercises both token streams back to back.
     ///
     /// upstream: receiver.c:receive_data() - basis_exists determines path
     #[test]
@@ -1775,7 +1798,16 @@ mod integration {
 
             enc.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-            writer.write_data(&[0u8; 16]).unwrap();
+            writer
+                .write_data(&file_sum(
+                    &[
+                        &basis_data[0..1400],
+                        &patch_data[..],
+                        &basis_data[1400..2000],
+                    ]
+                    .concat(),
+                ))
+                .unwrap();
 
             // --- new.txt: whole-file literal (no basis, uses eager path) ---
             ndx_buf.clear();
@@ -1793,7 +1825,7 @@ mod integration {
             enc2.send_literal(&mut token_buf, new_file_data).unwrap();
             enc2.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-            writer.write_data(&[0u8; 16]).unwrap();
+            writer.write_data(&file_sum(&new_file_data[..])).unwrap();
 
             // NDX_DONE phase 1 -> phase 2
             ndx_buf.clear();
@@ -1806,16 +1838,10 @@ mod integration {
             writer.write_data(&ndx_buf).unwrap();
         }
 
+        write_trailer(&mut writer, protocol_version);
         writer.finalize().unwrap();
-        let read_config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            protocol_version,
-        );
 
-        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
-
-        assert_eq!(result.file_count, 3);
+        read_batch(&batch_path, &dest_dir);
 
         let content_delta = fs::read(dest_dir.join("delta.dat")).unwrap();
         assert_eq!(content_delta.len(), delta_output_size);
@@ -1842,11 +1868,6 @@ mod integration {
     /// not exist, the delta stream contains only literals (no block matches),
     /// so see_token() is never called. The decoder must still correctly inflate
     /// the literal data even in CPRES_ZLIB mode without any dictionary sync.
-    ///
-    /// This tests the code path in replay.rs where cpres_zlib=true but
-    /// basis_exists=false, which falls through to read_compressed_delta_tokens()
-    /// (eager mode). The decoder was created with set_zlibx(false) but works
-    /// correctly because literal-only streams don't require dictionary sync.
     ///
     /// upstream: token.c:send_deflated_token() - uses CPRES_ZLIB for all files
     /// upstream: io.c:write_batch_monitor_in - tees compressed bytes to batch_fd
@@ -1924,7 +1945,7 @@ mod integration {
             encoder.send_literal(&mut token_buf, file_data).unwrap();
             encoder.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-            writer.write_data(&[0u8; 16]).unwrap();
+            writer.write_data(&file_sum(&file_data[..])).unwrap();
 
             // NDX_DONE phase 1 -> phase 2
             ndx_buf.clear();
@@ -1937,18 +1958,13 @@ mod integration {
             writer.write_data(&ndx_buf).unwrap();
         }
 
+        write_trailer(&mut writer, protocol_version);
         writer.finalize().unwrap();
 
         // Replay - no basis file at destination, cpres_zlib=true path
-        let read_config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            protocol_version,
-        );
 
-        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
+        read_batch(&batch_path, &dest_dir);
 
-        assert_eq!(result.file_count, 2); // 1 dir + 1 file
         assert!(dest_dir.join("newfile.txt").exists());
 
         let content = fs::read(dest_dir.join("newfile.txt")).unwrap();
@@ -2046,7 +2062,7 @@ mod integration {
             protocol::wire::delta::write_token_end(&mut delta_buf).unwrap();
             writer.write_data(&delta_buf).unwrap();
 
-            writer.write_data(&[0u8; 16]).unwrap();
+            writer.write_data(&file_sum(b"data")).unwrap();
 
             ndx_buf.clear();
             ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
@@ -2057,17 +2073,10 @@ mod integration {
             writer.write_data(&ndx_buf).unwrap();
         }
 
+        write_trailer(&mut writer, protocol_version);
         writer.finalize().unwrap();
 
-        let read_config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            protocol_version,
-        );
-
-        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
-        assert_eq!(result.file_count, 2);
-        assert_eq!(result.symlinks_created, 1);
+        read_batch(&batch_path, &dest_dir);
 
         let nolf = dest_dir.join("nolf");
         let nolf_link = dest_dir.join("nolf-symlink");

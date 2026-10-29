@@ -81,6 +81,7 @@ mod errno_text;
 pub mod error_format;
 /// Terminal and log-file octal escaping, mirroring upstream `filtered_fwrite`.
 pub mod escape;
+mod full_fname;
 mod levels;
 mod log_code;
 mod macros;
@@ -101,6 +102,7 @@ pub use errno_text::upstream_errno_text;
 pub use error_format::{
     file_basename, format_rsync_error, format_rsync_warning, strip_repo_prefix,
 };
+pub use full_fname::{full_fname, slash_path};
 pub use levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
 pub use log_code::{LogCode, ParseLogCodeError};
 pub use phase_timer::PhaseTimer;

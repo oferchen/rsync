@@ -50,6 +50,7 @@ where
     let mut cvs_exclude = false;
     let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let from0 = inputs.from0;
+    let mut delete_excluded_at = None;
 
     for token in inputs.order {
         let result = match token {
@@ -84,6 +85,10 @@ where
             FilterOrderToken::AppleDoubleSkip => {
                 append_apple_double_exclude_rules(&mut filter_rules)
             }
+            FilterOrderToken::DeleteExcluded => {
+                delete_excluded_at.get_or_insert(filter_rules.len());
+                Ok(())
+            }
         };
         if let Err(message) = result {
             return Err(fail_with_message(message, stderr));
@@ -91,6 +96,14 @@ where
     }
     if cvs_exclude {
         append_cvs_exclude_rules(&mut filter_rules);
+    }
+
+    // upstream: exclude.c:1478-1481 parse_rule_tok() - rules parsed before
+    // --delete-excluded get no implicit FILTRULE_SENDER_SIDE.
+    if let Some(at) = delete_excluded_at {
+        filter_rules[..at]
+            .iter_mut()
+            .for_each(FilterRuleSpec::mark_parsed_before_delete_excluded);
     }
 
     if !filter_rules.is_empty() {

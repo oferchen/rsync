@@ -127,35 +127,50 @@ impl<'a> CopyContext<'a> {
 
         // upstream: uidlist.c:send_id_lists() - the uid list is emitted only
         // when (preserve_uid || preserve_acls), and the gid list only when
-        // (preserve_gid || preserve_acls). The matching reader
-        // (crates/batch/src/reader/flist.rs, recv_id_list) gates on the same
-        // predicates, so emitting terminators unconditionally would drift the
-        // stream cursor and corrupt the subsequent NDX reads. Each list, when
-        // present, terminates with a single varint30(0) (no ID0_NAMES inline).
+        // (preserve_gid || preserve_acls). The matching reader gates on the
+        // same predicates, so emitting a list it does not expect would drift
+        // the stream cursor and corrupt the subsequent NDX reads. Owner names
+        // already ride inline in each entry, so each list holds only its
+        // terminator - followed, under CF_ID0_NAMES, by the name of id 0
+        // (uidlist.c:398-405 send_one_name(f, 0, name)).
         let send_uid_list = preserve_uid || preserve_acls;
         let send_gid_list = preserve_gid || preserve_acls;
         if !send_uid_list && !send_gid_list {
             return Ok(());
         }
+        let id0_names = compat_flags.is_some_and(|cf| {
+            protocol::CompatibilityFlags::from_bits(cf as u32)
+                .contains(protocol::CompatibilityFlags::ID0_NAMES)
+        });
 
-        let mut buf = Vec::with_capacity(2);
-        if send_uid_list {
-            protocol::write_varint30_int(&mut buf, 0, proto as u8).map_err(|e| {
-                crate::local_copy::LocalCopyError::io(
-                    "write batch uid list terminator",
-                    std::path::PathBuf::new(),
-                    e,
-                )
-            })?;
-        }
-        if send_gid_list {
-            protocol::write_varint30_int(&mut buf, 0, proto as u8).map_err(|e| {
-                crate::local_copy::LocalCopyError::io(
-                    "write batch gid list terminator",
-                    std::path::PathBuf::new(),
-                    e,
-                )
-            })?;
+        let mut buf = Vec::new();
+        let lists = [
+            (
+                send_uid_list,
+                "write batch uid list",
+                metadata::id_lookup::lookup_user_name_cached as fn(u32) -> _,
+            ),
+            (
+                send_gid_list,
+                "write batch gid list",
+                metadata::id_lookup::lookup_group_name_cached,
+            ),
+        ];
+        for (send, action, lookup) in lists {
+            if !send {
+                continue;
+            }
+            let id_error =
+                |e| crate::local_copy::LocalCopyError::io(action, std::path::PathBuf::new(), e);
+            let mut list = protocol::idlist::IdList::new();
+            if id0_names {
+                // upstream: uidlist.c:400-402 - uid_to_user(0)/gid_to_group(0).
+                let name = metadata::id_lookup::no_id_unless_converter_failed(lookup(0))
+                    .map_err(id_error)?;
+                list.add_id(0, name);
+            }
+            list.write(&mut buf, id0_names, proto as u8)
+                .map_err(id_error)?;
         }
 
         let mut writer_guard = batch_writer_arc

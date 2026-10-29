@@ -43,24 +43,21 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .help("Store updated data in batch files named PREFIX for later replay. \
                            Compression (--compress) is not supported with batch mode at protocol 28 \
                            (rsync 2.x servers).")
-                    .value_parser(OsStringValueParser::new())
-                    .conflicts_with_all(["read-batch", "only-write-batch"]),
+                    .value_parser(OsStringValueParser::new()),
             )
             .arg(
                 Arg::new("only-write-batch")
                     .long("only-write-batch")
                     .value_name("PREFIX")
                     .help("Write batch files named PREFIX without applying the updates locally.")
-                    .value_parser(OsStringValueParser::new())
-                    .conflicts_with_all(["read-batch", "write-batch"]),
+                    .value_parser(OsStringValueParser::new()),
             )
             .arg(
                 Arg::new("read-batch")
                     .long("read-batch")
                     .value_name("PREFIX")
                     .help("Apply updates stored in batch files named PREFIX.")
-                    .value_parser(OsStringValueParser::new())
-                    .conflicts_with_all(["write-batch", "only-write-batch"]),
+                    .value_parser(OsStringValueParser::new()),
             )
             .arg(
                 Arg::new("early-input")

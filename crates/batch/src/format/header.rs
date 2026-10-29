@@ -57,22 +57,29 @@ impl BatchHeader {
     ///    `io.c:2756 write_varint(batch_fd, compat_flags)`
     /// 4. Checksum seed (i32) - `io.c:2757 write_int(batch_fd, checksum_seed)`
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        // upstream: batch.c:113 write_int(fd, flags)
+        self.write_stream_flags(writer)?;
+        self.write_protocol_fields(writer)
+    }
+
+    /// Write the stream-flags bitmap that opens the header.
+    ///
+    /// upstream: batch.c:113 write_int(fd, flags), called from main.c:1944
+    /// as soon as the batch file is open.
+    pub fn write_stream_flags<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         self.stream_flags
-            .write_to_versioned(writer, self.protocol_version)?;
+            .write_to_versioned(writer, self.protocol_version)
+    }
 
-        // upstream: io.c:2754 write_int(batch_fd, protocol_version)
+    /// Write the protocol fields that follow the stream flags.
+    ///
+    /// upstream: io.c:2747-2757 start_write_batch() - protocol version, the
+    /// compat flags at protocol >= 30, then the checksum seed.
+    pub fn write_protocol_fields<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         write_i32(writer, self.protocol_version)?;
-
-        // upstream: io.c:2755-2756
         if let Some(flags) = self.compat_flags {
             write_varint(writer, flags)?;
         }
-
-        // upstream: io.c:2757 write_int(batch_fd, checksum_seed)
-        write_i32(writer, self.checksum_seed)?;
-
-        Ok(())
+        write_i32(writer, self.checksum_seed)
     }
 
     /// Read the header from a reader.

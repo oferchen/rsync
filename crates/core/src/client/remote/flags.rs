@@ -272,11 +272,14 @@ pub(crate) fn build_wire_format_rules(
         // flag drives `get_rule_prefix()` (exclude.c:1864-1866) to emit
         // the `s` modifier on the wire and `send_filter_list()` (exclude.c:1906-1913) to
         // elide the rule from the receiver's view because it has already
-        // been applied locally on the sender.
+        // been applied locally on the sender. A rule given before the option
+        // is elided the same way but carries no `s` (exclude.c:1908-1911).
         let mut spec_owned;
+        let mut sender_side_by_elision = false;
         let spec_ref = if delete_excluded {
             spec_owned = spec.clone();
-            spec_owned.apply_implicit_sender_side_for_delete_excluded();
+            sender_side_by_elision = spec_owned.apply_implicit_sender_side_for_delete_excluded()
+                && spec.is_parsed_before_delete_excluded();
             &spec_owned
         } else {
             spec
@@ -307,6 +310,7 @@ pub(crate) fn build_wire_format_rules(
             // on the sending role and protocol; carry the origin so the wire
             // projection (transfer::wire_rule_crosses_wire) can reproduce it.
             cvs_origin: spec.is_cvs_origin(),
+            sender_side_by_elision,
             ..FilterRuleWireFormat::default()
         };
 
@@ -1489,6 +1493,24 @@ mod tests {
     ///
     /// upstream: exclude.c:1864-1866 `get_rule_prefix()` emits `s` when
     /// `FILTRULE_SENDER_SIDE` is set and (`!for_xfer` or proto >= 29).
+    /// upstream: exclude.c:1478-1481 parse_rule_tok() - a rule given before
+    /// --delete-excluded is parsed without FILTRULE_SENDER_SIDE, so it is
+    /// sent as `- a`, yet send_rules() still elides it as sender-only
+    /// (exclude.c:1908-1911), which keeps it off a push.
+    #[test]
+    fn delete_excluded_rule_given_before_the_option_has_no_s_modifier() {
+        use protocol::ProtocolVersion;
+        use protocol::filters::build_rule_prefix;
+
+        let mut spec = FilterRuleSpec::exclude("a");
+        spec.mark_parsed_before_delete_excluded();
+        let rules = build_wire_format_rules(&[spec], true).expect("convert");
+
+        assert!(rules[0].sender_side && !rules[0].receiver_side);
+        let proto = ProtocolVersion::from_supported(32).unwrap();
+        assert_eq!(build_rule_prefix(&rules[0], proto).as_deref(), Some("- "));
+    }
+
     #[test]
     fn delete_excluded_wire_prefix_carries_s_modifier() {
         use protocol::ProtocolVersion;

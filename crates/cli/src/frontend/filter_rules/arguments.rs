@@ -28,6 +28,10 @@ pub(crate) enum FilterOrderToken {
     CvsExclude,
     /// `--apple-double-skip`
     AppleDoubleSkip,
+    /// `--delete-excluded`, recorded at its argv position because only the
+    /// rules parsed after it carry `FILTRULE_SENDER_SIDE`
+    /// (upstream: exclude.c:1478-1481 parse_rule_tok()).
+    DeleteExcluded,
 }
 
 /// Builds the filter directive stream in true command-line (argv) order.
@@ -104,6 +108,10 @@ pub(crate) fn build_filter_order(matches: &ArgMatches, args: &[OsString]) -> Vec
         }
         if text == "--apple-double-skip" {
             tokens.push(FilterOrderToken::AppleDoubleSkip);
+            continue;
+        }
+        if text == "--delete-excluded" {
+            tokens.push(FilterOrderToken::DeleteExcluded);
             continue;
         }
 

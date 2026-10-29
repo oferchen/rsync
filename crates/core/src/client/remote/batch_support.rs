@@ -25,40 +25,9 @@ pub(crate) fn build_batch_context(
     config: &ClientConfig,
     writer: Arc<Mutex<BatchWriter>>,
 ) -> BatchContext {
-    #[cfg(all(unix, feature = "xattr"))]
-    let preserve_xattrs = config.preserve_xattrs();
-    #[cfg(not(all(unix, feature = "xattr")))]
-    let preserve_xattrs = false;
-
-    #[cfg(all(any(unix, windows), feature = "acl"))]
-    let preserve_acls = config.preserve_acls();
-    #[cfg(not(all(any(unix, windows), feature = "acl")))]
-    let preserve_acls = false;
-
-    let flags = BatchFlags {
-        recurse: config.recursive(),
-        preserve_uid: config.preserve_owner(),
-        preserve_gid: config.preserve_group(),
-        preserve_links: config.links(),
-        preserve_devices: config.preserve_devices(),
-        preserve_hard_links: config.preserve_hard_links(),
-        always_checksum: config.checksum(),
-        xfer_dirs: config.dirs(),
-        // upstream: batch.c:68 - do_compression is stream-flag bit 8, set by
-        // batch.c:96-113 write_stream_flags() whenever the option is active.
-        // The recorder is attached to the multiplex layer, so it tees the raw
-        // (still compressed) wire bytes exactly like upstream's
-        // write_batch_monitor_in in io.c:read_buf(). The bit must therefore
-        // track the option, otherwise `--read-batch` would decode deflated
-        // tokens as plain ones.
-        do_compression: config.compress(),
-        preserve_acls,
-        preserve_xattrs,
-        inplace: config.inplace(),
-        append: config.append(),
-        append_verify: config.append_verify(),
-        ..Default::default()
-    };
+    // upstream: batch.c:97-114 write_stream_flags() - the same flag set as a
+    // local batch, `--iconv` (bit 9, `tweaked_iconv`) included.
+    let flags = crate::client::run::batch::config_batch_flags(config);
 
     BatchContext { writer, flags }
 }
