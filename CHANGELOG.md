@@ -247,7 +247,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
 
 ### Fixed
-- A receiver that cannot create its temp file, open an `--inplace` destination or rename a file into place now skips that file with upstream's `FERROR_XFER` line and exits 23 for every errno, not only `EACCES`; an `--inplace` failure reads `open "%s" failed` instead of `mkstemp` (#8284)
+- A receiver that cannot create its temp file, open an `--inplace` destination, or rename (or, across devices, copy) a file into place now skips that file with upstream's `FERROR_XFER` line and exits 23 for every errno, not only `EACCES`; an `--inplace` failure reads `open "%s" failed` instead of `mkstemp` (#8284)
 - An `--inplace` destination the receiver creates is owner-only (0600) until its final mode is applied, as upstream's `O_CREAT, 0600` open makes it (#8284)
 - A `--fake-super` rerun compares the destination's `%stat` record, not its owner-writable real mode, so 0444, setuid and setgid files no longer itemize `.f...p.....`, locally or on a pull (#8251)
 - A destination `%stat` that does not parse ends a `--fake-super` copy or pull with upstream's `Corrupt ... xattr attached to` line and exit 11 instead of exit 0, and the local copy prints the cause and the `error in file IO` trailer as two lines with an absolute path, as upstream does (#8251)

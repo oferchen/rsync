@@ -23,7 +23,7 @@ use std::sync::Arc;
 /// Upstream emits one message per site, each naming its own operation:
 /// `mkstemp %s failed` (`rsync-3.5.1/receiver.c:465-466`),
 /// `open %s failed` (`rsync-3.5.1/receiver.c:1242-1244`),
-/// `rename %s -> "%s"` (`rsync-3.5.1/rsync.c:919-921`),
+/// `rename %s -> "%s"` and `copy %s -> "%s"` (`rsync-3.5.1/rsync.c:919-921`),
 /// `keep_backup failed: %s -> "%s"` (`rsync-3.5.1/backup.c:402-403`) and
 /// `close failed on %s` (`rsync-3.5.1/receiver.c:1297-1298`). oc runs
 /// these stages behind one `Result`, so the operation identity has to ride on
@@ -40,6 +40,9 @@ pub enum CommitOp {
     /// Renaming the finished temp file onto its destination. The operand is
     /// the temp file and the destination is the rename target.
     Rename,
+    /// Copying the finished temp file onto its destination because the rename
+    /// crossed devices. Same operands as [`Self::Rename`].
+    Copy,
     /// Closing the received file, where a filesystem that defers write-back
     /// reports a failed write. The operand is the file that was written: the
     /// temp file, or the destination itself for an in-place update.
@@ -128,6 +131,10 @@ pub fn commit_op_destination(error: &io::Error) -> Option<&Path> {
 
 /// Tags `source` with the operation that raised it, preserving its
 /// [`io::ErrorKind`] so existing predicates keep classifying it unchanged.
+///
+/// An error an inner stage already tagged keeps that tag: the innermost stage
+/// is the one upstream names, so a failed copy fallback stays a `copy` failure
+/// when the rename that chose it wraps the error on the way out.
 pub fn attach_commit_op(op: CommitOp, operand: &Path, source: io::Error) -> io::Error {
     attach_commit_op_between(op, operand, None, source)
 }
@@ -140,6 +147,9 @@ pub fn attach_commit_op_between(
     destination: Option<&Path>,
     source: io::Error,
 ) -> io::Error {
+    if commit_op_failure(&source).is_some() {
+        return source;
+    }
     io::Error::new(
         source.kind(),
         CommitOpError {

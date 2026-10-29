@@ -372,3 +372,34 @@ fn partial_dir_obstruction_beneath_the_sandbox_is_unlinked() {
     clear_partial_dir_obstruction(anchor, &fx.dest.join("sub/.~partial")).expect("cleared");
     assert!(!fx.dest.join("sub/.~partial").exists());
 }
+
+/// A cross-device copy that fails is upstream's `copy` failure, not a rename
+/// failure: robust_rename() returns -2 and finish_transfer() prints `copy %s ->
+/// "%s"` naming the temp and the final destination, then moves on to the next
+/// file. The copy is forced to fail by a destination directory that does not
+/// exist.
+///
+/// upstream: util1.c:654-656, rsync.c:918-927.
+#[test]
+fn a_failed_exdev_copy_is_tagged_as_a_copy_of_the_temp_onto_the_destination() {
+    let fx = fixture(b"received content");
+    let final_path = fx.dest.join("missing").join("file");
+
+    let error = robust_rename(unanchored(&fx.dest), &fx.temp, &final_path, None, |_, _| {
+        Err(os_error(libc::EXDEV))
+    })
+    .expect_err("the copy cannot create its target");
+
+    assert_eq!(
+        crate::temp_guard::commit_op_failure(&error),
+        Some((crate::temp_guard::CommitOp::Copy, fx.temp.as_path()))
+    );
+    assert_eq!(
+        crate::temp_guard::commit_op_destination(&error),
+        Some(final_path.as_path())
+    );
+    assert!(
+        fx.temp.exists(),
+        "a failed copy leaves the temp for cleanup"
+    );
+}
