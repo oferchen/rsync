@@ -799,8 +799,17 @@ impl DestinationWriteGuard {
         };
         let staged = file.clone();
         if let Some(parent) = staged.parent() {
-            crate::create_partial_dir(parent)
-                .map_err(|error| LocalCopyError::io("create partial dir", parent, error))?;
+            // upstream: receiver.c:1319-1325 - the file is discarded and the
+            // walk goes on, so the failure is tagged for the per-entry report.
+            crate::create_partial_dir(parent).map_err(|error| {
+                let error = attach_commit_op_between(
+                    CommitOp::PartialDir,
+                    parent,
+                    Some(&self.final_path),
+                    error,
+                );
+                LocalCopyError::io("create partial dir", parent, error)
+            })?;
         }
         hardened_rename(temp_path, &staged, self.dest_root.as_deref())
             .map_err(|error| LocalCopyError::io("stage delayed update", &staged, error))?;

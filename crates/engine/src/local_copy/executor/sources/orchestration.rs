@@ -745,7 +745,7 @@ pub(crate) fn copy_sources(
                     multiple_sources,
                     destination_root_created,
                 )
-                .map_err(|error| error.report_skipped_commit(context.destination_root()));
+                .or_else(|error| error.report_commit_failure(context.destination_root()));
                 if let Err(error) = result {
                     if error.is_vanished_error() {
                         // upstream: flist.c:1688 - vanished files produce a warning
