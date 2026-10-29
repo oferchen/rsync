@@ -1096,7 +1096,7 @@ impl ReceiverContext {
     ///
     /// upstream: flist.c:3315-3325 - only a first list whose lowest sorted entry
     /// is `.` gets a parent, and that parent is `.` itself.
-    fn segment_root_head(&self, segment_idx: usize) -> Option<usize> {
+    pub(in crate::receiver) fn segment_root_head(&self, segment_idx: usize) -> Option<usize> {
         if segment_idx != 0 || self.segment_parent_dir_ndx.first().copied().flatten() != Some(0) {
             return None;
         }
@@ -1112,7 +1112,9 @@ impl ReceiverContext {
     /// Creates and itemizes the directory at `flist_idx` of a streamed segment.
     ///
     /// upstream: generator.c:1432 / :2260 itemize new / existing directory.
-    fn walk_streamed_directory<W: Write + crate::writer::MsgInfoSender + ?Sized>(
+    pub(in crate::receiver) fn walk_streamed_directory<
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
         &self,
         flist_idx: usize,
         setup: &PipelineSetup,
@@ -1207,7 +1209,9 @@ impl ReceiverContext {
     /// relative parents, symlinks, devices and specials, `--delete-missing-args`
     /// sentinels - over one segment's flat range. Ranges that tile the list
     /// produce the same effects as the whole-list calls.
-    fn run_segment_post_passes<W: Write + crate::writer::MsgInfoSender + ?Sized>(
+    pub(in crate::receiver) fn run_segment_post_passes<
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
         &mut self,
         range: std::ops::Range<usize>,
         setup: &PipelineSetup,

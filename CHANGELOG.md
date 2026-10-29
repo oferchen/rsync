@@ -187,6 +187,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The daemon honours the `open noatime` module directive (#6850)
 
 ### Changed
+- A recursive local `--write-batch` records incremental recursion, as 3.5.1 does (header `81 ff`), and writes its file list in the incremental layout: the top level, then one sub-list per directory, placed among the file data by 3.5.1's 1000-entry lookahead. rsync 3.5.1 replays these batches, and `--delete-before`, `--delete-after`, `--delay-updates`, `-m`, `--qsort` and `--no-inc-recursive` still record a flat list (#8261)
 
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down to 33 instead of refused, and a peer outside 28-40 is refused with exit 2 after `@RSYNCD: OK`, as upstream does (#7916, #8209)
@@ -246,6 +247,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
 
 ### Fixed
+- `--read-batch` replays batches of more than 1000 files recorded with incremental recursion, including 3.5.1's. It failed with "unexpected per-file NDX while fetching file-list segment", because the sub-lists of such a batch arrive among the file data (#8261)
 
 **Data integrity**
 - `--delete-excluded` on a pull or push no longer deletes destination files that a receiver-side (`-r`) rule protects; the flag only turns un-modified include/exclude rules into sender-side ones when they are parsed, as upstream `exclude.c:1479` does (#8258)

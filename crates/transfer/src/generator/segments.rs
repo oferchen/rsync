@@ -16,16 +16,7 @@
 
 use super::ndx_map::NdxMap;
 
-/// Entries the sender keeps queued in sub-lists beyond the one the receiver is
-/// currently working through. Once the backlog reaches this many entries the
-/// sender stops emitting sub-lists and waits for the receiver to catch up, so a
-/// peer that throttles is never flooded with the whole tree up front.
-///
-/// # Upstream Reference
-///
-/// - `rsync.h:151` - `#define MIN_FILECNT_LOOKAHEAD 1000`
-/// - `sender.c:516,550` - `send_extra_file_list(f_out, MIN_FILECNT_LOOKAHEAD)`
-pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
+pub use protocol::flist::MIN_FILECNT_LOOKAHEAD;
 
 /// Ceiling on the lookahead backlog the sender will grow to while it is idle.
 ///
@@ -74,33 +65,6 @@ pub(crate) struct PendingSegment {
     pub(crate) flist_start: usize,
     /// Number of entries in this segment.
     pub(crate) count: usize,
-}
-
-/// A file list index tagged with an optional directory node ID.
-///
-/// During classification, directory entries are tagged with their internal
-/// node ID so the reorder phase can assign wire `dir_ndx` values via dense
-/// Vec lookup instead of name-based HashMap probes.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct TaggedIndex {
-    /// Index into the original (pre-reorder) file list.
-    pub(crate) file_idx: usize,
-    /// For directory entries: the internal node ID for tree building.
-    /// `None` for regular files and the "." root entry.
-    pub(crate) node_id: Option<usize>,
-}
-
-/// Per-directory segment with tagged child entries for incremental recursion.
-///
-/// Groups children belonging to a single directory, along with the directory's
-/// internal node ID. The final wire `dir_ndx` is computed during reordering
-/// to match the upstream receiver's `dir_flist` growth order.
-#[derive(Debug)]
-pub(crate) struct DirSegment {
-    /// Internal node ID for tree building (NOT the wire dir_ndx).
-    pub(crate) node_id: usize,
-    /// Tagged entries belonging to this directory.
-    pub(crate) children: Vec<TaggedIndex>,
 }
 
 /// Cursor-based scheduler that yields pending segments on demand.

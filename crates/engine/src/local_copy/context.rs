@@ -439,6 +439,20 @@ pub(crate) struct CopyContext<'a> {
     /// sorted-first member of each group, so the batch must carry delta data
     /// for that member alone.
     batch_entry_hlink_gnum: Vec<Option<i32>>,
+    /// Flist entries in traversal order, held back when the batch records
+    /// `CF_INC_RECURSE`: the incremental layout groups entries by directory,
+    /// so none can be written before the walk ends.
+    batch_pending_entries: Vec<protocol::flist::FileEntry>,
+    /// Traversal index to wire NDX once an incremental batch file list has
+    /// been written; `None` for a flat list, whose NDX is the sorted index.
+    batch_traversal_to_ndx: Option<Vec<i32>>,
+    /// Number of file lists in the batch: 1 for a flat list.
+    batch_list_count: usize,
+    /// Encoded sub-lists of an incremental batch file list not yet written,
+    /// in send order; the last carries `NDX_FLIST_EOF`.
+    batch_pending_sublists: Vec<Vec<u8>>,
+    /// The incremental layout of the batch file list, once planned.
+    batch_list_plan: Option<protocol::flist::SubListPlan>,
     /// Traversal index of the current file being delta-captured.
     batch_current_delta_idx: i32,
     /// Zero-based file-list index counter for batch NDX framing.

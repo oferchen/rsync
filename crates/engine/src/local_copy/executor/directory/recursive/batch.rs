@@ -242,29 +242,11 @@ pub(crate) fn capture_batch_file_entry(
         numeric_ids,
     );
     apply_hardlink_fields(&mut entry, metadata, hlink_group, protocol_version);
-
-    let mut buf = Vec::with_capacity(128);
-    let flist_writer = context
-        .batch_flist_writer_mut()
-        .expect("batch_flist_writer must exist when batch_writer is set");
-    flist_writer.write_entry(&mut buf, &entry).map_err(|e| {
-        LocalCopyError::io("encode batch flist entry", relative_path.to_path_buf(), e)
-    })?;
-
-    let batch_writer_arc = context
-        .batch_writer()
-        .expect("batch writer set on the write-batch path")
-        .clone();
-    let mut writer_guard = batch_writer_arc
-        .lock()
-        .expect("batch writer mutex poisoned");
-    writer_guard.write_data(&buf).map_err(|e| {
-        LocalCopyError::io(
-            "write batch file entry",
-            relative_path.to_path_buf(),
-            std::io::Error::other(e),
-        )
-    })?;
+    if context.batch_inc_recurse() {
+        context.hold_batch_entry(entry);
+    } else {
+        write_batch_entry(context, &entry, relative_path)?;
+    }
 
     // Record sort metadata for this entry so flush_batch_delta_to_batch()
     // can compute the traversal-to-sorted index mapping that upstream's
@@ -293,6 +275,36 @@ pub(crate) fn capture_batch_file_entry(
     context.increment_batch_flist_index();
 
     Ok(())
+}
+
+/// Encodes one flist entry straight into a flat batch file list.
+fn write_batch_entry(
+    context: &mut CopyContext,
+    entry: &protocol::flist::FileEntry,
+    relative_path: &Path,
+) -> Result<(), LocalCopyError> {
+    let mut buf = Vec::with_capacity(128);
+    let flist_writer = context
+        .batch_flist_writer_mut()
+        .expect("batch_flist_writer must exist when batch_writer is set");
+    flist_writer.write_entry(&mut buf, entry).map_err(|e| {
+        LocalCopyError::io("encode batch flist entry", relative_path.to_path_buf(), e)
+    })?;
+
+    let batch_writer_arc = context
+        .batch_writer()
+        .expect("batch writer set on the write-batch path")
+        .clone();
+    let mut writer_guard = batch_writer_arc
+        .lock()
+        .expect("batch writer mutex poisoned");
+    writer_guard.write_data(&buf).map_err(|e| {
+        LocalCopyError::io(
+            "write batch file entry",
+            relative_path.to_path_buf(),
+            std::io::Error::other(e),
+        )
+    })
 }
 
 /// Extracts the major device number from a combined `rdev` (Linux glibc

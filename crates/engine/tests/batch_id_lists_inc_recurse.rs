@@ -18,9 +18,9 @@
 //! This test drives `LocalCopyPlan::execute_with_options` with a
 //! `BatchWriter` whose compat_flags include `CF_INC_RECURSE`, then reads
 //! the resulting batch file back through `BatchReader::read_protocol_flist`
-//! and confirms the flist deserializes without losing position - i.e. the
-//! stream contains no extraneous bytes between the flist end marker and
-//! the first NDX of the delta-replay region.
+//! and `read_incremental_flist_segment`, confirming each list deserializes
+//! without losing position - i.e. the stream contains no extraneous bytes
+//! between one list's end marker and the NDX that announces the next.
 
 use std::fs;
 use std::sync::{Arc, Mutex};
@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex};
 use batch::{BatchConfig, BatchFlags, BatchMode, BatchReader, BatchWriter};
 use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
 use protocol::CompatibilityFlags;
+use protocol::codec::{NDX_FLIST_OFFSET, NdxCodec};
 use tempfile::tempdir;
 
 /// Compose the compat_flags that mirror upstream `--write-batch` with
@@ -61,9 +62,10 @@ fn make_inc_recurse_batch_writer(path: &std::path::Path) -> Arc<Mutex<BatchWrite
 
 /// Under INC_RECURSE-on compat_flags the batch writer must omit the
 /// post-flist uid/gid terminators (`flist.c:3063`). With the omission in
-/// place, `BatchReader::read_protocol_flist` consumes the flist segment
-/// without drifting past it, and the entry covering the source file
-/// appears in the decoded flist.
+/// place, `BatchReader::read_protocol_flist` consumes the initial list
+/// without drifting past it, the next NDX announces `src`'s sub-list
+/// (`flist.c:send_extra_file_list()`), and that sub-list carries the
+/// source file.
 ///
 /// Before the fix, the writer left two stray varint30(0) bytes after the
 /// flist end marker. The reader (`reader/flist.rs:167`) skipped the ID
@@ -131,18 +133,32 @@ fn write_batch_under_inc_recurse_omits_post_flist_id_terminators() {
     );
     let _ = header;
 
-    let entries = reader
+    let mut entries = reader
         .read_protocol_flist()
         .expect("decode flist after INC_RECURSE write_batch");
-    let payload_seen = entries
-        .iter()
-        .any(|entry| entry.name().contains("payload.bin"));
-    assert!(
-        payload_seen,
-        "decoded flist must include the source payload; got {:?}",
+    let names = |entries: &[protocol::flist::FileEntry]| {
         entries
             .iter()
             .map(|e| e.name().to_string())
             .collect::<Vec<_>>()
+    };
+    // upstream: flist.c:3230 - an inc-recursive reader refuses a nested name
+    // in the initial list, so it holds the top-level `src` alone.
+    assert_eq!(names(&entries), ["src"], "initial list");
+    let mut ndx_codec = reader.take_ndx_codec().expect("NDX codec set");
+    // `NDX_FLIST_OFFSET - 0` is the negative-NDX prefix plus one diff byte.
+    let mut announce = [0u8; 2];
+    reader.read_exact(&mut announce).expect("read sub-list NDX");
+    let ndx = ndx_codec
+        .read_ndx(&mut &announce[..])
+        .expect("decode sub-list NDX");
+    assert_eq!(ndx, NDX_FLIST_OFFSET, "sub-list of dir_ndx 0 (`src`)");
+    reader
+        .read_incremental_flist_segment(&mut entries)
+        .expect("decode src sub-list");
+    assert_eq!(
+        names(&entries),
+        ["src", "src/payload.bin"],
+        "after sub-list"
     );
 }
