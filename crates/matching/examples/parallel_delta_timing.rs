@@ -1,7 +1,7 @@
 //! Direct wall-clock timing for the parallel sender-scan delta generator.
 //!
 //! Bypasses criterion's adaptive iteration estimate (which explodes when one
-//! variant is anomalously slow) and times single `generate` / `generate_chunked`
+//! variant is anomalously slow) and times single `generate` / `generate_chunked_counted`
 //! calls. Prints throughput plus token/literal counts so a chunk that stops
 //! matching (literal blow-up) is immediately visible.
 //!
@@ -104,8 +104,9 @@ fn main() {
     for n in [2usize, 4, 8] {
         time_it(&format!("chunked/{n}"), SIZE, || {
             let s = generator
-                .generate_chunked(source.as_slice(), &index, n)
-                .expect("chunked");
+                .generate_chunked_counted(source.as_slice(), &index, n)
+                .expect("chunked")
+                .0;
             (s.tokens().len(), s.literal_bytes())
         });
     }
