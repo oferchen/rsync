@@ -130,6 +130,7 @@ impl ReceiverContext {
                 dest_dir,
                 #[cfg(unix)]
                 sandbox.as_deref(),
+                &failed_dirs,
                 writer,
             );
             #[cfg(unix)]
@@ -832,7 +833,7 @@ impl ReceiverContext {
                     }
                 }
             }
-            self.run_segment_post_passes(range.clone(), setup, writer)?;
+            self.run_segment_post_passes(range.clone(), setup, failed_dirs, writer)?;
             let walked = self.build_files_to_transfer_in_range(
                 range,
                 writer,

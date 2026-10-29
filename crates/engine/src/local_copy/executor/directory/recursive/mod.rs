@@ -172,7 +172,23 @@ fn copy_directory_recursive_inner(
     let destination_state = if list_only {
         DestinationState::Ready(None)
     } else {
-        check_destination_state(context, destination, relative)?
+        match check_destination_state(context, destination, relative) {
+            // upstream: generator.c:1745-1746 + 1873-1887 - a stat that fails
+            // for any reason but ENOENT leaves the directory to the mkdir,
+            // whose failure is reported and the directory's contents skipped.
+            Err(error) if error.is_io_error() => {
+                if let crate::local_copy::LocalCopyErrorKind::Io { source, .. } = error.kind() {
+                    report_generator_failure(
+                        context,
+                        &format!("recv_generator: mkdir {} failed", full_fname(destination)),
+                        source,
+                    );
+                    eprintln!("*** Skipping any contents from this failed directory ***");
+                }
+                return Err(error.reported());
+            }
+            other => other?,
+        }
     };
     if let DestinationState::Skipped(skip) = destination_state {
         record_existence_skip(context, skip, metadata, relative);
