@@ -690,10 +690,9 @@ where
     // batch header so a reader decodes the file list and delta stream the
     // same way.
     //
-    // CF_INC_RECURSE is not recorded, although a recursive 3.5.1 recording
-    // sets it (compat.c:162-180): the local batch carries one flat file list,
-    // and an inc-recursive reader refuses any name below the top level in the
-    // first list ("invalid path from sender", flist.c:3230).
+    // CF_INC_RECURSE follows set_allow_inc_recurse() (compat.c:162-180); the
+    // engine then writes the file list in the incremental layout the bit
+    // promises, which an inc-recursive reader requires (flist.c:3230).
     let local_batch_compat_flags = {
         use protocol::CompatibilityFlags;
         // upstream: compat.c:739-740 - a local transfer's child advertises 'u',
@@ -705,6 +704,18 @@ where
             | CompatibilityFlags::INPLACE_PARTIAL_DIR
             | CompatibilityFlags::ID0_NAMES
             | CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let flags = if local_batch_inc_recurse(
+            recursive_effective,
+            inc_recursive,
+            qsort,
+            &delete_mode,
+            delay_updates,
+            prune_empty_dirs.unwrap_or(false),
+        ) {
+            flags | CompatibilityFlags::INC_RECURSE
+        } else {
+            flags
+        };
         #[cfg(unix)]
         let flags = flags | CompatibilityFlags::SYMLINK_TIMES;
         // upstream: compat.c:728-730 - CF_SYMLINK_ICONV is gated on
@@ -1276,6 +1287,29 @@ fn resolve_old_args(explicit: Option<u8>, protect_args: Option<bool>) -> Option<
         }
         _ => None,
     }
+}
+
+/// Reports whether a local recording sets `CF_INC_RECURSE`.
+///
+/// upstream: compat.c:162-180 set_allow_inc_recurse() - recursion without
+/// `--qsort` allows it, unless the receiving child deletes before or after the
+/// transfer, delays updates or prunes empty directories; `--no-inc-recursive`
+/// clears it outright (options.c:634).
+fn local_batch_inc_recurse(
+    recursive: bool,
+    inc_recursive: Option<bool>,
+    qsort: bool,
+    delete_mode: &core::client::DeleteMode,
+    delay_updates: bool,
+    prune_empty_dirs: bool,
+) -> bool {
+    use core::client::DeleteMode;
+    recursive
+        && inc_recursive != Some(false)
+        && !qsort
+        && !matches!(delete_mode, DeleteMode::Before | DeleteMode::After)
+        && !delay_updates
+        && !prune_empty_dirs
 }
 
 /// Returns the explicit checksum seed to record in a batch header, or `None`
