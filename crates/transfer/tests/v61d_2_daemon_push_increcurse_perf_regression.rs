@@ -127,6 +127,12 @@ fn build_fixture(root: &Path) -> io::Result<()> {
 /// `module_root`. `use chroot = false` and `read only = false` are both
 /// required so the unprivileged test process can drive a push transfer
 /// without root.
+///
+/// The module sets no `uid`/`gid`. Upstream calls setgid() for any
+/// configured `gid` even when not root (clientserver.c:844, 1100), so a
+/// non-root daemon refuses the session with "@ERROR: setgid failed". With
+/// both unset a root daemon still drops to nobody (clientserver.c:833,
+/// 872-873) and a non-root one keeps the runner's identity.
 fn write_daemon_config(
     config_path: &Path,
     log_path: &Path,
@@ -145,19 +151,12 @@ fn write_daemon_config(
          comment = v61d-2 perf repro\n\
          read only = false\n\
          write only = false\n\
-         list = true\n\
-         uid = nobody\n\
-         gid = nobody\n",
+         list = true\n",
         pid = pid_path.display(),
         lock = config_path.with_file_name("rsyncd.lock").display(),
         log = log_path.display(),
         module = module_root.display(),
     );
-    // Strip the uid/gid lines on systems where the user cannot drop
-    // privileges (rsync rejects the directive when not running as root).
-    // Upstream rsync silently ignores uid/gid when the daemon is not
-    // started as root, so leaving the lines in is harmless for the
-    // unprivileged test runner.
     fs::write(config_path, body)
 }
 
