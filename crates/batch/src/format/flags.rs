@@ -202,7 +202,7 @@ pub fn check_batch_flags(
 /// Stream flags bitmap that affects data stream format.
 ///
 /// These flags must match between write and read to ensure correct
-/// interpretation of the batch file. Each field is one [`STREAM_FLAGS`] entry,
+/// interpretation of the batch file. Each field is one `STREAM_FLAGS` entry,
 /// which fixes its bit position and protocol gating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BatchFlags {
