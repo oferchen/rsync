@@ -1106,8 +1106,9 @@ fn filter_program_include_only_specific_extensions() {
 /// named `[`. The old globset matcher refused the pattern outright.
 #[test]
 fn filter_program_unclosed_bracket_compiles_and_matches_nothing() {
-    let program = FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("bad[pattern"))])
-        .expect("upstream rejects no pattern");
+    let program =
+        FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("bad[pattern"))])
+            .expect("upstream rejects no pattern");
     let outcome = program.evaluate(
         Path::new("bad[pattern"),
         false,

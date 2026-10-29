@@ -171,7 +171,10 @@ impl<'a> CopyContext<'a> {
                 .filter_program
                 .as_ref()
                 .and_then(|program| program.abs_root(FilterContext::Transfer));
-            if let Some(result) = loaded.segment.excluded_dir_by_non_dir_rule(relative, abs_root) {
+            if let Some(result) = loaded
+                .segment
+                .excluded_dir_by_non_dir_rule(relative, abs_root)
+            {
                 return Some(result);
             }
         }

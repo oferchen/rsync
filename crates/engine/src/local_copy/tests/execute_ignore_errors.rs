@@ -705,8 +705,8 @@ fn ignore_errors_combined_with_delete_excluded() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let filter_set =
-        FilterSet::from_rules([FilterRule::exclude("*.tmp").with_sides(true, false)]).expect("compile filters");
+    let filter_set = FilterSet::from_rules([FilterRule::exclude("*.tmp").with_sides(true, false)])
+        .expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
         .delete_excluded(true)

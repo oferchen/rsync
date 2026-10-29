@@ -953,6 +953,8 @@ impl<'a> CopyContext<'a> {
 /// from getcwd() (util1.c), so the directory is resolved as the kernel sees it.
 /// A destination not yet created resolves lexically.
 fn current_dir_abs_root(dir: &Path) -> Option<Arc<Path>> {
-    let resolved = fs::canonicalize(dir).or_else(|_| std::path::absolute(dir)).ok()?;
+    let resolved = fs::canonicalize(dir)
+        .or_else(|_| std::path::absolute(dir))
+        .ok()?;
     filters::abs_rule_root(&resolved, None)
 }
