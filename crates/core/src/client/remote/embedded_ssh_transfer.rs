@@ -48,6 +48,7 @@ use super::operand_split::split_transfer_operands;
 use super::ssh_transfer::{
     convert_server_stats_to_summary, local_client_role, map_remote_exit, transfer_failure_error,
 };
+use super::version_exchange::version_exchange_failure;
 use crate::exit_code::ExitCode;
 use crate::server::{ServerConfig, ServerRole, TransferProgressCallback, TransferProgressEvent};
 
@@ -383,7 +384,9 @@ fn run_transfer_over_embedded_ssh(
 
     let handshake =
         crate::server::perform_handshake_with_max(&mut reader, &mut writer, server_config.protocol)
-            .map_err(|e| invalid_argument_error(&format!("handshake failed: {e}"), 5))?;
+            .map_err(|e| {
+                version_exchange_failure(&e, None, local_client_role(server_config.role))
+            })?;
     let negotiated_protocol = handshake.protocol.as_u8();
 
     let mut adapter = observer.map(|obs| ServerProgressAdapter::new(obs, start));

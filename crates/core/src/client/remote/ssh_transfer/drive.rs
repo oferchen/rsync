@@ -19,8 +19,8 @@ use rsync_io::ssh::SshConnection;
 
 use super::super::super::config::ClientConfig;
 use super::super::super::error::{
-    ClientError, connection_unexpectedly_closed_error, invalid_argument_error,
-    invalid_argument_error_typed_with_role, local_abort_text, remote_exit_error,
+    ClientError, connection_unexpectedly_closed_error, invalid_argument_error, local_abort_text,
+    remote_exit_error,
 };
 use super::super::super::progress::ClientProgressObserver;
 use super::super::super::summary::{ClientEvent, ClientSummary};
@@ -31,6 +31,7 @@ use super::super::implied_source::implied_source_args_for_pull;
 use super::super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 use super::super::itemize_sink::ItemizeEventSink;
 use super::super::operand_split::split_transfer_operands;
+use super::super::version_exchange::version_exchange_failure;
 use super::connection::build_ssh_connection;
 use super::exit_status::{
     convert_server_stats_to_summary, map_child_exit_status, map_cleanup_child_exit_status,
@@ -332,42 +333,7 @@ fn run_server_over_ssh_connection(
                 Ok(status) => map_cleanup_child_exit_status(status),
                 Err(_) => ExitCode::WaitChild,
             };
-
-            // upstream: io.c:282 whine_about_eof() maps an unexpected EOF
-            // during setup to RERR_STREAMIO (12); an out-of-range peer protocol
-            // version is RERR_PROTOCOL (2) per compat.c:621-625 setup_protocol;
-            // other handshake failures keep the client/server-startup code (5).
-            // exit_cleanup() then takes the worst of that base and the child's
-            // raw exit status (cleanup.c:150-152), so an arbitrary remote exit code
-            // propagates verbatim.
-            let base = if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                ExitCode::StreamIo
-            } else if ExitCode::from_io_error(&e) == ExitCode::Protocol {
-                ExitCode::Protocol
-            } else {
-                ExitCode::StartClient
-            };
-            let child_overrides = child_exit.as_i32() > base.as_i32();
-            if base == ExitCode::StreamIo {
-                // upstream: io.c:299-303 - whine_about_eof() prints its line
-                // before exit_cleanup() picks the worse code, and nothing is
-                // counted before buffered input starts (main.c:1378-1381).
-                let exit = if child_overrides { child_exit } else { base };
-                return Err(connection_unexpectedly_closed_error(0, exit, local_role));
-            }
-            if child_overrides {
-                // upstream: log.c:937 log_exit() - when the remote/child's raw
-                // exit status outranks the local base code (cleanup.c:150-152),
-                // the final `rsync error:` line reports that winning code by its
-                // rerr_name, or "unexplained error" for an unknown raw code
-                // (log.c:950-952), not the EOF whine text.
-                return Err(remote_exit_error(child_exit, local_role));
-            }
-            return Err(invalid_argument_error_typed_with_role(
-                &format!("handshake failed: {e}"),
-                base,
-                local_role,
-            ));
+            return Err(version_exchange_failure(&e, Some(child_exit), local_role));
         }
     };
 
