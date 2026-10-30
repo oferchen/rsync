@@ -65,9 +65,10 @@ use super::invocation::{RemoteOperands, RemoteRole, TransferSpec, determine_tran
 use super::operand_split::split_transfer_operands;
 use super::ssh_transfer::{
     build_server_config_for_generator, build_server_config_for_receiver,
-    convert_server_stats_to_summary, parse_remote_operands, parse_single_remote,
+    convert_server_stats_to_summary, local_client_role, parse_remote_operands, parse_single_remote,
     remote_operand_source_paths,
 };
+use super::version_exchange::version_exchange_failure;
 use crate::exit_code::ExitCode;
 use crate::server::{ServerConfig, ServerRole, ServerStats};
 
@@ -599,7 +600,7 @@ fn run_blocking_server(
 
     let handshake =
         crate::server::perform_handshake_with_max(&mut reader, &mut writer, config.protocol)
-            .map_err(|e| invalid_argument_error(&format!("async SSH handshake failed: {e}"), 5))?;
+            .map_err(|e| version_exchange_failure(&e, None, local_client_role(config.role)))?;
     let negotiated_protocol = handshake.protocol.as_u8();
 
     let transfer_result = crate::server::run_server_with_handshake(

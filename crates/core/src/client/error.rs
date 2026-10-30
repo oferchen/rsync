@@ -621,11 +621,25 @@ pub fn connection_unexpectedly_closed_error(
     exit_code: ExitCode,
     role: Role,
 ) -> ClientError {
+    program_line_error(
+        format!(
+            "connection unexpectedly closed ({bytes_received} bytes received so far) [{}]",
+            role.as_str()
+        ),
+        exit_code,
+        role,
+    )
+}
+
+/// Reports a fatal failure upstream announces with one `RSYNC_NAME ": ..."`
+/// line before log_exit()'s trailer for `exit_code`.
+///
+/// upstream: rprintf()/rsyserr() of the cause, then `exit_cleanup()`, whose
+/// log_exit() prints the trailer (log.c:937-963).
+#[cold]
+pub(crate) fn program_line_error(line: String, exit_code: ExitCode, role: Role) -> ClientError {
     let mut error = remote_exit_error(exit_code, role);
-    error.lead_line = Some(LeadLine::Program(format!(
-        "connection unexpectedly closed ({bytes_received} bytes received so far) [{}]",
-        role.as_str()
-    )));
+    error.lead_line = Some(LeadLine::Program(line));
     error
 }
 
