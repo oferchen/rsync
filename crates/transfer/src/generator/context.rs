@@ -180,6 +180,12 @@ pub struct GeneratorContext {
     /// and by default; only the in-crate tests set it.
     #[cfg(test)]
     pub(crate) lazy_flist_override: Option<bool>,
+    /// Test-only hook run before every source open (see
+    /// `open_source::SourceOpen::with_before_open`), so a test can swap the
+    /// source between the file-list stat and the sender's open
+    /// deterministically. `None` by default.
+    #[cfg(test)]
+    pub(crate) before_source_open: Option<fn(&std::path::Path)>,
     /// Accumulated deletion statistics received via NDX_DEL_STATS messages.
     /// (upstream: main.c:238-247 `read_del_stats()`)
     pub(crate) delete_stats: DeleteStats,
@@ -411,6 +417,8 @@ impl GeneratorContext {
             lazy_producer: None,
             #[cfg(test)]
             lazy_flist_override: None,
+            #[cfg(test)]
+            before_source_open: None,
             delete_stats: DeleteStats::new(),
             del_stats_echo: None,
             flist_send_stats: super::FlistSendStats::default(),
@@ -986,6 +994,8 @@ impl GeneratorContext {
             follow_symlinks,
             self.config.write.open_noatime,
         );
+        #[cfg(test)]
+        let policy = policy.with_before_open(self.before_source_open);
         #[cfg(unix)]
         {
             policy.with_files_from(self.files_from_base.clone())
@@ -1260,83 +1270,27 @@ impl GeneratorContext {
         }
     }
 
-    /// Opens a source file for reading with `BufReader` buffering.
+    /// Opens the delta path's source once and resolves its send length.
     ///
-    /// Suitable for callers that perform many small or random reads (e.g., the
-    /// delta generator's rolling-checksum scan). For callers that manage their
-    /// own large read buffer, use [`open_source_unbuffered`](Self::open_source_unbuffered)
-    /// to avoid an extra copy layer.
-    ///
-    /// Files at or above the io_uring read threshold (1 MB) use `reader_from_path`,
-    /// which creates an io_uring-backed reader on Linux 5.6+ (respecting the
-    /// `--no-io-uring` flag) or an IOCP overlapped reader on Windows, each with
-    /// transparent std fallback. Smaller files use a standard `BufReader` to
-    /// avoid the overhead of creating a ring/completion port per file.
-    ///
-    /// When `--open-noatime` is in effect the io_uring fast path is bypassed
-    /// because `IoUringReader::open` does not accept custom open flags;
-    /// matching upstream `do_open` semantics is the user-requested invariant.
+    /// The one descriptor serves the whole file: the block scan (or the
+    /// parallel scan's map) and the matched-block re-reads that feed the file
+    /// checksum and the compressor dictionary. A source renamed or replaced
+    /// after the open therefore cannot mix a second inode into one token
+    /// stream. The length is the fstat'd size, with the same device guard and
+    /// fatal fstat failure as [`Self::open_source_unbuffered`].
     ///
     /// # Upstream Reference
     ///
-    /// - `syscall.c:1603 do_open` / `syscall.c:2811 do_open_nofollow` (3.4.2
-    ///   propagates `O_NOATIME` through both paths).
-    pub(crate) fn open_source_reader(
+    /// - `sender.c:656-745` - one open, `do_fstat` and the `IS_DEVICE` guard,
+    ///   then `map_file(fd, st.st_size, ...)` at `sender.c:759` feeds
+    ///   `match_sums()` and the whole-file sum alike.
+    pub(crate) fn open_delta_source(
         &self,
         path: &std::path::Path,
-        file_size: u64,
-    ) -> std::io::Result<Box<dyn std::io::Read>> {
-        use crate::adaptive_buffer::adaptive_buffer_size;
-
-        // 1 MB threshold: io_uring ring creation has fixed overhead that only
-        // pays off for larger reads where batched syscalls reduce total cost.
-        const IO_URING_READ_THRESHOLD: u64 = 1024 * 1024;
-
-        let use_noatime = self.config.write.open_noatime;
-
-        // upstream: sender.c streams a `--copy-devices` device through the plain
-        // read path. Block/char devices report `st_size == 0`, so the io_uring
-        // fast path (which sizes reads from the fd's stat length) yields EOF at 0
-        // bytes and short-reads the stream. Force buffered I/O for devices so the
-        // full `file_size` bytes reach the wire.
-        if !use_noatime
-            && file_size >= IO_URING_READ_THRESHOLD
-            && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
-            && !self.source_is_copy_device(path)
-            && !self.requires_protected_source_open()
-        {
-            // Windows gets IOCP where Linux gets io_uring, std elsewhere. The
-            // IOCP reader mirrors the disk-commit writer's dispatch: runtime
-            // `is_iocp_available()` detection with transparent std buffered
-            // fallback (see fast_io iocp::file_factory::reader_from_path and
-            // disk_commit/config.rs iocp_policy).
-            #[cfg(target_os = "windows")]
-            {
-                if let Ok(r) = fast_io::iocp_reader_from_path(path, fast_io::IocpPolicy::Auto) {
-                    return Ok(Box::new(r));
-                }
-                // Fall through to standard BufReader on IOCP failure.
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                match fast_io::reader_from_path_with_depth(
-                    path,
-                    self.config.write.io_uring_policy,
-                    self.config.write.io_uring_depth,
-                ) {
-                    Ok(r) => return Ok(Box::new(r)),
-                    Err(_) => {
-                        // Fall through to standard BufReader on io_uring failure
-                    }
-                }
-            }
-        }
-
-        let f = self.source_open().open(path)?;
-        Ok(Box::new(std::io::BufReader::with_capacity(
-            adaptive_buffer_size(file_size),
-            f,
-        )))
+    ) -> std::io::Result<(std::fs::File, u64)> {
+        let mut file = self.source_open().open(path)?;
+        let size = self.fstat_source_guard(&mut file)?;
+        Ok((file, size))
     }
 
     /// Returns whether `--copy-devices` is active and `path` is a block/char
@@ -1362,17 +1316,17 @@ impl GeneratorContext {
         false
     }
 
-    /// Opens a source file without intermediate buffering.
+    /// Opens a whole-file or append source without intermediate buffering.
     ///
-    /// Identical to [`open_source_reader`](Self::open_source_reader) except the
-    /// fallback path returns the raw `File` instead of wrapping it in a
-    /// `BufReader`. Callers that manage their own read buffer (e.g.,
-    /// `stream_whole_file_transfer` with its 256 KB staging buffer and
-    /// `read_exact` calls) should use this to avoid an extra memcpy per byte
-    /// through the `BufReader`'s internal buffer.
-    ///
-    /// The io_uring fast path is unchanged - it already returns a reader with
-    /// its own internal buffering strategy.
+    /// Files at or above the io_uring read threshold (1 MB) use
+    /// `reader_from_path`, an io_uring-backed reader on Linux 5.6+ (respecting
+    /// `--no-io-uring`) or an IOCP overlapped reader on Windows, each with a
+    /// transparent std fallback; that reader keeps its own buffering. Smaller
+    /// files, and every file under `--open-noatime` (the io_uring reader takes
+    /// no custom open flags), return the raw `File`: their callers
+    /// (`stream_whole_file_transfer` with its 256 KB staging buffer and
+    /// `read_exact` calls) manage their own read buffer, so a `BufReader`
+    /// would only add a memcpy per byte.
     ///
     /// # NSV-1
     ///
@@ -1406,7 +1360,7 @@ impl GeneratorContext {
 
         // upstream: `--copy-devices` streams through the plain read path; a
         // device's stat size is 0, so the io_uring fast path would short-read.
-        // See `source_is_copy_device` / `open_source_reader`.
+        // See `source_is_copy_device`.
         if !use_noatime
             && file_size >= IO_URING_READ_THRESHOLD
             && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled

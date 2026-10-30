@@ -76,15 +76,17 @@ impl MmapReader {
     /// Returns an error if the file cannot be opened or mapped.
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let file = File::open(path)?;
-        Self::from_file(file)
+        Self::from_file(&file)
     }
 
     /// Memory-maps an already-open file handle.
     ///
-    /// Unlike [`open`](Self::open), this consumes a caller-provided [`File`]
+    /// Unlike [`open`](Self::open), this maps a caller-provided [`File`]
     /// instead of re-opening by path. Callers that resolved the file through a
     /// hardened open (e.g. `O_NOFOLLOW` on the basename) can map it without
-    /// re-traversing the path and re-introducing a symlink-race window.
+    /// re-traversing the path and re-introducing a symlink-race window. The
+    /// handle is only borrowed, so the caller can keep reading the same inode
+    /// through it.
     ///
     /// # Safety
     ///
@@ -96,13 +98,13 @@ impl MmapReader {
     /// Returns an error if the file metadata cannot be read or the file cannot
     /// be mapped (e.g. on NFS, FUSE, procfs, or for a zero-length file on some
     /// platforms).
-    pub fn from_file(file: File) -> io::Result<Self> {
+    pub fn from_file(file: &File) -> io::Result<Self> {
         let size = file.metadata()?.len();
 
         // SAFETY: We assume the file won't be modified while mapped.
         // This is a common assumption for rsync-style file transfer
         // where source files are treated as immutable during transfer.
-        let mmap = unsafe { MmapOptions::new().map(&file)? };
+        let mmap = unsafe { MmapOptions::new().map(file)? };
 
         Ok(Self {
             mmap,

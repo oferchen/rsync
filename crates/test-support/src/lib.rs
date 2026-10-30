@@ -24,6 +24,8 @@ pub mod lsh;
 pub mod quic_cert;
 pub mod reap;
 pub mod skip;
+#[cfg(target_os = "linux")]
+pub mod syscall_trace;
 pub mod transcript;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod transcript_cells;
