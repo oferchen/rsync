@@ -69,6 +69,8 @@ const PARAMETER_NAMES: &[&str] = &[
     "numericids",
     "opennoatime",
     "usechroot",
+    // oc-only sender tuning; see docs/oc-extension-env-reference.md
+    "paralleldeltascan",
     // oc-only QUIC listener parameters
     #[cfg(feature = "quic")]
     "quiccertfile",

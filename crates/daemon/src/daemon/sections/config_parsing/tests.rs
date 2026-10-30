@@ -1180,6 +1180,32 @@ mod config_parsing_tests {
         assert!(result.modules[0].forward_lookup);
     }
 
+    // WHY: `parallel delta scan` is the daemon's only way to enable the
+    // parallel scan for a pull, since the client never forwards the flag. It
+    // must parse per module, inherit a global default, default to off, and
+    // let a module override the global value (P_LOCAL semantics).
+    #[test]
+    fn parse_parallel_delta_scan_module_global_and_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+        let p = path.display();
+        let cases = [
+            (format!("[mod]\npath = {p}\n"), false),
+            (format!("[mod]\npath = {p}\nparallel delta scan = yes\n"), true),
+            (format!("parallel delta scan = yes\n[mod]\npath = {p}\n"), true),
+            (
+                format!("parallel delta scan = yes\n[mod]\npath = {p}\nparallel delta scan = no\n"),
+                false,
+            ),
+        ];
+        for (config, expected) in cases {
+            let file = write_config(&config);
+            let result = parse_config_modules(file.path()).expect("parse succeeds");
+            assert_eq!(result.modules[0].parallel_delta_scan, expected, "{config}");
+        }
+    }
+
     #[test]
     fn parse_module_insecure_links_yes() {
         let dir = TempDir::new().expect("create temp dir");
