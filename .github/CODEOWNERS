@@ -49,7 +49,6 @@
 # Release docs + runbooks
 # ---------------------------------------------------------------------------
 /docs/runbooks/                         @oferchen
-/.github/RELEASE_NOTES_BETA.md          @oferchen
 /.github/RELEASE_TEMPLATE.md            @oferchen
 /CHANGELOG.md                           @oferchen
 

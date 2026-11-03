@@ -149,6 +149,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Step the zstd token decoder through a fixed output buffer (#8172)
 - Write received xattrs through a leaf pinned beneath the destination root, and on Linux ACLs too, special files included; macOS and the BSDs apply ACLs by path, as upstream does (CVE-2026-53799, #8167, #8201)
 - Bump `rustls-webpki` to 0.103.16, which rejects certificate paths through the distrusted emSign intermediates (RUSTSEC-2026-0382, #8228)
+- Bump `crypto-bigint`, `ctutils` and the `zstd` crates for RUSTSEC-2026-0385, 0387, 0391, 0398, 0403 and 0410; the bundled libzstd stays 1.5.7, so compressed bytes on the wire are unchanged (#8245)
 
 ### Added
 
@@ -605,6 +606,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `--existing` and `--ignore-existing` apply to non-regular entries (#8168)
 - `-z` is detected only in the server flag cluster, not inside an `-e` string (#8188)
 - Public rustdoc no longer links private items in `batch`, `test-support` and `transfer`, so the strict "rustdoc links" job passes (#8276)
+- `-c` with a `none` file checksum (`--checksum-choice=none` or `md5,none`) exits 4 with `Invalid checksum-choice for --checksum: none (0)` at the first regular file, as 3.5.1 does; it used MD4 and exited 0 (#8262)
 
 ### Removed
 - The unreachable `engine::AsyncBatchCopier` and its `RSYNC_MAX_CONCURRENT` environment read (#8236)
