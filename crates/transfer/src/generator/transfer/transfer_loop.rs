@@ -3385,7 +3385,7 @@ mod append_redo_tests {
 
 #[cfg(test)]
 mod delta_single_open_tests {
-    //! The delta path's single source open.
+    //! The sender's single source open, on the delta and whole-file paths.
     //!
     //! upstream: sender.c:656-800 - `send_files()` opens each source once,
     //! fstats that fd, refuses a device without `--copy-devices`, then
@@ -3661,6 +3661,55 @@ mod delta_single_open_tests {
             ctx.io_error & IOERR_VANISHED,
             0,
             "IOERR_VANISHED was not raised"
+        );
+    }
+
+    /// A whole-file request for entry 0 (an empty `sum_head`), then the
+    /// `NDX_DONE`s that drain every phase.
+    #[cfg(unix)]
+    fn whole_file_request() -> Vec<u8> {
+        let mut ndx = create_ndx_codec(PROTOCOL);
+        let mut wire = Vec::new();
+        ndx.write_ndx(&mut wire, 0).expect("request ndx");
+        wire.extend_from_slice(&ITEM_TRANSFER_LE);
+        SumHead::empty().write(&mut wire).expect("sum head");
+        for _ in 0..3 {
+            ndx.write_ndx_done(&mut wire).expect("done");
+        }
+        wire
+    }
+
+    // WHY: the whole-file path read sources of 1 MiB or more under -L through
+    // a reader that reopened the path itself, outside the sender's open and
+    // its fstat, so a source swapped for a device streamed as nothing and the
+    // transfer exited 0; 3.5.1 refuses it with RERR_PROTOCOL (sender.c:738-742).
+    // The file is above the io_uring threshold and the read-ahead limit, and
+    // io_uring is left on, so the request reaches that path.
+    #[cfg(unix)]
+    #[test]
+    fn a_large_whole_file_source_swapped_for_a_device_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("data.bin");
+        std::fs::write(&source, lcg_bytes(5, 2 * 1024 * 1024)).expect("file-list source");
+        let flags = ParsedServerFlags {
+            copy_links: true,
+            ..Default::default()
+        };
+
+        let mut ctx = generator(&source, flags, swap_for_a_device_link);
+        ctx.config.write.io_uring_policy = fast_io::IoUringPolicy::Auto;
+        let err = send(&mut ctx, whole_file_request())
+            .err()
+            .expect("a device source must abort the whole-file transfer");
+
+        assert!(
+            super::is_protocol_violation(&err),
+            "not RERR_PROTOCOL: {err}"
+        );
+        assert!(
+            err.to_string()
+                .contains("attempt to copy device contents without --copy-devices"),
+            "upstream's refusal text: {err}"
         );
     }
 }

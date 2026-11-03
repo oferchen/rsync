@@ -1103,26 +1103,6 @@ impl GeneratorContext {
         std::fs::read_link(full_path)
     }
 
-    /// Whether the source open must apply confinement or `O_NOFOLLOW`, which
-    /// the path-based io_uring / IOCP fast readers cannot express (they follow
-    /// symlinks). Only a non-daemon transfer that already follows symlinks
-    /// (`--copy-links` / `--copy-unsafe-links`) may take the fast path.
-    ///
-    /// Non-Unix targets apply no symlink-race defence here (`O_NOFOLLOW` is a
-    /// Unix concept), so the fast path is always available.
-    pub(crate) fn requires_protected_source_open(&self) -> bool {
-        #[cfg(unix)]
-        {
-            let follows = !self.config.connection.is_daemon_connection
-                && (self.config.flags.copy_links || self.config.flags.copy_unsafe_links);
-            !follows
-        }
-        #[cfg(not(unix))]
-        {
-            false
-        }
-    }
-
     /// Returns the full source path for entry `ndx` for the `%f` out-format
     /// placeholder, mirroring upstream `log.c` `pathjoin(F_PATHNAME(file),
     /// f_name(file))`.
@@ -1293,111 +1273,53 @@ impl GeneratorContext {
         Ok((file, size))
     }
 
-    /// Returns whether `--copy-devices` is active and `path` is a block/char
-    /// device, i.e. a source that must be read through the plain buffered path
-    /// rather than the size-from-stat io_uring/mmap fast paths.
+    /// Opens a whole-file or append source once and resolves its send length.
     ///
-    /// The `symlink_metadata` probe runs only when `--copy-devices` is set, so
-    /// regular transfers pay no extra stat.
-    #[cfg(unix)]
-    pub(crate) fn source_is_copy_device(&self, path: &std::path::Path) -> bool {
-        use std::os::unix::fs::FileTypeExt;
-        self.config.flags.copy_devices
-            && std::fs::symlink_metadata(path).is_ok_and(|m| {
-                let ft = m.file_type();
-                ft.is_block_device() || ft.is_char_device()
-            })
-    }
-
-    /// Non-Unix stub: devices are not a distinct source kind, so nothing forces
-    /// the buffered path.
-    #[cfg(not(unix))]
-    pub(crate) fn source_is_copy_device(&self, _path: &std::path::Path) -> bool {
-        false
-    }
-
-    /// Opens a whole-file or append source without intermediate buffering.
+    /// The source is opened through the sender's open policy (confined,
+    /// `O_NOFOLLOW`, or following symlinks under `-L`) and fstat'ed with
+    /// [`Self::fstat_source_guard`]: a device without `--copy-devices` and a
+    /// failed fstat abort the transfer, and the length is the fstat'd size.
+    /// The raw `File` is returned unbuffered because its caller
+    /// (`stream_whole_file_transfer`, with its 256 KB staging buffer and
+    /// `read_exact` calls) manages its own read buffer.
     ///
-    /// Files at or above the io_uring read threshold (1 MB) use
-    /// `reader_from_path`, an io_uring-backed reader on Linux 5.6+ (respecting
-    /// `--no-io-uring`) or an IOCP overlapped reader on Windows, each with a
-    /// transparent std fallback; that reader keeps its own buffering. Smaller
-    /// files, and every file under `--open-noatime` (the io_uring reader takes
-    /// no custom open flags), return the raw `File`: their callers
-    /// (`stream_whole_file_transfer` with its 256 KB staging buffer and
-    /// `read_exact` calls) manage their own read buffer, so a `BufReader`
-    /// would only add a memcpy per byte.
+    /// On Windows a file of 1 MB or more is read through the IOCP overlapped
+    /// reader, which needs its own overlapped handle and so opens the path
+    /// itself; Windows has no device sources to guard against and no
+    /// `O_NOFOLLOW` policy to bypass.
     ///
     /// # NSV-1
     ///
-    /// Returns the reader together with the concrete source `RawFd` when the
-    /// fallback path opens a plain `File` (Unix only). The io_uring fast path
-    /// yields `None` for the fd because its reader owns the descriptor behind an
-    /// abstraction; a later zero-copy SERVE gate applies only to the plain-file
-    /// case. The fd is purely informational here - the byte stream is identical.
-    ///
-    /// The third tuple element is the effective source length: on the plain-file
-    /// path it is the fstat'd size (with a 0-length device resolved via
-    /// `get_device_size`), preferred over the flist scan-time length exactly as
-    /// upstream `sender.c:729-745` prefers `st.st_size`. The fast path, taken
-    /// only for a non-device regular file that follows symlinks, reports the
-    /// flist length. A device source opened without `--copy-devices` aborts the
-    /// transfer with `RERR_PROTOCOL` (a tagged `ProtocolViolation` error).
+    /// Returns the concrete source `RawFd` alongside the reader (Unix only);
+    /// the IOCP reader owns its handle, so that arm yields `None`. The fd is
+    /// purely informational here - the byte stream is identical.
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:729-745` - `do_fstat` + `IS_DEVICE` guard + `get_device_size`.
+    /// - `sender.c:656-745` - one open, `do_fstat`, the `IS_DEVICE` guard and
+    ///   `get_device_size`, then reads of `st.st_size` bytes.
     pub(crate) fn open_source_unbuffered(
         &self,
         path: &std::path::Path,
         file_size: u64,
     ) -> std::io::Result<(Box<dyn std::io::Read>, Option<SourceFd>, u64)> {
-        // 1 MB threshold: io_uring ring creation has fixed overhead that only
-        // pays off for larger reads where batched syscalls reduce total cost.
-        const IO_URING_READ_THRESHOLD: u64 = 1024 * 1024;
-
-        let use_noatime = self.config.write.open_noatime;
-
-        // upstream: `--copy-devices` streams through the plain read path; a
-        // device's stat size is 0, so the io_uring fast path would short-read.
-        // See `source_is_copy_device`.
-        if !use_noatime
-            && file_size >= IO_URING_READ_THRESHOLD
-            && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
-            && !self.source_is_copy_device(path)
-            && !self.requires_protected_source_open()
+        #[cfg(target_os = "windows")]
         {
-            // Windows gets IOCP where Linux gets io_uring, std elsewhere. The
-            // IOCP reader mirrors the disk-commit writer's dispatch: runtime
-            // `is_iocp_available()` detection with transparent std buffered
-            // fallback (see fast_io iocp::file_factory::reader_from_path and
-            // disk_commit/config.rs iocp_policy).
-            #[cfg(target_os = "windows")]
+            // 1 MB threshold: completion-port setup has fixed overhead that
+            // only pays off for larger reads.
+            const IOCP_READ_THRESHOLD: u64 = 1024 * 1024;
+            if !self.config.write.open_noatime
+                && file_size >= IOCP_READ_THRESHOLD
+                && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
+                && let Ok(r) = fast_io::iocp_reader_from_path(path, fast_io::IocpPolicy::Auto)
             {
-                if let Ok(r) = fast_io::iocp_reader_from_path(path, fast_io::IocpPolicy::Auto) {
-                    return Ok((Box::new(r), None, file_size));
-                }
-                // Fall through to raw File on IOCP failure.
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                match fast_io::reader_from_path_with_depth(
-                    path,
-                    self.config.write.io_uring_policy,
-                    self.config.write.io_uring_depth,
-                ) {
-                    Ok(r) => return Ok((Box::new(r), None, file_size)),
-                    Err(_) => {
-                        // Fall through to raw File on io_uring failure
-                    }
-                }
+                return Ok((Box::new(r), None, file_size));
             }
         }
+        #[cfg(not(target_os = "windows"))]
+        let _ = file_size;
 
         let mut f = self.source_open().open(path)?;
-        // upstream: sender.c:729-745 - fstat the opened fd, reject a device
-        // without --copy-devices, and prefer the fstat'd size (resolving a
-        // 0-length device via get_device_size) over the flist scan-time size.
         let effective_size = self.fstat_source_guard(&mut f)?;
         #[cfg(unix)]
         let src_fd = Some(std::os::fd::AsRawFd::as_raw_fd(&f));
