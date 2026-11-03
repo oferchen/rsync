@@ -121,6 +121,7 @@ impl ReceiverContext {
                 metadata_opts,
                 acl_cache.as_ref(),
                 acl_id_map.as_deref(),
+                &mut failed_dirs,
                 writer,
                 #[cfg(unix)]
                 sandbox.as_deref(),
@@ -129,6 +130,7 @@ impl ReceiverContext {
                 dest_dir,
                 #[cfg(unix)]
                 sandbox.as_deref(),
+                &failed_dirs,
                 writer,
             );
             #[cfg(unix)]
@@ -190,7 +192,7 @@ impl ReceiverContext {
                 #[cfg(unix)]
                 sandbox.as_deref(),
                 metadata_opts,
-                None,
+                Some(&failed_dirs),
                 &mut metadata_errors,
                 &mut stats,
                 acl_cache.as_ref(),
@@ -873,7 +875,7 @@ impl ReceiverContext {
                     }
                 }
             }
-            self.run_segment_post_passes(range.clone(), setup, writer)?;
+            self.run_segment_post_passes(range.clone(), setup, failed_dirs, writer)?;
             let walked = self.build_files_to_transfer_in_range(
                 range,
                 writer,

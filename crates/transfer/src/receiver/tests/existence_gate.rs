@@ -83,6 +83,7 @@ fn create_non_regular(ctx: &ReceiverContext, dest: &Path) -> Vec<String> {
         &MetadataOptions::default(),
         None,
         None,
+        &mut crate::receiver::directory::FailedDirectories::new(),
         &mut writer,
         None,
     )

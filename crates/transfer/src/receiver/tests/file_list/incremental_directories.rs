@@ -617,27 +617,39 @@ mod create_directory_incremental_tests {
         assert_eq!(failed.count(), 0, "replacement is not a failure");
     }
 
-    /// Fail-loud invariant (Rule 12): a genuine non-EACCES error from the
-    /// underlying `mkdir` must propagate as `Err`, never be coerced to
-    /// `Ok(None)` / `mark_failed`, which would hide it from the caller's
-    /// exit-code path.
+    /// Every mkdir failure, not only EACCES, is reported and skipped.
     ///
-    /// EACCES is the only non-fatal `mkdir` class (upstream
-    /// `receiver.c:709-716` folds it into `io_error` and continues); every
-    /// other errno is a hard failure. This shapes an `ENOTDIR` by placing a
-    /// regular file in the middle of the directory path (`afile/sub`, where
-    /// `afile` is a file), so `mkdir` on `afile/sub` fails because a path
-    /// component is not a directory. That error class is neither `NotFound`
-    /// (which would trigger the `create_dir_all` parent-walk) nor
-    /// `PermissionDenied` (the non-fatal branch), so it must surface as `Err`.
+    /// upstream: generator.c:1873-1887 handles every errno but EEXIST the same
+    /// way: `rsyserr(FERROR_XFER, ... "recv_generator: mkdir %s failed")`, then
+    /// `skip_dir` so the directory's contents are never attempted. The fixture
+    /// puts a regular file where a parent belongs, so `afile/sub` fails
+    /// ENOTDIR.
     #[cfg(unix)]
     #[test]
-    fn surfaces_non_permission_error_from_mkdir() {
+    fn non_permission_mkdir_failure_is_reported_and_skipped() {
+        /// Captures the error frames a server-mode receiver sends.
+        #[derive(Default)]
+        struct ErrorCapture(Vec<String>);
+        impl std::io::Write for ErrorCapture {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl crate::writer::MsgInfoSender for ErrorCapture {
+            fn send_msg_error_xfer(&mut self, data: &[u8]) -> std::io::Result<()> {
+                self.0.push(String::from_utf8_lossy(data).into_owned());
+                Ok(())
+            }
+            fn send_msg_error(&mut self, data: &[u8]) -> std::io::Result<()> {
+                self.0.push(String::from_utf8_lossy(data).into_owned());
+                Ok(())
+            }
+        }
         let temp = TempDir::new().unwrap();
         let dest = temp.path();
-
-        // A regular file where a parent directory is expected forces ENOTDIR
-        // when the receiver tries to create `afile/sub` beneath it.
         std::fs::write(dest.join("afile"), b"not a directory").expect("plant regular file");
 
         let entry = FileEntry::new_directory("afile/sub".into(), 0o755);
@@ -648,10 +660,11 @@ mod create_directory_incremental_tests {
         let config = test_config();
         let ctx = ReceiverContext::new_for_test(&handshake, config);
 
+        let mut writer = ErrorCapture::default();
         let result = ctx.create_directory_incremental(
             dest,
             &entry,
-            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &mut writer,
             &opts,
             &mut failed,
             None,
@@ -660,19 +673,25 @@ mod create_directory_incremental_tests {
             None,
         );
 
-        // Fail loud: the underlying ENOTDIR must propagate. Coercing it to
-        // `Ok(None)` would hide the failure from the caller's exit-code path.
-        let err = result
-            .expect_err("non-EACCES mkdir failure must propagate as Err, not be coerced to Ok");
-        assert_ne!(
-            err.kind(),
-            std::io::ErrorKind::PermissionDenied,
-            "EACCES takes the non-fatal branch; this scenario is shaped to avoid it"
+        assert!(
+            matches!(result, Ok(None)),
+            "a failed mkdir is not fatal: {result:?}"
         );
-        assert_ne!(
-            err.kind(),
-            std::io::ErrorKind::NotFound,
-            "NotFound would trigger the create_dir_all parent-walk, not a hard error"
+        assert!(
+            failed
+                .failed_ancestor(std::path::Path::new("afile/sub/child"))
+                .is_some(),
+            "entries below the failed directory must be skipped"
+        );
+        let errors = writer.0.concat();
+        assert!(
+            errors.contains("recv_generator: mkdir ")
+                && errors.contains("afile/sub\" failed: Not a directory (20)"),
+            "the mkdir failure must be reported, not silently folded: {errors:?}"
+        );
+        assert!(
+            errors.contains("*** Skipping any contents from this failed directory ***"),
+            "{errors:?}"
         );
     }
 
