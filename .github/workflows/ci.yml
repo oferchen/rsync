@@ -831,74 +831,24 @@ jobs:
         if: needs.changes.outputs.docs_only != 'true'
         uses: ./.github/actions/install-cargo-nextest-windows
 
-      # The steps below select individual packages, so Cargo never builds the
-      # `oc-rsync` binary as a side effect the way a `--workspace` run does.
-      # Integration tests that spawn the binary resolve exactly one path -
-      # `<target>/<profile>/oc-rsync` - and abort when it is absent, so it has
-      # to be built explicitly here. Default features match what the binary
-      # ships with.
-      - name: Build oc-rsync (for subprocess integration tests)
-        if: needs.changes.outputs.docs_only != 'true'
-        run: cargo build --locked -p bin --bin oc-rsync
-
+      # The whole workspace with every feature, as the Linux `test` job runs
+      # it, so each crate's `#[cfg(windows)]` arms (daemon, protocol, rsync_io's
+      # QUIC USO path, metadata, fast_io, transfer) gate the merge. A
+      # `--workspace` run also builds the `oc-rsync` binary that the
+      # subprocess integration tests spawn.
       - name: Test
         if: needs.changes.outputs.docs_only != 'true'
         # `shell: bash` turns on pipefail, so the tee never hides a failure.
         shell: bash
         run: |
-          # Run Windows-specific crates only (core, engine, cli have platform code)
-          # Full test suite runs on Linux; Windows validates platform-specific paths
-          cargo nextest run --locked -p core -p engine -p cli --all-features 2>&1 | tee nextest-run.log
+          cargo nextest run --locked --profile ci --workspace --all-features 2>&1 | tee nextest-run.log
           bash tools/ci/nextest_flaky_summary.sh nextest-run.log
-
-      # Pin the Windows crtime (NTFS creation-time via SetFileTime), NTFS
-      # sparse (FSCTL_SET_SPARSE) and IOCP read-parity tests on the required
-      # Windows cell. These live in `metadata` (crtime) and `fast_io` (sparse,
-      # IOCP) - crates the main Test step above does not run - so without this
-      # step the Windows regression signal for those paths sits only in the
-      # separate windows-acl-xattr / windows-iocp jobs. The filter matches the
-      # crtime conversion and skip-flag tests, the mark_file_sparse probe, the
-      # IOCP-vs-std read-path parity tests, and the network receiver's Windows
-      # symlink materialization (directory link -> junction fallback, file link
-      # -> skip-with-soft-error), which lives in `transfer` - another crate the
-      # main Test step does not run.
-      - name: Test crtime + sparse + iocp read parity + symlink junction (metadata, fast_io, transfer)
-        if: needs.changes.outputs.docs_only != 'true'
-        shell: bash
-        run: cargo nextest run --locked -p metadata -p fast_io -p transfer
-
-      # QUIC (`--features quic`, oc-only): Windows sends USO trains with receive
-      # coalescing off and wakes its driver with a loopback datagram instead of
-      # poll(2), none of which a Linux build compiles. Same scope as
-      # `linux-quic`. The last step prints the runner's UDP offload
-      # capabilities into the job log.
-      - name: Build quic forwarding (rsync_io + cli + daemon, --features quic)
-        if: needs.changes.outputs.docs_only != 'true'
-        timeout-minutes: 20
-        run: cargo build --locked -p rsync_io -p cli -p daemon --features quic
-
-      - name: Test rsync_io (--features quic)
-        if: needs.changes.outputs.docs_only != 'true'
-        timeout-minutes: 20
-        shell: bash
-        run: |
-          cargo nextest run --locked --profile ci -p rsync_io --features quic 2>&1 | tee nextest-quic.log
-          bash tools/ci/nextest_flaky_summary.sh nextest-quic.log
 
       - name: Report UDP offload capabilities
         if: needs.changes.outputs.docs_only != 'true'
         timeout-minutes: 10
         shell: bash
-        run: cargo nextest run --locked --profile ci -p rsync_io --features quic --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
-
-      # The QUIC daemon listener is Unix-only, so a Windows daemon must refuse
-      # every quic directive as a fatal config error. The test is gated on
-      # cfg(windows); this is the only job that compiles it.
-      - name: Test daemon refuses QUIC directives (--features quic)
-        if: needs.changes.outputs.docs_only != 'true'
-        timeout-minutes: 20
-        shell: bash
-        run: cargo nextest run --locked --profile ci -p daemon --features quic -E 'test(runtime_options_quic_directive_is_refused_on_windows)'
+        run: cargo nextest run --locked --profile ci -p rsync_io --all-features --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
 
       - name: Upload build artifacts
         if: needs.changes.outputs.docs_only != 'true'
@@ -983,11 +933,9 @@ jobs:
   # ===========================================================================
   # Windows ACL/xattr - Explicit ACL and xattr coverage (issue #1869)
   # ---------------------------------------------------------------------------
-  # The main `windows-test` job runs only `core`, `engine`, `cli`, so the
-  # `metadata` crate (which owns Windows ACL via Win32 GetSecurityInfo and
-  # Windows xattr via NTFS Alternate Data Streams) is never exercised on
-  # `windows-latest`. This job adds explicit coverage for those code paths so
-  # master CI catches Windows ACL/ADS regressions.
+  # Pins the `acl,xattr` feature pair on its own, without the rest of the
+  # workspace's features, so the Win32 GetSecurityInfo / NTFS Alternate Data
+  # Stream paths in `metadata` build and pass in isolation.
   # ===========================================================================
   windows-acl-xattr:
     name: Windows ACL/xattr
@@ -1036,8 +984,23 @@ jobs:
       # cases skip cleanly without `SeCreateSymbolicLinkPrivilege`; the
       # junction case runs unconditionally (`mklink /j` does not require
       # elevation on Windows 10+).
+      # The step normally takes under a minute. Its own timeout fails it well
+      # before the job's, so a hang leaves the step below running to keep
+      # nextest's SLOW lines, which name the stuck test every 120 s.
       - name: Test metadata (--features acl,xattr)
-        run: cargo nextest run --locked -p metadata --features acl,xattr
+        timeout-minutes: 5
+        # `shell: bash` turns on pipefail, so the tee never hides a failure.
+        shell: bash
+        run: cargo nextest run --locked --profile ci -p metadata --features acl,xattr 2>&1 | tee nextest-metadata.log
+
+      - name: Upload metadata test log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextest-windows-acl-xattr-metadata
+          path: nextest-metadata.log
+          if-no-files-found: ignore
+          retention-days: 30
 
       # Filtered workspace run that pins the ACL/ADS test sets in case future
       # tests land outside the metadata crate. Uses nextest expression syntax
@@ -1047,57 +1010,6 @@ jobs:
       - name: Test ACL/xattr/ADS filter (workspace)
         shell: bash
         run: cargo nextest run --locked --workspace --features acl,xattr -E 'test(acl) | test(xattr) | test(ads) | test(stream)'
-
-  # ===========================================================================
-  # Windows daemon - Build and test the daemon crate at PR time.
-  # ---------------------------------------------------------------------------
-  # The main `windows-test` job runs only `core`, `engine`, `cli`, so the
-  # `daemon` crate (which carries Windows-specific code in its TCP listener,
-  # name converter, xfer-exec, and module-access paths) never builds on
-  # `windows-latest` otherwise. This job is the only Windows daemon coverage,
-  # so a Windows-only daemon regression is caught before merge.
-  # ===========================================================================
-  windows-daemon:
-    name: Windows daemon
-    runs-on: windows-latest
-    needs: lint
-    if: github.event_name != 'push'
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          toolchain: stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-windows-daemon-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: windows-daemon
-
-      - name: Install cargo-nextest
-        uses: ./.github/actions/install-cargo-nextest-windows
-
-      # Build the daemon crate first so the nextest step links against an
-      # already-warm build artifact. Default features only; the cross-OS
-      # feature rows in _test-features.yml cover the async, tracing,
-      # concurrent-sessions, and iconv variants.
-      - name: Build daemon crate
-        run: cargo build --locked -p daemon
-
-      # Run the daemon-crate test suite on Windows so the Windows-gated
-      # listener, name-converter, and xfer-exec paths are exercised at PR
-      # time.
-      - name: Test daemon crate
-        # `shell: bash` turns on pipefail, so the tee never hides a failure.
-        shell: bash
-        run: |
-          cargo nextest run --locked -p daemon --no-fail-fast 2>&1 | tee nextest-run.log
-          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
 
   # ===========================================================================
   # Windows GNU Cross-Check - Validate x86_64-pc-windows-gnu compilation
