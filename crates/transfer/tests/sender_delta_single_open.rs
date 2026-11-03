@@ -13,8 +13,9 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 
+use test_support::oc_daemon::OcDaemon;
 use test_support::syscall_trace::OpenTrace;
-use test_support::{DaemonProcess, locate_command_on_path, oc_rsync_bin, test_name};
+use test_support::{locate_command_on_path, oc_rsync_bin, test_name};
 
 const FILES: usize = 6;
 const FILE_LEN: usize = 64 * 1024;
@@ -82,7 +83,7 @@ fn a_delta_push_opens_each_source_file_once() {
     }
     let config = dir.path().join("rsyncd.conf");
     write_config(&config, &module);
-    let daemon = DaemonProcess::spawn(&config, std::iter::empty::<&str>()).expect("daemon");
+    let daemon = OcDaemon::builder(&config).spawn().expect("daemon");
 
     let (output, trace) = OpenTrace::record(
         &strace,

@@ -44,13 +44,14 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, PipeReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 
 use tempfile::{TempDir, tempdir};
+use test_support::oc_daemon::OcDaemon;
 
 /// The exact upstream text, minus the trailing newline.
 ///
@@ -89,71 +90,50 @@ fn write_daemon_config(
     )
 }
 
-/// A running daemon plus a background drain of its stdout and stderr.
+/// A running daemon plus a background drain of its stderr.
 ///
-/// The pipes are drained on their own threads so a daemon that logs more than
-/// a pipe buffer can never block mid-transfer, and so the captured stderr can
-/// be inspected after the child is killed.
+/// The pipe is drained on its own thread so a daemon that logs more than a
+/// pipe buffer can never block mid-transfer, and so the captured stderr can be
+/// inspected after the daemon is stopped.
 struct Daemon {
-    child: Child,
+    server: OcDaemon,
     port: u16,
     stderr_rx: Receiver<String>,
-    stdout_rx: Receiver<String>,
 }
 
 impl Daemon {
-    /// Kills the daemon and returns everything it wrote to its own stderr.
-    fn shutdown_stderr(mut self) -> String {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let err = self.stderr_rx.recv().unwrap_or_default();
-        let _ = self.stdout_rx.recv();
-        err
+    /// Stops the daemon and returns everything it wrote to its own stderr.
+    ///
+    /// The pipe reaches EOF only once the daemon and every session it forked
+    /// have exited, so the drain returns the complete text.
+    fn shutdown_stderr(self) -> String {
+        let Self {
+            server, stderr_rx, ..
+        } = self;
+        drop(server);
+        stderr_rx.recv().unwrap_or_default()
     }
 }
 
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Drains one child pipe to completion on its own thread.
-fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> Receiver<String> {
+/// Drains the daemon's stderr pipe to completion on its own thread.
+fn drain(mut pipe: PipeReader) -> Receiver<String> {
     let (tx, rx) = channel();
     thread::spawn(move || {
         let mut buf = String::new();
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_string(&mut buf);
-        }
+        let _ = pipe.read_to_string(&mut buf);
         let _ = tx.send(buf);
     });
     rx
 }
 
-/// Starts `<bin> --daemon --no-detach` on a free port with piped stdio.
-fn spawn_daemon(bin: &Path, config_path: &Path) -> io::Result<Daemon> {
-    let (mut child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    let stdout_rx = drain::<ChildStdout>(child.stdout.take());
-    let stderr_rx = drain::<ChildStderr>(child.stderr.take());
+/// Starts the oc-rsync daemon on `config_path` with its stderr captured; see
+/// `test_support::oc_daemon`.
+fn spawn_daemon(config_path: &Path) -> io::Result<Daemon> {
+    let (server, stderr) = OcDaemon::builder(config_path).spawn_capturing_stderr()?;
     Ok(Daemon {
-        child,
-        port,
-        stderr_rx,
-        stdout_rx,
+        port: server.port(),
+        server,
+        stderr_rx: drain(stderr),
     })
 }
 
@@ -241,12 +221,11 @@ fn scratch() -> Option<Scratch> {
 ///
 /// `extra` carries the file-list mode under test.
 fn assert_push_is_refused(client: &Path, extra: &[&str]) {
-    let oc_bin = test_support::oc_rsync_bin();
     let Some(scratch) = scratch() else {
         eprintln!("skipping: tempdir setup failed");
         return;
     };
-    let Ok(daemon) = spawn_daemon(&oc_bin, &scratch.config) else {
+    let Ok(daemon) = spawn_daemon(&scratch.config) else {
         eprintln!("skipping: could not start the oc-rsync daemon");
         return;
     };
@@ -327,7 +306,7 @@ fn pull_from_the_same_module_still_exits_zero() {
     fs::write(scratch.module.join("allowed.txt"), b"allowed\n").expect("seed module");
     fs::write(scratch.module.join("top.secret"), b"secret\n").expect("seed module");
     fs::create_dir_all(&scratch.dest).expect("dest");
-    let Ok(daemon) = spawn_daemon(&oc_bin, &scratch.config) else {
+    let Ok(daemon) = spawn_daemon(&scratch.config) else {
         eprintln!("skipping: could not start the oc-rsync daemon");
         return;
     };
@@ -384,7 +363,7 @@ fn push_of_excluded_symlink_and_fifo_is_refused() {
         scratch.source.join("hard.secret"),
     )
     .expect("plant hard-link follower");
-    let Ok(daemon) = spawn_daemon(&oc_bin, &scratch.config) else {
+    let Ok(daemon) = spawn_daemon(&scratch.config) else {
         eprintln!("skipping: could not start the oc-rsync daemon");
         return;
     };
