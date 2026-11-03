@@ -223,3 +223,33 @@ fn local_delete_is_skipped_after_an_unreadable_xattr() {
         }
     }
 }
+
+/// A named operand whose xattrs cannot be read is dropped the same way: it
+/// never reaches the destination, the other operand does, and the run ends
+/// with code 23.
+#[test]
+fn local_operand_whose_xattrs_cannot_be_read_is_dropped() {
+    if let Some(reason) = skip_reason() {
+        eprintln!("skip: {reason}");
+        return;
+    }
+    for (name, bin) in implementations() {
+        let Some(fx) = Fixture::new() else {
+            eprintln!("skip: the temp filesystem does not take user xattrs");
+            return;
+        };
+        fs::set_permissions(fx.locked(), fs::Permissions::from_mode(0o000)).unwrap();
+        let out = Command::new(&bin)
+            .args(["-X", "src/sub/locked", "src/a.txt", "dst/"])
+            .current_dir(&fx.root)
+            .output()
+            .unwrap();
+        fs::set_permissions(fx.locked(), fs::Permissions::from_mode(0o600)).unwrap();
+        assert_dropped_at_list_time(name, &fx, &out);
+        assert!(fx.root.join("dst/a.txt").exists(), "{name}: a.txt arrives");
+        assert!(
+            !fx.root.join("dst/locked").exists(),
+            "{name}: the dropped operand does not"
+        );
+    }
+}

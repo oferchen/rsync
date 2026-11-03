@@ -16,10 +16,12 @@ use std::path::{Path, PathBuf};
 ))]
 use crate::local_copy::LocalCopyExecution;
 #[cfg(all(any(unix, windows), feature = "acl"))]
-use crate::local_copy::sync_acls_if_requested;
+use crate::local_copy::apply_source_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
-use crate::local_copy::{CopyContext, LocalCopyError, LocalCopyRecord, map_metadata_error};
+use crate::local_copy::{
+    CopyContext, LocalCopyError, LocalCopyRecord, SourceAttrs, map_metadata_error,
+};
 use ::metadata::apply_directory_metadata_with_options;
 
 /// The directory frame being finalized, with the stats the metadata apply reads.
@@ -48,6 +50,7 @@ pub(super) struct DirectoryFinalize<'a> {
 pub(super) fn apply_final_directory_metadata(
     context: &mut CopyContext,
     dir: &DirectoryFinalize<'_>,
+    attrs: &SourceAttrs,
     #[cfg(any(
         all(unix, any(feature = "acl", feature = "xattr")),
         all(windows, feature = "acl")
@@ -116,7 +119,7 @@ pub(super) fn apply_final_directory_metadata(
     sync_xattrs_if_requested(
         preserve_xattrs,
         mode,
-        source,
+        attrs.xattrs.as_ref(),
         destination,
         true,
         context.filter_program(),
@@ -124,18 +127,19 @@ pub(super) fn apply_final_directory_metadata(
     )?;
 
     #[cfg(all(any(unix, windows), feature = "acl"))]
-    sync_acls_if_requested(
+    apply_source_acls_if_requested(
         preserve_acls,
         context.options().fake_super_enabled(),
         mode,
         source,
+        attrs,
         destination,
         true,
         Some(context.destination_root()),
     )?;
 
     // Suppress unused variable warnings when features are disabled
-    let _ = source;
+    let _ = (source, attrs);
 
     Ok(())
 }

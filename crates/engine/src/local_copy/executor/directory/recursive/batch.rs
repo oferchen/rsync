@@ -239,7 +239,7 @@ pub(crate) fn capture_batch_file_entry(
         // in the file list (flist.c:2058-2068 send_file_name()).
         let mut entry =
             build_protocol_file_entry(source_path, relative_path, metadata, is_top_dir, true);
-        let report = capture_batch_xattrs(context, source_path, destination, &mut entry, false);
+        let report = capture_batch_xattrs(context, destination, &mut entry, false);
         let wire = report.as_ref().map(XattrReport::wire_lengths);
         context.tally_flist_entry(entry, readdir_index, wire);
         return Ok(());
@@ -261,14 +261,14 @@ pub(crate) fn capture_batch_file_entry(
         numeric_ids,
     );
     apply_hardlink_fields(&mut entry, metadata, hlink_group, protocol_version);
-    let xattr_report = capture_batch_xattrs(context, source_path, destination, &mut entry, true);
+    let xattr_report = capture_batch_xattrs(context, destination, &mut entry, true);
     if context.wire_tally_active() {
         let wire = xattr_report.as_ref().map(XattrReport::wire_lengths);
         context.tally_flist_entry(entry.clone(), readdir_index, wire);
     }
     context.set_batch_xattr_report(xattr_report.map(|report| report.sender));
     let acl = if context.batch_preserve_acls() {
-        read_batch_source_acl(source_path, &entry, context.options().fake_super_enabled())
+        batch_source_acl(context, source_path, &entry)
     } else {
         None
     };
@@ -308,9 +308,9 @@ pub(crate) fn capture_batch_file_entry(
     Ok(())
 }
 
-/// Reads a source entry's xattrs into its batch flist entry and returns the
-/// `ITEM_REPORT_XATTR` value block its iflags carry when the destination's
-/// xattrs differ.
+/// Puts the xattrs the sender half read into the entry's batch flist entry
+/// and returns the `ITEM_REPORT_XATTR` value block its iflags carry when the
+/// destination's xattrs differ.
 ///
 /// The list goes into the file list whole; the flist writer abbreviates each
 /// value over `MAX_FULL_DATUM` to its digest. Every such value the destination
@@ -329,7 +329,6 @@ pub(crate) fn capture_batch_file_entry(
 #[cfg(all(any(unix, windows), feature = "xattr"))]
 fn capture_batch_xattrs(
     context: &CopyContext,
-    source_path: &Path,
     destination: &Path,
     entry: &mut protocol::flist::FileEntry,
     batch: bool,
@@ -349,32 +348,22 @@ fn capture_batch_xattrs(
     if !preserve || !readable {
         return None;
     }
-    let rules = context
+    let list = context.entry_attrs().xattrs.clone()?;
+    let receiver_filter = context
         .filter_program()
-        .filter(|program| program.has_xattr_rules());
-    let sender_filter = rules
-        .map(|program| move |name: &str| program.allows_xattr(name, ::filters::XattrSide::Sender));
-    let receiver_filter = rules.map(|program| {
-        move |name: &str| program.allows_xattr(name, ::filters::XattrSide::Receiver)
-    });
-    let sender_opts = ::metadata::XattrSendOptions {
-        role: ::metadata::XattrRole::Sender,
+        .filter(|program| program.has_xattr_rules())
+        .map(|program| {
+            move |name: &str| program.allows_xattr(name, ::filters::XattrSide::Receiver)
+        });
+    let dest_opts = ::metadata::XattrSendOptions {
+        role: ::metadata::XattrRole::Generator,
         follow_symlinks: !entry.is_symlink(),
-        // upstream: xattrs.c:249 - the sender reads every namespace but
-        // system.*, whoever it runs as.
-        am_root: false,
+        am_root: ::metadata::am_root(),
         // The local-copy options carry `-X` as a bool. upstream: xattrs.c:274.
         preserve_xattrs: 1,
         fake_super: context.options().fake_super_enabled(),
-        filter: sender_filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
-        checksum_seed: 0,
-    };
-    let list = ::metadata::read_xattrs_for_wire(source_path, &sender_opts).ok()?;
-    let dest_opts = ::metadata::XattrSendOptions {
-        role: ::metadata::XattrRole::Generator,
-        am_root: ::metadata::am_root(),
         filter: receiver_filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
-        ..sender_opts
+        checksum_seed: 0,
     };
     // upstream: generator.c:581 - an absent destination compares against an
     // empty list (xattr_diff(file, NULL, 1)).
@@ -414,7 +403,6 @@ fn capture_batch_xattrs(
 #[cfg(not(all(any(unix, windows), feature = "xattr")))]
 fn capture_batch_xattrs(
     _context: &CopyContext,
-    _source_path: &Path,
     _destination: &Path,
     _entry: &mut protocol::flist::FileEntry,
     _batch: bool,
@@ -437,6 +425,34 @@ impl XattrReport {
     }
 }
 
+/// The access ACL and, for a directory, the default ACL the sender half read
+/// when it listed the entry.
+///
+/// upstream: `flist.c:2077-2081 send_file_name()` sends the ACL `get_acl()`
+/// read right after the entry.
+#[cfg(all(target_os = "linux", feature = "acl"))]
+fn batch_source_acl(
+    context: &CopyContext,
+    _source_path: &Path,
+    _entry: &protocol::flist::FileEntry,
+) -> Option<crate::local_copy::context::BatchSourceAcl> {
+    context
+        .entry_attrs()
+        .acls
+        .as_ref()
+        .map(|acls| (acls.access().clone(), acls.default_acl().cloned()))
+}
+
+/// Reads the entry's ACLs where the sender half does not carry them yet.
+#[cfg(not(all(target_os = "linux", feature = "acl")))]
+fn batch_source_acl(
+    context: &CopyContext,
+    source_path: &Path,
+    entry: &protocol::flist::FileEntry,
+) -> Option<crate::local_copy::context::BatchSourceAcl> {
+    read_batch_source_acl(source_path, entry, context.options().fake_super_enabled())
+}
+
 /// Reads a source entry's access ACL and, for a directory, its default ACL -
 /// what the generator reads for a network send (`prepare_pending_acl`).
 ///
@@ -447,6 +463,7 @@ impl XattrReport {
 /// upstream: `flist.c:2048-2055 send_file_name()` calls `get_acl()` for every
 /// non-symlink under `preserve_acls`, and `flist.c:2077-2081` sends it right
 /// after the entry.
+#[cfg(not(all(target_os = "linux", feature = "acl")))]
 fn read_batch_source_acl(
     source_path: &Path,
     entry: &protocol::flist::FileEntry,
