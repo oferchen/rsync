@@ -20,12 +20,14 @@
 mod counting;
 mod discard;
 mod msg_info;
+mod msg_route;
 pub(crate) mod multiplex;
 mod server;
 
 pub use self::counting::CountingWriter;
 pub use self::discard::DiscardSink;
 pub use self::msg_info::MsgInfoSender;
+pub use self::msg_route::{MessageRoute, frame_code};
 pub use self::multiplex::BatchRoute;
 pub use self::server::{ServerWriter, shutdown_send_side};
 pub use bandwidth::ThrottlingWriter;

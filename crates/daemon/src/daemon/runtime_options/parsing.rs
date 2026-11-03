@@ -26,6 +26,25 @@ impl RuntimeOptions {
         brand: Brand,
         load_defaults: bool,
     ) -> Result<Self, DaemonError> {
+        Self::parse_arguments(arguments, brand, load_defaults, true)
+    }
+
+    /// Checks `arguments` alone, reading no `rsyncd.conf`, so an inetd daemon
+    /// can report a bad option before it redirects stderr.
+    ///
+    /// upstream: main.c:1911 parse_arguments() runs before main.c:1954
+    /// daemon_main() redirects stderr and reads the config
+    /// (clientserver.c:1749-1760).
+    fn check_arguments(arguments: &[OsString], brand: Brand) -> Result<(), DaemonError> {
+        Self::parse_arguments(arguments, brand, false, false).map(drop)
+    }
+
+    fn parse_arguments(
+        arguments: &[OsString],
+        brand: Brand,
+        load_defaults: bool,
+        read_config: bool,
+    ) -> Result<Self, DaemonError> {
         let mut options = Self {
             brand,
             dparams: collect_dparams(arguments, brand)?,
@@ -79,7 +98,9 @@ impl RuntimeOptions {
                 let addr = parse_bind_address(&value)?;
                 options.set_bind_address(addr)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--config")? {
-                options.load_config_modules(&value, &mut seen_modules)?;
+                if read_config {
+                    options.load_config_modules(&value, &mut seen_modules)?;
+                }
             } else if let Some(value) = take_option_value(argument, &mut iter, "--motd-file")? {
                 options.load_motd_file(&value)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--motd")? {

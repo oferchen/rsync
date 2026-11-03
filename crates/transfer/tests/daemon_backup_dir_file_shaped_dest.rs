@@ -26,7 +26,7 @@
 //! return the basename). So `--backup-dir=bak` lands at `<module>/bak/payload`
 //! for BOTH operand shapes.
 //!
-//! Measured against the real rsync 3.5.0 binary: all three cells below produce
+//! Measured against the real rsync 3.5.1 binary: all three cells below produce
 //! exactly the state asserted here.
 //!
 //! # Why the `..` cell is here

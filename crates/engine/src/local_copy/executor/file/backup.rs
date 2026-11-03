@@ -415,7 +415,7 @@ fn apply_backup_dir_attrs(
         // at generator.c:1856/1939 and receiver.c:1208, none of which sit on
         // the backup path. A `!preserve_perms` run therefore still copies the
         // destination directory's exact permission bits onto the backup
-        // subdirectory (measured against rsync 3.5.0: dest dir 0707, -r
+        // subdirectory (measured against rsync 3.5.1: dest dir 0707, -r
         // without -p, umask 022 -> backup dir 0707), so force the permission
         // leg on for this one apply while every other leg keeps the caller's
         // options.

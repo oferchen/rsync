@@ -541,6 +541,9 @@ where
     // by the client tells the server to render the flist without writing to the
     // destination (`TransferFlags::skip_dest_writes`).
     config.flags.list_only = long_flags.list_only;
+    // upstream: options.c:2958-2961, log.c:357 - where this server's error and
+    // warning lines go; resolved against the protocol once it is known.
+    config.connection.msgs2stderr = long_flags.msgs2stderr;
     // upstream: options.c:3026-3027 / main.c:1946-1947 - a push sender forwards
     // `--only-write-batch=X`; on the receiver, `write_batch < 0` forces
     // `dry_run = 1` (no destination writes) while `do_xfers` stays 1 so the
@@ -849,7 +852,7 @@ where
             if let Some(code) = core::server::remote_exit_code(&e) {
                 return code;
             }
-            if let Some(code) = cause_line_exit_code(&e) {
+            if let Some(code) = core::exit_code::cause_line_exit_code(&e) {
                 let who = if role == ServerRole::Generator {
                     Role::Sender
                 } else {
@@ -1209,25 +1212,6 @@ fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt
     write_server_error_with_code(stderr, brand, core::exit_code::ExitCode::Syntax, text);
 }
 
-/// The exit code of a failure upstream reports as `rprintf(FERROR, cause)`
-/// followed by `exit_cleanup(code)`, or `None` for any other failure.
-///
-/// upstream: xattrs.c:1253-1258 get_stat_xattr() (RERR_FILEIO),
-/// util2.c:73-80 my_alloc() (RERR_MALLOC)
-fn cause_line_exit_code(error: &std::io::Error) -> Option<core::exit_code::ExitCode> {
-    use core::exit_code::ExitCode;
-    if metadata::is_corrupt_fake_super(error) {
-        Some(ExitCode::FileIo)
-    } else if error
-        .get_ref()
-        .is_some_and(|inner| inner.is::<protocol::MallocFailure>())
-    {
-        Some(ExitCode::Malloc)
-    } else {
-        None
-    }
-}
-
 /// Prints a fatal failure as upstream's remote-shell server does: the cause on
 /// its own line on stderr, then log_exit()'s trailer for `code` naming the
 /// process that hit it.
@@ -1241,11 +1225,8 @@ fn write_fatal_cause<Err: Write>(
     cause: &std::io::Error,
     code: core::exit_code::ExitCode,
 ) {
-    let _ = writeln!(stderr, "{cause}");
-    let mut sink = MessageSink::with_brand(stderr, brand);
-    let message = rsync_error!(code.as_i32(), "{}", code.description()).with_role(role);
-    if super::super::write_message(&message, &mut sink).is_err() {
-        let _ = writeln!(sink.writer_mut(), "{message}");
+    for line in core::exit_code::fatal_report_lines(cause, code, role, brand) {
+        let _ = stderr.write_all(&line);
     }
 }
 

@@ -119,7 +119,7 @@ pub(crate) fn append_filter_rules_from_files(
 ///
 /// This rule is deliberately NOT shared with `--files-from`, whose own open
 /// failure upstream reports from a different site and exits 1, not 11
-/// (main.c:1913) - measured on 3.5.0.
+/// (main.c:1913) - measured on 3.5.1.
 fn filter_file_open_error(
     path: &Path,
     include: bool,
@@ -287,7 +287,7 @@ pub(super) fn read_filter_patterns<R: BufRead>(
         // upstream: exclude.c:1806. `filters::filter_file_line_is_rule` is the
         // single owner of that test; it looks at the FIRST BYTE and does not
         // trim. `--*clude-from` files are always line-parsed, never word-split.
-        // MEASURED against rsync 3.5.0: an `--exclude-from` line of `   ` (three
+        // MEASURED against rsync 3.5.1: an `--exclude-from` line of `   ` (three
         // spaces) or `  #a` excludes a file of exactly that name.
         let chunk = String::from_utf8_lossy(&buffer);
 
@@ -405,7 +405,7 @@ mod tests {
     fn read_filter_patterns_keeps_whitespace_only_lines() {
         // upstream: exclude.c:1806 tests `*line`, the first BYTE, so a
         // whitespace-only record is not empty and becomes a literal pattern.
-        // MEASURED against rsync 3.5.0: an `--exclude-from` file holding only
+        // MEASURED against rsync 3.5.1: an `--exclude-from` file holding only
         // `   ` excludes a file literally named `   `.
         let input = b"pattern1\n   \n\t\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn read_filter_patterns_keeps_an_indented_comment_marker() {
         // upstream: exclude.c:1806 - only a `;`/`#` in COLUMN ZERO is a
-        // comment. MEASURED against rsync 3.5.0: an `--exclude-from` file
+        // comment. MEASURED against rsync 3.5.1: an `--exclude-from` file
         // holding only `  #a` excludes a file literally named `  #a`.
         let input = b"  #a\n  ;b\n";
         let mut reader = Cursor::new(input.to_vec());
@@ -478,7 +478,7 @@ mod tests {
     ///
     /// This is the OPERATOR-named arm: the path they typed and `strerror` are
     /// both theirs to see (upstream's `rsyserr` branch, exclude.c:1714-1717).
-    /// MEASURED on rsync 3.5.0: `--include-from=/definitely/missing` prints
+    /// MEASURED on rsync 3.5.1: `--include-from=/definitely/missing` prints
     /// `failed to open include file /definitely/missing: No such file or
     /// directory (2)` and exits 11.
     #[test]
@@ -508,7 +508,7 @@ mod tests {
     /// it" for any path a peer chooses to name. Both arms exit `RERR_FILEIO`;
     /// only the TEXT differs, which is why the code is asserted equal here.
     ///
-    /// MEASURED on rsync 3.5.0, a merge file containing `. /definitely/missing`:
+    /// MEASURED on rsync 3.5.1, a merge file containing `. /definitely/missing`:
     /// `failed to open exclude file <rule from FILE line 1>`, exit 11.
     #[test]
     fn read_merge_file_withholds_path_and_errno_when_the_name_came_from_a_file() {

@@ -710,6 +710,7 @@ pub fn run_server_with_handshake<W: Write>(
             daemon_log: None,
             bytes_read: None,
             fork_point: None,
+            fatal_report: None,
         },
     )
 }
@@ -762,7 +763,15 @@ pub struct ServerTransferHooks<'p, 'i> {
     /// fork, so the caller can name the role that reports a failure.
     /// upstream: main.c:1077 `do_recv()`.
     pub fork_point: Option<Arc<ForkPoint>>,
+    /// Renders the lines a daemon sender reports for a fatal failure with the
+    /// given `RERR_*`. `Some` only on the daemon path, whose messages go to
+    /// the client as `MSG_ERROR` frames ahead of its `MSG_ERROR_EXIT`.
+    /// upstream: clientserver.c:1178 `msgs2stderr = 0`, log.c:937-963 log_exit()
+    pub fatal_report: Option<&'p FatalReport>,
 }
+
+/// Renders a fatal failure and its `RERR_*` as newline-terminated lines.
+pub type FatalReport = dyn Fn(&io::Error, i32) -> Vec<Vec<u8>> + Sync;
 
 /// Runs a server transfer that may adopt a daemon-advertised `MSG_IO_TIMEOUT`.
 ///
@@ -818,6 +827,7 @@ pub fn run_server_over_transport<'a>(
         daemon_log,
         bytes_read,
         fork_point,
+        fatal_report,
     } = hooks;
     // upstream: options.c:2551-2561 - `--append` implies `--inplace`, applied by the
     // same parse_arguments() every peer runs. This is the one path shared by
@@ -1116,6 +1126,14 @@ pub fn run_server_over_transport<'a>(
     );
     if mplex_out {
         writer = writer.activate_multiplex()?;
+        // upstream: log.c:357 - a server routes its diagnostic lines by
+        // msgs2stderr, resolved once the protocol is known (compat.c:653-654).
+        if !config.connection.client_mode {
+            writer.set_message_routing(
+                writer::MessageRoute::resolve(config.connection.msgs2stderr, handshake.protocol),
+                handshake.protocol,
+            );
+        }
     }
 
     // upstream: io.c:set_io_timeout() derives allowed_lull = (io_timeout + 1) / 2
@@ -1338,6 +1356,7 @@ pub fn run_server_over_transport<'a>(
                 &error,
                 negotiated_protocol,
                 error_exit_reaches_peer,
+                fatal_report,
             );
             Err(error)
         }
@@ -1384,12 +1403,18 @@ pub fn run_server_over_transport<'a>(
 /// - `errcode.h` - `RERR_SOCKETIO`/`RERR_STREAMIO`/`RERR_SIGNAL1`/`RERR_TIMEOUT`.
 ///
 /// `reaches_peer` is [`error_exit_reaches_peer`]: a frame upstream would queue
-/// but never flush is not written at all.
+/// but never flush is not written at all. `report`, when supplied, renders the
+/// cause and log_exit() trailer that precede the frame as `MSG_ERROR`s, as a
+/// daemon's `rprintf(FERROR)` does once `msgs2stderr` is clear.
+///
+/// upstream: log.c:357-367 rwrite() frames FERROR for the peer,
+/// log.c:937-963 log_exit(), clientserver.c:1178
 fn announce_error_exit<W: Write>(
     writer: &mut writer::ServerWriter<W>,
     error: &io::Error,
     protocol_version: u8,
     reaches_peer: bool,
+    report: Option<&FatalReport>,
 ) {
     if !reaches_peer {
         return;
@@ -1423,6 +1448,12 @@ fn announce_error_exit<W: Write>(
         return;
     }
 
+    for line in report
+        .map(|report| report(error, exit_code))
+        .unwrap_or_default()
+    {
+        let _ = writer.send_message(protocol::MessageCode::Error, &line);
+    }
     if writer.send_error_exit(exit_code).is_ok() {
         let _ = writer.flush_all_pending();
     }

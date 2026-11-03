@@ -242,7 +242,7 @@ fn classify_filter_directive_line(
     // 1253) and takes the pattern length as `strlen(s)` otherwise
     // (exclude.c:1465), so trailing whitespace is part of the pattern.
     //
-    // Trimming here changed WHICH FILES TRANSFER. MEASURED against rsync 3.5.0
+    // Trimming here changed WHICH FILES TRANSFER. MEASURED against rsync 3.5.1
     // with a `.rsync-filter` holding `- a ` over a source containing `a` and
     // `a ` (trailing space): upstream excludes `a ` and copies `a`; oc excluded
     // `a` and copied `a `. A whitespace-only line and a leading-whitespace rule
@@ -818,7 +818,7 @@ mod tests {
     /// keyed on whether the merge file's own NAME came from a file. Redaction of
     /// the rule TEXT is unchanged: only the LOCATION is added.
     ///
-    /// MEASURED against rsync 3.5.0 with `-r -F` and a `.rsync-filter`
+    /// MEASURED against rsync 3.5.1 with `-r -F` and a `.rsync-filter`
     /// containing `Zbad-perdir`:
     /// `Unknown filter rule: <rule from /.../src/.rsync-filter line 1>`
     #[test]

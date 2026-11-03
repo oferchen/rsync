@@ -2729,7 +2729,7 @@ mod config_parsing_tests {
 
     /// SCOPE BOUNDARY, and a negative control for the whole change: a module's
     /// own value REPLACES the inherited global default, and that was already
-    /// correct before this fix. Measured against the real 3.5.0 daemon with
+    /// correct before this fix. Measured against the real 3.5.1 daemon with
     /// `exclude = foo` global + `exclude = bar` in the module: both upstream
     /// and oc serve `foo` and hide only `bar`.
     ///

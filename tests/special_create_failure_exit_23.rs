@@ -18,7 +18,7 @@
 //! /* cleanup.c:217-218 - exit_cleanup() lifts a zero exit to RERR_PARTIAL */
 //! ```
 //!
-//! Measured against rsync 3.5.0 with a single-entry operand pushed or pulled
+//! Measured against rsync 3.5.1 with a single-entry operand pushed or pulled
 //! into a `chmod 555` destination:
 //!
 //! | entry   | rsync 3.5.0                                 | oc before     |

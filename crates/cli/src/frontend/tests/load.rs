@@ -17,7 +17,7 @@ fn load_filter_file_patterns_skips_comments_and_trims_crlf() {
 ///
 /// upstream: exclude.c:1806 - `if (*line && (word_split || (*line != ';' &&
 /// *line != '#')))` tests the FIRST BYTE of the line, with no trimming first.
-/// MEASURED against rsync 3.5.0: an `--exclude-from` file holding only `  #a`
+/// MEASURED against rsync 3.5.1: an `--exclude-from` file holding only `  #a`
 /// excludes a file literally named `  #a`; oc used to transfer it, because the
 /// reader trimmed before testing.
 #[test]

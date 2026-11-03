@@ -368,7 +368,7 @@ mod tests {
     /// escape, so a LATER directive is still found - and the overlong run plus
     /// its `%` render as literal text rather than swallowing the next `%`.
     ///
-    /// MEASURED against rsync 3.5.0 for `%<30 zeros>%C %f`:
+    /// MEASURED against rsync 3.5.1 for `%<30 zeros>%C %f`:
     /// `%000000000000000000000000000000<40-hex-digest> <name>`, i.e. the digest
     /// IS produced. Unbounded, oc consumed the digits, read the `%` of `%C` as
     /// the `%%` literal case, skipped it, and returned false - so the checksum
