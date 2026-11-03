@@ -1247,7 +1247,7 @@ impl GeneratorContext {
                 // scan runs.
                 self.trace_send_files_mapped(ndx, file_size);
                 if self.logs_before_transfer() {
-                    self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
+                    self.emit_client_item(io.output(), &iflags, ndx, xname.as_deref(), itemize, true)?;
                 }
                 let (delta_script, scan_counters) = match source_mmap {
                     // The map is dropped at the end of this arm: literals are
@@ -1408,7 +1408,7 @@ impl GeneratorContext {
 
                 self.trace_send_files_mapped(ndx, file_size);
                 if self.logs_before_transfer() {
-                    self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
+                    self.emit_client_item(io.output(), &iflags, ndx, xname.as_deref(), itemize, true)?;
                 }
                 let checksum_algorithm = self.get_checksum_algorithm();
                 // upstream: io.c:977 - stats.total_written counts actual wire
