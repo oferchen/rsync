@@ -401,9 +401,6 @@ impl GeneratorContext {
             return Ok(());
         }
         match kind {
-            SenderDiagnostic::Warning if !self.protocol.supports_generator_messages() => {
-                writer.send_msg_info(text.as_bytes())
-            }
             SenderDiagnostic::Warning => writer.send_msg_warning(text.as_bytes()),
             SenderDiagnostic::ErrorXfer => writer.send_msg_error_xfer(text.as_bytes()),
             SenderDiagnostic::Info => writer.send_msg_info(text.as_bytes()),

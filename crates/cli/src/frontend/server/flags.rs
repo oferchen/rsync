@@ -415,6 +415,11 @@ pub(super) struct ServerLongFlags {
     /// is a listing. The receiver renders the flist without writing to the
     /// destination.
     pub(super) list_only: bool,
+    /// The diagnostic route the client asked for with `--msgs2stderr` or
+    /// `--no-msgs2stderr`, `None` when it forwarded neither.
+    ///
+    /// upstream: options.c:619-620, options.c:2958-2961.
+    pub(super) msgs2stderr: Option<core::server::writer::MessageRoute>,
     /// Whether the client forwarded `--only-write-batch=X` (upstream
     /// `write_batch = -1`). Emitted only in the `am_sender` block, so it
     /// reaches this process only when it is the server receiver on a push.
@@ -610,6 +615,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         delay_updates: false,
         mkpath: false,
         list_only: false,
+        msgs2stderr: None,
         only_write_batch: false,
         no_implied_dirs: false,
         no_recurse: false,
@@ -844,11 +850,12 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // client used the explicit flag (list_only > 1). The receiver lists
             // the flist without writing to the destination.
             "--list-only" => flags.list_only = true,
-            // upstream: options.c:2958-2961 - `--msgs2stderr` / `--no-msgs2stderr`
-            // control the peer's own diagnostic routing. Recognised here so the
-            // flag is consumed rather than treated as a positional path; the
-            // server's message routing is handled elsewhere.
-            "--msgs2stderr" | "--no-msgs2stderr" => {}
+            // upstream: options.c:2958-2961 - the client forwards its own
+            // `--msgs2stderr` / `--no-msgs2stderr`; the server's rwrite()
+            // routes its diagnostics by it (log.c:357).
+            "--msgs2stderr" | "--no-msgs2stderr" => {
+                flags.msgs2stderr = core::server::writer::MessageRoute::from_server_flag(&s);
+            }
             // upstream: options.c:2323-2325 - `--old-dirs`/`--old-d` set
             // xfer_dirs=4, resolved to recurse=1 plus an appended `- /*/*`
             // filter. server_options() never forwards these
