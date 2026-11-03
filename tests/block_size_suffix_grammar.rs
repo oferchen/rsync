@@ -17,7 +17,8 @@
 //! the shared parser ran, so `size.rs`'s tested suffix support was unreachable
 //! in production for this one option.
 //!
-//! Skip conditions (test passes with a printed reason):
+//! Skip conditions (test passes with a printed reason, except under
+//! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
 //! - The cross-implementation cell needs a built upstream 3.5.1 binary; without
 //!   it, it reports why it did not run.
 
@@ -30,9 +31,8 @@ fn oc_binary() -> PathBuf {
 }
 
 fn upstream_binary() -> Option<PathBuf> {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
-    path.is_file().then_some(path)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+        .map(|upstream| upstream.binary().to_path_buf())
 }
 
 /// Every spelling measured against the real 3.5.1 binary, with whether it is
@@ -110,10 +110,6 @@ fn block_size_accepts_the_upstream_size_grammar() {
 #[test]
 fn the_grammar_table_matches_the_real_upstream_binary() {
     let Some(upstream) = upstream_binary() else {
-        println!(
-            "SKIP: upstream 3.5.1 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.1/rsync)"
-        );
         return;
     };
     let fixture = Fixture::new();
