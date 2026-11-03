@@ -14,11 +14,11 @@ use crate::pipeline::messages::{
     BeginMessage, CommitResult, ComputedChecksum, ExpectedChecksum, FileMessage,
 };
 use crate::pipeline::spsc;
-use crate::temp_guard::TempFileGuard;
 #[cfg(not(unix))]
 use crate::temp_guard::open_tmpfile;
 #[cfg(unix)]
 use crate::temp_guard::open_tmpfile_sandboxed;
+use crate::temp_guard::{CommitOp, TempFileGuard, attach_commit_op};
 
 use super::super::config::{DiskCommitConfig, PartialMode};
 use super::super::writer::{ReusableBufWriter, Writer, close_received_file};
@@ -983,8 +983,12 @@ fn open_output_file(
     begin: &BeginMessage,
     config: &DiskCommitConfig,
 ) -> io::Result<(fs::File, TempFileGuard, bool)> {
+    // upstream: receiver.c:1242-1244 - the in-place and device arms both open
+    // `fnametmp == fname` and report a failure as `open %s failed`.
+    let tag_open = |e: io::Error| attach_commit_op(CommitOp::Open, &begin.file_path, e);
     if begin.is_device_target {
-        let file = super::commit::open_dest_for_write(config.backup_env(), &begin.file_path)?;
+        let file = super::commit::open_dest_for_write(config.backup_env(), &begin.file_path)
+            .map_err(tag_open)?;
         // The guard wraps the real device node, not a temp file. A
         // mid-transfer error must NOT unlink it (upstream never unlinks an
         // inplace/device target - receiver.c:1334-1335 gates on !one_inplace), so
@@ -999,7 +1003,7 @@ fn open_output_file(
         // `fast_io`. The receiver never truncates: the destination it opens IS
         // the delta basis. `Direct` because this is the destination leaf, whose
         // parents the caller has already anchored - not an operator path.
-        let mut file = open_inplace_dest(config, &begin.file_path)?;
+        let mut file = open_inplace_dest(config, &begin.file_path).map_err(tag_open)?;
         // upstream: receiver.c:544-549 - in append mode, seek past existing content
         if begin.append_offset > 0 {
             use std::io::Seek;

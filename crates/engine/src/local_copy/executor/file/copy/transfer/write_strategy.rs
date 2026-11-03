@@ -169,6 +169,53 @@ pub(in crate::local_copy) fn can_use_anonymous_tmpfile(destination: &Path) -> bo
     }
 }
 
+/// Wraps a failed open of the destination itself (`--inplace`, `--append`),
+/// tagged so the receiver reports it as upstream's per-file `open %s failed`.
+///
+/// upstream: receiver.c:1242-1261 - `rsyserr(FERROR_XFER, errno, "open %s
+/// failed", full_fname(fnametmp))`, then `discard_receive_data()` and
+/// `continue`.
+fn open_failure(destination: &Path, error: io::Error) -> LocalCopyError {
+    let error = crate::commit_failure::attach_commit_op(
+        crate::commit_failure::CommitOp::Open,
+        destination,
+        error,
+    );
+    LocalCopyError::io("copy file", destination, error)
+}
+
+/// Stages the transfer in a named temp file, upstream's only write path.
+///
+/// upstream: receiver.c:open_tmpfile() - `do_mkstemp()` beside the destination
+/// or in `--temp-dir`, committed by `finish_transfer()`'s rename. A failure is
+/// tagged `mkstemp` by `DestinationWriteGuard::new_confined`.
+fn open_named_temp(
+    context: &CopyContext,
+    destination: &Path,
+    record_path: &Path,
+    partial_enabled: bool,
+    guard: &mut Option<DestinationWriteGuard>,
+    staging_path: &mut Option<PathBuf>,
+) -> Result<fs::File, LocalCopyError> {
+    let (new_guard, file) = DestinationWriteGuard::new_confined(
+        destination,
+        partial_enabled,
+        context.partial_directory_path(),
+        context.temp_directory_path(),
+        Some(context.destination_root()),
+    )?;
+    *staging_path = Some(new_guard.staging_path().to_path_buf());
+    debug_log!(
+        Io,
+        3,
+        "created temp file {} for {}",
+        new_guard.staging_path().display(),
+        record_path.display()
+    );
+    *guard = Some(new_guard);
+    Ok(file)
+}
+
 /// Opens the destination file using the pre-selected write strategy.
 ///
 /// Each strategy maps to a distinct I/O path:
@@ -177,7 +224,8 @@ pub(in crate::local_copy) fn can_use_anonymous_tmpfile(destination: &Path) -> bo
 /// - **InplacePartialDir**: opens the `--partial-dir` entry through the
 ///   ownership walk (upstream's `one_inplace`); the commit renames it onto the
 ///   destination
-/// - **Direct**: creates new file directly when no existing destination
+/// - **Direct**: creates new file directly when no existing destination,
+///   retrying once through the named temp file when that create fails
 /// - **TempFileRename**: creates a staging file via `DestinationWriteGuard`
 #[allow(clippy::too_many_arguments)]
 pub(in crate::local_copy) fn open_destination_writer(
@@ -199,7 +247,7 @@ pub(in crate::local_copy) fn open_destination_writer(
                 .write(true)
                 .truncate(false)
                 .open(destination)
-                .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+                .map_err(|error| open_failure(destination, error))?;
             file.seek(SeekFrom::Start(append_offset))
                 .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
             Ok(file)
@@ -216,7 +264,7 @@ pub(in crate::local_copy) fn open_destination_writer(
                 should_truncate,
                 fast_io::InplaceResolution::Direct,
             )
-            .map_err(|error| LocalCopyError::io("copy file", destination, error))
+            .map_err(|error| open_failure(destination, error))
         }
         WriteStrategy::InplacePartialDir => {
             // upstream: receiver.c:1213 - `fnametmp = one_inplace ? partialptr
@@ -295,17 +343,34 @@ pub(in crate::local_copy) fn open_destination_writer(
                 record_path.display()
             );
             #[cfg(unix)]
-            {
-                fast_io::confined_create_new(context.destination_root(), destination)
-                    .map_err(|error| LocalCopyError::io("copy file", destination, error))
-            }
+            let direct = fast_io::confined_create_new(context.destination_root(), destination);
             #[cfg(not(unix))]
-            {
-                fs::OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(destination)
-                    .map_err(|error| LocalCopyError::io("copy file", destination, error))
+            let direct = fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(destination);
+            match direct {
+                Ok(file) => Ok(file),
+                Err(error) => {
+                    // upstream has no direct open to fail: it stages through
+                    // mkstemp, so a destination it cannot create reports as
+                    // `mkstemp %s failed` (receiver.c:465-468). Retrying once
+                    // through that path reproduces upstream's outcome and line.
+                    debug_log!(
+                        Io,
+                        3,
+                        "direct write to {} failed ({error}), staging through a temp file",
+                        record_path.display()
+                    );
+                    open_named_temp(
+                        context,
+                        destination,
+                        record_path,
+                        partial_enabled,
+                        guard,
+                        staging_path,
+                    )
+                }
             }
         }
         WriteStrategy::AnonymousTempFile => {
@@ -338,43 +403,23 @@ pub(in crate::local_copy) fn open_destination_writer(
                 }
             }
             // Fallback: named temp file (also the only path on non-Linux).
-            let (new_guard, file) = DestinationWriteGuard::new_confined(
+            open_named_temp(
+                context,
                 destination,
+                record_path,
                 partial_enabled,
-                context.partial_directory_path(),
-                context.temp_directory_path(),
-                Some(context.destination_root()),
-            )?;
-            *staging_path = Some(new_guard.staging_path().to_path_buf());
-            debug_log!(
-                Io,
-                3,
-                "created temp file {} for {}",
-                new_guard.staging_path().display(),
-                record_path.display()
-            );
-            *guard = Some(new_guard);
-            Ok(file)
+                guard,
+                staging_path,
+            )
         }
-        WriteStrategy::TempFileRename => {
-            let (new_guard, file) = DestinationWriteGuard::new_confined(
-                destination,
-                partial_enabled,
-                context.partial_directory_path(),
-                context.temp_directory_path(),
-                Some(context.destination_root()),
-            )?;
-            *staging_path = Some(new_guard.staging_path().to_path_buf());
-            debug_log!(
-                Io,
-                3,
-                "created temp file {} for {}",
-                new_guard.staging_path().display(),
-                record_path.display()
-            );
-            *guard = Some(new_guard);
-            Ok(file)
-        }
+        WriteStrategy::TempFileRename => open_named_temp(
+            context,
+            destination,
+            record_path,
+            partial_enabled,
+            guard,
+            staging_path,
+        ),
     }
 }
 
