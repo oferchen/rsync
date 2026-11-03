@@ -185,6 +185,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - On Windows, `-X` sends NTFS alternate data streams as xattrs on network transfers too, and a local copy without `-X` warns once that streams were dropped. The warning is oc-only; upstream has no ADS concept (#8214)
 - Opt-in consecutive-match block matching between two oc-rsync peers that both set `OC_CONSECUTIVE_MATCH=1`; off by default and inert against upstream (#7065, #7077)
 - The daemon honours the `open noatime` module directive (#6850)
+- Pulls can use the parallel delta scan, which their clients never forward: the daemon module parameter `parallel delta scan = yes` turns it on for a module, and `OC_RSYNC_PARALLEL_DELTA_SCAN=1` for a remote-shell server (#8289)
 
 ### Changed
 - A recursive local `--write-batch` records incremental recursion, as 3.5.1 does (header `81 ff`), and writes its file list in the incremental layout: the top level, then one sub-list per directory, placed among the file data by 3.5.1's 1000-entry lookahead. rsync 3.5.1 replays these batches, and `--delete-before`, `--delete-after`, `--delay-updates`, `-m`, `--qsort` and `--no-inc-recursive` still record a flat list (#8261)

@@ -292,6 +292,13 @@ where
         config.flags.keep_dirlinks = false;
     }
 
+    // `--parallel-delta-scan` never crosses the wire (an upstream server would
+    // reject it), so a remote-shell server's sender takes the switch from its
+    // own environment instead; a receiver has no scan to switch.
+    if role == ServerRole::Generator {
+        config.flags.parallel_delta_scan = super::parallel_delta_env::parallel_delta_scan_enabled();
+    }
+
     // Apply value-bearing flags, returning parse errors to the client.
     // upstream: server_options() sends these as `--flag=value` (options.c:2778).
     if let Err(code) = apply_value_flags(&mut config, &long_flags, stderr, program_brand) {

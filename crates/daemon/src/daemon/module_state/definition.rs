@@ -117,6 +117,14 @@ pub(crate) struct ModuleDefinition {
     /// `--insecure-links` can never reach it, which is why the daemon and local
     /// opt-outs are distinct types in `fast_io::confinement`.
     pub(crate) insecure_links: bool,
+    /// Whether this module's sender may use the parallel delta scan.
+    ///
+    /// oc-only (`parallel delta scan`, no upstream counterpart): the server-side
+    /// switch for `--parallel-delta-scan` on pulls. The client never forwards
+    /// that flag, because an upstream server rejects unknown options, so the
+    /// daemon decides for its own sender. Nothing goes on the wire, and the
+    /// scan's output stays upstream-compatible. Inert when the module receives.
+    pub(crate) parallel_delta_scan: bool,
     /// Controls whether symlink targets are munged with a `/rsyncd-munged/` prefix.
     ///
     /// When `None`, the effective value defaults to `!use_chroot` (upstream behaviour).

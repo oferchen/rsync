@@ -606,6 +606,13 @@ fn apply_global_directive(
                 state.module_defaults.fake_super = Some(parsed);
             }
         }
+        "paralleldeltascan" => {
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "parallel delta scan", path, line_number)
+            {
+                state.module_defaults.parallel_delta_scan = Some(parsed);
+            }
+        }
         "insecurelinks" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "insecure links", path, line_number)

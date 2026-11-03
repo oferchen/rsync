@@ -149,6 +149,13 @@ fn apply_module_directive(
                 builder.set_fake_super(parsed);
             }
         }
+        "paralleldeltascan" => {
+            if let Some(parsed) =
+                apply_boolean_directive(value, false, "parallel delta scan", path, line_number)
+            {
+                builder.set_parallel_delta_scan(parsed);
+            }
+        }
         "insecurelinks" => {
             if let Some(parsed) =
                 apply_boolean_directive(value, false, "insecure links", path, line_number)

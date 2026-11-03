@@ -335,6 +335,29 @@ mod daemon_module_suffix_tests {
 }
 
 #[cfg(test)]
+mod parallel_delta_scan_tests {
+    use super::{ModuleDefinition, ServerConfig, apply_module_transfer_directives};
+
+    // WHY: a pull's sender runs in the daemon, and the client never forwards
+    // --parallel-delta-scan, so the module switch is the only thing that can
+    // turn the scan on there. Parsing it without copying it into the session
+    // config would leave the directive silently inert.
+    #[test]
+    fn module_switch_reaches_the_session_sender_config() {
+        for enabled in [false, true] {
+            let module = ModuleDefinition {
+                parallel_delta_scan: enabled,
+                ..ModuleDefinition::default()
+            };
+            let mut cfg = ServerConfig::default();
+            cfg.flags.parallel_delta_scan = !enabled;
+            apply_module_transfer_directives(&module, &mut cfg);
+            assert_eq!(cfg.flags.parallel_delta_scan, enabled);
+        }
+    }
+}
+
+#[cfg(test)]
 mod daemon_clean_fname_collapse_tests {
     use super::clamp_basis_to_module;
     use std::path::Path;
