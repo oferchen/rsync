@@ -836,8 +836,26 @@ jobs:
       # QUIC USO path, metadata, fast_io, transfer) gate the merge. A
       # `--workspace` run also builds the `oc-rsync` binary that the
       # subprocess integration tests spawn.
+      # Every test process runs under `tmp-runner`, which gives it a private
+      # %TEMP%: tempfile names drawn by different processes then cannot hit
+      # another process's delete-pending file, which Windows refuses with
+      # ACCESS_DENIED (see crates/test-support/src/tmp_runner.rs). The binary
+      # is copied out of target/ so the workspace build cannot replace it
+      # while nextest runs it.
+      - name: Build per-process temp-dir runner
+        if: needs.changes.outputs.docs_only != 'true'
+        shell: bash
+        run: |
+          cargo build --locked -p test-support --bin tmp-runner
+          cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
+
       - name: Test
         if: needs.changes.outputs.docs_only != 'true'
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+          # The isolation probes fail instead of skipping if the runner is
+          # not wrapping them.
+          OC_REQUIRE_TMP_RUNNER: "1"
         # `shell: bash` turns on pipefail, so the tee never hides a failure.
         shell: bash
         run: |
