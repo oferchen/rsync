@@ -1454,10 +1454,6 @@ impl CompatFlagsExchanger for MockNegotiator {
     fn parse_client_info<'a>(&self, _client_args: &'a [String]) -> std::borrow::Cow<'a, str> {
         std::borrow::Cow::Borrowed("fxCIvu")
     }
-
-    fn has_pre_release_v_flag(&self, _client_info: &str) -> bool {
-        false
-    }
 }
 
 impl CapabilityNegotiator for MockNegotiator {
