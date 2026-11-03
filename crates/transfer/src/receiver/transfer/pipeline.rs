@@ -435,6 +435,10 @@ impl ReceiverContext {
         // stream ("multiplexed frame truncated").
         ndx_write_codec: &mut MonotonicNdxWriter,
         ndx_read_codec: &mut NdxCodecEnum,
+        // Write the phase-ending NDX_DONE once the last request is out, as
+        // upstream's generator does without INC_RECURSE (generator.c:2831-2833),
+        // instead of leaving it to `finalize_transfer`.
+        end_phase_after_requests: bool,
     ) -> io::Result<PipelineResult> {
         use crate::disk_commit::{
             BackupConfig, DELAY_UPDATES_PARTIAL_DIR, DiskCommitConfig, PartialMode,
@@ -670,6 +674,7 @@ impl ReceiverContext {
                 )
             });
             let mut flushed_pending: usize = 0;
+            let mut phase_ended = false;
 
             loop {
                 // upstream: io.c:768 - perform_io() acts on got_kill_signal at
@@ -870,6 +875,11 @@ impl ReceiverContext {
                             pipeline.push(pending, (file_idx, file_path, file_entry, base_iflags));
                         }
                     }
+                }
+
+                if end_phase_after_requests && !phase_ended && file_iter.len() == 0 {
+                    self.write_early_generator_ndx_done(writer)?;
+                    phase_ended = true;
                 }
 
                 if pipeline.is_empty() {
