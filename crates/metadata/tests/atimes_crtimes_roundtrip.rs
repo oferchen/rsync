@@ -10,8 +10,8 @@
 //! atime/crtime have been read off the wire.
 //!
 //! Upstream references:
-//! - `target/interop/upstream-src/rsync-3.5.0/testsuite/atimes_test.py`
-//! - `target/interop/upstream-src/rsync-3.5.0/testsuite/crtimes_test.py`
+//! - `target/interop/upstream-src/rsync-3.5.1/testsuite/atimes_test.py`
+//! - `target/interop/upstream-src/rsync-3.5.1/testsuite/crtimes_test.py`
 //!   (3.5.0 replaced the 3.4.x shell `*.test` scripts with Python
 //!   rewrites of the same scenarios)
 //! - `rsync.c:set_file_attrs()` for the apply order (chown -> chmod ->

@@ -1238,7 +1238,7 @@ mod short_options_drift_tests {
     #[test]
     fn the_embedded_reference_matches_the_upstream_source() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/interop/upstream-src/rsync-3.5.0/options.c");
+            .join("../../target/interop/upstream-src/rsync-3.5.1/options.c");
         let Ok(src) = std::fs::read_to_string(&path) else {
             eprintln!(
                 "skipping: upstream options.c not present at {} (fetch via tools/ci/run_interop.sh)",

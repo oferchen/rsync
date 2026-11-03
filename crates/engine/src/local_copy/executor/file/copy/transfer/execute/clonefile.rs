@@ -127,8 +127,9 @@ pub(super) fn try_clone(
     // will not reflink" falls through to the standard copy path, which anchors
     // its own create.
     //
-    // upstream: `rsync-3.5.0/receiver.c` has no CoW fast path at all - it
-    // always stages into a temp and commits with `do_rename_at()`, inheriting
+    // upstream: `rsync-3.5.1/receiver.c` has no CoW fast path at all - it
+    // always stages into a temp and commits with `robust_rename()` (`rsync.c:918`),
+    // which renames through `do_rename_at()` (`util1.c:620`), inheriting
     // confinement from the rename. This keeps oc's optimisation on the same
     // invariant rather than beside it.
     // The clone READS the source, so the source side takes the SAME confined
