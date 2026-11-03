@@ -319,6 +319,19 @@ time on each transfer (`crates/transfer/src/generator/lazy_flist.rs`), not
 cached per process. The flag is removed once the lazy producer becomes the
 default; see `docs/design/lazy-sender-inc-recurse.md` section 8. Default: off.
 
+### OC_RSYNC_PARALLEL_DELTA_SCAN
+Remote-shell server switch for the parallel delta scan on pulls. The client
+never forwards `--parallel-delta-scan` (an upstream server rejects unknown
+options), so when oc runs as a `--server` sender it takes the switch from this
+variable instead. Enabling values are `1`, `on`, `true` and `yes`
+(case-insensitive, surrounding whitespace ignored); unset, empty or any other
+value keeps the sequential scan. Set it in the environment the remote shell
+starts the server in (for example via `sshd`'s `SetEnv`/`AcceptEnv` or a
+wrapper). The same size and duplicate-free-basis gates as the client flag
+apply, and nothing goes on the wire. A daemon uses the `parallel delta scan`
+directive below instead. Read by `crates/cli/src/frontend/server/parallel_delta_env.rs`.
+Default: off.
+
 ### OC_RSYNC_PULL_INC_RECURSE
 
 Override flag for incremental recursion on pulls. By default, pulling clients
@@ -395,6 +408,10 @@ expansion has no oc-only forms: like upstream, oc expands only `%NAME%`
 references through the environment and the `RSYNC_*` connection variables.
 Directives:
 
+- `parallel delta scan` (global default, per-module override; boolean,
+  default `no`) - lets the module's sender use the parallel delta scan on
+  pulls, the daemon counterpart of `OC_RSYNC_PARALLEL_DELTA_SCAN`. Inert when
+  the module receives; nothing goes on the wire.
 - `quic cert file`, `quic key file`, `quic client ca file`, `quic port`
   (global, `quic` feature) - QUIC listener identity and port.
 

@@ -128,6 +128,9 @@ fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerC
     // global, a module with `insecure links = yes` switches off the
     // confinement of a concurrent connection to a module that never opted out.
     cfg.connection.daemon_insecure_links = module.insecure_links;
+    // The oc-only `parallel delta scan` module switch: the client never
+    // forwards --parallel-delta-scan, so the daemon decides for its sender.
+    cfg.flags.parallel_delta_scan = module.parallel_delta_scan;
 
     // upstream: clientserver.c:1193-1194
     if module.ignore_errors {

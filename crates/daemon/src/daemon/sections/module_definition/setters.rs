@@ -48,6 +48,7 @@ last_wins_setters! {
     set_outgoing_chmod => outgoing_chmod: Option<String>,
     set_fake_super => fake_super: bool,
     set_insecure_links => insecure_links: bool,
+    set_parallel_delta_scan => parallel_delta_scan: bool,
     set_munge_symlinks => munge_symlinks: Option<bool>,
     set_max_verbosity => max_verbosity: i32,
     set_ignore_errors => ignore_errors: bool,

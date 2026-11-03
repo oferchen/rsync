@@ -227,6 +227,10 @@ impl ModuleDefinitionBuilder {
                 .outgoing_chmod
                 .unwrap_or_else(|| default_outgoing_chmod.map(str::to_string)),
             fake_super: self.fake_super.or(defaults.fake_super).unwrap_or(false),
+            parallel_delta_scan: self
+                .parallel_delta_scan
+                .or(defaults.parallel_delta_scan)
+                .unwrap_or(false),
             insecure_links: self
                 .insecure_links
                 .or(defaults.insecure_links)
