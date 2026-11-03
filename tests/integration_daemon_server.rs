@@ -20,10 +20,10 @@ use integration::helpers::*;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tempfile::tempdir;
 
@@ -74,22 +74,15 @@ impl Drop for EnvGuard {
     }
 }
 
-/// Allocate a unique test port by letting the OS assign an ephemeral port.
+/// Binds the daemon's loopback listener before the daemon starts.
 ///
-/// Binds to port 0 so the kernel picks a free port, reads the assigned port,
-/// then drops the listener. This eliminates the TOCTOU race from the previous
-/// approach (bind-check-drop-rebind) where another process could steal the
-/// port between drop and daemon bind.
-///
-/// The residual race window (between our drop and daemon bind) is minimized
-/// because ephemeral ports are not immediately recycled by the kernel.
-/// Combined with nextest retries in `.config/nextest.toml`, this is robust
-/// against CI port contention.
-fn allocate_test_port() -> u16 {
+/// The listener goes to the daemon through `pre_bound_listener`, so there is
+/// no window in which another process can take the port, and a client that
+/// connects before the accept loop runs simply queues in the backlog.
+fn bound_listener() -> (TcpListener, u16) {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).expect("bind to ephemeral port");
     let port = listener.local_addr().expect("local addr").port();
-    drop(listener);
-    port
+    (listener, port)
 }
 
 /// The digest name list a protocol > 31 client must advertise.
@@ -145,8 +138,8 @@ fn send_client_greeting(stream: &mut TcpStream, protocol: u32) {
 /// clean exit as a pass, so every assertion in the file was unreachable.
 ///
 /// The window is not the spawn itself - `thread::spawn` returns before the
-/// daemon thread reaches the fork. It is the first blocking socket call:
-/// `connect_with_retries` parks the test thread for exactly as long as the
+/// daemon thread reaches the fork. It is the first blocking socket call: the
+/// client's first read parks the test thread for exactly as long as the
 /// daemon needs to detach. An unconditional `panic!` placed straight after the
 /// spawn therefore still fires, while the same `panic!` placed one line later,
 /// after the connect, never runs - all 25 tests reported PASSED with 14 such
@@ -159,37 +152,13 @@ fn no_detach() -> OsString {
     OsString::from("--no-detach")
 }
 
-/// Connect to daemon with retries.
-///
-/// Uses aggressive initial retries (10ms) ramping to 200ms, with a 60s
-/// deadline. The generous timeout accommodates slow CI runners (especially
-/// nightly builds under load).
-fn connect_with_retries(port: u16) -> TcpStream {
-    const INITIAL_BACKOFF: Duration = Duration::from_millis(10);
-    const MAX_BACKOFF: Duration = Duration::from_millis(200);
-    const TIMEOUT: Duration = Duration::from_secs(60);
-
-    let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let deadline = Instant::now() + TIMEOUT;
-    let mut backoff = INITIAL_BACKOFF;
-
-    loop {
-        match TcpStream::connect_timeout(&target, Duration::from_millis(500)) {
-            Ok(stream) => {
-                stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
-                stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
-                return stream;
-            }
-            Err(error) => {
-                if Instant::now() >= deadline {
-                    panic!("failed to connect to daemon within timeout: {error}");
-                }
-
-                thread::sleep(backoff);
-                backoff = (backoff.saturating_mul(2)).min(MAX_BACKOFF);
-            }
-        }
-    }
+/// Connects to a daemon whose listener [`bound_listener`] already holds.
+fn connect(port: u16) -> TcpStream {
+    let stream =
+        TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect to the pre-bound daemon");
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
+    stream
 }
 
 #[test]
@@ -198,7 +167,7 @@ fn server_lists_modules_on_request() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -212,11 +181,12 @@ fn server_lists_modules_on_request() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -285,7 +255,7 @@ fn server_lists_empty_when_no_modules() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -295,11 +265,12 @@ fn server_lists_empty_when_no_modules() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -337,7 +308,7 @@ fn server_filters_unlisted_modules() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
     let temp = tempdir().expect("tempdir");
 
     // Create config with one unlisted module
@@ -365,11 +336,12 @@ fn server_filters_unlisted_modules() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
     // Read greeting
@@ -428,7 +400,7 @@ fn server_sends_protocol_greeting_first() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -438,11 +410,12 @@ fn server_sends_protocol_greeting_first() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let stream = connect_with_retries(port);
+    let stream = connect(port);
     let mut reader = BufReader::new(stream);
 
     // Should receive greeting without sending anything
@@ -464,7 +437,7 @@ fn server_greeting_includes_version() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -474,11 +447,12 @@ fn server_greeting_includes_version() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let stream = connect_with_retries(port);
+    let stream = connect(port);
     let mut reader = BufReader::new(stream);
 
     let mut line = String::new();
@@ -503,7 +477,7 @@ fn server_greeting_includes_digests_for_protocol_31_plus() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -513,11 +487,12 @@ fn server_greeting_includes_digests_for_protocol_31_plus() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let stream = connect_with_retries(port);
+    let stream = connect(port);
     let mut reader = BufReader::new(stream);
 
     let mut line = String::new();
@@ -557,7 +532,7 @@ fn server_accepts_older_protocol_version() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -567,11 +542,12 @@ fn server_accepts_older_protocol_version() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -605,7 +581,7 @@ fn server_returns_error_for_unknown_module() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -615,11 +591,12 @@ fn server_returns_error_for_unknown_module() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -660,7 +637,7 @@ fn server_returns_error_for_access_denied() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
     let temp = tempdir().expect("tempdir");
 
     // Create config with hosts_allow that denies localhost
@@ -684,11 +661,12 @@ fn server_returns_error_for_access_denied() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -726,7 +704,7 @@ fn server_closes_connection_after_error() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -736,11 +714,12 @@ fn server_closes_connection_after_error() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -787,7 +766,7 @@ fn server_handles_empty_module_request() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -797,11 +776,12 @@ fn server_handles_empty_module_request() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -841,7 +821,7 @@ fn server_handles_early_disconnect() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -851,13 +831,14 @@ fn server_handles_early_disconnect() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
     // Connect and immediately disconnect after greeting
     {
-        let stream = connect_with_retries(port);
+        let stream = connect(port);
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
         reader.read_line(&mut line).expect("greeting");
@@ -877,7 +858,7 @@ fn server_requests_auth_for_protected_module() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
     let temp = tempdir().expect("tempdir");
 
     // Create secrets file
@@ -907,11 +888,12 @@ fn server_requests_auth_for_protected_module() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -948,7 +930,7 @@ fn server_enforces_max_connections() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
     let temp = tempdir().expect("tempdir");
 
     // Create config with max connections = 1
@@ -977,12 +959,13 @@ fn server_enforces_max_connections() {
             OsString::from("2"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
     // First connection
-    let mut stream1 = connect_with_retries(port);
+    let mut stream1 = connect(port);
     let mut reader1 = BufReader::new(stream1.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -1046,7 +1029,7 @@ fn server_lists_modules_with_comments() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -1058,11 +1041,12 @@ fn server_lists_modules_with_comments() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -1110,7 +1094,7 @@ fn server_handles_invalid_greeting_response() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -1120,11 +1104,12 @@ fn server_handles_invalid_greeting_response() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -1163,7 +1148,7 @@ fn server_sanitizes_module_name_in_error() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, "0");
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, "0");
 
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
@@ -1173,11 +1158,12 @@ fn server_sanitizes_module_name_in_error() {
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read greeting
@@ -1216,7 +1202,7 @@ fn start_auth_daemon() -> (
     tempfile::TempDir,
     thread::JoinHandle<Result<(), daemon::DaemonError>>,
 ) {
-    let port = allocate_test_port();
+    let (listener, port) = bound_listener();
     let temp = tempdir().expect("tempdir");
 
     let secrets_path = temp.path().join("secrets.txt");
@@ -1244,6 +1230,7 @@ fn start_auth_daemon() -> (
             OsString::from("--once"),
             no_detach(),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let handle = thread::spawn(move || run_daemon(config));
@@ -1259,7 +1246,7 @@ fn perform_auth_handshake(
     client_protocol: u8,
     digest: daemon::auth::DaemonAuthDigest,
 ) -> String {
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read server greeting
@@ -1457,7 +1444,7 @@ fn auth_flow_wrong_password_rejected() {
 
     let (port, _temp, handle) = start_auth_daemon();
 
-    let mut stream = connect_with_retries(port);
+    let mut stream = connect(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
