@@ -52,6 +52,8 @@
 mod apply;
 mod default_perms;
 mod error;
+#[cfg(target_os = "linux")]
+mod local;
 mod perms;
 #[cfg(target_os = "linux")]
 mod pinned;
@@ -68,6 +70,8 @@ mod tests;
 
 pub use apply::{apply_acls_from_cache, store_acls_via_fake_super};
 pub use default_perms::default_perms_for_dir;
+#[cfg(target_os = "linux")]
+pub use local::{AclReadError, LocalAcls};
 #[cfg(target_os = "linux")]
 pub(crate) use pinned::sync_acls_pinned;
 pub use read::get_rsync_acl;

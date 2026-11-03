@@ -301,6 +301,9 @@ pub fn sync_acls_confined(
 
 pub use acl_idmap::AclIdMapper;
 
+#[cfg(all(feature = "acl", target_os = "linux"))]
+pub use acl_exacl::{AclReadError, LocalAcls};
+
 #[cfg(all(
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
@@ -393,13 +396,13 @@ pub use xattr_send::{XattrRole, XattrSendOptions, XattrSyncFilters, dest_xattrs_
 #[cfg(all(feature = "xattr", any(unix, windows)))]
 pub use xattr::{
     apply_xattrs_from_list, read_xattrs_for_wire, strip_source_internal_xattrs,
-    strip_source_xattrs, sync_xattrs, xattrs_match,
+    strip_source_xattrs, sync_xattrs, sync_xattrs_from_list, xattrs_match,
 };
 
 #[cfg(not(all(feature = "xattr", any(unix, windows))))]
 pub use xattr_stub::{
     apply_xattrs_from_list, read_xattrs_for_wire, strip_source_internal_xattrs,
-    strip_source_xattrs, sync_xattrs, xattrs_match,
+    strip_source_xattrs, sync_xattrs, sync_xattrs_from_list, xattrs_match,
 };
 
 pub use copy_as::{CopyAsIds, become_copy_as_user, parse_copy_as_spec};
