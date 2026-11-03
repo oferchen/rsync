@@ -416,3 +416,68 @@ fn a_received_file_costs_the_generator_one_notice_under_remove_source_files() {
         );
     }
 }
+
+/// `MPLEX_BASE` plus `MSG_ERROR_EXIT` (rsync.h).
+const MSG_ERROR_EXIT_TAG: u32 = 7 + 86;
+
+/// Plays a daemon that ends the run with `MSG_ERROR_EXIT` carrying `code`
+/// instead of sending the file list.
+fn serve_error_exit(listener: TcpListener, code: i32) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let (mut sock, mut reader) = accept_and_set_up(listener);
+        let mut frame = ((MSG_ERROR_EXIT_TAG << 24) | 4).to_le_bytes().to_vec();
+        frame.extend_from_slice(&code.to_le_bytes());
+        sock.write_all(&frame).expect("MSG_ERROR_EXIT");
+        let mut sink = [0u8; 4096];
+        while matches!(reader.read(&mut sink), Ok(n) if n > 0) {}
+    })
+}
+
+/// upstream: io.c:1892-1930 - the peer's `MSG_ERROR_EXIT` ends the client
+/// with the peer's code through `_exit_cleanup(val, __FILE__, 0 - __LINE__)`,
+/// and the negative line keeps log_exit() quiet (cleanup.c:221-225): the peer
+/// already reported the failure. rsync 3.5.1 against this stream exits 11 and
+/// prints nothing; with `-v` only its `receiving file list ...` banner.
+#[test]
+fn a_peer_error_exit_ends_the_pull_with_its_code_and_no_trailer() {
+    for extra in [&[][..], &["-v"][..]] {
+        let tmp = TempDir::new().expect("tempdir");
+        let (code, text) = pull_from(
+            |listener| serve_error_exit(listener, 11),
+            extra,
+            &format!("{}/", tmp.path().display()),
+        );
+        assert_eq!(code, Some(11), "{extra:?}: {text}");
+        assert!(
+            !text.contains("(code 11)"),
+            "{extra:?}: no trailer after the peer's MSG_ERROR_EXIT: {text}"
+        );
+    }
+}
+
+/// upstream: cleanup.c:222-224 - a `--log-file` run still calls log_exit()
+/// after `MSG_ERROR_EXIT` unless `INFO_GTE(STATS, 1)`, which `-v` sets
+/// (options.c:257). rsync 3.5.1 prints `rsync error: error in file IO
+/// (code 11) at io.c(1930) [Receiver=3.5.1]` for the first and nothing for
+/// the second.
+#[test]
+fn a_log_file_run_without_stats_keeps_the_trailer_after_a_peer_error_exit() {
+    for (extra, trailer_expected) in [(&[][..], true), (&["-v"][..], false)] {
+        let tmp = TempDir::new().expect("tempdir");
+        let log = format!("--log-file={}", tmp.path().join("client.log").display());
+        let mut args: Vec<&str> = extra.to_vec();
+        args.push(&log);
+        let dest = tmp.path().join("dest");
+        let (code, text) = pull_from(
+            |listener| serve_error_exit(listener, 11),
+            &args,
+            &format!("{}/", dest.display()),
+        );
+        assert_eq!(code, Some(11), "{extra:?}: {text}");
+        assert_eq!(
+            text.contains("error in file IO (code 11)"),
+            trailer_expected,
+            "{extra:?}: {text}"
+        );
+    }
+}

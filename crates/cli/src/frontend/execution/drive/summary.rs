@@ -108,6 +108,7 @@ where
         eight_bit_output,
         log_file,
     } = inputs;
+    let has_log_file = log_file.is_some();
 
     // `StderrMode::All` is handled by the caller setting `msgs_to_stderr = true`.
     // `Client` mode applies to remote transfers only (server-side message routing);
@@ -409,7 +410,11 @@ where
         return core::exit_code::record_exit(core::exit_code::process_latch(), code);
     };
 
-    emit_error_report(&error, stderr);
+    // upstream: cleanup.c:221-225 - after the peer's MSG_ERROR_EXIT only a
+    // `--log-file` run without `--info=stats` still calls log_exit().
+    let trailer =
+        !error.ended_by_peer_error_exit() || (has_log_file && verbosity == 0 && stats_level == 0);
+    emit_error_report(&error, trailer, stderr);
     // 430: latch the decided error code at the site that maps it, so a
     // second interrupt during unwinding cannot overwrite it with
     // RERR_SIGNAL (upstream: cleanup.c:113-117).
@@ -421,12 +426,15 @@ where
 ///
 /// upstream: a forked pull client's receiver reports and exits before the
 /// generator, its parent, does (main.c:1077 do_recv()).
-fn emit_error_report<Err>(error: &core::client::ClientError, stderr: &mut MessageSink<Err>)
-where
+fn emit_error_report<Err>(
+    error: &core::client::ClientError,
+    trailer: bool,
+    stderr: &mut MessageSink<Err>,
+) where
     Err: Write,
 {
     if let Some(earlier) = error.preceding() {
-        emit_error_report(earlier, stderr);
+        emit_error_report(earlier, true, stderr);
     }
     // upstream: an unprefixed rprintf(FERROR, ...) cause that precedes the
     // log_exit() trailer, e.g. xattrs.c:1253-1258 get_stat_xattr().
@@ -438,6 +446,9 @@ where
     if let Some(line) = error.program_line() {
         let program = stderr.brand().client_program_name();
         let _ = writeln!(stderr.writer_mut(), "{program}: {line}");
+    }
+    if !trailer {
+        return;
     }
     let message: &Message = error.message();
     emit_message_with_fallback(

@@ -18,7 +18,9 @@ use engine::batch::BatchWriter;
 use rsync_io::ssh::SshConnection;
 
 use super::super::super::config::ClientConfig;
-use super::super::super::error::{ClientError, invalid_argument_error, remote_exit_error};
+use super::super::super::error::{
+    ClientError, invalid_argument_error, peer_error_exit_error, remote_exit_error,
+};
 use super::super::super::progress::ClientProgressObserver;
 use super::super::super::summary::{ClientEvent, ClientSummary};
 use super::super::batch_support::{BatchContext, build_batch_context, build_batch_recording};
@@ -443,7 +445,7 @@ pub(in crate::client::remote) fn transfer_failure_error(
     // local `ConnectionAborted` and reports RERR_SOCKETIO (10) whatever
     // the server actually exited with.
     if let Some(code) = crate::server::remote_exit_code(&transfer_error) {
-        return remote_exit_error(ExitCode::from_raw(code), side.exit_role());
+        return peer_error_exit_error(ExitCode::from_raw(code), side.exit_role());
     }
     if let Some(error) = crate::client::error::corrupt_fake_super_destination_error(&transfer_error)
     {
