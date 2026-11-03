@@ -131,6 +131,7 @@ pub mod async_io;
 
 pub mod block_touch;
 pub mod cleanup;
+pub mod commit_failure;
 pub mod concurrent_delta;
 pub mod delete;
 pub mod delta;

@@ -5,6 +5,8 @@ use std::time::{Duration, SystemTime};
 
 use thiserror::Error;
 
+use crate::commit_failure::{CommitDisposition, commit_op_destination, commit_op_failure};
+
 use super::LocalCopyReport;
 use super::filter_program::{
     FILE_IO_EXIT_CODE, INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE, MISSING_OPERANDS_EXIT_CODE,
@@ -37,6 +39,13 @@ pub fn upstream_io_error(error: &io::Error) -> String {
         },
         None => full,
     }
+}
+
+/// A `NotFound` is a vanished source only when no receiver stage claimed it:
+/// the `ENOENT` an in-place open reports after its no-create retry names the
+/// destination, not a source that disappeared.
+fn is_vanished_source(source: &io::Error) -> bool {
+    source.kind() == io::ErrorKind::NotFound && commit_op_failure(source).is_none()
 }
 
 /// Error produced when planning or executing a local copy fails.
@@ -281,7 +290,7 @@ impl LocalCopyError {
             LocalCopyErrorKind::MissingSourceOperands => MISSING_OPERANDS_EXIT_CODE,
             LocalCopyErrorKind::InvalidArgument(_) => INVALID_OPERAND_EXIT_CODE,
             LocalCopyErrorKind::Io { source, .. } => {
-                if source.kind() == io::ErrorKind::NotFound {
+                if is_vanished_source(source) {
                     VANISHED_EXIT_CODE
                 } else {
                     INVALID_OPERAND_EXIT_CODE
@@ -310,7 +319,7 @@ impl LocalCopyError {
             LocalCopyErrorKind::MissingSourceOperands => "RERR_SYNTAX",
             LocalCopyErrorKind::InvalidArgument(_) => "RERR_PARTIAL",
             LocalCopyErrorKind::Io { source, .. } => {
-                if source.kind() == io::ErrorKind::NotFound {
+                if is_vanished_source(source) {
                     "RERR_VANISHED"
                 } else {
                     "RERR_PARTIAL"
@@ -350,20 +359,69 @@ impl LocalCopyError {
     pub fn is_vanished_error(&self) -> bool {
         matches!(
             &self.kind,
-            LocalCopyErrorKind::Io { source, .. }
-                if source.kind() == io::ErrorKind::NotFound
+            LocalCopyErrorKind::Io { source, .. } if is_vanished_source(source)
         )
     }
 
     /// The path a vanished-file error names, or `None` for any other error.
     pub(crate) fn vanished_path(&self) -> Option<&Path> {
         match &self.kind {
-            LocalCopyErrorKind::Io { path, source, .. }
-                if source.kind() == io::ErrorKind::NotFound =>
-            {
+            LocalCopyErrorKind::Io { path, source, .. } if is_vanished_source(source) => {
                 Some(path.as_path())
             }
             _ => None,
+        }
+    }
+
+    /// Reports a commit-path failure the way upstream's receiver does and
+    /// decides whether the walk carries on.
+    ///
+    /// A failed temp create, open or rename into place prints the same
+    /// `FERROR_XFER` line a network receiver does and comes back as a reported
+    /// error, so the run goes on to exit 23. A failed staging-dir create prints
+    /// its plain `FERROR` line and the file is dropped with no error at all
+    /// (`T::default()`). Any other error, or one already printed, is returned
+    /// unchanged.
+    ///
+    /// `destination_root` is the receiver's working directory, which upstream's
+    /// rename, copy and partial-dir lines name their file relative to.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:465-468`, `receiver.c:1242-1261`, `rsync.c:918-927`.
+    /// - `receiver.c:1319-1325` - the staging-dir arm.
+    pub(crate) fn report_commit_failure<T: Default>(
+        self,
+        destination_root: &Path,
+    ) -> Result<T, Self> {
+        let LocalCopyErrorKind::Io { source, .. } = &self.kind else {
+            return Err(self);
+        };
+        let disposition = CommitDisposition::of(source);
+        if self.reported
+            || !matches!(
+                disposition,
+                CommitDisposition::SkipFile | CommitDisposition::Discard
+            )
+        {
+            return Err(self);
+        }
+        let Some((op, operand)) = commit_op_failure(source) else {
+            return Err(self);
+        };
+        let target = commit_op_destination(source)
+            .map(|target| target.strip_prefix(destination_root).unwrap_or(target));
+        eprintln!(
+            "{}",
+            op.failure_line(
+                &logging::full_fname(operand),
+                target,
+                &upstream_io_error(source)
+            )
+        );
+        match disposition {
+            CommitDisposition::Discard => Ok(T::default()),
+            _ => Err(self.reported()),
         }
     }
 
@@ -904,5 +962,84 @@ mod tests {
                 .to_string()
                 .starts_with("link_stat \"/tmp/nope\" failed")
         );
+    }
+
+    /// A missing file the receiver tried to create or open is the receiver's
+    /// failure, not a vanished source: upstream says "file has vanished" (exit
+    /// 24) only from the sender's own open (sender.c:715), and the receiver's
+    /// `open %s failed` is FERROR_XFER (exit 23). The commit-op tag is what
+    /// tells the two apart, never the errno.
+    #[test]
+    fn a_tagged_not_found_is_a_receiver_failure_not_a_vanished_source() {
+        use crate::commit_failure::{CommitOp, attach_commit_op};
+        let path = Path::new("/dst/a");
+        let not_found = || io::Error::from(ErrorKind::NotFound);
+
+        let source_gone = LocalCopyError::io("copy file", path, not_found());
+        assert!(source_gone.is_vanished_error());
+        assert_eq!(source_gone.exit_code(), VANISHED_EXIT_CODE);
+
+        let open_failed = LocalCopyError::io(
+            "copy file",
+            path,
+            attach_commit_op(CommitOp::Open, path, not_found()),
+        );
+        assert!(!open_failed.is_vanished_error());
+        assert_eq!(open_failed.vanished_path(), None);
+        assert_eq!(open_failed.exit_code(), INVALID_OPERAND_EXIT_CODE);
+    }
+
+    /// Only the per-file commit failures are printed and marked reported, so
+    /// the run carries on to exit 23; a fatal backup or close failure, and an
+    /// untagged error, are handed back for the caller's abort path unchanged.
+    ///
+    /// upstream: receiver.c:465-468, receiver.c:1242-1261, rsync.c:918-927 are
+    /// per-file; rsync.c:897-900 and receiver.c:1296-1300 exit RERR_FILEIO.
+    #[test]
+    fn report_commit_failure_marks_only_per_file_commit_failures_reported() {
+        use crate::commit_failure::{CommitOp, attach_commit_op};
+        let root = Path::new("/dst");
+        let path = Path::new("/dst/a");
+        let tagged = |op| {
+            LocalCopyError::io(
+                "copy file",
+                path,
+                attach_commit_op(op, path, io::Error::from(ErrorKind::PermissionDenied)),
+            )
+        };
+        for op in [
+            CommitOp::Mkstemp,
+            CommitOp::Open,
+            CommitOp::Rename,
+            CommitOp::Copy,
+        ] {
+            let error = tagged(op)
+                .report_commit_failure::<()>(root)
+                .expect_err("a skipped file is a transfer error");
+            assert!(error.is_reported(), "{op:?} skips the file");
+        }
+        for op in [CommitOp::Backup, CommitOp::Close] {
+            let error = tagged(op)
+                .report_commit_failure::<()>(root)
+                .expect_err("an abort stays an error");
+            assert!(!error.is_reported(), "{op:?} aborts the run");
+        }
+        let untagged = LocalCopyError::io(
+            "copy file",
+            path,
+            io::Error::from(ErrorKind::PermissionDenied),
+        );
+        assert!(
+            !untagged
+                .report_commit_failure::<()>(root)
+                .expect_err("untagged stays an error")
+                .is_reported()
+        );
+        // upstream: receiver.c:1319-1325 - the file is dropped, the run is not
+        // failed.
+        assert!(matches!(
+            tagged(CommitOp::PartialDir).report_commit_failure::<bool>(root),
+            Ok(false)
+        ));
     }
 }
