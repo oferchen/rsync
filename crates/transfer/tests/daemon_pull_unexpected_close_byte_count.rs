@@ -77,10 +77,21 @@ enum End {
 /// Answers the client's greeting, module and arguments, then sends the setup
 /// bytes once it has read them; returns the reader for the rest.
 fn accept_and_set_up(listener: TcpListener) -> (TcpStream, BufReader<TcpStream>) {
+    let (mut sock, mut reader) = accept_arguments(listener, b"@RSYNCD: 30.0\n");
+    sock.write_all(&SETUP).expect("setup");
+    reader
+        .read_exact(&mut [0u8; CLIENT_FILTER_LIST])
+        .expect("client filter list");
+    (sock, reader)
+}
+
+/// Answers the client's greeting with `greeting`, accepts the module and
+/// reads the arguments; returns the socket and the reader for the rest.
+fn accept_arguments(listener: TcpListener, greeting: &[u8]) -> (TcpStream, BufReader<TcpStream>) {
     let (mut sock, _) = listener.accept().expect("accept the client");
     sock.set_read_timeout(Some(Duration::from_secs(30)))
         .expect("read timeout");
-    sock.write_all(b"@RSYNCD: 30.0\n").expect("greeting");
+    sock.write_all(greeting).expect("greeting");
     let mut reader = BufReader::new(sock.try_clone().expect("clone socket"));
     let mut line = String::new();
     reader.read_line(&mut line).expect("client greeting");
@@ -88,7 +99,7 @@ fn accept_and_set_up(listener: TcpListener) -> (TcpStream, BufReader<TcpStream>)
     reader.read_line(&mut line).expect("module line");
 
     sock.write_all(b"@RSYNCD: OK\n").expect("module accepted");
-    // Protocol 30 arguments are NUL-terminated, closed by an empty one.
+    // Protocol 30+ arguments are NUL-terminated, closed by an empty one.
     let mut arg = Vec::new();
     loop {
         arg.clear();
@@ -97,10 +108,6 @@ fn accept_and_set_up(listener: TcpListener) -> (TcpStream, BufReader<TcpStream>)
             break;
         }
     }
-    sock.write_all(&SETUP).expect("setup");
-    reader
-        .read_exact(&mut [0u8; CLIENT_FILTER_LIST])
-        .expect("client filter list");
     (sock, reader)
 }
 
@@ -478,6 +485,70 @@ fn a_log_file_run_without_stats_keeps_the_trailer_after_a_peer_error_exit() {
             text.contains("error in file IO (code 11)"),
             trailer_expected,
             "{extra:?}: {text}"
+        );
+    }
+}
+
+/// Plays a daemon that sends `compat` as its compat flags at `greeting`'s
+/// protocol, reads the client's checksum list when `negotiates`, then resets
+/// the connection while the client waits for the daemon's next bytes.
+fn serve_handshake_reset(
+    listener: TcpListener,
+    greeting: &'static [u8],
+    compat: &'static [u8],
+    negotiates: bool,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let (mut sock, mut reader) = accept_arguments(listener, greeting);
+        sock.write_all(compat).expect("compat flags");
+        if negotiates {
+            let mut len = [0u8; 1];
+            reader.read_exact(&mut len).expect("checksum list length");
+            let mut list = vec![0u8; usize::from(len[0])];
+            reader.read_exact(&mut list).expect("client checksum list");
+        }
+        socket2::SockRef::from(&sock)
+            .set_linger(Some(Duration::ZERO))
+            .expect("zero linger");
+    })
+}
+
+/// upstream: io.c:351-358 safe_read() - before multiplexed I/O starts, a
+/// failed read is `safe_read failed to read %d bytes` and RERR_STREAMIO, not
+/// perform_io()'s `read error` and RERR_SOCKETIO. `len` is what the read
+/// asked for: the 1-byte length of the daemon's checksum list
+/// (compat.c:369-372 recv_negotiate_str()), or the 4-byte checksum seed
+/// (compat.c:826). rsync 3.5.1 against these streams prints exactly the
+/// lines below and exits 12.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_reset_during_the_handshake_is_safe_reads_failure() {
+    for (greeting, compat, negotiates, len) in [
+        (&b"@RSYNCD: 31.0\n"[..], &[0x80u8, 0x80][..], true, 1),
+        (&b"@RSYNCD: 30.0\n"[..], &[0x40u8][..], false, 4),
+    ] {
+        let tmp = TempDir::new().expect("tempdir");
+        let protocol = if negotiates {
+            "--protocol=31"
+        } else {
+            "--protocol=30"
+        };
+        let (code, text) = pull_from(
+            |listener| serve_handshake_reset(listener, greeting, compat, negotiates),
+            &[protocol],
+            &format!("{}/", tmp.path().display()),
+        );
+        assert_eq!(code, Some(12), "{protocol}: {text}");
+        assert_eq!(
+            report_lines(&text),
+            [
+                format!(
+                    "[Receiver] safe_read failed to read {len} bytes: \
+                     Connection reset by peer (104)"
+                ),
+                trailer("error in rsync protocol data stream", 12, "Receiver"),
+            ],
+            "{protocol}: {text}"
         );
     }
 }
