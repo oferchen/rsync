@@ -81,7 +81,7 @@ jobs:
           path: |
             target/interop/upstream-src
             target/interop/upstream-install
-          key: upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          key: upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-${{ hashFiles('tools/ci/upstream-tarballs.sha256', 'tools/ci/run_interop.sh') }}
           restore-keys: |
             upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-
 
@@ -89,7 +89,7 @@ jobs:
         if: steps.cache-rsync.outputs.cache-hit != 'true'
         uses: ./.github/actions/fetch-upstream-rsync
         with:
-          versions: '2.6.3 2.6.9 3.0.9 3.1.3 3.4.4 3.5.0 3.5.1'
+          versions: '2.6.3 2.6.9 3.0.9 3.1.3 3.4.1 3.4.4 3.5.0 3.5.1'
 
       - name: Build upstream rsync
         if: steps.cache-rsync.outputs.cache-hit != 'true'
@@ -115,55 +115,32 @@ jobs:
       # The upstream_compat oracle cells below spawn the oc-rsync binary through
       # the test-support resolver, which only looks in the profile directory
       # Cargo baked in. The `-p bin` cells link the binary as a side effect of
-      # their own build, but the `-p transfer` MSG_NO_SEND cell does not, so
-      # build it once here first. Keeps the interop job covered under the
+      # their own build, but the other packages' cells do not, so build it
+      # once here first. Keeps the interop job covered under the
       # bin-build-coverage guard.
       - name: Build oc-rsync (for subprocess integration tests)
         run: cargo build --locked -p bin --bin oc-rsync
 
-      # INC-S1a oracle: oc sender vs the real upstream 3.5.1 receiver under
-      # INC_RECURSE. Gated on OC_RSYNC_UPSTREAM_COMPAT so the standard
-      # nextest cells stay upstream-binary-free; this cell has the
-      # upstream-install tree built above.
-      - name: Run inc_recurse sender oracle (oc sender vs upstream receiver)
+      # Every cross-implementation cell: each top-level test file that calls
+      # test_support::require_upstream_rsync, derived from the tree by
+      # upstream_oracle_tests.py. OC_RSYNC_UPSTREAM_COMPAT=1 turns a missing or
+      # wrong oracle into a test failure instead of a skip, and check-log
+      # rejects any skip line and a run of zero tests.
+      - name: Run upstream oracle cells
         env:
           OC_RSYNC_UPSTREAM_COMPAT: "1"
-        run: cargo nextest run --locked --profile ci -p bin -E 'binary(upstream_compat_inc_recurse_sender_oracle)'
-
-      # INC-S1b oracle: a real upstream 3.5.1 sender vs oc as the
-      # server-receiver under INC_RECURSE (the receiver-facing twin of the
-      # sender oracle above). Encodes oc's CURRENT non-negotiation of
-      # CF_INC_RECURSE as its baseline; the assertion flips when #205 enables
-      # the receiver arm. Same OC_RSYNC_UPSTREAM_COMPAT gate.
-      - name: Run inc_recurse receiver oracle (upstream sender vs oc receiver)
-        env:
-          OC_RSYNC_UPSTREAM_COMPAT: "1"
-        run: cargo nextest run --locked --profile ci -p bin -E 'binary(upstream_compat_inc_recurse_receiver_oracle)'
-
-      # MSG_NO_SEND out-of-order oracle: a real upstream 3.5.0 sender declines a
-      # file it cannot open, emitting MSG_NO_SEND for a later NDX while oc's
-      # receiver still awaits an earlier one. Pins that oc retires the declined
-      # entry by index (io.c:1225 got_flist_entry_status) and lands the readable
-      # files instead of aborting the whole transfer as a desync. Same
-      # OC_RSYNC_UPSTREAM_COMPAT gate; the 3.5.0 install tree was built above.
-      - name: Run MSG_NO_SEND out-of-order oracle (upstream sender vs oc receiver)
-        env:
-          OC_RSYNC_UPSTREAM_COMPAT: "1"
-        run: cargo nextest run --locked --profile ci -p transfer -E 'binary(upstream_compat_no_send_out_of_order)'
-      # Delta token oracle: an upstream client pulls the same repeated-block
-      # and sparse-image fixtures from an upstream sender and from oc, and the
-      # captured sender streams must be byte-identical (match.c hash_search()).
-      - name: Run delta token parity oracle (oc sender vs upstream sender)
-        env:
-          OC_RSYNC_UPSTREAM_COMPAT: "1"
-        run: cargo nextest run --locked --profile ci -p test-support -E 'binary(upstream_delta_token_parity)'
-      # Delta total: line oracle: the -vv `total:` line of a delta transfer -
-      # matches, hash_hits, false_alarms, data - must equal upstream 3.5.1's
-      # for a local copy, a push and a pull (match.c match_report()).
-      - name: Run delta total line oracle (oc vs upstream match_report)
-        env:
-          OC_RSYNC_UPSTREAM_COMPAT: "1"
-        run: cargo nextest run --locked --profile ci -p cli -E 'binary(delta_total_line_oracle)'
+        run: |
+          set -euo pipefail
+          mapfile -t oracle_args < <(python3 tools/ci/upstream_oracle_tests.py args)
+          log="$RUNNER_TEMP/upstream-oracle.log"
+          # check-log must run even when nextest fails, so a run that both
+          # failed and skipped reports both.
+          set +e
+          cargo nextest run --locked --profile ci --no-fail-fast "${oracle_args[@]}" 2>&1 | tee "$log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          python3 tools/ci/upstream_oracle_tests.py check-log "$log"
+          exit "$rc"
 
       - name: Run interop tests
         run: |
