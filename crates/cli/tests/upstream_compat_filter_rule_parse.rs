@@ -17,10 +17,12 @@
 #![cfg(unix)]
 
 use std::fs;
+use std::net::{Ipv4Addr, TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 
+use test_support::inetd_server::{InetdCommand, InetdServer};
 use test_support::{
     UpstreamVersion, oc_rsync_bin, require_upstream_rsync, upstream_compat_enabled,
 };
@@ -102,10 +104,7 @@ enum Source {
 }
 
 /// A daemon serving the tree as module `m`, killed when dropped.
-struct Daemon {
-    child: Child,
-    port: u16,
-}
+struct Daemon(InetdServer);
 
 impl Daemon {
     fn start(binary: &Path, tree: &Path) -> Self {
@@ -118,29 +117,18 @@ impl Daemon {
             ),
         )
         .expect("write rsyncd.conf");
-        let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-            Command::new(binary)
-                .args(["--daemon", "--no-detach", "--address=127.0.0.1"])
-                .arg(format!("--port={port}"))
-                .arg(format!("--config={}", config.display()))
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-        })
-        .expect("start daemon");
-        Self { child, port }
+        let stderr = fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .expect("open /dev/null");
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind daemon listener");
+        let command =
+            InetdCommand::new(binary, stderr).arg(format!("--config={}", config.display()));
+        Self(InetdServer::start(listener, command).expect("start daemon"))
     }
 
     fn url(&self, dir: &str) -> String {
-        format!("rsync://127.0.0.1:{}/m/{dir}/", self.port)
-    }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        format!("rsync://127.0.0.1:{}/m/{dir}/", self.0.port())
     }
 }
 

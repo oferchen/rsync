@@ -228,6 +228,10 @@ fn a_source_without_regular_files_is_copied() {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn a_daemon_sender_refuses_like_a_3_5_1_daemon() {
+    use std::net::{Ipv4Addr, TcpListener};
+    use test_support::inetd_server::{InetdCommand, InetdServer};
+    use test_support::oc_daemon::OcDaemon;
+
     let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
         return;
     };
@@ -251,18 +255,16 @@ fn a_daemon_sender_refuses_like_a_3_5_1_daemon() {
             .expect("run pull")
     };
 
-    let (up_daemon, up_port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(upstream.binary())
-            .args(["--daemon", "--no-detach", "--address=127.0.0.1"])
-            .arg(format!("--config={}", config.display()))
-            .arg(format!("--port={port}"))
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-    })
+    let up_daemon = InetdServer::start(
+        TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind the 3.5.1 listener"),
+        InetdCommand::new(
+            upstream.binary(),
+            fs::File::create(temp.path().join("up.stderr")).expect("create stderr log"),
+        )
+        .arg(format!("--config={}", config.display())),
+    )
     .expect("start the 3.5.1 daemon");
-    let up_daemon = KillOnDrop(up_daemon);
+    let up_port = up_daemon.port();
     let baseline = pull(up_port, "up");
     drop(up_daemon);
     assert_ne!(
@@ -272,8 +274,7 @@ fn a_daemon_sender_refuses_like_a_3_5_1_daemon() {
         String::from_utf8_lossy(&baseline.stderr)
     );
 
-    let oc_daemon = test_support::DaemonProcess::spawn(&config, ["--address=127.0.0.1"])
-        .expect("start oc daemon");
+    let oc_daemon = OcDaemon::builder(&config).spawn().expect("start oc daemon");
     let output = pull(oc_daemon.port(), "oc");
     assert_eq!(
         output.status.code(),
@@ -285,18 +286,6 @@ fn a_daemon_sender_refuses_like_a_3_5_1_daemon() {
         !temp.path().join("oc/a").exists(),
         "a refused pull transfers nothing"
     );
-}
-
-/// Kills and reaps a spawned daemon.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-struct KillOnDrop(std::process::Child);
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 /// A push's client is the sender, so it refuses before the remote side

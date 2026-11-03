@@ -318,6 +318,7 @@ include!("daemon/sections/config_helpers.rs");
 pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     let external_signal_flags = config.take_signal_flags();
     let pre_bound_listener = config.take_pre_bound_listener();
+    let pre_bound_quic_sockets = config.take_pre_bound_quic_sockets();
     // upstream: clientserver.c:1748-1757 - an inetd daemon points stdout and
     // stderr at /dev/null before it reads rsyncd.conf, so neither config
     // diagnostics nor anything later lands on the descriptors inetd left. Its
@@ -343,7 +344,12 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         return serve_inetd_session(options);
     }
 
-    serve_connections(options, external_signal_flags, pre_bound_listener)
+    serve_connections(
+        options,
+        external_signal_flags,
+        pre_bound_listener,
+        pre_bound_quic_sockets,
+    )
 }
 
 /// Seeds the thread-local [`logging::VerbosityConfig`] from the daemon's

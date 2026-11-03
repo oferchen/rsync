@@ -37,7 +37,7 @@ use std::fs;
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -453,16 +453,6 @@ fn rsh_push_progress_without_verbose_names_entries() {
     );
 }
 
-/// Kills and reaps the daemon when the test ends, pass or fail.
-struct DaemonGuard(Child);
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 /// The daemon push takes the same sender and receiver paths as an `--rsh`
 /// push. The receiver also names the created destination root relative to
 /// the module, as upstream prints the operand after chdir'ing into the module
@@ -482,21 +472,10 @@ fn daemon_push_names_each_entry_once_with_directory_lines() {
         ),
     )
     .expect("write daemon config");
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(&binary)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg(format!("--port={port}"))
-            .arg("--address=127.0.0.1")
-            .arg(format!("--config={}", config.display()))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-    })
-    .expect("start daemon");
-    let _daemon = DaemonGuard(child);
-    let dest = format!("rsync://127.0.0.1:{port}/m/qqq");
+    let daemon = test_support::oc_daemon::OcDaemon::builder(&config)
+        .spawn()
+        .expect("start daemon");
+    let dest = format!("rsync://127.0.0.1:{}/m/qqq", daemon.port());
     let output = run_merged_args(&binary, &["-avP", "zzz/", &dest], temp.path());
     assert_eq!(
         normalize(&output),

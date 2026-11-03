@@ -7,13 +7,13 @@
 //! producer ran; the daemon takes no `--debug`, so its pull sender is lazy
 //! through the same environment flag the rsh matrix proves engages.
 
-#![cfg(any(target_os = "linux", target_os = "macos"))]
+#![cfg(all(any(target_os = "linux", target_os = "macos"), feature = "daemon"))]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use test_support::DaemonProcess;
+use test_support::oc_daemon::OcDaemon;
 
 const LAZY_ENV: [(&str, &str); 1] = [("OC_RSYNC_LAZY_FLIST", "1")];
 
@@ -90,7 +90,10 @@ fn lazy_daemon_pull_and_push_past_the_max_lookahead_complete() {
         ),
     )
     .expect("write config");
-    let daemon = DaemonProcess::spawn_with_env(&config, std::iter::empty::<&str>(), LAZY_ENV)
+    let [(key, value)] = LAZY_ENV;
+    let daemon = OcDaemon::builder(&config)
+        .env(key, value)
+        .spawn()
         .expect("daemon");
     let url = |module: &str| format!("rsync://127.0.0.1:{}/{module}/", daemon.port());
 
