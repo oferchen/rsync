@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use protocol::ProtocolVersion;
 use protocol::flist::FileEntry;
 
-use super::support::{REDO_CHECKSUM_LENGTH, test_handshake};
+use super::support::{REDO_CHECKSUM_LENGTH, TestDeletionWriter, test_handshake};
 use crate::config::ServerConfig;
 use crate::flags::ParsedServerFlags;
 use crate::role::ServerRole;
@@ -223,6 +223,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &mut TestDeletionWriter,
         );
 
         assert!(dest.join("a").is_dir());
@@ -246,6 +247,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &mut TestDeletionWriter,
         );
 
         assert!(dest.join("src").is_dir());
@@ -265,6 +267,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &mut TestDeletionWriter,
         );
 
         assert!(!dest.join("a").exists());
@@ -285,6 +288,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &mut TestDeletionWriter,
         );
     }
 
@@ -300,6 +304,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &mut TestDeletionWriter,
         );
 
         assert!(dest.join("a").is_dir());
@@ -324,6 +329,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &mut TestDeletionWriter,
         );
 
         assert_eq!(
@@ -363,6 +369,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &mut TestDeletionWriter,
         );
 
         assert!(!dest.join("deep").exists());
@@ -380,6 +387,7 @@ mod relative_parents {
             dest,
             #[cfg(unix)]
             None,
+            &mut TestDeletionWriter,
         );
 
         let dir_entries: Vec<_> = std::fs::read_dir(dest).unwrap().collect();

@@ -375,8 +375,8 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    if let Some(parent) = destination.parent() {
-        context.prepare_parent_directory(parent)?;
+    if !context.prepare_entry_parent(destination)? {
+        return Ok(());
     }
 
     // upstream: generator.c:1963-1970 - `quick_check_ok(FT_SYMLINK, ...)` -

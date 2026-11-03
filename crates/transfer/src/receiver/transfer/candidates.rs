@@ -143,6 +143,8 @@ impl ReceiverContext {
     ) -> Vec<ListOnlyEntry> {
         self.file_list[range]
             .iter()
+            // upstream: generator.c:1640 - implied parents are not listed.
+            .filter(|entry| !self.skips_implied_dir(entry))
             .map(|entry| {
                 let is_symlink = entry.is_symlink();
                 ListOnlyEntry {
