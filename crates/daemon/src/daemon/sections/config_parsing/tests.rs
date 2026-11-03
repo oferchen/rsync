@@ -1192,8 +1192,14 @@ mod config_parsing_tests {
         let p = path.display();
         let cases = [
             (format!("[mod]\npath = {p}\n"), false),
-            (format!("[mod]\npath = {p}\nparallel delta scan = yes\n"), true),
-            (format!("parallel delta scan = yes\n[mod]\npath = {p}\n"), true),
+            (
+                format!("[mod]\npath = {p}\nparallel delta scan = yes\n"),
+                true,
+            ),
+            (
+                format!("parallel delta scan = yes\n[mod]\npath = {p}\n"),
+                true,
+            ),
             (
                 format!("parallel delta scan = yes\n[mod]\npath = {p}\nparallel delta scan = no\n"),
                 false,
