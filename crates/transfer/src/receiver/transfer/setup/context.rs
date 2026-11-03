@@ -202,6 +202,12 @@ impl ReceiverContext {
         // `run_pipelined_incremental`).
         self.announce_created_directory(writer, &setup.dest_dir)?;
 
+        // upstream: main.c:1439-1441 - client_run() reaches do_recv(), and with
+        // it the fork, only for a non-empty list.
+        if !self.is_empty_client_flist(file_count) {
+            self.mark_fork();
+        }
+
         Ok((reader, file_count, setup))
     }
 
@@ -790,8 +796,19 @@ impl ReceiverContext {
                 self.config.flags.skip_dest_writes(),
                 self.config.flags.mkpath,
             )
-            .map_err(|e| {
-                io::Error::new(
+            .map_err(|e| match crate::receiver::mkdir_cause(e) {
+                // upstream: main.c:810-811 - the trailing slash is lopped
+                // before do_mkdir(), so full_fname() never shows it. Only the
+                // client gets here: do_server_recv() fails its change_dir#4
+                // into the destination first (main.c:1209-1217), which the
+                // server receiver reports through the arm below.
+                Ok(cause) if self.config.connection.client_mode => {
+                    crate::receiver::DestRootMkdirError::into_io(
+                        self.full_fname(dest_dir.components().as_path(), None),
+                        cause,
+                    )
+                }
+                Ok(e) | Err(e) => io::Error::new(
                     e.kind(),
                     format!(
                         "failed to create destination root {}: {e} {}{}",
@@ -799,7 +816,7 @@ impl ReceiverContext {
                         crate::role_trailer::error_location!(),
                         crate::role_trailer::receiver()
                     ),
-                )
+                ),
             })?
         };
         // upstream: main.c:826 - record whether the pre-flight mkdir

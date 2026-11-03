@@ -335,6 +335,72 @@ mod exit_code_11_file_io {
             "Unreadable source should return 11 (file I/O) or 23 (partial), got {code}"
         );
     }
+
+    /// upstream: main.c:817-821 get_local_name() - a pull whose destination
+    /// root cannot be created is the lone `Receiver`'s rsyserr() and
+    /// RERR_FILEIO, before the fork. Expected lines are rsync 3.5.1's (tarball
+    /// build) for the same pull, without the program name and the trailer's
+    /// source location.
+    #[test]
+    fn pull_into_an_uncreatable_destination_root_exits_with_file_io() {
+        let test_dir = TestDir::new().expect("create test dir");
+        let src_dir = test_dir.mkdir("src").unwrap();
+        fs::write(src_dir.join("a"), b"a").unwrap();
+        fs::write(src_dir.join("b"), b"b").unwrap();
+        let parent = test_dir.mkdir("ro").unwrap();
+        let mut perms = fs::metadata(&parent).unwrap().permissions();
+        perms.set_mode(0o555);
+        fs::set_permissions(&parent, perms.clone()).unwrap();
+        if fs::write(parent.join("probe"), b"").is_ok() {
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&parent, perms);
+            eprintln!("skip: the 0555 parent stays writable here (running as root)");
+            return;
+        }
+        let target = parent.join("inner");
+        let shim = test_dir
+            .write_file("rsh.sh", b"#!/bin/sh\nshift\nexec \"$@\"\n")
+            .unwrap();
+        let mut shim_perms = fs::metadata(&shim).unwrap().permissions();
+        shim_perms.set_mode(0o755);
+        fs::set_permissions(&shim, shim_perms).unwrap();
+        let rsync_path = format!("--rsync-path={}", oc_rsync_binary().display());
+
+        let output = run_rsync(&[
+            "-r",
+            "-e",
+            shim.to_str().unwrap(),
+            &rsync_path,
+            &format!("host:{}/", src_dir.display()),
+            &format!("{}/", target.display()),
+        ]);
+        perms.set_mode(0o755);
+        let _ = fs::set_permissions(&parent, perms);
+
+        assert_exit_code(&output, ExitCode::FileIo, "uncreatable destination root");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let lines: Vec<&str> = stderr.lines().collect();
+        assert_eq!(lines.len(), 2, "{stderr}");
+        assert_eq!(
+            lines[0].split_once(": ").map(|(_, text)| text),
+            Some(
+                format!(
+                    "[Receiver] mkdir \"{}\" failed: Permission denied (13)",
+                    target.display()
+                )
+                .as_str()
+            ),
+            "{stderr}"
+        );
+        let trailer = lines[1].split_once(" error: ").map(|(_, text)| text);
+        assert!(
+            trailer.is_some_and(|text| {
+                text.starts_with("error in file IO (code 11) at ")
+                    && text.ends_with(&format!("[Receiver={}]", env!("CARGO_PKG_VERSION")))
+            }),
+            "{stderr}"
+        );
+    }
 }
 
 /// Tests that data stream errors return exit code 12.
@@ -400,14 +466,14 @@ mod exit_code_12_stream_io {
     /// Expected lines are 3.5.1's (tarball build) for the same stub, with the
     /// program name and the trailer's source location left out:
     /// upstream: io.c:299-303 whine_about_eof(), log.c:937-963 log_exit().
+    /// A pull names the client before its fork, `[Receiver]` (rsync.c:987-995
+    /// who_am_i()).
     #[cfg(unix)]
     #[test]
     fn remote_shell_closing_stdout_before_handshake_prints_upstream_eof_whine() {
         let rsh = "sh -c 'exec 1>&-; cat >/dev/null'";
-        // The pull arm belongs to task 268: 3.5.1 names the pre-fork client
-        // receiver "[Receiver]", which oc does not render yet.
-        let role = "sender";
-        for (output, context) in run_directions(rsh, &["push"]) {
+        let results = run_directions(rsh, &["push", "pull"]);
+        for ((output, context), role) in results.into_iter().zip(["sender", "Receiver"]) {
             assert_exit_code(&output, ExitCode::StreamIo, context);
             let stderr = String::from_utf8_lossy(&output.stderr);
             let lines: Vec<&str> = stderr.lines().collect();
@@ -435,6 +501,72 @@ mod exit_code_12_stream_io {
     #[ignore = "Data stream errors require protocol corruption simulation"]
     fn corrupted_stream_returns_stream_io_error() {
         // Would require injecting corruption into the protocol stream
+    }
+}
+
+/// Which process closes a pull that ends with a partial transfer.
+///
+/// upstream: a pulling client forks once its file list is in (main.c:1077
+/// do_recv()); the generator, the parent, exits last and prints the trailer.
+/// With nothing in the list there is no fork, and the lone `Receiver` does
+/// (main.c:1439-1441). Measured with rsync 3.5.1 as the client: `[generator=`
+/// for an unreadable source file, `[Receiver=` for a missing source.
+#[cfg(unix)]
+mod pull_partial_trailer_role {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn pull(source: &str, test_dir: &TestDir) -> Output {
+        let shim = test_dir
+            .write_file("rsh.sh", b"#!/bin/sh\nshift\nexec \"$@\"\n")
+            .unwrap();
+        fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+        let dest = test_dir.path().join("dest");
+        run_rsync(&[
+            "-r",
+            "-e",
+            shim.to_str().unwrap(),
+            &format!("--rsync-path={}", oc_rsync_binary().display()),
+            &format!("host:{source}"),
+            &format!("{}/", dest.display()),
+        ])
+    }
+
+    fn trailer_role(output: &Output) -> String {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let last = stderr.lines().last().unwrap_or_default();
+        let role = last.rsplit_once('[').map_or("", |(_, tail)| tail);
+        role.split_once('=')
+            .map_or(role, |(role, _)| role)
+            .to_owned()
+    }
+
+    #[test]
+    fn a_partial_pull_after_the_fork_ends_on_the_generator() {
+        let test_dir = TestDir::new().expect("create test dir");
+        let src = test_dir.mkdir("src").unwrap();
+        fs::write(src.join("a"), b"readable").unwrap();
+        let unreadable = src.join("b");
+        fs::write(&unreadable, b"secret").unwrap();
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&unreadable).is_ok() {
+            fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
+            eprintln!("skip: the 0000 file stays readable here (running as root)");
+            return;
+        }
+        let output = pull(&format!("{}/", src.display()), &test_dir);
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_exit_code(&output, ExitCode::PartialTransfer, "unreadable source file");
+        assert_eq!(trailer_role(&output), "generator", "{output:?}");
+    }
+
+    #[test]
+    fn a_pull_with_nothing_to_list_ends_on_the_lone_receiver() {
+        let test_dir = TestDir::new().expect("create test dir");
+        let missing = test_dir.path().join("nope");
+        let output = pull(&missing.display().to_string(), &test_dir);
+        assert_exit_code(&output, ExitCode::PartialTransfer, "missing source");
+        assert_eq!(trailer_role(&output), "Receiver", "{output:?}");
     }
 }
 

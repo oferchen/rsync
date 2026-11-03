@@ -15,7 +15,6 @@ read_all_delta_ops	crates/batch/src/reader/delta.rs	2026-11-07	unreviewed baseli
 with_dir_merge_options	crates/core/src/client/config/filters.rs	2026-11-07	unreviewed baseline row
 is_enabled_by_env	crates/core/src/client/remote/async_ssh_transport.rs	2026-11-07	unreviewed baseline row
 registered_waker_count	crates/core/src/signal/io_wake.rs	2026-11-07	unreviewed baseline row
-serve	crates/daemon/src/daemon/async_session/listener.rs	2026-11-07	unreviewed baseline row
 run_stdio_session	crates/daemon/src/daemon/sections/stdio_session.rs	2026-11-07	unreviewed baseline row
 update_bytes	crates/daemon/src/daemon/session_registry.rs	2026-11-07	unreviewed baseline row
 all_sessions	crates/daemon/src/daemon/session_registry.rs	2026-11-07	unreviewed baseline row

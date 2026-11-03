@@ -23,6 +23,7 @@ mod capability;
 mod compat;
 mod negotiator;
 mod restrictions;
+mod safe_read;
 mod types;
 
 pub(crate) use capability::parse_peer_subprotocol;
@@ -33,6 +34,7 @@ pub use negotiator::{
     RsyncNegotiator, resolve_checksum_seed,
 };
 pub use restrictions::{ProtocolRestrictionFlags, refuse_unsupported_options};
+pub use safe_read::SafeReadError;
 pub use types::{ProtocolSetupConfig, SetupResult};
 
 #[cfg(test)]
@@ -97,6 +99,8 @@ pub fn setup_protocol_with<'a>(
     config: &ProtocolSetupConfig<'a>,
     negotiator: &dyn ProtocolNegotiator,
 ) -> io::Result<SetupResult> {
+    let mut stdin = safe_read::SafeRead::new(stdin);
+    let stdin: &mut dyn Read = &mut stdin;
     // upstream compat.c:599-607 - when remote_protocol != 0 (daemon mode),
     // binary 4-byte protocol exchange was already done via @RSYNCD text protocol.
 
