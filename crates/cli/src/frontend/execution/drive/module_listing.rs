@@ -176,6 +176,12 @@ where
             }
         }
         Err(error) => {
+            // upstream: the lines a failed connect prints before its trailer
+            // (socket.c:464-475), as for a transfer.
+            let program = stderr.brand().client_program_name();
+            for line in error.program_lines() {
+                let _ = writeln!(stderr.writer_mut(), "{program}: {line}");
+            }
             if write_message(error.message(), stderr).is_err() {
                 let code = error.exit_code();
                 let _ = writeln!(

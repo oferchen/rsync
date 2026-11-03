@@ -322,6 +322,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The entry after an abbreviated hard-link follower is encoded against the right previous entry (#7997)
 - A block match with no basis file exits 2, and a daemon stream closed mid-transfer exits 12, with upstream's messages (#8016)
 - A connection reset before multiplexed I/O starts is upstream's `safe_read failed to read N bytes` and exit 12, not `read error` and exit 10 (#8302)
+- A daemon connection that fails reports each address as upstream's `failed to connect to HOST (ADDR)` from the dialling process, an unresolvable host as `getaddrinfo: HOST PORT: ...`, and a `--contimeout` expiry with the trailer alone (#PRNUM)
 - An out-of-range block index in a delta stream, live or replayed with `--read-batch`, exits 2 with upstream's `Invalid block index` message (#8237)
 - The receiver resolves block-match tokens through the sum head the sender echoed, as upstream does, so a match against a basis it could not open ends on `got a block match with no basis file` (#8237)
 - A sender refuses a peer file-list index that no live list owns with upstream's `File-list index %d not in %d - %d` error and exit 2, for itemize-only items as well as transfer requests (#8237)
