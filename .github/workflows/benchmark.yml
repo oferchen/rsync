@@ -372,8 +372,9 @@ jobs:
 
           CURRENT_BODY=$(gh release view "$TAG" --json body -q .body)
 
-          # Avoid duplicate sections on re-runs
-          if echo "${CURRENT_BODY:-}" | grep -q "Performance Benchmark"; then
+          # Avoid duplicate sections on re-runs. Match the heading
+          # benchmark_report.py writes, which is what gets appended.
+          if printf '%s\n' "${CURRENT_BODY:-}" | grep -qxF "## Benchmark Results"; then
             echo "Performance benchmark section already present in release notes, skipping."
             exit 0
           fi
