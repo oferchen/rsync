@@ -10,6 +10,8 @@
 #![cfg(unix)]
 use std::fs;
 use std::path::Path;
+
+use rustix::io::Errno;
 use test_support::{
     CliOutput, LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binaries,
 };
@@ -178,8 +180,14 @@ fn a_permission_denied_mkdir_is_reported_once_for_all_its_children() {
 
             let cell = format!("{mode:?} {extra:?}");
             out.assert_exit(23);
+            // upstream: log.c:499-500 rsyserr() - the libc's strerror and errno.
+            let error = std::io::Error::from_raw_os_error(Errno::ACCESS.raw_os_error());
+            let eacces = format!(
+                "/dest/src\" failed: {}",
+                logging::upstream_errno_text(&error)
+            );
             for (needle, lines) in [
-                ("/dest/src\" failed: Permission denied (13)", 1),
+                (eacces.as_str(), 1),
                 ("recv_generator: mkdir \"", 1),
                 (
                     "*** Skipping any contents from this failed directory ***",

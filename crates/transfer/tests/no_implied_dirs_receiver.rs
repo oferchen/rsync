@@ -13,6 +13,8 @@
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+
+use rustix::io::Errno;
 use test_support::{
     CliOutput, LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binaries,
 };
@@ -26,11 +28,15 @@ enum Mode {
 
 const MODES: [Mode; 3] = [Mode::Local, Mode::Pull, Mode::Push];
 
-/// How 3.5.1 prints a confinement refusal.
-const ELOOP_TEXT: &str = ": Too many levels of symbolic links (40)";
-
-/// How the same refusal printed before oc mapped its internal escape signal.
-const EXDEV_TEXT: &str = ": Invalid cross-device link (18)";
+/// `": strerror(errno) (errno)"` as `rsyserr()` prints it on this platform.
+/// Both the text and the number are the libc's (glibc, musl and macOS differ),
+/// so the needle is built, never spelled out.
+///
+/// upstream: log.c:499-500 `rsyserr()` - `": %s (%d)"`.
+fn errno_text(errno: Errno) -> String {
+    let error = std::io::Error::from_raw_os_error(errno.raw_os_error());
+    format!(": {}", logging::upstream_errno_text(&error))
+}
 
 /// `src/sub/f` and `src/sub/deep/g`, the parents dated in the past so a
 /// re-timed destination parent is visible.
@@ -97,6 +103,7 @@ fn count(out: &CliOutput, needle: &str) -> usize {
 #[test]
 fn a_symlinked_parent_leading_out_is_kept_and_its_entries_are_reported() {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
+    let (eloop, exdev) = (errno_text(Errno::LOOP), errno_text(Errno::XDEV));
     for mode in MODES {
         let tmp = create_tempdir();
         source(tmp.path());
@@ -134,8 +141,8 @@ fn a_symlinked_parent_leading_out_is_kept_and_its_entries_are_reported() {
             ("recv_generator: mkdir \"", 1),
             // upstream: syscall.c:2920-2931 - the portable walk refuses an
             // escape with ELOOP; oc's EXDEV escape signal must not leak out.
-            (ELOOP_TEXT, 3),
-            (EXDEV_TEXT, 0),
+            (eloop.as_str(), 3),
+            (exdev.as_str(), 0),
         ] {
             assert_eq!(
                 count(&out, needle),
@@ -305,6 +312,7 @@ fn a_recursed_operand_leaves_its_implied_parent_alone() {
 #[test]
 fn a_recursed_directory_below_a_symlinked_parent_is_reported_and_skipped() {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
+    let (eloop, exdev) = (errno_text(Errno::LOOP), errno_text(Errno::XDEV));
     for mode in MODES {
         for extra in [&[][..], &["--no-inc-recursive"][..]] {
             let tmp = create_tempdir();
@@ -349,8 +357,8 @@ fn a_recursed_directory_below_a_symlinked_parent_is_reported_and_skipped() {
                     1,
                 ),
                 ("cannot replace non-directory destination", 0),
-                (ELOOP_TEXT, 1),
-                (EXDEV_TEXT, 0),
+                (eloop.as_str(), 1),
+                (exdev.as_str(), 0),
             ] {
                 assert_eq!(
                     count(&out, needle),
