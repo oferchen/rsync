@@ -186,6 +186,7 @@ pub use self::receiver::{
     DestRootMkdirError, ListOnlyEntry, ReceiverContext, SumHead, TransferStats,
 };
 pub use self::role::ServerRole;
+pub use self::setup::SafeReadError;
 pub use self::shared::{ChecksumFactory, TransferDeadline};
 pub use self::temp_cleanup::cleanup_stale_temp_files;
 pub use self::writer::{CountingWriter, MsgInfoSender, ServerWriter, shutdown_send_side};

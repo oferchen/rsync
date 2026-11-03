@@ -20,7 +20,7 @@ use crate::client::error::{
 };
 use crate::exit_code::ExitCode;
 use crate::message::Role;
-use crate::server::{DestRootMkdirError, ForkPoint};
+use crate::server::{DestRootMkdirError, ForkPoint, SafeReadError};
 
 /// The process that reports a failure, by the client's role and, on a pull,
 /// the side of upstream's fork the failure struck.
@@ -146,6 +146,17 @@ pub(crate) fn local_failure_error(
         )
     {
         return timeout_error(side, seconds);
+    }
+    // upstream: io.c:351-358 safe_read() - before multiplexed I/O starts a
+    // failed read is RERR_STREAMIO, not perform_io()'s RERR_SOCKETIO.
+    if let Some(failed) = SafeReadError::of(error) {
+        let line = format!(
+            "[{who}] safe_read failed to read {} bytes: {}",
+            failed.requested(),
+            upstream_io_error(failed.source_error())
+        );
+        let report = program_line_error(line, ExitCode::StreamIo, role);
+        return side.finish(report, ExitCode::StreamIo);
     }
     // upstream: io.c:930-946 perform_io() - a failed read of the peer's
     // stream is rsyserr(FERROR_SOCKET, errno, "read error") and
