@@ -259,6 +259,95 @@ impl<'a> CopyContext<'a> {
     /// path in one step would instead traverse such a level, and a symlink
     /// there would place the new directories wherever it points - outside the
     /// destination tree.
+    /// Prepares the directory that is to hold `destination`.
+    ///
+    /// Under `--relative --no-implied-dirs` a parent the copy may neither
+    /// replace nor walk through - a non-directory, or a symlink that leaves the
+    /// destination - is upstream's per-entry failure, not the end of the run:
+    /// the generator's stat of the parent decides whether `make_path()` runs
+    /// (and fails), and the entry's own stat then fails through the same
+    /// confined walk. Both are reported as `rsyserr()` lines and the entry is
+    /// skipped, so the copy finishes with `RERR_PARTIAL`.
+    ///
+    /// Returns `Ok(false)` when the entry was reported and must be skipped.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1718-1725` - `do_stat_at(dn)`, then `make_path()` and
+    ///   `recv_generator: mkdir %s failed`
+    /// - `generator.c:2213-2223` - `recv_generator: failed to stat %s`
+    pub(super) fn prepare_entry_parent(
+        &mut self,
+        destination: &Path,
+    ) -> Result<bool, LocalCopyError> {
+        let Some(parent) = destination.parent() else {
+            return Ok(true);
+        };
+        match self.prepare_parent_directory(parent) {
+            Ok(()) => Ok(true),
+            Err(error)
+                if self.relative_paths_enabled()
+                    && !self.implied_dirs_enabled()
+                    && matches!(
+                        error.kind(),
+                        LocalCopyErrorKind::InvalidArgument(
+                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory
+                        )
+                    ) =>
+            {
+                if self.report_unusable_relative_parent(parent, destination) {
+                    Ok(false)
+                } else {
+                    Err(error)
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Reports the generator's view of an entry below an unusable
+    /// `--no-implied-dirs` parent, probing both through the confined walk the
+    /// receiver uses. Returns `false` when neither probe fails, leaving the
+    /// caller's own error to stand.
+    #[cfg(unix)]
+    fn report_unusable_relative_parent(&mut self, parent: &Path, destination: &Path) -> bool {
+        let root = self.destination_root().to_path_buf();
+        let sandbox = fast_io::DirSandbox::open_root(&root).ok();
+        let probe = |path: &Path, follow: bool| {
+            let relative = path.strip_prefix(&root).unwrap_or(path);
+            let outcome = if follow {
+                fast_io::stat_via_sandbox_or_fallback(sandbox.as_ref(), &root, relative, path)
+            } else {
+                fast_io::lstat_via_sandbox_or_fallback(sandbox.as_ref(), &root, relative, path)
+            };
+            outcome.err()
+        };
+        let parent_error = probe(parent, true);
+        let entry_error = probe(destination, false);
+        if let Some(error) = &parent_error {
+            let what = format!(
+                "recv_generator: mkdir {} failed",
+                super::executor::full_fname(parent)
+            );
+            super::executor::report_generator_failure(self, &what, error);
+        }
+        if let Some(error) = &entry_error {
+            let what = format!(
+                "recv_generator: failed to stat {}",
+                super::executor::full_fname(destination)
+            );
+            super::executor::report_generator_failure(self, &what, error);
+        }
+        parent_error.is_some() || entry_error.is_some()
+    }
+
+    /// Off Unix there is no confined walk to consult; the caller's error
+    /// stands.
+    #[cfg(not(unix))]
+    fn report_unusable_relative_parent(&mut self, _parent: &Path, _destination: &Path) -> bool {
+        false
+    }
+
     pub(super) fn prepare_parent_directory(&mut self, parent: &Path) -> Result<(), LocalCopyError> {
         if parent.as_os_str().is_empty() {
             return Ok(());
