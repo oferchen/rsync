@@ -363,22 +363,6 @@ impl DiskCommitConfig {
             .clamp(MIN_CHANNEL_CAPACITY, MAX_CHANNEL_CAPACITY)
     }
 
-    /// Whether committing a file needs the destination's pre-transfer stat.
-    ///
-    /// Only `dest_mode()` reads that stat, and upstream runs `dest_mode()`
-    /// only without `--perms`: with `--perms` the flist mode is applied as-is
-    /// and an existing destination's bits are irrelevant. Statting the final
-    /// path anyway costs one failed lookup per new file and one stat per
-    /// updated file on every `-a` transfer.
-    ///
-    /// upstream: receiver.c:1197-1208 `if (!preserve_perms) ... dest_mode()`
-    #[must_use]
-    pub(crate) fn needs_pre_transfer_dest_stat(&self) -> bool {
-        self.metadata_opts
-            .as_ref()
-            .is_some_and(|opts| !opts.permissions())
-    }
-
     /// Borrows the fields the backup ladder reads.
     ///
     /// The ladder takes [`BackupEnv`] rather than the whole configuration so it
