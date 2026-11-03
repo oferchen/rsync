@@ -15,9 +15,9 @@
 //! | option | upstream call | empty resolves to |
 //! |---|---|---|
 //! | `--block-size` | min 0 (options.c:1808) | 0 -> default block size |
-//! | `--min-size` | min 0 (:1809) | 0 -> no lower bound |
+//! | `--min-size` | min 0 (:1821) | 0 -> no lower bound |
 //! | `--max-size` | min 0 (:1815) | 0 -> **excludes every non-empty file** |
-//! | `--bwlimit` | min 512, `unlimited_0` (:1821) | 0 -> unlimited |
+//! | `--bwlimit` | min 512, `unlimited_0` (:1827) | 0 -> unlimited |
 //! | `--max-alloc` | min 1 MiB, `unlimited_0` (:2073) | 0 -> the largest limit (SIZE_MAX/2) |
 //!
 //! `--max-size=` excluding everything is why a success-only assertion would be
@@ -176,7 +176,7 @@ fn a_non_empty_size_value_still_parses_and_applies() {
 /// value below the minimum is still rejected.
 ///
 /// upstream: options.c:2073 `parse_size_arg(..., "max-alloc", 1024*1024, -1, True)`,
-/// options.c:2086 `if (!max_alloc) max_alloc = SIZE_ARG_MAX;`
+/// options.c:2085-2086 `if (!max_alloc) max_alloc = SIZE_ARG_MAX;`
 #[test]
 fn an_empty_max_alloc_means_the_largest_limit() {
     let fixture = Fixture::new();
