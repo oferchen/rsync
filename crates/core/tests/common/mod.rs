@@ -1,8 +1,8 @@
 //! Shared test infrastructure for daemon interoperability tests.
 //!
-//! Provides `TestDaemon` for managing rsync daemon instances with OS-assigned
-//! ports and reliable readiness detection - eliminating hardcoded ports and
-//! sleep-based synchronization that cause flaky test failures.
+//! Provides `TestDaemon`, which serves an rsync daemon on a listener the
+//! harness binds itself, so tests need no hardcoded ports, no readiness
+//! polling and no wall-clock bound on daemon start-up.
 //!
 //! Design patterns applied:
 //! - **Builder Pattern**: `TestDaemonBuilder` for flexible daemon configuration
@@ -16,19 +16,15 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::process::ExitStatus;
-use std::process::{Child, Command, Stdio};
+#[cfg(unix)]
+use std::process::Stdio;
+use std::process::{Child, Command};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
-
-/// Default timeout for daemon readiness checks.
-const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Polling interval for TCP readiness probe.
-const READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Upstream rsync binary paths, anchored at the workspace root at compile
 /// time. Cargo runs these tests with CWD `crates/core/`, so a path relative
@@ -64,222 +60,121 @@ pub enum DaemonBinary {
     OcRsync,
 }
 
-impl DaemonBinary {
-    /// Resolve to an actual binary path.
-    ///
-    /// The oc-rsync arm goes through [`test_support::oc_rsync_bin`], which
-    /// knows the profile directory Cargo is building into. The previous
-    /// `target/{release,debug}/oc-rsync` probe was both cwd-relative and
-    /// profile-guessing, so it could launch a daemon from a different
-    /// revision than the one under test.
-    fn resolve(&self) -> io::Result<PathBuf> {
-        match self {
-            DaemonBinary::Upstream(path) => {
-                if !Path::new(path).exists() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("upstream rsync binary not found at: {path}"),
-                    ));
-                }
-                Ok(PathBuf::from(path))
-            }
-            DaemonBinary::OcRsync => Ok(test_support::oc_rsync_bin()),
-        }
-    }
-
-    /// Whether this is an oc-rsync binary (port passed via CLI, not config).
-    fn is_oc_rsync(&self) -> bool {
-        matches!(self, DaemonBinary::OcRsync)
+/// The upstream binary at `path`, or `NotFound` when it is absent.
+#[cfg(unix)]
+fn upstream_binary(path: &str) -> io::Result<PathBuf> {
+    if Path::new(path).exists() {
+        Ok(PathBuf::from(path))
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("upstream rsync binary not found at: {path}"),
+        ))
     }
 }
 
-/// Allocate a free TCP port using OS ephemeral port assignment.
+/// A managed rsync daemon for tests, on a loopback listener the harness binds
+/// on an OS-assigned port before any daemon runs.
 ///
-/// Binds to port 0, reads the assigned port, then drops the listener so the
-/// daemon can bind it. This is a TOCTOU window: between the drop here and the
-/// daemon's bind, another process can claim the port under parallel load. The
-/// port is not reserved once returned - callers that need a guaranteed bind
-/// (see [`TestDaemon::start`]) must retry on a fresh port when the daemon loses
-/// the race.
-fn allocate_test_port() -> io::Result<u16> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
-    drop(listener);
-    Ok(port)
-}
-
-/// Whether a [`TestDaemon::start_on_port`] failure was the daemon losing the
-/// allocate-then-bind race for its port.
+/// A client connect therefore queues in the kernel backlog: there is no port
+/// race, no readiness wait and no restart loop.
 ///
-/// [`allocate_test_port`] hands back a port the OS just freed, so under
-/// parallel load another process can grab it in the drop->bind window. When
-/// that happens the daemon logs `Address already in use` and never accepts
-/// connections, so the readiness probe times out; that timeout error embeds
-/// the daemon log verbatim (`wait_ready`). Matching the message is how the
-/// retry loop tells a losable port race - safe to retry on a fresh port - apart
-/// from a genuine startup failure it must propagate rather than mask.
+/// - oc-rsync runs as the daemon library in a forked process
+///   (`test_support::forked_server`) that serves the pre-bound listener, so the
+///   real accept loop and TCP session are under test and no binary is
+///   executed.
+/// - An upstream binary runs in inetd mode, once per accepted connection with
+///   the socket as its stdin and stdout, because a binary cannot take a
+///   pre-bound listener. upstream: clientserver.c:1748
+///   `is_inetd_socket(STDIN_FILENO)`.
 #[allow(dead_code)]
-pub fn is_addr_in_use(err: &io::Error) -> bool {
-    // The daemon logs the OS strerror ("Address already in use"), which is the
-    // form that reaches the retry via the readiness-timeout message. A raw
-    // EADDRINUSE `io::Error` renders as the shorter "address in use"; match both
-    // so the classifier is robust to either representation.
-    let msg = err.to_string().to_ascii_lowercase();
-    msg.contains("address already in use") || msg.contains("address in use")
-}
-
-/// A managed rsync daemon instance for testing.
-///
-/// Handles lifecycle (start, readiness, cleanup) with RAII semantics.
-/// Uses OS-assigned ports to avoid conflicts when tests run in parallel.
 pub struct TestDaemon {
-    _workdir: TempDir,
-    #[allow(dead_code)]
-    config_path: PathBuf,
+    // Dropped first, so the daemon and every session are killed and reaped
+    // before the working directory they serve is removed.
+    #[cfg(unix)]
+    server: Server,
+    workdir: TempDir,
     log_path: PathBuf,
-    #[allow(dead_code)]
-    pid_path: PathBuf,
     module_path: PathBuf,
     port: u16,
-    process: Option<Child>,
 }
 
 impl TestDaemon {
-    /// Start a daemon with the given binary, auto-allocating a free port.
+    /// Starts serving `binary` on a fresh loopback port.
     ///
-    /// The daemon is verified ready (accepting TCP connections) before returning.
-    /// Eliminates both hardcoded ports and sleep-based synchronization.
+    /// The oc-rsync daemon serves as soon as this returns. An upstream binary
+    /// is started once first, and this returns when that warm-up session has
+    /// sent its `@RSYNCD:` greeting: that proves the binary starts and leaves
+    /// it in the page cache, so a test's own timeouts never absorb a cold
+    /// exec.
     ///
-    /// [`allocate_test_port`] cannot reserve the port it returns, so under
-    /// parallel load the daemon can lose the allocate-then-bind race (TOCTOU)
-    /// and fail readiness with `Address already in use`. Retry on a fresh port
-    /// up to a small bound; a failed attempt's child is already killed and
-    /// reaped by [`start_on_port`]'s `Drop` before the error propagates here.
-    /// Any non-bind-conflict error is propagated immediately so a real startup
-    /// bug is never masked by the retry.
+    /// # Errors
+    ///
+    /// Returns the setup I/O error, or [`io::ErrorKind::UnexpectedEof`] with
+    /// the daemon's stderr and log when an upstream warm-up session ends
+    /// before its greeting, meaning the daemon died.
+    #[cfg(unix)]
     #[allow(dead_code)]
     pub fn start(binary: DaemonBinary) -> io::Result<Self> {
-        const MAX_ATTEMPTS: usize = 5;
-        let mut last_err: Option<io::Error> = None;
-        for _ in 0..MAX_ATTEMPTS {
-            let port = allocate_test_port()?;
-            match Self::start_on_port(binary, port) {
-                Ok(daemon) => return Ok(daemon),
-                Err(err) if is_addr_in_use(&err) => last_err = Some(err),
-                Err(err) => return Err(err),
-            }
-        }
-        Err(last_err.unwrap_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::AddrInUse,
-                "daemon failed to bind a free port after retries",
-            )
-        }))
-    }
-
-    /// Start a daemon on a specific port (for tests that need port control).
-    #[allow(dead_code)]
-    pub fn start_on_port(binary: DaemonBinary, port: u16) -> io::Result<Self> {
-        let binary_path = binary.resolve()?;
-        let is_oc = binary.is_oc_rsync();
-
         let workdir = test_support::create_tempdir();
         let config_path = workdir.path().join("rsyncd.conf");
         let log_path = workdir.path().join("rsyncd.log");
-        let pid_path = workdir.path().join("rsyncd.pid");
         let module_path = workdir.path().join("module");
-
         fs::create_dir_all(&module_path)?;
+        fs::write(&config_path, daemon_config(&module_path))?;
 
-        // Write daemon configuration.
-        // Upstream rsync: port goes in config file.
-        // oc-rsync: port passed via --port CLI flag.
-        let config_content = if is_oc {
-            format!(
-                "\
-pid file = {pid}
-
-[testmodule]
-    path = {path}
-    comment = Test module for interop
-    read only = false
-    list = yes
-    use chroot = false
-    numeric ids = yes
-",
-                pid = pid_path.display(),
-                path = module_path.display()
-            )
-        } else {
-            format!(
-                "\
-pid file = {pid}
-port = {port}
-use chroot = false
-numeric ids = yes
-
-[testmodule]
-    path = {path}
-    comment = Test module for interop
-    read only = false
-",
-                pid = pid_path.display(),
-                path = module_path.display()
-            )
+        let (server, port) = match binary {
+            DaemonBinary::OcRsync => {
+                let daemon = test_support::oc_daemon::OcDaemon::builder(&config_path)
+                    .arg("--log-file")
+                    .arg(&log_path)
+                    .spawn()?;
+                let port = daemon.port();
+                (Server::Forked(daemon), port)
+            }
+            DaemonBinary::Upstream(path) => {
+                use test_support::inetd_server::{InetdCommand, InetdServer};
+                let stderr = fs::File::options()
+                    .create(true)
+                    .append(true)
+                    .open(workdir.path().join("daemon.stderr"))?;
+                let command = InetdCommand::new(upstream_binary(path)?, stderr)
+                    .arg("--config")
+                    .arg(&config_path)
+                    .arg("--log-file")
+                    .arg(&log_path);
+                let server = InetdServer::start(TcpListener::bind("127.0.0.1:0")?, command)?;
+                let port = server.port();
+                (Server::Inetd(server), port)
+            }
         };
-        fs::write(&config_path, config_content)?;
-
-        // Build command with --no-detach for process management.
-        let mut cmd = Command::new(binary_path);
-        cmd.arg("--daemon")
-            .arg("--config")
-            .arg(&config_path)
-            .arg("--no-detach")
-            .arg("--log-file")
-            .arg(&log_path);
-
-        // oc-rsync takes port via CLI; upstream reads it from config.
-        if is_oc {
-            cmd.arg("--port").arg(port.to_string());
-        }
-
-        let mut child = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).spawn()?;
-
-        // Verify daemon didn't exit immediately by polling for up to 500ms.
-        // A single fixed sleep is flaky on slow CI runners - poll instead.
-        let startup_deadline = Instant::now() + Duration::from_millis(500);
-        loop {
-            if let Some(status) = child.try_wait()? {
-                let stderr = child.stderr.take();
-                let mut error_msg = format!("daemon exited immediately with status: {status}");
-                if let Some(mut stderr) = stderr {
-                    let mut buf = String::new();
-                    if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
-                        error_msg.push_str(&format!("\nStderr: {buf}"));
-                    }
-                }
-                return Err(io::Error::other(error_msg));
-            }
-            if Instant::now() >= startup_deadline {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-
         let daemon = Self {
-            _workdir: workdir,
-            config_path,
+            server,
+            workdir,
             log_path,
-            pid_path,
             module_path,
             port,
-            process: Some(child),
         };
-
-        // Wait for daemon to accept TCP connections before returning.
-        daemon.wait_ready(DEFAULT_READY_TIMEOUT)?;
-
+        if matches!(daemon.server, Server::Inetd(_)) {
+            daemon.await_greeting()?;
+        }
         Ok(daemon)
+    }
+
+    /// The daemon cannot take an accepted socket as its stdio here; the oc
+    /// daemon is Unix-only by design (`daemon.rs`), so every caller that
+    /// reaches this is an `#[ignore]`d upstream cell.
+    ///
+    /// # Errors
+    ///
+    /// Always [`io::ErrorKind::Unsupported`].
+    #[cfg(not(unix))]
+    #[allow(dead_code)]
+    pub fn start(_binary: DaemonBinary) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "inetd-mode test daemons need Unix socket stdio",
+        ))
     }
 
     /// Get the rsync:// URL for this daemon's test module.
@@ -306,41 +201,58 @@ numeric ids = yes
         fs::read_to_string(&self.log_path)
     }
 
-    /// Wait for daemon to accept TCP connections.
-    ///
-    /// Polls with exponential backoff starting at `READY_POLL_INTERVAL`.
-    /// Returns error if timeout is reached before daemon is ready.
-    fn wait_ready(&self, timeout: Duration) -> io::Result<()> {
-        let start = Instant::now();
-        loop {
-            if start.elapsed() > timeout {
-                let log = self
-                    .log_contents()
-                    .unwrap_or_else(|_| String::from("(log unavailable)"));
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!(
-                        "daemon on port {} did not become ready within {timeout:?}\nLog: {log}",
-                        self.port
-                    ),
-                ));
-            }
-
-            match TcpStream::connect(format!("127.0.0.1:{}", self.port)) {
-                Ok(_) => return Ok(()),
-                Err(_) => thread::sleep(READY_POLL_INTERVAL),
-            }
+    /// Reads a first inetd session's greeting, blocking until the daemon sends
+    /// it or its session ends.
+    #[cfg(unix)]
+    fn await_greeting(&self) -> io::Result<()> {
+        use std::io::{BufRead, BufReader};
+        let mut greeting = String::new();
+        BufReader::new(TcpStream::connect(("127.0.0.1", self.port))?).read_line(&mut greeting)?;
+        if greeting.starts_with("@RSYNCD: ") {
+            return Ok(());
         }
+        let stderr =
+            fs::read_to_string(self.workdir.path().join("daemon.stderr")).unwrap_or_default();
+        let log = self
+            .log_contents()
+            .unwrap_or_else(|_| String::from("(no log)"));
+        Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!(
+                "daemon session ended before its greeting (read {greeting:?})\nstderr: {stderr}\nlog: {log}"
+            ),
+        ))
     }
 }
 
-impl Drop for TestDaemon {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.process.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
+/// How a `TestDaemon` serves its listener.
+#[cfg(unix)]
+#[allow(
+    dead_code,
+    reason = "each variant is held for its Drop, which stops the daemon"
+)]
+enum Server {
+    /// The oc-rsync daemon library, in a forked process.
+    Forked(test_support::oc_daemon::OcDaemon),
+    /// An upstream binary, started once per connection.
+    Inetd(test_support::inetd_server::InetdServer),
+}
+
+/// The `rsyncd.conf` both upstream and oc-rsync serve the test module with.
+#[cfg(unix)]
+fn daemon_config(module_path: &Path) -> String {
+    format!(
+        "\
+[testmodule]
+    path = {path}
+    comment = Test module for interop
+    read only = false
+    list = yes
+    use chroot = false
+    numeric ids = yes
+",
+        path = module_path.display()
+    )
 }
 
 /// Create a test file with specific content, creating parent directories as needed.

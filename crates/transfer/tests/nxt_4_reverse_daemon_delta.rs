@@ -67,9 +67,10 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 
 use tempfile::{TempDir, tempdir};
+use test_support::oc_daemon::OcDaemon;
 
 /// Size of the delta-bearing payload. Large enough to span many signature
 /// blocks so the preserved outer thirds yield multiple Copy tokens.
@@ -106,39 +107,13 @@ fn write_daemon_config(
     fs::write(config_path, body)
 }
 
-/// Guard that kills the daemon child on drop.
-struct DaemonGuard {
-    child: Child,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Spawn `oc-rsync --daemon` on `port` and wait until it accepts connections.
-fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
-    // Acquire a race-free free port and start the daemon on it. Because the
-    // default daemon binds with SO_REUSEADDR only (upstream socket.c:605), a
-    // port collision is a clean EADDRINUSE daemon exit - never a silent
-    // SO_REUSEPORT co-bind - so the helper simply retries with a fresh port.
-    // See `test_support::daemon_port`.
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(oc_bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    Ok((DaemonGuard { child }, port))
+/// Starts the oc-rsync daemon on `config_path`, returning it with the loopback
+/// port it serves. `test_support::oc_daemon` binds the listener before the
+/// daemon starts, so the port is connectable as soon as this returns.
+fn spawn_oc_daemon(config_path: &Path) -> io::Result<(OcDaemon, u16)> {
+    let daemon = OcDaemon::builder(config_path).spawn()?;
+    let port = daemon.port();
+    Ok((daemon, port))
 }
 
 /// Deterministic authoritative payload bytes.
@@ -305,7 +280,7 @@ fn reverse_daemon_delta_reconstructs_via_copy_tokens() {
     )
     .expect("write daemon config");
 
-    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
+    let (_daemon, port) = match spawn_oc_daemon(&scratch.config) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("skipping: could not start oc-rsync --daemon: {e}");

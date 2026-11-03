@@ -480,7 +480,7 @@ fn sniff_negotiation_buffered_vectored_matches_buffered_bytes() {
 
     let flattened: Vec<u8> = vectored
         .iter()
-        .flat_map(|slice| slice.as_ref().iter().copied())
+        .flat_map(|slice| slice.iter().copied())
         .collect();
     assert_eq!(flattened, stream.buffered());
 }
@@ -511,7 +511,7 @@ fn sniff_negotiation_buffered_remaining_vectored_tracks_consumption() {
 
     let flattened: Vec<u8> = remaining
         .iter()
-        .flat_map(|slice| slice.as_ref().iter().copied())
+        .flat_map(|slice| slice.iter().copied())
         .collect();
     assert_eq!(flattened, stream.buffered_remaining_slice());
 }

@@ -59,12 +59,14 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Read};
+use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use tempfile::{TempDir, tempdir};
+use test_support::inetd_server::{InetdCommand, InetdServer};
 use test_support::{UpstreamVersion, require_upstream_rsync, upstream_compat_enabled};
 
 /// Upper bound on the client run. The transfer moves a few kilobytes over
@@ -78,18 +80,6 @@ const EXIT_PARTIAL_TRANSFER: i32 = 23;
 /// out-of-window-order - see the fixture note in the module docs.
 const READABLE: [&str; 2] = ["a_readable.bin", "z_readable.bin"];
 const UNREADABLE: &str = "m_unreadable.bin";
-
-/// Kills the daemon child on drop so a panicking test never leaks the listener.
-struct DaemonGuard {
-    child: Child,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
 
 /// Write an `rsyncd.conf` exposing one read-only module rooted at
 /// `module_root`. `use chroot = false` keeps the unprivileged test process from
@@ -124,21 +114,21 @@ fn write_daemon_config(
     fs::write(config_path, body)
 }
 
-/// Spawn `<upstream> --daemon` on a free port against `config_path`.
-fn spawn_upstream_daemon(rsync_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(rsync_bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--address=127.0.0.1")
-            .arg(format!("--port={port}"))
-            .arg(format!("--config={}", config_path.display()))
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    Ok((DaemonGuard { child }, port))
+/// Serves `config_path` with the upstream `rsync_bin` in inetd mode, one
+/// process per connection, on a loopback listener bound here first; see
+/// `test_support::inetd_server`. Each session's stderr is appended to
+/// `daemon.stderr` beside the config.
+fn spawn_upstream_daemon(rsync_bin: &Path, config_path: &Path) -> io::Result<(InetdServer, u16)> {
+    let stderr = fs::File::options()
+        .create(true)
+        .append(true)
+        .open(config_path.with_file_name("daemon.stderr"))?;
+    let command = InetdCommand::new(rsync_bin, stderr)
+        .arg("--config")
+        .arg(config_path);
+    let server = InetdServer::start(TcpListener::bind("127.0.0.1:0")?, command)?;
+    let port = server.port();
+    Ok((server, port))
 }
 
 /// Run one `oc-rsync` invocation under a deadline, returning `None` if it had to

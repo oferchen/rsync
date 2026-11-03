@@ -47,63 +47,16 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
-use std::sync::mpsc::{Receiver, channel};
-use std::thread;
+use std::process::{Command, Stdio};
 
 use tempfile::{TempDir, tempdir};
+use test_support::oc_daemon::OcDaemon;
 
-/// A running daemon with both pipes drained on their own threads.
-struct Daemon {
-    child: Child,
-    port: u16,
-    _stderr_rx: Receiver<String>,
-    _stdout_rx: Receiver<String>,
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> Receiver<String> {
-    let (tx, rx) = channel();
-    thread::spawn(move || {
-        let mut buf = String::new();
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_string(&mut buf);
-        }
-        let _ = tx.send(buf);
-    });
-    rx
-}
-
-fn spawn_daemon(bin: &Path, config_path: &Path) -> io::Result<Daemon> {
-    let (mut child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    let _stdout_rx = drain::<ChildStdout>(child.stdout.take());
-    let _stderr_rx = drain::<ChildStderr>(child.stderr.take());
-    Ok(Daemon {
-        child,
-        port,
-        _stderr_rx,
-        _stdout_rx,
-    })
+/// Starts the oc-rsync daemon on `config_path`; see `test_support::oc_daemon`.
+fn spawn_daemon(config_path: &Path) -> io::Result<OcDaemon> {
+    OcDaemon::builder(config_path).spawn()
 }
 
 /// A module tree whose ONLY mention of `bait.txt` is inside `sub/.rsync-filter`.
@@ -157,8 +110,8 @@ fn scratch(directive: Option<&str>) -> io::Result<Scratch> {
 
 /// Pulls the whole module and returns the relative paths that arrived, sorted.
 fn pull_served_names(bin: &Path, scratch: &Scratch) -> io::Result<Vec<String>> {
-    let daemon = spawn_daemon(bin, &scratch.config)?;
-    let src = format!("rsync://127.0.0.1:{}/m/", daemon.port);
+    let daemon = spawn_daemon(&scratch.config)?;
+    let src = format!("rsync://127.0.0.1:{}/m/", daemon.port());
     let dest = format!("{}/", scratch.dest.display());
     let output = Command::new(bin)
         .args(["-r", &src, &dest])
@@ -297,9 +250,9 @@ fn push_into_module(
     scratch: &PushScratch,
     delete: bool,
 ) -> io::Result<(Option<i32>, String)> {
-    let daemon = spawn_daemon(bin, &scratch.config)?;
+    let daemon = spawn_daemon(&scratch.config)?;
     let src = format!("{}/", scratch.source.display());
-    let dest = format!("rsync://127.0.0.1:{}/m/", daemon.port);
+    let dest = format!("rsync://127.0.0.1:{}/m/", daemon.port());
     let mut command = Command::new(bin);
     command.arg("-r");
     if delete {
