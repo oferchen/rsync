@@ -254,8 +254,9 @@ pub(crate) fn copy_symlink(
             );
             let target_metadata = follow_symlink_metadata(source)?;
             // The operand was listed as the link; what is copied is its
-            // referent, whose ACL and xattrs are read once it has followed the
-            // link.
+            // referent. upstream's get_acl() reads the referent's ACL through
+            // the followed path, while its xattr read stays on the link itself
+            // (xattrs.c:162,200 sys_llistxattr/sys_lgetxattr).
             match context.read_source_attrs(source, &target_metadata, relative.unwrap_or(source)) {
                 Some(attrs) => context.set_entry_attrs(attrs),
                 None => return Ok(()),
