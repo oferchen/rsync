@@ -16,6 +16,50 @@
 
 #[cfg(target_os = "macos")]
 mod clonefile;
+
+/// Whether a failed CoW clone was refused by the destination's confinement walk
+/// (a symlinked parent, `ELOOP`), which must propagate rather than fall back.
+///
+/// Every other failure is the clone failing to create the destination. The
+/// standard copy path then stages its temp beside the destination and reports
+/// that failure per file, as upstream reports its mkstemp (`receiver.c:465-468`);
+/// upstream has no clone fast path to fail differently.
+#[cfg(any(target_os = "macos", all(test, unix)))]
+fn is_confinement_refusal(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(libc::ELOOP)
+}
+
+#[cfg(all(test, unix))]
+mod clone_fallback_tests {
+    use super::is_confinement_refusal;
+    use std::io;
+
+    /// A clone that cannot create its destination falls through to the
+    /// standard copy, which reports the failure per file like upstream.
+    #[test]
+    fn a_failed_clone_create_falls_through_to_the_standard_copy() {
+        for errno in [
+            libc::EACCES,
+            libc::EPERM,
+            libc::EROFS,
+            libc::ENOSPC,
+            libc::EEXIST,
+        ] {
+            assert!(
+                !is_confinement_refusal(&io::Error::from_raw_os_error(errno)),
+                "errno {errno} must fall through to the standard copy"
+            );
+        }
+    }
+
+    /// A refused symlinked parent is a confinement decision and propagates.
+    #[test]
+    fn a_refused_symlink_parent_propagates() {
+        assert!(is_confinement_refusal(&io::Error::from_raw_os_error(
+            libc::ELOOP
+        )));
+    }
+}
 #[cfg(target_os = "linux")]
 mod ficlone;
 #[cfg(all(target_os = "linux", feature = "iouring-data-writes"))]

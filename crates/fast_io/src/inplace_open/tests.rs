@@ -118,3 +118,19 @@ fn the_operator_walk_opens_an_ordinary_target() {
     // 0600 is upstream's recv-open mode; the final mode is set_file_attrs' job.
     assert_eq!(mode_of(&path), 0o600);
 }
+
+/// A target the first arm creates is owner-only, as upstream's
+/// `do_open(fnametmp, O_WRONLY|O_CREAT, 0600)` makes it; the final mode is
+/// `set_file_attrs()`'s job after the data lands. With the default 0666 create
+/// mode a 022 umask would leave it 0644 - readable by others while partial.
+///
+/// upstream: receiver.c:1221-1226.
+#[test]
+fn the_first_arm_creates_an_absent_target_owner_only() {
+    let dir = test_support::create_tempdir();
+    let fresh = dir.path().join("fresh.bin");
+
+    drop(open_inplace_output(&fresh, false, InplaceResolution::Direct).expect("created"));
+
+    assert_eq!(mode_of(&fresh), test_support::umask_masked(0o600));
+}

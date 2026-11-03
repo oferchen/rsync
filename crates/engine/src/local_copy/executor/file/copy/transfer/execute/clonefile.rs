@@ -169,7 +169,23 @@ pub(super) fn try_clone(
                     .preferred_method(file_size),
             ),
             Ok(fast_io::CloneAttempt::Unsupported) => None,
-            Err(error) => return Err(LocalCopyError::io("copy file", destination, error)),
+            Err(error) if super::is_confinement_refusal(&error) => {
+                return Err(LocalCopyError::io("copy file", destination, error));
+            }
+            // Any other failure to create the clone falls through, as the Linux
+            // FICLONE tier does: the standard path stages a temp beside the
+            // destination and reports its failure per file, exactly as
+            // upstream's mkstemp does (receiver.c:465-468).
+            Err(error) => {
+                debug_log!(
+                    Clone,
+                    1,
+                    "CoW clone of {} failed ({}): using standard copy",
+                    record_path.display(),
+                    error
+                );
+                None
+            }
         }
     };
     #[cfg(not(unix))]
