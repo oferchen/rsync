@@ -69,6 +69,7 @@ enum End {
     /// Half-close, then drain the client: a clean end of stream.
     Eof,
     /// Close with a zero linger, so the client's next read is ECONNRESET.
+    #[cfg(target_os = "linux")]
     Reset,
     /// Send nothing more and wait for the client to give up.
     Stall,
@@ -124,6 +125,7 @@ fn serve_cut_stream(listener: TcpListener, cut: usize, end: End) -> JoinHandle<(
             .expect("cut stream");
         match end {
             End::Eof => sock.shutdown(Shutdown::Write).expect("half-close"),
+            #[cfg(target_os = "linux")]
             End::Reset => {
                 if cut >= FLIST.len() + 4 {
                     reader
@@ -492,6 +494,7 @@ fn a_log_file_run_without_stats_keeps_the_trailer_after_a_peer_error_exit() {
 /// Plays a daemon that sends `compat` as its compat flags at `greeting`'s
 /// protocol, reads the client's checksum list when `negotiates`, then resets
 /// the connection while the client waits for the daemon's next bytes.
+#[cfg(target_os = "linux")]
 fn serve_handshake_reset(
     listener: TcpListener,
     greeting: &'static [u8],
