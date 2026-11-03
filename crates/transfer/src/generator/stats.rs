@@ -32,6 +32,12 @@ use protocol::stats::{CreatedStats, DeleteStats};
 ///   minus the four typed categories.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct FlistSendStats {
+    /// Entries sent across every list (upstream `stats.num_files`, which
+    /// `send_file_list()` and each `send_extra_file_list()` sub-list grow by
+    /// the list's `used`, flist.c:3076 and flist.c:2709). Counted at send time
+    /// because the lazy producer has not read the later sub-lists when the
+    /// initial list goes out.
+    pub(crate) num_files: u64,
     /// Directories sent (upstream `stats.num_dirs`).
     pub(crate) num_dirs: u64,
     /// Symbolic links sent (upstream `stats.num_symlinks`).
@@ -55,6 +61,7 @@ impl FlistSendStats {
     /// - `flist.c:730-746` - per-type tally.
     /// - `flist.c:998-999` - `total_size` for regular files and symlinks only.
     pub(crate) fn record(&mut self, entry: &FileEntry) {
+        self.num_files += 1;
         if entry.is_dir() {
             self.num_dirs += 1;
         } else if entry.is_symlink() {
