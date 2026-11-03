@@ -9,7 +9,7 @@
 //! and default-path behaviour across the workspace.
 
 use std::ffi::OsString;
-use std::net::TcpListener;
+use std::net::{TcpListener, UdpSocket};
 use std::path::PathBuf;
 
 use core::branding::Brand;
@@ -35,6 +35,7 @@ pub struct DaemonConfig {
     pre_bound_listener: Option<TcpListener>,
     /// Program a Windows daemon starts for each accepted connection.
     session_executable: Option<PathBuf>,
+    pre_bound_quic_sockets: Vec<UdpSocket>,
 }
 
 impl Clone for DaemonConfig {
@@ -46,6 +47,7 @@ impl Clone for DaemonConfig {
             signal_flags: self.signal_flags.clone(),
             pre_bound_listener: None,
             session_executable: self.session_executable.clone(),
+            pre_bound_quic_sockets: Vec::new(),
         }
     }
 }
@@ -114,6 +116,14 @@ impl DaemonConfig {
         self.session_executable.as_deref()
     }
 
+    /// Takes the pre-bound QUIC UDP sockets injected through
+    /// [`DaemonConfigBuilder::pre_bound_quic_socket`], leaving none behind.
+    ///
+    /// Empty unless a caller injected sockets; the daemon then binds its own.
+    pub fn take_pre_bound_quic_sockets(&mut self) -> Vec<UdpSocket> {
+        std::mem::take(&mut self.pre_bound_quic_sockets)
+    }
+
     /// Reports whether any daemon-specific arguments were provided.
     #[must_use]
     pub const fn has_runtime_request(&self) -> bool {
@@ -130,6 +140,7 @@ pub struct DaemonConfigBuilder {
     signal_flags: Option<SignalFlags>,
     pre_bound_listener: Option<TcpListener>,
     session_executable: Option<PathBuf>,
+    pre_bound_quic_sockets: Vec<UdpSocket>,
 }
 
 impl Clone for DaemonConfigBuilder {
@@ -141,6 +152,7 @@ impl Clone for DaemonConfigBuilder {
             signal_flags: self.signal_flags.clone(),
             pre_bound_listener: None,
             session_executable: self.session_executable.clone(),
+            pre_bound_quic_sockets: Vec::new(),
         }
     }
 }
@@ -164,6 +176,7 @@ impl Default for DaemonConfigBuilder {
             signal_flags: None,
             pre_bound_listener: None,
             session_executable: None,
+            pre_bound_quic_sockets: Vec::new(),
         }
     }
 }
@@ -177,6 +190,7 @@ impl From<DaemonConfig> for DaemonConfigBuilder {
             signal_flags: config.signal_flags,
             pre_bound_listener: config.pre_bound_listener,
             session_executable: config.session_executable,
+            pre_bound_quic_sockets: config.pre_bound_quic_sockets,
         }
     }
 }
@@ -241,6 +255,20 @@ impl DaemonConfigBuilder {
         self
     }
 
+    /// Injects an already-bound UDP socket for the QUIC listener, the datagram
+    /// twin of [`pre_bound_listener`](Self::pre_bound_listener).
+    ///
+    /// When any is injected the daemon serves QUIC on exactly these sockets and
+    /// binds none of its own, so a test that owns the port before the daemon
+    /// starts never races another process for it. `quic address` and
+    /// `quic port` then no longer choose where QUIC listens. Ignored by builds
+    /// without QUIC and by daemons that do not enable it.
+    #[must_use]
+    pub fn pre_bound_quic_socket(mut self, socket: UdpSocket) -> Self {
+        self.pre_bound_quic_sockets.push(socket);
+        self
+    }
+
     /// Finalises the builder and constructs the [`DaemonConfig`].
     #[must_use]
     pub fn build(self) -> DaemonConfig {
@@ -251,6 +279,7 @@ impl DaemonConfigBuilder {
             signal_flags: self.signal_flags,
             pre_bound_listener: self.pre_bound_listener,
             session_executable: self.session_executable,
+            pre_bound_quic_sockets: self.pre_bound_quic_sockets,
         }
     }
 }
