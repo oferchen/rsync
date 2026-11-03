@@ -12,7 +12,6 @@
 //! - `token.c` - Token encoding with optional compression
 
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::Path;
 
 use compress::zlib::CompressionLevel;
 use logging::debug_log;
@@ -656,7 +655,7 @@ pub(super) fn write_delta_with_compression<W: Write>(
     ops: &[DeltaOp],
     encoder: Option<&mut CompressedTokenEncoder>,
     is_zlib: bool,
-    source_path: &Path,
+    source_path: &std::path::Path,
     source_open: &super::open_source::SourceOpen,
 ) -> io::Result<()> {
     match encoder {
@@ -731,10 +730,10 @@ pub(super) struct InlineChecksumResult {
 /// Supplies the source bytes behind each matched block for the inline checksum
 /// and the compressor dictionary.
 ///
-/// Matched blocks are re-read from a lazily opened file whose position is
-/// reused while blocks stay sequential, so a run of adjacent matches costs no
-/// `lseek`.
-struct CopySource<'b, R = io::BufReader<std::fs::File>> {
+/// Matched blocks are re-read from the descriptor the scan used, whose
+/// position is reused while blocks stay sequential, so a run of adjacent
+/// matches costs no `lseek`.
+struct CopySource<'b, R> {
     file: Option<R>,
     /// File position after the last fully read block, when known.
     position: Option<u64>,
@@ -743,22 +742,6 @@ struct CopySource<'b, R = io::BufReader<std::fs::File>> {
     /// upstream: fileio.c:403-410 - a failed source read zeroes the window and
     /// token emission continues; the file checksum is poisoned by the caller.
     read_error: Option<io::Error>,
-}
-
-impl<'b> CopySource<'b> {
-    fn open(
-        has_copies: bool,
-        path: &Path,
-        source_open: &super::open_source::SourceOpen,
-        buf: &'b mut Vec<u8>,
-    ) -> io::Result<Self> {
-        let file = if has_copies {
-            Some(io::BufReader::new(source_open.open(path)?))
-        } else {
-            None
-        };
-        Ok(Self::from_reader(file, buf))
-    }
 }
 
 impl<'b, R: Read + Seek> CopySource<'b, R> {
@@ -809,7 +792,11 @@ impl<'b, R: Read + Seek> CopySource<'b, R> {
 /// dictionary.
 ///
 /// Matched blocks are re-read into `copy_buf`, which the caller keeps for the
-/// session so the buffer is allocated once, not per file.
+/// session so the buffer is allocated once, not per file. They are read from
+/// `source`, the descriptor the scan read, never a fresh open of the path: a
+/// source renamed or replaced since then cannot mix a second inode into the
+/// checksum. upstream: `sender.c:759` maps the one fd that `match_sums()`
+/// reads for both the tokens and the file sum.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
     writer: &mut W,
@@ -817,8 +804,7 @@ pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
     copy_buf: &mut Vec<u8>,
     encoder: Option<&mut CompressedTokenEncoder>,
     is_zlib: bool,
-    source_path: &Path,
-    source_open: &super::open_source::SourceOpen,
+    source: &std::fs::File,
     checksum_algorithm: ChecksumAlgorithm,
     checksum_seed: i32,
     protocol: protocol::ProtocolVersion,
@@ -831,7 +817,8 @@ pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
         ChecksumVerifier::for_algorithm_seeded(checksum_algorithm, checksum_seed, protocol);
 
     let has_copies = ops.clone().any(|op| matches!(op, WireOp::Copy { .. }));
-    let mut copy_source = CopySource::open(has_copies, source_path, source_open, copy_buf)?;
+    let mut copy_source =
+        CopySource::from_reader(has_copies.then(|| io::BufReader::new(source)), copy_buf);
     let mut source_offset: u64 = 0;
     // upstream: match.c matched()/send_token() accumulate stats.matched_data
     // and stats.literal_data as each token is emitted on the sender.
@@ -1172,7 +1159,6 @@ mod tests {
         let mut temp = NamedTempFile::new().expect("temp file");
         temp.write_all(&source).expect("write source");
         temp.flush().expect("flush");
-        let source_path = temp.path().to_path_buf();
 
         // Build the wire-op sequence by hand. The block_index values are
         // wire token indices only; the Copy reads the LOCAL source file for
@@ -1196,8 +1182,7 @@ mod tests {
             &mut Vec::new(),
             None,
             false,
-            &source_path,
-            &crate::generator::open_source::SourceOpen::new(None, None, false, false),
+            temp.as_file(),
             ChecksumAlgorithm::MD5,
             0,
             proto(31),
@@ -1985,8 +1970,7 @@ mod tests {
             &mut Vec::new(),
             None,
             false,
-            temp.path(),
-            &crate::generator::open_source::SourceOpen::new(None, None, false, false),
+            temp.as_file(),
             ChecksumAlgorithm::MD5,
             0,
             proto(31),
