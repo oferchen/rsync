@@ -6803,8 +6803,9 @@ fn decode_mux_frames(buf: &[u8]) -> Vec<(protocol::MessageCode, Vec<u8>)> {
     frames
 }
 
-/// Runs `record_open_failure` against a multiplexed server writer and returns
-/// the frames it produced.
+/// Runs `record_open_failure` against a multiplexed server writer that frames
+/// every line (a daemon, clientserver.c:1177-1178) for the negotiated protocol,
+/// and returns the frames it produced.
 fn open_failure_frames(
     protocol_version: u8,
     client_mode: bool,
@@ -6820,6 +6821,10 @@ fn open_failure_frames(
         let mut writer = crate::writer::ServerWriter::new_plain(&mut buf)
             .activate_multiplex()
             .unwrap();
+        writer.set_message_routing(
+            crate::writer::MessageRoute::Frames,
+            ProtocolVersion::try_from(protocol_version).unwrap(),
+        );
         ctx.record_open_failure(&mut writer, 7, &error, "src/gone.txt")
             .unwrap();
     }
@@ -7166,6 +7171,12 @@ fn flist_vanished_warning_downgrades_to_info_below_protocol_30() {
             let mut writer = crate::writer::ServerWriter::new_plain(&mut buf)
                 .activate_multiplex()
                 .unwrap();
+            // A framing server (a daemon) for the negotiated protocol; the
+            // writer applies the pre-30 downgrade (log.c:359-364).
+            writer.set_message_routing(
+                crate::writer::MessageRoute::Frames,
+                ProtocolVersion::try_from(protocol_version).unwrap(),
+            );
             ctx.flush_flist_diagnostics(&mut writer).unwrap();
         }
         let frames = decode_mux_frames(&buf);

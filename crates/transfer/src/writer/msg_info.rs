@@ -72,10 +72,9 @@ pub trait MsgInfoSender {
     /// Sends a `MSG_WARNING` frame through the multiplexed output stream.
     ///
     /// Mirrors upstream `rprintf(FWARNING, ...)` from a server-side sender: the
-    /// text is framed instead of being written to the local stderr, so a client
-    /// on the far end of a daemon or SSH connection renders it. Callers must
-    /// downgrade to [`Self::send_msg_info`] below protocol 30, matching
-    /// `log.c:359-364`.
+    /// text reaches the client on the far end of a daemon or SSH connection. The
+    /// writer applies the route and the pre-30 downgrade to `MSG_INFO`
+    /// (`log.c:359-364`), so callers pass the warning as it is.
     ///
     /// The default implementation is a no-op, matching [`Self::send_msg_info`].
     ///
@@ -204,38 +203,22 @@ pub trait MsgInfoSender {
 }
 
 impl<W: Write> MsgInfoSender for ServerWriter<W> {
+    // upstream: log.c:357-366 - every diagnostic passes the one routing
+    // decision in rwrite(); plain mode sends nothing.
     fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
-        // Plain mode cannot send MSG_INFO - silently ignore (matches upstream
-        // behavior where am_server gates message emission).
-        if self.is_multiplexed() {
-            self.send_message(MessageCode::Info, data)
-        } else {
-            Ok(())
-        }
+        self.send_diagnostic(MessageCode::Info, data)
     }
 
     fn send_msg_error_xfer(&mut self, data: &[u8]) -> io::Result<()> {
-        if self.is_multiplexed() {
-            self.send_message(MessageCode::ErrorXfer, data)
-        } else {
-            Ok(())
-        }
+        self.send_diagnostic(MessageCode::ErrorXfer, data)
     }
 
     fn send_msg_error(&mut self, data: &[u8]) -> io::Result<()> {
-        if self.is_multiplexed() {
-            self.send_message(MessageCode::Error, data)
-        } else {
-            Ok(())
-        }
+        self.send_diagnostic(MessageCode::Error, data)
     }
 
     fn send_msg_warning(&mut self, data: &[u8]) -> io::Result<()> {
-        if self.is_multiplexed() {
-            self.send_message(MessageCode::Warning, data)
-        } else {
-            Ok(())
-        }
+        self.send_diagnostic(MessageCode::Warning, data)
     }
 
     fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {

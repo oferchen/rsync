@@ -184,6 +184,13 @@ pub struct ConnectionConfig {
     ///   `parse_arguments()`, which the server runs over the received argv.
     /// - `io.c:1284` - `set_io_timeout()` derives `allowed_lull` from it.
     pub io_timeout: Option<u32>,
+    /// The diagnostic route this server process was asked for (upstream
+    /// `msgs2stderr` with `saw_stderr_opt`): `None` keeps the default, which
+    /// [`crate::writer::MessageRoute::resolve`] picks from the protocol. A daemon
+    /// not run over a remote shell sets [`crate::writer::MessageRoute::Frames`].
+    ///
+    /// upstream: options.c:103, options.c:2059-2060, clientserver.c:1177-1178.
+    pub msgs2stderr: Option<crate::writer::MessageRoute>,
     /// Name of the daemon module this server process is serving, when any.
     ///
     /// Mirrors upstream's `module_id` global: it is set exactly once, when the
