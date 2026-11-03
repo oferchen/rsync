@@ -1,5 +1,6 @@
 //! Read filesystem ACLs and translate them into the rsync wire representation.
 
+use std::io;
 use std::path::Path;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -57,6 +58,31 @@ fn resolve_named_entry(name: &str, is_user: bool) -> (u32, Option<Vec<u8>>) {
 /// when it writes the sorted list, too late to drop one, so the fallback stays
 /// until the sender reads each ACL as it emits the entry (task 519).
 pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
+    read_rsync_acl(path, mode, is_default).unwrap_or_else(|_| mode_acl(mode, is_default))
+}
+
+/// The ACL upstream pretends a file has when it cannot read a real one: the
+/// one `mode` implies, or none for a default ACL.
+///
+/// upstream: acls.c:748-751 - `rsync_acl_fake_perms()` for the access type.
+fn mode_acl(mode: u32, is_default: bool) -> RsyncAcl {
+    if is_default {
+        RsyncAcl::new()
+    } else {
+        RsyncAcl::from_mode(mode)
+    }
+}
+
+/// Reads the filesystem ACL for `path`, failing where upstream fails.
+///
+/// A filesystem without ACLs yields the ACL `mode` implies, as in
+/// [`get_rsync_acl`]; any other read error is returned, so the caller can
+/// report it and drop the entry.
+///
+/// upstream: acls.c:740-756 get_rsync_acl() - `no_acl_syscall_error()`
+/// fakes the ACL, every other errno prints `get_acl: sys_acl_get_file` and
+/// fails with -1.
+pub(super) fn read_rsync_acl(path: &Path, mode: u32, is_default: bool) -> io::Result<RsyncAcl> {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let option = if is_default {
         Some(AclOption::DEFAULT_ACL)
@@ -71,31 +97,12 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
 
     let entries = match getfacl(path, option) {
         Ok(e) => e,
-        Err(e) => {
-            if is_unsupported_error(&e) {
-                // upstream: acls.c:748-751 - fake ACL from mode when unsupported
-                return if !is_default {
-                    RsyncAcl::from_mode(mode)
-                } else {
-                    RsyncAcl::new()
-                };
-            }
-            // Deviation from upstream (acls.c:752-755 returns -1): mode-based
-            // fallback on any other error.
-            return if !is_default {
-                RsyncAcl::from_mode(mode)
-            } else {
-                RsyncAcl::new()
-            };
-        }
+        Err(e) if is_unsupported_error(&e) => return Ok(mode_acl(mode, is_default)),
+        Err(e) => return Err(e),
     };
 
     if entries.is_empty() {
-        return if !is_default {
-            RsyncAcl::from_mode(mode)
-        } else {
-            RsyncAcl::new()
-        };
+        return Ok(mode_acl(mode, is_default));
     }
 
     let mut acl = RsyncAcl::new();
@@ -162,7 +169,7 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
         acl.other_obj = (mode & 7) as u8;
     }
 
-    acl
+    Ok(acl)
 }
 
 #[cfg(test)]
