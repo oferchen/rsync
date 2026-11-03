@@ -92,6 +92,16 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Whether any filter rule could keep a destination entry from deletion,
+    /// so an extraneous directory must be emptied one checked child at a time
+    /// (delete.c:91-183 delete_dir_contents) rather than removed wholesale.
+    pub(crate) fn deletion_filters_active(&self) -> bool {
+        match &self.filter_program {
+            Some(program) => !program.is_empty(),
+            None => self.options.filter_set().is_some_and(|set| !set.is_empty()),
+        }
+    }
+
     /// Freezes the effective deletion filter chain for the current directory
     /// into an immutable, `Send + Sync` [`DeletionFilterSnapshot`].
     ///
