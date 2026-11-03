@@ -59,10 +59,6 @@ pub trait CompatFlagsExchanger {
     /// Returns the capability characters (e.g. `"LsfxCIvu"`) extracted from
     /// arguments like `["-e.LsfxCIvu"]` or `["-e", "LsfxCIvu"]`.
     fn parse_client_info<'a>(&self, client_args: &'a [String]) -> Cow<'a, str>;
-
-    /// Returns `true` when `client_info` contains the pre-release `'V'`
-    /// capability flag.
-    fn has_pre_release_v_flag(&self, client_info: &str) -> bool;
 }
 
 /// Negotiates checksum and compression algorithms with the peer.
@@ -185,10 +181,6 @@ impl CompatFlagsExchanger for RsyncNegotiator {
 
     fn parse_client_info<'a>(&self, client_args: &'a [String]) -> Cow<'a, str> {
         super::capability::parse_client_info(client_args)
-    }
-
-    fn has_pre_release_v_flag(&self, client_info: &str) -> bool {
-        super::capability::client_has_pre_release_v_flag(client_info)
     }
 }
 
