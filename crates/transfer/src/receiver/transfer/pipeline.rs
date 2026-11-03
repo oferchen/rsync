@@ -878,7 +878,7 @@ impl ReceiverContext {
                 }
 
                 if end_phase_after_requests && !phase_ended && file_iter.len() == 0 {
-                    self.write_early_generator_ndx_done(writer)?;
+                    self.write_phase_end(writer)?;
                     phase_ended = true;
                 }
 
