@@ -27,11 +27,13 @@ use super::copy_directory_recursive;
 /// back, avoiding a per-entry `PathBuf` allocation from `Path::join`.
 pub(super) fn process_planned_entry(
     context: &mut CopyContext,
-    planned: &PlannedEntry<'_>,
+    planned: &mut PlannedEntry<'_>,
     target_buf: &mut PathBuf,
     ensure_directory: &mut impl FnMut(&mut CopyContext) -> Result<(), LocalCopyError>,
     root_device: Option<u64>,
 ) -> Result<bool, LocalCopyError> {
+    let attrs = std::mem::take(&mut planned.attrs);
+    let planned = &*planned;
     let entry_metadata = planned.metadata();
     let record_relative = non_empty_path(planned.relative.as_path());
 
@@ -80,6 +82,7 @@ pub(super) fn process_planned_entry(
     let dest_name = transcode_filename_component(file_name, context.options().iconv());
     target_buf.push(Path::new(&*dest_name));
 
+    context.set_entry_attrs(attrs);
     let result = dispatch_copy_action(
         context,
         planned,
@@ -91,6 +94,7 @@ pub(super) fn process_planned_entry(
     );
 
     target_buf.pop();
+    context.take_entry_attrs();
     result
 }
 

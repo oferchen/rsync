@@ -349,8 +349,8 @@ pub(crate) fn copy_file(
     // sync would always report "same" and never report a real drift.
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     let xattrs_changed = preserve_xattrs
-        && crate::local_copy::xattrs_differ_from_source(
-            source,
+        && crate::local_copy::xattrs_differ(
+            context.entry_attrs().xattrs.as_ref(),
             destination,
             false,
             metadata_options.fake_super_enabled(),

@@ -13,7 +13,7 @@ use std::time::Duration;
 use ::metadata::MetadataOptions;
 
 #[cfg(all(any(unix, windows), feature = "acl"))]
-use crate::local_copy::sync_acls_if_requested;
+use crate::local_copy::apply_source_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 
@@ -146,18 +146,19 @@ pub(super) fn record_metadata_only_skip(
     sync_xattrs_if_requested(
         flags.preserve_xattrs,
         mode,
-        source,
+        context.entry_attrs().xattrs.as_ref(),
         destination,
         true,
         context.filter_program(),
         Some(context.destination_root()),
     )?;
     #[cfg(all(any(unix, windows), feature = "acl"))]
-    sync_acls_if_requested(
+    apply_source_acls_if_requested(
         flags.preserve_acls,
         context.options().fake_super_enabled(),
         mode,
         source,
+        context.entry_attrs(),
         destination,
         true,
         Some(context.destination_root()),

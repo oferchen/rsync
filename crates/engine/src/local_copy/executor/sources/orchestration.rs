@@ -1163,6 +1163,7 @@ fn process_single_source(
     } else {
         handle_non_directory_source(context, &proc_ctx, plan)?;
     }
+    context.take_entry_attrs();
 
     retouch_relative_implied_dirs(
         context,

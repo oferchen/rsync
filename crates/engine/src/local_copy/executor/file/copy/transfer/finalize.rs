@@ -74,6 +74,7 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
                     destination_previously_existed,
                 },
                 destination_path,
+                context.take_entry_attrs(),
                 #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
                 #[cfg(all(any(unix, windows), feature = "acl"))]
