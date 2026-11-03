@@ -1,13 +1,14 @@
-# Upstream rsync 3.5.0 rrsync model
+# Upstream rsync rrsync model
 
 Read-only extraction of the restricted-shell rule set oc-rsync must mirror.
-Source of truth is `target/interop/upstream-src/rsync-3.5.0/support/rrsync`
-(1003 lines, up from 391 in 3.4.4), its man page `support/rrsync.1.md`, the
-generator `packaging/cull-options`, the 19 `testsuite/rrsync-*_test.py` files,
+Source of truth is `target/interop/upstream-src/rsync-3.5.1/support/rrsync`
+(1008 lines; 1003 in 3.5.0, 391 in 3.4.4), its man page `support/rrsync.1.md`,
+the generator `packaging/cull-options`, the 21 `testsuite/rrsync-*_test.py`
+files (19 in 3.5.0),
 and the two rsync options that exist only to serve it - `--drop-D` and
 `--confine-root`.
 
-This is the sibling of `upstream-3.5.0-path-confinement-model.md`. That document
+This is the sibling of `upstream-path-confinement-model.md`. That document
 covers what the *server* does with a path; this one covers what the *wrapper*
 does before the server ever runs. They meet at exactly two places: the
 `--confine-root` the wrapper passes, and the `/proc/self/fd/N` pins the wrapper
@@ -102,7 +103,7 @@ This is the core. rrsync carries two tables: a string of allowed short-option
 
 "Checked" means `validated_arg()` - section 4.
 
-### 2.2 Long options, 3.5.0 (91 entries)
+### 2.2 Long options (91 entries, the same in 3.5.0 and 3.5.1)
 
 **DENIED unconditionally (`-1`), 5:**
 `copy-devices`, `daemon`, `debug`, `no-munge-links`, `write-devices`.
@@ -271,8 +272,8 @@ server-side logging are unavailable under `-no-overwrite`.
 `rrsync -absolute /path/to/root` accepts a transfer arg spelled with the
 restricted directory's absolute server path - `/path/to/root/dir1` as an alias
 for `dir1`. It affects **transfer args only** (`opt == 'arg'`), not option
-values, and only when `DIR != '/'` (`validated_arg():697`). The absolute
-spelling is stripped back to a relative one before exec (`validated_arg():939-944`).
+values, and only when `DIR != '/'` (`validated_arg():699`). The absolute
+spelling is stripped back to a relative one before exec (`validated_arg():944-949`).
 
 ### 3.5 Logging hardened
 
@@ -286,7 +287,7 @@ Pinned by `rrsync-logfile-symlink_test.py`.
 **There is nevertheless no operator-visible diagnostic channel on a default
 install**, and this bounds what any "warn the admin" design can promise:
 
-- `die()` writes to `sys.stderr` (`support/rrsync:968`). Under an sshd forced
+- `die()` writes to `sys.stderr` (`support/rrsync:973`). Under an sshd forced
   command stderr goes back over the SSH channel **to the client** - the
   untrusted peer. The `sys.stdin.isatty()` guard on the next line exists
   precisely because non-interactive is the normal case. So every refusal
@@ -304,7 +305,7 @@ read. See consequence 5 - it is why "start, but warn" is not one option.
 
 ### 3.6 The lock is explicitly not a security control
 
-`lock_or_die()` (`support/rrsync:950-964`) now distinguishes "another instance
+`lock_or_die()` (`support/rrsync:955-969`) now distinguishes "another instance
 holds it" (`EWOULDBLOCK`/`EAGAIN`/`EACCES` → die) from "flock is unavailable on
 this fd/platform" (Solaris returns `EBADF` for `flock()` on a directory fd →
 proceed without the lock). The comment states the reasoning: the single-run lock
@@ -312,7 +313,7 @@ is a best-effort convenience, cf. `-no-lock`, not a security control.
 
 ## 4. The restricted-directory rule, and how a path argument is validated
 
-`validated_arg(opt, arg, typ, wild)` (`support/rrsync:681-947`) is the whole
+`validated_arg(opt, arg, typ, wild)` (`support/rrsync:681-952`) is the whole
 confinement. This is the FIXED version; the broken one is section 4.6.
 
 ### 4.1 Normalisation, before any check
@@ -325,13 +326,16 @@ confinement. This is the FIXED version; the broken one is section 4.6.
    breaks every such pull. Under `-wo`, any *other* `--files-from` value is
    refused outright - a write-only endpoint must not read a server-side list
    back to the peer (`validated_arg():686-691`).
-3. Strip a leading `./`, collapse `//`, and `lstrip('/')` - **unless** this is an
-   `-absolute` transfer arg naming the root.
+3. Strip a leading `./` and collapse `//`. A leading `/` names the restricted
+   root: since 3.5.1 a single `/` is kept and, when `DIR != '/'`, `/x` becomes
+   `DIR/x` (`validated_arg():697-704`, `NEWS.md:28-30`). 3.5.0 stripped it
+   with `lstrip('/')`, giving the relative `x`. An `-absolute` transfer arg
+   naming the root is left as it is.
 4. If `DIR != '/'`, refuse any `..` component:
    `HAS_DOT_DOT_RE = (^|/)\.\.(/|$)`, message "do not use .. in ... (anchor the
    path at the root of your restricted dir)".
 5. Transfer args only: `glob.glob()`, falling back to the literal string when
-   nothing matches (`validated_arg():704-709`). Each glob result is validated
+   nothing matches (`validated_arg():709-714`). Each glob result is validated
    independently.
 
 ### 4.2 The realpath check
@@ -346,9 +350,9 @@ if arg != real_arg and not real_arg.startswith(args.dir_slash):
 ```
 
 Trailing `/` and `/.` are split off first and re-appended after
-(`validated_arg():714-721, 935-938`) - they are meaningful to rsync and must
+(`validated_arg():719-726, 940-943`) - they are meaningful to rsync and must
 survive every rewrite. `args.dir` is itself a `realpath()` taken at startup
-(`__main__:994`).
+(`__main__:999`).
 
 Note the shape: a path that resolves to *itself* passes without a prefix check.
 Only a path that realpath actually *changed* has to land under `DIR/`.
@@ -416,7 +420,7 @@ Where the probe fails, rrsync passes the realpath-validated name, exactly as
 3.4.4 did. **The confinement is weaker there by design**, and the race tests
 `test_skipped()` rather than fail. Where `/proc/self/fd` exists but a readlink
 fails anyway (seccomp, restricted `/proc`), that is an anomaly and rrsync
-**fails closed** (`validated_arg():900-908`).
+**fails closed** (`validated_arg():905-913`).
 
 ### 4.5 Which pin, per argument shape
 
@@ -444,7 +448,7 @@ Whichever directory is pinned, rrsync then re-resolves the leaf beneath the held
 fd and compares `(st_dev, st_ino)` against the leaf it opened. A mismatch is
 "post-pin path changed (race?)" - fail closed.
 
-**Leaves rrsync deliberately never opens** (`validated_arg():767-781`): a sender
+**Leaves rrsync deliberately never opens** (`validated_arg():772-786`): a sender
 arg whose `lstat` says it is neither a regular file nor a directory. `O_RDONLY`
 on a FIFO blocks until a writer appears, which wedged rrsync before exec; a
 dangling symlink resolves to nothing and was reported as a race. Both are shapes
@@ -466,7 +470,7 @@ option value and a transfer arg beyond the type class.
 
 ## 5. How the option table stays in sync with rsync's own
 
-`packaging/cull-options` (byte-identical between 3.4.4 and 3.5.0) is a Python
+`packaging/cull-options` (byte-identical in 3.4.4, 3.5.0 and 3.5.1) is a Python
 script that **scrapes `options.c`** for everything a client can send to a server
 and prints the block between the `### START/END of options data produced by the
 cull-options script. ###` markers. The patterns it matches:
@@ -488,8 +492,9 @@ emits verbatim (`fake-super`, `no-munge-links`, `copy-devices`,
 ### The shipped table is NOT what the generator produces
 
 MEASURED, not inferred: running upstream's own `packaging/cull-options --python`
-against upstream's own 3.5.0 `options.c` and diffing the result against the
-block shipped in `support/rrsync` gives **three** differences.
+against upstream's own `options.c` and diffing the result against the
+block shipped in `support/rrsync` gives **three** differences. Measured on
+3.5.0 and again on 3.5.1, with the same result.
 
 ```
 -  'compress-threads': 1,     shipped only - generator does not emit it
@@ -504,11 +509,12 @@ Verified causes:
   `POPT_ARG_INT` into `do_compression_threads`) with no `args[ac++]` emit site,
   so the scraper never sees it. A hand-added permissive extra.
 - **`dirs`** likewise has no emit site: `-d` goes to the server through
-  `argstr[x++] = 'd'` (`options.c:2806`), so the generator learns the *letter*
+  `argstr[x++] = 'd'` (`options.c:2816`), so the generator learns the *letter*
   but never the long name. (The only `args[ac++]` match on "dirs" is
   `--no-implied-dirs`, a different option.) Also a hand-added permissive extra.
 - **`debug: -1`** is a hand-applied **denial** that a regeneration would revert
-  to `1`, re-opening exactly the disclosure route `NEWS.md:171-174` documents.
+  to `1`, re-opening exactly the disclosure route `NEWS.md:221-224` (3.5.0
+  section) documents.
 
 So the real relation is
 
@@ -531,16 +537,17 @@ rather than as a silent policy revert. Same shape as task 410; see consequence 8
 
 ## 6. The `/proc/self/fd/N` pin, seen from the server
 
-The server side is specified in `upstream-3.5.0-path-confinement-model.md`
+The server side is specified in `upstream-path-confinement-model.md`
 section 4; repeated here only as the contract between the two halves.
 
-- `fd_pin_tail()` (`syscall.c:149`) splits a `/proc/<self|pid>/fd` prefix,
-  returning `""` for the pin directory itself and a `/`-leading tail otherwise.
-- `is_exact_fd_pin()` (`syscall.c:176`) accepts only the **bare, all-digit**
+- `fd_pin_tail()` (`syscall.c:176`) splits a `/proc/<self|pid>/fd` prefix
+  (and, since 3.5.1, `/dev/fd` and `/dev/std{in,out,err}`), returning `""`
+  for the pin directory itself and a `/`-leading tail otherwise.
+- `is_exact_fd_pin()` (`syscall.c:222`) accepts only the **bare, all-digit**
   entry. A planted name like `.../fd/outside-secret` is not a pin. A pinned
   *parent* spelled `.../fd/7/<leaf>` is handled by the walk resolving the magic
   link and checking the components past it.
-- `abspath_outside_confinement()` (`syscall.c:197`) judges a pin by what it
+- `abspath_outside_confinement()` (`syscall.c:245`) judges a pin by what it
   points **at**, not by its spelling - a pin is outside the root by
   construction. `!am_daemon` gates the whole pin branch: a daemon has
   `module_dir`, never `confine_root`.
@@ -565,7 +572,7 @@ server's own resolution of such paths - the only end that can see them - and it
 is passed in both directions because a dir-merge is read by whichever side the
 rule applies to.
 
-Server-side validation (`options.c:2382-2399`):
+Server-side validation (`options.c:2391-2408`):
 
 - `am_daemon` → `confine_root = NULL`. A daemon already has `module_dir`, and
   honouring a peer-supplied root there could only *loosen* the module.
@@ -616,13 +623,13 @@ and fill is not one that can be safely handed over. The test asserts no
 **Without the `/proc/self/fd` primitive there is no safe answer for either
 family, so both are refused** ("receiver option path does not exist"), and
 first-use `--backup-dir`/`--partial-dir`/alt-dest simply do not work on those
-platforms (`validated_arg():816-832`). Every relevant test branches on
+platforms (`validated_arg():821-837`). Every relevant test branches on
 `proc_self_fd_pins()` and asserts the refusal on the other arm.
 
 For an ordinary missing receiver *destination* leaf (not one of these families),
 rrsync pins the existing parent and hands rsync
 `/proc/self/fd/<parent>/<leaf>`; if the parent does not exist either (a deeper
-`-R` path) it falls through unpinned, as before (`validated_arg():833-853`).
+`-R` path) it falls through unpinned, as before (`validated_arg():838-858`).
 
 ## 9. Test map - what each upstream test pins
 
@@ -643,6 +650,8 @@ rrsync pins the existing parent and hands rsync
 | `rrsync-files-from-stdin` | `--files-from=-` is a sentinel, not a path, and must pass through; a real out-of-tree list file is still refused, and refused *for the pathname*, not for a command-shape error. |
 | `rrsync-write-only-files-from` | `-wo` refuses a remote `--files-from` and leaks no record from it; a client-local `--files-from` upload still works and still selects. |
 | `rrsync-logfile-symlink` | `LOGFILE` symlink is not followed. |
+| `rrsync-root-relative-paths` | (3.5.1) A leading slash in an argument stays relative to the restricted root. |
+| `rrsync-userns-procfs` | (3.5.1) A confined fd pin stays usable inside a Linux user namespace. Linux only; skipped without `unshare`. |
 | `rrsync-no-overwrite-logfile` | `-no-overwrite` refuses `--log-file`; conditional on the flag (a wrapper without it must accept the same option). |
 | `rrsync-no-overwrite-partial-dir` | Same for `--partial-dir`, with an existing partial file as the victim. |
 | `rrsync-no-overwrite-delay-updates` | Same for `--delay-updates`, victim in `.~tmp~`. |
@@ -661,26 +670,24 @@ Two patterns worth adopting wholesale:
 Recorded here so the implementation tasks (U350-8b..8e) start from the right
 premises.
 
-1. **`--drop-D` is a prerequisite, not an optional extra.** oc-rsync does not
-   have it. A restricted-shell subcommand cannot ship correct device/special
-   denial without first adding `--drop-D`/`--no-drop-D` (`options.c:688-689`) and
-   the generator gate (`generator.c:2031`). Forcing `--no-D` instead is not a
-   smaller version of the same thing - it corrupts the file list. Tracked as
-   task 617, which blocks 8c.
+1. **`--drop-D` is a prerequisite, not an optional extra.** A restricted-shell
+   subcommand cannot ship correct device/special denial without
+   `--drop-D`/`--no-drop-D` (`options.c:688-689`) and the generator gate
+   (`generator.c:2031`). oc-rsync now has the option
+   (`crates/cli/src/frontend/server/flags.rs`, `drop_devices`). Forcing
+   `--no-D` instead is not a smaller version of the same thing - it corrupts
+   the file list.
 
    One rule that is easy to miss and that the wrapper depends on: **`--drop-D`
-   is not forwarded to the remote side** (`rsync.1.md:1439-1440` - "it is meant
+   is not forwarded to the remote side** (`rsync.1.md:1457-1458` - "it is meant
    to be applied to one end of a connection by itself"), exactly like
    `--confine-root`. That is what makes it safe for the wrapper to append
    unilaterally, and an implementation that adds it to the outgoing arg vector
    would defeat the point.
 
-2. **`--confine-root` is a prerequisite too.** Task 548 is still pending. oc has
-   an internal `confine_root` field on the generator's source opener
-   (`crates/transfer/src/generator/open_source.rs:43`), set only for daemon
-   connections (`crates/transfer/src/generator/context.rs:666`) - that is the
-   daemon's module boundary, which is precisely the case upstream makes
-   `--confine-root` *inert* for. There is no CLI option and no non-daemon path.
+2. **`--confine-root` is a prerequisite too.** oc-rsync now has the server
+   option (`crates/cli/src/frontend/server/flags.rs`, `confine_root`). It must
+   stay inert on a daemon, where the module boundary already applies.
 
 3. **The wrapper must not carry its own path validator.** That is the whole
    lesson of CVE-2026-53783 - a separate string-based validator that could be
@@ -722,7 +729,7 @@ premises.
    - **The Python-specific hooks.** `braceexpand` (optional; absent, rrsync just
      de-backslashes), `glob.glob()` semantics for transfer args, and
      `os.path.realpath()`'s exact `..`-collapse behaviour. A Rust implementation
-     must pick a glob and a normaliser and then *test against the real 3.5.0
+     must pick a glob and a normaliser and then *test against the real 3.5.1
      rrsync*, because these are the places where "looks equivalent" silently is
      not. The `..` refusal happens before globbing, which limits the blast
      radius, but the glob still decides which names get validated at all.
@@ -771,13 +778,15 @@ premises.
 
 ## References
 
-- `target/interop/upstream-src/rsync-3.5.0/support/rrsync` and `support/rrsync.1.md`
-- `target/interop/upstream-src/rsync-3.5.0/packaging/cull-options`
-- `target/interop/upstream-src/rsync-3.5.0/testsuite/rrsync-*_test.py` (19 files)
+- `target/interop/upstream-src/rsync-3.5.1/support/rrsync` and `support/rrsync.1.md`
+- `target/interop/upstream-src/rsync-3.5.1/packaging/cull-options`
+- `target/interop/upstream-src/rsync-3.5.1/testsuite/rrsync-*_test.py` (21 files)
 - `options.c` - `--drop-D` / `--no-drop-D` (688-689), `--confine-root` (690),
-  validation (2382-2399); `generator.c:2031` (`drop_devices` gate)
+  validation (2391-2408); `generator.c:2031` (`drop_devices` gate)
 - `syscall.c` - `fd_pin_tail()`, `is_exact_fd_pin()`, `abspath_outside_confinement()`
-- `NEWS.md` - the `support/rrsync` block under SECURITY FIXES, and the rrsync
-  entry under BEHAVIOR CHANGES. **Both say `--no-D`; the code says `--drop-D`.**
-- Sibling document: `docs/design/upstream-3.5.0-path-confinement-model.md`
+- `NEWS.md` - in the 3.5.0 section, the `support/rrsync` block under SECURITY
+  FIXES and the rrsync entry under BEHAVIOR CHANGES. **Both say `--no-D`; the
+  code says `--drop-D`.** In the 3.5.1 section, the restricted-root fix under
+  BUG FIXES (`NEWS.md:28-30`).
+- Sibling document: `docs/design/upstream-path-confinement-model.md`
 - CVE-2026-53783 (HIGH): rrsync restricted-directory escape

@@ -2,7 +2,7 @@
 """Enumerate every path-mutating / path-opening call site in crates/.
 
 Why this exists: upstream rsync 3.5.0 routes every such operation through a
-confinement resolver (see docs/design/upstream-3.5.0-path-confinement-model.md).
+confinement resolver (see docs/design/upstream-path-confinement-model.md).
 To mirror that, oc-rsync first needs to know the complete set of sites. A list
 maintained by hand is a list that rots, so this derives it mechanically and can
 be re-run to prove no site was missed after the resolver is wired in.

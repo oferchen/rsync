@@ -1,7 +1,7 @@
 """Unit tests for the production path-site sweep.
 
 The sweep's output feeds the confinement-resolver work (docs/design/
-upstream-3.5.0-path-confinement-model.md), so a site it wrongly counts becomes
+upstream-path-confinement-model.md), so a site it wrongly counts becomes
 work that gets scoped and never needed. Each test below pins one reason a file
 is or is not production code; the negative cases matter as much as the
 positive ones, because a rule that excludes too much shrinks the number just as
