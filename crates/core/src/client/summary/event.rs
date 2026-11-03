@@ -497,6 +497,54 @@ impl ClientEvent {
         }
     }
 
+    /// Returns whether upstream's generator writes this entry's line itself, the
+    /// moment it checks the entry, instead of itemizing it to the sender.
+    ///
+    /// upstream: generator.c:1154,1305 and rsync.c:828 write `is uptodate`, and
+    /// recv_generator() the skip notices (generator.c:1769,1798,2122,2130,2138),
+    /// with rprintf(); log.c:log_delete() sends a deletion as its own
+    /// MSG_DELETED. Every other entry is itemized to the sender, which logs it
+    /// when it reaches that entry (sender.c:send_files()).
+    #[must_use]
+    pub fn is_generator_notice(&self) -> bool {
+        self.is_uptodate()
+            || matches!(
+                self.kind,
+                ClientEventKind::SkippedExisting
+                    | ClientEventKind::SkippedMissingDestination
+                    | ClientEventKind::SkippedNewerDestination
+                    | ClientEventKind::SkippedOverMaxSize
+                    | ClientEventKind::SkippedUnderMinSize
+                    | ClientEventKind::EntryDeleted
+            )
+    }
+    /// Returns whether this is a hard-linked symlink (`hL`). Its metadata kind
+    /// is `Symlink` and its `symlink_target` slot holds the link target, not a
+    /// `=> leader` trailer.
+    #[must_use]
+    pub fn is_hardlinked_symlink(&self) -> bool {
+        matches!(self.kind, ClientEventKind::HardLink)
+            && self
+                .metadata
+                .as_ref()
+                .map(ClientEntryMetadata::kind)
+                .is_some_and(|kind| matches!(kind, ClientEntryKind::Symlink))
+    }
+    /// Returns whether this is a hard-link alias freshly linked to a leader
+    /// placed during this run. Upstream prints its `"%s => %s"` line in the
+    /// hard-link finishing phase, after the regular per-file lines
+    /// (hlink.c:250-251).
+    #[must_use]
+    pub fn is_deferred_hardlink(&self) -> bool {
+        matches!(self.kind, ClientEventKind::HardLink)
+            && !self.hardlink_uptodate
+            && !self.is_hardlinked_symlink()
+            && self
+                .metadata
+                .as_ref()
+                .and_then(ClientEntryMetadata::symlink_target)
+                .is_some()
+    }
     /// Returns whether this entry opens a per-file progress block.
     ///
     /// Only a regular-file transfer that actually moves data does; every other
