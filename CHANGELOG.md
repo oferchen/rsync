@@ -227,6 +227,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Local `--checksum` compares source and destination through the parallel checksum service: same-size pairs of a directory are hashed in one rayon batch, and files of 8 MiB or more as 4 MiB block vectors in parallel; decisions and output are unchanged against rsync 3.5.1 (#8249)
 
 - Probe OpenSSL MD4 once per process, as upstream does, instead of on every hasher; on OpenSSL 3 builds without the legacy provider this drops a failing `EVP_DigestInit_ex` per block (#8231)
+- The receiver no longer stats each destination before committing it under `--perms` (so every `-a` transfer): only `dest_mode()` reads that stat, and upstream runs `dest_mode()` only without `--perms`. This drops one lookup per file, a failing one for every new file (#8299)
 - Batch network sender writes to match upstream's cadence (#7009)
 - Stop waiting for the `SEND_ZC` notification, and write small batches positionally instead of through io_uring (#7593, #7600, #7610)
 - Batch QUIC UDP I/O (#8069)

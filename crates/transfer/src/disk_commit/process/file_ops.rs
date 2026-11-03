@@ -238,7 +238,7 @@ pub(in crate::disk_commit) fn process_file(
     // stat. An inplace open writes through the destination itself, so capture
     // that stat now - once the open below runs, the prior mode is gone and the
     // metadata apply would fall back to the brand-new-file formula.
-    let inplace_pre_transfer = inplace_pre_transfer_stat(&begin);
+    let inplace_pre_transfer = inplace_pre_transfer_stat(&begin, config);
 
     let (file, mut cleanup_guard, needs_rename) = match open_output_file(&begin, config) {
         Ok(triple) => triple,
@@ -625,7 +625,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     let inplace_backup_notice = make_inplace_backup(&begin, config)?;
 
     // See `inplace_pre_transfer_stat`: capture before the open destroys it.
-    let inplace_pre_transfer = inplace_pre_transfer_stat(&begin);
+    let inplace_pre_transfer = inplace_pre_transfer_stat(&begin, config);
 
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
     if needs_rename {
@@ -921,14 +921,18 @@ fn make_inplace_backup(
 /// it to [`super::metadata::apply_file_metadata`].
 ///
 /// Returns `None` when the destination does not exist, which is upstream's
-/// `exists == 0` and selects `flist_mode & (~CHMOD_BITS | dflt_perms)`.
+/// `exists == 0` and selects `flist_mode & (~CHMOD_BITS | dflt_perms)`, and
+/// without statting under `--perms`, where `dest_mode()` never runs.
 ///
 /// # Upstream Reference
 ///
 /// - `receiver.c:1199-1208` - `dest_mode()` invocation before the output open
 /// - `rsync.c:464` - `dest_mode()` body
-fn inplace_pre_transfer_stat(begin: &BeginMessage) -> Option<fs::Metadata> {
-    if !begin.is_inplace || begin.is_device_target {
+fn inplace_pre_transfer_stat(
+    begin: &BeginMessage,
+    config: &DiskCommitConfig,
+) -> Option<fs::Metadata> {
+    if !begin.is_inplace || begin.is_device_target || !config.needs_pre_transfer_dest_stat() {
         return None;
     }
     fs::symlink_metadata(&begin.file_path).ok()

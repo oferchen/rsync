@@ -65,7 +65,9 @@ pub(super) fn apply_file_metadata(
         // upstream's link_stat() of a name relative to the change_dir() cwd
         // does (receiver.c:1191-1194), so a destination swapped after entry
         // cannot turn an existing file into a fresh one.
-        let pre_transfer_meta = if target_path != begin.file_path {
+        let pre_transfer_meta = if !config.needs_pre_transfer_dest_stat() {
+            None
+        } else if target_path != begin.file_path {
             fast_io::destination_at::symlink_metadata(&begin.file_path).ok()
         } else {
             inplace_pre_transfer
@@ -364,6 +366,92 @@ mod tests {
             got, 0o644,
             "staged file must land entry-mode & dflt_perms (0o666 & 0o755), \
              not the symlink obstacle's lstat bits"
+        );
+    }
+
+    /// Stages `payload` at a temp path beside an existing final destination
+    /// holding `dest_mode`, and applies an entry of `entry_mode` with
+    /// `--perms` set to `perms`. Returns the staged file's resulting mode.
+    #[cfg(unix)]
+    fn staged_mode_over_existing(dest_mode: u32, entry_mode: u32, perms: bool) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Pin the umask; metadata caches it on first read and nextest runs
+        // each test in its own process.
+        let prev = rustix::process::umask(rustix::fs::Mode::from_bits_truncate(0o022));
+
+        let dir = test_support::create_tempdir();
+        let final_path = dir.path().join("dest.dat");
+        std::fs::write(&final_path, b"old").unwrap();
+        std::fs::set_permissions(&final_path, std::fs::Permissions::from_mode(dest_mode)).unwrap();
+        let staged = dir.path().join("staged.tmp");
+        std::fs::write(&staged, b"payload").unwrap();
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let entry = protocol::flist::FileEntry::new_file(
+            std::path::PathBuf::from("dest.dat"),
+            7,
+            entry_mode,
+        );
+        let config = DiskCommitConfig {
+            metadata_opts: Some(
+                metadata::MetadataOptions::new()
+                    .preserve_permissions(perms)
+                    .preserve_times(false),
+            ),
+            ..DiskCommitConfig::default()
+        };
+        let mut begin = begin_for(&final_path, Some(entry));
+        begin.file_path = final_path.clone();
+        let err = apply_file_metadata(&staged, &begin, &config, None);
+        let got = std::fs::metadata(&staged).unwrap().permissions().mode() & 0o7777;
+        rustix::process::umask(prev);
+
+        assert!(err.is_none(), "metadata apply reported an error: {err:?}");
+        got
+    }
+
+    // WHY: without --perms upstream's dest_mode() keeps an existing
+    // destination's own permission bits (rsync.c:470-480), so the commit must
+    // still stat the final path; skipping that stat would land the new-file
+    // formula (0o666 & 0o755 = 0o644) on a file the user had set to 0o640.
+    #[cfg(unix)]
+    #[test]
+    fn without_perms_an_existing_destination_keeps_its_own_bits() {
+        assert_eq!(staged_mode_over_existing(0o640, 0o666, false), 0o640);
+    }
+
+    // WHY: with --perms upstream never calls dest_mode() (receiver.c:1197),
+    // so the entry mode lands whatever the destination held; the stat the
+    // commit no longer takes under --perms must not have been load-bearing.
+    #[cfg(unix)]
+    #[test]
+    fn with_perms_the_entry_mode_replaces_an_existing_destinations_bits() {
+        assert_eq!(staged_mode_over_existing(0o640, 0o604, true), 0o604);
+    }
+
+    // WHY: the pre-transfer stat costs one lookup per file and only
+    // `dest_mode()` reads it, which upstream runs only without --perms
+    // (receiver.c:1197-1208). Under -a it must not be taken at all; without
+    // metadata application there is nothing to feed.
+    #[test]
+    fn the_pre_transfer_stat_is_needed_only_when_dest_mode_runs() {
+        let with = |opts: Option<metadata::MetadataOptions>| DiskCommitConfig {
+            metadata_opts: opts,
+            ..DiskCommitConfig::default()
+        };
+        assert!(!with(None).needs_pre_transfer_dest_stat());
+        assert!(
+            !with(Some(
+                metadata::MetadataOptions::new().preserve_permissions(true)
+            ))
+            .needs_pre_transfer_dest_stat()
+        );
+        assert!(
+            with(Some(
+                metadata::MetadataOptions::new().preserve_permissions(false)
+            ))
+            .needs_pre_transfer_dest_stat()
         );
     }
 
