@@ -1148,6 +1148,84 @@ fn delay_updates_clears_a_non_directory_at_the_partial_dir() {
     let _ = fs::remove_file(&staging_path);
     let _ = fs::remove_dir(&staging_dir);
 }
+
+/// Mode of the `--delay-updates` staging directory.
+///
+/// upstream: util1.c:1625 `handle_partial_dir()` creates it with
+/// `do_mkdir_at(dir, 0700)`, and an existing directory is reused without a
+/// chmod (`S_ISDIR` skips the mkdir). Oracle (3.5.1, umask 022): the staging
+/// dir is 700 on local, push and pull; oc's network receiver made it 755.
+#[cfg(unix)]
+mod staging_dir_mode {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    use super::*;
+
+    fn commit_one(dest: &Path) {
+        let h = spawn_disk_thread(delay_updates_config()).unwrap();
+        h.file_tx
+            .send(FileMessage::Begin(Box::new(BeginMessage {
+                file_path: dest.join("staged.dat"),
+                target_size: 4,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+                xattr_basis: None,
+                file_entry: None,
+            })))
+            .unwrap();
+        h.file_tx
+            .send(FileMessage::Chunk(b"data".to_vec()))
+            .unwrap();
+        h.file_tx
+            .send(FileMessage::Commit {
+                expected_checksum: Default::default(),
+            })
+            .unwrap();
+        h.result_rx
+            .recv()
+            .unwrap()
+            .expect("the delayed commit stages");
+        h.file_tx.send(FileMessage::Shutdown).unwrap();
+        h.join_handle.join().unwrap();
+    }
+
+    fn mode_of(path: &Path) -> u32 {
+        fs::metadata(path).unwrap().permissions().mode() & 0o7777
+    }
+
+    #[test]
+    fn delay_updates_creates_the_partial_dir_0700() {
+        let _registry_lock = test_support::cleanup_registry_test_guard();
+        let dir = test_support::create_tempdir();
+        commit_one(dir.path());
+        assert_eq!(
+            mode_of(&dir.path().join(DELAY_UPDATES_PARTIAL_DIR)),
+            0o700,
+            "a new staging dir is private to the owner, whatever the umask leaves of 0777"
+        );
+    }
+
+    /// Non-vacuity companion: a fix that chmods the staging dir after the
+    /// create would also pass the pin above, but upstream leaves an existing
+    /// directory's mode alone.
+    #[test]
+    fn delay_updates_keeps_an_existing_partial_dir_mode() {
+        let _registry_lock = test_support::cleanup_registry_test_guard();
+        let dir = test_support::create_tempdir();
+        let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
+        fs::create_dir(&staging_dir).unwrap();
+        fs::set_permissions(&staging_dir, fs::Permissions::from_mode(0o751)).unwrap();
+        commit_one(dir.path());
+        assert_eq!(mode_of(&staging_dir), 0o751);
+    }
+}
+
 /// Non-vacuity companion: clearing the obstruction must not clear a partial
 /// directory that is already a directory.
 ///
