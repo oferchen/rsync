@@ -164,32 +164,6 @@ pub fn process_file_response_streaming<R: Read>(
         ChecksumVerifier::for_algorithm_seeded(algo, ctx.config.checksum_seed, ctx.config.protocol),
     );
 
-    // Defer sending Begin - allows coalescing single-chunk files into a
-    // single WholeFile message (3 channel sends -> 1, reducing futex overhead).
-    let begin_msg = Box::new(BeginMessage {
-        file_path: header.file_path,
-        target_size: header.target_size,
-        file_entry_index,
-        checksum_verifier: Some(disk_verifier),
-        is_device_target,
-        // upstream: receiver.c:1153-1155 - one_inplace = inplace_partial &&
-        // fnamecmp_type == FNAMECMP_PARTIAL_DIR
-        is_inplace: header.use_inplace,
-        append_offset: header.append_offset,
-        xattr_list,
-        // upstream: xattrs.c:1175 rsync_xal_set(fname, ..., fnamecmp, ...) - the
-        // abbreviated-value resolution re-reads the basis actually used, which
-        // for a --fuzzy / --link-dest / --compare-dest / --partial-dir transfer
-        // is not the primary destination. Carry that basis so an entry the
-        // generator left abbreviated (it matched the basis) still resolves.
-        xattr_basis: header.basis_path.clone(),
-        // Carry this file's metadata entry with the message instead of having
-        // the disk thread index a shared clone of the whole flist. Cloning one
-        // entry per in-flight file is transient (freed at commit) and immune to
-        // the receiver reclaiming its own flist segments mid-transfer.
-        file_entry: Some(file_entry.clone()),
-    });
-
     let mut basis_map = if let Some(ref path) = header.basis_path {
         let map = ctx.open_basis_map(path).map_err(|e| {
             io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
@@ -211,6 +185,43 @@ pub fn process_file_response_streaming<R: Read>(
     } else {
         None
     };
+
+    // upstream: receiver.c:1158-1208 - without --perms, dest_mode() reads the
+    // fstat of the basis the receiver opened (fnamecmp: a --partial-dir,
+    // --fuzzy or alt-dest file, else the destination itself). Captured here,
+    // before any byte is written, so an --inplace write cannot destroy it.
+    let dest_mode_basis = if ctx.config.needs_dest_mode_basis() {
+        dest_mode_basis(basis_map.as_ref(), &header.file_path)
+    } else {
+        None
+    };
+
+    // Defer sending Begin - allows coalescing single-chunk files into a
+    // single WholeFile message (3 channel sends -> 1, reducing futex overhead).
+    let begin_msg = Box::new(BeginMessage {
+        file_path: header.file_path,
+        target_size: header.target_size,
+        file_entry_index,
+        checksum_verifier: Some(disk_verifier),
+        is_device_target,
+        // upstream: receiver.c:1153-1155 - one_inplace = inplace_partial &&
+        // fnamecmp_type == FNAMECMP_PARTIAL_DIR
+        is_inplace: header.use_inplace,
+        append_offset: header.append_offset,
+        xattr_list,
+        // upstream: xattrs.c:1175 rsync_xal_set(fname, ..., fnamecmp, ...) - the
+        // abbreviated-value resolution re-reads the basis actually used, which
+        // for a --fuzzy / --link-dest / --compare-dest / --partial-dir transfer
+        // is not the primary destination. Carry that basis so an entry the
+        // generator left abbreviated (it matched the basis) still resolves.
+        xattr_basis: header.basis_path.clone(),
+        dest_mode_basis,
+        // Carry this file's metadata entry with the message instead of having
+        // the disk thread index a shared clone of the whole flist. Cloning one
+        // entry per in-flight file is transient (freed at commit) and immune to
+        // the receiver reclaiming its own flist segments mid-transfer.
+        file_entry: Some(file_entry.clone()),
+    });
 
     let mut total_bytes: u64 = 0;
     let describe_file = || ctx.full_fname(receiver);
@@ -324,4 +335,84 @@ pub fn process_file_response_streaming<R: Read>(
     };
     result.data_read = reader.data_read() - data_read_start;
     Ok(ResponseProgress::Received(result))
+}
+
+/// The basis stat `dest_mode()` reads: an `fstat` of the mapped basis's own
+/// descriptor, or with no basis map the destination name, which is upstream's
+/// default `fnamecmp`.
+///
+/// Returns `None` - upstream's `exists == 0` - for a missing destination and
+/// for a basis that is not a regular file: upstream closes such a `fd1` again
+/// before `dest_mode()`, so a symlink, fifo or device obstacle never lends its
+/// permission bits to the received file.
+///
+/// upstream: receiver.c:1158-1208
+fn dest_mode_basis(
+    basis_map: Option<&crate::map_file::MapFile>,
+    file_path: &std::path::Path,
+) -> Option<fast_io::EntryMetadata> {
+    match basis_map {
+        Some(map) => map
+            .buffered_basis_file()
+            .and_then(|file| file.metadata().ok())
+            .map(fast_io::EntryMetadata::from),
+        None => fast_io::destination_at::symlink_metadata(file_path).ok(),
+    }
+    .filter(fast_io::EntryMetadata::is_file)
+}
+
+#[cfg(all(test, unix))]
+mod dest_mode_basis_tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::dest_mode_basis;
+    use crate::map_file::MapFile;
+
+    fn mode_of(meta: Option<fast_io::EntryMetadata>) -> Option<u32> {
+        meta.map(|m| m.mode() & 0o7777)
+    }
+
+    // WHY: upstream feeds dest_mode() the basis it opened (receiver.c:1158),
+    // so a --partial-dir, --fuzzy or alt-dest basis lends its bits even when
+    // the destination name holds something else; the destination must not
+    // be consulted once a basis is mapped.
+    #[test]
+    fn a_mapped_basis_wins_over_the_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let basis = dir.path().join("partial");
+        std::fs::write(&basis, b"basis").unwrap();
+        std::fs::set_permissions(&basis, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let dest = dir.path().join("dest");
+        std::fs::write(&dest, b"dest").unwrap();
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        let map = MapFile::open(&basis).unwrap();
+        assert_eq!(mode_of(dest_mode_basis(Some(&map), &dest)), Some(0o600));
+    }
+
+    // WHY: with no basis map upstream's fnamecmp is the destination name, so
+    // an existing regular destination keeps its own bits (rsync.c:470-480)
+    // and a missing one is a new file (exists == 0).
+    #[test]
+    fn without_a_map_the_destination_is_the_basis() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("dest");
+        assert_eq!(mode_of(dest_mode_basis(None, &dest)), None);
+        std::fs::write(&dest, b"dest").unwrap();
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o640)).unwrap();
+        assert_eq!(mode_of(dest_mode_basis(None, &dest)), Some(0o640));
+    }
+
+    // WHY: upstream closes a non-regular fd1 before dest_mode()
+    // (receiver.c:1191-1194), so a symlink obstacle's lstat bits (0o777 on
+    // Linux) must never become the received file's permissions.
+    #[test]
+    fn a_non_regular_destination_is_no_basis() {
+        let dir = tempfile::tempdir().unwrap();
+        let pointee = dir.path().join("pointee");
+        std::fs::write(&pointee, b"pointee").unwrap();
+        let dest = dir.path().join("dest");
+        std::os::unix::fs::symlink(&pointee, &dest).unwrap();
+        assert_eq!(mode_of(dest_mode_basis(None, &dest)), None);
+    }
 }

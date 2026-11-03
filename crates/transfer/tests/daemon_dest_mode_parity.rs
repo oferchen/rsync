@@ -21,15 +21,18 @@
 //! That holds for every write path - upstream picks the mode before it chooses
 //! between temp+rename and inplace.
 //!
-//! oc applies metadata at commit time instead. For temp+rename that is
-//! equivalent, because the final path is untouched until the rename. An inplace
-//! write is not: it writes through the destination, so the pre-transfer stat has
-//! to be captured before the open (see
-//! `disk_commit::process::file_ops::inplace_pre_transfer_stat`). Without that
-//! capture the commit took the brand-new-file branch and chmod'd an existing
-//! destination to `flist_mode & (~CHMOD_BITS | dflt_perms)` - mode 000 whenever
-//! the entry carried no permission bits, leaving the transferred file
-//! unreadable.
+//! oc applies metadata at commit time instead, so the receiver captures the
+//! basis stat before any byte is written (`BeginMessage::dest_mode_basis`). An
+//! inplace write goes through the destination itself, so a stat taken at commit
+//! time would see the new contents; without the early capture the commit took
+//! the brand-new-file branch and chmod'd an existing destination to
+//! `flist_mode & (~CHMOD_BITS | dflt_perms)` - mode 000 whenever the entry
+//! carried no permission bits, leaving the transferred file unreadable.
+//!
+//! `st` and `exists` describe the basis the receiver OPENED (`fnamecmp`), not
+//! the destination name: a `--partial-dir` file, a `--fuzzy` match or a
+//! `--compare-dest` / `--copy-dest` / `--link-dest` file lends its own bits
+//! (receiver.c:1158-1208). The basis cells pin that.
 //!
 //! These cells therefore cover the write paths as a SET. A regression that
 //! reintroduces the defect on any one of them fails here even if the others
@@ -52,6 +55,9 @@ const SOURCE_MODE: u32 = 0o600;
 /// Pre-existing destination mode: distinct from `SOURCE_MODE`, and not a mode
 /// the new-file formula could produce from it.
 const DEST_MODE: u32 = 0o644;
+/// Mode of a non-destination basis (partial, fuzzy, alt-dest): distinct from
+/// `DEST_MODE` and from anything the new-file formula yields for `SOURCE_MODE`.
+const BASIS_MODE: u32 = 0o640;
 
 struct DaemonGuard(Child);
 
@@ -104,6 +110,28 @@ fn spawn_daemon(oc_bin: &Path, config: &Path) -> io::Result<(DaemonGuard, u16)> 
 /// upstream's `exists != 0` branch; otherwise the destination is absent and the
 /// `exists == 0` branch applies.
 fn dest_mode_after_push(extra_args: &[&str], pre_existing: bool) -> Option<u32> {
+    push_and_read_mode(extra_args, |module_root, payload| {
+        if pre_existing {
+            // A true prefix, so `--append-verify` appends rather than restarting.
+            seed(
+                &module_root.join("payload.bin"),
+                &payload[..1024],
+                DEST_MODE,
+            );
+        }
+    })
+}
+
+/// Writes `contents` at `path` (creating its parent) with mode bits `mode`.
+fn seed(path: &Path, contents: &[u8], mode: u32) {
+    fs::create_dir_all(path.parent().expect("seed path has a parent")).expect("create seed dir");
+    fs::write(path, contents).expect("seed file");
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("chmod seed");
+}
+
+/// Pushes one file to a daemon module after `prepare` seeds the module root,
+/// and returns the destination's mode bits (`None`: no daemon, not measured).
+fn push_and_read_mode(extra_args: &[&str], prepare: impl FnOnce(&Path, &[u8])) -> Option<u32> {
     let oc_bin = test_support::oc_rsync_bin();
     let tmp = test_support::create_tempdir();
     let root = tmp.path();
@@ -117,11 +145,7 @@ fn dest_mode_after_push(extra_args: &[&str], pre_existing: bool) -> Option<u32> 
     fs::set_permissions(&source, fs::Permissions::from_mode(SOURCE_MODE)).expect("chmod source");
 
     let dest = module_root.join("payload.bin");
-    if pre_existing {
-        // A true prefix, so `--append-verify` appends rather than restarting.
-        fs::write(&dest, &payload[..1024]).expect("seed destination");
-        fs::set_permissions(&dest, fs::Permissions::from_mode(DEST_MODE)).expect("chmod dest");
-    }
+    prepare(&module_root, &payload);
 
     let config = root.join("rsyncd.conf");
     write_config(&config, &module_root, "data").expect("write daemon config");
@@ -135,9 +159,7 @@ fn dest_mode_after_push(extra_args: &[&str], pre_existing: bool) -> Option<u32> 
     let mut args: Vec<OsString> = extra_args.iter().map(OsString::from).collect();
     args.push(OsString::from("--ignore-times"));
     args.push(source.clone().into_os_string());
-    args.push(OsString::from(format!(
-        "rsync://127.0.0.1:{port}/data/payload.bin"
-    )));
+    args.push(OsString::from(format!("rsync://127.0.0.1:{port}/data/")));
 
     let status = Command::new(&oc_bin)
         .args(args.iter().map(OsStr::new))
@@ -148,7 +170,7 @@ fn dest_mode_after_push(extra_args: &[&str], pre_existing: bool) -> Option<u32> 
         .expect("run oc-rsync client");
     assert!(
         status.status.success(),
-        "push {extra_args:?} (pre_existing={pre_existing}) exited {:?}\nstderr:\n{}",
+        "push {extra_args:?} exited {:?}\nstderr:\n{}",
         status.status,
         String::from_utf8_lossy(&status.stderr),
     );
@@ -214,6 +236,67 @@ fn new_destination_takes_the_masked_source_mode_on_every_write_path() {
             "{extra:?}: upstream dest_mode() applies `flist_mode & (~CHMOD_BITS \
              | dflt_perms)` to a new destination (rsync.c:449-472, exists == 0); \
              got {mode:04o}, want {expected:04o}",
+        );
+    }
+}
+
+/// Seeds a module root before a push; see [`push_and_read_mode`].
+type Prepare = fn(&Path, &[u8]);
+
+/// The first half of the payload: shares blocks with it, so the receiver
+/// opens it as a real delta basis.
+fn half(payload: &[u8]) -> Vec<u8> {
+    payload[..2048].to_vec()
+}
+
+/// Without `--perms`, `dest_mode()` takes `st` and `exists` from the basis the
+/// receiver opened (receiver.c:1158-1208), so a `--partial-dir` file, a
+/// `--fuzzy` match or an alt-dest file lends its own bits to a new
+/// destination. 3.5.1 lands `BASIS_MODE` in every cell; re-statting the final
+/// path instead lands the new-file mode.
+#[test]
+fn a_partial_fuzzy_or_alt_dest_basis_lends_its_bits() {
+    let cells: [(&str, &[&str], Prepare); 5] = [
+        (
+            "new + --partial-dir",
+            &["--partial-dir=.p"],
+            |root, payload| {
+                seed(&root.join(".p/payload.bin"), &half(payload), BASIS_MODE);
+            },
+        ),
+        ("new + --fuzzy", &["--fuzzy"], |root, payload| {
+            seed(&root.join("payload.bin.old"), &half(payload), BASIS_MODE);
+        }),
+        (
+            "new + --compare-dest",
+            &["--compare-dest=alt"],
+            |root, payload| {
+                seed(&root.join("alt/payload.bin"), &half(payload), BASIS_MODE);
+            },
+        ),
+        (
+            "new + --copy-dest",
+            &["--copy-dest=alt"],
+            |root, payload| {
+                seed(&root.join("alt/payload.bin"), &half(payload), BASIS_MODE);
+            },
+        ),
+        (
+            "new + --link-dest",
+            &["--link-dest=alt"],
+            |root, payload| {
+                seed(&root.join("alt/payload.bin"), &half(payload), BASIS_MODE);
+            },
+        ),
+    ];
+    for (name, extra, prepare) in cells {
+        let Some(mode) = push_and_read_mode(extra, prepare) else {
+            panic!("{name}: could not start the daemon, so nothing was measured");
+        };
+        assert_eq!(
+            mode, BASIS_MODE,
+            "{name}: upstream dest_mode() keeps the opened basis's permission \
+             bits (receiver.c:1158-1208); got {mode:04o}, want {BASIS_MODE:04o}",
         );
     }
 }

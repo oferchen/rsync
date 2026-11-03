@@ -109,6 +109,12 @@ pub struct RequestConfig {
     ///
     /// - `receiver.c:1153`: `one_inplace = inplace_partial && partial_dir && ...`
     pub inplace_partial: bool,
+    /// Whether permissions are preserved (`--perms`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:1197` - `dest_mode()` runs only `if (!preserve_perms)`
+    pub preserve_perms: bool,
     /// Whether a partial dir is in effect (`--partial-dir`, or the implied
     /// `.~tmp~` of `--delay-updates`).
     ///
@@ -163,6 +169,18 @@ pub struct RequestConfig {
 }
 
 impl RequestConfig {
+    /// Whether the receiver must capture the basis stat `dest_mode()` reads.
+    ///
+    /// Only `dest_mode()` reads it, and upstream runs `dest_mode()` only
+    /// without `--perms`; under `-a` the capture would cost a lookup per file
+    /// for nothing.
+    ///
+    /// upstream: receiver.c:1197-1208 `if (!preserve_perms) ... dest_mode()`
+    #[must_use]
+    pub const fn needs_dest_mode_basis(&self) -> bool {
+        !self.preserve_perms
+    }
+
     /// Creates a [`TokenReader`] matching the negotiated compression algorithm.
     ///
     /// Returns a compressed token reader when the negotiated algorithms include
@@ -662,6 +680,7 @@ mod tests {
             write_devices: false,
             inplace: false,
             inplace_partial: false,
+            preserve_perms: false,
             partial_dir: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             io_uring_depth: None,
@@ -675,6 +694,18 @@ mod tests {
     }
 
     /// Builds a minimal protocol-31 `RequestConfig` with iflags enabled.
+    // WHY: only dest_mode() reads the basis stat, and upstream runs it only
+    // without --perms (receiver.c:1197-1208); under -a capturing it would
+    // cost a lookup per file for nothing.
+    #[test]
+    fn the_basis_stat_is_captured_only_when_dest_mode_runs() {
+        let mut config = iflags_request_config();
+        config.preserve_perms = true;
+        assert!(!config.needs_dest_mode_basis());
+        config.preserve_perms = false;
+        assert!(config.needs_dest_mode_basis());
+    }
+
     fn iflags_request_config() -> RequestConfig {
         RequestConfig {
             protocol: ProtocolVersion::from_supported(31).expect("31 is supported"),
@@ -690,6 +721,7 @@ mod tests {
             write_devices: false,
             inplace: false,
             inplace_partial: false,
+            preserve_perms: false,
             partial_dir: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             io_uring_depth: None,

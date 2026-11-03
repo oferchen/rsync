@@ -1064,6 +1064,7 @@ fn begin_with_append_offset(path: &Path, append_offset: u64) -> BeginMessage {
         append_offset,
         xattr_list: None,
         xattr_basis: None,
+        dest_mode_basis: None,
         file_entry: None,
     }
 }
@@ -1707,6 +1708,7 @@ fn commit_file_backup_anchors_on_the_pinned_destination() {
         append_offset: 0,
         xattr_list: None,
         xattr_basis: None,
+        dest_mode_basis: None,
         file_entry: None,
     };
     let mut guard = crate::temp_guard::TempFileGuard::new(fx.dest_dir.join(".tmp.payload"));
