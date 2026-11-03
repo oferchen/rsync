@@ -26,7 +26,8 @@
 //! Fixing only (1) left every row below still failing, which is why the table
 //! asserts the OUTCOME of a real connection rather than the shape of the call.
 //!
-//! Skip conditions (test passes with a printed reason):
+//! Skip conditions (test passes with a printed reason, except under
+//! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
 //! - Loopback TCP is unavailable.
 //! - The cross-implementation cells additionally need a built upstream 3.5.1
 //!   binary; without it they report why they did not run.
@@ -46,9 +47,8 @@ fn oc_binary() -> PathBuf {
 }
 
 fn upstream_binary() -> Option<PathBuf> {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
-    path.is_file().then_some(path)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+        .map(|upstream| upstream.binary().to_path_buf())
 }
 
 fn free_port() -> Option<u16> {
@@ -225,10 +225,6 @@ fn oc_matches_the_host_sentinels_in_hosts_allow() {
 #[test]
 fn upstream_matches_the_host_sentinels_in_hosts_allow() {
     let Some(upstream) = upstream_binary() else {
-        println!(
-            "SKIP: upstream 3.5.1 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.1/rsync)"
-        );
         return;
     };
     assert_table(&upstream, "upstream 3.5.1");
