@@ -248,6 +248,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
 
 ### Fixed
+- An rsh `--server` handles SIGINT, SIGTERM and SIGHUP like upstream: it stops at the next protocol frame instead of being killed outright or finishing the file, keeps the received prefix under `--partial` / `--partial-dir` and unlinks the temp otherwise, prints `received SIGINT, SIGTERM, or SIGHUP (code 20)` and its client exits 20; a local copy forced to exit by a second signal unlinks its in-flight temp even without `--partial` (#8321)
 - A receiver that cannot create its temp file, open an `--inplace` destination, or rename (or, across devices, copy) a file into place now skips that file with upstream's `FERROR_XFER` line and exits 23 for every errno, not only `EACCES`; an `--inplace` failure reads `open "%s" failed` instead of `mkstemp` (#8284)
 - An `--inplace` destination the receiver creates is owner-only (0600) until its final mode is applied, as upstream's `O_CREAT, 0600` open makes it (#8284)
 - A local copy that cannot create its temp file, open an `--inplace` destination, or rename a file into place now prints the same per-file line as a network receiver, skips that file and exits 23, instead of aborting after the first file with its own wording or calling a missing `--inplace` target vanished (exit 24) (#8285)

@@ -286,6 +286,10 @@ where
     }
 
     if server::server_mode_requested(&args) {
+        // upstream: main.c:1919-1921 installs sig_int for every role, the
+        // server included.
+        core::exit_code::process_latch().reset();
+        install_signal_handling();
         return server::run_server_mode(&args, stdout, stderr);
     }
 
@@ -310,7 +314,7 @@ where
     // the process (cleanup.c:105-108); `run` is a reentrant library entry
     // point, so the epoch must be reset explicitly.
     core::exit_code::process_latch().reset();
-    install_client_signal_handling();
+    install_signal_handling();
 
     let mut stderr_sink = MessageSink::with_brand(stderr, brand);
     // Raw command-line token count (including argv[0]); `== 2` means a single
@@ -497,7 +501,7 @@ const SIGNAL_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 /// upstream: `rsync.c:843 sig_int()` only records the signal and lets the
 /// normal I/O path shut the transfer down (`io.c:849 got_kill_signal` ->
 /// `handle_kill_signal` -> `cleanup.c:_exit_cleanup(RERR_SIGNAL)`).
-fn install_client_signal_handling() {
+fn install_signal_handling() {
     use std::sync::atomic::{AtomicBool, Ordering};
     static INSTALLED: AtomicBool = AtomicBool::new(false);
     if INSTALLED.swap(true, Ordering::SeqCst) {

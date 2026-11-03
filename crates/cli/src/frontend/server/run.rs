@@ -849,13 +849,21 @@ where
             if let Some(code) = core::server::remote_exit_code(&e) {
                 return code;
             }
+            let who = if role == ServerRole::Generator {
+                Role::Sender
+            } else {
+                Role::Generator
+            };
+            // upstream: io.c:600-605 handle_kill_signal() -> exit_cleanup(RERR_SIGNAL);
+            // log_exit() prints only the rerr_names entry, naming who_am_i().
+            if core::signal::shutdown_reason().is_some() {
+                let code = core::exit_code::ExitCode::Signal;
+                write_exit_trailer(stderr, program_brand, who, code);
+                return code.as_i32();
+            }
             if let Some(code) = cause_line_exit_code(&e) {
-                let who = if role == ServerRole::Generator {
-                    Role::Sender
-                } else {
-                    Role::Generator
-                };
-                write_fatal_cause(stderr, program_brand, who, &e, code);
+                let _ = writeln!(stderr, "{e}");
+                write_exit_trailer(stderr, program_brand, who, code);
                 return code.as_i32();
             }
             let exit_code = core::exit_code::ExitCode::from_io_error(&e);
@@ -1228,20 +1236,17 @@ fn cause_line_exit_code(error: &std::io::Error) -> Option<core::exit_code::ExitC
     }
 }
 
-/// Prints a fatal failure as upstream's remote-shell server does: the cause on
-/// its own line on stderr, then log_exit()'s trailer for `code` naming the
-/// process that hit it.
+/// Prints log_exit()'s trailer for `code` naming the process that hit it, as
+/// upstream's remote-shell server does after any cause line.
 ///
 /// upstream: log.c:357 rwrite() keeps an FERROR on stderr under
 /// `msgs2stderr == 2`, log.c:937-963 log_exit()
-fn write_fatal_cause<Err: Write>(
+fn write_exit_trailer<Err: Write>(
     stderr: &mut Err,
     brand: Brand,
     role: Role,
-    cause: &std::io::Error,
     code: core::exit_code::ExitCode,
 ) {
-    let _ = writeln!(stderr, "{cause}");
     let mut sink = MessageSink::with_brand(stderr, brand);
     let message = rsync_error!(code.as_i32(), "{}", code.description()).with_role(role);
     if super::super::write_message(&message, &mut sink).is_err() {

@@ -71,3 +71,9 @@ path = "src/bin/transcript-ab.rs"
 [[bin]]
 name = "sigterm-flag-stub"
 path = "src/bin/sigterm-flag-stub.rs"
+
+# Remote-shell trampoline that signals the server after a fixed number of
+# relayed bytes, so signal tests deliver at a known wire offset.
+[[bin]]
+name = "signal-rsh"
+path = "src/bin/signal-rsh.rs"
