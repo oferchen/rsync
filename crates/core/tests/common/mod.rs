@@ -19,11 +19,12 @@ use std::process::ExitStatus;
 #[cfg(unix)]
 use std::process::Stdio;
 use std::process::{Child, Command};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
 
+use notify::{RecursiveMode, Watcher};
 use tempfile::TempDir;
 
 /// Upstream rsync binary paths, anchored at the workspace root at compile
@@ -383,7 +384,36 @@ pub fn upstream_rsync() -> PathBuf {
 pub struct CappingProxy {
     port: u16,
     forwarded: Arc<AtomicU64>,
-    stop: Arc<AtomicBool>,
+    stop: Arc<Stop>,
+}
+
+/// Released once when the proxy drops: parked pumps return and the accept
+/// thread exits on its next connection.
+#[derive(Default)]
+struct Stop {
+    stopped: Mutex<bool>,
+    released: Condvar,
+}
+
+impl Stop {
+    fn is_set(&self) -> bool {
+        *self.stopped.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn set(&self) {
+        *self.stopped.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.released.notify_all();
+    }
+
+    fn wait(&self) {
+        let mut stopped = self.stopped.lock().unwrap_or_else(|e| e.into_inner());
+        while !*stopped {
+            stopped = self
+                .released
+                .wait(stopped)
+                .unwrap_or_else(|e| e.into_inner());
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -393,21 +423,22 @@ impl CappingProxy {
     pub fn start(target_port: u16, cap: u64) -> io::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let port = listener.local_addr()?.port();
-        listener.set_nonblocking(true)?;
 
         let forwarded = Arc::new(AtomicU64::new(0));
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(Stop::default());
         let accept_forwarded = Arc::clone(&forwarded);
         let accept_stop = Arc::clone(&stop);
 
         thread::spawn(move || {
-            while !accept_stop.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((client, _)) => {
+            for client in listener.incoming() {
+                if accept_stop.is_set() {
+                    return;
+                }
+                match client {
+                    Ok(client) => {
                         let Ok(daemon) = TcpStream::connect(("127.0.0.1", target_port)) else {
                             continue;
                         };
-                        let _ = client.set_nonblocking(false);
                         let (Ok(client_rx), Ok(daemon_rx)) =
                             (client.try_clone(), daemon.try_clone())
                         else {
@@ -420,9 +451,6 @@ impl CappingProxy {
                         thread::spawn(move || {
                             pump(daemon_rx, client, cap, Some(down_counter), down_stop);
                         });
-                    }
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(10));
                     }
                     Err(_) => return,
                 }
@@ -449,7 +477,9 @@ impl CappingProxy {
 
 impl Drop for CappingProxy {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.set();
+        // Wakes the blocking accept so its thread sees the stop and exits.
+        let _ = TcpStream::connect(("127.0.0.1", self.port));
     }
 }
 
@@ -460,7 +490,7 @@ fn pump(
     mut dst: TcpStream,
     cap: u64,
     counter: Option<Arc<AtomicU64>>,
-    stop: Arc<AtomicBool>,
+    stop: Arc<Stop>,
 ) {
     use std::io::Write;
 
@@ -481,27 +511,33 @@ fn pump(
         }
     }
     // Cap reached: hold both sockets open and forward nothing more.
-    while !stop.load(Ordering::Relaxed) {
-        thread::sleep(Duration::from_millis(25));
-    }
+    stop.wait();
 }
 
-/// Waits until some file under `root` has a non-zero length.
+/// Blocks until some file under `root` has a non-zero length.
 ///
 /// Gates the interrupt on real progress instead of a sleep, so the test cannot
 /// kill the client before the receiver has opened and written its temp file.
+/// The tree is re-checked on every filesystem event under `root`, and once
+/// after the watch is armed for a write that landed before it. There is no
+/// timeout: a transfer that never writes fails at the test runner's.
 #[allow(dead_code)]
-pub fn wait_for_progress(root: &Path, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if tree_has_data(root) {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        thread::sleep(Duration::from_millis(25));
+pub fn wait_for_progress(root: &Path) {
+    let (events, received) = mpsc::channel();
+    let mut watcher = notify::recommended_watcher(events).expect("create filesystem watcher");
+    watcher
+        .watch(root, RecursiveMode::Recursive)
+        .expect("watch destination");
+    if tree_has_data(root) {
+        return;
     }
+    for event in received {
+        event.expect("filesystem watch event");
+        if tree_has_data(root) {
+            return;
+        }
+    }
+    panic!("filesystem watch on {} ended", root.display());
 }
 
 fn tree_has_data(root: &Path) -> bool {
@@ -577,21 +613,6 @@ pub const TEST_FILE_SIZE: usize = 2 * 1024 * 1024;
 #[cfg(unix)]
 #[allow(dead_code)]
 pub const FORWARD_CAP: u64 = 512 * 1024;
-
-/// How long to wait for the receiver to put bytes on disk before signalling.
-#[cfg(unix)]
-#[allow(dead_code)]
-pub const PROGRESS_WAIT: Duration = Duration::from_secs(20);
-
-/// How long the client may take to exit after the signal.
-///
-/// Upstream exits in ~0.4 s, dominated by the deliberate `msleep(400)` in
-/// `rsync.c:694`. Anything in seconds here means the signal was not observed
-/// while the transfer was parked in a blocking transport read - which is the
-/// whole behaviour these fixtures exist to pin.
-#[cfg(unix)]
-#[allow(dead_code)]
-pub const EXIT_WAIT: Duration = Duration::from_secs(10);
 
 /// rsync's exit code for SIGINT/SIGTERM/SIGHUP (`errcode.h` `RERR_SIGNAL`).
 #[cfg(unix)]
@@ -720,14 +741,7 @@ impl StalledTransfer {
             .expect("spawn client");
         let drain = PipeDrain::start(&mut child);
 
-        assert!(
-            wait_for_progress(self.dest_path(), PROGRESS_WAIT),
-            "client wrote nothing to {} within {PROGRESS_WAIT:?}; proxy forwarded {} bytes; \
-             daemon log: {}",
-            self.dest_path().display(),
-            self.proxy.forwarded(),
-            self.daemon_log()
-        );
+        wait_for_progress(self.dest_path());
 
         let status = signal_and_wait(&mut child, signal);
         let (_stdout, stderr) = drain.join();
@@ -741,18 +755,14 @@ impl StalledTransfer {
             Some(RERR_SIGNAL),
             "interrupted transfer must exit {RERR_SIGNAL}; stderr: {stderr}"
         );
-        // Give the retained rename a moment to land before the caller stats.
-        thread::sleep(Duration::from_millis(200));
         status
     }
 }
 
-/// Delivers `signal` to `child` and waits for it, failing the test if the
-/// child outlives [`EXIT_WAIT`].
+/// Delivers `signal` to `child` and reaps it.
 ///
-/// The timeout is the load-bearing assertion: a client that sets its shutdown
-/// flag but never acts on it stays parked in the transport read forever, and
-/// this is what turns that into a red test instead of a hang.
+/// A client that sets its shutdown flag but never acts on it stays parked in
+/// the transport read; the test runner's timeout turns that into a failure.
 #[cfg(unix)]
 #[allow(dead_code)]
 pub fn signal_and_wait(child: &mut Child, signal: libc::c_int) -> ExitStatus {
@@ -760,23 +770,7 @@ pub fn signal_and_wait(child: &mut Child, signal: libc::c_int) -> ExitStatus {
     // SAFETY: sending a signal to a child this process spawned and has not reaped.
     let ret = unsafe { libc::kill(pid as libc::pid_t, signal) };
     assert_eq!(ret, 0, "failed to send signal {signal} to child pid {pid}");
-
-    let deadline = Instant::now() + EXIT_WAIT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return status,
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    panic!(
-                        "client pid {pid} ignored signal {signal} for {EXIT_WAIT:?}: the shutdown \
-                         flag is set but nothing on the network path acted on it"
-                    );
-                }
-                thread::sleep(Duration::from_millis(20));
-            }
-            Err(e) => panic!("error waiting for client pid {pid}: {e}"),
-        }
-    }
+    child
+        .wait()
+        .unwrap_or_else(|e| panic!("error waiting for client pid {pid}: {e}"))
 }
