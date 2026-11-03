@@ -92,7 +92,7 @@ impl HandshakeDeadline {
 
     /// The deadline's verdict on the wait about to be entered.
     pub(crate) fn state(&self) -> DeadlineState {
-        match self.deadline.checked_duration_since(Instant::now()) {
+        match self.deadline.checked_duration_since(observed_now()) {
             Some(left) if !left.is_zero() => DeadlineState::Remaining(left),
             _ => DeadlineState::Expired,
         }
@@ -101,6 +101,49 @@ impl HandshakeDeadline {
     /// Whether the deadline has elapsed.
     pub(crate) fn expired(&self) -> bool {
         self.state() == DeadlineState::Expired
+    }
+}
+
+/// The clock a deadline is observed against. Arming always reads the real
+/// clock, so a test offset reads as time spent since the phase began.
+#[cfg(not(test))]
+fn observed_now() -> Instant {
+    Instant::now()
+}
+
+#[cfg(test)]
+fn observed_now() -> Instant {
+    Instant::now() + test_clock::elapsed()
+}
+
+/// A test-only offset on the deadline's clock: a test models a peer that
+/// paused for a while without sleeping through the pause.
+#[cfg(test)]
+pub(crate) mod test_clock {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    static ELAPSED_MILLIS: AtomicU64 = AtomicU64::new(0);
+
+    /// Advances every deadline's clock by a fixed amount until dropped.
+    pub(crate) struct Advanced(());
+
+    impl Advanced {
+        pub(crate) fn by(elapsed: Duration) -> Self {
+            let millis = u64::try_from(elapsed.as_millis()).expect("offset fits in u64 millis");
+            ELAPSED_MILLIS.store(millis, Ordering::SeqCst);
+            Self(())
+        }
+    }
+
+    impl Drop for Advanced {
+        fn drop(&mut self) {
+            ELAPSED_MILLIS.store(0, Ordering::SeqCst);
+        }
+    }
+
+    pub(super) fn elapsed() -> Duration {
+        Duration::from_millis(ELAPSED_MILLIS.load(Ordering::SeqCst))
     }
 }
 
@@ -279,6 +322,21 @@ mod tests {
             guarded.fill_buf().expect("live deadline allows the read"),
             b"@RSYNCD: 31.0\n"
         );
+    }
+
+    #[test]
+    fn the_test_clock_reads_as_time_spent_since_arming() {
+        // The seam the slow-handshake regression rides on: an offset must
+        // shrink the remaining time, not move the deadline with it.
+        let deadline = HandshakeDeadline::armed(Duration::from_secs(60));
+        let _advanced = test_clock::Advanced::by(Duration::from_secs(59));
+        let DeadlineState::Remaining(left) = deadline.state() else {
+            panic!("one second is still left");
+        };
+        assert!(left <= Duration::from_secs(1), "left {left:?}");
+
+        let _advanced = test_clock::Advanced::by(Duration::from_secs(61));
+        assert!(deadline.expired());
     }
 
     #[test]
