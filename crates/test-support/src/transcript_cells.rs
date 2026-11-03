@@ -25,8 +25,12 @@ use std::path::Path;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 
+use crate::WireTranscript;
+use crate::inetd_server::{InetdCommand, InetdServer};
 use crate::transcript::{TranscriptError, TranscriptRecorder, normalized_client};
-use crate::{CLIENT_IO_TIMEOUT, DaemonProcess, WireTranscript};
+
+/// Read, write and connect timeout on the relay's daemon-side socket.
+const CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Name of the module every daemon cell transfers through.
 const MODULE: &str = "cell";
@@ -254,7 +258,17 @@ fn capture_daemon_cell(
         src
     };
     let config = write_daemon_config(work, module_root)?;
-    let daemon = DaemonProcess::spawn_binary(oc_rsync, &config, ["--log-file", "/dev/null"])?;
+    let stderr_path = work.join("daemon.stderr");
+    // The cell compares builds, so the daemon is the given binary, served in
+    // inetd mode on a listener bound here rather than forked from this one.
+    let daemon = InetdServer::start(
+        TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?,
+        InetdCommand::new(oc_rsync, fs::File::create(&stderr_path)?)
+            .arg("--config")
+            .arg(&config)
+            .arg("--log-file")
+            .arg("/dev/null"),
+    )?;
     let relay = TeeRelay::start(SocketAddr::from((Ipv4Addr::LOCALHOST, daemon.port())))?;
     let url = format!("rsync://127.0.0.1:{}/{MODULE}/", relay.port);
 
@@ -273,7 +287,7 @@ fn capture_daemon_cell(
             error.kind(),
             format!(
                 "{error}; daemon stderr: {:?}",
-                String::from_utf8_lossy(&daemon.stderr())
+                String::from_utf8_lossy(&fs::read(&stderr_path).unwrap_or_default())
             ),
         ))
     })

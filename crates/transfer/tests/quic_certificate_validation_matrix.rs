@@ -21,8 +21,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::process::{Command, Stdio};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tempfile::TempDir;
 use test_support::Deadlined;
@@ -32,6 +32,8 @@ use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose as Eku,
     IsCa, Issuer, KeyPair, KeyUsagePurpose, SanType, SignatureAlgorithm,
 };
+use test_support::LogLines;
+use test_support::oc_daemon::OcDaemon;
 
 /// Exit code of a refused QUIC handshake or trust setup (`RERR_STARTCLIENT`).
 const REFUSED: i32 = 5;
@@ -321,17 +323,11 @@ impl Scratch {
     }
 }
 
-/// Kills the daemon on drop so a failing case never leaks a listener.
+/// A daemon serving QUIC, and the reader that keeps its log pipe drained.
 struct Daemon {
-    child: Child,
+    _server: OcDaemon,
+    _log: LogLines,
     port: u16,
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
 }
 
 fn oc_bin() -> Option<PathBuf> {
@@ -349,36 +345,24 @@ fn oc_bin() -> Option<PathBuf> {
 }
 
 /// Starts the daemon and waits for its QUIC listener.
-fn spawn_quic_daemon(bin: &Path, scratch: &Scratch, setup: &Setup) -> Daemon {
-    let config = scratch.config(setup);
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(bin)
-            .args([
-                "--daemon",
-                "--no-detach",
-                "--port",
-                &port.to_string(),
-                "--config",
-            ])
-            .arg(&config)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-    })
-    .expect("spawn daemon");
-    let daemon = Daemon { child, port };
-    let log = scratch.path("d.log");
-    let deadline = Instant::now() + RUN_BUDGET;
-    while !fs::read_to_string(&log).is_ok_and(|text| text.contains("QUIC listener serving on")) {
-        assert!(
-            Instant::now() < deadline,
-            "QUIC listener never came up: {}",
-            fs::read_to_string(&log).unwrap_or_default()
-        );
-        std::thread::sleep(Duration::from_millis(25));
+///
+/// The daemon's log goes to its stderr pipe (`--log-file` overrides the
+/// config's `log file`), so the wait blocks on the listener's own line.
+fn spawn_quic_daemon(scratch: &Scratch, setup: &Setup) -> Daemon {
+    let (server, stderr) = OcDaemon::builder(scratch.config(setup))
+        .arg("--log-file")
+        .arg("/dev/stderr")
+        .quic()
+        .spawn_capturing_stderr()
+        .expect("spawn daemon");
+    let mut log = LogLines::spawn(stderr);
+    log.wait_for("QUIC listener serving on")
+        .expect("QUIC listener never came up");
+    Daemon {
+        port: server.quic_port(),
+        _server: server,
+        _log: log,
     }
-    daemon
 }
 
 /// Runs the daemon expecting it to refuse its configuration and exit.
@@ -498,7 +482,7 @@ fn both_directions(
 ) {
     let Some(bin) = oc_bin() else { return };
     let scratch = Scratch::new();
-    let daemon = spawn_quic_daemon(&bin, &scratch, &setup);
+    let daemon = spawn_quic_daemon(&scratch, &setup);
     let client = client(&scratch);
     for direction in [Direction::Pull, Direction::Push] {
         let outcome = transfer(&bin, &scratch, &daemon, direction, &client);

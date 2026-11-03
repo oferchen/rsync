@@ -25,7 +25,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
-use test_support::{DaemonProcess, oc_rsync_bin};
+use test_support::oc_daemon::OcDaemon;
+use test_support::oc_rsync_bin;
 /// One push into a daemon module whose destination holds `decoy` and a
 /// `secret` merge file containing `- decoy`.
 struct Scenario<'a> {
@@ -59,7 +60,7 @@ fn decoy_survives(scenario: &Scenario<'_>) -> bool {
         ),
     )
     .expect("write rsyncd.conf");
-    let daemon = DaemonProcess::spawn(&config, std::iter::empty::<&str>()).expect("spawn daemon");
+    let daemon = OcDaemon::builder(&config).spawn().expect("spawn daemon");
     let target = if scenario.target.is_empty() {
         String::new()
     } else {
@@ -179,7 +180,7 @@ fn decoy_is_sent_on_pull(directive: &str, target: &str) -> bool {
         ),
     )
     .expect("write rsyncd.conf");
-    let daemon = DaemonProcess::spawn(&config, std::iter::empty::<&str>()).expect("spawn daemon");
+    let daemon = OcDaemon::builder(&config).spawn().expect("spawn daemon");
     let output = Command::new(oc_rsync_bin())
         .arg("-r")
         .arg("--filter=: secret")
@@ -239,7 +240,7 @@ fn push_with_argv_option(option: &str) -> (std::process::Output, bool) {
         ),
     )
     .expect("write rsyncd.conf");
-    let daemon = DaemonProcess::spawn(&config, std::iter::empty::<&str>()).expect("spawn daemon");
+    let daemon = OcDaemon::builder(&config).spawn().expect("spawn daemon");
     let output = Command::new(oc_rsync_bin())
         .arg("-r")
         .arg("--delete")

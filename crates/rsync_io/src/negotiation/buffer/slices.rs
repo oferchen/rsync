@@ -213,7 +213,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
 
         let mut offset = 0usize;
         for slice in self.as_slices() {
-            let bytes = slice.as_ref();
+            let bytes: &[u8] = slice.as_ref();
             let end = offset + bytes.len();
             dest[offset..end].copy_from_slice(bytes);
             offset = end;
@@ -290,7 +290,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
         let mut consumed = self.total_len - remaining;
 
         for slice in slices {
-            let bytes = slice.as_ref();
+            let bytes: &[u8] = slice.as_ref();
 
             if consumed >= bytes.len() {
                 consumed -= bytes.len();
@@ -377,8 +377,8 @@ mod tests {
         let slices = NegotiationBufferedSlices::new(prefix, remainder);
         let io_slices = slices.as_slices();
         assert_eq!(io_slices.len(), 2);
-        assert_eq!(io_slices[0].as_ref(), prefix.as_slice());
-        assert_eq!(io_slices[1].as_ref(), remainder.as_slice());
+        assert_eq!(&io_slices[0][..], prefix.as_slice());
+        assert_eq!(&io_slices[1][..], remainder.as_slice());
     }
 
     #[test]

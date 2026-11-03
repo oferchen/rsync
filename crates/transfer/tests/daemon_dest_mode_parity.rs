@@ -46,7 +46,9 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
+use test_support::oc_daemon::OcDaemon;
 
 /// Source mode deliberately differs from the destination mode so the two
 /// `dest_mode()` branches produce DIFFERENT answers. With both at 0o644 the
@@ -58,15 +60,6 @@ const DEST_MODE: u32 = 0o644;
 /// Mode of a non-destination basis (partial, fuzzy, alt-dest): distinct from
 /// `DEST_MODE` and from anything the new-file formula yields for `SOURCE_MODE`.
 const BASIS_MODE: u32 = 0o640;
-
-struct DaemonGuard(Child);
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 fn write_config(config: &Path, root: &Path, module: &str) -> io::Result<()> {
     fs::write(
@@ -87,21 +80,13 @@ fn write_config(config: &Path, root: &Path, module: &str) -> io::Result<()> {
     )
 }
 
-fn spawn_daemon(oc_bin: &Path, config: &Path) -> io::Result<(DaemonGuard, u16)> {
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(oc_bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    Ok((DaemonGuard(child), port))
+/// Starts the oc-rsync daemon on `config`, returning it with the loopback
+/// port it serves. `test_support::oc_daemon` binds the listener before the
+/// daemon starts, so the port is connectable as soon as this returns.
+fn spawn_daemon(config: &Path) -> io::Result<(OcDaemon, u16)> {
+    let daemon = OcDaemon::builder(config).spawn()?;
+    let port = daemon.port();
+    Ok((daemon, port))
 }
 
 /// Pushes one file to a daemon module and returns the destination's mode bits.
@@ -150,7 +135,7 @@ fn push_and_read_mode(extra_args: &[&str], prepare: impl FnOnce(&Path, &[u8])) -
     let config = root.join("rsyncd.conf");
     write_config(&config, &module_root, "data").expect("write daemon config");
 
-    let Ok((_daemon, port)) = spawn_daemon(&oc_bin, &config) else {
+    let Ok((_daemon, port)) = spawn_daemon(&config) else {
         // The harness could not start a daemon; report it rather than passing
         // vacuously. Callers treat `None` as "did not measure".
         return None;

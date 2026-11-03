@@ -56,22 +56,15 @@
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
+use test_support::oc_daemon::OcDaemon;
 
 /// Seeded in the out-of-module directory so a stray creation there is
 /// distinguishable from a fixture that named the wrong directory.
 const OUTSIDE_MARKER: &str = "OUTSIDE-THE-MODULE-UNTOUCHED";
 /// The pushed file's contents.
 const PAYLOAD: &str = "PAYLOAD-FROM-THE-PEER\n";
-
-struct DaemonGuard(Child);
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 /// What stands at the first implied parent (`a`) inside the module root.
 #[derive(Clone, Copy)]
@@ -159,28 +152,17 @@ fn write_config(config: &Path, module_root: &Path, log_root: &Path) -> std::io::
     )
 }
 
-fn spawn_daemon(
-    oc_bin: &Path,
-    config: &Path,
-    sandbox: Sandbox,
-) -> std::io::Result<(DaemonGuard, u16)> {
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        let mut cmd = Command::new(oc_bin);
-        cmd.arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        for (key, value) in sandbox.daemon_env() {
-            cmd.env(key, value);
-        }
-        cmd.spawn()
-    })?;
-    Ok((DaemonGuard(child), port))
+/// Starts the oc-rsync daemon on `config`, returning it with the loopback
+/// port it serves. `test_support::oc_daemon` binds the listener before the
+/// daemon starts, so the port is connectable as soon as this returns.
+fn spawn_daemon(config: &Path, sandbox: Sandbox) -> std::io::Result<(OcDaemon, u16)> {
+    let mut builder = OcDaemon::builder(config);
+    for &(key, value) in sandbox.daemon_env() {
+        builder = builder.env(key, value);
+    }
+    let daemon = builder.spawn()?;
+    let port = daemon.port();
+    Ok((daemon, port))
 }
 
 /// Stages the module with `plant` at `a`, pushes `./a/b/c/file.txt` with `-R`
@@ -226,7 +208,7 @@ fn push_relative(plant: Plant, extra: &[&str], sandbox: Sandbox) -> Option<Outco
 
     let config = root.join("rsyncd.conf");
     write_config(&config, &module_root, root).expect("write daemon config");
-    let (_daemon, port) = spawn_daemon(&oc_bin, &config, sandbox).ok()?;
+    let (_daemon, port) = spawn_daemon(&config, sandbox).ok()?;
 
     let destination_url = format!("rsync://127.0.0.1:{port}/data/");
     let output = Command::new(&oc_bin)
