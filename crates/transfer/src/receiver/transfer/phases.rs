@@ -107,8 +107,10 @@ impl ReceiverContext {
                 if del_stats_slot == Some(phase + 1) {
                     self.write_del_stats(ndx_write_codec, writer)?;
                 }
-                ndx_write_codec.write_ndx_done(&mut *writer)?;
-                writer.flush()?;
+                if !self.take_early_generator_ndx_done() {
+                    ndx_write_codec.write_ndx_done(&mut *writer)?;
+                    writer.flush()?;
+                }
                 phase += 1;
                 // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
                 debug_log!(Recv, 1, "recv_files phase={}", phase);
@@ -195,11 +197,21 @@ impl ReceiverContext {
             self.note_sender_ndx_done();
             return Ok(());
         }
-        match read_marker_aware_ndx(reader, ndx_read_codec, &mut sink)? {
-            NdxFrame::Done => {
-                self.note_sender_ndx_done();
-                Ok(())
-            }
+        self.read_sender_ndx_done(ndx_read_codec, reader, &mut sink, context)?;
+        self.note_sender_ndx_done();
+        Ok(())
+    }
+
+    /// Reads the sender's next `NDX_DONE`, refusing a file index.
+    fn read_sender_ndx_done<R: Read>(
+        &self,
+        ndx_read_codec: &mut NdxCodecEnum,
+        reader: &mut R,
+        sink: &mut NoLazyFlist,
+        context: &str,
+    ) -> io::Result<()> {
+        match read_marker_aware_ndx(reader, ndx_read_codec, sink)? {
+            NdxFrame::Done => Ok(()),
             // upstream: io.c read_ndx / rsync.c:982 - a wire index that is not
             // the expected NDX_DONE (-1) is "File-list index N not in ..." and
             // aborts with exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the error so
@@ -210,6 +222,73 @@ impl ReceiverContext {
                 crate::role_trailer::receiver()
             ))),
         }
+    }
+
+    /// Writes the generator's request-phase `NDX_DONE` ahead of
+    /// [`Self::exchange_phase_done`], which then skips that write.
+    ///
+    /// upstream: generator.c:2831-2833 - without INC_RECURSE the generator
+    /// ends phase 0 right after its last request, so the sender can answer
+    /// it while the replies are still being read.
+    pub(in crate::receiver) fn write_early_generator_ndx_done<W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        create_ndx_codec(self.protocol.as_u8()).write_ndx_done(writer)?;
+        self.early_generator_ndx_dones
+            .set(self.early_generator_ndx_dones.get() + 1);
+        Ok(())
+    }
+
+    /// Consumes one write recorded by [`Self::write_early_generator_ndx_done`].
+    fn take_early_generator_ndx_done(&self) -> bool {
+        let early = self.early_generator_ndx_dones.get();
+        if early == 0 {
+            return false;
+        }
+        self.early_generator_ndx_dones.set(early - 1);
+        true
+    }
+
+    /// Ends the request phase before the redo pass: reads the sender's answer
+    /// to the phase-0 `NDX_DONE`, then the echoes of the hard-link follower
+    /// rows written after it.
+    ///
+    /// upstream: generator.c:2846-2856 sends the redo requests in phase 1,
+    /// after the phase-0 `NDX_DONE`, and the sender answers that `NDX_DONE`
+    /// after its last phase-0 reply (sender.c:540-549), so the redo replies
+    /// follow it. The read is credited, so [`Self::exchange_phase_done`] does
+    /// not repeat it.
+    pub(in crate::receiver) fn finish_request_phase<R: Read, W: Write + ?Sized>(
+        &self,
+        reader: &mut R,
+        writer: &mut W,
+        ndx_read_codec: &mut NdxCodecEnum,
+    ) -> io::Result<()> {
+        if self.early_generator_ndx_dones.get() == 0 {
+            // The pass wrote no NDX_DONE (nothing to request, or a --stop-at
+            // deadline), so the follower rows went out ahead of this one.
+            self.write_early_generator_ndx_done(writer)?;
+            writer.flush()?;
+            self.read_expected_ndx_done(ndx_read_codec, reader, "phase transition")?;
+        } else {
+            writer.flush()?;
+            let early = self.early_sender_ndx_dones.get();
+            if early > 0 {
+                self.early_sender_ndx_dones.set(early - 1);
+            } else {
+                let mut sink = self.no_lazy_flist_sink();
+                self.read_sender_ndx_done(ndx_read_codec, reader, &mut sink, "phase transition")?;
+                self.note_sender_ndx_done();
+            }
+            let mut sink = self.no_lazy_flist_sink();
+            if self.drain_hardlink_follower_echoes(ndx_read_codec, reader, &mut sink)? {
+                self.note_sender_ndx_done();
+                self.note_early_sender_ndx_done();
+            }
+        }
+        self.note_early_sender_ndx_done();
+        Ok(())
     }
 
     /// Builds the marker-rejecting sink used by the phase-boundary and goodbye

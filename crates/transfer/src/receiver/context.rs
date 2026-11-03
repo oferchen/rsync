@@ -458,6 +458,12 @@ pub struct ReceiverContext {
     /// [`Self::read_expected_ndx_done`] instead of being read again. `Cell`
     /// for the same `&self` reason as `hardlink_follower_echoes`.
     pub(in crate::receiver) early_sender_ndx_dones: std::cell::Cell<usize>,
+    /// Generator `NDX_DONE`s already written ahead of `finalize_transfer`, so
+    /// its phase exchange skips that many writes.
+    ///
+    /// upstream: generator.c:2831-2833 ends the request phase as soon as the
+    /// last request is out, before any reply is read.
+    pub(in crate::receiver) early_generator_ndx_dones: std::cell::Cell<usize>,
     /// Sender `NDX_DONE`s consumed so far. Under INC_RECURSE each one frees
     /// the oldest received flist, so once the count reaches
     /// `ndx_segments.len()` every list is gone - upstream's `first_flist ==
@@ -781,6 +787,7 @@ impl ReceiverContext {
             progress_active: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
             early_sender_ndx_dones: std::cell::Cell::new(0),
+            early_generator_ndx_dones: std::cell::Cell::new(0),
             sender_ndx_dones: std::cell::Cell::new(0),
             server_no_transfer_itemize: RefCell::new(Vec::new()),
             deferred_dir_rows: RefCell::new(HashMap::new()),

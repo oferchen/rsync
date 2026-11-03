@@ -289,8 +289,10 @@ impl ReceiverContext {
                     &mut progress,
                     &mut ndx_write_codec,
                     &mut ndx_read_codec,
+                    true,
                 )?;
                 all_delayed_updates.extend(delayed);
+                self.finish_request_phase(&mut *reader, writer, &mut ndx_read_codec)?;
 
                 // Phase 2: redo pass for files that failed checksum verification.
                 redo_count = redo_indices.len();
@@ -339,6 +341,7 @@ impl ReceiverContext {
                         &mut progress,
                         &mut ndx_write_codec,
                         &mut ndx_read_codec,
+                        false,
                     )?;
 
                     files_transferred += redo_transferred;

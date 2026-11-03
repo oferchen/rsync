@@ -349,6 +349,7 @@ impl ReceiverContext {
                     &mut progress,
                     &mut ndx_write_codec,
                     &mut ndx_read_codec,
+                    false,
                 )?;
                 all_delayed_updates.extend(delayed);
 
@@ -399,6 +400,7 @@ impl ReceiverContext {
                         &mut progress,
                         &mut ndx_write_codec,
                         &mut ndx_read_codec,
+                        false,
                     )?;
 
                     files_transferred += redo_transferred;
@@ -851,6 +853,7 @@ impl ReceiverContext {
                         &mut progress,
                         &mut ndx_write_codec,
                         &mut ndx_read_codec,
+                        false,
                     )?;
                     files_transferred += seg_transferred;
                     transferred_file_size += seg_size;
@@ -942,6 +945,7 @@ impl ReceiverContext {
                     &mut progress,
                     &mut ndx_write_codec,
                     &mut ndx_read_codec,
+                    false,
                 )?;
             files_transferred += redo_tx;
             transferred_file_size += redo_size;
