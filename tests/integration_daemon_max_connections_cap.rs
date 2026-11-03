@@ -21,10 +21,10 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::sync::{Barrier, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use daemon::{DaemonConfig, run_daemon};
 use tempfile::tempdir;
@@ -37,12 +37,13 @@ const MODULE_NAME: &str = "capped";
 const CONNECTION_CAP: u32 = 2;
 const TOTAL_CLIENTS: usize = 3;
 
-/// Bind to ephemeral port, capture it, then release for the daemon.
-fn allocate_test_port() -> Option<u16> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).ok()?;
-    let port = listener.local_addr().ok()?.port();
-    drop(listener);
-    Some(port)
+/// Binds the daemon's loopback listener before the daemon starts; the
+/// daemon receives it through `pre_bound_listener`, so no other process can
+/// take the port and a client that connects early queues in the backlog.
+fn bound_listener() -> (TcpListener, u16) {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).expect("bind to ephemeral port");
+    let port = listener.local_addr().expect("local addr").port();
+    (listener, port)
 }
 
 /// Outcome of a single client probing the capped module.
@@ -54,15 +55,11 @@ enum ClientOutcome {
     Refused(String),
 }
 
-/// Why a client probe produced no outcome.
-///
-/// The two variants are kept apart because only one of them may be tolerated.
-/// A probe that never reached the listener says nothing about the cap, while a
-/// probe that connected and then failed is indistinguishable from a broken cap
-/// and must fail the test - collapsing both into one string is what let a
-/// "skip when every client failed" guard swallow real daemon breakage.
+/// Why a client probe produced no outcome. Either is a test failure: the
+/// listener is bound before the daemon starts, so a refused connect is a
+/// broken fixture, not an environment to skip.
 enum ClientError {
-    /// The daemon never became connectable within the deadline.
+    /// The connect to the pre-bound listener failed.
     Connect(String),
     /// The client reached the daemon and the exchange then failed.
     Exchange(String),
@@ -85,18 +82,10 @@ fn describe(errors: &[ClientError]) -> String {
         .join("; ")
 }
 
-/// Connects to the daemon, waiting until it has bound or the deadline passes.
-fn connect_to_daemon(port: u16, ready_deadline: Instant) -> Result<TcpStream, ClientError> {
-    let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    loop {
-        match TcpStream::connect_timeout(&target, Duration::from_millis(500)) {
-            Ok(stream) => return Ok(stream),
-            Err(_) if Instant::now() < ready_deadline => {
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(err) => return Err(ClientError::Connect(format!("connect: {err}"))),
-        }
-    }
+/// Connects to the daemon's pre-bound listener.
+fn connect_to_daemon(port: u16) -> Result<TcpStream, ClientError> {
+    TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+        .map_err(|err| ClientError::Connect(format!("connect: {err}")))
 }
 
 /// Runs the daemon handshake on an established connection and classifies the
@@ -179,12 +168,8 @@ fn request_module(stream: &TcpStream) -> Result<ClientOutcome, ClientError> {
 /// client that finds the cap saturated is guaranteed to exist regardless of
 /// scheduling. The barrier replaces a fixed sleep, which only made the race
 /// unlikely rather than impossible.
-fn run_client(
-    port: u16,
-    ready_deadline: Instant,
-    all_classified: &Barrier,
-) -> Result<ClientOutcome, ClientError> {
-    let stream = match connect_to_daemon(port, ready_deadline) {
+fn run_client(port: u16, all_classified: &Barrier) -> Result<ClientOutcome, ClientError> {
+    let stream = match connect_to_daemon(port) {
         Ok(stream) => stream,
         Err(err) => {
             all_classified.wait();
@@ -230,12 +215,7 @@ fn daemon_log_message(line: &str) -> Option<&str> {
 fn daemon_caps_concurrent_module_connections_at_max_connections() {
     let _guard = TEST_LOCK.lock().expect("test lock poisoned");
 
-    let Some(port) = allocate_test_port() else {
-        eprintln!(
-            "daemon_caps_concurrent_module_connections_at_max_connections: skipped, no free port"
-        );
-        return;
-    };
+    let (listener, port) = bound_listener();
 
     let temp = tempdir().expect("tempdir");
     let module_dir = temp.path().join("module");
@@ -278,18 +258,15 @@ fn daemon_caps_concurrent_module_connections_at_max_connections() {
             // function still reported PASSED.
             OsString::from("--no-detach"),
         ])
+        .pre_bound_listener(listener)
         .build();
 
     let daemon_handle = thread::spawn(move || run_daemon(config));
 
-    // All clients are given the same deadline to wait for the daemon's
-    // bind. If the bind never lands the test skips rather than failing.
-    let ready_deadline = Instant::now() + Duration::from_secs(15);
-
     let all_classified = Barrier::new(TOTAL_CLIENTS);
     let outcomes: Vec<Result<ClientOutcome, ClientError>> = thread::scope(|scope| {
         let handles: Vec<_> = (0..TOTAL_CLIENTS)
-            .map(|_| scope.spawn(|| run_client(port, ready_deadline, &all_classified)))
+            .map(|_| scope.spawn(|| run_client(port, &all_classified)))
             .collect();
 
         handles
@@ -307,23 +284,6 @@ fn daemon_caps_concurrent_module_connections_at_max_connections() {
             Ok(ClientOutcome::Refused(payload)) => refused.push(payload),
             Err(err) => errors.push(err),
         }
-    }
-
-    // Skip only when no client could open a TCP connection at all, which means
-    // the environment has no usable loopback rather than that the cap is
-    // broken. A client that connected and then failed is a real failure and
-    // falls through to the assertions below.
-    if errors.len() == TOTAL_CLIENTS
-        && errors
-            .iter()
-            .all(|err| matches!(err, ClientError::Connect(_)))
-    {
-        eprintln!(
-            "daemon_caps_concurrent_module_connections_at_max_connections: skipped ({})",
-            describe(&errors)
-        );
-        let _ = daemon_handle.join();
-        return;
     }
 
     assert!(
