@@ -98,10 +98,11 @@ impl WireTranscript {
     /// identical runs without changing the stream length. The stream is
     /// demultiplexed from the end of the unmultiplexed handshake (the last
     /// handshake write is the fixed checksum seed; upstream: compat.c
-    /// setup_protocol()); the final `MSG_DATA` frame must be the sender's
-    /// lone `NDX_DONE` goodbye (upstream: main.c:933-935
-    /// read_final_goodbye(), protocol >= 31), preceded by the two 3-byte
-    /// time fields.
+    /// setup_protocol()); the data must end with the sender's `NDX_DONE`
+    /// goodbye (upstream: main.c:933-935 read_final_goodbye(), protocol >=
+    /// 31), optionally preceded by its echo of the client's `NDX_DEL_STATS`
+    /// (rsync.c:336-342, read there after the stats), and before that the
+    /// two 3-byte time fields.
     /// Anything else is refused rather than guessed at, so a layout change
     /// fails loudly instead of masking the wrong bytes.
     pub fn mask_pull_flist_times(&mut self) -> Result<(), TranscriptError> {
@@ -109,36 +110,29 @@ impl WireTranscript {
             direction: "server-to-client",
             reason,
         };
-        let mut data: Vec<(usize, usize)> = self
+        let mut data: Vec<usize> = self
             .server_frame_spans()?
             .into_iter()
             .filter(|&(code, _, _)| code == 0)
-            .map(|(_, start, len)| (start, len))
+            .flat_map(|(_, start, len)| start..start + len)
             .collect();
         let stream = &mut self.server_to_client;
 
-        // The sender blocks reading the client's NDX_DONE before writing its
-        // own, and that read flushes the stats first (upstream: io.c
-        // perform_io()), so the goodbye is always a lone 1-byte frame.
         match data.pop() {
-            Some((start, 1)) if stream[start] == 0 => {}
-            _ => return Err(malformed("stream does not end with an NDX_DONE frame")),
+            Some(last) if stream[last] == 0 => {}
+            _ => return Err(malformed("stream does not end with an NDX_DONE")),
+        }
+        if let Some(start) = del_stats_echo_start(stream, &data) {
+            data.truncate(start);
         }
         let tail_len = 2 * VARLONG30_WIDTH;
-        let mut tail: Vec<usize> = data
-            .iter()
-            .rev()
-            .flat_map(|&(start, len)| (start..start + len).rev())
-            .take(tail_len)
-            .collect();
-        tail.reverse();
-        if tail.len() != tail_len {
+        let Some(tail) = data.len().checked_sub(tail_len).map(|at| &data[at..]) else {
             return Err(malformed("data stream too short for the stats trailer"));
-        }
+        };
         if stream[tail[0]] >= 0x80 || stream[tail[VARLONG30_WIDTH]] >= 0x80 {
             return Err(malformed("flist time field is not a 3-byte varlong30"));
         }
-        for offset in tail {
+        for &offset in tail {
             stream[offset] = 0;
         }
         Ok(())
@@ -203,6 +197,32 @@ impl WireTranscript {
         }
         Ok(frames)
     }
+}
+
+/// Where the sender's `NDX_DEL_STATS` echo starts in `data`, when `data`
+/// ends with one.
+///
+/// The echo is a negative NDX (`0xFF` and a one-byte diff; upstream: io.c
+/// write_ndx()) and five varints (main.c:229-242 write_del_stats()), whose
+/// first byte's leading one bits count the extra bytes (io.c write_varint()).
+fn del_stats_echo_start(stream: &[u8], data: &[usize]) -> Option<usize> {
+    const MAX_ECHO_LEN: usize = 2 + 5 * 5;
+    let byte = |i: usize| stream[data[i]];
+    (data.len().saturating_sub(MAX_ECHO_LEN)..data.len().saturating_sub(1))
+        .rev()
+        .find(|&start| {
+            if byte(start) != 0xFF || byte(start + 1) >= 0xFE {
+                return false;
+            }
+            let mut at = start + 2;
+            for _ in 0..5 {
+                if at >= data.len() {
+                    return false;
+                }
+                at += 1 + byte(at).leading_ones() as usize;
+            }
+            at == data.len()
+        })
 }
 
 /// Error reading back a capture: the instrument itself failed.
