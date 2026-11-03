@@ -2077,6 +2077,46 @@ fn kqueue_engine_delivers_queued_connection_on_readiness() {
     drop(client);
 }
 
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
+#[test]
+fn kqueue_engine_keeps_serving_after_a_failed_accept_or_wait() {
+    // upstream: socket.c:746-757 `start_accept_loop()` continues past both a
+    // failed poll(2) and a failed accept(2). Before the fix the kqueue engine
+    // returned either failure as a fatal DaemonError, so a client that reset
+    // before accept took it (ECONNABORTED) ended the daemon and every queued
+    // client was reset or refused. The failures are injected through the
+    // engine's own classification seams; the follow-up poll proves the
+    // listener still serves.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let mut engine =
+        KqueueAcceptEngine::new(vec![listener], &[local], None, None).expect("kqueue engine");
+
+    let aborted = io::Error::from(io::ErrorKind::ConnectionAborted);
+    assert!(
+        engine.accepted(local, Err(aborted)).is_none(),
+        "ECONNABORTED drops that one connection and nothing else"
+    );
+    let failed_wait = io::Error::from(io::ErrorKind::OutOfMemory);
+    assert!(
+        matches!(engine.serve_events(Err(failed_wait)), AcceptOutcome::Idle),
+        "a failed kevent(2) wait is transient, like upstream's failed poll(2)"
+    );
+
+    let client = TcpStream::connect(local).expect("connect");
+    // No wait bound: only readiness can end this poll.
+    assert!(
+        matches!(
+            engine.poll().expect("poll"),
+            AcceptOutcome::Connection(_, _)
+        ),
+        "the listener must keep serving after both failures"
+    );
+
+    engine.shutdown();
+    drop(client);
+}
+
 // QUIC/UDP listener binding (QUIC-6c). The datagram sibling of the TCP
 // `bind_listeners_per_family` pipeline: it reuses `resolve_bind_addresses` and
 // mirrors the per-family tolerance. These tests pin dual-stack binding, the
