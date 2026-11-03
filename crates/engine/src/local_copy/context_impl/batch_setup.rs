@@ -53,6 +53,7 @@ fn build_batch_flist_writer(options: &LocalCopyOptions) -> Option<protocol::flis
         let proto_version = guard.config().protocol_version;
         let compat_flags_val = guard.config().compat_flags;
         let checksum_seed = guard.config().checksum_seed;
+        let numeric_ids = guard.config().numeric_ids;
         let stream_flags = *guard.stream_flags();
         drop(guard);
 
@@ -62,8 +63,10 @@ fn build_batch_flist_writer(options: &LocalCopyOptions) -> Option<protocol::flis
         // header. The flist writer must use the same compat_flags to ensure the wire
         // encoding (varint flags, safe file list) matches what the reader will expect
         // when decoding the batch body.
-        let writer = if let Some(cf) = compat_flags_val {
-            let compat = protocol::CompatibilityFlags::from_bits(cf as u32);
+        let compat = compat_flags_val.map(|cf| protocol::CompatibilityFlags::from_bits(cf as u32));
+        let inc_recurse =
+            compat.is_some_and(|cf| cf.contains(protocol::CompatibilityFlags::INC_RECURSE));
+        let writer = if let Some(compat) = compat {
             protocol::flist::FileListWriter::with_compat_flags(protocol, compat)
         } else {
             protocol::flist::FileListWriter::new(protocol)
@@ -92,7 +95,11 @@ fn build_batch_flist_writer(options: &LocalCopyOptions) -> Option<protocol::flis
             // terminators without names, so owner names must ride inline in
             // every entry regardless of inc_recurse. Keep XMIT_*_NAME_FOLLOWS
             // always enabled for the batch flist writer.
-            .with_name_follows(true);
+            .with_name_follows(true)
+            // upstream: acls.c:827 send_ida_entries() - a named ACL entry
+            // carries its name inline only under inc_recurse; otherwise the
+            // id lists name it (write_batch_id_lists).
+            .with_acl_send_names(inc_recurse && !numeric_ids);
 
         // upstream: flist.c:1336 - under always_checksum every regular-file
         // entry carries a trailing digest. The reader re-derives the length

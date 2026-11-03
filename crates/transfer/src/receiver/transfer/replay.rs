@@ -119,7 +119,7 @@ impl ReceiverContext {
             let mut metadata_errors = self.create_directories(
                 dest_dir,
                 metadata_opts,
-                acl_cache.as_deref(),
+                acl_cache.as_ref(),
                 acl_id_map.as_deref(),
                 writer,
                 #[cfg(unix)]
@@ -138,7 +138,7 @@ impl ReceiverContext {
             #[cfg(unix)]
             self.create_specials(
                 dest_dir,
-                acl_cache.as_deref(),
+                acl_cache.as_ref(),
                 acl_id_map.as_deref(),
                 sandbox.as_deref(),
                 writer,
@@ -193,7 +193,7 @@ impl ReceiverContext {
                 None,
                 &mut metadata_errors,
                 &mut stats,
-                acl_cache.as_deref(),
+                acl_cache.as_ref(),
                 acl_id_map.as_deref(),
             )?;
             self.server_no_transfer_itemize.borrow_mut().clear();
@@ -601,7 +601,7 @@ impl ReceiverContext {
             if let Err(acl_err) = apply_acls_from_receiver_cache(
                 &file_path,
                 &file_entry,
-                acl_cache.as_deref(),
+                acl_cache.as_ref(),
                 acl_id_map.as_deref(),
                 !file_entry.is_symlink(),
                 Some(dest_dir.as_path()),
@@ -842,7 +842,7 @@ impl ReceiverContext {
                 Some(failed_dirs),
                 metadata_errors,
                 stats,
-                setup.acl_cache.as_deref(),
+                setup.acl_cache.as_ref(),
                 setup.acl_id_map.as_deref(),
             );
             *self.itemize_rows.borrow_mut() = recorded_rows;

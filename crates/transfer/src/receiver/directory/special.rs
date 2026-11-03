@@ -23,13 +23,13 @@
 use std::path::Path;
 
 #[cfg(unix)]
+use crate::disk_commit::LiveAclCache;
+#[cfg(unix)]
 use logging::info_log;
 #[cfg(unix)]
 use metadata::{
     AclIdMapper, MetadataOptions, apply_metadata_from_file_entry, create_fifo_node_from_parts,
 };
-#[cfg(unix)]
-use protocol::acl::AclCache;
 #[cfg(unix)]
 use protocol::flist::{FileEntry, FileType};
 
@@ -63,7 +63,7 @@ impl ReceiverContext {
     pub(in crate::receiver) fn create_specials<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
-        #[cfg(unix)] acl_cache: Option<&AclCache>,
+        #[cfg(unix)] acl_cache: Option<&LiveAclCache>,
         #[cfg(unix)] acl_id_map: Option<&AclIdMapper>,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
@@ -92,7 +92,7 @@ impl ReceiverContext {
         &self,
         range: std::ops::Range<usize>,
         dest_dir: &Path,
-        acl_cache: Option<&AclCache>,
+        acl_cache: Option<&LiveAclCache>,
         acl_id_map: Option<&AclIdMapper>,
         sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,

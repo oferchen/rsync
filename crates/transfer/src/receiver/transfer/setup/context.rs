@@ -951,10 +951,11 @@ impl ReceiverContext {
         let acl_cache = if self.config.flags.acls {
             self.flist_reader_cache
                 .as_ref()
-                .map(|r| Arc::new(r.acl_cache().clone()))
+                .map(|r| Arc::new(std::sync::RwLock::new(r.acl_cache().clone())))
         } else {
             None
         };
+        self.live_acl_cache.clone_from(&acl_cache);
 
         // upstream: uidlist.c:483-484 match_acl_ids() - build the cross-host id
         // remapper for named ACL entries from the received uid/gid id-lists plus

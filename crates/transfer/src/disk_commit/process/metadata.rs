@@ -8,8 +8,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::disk_commit::LiveAclCache;
 use metadata::AclIdMapper;
-use protocol::acl::AclCache;
 
 use crate::delta_apply::ChecksumVerifier;
 use crate::pipeline::messages::{BeginMessage, ComputedChecksum};
@@ -78,7 +78,7 @@ pub(super) fn apply_file_metadata(
             MetadataApplyInputs {
                 file_entry,
                 metadata_opts: config.metadata_opts.as_ref(),
-                acl_cache: config.acl_cache.as_deref(),
+                acl_cache: config.acl_cache.as_ref(),
                 acl_id_map: config.acl_id_map.as_deref(),
                 xattr_list: begin.xattr_list.as_ref(),
                 xattr_filter: config.xattr_filter.as_deref(),
@@ -106,7 +106,7 @@ struct MetadataApplyInputs<'a> {
     /// Permission/ownership/timestamp options.
     metadata_opts: Option<&'a metadata::MetadataOptions>,
     /// Cached ACLs to apply after permissions.
-    acl_cache: Option<&'a AclCache>,
+    acl_cache: Option<&'a LiveAclCache>,
     /// Cross-host id remapper for named ACL entries.
     acl_id_map: Option<&'a AclIdMapper>,
     /// Received xattr list to apply last.
@@ -170,6 +170,7 @@ fn apply_metadata_acls_and_xattrs(
     if let Some(cache) = acl_cache
         && let Some(access_ndx) = entry.acl_ndx()
     {
+        let cache = &*cache.read().expect("ACL cache lock poisoned");
         let follow = !entry.is_symlink();
         // upstream: acls.c:1181 - under `--fake-super`, set_rsync_acl()
         // stashes the ACL in an xattr instead of calling sys_acl_set_file(),
@@ -471,7 +472,7 @@ mod tests {
                     .preserve_times(false)
                     .preserve_permissions(false),
             ),
-            acl_cache: Some(std::sync::Arc::new(cache)),
+            acl_cache: Some(std::sync::Arc::new(std::sync::RwLock::new(cache))),
             dest_dir: confine.then(|| root.clone()),
             ..DiskCommitConfig::default()
         };

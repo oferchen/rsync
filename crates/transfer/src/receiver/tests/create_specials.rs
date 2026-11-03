@@ -306,6 +306,7 @@ fn receiver_applies_the_acl_to_a_fifo_entry() {
     fifo.set_acl_ndx(ndx);
     ctx.file_list = vec![fifo].into();
     let mut writer = CapturingMsgInfoWriter;
+    let cache = std::sync::Arc::new(std::sync::RwLock::new(cache));
     ctx.create_specials(&dest, Some(&cache), None, None, &mut writer)
         .expect("create_specials must succeed");
 

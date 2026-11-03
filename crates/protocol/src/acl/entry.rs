@@ -744,6 +744,21 @@ impl AclCache {
         self.default_acls.len()
     }
 
+    /// Appends the ACLs `source` holds beyond this cache's own, so a copy
+    /// taken from `source` keeps up as `source` grows.
+    ///
+    /// Both caches only ever append, like upstream's `access_acl_list` and
+    /// `default_acl_list` (`acls.c:94-95`), so the entries this copy holds are
+    /// `source`'s first ones and only the tail is new.
+    pub fn extend_from(&mut self, source: &AclCache) {
+        let access = source.access_acls.get(self.access_acls.len()..);
+        self.access_acls
+            .extend_from_slice(access.unwrap_or_default());
+        let default = source.default_acls.get(self.default_acls.len()..);
+        self.default_acls
+            .extend_from_slice(default.unwrap_or_default());
+    }
+
     /// Iterates over every cached ACL (access then default).
     ///
     /// Used by the sender to feed each named entry's user/group id into the
