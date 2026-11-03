@@ -172,23 +172,25 @@ pub(crate) fn local_failure_error(
         return side.finish(report, ExitCode::StreamIo);
     }
     let transfer_exit = ExitCode::from_io_error(error);
-    // upstream: cleanup.c:146-153 - _exit_cleanup() polls the child with
-    // WNOHANG. When the client itself aborts with RERR_PROTOCOL (e.g.
-    // exclude.c:1924-1926 refusing a filter rule a pre-29 peer cannot read),
-    // the remote side is still blocked on its input, so its status is not yet
-    // available and the local code stands. oc closes the pipes and waits,
-    // which makes the child exit with its own EOF code (12) and would
-    // otherwise mask the refusal. A receiver that cannot enter its destination
-    // (main.c:778-781, RERR_FILESELECT) aborts the same way, before the remote
-    // sender has finished. A rule refused out of a per-directory merge file
-    // during the sender's walk is the same: exclude.c:133-137 filter_rule_err()
-    // exits RERR_SYNTAX while the peer still waits for the file list.
-    let local_setup_abort = matches!(
-        transfer_exit,
-        ExitCode::Protocol | ExitCode::FileSelect | ExitCode::Syntax
+    // upstream: cleanup.c:113-117 keeps the first exit code, and
+    // cleanup.c:146-153 folds in the child's status only if a WNOHANG poll
+    // finds it already gone. A failure the client raises itself - a refused
+    // filter rule (exclude.c:1924-1926), an unenterable destination
+    // (main.c:778-781), a --checksum-choice the file list cannot use
+    // (checksum.c:549-551) - leaves the remote side blocked on its input, so
+    // the poll finds it running and the local code stands. oc closes the
+    // pipes and waits, which makes that child exit with its own EOF code (12);
+    // only a failure of the stream itself means the peer went first.
+    let peer_went_first = matches!(
+        error.kind(),
+        io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::WriteZero
     );
     let report = match child_exit {
-        Some(child) if !local_setup_abort && child.as_i32() > transfer_exit.as_i32() => {
+        Some(child) if peer_went_first && child.as_i32() > transfer_exit.as_i32() => {
             remote_exit_error(child, side.exit_role())
         }
         _ => crate::client::error::invalid_argument_error_typed_with_role(
