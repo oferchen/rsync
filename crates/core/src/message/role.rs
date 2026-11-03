@@ -10,6 +10,13 @@ pub enum Role {
     Sender,
     /// Receiver role (`[receiver=…]`).
     Receiver,
+    /// Client receiver before it forks into receiver and generator
+    /// (`[Receiver=…]`).
+    ///
+    /// upstream: rsync.c:987-995 `who_am_i()` returns `"Receiver"` while none
+    /// of `am_sender`, `am_generator` or `am_receiver` is set, which on a pull
+    /// client is everything before main.c:1077 `do_recv()` forks.
+    PreForkReceiver,
     /// Generator role (`[generator=…]`).
     Generator,
     /// Server role (`[server=…]`).
@@ -37,19 +44,23 @@ impl Role {
     ///     .map(|role| role.as_str())
     ///     .collect();
     ///
-    /// assert_eq!(labels, ["sender", "receiver", "generator", "server", "client", "daemon"]);
+    /// assert_eq!(
+    ///     labels,
+    ///     ["sender", "receiver", "Receiver", "generator", "server", "client", "daemon"]
+    /// );
     /// ```
     #[doc(alias = "trailer roles")]
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Sender,
         Self::Receiver,
+        Self::PreForkReceiver,
         Self::Generator,
         Self::Server,
         Self::Client,
         Self::Daemon,
     ];
 
-    /// Returns the lowercase trailer identifier used when formatting messages.
+    /// Returns the trailer identifier used when formatting messages.
     ///
     /// The returned string matches the suffix rendered by upstream rsync. Keeping the
     /// mapping here allows higher layers to reuse the canonical spelling when
@@ -63,6 +74,7 @@ impl Role {
     ///
     /// assert_eq!(Role::Sender.as_str(), "sender");
     /// assert_eq!(Role::Receiver.as_str(), "receiver");
+    /// assert_eq!(Role::PreForkReceiver.as_str(), "Receiver");
     /// assert_eq!(Role::Daemon.as_str(), "daemon");
     /// ```
     #[must_use]
@@ -70,6 +82,7 @@ impl Role {
         match self {
             Self::Sender => "sender",
             Self::Receiver => "receiver",
+            Self::PreForkReceiver => "Receiver",
             Self::Generator => "generator",
             Self::Server => "server",
             Self::Client => "client",
@@ -98,6 +111,7 @@ impl FromStr for Role {
         match input {
             "sender" => Ok(Self::Sender),
             "receiver" => Ok(Self::Receiver),
+            "Receiver" => Ok(Self::PreForkReceiver),
             "generator" => Ok(Self::Generator),
             "server" => Ok(Self::Server),
             "client" => Ok(Self::Client),
@@ -112,8 +126,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_contains_six_roles() {
-        assert_eq!(Role::ALL.len(), 6);
+    fn all_contains_seven_roles() {
+        assert_eq!(Role::ALL.len(), 7);
     }
 
     #[test]
@@ -123,7 +137,7 @@ mod tests {
 
     #[test]
     fn all_ends_with_daemon() {
-        assert_eq!(Role::ALL[5], Role::Daemon);
+        assert_eq!(Role::ALL[6], Role::Daemon);
     }
 
     #[test]
@@ -134,6 +148,12 @@ mod tests {
     #[test]
     fn receiver_as_str() {
         assert_eq!(Role::Receiver.as_str(), "receiver");
+    }
+
+    #[test]
+    fn pre_fork_receiver_renders_capitalised_like_upstream() {
+        assert_eq!(Role::PreForkReceiver.as_str(), "Receiver");
+        assert_eq!("Receiver".parse::<Role>().unwrap(), Role::PreForkReceiver);
     }
 
     #[test]

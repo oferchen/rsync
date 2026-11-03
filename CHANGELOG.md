@@ -286,12 +286,15 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 **Interop**
 - A remote shell that dies before the protocol handshake exits 12 with upstream's message in either ordering; a failed version write exited 5 (#8283)
+- A failed pull reports from the process upstream would: `[Receiver]` before the file list is in, then the receiver and the generator, each with its own byte count. A daemon pull exits by error class (end of stream 12, reset socket 10, `--timeout` 30, an uncreatable destination root 11 with upstream's `mkdir ... failed` line) instead of 23 (#8287)
+- A run the peer ends with `MSG_ERROR_EXIT` exits with the peer's code and prints no exit trailer of its own, as upstream; a `--log-file` run without `--info=stats` keeps it (#8298)
 - A receiver refuses a peer file-list index that no live list owns, including one in an incremental-recursion sub-list it has already freed, with upstream's `File-list index %d not in %d - %d (read_ndx_and_attrs)` error and exit 2 (#8240)
 - A `-m` push to an upstream daemon sends the filter list the receiver reads, so 3.5.1 no longer aborts with `buffer overflow: recv_rules` (#8232)
 - A basis block matches every repeat of its content, as upstream does: repeated data (zero runs in sparse or VM images) went out as literals where upstream sends copy tokens, changing the wire and the `--stats` Literal/Matched split (#8009)
 - Upstream clients pulling with `-H` under INC_RECURSE no longer abort on hard links that span directories (#7982)
 - The entry after an abbreviated hard-link follower is encoded against the right previous entry (#7997)
 - A block match with no basis file exits 2, and a daemon stream closed mid-transfer exits 12, with upstream's messages (#8016)
+- A connection reset before multiplexed I/O starts is upstream's `safe_read failed to read N bytes` and exit 12, not `read error` and exit 10 (#8302)
 - An out-of-range block index in a delta stream, live or replayed with `--read-batch`, exits 2 with upstream's `Invalid block index` message (#8237)
 - The receiver resolves block-match tokens through the sum head the sender echoed, as upstream does, so a match against a basis it could not open ends on `got a block match with no basis file` (#8237)
 - A sender refuses a peer file-list index that no live list owns with upstream's `File-list index %d not in %d - %d` error and exit 2, for itemize-only items as well as transfer requests (#8237)

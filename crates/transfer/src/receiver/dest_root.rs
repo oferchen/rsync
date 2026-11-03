@@ -4,8 +4,90 @@
 //! the destination root directory when the transfer needs one.
 
 use std::ffi::OsStr;
+use std::fmt;
 use std::io;
 use std::path::Path;
+
+/// The failed pre-flight `mkdir` of the destination root.
+///
+/// upstream: main.c:817-821 get_local_name() - `rsyserr(FERROR, errno,
+/// "mkdir %s failed", full_fname(dest_path))`, then `exit_cleanup(RERR_FILEIO)`.
+/// The make_path() failure under `--mkpath` takes the same `mkdir_error` label.
+#[derive(Debug)]
+pub struct DestRootMkdirError {
+    fname: String,
+    source: io::Error,
+}
+
+impl DestRootMkdirError {
+    /// The destination root as upstream's `full_fname()` renders it, quoted.
+    #[must_use]
+    pub fn fname(&self) -> &str {
+        &self.fname
+    }
+
+    /// The error `mkdir` failed with.
+    #[must_use]
+    pub const fn source_error(&self) -> &io::Error {
+        &self.source
+    }
+
+    /// Returns the mkdir failure carried by `error`, if it is one.
+    #[must_use]
+    pub fn of(error: &io::Error) -> Option<&Self> {
+        error.get_ref()?.downcast_ref()
+    }
+
+    /// Wraps the failure as an `io::Error` of the cause's kind.
+    pub(in crate::receiver) fn into_io(fname: String, source: io::Error) -> io::Error {
+        io::Error::new(source.kind(), Self { fname, source })
+    }
+}
+
+impl fmt::Display for DestRootMkdirError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "mkdir {} failed: {}", self.fname, self.source)
+    }
+}
+
+impl std::error::Error for DestRootMkdirError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Marks the `mkdir` step's own failure so the caller can tell it from the
+/// stat-side refusals around it.
+#[derive(Debug)]
+struct MkdirFailed(io::Error);
+
+impl fmt::Display for MkdirFailed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for MkdirFailed {}
+
+/// Splits a [`ensure_dest_root_exists`] failure into the `mkdir` cause, when
+/// that is what failed, or the error unchanged.
+pub(in crate::receiver) fn mkdir_cause(error: io::Error) -> Result<io::Error, io::Error> {
+    if !error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<MkdirFailed>())
+    {
+        return Err(error);
+    }
+    let kind = error.kind();
+    match error
+        .into_inner()
+        .map(|inner| inner.downcast::<MkdirFailed>())
+    {
+        Some(Ok(failed)) => Ok(failed.0),
+        Some(Err(other)) => Err(io::Error::new(kind, other)),
+        None => Err(io::Error::from(kind)),
+    }
+}
 
 /// Reports whether a destination operand was written with a trailing path
 /// separator.
@@ -166,11 +248,14 @@ pub fn ensure_dest_root_exists(
             // upstream: main.c:759 make_path (full chain) only under --mkpath;
             // otherwise main.c:817 do_mkdir creates a single level and fails
             // with ENOENT when an ancestor is missing.
-            if mkpath {
-                std::fs::create_dir_all(dest_root).map(|()| true)
+            let created = if mkpath {
+                std::fs::create_dir_all(dest_root)
             } else {
-                std::fs::create_dir(dest_root).map(|()| true)
-            }
+                std::fs::create_dir(dest_root)
+            };
+            created
+                .map(|()| true)
+                .map_err(|cause| io::Error::new(cause.kind(), MkdirFailed(cause)))
         }
         Err(err) => Err(err),
     }

@@ -72,6 +72,7 @@
 //!   [`non_regular_transfer_request`] so the diagnostic has one owner.
 
 use std::io::{self, Read};
+use std::sync::Arc;
 
 use protocol::codec::{NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec};
 use protocol::stats::DeleteStats;
@@ -726,6 +727,11 @@ impl FlistMarkerSink for ReceiverContext {
         protocol::flist::trace_flist_eof(protocol::flist::ProcessRole::Receiver);
         self.flist_eof = true;
         self.flist_span_end(mark);
+        // upstream: rsync.c:359 - the receiver writes NDX_FLIST_EOF on to its
+        // generator.
+        if let Some(point) = self.fork_point() {
+            point.forward_data(4);
+        }
     }
 
     fn on_ndx_done(&mut self) {
@@ -744,8 +750,36 @@ impl FlistMarkerSink for ReceiverContext {
         raw_ndx: i32,
         mark: u64,
     ) -> io::Result<()> {
-        self.receive_one_extra_segment(reader, raw_ndx, mark)
-            .map(|_| ())
+        let Some(point) = self.fork_point().map(Arc::clone) else {
+            return self
+                .receive_one_extra_segment(reader, raw_ndx, mark)
+                .map(|_| ());
+        };
+        // upstream: rsync.c:377-381 - start_flist_forward() writes the dir
+        // index as a 4-byte int, then read_buf() copies every byte the
+        // sub-list decoder consumes to the generator (io.c:2167-2188).
+        let mut counted = CountedRead {
+            inner: reader,
+            count: 0,
+        };
+        let received = self.receive_one_extra_segment(&mut counted, raw_ndx, mark);
+        point.forward_data(4 + counted.count);
+        received.map(|_| ())
+    }
+}
+
+/// Counts the bytes a sub-list read consumes: the payload upstream's receiver
+/// forwards to its generator.
+struct CountedRead<'a, R: ?Sized> {
+    inner: &'a mut R,
+    count: u64,
+}
+
+impl<R: Read + ?Sized> Read for CountedRead<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.count += n as u64;
+        Ok(n)
     }
 }
 

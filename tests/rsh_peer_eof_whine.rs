@@ -133,16 +133,29 @@ fn write_truncating_rsh_shim(dir: &Path, cut: usize) -> PathBuf {
 /// Pulls a tree whose server output is cut after `cut` bytes.
 /// Returns (exit code, stderr lines).
 fn pull_cut_after(cut: usize) -> (Option<i32>, Vec<String>) {
+    pull_files_cut_after(cut, &[("big", 300_000)], &[])
+}
+
+/// Pulls `files` (name, size), with `extra` options, from a server whose
+/// output is cut after `cut` bytes. Returns (exit code, stderr lines).
+fn pull_files_cut_after(
+    cut: usize,
+    files: &[(&str, u32)],
+    extra: &[&str],
+) -> (Option<i32>, Vec<String>) {
     let temp = tempfile::tempdir().expect("tempdir");
     let src = temp.path().join("src");
     fs::create_dir_all(&src).expect("create src");
-    let data: Vec<u8> = (0..300_000u32)
-        .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
-        .collect();
-    fs::write(src.join("big"), &data).expect("write file");
+    for &(name, size) in files {
+        let data: Vec<u8> = (0..size)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect();
+        fs::write(src.join(name), &data).expect("write file");
+    }
     let rsh = write_truncating_rsh_shim(temp.path(), cut);
     let output = Command::new(env!("CARGO_BIN_EXE_oc-rsync"))
         .arg("-a")
+        .args(extra)
         .arg("-e")
         .arg(&rsh)
         .arg("--blocking-io")
@@ -178,24 +191,32 @@ fn whine_count(line: &str, role: &str) -> u64 {
 /// spoke, and N counts every byte read after setup (io.c:938 stats.total_read).
 /// Cutting the stream 40000 bytes later must report exactly 40000 more bytes;
 /// a constant or a frame-local count cannot pass that.
+///
+/// The cut lands after upstream's fork (main.c:1077 do_recv()), so the
+/// generator follows the receiver with its own whine and trailer, naming the
+/// little it read before the fork.
 #[test]
 fn pull_cut_mid_transfer_whines_with_the_bytes_read_since_setup() {
     let mut counts = Vec::new();
     for cut in [10_000usize, 50_000] {
         let (code, lines) = pull_cut_after(cut);
         assert_eq!(code, Some(12), "{lines:#?}");
-        assert_eq!(lines.len(), 2, "{lines:#?}");
-        assert!(
-            lines[1]
-                .starts_with("oc-rsync error: error in rsync protocol data stream (code 12) at ")
-                && lines[1].contains(" [receiver="),
-            "{lines:#?}"
-        );
+        assert_eq!(lines.len(), 4, "{lines:#?}");
+        for (trailer, role) in [(&lines[1], "receiver"), (&lines[3], "generator")] {
+            assert!(
+                trailer.starts_with(
+                    "oc-rsync error: error in rsync protocol data stream (code 12) at "
+                ) && trailer.contains(&format!(" [{role}=")),
+                "{lines:#?}"
+            );
+        }
         let count = whine_count(&lines[0], "receiver");
         assert!(
             count > 0 && count < cut as u64,
             "{count} vs cut {cut}: {lines:#?}"
         );
+        let generator = whine_count(&lines[2], "generator");
+        assert!(generator < count, "{generator} vs {count}: {lines:#?}");
         counts.push(count);
     }
     assert_eq!(counts[1] - counts[0], 40_000, "{counts:?}");

@@ -42,6 +42,7 @@ pub(crate) mod operator_file;
 pub(crate) mod output_option;
 /// `OC_RSYNC_PULL_INC_RECURSE` override flag and the `'i'` advertise decision.
 pub(crate) mod pull_inc_recurse;
+pub(crate) mod reporting_side;
 /// Upstream `safe_arg()` escaping for arguments passed to the server.
 pub(crate) mod safe_arg;
 /// Remote-to-remote transfer via local proxy relay.

@@ -1022,6 +1022,7 @@ impl ReceiverContext {
                     file_idx,
                     result.is_inplace,
                 );
+                self.note_generator_notice(&file_entry);
 
                 // Non-blocking: collect any ready disk results.
                 let (_disk_bytes, disk_meta_errors) =

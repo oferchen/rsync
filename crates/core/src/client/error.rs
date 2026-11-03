@@ -45,8 +45,10 @@ pub const UNSUPPORTED_EXIT_CODE: i32 = ExitCode::Unsupported.as_i32();
 pub struct ClientError {
     exit_code: ExitCode,
     message: Message,
-    lead_line: Option<LeadLine>,
+    lead_line: Option<Box<LeadLine>>,
     completed: Option<Box<ClientSummary>>,
+    preceding: Option<Box<ClientError>>,
+    peer_error_exit: bool,
 }
 
 /// The line upstream prints before log_exit()'s trailer, if a failure has one.
@@ -65,7 +67,45 @@ impl ClientError {
             message,
             lead_line: None,
             completed: None,
+            preceding: None,
+            peer_error_exit: false,
         }
+    }
+
+    /// Returns whether the run ended on the peer's `MSG_ERROR_EXIT`.
+    ///
+    /// upstream: io.c:1930 exits through `_exit_cleanup(val, __FILE__, 0 -
+    /// __LINE__)`, and the negative line keeps log_exit() from printing a
+    /// trailer (cleanup.c:221-225) unless `--log-file` is set without
+    /// `--info=stats`; the peer already reported the failure.
+    #[must_use]
+    pub const fn ended_by_peer_error_exit(&self) -> bool {
+        self.peer_error_exit
+    }
+
+    /// Exits with `exit_code` while keeping this report's trailer: the process
+    /// that printed it is not the one whose status ends the run.
+    #[must_use]
+    pub(crate) const fn with_exit_code(mut self, exit_code: ExitCode) -> Self {
+        self.exit_code = exit_code;
+        self
+    }
+
+    /// Records `earlier` as a report another process printed before this one.
+    ///
+    /// upstream: a forked pull client's receiver reports its failure and exits
+    /// before the generator, its parent, reports and exits (main.c:1077).
+    #[must_use]
+    pub(crate) fn after(mut self, earlier: Self) -> Self {
+        self.preceding = Some(Box::new(earlier));
+        self
+    }
+
+    /// Returns the report printed before this one, if another process ended
+    /// the run first.
+    #[must_use]
+    pub fn preceding(&self) -> Option<&Self> {
+        self.preceding.as_deref()
     }
 
     /// Attaches the cause upstream prints, unprefixed, before the exit
@@ -74,7 +114,7 @@ impl ClientError {
     /// upstream: xattrs.c:1253-1258 - `rprintf(FERROR, "Corrupt ...")` and
     /// then `exit_cleanup()`, whose log_exit() trailer follows it.
     fn with_cause_line(mut self, line: String) -> Self {
-        self.lead_line = Some(LeadLine::Cause(line));
+        self.lead_line = Some(Box::new(LeadLine::Cause(line)));
         self
     }
     /// Attaches the summary of a transfer that finished every entry but still
@@ -125,7 +165,7 @@ impl ClientError {
     /// exit trailer, if this failure has one. The caller prefixes the program
     /// name so the line carries the same brand as the trailer.
     pub fn program_line(&self) -> Option<&str> {
-        match &self.lead_line {
+        match self.lead_line.as_deref() {
             Some(LeadLine::Program(line)) => Some(line),
             _ => None,
         }
@@ -134,7 +174,7 @@ impl ClientError {
     /// Returns the line upstream prints verbatim before the exit trailer, if
     /// this failure has one.
     pub fn cause_line(&self) -> Option<&str> {
-        match &self.lead_line {
+        match self.lead_line.as_deref() {
             Some(LeadLine::Cause(line)) => Some(line),
             _ => None,
         }
@@ -308,6 +348,17 @@ pub(crate) fn invalid_argument_error_typed_with_role(
 pub(crate) fn remote_exit_error(exit_code: ExitCode, role: Role) -> ClientError {
     let message = rsync_error!(exit_code.as_i32(), "{}", exit_code.description()).with_role(role);
     ClientError::with_code(exit_code, message)
+}
+
+/// Builds the error for a run the peer ended with `MSG_ERROR_EXIT`, which
+/// exits with the peer's code.
+///
+/// upstream: io.c:1892-1930 - see [`ClientError::ended_by_peer_error_exit`].
+#[cold]
+pub(crate) fn peer_error_exit_error(exit_code: ExitCode, role: Role) -> ClientError {
+    let mut error = remote_exit_error(exit_code, role);
+    error.peer_error_exit = true;
+    error
 }
 
 #[cold]
@@ -639,8 +690,17 @@ pub fn connection_unexpectedly_closed_error(
 #[cold]
 pub(crate) fn program_line_error(line: String, exit_code: ExitCode, role: Role) -> ClientError {
     let mut error = remote_exit_error(exit_code, role);
-    error.lead_line = Some(LeadLine::Program(line));
+    error.lead_line = Some(Box::new(LeadLine::Program(line)));
     error
+}
+
+/// Reports a fatal failure upstream announces with one unprefixed line before
+/// log_exit()'s trailer for `exit_code`.
+///
+/// upstream: `rprintf(FERROR, ...)` of the cause, then `exit_cleanup()`.
+#[cold]
+pub(crate) fn cause_line_error(line: String, exit_code: ExitCode, role: Role) -> ClientError {
+    remote_exit_error(exit_code, role).with_cause_line(line)
 }
 
 /// Creates a daemon error from an i32 exit code.
