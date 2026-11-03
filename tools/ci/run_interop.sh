@@ -79,13 +79,18 @@ interop_log_dir="${workspace_root}/target/interop/logs"
 versions=(2.6.3 2.6.9 3.0.9 3.1.3 3.4.4 3.5.0 3.5.1)
 # Versions we only build and cache (no scenarios wired up yet).
 extra_build_versions=()
+# Versions built only as oracles for the cargo-nextest cross-implementation
+# cells (crates/test-support/src/upstream_compat.rs). They join no interop
+# scenario and no oracle cell below, and a build failure is fatal: CI runs those
+# cells with OC_RSYNC_UPSTREAM_COMPAT=1, where a missing oracle fails the test.
+test_oracle_versions=(3.4.1)
 
 # Versions with no usable per-arch .deb in any pool we track, so the harness
 # builds them from the release tarball instead. 2.6.9 predates the per-arch
 # pool coverage; 3.4.4 and 3.5.0 are too recent for a distro to have packaged.
 # Both the primary URL builder and the generic fallback consult this list, so
 # the "source-only" fact is stated once.
-source_only_versions=(2.6.3 2.6.9 3.4.4 3.5.0 3.5.1)
+source_only_versions=(2.6.3 2.6.9 3.4.1 3.4.4 3.5.0 3.5.1)
 
 version_is_source_only() {
   local version=$1 candidate
@@ -12871,13 +12876,14 @@ if [[ "$only_version_given" == "true" ]]; then
   # scenarios. A single-version run has no use for them, and building them would
   # charge every matrix cell for the same work.
   extra_build_versions=()
+  test_oracle_versions=()
 fi
 
 # Build upstream binaries first (always needed). Includes versions cached for
 # follow-up tasks (extra_build_versions) so the binary is on disk and on PATH
 # even when no scenarios reference it yet.
 mkdir -p "$upstream_src_root" "$upstream_install_root"
-for version in "${versions[@]}"; do
+for version in "${versions[@]}" ${test_oracle_versions[@]+"${test_oracle_versions[@]}"}; do
   ensure_upstream_build "$version"
 done
 # Cache-warming versions have no scenarios wired, so a build failure costs
@@ -12899,7 +12905,8 @@ done
 # If build-only mode, exit after building upstream binaries
 if [[ "$build_only" == "true" ]]; then
   echo "Built upstream rsync binaries (build-only mode)"
-  for version in "${versions[@]}" ${extra_build_versions[@]+"${extra_build_versions[@]}"}; do
+  for version in "${versions[@]}" ${extra_build_versions[@]+"${extra_build_versions[@]}"} \
+      ${test_oracle_versions[@]+"${test_oracle_versions[@]}"}; do
     binary="${upstream_install_root}/${version}/bin/rsync"
     if [[ -x "$binary" ]]; then
       echo "  - ${version}: $binary"

@@ -24,6 +24,8 @@ pub enum UpstreamVersion {
     V3_0_9,
     /// rsync 3.1.3.
     V3_1_3,
+    /// rsync 3.4.1.
+    V3_4_1,
     /// rsync 3.4.4.
     V3_4_4,
     /// rsync 3.5.0.
@@ -38,6 +40,7 @@ impl UpstreamVersion {
         match self {
             UpstreamVersion::V3_0_9 => "3.0.9",
             UpstreamVersion::V3_1_3 => "3.1.3",
+            UpstreamVersion::V3_4_1 => "3.4.1",
             UpstreamVersion::V3_4_4 => "3.4.4",
             UpstreamVersion::V3_5_0 => "3.5.0",
             UpstreamVersion::V3_5_1 => "3.5.1",
@@ -51,6 +54,7 @@ impl UpstreamVersion {
         match self {
             UpstreamVersion::V3_0_9 => "OC_RSYNC_UPSTREAM_BIN_3_0_9",
             UpstreamVersion::V3_1_3 => "OC_RSYNC_UPSTREAM_BIN_3_1_3",
+            UpstreamVersion::V3_4_1 => "OC_RSYNC_UPSTREAM_BIN_3_4_1",
             UpstreamVersion::V3_4_4 => "OC_RSYNC_UPSTREAM_BIN_3_4_4",
             UpstreamVersion::V3_5_0 => "OC_RSYNC_UPSTREAM_BIN_3_5_0",
             UpstreamVersion::V3_5_1 => "OC_RSYNC_UPSTREAM_BIN_3_5_1",
@@ -154,21 +158,27 @@ pub fn upstream_install_bin(version: &str) -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
-/// Self-skip helper. Returns `Some(UpstreamRsync)` when the binary
-/// exists, else prints a clear reason and returns `None`. Tests early-
-/// return on `None` so nextest reports them as passing with the skip
-/// reason in stderr.
+/// Resolves the upstream oracle for `version`, verified by its `--version`
+/// banner.
+///
+/// Without `OC_RSYNC_UPSTREAM_COMPAT=1` a missing or wrong oracle prints a
+/// skip reason and returns `None`, so local runs without an upstream build
+/// still pass. With it set, as the CI oracle step does, the same condition
+/// panics: a skipped oracle cell must never be counted as a pass.
 #[must_use]
 pub fn require_upstream_rsync(version: UpstreamVersion) -> Option<UpstreamRsync> {
     let Some(binary) = locate_upstream_rsync(version) else {
-        eprintln!(
-            "Skipping upstream-compat test: upstream rsync {} not installed at \
-             target/interop/upstream-install/{}/bin/rsync (override via {})",
-            version.directory(),
-            version.directory(),
-            version.env_var(),
+        return oracle_unavailable(
+            &format!(
+                "upstream rsync {} not installed at \
+                 target/interop/upstream-install/{}/bin/rsync (build it with \
+                 `tools/ci/run_interop.sh build-only`, or override via {})",
+                version.directory(),
+                version.directory(),
+                version.env_var(),
+            ),
+            upstream_compat_enabled(),
         );
-        return None;
     };
 
     // A path is not proof of provenance. `/usr/bin/rsync` on macOS is
@@ -178,25 +188,40 @@ pub fn require_upstream_rsync(version: UpstreamVersion) -> Option<UpstreamRsync>
     let banner = match Command::new(&binary).arg("--version").output() {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
         other => {
-            eprintln!(
-                "Skipping upstream-compat test: `{} --version` did not run cleanly ({other:?})",
-                binary.display(),
+            return oracle_unavailable(
+                &format!(
+                    "`{} --version` did not run cleanly ({other:?})",
+                    binary.display()
+                ),
+                upstream_compat_enabled(),
             );
-            return None;
         }
     };
     let first_line = banner.lines().next().unwrap_or_default();
     let expected = format!("rsync  version {}", version.directory());
     if !first_line.starts_with(&expected) {
-        eprintln!(
-            "Skipping upstream-compat test: {} is not upstream rsync {} (banner: {first_line:?})",
-            binary.display(),
-            version.directory(),
+        return oracle_unavailable(
+            &format!(
+                "{} is not upstream rsync {} (banner: {first_line:?})",
+                binary.display(),
+                version.directory(),
+            ),
+            upstream_compat_enabled(),
         );
-        return None;
     }
 
     Some(UpstreamRsync { binary, version })
+}
+
+/// Reports an unusable oracle: a skip line and `None` when `required` is
+/// false, a panic naming `reason` when it is true.
+fn oracle_unavailable<T>(reason: &str, required: bool) -> Option<T> {
+    assert!(
+        !required,
+        "upstream oracle required (OC_RSYNC_UPSTREAM_COMPAT=1) but unavailable: {reason}"
+    );
+    eprintln!("Skipping upstream-compat test: {reason}");
+    None
 }
 
 /// Resolve the workspace root from the consuming test's `CARGO_MANIFEST_DIR`.
@@ -237,6 +262,21 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).starts_with(&root),
             "workspace root must be an ancestor of the consuming manifest dir"
         );
+    }
+
+    #[test]
+    fn an_unavailable_oracle_skips_when_not_required() {
+        // Why: local runs without an upstream build must keep passing, so the
+        // optional path returns None instead of failing.
+        assert!(oracle_unavailable::<()>("absent", false).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "upstream oracle required")]
+    fn an_unavailable_oracle_fails_when_required() {
+        // Why: under OC_RSYNC_UPSTREAM_COMPAT=1 a skip would be counted as a
+        // pass in CI, so the required path must fail the test instead.
+        let _ = oracle_unavailable::<()>("absent", true);
     }
 
     #[test]
