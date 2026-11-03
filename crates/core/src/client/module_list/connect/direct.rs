@@ -7,10 +7,12 @@ use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 use super::super::DaemonAddress;
 use super::super::socket_options::apply_socket_options;
+use crate::client::error::{connect_failure_error, getaddrinfo_error};
 use crate::client::{
     AddressMode, ClientError, SOCKET_IO_EXIT_CODE, TcpFastOpenMode, connect_timeout_error,
     daemon_error, socket_error,
 };
+use crate::message::Role;
 
 /// Establishes a direct TCP connection to an rsync daemon.
 ///
@@ -19,6 +21,8 @@ use crate::client::{
 /// are applied to the resulting stream. `sockopts`, when given, is applied to
 /// each candidate socket before `connect(2)` (upstream: socket.c:434 `open_socket_out()`), so
 /// options that shape the SYN (e.g. `SO_SNDBUF`/`SO_RCVBUF`) take effect.
+/// `role` names the process a failure reports from.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn connect_direct(
     addr: &DaemonAddress,
     connect_timeout: Option<Duration>,
@@ -27,8 +31,9 @@ pub(crate) fn connect_direct(
     bind_address: Option<SocketAddr>,
     tfo: TcpFastOpenMode,
     sockopts: Option<&OsStr>,
+    role: Role,
 ) -> Result<TcpStream, ClientError> {
-    let addresses = resolve_daemon_addresses(addr, address_mode)?;
+    let addresses = resolve_daemon_addresses(addr, address_mode, role)?;
 
     let result = connect_first_reachable(&addresses, bind_address, connect_timeout, tfo, sockopts);
 
@@ -44,7 +49,12 @@ pub(crate) fn connect_direct(
             }
             Ok(stream)
         }
-        Err((candidate, error)) => Err(map_connect_failure(connect_timeout, candidate, error)),
+        Err(failures) => Err(map_connect_failure(
+            connect_timeout,
+            addr.host(),
+            failures,
+            role,
+        )),
     }
 }
 
@@ -65,12 +75,15 @@ pub(crate) fn connect_direct(
 /// `io::ErrorKind::TimedOut` while `connect_timeout` is `Some` is treated as
 /// that alarm firing, so iteration stops there rather than trying the
 /// remaining candidates with a fresh timeout budget.
+///
+/// On failure every attempted candidate comes back with its error, in order,
+/// because upstream reports each one (socket.c:464-475).
 pub(crate) fn try_candidates<T>(
     candidates: &[SocketAddr],
     connect_timeout: Option<Duration>,
     mut attempt: impl FnMut(SocketAddr) -> io::Result<T>,
-) -> Result<T, (SocketAddr, io::Error)> {
-    let mut last_error: Option<(SocketAddr, io::Error)> = None;
+) -> Result<T, Vec<(SocketAddr, io::Error)>> {
+    let mut failures = Vec::new();
 
     for &candidate in candidates {
         match attempt(candidate) {
@@ -78,7 +91,7 @@ pub(crate) fn try_candidates<T>(
             Err(error) => {
                 let contimeout_expired =
                     connect_timeout.is_some() && error.kind() == io::ErrorKind::TimedOut;
-                last_error = Some((candidate, error));
+                failures.push((candidate, error));
                 if contimeout_expired {
                     break;
                 }
@@ -86,7 +99,11 @@ pub(crate) fn try_candidates<T>(
         }
     }
 
-    Err(last_error.expect("try_candidates requires at least one candidate"))
+    assert!(
+        !failures.is_empty(),
+        "try_candidates requires at least one candidate"
+    );
+    Err(failures)
 }
 
 /// Connects to the first reachable candidate, preserving upstream's
@@ -106,7 +123,7 @@ pub(crate) fn connect_first_reachable(
     connect_timeout: Option<Duration>,
     tfo: TcpFastOpenMode,
     sockopts: Option<&OsStr>,
-) -> Result<TcpStream, (SocketAddr, io::Error)> {
+) -> Result<TcpStream, Vec<(SocketAddr, io::Error)>> {
     let tfo = fastopen_mode_for(candidates, tfo);
 
     try_candidates(candidates, connect_timeout, |candidate| {
@@ -139,25 +156,28 @@ fn fastopen_mode_for(candidates: &[SocketAddr], requested: TcpFastOpenMode) -> T
     requested
 }
 
-/// Maps a final `connect(2)` failure to a [`ClientError`] with the correct exit
-/// code.
+/// Maps the failed `connect(2)` attempts to `host` to a [`ClientError`].
 ///
 /// A `--contimeout` expiry (`connect_timeout` was `Some`, and `socket2` surfaces
 /// the alarm as [`io::ErrorKind::TimedOut`]) maps to `RERR_CONTIMEOUT` (35),
 /// matching upstream and the SSH path. Every other failure - including a bare
-/// OS SYN timeout when no `--contimeout` was requested - keeps the generic
-/// socket-I/O code (10).
+/// OS SYN timeout when no `--contimeout` was requested - reports each address
+/// and keeps the generic socket-I/O code (10).
 ///
 /// upstream: socket.c:436-437 - `if (connect_timeout < 0) exit_cleanup(RERR_CONTIMEOUT);`
 pub(crate) fn map_connect_failure(
     connect_timeout: Option<Duration>,
-    candidate: SocketAddr,
-    error: io::Error,
+    host: &str,
+    failures: Vec<(SocketAddr, io::Error)>,
+    role: Role,
 ) -> ClientError {
-    if connect_timeout.is_some() && error.kind() == io::ErrorKind::TimedOut {
-        return connect_timeout_error(candidate, error);
+    let expired = failures
+        .last()
+        .is_some_and(|(_, error)| error.kind() == io::ErrorKind::TimedOut);
+    if connect_timeout.is_some() && expired {
+        return connect_timeout_error(role);
     }
-    socket_error("connect to", candidate, error)
+    connect_failure_error(host, &failures, role)
 }
 
 /// Resolves a [`DaemonAddress`] to a list of [`SocketAddr`]s, filtered by address family.
@@ -167,16 +187,11 @@ pub(crate) fn map_connect_failure(
 pub(crate) fn resolve_daemon_addresses(
     addr: &DaemonAddress,
     mode: AddressMode,
+    role: Role,
 ) -> Result<Vec<SocketAddr>, ClientError> {
     let iterator = (addr.host.as_str(), addr.port)
         .to_socket_addrs()
-        .map_err(|error| {
-            socket_error(
-                "resolve daemon address for",
-                addr.socket_addr_display(),
-                error,
-            )
-        })?;
+        .map_err(|error| getaddrinfo_error(addr.host(), addr.port, &error, role))?;
 
     let addresses: Vec<SocketAddr> = iterator.collect();
 
@@ -358,8 +373,17 @@ mod tests {
     #[test]
     fn connect_timeout_expiry_maps_to_contimeout_exit_code() {
         let error = io::Error::new(io::ErrorKind::TimedOut, "connection timed out");
-        let mapped = map_connect_failure(Some(Duration::from_secs(5)), candidate(), error);
+        let mapped = map_connect_failure(
+            Some(Duration::from_secs(5)),
+            "localhost",
+            vec![(candidate(), error)],
+            Role::PreForkReceiver,
+        );
         assert_eq!(mapped.exit_code(), 35);
+        assert!(
+            mapped.program_lines().is_empty(),
+            "the alarm reports no address"
+        );
     }
 
     // Without --contimeout (connect_timeout is None), an OS-level SYN timeout is
@@ -368,7 +392,12 @@ mod tests {
     #[test]
     fn os_timeout_without_contimeout_stays_socket_io() {
         let error = io::Error::new(io::ErrorKind::TimedOut, "connection timed out");
-        let mapped = map_connect_failure(None, candidate(), error);
+        let mapped = map_connect_failure(
+            None,
+            "localhost",
+            vec![(candidate(), error)],
+            Role::PreForkReceiver,
+        );
         assert_eq!(mapped.exit_code(), 10);
     }
 
@@ -377,7 +406,12 @@ mod tests {
     #[test]
     fn non_timeout_failure_with_contimeout_stays_socket_io() {
         let error = io::Error::new(io::ErrorKind::ConnectionRefused, "refused");
-        let mapped = map_connect_failure(Some(Duration::from_secs(5)), candidate(), error);
+        let mapped = map_connect_failure(
+            Some(Duration::from_secs(5)),
+            "localhost",
+            vec![(candidate(), error)],
+            Role::PreForkReceiver,
+        );
         assert_eq!(mapped.exit_code(), 10);
     }
 
@@ -495,8 +529,11 @@ mod tests {
             attempted.push(candidate);
             Err::<SocketAddr, _>(io::Error::new(io::ErrorKind::TimedOut, "timed out"))
         });
-        let (candidate, error) = result.expect_err("contimeout expiry must fail");
-        assert_eq!(candidate, addrs[0]);
+        let failures = result.expect_err("contimeout expiry must fail");
+        let [(candidate, error)] = failures.as_slice() else {
+            panic!("one attempt, got {failures:?}");
+        };
+        assert_eq!(*candidate, addrs[0]);
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert_eq!(
             attempted,
@@ -525,12 +562,10 @@ mod tests {
         assert_eq!(attempted, addrs);
     }
 
-    // upstream: socket.c:464-475 - when every address fails, upstream
-    // reports on all of them but the caller only needs the final one to
-    // construct the exit-code mapping; the last candidate/error pair must
-    // be preserved.
+    // upstream: socket.c:464-475 - when every address fails, upstream reports
+    // each one, in resolution order.
     #[test]
-    fn try_candidates_all_fail_returns_last_error() {
+    fn try_candidates_all_fail_returns_every_failure_in_order() {
         let addrs = candidates(2);
         let result = try_candidates(&addrs, None, |candidate| {
             Err::<SocketAddr, _>(io::Error::new(
@@ -538,8 +573,58 @@ mod tests {
                 format!("refused {candidate}"),
             ))
         });
-        let (candidate, _error) = result.expect_err("both candidates fail");
-        assert_eq!(candidate, addrs[1]);
+        let failures = result.expect_err("both candidates fail");
+        let tried: Vec<SocketAddr> = failures.iter().map(|(candidate, _)| *candidate).collect();
+        assert_eq!(tried, addrs);
+    }
+
+    // upstream: socket.c:471 and clientserver.c:164-165 - one line per failed
+    // address, named by the host as given and the numeric address, then the
+    // RERR_SOCKETIO trailer from the process that dialled.
+    #[test]
+    fn a_refused_host_reports_every_address_in_upstreams_words() {
+        let refused = || io::Error::from_raw_os_error(libc_econnrefused());
+        let v6 = SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), 873);
+        let mapped = map_connect_failure(
+            None,
+            "localhost",
+            vec![(v6, refused()), (candidate(), refused())],
+            Role::Sender,
+        );
+        assert_eq!(mapped.exit_code(), 10);
+        let lines = mapped.program_lines();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[0].starts_with("[sender] failed to connect to localhost (::1): "),
+            "{lines:?}"
+        );
+        assert!(
+            lines[1].starts_with("[sender] failed to connect to localhost (127.0.0.1): "),
+            "{lines:?}"
+        );
+        assert!(mapped.to_string().contains("[sender="), "{mapped}");
+    }
+
+    // upstream: socket.c:402-406 - an unresolvable host is
+    // `RSYNC_NAME ": getaddrinfo: %s %s: %s"` with gai_strerror()'s text and
+    // no role, then RERR_SOCKETIO.
+    #[test]
+    fn an_unresolved_host_reports_getaddrinfo_like_upstream() {
+        let error =
+            io::Error::other("failed to lookup address information: Name or service not known");
+        let mapped = getaddrinfo_error("nonexistent.invalid", 873, &error, Role::PreForkReceiver);
+        assert_eq!(mapped.exit_code(), 10);
+        assert_eq!(
+            mapped.program_lines(),
+            ["getaddrinfo: nonexistent.invalid 873: Name or service not known"]
+        );
+        assert!(mapped.to_string().contains("[Receiver="), "{mapped}");
+    }
+
+    fn libc_econnrefused() -> i32 {
+        io::Error::from(io::ErrorKind::ConnectionRefused)
+            .raw_os_error()
+            .unwrap_or(if cfg!(windows) { 10061 } else { 111 })
     }
 
     // upstream: socket.c:434-435 - set_socket_options(s, sockopts) runs before
