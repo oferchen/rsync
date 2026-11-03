@@ -592,7 +592,10 @@ mod session_tests {
         let (first, second) = (first.join().unwrap(), second.join().unwrap());
         for (lines, tag) in [(&first, "first-"), (&second, "second-")] {
             assert_eq!(lines.len(), 200, "{tag} lost lines: {lines:?}");
-            assert!(lines.iter().all(|line| line.starts_with(tag)), "{tag} got: {lines:?}");
+            assert!(
+                lines.iter().all(|line| line.starts_with(tag)),
+                "{tag} got: {lines:?}"
+            );
         }
         assert!(
             logging::drain_events().is_empty(),

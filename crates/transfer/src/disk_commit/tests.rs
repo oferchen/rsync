@@ -3938,11 +3938,16 @@ fn a_file_whose_temp_open_fails_is_not_named() {
     context.install_sink(names.clone());
     let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
-    for (parent, name) in [(&missing, "lost-chunked"), (&dir.path().to_path_buf(), "kept-chunked")] {
+    for (parent, name) in [
+        (&missing, "lost-chunked"),
+        (&dir.path().to_path_buf(), "kept-chunked"),
+    ] {
         h.file_tx
             .send(FileMessage::Begin(named_begin(parent.join(name), name)))
             .unwrap();
-        h.file_tx.send(FileMessage::Chunk(b"data".to_vec())).unwrap();
+        h.file_tx
+            .send(FileMessage::Chunk(b"data".to_vec()))
+            .unwrap();
         h.file_tx
             .send(FileMessage::Commit {
                 expected_checksum: Default::default(),
@@ -3951,7 +3956,10 @@ fn a_file_whose_temp_open_fails_is_not_named() {
         let result = h.result_rx.recv().unwrap();
         assert_eq!(result.is_ok(), name.starts_with("kept"), "{name}");
     }
-    for (parent, name) in [(&missing, "lost-whole"), (&dir.path().to_path_buf(), "kept-whole")] {
+    for (parent, name) in [
+        (&missing, "lost-whole"),
+        (&dir.path().to_path_buf(), "kept-whole"),
+    ] {
         h.file_tx
             .send(FileMessage::WholeFile {
                 begin: named_begin(parent.join(name), name),

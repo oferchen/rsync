@@ -2,10 +2,10 @@
 //!
 //! upstream: log.c:357-366 rwrite() hands every server-side message to
 //! `send_msg()` the moment it is produced, after `logit()` has written it to a
-//! daemon's log (log.c:312-332). Lines may come from any thread of the session
-//! - the receiver, the disk-commit thread, a rayon worker - so the sink queues
-//! the frame in a [`PeerOutbox`] and the connection's multiplex writer sends
-//! the queue, in production order, before the next bytes it writes.
+//! daemon's log (log.c:312-332). Lines may come from any thread of the
+//! session (the receiver, the disk-commit thread, a rayon worker), so the sink
+//! queues the frame in a [`PeerOutbox`] and the connection's multiplex writer
+//! sends the queue, in production order, before the next bytes it writes.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -192,7 +192,10 @@ mod tests {
         assert_eq!(old.frame_code(LogCode::Warning), Some(MessageCode::Info));
         assert_eq!(old.frame_code(LogCode::Error), Some(MessageCode::ErrorXfer));
         let (modern, _) = sink(30);
-        assert_eq!(modern.frame_code(LogCode::Warning), Some(MessageCode::Warning));
+        assert_eq!(
+            modern.frame_code(LogCode::Warning),
+            Some(MessageCode::Warning)
+        );
         assert_eq!(modern.frame_code(LogCode::Error), Some(MessageCode::Error));
     }
 }

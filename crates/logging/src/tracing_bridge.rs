@@ -26,8 +26,8 @@
 //! ```
 
 use super::config::VerbosityConfig;
-use super::levels::{DebugFlag, InfoFlag};
 use super::context::{debug_gte, emit_debug, emit_info, info_gte};
+use super::levels::{DebugFlag, InfoFlag};
 use tracing::{Level, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;

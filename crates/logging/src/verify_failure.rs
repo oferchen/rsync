@@ -9,9 +9,9 @@
 
 use std::path::Path;
 
+use crate::context::info_gte;
 use crate::levels::InfoFlag;
 use crate::log_code::LogCode;
-use crate::context::info_gte;
 
 /// The state upstream's `case 0:` reads when a file fails verification.
 ///

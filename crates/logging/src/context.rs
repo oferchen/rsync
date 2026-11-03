@@ -31,7 +31,6 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError, RwLock};
 
-
 /// A diagnostic event collected during execution.
 ///
 /// The two variants correspond to the info and debug flag systems. Every
@@ -170,15 +169,6 @@ impl LogContext {
             .take()
     }
 
-    /// Whether a sink is installed.
-    #[must_use]
-    pub fn has_sink(&self) -> bool {
-        self.sink
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_some()
-    }
-
     fn dispatch(&self, event: Stamped<DiagnosticEvent>) {
         if event.value().code() == LogCode::ErrorXfer {
             self.xfer_error.store(true, Ordering::Release);
@@ -199,7 +189,10 @@ impl LogContext {
     }
 
     fn update_verbosity(&self, f: impl FnOnce(&mut VerbosityConfig)) {
-        let mut verbosity = self.verbosity.write().unwrap_or_else(PoisonError::into_inner);
+        let mut verbosity = self
+            .verbosity
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
         f(&mut verbosity);
         self.generation.fetch_add(1, Ordering::Release);
     }
@@ -1188,7 +1181,10 @@ mod sink_tests {
         assert_eq!(recorder.lines(), ["before"]);
         emit_debug(DebugFlag::Recv, 1, "after".to_owned());
         assert_eq!(recorder.lines(), ["before", "after"]);
-        assert!(drain_events().is_empty(), "a live sink leaves nothing buffered");
+        assert!(
+            drain_events().is_empty(),
+            "a live sink leaves nothing buffered"
+        );
     }
 
     /// The disk-commit and rayon threads must log as the main thread does:
@@ -1220,7 +1216,9 @@ mod sink_tests {
         let mut config = VerbosityConfig::default();
         config.info.copy = 3;
         init(config);
-        let seen = std::thread::spawn(|| info_gte(InfoFlag::Copy, 3)).join().unwrap();
+        let seen = std::thread::spawn(|| info_gte(InfoFlag::Copy, 3))
+            .join()
+            .unwrap();
         assert!(seen);
     }
 

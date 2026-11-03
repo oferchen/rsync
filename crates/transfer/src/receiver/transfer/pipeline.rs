@@ -257,7 +257,9 @@ impl ReceiverContext {
                 PeerEvent::Message(code, text) => {
                     self.emit_pipeline_messages(writer, vec![(code, text)]);
                 }
-                PeerEvent::Success(flat_idx) => self.send_source_removals(writer, vec![flat_idx])?,
+                PeerEvent::Success(flat_idx) => {
+                    self.send_source_removals(writer, vec![flat_idx])?
+                }
             }
         }
         Ok(())

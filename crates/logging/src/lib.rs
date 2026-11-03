@@ -76,6 +76,7 @@
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]
 
 mod config;
+mod context;
 mod errno_text;
 /// Upstream-compatible error and warning formatting.
 pub mod error_format;
@@ -88,7 +89,6 @@ mod macros;
 mod phase_timer;
 mod sequence;
 mod stream;
-mod context;
 mod verify_failure;
 
 #[cfg(feature = "tracing")]
@@ -98,6 +98,14 @@ mod tracing_bridge;
 mod tracing_macros;
 
 pub use config::{MAX_VERBOSITY, VerbosityConfig};
+pub use context::{
+    ContextGuard, DiagnosticEvent, DiagnosticSink, LogContext, Session, apply_debug_flag,
+    apply_info_flag, current, debug_gte, discard_events_from, drain_error_events, drain_events,
+    drain_events_coded, drain_events_for_daemon_log, drain_events_for_peer,
+    drain_stamped_events_for_client, emit_debug, emit_debug_coded, emit_info, emit_info_bytes,
+    emit_info_coded, emit_line, emit_warning, enter, finfo_suppressed, info_gte, init,
+    limit_output_verbosity, set_quiet, xfer_error_reported,
+};
 pub use errno_text::upstream_errno_text;
 pub use error_format::{
     file_basename, format_rsync_error, format_rsync_warning, strip_repo_prefix,
@@ -108,14 +116,6 @@ pub use log_code::{LogCode, ParseLogCodeError};
 pub use phase_timer::PhaseTimer;
 pub use sequence::{Sequence, Stamped};
 pub use stream::{BadLogCode, MessageStream, Msgs2Stderr, StreamContext, message_stream};
-pub use context::{
-    ContextGuard, DiagnosticSink, LogContext, Session, current, enter,
-    DiagnosticEvent, apply_debug_flag, apply_info_flag, debug_gte, discard_events_from,
-    drain_error_events, drain_events, drain_events_coded, drain_events_for_daemon_log,
-    drain_events_for_peer, drain_stamped_events_for_client, emit_debug, emit_debug_coded,
-    emit_info, emit_info_bytes, emit_info_coded, emit_line, emit_warning, finfo_suppressed, info_gte, init,
-    limit_output_verbosity, set_quiet, xfer_error_reported,
-};
 pub use verify_failure::{VerifyFailure, verification_failure};
 
 #[cfg(feature = "tracing")]

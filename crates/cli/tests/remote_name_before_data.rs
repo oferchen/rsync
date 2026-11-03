@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use test_support::{UpstreamVersion, oc_rsync_bin, require_upstream_rsync, upstream_compat_enabled};
+use test_support::{
+    UpstreamVersion, oc_rsync_bin, require_upstream_rsync, upstream_compat_enabled,
+};
 
 const FILE: &str = "big.bin";
 const SIZE: usize = 8 << 20;
@@ -29,14 +31,18 @@ enum Direction {
 
 /// The destination temp file once it holds some, but not all, of the data.
 fn partial_temp(dst: &Path) -> Option<PathBuf> {
-    fs::read_dir(dst).ok()?.flatten().map(|entry| entry.path()).find(|path| {
-        let named = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with(&format!(".{FILE}.")));
-        let len = fs::metadata(path).map_or(0, |meta| meta.len());
-        named && len > 0 && len < SIZE as u64
-    })
+    fs::read_dir(dst)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            let named = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&format!(".{FILE}.")));
+            let len = fs::metadata(path).map_or(0, |meta| meta.len());
+            named && len > 0 && len < SIZE as u64
+        })
 }
 
 /// Runs a throttled `-v` transfer, kills it mid-file and returns its stdout.
@@ -50,7 +56,10 @@ fn stdout_when_killed_mid_file(binary: &Path, direction: Direction) -> String {
     let rsh = root.join("rsh");
     fs::write(&rsh, "#!/bin/sh\nshift\nexec \"$@\"\n").unwrap();
     fs::set_permissions(&rsh, fs::Permissions::from_mode(0o755)).unwrap();
-    let (src, dst) = (format!("{}/src/", root.display()), format!("{}/dst/", root.display()));
+    let (src, dst) = (
+        format!("{}/src/", root.display()),
+        format!("{}/dst/", root.display()),
+    );
     let (from, to) = match direction {
         Direction::Pull => (format!("lh:{src}"), dst),
     };
@@ -67,13 +76,24 @@ fn stdout_when_killed_mid_file(binary: &Path, direction: Direction) -> String {
     // seconds; the deadline only bounds a run that never starts writing.
     let deadline = Instant::now() + Duration::from_secs(60);
     while partial_temp(&root.join("dst")).is_none() {
-        assert!(child.try_wait().unwrap().is_none(), "{direction:?} ended before a partial write");
-        assert!(Instant::now() < deadline, "{direction:?} never wrote part of {FILE}");
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "{direction:?} ended before a partial write"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "{direction:?} never wrote part of {FILE}"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
     child.kill().unwrap();
     let mut out = String::new();
-    child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut out)
+        .unwrap();
     child.wait().unwrap();
     out
 }
