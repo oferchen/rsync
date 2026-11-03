@@ -13,7 +13,9 @@ Companion documents - this is deliberately NOT a third document:
   paces, and frees the incremental lists, and how oc converts to that shape.
 
 Anchor provenance: every upstream `file:line` below was re-verified by reading
-`target/interop/upstream-src/rsync-3.5.0/` (the current source-of-truth pin).
+`target/interop/upstream-src/rsync-3.5.0/` and then retargeted to
+`target/interop/upstream-src/rsync-3.5.1/` (the current source-of-truth pin)
+by content, with no construct missing.
 The original LS-1 capture cited 3.4.4 line numbers; those no longer resolve
 and have been retargeted here (rsync.h and compat.c anchors were the only
 survivors). Section 10 is the consolidated verified anchor table.
@@ -32,7 +34,7 @@ The measured build-all overhead is diffuse - the parallel stat index, sort
 transients, Vec-doubling slack, and un-interned dirnames all scale with N. A
 per-segment build subsumes all of them: each transient becomes O(segment).
 
-## 2. Upstream model (rsync 3.5.0, protocol 32)
+## 2. Upstream model (rsync 3.5.1, protocol 33; the INC_RECURSE model is unchanged from 3.5.0)
 
 ### 2.1 Data structures
 
@@ -473,13 +475,13 @@ gates are per-stage, not end-loaded.
   `dir_flist` (IR-5a/5b/5c) are the SAME type at TWO construction sites -
   see Section 4 LS-2. Neither programme builds its own copy.
 
-## 10. Verified anchor table (rsync 3.5.0)
+## 10. Verified anchor table (rsync 3.5.1)
 
-Every row read in `target/interop/upstream-src/rsync-3.5.0/` on the date of
-this revision. 3.4.4 equivalents are listed only where a prior oc doc or
+Every row was read in `target/interop/upstream-src/rsync-3.5.0/` and then
+re-located in `target/interop/upstream-src/rsync-3.5.1/` by content. 3.4.4 equivalents are listed only where a prior oc doc or
 comment cites them.
 
-| Construct | 3.5.0 anchor | Notes (3.4.4 origin where retargeted) |
+| Construct | 3.5.1 anchor | Notes (3.4.4 origin where retargeted) |
 |---|---|---|
 | `MIN_FILECNT_LOOKAHEAD 1000` / `MAX_FILECNT_LOOKAHEAD 10000` | `rsync.h:151-152` | unchanged from 3.4.4 |
 | `NDX_FLIST_OFFSET -101` | `rsync.h:320` | was `rsync.h:313` |
