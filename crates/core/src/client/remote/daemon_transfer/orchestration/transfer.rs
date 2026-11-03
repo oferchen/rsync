@@ -14,7 +14,7 @@ use protocol::ProtocolVersion;
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
 use super::stats::convert_server_stats_to_summary;
 use crate::client::config::ClientConfig;
-use crate::client::error::{ClientError, remote_exit_error};
+use crate::client::error::{ClientError, peer_error_exit_error};
 use crate::client::module_list::{
     DaemonStreamReader, DaemonStreamWriter, build_io_timeout_reapply, register_shutdown_wake,
 };
@@ -319,7 +319,7 @@ fn map_server_transfer_error(
     }
     if let Some(code) = remote_exit_code(&error) {
         let exit = ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer);
-        return remote_exit_error(exit, side.exit_role());
+        return peer_error_exit_error(exit, side.exit_role());
     }
     if let Some(error) = crate::client::error::corrupt_fake_super_destination_error(&error) {
         return error;

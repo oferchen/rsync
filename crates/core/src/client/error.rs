@@ -48,6 +48,7 @@ pub struct ClientError {
     lead_line: Option<Box<LeadLine>>,
     completed: Option<Box<ClientSummary>>,
     preceding: Option<Box<ClientError>>,
+    peer_error_exit: bool,
 }
 
 /// The line upstream prints before log_exit()'s trailer, if a failure has one.
@@ -67,7 +68,19 @@ impl ClientError {
             lead_line: None,
             completed: None,
             preceding: None,
+            peer_error_exit: false,
         }
+    }
+
+    /// Returns whether the run ended on the peer's `MSG_ERROR_EXIT`.
+    ///
+    /// upstream: io.c:1930 exits through `_exit_cleanup(val, __FILE__, 0 -
+    /// __LINE__)`, and the negative line keeps log_exit() from printing a
+    /// trailer (cleanup.c:221-225) unless `--log-file` is set without
+    /// `--info=stats`; the peer already reported the failure.
+    #[must_use]
+    pub const fn ended_by_peer_error_exit(&self) -> bool {
+        self.peer_error_exit
     }
 
     /// Exits with `exit_code` while keeping this report's trailer: the process
@@ -335,6 +348,17 @@ pub(crate) fn invalid_argument_error_typed_with_role(
 pub(crate) fn remote_exit_error(exit_code: ExitCode, role: Role) -> ClientError {
     let message = rsync_error!(exit_code.as_i32(), "{}", exit_code.description()).with_role(role);
     ClientError::with_code(exit_code, message)
+}
+
+/// Builds the error for a run the peer ended with `MSG_ERROR_EXIT`, which
+/// exits with the peer's code.
+///
+/// upstream: io.c:1892-1930 - see [`ClientError::ended_by_peer_error_exit`].
+#[cold]
+pub(crate) fn peer_error_exit_error(exit_code: ExitCode, role: Role) -> ClientError {
+    let mut error = remote_exit_error(exit_code, role);
+    error.peer_error_exit = true;
+    error
 }
 
 #[cold]
