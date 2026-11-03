@@ -5,15 +5,15 @@
 //! with the entire signal path deleted. It now delivers SIGINT to a live
 //! `oc-rsync` client that is parked in a blocking read on a daemon socket, and
 //! asserts only what an outside observer can see: the process exits
-//! `RERR_SIGNAL` (20) within [`common::EXIT_WAIT`], and the destination is left
-//! exactly as upstream leaves it.
+//! `RERR_SIGNAL` (20), and the destination is left exactly as upstream leaves
+//! it.
 //!
 //! The three failure modes this pins, all of which the simulated version
 //! missed:
 //! - the handler is installed but nothing on the network path polls the flag,
-//!   so the client runs to `--timeout` (caught by the exit deadline);
+//!   so the client runs to `--timeout` and exits 30, not 20;
 //! - the flag is polled but the transfer is parked in `read()` and never
-//!   reaches a poll point (same deadline);
+//!   reaches a poll point (same exit code);
 //! - shutdown happens but the receiver's temp file is not registered, so a
 //!   `.name.XXXXXX` orphan survives (caught by the residue assertions).
 //!
