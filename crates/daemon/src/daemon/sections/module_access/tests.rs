@@ -5972,7 +5972,7 @@ mod module_access_tests {
     ///
     /// Dropping it here shipped `sub/file.txt` instead, and the receiver's
     /// `flist.c:1370` "rejecting unrequested file-list name: sub" killed the
-    /// transfer with exit 4. Measured against the 3.5.0 daemon over
+    /// transfer with exit 4. Measured against the 3.5.1 daemon over
     /// `rsync://host/mod/sub/./file.txt`.
     #[test]
     fn resolve_sender_sources_keeps_the_dot_pivot_under_relative() {

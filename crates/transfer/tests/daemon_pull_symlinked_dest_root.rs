@@ -24,7 +24,7 @@
 //! # Why this matters (Rule 9)
 //!
 //! A symlinked destination directory is an ordinary deployment shape
-//! (`/srv/backup -> /mnt/big/backup`). Measured against real rsync 3.5.0 on a
+//! (`/srv/backup -> /mnt/big/backup`). Measured against real rsync 3.5.1 on a
 //! loopback daemon, `rsync -a rsync://host/mod/ DEST` where `DEST` is such a
 //! symlink exits 0 and installs the file at the link target, with and without a
 //! trailing slash. Before this fix oc-rsync exited 23 on both spellings: the

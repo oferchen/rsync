@@ -767,12 +767,12 @@ fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
 ///
 /// This is the sibling of
 /// [`keep_dirlinks_delta_transfer_through_symlink_succeeds`]: the two fixtures
-/// differ only in the symlink's target, and upstream 3.5.0 answers them
+/// differ only in the symlink's target, and upstream 3.5.1 answers them
 /// differently. `ds_descend` follows a relative in-tree target and refuses an
 /// absolute one with `ELOOP`, so `-K` does not license an escape - it only
 /// licenses treating an in-tree symlinked directory as a directory.
 ///
-/// Measured directly against the real `rsync 3.5.0` binary on both macOS and
+/// Measured directly against the real `rsync 3.5.1` binary on both macOS and
 /// Linux: this shape exits 23 with "Too many levels of symbolic links" and
 /// leaves the out-of-tree target byte-for-byte untouched.
 ///
