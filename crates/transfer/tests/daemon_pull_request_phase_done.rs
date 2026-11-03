@@ -84,12 +84,17 @@ fn read_frame(reader: &mut impl Read) -> Frame {
 /// The whole-file reply for `keep`: ndx, iflags, sum head, one literal run,
 /// the end token and the MD5 file checksum (sender.c send_files()).
 fn reply() -> Vec<u8> {
+    reply_with_checksum(&checksums::strong::Md5::digest(&CONTENT))
+}
+
+/// [`reply`] with `checksum` as the file checksum.
+fn reply_with_checksum(checksum: &[u8]) -> Vec<u8> {
     let mut out = vec![0x01, 0x00, 0xa0];
     out.extend_from_slice(&[0u8; 16]);
     out.extend_from_slice(&(CONTENT.len() as i32).to_le_bytes());
     out.extend_from_slice(&CONTENT);
     out.extend_from_slice(&0i32.to_le_bytes());
-    out.extend_from_slice(&checksums::strong::Md5::digest(&CONTENT));
+    out.extend_from_slice(checksum);
     out
 }
 
@@ -225,5 +230,37 @@ fn redo_and_delay_phases_end_once_the_sender_ends_phase_zero() {
     assert_eq!(
         server.join().expect("replayed daemon"),
         [NDX_DONE, NDX_DONE]
+    );
+}
+
+/// upstream: generator.c:2853-2866 - the redo phase ends right after its last
+/// request. rsync 3.5.1 answers a failed whole-file checksum by re-requesting
+/// `keep` (the same index, so `0xFE` and a zero diff, then the item flags and
+/// an empty sum head) and writes the redo and delay phases' `NDX_DONE`s in the
+/// same frame, before any redo reply.
+#[test]
+fn redo_phase_ends_right_after_its_request() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let server = thread::spawn(move || {
+        let (mut sock, mut reader) = accept_and_send_list(&listener);
+        read_data(&mut reader, REQUEST.len() + 1);
+        let mut answer = reply_with_checksum(&[0u8; 16]);
+        answer.push(NDX_DONE);
+        sock.write_all(&frame(TAG_DATA, &answer))
+            .expect("corrupt file data and the sender's phase end");
+        let redo = read_data(&mut reader, 3 + REQUEST.len() - 1 + 2);
+        sock.shutdown(Shutdown::Both).expect("close");
+        redo
+    });
+    // The daemon hangs up mid-transfer, so only the bytes it read matter.
+    pull(port, &[]);
+    let redo = server.join().expect("replayed daemon");
+    assert_eq!(redo[..3], [0xfe, 0x00, 0x00], "the redo request for ndx 0");
+    assert_eq!(redo[5..21], [0u8; 16], "an empty sum head");
+    assert_eq!(
+        redo[21..],
+        [NDX_DONE, NDX_DONE],
+        "the redo and delay phases end before any redo reply"
     );
 }
