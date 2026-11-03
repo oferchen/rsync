@@ -71,6 +71,16 @@ jobs:
           - name: iconv
             args: "-p protocol -p transfer -p engine -p core -p cli -p daemon --features iconv"
             needs_bin: true
+        # One extra job, macOS only: `macos-kqueue` gates the daemon kqueue
+        # accept engine, which compiles only on macOS, so no other job ever
+        # runs its tests. The `row` value matches no row above, so this adds
+        # a single combination rather than widening one per OS.
+        include:
+          - os: macos-latest
+            row:
+              name: macos-kqueue
+              args: "-p daemon --features macos-kqueue"
+              needs_bin: false
 
     env:
       CARGO_TERM_COLOR: always
