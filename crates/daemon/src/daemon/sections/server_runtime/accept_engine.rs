@@ -275,6 +275,7 @@ impl PollAcceptEngine {
             Err(error) if error.kind() == io::ErrorKind::Interrupted => AcceptOutcome::Idle,
             Err(error) => {
                 warn_transient_accept_failure(self.log_sink.as_ref(), local_addr, &error);
+                // Deliberate deviation from socket.c:745-757: back off so EMFILE cannot busy-spin.
                 thread::sleep(Duration::from_millis(50));
                 AcceptOutcome::Idle
             }
@@ -301,6 +302,7 @@ impl AcceptEngine for PollAcceptEngine {
                 if let Some((_, local_addr)) = self.listeners.first() {
                     warn_transient_accept_failure(self.log_sink.as_ref(), *local_addr, &error);
                 }
+                // Deliberate deviation from socket.c:745-757: back off so EMFILE cannot busy-spin.
                 thread::sleep(Duration::from_millis(50));
                 return Ok(AcceptOutcome::Idle);
             }
@@ -493,6 +495,7 @@ impl KqueueAcceptEngine {
             }
             Err(error) => {
                 warn_transient_accept_failure(self.log_sink.as_ref(), local_addr, &error);
+                // Deliberate deviation from socket.c:745-757: back off so EMFILE cannot busy-spin.
                 thread::sleep(Duration::from_millis(50));
                 None
             }
@@ -512,6 +515,7 @@ impl KqueueAcceptEngine {
             Ok(events) => events,
             Err(error) => {
                 warn_transient_accept_failure(self.log_sink.as_ref(), self.listeners[0].1, &error);
+                // Deliberate deviation from socket.c:745-757: back off so EMFILE cannot busy-spin.
                 thread::sleep(Duration::from_millis(50));
                 return AcceptOutcome::Idle;
             }
