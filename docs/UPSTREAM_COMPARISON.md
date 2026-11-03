@@ -152,10 +152,10 @@ const INT_BYTE_EXTRA: [u8; 64] = [
 
 | Function | Upstream | Rust | Wire Compatible |
 |----------|----------|------|-----------------|
-| `read_varint()` | io.c:1795-1825 | `read_varint()` | ✅ |
-| `write_varint()` | io.c:2089-2109 | `write_varint()` | ✅ |
-| `read_varlong()` | io.c:1827-1866 | `read_varlong()` | ✅ |
-| `write_varlong()` | io.c:2111-2140 | `write_varlong()` | ✅ |
+| `read_varint()` | io.c:1833-1863 | `read_varint()` | ✅ |
+| `write_varint()` | io.c:2127-2147 | `write_varint()` | ✅ |
+| `read_varlong()` | io.c:1865-1904 | `read_varlong()` | ✅ |
+| `write_varlong()` | io.c:2149-2178 | `write_varlong()` | ✅ |
 | `read_longint()` | io.c | `read_longint()` | ✅ Legacy |
 | `write_longint()` | io.c | `write_longint()` | ✅ Legacy |
 
@@ -246,7 +246,7 @@ const INT_BYTE_EXTRA: [u8; 64] = [
 
 ## 6. NDX (File Index) Encoding
 
-**Reference:** upstream `io.c:2243-2318` vs `crates/protocol/src/codec/ndx.rs`
+**Reference:** upstream `io.c:2281-2356` vs `crates/protocol/src/codec/ndx.rs`
 
 ### NDX Constants
 
@@ -940,11 +940,11 @@ These custom implementations are necessary for byte-level wire protocol compatib
 
 | Function | Upstream Lines |
 |----------|---------------|
-| `int_byte_extra[]` | io.c:120-125 |
-| `read_varint()` | io.c:1795-1825 |
-| `write_varint()` | io.c:2089-2109 |
-| `read_ndx()` | io.c:2289-2318 |
-| `write_ndx()` | io.c:2243-2287 |
+| `int_byte_extra[]` | io.c:127-132 |
+| `read_varint()` | io.c:1833-1863 |
+| `write_varint()` | io.c:2127-2147 |
+| `read_ndx()` | io.c:2327-2356 |
+| `write_ndx()` | io.c:2281-2325 |
 
 ### Message Codes (rsync.h)
 
