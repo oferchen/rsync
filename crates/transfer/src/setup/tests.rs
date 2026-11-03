@@ -1232,18 +1232,12 @@ fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
     );
 }
 
-#[test]
-fn setup_protocol_server_v_flag_enables_negotiation() {
-    // 'V' should trigger algorithm negotiation just like 'v' does
-    let protocol = ProtocolVersion::try_from(31).unwrap();
-    let mut stdin = &b"\x03md5"[..]; // vstring: "md5" checksum list
-    let mut stdout = Vec::new();
-
-    let client_args = ["-e.LsfxCIVu".to_owned()];
-    let config = ProtocolSetupConfig {
-        protocol,
+/// Server config for a protocol-31 rsh session whose client sent `client_args`.
+fn negotiation_server_config(client_args: &[String]) -> ProtocolSetupConfig<'_> {
+    ProtocolSetupConfig {
+        protocol: ProtocolVersion::try_from(31).unwrap(),
         skip_compat_exchange: false,
-        client_args: Some(&client_args),
+        client_args: Some(client_args),
         flag_string: None,
         is_server: true,
         is_daemon_mode: true,
@@ -1251,19 +1245,74 @@ fn setup_protocol_server_v_flag_enables_negotiation() {
         compress_choice: None,
         checksum_choice: None,
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
-        checksum_seed: None,
+        checksum_seed: Some(42),
         allow_inc_recurse: false,
         options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
-    };
+    }
+}
+
+/// The pre-release `'V'` sets `CF_VARINT_FLIST_FLAGS` and the single-byte
+/// flags encoding, but not negotiation: the server writes its flags byte and
+/// the checksum seed and nothing between them, and never reads the client's
+/// lists.
+///
+/// upstream: compat.c:741-750 - only `'v'` sets `do_negotiated_strings`;
+/// compat.c:538-575 `negotiate_the_strings()` writes and reads vstrings only
+/// when it is set.
+#[test]
+fn setup_protocol_server_pre_release_v_flag_does_not_negotiate() {
+    let client_info = ["-e.LsfxCIVu".to_owned()];
+    let config = negotiation_server_config(&client_info);
+    let mut stdin = &b"\x03md5"[..];
+    let mut stdout = Vec::new();
 
     let result =
         setup_protocol(&mut stdout, &mut stdin, &config).expect("server setup should succeed");
 
-    assert!(
-        result.negotiated_algorithms.is_some(),
-        "'V' should enable algorithm negotiation"
+    let flags = result.compat_flags.expect("compat flags exchanged");
+    let mut expected = vec![flags.bits() as u8];
+    expected.extend_from_slice(&42i32.to_le_bytes());
+    assert_eq!(
+        stdout, expected,
+        "flags byte then seed, with no negotiation vstrings between them"
+    );
+    assert_eq!(
+        stdin, b"\x03md5",
+        "the client's checksum list is never read"
+    );
+}
+
+/// The released `'v'` negotiates: varint flags, the server's whole checksum
+/// list as a vstring (the server keeps `none`), then the seed; the client's
+/// list is read and its only name chosen.
+///
+/// upstream: compat.c:741-743, compat.c:520-536 `send_negotiate_str()`,
+/// compat.c:459-505 `get_default_nno_list()` (`none` dropped on the client
+/// side only).
+#[test]
+fn setup_protocol_server_v_flag_negotiates_the_checksum_list() {
+    let client_info = ["-e.LsfxCIvu".to_owned()];
+    let config = negotiation_server_config(&client_info);
+    let mut stdin = &b"\x03md5"[..];
+    let mut stdout = Vec::new();
+
+    let result =
+        setup_protocol(&mut stdout, &mut stdin, &config).expect("server setup should succeed");
+
+    let flags = result.compat_flags.expect("compat flags exchanged");
+    let mut expected = Vec::new();
+    protocol::write_varint(&mut expected, flags.bits() as i32).unwrap();
+    let list = b"xxh128 xxh3 xxh64 md5 md4 sha1 none";
+    expected.push(list.len() as u8);
+    expected.extend_from_slice(list);
+    expected.extend_from_slice(&42i32.to_le_bytes());
+    assert_eq!(stdout, expected);
+    assert!(stdin.is_empty(), "the client's checksum list is read");
+    assert_eq!(
+        result.negotiated_algorithms.map(|n| n.checksum),
+        Some(protocol::ChecksumAlgorithm::MD5)
     );
 }
 
