@@ -108,6 +108,26 @@ Create filesystem fixtures with the `test-support` helpers `create_tempdir()`,
 `create_named_tempfile()` and `create_canonical_tempdir()`. They name every path
 with a `.tmp<pid>-` prefix so concurrent nextest processes cannot collide.
 
+Most tests still call `tempfile` directly, whose random names are not unique
+across processes. On Windows a name that collides with another process's
+delete-pending file fails with `Access is denied (os error 5)` instead of being
+retried. The required Windows CI cell therefore wraps every test process in the
+`tmp-runner` Cargo target runner (`crates/test-support/src/tmp_runner.rs`): it
+gives the process a private directory as `TMP`/`TEMP`/`TMPDIR`, forwards its
+exit status unchanged and removes the directory afterwards. To get the same
+isolation on a local Windows checkout:
+
+```powershell
+cargo build -p test-support --bin tmp-runner
+Copy-Item target\debug\tmp-runner.exe $env:TEMP\tmp-runner.exe
+$env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER = "$env:TEMP\tmp-runner.exe"
+cargo nextest run -p <crate> --all-features
+```
+
+Copy the binary out of `target` first so a rebuild never replaces the runner
+while nextest is using it. `OC_REQUIRE_TMP_RUNNER=1` makes the
+`test-support` isolation probes fail when the runner is not engaged.
+
 ### Environment isolation
 
 Tests that modify environment variables must use the `EnvGuard` pattern to restore
@@ -150,7 +170,7 @@ only the crates you changed.
 |-----|----------|-------|----------|
 | nextest (stable) | Linux | Full workspace, all features | Yes |
 | nextest (beta/nightly) | Linux | Full workspace, all features | No (informational) |
-| Windows test | Windows | core, engine, cli | Yes |
+| Windows test | Windows | Full workspace, all features, per-process temp dir | Yes |
 | Windows IOCP | Windows | fast\_io, engine | Yes |
 | Windows metadata | Windows | metadata, ACL round-trip | Yes |
 | macOS test | macOS | core, engine, cli, metadata, apple-fs | Yes |
