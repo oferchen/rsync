@@ -1,33 +1,36 @@
 #!/usr/bin/env bash
 # build_old_rsync_oracle.sh - build a historical upstream rsync release and
-# install it into an upstream tree's old_versions/ directory, where the 3.5.0
+# install it into an upstream tree's old_versions/ directory, where the 3.5.1
 # testsuite looks for a legacy-behaviour oracle.
 #
 # WHY THIS EXISTS
 #
-# rsync 3.5.0 ships tests that pin a behaviour against a REAL old daemon when
-# one is on disk and fall back to a hand-written static prediction when it is
-# not. testsuite/daemon-symlink-escape-matrix_test.py is the current consumer:
+# rsync 3.5.1 ships tests that pin a behaviour against a REAL old binary when
+# one is on disk and fall back to a static prediction or a skip when it is
+# not. upstream: testsuite/daemon-symlink-escape-matrix_test.py:78-79 reads
+# rsync_3.2.7, and testsuite/daemon-auth-digest-floor_test.py:104-108 reads
+# rsync_3.1.3 and skips its md5-downgrade case without it. The first:
 #
 #     elif (_repo / 'old_versions' / 'rsync_3.2.7').is_file():
 #         ORACLE_BIN = str(_repo / 'old_versions' / 'rsync_3.2.7')
 #     ...
 #     want, src = static_followed(...), 'contract'
 #
-# upstream: rsync-3.5.0/old_versions/README.md documents the directory and
+# upstream: rsync-3.5.1/old_versions/README.md documents the directory and
 # ships build_static.sh to populate it, but the RELEASE TARBALL carries no
-# binaries - MEASURED on a pristine 3.5.0 extraction, old_versions/ holds
-# exactly README.md and build_static.sh. So on a stock CI runner the oracle is
+# binaries - MEASURED on the 3.5.1 tarball, old_versions/ holds exactly
+# README.md and build_static.sh (.gitattributes:17 marks the binaries
+# export-ignore). So on a stock CI runner the oracle is
 # always absent, every oracle-backed cell quietly asserts the static prediction
 # instead, and the test still reports PASS: runtests.py only shows a test's
-# stdout when it does NOT pass (3.5.0 runtests.py:621), so the one line that
+# stdout when it does NOT pass (3.5.1 runtests.py:621), so the one line that
 # names the degradation is never printed on the green path.
 #
 # This script closes that gap by BUILDING the oracle, so the contract the test
 # says it enforces is the contract it actually enforces.
 #
 # Not upstream's build_static.sh: that one checks a git TAG out of a local
-# rsync worktree (RSYNC_REPO, default ../rsync.4), links statically, and exists
+# rsync worktree (RSYNC_REPO; build_static.sh:22), links statically, and exists
 # to produce an architecture-portable archive binary. CI has no such worktree
 # and needs no portability - the binary is built and consumed on one machine -
 # so this builds the release TARBALL dynamically. The one flag that is not
@@ -45,7 +48,7 @@ DEST_DIR="${2:?usage: build_old_rsync_oracle.sh <version> <old_versions_dir> [wo
 WORKDIR="${3:-${DEST_DIR}/.build}"
 
 # Upstream's own naming convention for the archive - the testsuite stats this
-# exact path. upstream: rsync-3.5.0/old_versions/README.md ("named
+# exact path. upstream: rsync-3.5.1/old_versions/README.md:13 ("named
 # `rsync_<version>`").
 TARGET_BIN="${DEST_DIR}/rsync_${VERSION}"
 FETCH="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/fetch_upstream_rsync.sh"
@@ -111,7 +114,7 @@ bash "$FETCH" "$VERSION" "$WORKDIR" >/dev/null
 # it to =3, whose object-size checks turn latent (historically benign)
 # over-reads in old rsync into a hard "*** buffer overflow detected ***" abort
 # when the binary runs as a server/daemon - which is exactly how this oracle is
-# used. upstream: rsync-3.5.0/old_versions/README.md note 6 names 3.1.3 and
+# used. upstream: rsync-3.5.1/old_versions/README.md:74 (note 6) names 3.1.3 and
 # 3.2.7 specifically as "unusable as peers" without it. A fortified oracle
 # would not fail loudly here; it would abort mid-session, and the consuming
 # test would read the aborted transfer as "did not follow" - a WRONG oracle
@@ -135,7 +138,8 @@ bash "$FETCH" "$VERSION" "$WORKDIR" >/dev/null
 #
 # MEASURED on gcc 15.2.0: both 3.1.3 and 3.2.7 fail to build without this and
 # build clean with it. There is no -Wno- for it - the meaning of `()` changed,
-# so the era has to be named. Pinning the standard is also what the rest of
+# so the era has to be named; upstream's build_static.sh:33 names gnu11 for
+# the same reason (README.md:59). Pinning the standard is also what the rest of
 # this flag set is already doing implicitly, only for warnings.
 oracle_cflags="-O2 -g -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -std=gnu17"
 oracle_cflags+=" -Wno-error"
