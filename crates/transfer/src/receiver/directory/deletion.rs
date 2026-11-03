@@ -303,14 +303,23 @@ fn push_post_order(
 ///   directory; a subdirectory is expanded before it is itself deleted.
 /// - `delete.c:178-181 delete_item()` -> `log.c:845 log_delete()` - one
 ///   `deleting` line per removed entry.
+/// - `delete.c:108-110` - get_dirlist() leaves out a child the filters
+///   protect, which keeps its directory. `allows` is that check; such a child
+///   is not recorded, and every directory it keeps lands in `kept`.
+///
+/// Returns whether the subtree holds nothing the filters keep, so it may be
+/// removed wholesale.
+#[allow(clippy::too_many_arguments)]
 fn record_doomed_dir_descendants(
     #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     dest_dir: &Path,
     rel: &Path,
     path: &Path,
     capture_mode: bool,
+    filter: &mut DeletionFilter<'_>,
+    kept: &mut Vec<PathBuf>,
     out: &mut Vec<DeletedEntry>,
-) {
+) -> bool {
     let children = match read_dir_children(
         #[cfg(unix)]
         sandbox,
@@ -322,21 +331,34 @@ fn record_doomed_dir_descendants(
         // A read failure leaves the itemize list short but never blocks the
         // wholesale removal below; upstream likewise only logs what
         // get_dirlist() could enumerate.
-        Err(_) => return,
+        Err(_) => return true,
     };
+    let guard = filter.enter(path);
+    let mut emptied = true;
     for (name, is_dir, is_symlink) in children {
         let child_rel = rel.join(&name);
         let child_path = path.join(&name);
-        if is_dir && !is_symlink {
-            record_doomed_dir_descendants(
+        if !filter.allows(&child_rel, is_dir) {
+            emptied = false;
+            continue;
+        }
+        if is_dir
+            && !is_symlink
+            && !record_doomed_dir_descendants(
                 #[cfg(unix)]
                 sandbox,
                 dest_dir,
                 &child_rel,
                 &child_path,
                 capture_mode,
+                filter,
+                kept,
                 out,
-            );
+            )
+        {
+            kept.push(child_rel);
+            emptied = false;
+            continue;
         }
         let mode = victim_mode(
             capture_mode,
@@ -355,6 +377,86 @@ fn record_doomed_dir_descendants(
             mode,
         });
     }
+    filter.leave(guard);
+    emptied
+}
+
+/// The deletion filter a doomed subtree is judged by.
+///
+/// upstream: delete.c:105 - delete_dir_contents() calls push_local_filters()
+/// for each directory it empties, so that directory's own per-directory merge
+/// files take part in judging its children. `PerDir` loads them on the way
+/// down; `Flat` is a chain with no per-directory merge configs.
+enum DeletionFilter<'a> {
+    PerDir(&'a mut filters::FilterChain),
+    Flat(&'a filters::FilterChain),
+}
+
+impl DeletionFilter<'_> {
+    fn allows(&self, rel: &Path, is_dir: bool) -> bool {
+        match self {
+            Self::PerDir(chain) => chain.allows_deletion(rel, is_dir),
+            Self::Flat(chain) => chain.allows_deletion(rel, is_dir),
+        }
+    }
+
+    /// Loads `path`'s merge files. A merge file that cannot be read is
+    /// skipped, as the transfer-side walk skips it.
+    fn enter(&mut self, path: &Path) -> Option<filters::DirFilterGuard> {
+        match self {
+            Self::PerDir(chain) => chain.enter_directory(path).ok(),
+            Self::Flat(_) => None,
+        }
+    }
+
+    fn leave(&mut self, guard: Option<filters::DirFilterGuard>) {
+        if let (Self::PerDir(chain), Some(guard)) = (self, guard) {
+            chain.leave_directory(guard);
+        }
+    }
+}
+
+/// Removes the recorded victims of a directory a protected descendant keeps,
+/// deepest first, and leaves in `victims` only those actually removed.
+///
+/// upstream: delete.c:141-164 delete_dir_contents() deletes each listed child
+/// and leaves the directory itself when anything stayed.
+fn remove_recorded_victims(
+    #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &Path,
+    victims: &mut Vec<DeletedEntry>,
+) -> io::Result<()> {
+    for victim in order_deletions_upstream(std::mem::take(victims)) {
+        let path = dest_dir.join(&victim.rel);
+        #[cfg(unix)]
+        let result = fast_io::unlink_via_sandbox_or_fallback(
+            sandbox,
+            dest_dir,
+            &victim.rel,
+            &path,
+            if victim.is_dir {
+                fast_io::UnlinkFlags::Dir
+            } else {
+                fast_io::UnlinkFlags::File
+            },
+        );
+        #[cfg(not(unix))]
+        let result = if victim.is_dir {
+            std::fs::remove_dir(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        match result {
+            Ok(()) => victims.push(victim),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                if let Some(error) = fail_loud_unlink_error(error) {
+                    return Err(error);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Lists the immediate children of a directory as `(name, is_dir, is_symlink)`,
@@ -1014,7 +1116,7 @@ impl ReceiverContext {
                     // flat global chain is consulted directly.
                     // `reload_for_directory` takes `&mut self`, so each worker
                     // reloads onto its own clone of the merge chain.
-                    let local_chain = if needs_perdir_merge {
+                    let mut local_chain = if needs_perdir_merge {
                         let mut chain = (*merge_chain).clone();
                         chain.reload_for_directory(&dest_dir_owned, &dir_relative);
                         Some(chain)
@@ -1124,16 +1226,37 @@ impl ReceiverContext {
                         // is a leaf. Empty for files, so the common path is
                         // unchanged.
                         let mut subtree: Vec<DeletedEntry> = Vec::new();
-                        if is_dir && !is_symlink {
-                            record_doomed_dir_descendants(
+                        let mut kept: Vec<PathBuf> = Vec::new();
+                        let mut filter = match local_chain.as_mut() {
+                            Some(chain) => DeletionFilter::PerDir(chain),
+                            None => DeletionFilter::Flat(&flat_chain),
+                        };
+                        let emptied = !is_dir
+                            || is_symlink
+                            || record_doomed_dir_descendants(
                                 #[cfg(unix)]
                                 sandbox_ref,
                                 &dest_dir_owned,
                                 &entry_rel,
                                 &path,
                                 capture_mode,
+                                &mut filter,
+                                &mut kept,
                                 &mut subtree,
                             );
+                        if !emptied {
+                            // upstream: delete.c:178-180 - FINFO for each
+                            // directory a protected child keeps; neither
+                            // counted nor an I/O error.
+                            kept.push(entry_rel.clone());
+                            for dir in &kept {
+                                info_log!(
+                                    Nonreg,
+                                    1,
+                                    "cannot delete non-empty directory: {}",
+                                    dir.display().to_string().replace('\\', "/")
+                                );
+                            }
                         }
 
                         let mode = victim_mode(
@@ -1156,6 +1279,13 @@ impl ReceiverContext {
                         // the physical removal runs later in do_delayed_deletions().
                         let result = if collect_only || dry_run {
                             Ok(())
+                        } else if !emptied {
+                            remove_recorded_victims(
+                                #[cfg(unix)]
+                                sandbox_ref,
+                                &dest_dir_owned,
+                                &mut subtree,
+                            )
                         } else if is_dir {
                             // SEC-1.q2 audit row #6
                             #[cfg(unix)]
@@ -1220,6 +1350,9 @@ impl ReceiverContext {
                                     }
                                 }
                                 deleted_paths.extend(subtree);
+                                if !emptied {
+                                    continue;
+                                }
                                 if is_dir {
                                     stats.dirs += 1;
                                 } else if is_symlink {
@@ -1563,7 +1696,7 @@ impl ReceiverContext {
             // Reload this destination directory's per-directory merge rules so
             // dir-merge self-exclusion and merge-driven excludes stay active,
             // mirroring the parallel worker.
-            let local_chain = if needs_perdir_merge {
+            let mut local_chain = if needs_perdir_merge {
                 let mut chain = deletion_chain.clone();
                 chain.set_transfer_root(dest_dir.to_path_buf());
                 chain.reload_for_directory(dest_dir, dir_relative);
@@ -1636,6 +1769,10 @@ impl ReceiverContext {
                     &path,
                     candidate.is_dir,
                     candidate.is_symlink,
+                    &mut match local_chain.as_mut() {
+                        Some(chain) => DeletionFilter::PerDir(chain),
+                        None => DeletionFilter::Flat(deletion_chain),
+                    },
                 )?;
             }
         }
@@ -1743,7 +1880,11 @@ impl ReceiverContext {
             logged: self.captures_victim_modes().then(Vec::new),
             writer,
         };
-        let emptied = state.remove_dir_contents(relative, path)?;
+        let emptied = state.remove_dir_contents(
+            relative,
+            path,
+            &mut DeletionFilter::Flat(&self.deletion_filter_chain),
+        )?;
         // upstream: delete.c:217-218 - a capped child bumps the same
         // `skipped_deletes` the delete sweeps do.
         self.add_skipped_deletes(state.skipped);
@@ -1880,7 +2021,12 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
     /// # Upstream Reference
     ///
     /// - `delete.c:91-181` - `delete_dir_contents()`
-    fn remove_dir_contents(&mut self, rel: &Path, path: &Path) -> io::Result<bool> {
+    fn remove_dir_contents(
+        &mut self,
+        rel: &Path,
+        path: &Path,
+        filter: &mut DeletionFilter<'_>,
+    ) -> io::Result<bool> {
         let mut children = match self.scan_dir(rel, path) {
             Ok(children) => children,
             Err(e) => {
@@ -1894,14 +2040,28 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         children.sort_by(|a, b| f_name_cmp_full(Path::new(&a.0), a.1, Path::new(&b.0), b.1));
         children.reverse();
 
+        let guard = filter.enter(path);
         let mut all_removed = true;
         for (child_name, child_is_dir, child_is_symlink) in children {
             let child_rel = rel.join(&child_name);
             let child_path = path.join(&child_name);
-            if !self.remove_entry(&child_rel, &child_path, child_is_dir, child_is_symlink)? {
+            // upstream: delete.c:108-110 - get_dirlist() leaves out a child the
+            // filters protect, which keeps the directory.
+            if !filter.allows(&child_rel, child_is_dir) {
+                all_removed = false;
+                continue;
+            }
+            if !self.remove_entry(
+                &child_rel,
+                &child_path,
+                child_is_dir,
+                child_is_symlink,
+                filter,
+            )? {
                 all_removed = false;
             }
         }
+        filter.leave(guard);
         Ok(all_removed)
     }
 
@@ -1914,6 +2074,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         path: &Path,
         is_dir: bool,
         is_symlink: bool,
+        filter: &mut DeletionFilter<'_>,
     ) -> io::Result<bool> {
         if is_dir && !is_symlink {
             // upstream: generator.c:331-336 delete_in_dir() skips a dest dir
@@ -1937,7 +2098,7 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
             }
             // Peel the directory's contents depth-first before considering the
             // directory itself (upstream delete_dir_contents, reverse order).
-            if !self.remove_dir_contents(rel, path)? {
+            if !self.remove_dir_contents(rel, path, filter)? {
                 // upstream: delete.c:117 - one notice per non-empty directory,
                 // not counted and not an I/O error.
                 info_log!(
@@ -2571,7 +2732,16 @@ mod tests {
         std::fs::write(sub.join("deep.txt"), b"y").unwrap();
 
         let mut out = Vec::new();
-        record_doomed_dir_descendants(None, base, Path::new("stale_dir"), &stale, false, &mut out);
+        record_doomed_dir_descendants(
+            None,
+            base,
+            Path::new("stale_dir"),
+            &stale,
+            false,
+            &mut DeletionFilter::Flat(&filters::FilterChain::empty()),
+            &mut Vec::new(),
+            &mut out,
+        );
 
         let mut got: Vec<String> = out
             .iter()
