@@ -240,6 +240,8 @@ pub fn run_module_list_with_password_and_options(
             options.tcp_fastopen(),
             options.sockopts(),
             &quic_dial,
+            // upstream: the listing client is never the sender (who_am_i()).
+            crate::message::Role::PreForkReceiver,
         )?
     };
 
