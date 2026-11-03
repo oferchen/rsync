@@ -318,6 +318,16 @@ include!("daemon/sections/config_helpers.rs");
 pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     let external_signal_flags = config.take_signal_flags();
     let pre_bound_listener = config.take_pre_bound_listener();
+    // upstream: clientserver.c:1748-1757 - an inetd daemon points stdout and
+    // stderr at /dev/null before it reads rsyncd.conf, so neither config
+    // diagnostics nor anything later lands on the descriptors inetd left. Its
+    // options were parsed before that (main.c:1911), so their errors still
+    // reach stderr.
+    let inetd = is_stdin_socket();
+    if inetd {
+        RuntimeOptions::check_arguments(config.arguments(), config.brand())?;
+        let _ = platform::daemonize::redirect_output_to_devnull();
+    }
     let options = RuntimeOptions::parse_with_brand(
         config.arguments(),
         config.brand(),
@@ -329,7 +339,7 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     // upstream: clientserver.c:1748 - `if (is_inetd_socket(STDIN_FILENO))`
     // serves a single session over stdio (inetd mode) instead of binding a
     // TCP listener.
-    if is_stdin_socket() {
+    if inetd {
         return serve_inetd_session(options);
     }
 

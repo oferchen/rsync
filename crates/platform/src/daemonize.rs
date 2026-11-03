@@ -50,13 +50,29 @@ pub fn become_daemon() -> io::Result<()> {
 /// Uses `nix` safe wrappers for close, open, and dup2 where possible.
 #[cfg(unix)]
 pub fn redirect_stdio_to_devnull() -> io::Result<()> {
+    redirect_to_devnull(0..=2)
+}
+
+/// Redirects stdout and stderr to `/dev/null`, keeping stdin.
+///
+/// An inetd daemon serves the socket on stdin alone, so nothing a library
+/// writes to stdout or stderr reaches whatever inetd left on them.
+///
+/// upstream: clientserver.c:1749-1757 daemon_main()
+#[cfg(unix)]
+pub fn redirect_output_to_devnull() -> io::Result<()> {
+    redirect_to_devnull(1..=2)
+}
+
+#[cfg(unix)]
+fn redirect_to_devnull(fds: std::ops::RangeInclusive<i32>) -> io::Result<()> {
     use nix::fcntl::OFlag;
     use nix::sys::stat::Mode;
     use std::os::fd::{AsFd, AsRawFd, IntoRawFd};
 
     let nix_to_io = |e: nix::Error| io::Error::from_raw_os_error(e as i32);
 
-    for fd in 0..=2_i32 {
+    for fd in fds {
         let _ = nix::unistd::close(fd);
         let new_fd =
             nix::fcntl::open(c"/dev/null", OFlag::O_RDWR, Mode::empty()).map_err(nix_to_io)?;
@@ -95,6 +111,12 @@ pub fn redirect_stdio_to_devnull() -> io::Result<()> {
     ))
 }
 
+/// Stdio redirection is not supported on non-Unix platforms.
+#[cfg(not(unix))]
+pub fn redirect_output_to_devnull() -> io::Result<()> {
+    redirect_stdio_to_devnull()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +150,51 @@ mod tests {
                     0,
                     "redirect_stdio_to_devnull failed in subprocess"
                 );
+            }
+        }
+    }
+
+    /// An inetd daemon's stdin is its client socket: the redirect must leave
+    /// it in place while stdout and stderr land on `/dev/null`. The child's
+    /// stdin is first made a pipe so a redirect that also took fd 0 cannot
+    /// pass by finding `/dev/null` there already.
+    #[cfg(unix)]
+    #[allow(unsafe_code)]
+    #[test]
+    fn redirect_output_keeps_stdin_and_nulls_stdout_and_stderr() {
+        use nix::sys::stat::{fstat, stat};
+        use std::os::fd::AsFd;
+
+        let null = stat("/dev/null").expect("stat /dev/null");
+        let is_null = |fd: i32| {
+            // SAFETY: fd 0-2 stay open in the child for the whole check.
+            let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) };
+            fstat(fd).is_ok_and(|st| st.st_rdev == null.st_rdev && st.st_ino == null.st_ino)
+        };
+        // SAFETY: fork() is safe in this single-threaded test context.
+        let pid = unsafe { libc::fork() };
+        match pid {
+            -1 => panic!("fork failed: {}", io::Error::last_os_error()),
+            0 => {
+                let ok = nix::unistd::pipe().is_ok_and(|(read, _write)| {
+                    nix::unistd::dup2_stdin(read.as_fd()).is_ok()
+                        && redirect_output_to_devnull().is_ok()
+                        && !is_null(0)
+                        && is_null(1)
+                        && is_null(2)
+                });
+                // SAFETY: _exit is safe in the child process.
+                unsafe {
+                    libc::_exit(if ok { 0 } else { 1 });
+                }
+            }
+            child_pid => {
+                let mut status: libc::c_int = 0;
+                // SAFETY: waitpid with a valid child PID is safe.
+                let waited = unsafe { libc::waitpid(child_pid, &mut status, 0) };
+                assert_ne!(waited, -1, "waitpid failed");
+                assert!(libc::WIFEXITED(status), "child did not exit normally");
+                assert_eq!(libc::WEXITSTATUS(status), 0, "stdin moved or output kept");
             }
         }
     }

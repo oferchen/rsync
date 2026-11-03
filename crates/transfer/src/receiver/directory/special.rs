@@ -192,7 +192,11 @@ impl ReceiverContext {
             // x_lstat(), so a --fake-super placeholder answers with its %stat
             // type and rdev.
             let existing =
-                existing_special_stat(sandbox, dest_dir, &node_path, self.config.fake_super)?;
+                existing_special_stat(sandbox, dest_dir, &node_path, self.config.fake_super)
+                    .map_err(|error| {
+                        let name = self.full_fname_in_dest(dest_dir, &node_path);
+                        metadata::rename_corrupt_fake_super(error, name)
+                    })?;
             let disposition = SpecialDisposition::of(existing.as_ref(), entry);
             let up_to_date = disposition == SpecialDisposition::UpToDate;
             // upstream: generator.c:2055/2094 - itemize() compares the stat
