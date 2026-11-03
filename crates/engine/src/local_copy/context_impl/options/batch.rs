@@ -258,6 +258,7 @@ impl<'a> CopyContext<'a> {
 
     /// Reports whether the batch header records `--xattrs`, so each flist
     /// entry carries its source xattrs.
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     pub(crate) fn batch_preserve_xattrs(&self) -> bool {
         self.options.get_batch_writer().is_some_and(|w| {
             w.lock()
