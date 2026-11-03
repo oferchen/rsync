@@ -323,13 +323,12 @@ pub fn rerr_for_io_error(error: &io::Error) -> i32 {
     // like the per-file open failures below. Without this arm the usual `EACCES`
     // reaches the `PermissionDenied => RERR_FILESELECT` arm and reports 3.
     // upstream: receiver.c:1296-1300 - a failed close of the received file is
-    // `exit_cleanup(RERR_FILEIO)` whatever the errno, too.
+    // `exit_cleanup(RERR_FILEIO)` whatever the errno, too, and so are the
+    // append seek, a write of received data and the --fsync
+    // (receiver.c:545-548, 658-660, 679-681).
     if matches!(
-        crate::temp_guard::commit_op_failure(error),
-        Some((
-            crate::temp_guard::CommitOp::Backup | crate::temp_guard::CommitOp::Close,
-            _
-        ))
+        crate::temp_guard::CommitDisposition::of(error),
+        crate::temp_guard::CommitDisposition::Abort(_)
     ) {
         return 11;
     }

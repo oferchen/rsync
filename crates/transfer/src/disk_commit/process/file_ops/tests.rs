@@ -6,7 +6,7 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use super::{BeginMessage, DiskCommitConfig, open_output_file};
+use super::{BeginMessage, DiskCommitConfig, open_output_file, seek_to_append_offset};
 
 const READ_ONLY: u32 = 0o444;
 
@@ -247,4 +247,22 @@ fn routed_destination_opens_reach_an_intact_nested_target() {
     let target = dest.join("a/f");
     assert!(open_output_file(&inplace_begin(&target), &config).is_ok());
     assert!(super::super::commit::open_dest_for_write(config.backup_env(), &target).is_ok());
+}
+
+/// A destination that cannot be positioned at the `--append` offset ends the
+/// transfer: upstream's `lseek of %s returned %s, not %s` and RERR_FILEIO
+/// (`receiver.c:545-548`). A pipe stands in for a file `lseek(2)` refuses.
+#[test]
+fn a_failed_append_seek_is_tagged_with_the_offset_sought() {
+    let (_reader, writer) = std::io::pipe().expect("pipe");
+    let mut file = fs::File::from(std::os::fd::OwnedFd::from(writer));
+    let dest = Path::new("dest/a");
+
+    let error = seek_to_append_offset(&mut file, dest, 4096).expect_err("a pipe cannot seek");
+
+    let (op, named) = crate::temp_guard::commit_op_failure(&error).expect("tagged");
+    assert_eq!(op, crate::temp_guard::CommitOp::Seek);
+    assert_eq!(named, dest);
+    assert_eq!(crate::temp_guard::commit_op_offset(&error), Some(4096));
+    assert_eq!(crate::error::rerr_for_io_error(&error), 11);
 }

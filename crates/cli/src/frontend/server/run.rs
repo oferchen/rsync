@@ -862,12 +862,18 @@ where
                 return code.as_i32();
             }
             let exit_code = core::exit_code::ExitCode::from_io_error(&e);
-            write_server_error_with_code(
-                stderr,
-                program_brand,
-                exit_code,
-                format!("server error: {e}"),
-            );
+            // upstream: receiver.c:658-660 and the other RERR_FILEIO sites of
+            // the receive path print their own line first; log_exit() then
+            // prints only the code's description (cleanup.c:248).
+            let text = if matches!(
+                core::server::temp_guard::CommitDisposition::of(&e),
+                core::server::temp_guard::CommitDisposition::Abort(_)
+            ) {
+                exit_code.description().to_owned()
+            } else {
+                format!("server error: {e}")
+            };
+            write_server_error_with_code(stderr, program_brand, exit_code, text);
             exit_code.as_i32()
         }
     }

@@ -361,7 +361,12 @@ impl PipelinedReceiver {
             crate::temp_guard::CommitOp::Backup => crate::temp_guard::commit_op_destination(error),
             _ => None,
         };
-        op.failure_line(&name, target, &reason)
+        op.failure_line(
+            &name,
+            target,
+            &reason,
+            crate::temp_guard::commit_op_offset(error),
+        )
     }
 
     /// Formats a failed metadata apply the way upstream reports it.
@@ -487,6 +492,20 @@ impl PipelinedReceiver {
                 None
             }
             CommitDisposition::Abort(code) => {
+                // upstream: fileio.c:307-310 - an in-place skip whose lseek
+                // failed prints its own line before the write-failed one.
+                if let Some((crate::temp_guard::CommitOp::Write, _)) =
+                    crate::temp_guard::commit_op_failure(&error)
+                    && let Some(offset) = crate::temp_guard::commit_op_offset(&error)
+                {
+                    self.warnings.push((
+                        MessageCode::ErrorXfer,
+                        format!(
+                            "rsync: [receiver] lseek returned -1, not {offset}: {}",
+                            logging::upstream_errno_text(&error)
+                        ),
+                    ));
+                }
                 self.warnings
                     .push((code, self.commit_failure(&path, &error)));
                 Some(error)
@@ -816,6 +835,7 @@ pub(crate) fn keep_backup_failed_line(name: &str, error: &io::Error, reason: &st
         name,
         crate::temp_guard::commit_op_destination(error),
         reason,
+        None,
     )
 }
 
@@ -2856,5 +2876,100 @@ mod tests {
             pr.commit_failure(dest, &rewrapped),
             "rsync: [receiver] copy \"/srv/tmp/.f.AbC123\" -> \"sub/f\": No space left on device (28)"
         );
+    }
+
+    /// The fatal receive-path sites each print upstream's own line at upstream's
+    /// level, and every one exits RERR_FILEIO.
+    ///
+    /// upstream: receiver.c:545-548 (lseek of), 658-660 (write failed on),
+    /// 679-681 (fsync failed on), fileio.c:307-310 (lseek returned).
+    #[test]
+    fn fatal_receive_sites_print_upstream_lines_at_upstream_levels() {
+        use crate::temp_guard::{CommitOp, attach_commit_op, attach_commit_op_at};
+
+        let dest = std::path::Path::new("dest/a");
+        let enospc = || io::Error::from_raw_os_error(28);
+        let espipe = || io::Error::from_raw_os_error(29);
+        let text = |e: io::Error| logging::upstream_errno_text(&e);
+
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+        let name = full_fname_path(dest, pr.full_fname_paths());
+        let cells = [
+            (
+                attach_commit_op(CommitOp::Write, dest, enospc()),
+                vec![(
+                    MessageCode::ErrorXfer,
+                    format!(
+                        "rsync: [receiver] write failed on {name}: {}",
+                        text(enospc())
+                    ),
+                )],
+            ),
+            (
+                attach_commit_op_at(CommitOp::Write, dest, 4096, espipe()),
+                vec![
+                    (
+                        MessageCode::ErrorXfer,
+                        format!(
+                            "rsync: [receiver] lseek returned -1, not 4096: {}",
+                            text(espipe())
+                        ),
+                    ),
+                    (
+                        MessageCode::ErrorXfer,
+                        format!(
+                            "rsync: [receiver] write failed on {name}: {}",
+                            text(espipe())
+                        ),
+                    ),
+                ],
+            ),
+            (
+                attach_commit_op(CommitOp::Fsync, dest, io::Error::from_raw_os_error(22)),
+                vec![(
+                    MessageCode::Error,
+                    format!(
+                        "rsync: [receiver] fsync failed on {name}: {}",
+                        text(io::Error::from_raw_os_error(22))
+                    ),
+                )],
+            ),
+            // EACCES would grade RERR_FILESELECT by its ErrorKind; the site
+            // still exits RERR_FILEIO, as exit_cleanup(RERR_FILEIO) does for
+            // any errno.
+            (
+                attach_commit_op(CommitOp::Write, dest, io::Error::from_raw_os_error(13)),
+                vec![(
+                    MessageCode::ErrorXfer,
+                    format!(
+                        "rsync: [receiver] write failed on {name}: {}",
+                        text(io::Error::from_raw_os_error(13))
+                    ),
+                )],
+            ),
+            (
+                attach_commit_op_at(CommitOp::Seek, dest, 4096, espipe()),
+                vec![(
+                    MessageCode::ErrorXfer,
+                    format!(
+                        "rsync: [receiver] lseek of {name} returned -1, not 4096: {}",
+                        text(espipe())
+                    ),
+                )],
+            ),
+        ];
+
+        for (error, expected) in cells {
+            let mut meta_errors = Vec::new();
+            let fatal = pr
+                .absorb_commit_error(error, &mut meta_errors)
+                .expect("every site is fatal");
+            assert_eq!(crate::error::rerr_for_io_error(&fatal), 11);
+            assert_eq!(pr.drain_warnings(), expected);
+            assert!(
+                meta_errors.is_empty(),
+                "a fatal site is not a per-file error"
+            );
+        }
     }
 }
