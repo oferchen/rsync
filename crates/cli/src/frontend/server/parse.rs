@@ -31,8 +31,8 @@ const CWD_PLACEHOLDER: &str = ".";
 /// Parses the flag string and positional arguments from server-mode argument list.
 ///
 /// Extracts the compact flag string (first arg starting with `-` that is not
-/// a known long flag) and positional arguments (everything after the flag string
-/// and optional `.` separator).
+/// a known long flag, or empty when there is none) and the positional
+/// arguments (every other non-option token, minus the first `.` placeholder).
 ///
 /// This mirrors popt's argument-arity model (upstream runs the same
 /// `options.c` `long_options[]` popt parser on the server): a value-bearing
@@ -111,16 +111,17 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
             continue;
         }
 
-        // upstream uses "." as a placeholder separator between flags and paths
-        if found_flags && !cwd_placeholder_spent && arg_str == CWD_PLACEHOLDER {
+        // upstream uses "." as a placeholder separator between flags and paths.
+        // It does not wait for a flag string: server_options() omits the
+        // compact string when no short option is set (options.c:2906), so a
+        // flagless push arrives as `--server . DEST`.
+        if !cwd_placeholder_spent && arg_str == CWD_PLACEHOLDER {
             cwd_placeholder_spent = true;
             idx += 1;
             continue;
         }
 
-        if found_flags {
-            positional_args.push(arg.clone());
-        }
+        positional_args.push(arg.clone());
         idx += 1;
     }
 

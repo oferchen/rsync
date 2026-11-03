@@ -2907,9 +2907,9 @@ fn no_capability_letter_leaks_into_operands() {
 mod end_of_options {
     use super::*;
 
+    /// The slice `run.rs` hands the parser: argv without arg0.
     fn argv(extra: &[&str]) -> Vec<OsString> {
         let mut args = vec![
-            OsString::from("rsync"),
             OsString::from("--server"),
             OsString::from("--sender"),
             OsString::from("-vlogDtpre.iLsfxC"),
@@ -3303,5 +3303,44 @@ fn parse_server_protocol_mirrors_popt_int() {
             Err("number too large or too small"),
             "{text:?}"
         );
+    }
+}
+
+/// upstream: options.c:2905-2907 `server_options()` adds the compact flag
+/// string only when a short option is set, so a flagless push below protocol
+/// 30 (no `-e.` letters) sends `--server . DEST`. popt has no flag-string slot:
+/// the placeholder and operands must not wait for one.
+mod flagless_argv {
+    use super::*;
+
+    fn parse(tail: &[&str]) -> (String, Vec<OsString>) {
+        // The slice `run.rs` hands the parser: argv without arg0.
+        let mut args = vec![OsString::from("--server")];
+        args.extend(tail.iter().map(OsString::from));
+        parse_server_flag_string_and_args(&args)
+    }
+
+    #[test]
+    fn a_flagless_receiver_argv_keeps_its_destination() {
+        let (flag_string, paths) = parse(&[".", "dest/"]);
+
+        assert_eq!(flag_string, "");
+        assert_eq!(paths, vec![OsString::from("dest/")]);
+    }
+
+    #[test]
+    fn a_flagless_sender_argv_keeps_its_source() {
+        let (flag_string, paths) = parse(&["--sender", "--checksum-seed=1", ".", "src/"]);
+
+        assert_eq!(flag_string, "");
+        assert_eq!(paths, vec![OsString::from("src/")]);
+    }
+
+    /// Companion: the one-slot placeholder rule is unchanged without flags.
+    #[test]
+    fn a_flagless_argv_still_spends_only_the_first_dot() {
+        let (_, paths) = parse(&[".", "."]);
+
+        assert_eq!(paths, vec![OsString::from(".")]);
     }
 }

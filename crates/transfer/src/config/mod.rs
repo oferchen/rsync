@@ -1067,18 +1067,14 @@ impl ServerConfig {
 
     /// Builds a [`ServerConfig`] from the compact flag string and positional arguments.
     ///
-    /// The parser accepts empty flag strings when positional arguments are provided,
-    /// as daemon mode uses this pattern with module paths as arguments. Empty flag
-    /// strings without arguments are rejected as obvious misuse.
+    /// An empty flag string is valid: upstream's `server_options()` omits the
+    /// compact string when no short option is set (options.c:2906), and the
+    /// server's popt parse has no slot that requires one.
     pub fn from_flag_string_and_args(
         role: ServerRole,
         flag_string: String,
         args: Vec<OsString>,
     ) -> Result<Self, String> {
-        if flag_string.trim().is_empty() && args.is_empty() {
-            return Err("missing rsync server flag string".to_owned());
-        }
-
         let flags = if flag_string.trim().is_empty() {
             ParsedServerFlags::default()
         } else {
@@ -1119,15 +1115,14 @@ mod tests {
     }
 
     #[test]
-    fn from_flag_string_and_args_rejects_empty_without_args() {
-        let result =
-            ServerConfig::from_flag_string_and_args(ServerRole::Receiver, "".to_owned(), vec![]);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("missing rsync server flag string")
-        );
+    fn from_flag_string_and_args_accepts_empty_without_args() {
+        // upstream: options.c:2906 omits the flag string when no short option
+        // is set, and the server's popt parse has no slot that requires one.
+        let config =
+            ServerConfig::from_flag_string_and_args(ServerRole::Receiver, "".to_owned(), vec![])
+                .expect("an empty flag string is a valid server argv");
+        assert_eq!(config.flags, ParsedServerFlags::default());
+        assert!(config.args.is_empty());
     }
 
     #[test]
