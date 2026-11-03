@@ -20,7 +20,7 @@ pub fn local_copy_uses_server_child(config: &ClientConfig) -> bool {
 
 /// The per-role debug traces that `-vvv` enables (options.c:248) and that
 /// only the sender, generator and receiver roles emit.
-pub(crate) fn role_trace_requested() -> bool {
+fn role_trace_requested() -> bool {
     debug_gte(DebugFlag::Genr, 1)
         || debug_gte(DebugFlag::Recv, 1)
         || debug_gte(DebugFlag::Send, 1)
