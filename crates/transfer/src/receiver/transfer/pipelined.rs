@@ -341,7 +341,7 @@ impl ReceiverContext {
                         &mut progress,
                         &mut ndx_write_codec,
                         &mut ndx_read_codec,
-                        false,
+                        true,
                     )?;
 
                     files_transferred += redo_transferred;

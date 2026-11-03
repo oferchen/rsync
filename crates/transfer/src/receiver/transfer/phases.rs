@@ -25,6 +25,17 @@ use crate::receiver::ndx_stream::{
 use crate::receiver::stats::SenderStats;
 use crate::transfer_state::TransferPhase;
 
+/// One generator write that ends a transfer phase.
+#[derive(Clone, Copy)]
+enum PhaseEndWrite {
+    Done,
+    DelStats,
+}
+
+/// Gate of the writes that wait until the sender's phase loop and stats are
+/// done (generator.c:2910-2915).
+const AT_GOODBYE: usize = usize::MAX;
+
 impl ReceiverContext {
     /// Exchanges NDX_DONE messages for phase transitions.
     ///
@@ -47,7 +58,6 @@ impl ReceiverContext {
         } else {
             1
         };
-        let del_stats_slot = self.del_stats_slot();
 
         if inc_recurse {
             let num_segments = self.ndx_segments.len();
@@ -65,6 +75,7 @@ impl ReceiverContext {
                 writer.flush()?;
                 self.read_expected_ndx_done(ndx_read_codec, reader, "segment completion")?;
             }
+            self.sender_phase_dones.set(1);
 
             // upstream: generator.c:2848-2850 - phase++ then "generate_files phase=%d"
             // The first `phase++` after the per-segment loop advances 0 -> 1.
@@ -73,13 +84,10 @@ impl ReceiverContext {
             debug_log!(Recv, 1, "recv_files phase={}", phase);
             debug_log!(Genr, 1, "generate_files phase={}", phase);
 
-            for phase_step in 2..=max_phase {
-                if del_stats_slot == Some(phase_step) {
-                    self.write_del_stats(ndx_write_codec, writer)?;
-                }
-                ndx_write_codec.write_ndx_done(&mut *writer)?;
+            for _ in 2..=max_phase {
+                self.write_phase_end(writer)?;
                 writer.flush()?;
-                self.read_expected_ndx_done(ndx_read_codec, reader, "phase transition")?;
+                self.read_phase_end_ndx_done(ndx_read_codec, reader, "phase transition")?;
                 // upstream: generator.c:2366-2368 - phase++ on each additional
                 // iteration (covers the redo phase).
                 phase += 1;
@@ -88,10 +96,7 @@ impl ReceiverContext {
                 debug_log!(Genr, 1, "generate_files phase={}", phase);
             }
 
-            if del_stats_slot == Some(max_phase + 1) {
-                self.write_del_stats(ndx_write_codec, writer)?;
-            }
-            ndx_write_codec.write_ndx_done(&mut *writer)?;
+            self.write_phase_end(writer)?;
             writer.flush()?;
 
             // upstream: generator.c:2882-2887 - protocol >= 29 emits a final
@@ -104,13 +109,8 @@ impl ReceiverContext {
         } else {
             let mut phase: i32 = 0;
             loop {
-                if del_stats_slot == Some(phase + 1) {
-                    self.write_del_stats(ndx_write_codec, writer)?;
-                }
-                if !self.take_early_generator_ndx_done() {
-                    ndx_write_codec.write_ndx_done(&mut *writer)?;
-                    writer.flush()?;
-                }
+                self.write_phase_end(writer)?;
+                writer.flush()?;
                 phase += 1;
                 // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
                 debug_log!(Recv, 1, "recv_files phase={}", phase);
@@ -120,11 +120,14 @@ impl ReceiverContext {
                 if phase > max_phase {
                     break;
                 }
-                self.read_expected_ndx_done(ndx_read_codec, reader, "phase transition")?;
+                // The request pass may have read this phase's answer already.
+                if self.sender_phase_dones.get() < phase as usize {
+                    self.read_phase_end_ndx_done(ndx_read_codec, reader, "phase transition")?;
+                }
             }
         }
 
-        self.read_expected_ndx_done(ndx_read_codec, reader, "sender final")?;
+        self.read_phase_end_ndx_done(ndx_read_codec, reader, "sender final")?;
 
         Ok(())
     }
@@ -202,6 +205,20 @@ impl ReceiverContext {
         Ok(())
     }
 
+    /// [`Self::read_expected_ndx_done`] for a phase boundary, counted so the
+    /// generator's next phase-ending writes may go out.
+    fn read_phase_end_ndx_done<R: Read>(
+        &self,
+        ndx_read_codec: &mut NdxCodecEnum,
+        reader: &mut R,
+        context: &str,
+    ) -> io::Result<()> {
+        self.read_expected_ndx_done(ndx_read_codec, reader, context)?;
+        self.sender_phase_dones
+            .set(self.sender_phase_dones.get() + 1);
+        Ok(())
+    }
+
     /// Reads the sender's next `NDX_DONE`, refusing a file index.
     fn read_sender_ndx_done<R: Read>(
         &self,
@@ -224,30 +241,86 @@ impl ReceiverContext {
         }
     }
 
-    /// Writes the generator's request-phase `NDX_DONE` ahead of
-    /// [`Self::exchange_phase_done`], which then skips that write.
+    /// The generator's phase-ending writes in wire order, each paired with
+    /// the number of sender phase `NDX_DONE`s that must be read before it
+    /// goes out.
     ///
-    /// upstream: generator.c:2831-2833 - without INC_RECURSE the generator
-    /// ends phase 0 right after its last request, so the sender can answer
-    /// it while the replies are still being read.
-    pub(in crate::receiver) fn write_early_generator_ndx_done<W: Write + ?Sized>(
+    /// upstream: generator.c:2831-2833 ends phase 0 right after the last
+    /// request (under INC_RECURSE the per-segment `NDX_DONE`s end it instead).
+    /// generator.c:2853-2872 then waits only for the receiver to finish phase
+    /// 0 before writing the redo phase's `NDX_DONE`, the delay phase's unless
+    /// `--delay-updates` holds it back, and at protocol 31 an early delete's
+    /// `NDX_DEL_STATS` and the `NDX_DONE` after it. generator.c:2883-2890
+    /// writes the held-back ones once the redo phase ends, and
+    /// generator.c:2910-2915 sends a late delete's counters and `NDX_DONE`
+    /// only after the receiver is done.
+    fn phase_end_plan(&self) -> Vec<(usize, PhaseEndWrite)> {
+        let inc_recurse = self
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
+        // upstream: generator.c:126-127 EARLY_DELAY_DONE_MSG / EARLY_DELETE_DONE_MSG.
+        let delay_gate = if self.config.write.delay_updates {
+            2
+        } else {
+            1
+        };
+        let mut plan = Vec::with_capacity(6);
+        if !inc_recurse {
+            plan.push((0, PhaseEndWrite::Done));
+        }
+        plan.push((1, PhaseEndWrite::Done));
+        if self.protocol.supports_multi_phase() {
+            plan.push((delay_gate, PhaseEndWrite::Done));
+        }
+        if self.protocol.supports_extended_goodbye() {
+            let late = self.config.deletion.late_delete;
+            // upstream: main.c:229 write_del_stats() is gated on
+            // `delete_mode || force_delete || read_batch`; `read_batch` never
+            // reaches a network receiver.
+            if self.config.flags.delete || self.config.flags.force {
+                plan.push((if late { AT_GOODBYE } else { 1 }, PhaseEndWrite::DelStats));
+            }
+            plan.push((
+                if late { AT_GOODBYE } else { delay_gate },
+                PhaseEndWrite::Done,
+            ));
+        }
+        plan.sort_by_key(|&(gate, _)| gate);
+        plan
+    }
+
+    /// Sends the phase-ending writes that the sender `NDX_DONE`s read so far
+    /// allow and that have not gone out yet.
+    pub(in crate::receiver) fn write_phase_end<W: Write + ?Sized>(
         &self,
         writer: &mut W,
     ) -> io::Result<()> {
-        create_ndx_codec(self.protocol.as_u8()).write_ndx_done(writer)?;
-        self.early_generator_ndx_dones
-            .set(self.early_generator_ndx_dones.get() + 1);
-        Ok(())
+        self.write_phase_end_through(self.sender_phase_dones.get(), writer)
     }
 
-    /// Consumes one write recorded by [`Self::write_early_generator_ndx_done`].
-    fn take_early_generator_ndx_done(&self) -> bool {
-        let early = self.early_generator_ndx_dones.get();
-        if early == 0 {
-            return false;
+    /// [`Self::write_phase_end`] for an explicit number of sender reads.
+    fn write_phase_end_through<W: Write + ?Sized>(
+        &self,
+        sender_dones: usize,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        let sent = self.phase_end_writes_sent.get();
+        let mut codec = create_ndx_codec(self.protocol.as_u8());
+        let mut written = 0;
+        for &(_, write) in self
+            .phase_end_plan()
+            .iter()
+            .skip(sent)
+            .take_while(|&&(gate, _)| gate <= sender_dones)
+        {
+            match write {
+                PhaseEndWrite::Done => codec.write_ndx_done(&mut *writer)?,
+                PhaseEndWrite::DelStats => self.write_del_stats(&mut codec, writer)?,
+            }
+            written += 1;
         }
-        self.early_generator_ndx_dones.set(early - 1);
-        true
+        self.phase_end_writes_sent.set(sent + written);
+        Ok(())
     }
 
     /// Ends the request phase before the redo pass: reads the sender's answer
@@ -257,18 +330,18 @@ impl ReceiverContext {
     /// upstream: generator.c:2846-2856 sends the redo requests in phase 1,
     /// after the phase-0 `NDX_DONE`, and the sender answers that `NDX_DONE`
     /// after its last phase-0 reply (sender.c:540-549), so the redo replies
-    /// follow it. The read is credited, so [`Self::exchange_phase_done`] does
-    /// not repeat it.
+    /// follow it. The read is counted, so [`Self::exchange_phase_done`] does
+    /// not repeat it and the redo pass may end its phase.
     pub(in crate::receiver) fn finish_request_phase<R: Read, W: Write + ?Sized>(
         &self,
         reader: &mut R,
         writer: &mut W,
         ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<()> {
-        if self.early_generator_ndx_dones.get() == 0 {
+        if self.phase_end_writes_sent.get() == 0 {
             // The pass wrote no NDX_DONE (nothing to request, or a --stop-at
             // deadline), so the follower rows went out ahead of this one.
-            self.write_early_generator_ndx_done(writer)?;
+            self.write_phase_end(writer)?;
             writer.flush()?;
             self.read_expected_ndx_done(ndx_read_codec, reader, "phase transition")?;
         } else {
@@ -287,7 +360,7 @@ impl ReceiverContext {
                 self.note_early_sender_ndx_done();
             }
         }
-        self.note_early_sender_ndx_done();
+        self.sender_phase_dones.set(1);
         Ok(())
     }
 
@@ -298,31 +371,6 @@ impl ReceiverContext {
         NoLazyFlist::new(StreamRole::Receiver, FlistMarkerSink::last_file_ndx(self))
             .with_first_file_ndx(FlistMarkerSink::first_file_ndx(self))
             .with_all_flists_freed(FlistMarkerSink::all_flists_freed(self))
-    }
-
-    /// The 1-based phase `NDX_DONE` that `NDX_DEL_STATS` goes out ahead of, or
-    /// `None` when no deletion counters are sent.
-    ///
-    /// upstream: generator.c:2867-2871 sends them right after the phase-1
-    /// `NDX_DONE` when deletions finished early (`EARLY_DELETE_DONE_MSG()`),
-    /// and generator.c:2911-2915 right before the late `NDX_DONE` otherwise.
-    /// Either way they precede the `NDX_DONE` that ends the sender's phase
-    /// loop, so a server sender echoes them from `send_files()`
-    /// (rsync.c:338-341) before its stats. Only an early delete under
-    /// `--delay-updates` (`!EARLY_DELAY_DONE_MSG()`) moves them ahead of the
-    /// second `NDX_DONE` rather than the third. `read_batch`, upstream's third
-    /// term, never reaches a network receiver.
-    fn del_stats_slot(&self) -> Option<i32> {
-        if !self.protocol.supports_extended_goodbye()
-            || !(self.config.flags.delete || self.config.flags.force)
-        {
-            return None;
-        }
-        if self.config.write.delay_updates && !self.config.deletion.late_delete {
-            Some(2)
-        } else {
-            Some(3)
-        }
     }
 
     /// Writes `NDX_DEL_STATS` and the five deletion counters.
@@ -341,10 +389,10 @@ impl ReceiverContext {
 
     /// Handles the goodbye handshake at end of transfer.
     ///
-    /// Sends `NDX_DONE`. For extended goodbye (protocol >= 31), additionally
-    /// reads the echo and sends a final `NDX_DONE`. `NDX_DEL_STATS` is not
-    /// part of the goodbye: [`Self::exchange_phase_done`] sends it at the
-    /// phase boundary upstream's generator uses.
+    /// Sends `NDX_DONE`. For extended goodbye (protocol >= 31) that is the
+    /// generator's last phase-ending write, preceded by a late delete's
+    /// `NDX_DEL_STATS` and skipped when it went out early; the echo is then
+    /// read and a final `NDX_DONE` sent.
     ///
     /// # Upstream Reference
     ///
@@ -364,7 +412,11 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        ndx_write_codec.write_ndx_done(&mut *writer)?;
+        if self.protocol.supports_extended_goodbye() {
+            self.write_phase_end_through(AT_GOODBYE, writer)?;
+        } else {
+            ndx_write_codec.write_ndx_done(&mut *writer)?;
+        }
         writer.flush()?;
 
         if self.protocol.supports_extended_goodbye() {

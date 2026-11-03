@@ -9,12 +9,18 @@
 //! file arrives, `--remove-source-files` adds its `MSG_SUCCESS`. oc used to
 //! hold the `NDX_DONE` until every reply had been read, so its `MSG_SUCCESS`
 //! went out first.
+//!
+//! upstream: generator.c:2853-2866 - once the sender has answered that
+//! `NDX_DONE`, the generator ends the redo phase and, without
+//! `--delay-updates`, the delay phase straight away. rsync 3.5.1 writes both
+//! `NDX_DONE`s before the sender sends anything more; oc used to wait for the
+//! sender's answer to each.
 
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -153,6 +159,19 @@ fn pull_waiting_for_phase_end(extra: &[&str]) -> (Vec<u8>, Vec<Frame>) {
         tx.send((before_data, after)).expect("report");
     });
 
+    let (tmp, output) = pull(port, extra);
+    server.join().expect("replayed daemon");
+    let (before_data, after) = rx.recv().expect("daemon report");
+    assert!(
+        tmp.path().join("keep").exists(),
+        "the client must still receive the file: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (before_data, after)
+}
+
+/// Pulls `keep` with `extra` options from the daemon listening on `port`.
+fn pull(port: u16, extra: &[&str]) -> (TempDir, Output) {
     let tmp = TempDir::new().expect("tempdir");
     let output = Command::new(oc_rsync_bin())
         .args(["--protocol=30", "-r"])
@@ -162,14 +181,7 @@ fn pull_waiting_for_phase_end(extra: &[&str]) -> (Vec<u8>, Vec<Frame>) {
         .stdin(Stdio::null())
         .output()
         .expect("run oc-rsync");
-    server.join().expect("replayed daemon");
-    let (before_data, after) = rx.recv().expect("daemon report");
-    assert!(
-        tmp.path().join("keep").exists(),
-        "the client must still receive the file: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    (before_data, after)
+    (tmp, output)
 }
 
 #[test]
@@ -190,5 +202,28 @@ fn source_removal_notice_follows_the_phase_end() {
         after.first(),
         Some(&(TAG_SUCCESS, 0i32.to_le_bytes().to_vec())),
         "MSG_SUCCESS for ndx 0 must be the client's next frame"
+    );
+}
+
+#[test]
+fn redo_and_delay_phases_end_once_the_sender_ends_phase_zero() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let server = thread::spawn(move || {
+        let (mut sock, mut reader) = accept_and_send_list(&listener);
+        read_data(&mut reader, REQUEST.len() + 1);
+        let mut answer = reply();
+        answer.push(NDX_DONE);
+        sock.write_all(&frame(TAG_DATA, &answer))
+            .expect("file data and the sender's phase end");
+        let phase_ends = read_data(&mut reader, 2);
+        sock.shutdown(Shutdown::Both).expect("close");
+        phase_ends
+    });
+    // The daemon hangs up mid-transfer, so only the bytes it read matter.
+    pull(port, &[]);
+    assert_eq!(
+        server.join().expect("replayed daemon"),
+        [NDX_DONE, NDX_DONE]
     );
 }
