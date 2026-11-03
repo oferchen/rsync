@@ -254,13 +254,25 @@ fn half(payload: &[u8]) -> Vec<u8> {
 /// `--fuzzy` match or an alt-dest file lends its own bits to a new
 /// destination. 3.5.1 lands `BASIS_MODE` in every cell; re-statting the final
 /// path instead lands the new-file mode.
+///
+/// A partial wins over an existing destination (generator.c:2270-2275), and
+/// `--whole-file` changes none of it: the basis is chosen before the
+/// `whole_file` branch (:2280) and still named on the wire (:2381-2386).
 #[test]
 fn a_partial_fuzzy_or_alt_dest_basis_lends_its_bits() {
-    let cells: [(&str, &[&str], Prepare); 5] = [
+    let cells: [(&str, &[&str], Prepare); 6] = [
         (
             "new + --partial-dir",
             &["--partial-dir=.p"],
             |root, payload| {
+                seed(&root.join(".p/payload.bin"), &half(payload), BASIS_MODE);
+            },
+        ),
+        (
+            "existing 0604 + --partial-dir",
+            &["--partial-dir=.p"],
+            |root, payload| {
+                seed(&root.join("payload.bin"), &payload[..1024], 0o604);
                 seed(&root.join(".p/payload.bin"), &half(payload), BASIS_MODE);
             },
         ),
@@ -290,14 +302,21 @@ fn a_partial_fuzzy_or_alt_dest_basis_lends_its_bits() {
         ),
     ];
     for (name, extra, prepare) in cells {
-        let Some(mode) = push_and_read_mode(extra, prepare) else {
-            panic!("{name}: could not start the daemon, so nothing was measured");
-        };
-        assert_eq!(
-            mode, BASIS_MODE,
-            "{name}: upstream dest_mode() keeps the opened basis's permission \
-             bits (receiver.c:1158-1208); got {mode:04o}, want {BASIS_MODE:04o}",
-        );
+        for whole_file in [false, true] {
+            let mut args = extra.to_vec();
+            if whole_file {
+                args.push("--whole-file");
+            }
+            let Some(mode) = push_and_read_mode(&args, prepare) else {
+                panic!("{name}: could not start the daemon, so nothing was measured");
+            };
+            assert_eq!(
+                mode, BASIS_MODE,
+                "{name} (whole_file={whole_file}): upstream dest_mode() keeps the \
+                 opened basis's permission bits (receiver.c:1158-1208); got \
+                 {mode:04o}, want {BASIS_MODE:04o}",
+            );
+        }
     }
 }
 
