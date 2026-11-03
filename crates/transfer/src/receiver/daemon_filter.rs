@@ -178,7 +178,7 @@ mod tests {
 
     /// The discriminating cell.
     ///
-    /// Ground truth, MEASURED against a real rsync 3.5.0 daemon on loopback TCP
+    /// Ground truth, MEASURED against a real rsync 3.5.1 daemon on loopback TCP
     /// with `read only = no` and a module declaring `filter = : .rsync-filter`,
     /// pushing `sub/bait.txt` and `sub/keep.txt` with `--delete`: the daemon
     /// answers `ERROR: daemon refused to receive file "sub/bait.txt"` and exits

@@ -17,7 +17,7 @@
 //! The strip is budgeted, not unconditional: upstream passes `lastdir_depth`,
 //! the depth of the entry's own directory, so a target that walks back no
 //! further than the transfer root is preserved and only the part that reaches
-//! past it is collapsed. Measured against rsync 3.5.0 as a daemon receiver,
+//! past it is collapsed. Measured against rsync 3.5.1 as a daemon receiver,
 //! pushing two links from `sub/dir/`:
 //!
 //! ```text
@@ -162,7 +162,7 @@ fn daemon_receiver_sanitizes_an_escaping_symlink_target_when_munging_is_off() {
 fn the_client_end_of_a_daemon_pull_stores_the_target_verbatim() {
     // upstream: `sanitize_paths` is set only in the daemon server process
     // (clientserver.c:1067-1068); the client end of a daemon connection never
-    // sanitizes a received target. Measured against rsync 3.5.0: a pull
+    // sanitizes a received target. Measured against rsync 3.5.1: a pull
     // client stores `abs_link -> /etc/hostname` byte-for-byte. Rewriting the
     // target on the client corrupts the user's data and (below) defeats the
     // client's own --safe-links evaluation.
@@ -185,7 +185,7 @@ fn a_pull_clients_safe_links_check_reads_the_verbatim_target() {
     // Why the verbatim rule above is load-bearing: sanitizing `/etc/passwd`
     // into `etc/passwd` turns an unsafe absolute target into a safe-looking
     // relative one, so the client's --safe-links check would pass and create
-    // a link upstream skips. Measured against rsync 3.5.0: the pull client
+    // a link upstream skips. Measured against rsync 3.5.1: the pull client
     // reports `ignoring unsafe symlink` and creates nothing
     // (generator.c:1951 / util1.c:1664 "all absolute ... are unsafe").
     let mut config = daemon_receiver_without_munging();

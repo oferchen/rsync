@@ -35,7 +35,7 @@ fn upstream_binary() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// Every spelling measured against the real 3.5.0 binary, with whether it is
+/// Every spelling measured against the real 3.5.1 binary, with whether it is
 /// accepted. `1M` and above exceed `MAX_BLOCK_SIZE` (131072) at protocol >= 30,
 /// so they are rejected for a reason unrelated to the grammar - which is what
 /// makes them useful: a parser that ignored the scale entirely would accept

@@ -28,7 +28,7 @@
 //! and a comment AFTER the trim. All four consequences change WHICH FILES THE
 //! DAEMON SERVES, at exit 0, with no diagnostic.
 //!
-//! MEASURED against a real rsync 3.5.0 daemon on Linux, module holding `a` and
+//! MEASURED against a real rsync 3.5.1 daemon on Linux, module holding `a` and
 //! `a ` (trailing space), `exclude from` file holding the single line `a `:
 //! upstream serves `a` and hides `a `; oc at f054c633b served `a ` and hid `a`.
 //! Every row below is asserted against that measured upstream behaviour.

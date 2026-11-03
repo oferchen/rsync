@@ -589,7 +589,7 @@ fn protocol_29_accepts_the_rules_protocol_28_refuses() {
 }
 
 /// Control: a leading-slash pattern is not the `/` modifier. `--exclude=/foo`
-/// travels as `/foo` at protocol 28 in both directions (MEASURED: rsync 3.5.0
+/// travels as `/foo` at protocol 28 in both directions (MEASURED: rsync 3.5.1
 /// exits 0 on a protocol-28 daemon pull and push).
 #[test]
 fn pre29_anchored_pattern_is_sent_in_the_body() {

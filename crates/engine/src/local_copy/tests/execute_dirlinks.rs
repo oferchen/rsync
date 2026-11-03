@@ -822,7 +822,7 @@ fn keep_dirlinks_refuses_a_destination_symlink_pointing_outside_the_tree() {
 /// A refused `-K` commit must leave the out-of-tree target **intact**.
 ///
 /// The refusal is a security decision, not a licence to destroy: upstream
-/// 3.5.0 refuses this shape without touching the file (measured - the target
+/// 3.5.1 refuses this shape without touching the file (measured - the target
 /// survives byte-for-byte at exit 23). An implementation that cleared the
 /// destination before discovering the escape would turn a refusal into data
 /// loss, which is strictly worse than the escape it prevents.
