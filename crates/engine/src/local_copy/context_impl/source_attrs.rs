@@ -42,7 +42,7 @@ impl CopyContext<'_> {
         }
         #[cfg(all(any(unix, windows), feature = "xattr"))]
         if self.xattrs_enabled() {
-            match self.read_source_xattrs(source, metadata) {
+            match self.read_source_xattrs(source) {
                 Ok(list) => attrs.xattrs = Some(list),
                 Err(error) => {
                     let line = error
@@ -66,12 +66,15 @@ impl CopyContext<'_> {
     /// The sender's xattr list for `source`, shaped by the sender side of any
     /// `x` filter rule.
     ///
-    /// upstream: xattrs.c:rsync_xal_get() with `am_sender` set.
+    /// The path is never followed: a link copied as its referent (`-L`,
+    /// `--copy-unsafe-links`) contributes the link's own xattrs, as upstream's
+    /// sender lists and reads through `sys_llistxattr`/`sys_lgetxattr`.
+    ///
+    /// upstream: xattrs.c:rsync_xal_get() with `am_sender` set; xattrs.c:162,200.
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     fn read_source_xattrs(
         &self,
         source: &Path,
-        metadata: &fs::Metadata,
     ) -> Result<protocol::xattr::XattrList, ::metadata::MetadataError> {
         let rules = self
             .filter_program
@@ -84,7 +87,7 @@ impl CopyContext<'_> {
             source,
             &::metadata::XattrSendOptions {
                 role: ::metadata::XattrRole::Sender,
-                follow_symlinks: !metadata.file_type().is_symlink(),
+                follow_symlinks: false,
                 // upstream: xattrs.c:249 - the sender reads every namespace but
                 // system.*, whoever it runs as.
                 am_root: false,
