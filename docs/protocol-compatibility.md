@@ -1,19 +1,19 @@
 # Protocol Compatibility Matrix
 
 This document describes oc-rsync's wire protocol compatibility with upstream
-rsync across protocol versions 28-32. The upstream releases the interop
+rsync across protocol versions 28-33. The upstream releases the interop
 harness builds and exercises are listed once, in `versions=(...)` at
-`tools/ci/run_interop.sh:74`, rather than copied here - copying the list is what
-let it drift. At the time of writing that is 2.6.9, 3.0.9, 3.1.3, 3.4.4 and
-3.5.0. All claims are backed by automated CI tests that run on every pull
+`tools/ci/run_interop.sh:79`, rather than copied here - copying the list is what
+let it drift. At the time of writing that is 2.6.3, 2.6.9, 3.0.9, 3.1.3, 3.4.4,
+3.5.0 and 3.5.1. All claims are backed by automated CI tests that run on every pull
 request and nightly.
 
 ---
 
 ## Protocol Version Support
 
-oc-rsync supports protocol versions 28 through 32. The implementation
-advertises protocol 32 and negotiates downward when connecting to older peers.
+oc-rsync supports protocol versions 28 through 33. The implementation
+advertises protocol 33 and negotiates downward when connecting to older peers.
 
 | Protocol | Introduced In | Checksum | Compat Flags | Inc. Recurse | Status |
 |----------|---------------|----------|--------------|--------------|--------|
@@ -21,7 +21,8 @@ advertises protocol 32 and negotiates downward when connecting to older peers.
 | 29       | rsync 2.6.6   | MD4      | N/A          | No           | Supported |
 | 30       | rsync 3.0.0   | MD5      | Varint       | Yes          | Supported |
 | 31       | rsync 3.1.0   | MD5      | Varint       | Yes          | Supported |
-| 32       | rsync 3.4.0   | MD5      | Varint       | Yes          | Supported (primary) |
+| 32       | rsync 3.4.0   | MD5      | Varint       | Yes          | Supported |
+| 33       | rsync 3.5.1   | MD5      | Varint       | Yes          | Supported (primary) |
 
 Protocol 28-29 use the legacy 4-byte LE wire encoding for compatibility flags.
 Protocol 30+ uses varint encoding and supports the binary negotiation handshake
@@ -32,7 +33,7 @@ introduced in rsync 3.0.0.
 | Protocol | Default Strong Checksum | Negotiated Options (protocol 30+) |
 |----------|------------------------|-----------------------------------|
 | 28-29    | MD4                    | N/A (no negotiation)              |
-| 30-32    | MD5                    | XXH128, XXH3, XXH64, MD5, MD4, SHA1 |
+| 30-33    | MD5                    | XXH128, XXH3, XXH64, MD5, MD4, SHA1 |
 
 Checksum negotiation requires the `-e.LsfxCIvu` capability string in SSH
 transfers. Without it, transfers fall back to MD5.
@@ -304,4 +305,4 @@ Interop testing is distributed across several CI workflows:
 - Interop test details: [docs/INTEROP.md](INTEROP.md)
 - Interop testing guide: [docs/interop_testing.md](interop_testing.md)
 - Interop test script: `tools/ci/run_interop.sh`
-- Upstream rsync source: `target/interop/upstream-src/rsync-3.5.0/`
+- Upstream rsync source: `target/interop/upstream-src/rsync-3.5.1/`

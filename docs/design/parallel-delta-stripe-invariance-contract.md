@@ -142,8 +142,9 @@ two removes:
 
 ## 3. Upstream anchors for the sequential semantics
 
-Cited from `target/interop/upstream-src/rsync-3.5.0/match.c`, the pinned
-oracle.
+Cited from `target/interop/upstream-src/rsync-3.5.1/match.c`, the pinned
+oracle (`match.c` is byte-identical in 3.5.0 and 3.5.1, so the 3.5.0 line
+numbers below hold).
 
 - `match.c:197` - `end = len + 1 - s->sums[s->count-1].len;`. The scan
   bound is expressed in terms of the LAST block's length, which is the
@@ -434,7 +435,8 @@ Recorded per the task instruction: observed, not fixed.
 
 ## References
 
-Upstream rsync 3.5.0 (`target/interop/upstream-src/rsync-3.5.0/`):
+Upstream rsync 3.5.1 (`target/interop/upstream-src/rsync-3.5.1/`; `match.c` is
+unchanged from 3.5.0):
 
 - `match.c:78-111` - `build_hash_table`, index built once
 - `match.c:197` - scan bound expressed via the short final block
