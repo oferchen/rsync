@@ -9,11 +9,21 @@ use std::ffi::OsString;
 #[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use filters::FilterSet;
 use metadata::MetadataOptions;
 use protocol::acl::AclCache;
+
+/// The receiver's ACL cache, shared with the threads that apply it.
+///
+/// Under INC_RECURSE each sub-list adds the ACLs its entries introduce, so the
+/// receiver appends to this cache after every list it reads
+/// (`AclCache::extend_from`) and the appliers read it at apply time: an entry
+/// from any list finds its index, as in upstream's single growing
+/// `access_acl_list`/`default_acl_list` (`acls.c:94-95`, `acls.c:1016-1024
+/// receive_acl()`).
+pub type LiveAclCache = Arc<RwLock<AclCache>>;
 
 /// Controls partial file retention on interrupted transfers.
 ///
@@ -141,9 +151,9 @@ pub struct DiskCommitConfig {
     /// Backup configuration. When `Some`, existing files are renamed to a
     /// backup path before being overwritten.
     pub backup: Option<BackupConfig>,
-    /// ACL cache from flist reception, shared via `Arc` for thread safety.
+    /// ACL cache from flist reception, kept current as sub-lists arrive.
     /// When `Some`, the disk thread applies cached ACLs after metadata.
-    pub acl_cache: Option<Arc<AclCache>>,
+    pub acl_cache: Option<LiveAclCache>,
     /// Cross-host id remapper for named ACL entries, shared via `Arc`. Built
     /// from the received uid/gid id-lists plus `--usermap`/`--groupmap` so the
     /// disk thread remaps ACL ids like file owners.

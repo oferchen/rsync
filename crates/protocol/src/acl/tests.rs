@@ -402,6 +402,37 @@ mod acl_cache_tests {
         let _ = cache.store_default(acl.clone());
         assert_eq!(cache.find_default(&acl), Some(0));
     }
+
+    fn acl_with_user_obj(perms: u8) -> RsyncAcl {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = perms;
+        acl
+    }
+
+    /// The receiver's shared copy is taken after the initial file list and
+    /// must then resolve every index a later sub-list adds: only the ACLs
+    /// stored after the copy are appended, at the same indices, and a copy
+    /// that is already current is left alone.
+    #[test]
+    fn extend_from_appends_only_what_the_source_stored_since() {
+        let mut source = AclCache::new();
+        let _ = source.store_access(acl_with_user_obj(0x07));
+        let mut copy = source.clone();
+
+        let late_access = acl_with_user_obj(0x05);
+        let late_default = acl_with_user_obj(0x06);
+        assert_eq!(source.store_access(late_access.clone()), 1);
+        assert_eq!(source.store_default(late_default.clone()), 0);
+
+        copy.extend_from(&source);
+        assert_eq!(copy.access_count(), 2);
+        assert_eq!(copy.get_access(0), source.get_access(0));
+        assert_eq!(copy.get_access(1), Some(&late_access));
+        assert_eq!(copy.get_default(0), Some(&late_default));
+
+        copy.extend_from(&source);
+        assert_eq!((copy.access_count(), copy.default_count()), (2, 1));
+    }
 }
 
 /// Wire protocol round-trip tests.

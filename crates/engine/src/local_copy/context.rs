@@ -116,6 +116,10 @@ impl CopyOutcome {
 /// Holds transfer options, progress tracking, filter state, deferred
 /// operations, and the buffer pool. Created once per `local_copy()` call
 /// and consumed to produce a [`CopyOutcome`].
+/// A source entry's access ACL and, for a directory, its default ACL, as
+/// `FileListWriter::set_pending_acl` takes them.
+pub(crate) type BatchSourceAcl = (protocol::acl::RsyncAcl, Option<protocol::acl::RsyncAcl>);
+
 pub(crate) struct CopyContext<'a> {
     mode: LocalCopyExecution,
     options: LocalCopyOptions,
@@ -470,6 +474,9 @@ pub(crate) struct CopyContext<'a> {
     /// `CF_INC_RECURSE`: the incremental layout groups entries by directory,
     /// so none can be written before the walk ends.
     batch_pending_entries: Vec<protocol::flist::FileEntry>,
+    /// Source ACLs of `batch_pending_entries`, index for index; empty unless
+    /// the batch records `--acls`.
+    batch_pending_acls: Vec<Option<BatchSourceAcl>>,
     /// Traversal index to wire NDX once an incremental batch file list has
     /// been written; `None` for a flat list, whose NDX is the sorted index.
     batch_traversal_to_ndx: Option<Vec<i32>>,
