@@ -54,6 +54,16 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
     // cannot claim a path, and so the marker itself never reaches the path
     // list - upstream never delivers it to `link_stat()`, and neither may we.
     let (args, operands) = split_at_end_of_options(args);
+    // Nothing ahead of `--server` is a server operand. sshd execs the remote
+    // program, so upstream's server argv starts at `--server`; a remote shell
+    // that runs this binary with the remote command as its arguments (`exec
+    // oc-rsync "$@"` of `rsync --server ...`) leaves the program name ahead of
+    // it. Before the flagless argv was accepted that word was dropped as
+    // "before the flag string"; now operands no longer wait for one.
+    let args = args
+        .iter()
+        .position(|arg| arg == "--server")
+        .map_or(args, |at| &args[at + 1..]);
 
     let mut flag_string = String::new();
     let mut positional_args = Vec::new();

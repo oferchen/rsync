@@ -3336,6 +3336,22 @@ mod flagless_argv {
         assert_eq!(paths, vec![OsString::from("src/")]);
     }
 
+    /// A remote-shell shim that execs this binary with the remote command as
+    /// its arguments puts the remote program's name ahead of `--server`. That
+    /// word is not the destination, with or without a flag string.
+    #[test]
+    fn the_program_name_ahead_of_server_is_not_an_operand() {
+        for tail in [
+            &["rsync", "--server", "-re.iLsfxCIvu", ".", "dest/"][..],
+            &["rsync", "--server", ".", "dest/"][..],
+        ] {
+            let args: Vec<OsString> = tail.iter().map(OsString::from).collect();
+            let (_, paths) = parse_server_flag_string_and_args(&args);
+
+            assert_eq!(paths, vec![OsString::from("dest/")], "{tail:?}");
+        }
+    }
+
     /// Companion: the one-slot placeholder rule is unchanged without flags.
     #[test]
     fn a_flagless_argv_still_spends_only_the_first_dot() {
