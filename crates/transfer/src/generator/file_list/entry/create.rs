@@ -354,14 +354,13 @@ impl GeneratorContext {
         // upstream: flist.c:make_file() -> get_xattr() reads xattrs for -X mode
         #[cfg(any(unix, windows))]
         if self.config.flags.xattrs {
-            // upstream: xattrs.c:319-352 - get_xattr() only reads for regular files,
-            // dirs, symlinks (if preserve_links), specials (if preserve_specials),
-            // and devices (if preserve_devices).
-            let should_read = file_type.is_file()
-                || file_type.is_dir()
-                || (file_type.is_symlink() && self.config.flags.links);
-
-            if should_read {
+            let flags = &self.config.flags;
+            if protocol::xattr::entry_carries_xattrs(
+                &entry,
+                flags.links,
+                flags.devices,
+                flags.specials,
+            ) {
                 // Follow symlinks only for non-symlink entries (lgetxattr for symlinks)
                 let follow = !file_type.is_symlink();
                 let xattr_filter = self.xattr_name_filter();
@@ -382,16 +381,12 @@ impl GeneratorContext {
                     filter: predicate.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
                     checksum_seed: self.checksum_seed,
                 };
-                match metadata::read_xattrs_for_wire(full_path, &opts) {
-                    Ok(list) => {
-                        if !list.is_empty() {
-                            entry.set_xattr_list(list);
-                        }
-                    }
-                    Err(_) => {
-                        // Non-fatal: silently skip, matching upstream behavior
-                        // where xattr read failures don't abort the transfer
-                    }
+                // upstream: flist.c:2058-2063 - a failed get_xattr() leaves the
+                // entry out of the list; the walk reports it.
+                let list =
+                    metadata::read_xattrs_for_wire(full_path, &opts).map_err(io::Error::other)?;
+                if !list.is_empty() {
+                    entry.set_xattr_list(list);
                 }
             }
         }

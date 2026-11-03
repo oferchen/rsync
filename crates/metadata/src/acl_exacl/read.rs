@@ -53,7 +53,9 @@ fn resolve_named_entry(name: &str, is_user: bool) -> (u32, Option<Vec<u8>>) {
 /// Deviation from upstream: a read error that `no_acl_syscall_error()` does not
 /// classify is reported by upstream as `get_acl: sys_acl_get_file` and fails
 /// with -1 (`acls.c:752-755`); this function falls back to the mode-derived ACL
-/// instead.
+/// instead. Upstream's sender then drops the entry; oc's sender reads ACLs only
+/// when it writes the sorted list, too late to drop one, so the fallback stays
+/// until the sender reads each ACL as it emits the entry (task 519).
 pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let option = if is_default {

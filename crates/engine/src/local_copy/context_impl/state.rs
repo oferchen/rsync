@@ -107,6 +107,7 @@ impl<'a> CopyContext<'a> {
             batch_entry_hlink_gnum: Vec::new(),
             batch_pending_entries: Vec::new(),
             batch_pending_acls: Vec::new(),
+            batch_xattr_report: None,
             batch_traversal_to_ndx: None,
             batch_list_count: 1,
             batch_pending_sublists: Vec::new(),

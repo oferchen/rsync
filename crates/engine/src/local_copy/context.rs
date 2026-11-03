@@ -477,6 +477,9 @@ pub(crate) struct CopyContext<'a> {
     /// Source ACLs of `batch_pending_entries`, index for index; empty unless
     /// the batch records `--acls`.
     batch_pending_acls: Vec<Option<BatchSourceAcl>>,
+    /// The `ITEM_REPORT_XATTR` value block of the entry captured last, written
+    /// after that entry's iflags; `None` when its xattrs match the destination.
+    batch_xattr_report: Option<Vec<u8>>,
     /// Traversal index to wire NDX once an incremental batch file list has
     /// been written; `None` for a flat list, whose NDX is the sorted index.
     batch_traversal_to_ndx: Option<Vec<i32>>,
