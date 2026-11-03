@@ -67,6 +67,10 @@ pub(crate) struct SourceOpen {
     follow_symlinks: bool,
     /// Whether to propagate `O_NOATIME` (`--open-noatime`).
     noatime: bool,
+    /// Test seam run before every open, so a test can rename or replace the
+    /// source between the file-list stat and the open without a timing race.
+    #[cfg(test)]
+    before_open: Option<fn(&Path)>,
 }
 
 impl SourceOpen {
@@ -84,7 +88,16 @@ impl SourceOpen {
             files_from: None,
             follow_symlinks,
             noatime,
+            #[cfg(test)]
+            before_open: None,
         }
+    }
+
+    /// Runs `hook` with the path before every open (test seam).
+    #[cfg(test)]
+    pub(crate) fn with_before_open(mut self, hook: Option<fn(&Path)>) -> Self {
+        self.before_open = hook;
+        self
     }
 
     /// Routes every open through the held `--files-from` base, when one is
@@ -151,6 +164,10 @@ impl SourceOpen {
     /// (`sender_open_confined` / `sender_open_copylinks_confined`) for a
     /// daemon, `do_open_checklinks` otherwise.
     pub(crate) fn open(&self, path: &Path) -> io::Result<fs::File> {
+        #[cfg(test)]
+        if let Some(hook) = self.before_open {
+            hook(path);
+        }
         #[cfg(unix)]
         if let Some(root) = self.confine_root.as_deref() {
             // Reconstruct the module-relative path and open it confined
