@@ -204,12 +204,15 @@ pub(super) fn commit_file(
         // `mkstemp ... failed`, while the identical push without
         // `--delay-updates` succeeded. aarch64 has no legacy `mkdir(2)` for
         // glibc to lower to, which is why the defect was architecture-only.
+        //
+        // The staging dir is created 0700 (util1.c:1625 `do_mkdir_at(dir,
+        // 0700)`), not ACCESSPERMS like the backup-dir parents (backup.c:128).
         if let Some(parent) = staging_path.parent() {
             #[cfg(unix)]
             crate::robust_rename::clear_partial_dir_obstruction(commit_anchor(config), parent)?;
             #[cfg(not(unix))]
             engine::clear_partial_dir_obstruction(parent)?;
-            create_dir_all_sandboxed(config.backup_env(), parent)?;
+            create_dir_all_sandboxed(config.backup_env(), parent, 0o700)?;
         }
         let result =
             stage_into_partial_dir(config, cleanup_guard.path(), &staging_path).map_err(|e| {
@@ -1128,11 +1131,11 @@ fn create_backup_path_parents(
                 parent,
                 &metadata_opts,
                 &backup_config.dir_cache,
-                |path| create_dir_all_sandboxed(env, path),
+                |path| create_dir_all_sandboxed(env, path, 0o777),
             )
         }
         None if dest_exists(env, parent) => Ok(()),
-        None => create_dir_all_sandboxed(env, parent),
+        None => create_dir_all_sandboxed(env, parent, 0o777),
     }
 }
 
@@ -1144,9 +1147,10 @@ fn create_backup_path_parents(
 /// [`fast_io::mkdirat_via_sandbox_or_fallback`] so a symlink swap on the
 /// destination root cannot redirect it. Deeper trees, and the no-sandbox case,
 /// go through [`fast_io::operator_create_dir_all`], which is recursive like
-/// `std::fs::create_dir_all` but issues `mkdirat` per component.
+/// `std::fs::create_dir_all` but issues `mkdirat` per component. `mode` is
+/// the `mkdirat` mode before the umask.
 #[cfg(unix)]
-fn create_dir_all_sandboxed(env: BackupEnv<'_>, parent: &Path) -> io::Result<()> {
+fn create_dir_all_sandboxed(env: BackupEnv<'_>, parent: &Path, mode: u32) -> io::Result<()> {
     if let (Some(sandbox), Some(dest_dir)) = (env.sandbox, env.dest_dir)
         && parent.parent() == Some(dest_dir)
         && let Some(leaf) = parent.file_name()
@@ -1156,7 +1160,7 @@ fn create_dir_all_sandboxed(env: BackupEnv<'_>, parent: &Path) -> io::Result<()>
             dest_dir,
             Path::new(leaf),
             parent,
-            0o777,
+            mode,
         ) {
             Ok(()) => Ok(()),
             // Match `create_dir_all`'s idempotence: an already-present dir is
@@ -1165,11 +1169,11 @@ fn create_dir_all_sandboxed(env: BackupEnv<'_>, parent: &Path) -> io::Result<()>
             Err(e) => Err(e),
         };
     }
-    fast_io::operator_create_dir_all(parent, 0o777)
+    fast_io::operator_create_dir_all(parent, mode)
 }
 
 #[cfg(not(unix))]
-fn create_dir_all_sandboxed(_env: BackupEnv<'_>, parent: &Path) -> io::Result<()> {
+fn create_dir_all_sandboxed(_env: BackupEnv<'_>, parent: &Path, _mode: u32) -> io::Result<()> {
     fs::create_dir_all(parent)
 }
 
