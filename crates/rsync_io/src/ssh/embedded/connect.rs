@@ -1182,6 +1182,57 @@ mod tests {
         );
     }
 
+    /// The warnings this thread emitted since the last drain.
+    fn drained_warnings() -> Vec<String> {
+        logging::drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                logging::DiagnosticEvent::Info {
+                    code: logging::LogCode::Warning,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A `-` list removes from the transport's own hardware-tuned cipher
+    /// order, whichever order this CPU gets (user decision 2026-11-04).
+    #[test]
+    fn a_minus_list_removes_from_the_tuned_cipher_order() {
+        let ssh_config = SshConfig {
+            cipher_spec: Some("-aes128-gcm@openssh.com".to_owned()),
+            ..SshConfig::default()
+        };
+        let config = build_client_config(&ssh_config).expect("config builds");
+        let expected: Vec<String> = cipher::default_ciphers()
+            .into_iter()
+            .filter(|name| name != "aes128-gcm@openssh.com")
+            .collect();
+        assert_eq!(names(&config.preferred.cipher), expected);
+    }
+
+    /// A mixed list keeps the names the transport negotiates and warns once
+    /// per name it drops (user decision 2026-11-04).
+    #[test]
+    fn a_mixed_mac_list_keeps_working_and_warns_per_dropped_name() {
+        let _ = drained_warnings();
+        let ssh_config = SshConfig {
+            mac_spec: Some("umac-64@openssh.com,hmac-sha2-256,umac-128-etm@openssh.com".to_owned()),
+            ..SshConfig::default()
+        };
+        let config = build_client_config(&ssh_config).expect("config builds");
+        assert_eq!(names(&config.preferred.mac), ["hmac-sha2-256"]);
+        assert_eq!(
+            drained_warnings(),
+            [
+                "MACs: dropping umac-64@openssh.com, which the embedded ssh transport cannot negotiate",
+                "MACs: dropping umac-128-etm@openssh.com, which the embedded ssh transport cannot negotiate",
+            ]
+        );
+    }
+
     /// The explicit cipher list outranks an ssh_config `Ciphers` line.
     #[test]
     fn build_client_config_explicit_ciphers_beat_the_config_spec() {
