@@ -223,7 +223,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Follow upstream for `--fsync` (regular files only), delete order (a directory is emptied before removal), `SIGPIPE` (ignored, so a broken pipe is a write error) and remote-to-remote transfers (refused) (#8197)
 - Daemon logging follows upstream: timestrings, per-file `%b`, `%c` and `%C`, deletions, module-relative file names, server diagnostics, the contents of a directory cleared to make room, a peer `MSG_INFO`, a syslog fallback when the log file cannot be opened, and the reverse-DNS name in its original case, and width, alignment and human-readable modifiers in `log format` (#7892, #8135, #8136, #8138, #8147, #8160, #8159, #8165, #8123, #8155)
 
-- Embedded `ssh://` transfers read ssh_config keywords as OpenSSH 10.0p1 does: a keyword OpenSSH does not know is refused once the whole file has been read, with every bad line reported; `IgnoreUnknown` is honoured; a keyword with no value is refused; and every keyword OpenSSH accepts still loads, including the ones the embedded transport does not act on (#PRNUM)
+- Embedded `ssh://` transfers read ssh_config keywords as OpenSSH 10.0p1 does: a keyword OpenSSH does not know is refused once the whole file has been read, with every bad line reported; `IgnoreUnknown` is honoured; a keyword with no value is refused; and every keyword OpenSSH accepts still loads, including the ones the embedded transport does not act on (#8329)
 ### Performance
 - Local `--checksum` compares source and destination through the parallel checksum service: same-size pairs of a directory are hashed in one rayon batch, and files of 8 MiB or more as 4 MiB block vectors in parallel; decisions and output are unchanged against rsync 3.5.1 (#8249)
 
