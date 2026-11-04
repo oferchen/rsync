@@ -139,6 +139,36 @@ pub fn is_supported() -> bool {
 /// pre-5.13 kernels so the daemon can keep running with SEC-1 `*at` helpers
 /// as the sole defense.
 pub fn restrict_to_module_paths(allowed_roots: &[&Path]) -> LandlockOutcome {
+    restrict_to_paths(allowed_roots, &[], &[])
+}
+
+/// Restricts the current thread like [`restrict_to_module_paths`], and also
+/// grants a receiver's basis directories the least each one needs.
+///
+/// upstream: generator.c:1073 `try_dests_reg()` opens a `--compare-dest` or
+/// `--copy-dest` file as a basis or copies it (`copy_altdest_file()`), and
+/// hard-links a `--link-dest` file into the destination. None of them is
+/// ever created in, removed from or renamed within.
+///
+/// - `readable_roots` get `ReadFile` and `ReadDir`.
+/// - `link_source_roots` also get `Refer` and every file-content right
+///   (`WriteFile`, `Truncate`, `Execute`, `IoctlDev`). Landlock refuses a
+///   cross-directory `link(2)` with `EXDEV` when the file would gain rights at
+///   its new path, and the destination grants all of them. The hard-linked
+///   inode is writable through the destination anyway, which is what
+///   `--link-dest` means.
+///
+/// The same open-time rules as [`restrict_to_module_paths`] apply to every
+/// root: absolute, existing, opened before `restrict_self()`.
+///
+/// # Errors
+///
+/// As [`restrict_to_module_paths`].
+pub fn restrict_to_paths(
+    allowed_roots: &[&Path],
+    readable_roots: &[&Path],
+    link_source_roots: &[&Path],
+) -> LandlockOutcome {
     // Request the highest ABI we support; BestEffort lets the crate silently
     // drop rights the running kernel cannot honour (REFER on 5.13-5.18,
     // TRUNCATE on 5.13-6.1, IoctlDev on 5.13-6.6, network scopes on 5.13-6.6,
@@ -177,6 +207,23 @@ pub fn restrict_to_module_paths(allowed_roots: &[&Path]) -> LandlockOutcome {
             Err(err) => return LandlockOutcome::Error(err),
         };
         created = match created.add_rule(PathBeneath::new(fd, access)) {
+            Ok(c) => c,
+            Err(err) => return LandlockOutcome::Error(io::Error::other(err.to_string())),
+        };
+    }
+
+    let readable = AccessFs::ReadFile | AccessFs::ReadDir;
+    let link_source = AccessFs::from_file(ABI::V5) | AccessFs::ReadDir | AccessFs::Refer;
+    let basis_rules = readable_roots
+        .iter()
+        .map(|root| (root, readable))
+        .chain(link_source_roots.iter().map(|root| (root, link_source)));
+    for (root, rights) in basis_rules {
+        let fd = match crate::pinned_root::open_o_path(root) {
+            Ok(fd) => fd,
+            Err(err) => return LandlockOutcome::Error(err),
+        };
+        created = match created.add_rule(PathBeneath::new(fd, rights)) {
             Ok(c) => c,
             Err(err) => return LandlockOutcome::Error(io::Error::other(err.to_string())),
         };
