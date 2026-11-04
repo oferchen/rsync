@@ -132,7 +132,18 @@ jobs:
         if: matrix.row.needs_bin
         run: cargo build --locked -p bin --bin oc-rsync
 
+      # Same per-process temp-dir runner as ci.yml's Windows cell: without it,
+      # test processes collide on %TEMP% names and fail with Access denied (5).
+      - name: Build per-process temp-dir runner
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo build --locked -p test-support --bin tmp-runner
+          cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
       - name: Test (${{ matrix.row.name }})
+        env:
+          # Read only when the target is Windows MSVC.
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
         # `shell: bash` turns on pipefail, so the tee never hides a failure.
         shell: bash
         run: |
