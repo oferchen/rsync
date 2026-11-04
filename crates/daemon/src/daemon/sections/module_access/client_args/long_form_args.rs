@@ -664,7 +664,7 @@ fn parse_transfer_size_limit(opt_name: &str, value: &str) -> Result<u64, String>
     // `dsize >= size_max` clause. `(double)(SIZE_MAX / 2)` rounds to 2^63, so
     // the boundary is 2^63 in DOUBLE space, not in integer space.
     //
-    // Measured against real rsync 3.5.0: the largest accepted value is
+    // Measured against real rsync 3.5.1: the largest accepted value is
     // 9223372036854774784 (2^63 - 1024, the greatest double below 2^63), while
     // 9223372036854775807 (`i64::MAX`) is already reported "too large".
     // Comparing as integers would accept a band of values upstream refuses,

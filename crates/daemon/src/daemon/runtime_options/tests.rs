@@ -406,7 +406,7 @@ mod runtime_options_tests {
     ///
     /// Recording the directive only as a module default left `log_file` `None`,
     /// so the sink was never opened and those lines went to stderr or nowhere.
-    /// Measured against rsync 3.5.0 on the same config: upstream wrote three
+    /// Measured against rsync 3.5.1 on the same config: upstream wrote three
     /// lines to the file and nothing to stderr; oc created no file at all.
     #[test]
     fn global_log_file_directive_opens_the_daemon_log() {

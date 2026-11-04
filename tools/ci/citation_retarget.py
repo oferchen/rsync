@@ -426,7 +426,7 @@ def process(args) -> tuple[list[Hit], dict[str, str], dict[str, list[str]]]:
         if not any(f".{e}:" in text or f".{e} line" in text for e in CITED_EXTENSIONS):
             continue
         if src.startswith(RECORD_PREFIXES):
-            # A record named for a release (`upstream-3.5.0-rrsync-model.md`)
+            # A record named for a release (`upstream-<version>-<topic>.md`)
             # documents that release and keeps its lines even when they match.
             if RELEASE_IN_NAME.search(src) or not tracks_old_pin(text, old_m, prior_m, old_text_cache):
                 records["kept"].append(src)

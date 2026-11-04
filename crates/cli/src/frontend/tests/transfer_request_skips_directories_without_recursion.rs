@@ -118,7 +118,7 @@ fn skip_notice_count(stdout: &str) -> usize {
 /// makes `--info=name0` the discriminating cell rather than a variation on the
 /// default.
 ///
-/// Measured against rsync 3.5.0: it prints the line in all three cells below.
+/// Measured against rsync 3.5.1: it prints the line in all three cells below.
 #[test]
 fn skipping_directory_prints_without_name_output() {
     for flags in [&[][..], &["--info=name0"][..], &["--info=skip1"][..]] {

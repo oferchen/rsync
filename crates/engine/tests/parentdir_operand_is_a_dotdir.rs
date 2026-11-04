@@ -9,7 +9,7 @@
 //! oc used `Path::file_name()` on the operand instead. That returns `None` for
 //! a `ParentDir` final component, and the `None` became
 //! `LocalCopyArgumentError::DirectoryNameUnavailable` - "cannot determine
-//! directory name", exit 23, nothing transferred. MEASURED against rsync 3.5.0:
+//! directory name", exit 23, nothing transferred. MEASURED against rsync 3.5.1:
 //! `src/..`, `src/./..`, `src/sym-to-dir/..` and a bare `..` all aborted at 23
 //! where upstream exits 0 having copied the parent's contents.
 //!
@@ -274,7 +274,7 @@ fn a_basename_ending_in_two_dots_is_not_a_parent_dir_component() {
 /// `..` arm is reached, and `flist.c:2898-2907` rejects the operand outright
 /// with `found ".." dir in relative path: %s` / `exit_cleanup(RERR_SYNTAX)`.
 ///
-/// oc does not implement that rejection yet (MEASURED: rsync 3.5.0 exits 1,
+/// oc does not implement that rejection yet (MEASURED: rsync 3.5.1 exits 1,
 /// oc exits 23 - a KNOWN residual divergence, unchanged by this fix). What this
 /// cell pins is only the SCOPE: `--relative` must not quietly acquire contents
 /// semantics, which upstream never grants it.

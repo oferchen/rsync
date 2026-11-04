@@ -37,7 +37,7 @@
 //! `generator.c:1629` and `generator.c:2481` both compute `int del_opts =
 //! delete_mode || force_delete ? DEL_RECURSE : 0`, so under `--delete` or
 //! `--force` upstream removes a POPULATED directory obstacle recursively and
-//! completes at exit 0. Measured against 3.5.0 over a real `--server` child:
+//! completes at exit 0. Measured against 3.5.1 over a real `--server` child:
 //! `--force`, `--delete`, and both together each give `rc=0` with the symlink
 //! in place and `deleting obstacle/occupant` on the wire, while the bare run
 //! refuses at 23.

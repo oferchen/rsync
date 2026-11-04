@@ -9,7 +9,7 @@
 //! 3. Verify protocol negotiation, file transfers, and metadata preservation
 //!
 //! Upstream reference:
-//! - `target/interop/upstream-src/rsync-3.5.0/clientserver.c` - daemon protocol
+//! - `target/interop/upstream-src/rsync-3.5.1/clientserver.c` - daemon protocol
 //! - `target/interop/upstream-src/rsync-3.5.1/main.c:1341-1458` - client_run()
 
 mod common;

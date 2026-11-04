@@ -4,10 +4,10 @@
 //! itemize row for a dir/symlink whose attributes changed but whose node was
 //! kept.
 //!
-//! `#[ignore]`d because it requires a locally built upstream rsync 3.5.0
-//! (`target/interop/upstream-src/rsync-3.5.0/rsync`), which is not present on
+//! `#[ignore]`d because it requires a locally built upstream rsync 3.5.1
+//! (`target/interop/upstream-src/rsync-3.5.1/rsync`), which is not present on
 //! a bare checkout; build it with `bash tools/ci/run_interop.sh` or by hand
-//! (`git clone --branch v3.5.0 https://github.com/RsyncProject/rsync.git`
+//! (`git clone --branch v3.5.1 https://github.com/RsyncProject/rsync.git`
 //! then `./configure --disable-md2man --disable-openssl --disable-xxhash
 //! --disable-zstd --disable-lz4 && make`). Run explicitly with `--ignored`
 //! once built. Mirrors the `require_upstream` convention in the sibling
@@ -52,19 +52,19 @@ use test_support::{Deadlined, run_deadlined};
 /// Wall-clock budget for the upstream `--read-batch` subprocess.
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Locally built upstream rsync 3.5.0, source-tree layout.
-fn upstream_3_5_0() -> PathBuf {
+/// Locally built upstream rsync 3.5.1, source-tree layout.
+fn upstream_3_5_1() -> PathBuf {
     PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/interop/upstream-src/rsync-3.5.0/rsync"
+        "/../../target/interop/upstream-src/rsync-3.5.1/rsync"
     ))
 }
 
-/// Panics unless `path` is a genuine upstream rsync 3.5.0 binary.
+/// Panics unless `path` is a genuine upstream rsync 3.5.1 binary.
 fn require_upstream(path: &Path) {
     if !path.exists() {
         panic!(
-            "upstream rsync 3.5.0 required for this oracle test, but {} is absent. \
+            "upstream rsync 3.5.1 required for this oracle test, but {} is absent. \
              Build it with `bash tools/ci/run_interop.sh` or by hand (see this file's \
              module doc). This test is #[ignore]d for that reason - run with --ignored \
              once the binary exists.",
@@ -79,8 +79,8 @@ fn require_upstream(path: &Path) {
     };
     let banner = String::from_utf8_lossy(&output.stdout);
     let first = banner.lines().next().unwrap_or_default();
-    if !(first.starts_with("rsync  version 3.5.0") && first.contains("protocol version")) {
-        panic!("{} is not upstream rsync 3.5.0: {first:?}", path.display());
+    if !(first.starts_with("rsync  version 3.5.1") && first.contains("protocol version")) {
+        panic!("{} is not upstream rsync 3.5.1: {first:?}", path.display());
     }
 }
 
@@ -103,9 +103,9 @@ fn build_tree(root: &Path, dir_mode: u32, file_time: FileTime, link_time: FileTi
 /// `.d`/`.L` itemize row for each - proving the write side carries the
 /// metadata-only iflags word upstream expects.
 #[test]
-#[ignore = "requires a locally built upstream rsync 3.5.0; run with --ignored"]
+#[ignore = "requires a locally built upstream rsync 3.5.1; run with --ignored"]
 fn upstream_read_batch_itemizes_kept_nonfile_metadata_changes() {
-    let upstream = upstream_3_5_0();
+    let upstream = upstream_3_5_1();
     require_upstream(&upstream);
     let oc_rsync = test_support::oc_rsync_bin();
 

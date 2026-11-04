@@ -896,7 +896,7 @@ fn completed_run_exit_error(
 /// The directory the sender would `chdir` into for `source`, used as the
 /// confinement anchor for that operand's content reads.
 ///
-/// upstream: `rsync-3.5.0/main.c` chdirs to the transfer root before the
+/// upstream: `rsync-3.5.1/main.c:981` chdirs to the transfer root before the
 /// sender runs, and `sender.c` opens file content confined beneath it. A
 /// trailing-slash operand (`src/`) transfers the directory's *contents*, so the
 /// operand itself is the root; otherwise the operand is the first entry and its

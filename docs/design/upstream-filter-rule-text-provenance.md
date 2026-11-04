@@ -1,13 +1,16 @@
-# Upstream rsync 3.5.0 filter-rule text provenance
+# Upstream rsync filter-rule text provenance
 
 Read-only extraction of the rule set oc-rsync must mirror. Source of truth is
-the C at `target/interop/upstream-src/rsync-3.5.0/`, primarily `exclude.c`
-plus the `FILTRULE_FROM_FILE` bit in `rsync.h`.
+the C at `target/interop/upstream-src/rsync-3.5.1/`, primarily `exclude.c`
+plus the `FILTRULE_FROM_FILE` bit in `rsync.h`. The model arrived in 3.5.0.
+`exclude.c` is byte-identical in 3.5.0 and 3.5.1, so every `exclude.c` line
+below holds for both releases.
 
 This document is the specification the implementation work is measured against.
 It records what upstream *does*, not what oc-rsync currently does. Every rule
 below was additionally confirmed by running the real 3.5.0 binary; the probes
-are in section 9.
+are in section 9. They were not re-run against 3.5.1: the strings come from
+`exclude.c`, which 3.5.1 did not change.
 
 ## 0. Why this exists
 
@@ -49,7 +52,7 @@ Two inputs, and both are load-bearing:
 | Input | Kind | Answers |
 |---|---|---|
 | `rule_src_in_file` | dynamic, process-global | are we parsing a file's contents *right now*? |
-| `FILTRULE_FROM_FILE` (`rsync.h:1055`, bit 21) | per-rule flag | did *this rule's* text come from a file? |
+| `FILTRULE_FROM_FILE` (`rsync.h:1056`, bit 21) | per-rule flag | did *this rule's* text come from a file? |
 
 The per-rule flag exists for the **deferred** case: a per-directory merge rule
 whose name came from a file, but which is applied during traversal, long after
@@ -320,7 +323,7 @@ still in scope:
 - **Trace-time messages** (`add_rule`, the match trace). By the time a rule is
   compiled, `FilterRule`/`CompiledRule` hold `pattern: String` and nothing
   else - oc has **no field equivalent to `FILTRULE_FROM_FILE`**
-  (`rsync.h:1055`). Provenance is already lost. These sites cannot redact
+  (`rsync.h:1056`). Provenance is already lost. These sites cannot redact
   until a provenance bit is carried on the rule itself, through parsing and
   into the compiled form.
 
@@ -362,7 +365,7 @@ Out of scope: `daemon_config_filter_file` (`exclude.c:1681`,
 `clientserver.c:931/954`) gates `operator_path_resolve` so the daemon's own
 `filter` / `include from` / `exclude from` parameters may live outside the
 module. That is path confinement, covered by
-[upstream-3.5.0-path-confinement-model.md](upstream-3.5.0-path-confinement-model.md).
+[upstream-path-confinement-model.md](upstream-path-confinement-model.md).
 
 ## References
 
@@ -380,4 +383,4 @@ module. That is path confinement, covered by
 - `exclude.c:1800-1801` - over-long line, length 0
 - `exclude.c:1807` - `rule_src_file` re-set inside the read loop
 - `exclude.c:1814-1816` - restore on exit
-- `rsync.h:1055` - `FILTRULE_FROM_FILE` (1<<21)
+- `rsync.h:1056` - `FILTRULE_FROM_FILE` (1<<21)

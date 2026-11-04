@@ -5,7 +5,7 @@
 //! upstream emission text; the live send/receive paths call these so every
 //! upstream line has exactly one oc owner.
 //!
-//! # Debug Levels (as measured on upstream 3.5.0)
+//! # Debug Levels (as measured on upstream 3.5.1)
 //!
 //! - **Level 1**: `delta-transmission %s` (generator.c:2764; owned by the
 //!   receiver-side transfer setup and the local-copy frontend, not here) and

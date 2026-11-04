@@ -19,7 +19,7 @@
 //! `"a is uptodate"` for that case because it keyed the wording on the event
 //! KIND (`MetadataReused`) rather than on whether anything actually changed.
 //!
-//! Measured against the real rsync 3.5.0 binary on this fixture:
+//! Measured against the real rsync 3.5.1 binary on this fixture:
 //!
 //! | flags            | upstream | oc (pre-fix)    |
 //! |------------------|----------|-----------------|

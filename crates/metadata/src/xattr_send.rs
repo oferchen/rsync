@@ -374,7 +374,7 @@ mod macos_provenance_tests {
 /// (exclude.c:1010), so the two halves genuinely see different rule sets: an
 /// `H`/`S` rule shapes only the source read and a `P`/`R` rule only the
 /// destination prune. Sharing one predicate across both collapses that
-/// distinction - and measured against rsync 3.5.0 it is observable, e.g.
+/// distinction - and measured against rsync 3.5.1 it is observable, e.g.
 /// `--filter='Hx user.foo'` must not copy the attribute while
 /// `--filter='Px user.foo'` must not delete an extraneous one.
 ///

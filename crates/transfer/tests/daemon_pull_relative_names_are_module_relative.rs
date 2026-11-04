@@ -521,7 +521,7 @@ fn concurrent_connections_do_not_share_the_relative_pivot() {
 /// pushes `dest/.` into the single-file arm at main.c:865, whose
 /// `change_dir#3` on the not-yet-existing `dest` fails.
 ///
-/// Measured against the 3.5.0 daemon: `rsync -r <src>/a
+/// Measured against the 3.5.1 daemon: `rsync -r <src>/a
 /// rsync://host/wrmod/dest/.` lands `dest/a/b/file.txt` and `dest/a/c.txt`.
 /// This is the cell that discriminates "axis pinned ON" - none of the pull
 /// shapes do, because the sender's non-relative walk splits on the last `/`

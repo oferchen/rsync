@@ -362,7 +362,7 @@ fn build_daemon_filter_rules(
 /// `add_rule` gates the embedded-slash anchoring (exclude.c:298-306), the
 /// `/***` directory suffix (exclude.c:311-317) and the add-time side drop
 /// (exclude.c:279-285) on the first shape's bits, so none of the three applies
-/// to a merge file's rules. MEASURED against rsync 3.5.0: a module whose
+/// to a merge file's rules. MEASURED against rsync 3.5.1: a module whose
 /// `filter = H bait` serves `bait`, while the same rule reached through
 /// `filter = merge FILE` HIDES it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -672,7 +672,7 @@ fn push_merge_file_rules(
     // `word_split` (raised by the `w` modifier) changes BOTH halves of that
     // loop: a record ends at any `isspace` (:1772-1773) instead of at a
     // newline, and the `word_split ||` disjunct at :1806 stops treating a
-    // leading `;`/`#` as a comment. MEASURED against rsync 3.5.0 on a file
+    // leading `;`/`#` as a comment. MEASURED against rsync 3.5.1 on a file
     // holding `- bait - other`: `filter = merge,w FILE` is rc 5 (`unexpected
     // end of filter rule`, because the split leaves a patternless `-`) while
     // `filter = merge FILE` serves everything (the whole line is one pattern).
@@ -1078,7 +1078,7 @@ fn read_filter_file_contents(path: &Path) -> io::Result<String> {
 /// Nothing is trimmed. The pattern length upstream takes is `strlen(s)`
 /// (`exclude.c:1465`), so trailing whitespace is pattern text.
 ///
-/// MEASURED against rsync 3.5.0 with a module whose `exclude from` file holds
+/// MEASURED against rsync 3.5.1 with a module whose `exclude from` file holds
 /// the single line `a ` (trailing space), over a module directory holding `a`
 /// and `a `: upstream hides `a ` and serves `a`; oc trimmed the rule, hid `a`
 /// and served `a `. Both at exit 0, with no diagnostic - a silent divergence
@@ -1474,7 +1474,7 @@ fn parse_daemon_filter_token(
     // word onto the rule before it and refusing would have turned
     // configurations upstream serves into refusals. [`rule_token_len`] ends the
     // gluing, so the arm's whole reason for existing is gone and both xflags
-    // now refuse alike. MEASURED against rsync 3.5.0: `filter = - foo bar` and
+    // now refuse alike. MEASURED against rsync 3.5.1: `filter = - foo bar` and
     // `filter = - foo hideout` are both rc 5, where oc served the module with
     // every named file listed.
     Err(MalformedRule::UnknownRule {
@@ -2005,7 +2005,7 @@ fn build_prefixed_rule(
     // files from a pulling client and refuses incoming writes alike, which is
     // why no side flag goes on the wire rule here.
     //
-    // MEASURED against rsync 3.5.0, module `foo`+`bar`+`keep`+`ctl`:
+    // MEASURED against rsync 3.5.1, module `foo`+`bar`+`keep`+`ctl`:
     //   filter = P bar          -> list serves foo,keep,ctl; push refuses bar
     //   filter = H bar          -> both directions serve everything
     //   filter = exclude,r keep -> list serves foo,bar,ctl; push refuses keep

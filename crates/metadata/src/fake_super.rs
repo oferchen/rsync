@@ -1139,7 +1139,7 @@ mod tests {
                 .collect()
         };
 
-        // Measured from `rsync-3.5.0/rsync -rA -M--fake-super src/ dst/`.
+        // Measured from `rsync-3.5.1/rsync -rA -M--fake-super src/ dst/`.
         assert_eq!(
             read_u32s(FAKE_SUPER_ACCESS_ACL_XATTR),
             vec![128, 4, 7, 128, NOBODY, 0x8000_0007]

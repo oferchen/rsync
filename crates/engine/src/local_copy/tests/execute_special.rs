@@ -1984,7 +1984,7 @@ fn execute_keep_dirlinks_multiple_symlink_subdirs_all_preserved() {
     // refuses an absolute out-of-tree target, so only this shape exercises the
     // "-K preserves the symlink and writes through it" behaviour the test is
     // named for; the refusal is pinned separately in execute_dirlinks.rs.
-    // Measured against rsync 3.5.0: this fixture exits 0 with both links intact,
+    // Measured against rsync 3.5.1: this fixture exits 0 with both links intact,
     // while the absolute out-of-tree form exits 23 and transfers nothing.
     let real_alpha = dest_root.join("real_alpha");
     fs::create_dir(&real_alpha).expect("create real alpha");

@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn a_lone_carriage_return_ends_a_record() {
         // upstream: exclude.c:1774 - `ch == '\r'` breaks the record loop just
-        // as `\n` does. MEASURED against rsync 3.5.0: a merge file holding
+        // as `\n` does. MEASURED against rsync 3.5.1: a merge file holding
         // `- a.txt \r- b\r` excludes a file named `a.txt ` (trailing space).
         assert_eq!(records("- a\r- b\r"), vec!["- a", "- b"]);
         assert_eq!(records("- a\r"), vec!["- a"]);

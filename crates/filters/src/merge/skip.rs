@@ -68,7 +68,7 @@ mod tests {
     fn a_comment_marker_counts_only_in_column_zero() {
         assert!(!filter_file_line_is_rule("# x", true));
         assert!(!filter_file_line_is_rule("; x", true));
-        // MEASURED against rsync 3.5.0: an `--exclude-from` file holding only
+        // MEASURED against rsync 3.5.1: an `--exclude-from` file holding only
         // `  #a` excludes a file literally named `  #a`.
         assert!(filter_file_line_is_rule("  # x", true));
         assert!(filter_file_line_is_rule("  ; x", true));

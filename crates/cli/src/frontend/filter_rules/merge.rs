@@ -310,7 +310,7 @@ pub(crate) fn process_merge_directive(
                 // renders it with rule_text (exclude.c:135), and this guard can
                 // only fire on a rule read out of a merge file - the peer picks
                 // which file that is. See
-                // docs/design/upstream-3.5.0-filter-rule-text-provenance.md.
+                // docs/design/upstream-filter-rule-text-provenance.md.
                 return Err(rsync_error!(
                     1,
                     format!(

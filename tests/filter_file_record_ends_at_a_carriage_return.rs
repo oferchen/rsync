@@ -22,7 +22,7 @@
 //! bytes - so it matched nothing, and each file those rules were meant to
 //! exclude transferred instead, at exit 0.
 //!
-//! MEASURED against rsync 3.5.0 with a source holding `a` and `a ` (trailing
+//! MEASURED against rsync 3.5.1 with a source holding `a` and `a ` (trailing
 //! space) and a filter file of `- a \r`: upstream excludes `a ` and copies
 //! `a`; oc copied both. The same divergence reproduced through a `.rsync-filter`
 //! dir-merge, through `--filter='. FILE'`, and through `--exclude-from`. Every

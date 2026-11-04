@@ -243,7 +243,7 @@ mod permission_denied {
     /// destination left untouched - even under `-p`, since nothing gets far
     /// enough to repair the mode.
     ///
-    /// Measured against rsync 3.5.0: dest root 0o644, `-r` and `-rp` both give
+    /// Measured against rsync 3.5.1: dest root 0o644, `-r` and `-rp` both give
     /// rc 3, zero files, root still 0o644. A read-based probe cannot pin this:
     /// 0o644 IS readable, so the pre-fix probe passed and the run limped to a
     /// divergent exit 23.

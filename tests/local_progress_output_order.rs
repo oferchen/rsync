@@ -6,7 +6,7 @@
 //! <dest>` from `get_local_name()` (main.c:807-808), then each entry's name as
 //! the generator reaches it (generator.c:recv_generator() -> itemize() ->
 //! log_item()), with a regular file's progress block right after its name.
-//! Captured from rsync 3.5.0 with stdout and stderr merged into one pipe:
+//! Captured from rsync 3.5.1 with stdout and stderr merged into one pipe:
 //!
 //! ```text
 //! $ rsync -avPc zzz/ qqq 2>&1 | cat
@@ -173,7 +173,7 @@ struct Expected {
     trailer: bool,
 }
 
-/// upstream 3.5.0's normalized output for the fixture.
+/// upstream 3.5.1's normalized output for the fixture.
 fn expected_sequence(expected: Expected) -> Vec<String> {
     let entry = |name: &str, dir: bool| match expected.listing {
         Listing::Names => name.to_owned(),
@@ -505,19 +505,19 @@ fn daemon_push_names_each_entry_once_with_directory_lines() {
     );
 }
 
-/// Locates an upstream rsync 3.5.0 to use as a live oracle: the
+/// Locates an upstream rsync 3.5.1 to use as a live oracle: the
 /// `OC_RSYNC_UPSTREAM_RSYNC` override, then the interop install and build
-/// trees. Returns it only when its `--version` banner names 3.5.0.
+/// trees. Returns it only when its `--version` banner names 3.5.1.
 fn locate_upstream_rsync() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Some(explicit) = std::env::var_os("OC_RSYNC_UPSTREAM_RSYNC") {
         candidates.push(PathBuf::from(explicit));
     }
-    if let Some(installed) = test_support::upstream_install_bin("3.5.0") {
+    if let Some(installed) = test_support::upstream_install_bin("3.5.1") {
         candidates.push(installed);
     }
     if let Some(root) = test_support::workspace_root() {
-        candidates.push(root.join("target/interop/upstream-src/rsync-3.5.0/rsync"));
+        candidates.push(root.join("target/interop/upstream-src/rsync-3.5.1/rsync"));
     }
     candidates.into_iter().find(|candidate| {
         Command::new(candidate)
@@ -526,16 +526,16 @@ fn locate_upstream_rsync() -> Option<PathBuf> {
             .ok()
             .and_then(|out| String::from_utf8(out.stdout).ok())
             .and_then(|banner| banner.lines().next().map(str::to_owned))
-            .is_some_and(|first| first.starts_with("rsync") && first.contains(" version 3.5.0"))
+            .is_some_and(|first| first.starts_with("rsync") && first.contains(" version 3.5.1"))
     })
 }
 
-/// When an upstream 3.5.0 binary is available, its own output for the same
+/// When an upstream 3.5.1 binary is available, its own output for the same
 /// fixture must match both the pinned sequence and oc's output.
 #[test]
 fn local_copy_output_order_matches_live_upstream_oracle() {
     let Some(upstream) = locate_upstream_rsync() else {
-        eprintln!("skipping: no upstream rsync 3.5.0 found (set OC_RSYNC_UPSTREAM_RSYNC)");
+        eprintln!("skipping: no upstream rsync 3.5.1 found (set OC_RSYNC_UPSTREAM_RSYNC)");
         return;
     };
     let names = |progress, trailer| {

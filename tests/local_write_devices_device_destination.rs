@@ -305,7 +305,7 @@ fn ignore_existing_leaves_a_device_destination_alone() {
 ///
 /// The exit code is deliberately NOT asserted. `--write-devices` into a device
 /// this user does not own exits 23 on oc with `failed to apply dest_mode`,
-/// where rsync 3.5.0 exits 0 (measured on macOS as an unprivileged user), and
+/// where rsync 3.5.1 exits 0 (measured as an unprivileged user), and
 /// that is a SEPARATE defect: upstream's `set_file_attrs()` skips the `chmod`
 /// when the permission bits already match (`rsync.c` - `if
 /// (!BITS_EQUAL(st->st_mode, new_mode, CHMOD_BITS))`), and `dest_mode()`'s

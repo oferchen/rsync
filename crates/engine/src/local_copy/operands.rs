@@ -900,7 +900,7 @@ mod tests {
     ///   requires a separator AFTER the dot.
     ///
     /// `tree/.` satisfies the first and not the second, so upstream preserves
-    /// the whole relative path. Measured against rsync 3.5.0: `-aR tree/.`
+    /// the whole relative path. Measured against rsync 3.5.1: `-aR tree/.`
     /// lands at `dst/tree/sub/f`, and `-aR tree/sub/.` at `dst/tree/sub/f`.
     /// Treating the trailing dot as a pivot dropped the leading components and
     /// wrote to `dst/sub/f` and `dst/f` respectively - a placement defect, not

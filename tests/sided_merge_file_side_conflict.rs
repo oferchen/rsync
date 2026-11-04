@@ -168,7 +168,7 @@ fn sided_dir_merge_refuses_a_sided_rule() {
 #[test]
 fn sided_merge_refuses_a_protect_rule() {
     // `P` sets FILTRULE_RECEIVER_SIDE upstream, so it counts as a specified
-    // side even though no `s`/`r` modifier is typed. Measured: rsync 3.5.0
+    // side even though no `s`/`r` modifier is typed. Measured: rsync 3.5.1
     // exits 1 here.
     assert_refused(".s f.rules", "f.rules", "P foo");
 }
@@ -202,7 +202,7 @@ fn unsided_merge_accepts_a_sided_rule() {
 
 #[test]
 fn perishable_modifier_is_not_a_side() {
-    // `p` is the perishable modifier, not a side. Measured: rsync 3.5.0 exits
+    // `p` is the perishable modifier, not a side. Measured: rsync 3.5.1 exits
     // 0. This pins the guard against keying on "the directive has modifiers"
     // instead of "the directive names a side".
     assert_accepted(":p .rules", ".rules", "-r foo");

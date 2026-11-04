@@ -50,7 +50,7 @@ impl From<SizeArgError> for SizeParseError {
 /// `parse_size_spec` would silently start accepting an empty value for an
 /// option whose minimum excludes 0.
 ///
-/// Measured against rsync 3.5.0: an empty value behaves exactly like `=0` on
+/// Measured against rsync 3.5.1: an empty value behaves exactly like `=0` on
 /// each option - and for `--max-size` that EXCLUDES every non-empty file
 /// rather than meaning "no limit", so this is not a "fall back to the
 /// default" rule.

@@ -309,7 +309,7 @@ fn a_sole_creator_relative_parent_must_not_escape_the_module() {
 
 /// AVAILABILITY, on the same fixture. Confining the implied-parent creation
 /// must not turn a working transfer into a failure: the module still receives
-/// the whole `-R` path. Measured identical to rsync 3.5.0, which likewise
+/// the whole `-R` path. Measured identical to rsync 3.5.1, which likewise
 /// replaces the conflicting symlink with a real directory
 /// (`generator.c:1840-1842`).
 #[test]

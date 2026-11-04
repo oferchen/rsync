@@ -607,7 +607,7 @@ mod line_ending_handling {
     /// the opposite ("consistent with most Unix tools"), which is not the rule
     /// rsync implements: the single record it produced carried the `\r` and the
     /// later rules as pattern bytes and matched nothing, so every file those
-    /// rules named transferred instead. MEASURED against rsync 3.5.0.
+    /// rules named transferred instead. MEASURED against rsync 3.5.1.
     #[test]
     fn old_mac_line_endings() {
         let dir = create_tempdir();

@@ -1460,7 +1460,7 @@ mod module_access_tests {
     // daemon that is RECEIVING a push, because enforcement lives in the
     // generator (generator.c:2118-2133) on the receiving side. Dropping the
     // value made a push deposit exactly the files the client asked to
-    // exclude - measured against real rsync 3.5.0, which lands only the small
+    // exclude - measured against real rsync 3.5.1, which lands only the small
     // file where oc landed both.
     #[test]
     fn apply_long_form_args_honours_a_forwarded_max_size() {
@@ -1756,7 +1756,7 @@ mod module_access_tests {
         assert_eq!(config.file_selection.max_file_size, None);
     }
 
-    // Boundary MEASURED against real rsync 3.5.0, not derived from the C by
+    // Boundary MEASURED against real rsync 3.5.1, not derived from the C by
     // reading: upstream's range check compares the strtod `double` with a
     // strict `dsize >= size_max` (options.c:1222-1227), and
     // `(double)(SIZE_MAX / 2)` rounds to 2^63 - so `i64::MAX` itself is
@@ -2319,7 +2319,7 @@ mod module_access_tests {
     /// pins the composed result, so a later "tidy the pattern up" inside the
     /// builder cannot silently undo the fix while the reader test stays green.
     ///
-    /// MEASURED against a real rsync 3.5.0 daemon (module holding `a` and `a `,
+    /// MEASURED against a real rsync 3.5.1 daemon (module holding `a` and `a `,
     /// `exclude from` file holding the one line `a `): upstream served `a` and
     /// hid `a `; oc at f054c633b served `a ` and hid `a`.
     #[test]
@@ -2462,7 +2462,7 @@ mod module_access_tests {
     ///
     /// upstream: `exclude.c:1806` tests `*line` and `line[0]` on the untrimmed
     /// record, so `  ` is not empty and becomes a pattern matching a file
-    /// literally named `  `. MEASURED against an rsync 3.5.0 daemon whose
+    /// literally named `  `. MEASURED against an rsync 3.5.1 daemon whose
     /// `exclude from` file holds the single line `   `: the module's file named
     /// `   ` is hidden.
     #[test]
@@ -2642,7 +2642,7 @@ mod module_access_tests {
     /// (`exclude.c:133-136`), and while `parse_filter_file` reads an
     /// `exclude from` file `rule_src_file` is the file's GIVEN name and
     /// `rule_src_line` counts PHYSICAL lines, comments and blanks included
-    /// (`exclude.c:1754-1760`). MEASURED against rsync 3.5.0: a
+    /// (`exclude.c:1754-1760`). MEASURED against rsync 3.5.1: a
     /// module whose `exclude from` file holds `- ` is refused with
     /// `unexpected end of filter rule: <rule from FILE line 1>` at
     /// `RERR_SYNTAX`. Only the TEXT is in scope here; the delivery shape
@@ -3241,7 +3241,7 @@ mod module_access_tests {
     #[test]
     fn a_valid_modifier_run_after_a_comma_stays_accepted() {
         // NON-VACUITY for the refusals above: the modifier scan must not
-        // become a blanket comma ban. MEASURED against rsync 3.5.0, all rc 0:
+        // become a blanket comma ban. MEASURED against rsync 3.5.1, all rc 0:
         //   filter = hide, keep    (empty modifier run)
         //   filter = hide,p keep   (perishable)
         //   filter = hide,x keep   (xattr)
@@ -3531,7 +3531,7 @@ mod module_access_tests {
     /// clientserver.c:933 parses the directives 227 lines before
     /// parse_arguments at :1160 can set `am_sender`).
     ///
-    /// MEASURED against rsync 3.5.0: `filter = hide bar` on a module holding
+    /// MEASURED against rsync 3.5.1: `filter = hide bar` on a module holding
     /// `bar` + `keep` serves BOTH files upstream; oc served only `keep` while
     /// it kept the rule and applied it at match time.
     #[test]
@@ -4035,7 +4035,7 @@ mod module_access_tests {
 
     #[test]
     fn a_merge_token_expands_to_the_named_files_rules() {
-        // ROW A's red arm. MEASURED against a real rsync 3.5.0 daemon over
+        // ROW A's red arm. MEASURED against a real rsync 3.5.1 daemon over
         // loopback TCP, module holding `bait` + `keep` + `ctl` and a merge file
         // holding `- bait`: upstream hides `bait` and serves the other two. oc
         // built ONE rule - an exclude of the literal pattern `merge <path>` -
@@ -4225,7 +4225,7 @@ mod module_access_tests {
         // parse that was about to read it, and `filter = .e FILE` adds the
         // basename exclude and reads NOTHING.
         //
-        // MEASURED against a real rsync 3.5.0 daemon (module holding `bait` +
+        // MEASURED against a real rsync 3.5.1 daemon (module holding `bait` +
         // `keep`, merge file holding `- bait`): rc 0 with `bait` SERVED and only
         // the merge file itself hidden.
         let dir = tempfile::tempdir().expect("temp dir");
@@ -4249,7 +4249,7 @@ mod module_access_tests {
         // `split_filter_tokens` does not open a token on a bare `.`, so
         // `- keep . FILE` becomes ONE exclude of the literal pattern
         // `keep . FILE`. That is a separate, still-open divergence in the
-        // TOKENISER, measured against rsync 3.5.0 and deliberately untouched by
+        // TOKENISER, measured against rsync 3.5.1 and deliberately untouched by
         // this gate - which is why this cell uses the keyword spelling.
         let dir = tempfile::tempdir().expect("temp dir");
         let path = merge_file(dir.path(), "rules", "- bait\n");
@@ -4279,7 +4279,7 @@ mod module_access_tests {
         // reached and an absent file cannot refuse the module
         // (exclude.c:1639-1664 returns as if the file did not exist).
         //
-        // MEASURED against rsync 3.5.0: `filter = .e NOSUCHFILE` is rc 0 with
+        // MEASURED against rsync 3.5.1: `filter = .e NOSUCHFILE` is rc 0 with
         // every file served, while `filter = merge NOSUCHFILE` is rc 5.
         let dir = tempfile::tempdir().expect("temp dir");
         let missing = daemon_filter_path(&dir.path().join("nosuchfile"));
@@ -4298,7 +4298,7 @@ mod module_access_tests {
         // returns from `parse_filter_file` and `parse_filter_str` carries on
         // with the next token.
         //
-        // MEASURED: `filter = .e MERGEF - other` on rsync 3.5.0 hides the merge
+        // MEASURED: `filter = .e MERGEF - other` on rsync 3.5.1 hides the merge
         // file and `other`, and serves `bait`.
         let dir = tempfile::tempdir().expect("temp dir");
         let path = merge_file(dir.path(), "rules", "- bait\n");
@@ -4381,7 +4381,7 @@ mod module_access_tests {
         // Every word must be one: a merge file has no bare-word fall-through,
         // so a lone `ctl` word is `Unknown filter rule` - which is why BOTH
         // words here carry their own prefix.
-        // MEASURED against rsync 3.5.0: `filter = merge,w FILE` over a file
+        // MEASURED against rsync 3.5.1: `filter = merge,w FILE` over a file
         // holding `-_bait -_ctl` hides `bait` and `ctl`.
         let dir = tempfile::tempdir().expect("temp dir");
         let path = merge_file(dir.path(), "rules", "-_bait -_ctl\n");
@@ -4471,7 +4471,7 @@ mod module_access_tests {
     /// incoming name, and - through the exclude.c:1639-1665 open gate - stops
     /// the daemon's own dir-merge from reading its file.
     ///
-    /// MEASURED against a real rsync 3.5.0 daemon, module holding
+    /// MEASURED against a real rsync 3.5.1 daemon, module holding
     /// `bait`+`ctl`+`keep` (and the same under `sub/`) with a `rules` file
     /// holding `- ctl` in both directories:
     /// * `filter = dir-merge,e rules` -> list serves EVERYTHING but the
@@ -4712,7 +4712,7 @@ mod module_access_tests {
     /// record over verbatim (`exclude.c:1794-1808`); `parse_rule_tok` then takes
     /// `len = strlen(s)` (`exclude.c:1465`). No end is trimmed.
     ///
-    /// MEASURED against rsync 3.5.0: a module whose `exclude from` file holds
+    /// MEASURED against rsync 3.5.1: a module whose `exclude from` file holds
     /// the single line `a ` over a directory holding `a` and `a ` serves `a` and
     /// hides `a `. oc trimmed the rule, so it hid `a` and SERVED `a ` - a
     /// different set of files, at exit 0, with no diagnostic.
@@ -5270,7 +5270,7 @@ mod module_access_tests {
     /// PATTERN position instead. That is precisely the distinction a boundary
     /// scanner cannot draw and the positional walk draws by construction, so
     /// these rows are what stop the refusal above from being over-broad.
-    /// MEASURED rc 0 against rsync 3.5.0 for every row.
+    /// MEASURED rc 0 against rsync 3.5.1 for every row.
     #[test]
     fn build_daemon_filter_rules_still_serves_the_shapes_upstream_accepts() {
         let cases: &[(&str, usize, &str)] = &[
@@ -5429,7 +5429,7 @@ mod module_access_tests {
     // separator check and has no `\` arm, so it copies the byte through as part
     // of the component. oc used to split on it, which relocated the file: with
     // `a` present the request landed at `a/b`, and without it the open failed
-    // ENOENT and the connection died. MEASURED against real upstream 3.5.0.
+    // ENOENT and the connection died. MEASURED against real upstream 3.5.1.
     // upstream main.c:755 `get_local_name()`: `trailing_slash = cp && !cp[1]`,
     // and `file_total > 1 || trailing_slash` takes the make-a-directory branch
     // (mkdir + chdir + NULL local_name), so a single source file lands INSIDE.
@@ -5972,7 +5972,7 @@ mod module_access_tests {
     ///
     /// Dropping it here shipped `sub/file.txt` instead, and the receiver's
     /// `flist.c:1370` "rejecting unrequested file-list name: sub" killed the
-    /// transfer with exit 4. Measured against the 3.5.0 daemon over
+    /// transfer with exit 4. Measured against the 3.5.1 daemon over
     /// `rsync://host/mod/sub/./file.txt`.
     #[test]
     fn resolve_sender_sources_keeps_the_dot_pivot_under_relative() {

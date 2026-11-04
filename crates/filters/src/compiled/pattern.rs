@@ -363,7 +363,7 @@ mod tests {
     /// upstream: `dir/****` wildmatches the same set as `dir/***` (a run of
     /// three or more `*` is one slash-crossing wildcard) and carries
     /// FILTRULE_WILD3_SUFFIX, so it must fold to the same directory-only stem.
-    /// Measured on rsync 3.5.0: `-! /?*/*****` keeps the directory `cI`.
+    /// Measured on rsync 3.5.1: `-! /?*/*****` keeps the directory `cI`.
     #[test]
     fn normalise_pattern_long_star_run_folds_like_wild3() {
         let (anchored, dir_only, core) = normalise_pattern(b"/?*/*****");

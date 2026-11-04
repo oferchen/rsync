@@ -24,7 +24,7 @@
 //! to be unusable, so every later `-b` file is one lost pre-image away from the
 //! operator's only copy. Upstream refuses to make that trade even once.
 //!
-//! Measured against rsync 3.5.0 over this fixture (pull and push alike):
+//! Measured against rsync 3.5.1 over this fixture (pull and push alike):
 //! `rc=11`, exactly ONE `backup mkdir bak/sub failed: Permission denied (13)`
 //! on stderr for a 20-file batch, and every destination file left at its
 //! pre-transfer contents. oc emitted a diagnostic for all 20 and exited 23.
@@ -209,7 +209,7 @@ fn a_failed_commit_backup_aborts_with_file_io() {
     // The exit-code half. 11 (RERR_FILEIO), not the 23 (RERR_PARTIAL) a
     // per-file error accumulates: upstream hands 11 straight to exit_cleanup()
     // (rsync.c:900) and cleanup.c:210-218 only reaches for 23 when no code has
-    // been claimed. Measured identical against rsync 3.5.0 on this fixture.
+    // been claimed. Measured identical against rsync 3.5.1 on this fixture.
     assert_eq!(status, Some(11), "stderr was: {stderr}");
 
     // Nothing may be committed on the way out: the destination still holds the

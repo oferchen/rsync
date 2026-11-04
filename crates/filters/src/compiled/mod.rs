@@ -442,7 +442,7 @@ mod tests {
     /// The dead-rule short-circuit must fire ONLY for the unanchored, non-`**`
     /// form. The anchored spelling excludes the root `U` (slash_handling = 0),
     /// and a `**` rule excludes at depth (slash_handling = -1); both are
-    /// measured against rsync 3.5.0 and must keep matching.
+    /// measured against rsync 3.5.1 and must keep matching.
     #[test]
     fn bracket_internal_slash_anchored_and_wild2_still_match() {
         use crate::FilterRule;

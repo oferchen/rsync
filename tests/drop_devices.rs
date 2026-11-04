@@ -490,7 +490,7 @@ fn rendered_output(output: &Output) -> String {
 /// branch, unlinked whatever occupied the destination, and only then failed the
 /// `mknod` it was never able to perform - destroying an existing file.
 ///
-/// Measured against real upstream 3.5.0, non-root, `/dev/null` onto an existing
+/// Measured against real upstream 3.5.1, non-root, `/dev/null` onto an existing
 /// file: `skipping non-regular file "null"`, exit 0, contents intact.
 #[test]
 fn a_device_entry_never_destroys_an_occupied_destination() {

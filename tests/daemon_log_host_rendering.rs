@@ -27,7 +27,7 @@
 //!
 //! Skip conditions (test passes with a printed reason):
 //! - Loopback TCP is unavailable.
-//! - The cross-implementation cell additionally needs a built upstream 3.5.0
+//! - The cross-implementation cell additionally needs a built upstream 3.5.1
 //!   binary; without it that cell reports why it did not run.
 
 #![cfg(unix)]
@@ -48,12 +48,12 @@ fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
-/// Locates the built upstream 3.5.0 oracle, or `None` when the interop tree has
+/// Locates the built upstream 3.5.1 oracle, or `None` when the interop tree has
 /// not been fetched and built. The cross-implementation cell degrades to a
 /// printed skip rather than a silent pass.
 fn upstream_binary() -> Option<PathBuf> {
     let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.0/rsync");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
     path.is_file().then_some(path)
 }
 
@@ -267,7 +267,7 @@ fn reverse_lookup_on_renders_a_resolved_name() {
     );
 }
 
-/// CROSS-IMPLEMENTATION: the same config served by the real 3.5.0 binary must
+/// CROSS-IMPLEMENTATION: the same config served by the real 3.5.1 binary must
 /// produce the same `%h` / `%a` rendering.
 ///
 /// This is what makes the sentinels evidence rather than a guess - the strings
@@ -276,8 +276,8 @@ fn reverse_lookup_on_renders_a_resolved_name() {
 fn host_rendering_matches_the_real_upstream_daemon() {
     let Some(upstream) = upstream_binary() else {
         println!(
-            "SKIP: upstream 3.5.0 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.0/rsync)"
+            "SKIP: upstream 3.5.1 oracle not built \
+             (target/interop/upstream-src/rsync-3.5.1/rsync)"
         );
         return;
     };

@@ -1513,7 +1513,7 @@ mod symlink_basis_tests {
     /// that walk must not break the followed half, which is the half real
     /// deployments depend on.
     ///
-    /// MEASURED against real rsync 3.5.0: with `basis/sub -> ../outside` owned
+    /// MEASURED against real rsync 3.5.1: with `basis/sub -> ../outside` owned
     /// by the invoking user, upstream consumes the basis and does not transfer
     /// `sub/payload.bin`. The refusing half needs a foreign-owned symlink and so
     /// needs root to construct; it is pinned at the predicate instead, by

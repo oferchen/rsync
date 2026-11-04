@@ -285,7 +285,7 @@ fn receiver_writes_unmunged_target_when_disabled() {
 /// upstream: flist.c:1295,1521-1524 - the receiver prepends `SYMLINK_PREFIX`
 /// while decoding the file list; generator.c:1951 then evaluates
 /// `safe_symlinks && unsafe_symlink(sl, fname)` on that stored value, and
-/// util1.c:1664 rejects every absolute target. Measured against rsync 3.5.0:
+/// util1.c:1664 rejects every absolute target. Measured against rsync 3.5.1:
 /// a push into a `munge symlinks = yes` module with client `--safe-links`
 /// creates no symlinks at all, and each notice quotes the munged target.
 /// Checking the pre-munge wire target instead would create the safe ones -

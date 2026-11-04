@@ -767,12 +767,12 @@ fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
 ///
 /// This is the sibling of
 /// [`keep_dirlinks_delta_transfer_through_symlink_succeeds`]: the two fixtures
-/// differ only in the symlink's target, and upstream 3.5.0 answers them
+/// differ only in the symlink's target, and upstream 3.5.1 answers them
 /// differently. `ds_descend` follows a relative in-tree target and refuses an
 /// absolute one with `ELOOP`, so `-K` does not license an escape - it only
 /// licenses treating an in-tree symlinked directory as a directory.
 ///
-/// Measured directly against the real `rsync 3.5.0` binary on both macOS and
+/// Measured directly against the real `rsync 3.5.1` binary on both macOS and
 /// Linux: this shape exits 23 with "Too many levels of symbolic links" and
 /// leaves the out-of-tree target byte-for-byte untouched.
 ///
@@ -822,7 +822,7 @@ fn keep_dirlinks_refuses_a_destination_symlink_pointing_outside_the_tree() {
 /// A refused `-K` commit must leave the out-of-tree target **intact**.
 ///
 /// The refusal is a security decision, not a licence to destroy: upstream
-/// 3.5.0 refuses this shape without touching the file (measured - the target
+/// 3.5.1 refuses this shape without touching the file (measured - the target
 /// survives byte-for-byte at exit 23). An implementation that cleared the
 /// destination before discovering the escape would turn a refusal into data
 /// loss, which is strictly worse than the escape it prevents.

@@ -189,7 +189,7 @@ pub(super) fn commit_file(
         // (:1523-1528). Without the clear, `create_dir_all` reports
         // `AlreadyExists` for that shape and the `?` fails the whole
         // transfer where upstream unlinks the obstruction and proceeds -
-        // measured against real 3.5.0 over a daemon push, which exits 0.
+        // measured against real 3.5.1 over a daemon push, which exits 0.
         //
         // The create goes through [`create_dir_all_sandboxed`], the same
         // helper the `--backup-dir` parent already uses, rather than a bare

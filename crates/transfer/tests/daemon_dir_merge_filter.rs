@@ -335,7 +335,7 @@ fn landed(scratch: &PushScratch, relative: &str) -> bool {
 /// server forwards to the pushing client - and `log.c:338` turns that into
 /// `got_xfer_error`, which `cleanup.c:217-218` lifts to exit 23.
 ///
-/// MEASURED against a real rsync 3.5.0 daemon and client over loopback TCP,
+/// MEASURED against a real rsync 3.5.1 daemon and client over loopback TCP,
 /// with per-cell `lsof` port-ownership asserts, module `filter = : .rsync-filter`
 /// and `sub/.rsync-filter` holding `- bait.txt`:
 ///

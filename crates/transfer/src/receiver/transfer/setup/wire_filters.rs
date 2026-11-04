@@ -301,7 +301,7 @@ mod tests {
     /// (clientserver.c:934) reaches the receiver's deletion chain through
     /// `combine`d daemon rules, so a dropped clear keeps a `- keep.txt` alive
     /// and shields `keep.txt` from a `--delete` pass that upstream performs.
-    /// Measured against rsync 3.5.0 as a daemon receiver with
+    /// Measured against rsync 3.5.1 as a daemon receiver with
     /// `filter = - keep.txt clear - ctl.txt`: upstream deletes `keep.txt`,
     /// oc kept it.
     #[test]

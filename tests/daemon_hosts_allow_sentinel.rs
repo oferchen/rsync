@@ -28,7 +28,7 @@
 //!
 //! Skip conditions (test passes with a printed reason):
 //! - Loopback TCP is unavailable.
-//! - The cross-implementation cells additionally need a built upstream 3.5.0
+//! - The cross-implementation cells additionally need a built upstream 3.5.1
 //!   binary; without it they report why they did not run.
 
 #![cfg(unix)]
@@ -47,7 +47,7 @@ fn oc_binary() -> PathBuf {
 
 fn upstream_binary() -> Option<PathBuf> {
     let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.0/rsync");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
     path.is_file().then_some(path)
 }
 
@@ -226,10 +226,10 @@ fn oc_matches_the_host_sentinels_in_hosts_allow() {
 fn upstream_matches_the_host_sentinels_in_hosts_allow() {
     let Some(upstream) = upstream_binary() else {
         println!(
-            "SKIP: upstream 3.5.0 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.0/rsync)"
+            "SKIP: upstream 3.5.1 oracle not built \
+             (target/interop/upstream-src/rsync-3.5.1/rsync)"
         );
         return;
     };
-    assert_table(&upstream, "upstream 3.5.0");
+    assert_table(&upstream, "upstream 3.5.1");
 }
