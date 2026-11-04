@@ -91,9 +91,10 @@ use super::error::SshError;
 use crate::ssh::argv_split::argv_split;
 use crate::ssh::config_files::{ConfigFile, check_default_user_config_perms, home_dir as env_home};
 use crate::ssh::config_options::{
-    AddressFamily, Opcode, PatternListMatch, glob_matches, ignore_unknown_matches,
-    match_pattern_list, parse_address_family, parse_flag_value, parse_int_value,
-    parse_pubkey_auth_value, parse_scaled_value, parse_time_value, parse_token, split_directive,
+    AddressFamily, CanonicalizeHostname, Opcode, PatternListMatch, glob_matches,
+    ignore_unknown_matches, match_pattern_list, parse_address_family, parse_canonicalize_hostname,
+    parse_flag_value, parse_int_value, parse_pubkey_auth_value, parse_scaled_value,
+    parse_time_value, parse_token, split_directive, valid_domain,
 };
 use logging::warn_log;
 
@@ -239,6 +240,23 @@ pub(super) struct ResolvedHost {
     /// so a `Match tagged` line sees only the tag set above it
     /// (openssh/readconf.c:853-860).
     pub tag: Option<String>,
+    /// `CanonicalizeHostname`. `None` means no active line claimed the slot;
+    /// upstream's default is `no` (openssh/readconf.c:2754, :2281-2284).
+    pub canonicalize_hostname: Option<CanonicalizeHostname>,
+    /// `CanonicalDomains`, lowercased and without trailing dots, as the
+    /// first active line gave them (openssh/readconf.c:2201-2231).
+    pub canonical_domains: Option<Vec<String>>,
+    /// `CanonicalizeMaxDots`; upstream's default is 1
+    /// (openssh/readconf.c:2777-2778).
+    pub canonicalize_max_dots: Option<u32>,
+    /// `CanonicalizeFallbackLocal`; upstream's default is `yes`
+    /// (openssh/readconf.c:2779-2780).
+    pub canonicalize_fallback_local: Option<bool>,
+    /// `CanonicalizePermittedCNAMEs` as `(source, target)` pattern lists;
+    /// an empty list is a lone `none` (openssh/readconf.c:2233-2279,
+    /// normalised as fill_default_options does at :3037-3043). Parsed and
+    /// validated only: CNAME following is not implemented.
+    pub permitted_cnames: Option<Vec<(String, String)>>,
 }
 impl ResolvedHost {
     /// Whether an active line has already claimed the shared proxy slot.
@@ -289,40 +307,127 @@ pub(super) fn resolve_host_with_remote_user(
         let anchors = IncludeAnchors::live();
         let mut local_user = String::new();
         let ctx = MatchCtx::with_remote_user(host_alias, remote_user, &mut local_user);
-        // First pass, then the `SSHCONF_FINAL` re-parse only when a
-        // non-negated `Match final` asked for it (openssh/ssh.c:1190-1268).
-        let mut want_final_pass = false;
-        scan_config(
-            &mut resolved,
-            &text,
-            &display,
-            &anchors,
-            true,
-            false,
-            0,
-            true,
-            &ctx,
-            false,
-            &mut want_final_pass,
-        )?;
-        if want_final_pass {
+        resolve_passes(&mut resolved, &ctx, |resolved, final_pass, want| {
             scan_config(
-                &mut resolved,
-                &text,
-                &display,
-                &anchors,
-                true,
-                false,
-                0,
-                true,
-                &ctx,
-                true,
-                &mut false,
-            )?;
+                resolved, &text, &display, &anchors, true, false, 0, true, &ctx, final_pass, want,
+            )
+        })?;
+    }
+    Ok(resolved)
+}
+
+/// Runs upstream's configuration passes around hostname canonicalization
+/// (openssh/ssh.c:1221-1296).
+///
+/// After the first pass `HostName` gets its `%h` expansion. When
+/// `CanonicalizeHostname` is on, the name is canonicalized and the final
+/// pass is forced (:1280-1284); a `Match final` line forces it too. Before
+/// the final pass the host - lowercased unless it is an address, and
+/// canonicalized - becomes `HostName`, which is what that pass's
+/// `Match host` sees and why a final-pass `HostName` line never applies
+/// (:1287-1288).
+fn resolve_passes(
+    resolved: &mut ResolvedHost,
+    ctx: &MatchCtx<'_>,
+    mut pass: impl FnMut(&mut ResolvedHost, bool, &mut bool) -> Result<(), SshError>,
+) -> Result<(), SshError> {
+    let mut want_final_pass = false;
+    pass(resolved, false, &mut want_final_pass)?;
+    expand_hostname(resolved, ctx.host_alias)?;
+    let canonicalize = resolved
+        .canonicalize_hostname
+        .unwrap_or(CanonicalizeHostname::No);
+    if canonicalize == CanonicalizeHostname::No && !want_final_pass {
+        return Ok(());
+    }
+    let mut host = resolved
+        .hostname
+        .clone()
+        .unwrap_or_else(|| ctx.host_alias.to_owned());
+    if !is_address(&host) {
+        host.make_ascii_lowercase();
+    }
+    if canonicalize != CanonicalizeHostname::No {
+        canonicalize_host(resolved, &mut host, ctx.probe)?;
+    }
+    resolved.hostname = Some(host);
+    pass(resolved, true, &mut false)
+}
+
+/// Whether `host` is an IP address, which canonicalization never suffixes
+/// (openssh/ssh.c:1239-1240 `is_addr`).
+fn is_address(host: &str) -> bool {
+    host.parse::<std::net::IpAddr>().is_ok()
+}
+
+/// Asks the system resolver whether `name` resolves, honouring
+/// `AddressFamily` as upstream's `resolve_host` hints do
+/// (openssh/ssh.c:282-330). Only existence is asked: the canonical name a
+/// CNAME would give is not available through `std` (task 593).
+fn dns_resolves(name: &str, family: Option<AddressFamily>) -> bool {
+    use std::net::ToSocketAddrs;
+    (name, 0).to_socket_addrs().is_ok_and(|mut addrs| {
+        addrs.any(|addr| match family {
+            Some(AddressFamily::Inet) => addr.is_ipv4(),
+            Some(AddressFamily::Inet6) => addr.is_ipv6(),
+            Some(AddressFamily::Any) | None => true,
+        })
+    })
+}
+
+/// A port of `resolve_canonicalize` without its address re-formatting and
+/// CNAME following (openssh/ssh.c:427-521): a direct connection (or any,
+/// under `always`) whose name has at most `CanonicalizeMaxDots` dots tries
+/// each `CanonicalDomains` suffix in order and takes the first that
+/// resolves; a name with a trailing dot is tried as it stands.
+fn canonicalize_host(
+    resolved: &ResolvedHost,
+    host: &mut String,
+    probe: CanonicalProbe,
+) -> Result<(), SshError> {
+    if is_address(host) {
+        return Ok(());
+    }
+    let unset_or_none = |slot: &Option<String>| {
+        slot.as_deref()
+            .is_none_or(|value| value.eq_ignore_ascii_case("none"))
+    };
+    let direct = unset_or_none(&resolved.proxy_command) && unset_or_none(&resolved.jump_hosts);
+    if !direct && resolved.canonicalize_hostname != Some(CanonicalizeHostname::Always) {
+        return Ok(());
+    }
+    let family = resolved.address_family;
+    if host.ends_with('.') {
+        if probe(host, family) {
+            host.pop();
+            return Ok(());
+        }
+    } else {
+        let max_dots = resolved.canonicalize_max_dots.unwrap_or(1);
+        let dots = host.bytes().filter(|&b| b == b'.').count();
+        if dots > max_dots as usize {
+            return Ok(());
+        }
+        let domains = resolved.canonical_domains.as_deref().unwrap_or_default();
+        for domain in domains {
+            if domain.eq_ignore_ascii_case("none") {
+                break;
+            }
+            let full = format!("{host}.{domain}.");
+            if probe(&full, family) {
+                *host = full[..full.len() - 1].to_owned();
+                return Ok(());
+            }
         }
     }
-    expand_hostname(&mut resolved, host_alias)?;
-    Ok(resolved)
+    if resolved.canonicalize_fallback_local == Some(false) {
+        // upstream: fatal("%s: Could not resolve host \"%s\"", __progname, ...)
+        // (openssh/ssh.c:516-517); the program-name prefix is the caller's.
+        return Err(SshError::SshConfigFatal {
+            reason: format!("Could not resolve host \"{host}\""),
+        });
+    }
+    Ok(())
 }
 
 /// Applies the one expansion upstream performs as soon as the options are
@@ -438,17 +543,13 @@ fn resolve_host_files_with_ctx(
     anchors: &IncludeAnchors,
 ) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
-    // First pass over the whole load order, then the `SSHCONF_FINAL`
-    // re-parse only when a non-negated `Match final` asked for it. Upstream
-    // calls `process_config_files` a second time with the SAME options
-    // struct, so first-obtained-wins carries across both passes and the
-    // re-parse only fills slots a `Match final`/`Match canonical` block
-    // could not reach on the first (openssh/ssh.c:1190-1268).
-    let want_final_pass = scan_files_once(&mut resolved, files, ctx, anchors, false)?;
-    if want_final_pass {
-        scan_files_once(&mut resolved, files, ctx, anchors, true)?;
-    }
-    expand_hostname(&mut resolved, ctx.host_alias)?;
+    // Upstream calls `process_config_files` a second time with the SAME
+    // options struct, so first-obtained-wins carries across both passes
+    // (openssh/ssh.c:1221, :1286-1290).
+    resolve_passes(&mut resolved, ctx, |resolved, final_pass, want| {
+        *want |= scan_files_once(resolved, files, ctx, anchors, final_pass)?;
+        Ok(())
+    })?;
     Ok(resolved)
 }
 
@@ -518,6 +619,7 @@ pub(super) fn resolve_host_str_with_users(
         host_alias,
         remote_user,
         local_user,
+        probe: dns_resolves,
     };
     resolve_host_str_with_ctx(text, &ctx)
 }
@@ -526,23 +628,9 @@ pub(super) fn resolve_host_str_with_users(
 fn resolve_host_str_with_ctx(text: &str, ctx: &MatchCtx<'_>) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
     let anchors = IncludeAnchors::none();
-    let mut want_final_pass = false;
-    scan_config(
-        &mut resolved,
-        text,
-        INLINE_CONFIG_NAME,
-        &anchors,
-        true,
-        false,
-        0,
-        true,
-        ctx,
-        false,
-        &mut want_final_pass,
-    )?;
-    if want_final_pass {
+    resolve_passes(&mut resolved, ctx, |resolved, final_pass, want| {
         scan_config(
-            &mut resolved,
+            resolved,
             text,
             INLINE_CONFIG_NAME,
             &anchors,
@@ -551,11 +639,10 @@ fn resolve_host_str_with_ctx(text: &str, ctx: &MatchCtx<'_>) -> Result<ResolvedH
             0,
             true,
             ctx,
-            true,
-            &mut false,
-        )?;
-    }
-    expand_hostname(&mut resolved, ctx.host_alias)?;
+            final_pass,
+            want,
+        )
+    })?;
     Ok(resolved)
 }
 
@@ -588,7 +675,14 @@ struct MatchCtx<'a> {
     host_alias: &'a str,
     remote_user: &'a str,
     local_user: &'a str,
+    /// Answers whether a canonicalization candidate resolves. The live
+    /// resolver is [`dns_resolves`]; tests substitute a fixed table.
+    probe: CanonicalProbe,
 }
+
+/// The resolver question canonicalization asks: does this name resolve
+/// under this `AddressFamily`?
+type CanonicalProbe = fn(&str, Option<AddressFamily>) -> bool;
 
 impl<'a> MatchCtx<'a> {
     /// A context for the passive resolvers, whose only connection input is
@@ -603,6 +697,7 @@ impl<'a> MatchCtx<'a> {
             host_alias,
             remote_user: "",
             local_user: local_user_buf.as_str(),
+            probe: dns_resolves,
         }
     }
 
@@ -621,6 +716,7 @@ impl<'a> MatchCtx<'a> {
             host_alias,
             remote_user,
             local_user: local_user_buf.as_str(),
+            probe: dns_resolves,
         }
     }
 
@@ -980,6 +1076,10 @@ impl FileScan<'_, '_> {
             return Ok(());
         }
 
+        if opcode == Opcode::CanonicalDomains || opcode == Opcode::CanonicalizePermittedCNAMEs {
+            return self.canonical_list(opcode, &key.to_ascii_lowercase(), &tokens, linenum);
+        }
+
         // Every directive below is single-valued, so it consumes exactly
         // one token - upstream's `arg = argv_next(&ac, &av)`. A `NULL`
         // there is fatal, which is how `Port #comment` is refused. The
@@ -1017,6 +1117,9 @@ impl FileScan<'_, '_> {
             | Opcode::RequiredRSASize
             | Opcode::IgnoreUnknown
             | Opcode::Tag
+            | Opcode::CanonicalizeHostname
+            | Opcode::CanonicalizeMaxDots
+            | Opcode::CanonicalizeFallbackLocal
             | Opcode::Ciphers
             | Opcode::Macs
             | Opcode::KexAlgorithms
@@ -1093,6 +1196,28 @@ impl FileScan<'_, '_> {
             _ => None,
         };
 
+        // The canonicalization scalars: a multistate, a `parse_int` and a
+        // `parse_flag`, each refused whether or not the block is active
+        // (openssh/readconf.c:2281-2292).
+        let unsupported = || refuse(self.path, linenum, format!("unsupported option \"{arg}\"."));
+        let canonical_mode = match opcode {
+            Opcode::CanonicalizeHostname => {
+                Some(parse_canonicalize_hostname(arg).ok_or_else(unsupported)?)
+            }
+            _ => None,
+        };
+        let max_dots = match opcode {
+            Opcode::CanonicalizeMaxDots => {
+                Some(parse_int_value(arg).map_err(|reason| refuse(self.path, linenum, reason))?)
+            }
+            _ => None,
+        };
+        let fallback_local = match opcode {
+            Opcode::CanonicalizeFallbackLocal => {
+                Some(parse_flag_value(arg).ok_or_else(unsupported)?)
+            }
+            _ => None,
+        };
         // The algorithm lists: everything but a `-` list must name known
         // algorithms, checked before the `*activep` test
         // (openssh/readconf.c:1593-1664).
@@ -1143,6 +1268,21 @@ impl FileScan<'_, '_> {
                 set_if_unset(&mut self.resolved.ignore_unknown, arg.to_owned());
             }
             Opcode::Tag => set_if_unset(&mut self.resolved.tag, arg.to_owned()),
+            Opcode::CanonicalizeHostname => {
+                if let Some(mode) = canonical_mode {
+                    set_if_unset(&mut self.resolved.canonicalize_hostname, mode);
+                }
+            }
+            Opcode::CanonicalizeMaxDots => {
+                if let Some(dots) = max_dots {
+                    set_if_unset(&mut self.resolved.canonicalize_max_dots, dots);
+                }
+            }
+            Opcode::CanonicalizeFallbackLocal => {
+                if let Some(flag) = fallback_local {
+                    set_if_unset(&mut self.resolved.canonicalize_fallback_local, flag);
+                }
+            }
             Opcode::Port => {
                 if self.resolved.port.is_none()
                     && let Ok(parsed) = arg.parse::<u16>()
@@ -1250,6 +1390,68 @@ impl FileScan<'_, '_> {
         Ok(())
     }
 
+    /// `CanonicalDomains` and `CanonicalizePermittedCNAMEs`: every token is
+    /// checked whether or not the block is active, the first active line
+    /// claims the list, and a line without tokens is fatal at once
+    /// (openssh/readconf.c:2201-2279).
+    fn canonical_list(
+        &mut self,
+        opcode: Opcode,
+        keyword: &str,
+        tokens: &[String],
+        linenum: usize,
+    ) -> Result<(), Refusal> {
+        if tokens.is_empty() {
+            return Err(Refusal::Fatal(SshError::SshConfigFatal {
+                reason: format!("{} line {linenum}: no {keyword} specified", self.path),
+            }));
+        }
+        let mut domains = Vec::new();
+        let mut cnames = Vec::new();
+        for (i, tok) in tokens.iter().enumerate() {
+            let is_none = tok.eq_ignore_ascii_case("none");
+            if is_none && (i > 0 || tokens.len() > 1) {
+                return Err(refuse(
+                    self.path,
+                    linenum,
+                    format!("keyword {keyword} \"none\" argument must appear alone."),
+                )
+                .into());
+            }
+            if opcode == Opcode::CanonicalDomains {
+                domains.push(valid_domain(tok).map_err(|e| refuse(self.path, linenum, e))?);
+            } else if !is_none {
+                // `*` stands for both lists; anything else is
+                // `source:target`, lowercased first (:2250-2265).
+                let lower = tok.to_ascii_lowercase();
+                let pair = if lower == "*" {
+                    Some(("*".to_owned(), "*".to_owned()))
+                } else {
+                    lower
+                        .split_once(':')
+                        .filter(|(_, target)| !target.is_empty())
+                        .map(|(source, target)| (source.to_owned(), target.to_owned()))
+                };
+                let Some(pair) = pair else {
+                    return Err(refuse(
+                        self.path,
+                        linenum,
+                        format!("Invalid permitted CNAME \"{lower}\""),
+                    )
+                    .into());
+                };
+                cnames.push(pair);
+            }
+        }
+        if self.in_matching_block {
+            if opcode == Opcode::CanonicalDomains {
+                set_if_unset(&mut self.resolved.canonical_domains, domains);
+            } else {
+                set_if_unset(&mut self.resolved.permitted_cnames, cnames);
+            }
+        }
+        Ok(())
+    }
     /// Parses a `RekeyLimit` value: a scaled byte count or `default`, then
     /// an optional interval through the shared `parse_time` arm, `none`
     /// discarded (openssh/readconf.c:1362-1393).
@@ -2034,6 +2236,170 @@ fn parse_known_hosts_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Resolves with a fixed resolver that knows only `names`, so the
+    /// canonicalization cells never touch DNS.
+    fn resolve_probed(
+        text: &str,
+        alias: &str,
+        probe: CanonicalProbe,
+    ) -> Result<ResolvedHost, SshError> {
+        let ctx = MatchCtx {
+            host_alias: alias,
+            remote_user: "",
+            local_user: "",
+            probe,
+        };
+        resolve_host_str_with_ctx(text, &ctx)
+    }
+
+    fn knows_web(name: &str, _: Option<AddressFamily>) -> bool {
+        name == "web.second.test." || name == "web.third.test." || name == "anchored.test."
+    }
+
+    fn knows_web_v6_only(name: &str, family: Option<AddressFamily>) -> bool {
+        name == "web.first.test." && family != Some(AddressFamily::Inet)
+    }
+
+    /// The suffixes are tried in order and the first that resolves wins;
+    /// the final pass then matches the canonical name, and a `HostName`
+    /// in that pass cannot replace it (openssh/ssh.c:494-511, :1286-1290).
+    #[test]
+    fn canonicalization_takes_the_first_resolving_suffix() {
+        let text = "CanonicalizeHostname yes\nCanonicalDomains first.test second.test third.test\n\
+                    Match canonical host web.second.test\n  User canon\n  HostName other\n";
+        let got = resolve_probed(text, "WEB", knows_web).expect("accepted");
+        assert_eq!(got.hostname.as_deref(), Some("web.second.test"));
+        assert_eq!(got.user.as_deref(), Some("canon"));
+    }
+
+    /// `none` ends the suffix list; past `CanonicalizeMaxDots` nothing is
+    /// tried; an anchored name is tried as it stands; an address is never
+    /// suffixed; a proxy skips canonicalization unless it is `always`
+    /// (openssh/ssh.c:440-500).
+    #[test]
+    fn canonicalization_rules_gate_the_suffix_search() {
+        let none_stops = "CanonicalizeHostname yes\nCanonicalDomains none\n";
+        assert_eq!(
+            resolve_probed(none_stops, "web", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web")
+        );
+        let dots =
+            "CanonicalizeHostname yes\nCanonicalizeMaxDots 0\nCanonicalDomains second.test\n";
+        assert_eq!(
+            resolve_probed(dots, "web.x", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web.x")
+        );
+        let dots =
+            "CanonicalizeHostname yes\nCanonicalizeMaxDots 0\nCanonicalDomains second.test\n";
+        assert_eq!(
+            resolve_probed(dots, "web", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web.second.test")
+        );
+        let anchored = "CanonicalizeHostname yes\nCanonicalizeFallbackLocal no\n";
+        assert_eq!(
+            resolve_probed(anchored, "anchored.test.", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("anchored.test")
+        );
+        let address = "CanonicalizeHostname yes\nCanonicalizeFallbackLocal no\nCanonicalDomains second.test\n";
+        assert_eq!(
+            resolve_probed(address, "::1", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("::1")
+        );
+        let proxied = "CanonicalizeHostname yes\nCanonicalDomains second.test\nProxyJump j\n";
+        assert_eq!(
+            resolve_probed(proxied, "web", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web")
+        );
+        let always = "CanonicalizeHostname always\nCanonicalDomains second.test\nProxyJump j\n";
+        assert_eq!(
+            resolve_probed(always, "web", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web.second.test")
+        );
+        let direct_none =
+            "CanonicalizeHostname yes\nCanonicalDomains second.test\nProxyCommand none\n";
+        assert_eq!(
+            resolve_probed(direct_none, "web", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web.second.test")
+        );
+    }
+
+    /// The candidate must resolve in the configured `AddressFamily`, as
+    /// upstream's `resolve_host` hints ask (openssh/ssh.c:282-330).
+    #[test]
+    fn canonicalization_probes_in_the_configured_family() {
+        let text = "CanonicalizeHostname yes\nCanonicalDomains first.test\nAddressFamily inet\n";
+        assert_eq!(
+            resolve_probed(text, "web", knows_web_v6_only)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web")
+        );
+        let text = "CanonicalizeHostname yes\nCanonicalDomains first.test\n";
+        assert_eq!(
+            resolve_probed(text, "web", knows_web_v6_only)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web.first.test")
+        );
+    }
+
+    /// The live resolver keeps only addresses of the configured family, as
+    /// upstream's `ai_family` hint does (openssh/ssh.c:282-330). Literal
+    /// addresses resolve without DNS, so the cell is deterministic.
+    #[test]
+    fn the_live_probe_honours_address_family() {
+        assert!(dns_resolves("127.0.0.1", Some(AddressFamily::Inet)));
+        assert!(dns_resolves("127.0.0.1", Some(AddressFamily::Any)));
+        assert!(dns_resolves("127.0.0.1", None));
+        assert!(!dns_resolves("127.0.0.1", Some(AddressFamily::Inet6)));
+        assert!(dns_resolves("::1", Some(AddressFamily::Inet6)));
+        assert!(!dns_resolves("::1", Some(AddressFamily::Inet)));
+    }
+
+    /// With fallback off, a name no suffix resolves is refused
+    /// (openssh/ssh.c:515-517); with it on (the default) it stands.
+    #[test]
+    fn canonicalization_fallback_decides_an_unresolved_name() {
+        let off =
+            "CanonicalizeHostname yes\nCanonicalizeFallbackLocal no\nCanonicalDomains first.test\n";
+        let err = resolve_probed(off, "nope", knows_web).expect_err("refused");
+        assert_eq!(err.to_string(), "Could not resolve host \"nope\"");
+        let on = "CanonicalizeHostname yes\nCanonicalDomains first.test\n";
+        assert_eq!(
+            resolve_probed(on, "Nope", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("nope")
+        );
+    }
 
     /// Resolve, asserting the config was accepted. Most cells below are
     /// about which value wins, not about refusal.

@@ -101,6 +101,7 @@ use super::algorithms::{AlgorithmList, assemble, openssh_defaults};
 use super::ssh_config::{resolve_host, resolve_host_str};
 #[cfg(feature = "ssh-config-parse")]
 use crate::ssh::config_lookup::{MatchContext, parse_enables_compression};
+use crate::ssh::config_options::CanonicalizeHostname;
 
 /// Whether `ssh -G` prints a keyword's value with tokens already expanded.
 ///
@@ -428,6 +429,54 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
             .map(|names| vec![names.join(",")]);
         map.insert(keyword.to_owned(), composed);
     }
+    // The canonicalization settings, with upstream's defaults filled in
+    // as `ssh -G` dumps them (openssh/readconf.c:2752-2780, :3645-3646,
+    // :3684, :3730, and the hand-written CNAME row).
+    map.insert(
+        "canonicalizehostname".to_owned(),
+        Some(vec![
+            resolved
+                .canonicalize_hostname
+                .unwrap_or(CanonicalizeHostname::No)
+                .as_str()
+                .to_owned(),
+        ]),
+    );
+    map.insert(
+        "canonicaldomains".to_owned(),
+        Some(vec![match resolved.canonical_domains.as_deref() {
+            None | Some([]) => "none".to_owned(),
+            Some(domains) => domains.join(" "),
+        }]),
+    );
+    map.insert(
+        "canonicalizemaxdots".to_owned(),
+        Some(vec![
+            resolved.canonicalize_max_dots.unwrap_or(1).to_string(),
+        ]),
+    );
+    map.insert(
+        "canonicalizefallbacklocal".to_owned(),
+        Some(vec![
+            if resolved.canonicalize_fallback_local.unwrap_or(true) {
+                "yes"
+            } else {
+                "no"
+            }
+            .to_owned(),
+        ]),
+    );
+    map.insert(
+        "canonicalizePermittedcnames".to_owned(),
+        Some(vec![match resolved.permitted_cnames.as_deref() {
+            None | Some([]) => "none".to_owned(),
+            Some(rules) => rules
+                .iter()
+                .map(|(source, target)| format!("{source}:{target}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        }]),
+    );
     // Both halves default to 0 (openssh/readconf.c:2958-2961).
     map.insert(
         "rekeylimit".to_owned(),
@@ -1564,6 +1613,159 @@ mod tests {
                 assert!(resolve_host_str(fixture, "a").expect("loads").tag.is_none());
             }
         }
+    }
+
+    /// The canonicalization settings parse, default and dump as `ssh -G`
+    /// shows them, and the passes they drive match it wherever no DNS
+    /// answer is needed: no suffix to try, a proxied connection, too many
+    /// dots, an anchored `localhost.`, and a final-pass `HostName` that the
+    /// canonical host pre-empts (openssh/ssh.c:427-521, :1221-1296).
+    #[test]
+    fn canonicalization_matches_the_oracle() {
+        type Case = (
+            &'static str,
+            &'static str,
+            &'static [(&'static str, &'static str)],
+        );
+        const FIXTURES: &[Case] = &[
+            (
+                "CanonicalizePermittedCNAMEs A:B *.x:*.y *\nCanonicalDomains Example.COM. b\n\
+                 CanonicalizeMaxDots 3\nCanonicalizeFallbackLocal no\n\
+                 CanonicalizeHostname no\nProxyJump j\n",
+                "localhost",
+                &[
+                    ("canonicalizehostname", "false"),
+                    ("canonicaldomains", "example.com b"),
+                    ("canonicalizemaxdots", "3"),
+                    ("canonicalizefallbacklocal", "no"),
+                    ("canonicalizePermittedcnames", "a:b *.x:*.y *:*"),
+                ],
+            ),
+            (
+                "Host x\n",
+                "a",
+                &[
+                    ("canonicalizehostname", "false"),
+                    ("canonicaldomains", "none"),
+                ],
+            ),
+            (
+                "CanonicalizeHostname yes\nMatch canonical\n  User canon\n",
+                "Ab",
+                &[
+                    ("user", "canon"),
+                    ("hostname", "ab"),
+                    ("canonicalizehostname", "true"),
+                ],
+            ),
+            (
+                "CanonicalizeHostname yes\nCanonicalizeFallbackLocal no\n\
+                 CanonicalDomains invalid\nProxyCommand nc %h %p\n",
+                "Ab",
+                &[("hostname", "ab")],
+            ),
+            (
+                "CanonicalizeHostname yes\nCanonicalizeMaxDots 0\n\
+                 CanonicalizeFallbackLocal no\nCanonicalDomains invalid\n",
+                "a.b",
+                &[("hostname", "a.b")],
+            ),
+            (
+                "CanonicalizeHostname yes\nCanonicalizeFallbackLocal no\n",
+                "localhost.",
+                &[("hostname", "localhost")],
+            ),
+            (
+                "Match final\n  HostName x.example\n",
+                "Alias",
+                &[("hostname", "alias")],
+            ),
+            (
+                "Host *\n  HostName %h.z\nMatch final\n  User u\n",
+                "AB",
+                &[("hostname", "ab.z"), ("user", "u")],
+            ),
+        ];
+        for (fixture, alias, rows) in FIXTURES {
+            let diff = match run(fixture, alias) {
+                Ok(d) => d,
+                Err(why) => {
+                    report_skip("canonicalization parity", &why);
+                    return;
+                }
+            };
+            for (keyword, value) in *rows {
+                let cell = diff.cell(keyword).expect("dumped");
+                assert_eq!(
+                    cell.upstream,
+                    vec![(*value).to_owned()],
+                    "{keyword} on {fixture:?}"
+                );
+                // Upstream lowercases the dumped host; compare oc's exactly.
+                assert_eq!(
+                    cell.oc.as_deref(),
+                    Some(&[(*value).to_owned()][..]),
+                    "{keyword} on {fixture:?}"
+                );
+            }
+        }
+    }
+
+    /// The canonicalization refusals carry upstream's exact text, the
+    /// counted ones followed by the count and the token-less line fatal on
+    /// its own (openssh/readconf.c:2201-2292, openssh/misc.c:2398-2441).
+    #[test]
+    fn canonicalization_refusals_match_the_oracle() {
+        const FIXTURES: &[&str] = &[
+            "CanonicalDomains invalid. none\n",
+            "CanonicalDomains a..b\n",
+            "CanonicalDomains -a\n",
+            "CanonicalDomains AB!c\n",
+            "CanonicalDomains AB..CD\n",
+            "Host other\n  CanonicalDomains a..b\n",
+            "CanonicalizePermittedCNAMEs foo\n",
+            "CanonicalizePermittedCNAMEs Foo:\n",
+            "CanonicalizePermittedCNAMEs a:b none\n",
+            "CanonicalDomains #x\n",
+            "CanonicalizeHostname maybe\nCanonicalizeMaxDots x\nCanonicalizeFallbackLocal 2\n",
+        ];
+        for fixture in FIXTURES {
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("ssh_config");
+            std::fs::write(&path, fixture).expect("write fixture");
+            let upstream = match upstream_refusal(&path, "a") {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("canonicalization refusal parity", &why);
+                    return;
+                }
+            };
+            assert!(upstream.is_some(), "the oracle accepted {fixture:?}");
+            let oc = resolve_host(&path, "a").err().map(|err| err.to_string());
+            assert_eq!(oc, upstream, "fixture {fixture:?}");
+        }
+    }
+
+    /// With no suffix resolving and fallback off, both refuse the host;
+    /// upstream's line carries its program name, oc's does not
+    /// (openssh/ssh.c:516-517). `.invalid` never resolves (RFC 6761).
+    #[test]
+    fn an_unresolvable_canonical_name_is_refused_by_both() {
+        const FIXTURE: &str = "CanonicalizeHostname always\nCanonicalizeFallbackLocal no\n\
+                               CanonicalDomains invalid\nProxyCommand nc %h %p\n";
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("ssh_config");
+        std::fs::write(&path, FIXTURE).expect("write fixture");
+        let upstream = match upstream_refusal(&path, "Ab") {
+            Ok(v) => v,
+            Err(why) => {
+                report_skip("canonical refusal parity", &why);
+                return;
+            }
+        };
+        let oc = resolve_host(&path, "Ab").expect_err("refused").to_string();
+        assert_eq!(oc, "Could not resolve host \"ab\"");
+        assert_eq!(upstream, Some(format!("ssh: {oc}")));
     }
 
     /// Whether the oracle is the pinned 10.0p1 whose name tables and
