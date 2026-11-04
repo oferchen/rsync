@@ -91,9 +91,9 @@ use super::error::SshError;
 use crate::ssh::argv_split::argv_split;
 use crate::ssh::config_files::{ConfigFile, check_default_user_config_perms, home_dir as env_home};
 use crate::ssh::config_options::{
-    AddressFamily, Opcode, glob_matches, ignore_unknown_matches, parse_address_family,
-    parse_flag_value, parse_int_value, parse_pubkey_auth_value, parse_scaled_value,
-    parse_time_value, parse_token, split_directive,
+    AddressFamily, Opcode, PatternListMatch, glob_matches, ignore_unknown_matches,
+    match_pattern_list, parse_address_family, parse_flag_value, parse_int_value,
+    parse_pubkey_auth_value, parse_scaled_value, parse_time_value, parse_token, split_directive,
 };
 use logging::warn_log;
 
@@ -234,8 +234,12 @@ pub(super) struct ResolvedHost {
     /// `RekeyLimit`'s optional interval in seconds, its own first-obtained
     /// slot; `none` leaves it claimable (openssh/readconf.c:1384-1391).
     pub rekey_interval: Option<u32>,
+    /// `Tag`, first obtained. `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1498-1500, `parse_string`). Read while parsing,
+    /// so a `Match tagged` line sees only the tag set above it
+    /// (openssh/readconf.c:853-860).
+    pub tag: Option<String>,
 }
-
 impl ResolvedHost {
     /// Whether an active line has already claimed the shared proxy slot.
     ///
@@ -855,6 +859,7 @@ impl FileScan<'_, '_> {
             let activates = evaluate_match_line(
                 &tokens,
                 match_host,
+                self.resolved.tag.as_deref(),
                 self.ctx,
                 self.final_pass,
                 self.want_final_pass,
@@ -1011,6 +1016,7 @@ impl FileScan<'_, '_> {
             | Opcode::CertificateFile
             | Opcode::RequiredRSASize
             | Opcode::IgnoreUnknown
+            | Opcode::Tag
             | Opcode::Ciphers
             | Opcode::Macs
             | Opcode::KexAlgorithms
@@ -1136,6 +1142,7 @@ impl FileScan<'_, '_> {
             Opcode::IgnoreUnknown => {
                 set_if_unset(&mut self.resolved.ignore_unknown, arg.to_owned());
             }
+            Opcode::Tag => set_if_unset(&mut self.resolved.tag, arg.to_owned()),
             Opcode::Port => {
                 if self.resolved.port.is_none()
                     && let Ok(parsed) = arg.parse::<u16>()
@@ -1580,8 +1587,8 @@ fn pattern_matches(host: &str, pattern: &str) -> bool {
 ///   (openssh/readconf.c:807-822); a leading `!` negates it.
 /// - `canonical`/`final` take no argument and evaluate to the pass flag:
 ///   `r = !!final_pass` (openssh/readconf.c:832), so they match only on the
-///   final pass. A non-negated `final` sets `want_final_pass` so the driver
-///   runs that second pass (openssh/readconf.c:826-828). With
+///   final pass. A `final`, negated or not, sets `want_final_pass` so the
+///   driver runs that second pass (openssh/readconf.c:774-776). With
 ///   canonicalization unbuilt (owned by task 1218) the only trigger for the
 ///   final pass is a `Match final`, which is upstream's behaviour with
 ///   canonicalization off (openssh/ssh.c:1252-1256 leaves `want_final_pass`
@@ -1606,7 +1613,7 @@ fn pattern_matches(host: &str, pattern: &str) -> bool {
 /// interface-address enumeration `check_match_ifaddrs`, openssh/readconf.c:1189,
 /// which lives behind FFI this crate forbids), `version` (matches OpenSSH's
 /// `SSH_RELEASE`, openssh/readconf.c:1196, a value oc has no analogue for),
-/// `tagged` (the `Tag` directive is not modelled), and the session-only
+/// and the session-only
 /// `command`/`sessiontype` (openssh/readconf.c:1207-1221, no counterpart in a
 /// non-interactive transfer) - keep upstream's argument grammar (a missing
 /// argument refuses, openssh/readconf.c:855-858) but resolve to a non-match,
@@ -1615,6 +1622,7 @@ fn pattern_matches(host: &str, pattern: &str) -> bool {
 fn evaluate_match_line(
     tokens: &[String],
     match_host: &str,
+    tag: Option<&str>,
     ctx: &MatchCtx<'_>,
     final_pass: bool,
     want_final_pass: &mut bool,
@@ -1662,7 +1670,9 @@ fn evaluate_match_line(
         // `canonical`/`final`: no argument; the pass flag is the predicate
         // (openssh/readconf.c:823-836).
         if attrib_lc == "canonical" || attrib_lc == "final" {
-            if attrib_lc == "final" && !negate {
+            // Negation is not consulted here: `Match !final` requests the
+            // final pass too (openssh/readconf.c:774-776).
+            if attrib_lc == "final" {
                 *want_final_pass = true;
             }
             let matched = if negate { !final_pass } else { final_pass };
@@ -1687,7 +1697,10 @@ fn evaluate_match_line(
                 }
             },
         };
-        if arg.is_empty() || arg.starts_with('#') {
+        // `tagged` and `command` accept an empty argument
+        // (openssh/readconf.c:806-813).
+        let may_be_empty = attrib_lc == "tagged" || attrib_lc == "command";
+        if (arg.is_empty() && !may_be_empty) || arg.starts_with('#') {
             return Err(refuse(
                 path,
                 linenum,
@@ -1746,7 +1759,18 @@ fn evaluate_match_line(
             // has no faithful predicate (see the function's doc comment), so
             // the criterion resolves to a non-match and the block stays
             // inactive rather than mis-applied.
-            "localnetwork" | "version" | "tagged" | "command" | "sessiontype" => {
+            // An unset tag matches only an empty argument; otherwise the tag
+            // is matched case-sensitively (openssh/readconf.c:853-860).
+            "tagged" => {
+                let matched = match tag.unwrap_or("") {
+                    "" => arg.is_empty(),
+                    tag => match_pattern_list(tag, arg, false) == PatternListMatch::Positive,
+                };
+                if matched == negate {
+                    result = false;
+                }
+            }
+            "localnetwork" | "version" | "command" | "sessiontype" => {
                 result = false;
             }
             _ => {

@@ -305,6 +305,7 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
         resolved.port.map(|p| vec![p.to_string()]),
     );
     map.insert("user".to_owned(), resolved.user.clone().map(|u| vec![u]));
+    map.insert("tag".to_owned(), resolved.tag.clone().map(|t| vec![t]));
     map.insert(
         "identityfile".to_owned(),
         if resolved.identity_files.is_empty() {
@@ -1372,6 +1373,96 @@ mod tests {
                 oc.contains(needle),
                 "oc refused {fixture:?} with unexpected text: {oc}"
             );
+        }
+    }
+
+    /// `Tag` and `Match tagged`: first obtained, read positionally, an
+    /// unset tag matching only `""`, a pattern list otherwise; and
+    /// `Match !final` requesting the final pass like `Match final`
+    /// (openssh/readconf.c:774-776, :806-813, :853-860, :1498-1500).
+    #[test]
+    fn tag_and_final_pass_triggers_match_the_oracle() {
+        // (fixture, rows both sides must dump, user value neither may take)
+        type Case = (
+            &'static str,
+            &'static [(&'static str, &'static str)],
+            Option<&'static str>,
+        );
+        const FIXTURES: &[Case] = &[
+            (
+                "Tag t1\nMatch tagged t*\n  User tagged\n",
+                &[("user", "tagged"), ("tag", "t1")],
+                None,
+            ),
+            (
+                "Tag t1\nTag t2\nMatch tagged t2\n  User second\nMatch tagged t1\n  Port 2\n",
+                &[("port", "2"), ("tag", "t1")],
+                Some("second"),
+            ),
+            (
+                "Match tagged t1\n  User early\nHost *\nTag t1\nMatch tagged=t1\n  Port 3\n",
+                &[("port", "3"), ("tag", "t1")],
+                Some("early"),
+            ),
+            (
+                "Match tagged \"\"\n  User emptytag\n",
+                &[("user", "emptytag")],
+                None,
+            ),
+            (
+                "Tag x\nMatch tagged \"\"\n  User wrong\nMatch !tagged y*,!x\n  Port 4\n",
+                &[("port", "4"), ("tag", "x")],
+                Some("wrong"),
+            ),
+            (
+                "Host other\n  Tag skipped\nHost *\nMatch tagged skipped\n  User wrong\n",
+                &[],
+                Some("wrong"),
+            ),
+            (
+                "Match !final\n  Port 1\nMatch canonical\n  User b\n",
+                &[("port", "1"), ("user", "b")],
+                None,
+            ),
+        ];
+        for (fixture, rows, forbidden_user) in FIXTURES {
+            let diff = match run(fixture, "a") {
+                Ok(d) => d,
+                Err(why) => {
+                    report_skip("tag parity", &why);
+                    return;
+                }
+            };
+            for (keyword, value) in *rows {
+                let cell = diff.cell(keyword).expect("dumped");
+                assert_eq!(
+                    cell.upstream,
+                    vec![(*value).to_owned()],
+                    "{keyword} on {fixture:?}"
+                );
+                assert_eq!(
+                    cell.verdict,
+                    Verdict::Match,
+                    "{keyword} on {fixture:?}: oc {:?}",
+                    cell.oc
+                );
+            }
+            if let Some(user) = forbidden_user {
+                let cell = diff.cell("user").expect("dumped");
+                assert_ne!(
+                    cell.upstream,
+                    vec![(*user).to_owned()],
+                    "upstream on {fixture:?}"
+                );
+                assert_ne!(cell.oc, Some(vec![(*user).to_owned()]), "oc on {fixture:?}");
+            }
+            if rows.iter().all(|(keyword, _)| *keyword != "tag") {
+                assert!(
+                    diff.cell("tag").is_none(),
+                    "upstream dumped a tag for {fixture:?}"
+                );
+                assert!(resolve_host_str(fixture, "a").expect("loads").tag.is_none());
+            }
         }
     }
 
