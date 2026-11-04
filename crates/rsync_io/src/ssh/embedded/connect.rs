@@ -1169,7 +1169,12 @@ mod remote_exit_tests {
         port
     }
 
-    fn client_config(port: u16) -> SshConfig {
+    /// A client for the scripted server. Each server mints a fresh host key
+    /// on an ephemeral port, so the key is learned into a known_hosts file
+    /// inside `dir`: the default would be the user's `~/.ssh/known_hosts`,
+    /// where a reused port meets an older key and fails with
+    /// `HostKeyMismatch`.
+    fn client_config(port: u16, dir: &std::path::Path) -> SshConfig {
         SshConfig {
             host: "127.0.0.1".to_owned(),
             port,
@@ -1179,6 +1184,7 @@ mod remote_exit_tests {
             use_agent: false,
             connect_timeout: Duration::from_secs(5),
             strict_host_key_checking: super::super::types::StrictHostKeyChecking::No,
+            known_hosts_file: Some(dir.join("known_hosts")),
             ..SshConfig::default()
         }
     }
@@ -1188,8 +1194,9 @@ mod remote_exit_tests {
     /// report plus everything forwarded to stderr.
     async fn run_bridge(script: Script) -> (Option<RemoteExit>, Vec<u8>) {
         let port = start_server(script).await;
+        let dir = test_support::create_tempdir();
         let (mut channel, handle, channel_id) =
-            ssh_setup(&client_config(port), "rsync --server", None)
+            ssh_setup(&client_config(port, dir.path()), "rsync --server", None)
                 .await
                 .expect("ssh setup");
         let (data_tx, _data_rx) = std::sync::mpsc::sync_channel::<Bytes>(8);
@@ -1222,6 +1229,33 @@ mod remote_exit_tests {
         })
         .await;
         assert_eq!(exit, Some(RemoteExit::Status(23)));
+    }
+
+    /// The scripted server's key is learned into the test's own known_hosts
+    /// file, so these tests never read or write the user's
+    /// `~/.ssh/known_hosts` (task 590).
+    #[tokio::test]
+    async fn the_server_key_is_learned_into_the_test_known_hosts() {
+        let port = start_server(Script {
+            stderr: Vec::new(),
+            exit: Some(RemoteExit::Status(0)),
+        })
+        .await;
+        let dir = test_support::create_tempdir();
+        let config = client_config(port, dir.path());
+        assert_ne!(
+            config.known_hosts_file,
+            SshConfig::default().known_hosts_file
+        );
+        let (_channel, _handle, _id) = ssh_setup(&config, "rsync --server", None)
+            .await
+            .expect("ssh setup");
+        let learned = std::fs::read_to_string(dir.path().join("known_hosts"))
+            .expect("the key was learned into the test file");
+        assert!(
+            learned.contains(&format!("[127.0.0.1]:{port} ")),
+            "known_hosts holds {learned:?}"
+        );
     }
 
     /// A remote shell that cannot find `rsync` exits 127 (RERR_CMD_NOTFOUND).
@@ -1285,8 +1319,10 @@ mod remote_exit_tests {
             stderr: Vec::new(),
             exit: Some(RemoteExit::Status(23)),
         }));
+        let dir = test_support::create_tempdir();
         let (mut reader, writer) =
-            connect_and_exec(&client_config(port), "rsync --server", None).expect("connect");
+            connect_and_exec(&client_config(port, dir.path()), "rsync --server", None)
+                .expect("connect");
         drop(writer);
         let mut rest = Vec::new();
         reader.read_to_end(&mut rest).expect("read to EOF");
