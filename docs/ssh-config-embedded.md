@@ -51,6 +51,7 @@ These differ from oc-rsync releases before 0.6.5. Each now matches OpenSSH 10.0p
 - `IdentityFile2` is read as `IdentityFile`.
 - `Ciphers`, `MACs`, `KexAlgorithms`, `HostKeyAlgorithms` and `RekeyLimit` change what the transport offers and when it re-keys. The `+`, `-` and `^` forms work.
 - `Tag` and `Match tagged` work.
+- Time-based re-keying happens only when `RekeyLimit` names an interval above `0`, as in OpenSSH. Before, the transport re-keyed every hour regardless.
 
 ### Host names and the final pass
 
@@ -69,10 +70,7 @@ These differ from oc-rsync releases before 0.6.5. Each now matches OpenSSH 10.0p
 
 These are tracked for a follow-up (task 594):
 
-- **RekeyLimit:**
-  - sizes are capped at russh's 1 GiB maximum, and `default` keeps that 1 GiB, where OpenSSH derives the limit from the cipher;
-  - with no interval, russh still re-keys hourly;
-  - an interval of `0` turns time-based re-keying off.
+- **RekeyLimit size (accepted):** sizes above 1 GiB are capped at russh's 1 GiB maximum, and `default` keeps that 1 GiB. OpenSSH derives a far higher limit from the cipher (`packet.c:1033-1043`). russh refuses anything larger, so the only cost is an extra re-key per GiB transferred.
 - **HostKeyAlgorithms order:** the list is not reordered by the keys already in `known_hosts`.
 - **Late composition errors:** a list that validates but cannot be composed (a stray `!` pattern) fails at connect time rather than when the file is read.
 - **Fill-time notes:** OpenSSH prints some notes after the file loads, such as `fill_default_options: ca_sign_algorithms: invalid argument` and `Cannot forward agent socket path`. The transport never uses those values, so oc does not print the notes.

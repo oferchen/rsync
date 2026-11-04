@@ -585,13 +585,19 @@ fn joined<T: AsRef<str>>(names: &[T]) -> String {
         .collect::<Vec<_>>()
         .join(",")
 }
+/// The time limit that stands for "no time-based re-key": tokio's own
+/// ceiling for a sleep (`tokio::time::sleep` clamps to 30 years), so neither
+/// russh's elapsed-time comparison nor its re-key timer can overflow.
+const NO_REKEY_INTERVAL: Duration = Duration::from_secs(30 * 365 * 86_400);
+
 /// Maps `RekeyLimit` onto russh's re-key bounds.
 ///
 /// A byte limit of `0` (`default`) or one russh cannot hold keeps russh's
-/// 1 GiB ceiling, the largest it accepts (`russh::Limits::new`). An interval
-/// of `0` disables time-based re-keying, as upstream's does
-/// (openssh/packet.c:1075-1076 skips a zero
-/// `rekey_interval`); with no interval russh keeps its own hourly one.
+/// 1 GiB ceiling, the largest it accepts (`russh::Limits::new`); upstream's
+/// cipher-derived limit is higher (openssh/packet.c:1033-1043), a documented
+/// deviation. Upstream re-keys on time only when an interval above `0` is set
+/// (openssh/packet.c:1075-1076), so an absent or zero interval means
+/// [`NO_REKEY_INTERVAL`] rather than russh's own hourly default.
 fn rekey_limits(limit: Option<i64>, interval: Option<u32>) -> russh::Limits {
     let defaults = russh::Limits::default();
     let bytes = limit
@@ -601,8 +607,7 @@ fn rekey_limits(limit: Option<i64>, interval: Option<u32>) -> russh::Limits {
             bytes.min(defaults.rekey_write_limit)
         });
     let time = match interval {
-        None => defaults.rekey_time_limit,
-        Some(0) => Duration::MAX,
+        None | Some(0) => NO_REKEY_INTERVAL,
         Some(secs) => Duration::from_secs(u64::from(secs)),
     };
     russh::Limits::new(bytes, bytes, time)
@@ -1246,8 +1251,8 @@ mod tests {
     }
 
     /// `RekeyLimit` onto russh's bounds: a size is capped at russh's 1 GiB
-    /// ceiling, `0` keeps the ceiling, an interval of `0` turns time-based
-    /// re-keying off, and an absent half keeps russh's default.
+    /// ceiling and `0` keeps the ceiling; an absent or zero interval turns
+    /// time-based re-keying off, as upstream has none by default.
     #[test]
     fn rekey_limits_map_rekeylimit() {
         let defaults = russh::Limits::default();
@@ -1257,10 +1262,11 @@ mod tests {
         assert_eq!(limits.rekey_time_limit, Duration::from_secs(90));
         let limits = rekey_limits(Some(4 << 30), Some(0));
         assert_eq!(limits.rekey_write_limit, defaults.rekey_write_limit);
-        assert_eq!(limits.rekey_time_limit, Duration::MAX);
+        assert_eq!(limits.rekey_time_limit, NO_REKEY_INTERVAL);
         let limits = rekey_limits(Some(0), None);
         assert_eq!(limits.rekey_write_limit, defaults.rekey_write_limit);
-        assert_eq!(limits.rekey_time_limit, defaults.rekey_time_limit);
+        assert_eq!(limits.rekey_time_limit, NO_REKEY_INTERVAL);
+        assert_eq!(rekey_limits(None, None).rekey_time_limit, NO_REKEY_INTERVAL);
         let config = build_client_config(&SshConfig {
             rekey_limit: Some(1 << 20),
             ..SshConfig::default()
@@ -1443,12 +1449,21 @@ mod remote_exit_tests {
     /// still open, so the remote side drives the shutdown, and returns the exit
     /// report plus everything forwarded to stderr.
     async fn run_bridge(script: Script) -> (Option<RemoteExit>, Vec<u8>) {
+        run_bridge_with(script, |_| {}).await
+    }
+
+    /// [`run_bridge`] with the client config adjusted by `tweak` first.
+    async fn run_bridge_with(
+        script: Script,
+        tweak: impl FnOnce(&mut SshConfig),
+    ) -> (Option<RemoteExit>, Vec<u8>) {
         let port = start_server(script).await;
         let dir = test_support::create_tempdir();
-        let (mut channel, handle, channel_id) =
-            ssh_setup(&client_config(port, dir.path()), "rsync --server", None)
-                .await
-                .expect("ssh setup");
+        let mut config = client_config(port, dir.path());
+        tweak(&mut config);
+        let (mut channel, handle, channel_id) = ssh_setup(&config, "rsync --server", None)
+            .await
+            .expect("ssh setup");
         let (data_tx, _data_rx) = std::sync::mpsc::sync_channel::<Bytes>(8);
         let (_write_tx, write_rx) = tokio::sync::mpsc::channel::<Bytes>(8);
         let mut stderr = Vec::new();
@@ -1479,6 +1494,28 @@ mod remote_exit_tests {
         })
         .await;
         assert_eq!(exit, Some(RemoteExit::Status(23)));
+    }
+
+    /// With no time-based re-key - `RekeyLimit` without an interval, or with
+    /// `0` - a whole session runs under [`NO_REKEY_INTERVAL`]: russh arms its
+    /// re-key timer from it once authenticated and compares elapsed time
+    /// against it, and neither may overflow or panic.
+    #[tokio::test]
+    async fn a_session_without_a_rekey_interval_runs_to_completion() {
+        for interval in [None, Some(0)] {
+            let (exit, _) = run_bridge_with(
+                Script {
+                    stderr: Vec::new(),
+                    exit: Some(RemoteExit::Status(0)),
+                },
+                |config| {
+                    config.rekey_limit = Some(1 << 20);
+                    config.rekey_interval = interval;
+                },
+            )
+            .await;
+            assert_eq!(exit, Some(RemoteExit::Status(0)), "interval {interval:?}");
+        }
     }
 
     /// The scripted server's key is learned into the test's own known_hosts
