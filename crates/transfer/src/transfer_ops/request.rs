@@ -237,7 +237,14 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
             sig.release_blocks();
             PendingTransfer::new_delta_transfer(ndx, file_path, basis, sig, target_size)
         }
-        _ => PendingTransfer::new_full_transfer(ndx, file_path, target_size),
+        // upstream: generator.c:2280,2400 - a --whole-file request still
+        // names its basis; the receiver opens it with no sums to match.
+        (None, Some(basis)) => {
+            PendingTransfer::new_whole_file_against(ndx, file_path, basis, target_size)
+        }
+        (Some(_), None) | (None, None) => {
+            PendingTransfer::new_full_transfer(ndx, file_path, target_size)
+        }
     };
 
     Ok(pending)
