@@ -503,7 +503,8 @@ const FAST_KEX_ORDER: &[russh::kex::Name] = &[
 /// An ssh_config `Ciphers`, `MACs`, `KexAlgorithms` or `HostKeyAlgorithms`
 /// list is composed against the defaults above and fails the connection
 /// when nothing in it can be negotiated; `RekeyLimit` replaces russh's
-/// re-key bounds.
+/// re-key bounds. Host-key algorithms are reordered by known_hosts later,
+/// in [`ssh_setup`].
 fn build_client_config(ssh_config: &SshConfig) -> Result<russh::client::Config, SshError> {
     let defaults = russh::Preferred::DEFAULT;
     let kex = match ssh_config.kex_spec.as_deref() {
@@ -705,7 +706,20 @@ async fn ssh_setup(
     ),
     SshError,
 > {
-    let client_config = Arc::new(build_client_config(ssh_config)?);
+    let mut client_config = build_client_config(ssh_config)?;
+    // upstream prefers the host-key types known_hosts records unless the
+    // user gave an explicit list (openssh/sshconnect2.c:233-251).
+    if ssh_config
+        .host_key_spec
+        .as_deref()
+        .is_none_or(|spec| spec.starts_with(['+', '-']))
+    {
+        client_config.preferred.key = Cow::Owned(
+            build_host_key_options(ssh_config, None)
+                .order_host_key_algorithms(&client_config.preferred.key),
+        );
+    }
+    let client_config = Arc::new(client_config);
 
     // Direct dial versus a `ProxyCommand`/`ProxyJump` stream is the single
     // point the connect path branches on; everything after the handle is
@@ -1409,13 +1423,20 @@ mod remote_exit_tests {
 
     /// Starts the scripted server on an ephemeral port with a fresh host key.
     async fn start_server(script: Script) -> u16 {
+        start_server_with_keys(script, vec![host_key(russh::keys::Algorithm::Ed25519)]).await
+    }
+
+    /// A fresh host key of type `alg`.
+    fn host_key(alg: russh::keys::Algorithm) -> russh::keys::PrivateKey {
+        russh::keys::PrivateKey::random(&mut rand::rng(), alg).expect("keygen")
+    }
+
+    /// [`start_server`] offering every key in `keys`.
+    async fn start_server_with_keys(script: Script, keys: Vec<russh::keys::PrivateKey>) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let port = listener.local_addr().expect("local_addr").port();
-        let host_key =
-            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
-                .expect("keygen");
         let config = Arc::new(russh::server::Config {
-            keys: vec![host_key],
+            keys,
             ..Default::default()
         });
         let mut server = ScriptedServer { script };
@@ -1543,6 +1564,45 @@ mod remote_exit_tests {
             learned.contains(&format!("[127.0.0.1]:{port} ")),
             "known_hosts holds {learned:?}"
         );
+    }
+
+    /// The server offers ed25519 and ECDSA keys, and known_hosts records only
+    /// the ECDSA one. With no `HostKeyAlgorithms`, or a `+`/`-` list, the
+    /// client prefers the recorded type and verifies under
+    /// `StrictHostKeyChecking yes`; an explicit list is offered as written,
+    /// so ed25519 is negotiated and the host is unknown
+    /// (openssh/sshconnect2.c:233-251).
+    #[tokio::test]
+    async fn known_hosts_key_types_lead_the_host_key_offer() {
+        let ecdsa = host_key(russh::keys::Algorithm::Ecdsa {
+            curve: russh::keys::EcdsaCurve::NistP256,
+        });
+        let recorded = ecdsa.public_key().clone();
+        let keys = vec![host_key(russh::keys::Algorithm::Ed25519), ecdsa];
+        for (spec, verifies) in [
+            (None, true),
+            (Some("+ssh-rsa"), true),
+            (Some("-rsa-sha2-256"), true),
+            (Some("ssh-ed25519,ecdsa-sha2-nistp256"), false),
+        ] {
+            let port = start_server_with_keys(
+                Script {
+                    stderr: Vec::new(),
+                    exit: Some(RemoteExit::Status(0)),
+                },
+                keys.clone(),
+            )
+            .await;
+            let dir = test_support::create_tempdir();
+            let known = dir.path().join("known_hosts");
+            russh::keys::known_hosts::learn_known_hosts_path("127.0.0.1", port, &recorded, &known)
+                .expect("record the ECDSA key");
+            let mut config = client_config(port, dir.path());
+            config.strict_host_key_checking = super::super::types::StrictHostKeyChecking::Yes;
+            config.host_key_spec = spec.map(str::to_owned);
+            let outcome = ssh_setup(&config, "rsync --server", None).await;
+            assert_eq!(outcome.is_ok(), verifies, "{spec:?}");
+        }
     }
 
     /// A remote shell that cannot find `rsync` exits 127 (RERR_CMD_NOTFOUND).
