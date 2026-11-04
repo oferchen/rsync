@@ -25,6 +25,7 @@ windows = { workspace = true, features = [
     "Win32_Security_Authentication_Identity",
     "Win32_System_Console",
     "Win32_System_Services",
+    "Win32_System_SystemInformation",
     "Win32_System_EventLog",
 ] }
 
