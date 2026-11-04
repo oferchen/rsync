@@ -2702,6 +2702,36 @@ mod tests {
     /// does not cover) must leave the slot unset on both sides, or a
     /// resolver that applied the block unconditionally would pass the first
     /// half alone.
+    /// `Match host`/`originalhost` lists split on commas only, as
+    /// `match_pattern_list` does (openssh/match.c:122-172): a quoted space
+    /// belongs to its subpattern and an empty item matches nothing. A
+    /// whitespace split would match `a` in `"!b a"` and `"x a"`.
+    #[test]
+    fn match_host_lists_split_on_commas_only() {
+        for (fixture, port, verdict) in [
+            ("Match host \"!b a\"\n  Port 2222\n", "22", Verdict::OcUnset),
+            ("Match host \"x a\"\n  Port 2222\n", "22", Verdict::OcUnset),
+            (
+                "Match originalhost \"!b a\"\n  Port 2222\n",
+                "22",
+                Verdict::OcUnset,
+            ),
+            ("Match host a,,b\n  Port 2222\n", "2222", Verdict::Match),
+            ("Match host \",a\"\n  Port 2222\n", "2222", Verdict::Match),
+        ] {
+            let diff = match run(fixture, "a") {
+                Ok(d) => d,
+                Err(why) => {
+                    report_skip("match host comma lists", &why);
+                    return;
+                }
+            };
+            let cell = diff.cell("port").expect("dumped");
+            assert_eq!(cell.upstream, vec![port.to_owned()], "{fixture:?}");
+            assert_eq!(cell.verdict, verdict, "{fixture:?}: oc {:?}", cell.oc);
+        }
+    }
+
     #[test]
     fn match_host_criterion_is_case_insensitive_and_gates_the_block() {
         const FIXTURE: &str = "Match host prod-*.example.com\n  Port 2277\n";
