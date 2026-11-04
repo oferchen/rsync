@@ -901,6 +901,52 @@ impl ReceiverContext {
     /// is gated on `entry.is_file()` so it never fires for a directory, and
     /// `keep_time` follows upstream's per-type gating on `--omit-dir-times` /
     /// `--omit-link-times` (`generator.c:525-529`).
+    /// The iflags of a phase-2 redo request for `idx`, or `None` when the
+    /// destination cannot be stat'd and the file is skipped.
+    ///
+    /// upstream: generator.c:2667-2705 re-enters recv_generator() for the
+    /// redo index, which re-stats the destination (generator.c:2213-2223
+    /// reports and skips any failure but ENOENT) and itemizes the request
+    /// against it (generator.c:2378-2384). The failed temp was discarded, so a
+    /// new file is still absent and goes out as `ITEM_IS_NEW`
+    /// (generator.c:584); an existing one carries its attribute report bits.
+    pub(in crate::receiver) fn redo_request_iflags<
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        writer: &mut W,
+        idx: usize,
+        file_path: &Path,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    ) -> io::Result<Option<u32>> {
+        #[cfg(unix)]
+        let stat = super::super::directory::dest_lstat(sandbox, dest_dir, file_path, true);
+        #[cfg(not(unix))]
+        let stat = fs::metadata(file_path).map(fast_io::EntryMetadata::from);
+        let dest_meta = match stat {
+            Ok(meta) if self.config.fake_super => {
+                Some(metadata::fold_fake_super_stat(file_path, meta)?)
+            }
+            Ok(meta) => Some(meta),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => {
+                let what = format!(
+                    "recv_generator: failed to stat {}",
+                    self.full_fname_in_dest(dest_dir, file_path)
+                );
+                let _ = self.emit_generator_error_xfer(writer, &what, &error);
+                return Ok(None);
+            }
+        };
+        Ok(Some(self.itemize_existing_flags(
+            &self.file_list[idx],
+            file_path,
+            dest_meta.as_ref(),
+            transfer_seed(self.config.flags.checksum),
+        )))
+    }
+
     pub(in crate::receiver) fn itemize_existing_flags(
         &self,
         entry: &FileEntry,
