@@ -99,6 +99,7 @@ use crate::ssh::config_options::{
 };
 use logging::warn_log;
 
+mod address;
 mod values;
 
 /// upstream's `READCONF_MAX_DEPTH` - the nested-`Include` ceiling
@@ -328,13 +329,15 @@ pub(super) fn resolve_host_with_remote_user(
 /// Runs upstream's configuration passes around hostname canonicalization
 /// (openssh/ssh.c:1221-1296).
 ///
-/// After the first pass `HostName` gets its `%h` expansion. When
-/// `CanonicalizeHostname` is on, the name is canonicalized and the final
-/// pass is forced (:1280-1284); a `Match final` line forces it too. Before
-/// the final pass the host - lowercased unless it is an address, and
-/// canonicalized - becomes `HostName`, which is what that pass's
-/// `Match host` sees and why a final-pass `HostName` line never applies
-/// (:1287-1288).
+/// After the first pass `HostName` gets its `%h` expansion. A numeric
+/// host is rewritten to `resolve_addr`'s form whatever the canonicalization
+/// setting (:1239-1248, :437-446), so `127.1` connects and is looked up in
+/// known_hosts as `127.0.0.1`. When `CanonicalizeHostname` is on, a name is
+/// canonicalized and the final pass is forced (:1280-1284); a `Match final`
+/// line forces it too. Before the final pass the host - lowercased unless it
+/// is an address, and canonicalized - becomes `HostName`, which is what that
+/// pass's `Match host` sees and why a final-pass `HostName` line never
+/// applies (:1287-1288).
 fn resolve_passes(
     resolved: &mut ResolvedHost,
     ctx: &MatchCtx<'_>,
@@ -346,27 +349,30 @@ fn resolve_passes(
     let canonicalize = resolved
         .canonicalize_hostname
         .unwrap_or(CanonicalizeHostname::No);
-    if canonicalize == CanonicalizeHostname::No && !want_final_pass {
-        return Ok(());
-    }
     let mut host = resolved
         .hostname
         .clone()
         .unwrap_or_else(|| ctx.host_alias.to_owned());
-    if !is_address(&host) {
+    let family = resolved.address_family;
+    let was_addr = address::is_addr(&host, family);
+    if was_addr {
+        if let Some(addr) = address::canonical_address(&host, family)
+            && !addr.eq_ignore_ascii_case(&host)
+        {
+            host = addr;
+            resolved.hostname = Some(host.clone());
+        }
+    } else {
         host.make_ascii_lowercase();
     }
-    if canonicalize != CanonicalizeHostname::No {
+    if canonicalize == CanonicalizeHostname::No && !want_final_pass {
+        return Ok(());
+    }
+    if canonicalize != CanonicalizeHostname::No && !was_addr {
         canonicalize_host(resolved, &mut host, ctx.probe)?;
     }
     resolved.hostname = Some(host);
     pass(resolved, true, &mut false)
-}
-
-/// Whether `host` is an IP address, which canonicalization never suffixes
-/// (openssh/ssh.c:1239-1240 `is_addr`).
-fn is_address(host: &str) -> bool {
-    host.parse::<std::net::IpAddr>().is_ok()
 }
 
 /// Asks the system resolver whether `name` resolves, honouring
@@ -384,8 +390,8 @@ fn dns_resolves(name: &str, family: Option<AddressFamily>) -> bool {
     })
 }
 
-/// A port of `resolve_canonicalize` without its address re-formatting and
-/// CNAME following (openssh/ssh.c:427-521): a direct connection (or any,
+/// A port of `resolve_canonicalize` for a host that is not an address,
+/// without CNAME following (openssh/ssh.c:427-521): a direct connection (or any,
 /// under `always`) whose name has at most `CanonicalizeMaxDots` dots tries
 /// each `CanonicalDomains` suffix in order and takes the first that
 /// resolves; a name with a trailing dot is tried as it stands.
@@ -394,9 +400,6 @@ fn canonicalize_host(
     host: &mut String,
     probe: CanonicalProbe,
 ) -> Result<(), SshError> {
-    if is_address(host) {
-        return Ok(());
-    }
     let unset_or_none = |slot: &Option<String>| {
         slot.as_deref()
             .is_none_or(|value| value.eq_ignore_ascii_case("none"))

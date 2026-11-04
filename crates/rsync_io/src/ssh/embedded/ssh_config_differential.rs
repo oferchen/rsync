@@ -2632,6 +2632,36 @@ mod tests {
         }
     }
 
+    /// A numeric host takes `resolve_addr`'s form whatever the
+    /// canonicalization setting (openssh/ssh.c:337-380, :1239-1248):
+    /// `inet_aton` shorthands become dotted quads, IPv6 takes `inet_ntop`
+    /// form, and a malformed or other-family address is left as typed.
+    #[test]
+    fn numeric_hosts_are_rewritten_like_resolve_addr() {
+        for (text, alias, hostname) in [
+            ("", "127.1", "127.0.0.1"),
+            ("", "0x7f.1", "127.0.0.1"),
+            ("", "10.300", "10.0.1.44"),
+            ("", "0:0::1", "::1"),
+            ("", "::1.2.3.4", "::1.2.3.4"),
+            ("", "1.2.3.256", "1.2.3.256"),
+            ("", "FE80::A", "FE80::A"),
+            ("AddressFamily inet\n", "0:0::1", "0:0::1"),
+            ("CanonicalizeHostname yes\n", "127.1", "127.0.0.1"),
+        ] {
+            let diff = match run(text, alias) {
+                Ok(d) => d,
+                Err(why) => {
+                    report_skip("numeric host rewrite", &why);
+                    return;
+                }
+            };
+            let cell = diff.cell("hostname").expect("dumped");
+            assert_eq!(cell.upstream, vec![hostname.to_owned()], "{alias} {text:?}");
+            assert_eq!(cell.oc, Some(vec![hostname.to_owned()]), "{alias} {text:?}");
+        }
+    }
+
     #[test]
     fn match_host_criterion_is_case_insensitive_and_gates_the_block() {
         const FIXTURE: &str = "Match host prod-*.example.com\n  Port 2277\n";
