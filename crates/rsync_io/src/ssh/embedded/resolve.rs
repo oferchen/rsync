@@ -21,7 +21,7 @@ use super::types::IpPreference;
 ///
 /// # Errors
 ///
-/// Returns `SshError::Io` if DNS resolution fails, or `SshError::DnsResolution` if the
+/// Returns `SshError::HostUnresolvable` if DNS resolution fails, or `SshError::DnsResolution` if the
 /// resolver returned addresses but none matched the IP version preference.
 pub async fn resolve_host(
     host: &str,
@@ -29,9 +29,27 @@ pub async fn resolve_host(
     preference: IpPreference,
 ) -> Result<Vec<SocketAddr>, SshError> {
     let lookup_str = format!("{host}:{port}");
-    let resolved: Vec<SocketAddr> = tokio::net::lookup_host(&lookup_str).await?.collect();
+    let resolved: Vec<SocketAddr> = tokio::net::lookup_host(&lookup_str)
+        .await
+        .map_err(|err| unresolvable(host, &err))?
+        .collect();
 
     filter_by_preference(resolved, host, preference)
+}
+
+/// The resolver's error text before the `gai_strerror` message ssh prints.
+const LOOKUP_ERROR_PREFIX: &str = "failed to lookup address information: ";
+
+/// ssh's report of a host that does not resolve (openssh/ssh.c:274-276):
+/// the name cut to 100 characters and the resolver's own reason.
+fn unresolvable(host: &str, err: &std::io::Error) -> SshError {
+    let text = err.to_string();
+    SshError::HostUnresolvable {
+        host: host.chars().take(100).collect(),
+        reason: text
+            .strip_prefix(LOOKUP_ERROR_PREFIX)
+            .map_or_else(|| text.clone(), str::to_owned),
+    }
 }
 
 /// Filters and sorts a list of socket addresses according to IP version preference.
@@ -252,7 +270,7 @@ mod tests {
         let result = resolve_host("localhost", 22, IpPreference::Auto).await;
         match result {
             Ok(addrs) => assert!(!addrs.is_empty()),
-            Err(SshError::Io(_)) => {
+            Err(SshError::HostUnresolvable { .. }) => {
                 // Some CI environments may not resolve localhost - acceptable.
             }
             Err(e) => panic!("unexpected error: {e}"),
@@ -268,7 +286,7 @@ mod tests {
                 assert!(addrs[0].is_ipv4());
                 assert_eq!(addrs[0].port(), 22);
             }
-            Err(SshError::Io(_)) => {}
+            Err(SshError::HostUnresolvable { .. }) => {}
             Err(e) => panic!("unexpected error: {e}"),
         }
     }
@@ -282,7 +300,7 @@ mod tests {
                 assert!(addrs.iter().all(|a| a.is_ipv6()));
             }
             // Some CI environments lack IPv6 - acceptable.
-            Err(SshError::DnsResolution { .. }) | Err(SshError::Io(_)) => {}
+            Err(SshError::DnsResolution { .. }) | Err(SshError::HostUnresolvable { .. }) => {}
             Err(e) => panic!("unexpected error: {e}"),
         }
     }
@@ -294,14 +312,23 @@ mod tests {
             Ok(addrs) => {
                 assert!(addrs.iter().all(|a| a.is_ipv4()));
             }
-            Err(SshError::DnsResolution { .. }) | Err(SshError::Io(_)) => {}
+            Err(SshError::DnsResolution { .. }) | Err(SshError::HostUnresolvable { .. }) => {}
             Err(e) => panic!("unexpected error: {e}"),
         }
     }
 
     #[tokio::test]
-    async fn resolve_host_nonexistent_returns_io_error() {
-        let result = resolve_host("this-host-does-not-exist.invalid", 22, IpPreference::Auto).await;
-        assert!(result.is_err());
+    /// An unresolvable host is reported in ssh's words, with the
+    /// resolver's reason and no wrapper text (openssh/ssh.c:274-276).
+    async fn resolve_host_nonexistent_is_reported_as_ssh_reports_it() {
+        let err = resolve_host("this-host-does-not-exist.invalid", 22, IpPreference::Auto)
+            .await
+            .expect_err("RFC 6761 .invalid never resolves");
+        let text = err.to_string();
+        assert!(
+            text.starts_with("ssh: Could not resolve hostname this-host-does-not-exist.invalid: "),
+            "{text}"
+        );
+        assert!(!text.contains(LOOKUP_ERROR_PREFIX), "{text}");
     }
 }

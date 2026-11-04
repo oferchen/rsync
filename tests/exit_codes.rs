@@ -401,6 +401,57 @@ mod exit_code_11_file_io {
 }
 
 /// Tests that data stream errors return exit code 12.
+/// An embedded `ssh://` connection that fails exits as rsync does over a
+/// failing ssh child: ssh's own line, the whine about the closed stream,
+/// then the trailer for ssh's status 255 (io.c:299-303,
+/// cleanup.c:146-153). Measured on 3.5.1 with a remote shell that prints
+/// ssh's resolver error and exits 255:
+///
+/// ```text
+/// ssh: Could not resolve hostname nope: Name or service not known
+/// rsync: connection unexpectedly closed (0 bytes received so far) [sender]
+/// rsync error: unexplained error (code 255) at io.c(303) [sender=3.5.1]
+/// ```
+#[cfg(feature = "embedded-ssh")]
+mod embedded_ssh_connect_failure {
+    use super::*;
+
+    #[test]
+    fn an_unresolvable_host_exits_255_after_ssh_and_whine_lines() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let src = temp.path().join("f");
+        fs::write(&src, b"x").expect("write");
+        let src_arg = src.display().to_string();
+        let dest_arg = temp.path().display().to_string();
+        let remote = "ssh://nonexist.invalid/tmp/f";
+        for (args, role) in [
+            ([src_arg.as_str(), remote], "sender"),
+            ([remote, dest_arg.as_str()], "Receiver"),
+        ] {
+            let output = run_rsync(&args);
+            assert_eq!(output.status.code(), Some(255), "{role}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let lines: Vec<&str> = stderr.lines().collect();
+            assert_eq!(lines.len(), 3, "{role}: {stderr}");
+            assert!(
+                lines[0].starts_with("ssh: Could not resolve hostname nonexist.invalid: "),
+                "{role}: {stderr}"
+            );
+            assert!(
+                lines[1].ends_with(&format!(
+                    ": connection unexpectedly closed (0 bytes received so far) [{role}]"
+                )),
+                "{role}: {stderr}"
+            );
+            assert!(
+                lines[2].contains("unexplained error (code 255)")
+                    && lines[2].contains(&format!("[{role}=")),
+                "{role}: {stderr}"
+            );
+        }
+    }
+}
+
 mod exit_code_12_stream_io {
     // Note: Data stream errors require protocol-level corruption which is
     // difficult to trigger in normal integration tests.

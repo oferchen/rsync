@@ -34,7 +34,9 @@ use rsync_io::ssh::embedded::SshConfig;
 use super::super::config::ClientConfig;
 #[allow(unused_imports)] // REASON: used in tests
 use super::super::config::EmbeddedSshOptions;
-use super::super::error::{ClientError, invalid_argument_error, remote_exit_error};
+use super::super::error::{
+    ClientError, invalid_argument_error, remote_exit_error, remote_shell_failed_error,
+};
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::batch_support::{build_batch_context, build_batch_recording};
@@ -372,7 +374,16 @@ fn run_transfer_over_embedded_ssh(
         &remote_command,
         stdin_data.as_deref(),
     )
-    .map_err(|e| invalid_argument_error(&format!("embedded SSH connection failed: {e}"), 5))?;
+    // upstream: ssh prints its own diagnostic and exits 255, and the client
+    // then fails as over any remote shell that died before the protocol
+    // started (cleanup.c:146-153).
+    .map_err(|e| {
+        remote_shell_failed_error(
+            e.to_string(),
+            ExitCode::from_raw(255),
+            local_client_role(server_config.role),
+        )
+    })?;
 
     // upstream: io.c read_buf() uses 32KB read-ahead buffering.
     let mut reader = BufReader::with_capacity(32768, reader);

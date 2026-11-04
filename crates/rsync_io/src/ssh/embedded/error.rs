@@ -163,6 +163,16 @@ pub enum SshError {
         reason: String,
     },
 
+    /// The host does not resolve, reported as ssh reports it
+    /// (openssh/ssh.c:274-276).
+    #[error("ssh: Could not resolve hostname {host}: {reason}")]
+    HostUnresolvable {
+        /// The host as given, at most 100 characters (`%.100s`).
+        host: String,
+        /// The resolver's `gai_strerror` text.
+        reason: String,
+    },
+
     /// DNS resolution produced no addresses matching the IP version preference.
     #[error("no {preference} addresses found for {host}")]
     DnsResolution {
