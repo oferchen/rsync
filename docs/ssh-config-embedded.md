@@ -53,6 +53,7 @@ These differ from oc-rsync releases before 0.6.5. Each now matches OpenSSH 10.0p
 - `Tag` and `Match tagged` work.
 - A numeric host is rewritten the way `resolve_addr` rewrites it, whether or not canonicalization is on: `127.1` becomes `127.0.0.1` and `0:0::1` becomes `::1`. That form is what the transport connects to and looks up in `known_hosts`. A scoped IPv6 address keeps its scope as written.
 - With no `HostKeyAlgorithms`, or a `+`/`-` list, the host-key types `known_hosts` already records for the host are offered first, unless the first preference is already recorded (`sshconnect2.c:119-206`). A server with several host keys is then verified against the recorded one, where earlier releases negotiated ed25519 and reported the host as unknown.
+- A `Ciphers`, `MACs` or `KexAlgorithms` list that passes validation but cannot be composed, such as `^aes128-ctr,,!aes256-ctr`, no longer refuses the connection. As in OpenSSH, it prints `fill_default_options: <list>: invalid argument` and falls back to the defaults (`readconf.c:2794`, `:2987-2997`). The lists after it in the order ciphers, MACs, key exchange are then used exactly as written, without `+`/`-`/`^` composition or pattern expansion; a list written as `+name` therefore names nothing negotiable and is refused. `HostKeyAlgorithms` still fails at connect, now as `ssh_kex2: kex_assemble_namelist: invalid argument` (`sshconnect2.c:245-247`).
 - Time-based re-keying happens only when `RekeyLimit` names an interval above `0`, as in OpenSSH. Before, the transport re-keyed every hour regardless.
 
 ### Host names and the final pass
@@ -73,7 +74,6 @@ These differ from oc-rsync releases before 0.6.5. Each now matches OpenSSH 10.0p
 These are tracked for a follow-up (task 594):
 
 - **RekeyLimit size (accepted):** sizes above 1 GiB are capped at russh's 1 GiB maximum, and `default` keeps that 1 GiB. OpenSSH derives a far higher limit from the cipher (`packet.c:1033-1043`). russh refuses anything larger, so the only cost is an extra re-key per GiB transferred.
-- **Late composition errors:** a list that validates but cannot be composed (a stray `!` pattern) fails at connect time rather than when the file is read.
 - **Fill-time notes:** OpenSSH prints some notes after the file loads, such as `fill_default_options: ca_sign_algorithms: invalid argument` and `Cannot forward agent socket path`. The transport never uses those values, so oc does not print the notes.
 - **No CNAME following:** `CanonicalizePermittedCNAMEs` is parsed but CNAMEs are not followed, and the bare-host resolve check that goes with it is skipped (task 593).
 - **10.6-only keywords:** `RefuseConnection` and `WarnWeakCrypto` exist only in OpenSSH 10.6 and are refused as unknown, as 10.0p1 refuses them.

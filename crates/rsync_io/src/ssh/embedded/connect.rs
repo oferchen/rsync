@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 
-use super::algorithms::{AlgorithmList, negotiable};
+use super::algorithms::{AlgorithmList, fill_default_lists, negotiable, offered};
 use super::auth::authenticate;
 use super::cipher;
 use super::config::SshConfig;
@@ -507,40 +507,46 @@ const FAST_KEX_ORDER: &[russh::kex::Name] = &[
 /// in [`ssh_setup`].
 fn build_client_config(ssh_config: &SshConfig) -> Result<russh::client::Config, SshError> {
     let defaults = russh::Preferred::DEFAULT;
-    let kex = match ssh_config.kex_spec.as_deref() {
+    // An explicit cipher list replaces the ssh_config spec outright.
+    let [cipher_fill, mac_fill, kex_fill] = fill_default_lists([
+        ssh_config
+            .cipher_spec
+            .as_deref()
+            .filter(|_| ssh_config.ciphers.is_none()),
+        ssh_config.mac_spec.as_deref(),
+        ssh_config.kex_spec.as_deref(),
+    ]);
+    let (kex_base, kex_extensions) = FAST_KEX_ORDER.split_at(FAST_KEX_ORDER.len() - 2);
+    let kex = match offered(AlgorithmList::Kex, kex_fill, &joined(kex_base), |name| {
+        russh::kex::Name::try_from(name).ok()
+    })? {
         None => Cow::Borrowed(FAST_KEX_ORDER),
-        Some(spec) => {
-            let (base, extensions) = FAST_KEX_ORDER.split_at(FAST_KEX_ORDER.len() - 2);
-            let mut names = negotiable(AlgorithmList::Kex, spec, &joined(base), |name| {
-                russh::kex::Name::try_from(name).ok()
-            })?;
+        Some(mut names) => {
             // The client always advertises these two markers after its
             // own list (openssh/kex.c:103-108).
-            names.extend_from_slice(extensions);
+            names.extend_from_slice(kex_extensions);
             Cow::Owned(names)
         }
     };
     // Cipher preference: the explicit list wins, then an ssh_config spec,
     // then the hardware-detected defaults.
-    let cipher_list = match (&ssh_config.ciphers, ssh_config.cipher_spec.as_deref()) {
-        (Some(names), _) => resolve_cipher_names(names),
-        (None, Some(spec)) => negotiable(
+    let cipher_list = match &ssh_config.ciphers {
+        Some(names) => resolve_cipher_names(names),
+        None => offered(
             AlgorithmList::Ciphers,
-            spec,
+            cipher_fill,
             &cipher::default_ciphers().join(","),
             |name| russh::cipher::Name::try_from(name).ok(),
-        )?,
-        (None, None) => resolve_cipher_names(&cipher::default_ciphers()),
+        )?
+        .unwrap_or_else(|| resolve_cipher_names(&cipher::default_ciphers())),
     };
-    let mac = match ssh_config.mac_spec.as_deref() {
-        None => defaults.mac.clone(),
-        Some(spec) => Cow::Owned(negotiable(
-            AlgorithmList::Macs,
-            spec,
-            &joined(&defaults.mac),
-            |name| russh::mac::Name::try_from(name).ok(),
-        )?),
-    };
+    let mac = offered(
+        AlgorithmList::Macs,
+        mac_fill,
+        &joined(&defaults.mac),
+        |name| russh::mac::Name::try_from(name).ok(),
+    )?
+    .map_or_else(|| defaults.mac.clone(), Cow::Owned);
     let key = match ssh_config.host_key_spec.as_deref() {
         None => defaults.key.clone(),
         Some(spec) => {
@@ -1197,7 +1203,44 @@ mod tests {
         let err = build_client_config(&ssh_config).expect_err("negated pattern");
         assert_eq!(
             err.to_string(),
-            "expand HostKeyAlgorithms: invalid argument"
+            "ssh_kex2: kex_assemble_namelist: invalid argument"
+        );
+    }
+
+    /// A `Ciphers` list that fails to assemble falls back to the
+    /// transport's ciphers, and a later `MACs` list is offered as written,
+    /// unassembled (openssh/readconf.c:2794, :2987-2997, openssh/kex.c:117-124);
+    /// a `+` list offered as written names no MAC, so it is refused.
+    #[test]
+    fn a_failed_cipher_assembly_falls_back_and_leaves_later_lists_as_written() {
+        let _ = drained_warnings();
+        let config = build_client_config(&SshConfig {
+            cipher_spec: Some("^aes128-ctr,,!aes256-ctr".to_owned()),
+            mac_spec: Some("hmac-sha2-256".to_owned()),
+            kex_spec: Some("curve25519-sha256".to_owned()),
+            ..SshConfig::default()
+        })
+        .expect("a failed assembly is not fatal");
+        assert_eq!(
+            config.preferred.cipher.as_ref(),
+            resolve_cipher_names(&cipher::default_ciphers())
+        );
+        assert_eq!(config.preferred.mac.as_ref(), [russh::mac::HMAC_SHA256]);
+        assert_eq!(config.preferred.kex.first(), Some(&russh::kex::CURVE25519));
+        assert_eq!(
+            drained_warnings(),
+            ["fill_default_options: ciphers: invalid argument"]
+        );
+
+        let err = build_client_config(&SshConfig {
+            cipher_spec: Some("^aes128-ctr,,!aes256-ctr".to_owned()),
+            mac_spec: Some("+hmac-sha1".to_owned()),
+            ..SshConfig::default()
+        })
+        .expect_err("the unassembled list names nothing");
+        assert_eq!(
+            err.to_string(),
+            "MACs '+hmac-sha1': no algorithm the embedded ssh transport supports"
         );
     }
 

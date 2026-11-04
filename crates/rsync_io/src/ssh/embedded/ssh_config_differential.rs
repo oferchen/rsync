@@ -97,7 +97,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::algorithms::{AlgorithmList, assemble, openssh_defaults};
+use super::algorithms::{AlgorithmList, Filled, assemble, fill_default_lists, openssh_defaults};
 use super::ssh_config::{resolve_host, resolve_host_str};
 #[cfg(feature = "ssh-config-parse")]
 use crate::ssh::config_lookup::{MatchContext, parse_enables_compression};
@@ -409,25 +409,32 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
     // way `ssh -G` dumps them (openssh/readconf.c:2976-2997, :3630-3632).
     // The transport composes against its own defaults instead, so these
     // rows prove the parse and composition, not the negotiated list.
-    for (keyword, list, spec) in [
-        ("ciphers", AlgorithmList::Ciphers, &resolved.ciphers),
-        ("macs", AlgorithmList::Macs, &resolved.macs),
-        (
-            "kexalgorithms",
-            AlgorithmList::Kex,
-            &resolved.kex_algorithms,
-        ),
+    // A list `fill_default_options` leaves unassembled dumps as written,
+    // and one it leaves unset prints no line (see `fill_default_lists`).
+    let [ciphers, macs, kex] = fill_default_lists([
+        resolved.ciphers.as_deref(),
+        resolved.macs.as_deref(),
+        resolved.kex_algorithms.as_deref(),
+    ]);
+    for (keyword, list, filled) in [
+        ("ciphers", AlgorithmList::Ciphers, ciphers),
+        ("macs", AlgorithmList::Macs, macs),
+        ("kexalgorithms", AlgorithmList::Kex, kex),
         (
             "hostkeyalgorithms",
             AlgorithmList::HostKey,
-            &resolved.host_key_algorithms,
+            Filled::Assembled(resolved.host_key_algorithms.as_deref()),
         ),
     ] {
         let all = list.known_names().join(",");
-        let composed = assemble(spec.as_deref(), &openssh_defaults(list), &all)
-            .ok()
-            .map(|names| vec![names.join(",")]);
-        map.insert(keyword.to_owned(), composed);
+        let dumped = match filled {
+            Filled::Assembled(spec) => assemble(spec, &openssh_defaults(list), &all)
+                .ok()
+                .map(|names| vec![names.join(",")]),
+            Filled::Unset => None,
+            Filled::Verbatim(spec) => Some(vec![spec.to_owned()]),
+        };
+        map.insert(keyword.to_owned(), dumped);
     }
     // The canonicalization settings, with upstream's defaults filled in
     // as `ssh -G` dumps them (openssh/readconf.c:2752-2780, :3645-3646,
@@ -632,6 +639,37 @@ mod tests {
         f.write_all(text.as_bytes()).expect("write fixture");
         drop(f);
         differential(&path, text, alias)
+    }
+
+    /// The warnings this thread emitted since the last drain.
+    fn drained_warnings() -> Vec<String> {
+        logging::drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                logging::DiagnosticEvent::Info {
+                    code: logging::LogCode::Warning,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `ssh -G`'s stderr for a fixture that it accepts, CRLF line ends
+    /// folded (openssh/log.c:409).
+    fn upstream_stderr(text: &str, alias: &str) -> Result<String, Skipped> {
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("ssh_config");
+        std::fs::write(&path, text).expect("write fixture");
+        let out = Command::new(oracle_ssh())
+            .arg("-G")
+            .arg("-F")
+            .arg(&path)
+            .arg(alias)
+            .output()
+            .map_err(|_| Skipped::NoSshBinary)?;
+        Ok(String::from_utf8_lossy(&out.stderr).replace("\r\n", "\n"))
     }
 
     /// Environment switch that converts a skip into a failure.
@@ -2759,6 +2797,56 @@ mod tests {
             let cell = diff.cell("hostname").expect("dumped");
             assert_eq!(cell.upstream, vec![hostname.to_owned()], "{alias} {text:?}");
             assert_eq!(cell.oc, Some(vec![hostname.to_owned()]), "{alias} {text:?}");
+        }
+    }
+
+    /// A list that validates but fails `kex_assemble_names` is warned
+    /// about and left unset, and the later lists are dumped as written
+    /// rather than assembled (openssh/readconf.c:2794, :2987-2997): both
+    /// sides print the same warning, neither dumps the failing list, and
+    /// the lists before it keep their assembled value.
+    #[test]
+    fn a_failed_list_assembly_warns_and_leaves_later_lists_unassembled() {
+        for (text, kept, unset, warning) in [
+            (
+                "Ciphers ^aes128-ctr,,!aes256-ctr\nMACs +hmac-sha2-256\nKexAlgorithms curve25519-sha256\n",
+                &[
+                    ("macs", "+hmac-sha2-256"),
+                    ("kexalgorithms", "curve25519-sha256"),
+                ][..],
+                &["ciphers"][..],
+                "fill_default_options: ciphers: invalid argument",
+            ),
+            (
+                "Ciphers aes128-ctr\nMACs ^hmac-sha2-256,,!x\n",
+                &[("ciphers", "aes128-ctr")][..],
+                &["macs", "kexalgorithms"][..],
+                "fill_default_options: macs: invalid argument",
+            ),
+        ] {
+            let _ = drained_warnings();
+            let (diff, stderr) =
+                match run(text, "a").and_then(|d| Ok((d, upstream_stderr(text, "a")?))) {
+                    Ok(both) => both,
+                    Err(why) => {
+                        report_skip("failed list assembly", &why);
+                        return;
+                    }
+                };
+            // A later note (the pty refusal ssh -G prints with stdin not a
+            // terminal) has no counterpart in the transport.
+            assert_eq!(stderr.lines().next(), Some(warning), "{text:?}");
+            assert_eq!(drained_warnings(), [warning], "{text:?}");
+            for &(keyword, value) in kept {
+                let cell = diff.cell(keyword).expect("dumped");
+                assert_eq!(cell.upstream, [value], "{keyword} {text:?}");
+                assert_eq!(cell.verdict, Verdict::Match, "{keyword} {text:?}");
+            }
+            let oc = oc_resolution(text, "a");
+            for keyword in unset {
+                assert!(diff.cell(keyword).is_none(), "{keyword} {text:?}");
+                assert_eq!(oc.get(*keyword), Some(&None), "{keyword} {text:?}");
+            }
         }
     }
 
