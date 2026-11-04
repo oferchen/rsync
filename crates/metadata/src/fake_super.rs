@@ -865,6 +865,104 @@ mod tests {
     use super::*;
 
     #[cfg(all(unix, feature = "xattr"))]
+    mod acl_stash {
+        use super::super::{
+            FAKE_SUPER_ACCESS_ACL_XATTR, FAKE_SUPER_DEFAULT_ACL_XATTR, read_sender_acl,
+            update_fake_super_access_acl, update_fake_super_default_acl,
+        };
+        use protocol::acl::RsyncAcl;
+        use std::fs;
+        use std::path::{Path, PathBuf};
+
+        /// A `%aacl` granting `nobody` read: mask r, one named user entry.
+        const NAMED: [u8; 24] = [
+            0x80, 0, 0, 0, 0x80, 0, 0, 0, 0x04, 0, 0, 0, 0x80, 0, 0, 0, 0xfe, 0xff, 0, 0, 0x04, 0,
+            0, 0x80,
+        ];
+
+        fn named() -> RsyncAcl {
+            RsyncAcl::from_fake_super_bytes(&NAMED).expect("valid stash")
+        }
+
+        /// A fresh file, or `None` when the filesystem refuses user xattrs.
+        fn file(dir: &Path) -> Option<PathBuf> {
+            let path = dir.join("f");
+            fs::write(&path, b"x").expect("write");
+            xattr::set(&path, "user.probe", b"1").ok()?;
+            Some(path)
+        }
+
+        fn stash(path: &Path, name: &str) -> Option<Vec<u8>> {
+            xattr::get(path, name).expect("getxattr")
+        }
+
+        /// upstream: acls.c:1388-1399 - an ACL equal to the empty one the
+        /// destination reads without a stash is not stored.
+        #[test]
+        fn a_mode_only_access_acl_is_not_stashed() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            update_fake_super_access_acl(&path, &RsyncAcl::default(), 0o644).expect("update");
+            assert_eq!(stash(&path, FAKE_SUPER_ACCESS_ACL_XATTR), None);
+        }
+
+        #[test]
+        fn a_named_access_acl_is_stashed() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            update_fake_super_access_acl(&path, &named(), 0o644).expect("update");
+            assert_eq!(
+                stash(&path, FAKE_SUPER_ACCESS_ACL_XATTR),
+                Some(NAMED.to_vec())
+            );
+        }
+
+        /// A stash the source no longer carries is replaced, not kept.
+        #[test]
+        fn a_stale_access_stash_is_rewritten() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            xattr::set(&path, FAKE_SUPER_ACCESS_ACL_XATTR, &NAMED).expect("plant");
+            update_fake_super_access_acl(&path, &RsyncAcl::default(), 0o644).expect("update");
+            let held = stash(&path, FAKE_SUPER_ACCESS_ACL_XATTR).expect("stash kept");
+            assert_ne!(held, NAMED.to_vec());
+        }
+
+        /// upstream: acls.c:1405-1415 with the delete branch at 1176-1182.
+        #[test]
+        fn a_default_stash_follows_the_source() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            update_fake_super_default_acl(&path, &RsyncAcl::default(), 0o755).expect("update");
+            assert_eq!(stash(&path, FAKE_SUPER_DEFAULT_ACL_XATTR), None);
+
+            let mut with_owner = named();
+            with_owner.user_obj = 7;
+            update_fake_super_default_acl(&path, &with_owner, 0o755).expect("update");
+            assert!(stash(&path, FAKE_SUPER_DEFAULT_ACL_XATTR).is_some());
+
+            update_fake_super_default_acl(&path, &RsyncAcl::default(), 0o755).expect("update");
+            assert_eq!(stash(&path, FAKE_SUPER_DEFAULT_ACL_XATTR), None);
+        }
+
+        /// upstream: acls.c:599-607 - no stash reads as the empty ACL.
+        #[test]
+        fn a_fake_super_sender_reads_only_the_stash() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            let empty = read_sender_acl(&path, 0o644, false, true).expect("read");
+            assert_eq!(empty, RsyncAcl::default());
+
+            xattr::set(&path, FAKE_SUPER_ACCESS_ACL_XATTR, &NAMED).expect("plant");
+            let stashed = read_sender_acl(&path, 0o644, false, true).expect("read");
+            assert_eq!(stashed, named());
+
+            xattr::set(&path, FAKE_SUPER_ACCESS_ACL_XATTR, b"bad").expect("plant");
+            assert!(read_sender_acl(&path, 0o644, false, true).is_err());
+        }
+    }
+
+    #[cfg(all(unix, feature = "xattr"))]
     mod fold {
         use super::super::{FAKE_SUPER_XATTR, fold_fake_super_stat, is_corrupt_fake_super};
         use std::fs;
