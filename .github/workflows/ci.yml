@@ -70,6 +70,11 @@ env:
   CARGO_INCREMENTAL: "0"
   RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: "full"
+  # Full debuginfo made the workspace test binaries outgrow the runner disk
+  # ("No space left on device" while linking, master 2026-11-04). Line
+  # tables keep file:line in panics and backtraces at a fraction of the size.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
   CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
 
 jobs:
