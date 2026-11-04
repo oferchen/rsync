@@ -1964,9 +1964,9 @@ mod tests {
         }
     }
 
-    /// With no suffix resolving and fallback off, both refuse the host;
-    /// upstream's line carries its program name, oc's does not
-    /// (openssh/ssh.c:516-517). `.invalid` never resolves (RFC 6761).
+    /// With no suffix resolving and fallback off, both refuse the host with
+    /// the same line, program name included (openssh/ssh.c:520). `.invalid`
+    /// never resolves (RFC 6761).
     #[test]
     fn an_unresolvable_canonical_name_is_refused_by_both() {
         const FIXTURE: &str = "CanonicalizeHostname always\nCanonicalizeFallbackLocal no\n\
@@ -1982,8 +1982,8 @@ mod tests {
             }
         };
         let oc = resolve_host(&path, "Ab").expect_err("refused").to_string();
-        assert_eq!(oc, "Could not resolve host \"ab\"");
-        assert_eq!(upstream, Some(format!("ssh: {oc}")));
+        assert_eq!(oc, "ssh: Could not resolve host \"ab\"");
+        assert_eq!(upstream, Some(oc));
     }
 
     /// Whether the oracle is the pinned 10.0p1 whose name tables and
