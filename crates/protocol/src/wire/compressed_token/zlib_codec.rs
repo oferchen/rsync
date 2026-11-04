@@ -26,16 +26,20 @@ use super::{
 ///
 /// Reference: upstream token.c:send_deflated_token()
 pub(super) struct ZlibTokenEncoder {
+    /// Literal bytes not yet deflated. Holds at most one full chunk beyond the
+    /// chunks already fed, so the run's last chunk is always the one deflated
+    /// with `Z_SYNC_FLUSH`, as upstream's `nb == 0` test does (token.c:445).
     literal_buf: Vec<u8>,
     compressor: Compress,
     compress_buf: Vec<u8>,
-    flush_buf: Vec<u8>,
+    /// Deflate output not yet written: upstream's `obuf` payload. A piece is
+    /// written only when it fills or the run ends (token.c:452-466).
+    pending_out: Vec<u8>,
     last_token: i32,
     run_start: i32,
     last_run_end: i32,
     protocol_version: u32,
     is_zlibx: bool,
-    needs_flush: bool,
 }
 
 impl ZlibTokenEncoder {
@@ -54,37 +58,37 @@ impl ZlibTokenEncoder {
         Self {
             literal_buf: Vec::new(),
             compressor: Compress::new(compression, false),
-            compress_buf: vec![0u8; CHUNK_SIZE * 2],
-            flush_buf: Vec::with_capacity(CHUNK_SIZE * 2),
+            compress_buf: vec![0u8; MAX_DATA_COUNT],
+            pending_out: Vec::with_capacity(MAX_DATA_COUNT),
             last_token: -1,
             run_start: 0,
             last_run_end: 0,
             protocol_version,
             is_zlibx: false,
-            needs_flush: false,
         }
     }
 
     pub(super) fn reset(&mut self) {
         self.literal_buf.clear();
         self.compressor.reset();
-        self.flush_buf.clear();
+        self.pending_out.clear();
         self.last_token = -1;
         self.run_start = 0;
         self.last_run_end = 0;
-        self.needs_flush = false;
     }
 
     pub(super) fn send_literal<W: Write>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<()> {
         self.literal_buf.extend_from_slice(data);
-        while self.literal_buf.len() >= CHUNK_SIZE {
-            // The chunk flush below writes DEFLATED_DATA to the wire, so any
+        // A full chunk is deflated only once more data follows it, so the
+        // final chunk of the run is left for the Z_SYNC_FLUSH in `flush_run`.
+        while self.literal_buf.len() > CHUNK_SIZE {
+            // The chunk below can write DEFLATED_DATA to the wire, so any
             // pending token run has to be closed first: the receiver ends an
             // inflate run at the first non-DEFLATED_DATA flag and injects the
             // Z_SYNC_FLUSH trailer there, so a token byte arriving after these
             // blocks would split one deflate stream in two.
             self.flush_pending_token_run(writer)?;
-            self.compress_chunk_no_flush(writer)?;
+            self.deflate_chunk(writer, CHUNK_SIZE, FlushCompress::None)?;
         }
         Ok(())
     }
@@ -206,86 +210,77 @@ impl ZlibTokenEncoder {
         self.is_zlibx = zlibx;
     }
 
-    fn compress_chunk_no_flush<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        if self.literal_buf.is_empty() {
-            return Ok(());
-        }
-
-        let chunk_len = self.literal_buf.len().min(CHUNK_SIZE);
-        self.needs_flush = true;
-
+    /// Deflates the first `len` literal bytes, writing every piece that fills.
+    ///
+    /// upstream: token.c:421-468 - deflate writes into `obuf`, whose free space
+    /// is its `avail_out`, and a piece is written each time it fills. Once the
+    /// final chunk is fed with `Z_SYNC_FLUSH`, a full buffer keeps its last 4
+    /// bytes back, in case they are the sync trailer, to open the next piece
+    /// (token.c:434-443). Bounding each call by the buffer's free space, as
+    /// upstream does, decides which call emits the bytes at a piece boundary,
+    /// so it is part of the framing.
+    fn deflate_chunk<W: Write>(
+        &mut self,
+        writer: &mut W,
+        len: usize,
+        flush: FlushCompress,
+    ) -> io::Result<()> {
+        let piece_len = if flush == FlushCompress::None {
+            MAX_DATA_COUNT
+        } else {
+            MAX_DATA_COUNT - 4
+        };
         let mut consumed_total = 0;
-        while consumed_total < chunk_len {
-            let input = &self.literal_buf[consumed_total..chunk_len];
+        loop {
+            let input = &self.literal_buf[consumed_total..len];
+            let avail_out = MAX_DATA_COUNT - self.pending_out.len();
             let before_in = self.compressor.total_in();
             let before_out = self.compressor.total_out();
 
             self.compressor
-                .compress(input, &mut self.compress_buf, FlushCompress::None)
+                .compress(input, &mut self.compress_buf[..avail_out], flush)
                 .map_err(|e| io::Error::other(e.to_string()))?;
 
-            let consumed = (self.compressor.total_in() - before_in) as usize;
+            consumed_total += (self.compressor.total_in() - before_in) as usize;
             let produced = (self.compressor.total_out() - before_out) as usize;
+            self.pending_out
+                .extend_from_slice(&self.compress_buf[..produced]);
 
-            if produced > 0 {
-                write_deflated_data_pieces(writer, &self.compress_buf[..produced])?;
+            let filled = self.pending_out.len() == MAX_DATA_COUNT;
+            if filled {
+                write_deflated_data_pieces(writer, &self.pending_out[..piece_len])?;
+                self.pending_out.drain(..piece_len);
             }
-
-            consumed_total += consumed;
-            if consumed == 0 && produced < self.compress_buf.len() {
+            // upstream: token.c:468 `while (nb != 0 || tx_strm.avail_out == 0)` - a full
+            // buffer is drained with no new input only on the final chunk;
+            // before it, the next chunk is fed with the next call.
+            if consumed_total == len && (!filled || flush == FlushCompress::None) {
                 break;
             }
         }
-
-        self.literal_buf.drain(..chunk_len);
+        self.literal_buf.drain(..len);
         Ok(())
     }
 
-    fn sync_flush<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        self.flush_buf.clear();
-
-        loop {
-            let before_out = self.compressor.total_out();
-            let status = self
-                .compressor
-                .compress(&[], &mut self.compress_buf, FlushCompress::Sync)
-                .map_err(|e| io::Error::other(e.to_string()))?;
-
-            let produced = (self.compressor.total_out() - before_out) as usize;
-            if produced > 0 {
-                self.flush_buf
-                    .extend_from_slice(&self.compress_buf[..produced]);
-            }
-
-            if status == flate2::Status::Ok || produced == 0 {
-                break;
-            }
+    /// Deflates the run's last chunk with `Z_SYNC_FLUSH` and writes what is
+    /// left, minus the 4-byte sync trailer the receiver re-creates.
+    ///
+    /// upstream: token.c:445-461
+    fn flush_run<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.deflate_chunk(writer, self.literal_buf.len(), FlushCompress::Sync)?;
+        let len = self.pending_out.len().saturating_sub(4);
+        if len > 0 {
+            write_deflated_data_pieces(writer, &self.pending_out[..len])?;
         }
-
-        // upstream: token.c:454-461 - trim the trailing 00 00 FF FF sync marker.
-        if self.flush_buf.len() >= 4 {
-            let len = self.flush_buf.len();
-            if self.flush_buf[len - 4..] == [0x00, 0x00, 0xFF, 0xFF] {
-                self.flush_buf.truncate(len - 4);
-            }
-        }
-
-        if !self.flush_buf.is_empty() {
-            write_deflated_data_pieces(writer, &self.flush_buf)?;
-        }
-
-        self.needs_flush = false;
+        self.pending_out.clear();
         Ok(())
     }
 
     fn flush_all_literals<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        while !self.literal_buf.is_empty() {
-            self.compress_chunk_no_flush(writer)?;
+        if self.literal_buf.is_empty() {
+            return Ok(());
         }
-        if self.needs_flush {
-            self.sync_flush(writer)?;
-        }
-        Ok(())
+        self.flush_run(writer)
     }
 
     fn write_token_run<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {

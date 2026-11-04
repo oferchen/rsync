@@ -45,6 +45,8 @@ mod zlib_codec;
 #[cfg(feature = "zstd")]
 mod zstd_codec;
 
+#[cfg(test)]
+mod framing_tests;
 #[cfg(all(test, feature = "tokio-transfer"))]
 mod parity_tests;
 #[cfg(test)]
