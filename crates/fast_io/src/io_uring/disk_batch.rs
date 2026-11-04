@@ -24,6 +24,8 @@
 
 use std::fs::File;
 use std::io::{self, Write};
+
+use crate::CommitFailure;
 use std::os::unix::io::AsRawFd;
 
 use io_uring::{IoUring as RawIoUring, opcode};
@@ -169,19 +171,33 @@ impl IoUringDiskBatch {
     ///
     /// Returns an error if flushing or fsync fails.
     pub fn commit_file(&mut self, do_fsync: bool) -> io::Result<(File, u64)> {
-        self.flush_current()?;
+        self.commit_file_staged(do_fsync)
+            .map_err(CommitFailure::into_inner)
+    }
+
+    /// [`Self::commit_file`], reporting which stage failed.
+    ///
+    /// The fsync stays one submission on the ring, after the drain; only the
+    /// error is attributed.
+    ///
+    /// # Errors
+    ///
+    /// [`CommitFailure::Write`] if draining the buffered writes fails,
+    /// [`CommitFailure::Fsync`] if the fsync fails.
+    pub fn commit_file_staged(&mut self, do_fsync: bool) -> Result<(File, u64), CommitFailure> {
+        self.flush_current().map_err(CommitFailure::Write)?;
 
         let active = self.current_file.take().ok_or_else(|| {
-            io::Error::new(
+            CommitFailure::Write(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "no file active in batched disk writer",
-            )
+            ))
         })?;
 
         let bytes_written = active.bytes_written;
 
         if do_fsync {
-            self.submit_fsync(&active)?;
+            self.submit_fsync(&active).map_err(CommitFailure::Fsync)?;
         }
 
         Ok((active.file, bytes_written))
@@ -498,5 +514,39 @@ mod tests {
 
         let content = std::fs::read(&path).unwrap();
         assert_eq!(content, b"drop test");
+    }
+
+    /// The combined commit still says which completion failed. `/dev/full`
+    /// fails the drain of buffered data with ENOSPC and an fsync with EINVAL,
+    /// so each stage fails for real inside one `commit_file_staged` call.
+    #[test]
+    fn staged_commit_attributes_the_failing_completion() {
+        let config = IoUringConfig::default();
+        let Some(mut batch) = IoUringDiskBatch::try_new(&config) else {
+            return;
+        };
+        let dev_full = || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open("/dev/full")
+                .unwrap()
+        };
+
+        batch.begin_file(dev_full()).unwrap();
+        batch.write_data(b"payload").unwrap();
+        match batch.commit_file_staged(true) {
+            Err(CommitFailure::Write(e)) => assert_eq!(e.raw_os_error(), Some(28)),
+            other => panic!("the drain must fail first, as a write: {other:?}"),
+        }
+
+        // A fresh batch: the failed drain above keeps its bytes buffered.
+        let Some(mut batch) = IoUringDiskBatch::try_new(&config) else {
+            return;
+        };
+        batch.begin_file(dev_full()).unwrap();
+        match batch.commit_file_staged(true) {
+            Err(CommitFailure::Fsync(e)) => assert_eq!(e.raw_os_error(), Some(22)),
+            other => panic!("an empty drain leaves the fsync to fail: {other:?}"),
+        }
     }
 }

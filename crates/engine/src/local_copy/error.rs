@@ -416,7 +416,8 @@ impl LocalCopyError {
             op.failure_line(
                 &logging::full_fname(operand),
                 target,
-                &upstream_io_error(source)
+                &upstream_io_error(source),
+                crate::commit_failure::commit_op_offset(source),
             )
         );
         match disposition {

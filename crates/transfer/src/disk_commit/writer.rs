@@ -15,6 +15,8 @@ use std::fs;
 use std::io::{self, IoSlice, Seek, Write};
 use std::path::Path;
 
+use crate::temp_guard::CommitOp;
+
 /// Fixed write buffer size matching upstream's `wf_writeBufSize = WRITE_SIZE * 8`
 /// (fileio.c:262-266). Upstream always uses 256 KB regardless of file size.
 pub(super) const WRITE_BUF_SIZE: usize = 256 * 1024;
@@ -237,10 +239,24 @@ impl<'a> Writer<'a> {
     /// the batched backends submit at their own internally tracked offset and
     /// cannot honor an intervening seek; the other variants are therefore
     /// unreachable here.
-    pub(super) fn skip_matched(&mut self, len: u64) -> io::Result<()> {
+    ///
+    /// A failure is tagged [`CommitOp::Write`] against `file_path`, the
+    /// destination name upstream's `write failed on` line reports. A failed
+    /// seek also carries `offset`, the position the skip started from, for the
+    /// `lseek returned %s, not %s` line `skip_matched()` prints before it
+    /// (`fileio.c:307-310`, which reports that offset, not the target).
+    pub(super) fn skip_matched(
+        &mut self,
+        len: u64,
+        file_path: &Path,
+        offset: u64,
+    ) -> io::Result<()> {
         match self {
             Writer::Buffered(w) => {
-                w.seek(io::SeekFrom::Current(len as i64))?;
+                w.flush().map_err(|e| write_failed(file_path, e))?;
+                w.seek(io::SeekFrom::Current(len as i64)).map_err(|e| {
+                    crate::temp_guard::attach_commit_op_at(CommitOp::Write, file_path, offset, e)
+                })?;
                 Ok(())
             }
             #[cfg(all(target_os = "linux", feature = "io_uring"))]
@@ -303,15 +319,11 @@ impl<'a> Writer<'a> {
     pub(super) fn flush_and_sync(&mut self, do_fsync: bool, file_path: &Path) -> io::Result<()> {
         match self {
             Writer::Buffered(w) => {
+                w.flush().map_err(|e| write_failed(file_path, e))?;
                 if do_fsync {
-                    w.sync().map_err(|e| {
-                        io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
-                    })
-                } else {
-                    w.flush().map_err(|e| {
-                        io::Error::other(format!("flush failed for {file_path:?}: {e}"))
-                    })
+                    w.sync().map_err(|e| fsync_failed(file_path, e))?;
                 }
+                Ok(())
             }
             #[cfg(all(target_os = "linux", feature = "io_uring"))]
             Writer::IoUring { .. } => Ok(()),
@@ -319,15 +331,11 @@ impl<'a> Writer<'a> {
             Writer::Iocp { .. } => Ok(()),
             #[cfg(target_os = "macos")]
             Writer::Macos(w) => {
+                w.flush().map_err(|e| write_failed(file_path, e))?;
                 if do_fsync {
-                    w.sync().map_err(|e| {
-                        io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
-                    })
-                } else {
-                    w.flush().map_err(|e| {
-                        io::Error::other(format!("flush failed for {file_path:?}: {e}"))
-                    })
+                    w.sync().map_err(|e| fsync_failed(file_path, e))?;
                 }
+                Ok(())
             }
             #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
             Writer::MacosGcd(w) => {
@@ -336,12 +344,9 @@ impl<'a> Writer<'a> {
                 // non-fsync case is a no-op. The fsync path forces the
                 // durability barrier on the channel-owned descriptor.
                 if do_fsync {
-                    w.sync_all().map_err(|e| {
-                        io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
-                    })
-                } else {
-                    Ok(())
+                    w.sync_all().map_err(|e| fsync_failed(file_path, e))?;
                 }
+                Ok(())
             }
             #[cfg(all(target_os = "linux", feature = "vmsplice"))]
             Writer::Vmsplice(w) => {
@@ -349,12 +354,11 @@ impl<'a> Writer<'a> {
                 // so there is no userspace buffer to flush. The fsync, when
                 // requested, syncs the file the writer owns.
                 if do_fsync {
-                    w.file().sync_all().map_err(|e| {
-                        io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
-                    })
-                } else {
-                    Ok(())
+                    w.file()
+                        .sync_all()
+                        .map_err(|e| fsync_failed(file_path, e))?;
                 }
+                Ok(())
             }
             #[cfg(all(target_os = "linux", feature = "dontcache"))]
             Writer::Dontcache(w) => {
@@ -362,12 +366,11 @@ impl<'a> Writer<'a> {
                 // userspace buffer to flush. The fsync, when requested, syncs
                 // the file the writer owns.
                 if do_fsync {
-                    w.file().sync_all().map_err(|e| {
-                        io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
-                    })
-                } else {
-                    Ok(())
+                    w.file()
+                        .sync_all()
+                        .map_err(|e| fsync_failed(file_path, e))?;
                 }
+                Ok(())
             }
         }
     }
@@ -391,25 +394,15 @@ impl<'a> Writer<'a> {
             #[cfg(all(target_os = "linux", feature = "io_uring"))]
             Writer::IoUring { batch } => {
                 batch
-                    .commit_file(do_fsync)
-                    .map_err(|e| {
-                        io::Error::new(
-                            e.kind(),
-                            format!("io_uring commit failed for {file_path:?}: {e}"),
-                        )
-                    })?
+                    .commit_file_staged(do_fsync)
+                    .map_err(|failure| commit_failed(file_path, failure))?
                     .0
             }
             #[cfg(all(target_os = "windows", feature = "iocp"))]
             Writer::Iocp { batch } => {
                 batch
-                    .commit_file(do_fsync)
-                    .map_err(|e| {
-                        io::Error::new(
-                            e.kind(),
-                            format!("IOCP commit failed for {file_path:?}: {e}"),
-                        )
-                    })?
+                    .commit_file_staged(do_fsync)
+                    .map_err(|failure| commit_failed(file_path, failure))?
                     .0
             }
             #[cfg(target_os = "macos")]
@@ -422,6 +415,31 @@ impl<'a> Writer<'a> {
             Writer::Dontcache(w) => w.into_file(),
         };
         Ok(Some(file))
+    }
+}
+
+/// Tags a failed write of received data, reported as upstream's
+/// `write failed on %s` (`receiver.c:658-660`).
+pub(super) fn write_failed(file_path: &Path, error: io::Error) -> io::Error {
+    crate::temp_guard::attach_commit_op(CommitOp::Write, file_path, error)
+}
+
+/// Tags a failed `--fsync`, reported as upstream's `fsync failed on %s`
+/// (`receiver.c:679-681`).
+fn fsync_failed(file_path: &Path, error: io::Error) -> io::Error {
+    crate::temp_guard::attach_commit_op(CommitOp::Fsync, file_path, error)
+}
+
+/// Tags a failed batched commit by the stage that failed: the drain of its
+/// buffered writes or its fsync.
+#[cfg(any(
+    all(target_os = "linux", feature = "io_uring"),
+    all(target_os = "windows", feature = "iocp"),
+))]
+fn commit_failed(file_path: &Path, failure: fast_io::CommitFailure) -> io::Error {
+    match failure {
+        fast_io::CommitFailure::Write(e) => write_failed(file_path, e),
+        fast_io::CommitFailure::Fsync(e) => fsync_failed(file_path, e),
     }
 }
 
@@ -487,5 +505,109 @@ pub(crate) mod close_fault {
             0 => None,
             errno => Some(io::Error::from_raw_os_error(errno)),
         }
+    }
+}
+
+/// Each receive-path failure carries the operation upstream reports it as.
+/// `/dev/full` fails every write with ENOSPC and `fsync(2)` with EINVAL, and a
+/// pipe refuses `lseek(2)`, so each site fails for real.
+#[cfg(all(test, target_os = "linux"))]
+mod failure_site_tests {
+    use super::*;
+
+    fn dev_full() -> fs::File {
+        fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .expect("open /dev/full")
+    }
+
+    fn op_of(error: &io::Error) -> (CommitOp, Option<u64>) {
+        let (op, _) = crate::temp_guard::commit_op_failure(error).expect("tagged");
+        (op, crate::temp_guard::commit_op_offset(error))
+    }
+
+    /// upstream: receiver.c:652-660 - a failed flush_write_file() is reported
+    /// as the write it completes.
+    #[test]
+    fn a_failed_flush_is_a_write_failure() {
+        let mut buf = Vec::with_capacity(WRITE_BUF_SIZE);
+        let mut writer = Writer::Buffered(ReusableBufWriter::new(dev_full(), &mut buf));
+        writer.write_chunk(b"payload").expect("buffered");
+
+        let error = writer
+            .flush_and_sync(false, Path::new("dest/a"))
+            .expect_err("/dev/full refuses the flush");
+
+        assert_eq!(op_of(&error), (CommitOp::Write, None));
+        assert_eq!(
+            error.raw_os_error(),
+            None,
+            "tagged errors keep the errno inside"
+        );
+        assert_eq!(
+            logging::upstream_errno_text(&error),
+            logging::upstream_errno_text(&io::Error::from_raw_os_error(28))
+        );
+    }
+
+    /// The flush before an `--fsync` is still the write: upstream flushes at
+    /// receiver.c:652 and syncs only later, at receiver.c:679.
+    #[test]
+    fn a_failed_flush_under_fsync_is_a_write_failure() {
+        let mut buf = Vec::with_capacity(WRITE_BUF_SIZE);
+        let mut writer = Writer::Buffered(ReusableBufWriter::new(dev_full(), &mut buf));
+        writer.write_chunk(b"payload").expect("buffered");
+
+        let error = writer
+            .flush_and_sync(true, Path::new("dest/a"))
+            .expect_err("/dev/full refuses the flush");
+
+        assert_eq!(op_of(&error), (CommitOp::Write, None));
+    }
+
+    /// upstream: receiver.c:679-681 - `fsync failed on %s`.
+    #[test]
+    fn a_failed_fsync_is_an_fsync_failure() {
+        let mut buf = Vec::with_capacity(WRITE_BUF_SIZE);
+        let mut writer = Writer::Buffered(ReusableBufWriter::new(dev_full(), &mut buf));
+
+        let error = writer
+            .flush_and_sync(true, Path::new("dest/a"))
+            .expect_err("/dev/full refuses fsync");
+
+        assert_eq!(op_of(&error), (CommitOp::Fsync, None));
+        assert_eq!(crate::error::rerr_for_io_error(&error), 11);
+    }
+
+    /// upstream: fileio.c:304-311 - a failed lseek past a matched block reports
+    /// the offset it started from, then the write failure.
+    #[test]
+    fn a_failed_skip_seek_carries_its_offset() {
+        let (_reader, pipe) = std::io::pipe().expect("pipe");
+        let file = fs::File::from(std::os::fd::OwnedFd::from(pipe));
+        let mut buf = Vec::with_capacity(WRITE_BUF_SIZE);
+        let mut writer = Writer::Buffered(ReusableBufWriter::new(file, &mut buf));
+
+        let error = writer
+            .skip_matched(512, Path::new("dest/a"), 4096)
+            .expect_err("a pipe cannot seek");
+
+        assert_eq!(op_of(&error), (CommitOp::Write, Some(4096)));
+    }
+
+    /// A skip whose flush fails never reached the lseek, so it reports only the
+    /// write (fileio.c:304-305 returns before the lseek).
+    #[test]
+    fn a_failed_skip_flush_carries_no_offset() {
+        let mut buf = Vec::with_capacity(WRITE_BUF_SIZE);
+        let mut writer = Writer::Buffered(ReusableBufWriter::new(dev_full(), &mut buf));
+        writer.write_chunk(b"payload").expect("buffered");
+
+        let error = writer
+            .skip_matched(512, Path::new("dest/a"), 4096)
+            .expect_err("/dev/full refuses the flush");
+
+        assert_eq!(op_of(&error), (CommitOp::Write, None));
     }
 }
