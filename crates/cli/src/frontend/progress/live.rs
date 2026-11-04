@@ -13,7 +13,6 @@ use super::interleave::PendingDiagnostics;
 use super::mode::{NameOutputLevel, ProgressMode};
 use super::render::{
     DeltaTransmissionState, FlistBanner, LiveRendered, emit_session_notices, emit_verbose,
-    is_generator_notice,
 };
 use crate::frontend::escape::EscapeStyle;
 use crate::frontend::out_format::{OutFormat, OutFormatContext, emit_out_format};
@@ -117,14 +116,13 @@ impl LiveListing<'_> {
         escape: EscapeStyle,
         writer: &mut dyn Write,
     ) -> io::Result<()> {
-        let event = std::slice::from_ref(event);
         match *self {
             Self::Names {
                 verbosity,
                 name_level,
                 name_overridden,
             } => emit_verbose(
-                event,
+                &[event],
                 verbosity,
                 name_level,
                 name_overridden,
@@ -133,7 +131,9 @@ impl LiveListing<'_> {
                 writer,
                 &mut PendingDiagnostics::empty(),
             ),
-            Self::Formatted { format, context } => emit_out_format(event, format, context, writer),
+            Self::Formatted { format, context } => {
+                emit_out_format(std::slice::from_ref(event), format, context, writer)
+            }
         }
     }
 }
@@ -399,7 +399,10 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
             return;
         }
         let result = (|| -> io::Result<()> {
-            if is_generator_notice(event) {
+            if event.is_generator_notice() {
+                // The forwarder hands notices over in upstream's print order, so
+                // the entries held back before this one print ahead of it.
+                self.write_deferred()?;
                 self.end_active_line()?;
                 listing.render(event, self.human_readable, session.escape, self.writer)?;
                 return self.writer.flush();

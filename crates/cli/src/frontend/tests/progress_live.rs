@@ -934,3 +934,58 @@ fn live_progress_without_session_leaves_header_and_listing_to_summary() {
     assert!(buffer.is_empty(), "{:?}", String::from_utf8_lossy(&buffer));
     assert!(!rendered.header && !rendered.listing, "{rendered:?}");
 }
+/// The forwarder hands a local copy's entries over in upstream's print order,
+/// so a generator notice must not overtake an entry line still held back for
+/// batching: a directory name buffered before `aaa is uptodate` prints first.
+#[test]
+fn live_progress_notice_follows_the_lines_held_back_before_it() {
+    use crate::frontend::escape::EscapeStyle;
+    use crate::frontend::progress::{LiveListing, LocalSessionOutput, NameOutputLevel};
+    use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent};
+    use engine::local_copy::LocalCopyChangeSet;
+    use std::path::PathBuf;
+    logging::init(logging::VerbosityConfig::from_verbose_level(2));
+    let event = |path: &str, kind, created, entry_kind| {
+        ClientEvent::for_test(
+            PathBuf::from(path),
+            kind,
+            created,
+            Some(ClientEntryMetadata::for_test(entry_kind)),
+            LocalCopyChangeSet::new(),
+        )
+    };
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut live = LiveProgress::new(
+        &mut buffer,
+        ProgressMode::PerFile,
+        HumanReadableMode::Grouped,
+    )
+    .with_local_session(LocalSessionOutput {
+        banner: crate::frontend::progress::FlistBanner::None,
+        delta_notice: None,
+        itemizing: false,
+        escape: EscapeStyle::terminal(false),
+        listing: Some(LiveListing::Names {
+            verbosity: 2,
+            name_level: NameOutputLevel::UpdatedAndUnchanged,
+            name_overridden: false,
+        }),
+    });
+    live.on_entry(&event(
+        "d",
+        ClientEventKind::DirectoryCreated,
+        true,
+        ClientEntryKind::Directory,
+    ));
+    live.on_entry(&event(
+        "aaa",
+        ClientEventKind::MetadataReused,
+        false,
+        ClientEntryKind::File,
+    ));
+    live.finish().expect("finish succeeds");
+    assert_eq!(
+        String::from_utf8(buffer).expect("utf8"),
+        "d/\naaa is uptodate\n"
+    );
+}

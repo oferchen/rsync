@@ -153,10 +153,7 @@ where
     // incremental banner is an FCLIENT line, which rwrite() turns into FINFO
     // and drops under `quiet` (log.c:310, log.c:345). Neither banner has a
     // verbosity gate: `-P` raises FLIST to 2 without `-v` (options.c:2514).
-    let inc_recurse = config.allow_inc_recurse(false)
-        && config
-            .protocol_version()
-            .is_none_or(|protocol| protocol.supports_inc_recurse());
+    let inc_recurse = config.local_inc_recurse();
     let flist_banner =
         if !info_gte(InfoFlag::Flist, 1) || config.quiet() || config.is_pull() || is_sender {
             FlistBanner::None

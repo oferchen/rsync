@@ -34,9 +34,11 @@
 //! ```
 
 mod event;
+mod listing_order;
 mod metadata;
 
 pub use self::event::{ClientEvent, ClientEventKind};
+pub use self::listing_order::listing_order;
 pub use self::metadata::{
     ClientEntryKind, ClientEntryMetadata, ListOnlyEntryFields, RemoteItemizeFields,
 };
@@ -65,6 +67,9 @@ pub struct ClientSummary {
     /// Set to the actual negotiated version for remote/daemon transfers.
     /// upstream: main.c:434-437 gates stats lines on protocol version.
     protocol_version: u8,
+    /// Whether the events came from a local copy that recursed incrementally,
+    /// which decides how upstream interleaves their lines.
+    incremental_listing: bool,
 }
 
 /// Newest protocol version, used as default for local copies.
@@ -77,6 +82,7 @@ impl Default for ClientSummary {
             events: Vec::new(),
             io_error_exit_code: None,
             protocol_version: DEFAULT_PROTOCOL_VERSION,
+            incremental_listing: false,
         }
     }
 }
@@ -101,6 +107,7 @@ impl ClientSummary {
             events,
             io_error_exit_code: None,
             protocol_version: DEFAULT_PROTOCOL_VERSION,
+            incremental_listing: false,
         }
     }
 
@@ -111,6 +118,7 @@ impl ClientSummary {
             events: Vec::new(),
             io_error_exit_code: None,
             protocol_version: DEFAULT_PROTOCOL_VERSION,
+            incremental_listing: false,
         }
     }
 
@@ -127,6 +135,7 @@ impl ClientSummary {
             events: Vec::new(),
             io_error_exit_code: None,
             protocol_version,
+            incremental_listing: false,
         }
     }
 
@@ -512,6 +521,22 @@ impl ClientSummary {
     /// Records the negotiated protocol version from a remote transfer.
     pub(crate) fn set_protocol_version(&mut self, version: u8) {
         self.protocol_version = version;
+    }
+
+    /// Records that a local copy recursed incrementally.
+    pub(crate) fn set_incremental_listing(&mut self, incremental: bool) {
+        self.incremental_listing = incremental;
+    }
+
+    /// Returns the events in the order upstream prints their lines.
+    ///
+    /// See [`listing_order`].
+    #[must_use]
+    pub fn listing_order(&self) -> Vec<&ClientEvent> {
+        listing_order(&self.events, self.incremental_listing)
+            .into_iter()
+            .map(|index| &self.events[index])
+            .collect()
     }
 }
 

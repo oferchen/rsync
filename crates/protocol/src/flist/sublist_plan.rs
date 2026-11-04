@@ -164,34 +164,22 @@ impl SubListPlan {
     #[must_use]
     pub fn lookahead_schedule(&self, record_ndxs: &[i32]) -> Vec<usize> {
         let starts = self.ndx_starts();
-        let used: Vec<usize> = std::iter::once(self.initial.len())
-            .chain(self.sublists.iter().map(|s| s.members.len()))
-            .collect();
-        let mut file_total = used[0];
-        let mut file_old_total = used[0];
-        let mut sent = 0usize;
-        let mut current = 0usize;
-        let mut schedule = Vec::with_capacity(record_ndxs.len());
-        for &ndx in record_ndxs {
-            // A list owns the gap NDX just below its start (rsync.c flist_for_ndx()).
-            let list = starts
-                .partition_point(|&start| start - 1 <= ndx)
-                .saturating_sub(1);
-            if list != current {
-                current = list;
-                file_old_total = used[..=list].iter().sum();
-            }
-            while sent < self.sublists.len()
-                && (sent < list || file_total < file_old_total + MIN_FILECNT_LOOKAHEAD)
-            {
-                sent += 1;
-                file_total += used[sent];
-            }
-            schedule.push(sent);
-        }
-        schedule
+        let mut lookahead = SubListLookahead::new(
+            std::iter::once(self.initial.len())
+                .chain(self.sublists.iter().map(|s| s.members.len()))
+                .collect(),
+        );
+        record_ndxs
+            .iter()
+            .map(|&ndx| {
+                // A list owns the gap NDX just below its start (rsync.c flist_for_ndx()).
+                let list = starts
+                    .partition_point(|&start| start - 1 <= ndx)
+                    .saturating_sub(1);
+                lookahead.serve(list)
+            })
+            .collect()
     }
-
     /// The NDX each planned entry goes out under, indexed like `entries`.
     ///
     /// A file's NDX is its list's `ndx_start` plus its position in the list.
@@ -219,6 +207,67 @@ impl SubListPlan {
             ndx[sublist.parent] = start - 1;
         }
         ndx
+    }
+}
+
+/// A sender's INC_RECURSE lookahead, advanced one request at a time.
+///
+/// Before handling each request the sender sends sub-lists while fewer than
+/// [`MIN_FILECNT_LOOKAHEAD`] entries are queued beyond the list the request
+/// belongs to; a request for a list not yet sent waits until it is.
+///
+/// upstream: sender.c:515-547 (`send_extra_file_list()` around each
+/// `read_ndx_and_attrs()`), flist.c:2651 (`file_total - file_old_total`),
+/// rsync.c:396-401 (`file_old_total` recounted through the request's list)
+#[derive(Clone, Debug)]
+pub struct SubListLookahead {
+    used: Vec<usize>,
+    file_total: usize,
+    file_old_total: usize,
+    current: usize,
+    sent: usize,
+}
+
+impl SubListLookahead {
+    /// Starts with only the initial list sent. `used` holds each list's entry
+    /// count, initial list first; an empty `used` is one empty initial list.
+    #[must_use]
+    pub fn new(mut used: Vec<usize>) -> Self {
+        if used.is_empty() {
+            used.push(0);
+        }
+        let initial = used[0];
+        Self {
+            used,
+            file_total: initial,
+            file_old_total: initial,
+            current: 0,
+            sent: 0,
+        }
+    }
+
+    /// Sends what the sender sends before handling a request from `list`, and
+    /// returns how many sub-lists have been sent. A `list` past the last one
+    /// is treated as the last.
+    pub fn serve(&mut self, list: usize) -> usize {
+        let list = list.min(self.used.len() - 1);
+        if list != self.current {
+            self.current = list;
+            self.file_old_total = self.used[..=list].iter().sum();
+        }
+        while self.sent + 1 < self.used.len()
+            && (self.sent < list || self.file_total < self.file_old_total + MIN_FILECNT_LOOKAHEAD)
+        {
+            self.sent += 1;
+            self.file_total += self.used[self.sent];
+        }
+        self.sent
+    }
+
+    /// Number of sub-lists sent so far.
+    #[must_use]
+    pub const fn sent(&self) -> usize {
+        self.sent
     }
 }
 
