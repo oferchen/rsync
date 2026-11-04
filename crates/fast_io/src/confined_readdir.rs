@@ -66,6 +66,21 @@ pub(crate) fn read_dir_names_at(dirfd: std::os::fd::BorrowedFd<'_>) -> io::Resul
     imp::read_names(dirfd)
 }
 
+/// Lists the entry names of `dir`, a descriptor already opened `O_RDONLY`,
+/// without reopening it.
+///
+/// [`read_dir_names_at`] reopens `"."` beneath its descriptor, which needs
+/// search permission on the directory. A leaf the caller opened readable
+/// itself needs only read permission, as upstream's `fdopendir()` of the leaf
+/// `ona_open()` returned does.
+///
+/// upstream: `rsync-3.5.1/syscall.c:593-605` - `ona_open()` opens a
+/// non-symlink leaf with the caller's flags, and `flist.c:2266` lists it.
+#[cfg(unix)]
+pub(crate) fn read_dir_names_owned(dir: std::os::fd::OwnedFd) -> io::Result<Vec<OsString>> {
+    imp::read_names_owned(dir)
+}
+
 #[cfg(unix)]
 mod imp {
     use super::*;
@@ -97,7 +112,6 @@ mod imp {
     ///
     /// upstream: `rsync-3.5.1/syscall.c:3384-3386` - "Callers that read
     /// directory entries ... must continue to use `O_RDONLY | O_DIRECTORY`".
-    #[allow(unsafe_code)]
     pub(super) fn read_names(dirfd: BorrowedFd<'_>) -> io::Result<Vec<OsString>> {
         let readable = crate::dir_sandbox::at_syscalls::openat(
             dirfd,
@@ -105,10 +119,17 @@ mod imp {
             libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
             0,
         )?;
+        read_names_owned(std::os::fd::OwnedFd::from(readable))
+    }
+
+    /// Enumerates `readable`, a directory descriptor open for reading that this
+    /// function takes ownership of.
+    #[allow(unsafe_code)]
+    pub(super) fn read_names_owned(readable: std::os::fd::OwnedFd) -> io::Result<Vec<OsString>> {
         let raw = readable.into_raw_fd();
 
         // SAFETY: `raw` is an open directory descriptor this function solely
-        // owns, freshly opened above and not shared with the caller's.
+        // owns, taken from the `OwnedFd` passed in and shared with nobody.
         // `fdopendir` takes that ownership on success; on failure it does not,
         // which is why the error arm closes `raw` itself.
         let dir = unsafe { libc::fdopendir(raw) };

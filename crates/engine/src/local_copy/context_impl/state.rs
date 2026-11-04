@@ -640,6 +640,10 @@ impl<'a> CopyContext<'a> {
     /// follow a symlinked *parent*, and the scan resolves exactly those parents,
     /// so confining it would refuse the traversal the operator asked for.
     ///
+    /// `--insecure-links` withholds it too: upstream picks the legacy
+    /// `opendir()` whenever `symlink_optout_allowed()` holds
+    /// (`rsync-3.5.1/flist.c:2357-2361`, `syscall.c:139-144`).
+    ///
     /// [`follow_source_symlinks`]: Self::follow_source_symlinks
     /// A `--files-from` scan takes the ownership walk ahead of the anchor, as
     /// upstream's `secure_opendir()` tests `filesfrom_owner_walk_active()`
@@ -651,7 +655,8 @@ impl<'a> CopyContext<'a> {
         if let Some(base) = self.files_from_base.as_ref() {
             return (&mut self.readdir_buf, ScanRoot::FilesFrom(base));
         }
-        let confine = !self.follow_source_symlinks();
+        let confine =
+            !self.follow_source_symlinks() && !fast_io::confinement::session_optout_allowed();
         let root = match confine.then_some(self.source_anchor.as_deref()).flatten() {
             Some(anchor) => ScanRoot::Beneath(anchor),
             None => ScanRoot::Unconfined,

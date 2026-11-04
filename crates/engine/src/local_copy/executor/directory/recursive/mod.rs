@@ -40,6 +40,7 @@ use entry::process_planned_entry;
 
 use super::planner::{
     apply_pre_transfer_deletions, plan_directory_entries, reorder_hardlink_group_holders,
+    report_unstatable_entry,
 };
 use super::support::read_directory_entries_sorted_reuse;
 
@@ -247,6 +248,7 @@ fn copy_directory_recursive_inner(
     let pinned_root_error = context.pinned_anchor_error(source);
     let scans_operand_root = relative.is_none() && context.source_anchor() == Some(source);
     context.set_batch_listing_dir(Some(relative.unwrap_or(Path::new("."))));
+    let walks_children = context.recursive_enabled() || force_walk_one_level;
     let (readdir_buf, scan_root) = context.readdir_buf_with_confined_anchor();
     // Seeded here rather than at the entry loop so a failed enumeration can
     // carry its error to the same end-of-frame re-raise the per-entry failures
@@ -271,9 +273,19 @@ fn copy_directory_recursive_inner(
     // directory's own permissions/ACLs unapplied and a stale destination ACL
     // entry unrevoked. Continue with no children; the tail re-raises.
     let mut enumeration_failed = false;
-    let scan = match pinned_root_error {
-        Some(error) => Err(LocalCopyError::io("open directory", source, error)),
-        None => read_directory_entries_sorted_reuse(source, readdir_buf, scan_root),
+    let mut unstatable = Vec::new();
+    // upstream: flist.c:2992 - a directory this frame will not walk (no
+    // recursion, not a trailing-slash or dot-dir source) is never opened, so an
+    // unreadable one is not an error.
+    let scan = if !walks_children {
+        Ok(Vec::new())
+    } else {
+        match pinned_root_error {
+            Some(error) => Err(LocalCopyError::io("open directory", source, error)),
+            None => {
+                read_directory_entries_sorted_reuse(source, readdir_buf, scan_root, &mut unstatable)
+            }
+        }
     };
     let mut entries = match scan {
         Ok(entries) => entries,
@@ -303,6 +315,15 @@ fn copy_directory_recursive_inner(
             Vec::new()
         }
     };
+    for (path, error) in unstatable {
+        let name = path.file_name().map_or(path.as_path(), Path::new);
+        let entry_relative = relative.map_or_else(|| name.to_path_buf(), |dir| dir.join(name));
+        if let Some(vanished) = report_unstatable_entry(context, &path, &entry_relative, error)
+            && first_entry_io_error.is_none()
+        {
+            first_entry_io_error = Some(vanished);
+        }
+    }
     // upstream: the file list is built once before the receiver mkdir's the
     // destination root, so a destination created inside the source tree (e.g.
     // `rsync -a src src/child`) never appears in the list. oc reads each source
