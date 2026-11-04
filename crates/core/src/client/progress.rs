@@ -28,7 +28,8 @@
 //! run_client_with_observer(config, Some(&mut observer))?;
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -40,7 +41,7 @@ use engine::local_copy::{
 
 use super::ClientError;
 use super::error::map_local_copy_error;
-use super::summary::{ClientEvent, ClientEventKind};
+use super::summary::{ClientEvent, ClientEventKind, listing_order};
 
 /// Progress update emitted while executing a client transfer.
 #[derive(Clone, Debug)]
@@ -283,6 +284,8 @@ pub(crate) struct ClientProgressForwarder<'a> {
     pending_transfers: HashMap<PathBuf, ClientEvent>,
     // The in-flight file already announced from `pending_transfers`.
     announced: Option<PathBuf>,
+    // The preview's generator notices, handed out in upstream's print order.
+    notices: PreviewNotices,
 }
 
 impl<'a> ClientProgressForwarder<'a> {
@@ -291,6 +294,7 @@ impl<'a> ClientProgressForwarder<'a> {
         plan: &LocalCopyPlan,
         mode: LocalCopyExecution,
         mut options: LocalCopyOptions,
+        inc_recurse: bool,
     ) -> Result<Self, ClientError> {
         if !options.events_enabled() {
             options = options.collect_events(true);
@@ -305,32 +309,41 @@ impl<'a> ClientProgressForwarder<'a> {
 
         let (summary, records, destination_root) = preview_report.into_parts();
         let destination_root: Arc<Path> = Arc::from(destination_root);
-        let progress_events: Vec<_> = records
+        let events: Vec<_> = records
             .into_iter()
             .map(|record| ClientEvent::from_record_owned(record, Arc::clone(&destination_root)))
-            .filter(|event| event.kind().is_progress())
             .collect();
         // Denominator counts every checked flist entry (upstream num_files:
         // directories and symlinks included); the numerator counts down over
         // all of them via `checked`. `transferred_total` counts only the
         // regular-file transfers that will print a block and advance `xfr#`.
-        let total = progress_events.len();
-        let transferred_total = progress_events
+        let total = events
             .iter()
-            .filter(|event| event.opens_progress_block())
+            .filter(|event| event.kind().is_progress())
             .count();
-
+        let transferred_total = events
+            .iter()
+            .filter(|event| event.kind().is_progress() && event.opens_progress_block())
+            .count();
         let total_bytes = summary.total_source_bytes();
         let dry_run = matches!(mode, LocalCopyExecution::DryRun);
-        let pending_transfers = if dry_run {
-            HashMap::new()
-        } else {
-            progress_events
-                .into_iter()
-                .filter(ClientEvent::opens_progress_block)
-                .map(|event| (event.relative_path().to_path_buf(), event))
-                .collect()
-        };
+        let order = listing_order(&events, inc_recurse);
+        let mut slots: Vec<Option<ClientEvent>> = events.into_iter().map(Some).collect();
+        let mut notices = PreviewNotices::with_capacity(order.len());
+        let mut pending_transfers =
+            HashMap::with_capacity(if dry_run { 0 } else { transferred_total });
+        for event in order.into_iter().filter_map(|index| slots[index].take()) {
+            if event.is_generator_notice() {
+                notices.push(event);
+                continue;
+            }
+            if !event.is_deferred_hardlink() {
+                notices.precede(event.relative_path());
+            }
+            if !dry_run && event.kind().is_progress() && event.opens_progress_block() {
+                pending_transfers.insert(event.relative_path().to_path_buf(), event);
+            }
+        }
 
         Ok(Self {
             observer,
@@ -347,6 +360,7 @@ impl<'a> ClientProgressForwarder<'a> {
             dry_run,
             pending_transfers,
             announced: None,
+            notices,
         })
     }
 
@@ -376,6 +390,7 @@ impl<'a> ClientProgressForwarder<'a> {
     /// upstream has no terminal summary outside progress2. A dry run always
     /// takes this path: it counts its transfers but prints no block for them.
     pub(crate) fn finalize(&mut self) {
+        self.notices.release_all(&mut *self.observer);
         if self.total == 0 || (self.transferred > 0 && !self.dry_run) {
             return;
         }
@@ -418,7 +433,14 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
         if opens_block {
             self.pending_transfers.remove(event.relative_path());
         }
-        if !opens_block || announced.as_deref() != Some(event.relative_path()) {
+        if event.is_generator_notice() {
+            // A notice the preview already ordered is handed out from there.
+            if !self.notices.taken_from_preview(event.relative_path()) {
+                self.observer.on_entry(&event);
+            }
+        } else if !opens_block || announced.as_deref() != Some(event.relative_path()) {
+            self.notices
+                .release_before(event.relative_path(), &mut *self.observer);
             self.observer.on_entry(&event);
         }
         if !event.kind().is_progress() {
@@ -489,6 +511,8 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
         if self.announced.as_deref() != Some(progress.relative_path())
             && let Some(entry) = self.pending_transfers.remove(progress.relative_path())
         {
+            self.notices
+                .release_before(entry.relative_path(), &mut *self.observer);
             self.observer.on_entry(&entry);
             self.announced = Some(entry.relative_path().to_path_buf());
         }
@@ -534,6 +558,76 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
         };
 
         self.observer.on_progress(&update);
+    }
+}
+
+/// A local copy's generator notices, taken from the dry-run preview so each
+/// can be printed where upstream prints it.
+///
+/// Upstream's generator prints a notice the moment it checks the entry, while
+/// the names of the entries around it wait for its next flush (see
+/// [`listing_order`]). A live copy only learns an entry is up to date when it
+/// reaches it, so the preview's notices are released just ahead of the first
+/// entry upstream prints after them, and the live notices are dropped.
+struct PreviewNotices {
+    queue: VecDeque<ClientEvent>,
+    // How many notices upstream prints before each sender-printed entry. Keyed
+    // by the path's bytes: hashing those skips `Path`'s per-component hash.
+    before: HashMap<OsString, usize>,
+    released: usize,
+    // Paths whose live notice the preview stands in for.
+    previewed: HashSet<OsString>,
+}
+
+impl PreviewNotices {
+    fn with_capacity(entries: usize) -> Self {
+        Self {
+            queue: VecDeque::new(),
+            before: HashMap::with_capacity(entries),
+            released: 0,
+            previewed: HashSet::new(),
+        }
+    }
+    fn push(&mut self, notice: ClientEvent) {
+        self.previewed
+            .insert(notice.relative_path().as_os_str().to_owned());
+        self.queue.push_back(notice);
+    }
+
+    /// Records that the entry at `path` prints after every notice pushed so far.
+    fn precede(&mut self, path: &Path) {
+        // With no notice queued there is nothing to release before it.
+        if !self.queue.is_empty() {
+            self.before
+                .insert(path.as_os_str().to_owned(), self.queue.len());
+        }
+    }
+
+    /// Hands the observer every notice upstream prints before `path`.
+    fn release_before(&mut self, path: &Path, observer: &mut dyn ClientProgressObserver) {
+        if let Some(&count) = self.before.get(path.as_os_str()) {
+            while self.released < count {
+                self.release_one(observer);
+            }
+        }
+    }
+
+    fn release_all(&mut self, observer: &mut dyn ClientProgressObserver) {
+        while !self.queue.is_empty() {
+            self.release_one(observer);
+        }
+    }
+
+    fn release_one(&mut self, observer: &mut dyn ClientProgressObserver) {
+        if let Some(notice) = self.queue.pop_front() {
+            observer.on_entry(&notice);
+        }
+        self.released += 1;
+    }
+
+    /// Whether the live notice for `path` was already taken from the preview.
+    fn taken_from_preview(&mut self, path: &Path) -> bool {
+        self.previewed.remove(path.as_os_str())
     }
 }
 
