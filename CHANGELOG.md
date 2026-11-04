@@ -225,6 +225,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 - Embedded `ssh://` transfers read ssh_config keywords as OpenSSH 10.0p1 does: a keyword OpenSSH does not know is refused once the whole file has been read, with every bad line reported; `IgnoreUnknown` is honoured; a keyword with no value is refused; and every keyword OpenSSH accepts still loads, including the ones the embedded transport does not act on (#8329)
 - Embedded `ssh://` transfers honour ssh_config `Ciphers`, `MACs`, `KexAlgorithms`, `HostKeyAlgorithms` and `RekeyLimit` as OpenSSH 10.0p1 reads them: lists are validated when read, `+`, `-` and `^` compose against the transport defaults, names the transport cannot negotiate are left out, and a list with nothing negotiable fails the connection (#PRNUM)
+- Embedded `ssh://` transfers read ssh_config `Tag` and evaluate `Match tagged` as OpenSSH 10.0p1 does, and `Match !final` now requests the final pass like `Match final` (#PRNUM2)
 ### Performance
 - Local `--checksum` compares source and destination through the parallel checksum service: same-size pairs of a directory are hashed in one rayon batch, and files of 8 MiB or more as 4 MiB block vectors in parallel; decisions and output are unchanged against rsync 3.5.1 (#8249)
 

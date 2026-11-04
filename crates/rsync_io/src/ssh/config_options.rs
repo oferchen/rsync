@@ -217,6 +217,9 @@ pub(in crate::ssh) enum Opcode {
     /// `RekeyLimit <bytes>|default [<time>|none]` - when to re-key.
     /// upstream: openssh/readconf.c:287 `oRekeyLimit`, arm at :1362.
     RekeyLimit,
+    /// `Tag <name>` - the tag a later `Match tagged` line tests.
+    /// upstream: openssh/readconf.c:262 `oTag`, arm at :1498 (`parse_string`).
+    Tag,
     /// `IgnoreUnknown <pattern-list>` - unknown keywords matching the list
     /// are skipped instead of refused, from the line after it onwards.
     /// upstream: openssh/readconf.c:326 `oIgnoreUnknown`, arm at :2193
@@ -378,7 +381,7 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("streamlocalbindunlink", Opcode::NotActedOn),
     ("stricthostkeychecking", Opcode::NotActedOn),
     ("syslogfacility", Opcode::NotActedOn),
-    ("tag", Opcode::NotActedOn),
+    ("tag", Opcode::Tag),
     ("tcpkeepalive", Opcode::TCPKeepAlive),
     // Alias resolving to the same opcode as `KbdInteractiveAuthentication`.
     // upstream: openssh/readconf.c:240 `{ "tisauthentication",
@@ -558,6 +561,7 @@ impl Opcode {
             | Self::CertificateFile
             | Self::PreferredAuthentications
             | Self::IgnoreUnknown
+            | Self::Tag
             | Self::Ciphers
             | Self::Macs
             | Self::KexAlgorithms
@@ -1051,6 +1055,7 @@ mod tests {
         ("KexAlgorithms", Opcode::KexAlgorithms),
         ("HostKeyAlgorithms", Opcode::HostKeyAlgorithms),
         ("RekeyLimit", Opcode::RekeyLimit),
+        ("Tag", Opcode::Tag),
         ("Port", Opcode::Port),
         ("IdentityFile", Opcode::IdentityFile),
         ("IdentitiesOnly", Opcode::IdentitiesOnly),
