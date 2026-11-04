@@ -188,6 +188,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Pulls can use the parallel delta scan, which their clients never forward: the daemon module parameter `parallel delta scan = yes` turns it on for a module, and `OC_RSYNC_PARALLEL_DELTA_SCAN=1` for a remote-shell server (#8289)
 
 ### Changed
+- Embedded `ssh://` ssh_config parity is now gated on a corpus (bastions with `ProxyJump` and `Match`, `Include` directories, token expansion, algorithm lists, `Tag`, canonicalization) diffed against OpenSSH 10.0p1 `ssh -G`, and the user-visible behaviour changes are listed in `docs/ssh-config-embedded.md` (#8329)
 - A recursive local `--write-batch` records incremental recursion, as 3.5.1 does (header `81 ff`), and writes its file list in the incremental layout: the top level, then one sub-list per directory, placed among the file data by 3.5.1's 1000-entry lookahead. rsync 3.5.1 replays these batches, and `--delete-before`, `--delete-after`, `--delay-updates`, `-m`, `--qsort` and `--no-inc-recursive` still record a flat list (#8261)
 
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
