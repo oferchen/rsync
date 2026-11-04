@@ -107,6 +107,7 @@ impl<'a> CopyContext<'a> {
             batch_entry_hlink_gnum: Vec::new(),
             batch_pending_entries: Vec::new(),
             batch_pending_acls: Vec::new(),
+            batch_xattr_report: None,
             batch_traversal_to_ndx: None,
             batch_list_count: 1,
             batch_pending_sublists: Vec::new(),
@@ -909,10 +910,9 @@ impl<'a> CopyContext<'a> {
     /// I/O error occurred and `--ignore-errors` was not given, emitting the
     /// upstream skip notice exactly once.
     ///
-    /// The message renders at the default verbosity through the `NONREG`
-    /// info category (info_verbosity\[0\], enabled at verbose level 0), the
-    /// same channel oc uses for the sibling "skipping non-regular file"
-    /// notice. `--ignore-errors` keeps [`Self::deletions_allowed`] true, so
+    /// The message is a level-0 info event, so no `--info` setting hides it
+    /// and only `--quiet` does, as for upstream's bare `rprintf(FINFO, ...)`.
+    /// `--ignore-errors` keeps [`Self::deletions_allowed`] true, so
     /// neither the warning nor the skip fires in that case - matching
     /// upstream, where the flag both suppresses the notice and lets the
     /// delete pass run.
@@ -942,7 +942,7 @@ impl<'a> CopyContext<'a> {
         }
         if !self.io_error_delete_warning_emitted {
             self.io_error_delete_warning_emitted = true;
-            info_log!(Nonreg, 1, "IO error encountered -- skipping file deletion");
+            info_log!(Misc, 0, "IO error encountered -- skipping file deletion");
         }
         true
     }

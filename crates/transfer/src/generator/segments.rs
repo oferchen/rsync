@@ -259,6 +259,14 @@ pub(crate) struct IncrementalState {
     pub(crate) pending_segments: Vec<PendingSegment>,
     /// Whether all incremental file list segments have been sent.
     pub(crate) flist_eof_sent: bool,
+    /// `io_error` as it stood when the current round of sub-list sending
+    /// began. A sub-list closed after `io_error` moved past it carries the
+    /// error in its trailer, so the receiver learns of a failure found while
+    /// scanning a later directory before it walks that list.
+    ///
+    /// upstream: flist.c:2641 `save_io_error = io_error` records the base.
+    /// upstream: flist.c:2686-2693 `io_error == save_io_error || ignore_errors` picks the trailer.
+    pub(crate) sublist_io_error_base: i32,
     /// Cached file list writer for compression state continuity across sub-lists.
     ///
     /// Upstream rsync uses `static` variables in `send_file_entry()` that persist
@@ -317,6 +325,19 @@ pub(crate) struct LazyFlistProducer {
     /// each segment's sorted order - reproducing the eager reorder's phase-2
     /// depth-first assignment.
     pub(crate) next_wire_dir_ndx: i32,
+    /// Transfer-root directory whose per-directory merge files are pushed at
+    /// depth 0 before the first lazy scan; `Some` only for a `src/` (DOTDIR)
+    /// source, as upstream pushes the root scope only for that name type.
+    ///
+    /// upstream: flist.c:3001-3004 send_file_list()
+    pub(crate) pending_root_scope: Option<std::path::PathBuf>,
+    /// Pushed per-directory merge scopes for the current tree path, innermost
+    /// last, each tagged with its tree depth.
+    ///
+    /// upstream: exclude.c:974 change_local_filter_dir() keeps one scope per
+    /// depth (`filt_array`) alive across sub-lists, so a lazily scanned
+    /// directory still sees every ancestor's dir-merge rules.
+    pub(crate) filter_scopes: Vec<(usize, filters::DirFilterGuard)>,
 }
 
 impl IncrementalState {
@@ -325,6 +346,7 @@ impl IncrementalState {
         Self {
             pending_segments: Vec::new(),
             flist_eof_sent: false,
+            sublist_io_error_base: 0,
             flist_writer_cache: None,
             initial_segment_count: None,
             ndx_map: NdxMap::new(initial_ndx_start),

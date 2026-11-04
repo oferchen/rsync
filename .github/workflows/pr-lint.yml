@@ -40,9 +40,12 @@ name: PR lint
 # tarball. It runs here, unfiltered, because ci.yml is path-filtered to code and
 # a docs-only PR is exactly the change this check exists to validate. The same
 # assertion also runs under the required `nextest (stable)` cell for code
-# changes. Advisory: not a required status check.
+# changes. Advisory: not a required status check. It also runs on every push
+# to master, so a red run merged past it shows up on master's own checks.
 on:
   pull_request:
+  push:
+    branches: [ master ]
 
 permissions:
   contents: read

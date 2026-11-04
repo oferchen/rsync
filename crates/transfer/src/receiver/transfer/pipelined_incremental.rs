@@ -207,6 +207,7 @@ impl ReceiverContext {
             &setup.dest_dir,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
+            &failed_dirs,
             writer,
         );
 
@@ -477,7 +478,7 @@ impl ReceiverContext {
         // matching upstream's single-pass emission ordering.
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
-        self.order_list_only_entries(&mut stats);
+        self.publish_list_only_entries(&mut stats, writer)?;
 
         self.finalize_transfer(
             reader,
@@ -780,7 +781,7 @@ impl ReceiverContext {
             // segment's own request stream (generator.c:582-593), so a row
             // recorded after it would go out with a later segment, after its
             // own sub-list was freed.
-            self.run_segment_post_passes(range.clone(), &setup, writer)?;
+            self.run_segment_post_passes(range.clone(), &setup, &failed_dirs, writer)?;
             // Build and transfer this segment's candidate files. The threaded
             // codec pair keeps the request-stream NDX diff-state connection-wide
             // across every segment. A segment that interleaves during these
@@ -984,7 +985,7 @@ impl ReceiverContext {
 
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
-        self.order_list_only_entries(&mut stats);
+        self.publish_list_only_entries(&mut stats, writer)?;
 
         // upstream: generator.c:2899-2909 - the delayed deletions, then one
         // --max-delete report for every per-directory delete of the walk.
@@ -1222,6 +1223,7 @@ impl ReceiverContext {
         &mut self,
         range: std::ops::Range<usize>,
         setup: &PipelineSetup,
+        failed_dirs: &crate::receiver::directory::FailedDirectories,
         writer: &mut W,
     ) -> io::Result<()> {
         self.ensure_relative_parents_in_range(
@@ -1229,6 +1231,7 @@ impl ReceiverContext {
             &setup.dest_dir,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
+            failed_dirs,
             writer,
         );
         #[cfg(unix)]

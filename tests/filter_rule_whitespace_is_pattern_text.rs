@@ -31,7 +31,7 @@
 //! The daemon reader is pinned separately, because only a running daemon
 //! exercises it: `tests/daemon_filter_file_whitespace_is_pattern_text.rs`.
 //!
-//! MEASURED against rsync 3.5.0 with a source holding `a` and `a ` (trailing
+//! MEASURED against rsync 3.5.1 with a source holding `a` and `a ` (trailing
 //! space) and a `.rsync-filter` of `- a `: upstream excludes `a ` and copies
 //! `a`; oc excluded `a` and copied `a `. Every cell below is asserted against
 //! that measured upstream behaviour.
@@ -165,7 +165,7 @@ fn a_keyword_rule_keeps_its_trailing_space() {
 ///
 /// upstream: `exclude.c:1806` skips only an EMPTY line, so `   ` reaches
 /// `parse_rule_tok`, takes the prefix switch's `default:` arm and dies at
-/// `exclude.c:1363`. MEASURED against rsync 3.5.0: exit 1, nothing transfers.
+/// `exclude.c:1363`. MEASURED against rsync 3.5.1: exit 1, nothing transfers.
 #[test]
 fn a_whitespace_only_line_is_a_syntax_error() {
     let dir = TestDir::new().expect("scratch dir");
@@ -274,7 +274,7 @@ fn transfer_exclude_from(dir: &TestDir) -> RsyncCommand {
 /// A whitespace-only `--exclude-from` line is a PATTERN, not a blank line.
 ///
 /// upstream: `exclude.c:1806` tests `*line`, the first byte, so `   ` is not
-/// empty. MEASURED against rsync 3.5.0: it excludes the file named `   `.
+/// empty. MEASURED against rsync 3.5.1: it excludes the file named `   `.
 #[test]
 fn a_whitespace_only_exclude_from_line_is_a_pattern() {
     let dir = TestDir::new().expect("scratch dir");

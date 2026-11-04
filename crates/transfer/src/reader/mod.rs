@@ -6,6 +6,7 @@
 //! demultiplexes incoming messages, extracting MSG_DATA payloads.
 
 mod multiplex;
+pub(crate) use multiplex::escape_terminal_line;
 mod server;
 
 #[cfg(test)]

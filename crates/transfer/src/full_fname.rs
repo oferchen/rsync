@@ -154,6 +154,23 @@ impl<'a> FullFnamePaths<'a> {
         }
     }
 
+    /// The context a receiver renders against: a daemon module's when both its
+    /// name and root are known, otherwise the non-daemon one.
+    ///
+    /// `curr_dir` is the destination directory the receiver entered, or the
+    /// module root when none is recorded.
+    #[must_use]
+    pub(crate) fn receiver(
+        module: Option<&'a str>,
+        module_root: Option<&'a Path>,
+        dest_dir: Option<&'a Path>,
+    ) -> Self {
+        match (module, module_root) {
+            (Some(module), Some(root)) => Self::daemon(module, root, dest_dir.unwrap_or(root)),
+            _ => Self::non_daemon(),
+        }
+    }
+
     /// Rewrites a server-side path into the form upstream renders, or returns
     /// `None` when the path lies outside the tree `curr_dir` anchors.
     ///

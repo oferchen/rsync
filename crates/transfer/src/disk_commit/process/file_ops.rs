@@ -21,7 +21,7 @@ use crate::temp_guard::open_tmpfile_sandboxed;
 use crate::temp_guard::{CommitOp, TempFileGuard, attach_commit_op};
 
 use super::super::config::{DiskCommitConfig, PartialMode};
-use super::super::writer::{ReusableBufWriter, Writer, close_received_file};
+use super::super::writer::{ReusableBufWriter, Writer, close_received_file, write_failed};
 use super::commit::{
     SparseFinalize, commit_file, finalize_sparse, make_backup_copy, retain_partial_file,
 };
@@ -234,12 +234,6 @@ pub(in crate::disk_commit) fn process_file(
         Err(err) => return discard_file_messages(file_rx, buf_return_tx, err),
     };
 
-    // upstream: rsync.c:464 dest_mode() reads the PRE-transfer destination
-    // stat. An inplace open writes through the destination itself, so capture
-    // that stat now - once the open below runs, the prior mode is gone and the
-    // metadata apply would fall back to the brand-new-file formula.
-    let inplace_pre_transfer = inplace_pre_transfer_stat(&begin);
-
     let (file, mut cleanup_guard, needs_rename) = match open_output_file(&begin, config) {
         Ok(triple) => triple,
         Err(open_err) => {
@@ -373,7 +367,7 @@ pub(in crate::disk_commit) fn process_file(
                     }
                     None => output.write_chunk(&data),
                 };
-                if let Err(err) = written {
+                if let Err(err) = written.map_err(|e| write_failed(&begin.file_path, e)) {
                     let _ = buf_return_tx.try_send(data);
                     return discard_file_messages(file_rx, buf_return_tx, err);
                 }
@@ -404,11 +398,12 @@ pub(in crate::disk_commit) fn process_file(
                     sparse
                         .skip_matched(output.buffered_for_sparse(), &data)
                         .map(drop)
+                        .map_err(|e| write_failed(&begin.file_path, e))
                 } else {
                     // upstream: fileio.c:304-313 skip_matched() - flush then
                     // lseek past the already-in-place bytes instead of
                     // rewriting identical data.
-                    output.skip_matched(data.len() as u64)
+                    output.skip_matched(data.len() as u64, &begin.file_path, write_offset)
                 };
                 if let Err(err) = skipped {
                     let _ = buf_return_tx.try_send(data);
@@ -423,7 +418,9 @@ pub(in crate::disk_commit) fn process_file(
                 // and hand the logical length + in-basis hole ranges to the
                 // commit step for ftruncate + punch (no materialized byte).
                 let sparse_final = if let Some(ref mut sparse) = sparse_state {
-                    let logical = sparse.finish(output.buffered_for_sparse())?;
+                    let logical = sparse
+                        .finish(output.buffered_for_sparse())
+                        .map_err(|e| write_failed(&begin.file_path, e))?;
                     Some(SparseFinalize {
                         logical_len: logical,
                         holes: sparse.take_holes(),
@@ -474,12 +471,7 @@ pub(in crate::disk_commit) fn process_file(
                 // file is already correct when it appears at the final
                 // path. For inplace/device, metadata is applied after.
                 let pre_meta_error = if needs_rename {
-                    apply_file_metadata(
-                        cleanup_guard.path(),
-                        &begin,
-                        config,
-                        inplace_pre_transfer.as_ref(),
-                    )
+                    apply_file_metadata(cleanup_guard.path(), &begin, config)
                 } else {
                     None
                 };
@@ -513,16 +505,11 @@ pub(in crate::disk_commit) fn process_file(
                         .delayed_path
                         .as_ref()
                         .expect("delayed_path is Some on the staged-partial path");
-                    apply_file_metadata(staged, &begin, config, inplace_pre_transfer.as_ref())
+                    apply_file_metadata(staged, &begin, config)
                 } else if needs_rename && !outcome.was_copy {
                     pre_meta_error
                 } else {
-                    apply_file_metadata(
-                        &begin.file_path,
-                        &begin,
-                        config,
-                        inplace_pre_transfer.as_ref(),
-                    )
+                    apply_file_metadata(&begin.file_path, &begin, config)
                 };
 
                 return Ok(CommitResult {
@@ -624,9 +611,6 @@ pub(in crate::disk_commit) fn process_whole_file(
     // before rewriting the destination in place (see process_file).
     let inplace_backup_notice = make_inplace_backup(&begin, config)?;
 
-    // See `inplace_pre_transfer_stat`: capture before the open destroys it.
-    let inplace_pre_transfer = inplace_pre_transfer_stat(&begin);
-
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
     if needs_rename {
         // The coalesced path carries its whole payload inline, so the
@@ -679,8 +663,12 @@ pub(in crate::disk_commit) fn process_whole_file(
     let (sparse_final, touched_blocks_4k) = if config.use_sparse {
         let mut sparse = SparseWriteState::default();
         sparse.set_preallocated_len(preallocated_len);
-        sparse.write(output.buffered_for_sparse(), &data)?;
-        let logical = sparse.finish(output.buffered_for_sparse())?;
+        sparse
+            .write(output.buffered_for_sparse(), &data)
+            .map_err(|e| write_failed(&begin.file_path, e))?;
+        let logical = sparse
+            .finish(output.buffered_for_sparse())
+            .map_err(|e| write_failed(&begin.file_path, e))?;
         let touched = sparse.touched_blocks();
         (
             Some(SparseFinalize {
@@ -690,7 +678,9 @@ pub(in crate::disk_commit) fn process_whole_file(
             touched,
         )
     } else {
-        output.write_chunk(&data)?;
+        output
+            .write_chunk(&data)
+            .map_err(|e| write_failed(&begin.file_path, e))?;
         (
             None,
             engine::BlockTouchTracker::blocks_spanned(begin.append_offset, bytes_written),
@@ -729,12 +719,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     // upstream: rsync.c:937-938 finish_transfer() - apply metadata to the
     // temp file before rename (see process_file for full rationale).
     let pre_meta_error = if needs_rename {
-        apply_file_metadata(
-            cleanup_guard.path(),
-            &begin,
-            config,
-            inplace_pre_transfer.as_ref(),
-        )
+        apply_file_metadata(cleanup_guard.path(), &begin, config)
     } else {
         None
     };
@@ -757,16 +742,11 @@ pub(in crate::disk_commit) fn process_whole_file(
             .delayed_path
             .as_ref()
             .expect("delayed_path checked is_some above");
-        apply_file_metadata(staged, &begin, config, inplace_pre_transfer.as_ref())
+        apply_file_metadata(staged, &begin, config)
     } else if needs_rename && !outcome.was_copy {
         pre_meta_error
     } else {
-        apply_file_metadata(
-            &begin.file_path,
-            &begin,
-            config,
-            inplace_pre_transfer.as_ref(),
-        )
+        apply_file_metadata(&begin.file_path, &begin, config)
     };
 
     Ok(CommitResult {
@@ -899,41 +879,6 @@ fn make_inplace_backup(
         .map(|made| made.map(|(_, notice)| notice))
 }
 
-/// Stats the destination before an inplace write so `dest_mode()` keeps its
-/// permission bits.
-///
-/// Upstream computes the destination mode BEFORE opening the output file:
-///
-/// ```text
-/// int exists = fd1 != -1;                                     // receiver.c:1199
-/// file->mode = dest_mode(file->mode, st.st_mode, dflt_perms, exists);
-/// if (inplace || one_inplace) { ... }                         // receiver.c:1212
-/// ```
-///
-/// and for an existing destination `dest_mode()` returns
-/// `(flist_mode & ~CHMOD_BITS) | (stat_mode & CHMOD_BITS)` - the destination's
-/// own permission bits (rsync.c:464).
-///
-/// oc instead applies metadata at commit time. For the temp+rename path that is
-/// still equivalent, because the final path is untouched until the rename. An
-/// inplace write has no such luxury: it writes through the destination, so by
-/// commit time the pre-transfer stat is unrecoverable. Capture it here and hand
-/// it to [`super::metadata::apply_file_metadata`].
-///
-/// Returns `None` when the destination does not exist, which is upstream's
-/// `exists == 0` and selects `flist_mode & (~CHMOD_BITS | dflt_perms)`.
-///
-/// # Upstream Reference
-///
-/// - `receiver.c:1199-1208` - `dest_mode()` invocation before the output open
-/// - `rsync.c:464` - `dest_mode()` body
-fn inplace_pre_transfer_stat(begin: &BeginMessage) -> Option<fs::Metadata> {
-    if !begin.is_inplace || begin.is_device_target {
-        return None;
-    }
-    fs::symlink_metadata(&begin.file_path).ok()
-}
-
 /// Opens the in-place destination, anchored beneath the destination sandbox
 /// when the destination lies inside the destination tree.
 ///
@@ -1006,8 +951,7 @@ fn open_output_file(
         let mut file = open_inplace_dest(config, &begin.file_path).map_err(tag_open)?;
         // upstream: receiver.c:544-549 - in append mode, seek past existing content
         if begin.append_offset > 0 {
-            use std::io::Seek;
-            file.seek(io::SeekFrom::Start(begin.append_offset))?;
+            seek_to_append_offset(&mut file, &begin.file_path, begin.append_offset)?;
         }
         // The guard wraps the real destination file, not a temp file. On a
         // mid-transfer error the guard must LEAVE the partial write in place
@@ -1038,6 +982,29 @@ fn open_output_file(
         let (file, guard) = open_tmpfile(&begin.file_path, config.temp_dir.as_deref())?;
         Ok((file, guard, true))
     }
+}
+
+/// Positions an `--append` destination after the bytes it already holds.
+///
+/// A failure is fatal and tagged [`CommitOp::Seek`](crate::temp_guard::CommitOp::Seek)
+/// with the offset sought, for upstream's `lseek of %s returned %s, not %s`
+/// (`receiver.c:545-548`).
+fn seek_to_append_offset(
+    file: &mut fs::File,
+    file_path: &std::path::Path,
+    offset: u64,
+) -> io::Result<()> {
+    use std::io::Seek;
+    file.seek(io::SeekFrom::Start(offset))
+        .map(drop)
+        .map_err(|e| {
+            crate::temp_guard::attach_commit_op_at(
+                crate::temp_guard::CommitOp::Seek,
+                file_path,
+                offset,
+                e,
+            )
+        })
 }
 
 /// Preallocates the destination file to its eventual length under

@@ -523,7 +523,7 @@ fn apply_global_directive(
         //
         // Recording only the module default leaves `log_init`'s equivalent with
         // nothing to open, so the log file is never created and those lines are
-        // lost - measured against rsync 3.5.0, which writes three of them here.
+        // lost - measured against rsync 3.5.1, which writes three of them here.
         "logfile" => {
             if !value.is_empty() {
                 let resolved = daemon_parameter_path(value);

@@ -7,6 +7,7 @@ use std::io::{self, Write};
 use core::branding::Brand;
 use core::message::Role;
 use core::rsync_error;
+use engine::local_copy::{ReferenceDirectory, ReferenceDirectoryKind};
 use logging_sink::MessageSink;
 
 use super::flags::{detect_secluded_args_flag, parse_server_long_flags, refused_server_option};
@@ -32,6 +33,98 @@ use crate::frontend::execution::{
 /// The receiver's `mkstemp` of a sibling temp then fails with `EACCES`. Taking
 /// the parent in that case makes an existing destination behave like one that
 /// does not exist yet, which already resolved to the parent.
+/// The directories a relative `--*-dest`, `--backup-dir` or `--partial-dir`
+/// may be anchored on, each with upstream's `dry_run > 1` flag.
+///
+/// The receiver anchors those on `curr_dir` (main.c:898-911), which
+/// `get_local_name()` fixes only once the file list says what arrives
+/// (main.c:744-858): the destination itself, or its parent for a single file.
+/// The Landlock ruleset goes in before that, so it covers every anchor the
+/// destination still admits. A missing destination is anchored as a dry run's
+/// is, so `../alt` names the sibling without the directory existing yet.
+fn landlock_anchors(dest: &std::path::Path) -> Vec<(std::path::PathBuf, bool)> {
+    let trailing_slash = dest
+        .as_os_str()
+        .to_string_lossy()
+        .ends_with(std::path::is_separator);
+    let mut anchors = Vec::with_capacity(2);
+    if dest.is_dir() {
+        anchors.push((dest.to_path_buf(), false));
+        return anchors;
+    }
+    if !dest.exists() {
+        anchors.push((dest.to_path_buf(), true));
+    }
+    if !trailing_slash && let Some(parent) = dest.parent() {
+        anchors.push((parent.to_path_buf(), false));
+    }
+    anchors
+}
+
+/// Canonical forms of `path` anchored on each of `anchors`.
+fn anchored_candidates(
+    path: &std::path::Path,
+    anchors: &[(std::path::PathBuf, bool)],
+) -> Vec<std::path::PathBuf> {
+    let reference = ReferenceDirectory::new(ReferenceDirectoryKind::Compare, path);
+    anchors
+        .iter()
+        .map(|(anchor, pending)| reference.anchored_at(anchor, *pending).path)
+        .collect()
+}
+
+/// The `--*-dest` directories the `--server` receiver may open, as
+/// (read-only roots, link-source roots).
+///
+/// upstream: generator.c:1073 `try_dests_reg()` - the receiver opens a basis
+/// in a `--compare-dest` / `--copy-dest` dir or copies from it
+/// (`copy_altdest_file()`), and hard-links out of a `--link-dest` dir. A basis
+/// that resolves to nothing gets no rule: the receiver cannot open it either,
+/// and `check_alt_basis_dirs()` has already warned.
+fn alt_basis_roots(
+    references: &[ReferenceDirectory],
+    anchors: &[(std::path::PathBuf, bool)],
+) -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
+    let (links, reads): (Vec<_>, Vec<_>) = references
+        .iter()
+        .partition(|reference| reference.kind == ReferenceDirectoryKind::Link);
+    let canonical = |set: Vec<&ReferenceDirectory>| -> Vec<std::path::PathBuf> {
+        set.into_iter()
+            .flat_map(|reference| anchored_candidates(&reference.path, anchors))
+            .filter_map(|candidate| candidate.canonicalize().ok())
+            .collect()
+    };
+    (canonical(reads), canonical(links))
+}
+
+/// The write rule for a staging directory the receiver may create later.
+///
+/// upstream creates `--backup-dir` (backup.c:128 `do_mkdir_at()` in
+/// `make_bak_dir()`) and `--partial-dir` on first use, and only stats them at
+/// startup (main.c:1036-1054). A Landlock rule needs an existing inode, so a
+/// directory that is not there yet is covered through its nearest existing
+/// ancestor: the sandbox is wider for that run, and the behaviour stays
+/// upstream's (user decision 2026-11-03: never pre-create the directory,
+/// which upstream would not). An existing directory gets an exact rule. The
+/// widening is oc-only, so it is reported only through `--debug=landlock`,
+/// never on a channel upstream's output would show. The filesystem root is
+/// never granted that way - that would be no sandbox at all.
+fn staging_write_root(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let existing = path.ancestors().find(|ancestor| ancestor.exists())?;
+    let canonical = existing.canonicalize().ok()?;
+    canonical.parent()?;
+    if existing != path {
+        logging::debug_log!(
+            Landlock,
+            1,
+            "landlock: {} does not exist yet; granting write on its nearest existing ancestor {}",
+            path.display(),
+            canonical.display()
+        );
+    }
+    Some(canonical)
+}
+
 fn landlock_root_for_dest(dest: &std::path::Path) -> Option<std::path::PathBuf> {
     dest.canonicalize()
         .ok()
@@ -541,6 +634,9 @@ where
     // by the client tells the server to render the flist without writing to the
     // destination (`TransferFlags::skip_dest_writes`).
     config.flags.list_only = long_flags.list_only;
+    // upstream: options.c:2958-2961, log.c:357 - where this server's error and
+    // warning lines go; resolved against the protocol once it is known.
+    config.connection.msgs2stderr = long_flags.msgs2stderr;
     // upstream: options.c:3026-3027 / main.c:1946-1947 - a push sender forwards
     // `--only-write-batch=X`; on the receiver, `write_batch < 0` forces
     // `dry_run = 1` (no destination writes) while `do_xfers` stays 1 so the
@@ -730,7 +826,7 @@ where
         if let Some(dest) = config.args.last() {
             let dest_path = std::path::PathBuf::from(dest);
             if let Some(root) = landlock_root_for_dest(&dest_path) {
-                use fast_io::landlock::{is_supported, restrict_to_module_paths};
+                use fast_io::landlock::{is_supported, restrict_to_paths};
                 if !is_supported() {
                     // AVAILABILITY, not failure: pre-5.13 kernels, a build
                     // without the `landlock` feature, and every non-Linux
@@ -797,9 +893,40 @@ where
                         collect_keep_dirlink_targets(&canonical_root, &mut allowed);
                     }
 
+                    // upstream: backup.c:65-136 and receiver.c:820-849 - a
+                    // --backup-dir or absolute --partial-dir may sit outside
+                    // the destination; the receiver renames files into it and
+                    // creates it on first use, so it needs write rights.
+                    let anchors = landlock_anchors(&dest_path);
+                    let staging = config
+                        .backup_dir
+                        .iter()
+                        .map(std::path::PathBuf::from)
+                        .chain(
+                            config
+                                .partial_dir
+                                .iter()
+                                .filter(|p| p.is_absolute())
+                                .cloned(),
+                        );
+                    for dir in staging {
+                        allowed.extend(
+                            anchored_candidates(&dir, &anchors)
+                                .iter()
+                                .filter_map(|candidate| staging_write_root(candidate)),
+                        );
+                    }
+
+                    let (readable, link_sources) =
+                        alt_basis_roots(&config.reference_directories, &anchors);
                     let allowed_refs: Vec<&std::path::Path> =
                         allowed.iter().map(|p| p.as_path()).collect();
-                    let outcome = restrict_to_module_paths(&allowed_refs);
+                    let readable_refs: Vec<&std::path::Path> =
+                        readable.iter().map(|p| p.as_path()).collect();
+                    let link_source_refs: Vec<&std::path::Path> =
+                        link_sources.iter().map(|p| p.as_path()).collect();
+                    let outcome =
+                        restrict_to_paths(&allowed_refs, &readable_refs, &link_source_refs);
                     surface_landlock_outcome(&outcome, &canonical_root, &allowed_refs);
                 }
             }
@@ -849,7 +976,7 @@ where
             if let Some(code) = core::server::remote_exit_code(&e) {
                 return code;
             }
-            if let Some(code) = cause_line_exit_code(&e) {
+            if let Some(code) = core::exit_code::cause_line_exit_code(&e) {
                 let who = if role == ServerRole::Generator {
                     Role::Sender
                 } else {
@@ -859,12 +986,18 @@ where
                 return code.as_i32();
             }
             let exit_code = core::exit_code::ExitCode::from_io_error(&e);
-            write_server_error_with_code(
-                stderr,
-                program_brand,
-                exit_code,
-                format!("server error: {e}"),
-            );
+            // upstream: receiver.c:658-660 and the other RERR_FILEIO sites of
+            // the receive path print their own line first; log_exit() then
+            // prints only the code's description (cleanup.c:248).
+            let text = if matches!(
+                core::server::temp_guard::CommitDisposition::of(&e),
+                core::server::temp_guard::CommitDisposition::Abort(_)
+            ) {
+                exit_code.description().to_owned()
+            } else {
+                format!("server error: {e}")
+            };
+            write_server_error_with_code(stderr, program_brand, exit_code, text);
             exit_code.as_i32()
         }
     }
@@ -1209,25 +1342,6 @@ fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt
     write_server_error_with_code(stderr, brand, core::exit_code::ExitCode::Syntax, text);
 }
 
-/// The exit code of a failure upstream reports as `rprintf(FERROR, cause)`
-/// followed by `exit_cleanup(code)`, or `None` for any other failure.
-///
-/// upstream: xattrs.c:1253-1258 get_stat_xattr() (RERR_FILEIO),
-/// util2.c:73-80 my_alloc() (RERR_MALLOC)
-fn cause_line_exit_code(error: &std::io::Error) -> Option<core::exit_code::ExitCode> {
-    use core::exit_code::ExitCode;
-    if metadata::is_corrupt_fake_super(error) {
-        Some(ExitCode::FileIo)
-    } else if error
-        .get_ref()
-        .is_some_and(|inner| inner.is::<protocol::MallocFailure>())
-    {
-        Some(ExitCode::Malloc)
-    } else {
-        None
-    }
-}
-
 /// Prints a fatal failure as upstream's remote-shell server does: the cause on
 /// its own line on stderr, then log_exit()'s trailer for `code` naming the
 /// process that hit it.
@@ -1241,11 +1355,8 @@ fn write_fatal_cause<Err: Write>(
     cause: &std::io::Error,
     code: core::exit_code::ExitCode,
 ) {
-    let _ = writeln!(stderr, "{cause}");
-    let mut sink = MessageSink::with_brand(stderr, brand);
-    let message = rsync_error!(code.as_i32(), "{}", code.description()).with_role(role);
-    if super::super::write_message(&message, &mut sink).is_err() {
-        let _ = writeln!(sink.writer_mut(), "{message}");
+    for line in core::exit_code::fatal_report_lines(cause, code, role, brand) {
+        let _ = stderr.write_all(&line);
     }
 }
 
@@ -1439,6 +1550,50 @@ mod keep_dirlink_target_tests {
 mod landlock_surfacing_tests {
     use std::io;
     use std::path::Path;
+
+    /// A staging dir that exists gets an exact rule; a missing one is covered
+    /// through its nearest existing ancestor, and the widening is named on
+    /// `--debug=landlock` only.
+    #[test]
+    fn a_missing_staging_dir_is_granted_through_its_nearest_ancestor_and_logged() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base = tmp.path().canonicalize().expect("canonical tempdir");
+        let existing = base.join("bak");
+        std::fs::create_dir(&existing).expect("mkdir bak");
+
+        init(VerbosityConfig::default());
+        logging::apply_debug_flag("landlock").expect("debug token parses");
+        drain_events();
+        assert_eq!(super::staging_write_root(&existing), Some(existing.clone()));
+        assert_eq!(
+            count_landlock_debug(&drain_events(), 1, "nearest existing ancestor"),
+            0
+        );
+
+        let missing = base.join("missing/deeper");
+        assert_eq!(super::staging_write_root(&missing), Some(base.clone()));
+        let events = drain_events();
+        assert_eq!(
+            count_landlock_debug(&events, 1, &base.display().to_string()),
+            1
+        );
+
+        init(VerbosityConfig::from_verbose_level(1));
+        drain_events();
+        assert_eq!(super::staging_write_root(&missing), Some(base));
+        assert_eq!(
+            count_landlock_debug(&drain_events(), 1, "nearest existing ancestor"),
+            0,
+            "plain -v must stay byte-identical to 3.5.1"
+        );
+    }
+
+    #[test]
+    fn the_filesystem_root_is_never_granted_for_a_missing_staging_dir() {
+        let missing = Path::new("/oc-rsync-no-such-staging-dir/backups");
+        assert!(!missing.exists());
+        assert_eq!(super::staging_write_root(missing), None);
+    }
 
     use fast_io::landlock::{EnforcementStatus, LandlockOutcome};
     use logging::{DebugFlag, DiagnosticEvent, LogCode, VerbosityConfig, drain_events, init};

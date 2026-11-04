@@ -585,7 +585,15 @@ fn run_client_internal(
     }
 
     let mut handler_adapter = observer
-        .map(|observer| ClientProgressForwarder::new(observer, &plan, mode, options.clone()))
+        .map(|observer| {
+            ClientProgressForwarder::new(
+                observer,
+                &plan,
+                mode,
+                options.clone(),
+                config.local_inc_recurse(),
+            )
+        })
         .transpose()?;
     if let Some(adapter) = handler_adapter.as_mut() {
         adapter.start();
@@ -634,6 +642,7 @@ fn run_client_internal(
     if let Some(protocol) = config.protocol_version() {
         summary.set_protocol_version(protocol.as_u8());
     }
+    summary.set_incremental_listing(config.local_inc_recurse());
 
     // upstream: receiver.c:690-692 - emit the progress2 end-of-transfer summary
     // line when the transfer moved no file data (a lone special/symlink or a

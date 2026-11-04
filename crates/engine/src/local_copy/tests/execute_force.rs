@@ -47,7 +47,7 @@ fn force_file_replaces_non_empty_directory() {
 //
 // The flist.c:3606-3625 rule this cell used to cite is the MULTI-SOURCE merge -
 // see `force_disabled_multi_source_keeps_the_directory` - and a single source
-// never reaches it. Measured against rsync 3.5.0.
+// never reaches it. Measured against rsync 3.5.1.
 #[test]
 fn force_disabled_file_replaces_an_empty_directory_in_recursive_copy() {
     let temp = tempdir().expect("tempdir");
@@ -249,7 +249,7 @@ fn force_replaces_file_entry_with_directory_during_recursive_copy() {
 // citation is the MULTI-SOURCE merge rule (see
 // `force_disabled_multi_source_keeps_the_directory` below); it does not reach
 // a single-source recursive copy, where the file is in the flist and the
-// generator makes room for it. Measured against rsync 3.5.0.
+// generator makes room for it. Measured against rsync 3.5.1.
 #[test]
 fn force_disabled_recursive_copy_replaces_an_empty_directory() {
     let temp = tempdir().expect("tempdir");

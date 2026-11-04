@@ -134,11 +134,15 @@ impl ReceiverContext {
             Vec::new()
         };
 
+        // upstream: generator.c:1648-1658 - `skip_dir` outlives the directory
+        // pass: the files below a directory that could not be made are skipped.
+        let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
         let mut metadata_errors = self.create_directories(
             &setup.dest_dir,
             &setup.metadata_opts,
             setup.acl_cache.as_ref(),
             setup.acl_id_map.as_deref(),
+            &mut failed_dirs,
             writer,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
@@ -152,6 +156,7 @@ impl ReceiverContext {
             &setup.dest_dir,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
+            &failed_dirs,
             writer,
         );
         #[cfg(unix)]
@@ -203,7 +208,7 @@ impl ReceiverContext {
             #[cfg(unix)]
             setup.sandbox.as_deref(),
             &setup.metadata_opts,
-            None,
+            Some(&failed_dirs),
             &mut metadata_errors,
             &mut stats,
             setup.acl_cache.as_ref(),
@@ -380,6 +385,7 @@ impl ReceiverContext {
         // matching upstream's single-pass emission ordering.
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
+        self.publish_list_only_entries(&mut stats, writer)?;
 
         self.finalize_transfer(
             reader,

@@ -87,6 +87,8 @@ pub mod acl_fd;
 pub mod cached_sort;
 /// Closing a written file with the result of `close(2)` reported.
 pub mod checked_close;
+/// The stage of a batched file commit that failed.
+pub mod commit_failure;
 /// Sender-side confined source open beneath a module root.
 ///
 /// Unix-only: mirrors upstream `secure_relative_open` so a non-chroot
@@ -174,6 +176,8 @@ pub mod pinned_root;
 pub mod readiness;
 #[cfg(unix)]
 pub mod readonly_inplace;
+/// The errno a confinement refusal is reported with.
+pub mod refusal_errno;
 /// Same-filesystem (device) detection for reflink / copy-on-write gating.
 pub mod same_fs;
 /// Strict-resolution directory open for the SEC-1 dirfd sandbox.
@@ -404,6 +408,7 @@ mod status;
 pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use checked_close::close_file;
 pub use clone_file_range::{CLONE_FILE_RANGE_MIN_BYTES, try_clone_file_range};
+pub use commit_failure::CommitFailure;
 pub use container::{
     FORCE_ROOTLESS_ENV, RootlessSignal, detect_rootless_container, rootless_signal,
 };

@@ -839,7 +839,7 @@ mod quic_url_tests {
 }
 
 /// The username sent in the `@RSYNCD` auth response, one case per row of the
-/// table measured against the real rsync 3.5.0 client.
+/// table measured against the real rsync 3.5.1 client.
 ///
 /// upstream: clientserver.c:289-292 (`USER` then `LOGNAME`) composed with
 /// authenticate.c:451-452 (`if (!user || !*user) user = "nobody";`).

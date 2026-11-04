@@ -1,14 +1,16 @@
-# Rust rsync vs Upstream rsync 3.5.0 Comparison
+# Rust rsync vs Upstream rsync 3.5.1 Comparison
 
-This document provides a systematic comparison between the Rust rsync implementation and upstream rsync 3.5.0 (protocol 32), treating the upstream C source at `target/interop/upstream-src/rsync-3.5.0/` as the source of truth.
+This document provides a systematic comparison between the Rust rsync implementation and upstream rsync 3.5.1 (protocol 33), treating the upstream C source at `target/interop/upstream-src/rsync-3.5.1/` as the source of truth.
 
+> **3.5.1 retarget (2026-11-03).** Line citations were re-located in 3.5.1 by content with `tools/ci/citation_retarget.py`. 3.5.1 raises `PROTOCOL_VERSION` to 33 (`rsync.h:114`; `SUBPROTOCOL_VERSION` stays 0, `rsync.h:128`) and adds one message code, `MSG_BLOCK_STATS` = 11 (`rsync.h:302`). `errcode.h` is byte-identical to 3.5.0, and no `XMIT_*`, `NDX_*` or `CF_*` constant changed, so the wire claims below carry over apart from the rows updated for protocol 33.
+>
 > **Retarget note (2026-08-13, narrowed 2026-09-04).** The comparisons below were verified line-by-line against rsync 3.4.4 and have been repointed at 3.5.0. That repoint is sound for everything protocol-level: 3.5.0 declares the same `PROTOCOL_VERSION` 32 and `SUBPROTOCOL_VERSION` 0, ships a byte-identical `errcode.h`, and adds no `MSG_*`, `XMIT_*` or compat-flag constants, so every wire constant and algorithm claim here carries over unchanged.
 >
 > The note originally warned that every section "touching path resolution, symlink handling, chroot or daemon access control" still described 3.4.4. That warning was broader than this document's contents: grepping those four topics returns 13 lines, of which only two subsections make behavioural claims — [Module Chroot Handling](#module-chroot-handling) (§19) and [Path Resolution](#path-resolution) (§22). Both have now been re-read against the 3.5.0 source and their citations corrected; the remaining hits are wire constants (`CF_SYMLINK_TIMES`, `CF_SYMLINK_ICONV`, the `DeleteStats` symlink counter) that the protocol-level argument above already covers.
 >
-> What this document still does **not** claim is coverage of 3.5.0's confinement model itself. 3.5.0 rewrote the path resolver and hardened the daemon across 33 CVEs, growing `syscall.c` by 85%; the resolver, `--confine-root`, `--insecure-links` and the new daemon directives have no section here at all. [`docs/design/upstream-3.5.0-path-confinement-model.md`](./design/upstream-3.5.0-path-confinement-model.md) owns that surface — absence from this table is not evidence of parity.
+> What this document still does **not** claim is coverage of 3.5.0's confinement model itself. 3.5.0 rewrote the path resolver and hardened the daemon across 33 CVEs, growing `syscall.c` by 85%; the resolver, `--confine-root`, `--insecure-links` and the new daemon directives have no section here at all. [`docs/design/upstream-path-confinement-model.md`](./design/upstream-path-confinement-model.md) owns that surface — absence from this table is not evidence of parity.
 
-**Last verified:** 2026-09-04 (protocol sections against 3.5.0 by repoint; §19 and §22 behavioural claims re-read against the 3.5.0 source)
+**Last verified:** 2026-11-03 (citations and protocol constants against 3.5.1); 2026-09-04 (protocol sections against 3.5.0 by repoint; §19 and §22 behavioural claims re-read against the 3.5.0 source)
 **Validation commands:**
 ```sh
 cargo fmt --all -- --check \
@@ -22,7 +24,7 @@ cargo fmt --all -- --check \
 
 | Area | Compatibility | Notes |
 |------|---------------|-------|
-| Protocol Versions | 100%* | Versions 28-32 (upstream supports 20-40) |
+| Protocol Versions | 100%* | Versions 28-33 (upstream supports 20-40) |
 | Protocol Constants | 100% | All MSG_*, XMIT_*, NDX_*, CF_* match |
 | Varint Encoding | 100% | INT_BYTE_EXTRA lookup table identical |
 | File List Encoding | 100% | Wire format byte-compatible |
@@ -31,7 +33,7 @@ cargo fmt --all -- --check \
 | Compression Tokens | 100% | END_FLAG, TOKEN_*, DEFLATED_DATA identical |
 | ACL/Xattr Wire Format | 100% | ACCESS_SHIFT, prefix handling correct |
 | Filter Rules | 100% | All prefixes including `:` (dir-merge) |
-| I/O Multiplexing | 100% | All 18 message codes and framing |
+| I/O Multiplexing | 100% | All 19 message codes and framing |
 | Strong Checksums | 100% | MD4, MD5, XXH3-64, XXH3-128 |
 | Compression | 100% | zlib (deflate), zstd, LZ4 |
 | Daemon Protocol | 100% | Greeting, authentication, module listing |
@@ -43,7 +45,7 @@ cargo fmt --all -- --check \
 
 **Overall Wire Protocol: FULLY COMPATIBLE**
 
-\* *Protocol versions 28-32 are fully compatible. Versions 20-27 are intentionally unsupported (15+ years old).*
+\* *Protocol versions 28-33 are fully compatible. Versions 20-27 are intentionally unsupported (15+ years old).*
 
 ---
 
@@ -87,9 +89,9 @@ cargo fmt --all -- --check \
 |----------|---------------------|------|--------|
 | MIN_PROTOCOL_VERSION | 20 | `OLDEST_SUPPORTED_PROTOCOL = 28` | ⚠️ Intentional |
 | MAX_PROTOCOL_VERSION | 40 | `MAXIMUM_PROTOCOL_ADVERTISEMENT = 40` | ✅ |
-| PROTOCOL_VERSION | 32 | `NEWEST_SUPPORTED_PROTOCOL = 32` | ✅ |
+| PROTOCOL_VERSION | 33 | `NEWEST_SUPPORTED_PROTOCOL = 33` | ✅ |
 
-> **Note:** The Rust implementation intentionally supports a narrower protocol range (28-32)
+> **Note:** The Rust implementation intentionally supports a narrower protocol range (28-33)
 > compared to upstream's (20-40). Protocol versions 20-27 are over 15 years old and
 > rarely encountered. This simplifies the codebase while maintaining compatibility with
 > all modern rsync clients and servers.
@@ -104,6 +106,7 @@ cargo fmt --all -- --check \
 | Nanosecond mtime | 31 | `XMIT_MOD_NSEC` |
 | Error exit sync | 31 | `MSG_ERROR_EXIT (86)` |
 | ID0 names | 32 | `CF_ID0_NAMES` |
+| Block-level stats | 33 | `MSG_BLOCK_STATS (11)` |
 
 **Source:** `crates/protocol/src/version/constants.rs:7-16`
 
@@ -152,10 +155,10 @@ const INT_BYTE_EXTRA: [u8; 64] = [
 
 | Function | Upstream | Rust | Wire Compatible |
 |----------|----------|------|-----------------|
-| `read_varint()` | io.c:1795-1825 | `read_varint()` | ✅ |
-| `write_varint()` | io.c:2089-2109 | `write_varint()` | ✅ |
-| `read_varlong()` | io.c:1827-1866 | `read_varlong()` | ✅ |
-| `write_varlong()` | io.c:2111-2140 | `write_varlong()` | ✅ |
+| `read_varint()` | io.c:1833-1863 | `read_varint()` | ✅ |
+| `write_varint()` | io.c:2127-2147 | `write_varint()` | ✅ |
+| `read_varlong()` | io.c:1865-1904 | `read_varlong()` | ✅ |
+| `write_varlong()` | io.c:2149-2178 | `write_varlong()` | ✅ |
 | `read_longint()` | io.c | `read_longint()` | ✅ Legacy |
 | `write_longint()` | io.c | `write_longint()` | ✅ Legacy |
 
@@ -180,28 +183,29 @@ const INT_BYTE_EXTRA: [u8; 64] = [
 - `MPLEX_BASE = 7` (matches upstream)
 - Maximum payload: 24-bit length field (16MB)
 
-### Message Codes (All 18 Verified)
+### Message Codes (All 19 Verified)
 
 | Code | Upstream | Rust | Value |
 |------|----------|------|-------|
-| MSG_DATA | rsync.h:264 | `MessageCode::Data` | 0 |
-| MSG_ERROR_XFER | rsync.h:265 | `MessageCode::ErrorXfer` | 1 |
-| MSG_INFO | rsync.h:265 | `MessageCode::Info` | 2 |
-| MSG_ERROR | rsync.h:266 | `MessageCode::Error` | 3 |
-| MSG_WARNING | rsync.h:266 | `MessageCode::Warning` | 4 |
-| MSG_ERROR_SOCKET | rsync.h | `MessageCode::ErrorSocket` | 5 |
-| MSG_LOG | rsync.h | `MessageCode::Log` | 6 |
-| MSG_CLIENT | rsync.h | `MessageCode::Client` | 7 |
-| MSG_ERROR_UTF8 | rsync.h | `MessageCode::ErrorUtf8` | 8 |
-| MSG_REDO | rsync.h:270 | `MessageCode::Redo` | 9 |
-| MSG_STATS | rsync.h:271 | `MessageCode::Stats` | 10 |
-| MSG_IO_ERROR | rsync.h:272 | `MessageCode::IoError` | 22 |
-| MSG_IO_TIMEOUT | rsync.h:273 | `MessageCode::IoTimeout` | 33 |
-| MSG_NOOP | rsync.h:274 | `MessageCode::NoOp` | 42 |
-| MSG_ERROR_EXIT | rsync.h:275 | `MessageCode::ErrorExit` | 86 |
-| MSG_SUCCESS | rsync.h:276 | `MessageCode::Success` | 100 |
-| MSG_DELETED | rsync.h:277 | `MessageCode::Deleted` | 101 |
-| MSG_NO_SEND | rsync.h:278 | `MessageCode::NoSend` | 102 |
+| MSG_DATA | rsync.h:294 | `MessageCode::Data` | 0 |
+| MSG_ERROR_XFER | rsync.h:295 | `MessageCode::ErrorXfer` | 1 |
+| MSG_INFO | rsync.h:295 | `MessageCode::Info` | 2 |
+| MSG_ERROR | rsync.h:296 | `MessageCode::Error` | 3 |
+| MSG_WARNING | rsync.h:296 | `MessageCode::Warning` | 4 |
+| MSG_ERROR_SOCKET | rsync.h:297 | `MessageCode::ErrorSocket` | 5 |
+| MSG_LOG | rsync.h:299 | `MessageCode::Log` | 6 |
+| MSG_CLIENT | rsync.h:299 | `MessageCode::Client` | 7 |
+| MSG_ERROR_UTF8 | rsync.h:298 | `MessageCode::ErrorUtf8` | 8 |
+| MSG_REDO | rsync.h:300 | `MessageCode::Redo` | 9 |
+| MSG_STATS | rsync.h:301 | `MessageCode::Stats` | 10 |
+| MSG_BLOCK_STATS | rsync.h:302 | `MessageCode::BlockStats` | 11 |
+| MSG_IO_ERROR | rsync.h:303 | `MessageCode::IoError` | 22 |
+| MSG_IO_TIMEOUT | rsync.h:304 | `MessageCode::IoTimeout` | 33 |
+| MSG_NOOP | rsync.h:305 | `MessageCode::NoOp` | 42 |
+| MSG_ERROR_EXIT | rsync.h:306 | `MessageCode::ErrorExit` | 86 |
+| MSG_SUCCESS | rsync.h:307 | `MessageCode::Success` | 100 |
+| MSG_DELETED | rsync.h:308 | `MessageCode::Deleted` | 101 |
+| MSG_NO_SEND | rsync.h:309 | `MessageCode::NoSend` | 102 |
 
 **Source:** `crates/protocol/src/envelope/message_code.rs:17-75`
 
@@ -246,16 +250,16 @@ const INT_BYTE_EXTRA: [u8; 64] = [
 
 ## 6. NDX (File Index) Encoding
 
-**Reference:** upstream `io.c:2243-2318` vs `crates/protocol/src/codec/ndx.rs`
+**Reference:** upstream `io.c:2281-2356` vs `crates/protocol/src/codec/ndx.rs`
 
 ### NDX Constants
 
 | Constant | Value | Upstream | Description |
 |----------|-------|----------|-------------|
-| NDX_DONE | -1 | rsync.h:285 | End of file requests |
-| NDX_FLIST_EOF | -2 | rsync.h:286 | End of file list(s) |
-| NDX_DEL_STATS | -3 | rsync.h:287 | Delete statistics marker |
-| NDX_FLIST_OFFSET | -101 | rsync.h:288 | Incremental flist offset |
+| NDX_DONE | -1 | rsync.h:316 | End of file requests |
+| NDX_FLIST_EOF | -2 | rsync.h:317 | End of file list(s) |
+| NDX_DEL_STATS | -3 | rsync.h:318 | Delete statistics marker |
+| NDX_FLIST_OFFSET | -101 | rsync.h:319 | Incremental flist offset |
 
 ### Protocol Version Differences
 
@@ -384,7 +388,7 @@ Preference order: xxh128, xxh3, xxh64, md5, md4, sha1, none
 
 ## 11. Compression Token Encoding
 
-**Reference:** upstream `token.c` vs `crates/protocol/src/wire/compressed_token.rs`
+**Reference:** upstream `token.c` vs `crates/protocol/src/wire/compressed_token/`
 
 ### Token Constants
 
@@ -405,7 +409,7 @@ Byte 1: len & 0xFF          // Lower 8 bits of length
 [data]: compressed bytes    // Up to 16383 bytes (14-bit max)
 ```
 
-**Source:** `crates/protocol/src/wire/compressed_token.rs`
+**Source:** `crates/protocol/src/wire/compressed_token/`
 
 ---
 
@@ -418,6 +422,39 @@ Byte 1: len & 0xFF          // Lower 8 bits of length
 | LZ4 | Level 0 only | `lz4_flex` | Raw block |
 
 **Source:** `crates/compress/src/`
+
+### Deviation: the deflate library behind zlib and zlibx
+
+The token framing for `zlib` and `zlibx` is identical to upstream's
+`token.c:send_deflated_token()`. That covers one deflate stream per file,
+`CHUNK_SIZE` input chunks, `Z_SYNC_FLUSH` on the run's last chunk only,
+DEFLATED_DATA pieces cut where upstream's `obuf` fills, and the stripped 4-byte
+sync trailer. `crates/protocol/src/wire/compressed_token/framing_tests.rs`
+checks this byte for byte against a direct port of that function.
+
+Only the deflate library differs. Upstream 3.5.1 links classic zlib; oc-rsync
+builds `flate2` with zlib-ng (the default `zlib-ng` feature; `zlib-rs` gives the
+same output). Both produce valid raw deflate that either side decodes, but
+zlib-ng's level 1 (`deflate_quick`) and level 6 (`deflate_medium`) find fewer
+long-distance matches, so the compressed literal data can be larger.
+
+Wire bytes for one literal run with identical framing, measured 2026-10-28
+(classic zlib 1.3.2 vs libz-ng 2.x):
+
+| Input | Level | classic zlib (upstream) | zlib-ng (oc-rsync) | Difference |
+|---|---|---|---|---|
+| 200 KiB of one repeated paragraph | 1 | 1561 | 2574 | +65% |
+| 200 KiB of one repeated paragraph | 6 | 812 | 1542 | +90% |
+| 200 KiB of one repeated paragraph | 9 | 812 | 812 | 0% |
+| 16 MB of Rust source | 1 | 4322514 | 5266235 | +22% |
+| 16 MB of Rust source | 6 | 3439825 | 3448992 | +0.27% |
+| 16 MB of Rust source | 9 | 3414063 | 3419540 | +0.16% |
+
+zlib-ng compressed the 16 MB corpus at all three levels in 0.64 s against
+classic zlib's 1.66 s, about 2.6x faster. The project keeps zlib-ng
+(decision of 2026-10-28): at the default level the cost on real data is under
+0.3% more bytes, and the gap is large only on highly repetitive input and at
+level 1. `zstd` and `lz4` are unaffected.
 
 ---
 
@@ -547,7 +584,7 @@ pipeline: rayon workers compute per-directory delete plans in parallel
 (`compute_extras`), and a single emitter thread walks directories in
 upstream depth-first order to perform every `unlink`, emit every
 `*deleting` itemize line, and update every counter. The emitter
-preserves upstream rsync 3.5.0's wall-clock event sequence
+preserves upstream rsync 3.5.1's wall-clock event sequence (`delete.c` is unchanged from 3.5.0)
 byte-for-byte while keeping candidate computation parallel. See
 [`docs/architecture/delete-during.md`](architecture/delete-during.md)
 and the full specification in
@@ -898,11 +935,11 @@ it clears an obstructing backup entry (`backup.c:321`).
 
 ## Summary
 
-The Rust rsync implementation achieves **full wire protocol compatibility** with upstream rsync 3.5.0:
+The Rust rsync implementation achieves **full wire protocol compatibility** with upstream rsync 3.5.1:
 
-1. **Protocol versions 28-32** fully supported with version-specific feature gates
+1. **Protocol versions 28-33** fully supported with version-specific feature gates
 2. **All compatibility flags** match upstream bit positions
-3. **All 18 message codes** match upstream numeric values
+3. **All 19 message codes** match upstream numeric values
 4. **NDX encoding** supports both legacy and modern formats
 5. **Varint encoding** uses identical INT_BYTE_EXTRA lookup table
 6. **Compression tokens** match END_FLAG, TOKEN_*, DEFLATED_DATA
@@ -930,7 +967,7 @@ The Rust rsync implementation achieves **full wire protocol compatibility** with
 4. **ACL handling:** rsync-specific synchronization semantics
 5. **Filter rules:** rsync syntax differs from gitignore
 
-These custom implementations are necessary for byte-level wire protocol compatibility with upstream rsync 3.5.0.
+These custom implementations are necessary for byte-level wire protocol compatibility with upstream rsync 3.5.1.
 
 ---
 
@@ -940,11 +977,11 @@ These custom implementations are necessary for byte-level wire protocol compatib
 
 | Function | Upstream Lines |
 |----------|---------------|
-| `int_byte_extra[]` | io.c:120-125 |
-| `read_varint()` | io.c:1795-1825 |
-| `write_varint()` | io.c:2089-2109 |
-| `read_ndx()` | io.c:2289-2318 |
-| `write_ndx()` | io.c:2243-2287 |
+| `int_byte_extra[]` | io.c:127-132 |
+| `read_varint()` | io.c:1833-1863 |
+| `write_varint()` | io.c:2127-2147 |
+| `read_ndx()` | io.c:2327-2356 |
+| `write_ndx()` | io.c:2281-2325 |
 
 ### Message Codes (rsync.h)
 
@@ -968,4 +1005,4 @@ These custom implementations are necessary for byte-level wire protocol compatib
 
 ---
 
-**Verification methodology:** Each constant and algorithm was verified by reading upstream rsync 3.5.0 source code and comparing against the corresponding Rust implementation.
+**Verification methodology:** Each constant and algorithm was verified by reading upstream rsync source code (3.4.4, repointed at 3.5.0, then 3.5.1) and comparing against the corresponding Rust implementation.

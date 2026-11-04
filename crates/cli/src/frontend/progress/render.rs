@@ -377,7 +377,7 @@ pub(crate) fn emit_transfer_summary(
 
     if emit_verbose_listing {
         emit_verbose(
-            events,
+            &summary.listing_order(),
             verbosity,
             name_level,
             name_overridden,
@@ -1015,62 +1015,6 @@ fn reports_uptodate_wording(event: &ClientEvent) -> bool {
     !event.change_set().has_any_change()
 }
 
-/// Returns `true` for the per-file skip notices that upstream's `recv_generator`
-/// emits during the generator phase (`"exists"`, `"not creating new"`, `"is
-/// newer"`, `"is over max-size"`, `"is under min-size"`), ahead of the receiver
-/// phase that prints transferred-file names. Bucketing these with the uptodate
-/// notices reproduces that interleaving.
-///
-/// upstream: generator.c:1769,1798,2122,2130,2138 (recv_generator)
-fn is_generator_phase_skip(event: &ClientEvent) -> bool {
-    matches!(
-        event.kind(),
-        ClientEventKind::SkippedExisting
-            | ClientEventKind::SkippedMissingDestination
-            | ClientEventKind::SkippedNewerDestination
-            | ClientEventKind::SkippedOverMaxSize
-            | ClientEventKind::SkippedUnderMinSize
-    )
-}
-
-/// Returns whether upstream's generator writes this entry's line itself, the
-/// moment it checks the entry, instead of itemizing it to the sender.
-///
-/// upstream: generator.c:1154,1305 and rsync.c:828 write `is uptodate`, and
-/// recv_generator() the skip notices, with rprintf(), and log.c:log_delete()
-/// sends a deletion as its own MSG_DELETED. Every other entry is itemized to the
-/// sender, which logs it when it reaches that entry (sender.c:send_files()).
-pub(crate) fn is_generator_notice(event: &ClientEvent) -> bool {
-    is_uptodate_event(event)
-        || is_generator_phase_skip(event)
-        || matches!(event.kind(), ClientEventKind::EntryDeleted)
-}
-
-/// Returns `true` for a HardLink event describing a hard-linked symlink (`hL`).
-/// Its metadata kind is `Symlink` and its `symlink_target` slot holds the link
-/// target, not a `=> leader` trailer.
-fn is_hardlinked_symlink_event(event: &ClientEvent) -> bool {
-    matches!(event.kind(), ClientEventKind::HardLink)
-        && event
-            .metadata()
-            .map(ClientEntryMetadata::kind)
-            .is_some_and(|kind| matches!(kind, ClientEntryKind::Symlink))
-}
-
-/// Returns `true` for a hardlink alias freshly linked to a leader placed during
-/// this run. Upstream defers the `"%s => %s"` notice to the hardlink-finishing
-/// phase (hlink.c:250-251), so it appears after the regular per-file lines. A
-/// hard-linked symlink is excluded (its trailer is `-> target`, not `=> leader`).
-fn is_deferred_hardlink_event(event: &ClientEvent) -> bool {
-    matches!(event.kind(), ClientEventKind::HardLink)
-        && !event.is_hardlink_uptodate()
-        && !is_hardlinked_symlink_event(event)
-        && event
-            .metadata()
-            .and_then(ClientEntryMetadata::symlink_target)
-            .is_some()
-}
-
 /// Renders an event's path for the verbose file listing, mirroring upstream
 /// `f_name()` (flist.c): directory names carry a trailing `/` and the transfer
 /// root (`.`) renders as `./`. Non-directory entries render verbatim. This
@@ -1107,7 +1051,7 @@ fn verbose_listing_name(event: &ClientEvent, escape: EscapeStyle) -> Vec<u8> {
 /// Renders verbose listings for the provided transfer events.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_verbose<W: Write + ?Sized>(
-    events: &[ClientEvent],
+    events: &[&ClientEvent],
     verbosity: u8,
     name_level: NameOutputLevel,
     name_overridden: bool,
@@ -1131,35 +1075,12 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
         return Ok(());
     }
 
-    // upstream pipelines the generator (which emits `"is uptodate"`
-    // synchronously) ahead of the receiver (which emits the bare-name
-    // notice only after `set_file_attrs` returns). In our event-stream
-    // pipeline the actions are recorded in traversal order, so partition
-    // them to recover the upstream wire order. The sort is stable so each
-    // group preserves its original relative ordering.
-    let mut ordered_events: Vec<&ClientEvent> = events.iter().collect();
-    ordered_events.sort_by_key(|event| {
-        // upstream: recv_generator() emits the "is uptodate", "exists",
-        // "not creating new", and "is newer" notices synchronously in the
-        // generator phase, ahead of the receiver phase that prints the
-        // transferred-file names. Bucket those generator-phase notices first
-        // so the stable sort reproduces that interleaving.
-        // (generator.c:1769,1798,2138)
-        if is_uptodate_event(event) || is_generator_phase_skip(event) {
-            0u8
-        } else if is_deferred_hardlink_event(event) {
-            // Hardlink aliases linked to a this-run leader are finished last.
-            2
-        } else {
-            1
-        }
-    });
-
-    for event in ordered_events {
-        // The list above is re-sorted into upstream's generator-then-receiver
-        // phase order, so keys are not monotonic here. The merge stays correct
-        // because it only ever flushes forward: a diagnostic renders before the
-        // first event it preceded, which is the position upstream wrote it at.
+    for &event in events {
+        // `events` is in upstream's print order (`ClientSummary::listing_order`),
+        // not production order, so keys are not monotonic here. The merge stays
+        // correct because it only ever flushes forward: a diagnostic renders
+        // before the first event it preceded, which is the position upstream
+        // wrote it at.
         pending.begin_event(event.sequence(), stdout)?;
         let kind = event.kind();
         // upstream: log.c:920-924 log_delete() prints "deleting %n" gated on
@@ -1455,7 +1376,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
             }
             // upstream: generator.c:1304-1306 - a `--link-dest` symlink
             // hard-linked from the basis prints `"%s is uptodate"` at NAME>=2.
-            ClientEventKind::HardLink if is_hardlinked_symlink_event(event) => {
+            ClientEventKind::HardLink if event.is_hardlinked_symlink() => {
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
                     writeln_wrapped(stdout, "", event.relative_path(), escape, " is uptodate")?;
                 }
@@ -1517,7 +1438,7 @@ mod tests {
     fn render_verbose(event: ClientEvent) -> String {
         let mut out = Vec::new();
         emit_verbose(
-            &[event],
+            &[&event],
             1,
             NameOutputLevel::UpdatedAndUnchanged,
             false,
@@ -1536,8 +1457,12 @@ mod tests {
         // (upstream options.c:258), `(1)` leaves it at 0.
         logging::init(logging::VerbosityConfig::from_verbose_level(verbose_level));
         let mut out = Vec::new();
+        let ordered: Vec<&ClientEvent> = core::client::listing_order(&events, false)
+            .into_iter()
+            .map(|index| &events[index])
+            .collect();
         emit_verbose(
-            &events,
+            &ordered,
             verbose_level,
             NameOutputLevel::UpdatedAndUnchanged,
             false,

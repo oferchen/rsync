@@ -49,6 +49,28 @@ impl PendingTransfer {
         }
     }
 
+    /// Creates a pending whole-file transfer that still names a basis.
+    ///
+    /// Under `--whole-file` upstream chooses a `--partial-dir`, `--fuzzy` or
+    /// alt-dest basis and names it on the wire with no block sums; the
+    /// receiver opens it all the same (receiver.c:1086-1105), and
+    /// `dest_mode()` reads its stat. The data arrives as literals only.
+    #[must_use]
+    pub fn new_whole_file_against(
+        ndx: i32,
+        file_path: PathBuf,
+        basis_path: PathBuf,
+        target_size: u64,
+    ) -> Self {
+        Self {
+            ndx,
+            file_path,
+            basis_path: Some(basis_path),
+            signature: None,
+            target_size,
+        }
+    }
+
     /// Creates a new pending transfer for a delta transfer.
     ///
     /// Use this when a basis file exists and we're receiving only changes.
@@ -81,7 +103,7 @@ impl PendingTransfer {
         &self.file_path
     }
 
-    /// Returns the basis file path, if this is a delta transfer.
+    /// Returns the basis file path, if a basis was named.
     pub fn basis_path(&self) -> Option<&PathBuf> {
         self.basis_path.as_ref()
     }
@@ -97,10 +119,10 @@ impl PendingTransfer {
         self.target_size
     }
 
-    /// Returns true if this is a delta transfer (has basis file).
+    /// Returns true if this is a delta transfer (block sums were sent).
     #[must_use]
     pub const fn is_delta_transfer(&self) -> bool {
-        self.basis_path.is_some()
+        self.signature.is_some()
     }
 
     /// Consumes the pending transfer and returns its components.
@@ -146,6 +168,23 @@ mod tests {
         assert!(transfer.basis_path().is_none());
         assert!(transfer.signature().is_none());
         assert_eq!(transfer.target_size(), 1024);
+        assert!(!transfer.is_delta_transfer());
+    }
+
+    #[test]
+    fn a_whole_file_transfer_keeps_its_basis_but_is_not_a_delta() {
+        let transfer = PendingTransfer::new_whole_file_against(
+            3,
+            PathBuf::from("/tmp/dest/file.txt"),
+            PathBuf::from("/tmp/dest/.p/file.txt"),
+            512,
+        );
+
+        assert_eq!(
+            transfer.basis_path(),
+            Some(&PathBuf::from("/tmp/dest/.p/file.txt"))
+        );
+        assert!(transfer.signature().is_none());
         assert!(!transfer.is_delta_transfer());
     }
 

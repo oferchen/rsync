@@ -718,8 +718,9 @@ impl ReceiverContext {
             self.io_error_delete_warning_emitted = true;
             // upstream: log.c:rwrite() - a server frames the FINFO notice
             // as MSG_INFO for the client; only a client prints it locally.
+            // A level-0 event: no `--info` setting hides it, only `--quiet`.
             if self.config.connection.client_mode {
-                info_log!(Nonreg, 1, "IO error encountered -- skipping file deletion");
+                info_log!(Misc, 0, "IO error encountered -- skipping file deletion");
             } else {
                 let _ = writer.send_msg_info(b"IO error encountered -- skipping file deletion\n");
             }
@@ -938,7 +939,7 @@ fn sweep_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
 ///   backup was meant to preserve, leaving no copy of it anywhere. The
 ///   diagnostic `make_backup()` prints is `FERROR`, which carries no
 ///   exit-code bit (log.c:336-341), so the run's status is unchanged -
-///   measured against rsync 3.5.0.
+///   measured against rsync 3.5.1.
 /// - A failed RENAME is `rsyserr(FERROR_XFER, ...)` (`receiver.c:725-728`),
 ///   which sets `got_xfer_error` and forces exit 23 (`RERR_PARTIAL`). The
 ///   failure is returned in [`DelayedSweep::failed`] for the caller to report

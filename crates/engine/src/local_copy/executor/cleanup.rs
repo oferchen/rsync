@@ -266,7 +266,15 @@ where
     // in `delete_extraneous_entries_via_emitter`; this guard covers the deferred
     // `--delete-delay` plan, whose decided extras are consumed here rather than
     // rescanned.
-    if context.one_file_system_enabled() || context.options().backup_enabled() {
+    // A filter that keeps something inside an extraneous directory routes the
+    // same way: each child meets the filters on its own and a protected one
+    // keeps the directory (delete.c:91-183 delete_dir_contents, through the
+    // is_excluded() check in get_dirlist()), where the emitter's
+    // `remove_dir_all` would take it too.
+    if context.one_file_system_enabled()
+        || context.options().backup_enabled()
+        || plan_keeps_a_descendant(context, destination, relative, &plan)
+    {
         let boundary_dev = delete_boundary_device(context);
         let mut skipped = 0u64;
         for entry in &plan.extras {
@@ -599,6 +607,48 @@ fn remove_entry_capped(
     }
     delete_leaf(context, path, entry_relative, file_type)
 }
+/// Whether a filter keeps an entry inside one of `plan`'s extraneous
+/// directories. Only then must they be emptied one checked child at a time;
+/// otherwise the wholesale removal deletes exactly what upstream would.
+fn plan_keeps_a_descendant(
+    context: &CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+    plan: &DeletePlan,
+) -> bool {
+    if !context.deletion_filters_active() {
+        return false;
+    }
+    plan.extras
+        .iter()
+        .filter(|entry| matches!(entry.kind, DeleteEntryKind::Dir))
+        .any(|entry| {
+            let name = Path::new(&entry.name);
+            let entry_relative =
+                relative.map_or_else(|| name.to_path_buf(), |base| base.join(name));
+            subtree_keeps_an_entry(context, &destination.join(name), &entry_relative)
+        })
+}
+
+/// Whether a filter keeps any entry below `path`, named `relative` for
+/// filter matching.
+fn subtree_keeps_an_entry(context: &CopyContext, path: &Path, relative: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    // upstream: delete.c:105 - the directory's own merge files judge its
+    // children (push_local_filters).
+    let Ok(_merge_rules) = context.enter_destination_for_deletion(path, Some(relative)) else {
+        return true;
+    };
+    entries.flatten().any(|entry| {
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        let child = relative.join(entry.file_name());
+        !context.allows_deletion(&child, is_dir)
+            || (is_dir && subtree_keeps_an_entry(context, &entry.path(), &child))
+    })
+}
+
 /// Reports a removal the capped delete pass could not make and records it
 /// for the exit code; the pass keeps deleting siblings and the transfer goes
 /// on (upstream: delete.c:264-267, `DR_FAILURE` never aborts the pass).
@@ -672,15 +722,24 @@ fn remove_children_capped(
             ));
         }
     }
+    // upstream: delete.c:105 - push_local_filters() loads this directory's
+    // own merge files before its children are judged; the guard pops them.
+    let _merge_rules = context.enter_destination_for_deletion(path, Some(entry_relative))?;
     // Peel contents in upstream's reverse-sorted delete order so the
     // prefix that survives when `--max-delete` trips matches upstream.
     children.sort_unstable_by(|a, b| cmp_child_delete_order((&a.0, a.1), (&b.0, b.1)));
     children.reverse();
 
     let mut all_children_removed = true;
-    for (child_name, _) in children {
+    for (child_name, is_dir) in children {
         let child_path = path.join(&child_name);
         let child_relative = entry_relative.join(&child_name);
+        // upstream: delete.c:108-110 - get_dirlist() leaves out a child the
+        // filters protect, and counts it so the directory stays non-empty.
+        if !context.allows_deletion(&child_relative, is_dir) {
+            all_children_removed = false;
+            continue;
+        }
         // Children are reached via the recursion, mirroring upstream's
         // `delete_item(..., DEL_DIR_IS_EMPTY)` at delete.c:162; mark them
         // `nested` so a cap-saturated non-empty subdir is counted.

@@ -1,7 +1,9 @@
 # Path-confinement resolver API
 
 Design for the shared per-component resolver (task U350-4c.1). Upstream source of
-truth: rsync 3.5.0 `syscall.c`, read directly rather than from the spec summary.
+truth: rsync 3.5.1 `syscall.c`, read directly rather than from the spec summary.
+The design was first written against 3.5.0; the walk is the same in 3.5.1 except
+where section 2 says otherwise.
 
 ## 1. What the consumer walk settled
 
@@ -25,7 +27,7 @@ Two findings from that walk drive the API shape:
 
 ## 2. Upstream mechanism
 
-`struct dirstack` (`rsync-3.5.0/syscall.c:2803-2811`):
+`struct dirstack` (`rsync-3.5.1/syscall.c:2942-2950`):
 
 ```c
 struct dirstack {
@@ -40,25 +42,41 @@ Three properties matter for the API:
 1. **`fds[0]` is borrowed.** `secure_walk_at` does not close the anchor; the caller
    owns it. A resolver that took ownership would break every caller that reuses a
    held module-root fd.
-2. **`abspath` is seeded only when the anchor path is absolute** (`rsync-3.5.0/syscall.c:2989-2991`).
+2. **`abspath` is seeded only when the anchor path is absolute** (`rsync-3.5.1/syscall.c:3130-3132`).
    Unseeded means the exclude-aware refusal is disabled and, in upstream's words,
    "non-daemon callers pay nothing". The trust policy is *data*, not a branch.
 3. **Depth and symlink hops are bounded** - `DS_MAXDEPTH` is 1024, and `hops` is a
    single budget shared across the whole walk, passed by pointer so a symlink target
    that itself contains symlinks draws from the same allowance.
 
-`ds_descend` (`rsync-3.5.0/syscall.c:2891-2965`) is the per-component step:
+`ds_descend` (`rsync-3.5.1/syscall.c:3032-3106`) is the per-component step:
 
 - `.` is a no-op; `..` pops to the held parent fd and returns `ELOOP` at `top == 0`
   rather than rising above the anchor.
-- otherwise `openat(cur, part, O_RDONLY|O_DIRECTORY|O_NOFOLLOW)`.
+- otherwise `openat(cur, part, directory_traverse_flags() | O_NOFOLLOW)`. Since
+  3.5.1 that is `O_PATH|O_DIRECTORY` where `O_PATH` exists, so a search-only
+  directory can be crossed (`syscall.c:83-92`); 3.5.0 used
+  `O_RDONLY|O_DIRECTORY`.
 - on success it pushes the fd, extends `abspath`, then refuses with `ELOOP` if
-  `abspath_outside_confinement()` says the resolved path left the module.
+  `abspath_outside_confinement(abspath, 0)` says the resolved path left the
+  confinement root (`final = 0`: an ancestor of the root is still allowed while
+  descending).
 - on `ENOTDIR` or a NOFOLLOW hit it probes with `readlinkat`. An **absolute** target
   is refused (`ELOOP`); a **relative** target is followed by re-walking it, so an
   in-tree symlink resolves and its target may itself contain `..`.
 - `EMFILE`/`ENFILE` gets a one-shot warning, because holding one dirfd per component
   can exhaust descriptors where a plain `open` would not.
+
+**Correction, checked against 3.5.1 (3.5.0 is the same).** `ds_descend` calls
+this check "exclude-aware", but `abspath_outside_confinement()` never consults
+the module's filter rules. A path inside the root returns 0 with the comment
+"inside: name-based exclude is not a boundary" (`syscall.c:277`), and the
+function's header says the daemon exclude list is a name-based visibility
+filter, not a physical-path boundary (`syscall.c:240-244`). The refusal is
+root confinement of the *resolved* path. Sections 3, 4.4 and 8 were written
+assuming a per-component exclude check; read "exclude-aware refusal" there as
+"resolved-path root confinement". The argument against `openat2` still holds,
+because the check needs the resolved path, which only a manual walk knows.
 
 ## 3. The central constraint: resolve masks cannot express this
 
@@ -120,7 +138,7 @@ compiles the check out of an operator-trusted walk completely.
 That is the load-bearing consequence, and §4.4 gives the impossibility result behind
 it. It also converges on upstream's own semantics from the opposite direction:
 upstream seeds `ds.abspath` only for an absolute anchor and notes that unseeded means
-"non-daemon callers pay nothing" (`rsync-3.5.0/syscall.c:2989-2991`). Reaching the same property
+"non-daemon callers pay nothing" (`rsync-3.5.1/syscall.c:3130-3132`). Reaching the same property
 through Rust's type system rather than through a runtime seed check is evidence the
 shape is right rather than merely compliant.
 
@@ -205,7 +223,7 @@ one.
 visible tree. Checking that against the nominal path is exactly what a symlink
 defeats - which is the case the check exists for. Upstream can ask the question only
 because it performs the following itself and extends `ds.abspath` component by
-component (`rsync-3.5.0/syscall.c:2891-2965`).
+component (`rsync-3.5.1/syscall.c:3032-3106`).
 
 So the exclude-aware refusal is not merely awkward on top of `openat2`; it is
 **unimplementable** there. That is why the policy selects the mechanism.
@@ -235,7 +253,7 @@ Section 4.4 justifies the split from the exclude check. The **hop budget** justi
 it again, by an unrelated route - and two independent requirements arriving at the
 same seam is the strongest defence the split has.
 
-Upstream's `ds_walk_path` passes `hops` **by pointer** (`rsync-3.5.0/syscall.c:2966`), so it is a
+Upstream's `ds_walk_path` passes `hops` **by pointer** (`rsync-3.5.1/syscall.c:3107`), so it is a
 single budget spent across the whole walk rather than a per-component allowance. A
 chain of nested symlinks therefore exhausts one shared budget; resetting it per
 descend would let an attacker chain arbitrarily many hops while no single component
@@ -296,11 +314,11 @@ The live metadata applier is **not** an instance: it threads an
 upstream's `stat_x *` argument to `set_file_attrs()`.
 
 Neither cache has an upstream counterpart. Upstream keeps no pathname-keyed stat
-cache in the file-list build: `flist.c:1547-1556`'s `lastdir` interns a directory
+cache in the file-list build: `flist.c:1772-1781`'s `lastdir` interns a directory
 *name* plus a derived component count, `make_file()` destructures each stat into
 scalar `file_struct` fields and drops it, and every upstream hashtable is keyed on
 integers (`(dev, ino)` in `hlink.c:74-84`, `gnum`, `fs_dev`, an xattr-content
-checksum). The one path-shaped cache, `syscall.c:3540-3548`, holds open **dirfds**;
+checksum). The one path-shaped cache, `syscall.c:3721-3729`, holds open **dirfds**;
 upstream's own comment there argues its safety comes from an fd pinning an inode,
 which is exactly the distinction this section draws.
 
@@ -337,7 +355,7 @@ or an acceptance that a mask-based implementation would get wrong:
 8. operator-trusted policy performs no oracle calls at all
 9. anchor fd is still open and usable after the sandbox is dropped
 
-Cross-implementation (task 612): the same scenarios against the real 3.5.0 binary,
+Cross-implementation (task 612): the same scenarios against the real 3.5.1 binary,
 since a shared wrong belief about upstream is what this epic keeps finding.
 
 ## 9. Deferred with an owner

@@ -161,8 +161,12 @@ impl ReceiverContext {
                     atime_nsec: entry.atime_nsec(),
                     crtime: entry.crtime(),
                     crtime_nsec: 0,
+                    // upstream: generator.c:1345 lists `F_SYMLINK(f)`, the target
+                    // as recv_file_entry() stored it, munge prefix and
+                    // sanitizing included (flist.c:1521-1524, :1553).
                     symlink_target: if is_symlink {
-                        entry.link_target().cloned()
+                        self.stored_symlink_target(entry)
+                            .map(std::borrow::Cow::into_owned)
                     } else {
                         None
                     },
@@ -455,7 +459,14 @@ impl ReceiverContext {
                         "recv_generator: failed to stat {}",
                         self.full_fname_in_dest(dest_dir, &file_path)
                     );
-                    let _ = self.emit_generator_error_xfer(writer, &what, &error);
+                    // upstream: syscall.c:2920-2931 - a confinement refusal
+                    // prints as ELOOP; EXDEV is oc's internal escape signal.
+                    let shown = fast_io::refusal_errno::reported_refusal(&error);
+                    let _ = self.emit_generator_error_xfer(
+                        writer,
+                        &what,
+                        shown.as_ref().unwrap_or(&error),
+                    );
                     continue;
                 }
             };
@@ -466,7 +477,12 @@ impl ReceiverContext {
             if self.config.fake_super
                 && let Some(meta) = dest_meta.take()
             {
-                dest_meta = Some(metadata::fold_fake_super_stat(&file_path, meta)?);
+                dest_meta = Some(metadata::fold_fake_super_stat(&file_path, meta).map_err(
+                    |error| {
+                        let name = self.full_fname_in_dest(dest_dir, &file_path);
+                        metadata::rename_corrupt_fake_super(error, name)
+                    },
+                )?);
             }
             // upstream: generator.c:2822-2827 generate_files() - the per-file
             // generate loop pokes maybe_send_keepalive once the I/O lull has
@@ -2825,6 +2841,7 @@ mod itemize_order_tests {
             &opts,
             None,
             None,
+            &mut crate::receiver::directory::FailedDirectories::new(),
             &mut writer,
             #[cfg(unix)]
             None,

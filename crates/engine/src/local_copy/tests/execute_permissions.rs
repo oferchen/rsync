@@ -755,7 +755,7 @@ fn fresh_directory_without_perms_lands_dest_mode_not_umask_default() {
 /// `dest_mode()`'s exists arm keeps the directory's own 0o555
 /// (rsync.c:470-480); the raise (generator.c:1904-1912) is what lets the file
 /// land, and fix_dir_perms restores 0o555 because owner-write is absent
-/// (generator.c:2594). Measured against rsync 3.5.0: rc 0, file transferred,
+/// (generator.c:2594). Measured against rsync 3.5.1: rc 0, file transferred,
 /// directory back at 0o555; the pre-fix behaviour failed the write with
 /// EACCES (exit 23) and transferred nothing.
 #[cfg(unix)]
@@ -805,7 +805,7 @@ fn preexisting_readonly_subdir_without_perms_transfers_and_is_restored() {
 }
 
 /// The transfer ROOT variant: a pre-existing 0o555 destination root must not
-/// fail the copy. Measured against rsync 3.5.0 (`-r`, fresh files): rc 0, both
+/// fail the copy. Measured against rsync 3.5.1 (`-r`, fresh files): rc 0, both
 /// files land, the root is restored to 0o555.
 #[cfg(unix)]
 #[test]

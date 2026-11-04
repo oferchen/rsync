@@ -56,8 +56,8 @@
 // whenever it is about to write, keeping the peer's send buffer emptied.
 //
 // This file is `include!`d into the `crate::daemon` scope, so it reuses the
-// enclosing module's imports (`Arc`, `Mutex`, `AtomicBool`, `Ordering`,
-// `thread`, `io`, `Read`) and fully qualifies the `mpsc` types it adds.
+// enclosing module's imports (`Arc`, `Mutex`, `AtomicBool`, `AtomicUsize`,
+// `Ordering`, `thread`, `io`, `Read`) and fully qualifies the `mpsc` types it adds.
 
 /// Size of each socket read the drain thread performs.
 const DRAIN_CHUNK_SIZE: usize = 64 * 1024;
@@ -135,6 +135,8 @@ struct DrainingReader {
 struct DrainInner {
     stop: AtomicBool,
     join: Mutex<Option<thread::JoinHandle<()>>>,
+    /// Bytes read off the socket that the transfer has not consumed yet.
+    unread: AtomicUsize,
 }
 
 /// External stop handle for a `DrainingReader`'s background thread.
@@ -164,6 +166,12 @@ impl DrainHandle {
     /// the orchestration goodbye drain reads the socket via another clone.
     fn stop(&self) {
         self.inner.stop_and_join();
+    }
+
+    /// Whether the thread read peer bytes the transfer never consumed - data
+    /// a process without the drain thread would have left on the socket.
+    fn holds_unread(&self) -> bool {
+        self.inner.unread.load(Ordering::Acquire) > 0
     }
 }
 
@@ -204,6 +212,7 @@ impl DrainingReader {
         let inner = Arc::new(DrainInner {
             stop: AtomicBool::new(false),
             join: Mutex::new(None),
+            unread: AtomicUsize::new(0),
         });
         let thread_inner = Arc::clone(&inner);
 
@@ -254,6 +263,7 @@ impl DrainingReader {
                             // straight back to `read()` and keeps the socket
                             // receive buffer drained. A send error means the
                             // consumer dropped the receiver (transfer over).
+                            thread_inner.unread.fetch_add(n, Ordering::AcqRel);
                             if tx.send(DrainItem::Data(buf[..n].to_vec())).is_err() {
                                 break 'drain;
                             }
@@ -334,6 +344,7 @@ impl DrainingReader {
         let n = available.min(out.len());
         out[..n].copy_from_slice(&self.residual[self.residual_pos..self.residual_pos + n]);
         self.residual_pos += n;
+        self.inner.unread.fetch_sub(n, Ordering::AcqRel);
         if self.residual_pos == self.residual.len() {
             self.residual.clear();
             self.residual_pos = 0;

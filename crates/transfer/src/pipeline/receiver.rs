@@ -309,17 +309,11 @@ impl PipelinedReceiver {
     /// `module_id < 0`); the `curr_dir` prefix applies to every process, so a
     /// non-daemon receiver still anchors at its working directory.
     fn full_fname_paths(&self) -> crate::full_fname::FullFnamePaths<'_> {
-        match (
+        crate::full_fname::FullFnamePaths::receiver(
             self.daemon_module.as_deref(),
             self.daemon_module_root.as_deref(),
-        ) {
-            (Some(module), Some(root)) => crate::full_fname::FullFnamePaths::daemon(
-                module,
-                root,
-                self.dest_dir.as_deref().unwrap_or(root),
-            ),
-            _ => crate::full_fname::FullFnamePaths::non_daemon(),
-        }
+            self.dest_dir.as_deref(),
+        )
     }
 
     /// Formats the receiver's temp-file creation failure the way upstream does.
@@ -361,7 +355,12 @@ impl PipelinedReceiver {
             crate::temp_guard::CommitOp::Backup => crate::temp_guard::commit_op_destination(error),
             _ => None,
         };
-        op.failure_line(&name, target, &reason)
+        op.failure_line(
+            &name,
+            target,
+            &reason,
+            crate::temp_guard::commit_op_offset(error),
+        )
     }
 
     /// Formats a failed metadata apply the way upstream reports it.
@@ -371,11 +370,9 @@ impl PipelinedReceiver {
     /// on %s", full_fname(fname))` and then `goto cleanup`. The diagnostic is
     /// not verbosity-gated, so an operator sees it at the default `-a`.
     ///
-    /// `message` is [`metadata::MetadataError`]'s own rendering, which already
-    /// carries upstream's `failed to <op> <path>: <errno text>` shape and names
-    /// the failing attribute at the site that knows it. Re-deriving upstream's
-    /// per-attribute wording here would mean inventing a mapping the apply
-    /// chain does not report.
+    /// `message` is the disk thread's rendering of the failure: upstream's
+    /// `rsyserr()` text for a `set_file_attrs()` step, with the path through
+    /// `full_fname()`, or the error's own text for an ACL or xattr step.
     ///
     /// Emitting this as `FERROR_XFER` (not `FINFO`) is what makes the peer's
     /// `rwrite()` set `got_xfer_error`, matching the exit 23 the collected
@@ -487,6 +484,20 @@ impl PipelinedReceiver {
                 None
             }
             CommitDisposition::Abort(code) => {
+                // upstream: fileio.c:307-310 - an in-place skip whose lseek
+                // failed prints its own line before the write-failed one.
+                if let Some((crate::temp_guard::CommitOp::Write, _)) =
+                    crate::temp_guard::commit_op_failure(&error)
+                    && let Some(offset) = crate::temp_guard::commit_op_offset(&error)
+                {
+                    self.warnings.push((
+                        MessageCode::ErrorXfer,
+                        format!(
+                            "rsync: [receiver] lseek returned -1, not {offset}: {}",
+                            logging::upstream_errno_text(&error)
+                        ),
+                    ));
+                }
                 self.warnings
                     .push((code, self.commit_failure(&path, &error)));
                 Some(error)
@@ -816,6 +827,7 @@ pub(crate) fn keep_backup_failed_line(name: &str, error: &io::Error, reason: &st
         name,
         crate::temp_guard::commit_op_destination(error),
         reason,
+        None,
     )
 }
 
@@ -877,6 +889,7 @@ mod tests {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                dest_mode_basis: None,
                 file_entry: None,
             })))
             .unwrap();
@@ -1235,6 +1248,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"test data".to_vec(),
@@ -1316,6 +1330,7 @@ mod tests {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                dest_mode_basis: None,
                 file_entry: None,
             })))
             .unwrap();
@@ -1379,6 +1394,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"next".to_vec(),
@@ -1472,6 +1488,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: Some(entry),
                 }),
                 data: b"test data".to_vec(),
@@ -1595,6 +1612,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: Some(entry),
                 }),
                 data: b"test data".to_vec(),
@@ -1869,6 +1887,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"test data".to_vec(),
@@ -1947,6 +1966,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"test data".to_vec(),
@@ -2026,6 +2046,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"test data".to_vec(),
@@ -2436,6 +2457,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"drop staged".to_vec(),
@@ -2499,6 +2521,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"shutdown stage".to_vec(),
@@ -2552,6 +2575,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"e2e staged".to_vec(),
@@ -2615,6 +2639,7 @@ mod tests {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            dest_mode_basis: None,
             file_entry: None,
         };
         crate::disk_commit::close_fault::arm(libc::EIO);
@@ -2789,6 +2814,7 @@ mod tests {
                         append_offset: 0,
                         xattr_list: None,
                         xattr_basis: None,
+                        dest_mode_basis: None,
                         file_entry: None,
                     }),
                     data: b"payload".to_vec(),
@@ -2856,5 +2882,100 @@ mod tests {
             pr.commit_failure(dest, &rewrapped),
             "rsync: [receiver] copy \"/srv/tmp/.f.AbC123\" -> \"sub/f\": No space left on device (28)"
         );
+    }
+
+    /// The fatal receive-path sites each print upstream's own line at upstream's
+    /// level, and every one exits RERR_FILEIO.
+    ///
+    /// upstream: receiver.c:545-548 (lseek of), 658-660 (write failed on),
+    /// 679-681 (fsync failed on), fileio.c:307-310 (lseek returned).
+    #[test]
+    fn fatal_receive_sites_print_upstream_lines_at_upstream_levels() {
+        use crate::temp_guard::{CommitOp, attach_commit_op, attach_commit_op_at};
+
+        let dest = std::path::Path::new("dest/a");
+        let enospc = || io::Error::from_raw_os_error(28);
+        let espipe = || io::Error::from_raw_os_error(29);
+        let text = |e: io::Error| logging::upstream_errno_text(&e);
+
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+        let name = full_fname_path(dest, pr.full_fname_paths());
+        let cells = [
+            (
+                attach_commit_op(CommitOp::Write, dest, enospc()),
+                vec![(
+                    MessageCode::ErrorXfer,
+                    format!(
+                        "rsync: [receiver] write failed on {name}: {}",
+                        text(enospc())
+                    ),
+                )],
+            ),
+            (
+                attach_commit_op_at(CommitOp::Write, dest, 4096, espipe()),
+                vec![
+                    (
+                        MessageCode::ErrorXfer,
+                        format!(
+                            "rsync: [receiver] lseek returned -1, not 4096: {}",
+                            text(espipe())
+                        ),
+                    ),
+                    (
+                        MessageCode::ErrorXfer,
+                        format!(
+                            "rsync: [receiver] write failed on {name}: {}",
+                            text(espipe())
+                        ),
+                    ),
+                ],
+            ),
+            (
+                attach_commit_op(CommitOp::Fsync, dest, io::Error::from_raw_os_error(22)),
+                vec![(
+                    MessageCode::Error,
+                    format!(
+                        "rsync: [receiver] fsync failed on {name}: {}",
+                        text(io::Error::from_raw_os_error(22))
+                    ),
+                )],
+            ),
+            // EACCES would grade RERR_FILESELECT by its ErrorKind; the site
+            // still exits RERR_FILEIO, as exit_cleanup(RERR_FILEIO) does for
+            // any errno.
+            (
+                attach_commit_op(CommitOp::Write, dest, io::Error::from_raw_os_error(13)),
+                vec![(
+                    MessageCode::ErrorXfer,
+                    format!(
+                        "rsync: [receiver] write failed on {name}: {}",
+                        text(io::Error::from_raw_os_error(13))
+                    ),
+                )],
+            ),
+            (
+                attach_commit_op_at(CommitOp::Seek, dest, 4096, espipe()),
+                vec![(
+                    MessageCode::ErrorXfer,
+                    format!(
+                        "rsync: [receiver] lseek of {name} returned -1, not 4096: {}",
+                        text(espipe())
+                    ),
+                )],
+            ),
+        ];
+
+        for (error, expected) in cells {
+            let mut meta_errors = Vec::new();
+            let fatal = pr
+                .absorb_commit_error(error, &mut meta_errors)
+                .expect("every site is fatal");
+            assert_eq!(crate::error::rerr_for_io_error(&fatal), 11);
+            assert_eq!(pr.drain_warnings(), expected);
+            assert!(
+                meta_errors.is_empty(),
+                "a fatal site is not a per-file error"
+            );
+        }
     }
 }

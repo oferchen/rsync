@@ -296,6 +296,18 @@ impl ClientConfig {
                 || self.delay_updates
                 || self.prune_empty_dirs)
     }
+    /// Whether a local copy recurses incrementally: the local receiver's
+    /// [`allow_inc_recurse`](Self::allow_inc_recurse) at the copy's protocol.
+    ///
+    /// upstream: compat.c:172-177 `set_allow_inc_recurse()` on the receiving
+    /// child, and compat.c:722 - INC_RECURSE needs protocol 30.
+    #[must_use]
+    pub fn local_inc_recurse(&self) -> bool {
+        self.allow_inc_recurse(false)
+            && self
+                .protocol_version()
+                .is_none_or(|protocol| protocol.supports_inc_recurse())
+    }
 }
 
 #[cfg(test)]

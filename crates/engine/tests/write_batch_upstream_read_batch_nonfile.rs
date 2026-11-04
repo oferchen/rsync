@@ -3,8 +3,8 @@
 //! `--read-batch` replay of an oc-produced batch must itemize each created
 //! non-regular entry (`cd`/`cL`/`cS`) and count it in `--stats`.
 //!
-//! `#[ignore]`d because it requires a locally built upstream rsync 3.5.0
-//! (`target/interop/upstream-src/rsync-3.5.0/rsync`), absent on a bare
+//! `#[ignore]`d because it requires a locally built upstream rsync 3.5.1
+//! (`target/interop/upstream-src/rsync-3.5.1/rsync`), absent on a bare
 //! checkout; build it with `bash tools/ci/run_interop.sh` or by hand (see
 //! `write_batch_upstream_read_batch_itemize.rs`). Run with `--ignored` once
 //! built. A missing oracle binary panics loudly rather than silently passing.
@@ -34,19 +34,19 @@ use test_support::{Deadlined, run_deadlined};
 /// Wall-clock budget for the upstream `--read-batch` subprocess.
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Locally built upstream rsync 3.5.0, source-tree layout.
-fn upstream_3_5_0() -> PathBuf {
+/// Locally built upstream rsync 3.5.1, source-tree layout.
+fn upstream_3_5_1() -> PathBuf {
     PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/interop/upstream-src/rsync-3.5.0/rsync"
+        "/../../target/interop/upstream-src/rsync-3.5.1/rsync"
     ))
 }
 
-/// Panics unless `path` is a genuine upstream rsync 3.5.0 binary.
+/// Panics unless `path` is a genuine upstream rsync 3.5.1 binary.
 fn require_upstream(path: &Path) {
     if !path.exists() {
         panic!(
-            "upstream rsync 3.5.0 required for this oracle test, but {} is absent. \
+            "upstream rsync 3.5.1 required for this oracle test, but {} is absent. \
              Build it with `bash tools/ci/run_interop.sh` or by hand. This test is \
              #[ignore]d for that reason - run with --ignored once the binary exists.",
             path.display()
@@ -60,15 +60,15 @@ fn require_upstream(path: &Path) {
     };
     let banner = String::from_utf8_lossy(&output.stdout);
     let first = banner.lines().next().unwrap_or_default();
-    if !(first.starts_with("rsync  version 3.5.0") && first.contains("protocol version")) {
-        panic!("{} is not upstream rsync 3.5.0: {first:?}", path.display());
+    if !(first.starts_with("rsync  version 3.5.1") && first.contains("protocol version")) {
+        panic!("{} is not upstream rsync 3.5.1: {first:?}", path.display());
     }
 }
 
 #[test]
-#[ignore = "requires a locally built upstream rsync 3.5.0; run with --ignored"]
+#[ignore = "requires a locally built upstream rsync 3.5.1; run with --ignored"]
 fn upstream_read_batch_counts_created_dirs_symlinks_and_specials() {
-    let upstream = upstream_3_5_0();
+    let upstream = upstream_3_5_1();
     require_upstream(&upstream);
     let oc_rsync = test_support::oc_rsync_bin();
 

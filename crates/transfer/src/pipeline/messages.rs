@@ -159,6 +159,19 @@ pub struct BeginMessage {
     /// - `xattrs.c:994` `rsync_xal_set(fname, ..., fnamecmp, ...)` - the
     ///   abbreviated resolution re-reads `fnamecmp`, the basis actually used.
     pub xattr_basis: Option<PathBuf>,
+    /// The basis the receiver opened, as `dest_mode()` sees it without
+    /// `--perms`: the `fstat` of the delta basis (a `--partial-dir`,
+    /// `--fuzzy` or alt-dest file, or the destination itself), captured
+    /// before any byte is written. `None` is upstream's `exists == 0`: no
+    /// basis, or one that is not a regular file. Always `None` under
+    /// `--perms`, where `dest_mode()` does not run.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:1158-1208` - `do_fstat(fd1, &st)`, a non-regular basis
+    ///   closed again, then `dest_mode(file->mode, st.st_mode, dflt_perms,
+    ///   fd1 != -1)` only `if (!preserve_perms)`
+    pub dest_mode_basis: Option<fast_io::EntryMetadata>,
     /// Flist entry whose metadata (permissions, ownership, timestamps, ACL
     /// indices) the disk thread applies after committing this file.
     ///

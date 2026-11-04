@@ -12,6 +12,7 @@ use crate::disk_commit::LiveAclCache;
 use metadata::AclIdMapper;
 
 use crate::delta_apply::ChecksumVerifier;
+use crate::full_fname::{FullFnamePaths, full_fname_path};
 use crate::pipeline::messages::{BeginMessage, ComputedChecksum};
 
 use super::super::config::DiskCommitConfig;
@@ -28,7 +29,6 @@ pub(super) fn apply_file_metadata(
     target_path: &Path,
     begin: &BeginMessage,
     config: &DiskCommitConfig,
-    inplace_pre_transfer: Option<&std::fs::Metadata>,
 ) -> Option<(PathBuf, String)> {
     // The desired metadata rides on the begin message per-file (see
     // `BeginMessage::file_entry`), so the disk thread no longer indexes a shared
@@ -38,41 +38,10 @@ pub(super) fn apply_file_metadata(
     if begin.is_device_target {
         None
     } else {
-        // upstream: receiver.c:1208 dest_mode() runs against the PRE-transfer
-        // destination stat. When metadata is applied to a temp/staged file
-        // (target_path != final path), the final destination still holds the
-        // file it had before this transfer, so stat it to reproduce
-        // dest_mode()'s `stat_mode`/`exists` inputs: `Some(meta)` -> keep the
-        // prior perm bits; a missing final path (`None`) -> brand-new file,
-        // apply the umask-masked source mode.
-        //
-        // Writing directly to the final path (inplace) destroys the
-        // pre-transfer state by the time we get here, so the caller stats the
-        // destination BEFORE `open_output_file` and hands it in. Passing `None`
-        // here instead would take the brand-new-file branch and chmod an
-        // existing destination to `source_mode & (~CHMOD_BITS | dflt_perms)` -
-        // mode 000 whenever the entry carries no perm bits - where upstream
-        // preserves the destination's own bits.
-        //
-        // upstream: rsync.c:464 dest_mode() is called (receiver.c:1208) with
-        // `statret == 0` for an inplace write, because the destination exists.
-        // upstream: receiver.c:1191-1194 - the basis fd is dropped again
-        // unless it is a regular file, so a symlink / fifo / device obstacle
-        // leaves `exists = fd1 != -1` false and dest_mode() takes the
-        // new-destination arm (its lstat mode - 0o755 for a symlink on some
-        // platforms - must never become the file's permissions).
-        // Stat the destination beneath the directory the receiver entered, as
-        // upstream's link_stat() of a name relative to the change_dir() cwd
-        // does (receiver.c:1191-1194), so a destination swapped after entry
-        // cannot turn an existing file into a fresh one.
-        let pre_transfer_meta = if target_path != begin.file_path {
-            fast_io::destination_at::symlink_metadata(&begin.file_path).ok()
-        } else {
-            inplace_pre_transfer
-                .cloned()
-                .map(fast_io::EntryMetadata::from)
-        }
-        .filter(fast_io::EntryMetadata::is_file);
+        // upstream: receiver.c:1158-1208 - dest_mode()'s `stat_mode`/`exists`
+        // inputs come from the basis the receiver opened, captured before any
+        // write (see `BeginMessage::dest_mode_basis`).
+        let pre_transfer_meta = begin.dest_mode_basis.clone();
         apply_metadata_acls_and_xattrs(
             target_path,
             MetadataApplyInputs {
@@ -92,6 +61,7 @@ pub(super) fn apply_file_metadata(
                 // still holds the referenced value, so fall back to file_path.
                 basis_path: begin.xattr_basis.as_deref().unwrap_or(&begin.file_path),
                 dest_root: config.dest_dir.as_deref(),
+                fname_paths: config.full_fname_paths(),
             },
         )
     }
@@ -119,6 +89,8 @@ struct MetadataApplyInputs<'a> {
     basis_path: &'a Path,
     /// Destination tree the xattr writes are pinned beneath.
     dest_root: Option<&'a Path>,
+    /// Path context a failed step's name renders against.
+    fname_paths: FullFnamePaths<'a>,
 }
 
 /// Applies file metadata, ACLs, and xattrs from the receiver's caches.
@@ -144,6 +116,7 @@ fn apply_metadata_acls_and_xattrs(
         pre_transfer_meta,
         basis_path,
         dest_root,
+        fname_paths,
     } = inputs;
 
     let (opts, entry) = match (metadata_opts, file_entry) {
@@ -163,7 +136,14 @@ fn apply_metadata_acls_and_xattrs(
         None,
         pre_transfer_meta,
     ) {
-        return Some((file_path.to_path_buf(), e.to_string()));
+        // upstream: rsync.c:685-687, 784, 814-816 - set_file_attrs() reports
+        // the failed step in rsyserr() wording, naming the file it was handed
+        // (the temp file before the rename) through full_fname().
+        let fname = full_fname_path(e.path(), fname_paths);
+        let text = e
+            .set_file_attrs_text(&fname)
+            .unwrap_or_else(|| e.to_string());
+        return Some((file_path.to_path_buf(), text));
     }
 
     // upstream: set_file_attrs() calls set_acl() after perms/times/ownership
@@ -260,6 +240,7 @@ mod tests {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            dest_mode_basis: None,
             file_entry: entry,
         }
     }
@@ -300,7 +281,7 @@ mod tests {
 
         // target_path == file_path: the final-destination apply path.
         let begin = begin_for(&path, Some(entry));
-        let err = apply_file_metadata(&path, &begin, &config, None);
+        let err = apply_file_metadata(&path, &begin, &config);
         assert!(err.is_none(), "metadata apply reported an error: {err:?}");
 
         let meta = std::fs::metadata(&path).unwrap();
@@ -316,15 +297,11 @@ mod tests {
         );
     }
 
-    /// A non-regular obstacle at the final destination (here a symlink) must
-    /// NOT count as an existing destination for `dest_mode()`: upstream drops
-    /// the basis fd unless it is a regular file (receiver.c:1191-1194), so
-    /// the staged file takes the new-destination arm - the entry mode masked
-    /// by the umask - never the obstacle's lstat permission bits (0o755 for a
-    /// symlink on some platforms).
+    /// Applies an entry of `entry_mode` to a staged 0o600 temp file whose
+    /// receiver-captured basis has `basis_mode` (`None`: no basis), with
+    /// `--perms` set to `perms`, and returns the staged file's mode.
     #[cfg(unix)]
-    #[test]
-    fn non_regular_basis_takes_the_new_destination_arm() {
+    fn staged_mode(basis_mode: Option<u32>, entry_mode: u32, perms: bool) -> u32 {
         use std::os::unix::fs::PermissionsExt;
 
         // Pin the umask; metadata caches it on first read and nextest runs
@@ -332,39 +309,64 @@ mod tests {
         let prev = rustix::process::umask(rustix::fs::Mode::from_bits_truncate(0o022));
 
         let dir = test_support::create_tempdir();
-        // The final destination currently holds a symlink obstacle.
         let final_path = dir.path().join("dest.dat");
-        let pointee = dir.path().join("pointee.dat");
-        std::fs::write(&pointee, b"pointee").unwrap();
-        std::os::unix::fs::symlink(&pointee, &final_path).unwrap();
-        // The staged temp file carries the O_TMPFILE-style creation mode.
         let staged = dir.path().join("staged.tmp");
         std::fs::write(&staged, b"payload").unwrap();
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let dest_mode_basis = basis_mode.map(|mode| {
+            let basis = dir.path().join("basis.dat");
+            std::fs::write(&basis, b"basis").unwrap();
+            std::fs::set_permissions(&basis, std::fs::Permissions::from_mode(mode)).unwrap();
+            fast_io::EntryMetadata::from(std::fs::metadata(&basis).unwrap())
+        });
 
-        let entry =
-            protocol::flist::FileEntry::new_file(std::path::PathBuf::from("dest.dat"), 7, 0o666);
+        let entry = protocol::flist::FileEntry::new_file(
+            std::path::PathBuf::from("dest.dat"),
+            7,
+            entry_mode,
+        );
         let config = DiskCommitConfig {
             metadata_opts: Some(
                 metadata::MetadataOptions::new()
-                    .preserve_permissions(false)
+                    .preserve_permissions(perms)
                     .preserve_times(false),
             ),
             ..DiskCommitConfig::default()
         };
-
         let mut begin = begin_for(&final_path, Some(entry));
-        begin.file_path = final_path.clone();
-        let err = apply_file_metadata(&staged, &begin, &config, None);
+        begin.dest_mode_basis = dest_mode_basis;
+        let err = apply_file_metadata(&staged, &begin, &config);
         let got = std::fs::metadata(&staged).unwrap().permissions().mode() & 0o7777;
         rustix::process::umask(prev);
 
         assert!(err.is_none(), "metadata apply reported an error: {err:?}");
-        assert_eq!(
-            got, 0o644,
-            "staged file must land entry-mode & dflt_perms (0o666 & 0o755), \
-             not the symlink obstacle's lstat bits"
-        );
+        got
+    }
+
+    // WHY: without --perms upstream's dest_mode() keeps the opened basis's
+    // own bits (rsync.c:470-480, exists == 1). The basis can be a
+    // --partial-dir, --fuzzy or alt-dest file, so the commit must use the
+    // stat the receiver captured, not re-stat the final path.
+    #[cfg(unix)]
+    #[test]
+    fn without_perms_the_basis_bits_are_kept() {
+        assert_eq!(staged_mode(Some(0o600), 0o666, false), 0o600);
+    }
+
+    // WHY: with no basis upstream's dest_mode() takes the new-file arm,
+    // `flist_mode & (~CHMOD_BITS | dflt_perms)`: 0o666 & 0o755 = 0o644.
+    #[cfg(unix)]
+    #[test]
+    fn without_perms_no_basis_takes_the_new_file_mode() {
+        assert_eq!(staged_mode(None, 0o666, false), 0o644);
+    }
+
+    // WHY: with --perms upstream never calls dest_mode() (receiver.c:1197),
+    // so the entry mode lands whatever basis was opened.
+    #[cfg(unix)]
+    #[test]
+    fn with_perms_the_entry_mode_replaces_the_basis_bits() {
+        assert_eq!(staged_mode(Some(0o640), 0o604, true), 0o604);
     }
 
     /// With no entry on the message (and no shared flist), the apply path is a
@@ -382,7 +384,7 @@ mod tests {
             ..DiskCommitConfig::default()
         };
         let begin = begin_for(&path, None);
-        assert!(apply_file_metadata(&path, &begin, &config, None).is_none());
+        assert!(apply_file_metadata(&path, &begin, &config).is_none());
     }
 
     /// ACL case: the access/default ACL indices live in the entry's `extras`
@@ -424,7 +426,7 @@ mod tests {
             metadata_opts: Some(metadata::MetadataOptions::new().preserve_permissions(true)),
             ..DiskCommitConfig::default()
         };
-        assert!(apply_file_metadata(&path, &begin, &config, None).is_none());
+        assert!(apply_file_metadata(&path, &begin, &config).is_none());
     }
 
     /// Runs the commit-path apply for `root/sub/victim`, where `sub` is a
@@ -476,7 +478,7 @@ mod tests {
             dest_dir: confine.then(|| root.clone()),
             ..DiskCommitConfig::default()
         };
-        let _ = apply_file_metadata(&path, &begin_for(&path, Some(entry)), &config, None);
+        let _ = apply_file_metadata(&path, &begin_for(&path, Some(entry)), &config);
         matches!(xattr::get(&victim, "system.posix_acl_access"), Ok(Some(_)))
     }
 
