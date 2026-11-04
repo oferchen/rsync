@@ -18,8 +18,9 @@
 //! `ConnectionAttempts`, `IPQoS`, `TCPKeepAlive`) are accepted by the shared
 //! table but not acted on here, because the embedded transport exposes no
 //! matching knob. Every other keyword upstream recognises is accepted
-//! without effect, and a spelling upstream does not recognise is refused
-//! (see "Failure mode"). Wildcards in `Host` patterns follow OpenSSH
+//! without effect once its value passes the check upstream's arm makes
+//! (the `values` submodule), and a spelling upstream does not recognise is
+//! refused (see "Failure mode"). Wildcards in `Host` patterns follow OpenSSH
 //! semantics: `*`
 //! matches any sequence, `?` matches any single character, `!pattern`
 //! negates a match for that block.
@@ -91,12 +92,14 @@ use super::error::SshError;
 use crate::ssh::argv_split::argv_split;
 use crate::ssh::config_files::{ConfigFile, check_default_user_config_perms, home_dir as env_home};
 use crate::ssh::config_options::{
-    AddressFamily, CanonicalizeHostname, Opcode, PatternListMatch, glob_matches,
+    AddressFamily, CanonicalizeHostname, Opcode, PatternListMatch, ValueKind, glob_matches,
     ignore_unknown_matches, match_pattern_list, parse_address_family, parse_canonicalize_hostname,
     parse_flag_value, parse_int_value, parse_pubkey_auth_value, parse_scaled_value,
     parse_time_value, parse_token, split_directive, valid_domain,
 };
 use logging::warn_log;
+
+mod values;
 
 /// upstream's `READCONF_MAX_DEPTH` - the nested-`Include` ceiling
 /// (openssh/readconf.c:2561). A top-level file is depth 0, each `Include`
@@ -922,6 +925,10 @@ impl FileScan<'_, '_> {
         if self.accepts_unread(opcode, &keyword, linenum) {
             return Ok(());
         }
+        if let Some(kind) = unread_value_kind(opcode) {
+            let consumed = values::check(kind, &keyword, &tokens, value, self.path, linenum)?;
+            return self.no_extra_arguments(&keyword, consumed, tokens.len(), linenum);
+        }
 
         if opcode == Opcode::Host {
             let matched = host_matches_any_pattern(self.ctx.host_alias, &tokens).map_err(
@@ -1511,10 +1518,46 @@ impl FileScan<'_, '_> {
                     self.path
                 );
             }
-            Opcode::Unknown | Opcode::Deprecated | Opcode::Ignore | Opcode::NotActedOn => {}
+            Opcode::Unknown | Opcode::Deprecated | Opcode::Ignore => {}
             _ => return false,
         }
         true
+    }
+
+    /// Upstream's end-of-line check: an arm that left tokens unread
+    /// refuses the line (openssh/readconf.c:2529-2534).
+    fn no_extra_arguments(
+        &self,
+        keyword: &str,
+        consumed: usize,
+        tokens: usize,
+        linenum: usize,
+    ) -> Result<(), Refusal> {
+        if consumed < tokens {
+            return Err(refuse(
+                self.path,
+                linenum,
+                format!("keyword {keyword} extra arguments at end of line"),
+            )
+            .into());
+        }
+        Ok(())
+    }
+}
+
+/// The value shape of a keyword this reader checks but does not act on:
+/// every [`Opcode::NotActedOn`] row, plus the connection keywords the
+/// transport has no knob for.
+fn unread_value_kind(opcode: Opcode) -> Option<ValueKind> {
+    match opcode {
+        Opcode::NotActedOn(kind) => Some(kind),
+        Opcode::BindAddress
+        | Opcode::BindInterface
+        | Opcode::ConnectionAttempts
+        | Opcode::IPQoS
+        | Opcode::TCPKeepAlive
+        | Opcode::Compression => Some(opcode.value_kind()),
+        _ => None,
     }
 }
 
