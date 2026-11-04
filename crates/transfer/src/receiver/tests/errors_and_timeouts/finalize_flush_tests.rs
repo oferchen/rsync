@@ -36,8 +36,7 @@ const NDX_DONE_LE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
 
 /// Writer that records every `write` and `flush` so tests can assert that
 /// upstream's `io_flush(FULL_FLUSH)` contract is honoured before
-/// `finalize_transfer` returns. Mirrors the generator-side
-/// `FlushTrackingWriter` used by `handle_goodbye_proto31_flushes_ndx_done_before_close`.
+/// `finalize_transfer` returns.
 #[derive(Default)]
 struct FlushTrackingWriter {
     buffer: Vec<u8>,
