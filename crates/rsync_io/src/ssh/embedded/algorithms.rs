@@ -137,14 +137,14 @@ impl AlgorithmList {
     }
 
     /// The name upstream reports a failed composition under: the option
-    /// field for the `ASSEMBLE` lists (openssh/readconf.c:2986-2997), the
-    /// call site's text for host keys (openssh/sshconnect2.c:247).
+    /// field for the `ASSEMBLE` lists (openssh/readconf.c:2987-2997), the
+    /// call site's text for host keys (openssh/sshconnect2.c:245-247).
     fn assembly_name(self) -> &'static str {
         match self {
             Self::Ciphers => "ciphers",
             Self::Macs => "macs",
             Self::Kex => "kex_algorithms",
-            Self::HostKey => "expand HostKeyAlgorithms",
+            Self::HostKey => "ssh_kex2: kex_assemble_namelist",
         }
     }
 
@@ -324,16 +324,82 @@ fn filter_list(proposal: &str, filter: &str, deny: bool) -> String {
         .join(",")
 }
 
+/// What `fill_default_options` leaves in one of the transport lists.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(in crate::ssh) enum Filled<'a> {
+    /// Assembled as usual; `None` is the defaults.
+    Assembled(Option<&'a str>),
+    /// Left unset: the list that failed to assemble, or a later one the
+    /// configuration never set. The key exchange offers the defaults and
+    /// `ssh -G` prints no line for it.
+    Unset,
+    /// A later list's configured value, never assembled and offered as
+    /// written.
+    Verbatim(&'a str),
+}
+
+/// `fill_default_options`' `ASSEMBLE` run over `Ciphers`, `MACs` and
+/// `KexAlgorithms`, in that order (openssh/readconf.c:2987-2997).
+///
+/// A list that `kex_assemble_names` refuses is reported as
+/// `fill_default_options: <name>: invalid argument` and left unset, and the
+/// `goto fail` skips every later `ASSEMBLE`. `ret` is still `0` there
+/// (:2794), so ssh carries on: a later list keeps its configured text
+/// unassembled, and an unset one stays unset; the key exchange offers the
+/// defaults for an unset list (openssh/kex.c:105-106, :117-124).
+pub(in crate::ssh) fn fill_default_lists(specs: [Option<&str>; 3]) -> [Filled<'_>; 3] {
+    const ORDER: [AlgorithmList; 3] = [
+        AlgorithmList::Ciphers,
+        AlgorithmList::Macs,
+        AlgorithmList::Kex,
+    ];
+    let mut failed = false;
+    let mut filled = [Filled::Unset; 3];
+    for ((list, spec), slot) in ORDER.into_iter().zip(specs).zip(&mut filled) {
+        *slot = match spec {
+            Some(spec) if failed => Filled::Verbatim(spec),
+            None if failed => Filled::Unset,
+            spec => {
+                let all = list.known_names().join(",");
+                if spec.is_some() && assemble(spec, &all, &all).is_err() {
+                    warn_log!(
+                        "fill_default_options: {}: invalid argument",
+                        list.assembly_name()
+                    );
+                    failed = true;
+                    Filled::Unset
+                } else {
+                    Filled::Assembled(spec)
+                }
+            }
+        };
+    }
+    filled
+}
+
+/// The names a filled transport list offers, or `None` for the
+/// transport's own `defaults`: an assembled list composes against them
+/// ([`negotiable`]), an unassembled one is offered as written.
+pub(super) fn offered<T>(
+    list: AlgorithmList,
+    filled: Filled<'_>,
+    defaults: &str,
+    map: impl Fn(&str) -> Option<T>,
+) -> Result<Option<Vec<T>>, SshError> {
+    match filled {
+        Filled::Assembled(None) | Filled::Unset => Ok(None),
+        Filled::Assembled(Some(spec)) => negotiable(list, spec, defaults, map).map(Some),
+        Filled::Verbatim(spec) => keep_negotiable(list, spec, &split_list(spec), map).map(Some),
+    }
+}
+
 /// Composes a directive's list against the transport's `defaults` and
 /// keeps the names the transport can negotiate, in order.
 ///
-/// Composition failures are upstream's: `fill_default_options` reports
-/// `<name>: invalid argument` for the three transport lists
-/// (openssh/readconf.c:2986-2997), and `HostKeyAlgorithms` fails as
-/// `expand HostKeyAlgorithms` (openssh/sshconnect2.c:245-247). A name
-/// OpenSSH knows but `map` rejects is left out with a warning naming it;
-/// upstream would still offer it, so a list left with nothing the
-/// transport supports is refused rather than sent empty.
+/// A list that cannot be composed fails as upstream's call site does:
+/// `HostKeyAlgorithms` as `ssh_kex2: kex_assemble_namelist: invalid
+/// argument` (openssh/sshconnect2.c:245-247); the other lists have already
+/// been through [`fill_default_lists`].
 pub(super) fn negotiable<T>(
     list: AlgorithmList,
     spec: &str,
@@ -344,8 +410,21 @@ pub(super) fn negotiable<T>(
     let names = assemble(Some(spec), defaults, &all).map_err(|_| SshError::SshConfigFatal {
         reason: format!("{}: invalid argument", list.assembly_name()),
     })?;
+    keep_negotiable(list, spec, &names, map)
+}
+
+/// Keeps the `names` the transport can negotiate, in order. A name OpenSSH
+/// knows but `map` rejects is left out with a warning naming it; upstream
+/// would still offer it, so a list left with nothing the transport
+/// supports is refused rather than sent empty.
+fn keep_negotiable<T>(
+    list: AlgorithmList,
+    spec: &str,
+    names: &[String],
+    map: impl Fn(&str) -> Option<T>,
+) -> Result<Vec<T>, SshError> {
     let mut supported = Vec::with_capacity(names.len());
-    for name in &names {
+    for name in names {
         match map(name) {
             Some(alg) => supported.push(alg),
             None => warn_log!(
@@ -486,5 +565,91 @@ mod tests {
             assemble(Some("^a,,!d"), def, all),
             Err(AssembleError::NegatedPattern)
         );
+    }
+
+    /// The warnings this thread emitted since the last drain.
+    fn drained_warnings() -> Vec<String> {
+        logging::drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                logging::DiagnosticEvent::Info {
+                    code: logging::LogCode::Warning,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// openssh/readconf.c:2794, :2987-2997: the failing list is left unset,
+    /// a later list keeps its text unassembled (or stays unset), an earlier
+    /// one keeps its assembled value, and one warning names the failure.
+    #[test]
+    fn a_failed_assembly_leaves_the_later_lists_unassembled() {
+        let bad_cipher = "^aes128-ctr,,!aes256-ctr";
+        let _ = drained_warnings();
+        for (specs, filled, warning) in [
+            (
+                [
+                    Some(bad_cipher),
+                    Some("+hmac-sha2-256"),
+                    Some("curve25519-sha256"),
+                ],
+                [
+                    Filled::Unset,
+                    Filled::Verbatim("+hmac-sha2-256"),
+                    Filled::Verbatim("curve25519-sha256"),
+                ],
+                Some("ciphers"),
+            ),
+            (
+                [Some(bad_cipher), None, Some("-x")],
+                [Filled::Unset, Filled::Unset, Filled::Verbatim("-x")],
+                Some("ciphers"),
+            ),
+            (
+                [
+                    Some("aes128-ctr"),
+                    Some("^hmac-sha2-256,,!x"),
+                    Some("curve25519-sha256"),
+                ],
+                [
+                    Filled::Assembled(Some("aes128-ctr")),
+                    Filled::Unset,
+                    Filled::Verbatim("curve25519-sha256"),
+                ],
+                Some("macs"),
+            ),
+            (
+                [
+                    None,
+                    Some("^hmac-sha2-256,,hmac-sha1"),
+                    Some("^curve25519-sha256,,!x"),
+                ],
+                [
+                    Filled::Assembled(None),
+                    Filled::Assembled(Some("^hmac-sha2-256,,hmac-sha1")),
+                    Filled::Unset,
+                ],
+                Some("kex_algorithms"),
+            ),
+            (
+                [None, Some("-hmac-sha1"), None],
+                [
+                    Filled::Assembled(None),
+                    Filled::Assembled(Some("-hmac-sha1")),
+                    Filled::Assembled(None),
+                ],
+                None,
+            ),
+        ] {
+            assert_eq!(fill_default_lists(specs), filled, "{specs:?}");
+            let expected = warning
+                .map(|name| format!("fill_default_options: {name}: invalid argument"))
+                .into_iter()
+                .collect::<Vec<_>>();
+            assert_eq!(drained_warnings(), expected, "{specs:?}");
+        }
     }
 }
