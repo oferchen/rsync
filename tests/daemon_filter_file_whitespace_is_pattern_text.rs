@@ -36,7 +36,8 @@
 //! The assertion is the SET OF FILES THE CLIENT RECEIVES, not a parsed pattern
 //! string, because that set is the property that matters.
 //!
-//! Skip conditions (the test passes with a printed reason):
+//! Skip conditions (the test passes with a printed reason, except under
+//! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
 //! - Loopback TCP is unavailable.
 //! - The cross-implementation cell additionally needs a built upstream 3.5.1
 //!   binary; without it it reports why it did not run.
@@ -57,9 +58,8 @@ fn oc_binary() -> PathBuf {
 }
 
 fn upstream_binary() -> Option<PathBuf> {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
-    path.is_file().then_some(path)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+        .map(|upstream| upstream.binary().to_path_buf())
 }
 
 fn free_port() -> Option<u16> {
@@ -247,10 +247,6 @@ fn oc_keeps_daemon_filter_file_whitespace_as_pattern_text() {
 #[test]
 fn upstream_keeps_daemon_filter_file_whitespace_as_pattern_text() {
     let Some(upstream) = upstream_binary() else {
-        println!(
-            "SKIP: upstream 3.5.1 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.1/rsync)"
-        );
         return;
     };
     assert_table(&upstream, "upstream 3.5.1");

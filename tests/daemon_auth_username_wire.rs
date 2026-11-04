@@ -27,7 +27,8 @@
 //! set on the CHILD only - never on the test process - so these cases stay
 //! correct under parallel nextest.
 //!
-//! Skip conditions (test passes with a printed reason):
+//! Skip conditions (test passes with a printed reason, except under
+//! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
 //! - Loopback TCP is unavailable.
 //! - The cross-implementation cell additionally needs a built upstream 3.5.1
 //!   binary; without it that cell reports why it did not run.
@@ -47,9 +48,8 @@ fn oc_binary() -> PathBuf {
 /// Locates the built upstream 3.5.1 oracle, or `None` when the interop tree has
 /// not been fetched and built.
 fn upstream_binary() -> Option<PathBuf> {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
-    path.is_file().then_some(path)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+        .map(|upstream| upstream.binary().to_path_buf())
 }
 
 /// Serves one stub daemon session and returns the username field of the auth
@@ -144,10 +144,6 @@ fn oc_sends_the_upstream_username_for_every_environment() {
 #[test]
 fn upstream_sends_the_same_username_for_every_environment() {
     let Some(upstream) = upstream_binary() else {
-        println!(
-            "SKIP: upstream 3.5.1 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.1/rsync)"
-        );
         return;
     };
     assert_table(&upstream, "upstream 3.5.1");

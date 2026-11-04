@@ -24,7 +24,8 @@
 //! the wrong oracle here, and why the rule cannot live in the shared string
 //! parser: each option decides what its 0 means.
 //!
-//! Skip conditions (test passes with a printed reason):
+//! Skip conditions (test passes with a printed reason, except under
+//! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
 //! - The cross-implementation cell needs a built upstream 3.5.1 binary.
 
 use std::fs;
@@ -36,9 +37,8 @@ fn oc_binary() -> PathBuf {
 }
 
 fn upstream_binary() -> Option<PathBuf> {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
-    path.is_file().then_some(path)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+        .map(|upstream| upstream.binary().to_path_buf())
 }
 
 /// The observable outcome of one run: did it succeed, and did the file arrive.
@@ -121,10 +121,6 @@ fn oc_resolves_an_empty_size_value_to_zero() {
 #[test]
 fn upstream_resolves_an_empty_size_value_to_zero() {
     let Some(upstream) = upstream_binary() else {
-        println!(
-            "SKIP: upstream 3.5.1 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.1/rsync)"
-        );
         return;
     };
     assert_empty_matches_zero(&upstream, "upstream 3.5.1");
