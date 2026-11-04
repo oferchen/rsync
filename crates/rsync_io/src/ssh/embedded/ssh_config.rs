@@ -17,8 +17,11 @@
 //! recognised connection keywords (`BindAddress`, `BindInterface`,
 //! `ConnectionAttempts`, `IPQoS`, `TCPKeepAlive`) are accepted by the shared
 //! table but not acted on here, because the embedded transport exposes no
-//! matching knob. Unknown directives are skipped
-//! silently. Wildcards in `Host` patterns follow OpenSSH semantics: `*`
+//! matching knob. Every other keyword upstream recognises is accepted
+//! without effect once its value passes the check upstream's arm makes
+//! (the `values` submodule), and a spelling upstream does not recognise is
+//! refused (see "Failure mode"). Wildcards in `Host` patterns follow OpenSSH
+//! semantics: `*`
 //! matches any sequence, `?` matches any single character, `!pattern`
 //! negates a match for that block.
 //!
@@ -46,15 +49,22 @@
 //! # Failure mode
 //!
 //! A missing or unreadable file is still an empty result, but a file that
-//! real `ssh` would REFUSE is now an error rather than silently-empty.
-//! Upstream counts bad lines and then aborts the load outright
-//! (openssh/readconf.c:2667), so the connection never happens; resolving
-//! to different connection parameters than `ssh` would have used is the
-//! worse outcome. Four refusals are mirrored, each with upstream's own
-//! wording, and each fires whether or not the surrounding `Host` block
-//! matches - upstream parses every line and gates only the ASSIGNMENT on
-//! `*activep`:
+//! real `ssh` would REFUSE is an error rather than silently-empty.
+//! Upstream reports each refused line, finishes the file, and only then
+//! aborts the load (openssh/readconf.c:2604-2613), so the connection never
+//! happens; resolving to different connection parameters than `ssh` would
+//! have used is the worse outcome. The reader does the same: every refused
+//! line is collected and the file fails with
+//! [`SshError::SshConfigBadOptions`] once its last line is read. The
+//! refusals are mirrored with upstream's own wording, and each fires
+//! whether or not the surrounding `Host` block matches - upstream parses
+//! every line and gates only the ASSIGNMENT on `*activep`:
 //!
+//! * `Bad configuration option: <keyword>` - a keyword outside upstream's
+//!   table that no earlier `IgnoreUnknown` excuses
+//!   (openssh/readconf.c:977-982).
+//! * `no argument after keyword "<keyword>"` - a keyword with no value
+//!   (openssh/readconf.c:1190-1193).
 //! * `invalid quotes` - a quote left open (openssh/readconf.c:1196-1199).
 //! * `keyword host empty argument` - an empty `Host` token
 //!   (openssh/readconf.c:1832-1836).
@@ -77,13 +87,20 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::algorithms::AlgorithmList;
 use super::error::SshError;
 use crate::ssh::argv_split::argv_split;
 use crate::ssh::config_files::{ConfigFile, check_default_user_config_perms, home_dir as env_home};
 use crate::ssh::config_options::{
-    AddressFamily, Opcode, glob_matches, parse_address_family, parse_flag_value, parse_int_value,
-    parse_pubkey_auth_value, parse_time_value, parse_token, split_directive,
+    AddressFamily, CanonicalizeHostname, Opcode, PatternListMatch, ValueKind, glob_matches,
+    ignore_unknown_matches, match_pattern_list, parse_address_family, parse_canonicalize_hostname,
+    parse_flag_value, parse_int_value, parse_pubkey_auth_value, parse_scaled_value,
+    parse_time_value, parse_token, split_directive, valid_domain,
 };
+use logging::warn_log;
+
+mod address;
+mod values;
 
 /// upstream's `READCONF_MAX_DEPTH` - the nested-`Include` ceiling
 /// (openssh/readconf.c:2561). A top-level file is depth 0, each `Include`
@@ -102,6 +119,12 @@ const SYSTEM_SSH_DIR: &str = "/etc/ssh";
 /// text-only entry point substitutes this rather than printing nothing.
 #[cfg(test)]
 const INLINE_CONFIG_NAME: &str = "<ssh_config>";
+
+/// `SSH_MAX_IDENTITY_FILES` (openssh/ssh.h:28).
+const SSH_MAX_IDENTITY_FILES: usize = 100;
+
+/// `SSH_MAX_CERTIFICATE_FILES` (openssh/ssh.h:22).
+const SSH_MAX_CERTIFICATE_FILES: usize = 100;
 
 /// Resolved directives for a single host alias, merged in declaration order
 /// across every matching `Host` block. Only the directives the embedded
@@ -199,8 +222,51 @@ pub(super) struct ResolvedHost {
     /// differential; the embedded transport does not yet enforce a minimum
     /// RSA key length.
     pub required_rsa_size: Option<u32>,
+    /// `IgnoreUnknown`, the raw pattern list. `None` means no active line
+    /// claimed the slot (openssh/readconf.c:2193, `parse_string`). Read
+    /// while parsing, so it excuses only unknown keywords on later lines
+    /// (openssh/readconf.c:1195-1196), and in both passes.
+    pub ignore_unknown: Option<String>,
+    /// `Ciphers`, the raw `[+-^]list` taken verbatim once it validates.
+    /// `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1593-1608). Assembled against the transport's
+    /// defaults at connect time.
+    pub ciphers: Option<String>,
+    /// `MACs`, as [`Self::ciphers`] (openssh/readconf.c:1610-1625).
+    pub macs: Option<String>,
+    /// `KexAlgorithms`, as [`Self::ciphers`] (openssh/readconf.c:1627-1643).
+    pub kex_algorithms: Option<String>,
+    /// `HostKeyAlgorithms`, as [`Self::ciphers`]; patterns are allowed
+    /// (openssh/readconf.c:1645-1664).
+    pub host_key_algorithms: Option<String>,
+    /// `RekeyLimit` bytes, `0` for `default`. `None` means no active line
+    /// claimed the slot (openssh/readconf.c:1362-1383).
+    pub rekey_limit: Option<i64>,
+    /// `RekeyLimit`'s optional interval in seconds, its own first-obtained
+    /// slot; `none` leaves it claimable (openssh/readconf.c:1384-1391).
+    pub rekey_interval: Option<u32>,
+    /// `Tag`, first obtained. `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1498-1500, `parse_string`). Read while parsing,
+    /// so a `Match tagged` line sees only the tag set above it
+    /// (openssh/readconf.c:853-860).
+    pub tag: Option<String>,
+    /// `CanonicalizeHostname`. `None` means no active line claimed the slot;
+    /// upstream's default is `no` (openssh/readconf.c:2754, :2281-2284).
+    pub canonicalize_hostname: Option<CanonicalizeHostname>,
+    /// `CanonicalDomains`, lowercased and without trailing dots, as the
+    /// first active line gave them (openssh/readconf.c:2201-2231).
+    pub canonical_domains: Option<Vec<String>>,
+    /// `CanonicalizeMaxDots`; upstream's default is 1
+    /// (openssh/readconf.c:2777-2778).
+    pub canonicalize_max_dots: Option<u32>,
+    /// `CanonicalizeFallbackLocal`; upstream's default is `yes`
+    /// (openssh/readconf.c:2779-2780).
+    pub canonicalize_fallback_local: Option<bool>,
+    /// `CanonicalizePermittedCNAMEs` as `(source, target)` pattern lists;
+    /// an empty list is a lone `none` (openssh/readconf.c:2233-2279,
+    /// normalised as fill_default_options does at :3037-3043).
+    pub permitted_cnames: Option<Vec<(String, String)>>,
 }
-
 impl ResolvedHost {
     /// Whether an active line has already claimed the shared proxy slot.
     ///
@@ -250,40 +316,220 @@ pub(super) fn resolve_host_with_remote_user(
         let anchors = IncludeAnchors::live();
         let mut local_user = String::new();
         let ctx = MatchCtx::with_remote_user(host_alias, remote_user, &mut local_user);
-        // First pass, then the `SSHCONF_FINAL` re-parse only when a
-        // non-negated `Match final` asked for it (openssh/ssh.c:1190-1268).
-        let mut want_final_pass = false;
-        scan_config(
-            &mut resolved,
-            &text,
-            &display,
-            &anchors,
-            true,
-            false,
-            0,
-            true,
-            &ctx,
-            false,
-            &mut want_final_pass,
-        )?;
-        if want_final_pass {
+        resolve_passes(&mut resolved, &ctx, |resolved, final_pass, want| {
             scan_config(
-                &mut resolved,
-                &text,
-                &display,
-                &anchors,
-                true,
-                false,
-                0,
-                true,
-                &ctx,
-                true,
-                &mut false,
-            )?;
+                resolved, &text, &display, &anchors, true, false, 0, true, &ctx, final_pass, want,
+            )
+        })?;
+    }
+    Ok(resolved)
+}
+
+/// Runs upstream's configuration passes around hostname canonicalization
+/// (openssh/ssh.c:1221-1296).
+///
+/// After the first pass `HostName` gets its `%h` expansion. A numeric
+/// host is rewritten to `resolve_addr`'s form whatever the canonicalization
+/// setting (:1239-1248, :437-446), so `127.1` connects and is looked up in
+/// known_hosts as `127.0.0.1`. When `CanonicalizeHostname` is on, a name is
+/// canonicalized and the final pass is forced (:1280-1284); a `Match final`
+/// line forces it too. Before the final pass the host - lowercased unless it
+/// is an address, and canonicalized - becomes `HostName`, which is what that
+/// pass's `Match host` sees and why a final-pass `HostName` line never
+/// applies (:1287-1288).
+fn resolve_passes(
+    resolved: &mut ResolvedHost,
+    ctx: &MatchCtx<'_>,
+    mut pass: impl FnMut(&mut ResolvedHost, bool, &mut bool) -> Result<(), SshError>,
+) -> Result<(), SshError> {
+    let mut want_final_pass = false;
+    pass(resolved, false, &mut want_final_pass)?;
+    expand_hostname(resolved, ctx.host_alias)?;
+    let canonicalize = resolved
+        .canonicalize_hostname
+        .unwrap_or(CanonicalizeHostname::No);
+    let mut host = resolved
+        .hostname
+        .clone()
+        .unwrap_or_else(|| ctx.host_alias.to_owned());
+    let family = resolved.address_family;
+    let was_addr = address::is_addr(&host, family);
+    let mut found = false;
+    if was_addr {
+        if let Some(addr) = address::canonical_address(&host, family) {
+            found = true;
+            if !addr.eq_ignore_ascii_case(&host) {
+                host = addr;
+                resolved.hostname = Some(host.clone());
+            }
+        }
+    } else {
+        host.make_ascii_lowercase();
+        if canonicalize != CanonicalizeHostname::No {
+            found = canonicalize_host(resolved, &mut host, ctx.probe)?;
         }
     }
-    expand_hostname(&mut resolved, host_alias)?;
-    Ok(resolved)
+    // A name canonicalization left alone is still looked up as typed when
+    // CNAMEs are permitted, so a CNAME can rename it; a direct connection
+    // to a name that does not resolve is fatal (openssh/ssh.c:1255-1273).
+    let direct = is_direct(resolved);
+    if !found
+        && resolved
+            .permitted_cnames
+            .as_ref()
+            .is_some_and(|rules| !rules.is_empty())
+        && (direct || canonicalize == CanonicalizeHostname::Always)
+    {
+        match (ctx.probe)(&host, family) {
+            Ok(cname) => follow_cname(resolved, direct, &mut host, &cname),
+            Err(reason) if direct => {
+                // upstream: "%s: Could not resolve hostname %.100s: %s"
+                // (openssh/ssh.c:274-276), then cleanup_exit(255).
+                let shown: String = host.chars().take(100).collect();
+                return Err(SshError::SshConfigFatal {
+                    reason: format!("ssh: Could not resolve hostname {shown}: {reason}"),
+                });
+            }
+            Err(_) => {}
+        }
+    }
+    if canonicalize == CanonicalizeHostname::No && !want_final_pass {
+        return Ok(());
+    }
+    resolved.hostname = Some(host);
+    pass(resolved, true, &mut false)
+}
+
+/// `AI_CANONNAME`: `0x0002` in every libc and in WinSock, so the flag is
+/// spelled out rather than taken from a platform crate.
+const AI_CANONNAME: i32 = 0x0002;
+
+/// The resolver's error text before the `gai_strerror` message upstream
+/// prints on its own.
+const LOOKUP_ERROR_PREFIX: &str = "failed to lookup address information: ";
+
+/// `resolve_host` asking for the canonical name (openssh/ssh.c:253-297):
+/// `getaddrinfo` with `AddressFamily` as the family hint and
+/// `AI_CANONNAME`. The canonical name is empty when the resolver gave none
+/// or one that is not a valid domain, which upstream reports and ignores.
+fn dns_canonical_name(name: &str, family: Option<AddressFamily>) -> Result<String, String> {
+    let address = match family {
+        Some(AddressFamily::Inet) => dns_lookup::AddrFamily::Inet.into(),
+        Some(AddressFamily::Inet6) => dns_lookup::AddrFamily::Inet6.into(),
+        Some(AddressFamily::Any) | None => 0,
+    };
+    let hints = dns_lookup::AddrInfoHints {
+        flags: AI_CANONNAME,
+        address,
+        socktype: dns_lookup::SockType::Stream.into(),
+        protocol: 0,
+    };
+    let reason = |err: &dyn std::fmt::Display| {
+        let text = err.to_string();
+        text.strip_prefix(LOOKUP_ERROR_PREFIX)
+            .map_or_else(|| text.clone(), str::to_owned)
+    };
+    let first = dns_lookup::getaddrinfo(Some(name), None, Some(hints))
+        .map_err(|err| reason(&err))?
+        .next()
+        .ok_or_else(|| "Name or service not known".to_owned())?
+        .map_err(|err| reason(&err))?;
+    Ok(first.canonname.map_or_else(String::new, |cname| {
+        valid_domain(&cname, false).unwrap_or_else(|why| {
+            warn_log!("ignoring bad CNAME \"{cname}\" for host \"{name}\": {why}");
+            String::new()
+        })
+    }))
+}
+
+/// Whether the connection dials the host itself rather than through
+/// `ProxyCommand`/`ProxyJump` (openssh/ssh.c:466-467, :1263-1264).
+fn is_direct(resolved: &ResolvedHost) -> bool {
+    let unset_or_none = |slot: &Option<String>| {
+        slot.as_deref()
+            .is_none_or(|value| value.eq_ignore_ascii_case("none"))
+    };
+    unset_or_none(&resolved.proxy_command) && unset_or_none(&resolved.jump_hosts)
+}
+
+/// `check_follow_cname` (openssh/ssh.c:387-421): replaces `name` with the
+/// `cname` its lookup reported when canonicalization is on (and the
+/// connection direct, unless it is `always`) and a
+/// `CanonicalizePermittedCNAMEs` rule's source list matches `name` and its
+/// target list matches `cname`.
+fn follow_cname(resolved: &ResolvedHost, direct: bool, name: &mut String, cname: &str) {
+    let Some(rules) = resolved.permitted_cnames.as_deref() else {
+        return;
+    };
+    if cname.is_empty() || rules.is_empty() || name == cname {
+        return;
+    }
+    match resolved
+        .canonicalize_hostname
+        .unwrap_or(CanonicalizeHostname::No)
+    {
+        CanonicalizeHostname::No => return,
+        CanonicalizeHostname::Yes if !direct => return,
+        _ => {}
+    }
+    let permitted = rules.iter().any(|(source, target)| {
+        match_pattern_list(name, source, true) == PatternListMatch::Positive
+            && match_pattern_list(cname, target, true) == PatternListMatch::Positive
+    });
+    if permitted {
+        *name = cname.to_owned();
+    }
+}
+
+/// A port of `resolve_canonicalize` for a host that is not an address
+/// (openssh/ssh.c:427-521): a direct connection (or any, under `always`)
+/// whose name has at most `CanonicalizeMaxDots` dots tries each
+/// `CanonicalDomains` suffix in order and takes the first that resolves; a
+/// name with a trailing dot is tried as it stands. The name found may then
+/// follow its CNAME ([`follow_cname`]). Returns whether a name was found.
+fn canonicalize_host(
+    resolved: &ResolvedHost,
+    host: &mut String,
+    probe: CanonicalProbe,
+) -> Result<bool, SshError> {
+    let direct = is_direct(resolved);
+    if !direct && resolved.canonicalize_hostname != Some(CanonicalizeHostname::Always) {
+        return Ok(false);
+    }
+    let family = resolved.address_family;
+    if host.ends_with('.') {
+        if let Ok(cname) = probe(host, family) {
+            host.pop();
+            follow_cname(resolved, direct, host, &cname);
+            return Ok(true);
+        }
+    } else {
+        let max_dots = resolved.canonicalize_max_dots.unwrap_or(1);
+        let dots = host.bytes().filter(|&b| b == b'.').count();
+        if dots > max_dots as usize {
+            return Ok(false);
+        }
+        let domains = resolved.canonical_domains.as_deref().unwrap_or_default();
+        for domain in domains {
+            if domain.eq_ignore_ascii_case("none") {
+                break;
+            }
+            let full = format!("{host}.{domain}.");
+            if let Ok(cname) = probe(&full, family) {
+                *host = full[..full.len() - 1].to_owned();
+                follow_cname(resolved, direct, host, &cname);
+                return Ok(true);
+            }
+        }
+    }
+    if resolved.canonicalize_fallback_local == Some(false) {
+        // upstream: fatal("%s: Could not resolve host \"%s\"", __progname, ...)
+        // (openssh/ssh.c:520), printed as `ssh` prints it.
+        return Err(SshError::SshConfigFatal {
+            reason: format!("ssh: Could not resolve host \"{host}\""),
+        });
+    }
+    Ok(false)
 }
 
 /// Applies the one expansion upstream performs as soon as the options are
@@ -399,17 +645,13 @@ fn resolve_host_files_with_ctx(
     anchors: &IncludeAnchors,
 ) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
-    // First pass over the whole load order, then the `SSHCONF_FINAL`
-    // re-parse only when a non-negated `Match final` asked for it. Upstream
-    // calls `process_config_files` a second time with the SAME options
-    // struct, so first-obtained-wins carries across both passes and the
-    // re-parse only fills slots a `Match final`/`Match canonical` block
-    // could not reach on the first (openssh/ssh.c:1190-1268).
-    let want_final_pass = scan_files_once(&mut resolved, files, ctx, anchors, false)?;
-    if want_final_pass {
-        scan_files_once(&mut resolved, files, ctx, anchors, true)?;
-    }
-    expand_hostname(&mut resolved, ctx.host_alias)?;
+    // Upstream calls `process_config_files` a second time with the SAME
+    // options struct, so first-obtained-wins carries across both passes
+    // (openssh/ssh.c:1221, :1286-1290).
+    resolve_passes(&mut resolved, ctx, |resolved, final_pass, want| {
+        *want |= scan_files_once(resolved, files, ctx, anchors, final_pass)?;
+        Ok(())
+    })?;
     Ok(resolved)
 }
 
@@ -479,6 +721,7 @@ pub(super) fn resolve_host_str_with_users(
         host_alias,
         remote_user,
         local_user,
+        probe: dns_canonical_name,
     };
     resolve_host_str_with_ctx(text, &ctx)
 }
@@ -487,23 +730,9 @@ pub(super) fn resolve_host_str_with_users(
 fn resolve_host_str_with_ctx(text: &str, ctx: &MatchCtx<'_>) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
     let anchors = IncludeAnchors::none();
-    let mut want_final_pass = false;
-    scan_config(
-        &mut resolved,
-        text,
-        INLINE_CONFIG_NAME,
-        &anchors,
-        true,
-        false,
-        0,
-        true,
-        ctx,
-        false,
-        &mut want_final_pass,
-    )?;
-    if want_final_pass {
+    resolve_passes(&mut resolved, ctx, |resolved, final_pass, want| {
         scan_config(
-            &mut resolved,
+            resolved,
             text,
             INLINE_CONFIG_NAME,
             &anchors,
@@ -512,11 +741,10 @@ fn resolve_host_str_with_ctx(text: &str, ctx: &MatchCtx<'_>) -> Result<ResolvedH
             0,
             true,
             ctx,
-            true,
-            &mut false,
-        )?;
-    }
-    expand_hostname(&mut resolved, ctx.host_alias)?;
+            final_pass,
+            want,
+        )
+    })?;
     Ok(resolved)
 }
 
@@ -549,7 +777,16 @@ struct MatchCtx<'a> {
     host_alias: &'a str,
     remote_user: &'a str,
     local_user: &'a str,
+    /// Resolves a canonicalization candidate. The live resolver is
+    /// [`dns_canonical_name`]; tests substitute a fixed table.
+    probe: CanonicalProbe,
 }
+
+/// The resolver question canonicalization asks: does this name resolve
+/// under this `AddressFamily`, and to which canonical name? `Ok` carries
+/// the canonical name (empty when there is none), `Err` the resolver's
+/// reason.
+type CanonicalProbe = fn(&str, Option<AddressFamily>) -> Result<String, String>;
 
 impl<'a> MatchCtx<'a> {
     /// A context for the passive resolvers, whose only connection input is
@@ -564,6 +801,7 @@ impl<'a> MatchCtx<'a> {
             host_alias,
             remote_user: "",
             local_user: local_user_buf.as_str(),
+            probe: dns_canonical_name,
         }
     }
 
@@ -582,6 +820,7 @@ impl<'a> MatchCtx<'a> {
             host_alias,
             remote_user,
             local_user: local_user_buf.as_str(),
+            probe: dns_canonical_name,
         }
     }
 
@@ -654,11 +893,78 @@ fn scan_config(
     final_pass: bool,
     want_final_pass: &mut bool,
 ) -> Result<(), SshError> {
-    let mut in_matching_block = active;
-
+    let mut scan = FileScan {
+        resolved,
+        path,
+        anchors,
+        in_matching_block: active,
+        never_match,
+        depth,
+        user_conf,
+        ctx,
+        final_pass,
+        want_final_pass,
+    };
+    let mut bad_options = Vec::new();
     for (index, raw_line) in text.lines().enumerate() {
-        // Upstream counts physical lines from 1 (openssh/readconf.c:2651-2654).
-        let linenum = index + 1;
+        // Upstream counts physical lines from 1 (openssh/readconf.c:2596-2598).
+        match scan.line(index + 1, raw_line) {
+            Ok(()) => {}
+            // A refused line is reported and the scan goes on; only the end
+            // of the file turns the count into a fatal
+            // (openssh/readconf.c:2604-2613).
+            Err(Refusal::Counted(diagnostic)) => bad_options.push(diagnostic),
+            Err(Refusal::Fatal(err)) => return Err(err),
+        }
+    }
+    if bad_options.is_empty() {
+        Ok(())
+    } else {
+        Err(SshError::SshConfigBadOptions {
+            path: path.to_owned(),
+            lines: bad_options,
+        })
+    }
+}
+
+/// Why one line failed: counted toward its file's bad-option total, as
+/// upstream's `goto out` arms are (openssh/readconf.c:2538-2542), or fatal
+/// at once, as upstream's `fatal()` calls are.
+enum Refusal {
+    /// The line's diagnostic, reported when the file ends.
+    Counted(String),
+    /// An error that ends the load immediately.
+    Fatal(SshError),
+}
+
+impl From<SshError> for Refusal {
+    fn from(err: SshError) -> Self {
+        match err {
+            SshError::SshConfig { .. } => Self::Counted(err.to_string()),
+            other => Self::Fatal(other),
+        }
+    }
+}
+
+/// The state one file's scan threads from line to line.
+struct FileScan<'s, 'c> {
+    resolved: &'s mut ResolvedHost,
+    path: &'s str,
+    anchors: &'s IncludeAnchors,
+    /// Whether the enclosing `Host`/`Match` block is active.
+    in_matching_block: bool,
+    never_match: bool,
+    depth: u32,
+    user_conf: bool,
+    ctx: &'s MatchCtx<'c>,
+    final_pass: bool,
+    want_final_pass: &'s mut bool,
+}
+
+impl FileScan<'_, '_> {
+    /// Processes one physical line - upstream's `process_config_line_depth`
+    /// (openssh/readconf.c:1145).
+    fn line(&mut self, linenum: usize, raw_line: &str) -> Result<(), Refusal> {
         // Trailing whitespace strip + leading whitespace skip
         // (openssh/readconf.c:1168-1172, :1178-1180). `\r` is in
         // upstream's WHITESPACE set (openssh/misc.c:464), so a CRLF file
@@ -669,36 +975,77 @@ fn scan_config(
         // may be tested: mid-token a `#` is literal, and `argv_split`
         // owns that decision.
         if line.is_empty() || line.starts_with('#') {
-            continue;
+            return Ok(());
         }
 
         let Some((key, value)) = split_directive(line) else {
-            continue;
+            // A keyword with no value is refused before it is even looked up
+            // (openssh/readconf.c:1190-1193), whether or not it is known.
+            let keyword = line
+                .split(|c: char| c.is_whitespace() || c == '=')
+                .next()
+                .unwrap_or(line)
+                .to_ascii_lowercase();
+            return Err(refuse(
+                self.path,
+                linenum,
+                format!("no argument after keyword \"{keyword}\""),
+            )
+            .into());
         };
         // One keyword lookup against the shared option table, exactly
         // where upstream resolves the opcode for the line
-        // (openssh/readconf.c:1194 `parse_token`).
+        // (openssh/readconf.c:1195 `parse_token`). Upstream lowercases the
+        // keyword first (openssh/readconf.c:1185), which is the spelling its
+        // diagnostics print.
         let opcode = parse_token(key);
+        let keyword = key.to_ascii_lowercase();
+        // `parse_token` reports an unknown keyword before the value is split.
+        let bad_keyword = if opcode == Opcode::Unknown {
+            self.unknown_keyword(&keyword, linenum)
+        } else {
+            None
+        };
 
         // One tokenisation per line, exactly as upstream does it
-        // (openssh/readconf.c:1196).
-        let tokens =
-            argv_split(value, true).map_err(|err| refuse(path, linenum, err.to_string()))?;
+        // (openssh/readconf.c:1197). A quoting error on a line whose keyword
+        // was already refused is the same bad line, so it counts once.
+        let tokens = match argv_split(value, true) {
+            Ok(tokens) => tokens,
+            Err(err) => {
+                let quotes = refuse(self.path, linenum, err.to_string()).to_string();
+                return Err(Refusal::Counted(match bad_keyword {
+                    Some(bad) => format!("{bad}\n{quotes}"),
+                    None => quotes,
+                }));
+            }
+        };
+        if let Some(bad) = bad_keyword {
+            return Err(Refusal::Counted(bad));
+        }
+        if self.accepts_unread(opcode, &keyword, linenum) {
+            return Ok(());
+        }
+        if let Some(kind) = unread_value_kind(opcode) {
+            let consumed = values::check(kind, &keyword, &tokens, value, self.path, linenum)?;
+            return self.no_extra_arguments(&keyword, consumed, tokens.len(), linenum);
+        }
 
         if opcode == Opcode::Host {
-            let matched =
-                host_matches_any_pattern(ctx.host_alias, &tokens).map_err(|EmptyHostToken| {
+            let matched = host_matches_any_pattern(self.ctx.host_alias, &tokens).map_err(
+                |EmptyHostToken| {
                     // Upstream interpolates the LOWERCASED keyword it
                     // matched on (openssh/readconf.c:1184, :1833), not the
                     // spelling in the file.
-                    refuse(path, linenum, "keyword host empty argument")
-                })?;
+                    refuse(self.path, linenum, "keyword host empty argument")
+                },
+            )?;
             // Under `SSHCONF_NEVERMATCH` (a file included from an inactive
             // block) the block can never activate, but the tokens are still
             // walked for the empty-argument refusal above
             // (openssh/readconf.c:1841).
-            in_matching_block = !never_match && matched;
-            continue;
+            self.in_matching_block = !self.never_match && matched;
+            return Ok(());
         }
 
         if opcode == Opcode::Match {
@@ -708,18 +1055,23 @@ fn scan_config(
             // (openssh/readconf.c:2116). A bad condition returns < 0 there
             // and aborts the load regardless of the block's activity, which
             // is why the evaluation runs even under `never_match`.
-            let match_host = resolved.hostname.as_deref().unwrap_or(ctx.host_alias);
+            let match_host = self
+                .resolved
+                .hostname
+                .as_deref()
+                .unwrap_or(self.ctx.host_alias);
             let activates = evaluate_match_line(
                 &tokens,
                 match_host,
-                ctx,
-                final_pass,
-                want_final_pass,
-                path,
+                self.resolved.tag.as_deref(),
+                self.ctx,
+                self.final_pass,
+                self.want_final_pass,
+                self.path,
                 linenum,
             )?;
-            in_matching_block = !never_match && activates;
-            continue;
+            self.in_matching_block = !self.never_match && activates;
+            return Ok(());
         }
 
         // `Include` is processed on every line regardless of the block's
@@ -728,20 +1080,20 @@ fn scan_config(
         // (openssh/readconf.c:2073-2150).
         if opcode == Opcode::Include {
             process_include(
-                resolved,
+                self.resolved,
                 &tokens,
-                path,
+                self.path,
                 linenum,
-                anchors,
-                in_matching_block,
-                never_match,
-                depth,
-                user_conf,
-                ctx,
-                final_pass,
-                want_final_pass,
+                self.anchors,
+                self.in_matching_block,
+                self.never_match,
+                self.depth,
+                self.user_conf,
+                self.ctx,
+                self.final_pass,
+                self.want_final_pass,
             )?;
-            continue;
+            return Ok(());
         }
 
         // Proxy dial directives. `ProxyCommand` and `ProxyJump` consume the
@@ -753,65 +1105,53 @@ fn scan_config(
         // `ResolvedHost::proxy_claimed` guard mirrors upstream's mutual
         // exclusion.
         if opcode == Opcode::ProxyCommand {
-            if in_matching_block && !resolved.proxy_claimed() {
-                resolved.proxy_command = Some(value.to_owned());
+            if self.in_matching_block && !self.resolved.proxy_claimed() {
+                self.resolved.proxy_command = Some(value.to_owned());
             }
-            continue;
+            return Ok(());
         }
         if opcode == Opcode::ProxyJump {
-            if in_matching_block && !resolved.proxy_claimed() {
-                resolved.jump_hosts = Some(value.to_owned());
+            if self.in_matching_block && !self.resolved.proxy_claimed() {
+                self.resolved.jump_hosts = Some(value.to_owned());
             }
-            continue;
+            return Ok(());
         }
-        if opcode == Opcode::ProxyUseFdpass {
-            // A multistate flag. An out-of-set token is upstream's
-            // `unsupported option "%s".` (openssh/readconf.c:1269), and an
-            // empty value (e.g. a lone `#comment`) is `missing argument.`
-            // (openssh/readconf.c:1106) - both refused whether or not the
-            // block is active, exactly as `AddressFamily` above.
-            let Some(tok) = tokens.first() else {
-                return Err(refuse(path, linenum, "missing argument."));
-            };
-            let Some(flag) = parse_flag_value(tok) else {
-                return Err(refuse(
-                    path,
-                    linenum,
-                    format!("unsupported option \"{tok}\"."),
-                ));
-            };
-            if in_matching_block && resolved.proxy_use_fdpass.is_none() {
-                resolved.proxy_use_fdpass = Some(flag);
+        // `ProxyUseFdpass`, `HashKnownHosts` and `CheckHostIP` are plain
+        // `parse_flag` multistates (openssh/readconf.c:1266-1280), checked
+        // whether or not the block is active.
+        if matches!(
+            opcode,
+            Opcode::ProxyUseFdpass | Opcode::HashKnownHosts | Opcode::CheckHostIP
+        ) {
+            let consumed = values::check(
+                ValueKind::Flag,
+                &keyword,
+                &tokens,
+                value,
+                self.path,
+                linenum,
+            )?;
+            self.no_extra_arguments(&keyword, consumed, tokens.len(), linenum)?;
+            let flag = tokens.first().and_then(|tok| parse_flag_value(tok));
+            if opcode == Opcode::ProxyUseFdpass {
+                if self.in_matching_block && self.resolved.proxy_use_fdpass.is_none() {
+                    self.resolved.proxy_use_fdpass = flag;
+                }
+                return Ok(());
             }
-            continue;
-        }
-        // `HashKnownHosts` and `CheckHostIP` are plain `parse_flag`
-        // multistates, the same shape as `ProxyUseFdpass`: an out-of-set
-        // token is `unsupported option "%s".` (openssh/readconf.c:1269) and
-        // an absent value is `missing argument.` (openssh/readconf.c:1106),
-        // both refused whether or not the block is active.
-        if opcode == Opcode::HashKnownHosts || opcode == Opcode::CheckHostIP {
-            let Some(tok) = tokens.first() else {
-                return Err(refuse(path, linenum, "missing argument."));
-            };
-            let Some(flag) = parse_flag_value(tok) else {
-                return Err(refuse(
-                    path,
-                    linenum,
-                    format!("unsupported option \"{tok}\"."),
-                ));
-            };
-            if in_matching_block {
+            if let Some(flag) = flag
+                && self.in_matching_block
+            {
                 let slot = if opcode == Opcode::HashKnownHosts {
-                    &mut resolved.hash_known_hosts
+                    &mut self.resolved.hash_known_hosts
                 } else {
-                    &mut resolved.check_host_ip
+                    &mut self.resolved.check_host_ip
                 };
                 if slot.is_none() {
                     *slot = Some(flag);
                 }
             }
-            continue;
+            return Ok(());
         }
         // `UserKnownHostsFile`/`GlobalKnownHostsFile` walk the whole token
         // list through upstream's `parse_char_array` (openssh/readconf.c:
@@ -821,23 +1161,30 @@ fn scan_config(
         // being active AND the list still unclaimed (`value = *uintptr == 0`
         // captured once per line, so only the FIRST active line wins).
         if opcode == Opcode::UserKnownHostsFile || opcode == Opcode::GlobalKnownHostsFile {
-            let files = parse_known_hosts_files(&tokens, &key.to_ascii_lowercase(), path, linenum)?;
-            if in_matching_block {
+            let files =
+                parse_known_hosts_files(&tokens, &key.to_ascii_lowercase(), self.path, linenum)?;
+            if self.in_matching_block {
                 let slot = if opcode == Opcode::UserKnownHostsFile {
-                    &mut resolved.user_known_hosts_files
+                    &mut self.resolved.user_known_hosts_files
                 } else {
-                    &mut resolved.global_known_hosts_files
+                    &mut self.resolved.global_known_hosts_files
                 };
                 if slot.is_none() {
                     *slot = Some(files);
                 }
             }
-            continue;
+            return Ok(());
+        }
+
+        if opcode == Opcode::CanonicalDomains || opcode == Opcode::CanonicalizePermittedCNAMEs {
+            return self.canonical_list(opcode, &key.to_ascii_lowercase(), &tokens, linenum);
         }
 
         // Every directive below is single-valued, so it consumes exactly
-        // one token - upstream's `arg = argv_next(&ac, &av)`. A `NULL`
-        // there is fatal, which is how `Port #comment` is refused. The
+        // one token - upstream's `arg = argv_next(&ac, &av)` - and its value
+        // first passes the check its readconf.c arm shares with the keywords
+        // this reader does not act on (`values::check`): an absent or empty
+        // token is refused, which is how `Port #comment` is refused. The
         // refusal fires BEFORE the block-activity gate: upstream
         // processes every line and `*activep` gates only the assignment
         // (e.g. openssh/readconf.c:1229 `if (*activep && *intptr == -1)`),
@@ -849,6 +1196,7 @@ fn scan_config(
         // is in the table with the same shape but belongs to the other
         // reader, which never refuses. Widening the refusal to every known
         // keyword is upstream's behaviour and a separate row.
+        let consumed;
         let arg = match opcode {
             Opcode::Hostname
             | Opcode::User
@@ -869,19 +1217,37 @@ fn scan_config(
             | Opcode::BatchMode
             | Opcode::NumberOfPasswordPrompts
             | Opcode::CertificateFile
-            | Opcode::RequiredRSASize => {
+            | Opcode::RequiredRSASize
+            | Opcode::IgnoreUnknown
+            | Opcode::Tag
+            | Opcode::CanonicalizeHostname
+            | Opcode::CanonicalizeMaxDots
+            | Opcode::CanonicalizeFallbackLocal
+            | Opcode::Ciphers
+            | Opcode::Macs
+            | Opcode::KexAlgorithms
+            | Opcode::HostKeyAlgorithms
+            | Opcode::RekeyLimit => {
+                consumed = values::check(
+                    opcode.value_kind(),
+                    &keyword,
+                    &tokens,
+                    value,
+                    self.path,
+                    linenum,
+                )?;
                 let Some(arg) = tokens.first() else {
                     let Some(reason) = opcode.missing_argument() else {
-                        continue;
+                        return Ok(());
                     };
-                    return Err(refuse(path, linenum, reason));
+                    return Err(refuse(self.path, linenum, reason).into());
                 };
                 arg.as_str()
             }
             // Not a directive this parser acts on. Upstream would still
             // classify it, but oc's unknown-keyword policy is task 237j's
             // row, not this one.
-            _ => continue,
+            _ => return Ok(()),
         };
 
         // Value validation that upstream performs before the `*activep`
@@ -891,25 +1257,24 @@ fn scan_config(
         // (openssh/readconf.c:1214-1228, :1916).
         let time_value = match opcode {
             Opcode::ConnectTimeout | Opcode::ServerAliveInterval => {
-                parse_connect_timeout(arg).map_err(|reason| refuse(path, linenum, reason))?
+                parse_connect_timeout(arg).map_err(|reason| refuse(self.path, linenum, reason))?
             }
             _ => None,
         };
         // `AddressFamily` (a multistate): an out-of-set token is upstream's
         // `unsupported option "%s".` (openssh/readconf.c:1269).
-        let address_family =
-            match opcode {
-                Opcode::AddressFamily => Some(parse_address_family(arg).ok_or_else(|| {
-                    refuse(path, linenum, format!("unsupported option \"{arg}\"."))
-                })?),
-                _ => None,
-            };
+        let address_family = match opcode {
+            Opcode::AddressFamily => Some(parse_address_family(arg).ok_or_else(|| {
+                refuse(self.path, linenum, format!("unsupported option \"{arg}\"."))
+            })?),
+            _ => None,
+        };
         // `ServerAliveCountMax` (a `parse_int`): an out-of-band or non-decimal
         // value is upstream's `integer value <errstr>.`
         // (openssh/readconf.c:1579).
         let server_alive_count_max = match opcode {
             Opcode::ServerAliveCountMax => {
-                Some(parse_int_value(arg).map_err(|reason| refuse(path, linenum, reason))?)
+                Some(parse_int_value(arg).map_err(|reason| refuse(self.path, linenum, reason))?)
             }
             _ => None,
         };
@@ -919,7 +1284,7 @@ fn scan_config(
         // (openssh/readconf.c:1312, :2366, :1579).
         let auth_int = match opcode {
             Opcode::NumberOfPasswordPrompts | Opcode::RequiredRSASize => {
-                Some(parse_int_value(arg).map_err(|reason| refuse(path, linenum, reason))?)
+                Some(parse_int_value(arg).map_err(|reason| refuse(self.path, linenum, reason))?)
             }
             _ => None,
         };
@@ -928,48 +1293,144 @@ fn scan_config(
         // `unsupported option "%s".` (openssh/readconf.c:1228-1229), refused
         // whether or not the block is active. `PubkeyAuthentication` accepts
         // the wider `multistate_pubkey_auth` set (openssh/readconf.c:1041).
-        let auth_flag =
-            match opcode {
-                Opcode::PasswordAuthentication
-                | Opcode::KbdInteractiveAuthentication
-                | Opcode::BatchMode => Some(parse_flag_value(arg).ok_or_else(|| {
-                    refuse(path, linenum, format!("unsupported option \"{arg}\"."))
-                })?),
-                Opcode::PubkeyAuthentication => {
-                    Some(parse_pubkey_auth_value(arg).ok_or_else(|| {
-                        refuse(path, linenum, format!("unsupported option \"{arg}\"."))
-                    })?)
-                }
-                _ => None,
-            };
+        let auth_flag = match opcode {
+            Opcode::PasswordAuthentication
+            | Opcode::KbdInteractiveAuthentication
+            | Opcode::BatchMode => Some(parse_flag_value(arg).ok_or_else(|| {
+                refuse(self.path, linenum, format!("unsupported option \"{arg}\"."))
+            })?),
+            Opcode::PubkeyAuthentication => {
+                Some(parse_pubkey_auth_value(arg).ok_or_else(|| {
+                    refuse(self.path, linenum, format!("unsupported option \"{arg}\"."))
+                })?)
+            }
+            _ => None,
+        };
 
-        if !in_matching_block {
-            continue;
+        // The canonicalization scalars: a multistate, a `parse_int` and a
+        // `parse_flag`, each refused whether or not the block is active
+        // (openssh/readconf.c:2281-2292).
+        let unsupported = || refuse(self.path, linenum, format!("unsupported option \"{arg}\"."));
+        let canonical_mode = match opcode {
+            Opcode::CanonicalizeHostname => {
+                Some(parse_canonicalize_hostname(arg).ok_or_else(unsupported)?)
+            }
+            _ => None,
+        };
+        let max_dots = match opcode {
+            Opcode::CanonicalizeMaxDots => {
+                Some(parse_int_value(arg).map_err(|reason| refuse(self.path, linenum, reason))?)
+            }
+            _ => None,
+        };
+        let fallback_local = match opcode {
+            Opcode::CanonicalizeFallbackLocal => {
+                Some(parse_flag_value(arg).ok_or_else(unsupported)?)
+            }
+            _ => None,
+        };
+        // The algorithm lists: everything but a `-` list must name known
+        // algorithms, checked before the `*activep` test
+        // (openssh/readconf.c:1593-1664).
+        let algorithms = match opcode {
+            Opcode::Ciphers => Some(AlgorithmList::Ciphers),
+            Opcode::Macs => Some(AlgorithmList::Macs),
+            Opcode::KexAlgorithms => Some(AlgorithmList::Kex),
+            Opcode::HostKeyAlgorithms => Some(AlgorithmList::HostKey),
+            _ => None,
+        };
+        if let Some(list) = algorithms
+            && !list.spec_is_valid(arg)
+        {
+            let refusal = refuse(self.path, linenum, list.bad_spec(arg)).to_string();
+            return Err(Refusal::Counted(match list.validator_note(arg) {
+                Some(note) => format!("{note}\n{refusal}"),
+                None => refusal,
+            }));
+        }
+        let rekey = match opcode {
+            Opcode::RekeyLimit => Some(self.rekey_limit(arg, tokens.get(1), linenum)?),
+            _ => None,
+        };
+        let port = match opcode {
+            Opcode::Port => Some(values::port(arg, self.path, linenum)?),
+            _ => None,
+        };
+        if opcode == Opcode::IdentityAgent {
+            values::identity_agent(arg, self.path, linenum)?;
+        }
+        self.no_extra_arguments(&keyword, consumed, tokens.len(), linenum)?;
+        if !self.in_matching_block {
+            return Ok(());
         }
 
         match opcode {
-            Opcode::Hostname => set_if_unset(&mut resolved.hostname, arg.to_owned()),
-            Opcode::User => set_if_unset(&mut resolved.user, arg.to_owned()),
+            Opcode::Hostname => set_if_unset(&mut self.resolved.hostname, arg.to_owned()),
+            Opcode::Ciphers => set_if_unset(&mut self.resolved.ciphers, arg.to_owned()),
+            Opcode::Macs => set_if_unset(&mut self.resolved.macs, arg.to_owned()),
+            Opcode::KexAlgorithms => {
+                set_if_unset(&mut self.resolved.kex_algorithms, arg.to_owned());
+            }
+            Opcode::HostKeyAlgorithms => {
+                set_if_unset(&mut self.resolved.host_key_algorithms, arg.to_owned());
+            }
+            Opcode::RekeyLimit => {
+                if let Some((limit, interval)) = rekey {
+                    set_if_unset(&mut self.resolved.rekey_limit, limit);
+                    if let Some(secs) = interval {
+                        set_if_unset(&mut self.resolved.rekey_interval, secs);
+                    }
+                }
+            }
+            Opcode::User => set_if_unset(&mut self.resolved.user, arg.to_owned()),
+            Opcode::IgnoreUnknown => {
+                set_if_unset(&mut self.resolved.ignore_unknown, arg.to_owned());
+            }
+            Opcode::Tag => set_if_unset(&mut self.resolved.tag, arg.to_owned()),
+            Opcode::CanonicalizeHostname => {
+                if let Some(mode) = canonical_mode {
+                    set_if_unset(&mut self.resolved.canonicalize_hostname, mode);
+                }
+            }
+            Opcode::CanonicalizeMaxDots => {
+                if let Some(dots) = max_dots {
+                    set_if_unset(&mut self.resolved.canonicalize_max_dots, dots);
+                }
+            }
+            Opcode::CanonicalizeFallbackLocal => {
+                if let Some(flag) = fallback_local {
+                    set_if_unset(&mut self.resolved.canonicalize_fallback_local, flag);
+                }
+            }
             Opcode::Port => {
-                if resolved.port.is_none()
-                    && let Ok(parsed) = arg.parse::<u16>()
-                {
-                    resolved.port = Some(parsed);
+                if let Some(port) = port {
+                    set_if_unset(&mut self.resolved.port, port);
                 }
             }
             Opcode::IdentityFile => {
+                // upstream: openssh/readconf.c:1402-1409.
+                if self.resolved.identity_files.len() >= SSH_MAX_IDENTITY_FILES {
+                    return Err(refuse(
+                        self.path,
+                        linenum,
+                        format!(
+                            "Too many identity files specified (max {SSH_MAX_IDENTITY_FILES})."
+                        ),
+                    )
+                    .into());
+                }
                 let expanded = expand_tilde(arg);
-                if !resolved.identity_files.contains(&expanded) {
-                    resolved.identity_files.push(expanded);
+                if !self.resolved.identity_files.contains(&expanded) {
+                    self.resolved.identity_files.push(expanded);
                 }
             }
             Opcode::IdentitiesOnly => {
-                if resolved.identities_only.is_none() {
-                    resolved.identities_only = parse_flag_value(arg);
+                if self.resolved.identities_only.is_none() {
+                    self.resolved.identities_only = parse_flag_value(arg);
                 }
             }
             Opcode::IdentityAgent => {
-                set_if_unset(&mut resolved.identity_agent, expand_tilde_str(arg));
+                set_if_unset(&mut self.resolved.identity_agent, expand_tilde_str(arg));
             }
             Opcode::ConnectTimeout => {
                 // `None` here is `ConnectTimeout none`: upstream writes -1,
@@ -979,83 +1440,257 @@ fn scan_config(
                 // first-obtained-wins that let `none` claim the slot
                 // would diverge exactly there.
                 if let Some(secs) = time_value {
-                    set_if_unset(&mut resolved.connect_timeout, secs);
+                    set_if_unset(&mut self.resolved.connect_timeout, secs);
                 }
             }
             // Same `parse_time` `none`-sentinel behaviour as `ConnectTimeout`
             // above: `none` leaves the slot claimable for a later numeric.
             Opcode::ServerAliveInterval => {
                 if let Some(secs) = time_value {
-                    set_if_unset(&mut resolved.server_alive_interval, secs);
+                    set_if_unset(&mut self.resolved.server_alive_interval, secs);
                 }
             }
             Opcode::ServerAliveCountMax => {
                 if let Some(count) = server_alive_count_max {
-                    set_if_unset(&mut resolved.server_alive_count_max, count);
+                    set_if_unset(&mut self.resolved.server_alive_count_max, count);
                 }
             }
             Opcode::AddressFamily => {
                 if let Some(family) = address_family {
-                    set_if_unset(&mut resolved.address_family, family);
+                    set_if_unset(&mut self.resolved.address_family, family);
                 }
             }
             // `HostKeyAlias` is a hostname, not a path: upstream stores it
             // verbatim (openssh/readconf.c:1497 `parse_string`) and never
             // tilde- or percent-expands it.
-            Opcode::HostKeyAlias => set_if_unset(&mut resolved.host_key_alias, arg.to_owned()),
+            Opcode::HostKeyAlias => set_if_unset(&mut self.resolved.host_key_alias, arg.to_owned()),
             // `RevokedHostKeys` is a file path; upstream tilde/percent-expands
             // it before use (openssh/ssh.c:601 `tilde_expand_filename`). The
             // reader mirrors `IdentityFile` and does the tilde half here.
             Opcode::RevokedHostKeys => {
-                set_if_unset(&mut resolved.revoked_host_keys, expand_tilde(arg));
+                set_if_unset(&mut self.resolved.revoked_host_keys, expand_tilde(arg));
             }
             Opcode::PubkeyAuthentication => {
                 if let Some(flag) = auth_flag {
-                    set_if_unset(&mut resolved.pubkey_authentication, flag);
+                    set_if_unset(&mut self.resolved.pubkey_authentication, flag);
                 }
             }
             Opcode::PasswordAuthentication => {
                 if let Some(flag) = auth_flag {
-                    set_if_unset(&mut resolved.password_authentication, flag);
+                    set_if_unset(&mut self.resolved.password_authentication, flag);
                 }
             }
             Opcode::KbdInteractiveAuthentication => {
                 if let Some(flag) = auth_flag {
-                    set_if_unset(&mut resolved.kbd_interactive_authentication, flag);
+                    set_if_unset(&mut self.resolved.kbd_interactive_authentication, flag);
                 }
             }
             Opcode::BatchMode => {
                 if let Some(flag) = auth_flag {
-                    set_if_unset(&mut resolved.batch_mode, flag);
+                    set_if_unset(&mut self.resolved.batch_mode, flag);
                 }
             }
             Opcode::PreferredAuthentications => {
-                set_if_unset(&mut resolved.preferred_authentications, arg.to_owned());
+                set_if_unset(&mut self.resolved.preferred_authentications, arg.to_owned());
             }
             Opcode::NumberOfPasswordPrompts => {
                 if let Some(count) = auth_int {
-                    set_if_unset(&mut resolved.number_of_password_prompts, count);
+                    set_if_unset(&mut self.resolved.number_of_password_prompts, count);
                 }
             }
             Opcode::RequiredRSASize => {
                 if let Some(bits) = auth_int {
-                    set_if_unset(&mut resolved.required_rsa_size, bits);
+                    set_if_unset(&mut self.resolved.required_rsa_size, bits);
                 }
             }
             // The one accumulating row in the family: every active line
             // appends, deduplicated on the expanded path exactly as upstream
             // (openssh/readconf.c:1385 `add_certificate_file`).
             Opcode::CertificateFile => {
+                // upstream: openssh/readconf.c:1422-1430.
+                if self.resolved.certificate_files.len() >= SSH_MAX_CERTIFICATE_FILES {
+                    return Err(refuse(
+                        self.path,
+                        linenum,
+                        format!(
+                            "Too many certificate files specified (max {SSH_MAX_CERTIFICATE_FILES})."
+                        ),
+                    )
+                    .into());
+                }
                 let expanded = expand_tilde(arg);
-                if !resolved.certificate_files.contains(&expanded) {
-                    resolved.certificate_files.push(expanded);
+                if !self.resolved.certificate_files.contains(&expanded) {
+                    self.resolved.certificate_files.push(expanded);
                 }
             }
             _ => unreachable!("the match above already narrowed the opcode set"),
         }
+
+        Ok(())
     }
 
-    Ok(())
+    /// `CanonicalDomains` and `CanonicalizePermittedCNAMEs`: every token is
+    /// checked whether or not the block is active, the first active line
+    /// claims the list, and a line without tokens is fatal at once
+    /// (openssh/readconf.c:2201-2279).
+    fn canonical_list(
+        &mut self,
+        opcode: Opcode,
+        keyword: &str,
+        tokens: &[String],
+        linenum: usize,
+    ) -> Result<(), Refusal> {
+        if tokens.is_empty() {
+            return Err(Refusal::Fatal(SshError::SshConfigFatal {
+                reason: format!("{} line {linenum}: no {keyword} specified", self.path),
+            }));
+        }
+        let mut domains = Vec::new();
+        let mut cnames = Vec::new();
+        for (i, tok) in tokens.iter().enumerate() {
+            let is_none = tok.eq_ignore_ascii_case("none");
+            if is_none && (i > 0 || tokens.len() > 1) {
+                return Err(refuse(
+                    self.path,
+                    linenum,
+                    format!("keyword {keyword} \"none\" argument must appear alone."),
+                )
+                .into());
+            }
+            if opcode == Opcode::CanonicalDomains {
+                domains.push(valid_domain(tok, true).map_err(|e| refuse(self.path, linenum, e))?);
+            } else if !is_none {
+                // `*` stands for both lists; anything else is
+                // `source:target`, lowercased first (:2250-2265).
+                let lower = tok.to_ascii_lowercase();
+                let pair = if lower == "*" {
+                    Some(("*".to_owned(), "*".to_owned()))
+                } else {
+                    lower
+                        .split_once(':')
+                        .filter(|(_, target)| !target.is_empty())
+                        .map(|(source, target)| (source.to_owned(), target.to_owned()))
+                };
+                let Some(pair) = pair else {
+                    return Err(refuse(
+                        self.path,
+                        linenum,
+                        format!("Invalid permitted CNAME \"{lower}\""),
+                    )
+                    .into());
+                };
+                cnames.push(pair);
+            }
+        }
+        if self.in_matching_block {
+            if opcode == Opcode::CanonicalDomains {
+                set_if_unset(&mut self.resolved.canonical_domains, domains);
+            } else {
+                set_if_unset(&mut self.resolved.permitted_cnames, cnames);
+            }
+        }
+        Ok(())
+    }
+    /// Parses a `RekeyLimit` value: a scaled byte count or `default`, then
+    /// an optional interval through the shared `parse_time` arm, `none`
+    /// discarded (openssh/readconf.c:1362-1393).
+    fn rekey_limit(
+        &self,
+        arg: &str,
+        interval: Option<&String>,
+        linenum: usize,
+    ) -> Result<(i64, Option<u32>), SshError> {
+        let limit = if arg == "default" {
+            0
+        } else {
+            let bytes = parse_scaled_value(arg)
+                .map_err(|e| refuse(self.path, linenum, format!("Bad number '{arg}': {e}")))?;
+            if bytes != 0 && bytes < 16 {
+                return Err(refuse(self.path, linenum, "RekeyLimit too small"));
+            }
+            bytes
+        };
+        // `parse_connect_timeout` already reads `none` as "no value".
+        let interval = interval
+            .map(|time| parse_connect_timeout(time))
+            .transpose()
+            .map_err(|reason| refuse(self.path, linenum, reason))?
+            .flatten();
+        Ok((limit, interval))
+    }
+    /// The diagnostic for an unknown `keyword`, or `None` when the
+    /// `IgnoreUnknown` list in force excuses it
+    /// (openssh/readconf.c:977-982). Upstream prints this one as `%s: line`,
+    /// with a colon after the filename no other refusal has.
+    fn unknown_keyword(&self, keyword: &str, linenum: usize) -> Option<String> {
+        let excused = self
+            .resolved
+            .ignore_unknown
+            .as_deref()
+            .is_some_and(|list| ignore_unknown_matches(keyword, list));
+        (!excused).then(|| {
+            format!(
+                "{}: line {linenum}: Bad configuration option: {keyword}",
+                self.path
+            )
+        })
+    }
+
+    /// Whether `opcode` names a keyword this reader accepts without
+    /// reading its value. An unsupported keyword is reported at error level
+    /// although the line still succeeds (openssh/readconf.c:2517-2521). The
+    /// rest pass without a word: `Protocol` (:1208-1210), and the excused
+    /// unknown and deprecated keywords, whose upstream notes are `ssh -v`
+    /// debug lines rsync has no counterpart for (:1211-1215, :2511-2515).
+    fn accepts_unread(&self, opcode: Opcode, keyword: &str, linenum: usize) -> bool {
+        match opcode {
+            Opcode::Unsupported => {
+                warn_log!(
+                    "{} line {linenum}: Unsupported option \"{keyword}\"",
+                    self.path
+                );
+            }
+            Opcode::Unknown | Opcode::Deprecated | Opcode::Ignore => {}
+            _ => return false,
+        }
+        true
+    }
+
+    /// Upstream's end-of-line check: an arm that left tokens unread
+    /// refuses the line (openssh/readconf.c:2529-2534).
+    fn no_extra_arguments(
+        &self,
+        keyword: &str,
+        consumed: usize,
+        tokens: usize,
+        linenum: usize,
+    ) -> Result<(), Refusal> {
+        if consumed < tokens {
+            return Err(refuse(
+                self.path,
+                linenum,
+                format!("keyword {keyword} extra arguments at end of line"),
+            )
+            .into());
+        }
+        Ok(())
+    }
+}
+
+/// The value shape of a keyword this reader checks but does not act on:
+/// every [`Opcode::NotActedOn`] row, plus the connection keywords the
+/// transport has no knob for.
+fn unread_value_kind(opcode: Opcode) -> Option<ValueKind> {
+    match opcode {
+        Opcode::NotActedOn(kind) => Some(kind),
+        Opcode::BindAddress
+        | Opcode::BindInterface
+        | Opcode::ConnectionAttempts
+        | Opcode::IPQoS
+        | Opcode::TCPKeepAlive
+        | Opcode::Compression => Some(opcode.value_kind()),
+        _ => None,
+    }
 }
 
 /// Handles one `Include` line: for each whitespace-separated glob pattern,
@@ -1085,11 +1720,9 @@ fn process_include(
     // (openssh/readconf.c:2573-2574). A top-level file is depth 0; this
     // include's children enter at depth+1.
     if depth + 1 > READCONF_MAX_DEPTH {
-        return Err(refuse(
-            path,
-            linenum,
-            "Too many recursive configuration includes",
-        ));
+        return Err(SshError::SshConfigFatal {
+            reason: "Too many recursive configuration includes".to_owned(),
+        });
     }
     let child_depth = depth + 1;
     // The recursion is NEVERMATCH when the containing block was inactive, or
@@ -1331,8 +1964,8 @@ fn pattern_matches(host: &str, pattern: &str) -> bool {
 ///   (openssh/readconf.c:807-822); a leading `!` negates it.
 /// - `canonical`/`final` take no argument and evaluate to the pass flag:
 ///   `r = !!final_pass` (openssh/readconf.c:832), so they match only on the
-///   final pass. A non-negated `final` sets `want_final_pass` so the driver
-///   runs that second pass (openssh/readconf.c:826-828). With
+///   final pass. A `final`, negated or not, sets `want_final_pass` so the
+///   driver runs that second pass (openssh/readconf.c:774-776). With
 ///   canonicalization unbuilt (owned by task 1218) the only trigger for the
 ///   final pass is a `Match final`, which is upstream's behaviour with
 ///   canonicalization off (openssh/ssh.c:1252-1256 leaves `want_final_pass`
@@ -1357,7 +1990,7 @@ fn pattern_matches(host: &str, pattern: &str) -> bool {
 /// interface-address enumeration `check_match_ifaddrs`, openssh/readconf.c:1189,
 /// which lives behind FFI this crate forbids), `version` (matches OpenSSH's
 /// `SSH_RELEASE`, openssh/readconf.c:1196, a value oc has no analogue for),
-/// `tagged` (the `Tag` directive is not modelled), and the session-only
+/// and the session-only
 /// `command`/`sessiontype` (openssh/readconf.c:1207-1221, no counterpart in a
 /// non-interactive transfer) - keep upstream's argument grammar (a missing
 /// argument refuses, openssh/readconf.c:855-858) but resolve to a non-match,
@@ -1366,6 +1999,7 @@ fn pattern_matches(host: &str, pattern: &str) -> bool {
 fn evaluate_match_line(
     tokens: &[String],
     match_host: &str,
+    tag: Option<&str>,
     ctx: &MatchCtx<'_>,
     final_pass: bool,
     want_final_pass: &mut bool,
@@ -1413,7 +2047,9 @@ fn evaluate_match_line(
         // `canonical`/`final`: no argument; the pass flag is the predicate
         // (openssh/readconf.c:823-836).
         if attrib_lc == "canonical" || attrib_lc == "final" {
-            if attrib_lc == "final" && !negate {
+            // Negation is not consulted here: `Match !final` requests the
+            // final pass too (openssh/readconf.c:774-776).
+            if attrib_lc == "final" {
                 *want_final_pass = true;
             }
             let matched = if negate { !final_pass } else { final_pass };
@@ -1438,7 +2074,10 @@ fn evaluate_match_line(
                 }
             },
         };
-        if arg.is_empty() || arg.starts_with('#') {
+        // `tagged` and `command` accept an empty argument
+        // (openssh/readconf.c:806-813).
+        let may_be_empty = attrib_lc == "tagged" || attrib_lc == "command";
+        if (arg.is_empty() && !may_be_empty) || arg.starts_with('#') {
             return Err(refuse(
                 path,
                 linenum,
@@ -1448,7 +2087,7 @@ fn evaluate_match_line(
 
         match attrib_lc.as_str() {
             "host" => {
-                let matched = match_pattern_list_ci(match_host, arg);
+                let matched = match_hostname(match_host, arg);
                 let pass = if negate { !matched } else { matched };
                 if !pass {
                     result = false;
@@ -1458,7 +2097,7 @@ fn evaluate_match_line(
             // the alias as typed, before any `HostName` rewrite, matched
             // case-insensitively like `host`.
             "originalhost" => {
-                let matched = match_pattern_list_ci(ctx.host_alias, arg);
+                let matched = match_hostname(ctx.host_alias, arg);
                 let pass = if negate { !matched } else { matched };
                 if !pass {
                     result = false;
@@ -1468,7 +2107,7 @@ fn evaluate_match_line(
             // the remote user, case-sensitive, defaulting to the local user
             // when the operand supplied none.
             "user" => {
-                let matched = match_pattern_list_cs(ctx.ruser(), arg);
+                let matched = match_user(ctx.ruser(), arg);
                 let pass = if negate { !matched } else { matched };
                 if !pass {
                     result = false;
@@ -1477,7 +2116,7 @@ fn evaluate_match_line(
             // `match_pattern_list(pw->pw_name, arg, 0)`
             // (openssh/readconf.c:1182): the local user, case-sensitive.
             "localuser" => {
-                let matched = match_pattern_list_cs(ctx.local_user, arg);
+                let matched = match_user(ctx.local_user, arg);
                 let pass = if negate { !matched } else { matched };
                 if !pass {
                     result = false;
@@ -1497,7 +2136,18 @@ fn evaluate_match_line(
             // has no faithful predicate (see the function's doc comment), so
             // the criterion resolves to a non-match and the block stays
             // inactive rather than mis-applied.
-            "localnetwork" | "version" | "tagged" | "command" | "sessiontype" => {
+            // An unset tag matches only an empty argument; otherwise the tag
+            // is matched case-sensitively (openssh/readconf.c:853-860).
+            "tagged" => {
+                let matched = match tag.unwrap_or("") {
+                    "" => arg.is_empty(),
+                    tag => match_pattern_list(tag, arg, false) == PatternListMatch::Positive,
+                };
+                if matched == negate {
+                    result = false;
+                }
+            }
+            "localnetwork" | "version" | "command" | "sessiontype" => {
                 result = false;
             }
             _ => {
@@ -1522,62 +2172,17 @@ fn evaluate_match_line(
     Ok(result)
 }
 
-/// Case-INSENSITIVE glob-list match for `Match host`/`originalhost`, the
-/// rule `match_hostname` applies (openssh/match.c:193-203): lowercase the
-/// host and match it against a comma/whitespace-separated pattern list
-/// (openssh/match.c:143) where a leading `!` on any pattern negates and a
-/// negated hit fails the whole list. An empty input never matches.
-fn match_pattern_list_ci(input: &str, patterns: &str) -> bool {
-    if input.is_empty() {
-        return false;
-    }
-    let input_lc = input.to_ascii_lowercase();
-    let mut any_positive = false;
-    for token in patterns.split(|c: char| c.is_whitespace() || c == ',') {
-        let token = token.trim();
-        if token.is_empty() {
-            continue;
-        }
-        let (negate, pattern) = token
-            .strip_prefix('!')
-            .map_or((false, token), |stripped| (true, stripped));
-        if glob_matches(input_lc.as_bytes(), pattern.to_ascii_lowercase().as_bytes()) {
-            if negate {
-                return false;
-            }
-            any_positive = true;
-        }
-    }
-    any_positive
+/// `match_hostname` (openssh/match.c:193-203): the host lowercased and
+/// matched against the comma-separated list with lowercased subpatterns.
+/// Only a positive verdict counts (openssh/readconf.c:821, :826).
+fn match_hostname(host: &str, patterns: &str) -> bool {
+    match_pattern_list(&host.to_ascii_lowercase(), patterns, true) == PatternListMatch::Positive
 }
 
-/// Case-SENSITIVE glob-list match for `Match user`/`localuser`, the rule
-/// `match_pattern_list(string, arg, 0)` applies with the trailing `0`
-/// disabling case folding (openssh/readconf.c:1177, :1182; the list walker is
-/// `match_pattern_list`, openssh/match.c:143-184). A leading `!` on any
-/// pattern negates, and a negated hit fails the whole list. Unlike
-/// [`match_pattern_list_ci`] there is no empty-input guard: upstream's
-/// `ruser`/`pw_name` are never empty, and a bare `*` still matches an empty
-/// string, matching `match_pattern`'s glob semantics
-/// (openssh/match.c:57-114).
-fn match_pattern_list_cs(input: &str, patterns: &str) -> bool {
-    let mut any_positive = false;
-    for token in patterns.split(|c: char| c.is_whitespace() || c == ',') {
-        let token = token.trim();
-        if token.is_empty() {
-            continue;
-        }
-        let (negate, pattern) = token
-            .strip_prefix('!')
-            .map_or((false, token), |stripped| (true, stripped));
-        if glob_matches(input.as_bytes(), pattern.as_bytes()) {
-            if negate {
-                return false;
-            }
-            any_positive = true;
-        }
-    }
-    any_positive
+/// `match_pattern_list(string, arg, 0)` for `Match user`/`localuser`: the
+/// same comma list, compared case-sensitively (openssh/readconf.c:831, :836).
+fn match_user(user: &str, patterns: &str) -> bool {
+    match_pattern_list(user, patterns, false) == PatternListMatch::Positive
 }
 
 /// Runs a `Match exec` command through the user's shell and reports whether
@@ -1762,14 +2367,325 @@ fn parse_known_hosts_files(
 mod tests {
     use super::*;
 
+    /// Resolves with a fixed resolver that knows only `names`, so the
+    /// canonicalization cells never touch DNS.
+    fn resolve_probed(
+        text: &str,
+        alias: &str,
+        probe: CanonicalProbe,
+    ) -> Result<ResolvedHost, SshError> {
+        let ctx = MatchCtx {
+            host_alias: alias,
+            remote_user: "",
+            local_user: "",
+            probe,
+        };
+        resolve_host_str_with_ctx(text, &ctx)
+    }
+
+    /// A fake resolver's answer: `name` resolves with no canonical name.
+    fn resolves(known: bool) -> Result<String, String> {
+        known
+            .then(String::new)
+            .ok_or_else(|| "Name or service not known".to_owned())
+    }
+
+    fn knows_web(name: &str, _: Option<AddressFamily>) -> Result<String, String> {
+        resolves(
+            name == "web.second.test." || name == "web.third.test." || name == "anchored.test.",
+        )
+    }
+
+    fn knows_web_v6_only(name: &str, family: Option<AddressFamily>) -> Result<String, String> {
+        resolves(name == "web.first.test." && family != Some(AddressFamily::Inet))
+    }
+
+    /// `Match user`/`localuser` lists split on commas only and compare
+    /// case-sensitively (openssh/readconf.c:831, :836, match.c:122-172).
+    #[test]
+    fn match_user_lists_split_on_commas_only() {
+        let port = |criteria: &str| {
+            let text = format!("Match {criteria}\n  Port 2222\n");
+            resolve_host_str_with_users(&text, "a", "r", "l")
+                .expect("loads")
+                .port
+        };
+        assert_eq!(port("user \"!b r\""), None);
+        assert_eq!(port("user \"z r\""), None);
+        assert_eq!(port("user z,r"), Some(2222));
+        assert_eq!(port("user R"), None);
+        assert_eq!(port("localuser \"x l\""), None);
+        assert_eq!(port("localuser x,,l"), Some(2222));
+    }
+
+    /// A resolver whose names are CNAMEs: `web.corp.test` and the bare
+    /// `www.dots.test` alias `edge.cdn.test`, `same.corp.test` is its own
+    /// canonical name, and nothing else resolves.
+    fn cname_table(name: &str, _: Option<AddressFamily>) -> Result<String, String> {
+        match name {
+            "web.corp.test." | "www.dots.test" => Ok("edge.cdn.test".to_owned()),
+            "same.corp.test." => Ok("same.corp.test".to_owned()),
+            _ => Err("Name or service not known".to_owned()),
+        }
+    }
+
+    /// `check_follow_cname` (openssh/ssh.c:387-421): a found name takes its
+    /// CNAME only when a rule's source list matches the name and its target
+    /// list the CNAME, on a direct connection or under `always`.
+    #[test]
+    fn a_permitted_cname_replaces_the_canonical_name() {
+        let base = "CanonicalizeHostname yes\nCanonicalDomains corp.test\n";
+        let always = "CanonicalizeHostname always\nCanonicalDomains corp.test\n";
+        let proxied = "ProxyCommand nc %h %p\n";
+        for (text, alias, hostname) in [
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *.corp.test:*.cdn.test\n"),
+                "web",
+                "edge.cdn.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *.corp.test:*.other.test\n"),
+                "web",
+                "web.corp.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *.else.test:*.cdn.test\n"),
+                "web",
+                "web.corp.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *.else.test:*.x *.corp.test:edge.*\n"),
+                "web",
+                "edge.cdn.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *:*\n"),
+                "web.corp.test.",
+                "edge.cdn.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs none\n"),
+                "web",
+                "web.corp.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *:*\n"),
+                "same",
+                "same.corp.test",
+            ),
+            (
+                format!("{base}{proxied}CanonicalizePermittedCNAMEs *:*\n"),
+                "web",
+                "web",
+            ),
+            (
+                format!("{always}{proxied}CanonicalizePermittedCNAMEs *:*\n"),
+                "web",
+                "edge.cdn.test",
+            ),
+        ] {
+            let got = resolve_probed(&text, alias, cname_table).expect("accepted");
+            assert_eq!(got.hostname.as_deref(), Some(hostname), "{text:?}");
+        }
+    }
+
+    /// A name canonicalization did not find is looked up as typed when
+    /// CNAMEs are permitted (openssh/ssh.c:1255-1273): it may follow a CNAME
+    /// (only with canonicalization on), and on a direct connection a name
+    /// that does not resolve is fatal even with canonicalization off.
+    #[test]
+    fn a_bare_name_is_looked_up_when_cnames_are_permitted() {
+        let rules = "CanonicalizePermittedCNAMEs *:*\n";
+        let followed = format!("CanonicalizeHostname yes\nCanonicalizeMaxDots 0\n{rules}");
+        let got = resolve_probed(&followed, "www.dots.test", cname_table).expect("accepted");
+        assert_eq!(got.hostname.as_deref(), Some("edge.cdn.test"));
+        let proxied_always =
+            format!("CanonicalizeHostname always\nCanonicalizeMaxDots 0\nProxyJump j\n{rules}");
+        let got = resolve_probed(&proxied_always, "www.dots.test", cname_table).expect("accepted");
+        assert_eq!(got.hostname.as_deref(), Some("edge.cdn.test"));
+
+        let got = resolve_probed(rules, "www.dots.test", cname_table).expect("accepted");
+        assert_eq!(got.hostname, None, "canonicalization off follows no CNAME");
+
+        let err = resolve_probed(rules, "missing", cname_table).expect_err("direct");
+        assert_eq!(
+            err.to_string(),
+            "ssh: Could not resolve hostname missing: Name or service not known"
+        );
+        let proxied = format!("ProxyCommand nc %h %p\n{rules}");
+        let got = resolve_probed(&proxied, "missing", cname_table).expect("proxied");
+        assert_eq!(got.hostname, None);
+        let always = format!("CanonicalizeHostname always\nProxyJump j\n{rules}");
+        let got = resolve_probed(&always, "missing", cname_table).expect("proxied, always");
+        assert_eq!(got.hostname.as_deref(), Some("missing"));
+
+        assert!(
+            resolve_probed("", "missing", cname_table).is_ok(),
+            "no rules, no lookup"
+        );
+        // An address is canonicalized without a lookup (:1246-1247), and a
+        // resolver that reports no canonical name renames nothing (:390).
+        assert!(resolve_probed(rules, "127.1", cname_table).is_ok());
+        let no_cname = format!("CanonicalizeHostname yes\nCanonicalDomains second.test\n{rules}");
+        let got = resolve_probed(&no_cname, "web", knows_web).expect("accepted");
+        assert_eq!(got.hostname.as_deref(), Some("web.second.test"));
+    }
+
+    /// The suffixes are tried in order and the first that resolves wins;
+    /// the final pass then matches the canonical name, and a `HostName`
+    /// in that pass cannot replace it (openssh/ssh.c:494-511, :1286-1290).
+    #[test]
+    fn canonicalization_takes_the_first_resolving_suffix() {
+        let text = "CanonicalizeHostname yes\nCanonicalDomains first.test second.test third.test\n\
+                    Match canonical host web.second.test\n  User canon\n  HostName other\n";
+        let got = resolve_probed(text, "WEB", knows_web).expect("accepted");
+        assert_eq!(got.hostname.as_deref(), Some("web.second.test"));
+        assert_eq!(got.user.as_deref(), Some("canon"));
+    }
+
+    /// `none` ends the suffix list; past `CanonicalizeMaxDots` nothing is
+    /// tried; an anchored name is tried as it stands; an address is never
+    /// suffixed; a proxy skips canonicalization unless it is `always`
+    /// (openssh/ssh.c:440-500).
+    #[test]
+    fn canonicalization_rules_gate_the_suffix_search() {
+        let none_stops = "CanonicalizeHostname yes\nCanonicalDomains none\n";
+        assert_eq!(
+            resolve_probed(none_stops, "web", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web")
+        );
+        let dots =
+            "CanonicalizeHostname yes\nCanonicalizeMaxDots 0\nCanonicalDomains second.test\n";
+        assert_eq!(
+            resolve_probed(dots, "web.x", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web.x")
+        );
+        let dots =
+            "CanonicalizeHostname yes\nCanonicalizeMaxDots 0\nCanonicalDomains second.test\n";
+        assert_eq!(
+            resolve_probed(dots, "web", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web.second.test")
+        );
+        let anchored = "CanonicalizeHostname yes\nCanonicalizeFallbackLocal no\n";
+        assert_eq!(
+            resolve_probed(anchored, "anchored.test.", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("anchored.test")
+        );
+        let address = "CanonicalizeHostname yes\nCanonicalizeFallbackLocal no\nCanonicalDomains second.test\n";
+        assert_eq!(
+            resolve_probed(address, "::1", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("::1")
+        );
+        let proxied = "CanonicalizeHostname yes\nCanonicalDomains second.test\nProxyJump j\n";
+        assert_eq!(
+            resolve_probed(proxied, "web", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web")
+        );
+        let always = "CanonicalizeHostname always\nCanonicalDomains second.test\nProxyJump j\n";
+        assert_eq!(
+            resolve_probed(always, "web", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web.second.test")
+        );
+        let direct_none =
+            "CanonicalizeHostname yes\nCanonicalDomains second.test\nProxyCommand none\n";
+        assert_eq!(
+            resolve_probed(direct_none, "web", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web.second.test")
+        );
+    }
+
+    /// The candidate must resolve in the configured `AddressFamily`, as
+    /// upstream's `resolve_host` hints ask (openssh/ssh.c:282-330).
+    #[test]
+    fn canonicalization_probes_in_the_configured_family() {
+        let text = "CanonicalizeHostname yes\nCanonicalDomains first.test\nAddressFamily inet\n";
+        assert_eq!(
+            resolve_probed(text, "web", knows_web_v6_only)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web")
+        );
+        let text = "CanonicalizeHostname yes\nCanonicalDomains first.test\n";
+        assert_eq!(
+            resolve_probed(text, "web", knows_web_v6_only)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("web.first.test")
+        );
+    }
+
+    /// The live resolver passes `AddressFamily` as the family hint, as
+    /// upstream's `resolve_host` does (openssh/ssh.c:269-270). Literal
+    /// addresses resolve without DNS, so the cell is deterministic.
+    #[test]
+    fn the_live_probe_honours_address_family() {
+        let resolves = |name, family| dns_canonical_name(name, family).is_ok();
+        assert!(resolves("127.0.0.1", Some(AddressFamily::Inet)));
+        assert!(resolves("127.0.0.1", Some(AddressFamily::Any)));
+        assert!(resolves("127.0.0.1", None));
+        assert!(!resolves("127.0.0.1", Some(AddressFamily::Inet6)));
+        assert!(resolves("::1", Some(AddressFamily::Inet6)));
+        assert!(!resolves("::1", Some(AddressFamily::Inet)));
+    }
+
+    /// With fallback off, a name no suffix resolves is refused
+    /// (openssh/ssh.c:515-517); with it on (the default) it stands.
+    #[test]
+    fn canonicalization_fallback_decides_an_unresolved_name() {
+        let off =
+            "CanonicalizeHostname yes\nCanonicalizeFallbackLocal no\nCanonicalDomains first.test\n";
+        let err = resolve_probed(off, "nope", knows_web).expect_err("refused");
+        assert_eq!(err.to_string(), "ssh: Could not resolve host \"nope\"");
+        let on = "CanonicalizeHostname yes\nCanonicalDomains first.test\n";
+        assert_eq!(
+            resolve_probed(on, "Nope", knows_web)
+                .unwrap()
+                .hostname
+                .as_deref(),
+            Some("nope")
+        );
+    }
+
     /// Resolve, asserting the config was accepted. Most cells below are
     /// about which value wins, not about refusal.
     fn resolve(text: &str, alias: &str) -> ResolvedHost {
         resolve_host_str(text, alias).expect("config accepted")
     }
 
-    /// The `path line N: reason` text of a refusal, for the cells that
-    /// assert on upstream's wording.
+    /// Upstream's full output for a file with exactly one refused line:
+    /// the line's diagnostic, then the fatal count
+    /// (openssh/readconf.c:2611-2613).
+    fn one_bad(path: &str, diagnostic: &str) -> String {
+        format!("{diagnostic}\n{path}: terminating, 1 bad configuration options")
+    }
+    /// The rendered text of a refusal, for the cells that assert on
+    /// upstream's wording.
     fn refusal(text: &str, alias: &str) -> String {
         match resolve_host_str(text, alias) {
             Ok(resolved) => panic!("expected a refusal, resolved {resolved:?}"),
@@ -2446,10 +3362,17 @@ mod tests {
         );
     }
 
+    /// A port `a2port` cannot resolve refuses the file, as upstream does
+    /// (openssh/readconf.c:1570-1575).
     #[test]
-    fn invalid_port_is_ignored() {
-        let text = "Host example\n  Port notanumber\n";
-        assert!(resolve(text, "example").port.is_none());
+    fn invalid_port_is_refused() {
+        assert_eq!(
+            refusal("Host example\n  Port notanumber\n", "example"),
+            one_bad(
+                "<ssh_config>",
+                "<ssh_config> line 2: Bad port 'notanumber'."
+            )
+        );
     }
 
     // -- argv_split boundary behaviour, as seen through the directives --
@@ -2599,7 +3522,10 @@ mod tests {
         ] {
             assert_eq!(
                 refusal(text, "a"),
-                "<ssh_config> line 1: keyword host empty argument",
+                one_bad(
+                    "<ssh_config>",
+                    "<ssh_config> line 1: keyword host empty argument"
+                ),
                 "fixture {text:?}"
             );
         }
@@ -2632,7 +3558,10 @@ mod tests {
         // the empty token IS refused.
         assert_eq!(
             refusal(text, "z"),
-            "<ssh_config> line 1: keyword host empty argument"
+            one_bad(
+                "<ssh_config>",
+                "<ssh_config> line 1: keyword host empty argument"
+            )
         );
     }
 
@@ -2643,13 +3572,13 @@ mod tests {
     fn an_unterminated_quote_is_refused() {
         assert_eq!(
             refusal("Host \"a b\n  Port 2222\n", "a"),
-            "<ssh_config> line 1: invalid quotes"
+            one_bad("<ssh_config>", "<ssh_config> line 1: invalid quotes")
         );
         // A quote on a VALUE line refuses too, and carries that line's
         // number - proving the refusal is per-line, not Host-specific.
         assert_eq!(
             refusal("Host a\n  HostName \"x\n", "a"),
-            "<ssh_config> line 2: invalid quotes"
+            one_bad("<ssh_config>", "<ssh_config> line 2: invalid quotes")
         );
     }
 
@@ -2665,12 +3594,18 @@ mod tests {
             ("Port", "Missing argument."),
             ("IdentityFile", "Missing argument."),
             ("IdentityAgent", "Missing argument."),
-            ("IdentitiesOnly", "missing argument."),
+            // A flag's arm adds its own line after the parser's, naming
+            // the absent token as glibc prints a NULL `%s`
+            // (openssh/readconf.c:1103-1117, :1266-1280).
+            (
+                "IdentitiesOnly",
+                "missing argument.\n<ssh_config> line 2: unsupported option \"(null)\".",
+            ),
         ] {
             let text = format!("Host a\n  {keyword} #x\n");
             assert_eq!(
                 refusal(&text, "a"),
-                format!("<ssh_config> line 2: {reason}"),
+                one_bad("<ssh_config>", &format!("<ssh_config> line 2: {reason}")),
                 "keyword {keyword}"
             );
         }
@@ -2777,7 +3712,7 @@ mod tests {
         ] {
             assert_eq!(
                 refusal(text, "a"),
-                format!("<ssh_config> line 2: {reason}"),
+                one_bad("<ssh_config>", &format!("<ssh_config> line 2: {reason}")),
                 "fixture {text:?}"
             );
         }
@@ -2792,13 +3727,13 @@ mod tests {
     fn a_bad_value_in_a_non_matching_block_still_refuses() {
         assert_eq!(
             refusal("Host other\n  ConnectTimeout bogus\nHost t\n", "t"),
-            "<ssh_config> line 2: invalid time value."
+            one_bad("<ssh_config>", "<ssh_config> line 2: invalid time value.")
         );
         // The hoisted gate covers the OTHER value options' missing-arg
         // refusal too - the same upstream rule, same measurement.
         assert_eq!(
             refusal("Host other\n  Port #x\nHost t\n", "t"),
-            "<ssh_config> line 2: Missing argument."
+            one_bad("<ssh_config>", "<ssh_config> line 2: Missing argument.")
         );
     }
 
@@ -2812,7 +3747,10 @@ mod tests {
         let err = resolve_host(&path, "a").expect_err("refused");
         assert_eq!(
             err.to_string(),
-            format!("{} line 1: keyword host empty argument", path.display())
+            one_bad(
+                &path.display().to_string(),
+                &format!("{} line 1: keyword host empty argument", path.display())
+            )
         );
     }
 
@@ -3052,7 +3990,10 @@ mod tests {
         let err = resolve_host_files(&[user.clone(), system], "t").expect_err("refused");
         assert_eq!(
             err.to_string(),
-            format!("{} line 1: invalid quotes", user.path.display())
+            one_bad(
+                &user.path.display().to_string(),
+                &format!("{} line 1: invalid quotes", user.path.display())
+            )
         );
     }
 
@@ -3227,7 +4168,8 @@ mod tests {
         let err =
             resolve_host_files_with_anchors(&[system_top], "t", &anchors).expect_err("refused");
         assert!(
-            err.to_string().ends_with("bad include path ~/inc.conf."),
+            err.to_string()
+                .contains("line 1: bad include path ~/inc.conf.\n"),
             "unexpected: {err}"
         );
     }
@@ -3303,7 +4245,8 @@ mod tests {
         let err = resolve_host_files_with_anchors(&[top], "t", &IncludeAnchors::none())
             .expect_err("refused");
         assert!(
-            err.to_string().ends_with("keyword include empty argument"),
+            err.to_string()
+                .contains("line 1: keyword include empty argument\n"),
             "unexpected: {err}"
         );
     }
@@ -3530,18 +4473,134 @@ mod tests {
     fn host_key_alias_is_stored_verbatim() {
         let resolved = resolve("Host t\n  HostKeyAlias bastion.internal\n", "t");
         assert_eq!(resolved.host_key_alias.as_deref(), Some("bastion.internal"));
-        // A keyword-only line has no value and is dropped before dispatch,
-        // so it never claims the slot.
+        // First obtained wins (openssh/readconf.c:1449 `parse_string`).
         let bare = resolve("Host t\n  HostKeyAlias real\n  HostKeyAlias other\n", "t");
         assert_eq!(bare.host_key_alias.as_deref(), Some("real"));
     }
 
+    /// An unknown keyword is upstream's `Bad configuration option`, and the
+    /// file is read to its end first: every bad line is reported, in order,
+    /// before the count (openssh/readconf.c:980-981, :2611-2613).
     #[test]
-    fn host_key_alias_missing_value_is_dropped_not_refused() {
-        // `split_directive` returns None for a keyword-only line, so it never
-        // reaches the single-token missing-argument refusal.
-        let resolved = resolve("Host t\n  HostKeyAlias\n", "t");
-        assert!(resolved.host_key_alias.is_none());
+    fn unknown_keywords_are_refused_after_the_whole_file() {
+        assert_eq!(
+            refusal("Host a\n  ForwardAgentx yes\n  Bogus 1\n  Port 22\n", "a"),
+            "<ssh_config>: line 2: Bad configuration option: forwardagentx\n\
+             <ssh_config>: line 3: Bad configuration option: bogus\n\
+             <ssh_config>: terminating, 2 bad configuration options"
+        );
+    }
+
+    /// Unknown is unknown in any block: the keyword lookup precedes the
+    /// `*activep` gate (openssh/readconf.c:1195).
+    #[test]
+    fn an_unknown_keyword_in_a_non_matching_block_is_refused() {
+        assert!(refusal("Host other\n  Bogus 1\nHost a\n", "a").contains("bogus"));
+    }
+
+    /// Every kind of refused line counts toward one total, reported in file
+    /// order. Oracle: `ssh -G` prints these three lines and `3 bad`.
+    #[test]
+    fn refused_lines_of_every_kind_are_counted_together() {
+        assert_eq!(
+            refusal("Port #x\nBogus 1\nHostName #y\n", "a"),
+            "<ssh_config> line 1: Missing argument.\n\
+             <ssh_config>: line 2: Bad configuration option: bogus\n\
+             <ssh_config> line 3: Missing argument.\n\
+             <ssh_config>: terminating, 3 bad configuration options"
+        );
+    }
+
+    /// An unknown keyword whose value also has a quoting error is one bad
+    /// line with two diagnostics (openssh/readconf.c:1195-1200).
+    #[test]
+    fn a_bad_keyword_with_bad_quotes_counts_once() {
+        assert_eq!(
+            refusal("Bogus \"x\nPort 22\n", "a"),
+            "<ssh_config>: line 1: Bad configuration option: bogus\n\
+             <ssh_config> line 1: invalid quotes\n\
+             <ssh_config>: terminating, 1 bad configuration options"
+        );
+    }
+
+    /// `IgnoreUnknown` excuses matching unknown keywords on LATER lines only,
+    /// because `parse_token` reads the list in force at each line
+    /// (openssh/readconf.c:1195-1196).
+    #[test]
+    fn ignore_unknown_excuses_only_later_lines() {
+        let resolved = resolve("IgnoreUnknown foo*\nfoobar 1\nHost a\n  Port 2222\n", "a");
+        assert_eq!(resolved.port, Some(2222));
+        assert_eq!(resolved.ignore_unknown.as_deref(), Some("foo*"));
+        assert!(refusal("foobar 1\nIgnoreUnknown foo*\n", "a").contains("foobar"));
+        assert!(refusal("IgnoreUnknown foo*,!foox\nfoox 1\n", "a").contains("foox"));
+    }
+
+    /// `IgnoreUnknown` is a `parse_string` option: only an active line
+    /// claims it (openssh/readconf.c:1449).
+    #[test]
+    fn ignore_unknown_in_a_non_matching_block_excuses_nothing() {
+        assert!(refusal("Host other\n  IgnoreUnknown foo*\nfoobar 1\n", "a").contains("foobar"));
+    }
+
+    /// Every keyword upstream recognises loads: its accept-and-ignore
+    /// categories, and the keywords upstream implements that the embedded
+    /// transport does not act on - `RemoteCommand` among them, which must
+    /// never replace `rsync --server`.
+    #[test]
+    fn keywords_upstream_accepts_still_load() {
+        let resolved = resolve(
+            "ForwardAgent yes\nControlMaster auto\nRemoteCommand ls\nCiphers aes128-ctr\n\
+             Protocol 2\nCipher x\nRSAAuthentication yes\nIdentityFile2 ~/.ssh/k2\n\
+             Host a\n  Port 2222\n",
+            "a",
+        );
+        assert_eq!(resolved.port, Some(2222));
+        assert_eq!(
+            resolved.identity_files.len(),
+            1,
+            "IdentityFile2 is IdentityFile"
+        );
+    }
+
+    /// A bad option in an INCLUDED file ends the load at that file's end,
+    /// before the includer's later lines are read - upstream fatals inside
+    /// the nested read (openssh/readconf.c:2611-2613). Oracle: only the
+    /// child's line and count are printed.
+    #[test]
+    fn a_bad_included_file_is_fatal_at_its_own_end() {
+        let dir = test_support::create_tempdir();
+        let child = write_at(dir.path().join("child"), "Nope 1\n");
+        let top = include_top(
+            &dir,
+            &format!("Include {}\nBogus 1\n", child.display()),
+            true,
+        );
+        let err = resolve_host_files_with_anchors(&[top], "t", &IncludeAnchors::none())
+            .expect_err("refused");
+        assert_eq!(
+            err.to_string(),
+            one_bad(
+                &child.display().to_string(),
+                &format!(
+                    "{}: line 1: Bad configuration option: nope",
+                    child.display()
+                )
+            )
+        );
+    }
+
+    /// A keyword with no value is refused before its opcode is looked up,
+    /// known keyword or not (openssh/readconf.c:1190-1193). Oracle:
+    /// `ssh -G` prints `line 2: no argument after keyword "hostkeyalias"`.
+    #[test]
+    fn a_keyword_without_a_value_is_refused() {
+        assert_eq!(
+            refusal("Host t\n  HostKeyAlias\n", "t"),
+            one_bad(
+                "<ssh_config>",
+                "<ssh_config> line 2: no argument after keyword \"hostkeyalias\""
+            )
+        );
     }
 
     #[test]

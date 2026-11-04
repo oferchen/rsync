@@ -14,6 +14,9 @@ of spawning `ssh`. The trade-offs between the two paths, and the
 historical anchor for why russh is the preferred transport for new
 deployments, are documented in
 [`ssh-transport-decision-matrix.md`](ssh-transport-decision-matrix.md).
+How that path reads `ssh_config`, how its parity with OpenSSH is
+checked, and what changed for users are in
+[`ssh-config-embedded.md`](ssh-config-embedded.md).
 
 ## SSH stderr
 

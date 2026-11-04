@@ -95,9 +95,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
-use super::ssh_config::resolve_host_str;
+use super::algorithms::{AlgorithmList, Filled, assemble, fill_default_lists, openssh_defaults};
+use super::ssh_config::{resolve_host, resolve_host_str};
 #[cfg(feature = "ssh-config-parse")]
 use crate::ssh::config_lookup::{MatchContext, parse_enables_compression};
+use crate::ssh::config_options::CanonicalizeHostname;
 
 /// Whether `ssh -G` prints a keyword's value with tokens already expanded.
 ///
@@ -194,6 +196,16 @@ impl Differential {
     }
 }
 
+/// The `ssh` the oracle runs: `OC_RSYNC_SSH_G_BIN` when set, else `ssh`
+/// on `PATH`.
+///
+/// The reader is pinned to openssh-portable 10.0p1, so the faithful oracle
+/// is an `ssh` built from that tarball. A distribution `ssh` of another
+/// release can disagree on keywords whose arms changed between releases.
+fn oracle_ssh() -> std::ffi::OsString {
+    std::env::var_os("OC_RSYNC_SSH_G_BIN").unwrap_or_else(|| "ssh".into())
+}
+
 /// Run `ssh -G <alias> -F <path>` and parse the dump.
 ///
 /// The output shape is one `keyword value` line per option, keyword
@@ -204,14 +216,14 @@ fn upstream_dump(
     config: &Path,
     alias: &str,
 ) -> Result<(String, BTreeMap<String, Vec<String>>), Skipped> {
-    let version = Command::new("ssh")
+    let version = Command::new(oracle_ssh())
         .arg("-V")
         .output()
         .map_err(|_| Skipped::NoSshBinary)?;
     // `ssh -V` prints to stderr.
     let version = String::from_utf8_lossy(&version.stderr).trim().to_owned();
 
-    let out = Command::new("ssh")
+    let out = Command::new(oracle_ssh())
         .arg("-G")
         .arg("-F")
         .arg(config)
@@ -294,6 +306,7 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
         resolved.port.map(|p| vec![p.to_string()]),
     );
     map.insert("user".to_owned(), resolved.user.clone().map(|u| vec![u]));
+    map.insert("tag".to_owned(), resolved.tag.clone().map(|t| vec![t]));
     map.insert(
         "identityfile".to_owned(),
         if resolved.identity_files.is_empty() {
@@ -352,7 +365,94 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
             .server_alive_count_max
             .map(|count| vec![count.to_string()]),
     );
-
+    // The algorithm lists, composed against OpenSSH's own defaults the
+    // way `ssh -G` dumps them (openssh/readconf.c:2976-2997, :3630-3632).
+    // The transport composes against its own defaults instead, so these
+    // rows prove the parse and composition, not the negotiated list.
+    // A list `fill_default_options` leaves unassembled dumps as written,
+    // and one it leaves unset prints no line (see `fill_default_lists`).
+    let [ciphers, macs, kex] = fill_default_lists([
+        resolved.ciphers.as_deref(),
+        resolved.macs.as_deref(),
+        resolved.kex_algorithms.as_deref(),
+    ]);
+    for (keyword, list, filled) in [
+        ("ciphers", AlgorithmList::Ciphers, ciphers),
+        ("macs", AlgorithmList::Macs, macs),
+        ("kexalgorithms", AlgorithmList::Kex, kex),
+        (
+            "hostkeyalgorithms",
+            AlgorithmList::HostKey,
+            Filled::Assembled(resolved.host_key_algorithms.as_deref()),
+        ),
+    ] {
+        let all = list.known_names().join(",");
+        let dumped = match filled {
+            Filled::Assembled(spec) => assemble(spec, &openssh_defaults(list), &all)
+                .ok()
+                .map(|names| vec![names.join(",")]),
+            Filled::Unset => None,
+            Filled::Verbatim(spec) => Some(vec![spec.to_owned()]),
+        };
+        map.insert(keyword.to_owned(), dumped);
+    }
+    // The canonicalization settings, with upstream's defaults filled in
+    // as `ssh -G` dumps them (openssh/readconf.c:2752-2780, :3645-3646,
+    // :3684, :3730, and the hand-written CNAME row).
+    map.insert(
+        "canonicalizehostname".to_owned(),
+        Some(vec![
+            resolved
+                .canonicalize_hostname
+                .unwrap_or(CanonicalizeHostname::No)
+                .as_str()
+                .to_owned(),
+        ]),
+    );
+    map.insert(
+        "canonicaldomains".to_owned(),
+        Some(vec![match resolved.canonical_domains.as_deref() {
+            None | Some([]) => "none".to_owned(),
+            Some(domains) => domains.join(" "),
+        }]),
+    );
+    map.insert(
+        "canonicalizemaxdots".to_owned(),
+        Some(vec![
+            resolved.canonicalize_max_dots.unwrap_or(1).to_string(),
+        ]),
+    );
+    map.insert(
+        "canonicalizefallbacklocal".to_owned(),
+        Some(vec![
+            if resolved.canonicalize_fallback_local.unwrap_or(true) {
+                "yes"
+            } else {
+                "no"
+            }
+            .to_owned(),
+        ]),
+    );
+    map.insert(
+        "canonicalizePermittedcnames".to_owned(),
+        Some(vec![match resolved.permitted_cnames.as_deref() {
+            None | Some([]) => "none".to_owned(),
+            Some(rules) => rules
+                .iter()
+                .map(|(source, target)| format!("{source}:{target}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+        }]),
+    );
+    // Both halves default to 0 (openssh/readconf.c:2958-2961).
+    map.insert(
+        "rekeylimit".to_owned(),
+        Some(vec![format!(
+            "{} {}",
+            resolved.rekey_limit.unwrap_or(0),
+            resolved.rekey_interval.unwrap_or(0)
+        )]),
+    );
     map
 }
 
@@ -373,7 +473,7 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
 ///
 /// [`Skipped::NoSshBinary`] when no `ssh` is on PATH.
 pub(super) fn upstream_refusal(config: &Path, alias: &str) -> Result<Option<String>, Skipped> {
-    let out = Command::new("ssh")
+    let out = Command::new(oracle_ssh())
         .arg("-G")
         .arg("-F")
         .arg(config)
@@ -383,11 +483,11 @@ pub(super) fn upstream_refusal(config: &Path, alias: &str) -> Result<Option<Stri
     if out.status.success() {
         return Ok(None);
     }
+    // upstream ends every stderr log line in CRLF (openssh/log.c:409);
+    // the line content is what is compared.
     Ok(Some(
         String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .next()
-            .unwrap_or_default()
+            .replace("\r\n", "\n")
             .trim()
             .to_owned(),
     ))
@@ -497,6 +597,37 @@ mod tests {
         f.write_all(text.as_bytes()).expect("write fixture");
         drop(f);
         differential(&path, text, alias)
+    }
+
+    /// The warnings this thread emitted since the last drain.
+    fn drained_warnings() -> Vec<String> {
+        logging::drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                logging::DiagnosticEvent::Info {
+                    code: logging::LogCode::Warning,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `ssh -G`'s stderr for a fixture that it accepts, CRLF line ends
+    /// folded (openssh/log.c:409).
+    fn upstream_stderr(text: &str, alias: &str) -> Result<String, Skipped> {
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("ssh_config");
+        std::fs::write(&path, text).expect("write fixture");
+        let out = Command::new(oracle_ssh())
+            .arg("-G")
+            .arg("-F")
+            .arg(&path)
+            .arg(alias)
+            .output()
+            .map_err(|_| Skipped::NoSshBinary)?;
+        Ok(String::from_utf8_lossy(&out.stderr).replace("\r\n", "\n"))
     }
 
     /// Environment switch that converts a skip into a failure.
@@ -1021,6 +1152,224 @@ mod tests {
         assert_eq!(produced + skipped, FIXTURES.len(), "a fixture went missing");
     }
 
+    /// One realistic configuration of the corpus: the files to write (the
+    /// first is the one `-F` names; `{dir}` becomes the temp directory) and
+    /// the aliases to resolve against it.
+    struct CorpusCase {
+        name: &'static str,
+        files: &'static [(&'static str, &'static str)],
+        aliases: &'static [&'static str],
+    }
+
+    /// The epic gate's corpus: layouts real configs use, each resolved for
+    /// several aliases so both the matching and the non-matching paths are
+    /// compared. Bastions with `ProxyJump` and `Match`, `Include`
+    /// directories with globs, `%h`/`%%` expansion, every `Match`
+    /// criterion oc evaluates, the algorithm lists, `RekeyLimit`, `Tag`,
+    /// and canonicalization without DNS.
+    const CORPUS: &[CorpusCase] = &[
+        CorpusCase {
+            name: "bastion_proxyjump_match",
+            files: &[(
+                "ssh_config",
+                "Host bastion\n  HostName bastion.example.com\n  User jump\n  Port 2222\n\
+                 Host *.internal\n  ProxyJump bastion\n  User deploy\n\
+                 Match host db.internal\n  Port 5432\n  ConnectTimeout 9\n\
+                 Match originalhost web.internal\n  ServerAliveInterval 15\n\
+                 Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 4\n  Compression yes\n",
+            )],
+            aliases: &[
+                "db.internal",
+                "web.internal",
+                "bastion",
+                "other.example.com",
+            ],
+        },
+        CorpusCase {
+            name: "include_directory",
+            files: &[
+                (
+                    "ssh_config",
+                    "Include {dir}/conf.d/*.conf\nHost *\n  User fallback\n  Port 22\n",
+                ),
+                (
+                    "conf.d/10-web.conf",
+                    "Host web*\n  HostName %h.example.com\n  Port 2200\n  AddressFamily inet\n",
+                ),
+                (
+                    "conf.d/20-db.conf",
+                    "Host db\n  HostName 10.0.0.9\n  User dba\n  IdentityFile ~/.ssh/db_key\n  \
+                     IdentitiesOnly yes\n\
+                     Host web1\n  Port 9999\n  User webuser\n",
+                ),
+                ("conf.d/README", "this file is not matched by the glob\n"),
+            ],
+            aliases: &["web1", "web2", "db", "zzz"],
+        },
+        CorpusCase {
+            name: "nested_include_and_match_final",
+            files: &[
+                (
+                    "ssh_config",
+                    "Host *\n  Include {dir}/inner\nMatch final host *.corp\n  User finaluser\n",
+                ),
+                (
+                    "inner",
+                    "Host app\n  HostName app.corp\nHost app2\n  HostName APP2.CORP\n  User early\n",
+                ),
+            ],
+            aliases: &["app", "app2", "elsewhere"],
+        },
+        CorpusCase {
+            name: "token_expansion",
+            files: &[(
+                "ssh_config",
+                "Host t*\n  HostName %h.lan\nHost x\n  HostName %%literal\n\
+                 Host y\n  HostName prefix-%h-%%\nHost Z\n  HostName %h\n",
+            )],
+            aliases: &["t1", "x", "y", "Z"],
+        },
+        CorpusCase {
+            name: "match_criteria",
+            files: &[(
+                "ssh_config",
+                "Match originalhost alias1\n  Port 1001\n\
+                 Host alias1\n  HostName real.example.com\n\
+                 Match host real.example.com !originalhost skipme\n  User matched\n\
+                 Match !host *.example.com\n  ConnectTimeout 3\n\
+                 Match all\n  ServerAliveCountMax 6\n\
+                 Match originalhost real.example.com\n  ServerAliveInterval 44\n\
+                 Host *\n  ServerAliveInterval 55\n",
+            )],
+            aliases: &["alias1", "skipme", "plain"],
+        },
+        CorpusCase {
+            name: "crypto_rekey_tag",
+            files: &[(
+                "ssh_config",
+                "Host secure*\n  Ciphers +aes128-cbc\n  MACs -umac*\n  \
+                 KexAlgorithms ^curve25519-sha256\n  HostKeyAlgorithms ssh-ed25519,rsa-sha2-512\n  \
+                 RekeyLimit 512M 1h\n  Tag prod\n\
+                 Match tagged prod\n  AddressFamily inet6\n\
+                 Host legacy\n  Ciphers aes256-ctr,aes128-ctr\n  KexAlgorithms -sntrup*,mlkem*\n  \
+                 RekeyLimit default none\n",
+            )],
+            aliases: &["secure1", "legacy", "plain"],
+        },
+        CorpusCase {
+            name: "canonicalization_without_dns",
+            files: &[(
+                "ssh_config",
+                "CanonicalizeHostname yes\nCanonicalDomains none\nCanonicalizeMaxDots 2\n\
+                 Host jumped\n  ProxyJump bastion\n\
+                 Match canonical host short\n  User canonical\n\
+                 Match canonical host jumped\n  Port 2022\n",
+            )],
+            aliases: &["Short", "jumped", "a.b.c.d"],
+        },
+    ];
+
+    /// What one corpus comparison found.
+    #[derive(Default)]
+    struct CorpusTally {
+        compared: usize,
+        matched: usize,
+        representation: usize,
+        mismatches: Vec<String>,
+    }
+
+    /// Whether a mismatch is only upstream dumping `~` before expanding it
+    /// (see `identityfile_is_dumped_unexpanded_by_upstream`): the same
+    /// file, named in two spellings.
+    fn tilde_only(cell: &Cell) -> bool {
+        let Some(oc) = &cell.oc else { return false };
+        let Some(home) = std::env::var_os("HOME") else {
+            return false;
+        };
+        let home = Path::new(&home);
+        cell.expansion == Expansion::Unexpanded
+            && cell.upstream.len() == oc.len()
+            && cell.upstream.iter().zip(oc).all(|(up, ours)| {
+                up.strip_prefix("~/")
+                    .map_or(up == ours, |rest| Path::new(ours) == home.join(rest))
+            })
+    }
+
+    /// THE EPIC GATE (task 359): over the whole corpus, every row oc resolves
+    /// agrees with `ssh -G` from the pinned 10.0p1 build. A `Mismatch`
+    /// fails the gate with every divergence listed, not just the first. A
+    /// floor on the number of matched rows keeps the gate from passing
+    /// vacuously if oc stopped resolving rows.
+    #[test]
+    fn corpus_matches_the_oracle_on_every_resolved_row() {
+        let mut tally = CorpusTally::default();
+        for case in CORPUS {
+            let dir = test_support::create_tempdir();
+            let root = dir.path().display().to_string();
+            for (name, text) in case.files {
+                let path = dir.path().join(name);
+                std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+                std::fs::write(&path, text.replace("{dir}", &root)).expect("write corpus file");
+            }
+            let top = dir.path().join(case.files[0].0);
+            let top_text = case.files[0].1.replace("{dir}", &root);
+            for alias in case.aliases {
+                let diff = match differential(&top, &top_text, alias) {
+                    Ok(d) => d,
+                    Err(why) => {
+                        report_skip(&format!("corpus {} / {alias}", case.name), &why);
+                        return;
+                    }
+                };
+                if !pinned_oracle(&diff, "corpus gate") {
+                    return;
+                }
+                for cell in &diff.cells {
+                    match cell.verdict {
+                        Verdict::Match => {
+                            tally.compared += 1;
+                            tally.matched += 1;
+                        }
+                        Verdict::Mismatch if tilde_only(cell) => {
+                            tally.compared += 1;
+                            tally.representation += 1;
+                        }
+                        Verdict::Mismatch => {
+                            tally.compared += 1;
+                            tally.mismatches.push(format!(
+                                "{} / {alias} / {}: upstream {:?} vs oc {:?}",
+                                case.name, cell.keyword, cell.upstream, cell.oc
+                            ));
+                        }
+                        Verdict::NotResolvedByOc | Verdict::OcUnset => {}
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "ssh -G corpus gate: {} rows compared, {} matched, {} tilde-only, {} mismatched",
+            tally.compared,
+            tally.matched,
+            tally.representation,
+            tally.mismatches.len()
+        );
+        assert!(
+            tally.mismatches.is_empty(),
+            "corpus divergences:\n{}",
+            tally.mismatches.join("\n")
+        );
+        // 7 cases, 24 aliases; the floor is the measured count.
+        assert!(
+            tally.matched >= MIN_CORPUS_MATCHES,
+            "only {} rows matched",
+            tally.matched
+        );
+    }
+
+    /// The measured number of matched corpus rows: a drop
+    /// means oc stopped resolving a row the gate used to prove.
+    const MIN_CORPUS_MATCHES: usize = 329;
+
     /// Materialise a fixture and ask `ssh -G` whether it REFUSES the file.
     fn refusal(text: &str, alias: &str) -> Result<Option<String>, Skipped> {
         let dir = test_support::create_tempdir();
@@ -1036,6 +1385,42 @@ mod tests {
         resolve_host_str(text, alias)
             .err()
             .map(|err| err.to_string())
+    }
+
+    /// Unknown keywords and refused lines: oc's full refusal text equals
+    /// `ssh -G`'s stderr byte for byte - every refused line in file order,
+    /// then the count (openssh/readconf.c:977-982, :1190-1199,
+    /// :2604-2613). The accepting fixtures pin the other half: upstream's
+    /// accept-and-ignore categories and the keywords oc does not act on
+    /// still load, so a valid config is never refused.
+    #[test]
+    fn refused_and_accepted_keywords_match_upstream() {
+        const FIXTURES: &[&str] = &[
+            "Host a\n  ForwardAgentx yes\n  Bogus 1\n  Port 22\n",
+            "Host other\n  Bogus 1\nHost a\n",
+            "IgnoreUnknown foo*,!foox\nfoobar 1\nfoox 2\n",
+            "foobar 1\nIgnoreUnknown foo*\n",
+            "Port\n",
+            "Bogus \"x\nPort 22\n",
+            "Port #x\nBogus 1\nHostName #y\n",
+            "ForwardAgent yes\nControlMaster auto\nRemoteCommand ls\n\
+             Ciphers aes128-ctr\nTag t\nCanonicalizeHostname no\nHost a\n",
+            "Protocol 2\nCipher x\nUseRoaming no\nRSAAuthentication yes\nHost a\n",
+        ];
+        for fixture in FIXTURES {
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("ssh_config");
+            std::fs::write(&path, fixture).expect("write fixture");
+            let upstream = match upstream_refusal(&path, "a") {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("keyword refusal parity", &why);
+                    return;
+                }
+            };
+            let oc = resolve_host(&path, "a").err().map(|err| err.to_string());
+            assert_eq!(oc, upstream, "fixture {fixture:?}");
+        }
     }
 
     /// An empty `Host` token is a HARD ERROR on both sides.
@@ -1293,6 +1678,521 @@ mod tests {
                 oc.contains(needle),
                 "oc refused {fixture:?} with unexpected text: {oc}"
             );
+        }
+    }
+
+    /// `Tag` and `Match tagged`: first obtained, read positionally, an
+    /// unset tag matching only `""`, a pattern list otherwise; and
+    /// `Match !final` requesting the final pass like `Match final`
+    /// (openssh/readconf.c:774-776, :806-813, :853-860, :1498-1500).
+    #[test]
+    fn tag_and_final_pass_triggers_match_the_oracle() {
+        // (fixture, rows both sides must dump, user value neither may take)
+        type Case = (
+            &'static str,
+            &'static [(&'static str, &'static str)],
+            Option<&'static str>,
+        );
+        const FIXTURES: &[Case] = &[
+            (
+                "Tag t1\nMatch tagged t*\n  User tagged\n",
+                &[("user", "tagged"), ("tag", "t1")],
+                None,
+            ),
+            (
+                "Tag t1\nTag t2\nMatch tagged t2\n  User second\nMatch tagged t1\n  Port 2\n",
+                &[("port", "2"), ("tag", "t1")],
+                Some("second"),
+            ),
+            (
+                "Match tagged t1\n  User early\nHost *\nTag t1\nMatch tagged=t1\n  Port 3\n",
+                &[("port", "3"), ("tag", "t1")],
+                Some("early"),
+            ),
+            (
+                "Match tagged \"\"\n  User emptytag\n",
+                &[("user", "emptytag")],
+                None,
+            ),
+            (
+                "Tag x\nMatch tagged \"\"\n  User wrong\nMatch !tagged y*,!x\n  Port 4\n",
+                &[("port", "4"), ("tag", "x")],
+                Some("wrong"),
+            ),
+            (
+                "Host other\n  Tag skipped\nHost *\nMatch tagged skipped\n  User wrong\n",
+                &[],
+                Some("wrong"),
+            ),
+            (
+                "Match !final\n  Port 1\nMatch canonical\n  User b\n",
+                &[("port", "1"), ("user", "b")],
+                None,
+            ),
+        ];
+        for (fixture, rows, forbidden_user) in FIXTURES {
+            let diff = match run(fixture, "a") {
+                Ok(d) => d,
+                Err(why) => {
+                    report_skip("tag parity", &why);
+                    return;
+                }
+            };
+            for (keyword, value) in *rows {
+                let cell = diff.cell(keyword).expect("dumped");
+                assert_eq!(
+                    cell.upstream,
+                    vec![(*value).to_owned()],
+                    "{keyword} on {fixture:?}"
+                );
+                assert_eq!(
+                    cell.verdict,
+                    Verdict::Match,
+                    "{keyword} on {fixture:?}: oc {:?}",
+                    cell.oc
+                );
+            }
+            if let Some(user) = forbidden_user {
+                let cell = diff.cell("user").expect("dumped");
+                assert_ne!(
+                    cell.upstream,
+                    vec![(*user).to_owned()],
+                    "upstream on {fixture:?}"
+                );
+                assert_ne!(cell.oc, Some(vec![(*user).to_owned()]), "oc on {fixture:?}");
+            }
+            if rows.iter().all(|(keyword, _)| *keyword != "tag") {
+                assert!(
+                    diff.cell("tag").is_none(),
+                    "upstream dumped a tag for {fixture:?}"
+                );
+                assert!(resolve_host_str(fixture, "a").expect("loads").tag.is_none());
+            }
+        }
+    }
+
+    /// The canonicalization settings parse, default and dump as `ssh -G`
+    /// shows them, and the passes they drive match it wherever no DNS
+    /// answer is needed: no suffix to try, a proxied connection, too many
+    /// dots, an anchored `localhost.`, and a final-pass `HostName` that the
+    /// canonical host pre-empts (openssh/ssh.c:427-521, :1221-1296).
+    #[test]
+    fn canonicalization_matches_the_oracle() {
+        type Case = (
+            &'static str,
+            &'static str,
+            &'static [(&'static str, &'static str)],
+        );
+        const FIXTURES: &[Case] = &[
+            (
+                "CanonicalizePermittedCNAMEs A:B *.x:*.y *\nCanonicalDomains Example.COM. b\n\
+                 CanonicalizeMaxDots 3\nCanonicalizeFallbackLocal no\n\
+                 CanonicalizeHostname no\nProxyJump j\n",
+                "localhost",
+                &[
+                    ("canonicalizehostname", "false"),
+                    ("canonicaldomains", "example.com b"),
+                    ("canonicalizemaxdots", "3"),
+                    ("canonicalizefallbacklocal", "no"),
+                    ("canonicalizePermittedcnames", "a:b *.x:*.y *:*"),
+                ],
+            ),
+            (
+                "Host x\n",
+                "a",
+                &[
+                    ("canonicalizehostname", "false"),
+                    ("canonicaldomains", "none"),
+                ],
+            ),
+            (
+                "CanonicalizeHostname yes\nMatch canonical\n  User canon\n",
+                "Ab",
+                &[
+                    ("user", "canon"),
+                    ("hostname", "ab"),
+                    ("canonicalizehostname", "true"),
+                ],
+            ),
+            (
+                "CanonicalizeHostname yes\nCanonicalizeFallbackLocal no\n\
+                 CanonicalDomains invalid\nProxyCommand nc %h %p\n",
+                "Ab",
+                &[("hostname", "ab")],
+            ),
+            (
+                "CanonicalizeHostname yes\nCanonicalizeMaxDots 0\n\
+                 CanonicalizeFallbackLocal no\nCanonicalDomains invalid\n",
+                "a.b",
+                &[("hostname", "a.b")],
+            ),
+            (
+                "CanonicalizeHostname yes\nCanonicalizeFallbackLocal no\n",
+                "localhost.",
+                &[("hostname", "localhost")],
+            ),
+            (
+                "Match final\n  HostName x.example\n",
+                "Alias",
+                &[("hostname", "alias")],
+            ),
+            (
+                "Host *\n  HostName %h.z\nMatch final\n  User u\n",
+                "AB",
+                &[("hostname", "ab.z"), ("user", "u")],
+            ),
+        ];
+        for (fixture, alias, rows) in FIXTURES {
+            let diff = match run(fixture, alias) {
+                Ok(d) => d,
+                Err(why) => {
+                    report_skip("canonicalization parity", &why);
+                    return;
+                }
+            };
+            for (keyword, value) in *rows {
+                let cell = diff.cell(keyword).expect("dumped");
+                assert_eq!(
+                    cell.upstream,
+                    vec![(*value).to_owned()],
+                    "{keyword} on {fixture:?}"
+                );
+                // Upstream lowercases the dumped host; compare oc's exactly.
+                assert_eq!(
+                    cell.oc.as_deref(),
+                    Some(&[(*value).to_owned()][..]),
+                    "{keyword} on {fixture:?}"
+                );
+            }
+        }
+    }
+
+    /// The canonicalization refusals carry upstream's exact text, the
+    /// counted ones followed by the count and the token-less line fatal on
+    /// its own (openssh/readconf.c:2201-2292, openssh/misc.c:2398-2441).
+    #[test]
+    fn canonicalization_refusals_match_the_oracle() {
+        const FIXTURES: &[&str] = &[
+            "CanonicalDomains invalid. none\n",
+            "CanonicalDomains a..b\n",
+            "CanonicalDomains -a\n",
+            "CanonicalDomains AB!c\n",
+            "CanonicalDomains AB..CD\n",
+            "Host other\n  CanonicalDomains a..b\n",
+            "CanonicalizePermittedCNAMEs foo\n",
+            "CanonicalizePermittedCNAMEs Foo:\n",
+            "CanonicalizePermittedCNAMEs a:b none\n",
+            "CanonicalDomains #x\n",
+            "CanonicalizeHostname maybe\nCanonicalizeMaxDots x\nCanonicalizeFallbackLocal 2\n",
+        ];
+        for fixture in FIXTURES {
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("ssh_config");
+            std::fs::write(&path, fixture).expect("write fixture");
+            let upstream = match upstream_refusal(&path, "a") {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("canonicalization refusal parity", &why);
+                    return;
+                }
+            };
+            assert!(upstream.is_some(), "the oracle accepted {fixture:?}");
+            let oc = resolve_host(&path, "a").err().map(|err| err.to_string());
+            assert_eq!(oc, upstream, "fixture {fixture:?}");
+        }
+    }
+
+    /// With no suffix resolving and fallback off, both refuse the host with
+    /// the same line, program name included (openssh/ssh.c:520). `.invalid`
+    /// never resolves (RFC 6761).
+    #[test]
+    fn an_unresolvable_canonical_name_is_refused_by_both() {
+        const FIXTURE: &str = "CanonicalizeHostname always\nCanonicalizeFallbackLocal no\n\
+                               CanonicalDomains invalid\nProxyCommand nc %h %p\n";
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("ssh_config");
+        std::fs::write(&path, FIXTURE).expect("write fixture");
+        let upstream = match upstream_refusal(&path, "Ab") {
+            Ok(v) => v,
+            Err(why) => {
+                report_skip("canonical refusal parity", &why);
+                return;
+            }
+        };
+        let oc = resolve_host(&path, "Ab").expect_err("refused").to_string();
+        assert_eq!(oc, "ssh: Could not resolve host \"ab\"");
+        assert_eq!(upstream, Some(oc));
+    }
+
+    /// With `CanonicalizePermittedCNAMEs` set, the host is looked up as
+    /// typed even with canonicalization off, and a direct connection to a
+    /// name that does not resolve is refused with the resolver's reason
+    /// (openssh/ssh.c:274-276, :1263-1273); through a proxy it is not.
+    #[test]
+    fn a_bare_name_lookup_refuses_an_unresolvable_direct_host() {
+        for (text, alias, refused) in [
+            (
+                "CanonicalizePermittedCNAMEs *:*\n",
+                "nonexist.invalid",
+                true,
+            ),
+            ("CanonicalizePermittedCNAMEs *:*\n", "1.2.3.256", true),
+            (
+                "CanonicalizePermittedCNAMEs *:*\nProxyCommand nc %h %p\n",
+                "nonexist.invalid",
+                false,
+            ),
+            (
+                "CanonicalizePermittedCNAMEs none\n",
+                "nonexist.invalid",
+                false,
+            ),
+        ] {
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("ssh_config");
+            std::fs::write(&path, text).expect("write fixture");
+            let upstream = match upstream_refusal(&path, alias) {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("bare-name lookup refusal", &why);
+                    return;
+                }
+            };
+            let oc = resolve_host(&path, alias).err().map(|e| e.to_string());
+            assert_eq!(oc.is_some(), refused, "{alias} {text:?}: {oc:?}");
+            assert_eq!(upstream, oc, "{alias} {text:?}");
+        }
+    }
+
+    /// Whether the oracle is the pinned 10.0p1 whose name tables and
+    /// defaults the algorithm rows encode; a newer `ssh` dumps different
+    /// defaults, so it cannot judge them.
+    fn pinned_oracle(diff: &Differential, what: &str) -> bool {
+        let pinned = diff.oracle_version.starts_with("OpenSSH_10.0p");
+        if !pinned {
+            report_skip(
+                what,
+                &Skipped::SshFailed(format!("oracle is {}, not 10.0p1", diff.oracle_version)),
+            );
+        }
+        pinned
+    }
+
+    /// `Ciphers`, `MACs`, `KexAlgorithms` and `HostKeyAlgorithms` compose
+    /// to the list `ssh -G` dumps for every operator: a bare list, `+`,
+    /// `-`, `^`, host-key patterns, and the empty-element quirks of
+    /// `kex_names_cat` (openssh/kex-names.c:202-329). `RekeyLimit` rides
+    /// along, scaled sizes and intervals included.
+    #[test]
+    fn algorithm_lists_and_rekeylimit_match_the_oracle() {
+        const FIXTURES: &[&str] = &[
+            "Host t\n",
+            "Host t\n  Ciphers aes256-ctr,aes128-ctr\n",
+            "Host t\n  Ciphers +aes128-cbc,3des-cbc\n",
+            "Host t\n  Ciphers -aes*\n",
+            "Host t\n  Ciphers ^aes256-ctr\n",
+            "Host t\n  Ciphers ^aes256-ctr,,bogus\n",
+            "Host t\n  Ciphers aes128-ctr,,bogus\n",
+            "Host t\n  MACs -hmac-sha1*,umac*\n",
+            "Host t\n  MACs -*\n",
+            "Host t\n  MACs hmac-md5-96\n",
+            "Host t\n  KexAlgorithms +diffie-hellman-group1-sha1\n",
+            "Host t\n  KexAlgorithms -sntrup*,mlkem*\n",
+            "Host t\n  HostKeyAlgorithms ssh-ed25519*\n",
+            "Host t\n  HostKeyAlgorithms ^ssh-ed*\n",
+            "Host t\n  HostKeyAlgorithms +webauthn*\n",
+            "Host t\n  HostKeyAlgorithms -ssh-ed25519*\n",
+            "Host t\n  HostKeyAlgorithms ssh-rsa,,nope\n",
+            "Host t\n  Ciphers aes128-ctr\n  Ciphers aes256-ctr\n",
+            "Host other\n  Ciphers aes128-ctr\nHost t\n  Ciphers aes256-ctr\n",
+            "Host t\n  RekeyLimit 1G 1h\n",
+            "Host t\n  RekeyLimit 1.5K\n",
+            "Host t\n  RekeyLimit 7E\n",
+            "Host t\n  RekeyLimit default none\n  RekeyLimit 4M 30\n",
+            "Host t\n  RekeyLimit 0 0\n",
+            "Host t\n  RekeyLimit 32 none\n  RekeyLimit 64 10m\n",
+        ];
+        for fixture in FIXTURES {
+            let diff = match run(fixture, "t") {
+                Ok(d) => d,
+                Err(why) => {
+                    report_skip("algorithm list parity", &why);
+                    return;
+                }
+            };
+            if !pinned_oracle(&diff, "algorithm list parity") {
+                return;
+            }
+            for keyword in [
+                "ciphers",
+                "macs",
+                "kexalgorithms",
+                "hostkeyalgorithms",
+                "rekeylimit",
+            ] {
+                let cell = diff.cell(keyword).expect("dumped");
+                assert_eq!(
+                    cell.verdict,
+                    Verdict::Match,
+                    "{keyword} on {fixture:?}: upstream {:?} vs oc {:?}",
+                    cell.upstream,
+                    cell.oc
+                );
+            }
+        }
+    }
+
+    /// The refusals: an unknown name, a cipher pattern (only host keys
+    /// take patterns), a bad size, a size below 16, an overflowing scale
+    /// and a bad interval each fail with upstream's exact text, from an
+    /// inactive block too (openssh/readconf.c:1362-1393, :1593-1664).
+    #[test]
+    fn algorithm_and_rekeylimit_refusals_match_the_oracle() {
+        const FIXTURES: &[&str] = &[
+            "Ciphers aes128-ctr,bogus\n",
+            "Ciphers aes*\n",
+            "Ciphers +\n",
+            "MACs hmac-sha3\n",
+            "KexAlgorithms ^nope\n",
+            "KexAlgorithms curve25519-sha256,bogus,alsobad\n",
+            "HostKeyAlgorithms nope\n",
+            "Host other\n  Ciphers bogus\nHost a\n",
+            "RekeyLimit 8\n",
+            "RekeyLimit -1\n",
+            "RekeyLimit 4x\n",
+            "RekeyLimit 1.2.3\n",
+            "RekeyLimit 8E\n",
+            "RekeyLimit 1G x\n",
+            "RekeyLimit\n",
+        ];
+        for fixture in FIXTURES {
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("ssh_config");
+            std::fs::write(&path, fixture).expect("write fixture");
+            let upstream = match upstream_refusal(&path, "a") {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("algorithm refusal parity", &why);
+                    return;
+                }
+            };
+            assert!(upstream.is_some(), "the oracle accepted {fixture:?}");
+            let oc = resolve_host(&path, "a").err().map(|err| err.to_string());
+            assert_eq!(oc, upstream, "fixture {fixture:?}");
+        }
+    }
+
+    /// The keywords oc accepts without acting on still have their values
+    /// checked by their readconf.c arm: every line below loads or is
+    /// refused exactly as `ssh -G` loads or refuses it, refusal text and
+    /// helper notes included. GSSAPI is left out: the oracle build has no
+    /// GSSAPI, and oc models a build that does (unit-tested in
+    /// `ssh_config::values`).
+    #[test]
+    fn unread_keyword_values_match_the_oracle() {
+        const LINES: &[&str] = &[
+            "ForwardAgent yes",
+            "ForwardAgent $1bad",
+            "ForwardAgent ${OC_T589_UNSET}",
+            "ForwardAgent ${",
+            "ForwardAgent $",
+            "PKCS11Provider /usr/lib/p11.so",
+            "PKCS11Provider \"\"",
+            "ForwardX11 #c",
+            "ForwardX11 \"\"",
+            "ForwardX11 yes no",
+            "ForwardX11Timeout x",
+            "TCPKeepAlive transport",
+            "Compression true",
+            "ConnectionAttempts 3 4",
+            "IPQoS af11 cs1",
+            "IPQoS af11 bogus",
+            "IPQoS 1 2 3",
+            "BindInterface a b",
+            "LocalForward 8080 host:http",
+            "LocalForward [::1]:8080 host:80",
+            "LocalForward /tmp/s host:80",
+            "LocalForward 8080",
+            "LocalForward 0 host:80",
+            "LocalForward 8080 host:80:extra",
+            "LocalForward ${OC_T589_UNSET} h:1",
+            "RemoteForward 8080",
+            "RemoteForward 0 h:1",
+            "DynamicForward host:1080",
+            "DynamicForward a:b:c",
+            "PermitRemoteOpen h:* [::1]:22",
+            "PermitRemoteOpen any h:1",
+            "PermitRemoteOpen h",
+            "PermitRemoteOpen h/22",
+            "EscapeChar ^A",
+            "EscapeChar ab",
+            "StreamLocalBindMask 7x",
+            "StreamLocalBindMask 1000",
+            "TunnelDevice any:any",
+            "TunnelDevice 2147483646",
+            "FingerprintHash sha3",
+            "SyslogFacility nope",
+            "LogLevel loud",
+            "LogVerbose none a",
+            "LogVerbose \"\"",
+            "SendEnv A=B",
+            "SendEnv #c",
+            "SetEnv A",
+            "SetEnv #c",
+            "ControlPersist YES",
+            "ControlPersist 10m",
+            "ObscureKeystrokeTiming interval:0",
+            "ObscureKeystrokeTiming interval:",
+            "ObscureKeystrokeTiming yes no",
+            "ObscureKeystrokeTiming #c",
+            "ChannelTimeout session=5m",
+            "ChannelTimeout none x=1",
+            "ChannelTimeout =5",
+            "ChannelTimeout #c",
+            "VersionAddendum hello world",
+            "AddKeysToAgent confirm 5m",
+            "AddKeysToAgent confirm x",
+            "AddKeysToAgent yes 5m",
+            "AddKeysToAgent #c",
+            "CASignatureAlgorithms ssh-ed25519-cert-v01@openssh.com",
+            "CASignatureAlgorithms ssh-ed25519,*cert*",
+            "PubkeyAcceptedKeyTypes nope",
+            "StrictHostKeyChecking accept-new",
+            "ControlMaster maybe",
+            "SessionType maybe",
+            "UpdateHostKeys ASK",
+            "LocalCommand a b c",
+            "Host other\n  ForwardAgent maybe/x${",
+            "IdentitiesOnly #c",
+            "AddressFamily #c",
+            "PubkeyAuthentication \"\"",
+            "ProxyUseFdpass #c",
+            "Ciphers \"\"",
+            "RekeyLimit 1G 1h x",
+            "Port 22 23",
+            "Port 0x10",
+            "Port ssh",
+            "User \"\"",
+            "IdentityFile \"\"",
+            "IdentityAgent ${OC_T589_UNSET}",
+            "IdentityAgent $",
+            "ConnectTimeout 1.5",
+            "ConnectTimeout 5s5",
+        ];
+        for line in LINES {
+            let fixture = format!("{line}\n");
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("ssh_config");
+            std::fs::write(&path, &fixture).expect("write fixture");
+            let upstream = match upstream_refusal(&path, "a") {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("unread keyword value parity", &why);
+                    return;
+                }
+            };
+            let oc = resolve_host(&path, "a").err().map(|err| err.to_string());
+            assert_eq!(oc, upstream, "fixture {fixture:?}");
         }
     }
 
@@ -1780,6 +2680,116 @@ mod tests {
     /// does not cover) must leave the slot unset on both sides, or a
     /// resolver that applied the block unconditionally would pass the first
     /// half alone.
+    /// `Match host`/`originalhost` lists split on commas only, as
+    /// `match_pattern_list` does (openssh/match.c:122-172): a quoted space
+    /// belongs to its subpattern and an empty item matches nothing. A
+    /// whitespace split would match `a` in `"!b a"` and `"x a"`.
+    #[test]
+    fn match_host_lists_split_on_commas_only() {
+        for (fixture, port, verdict) in [
+            ("Match host \"!b a\"\n  Port 2222\n", "22", Verdict::OcUnset),
+            ("Match host \"x a\"\n  Port 2222\n", "22", Verdict::OcUnset),
+            (
+                "Match originalhost \"!b a\"\n  Port 2222\n",
+                "22",
+                Verdict::OcUnset,
+            ),
+            ("Match host a,,b\n  Port 2222\n", "2222", Verdict::Match),
+            ("Match host \",a\"\n  Port 2222\n", "2222", Verdict::Match),
+        ] {
+            let diff = match run(fixture, "a") {
+                Ok(d) => d,
+                Err(why) => {
+                    report_skip("match host comma lists", &why);
+                    return;
+                }
+            };
+            let cell = diff.cell("port").expect("dumped");
+            assert_eq!(cell.upstream, vec![port.to_owned()], "{fixture:?}");
+            assert_eq!(cell.verdict, verdict, "{fixture:?}: oc {:?}", cell.oc);
+        }
+    }
+
+    /// A numeric host takes `resolve_addr`'s form whatever the
+    /// canonicalization setting (openssh/ssh.c:337-380, :1239-1248):
+    /// `inet_aton` shorthands become dotted quads, IPv6 takes `inet_ntop`
+    /// form, and a malformed or other-family address is left as typed.
+    #[test]
+    fn numeric_hosts_are_rewritten_like_resolve_addr() {
+        for (text, alias, hostname) in [
+            ("", "127.1", "127.0.0.1"),
+            ("", "0x7f.1", "127.0.0.1"),
+            ("", "10.300", "10.0.1.44"),
+            ("", "0:0::1", "::1"),
+            ("", "::1.2.3.4", "::1.2.3.4"),
+            ("", "1.2.3.256", "1.2.3.256"),
+            ("", "FE80::A", "FE80::A"),
+            ("AddressFamily inet\n", "0:0::1", "0:0::1"),
+            ("CanonicalizeHostname yes\n", "127.1", "127.0.0.1"),
+        ] {
+            let diff = match run(text, alias) {
+                Ok(d) => d,
+                Err(why) => {
+                    report_skip("numeric host rewrite", &why);
+                    return;
+                }
+            };
+            let cell = diff.cell("hostname").expect("dumped");
+            assert_eq!(cell.upstream, vec![hostname.to_owned()], "{alias} {text:?}");
+            assert_eq!(cell.oc, Some(vec![hostname.to_owned()]), "{alias} {text:?}");
+        }
+    }
+
+    /// A list that validates but fails `kex_assemble_names` is warned
+    /// about and left unset, and the later lists are dumped as written
+    /// rather than assembled (openssh/readconf.c:2794, :2987-2997): both
+    /// sides print the same warning, neither dumps the failing list, and
+    /// the lists before it keep their assembled value.
+    #[test]
+    fn a_failed_list_assembly_warns_and_leaves_later_lists_unassembled() {
+        for (text, kept, unset, warning) in [
+            (
+                "Ciphers ^aes128-ctr,,!aes256-ctr\nMACs +hmac-sha2-256\nKexAlgorithms curve25519-sha256\n",
+                &[
+                    ("macs", "+hmac-sha2-256"),
+                    ("kexalgorithms", "curve25519-sha256"),
+                ][..],
+                &["ciphers"][..],
+                "fill_default_options: ciphers: invalid argument",
+            ),
+            (
+                "Ciphers aes128-ctr\nMACs ^hmac-sha2-256,,!x\n",
+                &[("ciphers", "aes128-ctr")][..],
+                &["macs", "kexalgorithms"][..],
+                "fill_default_options: macs: invalid argument",
+            ),
+        ] {
+            let _ = drained_warnings();
+            let (diff, stderr) =
+                match run(text, "a").and_then(|d| Ok((d, upstream_stderr(text, "a")?))) {
+                    Ok(both) => both,
+                    Err(why) => {
+                        report_skip("failed list assembly", &why);
+                        return;
+                    }
+                };
+            // A later note (the pty refusal ssh -G prints with stdin not a
+            // terminal) has no counterpart in the transport.
+            assert_eq!(stderr.lines().next(), Some(warning), "{text:?}");
+            assert_eq!(drained_warnings(), [warning], "{text:?}");
+            for &(keyword, value) in kept {
+                let cell = diff.cell(keyword).expect("dumped");
+                assert_eq!(cell.upstream, [value], "{keyword} {text:?}");
+                assert_eq!(cell.verdict, Verdict::Match, "{keyword} {text:?}");
+            }
+            let oc = oc_resolution(text, "a");
+            for keyword in unset {
+                assert!(diff.cell(keyword).is_none(), "{keyword} {text:?}");
+                assert_eq!(oc.get(*keyword), Some(&None), "{keyword} {text:?}");
+            }
+        }
+    }
+
     #[test]
     fn match_host_criterion_is_case_insensitive_and_gates_the_block() {
         const FIXTURE: &str = "Match host prod-*.example.com\n  Port 2277\n";

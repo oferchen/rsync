@@ -23,12 +23,15 @@
 //!
 //! # Scope
 //!
-//! The table holds the union of what oc's readers act on today, not
-//! upstream's full ~180 keywords. A keyword absent from it resolves to
-//! [`Opcode::Unknown`], which every reader ignores - the same answer both
-//! readers gave before the table existed. Widening the table is one row per
-//! keyword; oc's unknown-keyword *policy* (upstream counts bad options and
-//! then aborts the load, openssh/readconf.c:2667-2669) is a separate row.
+//! The table holds every keyword upstream recognises
+//! (openssh/readconf.c:192-337), so a valid `ssh -G` config is a valid oc
+//! config. Keywords oc acts on carry their own opcode; the rest keep
+//! upstream's accept-and-ignore categories ([`Opcode::Ignore`],
+//! [`Opcode::Deprecated`], [`Opcode::Unsupported`]) or, for keywords upstream
+//! implements and the embedded transport does not, [`Opcode::NotActedOn`].
+//! A spelling outside the table resolves to [`Opcode::Unknown`], upstream's
+//! `oBadOption`, which the embedded reader counts and then refuses the file
+//! on (openssh/readconf.c:2604-2613).
 //!
 //! # What this module does NOT own
 //!
@@ -39,119 +42,120 @@
 
 /// One ssh_config keyword, resolved from its spelling.
 ///
-/// Mirrors upstream's `OpCodes` (openssh/readconf.c:132-174), narrowed to
-/// the keywords oc resolves plus the catch-all. Upstream splits its
-/// catch-all three ways (`oBadOption`, `oIgnore`,
-/// `oIgnoredUnknownOption`) because it acts on the distinction; oc ignores
-/// every unrecognised keyword identically, so one variant is the honest
-/// model.
+/// Mirrors upstream's `OpCodes` (openssh/readconf.c:146-185): one variant
+/// per keyword oc acts on, upstream's three accept-and-ignore categories,
+/// one variant for the keywords upstream implements and oc does not act on,
+/// and the `oBadOption` catch-all. `oIgnoredUnknownOption` has no variant
+/// because it depends on the `IgnoreUnknown` list in force at the line, so
+/// the reader decides it, as upstream's `parse_token` does
+/// (openssh/readconf.c:977-979).
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(in crate::ssh) enum Opcode {
     /// `Host <patterns>` - opens a block gated on the target alias.
-    /// upstream: openssh/readconf.c:246 `oHost`, arm at :1823.
+    /// upstream: openssh/readconf.c:260 `oHost`, arm at :1827.
     Host,
     /// `Match <criteria>` - opens a conditionally active block.
-    /// upstream: openssh/readconf.c:247 `oMatch`, arm at :1864.
+    /// upstream: openssh/readconf.c:261 `oMatch`, arm at :1868.
     Match,
     /// `Include <pattern>...` - reads the glob-expanded file(s) inline.
-    /// upstream: openssh/readconf.c:248 `oInclude`, arm at :2073.
+    /// upstream: openssh/readconf.c:298 `oInclude`, arm at :2066.
     Include,
     /// `Compression yes|no`.
-    /// upstream: openssh/readconf.c:256 `oCompression`, arm at :1344.
+    /// upstream: openssh/readconf.c:270 `oCompression`, arm at :1345.
     Compression,
     /// `HostName <name>`.
-    /// upstream: openssh/readconf.c:236 `oHostname`, arm at :1493.
+    /// upstream: openssh/readconf.c:250 `oHostname`, arm at :1494.
     Hostname,
     /// `User <name>`.
-    /// upstream: openssh/readconf.c:245 `oUser`, arm at :1439.
+    /// upstream: openssh/readconf.c:259 `oUser`, arm at :1440.
     User,
     /// `Port <number>`.
-    /// upstream: openssh/readconf.c:239 `oPort`, arm at :1559.
+    /// upstream: openssh/readconf.c:253 `oPort`, arm at :1563.
     Port,
     /// `IdentityFile <path>`.
-    /// upstream: openssh/readconf.c:230 `oIdentityFile`, arm at :1394.
+    /// upstream: openssh/readconf.c:244 `oIdentityFile`, arm at :1395.
     IdentityFile,
     /// `IdentitiesOnly yes|no`.
-    /// upstream: openssh/readconf.c:232 `oIdentitiesOnly`, arm at :1914.
+    /// upstream: openssh/readconf.c:246 `oIdentitiesOnly`, arm at :1918.
     IdentitiesOnly,
     /// `IdentityAgent <path>`.
-    /// upstream: openssh/readconf.c:235 `oIdentityAgent`, arm at :2419.
+    /// upstream: openssh/readconf.c:249 `oIdentityAgent`, arm at :2381.
     IdentityAgent,
     /// `ConnectTimeout <time>|none`.
-    /// upstream: openssh/readconf.c:274 `oConnectTimeout`, arm at :1215.
+    /// upstream: openssh/readconf.c:288 `oConnectTimeout`, arm at :1216.
     ConnectTimeout,
     /// `AddressFamily any|inet|inet6`.
-    /// upstream: openssh/readconf.c:270 `oAddressFamily`, arm at :1903 via
-    /// `multistate_addressfamily` (:1016).
+    /// upstream: openssh/readconf.c:289 `oAddressFamily`, arm at :1909 via
+    /// `multistate_addressfamily` (:1038).
     AddressFamily,
     /// `BindAddress <addr>`.
-    /// upstream: openssh/readconf.c:262 `oBindAddress`, arm at :1507.
+    /// upstream: openssh/readconf.c:281 `oBindAddress`, arm at :1510.
     BindAddress,
     /// `BindInterface <iface>`.
-    /// upstream: openssh/readconf.c:263 `oBindInterface`, arm at :1511.
+    /// upstream: openssh/readconf.c:282 `oBindInterface`, arm at :1514.
     BindInterface,
     /// `ConnectionAttempts <count>`.
-    /// upstream: openssh/readconf.c:247 `oConnectionAttempts`, arm at :1574.
+    /// upstream: openssh/readconf.c:266 `oConnectionAttempts`, arm at :1580.
     ConnectionAttempts,
     /// `IPQoS <interactive> [bulk]`.
-    /// upstream: openssh/readconf.c:287 `oIPQoS`, arm at :2148.
+    /// upstream: openssh/readconf.c:306 `oIPQoS`, arm at :2154.
     IPQoS,
     /// `TCPKeepAlive yes|no|transport|all` (obsolete alias `KeepAlive`).
-    /// upstream: openssh/readconf.c:252 `oTCPKeepAlive`, arm at :1346 via
+    /// upstream: openssh/readconf.c:271 `oTCPKeepAlive`, arm at :1350 via
     /// `multistate_keepalives` (:1080).
     TCPKeepAlive,
     /// `ServerAliveInterval <time>`.
-    /// upstream: openssh/readconf.c:271 `oServerAliveInterval`, arm at :1916.
+    /// upstream: openssh/readconf.c:290 `oServerAliveInterval`, arm at :1922.
     ServerAliveInterval,
     /// `ServerAliveCountMax <count>`.
-    /// upstream: openssh/readconf.c:272 `oServerAliveCountMax`, arm at :1920.
+    /// upstream: openssh/readconf.c:291 `oServerAliveCountMax`, arm at :1926.
     ServerAliveCountMax,
     /// `ProxyCommand <command>` - the rest of the line taken verbatim and
     /// later run through a shell, its stdio replacing the direct socket.
-    /// upstream: openssh/readconf.c:249 `oProxyCommand`, arm at :1466
+    /// upstream: openssh/readconf.c:252 `oProxyCommand`, arm at :1530
     /// (`parse_command`); dialled by openssh/sshconnect.c:222
     /// `ssh_proxy_connect`.
     ProxyCommand,
     /// `ProxyJump [user@]host[:port][,...]` - a jump-host chain upstream
     /// synthesises into an equivalent `ProxyCommand`.
-    /// upstream: openssh/readconf.c:277 `oProxyJump`, arm at :1730
+    /// upstream: openssh/readconf.c:327 `oProxyJump`, arm at :1547
     /// (`parse_jump`); the synthesis is openssh/ssh.c:1310-1360.
     ProxyJump,
     /// `ProxyUseFdpass yes|no` - whether the `ProxyCommand` passes back a
     /// connected file descriptor rather than piping through stdio.
-    /// upstream: openssh/readconf.c:250 `oProxyUseFdpass`, arm at :1471.
+    /// upstream: openssh/readconf.c:311 `oProxyUseFdpass`, arm at :2197.
     ProxyUseFdpass,
     /// `UserKnownHostsFile <file>...` - the ordered list of per-user
     /// known_hosts files consulted for host-key verification and appended
     /// to when a new key is learned. `none` (alone) disables the user list.
-    /// upstream: openssh/readconf.c:243 `oUserKnownHostsFile`, arm at :1614
-    /// via the `parse_char_array` path (:1600-1652).
+    /// upstream: openssh/readconf.c:265 `oUserKnownHostsFile`, arm at :1488
+    /// via the `parse_char_array` path (:1457-1486).
     UserKnownHostsFile,
     /// `GlobalKnownHostsFile <file>...` - the ordered list of system-wide
     /// known_hosts files, consulted for verification only (never written).
     /// `none` (alone) disables the system list.
-    /// upstream: openssh/readconf.c:242 `oGlobalKnownHostsFile`, arm at
-    /// :1610 via the same `parse_char_array` path.
+    /// upstream: openssh/readconf.c:264 `oGlobalKnownHostsFile`, arm at
+    /// :1453 via the same `parse_char_array` path.
     GlobalKnownHostsFile,
     /// `HashKnownHosts yes|no` - whether a newly learned host entry is
     /// written hashed (`|1|salt|hash`) rather than as a plaintext hostname.
-    /// upstream: openssh/readconf.c:264 `oHashKnownHosts`, arm at :1873 via
+    /// upstream: openssh/readconf.c:297 `oHashKnownHosts`, arm at :2022 via
     /// `parse_flag`.
     HashKnownHosts,
     /// `HostKeyAlias <alias>` - the name used to look up and store the host
     /// key instead of the real hostname. Taken verbatim, never expanded.
-    /// upstream: openssh/readconf.c:237 `oHostKeyAlias`, arm at :1497 via
+    /// upstream: openssh/readconf.c:251 `oHostKeyAlias`, arm at :1502 via
     /// `parse_string`.
     HostKeyAlias,
     /// `CheckHostIP yes|no` - whether the host key is additionally checked
     /// against the server's resolved IP address.
-    /// upstream: openssh/readconf.c:238 `oCheckHostIP`, arm at :1466 via
+    /// upstream: openssh/readconf.c:268 `oCheckHostIP`, arm at :1331 via
     /// `parse_flag`.
     CheckHostIP,
     /// `RevokedHostKeys <file>` - a file of revoked host keys; a server key
     /// listed there is rejected. Path taken verbatim (tilde-expanded by the
     /// consumer).
-    /// upstream: openssh/readconf.c:290 `oRevokedHostKeys`, arm at :2444 via
+    /// upstream: openssh/readconf.c:319 `oRevokedHostKeys`, arm at :2314 via
     /// `parse_string`.
     RevokedHostKeys,
     /// `PubkeyAuthentication yes|no|unbound|host-bound` - whether public-key
@@ -159,46 +163,108 @@ pub(in crate::ssh) enum Opcode {
     /// A multistate whose `unbound`/`host-bound` rows select the
     /// session-bound-pubkey extension the embedded transport does not
     /// negotiate, so both collapse onto "public-key enabled" here.
-    /// upstream: openssh/readconf.c:239 `oPubkeyAuthentication`, arm at
-    /// :1264 via `multistate_pubkey_auth` (:1041-1048).
+    /// upstream: openssh/readconf.c:241 `oPubkeyAuthentication`, arm at
+    /// :1310 via `multistate_pubkey_auth` (:1086-1094).
     PubkeyAuthentication,
     /// `PasswordAuthentication yes|no` - whether password authentication may
     /// be attempted.
-    /// upstream: openssh/readconf.c:233 `oPasswordAuthentication`, arm at
-    /// :1252 (`parse_flag`).
+    /// upstream: openssh/readconf.c:235 `oPasswordAuthentication`, arm at
+    /// :1298 (`parse_flag`).
     PasswordAuthentication,
     /// `KbdInteractiveAuthentication yes|no` (aliases
     /// `ChallengeResponseAuthentication`, `SKeyAuthentication`,
     /// `TISAuthentication`) - whether keyboard-interactive authentication may
     /// be attempted.
-    /// upstream: openssh/readconf.c:234 `oKbdInteractiveAuthentication`, arm
-    /// at :1256 (`parse_flag`); the three aliases are :236-238.
+    /// upstream: openssh/readconf.c:236 `oKbdInteractiveAuthentication`, arm
+    /// at :1302 (`parse_flag`); the three aliases are :238-240.
     KbdInteractiveAuthentication,
     /// `PreferredAuthentications <comma-list>` - the order the client offers
     /// authentication methods in, most preferred first.
-    /// upstream: openssh/readconf.c:276 `oPreferredAuthentications`, arm at
-    /// :1460 (`parse_string`).
+    /// upstream: openssh/readconf.c:278 `oPreferredAuthentications`, arm at
+    /// :1506 (`parse_string`).
     PreferredAuthentications,
     /// `BatchMode yes|no` - when on, never prompt interactively for a
     /// password or passphrase.
-    /// upstream: openssh/readconf.c:265 `oBatchMode`, arm at :1281
+    /// upstream: openssh/readconf.c:267 `oBatchMode`, arm at :1327
     /// (`parse_flag`).
     BatchMode,
     /// `NumberOfPasswordPrompts <int>` - how many times a password may be
     /// prompted for before the method is abandoned.
-    /// upstream: openssh/readconf.c:271 `oNumberOfPasswordPrompts`, arm at
-    /// :1312 (`parse_int`).
+    /// upstream: openssh/readconf.c:273 `oNumberOfPasswordPrompts`, arm at
+    /// :1358 (`parse_int`).
     NumberOfPasswordPrompts,
     /// `CertificateFile <path>` - a certificate to offer alongside a key;
     /// accumulates across active lines.
-    /// upstream: openssh/readconf.c:245 `oCertificateFile`, arm at :1369
+    /// upstream: openssh/readconf.c:247 `oCertificateFile`, arm at :1415
     /// (`add_certificate_file`).
     CertificateFile,
     /// `RequiredRSASize <int>` - the minimum accepted RSA key length in bits.
-    /// upstream: openssh/readconf.c:328 `oRequiredRSASize`, arm at :2366
+    /// upstream: openssh/readconf.c:330 `oRequiredRSASize`, arm at :2412
     /// (`parse_int`).
     RequiredRSASize,
-    /// A keyword no reader resolves. Ignored by both.
+    /// `Ciphers [+-^]<list>` - the cipher preference.
+    /// upstream: openssh/readconf.c:254 `oCiphers`, arm at :1593.
+    Ciphers,
+    /// `MACs [+-^]<list>` - the MAC preference.
+    /// upstream: openssh/readconf.c:255 `oMacs`, arm at :1610.
+    Macs,
+    /// `KexAlgorithms [+-^]<list>` - the key-exchange preference.
+    /// upstream: openssh/readconf.c:305 `oKexAlgorithms`, arm at :1627.
+    KexAlgorithms,
+    /// `HostKeyAlgorithms [+-^]<list>` - the host-key algorithm preference.
+    /// upstream: openssh/readconf.c:279 `oHostKeyAlgorithms`, arm at :1645.
+    HostKeyAlgorithms,
+    /// `RekeyLimit <bytes>|default [<time>|none]` - when to re-key.
+    /// upstream: openssh/readconf.c:287 `oRekeyLimit`, arm at :1362.
+    RekeyLimit,
+    /// `CanonicalizeHostname yes|no|always` - whether the host name is
+    /// canonicalized, and with `always` even through a proxy.
+    /// upstream: openssh/readconf.c:314 `oCanonicalizeHostname`, arm at :2281.
+    CanonicalizeHostname,
+    /// `CanonicalDomains <domain>...` - the suffixes canonicalization tries.
+    /// upstream: openssh/readconf.c:312 `oCanonicalDomains`, arm at :2201.
+    CanonicalDomains,
+    /// `CanonicalizeMaxDots <n>` - names with more dots are left as typed.
+    /// upstream: openssh/readconf.c:315 `oCanonicalizeMaxDots`, arm at :2286.
+    CanonicalizeMaxDots,
+    /// `CanonicalizeFallbackLocal yes|no` - whether a name no suffix
+    /// resolves is used as typed rather than refused.
+    /// upstream: openssh/readconf.c:313 `oCanonicalizeFallbackLocal`, arm at
+    /// :2290.
+    CanonicalizeFallbackLocal,
+    /// `CanonicalizePermittedCNAMEs <source>:<target>...` - the CNAME rules.
+    /// upstream: openssh/readconf.c:316 `oCanonicalizePermittedCNAMEs`, arm at
+    /// :2233.
+    CanonicalizePermittedCNAMEs,
+    /// `Tag <name>` - the tag a later `Match tagged` line tests.
+    /// upstream: openssh/readconf.c:262 `oTag`, arm at :1498 (`parse_string`).
+    Tag,
+    /// `IgnoreUnknown <pattern-list>` - unknown keywords matching the list
+    /// are skipped instead of refused, from the line after it onwards.
+    /// upstream: openssh/readconf.c:326 `oIgnoreUnknown`, arm at :2193
+    /// (`parse_string`); read by `parse_token` (openssh/readconf.c:977-979).
+    IgnoreUnknown,
+    /// `Protocol` - accepted and ignored without a word.
+    /// upstream: openssh/readconf.c:194 `oIgnore`, arm at :1208.
+    Ignore,
+    /// A keyword upstream retired; accepted with a debug-level note.
+    /// upstream: openssh/readconf.c:195-202 `oDeprecated`, arm at :2511.
+    Deprecated,
+    /// A keyword upstream no longer supports; accepted after an error-level
+    /// note, without counting as a bad option.
+    /// upstream: openssh/readconf.c:205-210 `oUnsupported`, arm at :2517.
+    Unsupported,
+    /// A keyword upstream implements and the embedded transport does not act
+    /// on: forwarding, session shaping, interactive-terminal options, local
+    /// command execution, `RemoteCommand` (which would replace
+    /// `rsync --server`), and the options later rows of this table will
+    /// take over. Accepted so a config `ssh` loads, loads here too. Its
+    /// value is still checked against the carried [`ValueKind`], the shape
+    /// of the keyword's readconf.c arm, and a value `ssh` refuses refuses the
+    /// file here too; an accepted value is dropped.
+    NotActedOn(ValueKind),
+    /// A spelling outside the table - upstream's `oBadOption`
+    /// (openssh/readconf.c:147, returned by `parse_token` at :980-982).
     Unknown,
 }
 
@@ -209,67 +275,245 @@ pub(in crate::ssh) enum Opcode {
 /// (openssh/readconf.c:1184 `lowercase(keyword)` into
 /// openssh/readconf.c:964-966).
 const KEYWORDS: &[(&str, Opcode)] = &[
+    (
+        "addkeystoagent",
+        Opcode::NotActedOn(ValueKind::AddKeysToAgent),
+    ),
     ("addressfamily", Opcode::AddressFamily),
+    ("afstokenpassing", Opcode::Unsupported),
     ("batchmode", Opcode::BatchMode),
     ("bindaddress", Opcode::BindAddress),
     ("bindinterface", Opcode::BindInterface),
+    ("canonicaldomains", Opcode::CanonicalDomains),
+    (
+        "canonicalizefallbacklocal",
+        Opcode::CanonicalizeFallbackLocal,
+    ),
+    ("canonicalizehostname", Opcode::CanonicalizeHostname),
+    ("canonicalizemaxdots", Opcode::CanonicalizeMaxDots),
+    (
+        "canonicalizepermittedcnames",
+        Opcode::CanonicalizePermittedCNAMEs,
+    ),
+    (
+        "casignaturealgorithms",
+        Opcode::NotActedOn(ValueKind::KeyTypes { ca_only: true }),
+    ),
     ("certificatefile", Opcode::CertificateFile),
     // Alias resolving to the same opcode as `KbdInteractiveAuthentication`.
-    // upstream: openssh/readconf.c:236 `{ "challengeresponseauthentication",
+    // upstream: openssh/readconf.c:238 `{ "challengeresponseauthentication",
     // oKbdInteractiveAuthentication }`.
     (
         "challengeresponseauthentication",
         Opcode::KbdInteractiveAuthentication,
     ),
+    (
+        "channeltimeout",
+        Opcode::NotActedOn(ValueKind::ChannelTimeout),
+    ),
     ("checkhostip", Opcode::CheckHostIP),
+    ("cipher", Opcode::Deprecated),
+    ("ciphers", Opcode::Ciphers),
+    ("clearallforwardings", Opcode::NotActedOn(ValueKind::Flag)),
     ("compression", Opcode::Compression),
+    ("compressionlevel", Opcode::Unsupported),
     ("connectionattempts", Opcode::ConnectionAttempts),
     ("connecttimeout", Opcode::ConnectTimeout),
+    (
+        "controlmaster",
+        Opcode::NotActedOn(ValueKind::Multistate(Multistate::ControlMaster)),
+    ),
+    ("controlpath", Opcode::NotActedOn(ValueKind::Single)),
+    (
+        "controlpersist",
+        Opcode::NotActedOn(ValueKind::ControlPersist),
+    ),
     // Alias resolving to the same opcode as `PubkeyAuthentication`.
-    // upstream: openssh/readconf.c:240 `{ "dsaauthentication",
+    // upstream: openssh/readconf.c:242 `{ "dsaauthentication",
     // oPubkeyAuthentication }`.
     ("dsaauthentication", Opcode::PubkeyAuthentication),
+    (
+        "dynamicforward",
+        Opcode::NotActedOn(ValueKind::Forward(ForwardKind::Dynamic)),
+    ),
+    (
+        "enableescapecommandline",
+        Opcode::NotActedOn(ValueKind::Flag),
+    ),
+    ("enablesshkeysign", Opcode::NotActedOn(ValueKind::Flag)),
+    ("escapechar", Opcode::NotActedOn(ValueKind::EscapeChar)),
+    ("exitonforwardfailure", Opcode::NotActedOn(ValueKind::Flag)),
+    ("fallbacktorsh", Opcode::Deprecated),
+    (
+        "fingerprinthash",
+        Opcode::NotActedOn(ValueKind::FingerprintHash),
+    ),
+    (
+        "forkafterauthentication",
+        Opcode::NotActedOn(ValueKind::Flag),
+    ),
+    ("forwardagent", Opcode::NotActedOn(ValueKind::ForwardAgent)),
+    ("forwardx11", Opcode::NotActedOn(ValueKind::Flag)),
+    ("forwardx11timeout", Opcode::NotActedOn(ValueKind::Time)),
+    ("forwardx11trusted", Opcode::NotActedOn(ValueKind::Flag)),
+    ("gatewayports", Opcode::NotActedOn(ValueKind::Flag)),
     ("globalknownhostsfile", Opcode::GlobalKnownHostsFile),
+    ("globalknownhostsfile2", Opcode::Deprecated),
+    ("gssapiauthentication", Opcode::NotActedOn(ValueKind::Flag)),
+    (
+        "gssapidelegatecredentials",
+        Opcode::NotActedOn(ValueKind::Flag),
+    ),
     ("hashknownhosts", Opcode::HashKnownHosts),
     ("host", Opcode::Host),
+    (
+        "hostbasedacceptedalgorithms",
+        Opcode::NotActedOn(ValueKind::KeyTypes { ca_only: false }),
+    ),
+    (
+        "hostbasedauthentication",
+        Opcode::NotActedOn(ValueKind::Flag),
+    ),
+    (
+        "hostbasedkeytypes",
+        Opcode::NotActedOn(ValueKind::KeyTypes { ca_only: false }),
+    ),
+    ("hostkeyalgorithms", Opcode::HostKeyAlgorithms),
     ("hostkeyalias", Opcode::HostKeyAlias),
     ("hostname", Opcode::Hostname),
     ("identitiesonly", Opcode::IdentitiesOnly),
     ("identityagent", Opcode::IdentityAgent),
     ("identityfile", Opcode::IdentityFile),
+    ("identityfile2", Opcode::IdentityFile),
+    ("ignoreunknown", Opcode::IgnoreUnknown),
     ("include", Opcode::Include),
     ("ipqos", Opcode::IPQoS),
     (
         "kbdinteractiveauthentication",
         Opcode::KbdInteractiveAuthentication,
     ),
+    (
+        "kbdinteractivedevices",
+        Opcode::NotActedOn(ValueKind::Single),
+    ),
     // Obsolete alias resolving to the same opcode as `TCPKeepAlive`.
-    // upstream: openssh/readconf.c:270 `{ "keepalive", oTCPKeepAlive }`.
+    // upstream: openssh/readconf.c:272 `{ "keepalive", oTCPKeepAlive }`.
     ("keepalive", Opcode::TCPKeepAlive),
+    ("kerberosauthentication", Opcode::Unsupported),
+    ("kerberostgtpassing", Opcode::Unsupported),
+    ("kexalgorithms", Opcode::KexAlgorithms),
+    ("knownhostscommand", Opcode::NotActedOn(ValueKind::Command)),
+    ("localcommand", Opcode::NotActedOn(ValueKind::Command)),
+    (
+        "localforward",
+        Opcode::NotActedOn(ValueKind::Forward(ForwardKind::Local)),
+    ),
+    ("loglevel", Opcode::NotActedOn(ValueKind::LogLevel)),
+    ("logverbose", Opcode::NotActedOn(ValueKind::LogVerbose)),
+    ("macs", Opcode::Macs),
     ("match", Opcode::Match),
+    (
+        "nohostauthenticationforlocalhost",
+        Opcode::NotActedOn(ValueKind::Flag),
+    ),
     ("numberofpasswordprompts", Opcode::NumberOfPasswordPrompts),
+    (
+        "obscurekeystroketiming",
+        Opcode::NotActedOn(ValueKind::ObscureKeystrokeTiming),
+    ),
     ("passwordauthentication", Opcode::PasswordAuthentication),
+    ("permitlocalcommand", Opcode::NotActedOn(ValueKind::Flag)),
+    (
+        "permitremoteopen",
+        Opcode::NotActedOn(ValueKind::PermitRemoteOpen),
+    ),
+    ("pkcs11provider", Opcode::NotActedOn(ValueKind::Single)),
     ("port", Opcode::Port),
     ("preferredauthentications", Opcode::PreferredAuthentications),
+    ("protocol", Opcode::Ignore),
     ("proxycommand", Opcode::ProxyCommand),
     ("proxyjump", Opcode::ProxyJump),
     ("proxyusefdpass", Opcode::ProxyUseFdpass),
+    (
+        "pubkeyacceptedalgorithms",
+        Opcode::NotActedOn(ValueKind::KeyTypes { ca_only: false }),
+    ),
+    (
+        "pubkeyacceptedkeytypes",
+        Opcode::NotActedOn(ValueKind::KeyTypes { ca_only: false }),
+    ),
     ("pubkeyauthentication", Opcode::PubkeyAuthentication),
+    ("rekeylimit", Opcode::RekeyLimit),
+    ("remotecommand", Opcode::NotActedOn(ValueKind::Command)),
+    (
+        "remoteforward",
+        Opcode::NotActedOn(ValueKind::Forward(ForwardKind::Remote)),
+    ),
+    (
+        "requesttty",
+        Opcode::NotActedOn(ValueKind::Multistate(Multistate::RequestTty)),
+    ),
     ("requiredrsasize", Opcode::RequiredRSASize),
     ("revokedhostkeys", Opcode::RevokedHostKeys),
+    ("rhostsauthentication", Opcode::Deprecated),
+    ("rhostsrsaauthentication", Opcode::Unsupported),
+    ("rsaauthentication", Opcode::Unsupported),
+    ("securitykeyprovider", Opcode::NotActedOn(ValueKind::Single)),
+    ("sendenv", Opcode::NotActedOn(ValueKind::SendEnv)),
     ("serveralivecountmax", Opcode::ServerAliveCountMax),
     ("serveraliveinterval", Opcode::ServerAliveInterval),
+    (
+        "sessiontype",
+        Opcode::NotActedOn(ValueKind::Multistate(Multistate::SessionType)),
+    ),
+    ("setenv", Opcode::NotActedOn(ValueKind::SetEnv)),
     // Alias resolving to the same opcode as `KbdInteractiveAuthentication`.
-    // upstream: openssh/readconf.c:237 `{ "skeyauthentication",
+    // upstream: openssh/readconf.c:239 `{ "skeyauthentication",
     // oKbdInteractiveAuthentication }`.
     ("skeyauthentication", Opcode::KbdInteractiveAuthentication),
+    ("smartcarddevice", Opcode::NotActedOn(ValueKind::Single)),
+    ("stdinnull", Opcode::NotActedOn(ValueKind::Flag)),
+    (
+        "streamlocalbindmask",
+        Opcode::NotActedOn(ValueKind::StreamLocalBindMask),
+    ),
+    ("streamlocalbindunlink", Opcode::NotActedOn(ValueKind::Flag)),
+    (
+        "stricthostkeychecking",
+        Opcode::NotActedOn(ValueKind::Multistate(Multistate::StrictHostKey)),
+    ),
+    ("syslogfacility", Opcode::NotActedOn(ValueKind::LogFacility)),
+    ("tag", Opcode::Tag),
     ("tcpkeepalive", Opcode::TCPKeepAlive),
     // Alias resolving to the same opcode as `KbdInteractiveAuthentication`.
-    // upstream: openssh/readconf.c:238 `{ "tisauthentication",
+    // upstream: openssh/readconf.c:240 `{ "tisauthentication",
     // oKbdInteractiveAuthentication }`.
     ("tisauthentication", Opcode::KbdInteractiveAuthentication),
+    (
+        "tunnel",
+        Opcode::NotActedOn(ValueKind::Multistate(Multistate::Tunnel)),
+    ),
+    ("tunneldevice", Opcode::NotActedOn(ValueKind::TunnelDevice)),
+    (
+        "updatehostkeys",
+        Opcode::NotActedOn(ValueKind::Multistate(Multistate::YesNoAsk)),
+    ),
+    ("useprivilegedport", Opcode::Deprecated),
     ("user", Opcode::User),
     ("userknownhostsfile", Opcode::UserKnownHostsFile),
+    ("userknownhostsfile2", Opcode::Deprecated),
+    ("useroaming", Opcode::Deprecated),
+    ("usersh", Opcode::Deprecated),
+    (
+        "verifyhostkeydns",
+        Opcode::NotActedOn(ValueKind::Multistate(Multistate::YesNoAsk)),
+    ),
+    (
+        "versionaddendum",
+        Opcode::NotActedOn(ValueKind::VersionAddendum),
+    ),
+    ("visualhostkey", Opcode::NotActedOn(ValueKind::Flag)),
+    ("xauthlocation", Opcode::NotActedOn(ValueKind::Single)),
 ];
 
 /// Resolves a keyword spelling to its [`Opcode`], case-insensitively.
@@ -327,28 +571,147 @@ pub(in crate::ssh) enum ValueKind {
     /// One token, read as an address-family multistate (`any`, `inet`,
     /// `inet6`). upstream: the `parse_multistate` arm
     /// (openssh/readconf.c:1264-1276) with `multistate_addressfamily`
-    /// (openssh/readconf.c:1016-1021).
+    /// (openssh/readconf.c:1038-1043).
     AddressFamily,
-    /// One token, read as a keepalive multistate (`yes`/`true`/`transport`,
-    /// `no`/`false`, `all`). upstream: the `parse_multistate` arm with
-    /// `multistate_keepalives` (openssh/readconf.c:1080-1088).
-    KeepAlive,
+    /// One token from one of upstream's other multistate tables.
+    /// upstream: `parse_multistate_value` (openssh/readconf.c:1103-1117).
+    Multistate(Multistate),
     /// One token, read as a public-key-auth multistate
     /// (`yes`/`true`/`no`/`false`/`unbound`/`host-bound`). upstream: the
     /// `parse_multistate` arm with `multistate_pubkey_auth`
-    /// (openssh/readconf.c:1041-1048).
+    /// (openssh/readconf.c:1086-1094).
     PubkeyAuth,
+    /// One token, read as a canonicalization multistate (`yes`/`true`,
+    /// `no`/`false`, `always`). upstream: the `parse_multistate` arm with
+    /// `multistate_canonicalizehostname` (openssh/readconf.c:1078-1085).
+    CanonicalizeHostname,
+    /// A token list walked by its own arm, `none` allowed only alone; a
+    /// line with no tokens is fatal (openssh/readconf.c:2201-2279).
+    CanonicalLists,
+    /// A byte count (or `default`) and an optional time (or `none`).
+    /// upstream: the `oRekeyLimit` arm (openssh/readconf.c:1362-1393).
+    RekeyLimit,
     /// One or two tokens, each an IPQoS class or DSCP value.
-    /// upstream: the two-token `oIPQoS` arm (openssh/readconf.c:2148-2170).
+    /// upstream: the two-token `oIPQoS` arm (openssh/readconf.c:2154).
     IpQos,
     /// The rest of the line taken verbatim, un-tokenised - the shape
-    /// `ProxyCommand` and `ProxyJump` share. Upstream's `parse_command`
-    /// arm reads `s + strspn(s, WHITESPACE "=")` rather than a tokenised
-    /// arg (openssh/readconf.c:1465-1470), and `parse_jump` likewise acts
-    /// on the whole remaining string `s` (openssh/readconf.c:1730-1735).
+    /// `ProxyCommand`, `ProxyJump`, `LocalCommand`, `RemoteCommand` and
+    /// `KnownHostsCommand` share. Upstream's `parse_command` arm reads
+    /// `s + strspn(s, WHITESPACE "=")` rather than a tokenised arg
+    /// (openssh/readconf.c:1535), and `parse_jump` likewise acts on
+    /// the whole remaining string `s` (openssh/readconf.c:1547).
     Command,
-    /// No shape, because no reader resolves the keyword.
+    /// A key-type list, `+`/`-`/`^` prefixed or not; with `ca_only` a
+    /// certificate type is refused. upstream: `parse_pubkey_algos`
+    /// (openssh/readconf.c:1648) over `sshkey_names_valid2`.
+    KeyTypes {
+        /// `CASignatureAlgorithms` takes plain key types only.
+        ca_only: bool,
+    },
+    /// A flag or an agent socket path. upstream: the `oForwardAgent` arm
+    /// (openssh/readconf.c:1236) into `parse_agent_path` (:2389).
+    ForwardAgent,
+    /// A yes/no/ask/confirm state, a lifetime, or `confirm <time>`.
+    /// upstream: the `oAddKeysToAgent` arm (openssh/readconf.c:2350).
+    AddKeysToAgent,
+    /// A port-forwarding specification. upstream: the shared
+    /// `oLocalForward`/`oRemoteForward`/`oDynamicForward` arm
+    /// (openssh/readconf.c:1725) over `parse_forward` (:3229).
+    Forward(ForwardKind),
+    /// `host:port` pairs, or `any`/`none` alone. upstream: the
+    /// `oPermitRemoteOpen` arm (openssh/readconf.c:1772).
+    PermitRemoteOpen,
+    /// One character, `^X`, or `none`. upstream: the `oEscapeChar` arm
+    /// (openssh/readconf.c:1885).
+    EscapeChar,
+    /// A syslog facility name. upstream: the `oLogFacility` arm
+    /// (openssh/readconf.c:1684) over `log_facility_number`.
+    LogFacility,
+    /// A log level name. upstream: the `oLogLevel` arm
+    /// (openssh/readconf.c:1671) over `log_level_number`.
+    LogLevel,
+    /// Non-empty patterns, or `none` alone. upstream: the `oLogVerbose`
+    /// arm (openssh/readconf.c:1697).
+    LogVerbose,
+    /// Environment variable names without `=`. upstream: the `oSendEnv`
+    /// arm (openssh/readconf.c:1930).
+    SendEnv,
+    /// `NAME=value` pairs. upstream: the `oSetEnv` arm
+    /// (openssh/readconf.c:1956).
+    SetEnv,
+    /// `yes`/`no`/`true`/`false` or a time. upstream: the `oControlPersist`
+    /// arm (openssh/readconf.c:1994).
+    ControlPersist,
+    /// `local[:remote]` tunnel device ids. upstream: the `oTunnelDevice`
+    /// arm (openssh/readconf.c:2031) over `a2tun`.
+    TunnelDevice,
+    /// An octal mask up to 0777. upstream: the `oStreamLocalBindMask` arm
+    /// (openssh/readconf.c:2294).
+    StreamLocalBindMask,
+    /// A digest name. upstream: the `oFingerprintHash` arm
+    /// (openssh/readconf.c:2318).
+    FingerprintHash,
+    /// `yes`/`no`/`interval:<ms>`. upstream: the `oObscureKeystrokeTiming`
+    /// arm (openssh/readconf.c:2416).
+    ObscureKeystrokeTiming,
+    /// `type=interval` pairs, or `none` alone. upstream: the
+    /// `oChannelTimeout` arm (openssh/readconf.c:2458).
+    ChannelTimeout,
+    /// The rest of the line, which must not hold a carriage return.
+    /// upstream: the `oVersionAddendum` arm (openssh/readconf.c:2489).
+    VersionAddendum,
+    /// No shape, because no reader parses the keyword's value.
     Unknown,
+}
+
+/// Upstream's multistate tables beyond the plain flag, each a set of
+/// case-insensitive keywords (openssh/readconf.c:1004-1101).
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(in crate::ssh) enum Multistate {
+    /// `multistate_yesnoask` (openssh/readconf.c:1011-1018).
+    YesNoAsk,
+    /// `multistate_strict_hostkey` (openssh/readconf.c:1019-1028).
+    StrictHostKey,
+    /// `multistate_yesnoaskconfirm` (openssh/readconf.c:1029-1037).
+    YesNoAskConfirm,
+    /// `multistate_controlmaster` (openssh/readconf.c:1044-1053).
+    ControlMaster,
+    /// `multistate_tunnel` (openssh/readconf.c:1054-1062).
+    Tunnel,
+    /// `multistate_requesttty` (openssh/readconf.c:1063-1071).
+    RequestTty,
+    /// `multistate_sessiontype` (openssh/readconf.c:1072-1077).
+    SessionType,
+    /// `multistate_compression` (openssh/readconf.c:1095-1101): `yes` is
+    /// there only `WITH_ZLIB`, as every supported build is.
+    Compression,
+}
+
+impl Multistate {
+    /// The table's keywords, compared with `strcasecmp`.
+    pub(in crate::ssh) fn keys(self) -> &'static [&'static str] {
+        match self {
+            Self::YesNoAsk => &["true", "false", "yes", "no", "ask"],
+            Self::StrictHostKey => &["true", "false", "yes", "no", "ask", "off", "accept-new"],
+            Self::YesNoAskConfirm => &["true", "false", "yes", "no", "ask", "confirm"],
+            Self::ControlMaster => &["true", "yes", "false", "no", "auto", "ask", "autoask"],
+            Self::Tunnel => &["ethernet", "point-to-point", "true", "yes", "false", "no"],
+            Self::RequestTty => &["true", "yes", "false", "no", "force", "auto"],
+            Self::SessionType => &["none", "subsystem", "default"],
+            Self::Compression => &["yes", "no"],
+        }
+    }
+}
+
+/// Which forwarding directive a [`ValueKind::Forward`] value belongs to.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(in crate::ssh) enum ForwardKind {
+    /// `LocalForward`: a listen spec and a target.
+    Local,
+    /// `RemoteForward`: like `Local`, or a lone listen spec (dynamic).
+    Remote,
+    /// `DynamicForward`: a lone listen spec.
+    Dynamic,
 }
 
 /// How repeated assignments to one keyword resolve across the single
@@ -405,14 +768,20 @@ impl Opcode {
             Self::Host => ValueKind::HostPatterns,
             Self::Match => ValueKind::MatchCriteria,
             Self::Include => ValueKind::IncludePatterns,
-            Self::Compression
-            | Self::IdentitiesOnly
+            Self::IdentitiesOnly
             | Self::ProxyUseFdpass
             | Self::HashKnownHosts
             | Self::CheckHostIP
             | Self::PasswordAuthentication
             | Self::KbdInteractiveAuthentication
-            | Self::BatchMode => ValueKind::Flag,
+            | Self::BatchMode
+            | Self::CanonicalizeFallbackLocal
+            // `TCPKeepAlive` is a plain `parse_flag` in 10.0p1
+            // (openssh/readconf.c:1350-1352).
+            | Self::TCPKeepAlive => ValueKind::Flag,
+            Self::Compression => ValueKind::Multistate(Multistate::Compression),
+            Self::CanonicalizeHostname => ValueKind::CanonicalizeHostname,
+            Self::CanonicalDomains | Self::CanonicalizePermittedCNAMEs => ValueKind::CanonicalLists,
             Self::PubkeyAuthentication => ValueKind::PubkeyAuth,
             Self::ProxyCommand | Self::ProxyJump => ValueKind::Command,
             Self::UserKnownHostsFile | Self::GlobalKnownHostsFile => ValueKind::KnownHostsFiles,
@@ -426,16 +795,26 @@ impl Opcode {
             | Self::HostKeyAlias
             | Self::RevokedHostKeys
             | Self::CertificateFile
-            | Self::PreferredAuthentications => ValueKind::Single,
+            | Self::PreferredAuthentications
+            | Self::IgnoreUnknown
+            | Self::Tag
+            | Self::Ciphers
+            | Self::Macs
+            | Self::KexAlgorithms
+            | Self::HostKeyAlgorithms => ValueKind::Single,
+            Self::RekeyLimit => ValueKind::RekeyLimit,
             Self::ConnectTimeout | Self::ServerAliveInterval => ValueKind::Time,
             Self::ConnectionAttempts
             | Self::ServerAliveCountMax
             | Self::NumberOfPasswordPrompts
-            | Self::RequiredRSASize => ValueKind::Int,
+            | Self::RequiredRSASize
+            | Self::CanonicalizeMaxDots => ValueKind::Int,
             Self::AddressFamily => ValueKind::AddressFamily,
-            Self::TCPKeepAlive => ValueKind::KeepAlive,
             Self::IPQoS => ValueKind::IpQos,
-            Self::Unknown => ValueKind::Unknown,
+            Self::NotActedOn(kind) => kind,
+            Self::Ignore | Self::Deprecated | Self::Unsupported | Self::Unknown => {
+                ValueKind::Unknown
+            }
         }
     }
 
@@ -458,9 +837,10 @@ impl Opcode {
             // wording is `missing argument.` (openssh/readconf.c:1106).
             ValueKind::Flag
             | ValueKind::AddressFamily
-            | ValueKind::KeepAlive
-            | ValueKind::PubkeyAuth => Some("missing argument."),
-            ValueKind::Single => Some("Missing argument."),
+            | ValueKind::Multistate(_)
+            | ValueKind::PubkeyAuth
+            | ValueKind::CanonicalizeHostname => Some("missing argument."),
+            ValueKind::Single | ValueKind::RekeyLimit => Some("Missing argument."),
             ValueKind::Time => Some("missing time value."),
             // `atoi_err(NULL)` returns `"missing"`, printed as
             // `integer value missing.` (openssh/readconf.c:1579,
@@ -486,7 +866,27 @@ impl Opcode {
             // and an empty TOKEN is the per-token `keyword %s empty argument`
             // (openssh/readconf.c:1626), not an absent-value diagnostic.
             | ValueKind::KnownHostsFiles
+            | ValueKind::CanonicalLists
             | ValueKind::Command
+            // The arms below word their own refusals.
+            | ValueKind::KeyTypes { .. }
+            | ValueKind::ForwardAgent
+            | ValueKind::AddKeysToAgent
+            | ValueKind::Forward(_)
+            | ValueKind::PermitRemoteOpen
+            | ValueKind::EscapeChar
+            | ValueKind::LogFacility
+            | ValueKind::LogLevel
+            | ValueKind::LogVerbose
+            | ValueKind::SendEnv
+            | ValueKind::SetEnv
+            | ValueKind::ControlPersist
+            | ValueKind::TunnelDevice
+            | ValueKind::StreamLocalBindMask
+            | ValueKind::FingerprintHash
+            | ValueKind::ObscureKeystrokeTiming
+            | ValueKind::ChannelTimeout
+            | ValueKind::VersionAddendum
             | ValueKind::Unknown => None,
         }
     }
@@ -526,7 +926,7 @@ pub(in crate::ssh) fn parse_flag_value(value: &str) -> Option<bool> {
 /// Returns `None` for anything outside the multistate set so a typo cannot
 /// silently flip the setting.
 ///
-/// upstream: `multistate_pubkey_auth` (openssh/readconf.c:1041-1048) accepts
+/// upstream: `multistate_pubkey_auth` (openssh/readconf.c:1086-1094) accepts
 /// `true`/`yes` (`SSH_PUBKEY_AUTH_ALL`), `false`/`no` (`SSH_PUBKEY_AUTH_NO`)
 /// and the session-bound-key selectors `unbound`/`host-bound`, all compared
 /// with `strcasecmp` (openssh/readconf.c:1109-1112). The embedded transport
@@ -549,82 +949,107 @@ pub(in crate::ssh) fn parse_pubkey_auth_value(value: &str) -> Option<bool> {
 
 /// Parses a [`ValueKind::Time`] value into whole seconds.
 ///
-/// A faithful port of upstream's `convtime` (openssh/misc.c:733-745) over
-/// `convtime_double` (openssh/misc.c:657-726): a sequence of decimal
-/// components, each with an optional case-insensitive qualifier - seconds
-/// (bare or `s`), minutes (`m`), hours (`h`), days (`d`), weeks (`w`) -
-/// summed together, so `1h30m` is 5400. A seconds component may appear
-/// only once (openssh/misc.c:685-686); a fraction is allowed only on a
-/// seconds component and must end in a digit (openssh/misc.c:710-717);
-/// anything else - a negative, an empty string, a stray byte - is `None`.
-/// Fractional seconds truncate and a total above `i32::MAX` is invalid,
-/// both from `convtime` itself (openssh/misc.c:737-742).
+/// A port of upstream's `convtime` (openssh/misc.c:617-680): a sequence of
+/// decimal components, each with an optional case-insensitive qualifier -
+/// seconds (bare or `s`), minutes (`m`), hours (`h`), days (`d`), weeks
+/// (`w`) - summed together, so `1h30m` is 5400 and `5s5` is 10. A component
+/// with no digits, any other byte, or a total past `i32::MAX` is `None`.
+/// 10.0p1's `convtime` has no fractions: `1.5` is refused.
 #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
 pub(in crate::ssh) fn parse_time_value(value: &str) -> Option<u32> {
-    const MINUTES: f64 = 60.0;
-    const HOURS: f64 = 60.0 * MINUTES;
-    const DAYS: f64 = 24.0 * HOURS;
-    const WEEKS: f64 = 7.0 * DAYS;
-
-    if value.is_empty() {
+    let bytes = value.as_bytes();
+    if bytes.is_empty() {
         return None;
     }
-    let mut total = 0.0_f64;
-    let mut seen_seconds = false;
-    let mut rest = value;
-    while !rest.is_empty() {
-        // A component is a run of decimal digits and dots; any other lead
-        // byte, and any form strtod would accept beyond plain decimals,
-        // is rejected (openssh/misc.c:669-676).
-        let span = rest
-            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
-            .unwrap_or(rest.len());
-        let number = &rest[..span];
-        let val: f64 = number.parse().ok().filter(|v| *v >= 0.0)?;
-        rest = &rest[span..];
-
-        let multiplier = match rest.chars().next() {
-            // Bare seconds and `s` share upstream's once-only flag
-            // (openssh/misc.c:681-687).
-            None | Some('s' | 'S') => {
-                if seen_seconds {
-                    return None;
-                }
-                seen_seconds = true;
-                1.0
-            }
-            Some('m' | 'M') => MINUTES,
-            Some('h' | 'H') => HOURS,
-            Some('d' | 'D') => DAYS,
-            Some('w' | 'W') => WEEKS,
+    let mut total: i32 = 0;
+    let mut pos = 0;
+    while pos < bytes.len() {
+        let digits = bytes[pos..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        let secs = strtonum(&value[pos..pos + digits], 0, i64::from(i32::MAX)).ok()?;
+        pos += digits;
+        let multiplier: i32 = match bytes.get(pos) {
+            None | Some(b's' | b'S') => 1,
+            Some(b'm' | b'M') => 60,
+            Some(b'h' | b'H') => 60 * 60,
+            Some(b'd' | b'D') => 24 * 60 * 60,
+            Some(b'w' | b'W') => 7 * 24 * 60 * 60,
             Some(_) => return None,
         };
-
-        // A decimal point is legal only on a seconds component, and the
-        // digits must continue past it (openssh/misc.c:710-717), so `1.`
-        // and `1.5m` are both invalid.
-        if number.contains('.')
-            && (multiplier > 1.0 || !number.ends_with(|c: char| c.is_ascii_digit()))
-        {
-            return None;
-        }
-
-        total += val * multiplier;
-        if !rest.is_empty() {
-            rest = &rest[1..];
-        }
+        // `strtonum` capped `secs` at `INT_MAX`.
+        let secs = i32::try_from(secs).ok()?.checked_mul(multiplier)?;
+        total = total.checked_add(secs)?;
+        pos += 1;
     }
-    if total > f64::from(i32::MAX) {
-        return None;
+    u32::try_from(total).ok()
+}
+
+/// OpenBSD's `strtonum` over `strtoll(s, &ep, 10)`: leading whitespace
+/// and one sign are allowed, any trailing byte is `invalid`, and a value
+/// outside `min..=max` is `too small`/`too large` (openbsd-compat/strtonum.c).
+pub(in crate::ssh) fn strtonum(s: &str, min: i64, max: i64) -> Result<i64, &'static str> {
+    let t = s.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']);
+    let (negative, digits) = match t.as_bytes().first() {
+        Some(b'-') => (true, &t[1..]),
+        Some(b'+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("invalid");
     }
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    Some(total as u32)
+    // `strtoll` saturates on overflow; one past `i64::MAX` keeps a saturated
+    // value out of every range a caller passes.
+    let limit = i128::from(i64::MAX) + 1;
+    let magnitude = digits.bytes().fold(0_i128, |acc, d| {
+        (acc * 10 + i128::from(d - b'0')).min(limit)
+    });
+    let value = if negative { -magnitude } else { magnitude };
+    if value < i128::from(min) {
+        Err("too small")
+    } else if value > i128::from(max) {
+        Err("too large")
+    } else {
+        i64::try_from(value).map_err(|_| "too large")
+    }
+}
+
+/// A port number or a `tcp` service name, as upstream's `a2port` resolves
+/// it (openssh/misc.c:536-548): `strtonum(s, 0, 65535)`, then
+/// `getservbyname(s, "tcp")`. `None` is upstream's `-1`; 0 is a valid
+/// answer the callers refuse themselves.
+pub(in crate::ssh) fn a2port(s: &str) -> Option<u16> {
+    match strtonum(s, 0, 65535) {
+        Ok(port) => u16::try_from(port).ok(),
+        Err(_) => service_port(s),
+    }
+}
+
+/// `getservbyname(name, "tcp")` through the services file, which is the
+/// `files` source every libc consults; a name served only by another NSS
+/// source is not found.
+fn service_port(name: &str) -> Option<u16> {
+    #[cfg(windows)]
+    let path = std::path::PathBuf::from(std::env::var_os("SystemRoot")?)
+        .join(r"System32\drivers\etc\services");
+    #[cfg(not(windows))]
+    let path = std::path::PathBuf::from("/etc/services");
+    let text = std::fs::read(path).ok()?;
+    String::from_utf8_lossy(&text).lines().find_map(|line| {
+        let mut fields = line.split('#').next()?.split_whitespace();
+        let official = fields.next()?;
+        let (port, proto) = fields.next()?.split_once('/')?;
+        (proto == "tcp" && (official == name || fields.any(|alias| alias == name)))
+            .then(|| port.parse().ok())
+            .flatten()
+    })
 }
 
 /// The address family a `AddressFamily` directive selects.
 ///
 /// upstream: the three non-sentinel rows of `multistate_addressfamily`
-/// (openssh/readconf.c:1016-1021), which map to `AF_INET`, `AF_INET6` and
+/// (openssh/readconf.c:1038-1043), which map to `AF_INET`, `AF_INET6` and
 /// `AF_UNSPEC`. Kept as a reader-neutral enum so the transport, not this
 /// table, owns the mapping onto its own IP-preference knob.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -668,6 +1093,91 @@ pub(in crate::ssh) fn parse_address_family(value: &str) -> Option<AddressFamily>
     }
 }
 
+/// A `CanonicalizeHostname` setting (openssh/readconf.c:1078-1085).
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(in crate::ssh) enum CanonicalizeHostname {
+    /// `no`/`false` - never canonicalize (the default).
+    No,
+    /// `yes`/`true` - canonicalize direct connections.
+    Yes,
+    /// `always` - canonicalize proxied connections too.
+    Always,
+}
+
+impl CanonicalizeHostname {
+    /// The spelling `ssh -G` dumps: the first table name for the value
+    /// (openssh/readconf.c:3497-3498 `fmt_multistate_int`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(in crate::ssh) fn as_str(self) -> &'static str {
+        match self {
+            Self::No => "false",
+            Self::Yes => "true",
+            Self::Always => "always",
+        }
+    }
+}
+
+/// Parses a [`ValueKind::CanonicalizeHostname`] value, case-insensitively as
+/// `parse_multistate_value` compares (openssh/readconf.c:1103-1117).
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn parse_canonicalize_hostname(value: &str) -> Option<CanonicalizeHostname> {
+    match value.to_ascii_lowercase().as_str() {
+        "yes" | "true" => Some(CanonicalizeHostname::Yes),
+        "no" | "false" => Some(CanonicalizeHostname::No),
+        "always" => Some(CanonicalizeHostname::Always),
+        _ => None,
+    }
+}
+
+/// Checks a domain name and returns it without a trailing dot, or
+/// upstream's diagnostic - a port of `valid_domain` (openssh/misc.c:2398-2441).
+/// With `makelower`, as for a `CanonicalDomains` entry, the name is
+/// returned lowercased; a resolver's canonical name is checked without it
+/// (openssh/ssh.c:285).
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn valid_domain(name: &str, makelower: bool) -> Result<String, String> {
+    let shown: String = name.chars().take(100).collect();
+    let Some(&first) = name.as_bytes().first() else {
+        return Err("empty domain name".to_owned());
+    };
+    if !first.is_ascii_alphanumeric() && first != b'_' {
+        return Err(format!(
+            "domain name \"{shown}\" starts with invalid character"
+        ));
+    }
+    // Upstream lowercases in place as it scans, so a refused name is shown
+    // lowercased up to and including the offending byte (:2415-2431).
+    let shown_at = |i: usize| -> String {
+        let mut seen = name.as_bytes().to_vec();
+        if makelower {
+            seen[..=i].make_ascii_lowercase();
+        }
+        String::from_utf8_lossy(&seen).chars().take(100).collect()
+    };
+    let mut last = 0_u8;
+    for (i, c) in name.bytes().map(|c| c.to_ascii_lowercase()).enumerate() {
+        if last == b'.' && c == b'.' {
+            return Err(format!(
+                "domain name \"{}\" contains consecutive separators",
+                shown_at(i)
+            ));
+        }
+        if c != b'.' && c != b'-' && c != b'_' && !c.is_ascii_alphanumeric() {
+            return Err(format!(
+                "domain name \"{}\" contains invalid characters",
+                shown_at(i)
+            ));
+        }
+        last = c;
+    }
+    let name = if makelower {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_owned()
+    };
+    Ok(name.strip_suffix('.').unwrap_or(&name).to_owned())
+}
+
 /// Parses a [`ValueKind::Int`] value the way upstream's `atoi_err` does:
 /// `strtonum(arg, 0, INT_MAX)` (openssh/misc.c:2448-2456). `Err` carries
 /// the full diagnostic upstream prints (`integer value <errstr>.`,
@@ -678,14 +1188,13 @@ pub(in crate::ssh) fn parse_address_family(value: &str) -> Option<AddressFamily>
 /// matching `strtonum`'s own `errstr` set.
 #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
 pub(in crate::ssh) fn parse_int_value(value: &str) -> Result<u32, &'static str> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
+    if value.is_empty() {
         return Err("integer value missing.");
     }
-    match trimmed.parse::<i64>() {
-        Ok(v) if v < 0 => Err("integer value too small."),
-        Ok(v) if v > i64::from(i32::MAX) => Err("integer value too large."),
-        Ok(v) => Ok(v as u32),
+    match strtonum(value, 0, i64::from(i32::MAX)) {
+        Ok(v) => u32::try_from(v).map_err(|_| "integer value too large."),
+        Err("too small") => Err("integer value too small."),
+        Err("too large") => Err("integer value too large."),
         Err(_) => Err("integer value invalid."),
     }
 }
@@ -715,6 +1224,180 @@ pub(in crate::ssh) fn glob_matches(input: &[u8], glob: &[u8]) -> bool {
     }
 }
 
+/// How a pattern list matched a string.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(in crate::ssh) enum PatternListMatch {
+    /// A `!`-negated subpattern matched, which excludes the string outright.
+    Negative,
+    /// No subpattern matched.
+    None,
+    /// A positive subpattern matched and no negated one did.
+    Positive,
+}
+
+/// Matches `string` against a comma-separated pattern list - a port of
+/// `match_pattern_list` (openssh/match.c:122-172).
+///
+/// Each subpattern may be `!`-negated; a matching negated subpattern
+/// excludes the string outright, otherwise one positive match is needed.
+/// With `dolower` the subpatterns are lowercased first.
+pub(in crate::ssh) fn match_pattern_list(
+    string: &str,
+    list: &str,
+    dolower: bool,
+) -> PatternListMatch {
+    // Upstream copies each subpattern into `char sub[1024]` and gives up
+    // with "no match" on one that does not fit (openssh/match.c:147-149).
+    const SUB_MAX: usize = 1023;
+    // The scan ends at the list's end, so a trailing comma adds no empty
+    // subpattern while a leading or doubled one does (:130-156).
+    let body = list.strip_suffix(',').unwrap_or(list);
+    if list.is_empty() {
+        return PatternListMatch::None;
+    }
+    let mut positive = false;
+    for sub in body.split(',') {
+        let (negated, glob) = sub.strip_prefix('!').map_or((false, sub), |g| (true, g));
+        if glob.len() >= SUB_MAX {
+            return PatternListMatch::None;
+        }
+        let glob = if dolower {
+            glob.to_ascii_lowercase()
+        } else {
+            glob.to_owned()
+        };
+        if glob_matches(string.as_bytes(), glob.as_bytes()) {
+            if negated {
+                return PatternListMatch::Negative;
+            }
+            positive = true;
+        }
+    }
+    if positive {
+        PatternListMatch::Positive
+    } else {
+        PatternListMatch::None
+    }
+}
+
+/// Whether `keyword` (already lowercased) is excused by an `IgnoreUnknown`
+/// list: upstream's `parse_token` returns `oIgnoredUnknownOption` only when
+/// `match_pattern_list(cp, ignored_unknown, 1) == 1`
+/// (openssh/readconf.c:977-979).
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn ignore_unknown_matches(keyword: &str, list: &str) -> bool {
+    match_pattern_list(keyword, list, true) == PatternListMatch::Positive
+}
+
+/// Why a scaled number did not parse: upstream's `errno`, rendered as its
+/// `strerror` text.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(in crate::ssh) enum ScaledError {
+    /// `EINVAL`: a stray character or unit.
+    Invalid,
+    /// `ERANGE`: too many digits, or overflow.
+    Range,
+}
+
+impl std::fmt::Display for ScaledError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Invalid => "Invalid argument",
+            #[cfg(target_os = "linux")]
+            Self::Range => "Numerical result out of range",
+            #[cfg(not(target_os = "linux"))]
+            Self::Range => "Result too large",
+        })
+    }
+}
+
+/// Parses a number with an optional `B`/`K`/`M`/`G`/`T`/`P`/`E` binary
+/// suffix and fraction (`1.5K` is 1536) - a port of `scan_scaled`
+/// (openssh/openbsd-compat/fmt_scaled.c:76-214).
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn parse_scaled_value(scaled: &str) -> Result<i64, ScaledError> {
+    // `SCALE_LENGTH * 3` (openssh/openbsd-compat/fmt_scaled.c:70).
+    const MAX_DIGITS: u32 = 21;
+    const SCALE_CHARS: &[u8] = b"BKMGTPE";
+    let bytes = scaled.trim_start().as_bytes();
+    let mut i = 0;
+    let mut sign = 0_i64;
+    while i < bytes.len() && (bytes[i] == b'-' || bytes[i] == b'+') {
+        if sign != 0 {
+            return Err(ScaledError::Invalid);
+        }
+        sign = if bytes[i] == b'-' { -1 } else { 1 };
+        i += 1;
+    }
+    let (mut whole, mut fpart) = (0_i64, 0_i64);
+    let (mut ndigits, mut fract_digits) = (0_u32, 0_u32);
+    while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+        let c = bytes[i];
+        i += 1;
+        if c == b'.' {
+            if fract_digits > 0 {
+                return Err(ScaledError::Invalid);
+            }
+            fract_digits = 1;
+            continue;
+        }
+        let digit = i64::from(c - b'0');
+        if fract_digits > 0 {
+            // Extra fractional digits are ignored (:124-126).
+            if fract_digits >= MAX_DIGITS - 1 {
+                continue;
+            }
+            fract_digits += 1;
+            fpart = fpart
+                .checked_mul(10)
+                .and_then(|f| f.checked_add(digit))
+                .ok_or(ScaledError::Range)?;
+        } else {
+            ndigits += 1;
+            if ndigits >= MAX_DIGITS {
+                return Err(ScaledError::Range);
+            }
+            whole = whole
+                .checked_mul(10)
+                .and_then(|w| w.checked_add(digit))
+                .ok_or(ScaledError::Range)?;
+        }
+    }
+    if sign != 0 {
+        whole *= sign;
+    }
+    // No unit: the fraction is discarded (:159-163).
+    let Some(&unit) = bytes.get(i) else {
+        return Ok(whole);
+    };
+    let Some(power) = SCALE_CHARS
+        .iter()
+        .position(|&c| c == unit.to_ascii_uppercase())
+    else {
+        return Err(ScaledError::Invalid);
+    };
+    if bytes.get(i + 1).is_some_and(u8::is_ascii_alphanumeric) {
+        return Err(ScaledError::Invalid);
+    }
+    let scale = 1_i64 << (10 * power);
+    whole = whole.checked_mul(scale).ok_or(ScaledError::Range)?;
+    // Truncate the fraction so scaling cannot overflow, then scale it
+    // (:189-201).
+    while fpart >= i64::MAX / scale || fpart <= i64::MIN / scale {
+        fpart /= 10;
+        fract_digits = fract_digits.saturating_sub(1);
+    }
+    fpart *= scale;
+    for _ in 1..fract_digits {
+        fpart /= 10;
+    }
+    Ok(if sign == -1 {
+        whole - fpart
+    } else {
+        whole + fpart
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -732,6 +1415,23 @@ mod tests {
         ("Compression", Opcode::Compression),
         ("HostName", Opcode::Hostname),
         ("User", Opcode::User),
+        ("Ciphers", Opcode::Ciphers),
+        ("MACs", Opcode::Macs),
+        ("KexAlgorithms", Opcode::KexAlgorithms),
+        ("HostKeyAlgorithms", Opcode::HostKeyAlgorithms),
+        ("RekeyLimit", Opcode::RekeyLimit),
+        ("Tag", Opcode::Tag),
+        ("CanonicalizeHostname", Opcode::CanonicalizeHostname),
+        ("CanonicalDomains", Opcode::CanonicalDomains),
+        ("CanonicalizeMaxDots", Opcode::CanonicalizeMaxDots),
+        (
+            "CanonicalizeFallbackLocal",
+            Opcode::CanonicalizeFallbackLocal,
+        ),
+        (
+            "CanonicalizePermittedCNAMEs",
+            Opcode::CanonicalizePermittedCNAMEs,
+        ),
         ("Port", Opcode::Port),
         ("IdentityFile", Opcode::IdentityFile),
         ("IdentitiesOnly", Opcode::IdentitiesOnly),
@@ -777,14 +1477,160 @@ mod tests {
         ("SKeyAuthentication", Opcode::KbdInteractiveAuthentication),
         ("TISAuthentication", Opcode::KbdInteractiveAuthentication),
         ("DSAAuthentication", Opcode::PubkeyAuthentication),
+        // Obsolete alias, same opcode (openssh/readconf.c:245).
+        ("IdentityFile2", Opcode::IdentityFile),
+        ("IgnoreUnknown", Opcode::IgnoreUnknown),
     ];
+
+    /// Every keyword upstream openssh-portable 10.0p1 recognises
+    /// (openssh/readconf.c:192-337, 130 initialisers naming 126 spellings).
+    /// Pinned here so a keyword dropped from [`KEYWORDS`] fails as a test
+    /// rather than becoming a fatal `Bad configuration option` in a config
+    /// `ssh` accepts.
+    const UPSTREAM_10_0P1: &[&str] = &[
+        "addkeystoagent",
+        "addressfamily",
+        "afstokenpassing",
+        "batchmode",
+        "bindaddress",
+        "bindinterface",
+        "canonicaldomains",
+        "canonicalizefallbacklocal",
+        "canonicalizehostname",
+        "canonicalizemaxdots",
+        "canonicalizepermittedcnames",
+        "casignaturealgorithms",
+        "certificatefile",
+        "challengeresponseauthentication",
+        "channeltimeout",
+        "checkhostip",
+        "cipher",
+        "ciphers",
+        "clearallforwardings",
+        "compression",
+        "compressionlevel",
+        "connectionattempts",
+        "connecttimeout",
+        "controlmaster",
+        "controlpath",
+        "controlpersist",
+        "dsaauthentication",
+        "dynamicforward",
+        "enableescapecommandline",
+        "enablesshkeysign",
+        "escapechar",
+        "exitonforwardfailure",
+        "fallbacktorsh",
+        "fingerprinthash",
+        "forkafterauthentication",
+        "forwardagent",
+        "forwardx11",
+        "forwardx11timeout",
+        "forwardx11trusted",
+        "gatewayports",
+        "globalknownhostsfile",
+        "globalknownhostsfile2",
+        "gssapiauthentication",
+        "gssapidelegatecredentials",
+        "hashknownhosts",
+        "host",
+        "hostbasedacceptedalgorithms",
+        "hostbasedauthentication",
+        "hostbasedkeytypes",
+        "hostkeyalgorithms",
+        "hostkeyalias",
+        "hostname",
+        "identitiesonly",
+        "identityagent",
+        "identityfile",
+        "identityfile2",
+        "ignoreunknown",
+        "include",
+        "ipqos",
+        "kbdinteractiveauthentication",
+        "kbdinteractivedevices",
+        "keepalive",
+        "kerberosauthentication",
+        "kerberostgtpassing",
+        "kexalgorithms",
+        "knownhostscommand",
+        "localcommand",
+        "localforward",
+        "loglevel",
+        "logverbose",
+        "macs",
+        "match",
+        "nohostauthenticationforlocalhost",
+        "numberofpasswordprompts",
+        "obscurekeystroketiming",
+        "passwordauthentication",
+        "permitlocalcommand",
+        "permitremoteopen",
+        "pkcs11provider",
+        "port",
+        "preferredauthentications",
+        "protocol",
+        "proxycommand",
+        "proxyjump",
+        "proxyusefdpass",
+        "pubkeyacceptedalgorithms",
+        "pubkeyacceptedkeytypes",
+        "pubkeyauthentication",
+        "rekeylimit",
+        "remotecommand",
+        "remoteforward",
+        "requesttty",
+        "requiredrsasize",
+        "revokedhostkeys",
+        "rhostsauthentication",
+        "rhostsrsaauthentication",
+        "rsaauthentication",
+        "securitykeyprovider",
+        "sendenv",
+        "serveralivecountmax",
+        "serveraliveinterval",
+        "sessiontype",
+        "setenv",
+        "skeyauthentication",
+        "smartcarddevice",
+        "stdinnull",
+        "streamlocalbindmask",
+        "streamlocalbindunlink",
+        "stricthostkeychecking",
+        "syslogfacility",
+        "tag",
+        "tcpkeepalive",
+        "tisauthentication",
+        "tunnel",
+        "tunneldevice",
+        "updatehostkeys",
+        "useprivilegedport",
+        "user",
+        "userknownhostsfile",
+        "userknownhostsfile2",
+        "useroaming",
+        "usersh",
+        "verifyhostkeydns",
+        "versionaddendum",
+        "visualhostkey",
+        "xauthlocation",
+    ];
+
+    /// Whether the reader accepts `opcode` without acting on it.
+    fn accepted_unread(opcode: Opcode) -> bool {
+        matches!(
+            opcode,
+            Opcode::Ignore | Opcode::Deprecated | Opcode::Unsupported | Opcode::NotActedOn(_)
+        )
+    }
 
     #[test]
     fn every_keyword_both_readers_use_resolves_from_the_one_table() {
         for (spelling, expected) in UNION {
             assert_eq!(parse_token(spelling), *expected, "keyword {spelling}");
         }
-        assert_eq!(KEYWORDS.len(), UNION.len(), "table and union disagree");
+        let acted = KEYWORDS.iter().filter(|(_, op)| !accepted_unread(*op));
+        assert_eq!(acted.count(), UNION.len(), "table and union disagree");
     }
 
     /// upstream lowercases the keyword before the table scan
@@ -801,11 +1647,143 @@ mod tests {
     /// not a function that answers every question affirmatively.
     #[test]
     fn a_keyword_outside_the_table_is_unknown() {
-        for spelling in ["forwardagent", "ciphers", "", "hostnamex", "hos"] {
+        for spelling in ["", "hostnamex", "hos", "forwardagents", "identityfile3"] {
             assert_eq!(parse_token(spelling), Opcode::Unknown, "keyword {spelling}");
         }
     }
 
+    /// The table is upstream's, entire: every 10.0p1 spelling resolves,
+    /// and nothing else is in it.
+    #[test]
+    fn the_table_is_exactly_upstreams_keyword_set() {
+        for spelling in UPSTREAM_10_0P1 {
+            assert_ne!(parse_token(spelling), Opcode::Unknown, "keyword {spelling}");
+        }
+        assert_eq!(KEYWORDS.len(), UPSTREAM_10_0P1.len());
+    }
+
+    /// upstream's accept-and-ignore categories keep their own opcodes,
+    /// because each prints a different note (openssh/readconf.c:194-210).
+    #[test]
+    fn upstream_accept_and_ignore_categories_are_kept_apart() {
+        assert_eq!(parse_token("protocol"), Opcode::Ignore);
+        for spelling in [
+            "cipher",
+            "fallbacktorsh",
+            "globalknownhostsfile2",
+            "rhostsauthentication",
+            "userknownhostsfile2",
+            "useroaming",
+            "usersh",
+            "useprivilegedport",
+        ] {
+            assert_eq!(parse_token(spelling), Opcode::Deprecated, "{spelling}");
+        }
+        for spelling in [
+            "afstokenpassing",
+            "kerberosauthentication",
+            "kerberostgtpassing",
+            "rsaauthentication",
+            "rhostsrsaauthentication",
+            "compressionlevel",
+        ] {
+            assert_eq!(parse_token(spelling), Opcode::Unsupported, "{spelling}");
+        }
+    }
+
+    /// The options a non-interactive single-channel transfer must never
+    /// honour are accepted and NOT acted on. `RemoteCommand` above all:
+    /// honouring it would replace `rsync --server`. The build-dependent
+    /// GSSAPI and PKCS#11 keywords are accepted as a build with those
+    /// features accepts them (openssh/readconf.c:213-226).
+    #[test]
+    fn options_the_transfer_must_not_honour_are_accepted_unread() {
+        for spelling in [
+            "remotecommand",
+            "forwardagent",
+            "localforward",
+            "localcommand",
+            "permitlocalcommand",
+            "requesttty",
+            "controlmaster",
+            "gssapiauthentication",
+            "gssapidelegatecredentials",
+            "pkcs11provider",
+            "smartcarddevice",
+        ] {
+            assert!(
+                matches!(parse_token(spelling), Opcode::NotActedOn(_)),
+                "{spelling}"
+            );
+        }
+    }
+
+    /// `IgnoreUnknown` is `match_pattern_list(keyword, list, 1)`: comma
+    /// separated, lowercased patterns, a matching negation excludes
+    /// (openssh/match.c:122-172). Oracle: `IgnoreUnknown foo*,!foox` still
+    /// refuses `foox` under `ssh -G`.
+    #[test]
+    fn ignore_unknown_follows_match_pattern_list() {
+        assert!(ignore_unknown_matches("foobar", "foo*"));
+        assert!(ignore_unknown_matches("foobar", "x,FOO*"));
+        assert!(!ignore_unknown_matches("foox", "foo*,!foox"));
+        assert!(!ignore_unknown_matches("foox", "!foox,foo*"));
+        assert!(!ignore_unknown_matches("bar", "foo*"));
+        assert!(!ignore_unknown_matches("bar", "!foo"));
+    }
+
+    /// `match_pattern_list`'s subpattern scan: a trailing comma adds no
+    /// empty subpattern, a doubled one does, and a subpattern too long for
+    /// upstream's 1024-byte buffer fails the whole list
+    /// (openssh/match.c:122-172).
+    #[test]
+    fn match_pattern_list_follows_the_subpattern_scan() {
+        use PatternListMatch::{Negative, None, Positive};
+        assert_eq!(match_pattern_list("a", "", false), None);
+        assert_eq!(match_pattern_list("", "", false), None);
+        assert_eq!(match_pattern_list("", "a,", false), None);
+        assert_eq!(match_pattern_list("", "a,,", false), Positive);
+        assert_eq!(match_pattern_list("", ",a", false), Positive);
+        assert_eq!(match_pattern_list("ab", "a?,!x", false), Positive);
+        assert_eq!(match_pattern_list("ab", "a*,!ab", false), Negative);
+        assert_eq!(match_pattern_list("AB", "a*", false), None);
+        assert_eq!(match_pattern_list("ab", "A*", true), Positive);
+        let long = "a".repeat(1023);
+        assert_eq!(match_pattern_list(&long, &long, false), None);
+        assert_eq!(match_pattern_list("a", &format!("a,{long}"), false), None);
+        let fits = "a".repeat(1022);
+        assert_eq!(match_pattern_list(&fits, &fits, false), Positive);
+    }
+
+    /// `scan_scaled`: binary units, fractions (kept only with a unit),
+    /// one sign, and the `EINVAL`/`ERANGE` split
+    /// (openssh/openbsd-compat/fmt_scaled.c:76-214). The values with a
+    /// unit and a fraction are the ones `ssh -G` confirms in the
+    /// differential.
+    #[test]
+    fn parse_scaled_value_mirrors_scan_scaled() {
+        assert_eq!(parse_scaled_value("16"), Ok(16));
+        assert_eq!(parse_scaled_value("1.9"), Ok(1));
+        assert_eq!(parse_scaled_value("1.5K"), Ok(1536));
+        assert_eq!(parse_scaled_value("0.5k"), Ok(512));
+        assert_eq!(parse_scaled_value("1G"), Ok(1 << 30));
+        assert_eq!(parse_scaled_value("2B"), Ok(2));
+        assert_eq!(parse_scaled_value("7E"), Ok(7 << 60));
+        assert_eq!(parse_scaled_value("K"), Ok(0));
+        assert_eq!(parse_scaled_value("-1"), Ok(-1));
+        assert_eq!(parse_scaled_value("+1K"), Ok(1024));
+        assert_eq!(parse_scaled_value("-1.5K"), Ok(-1536));
+        assert_eq!(parse_scaled_value("4x"), Err(ScaledError::Invalid));
+        assert_eq!(parse_scaled_value("1Kb"), Err(ScaledError::Invalid));
+        assert_eq!(parse_scaled_value("1.2.3"), Err(ScaledError::Invalid));
+        assert_eq!(parse_scaled_value("+-1"), Err(ScaledError::Invalid));
+        assert_eq!(parse_scaled_value("8E"), Err(ScaledError::Range));
+        assert_eq!(parse_scaled_value(&"9".repeat(20)), Err(ScaledError::Range));
+        assert_eq!(
+            parse_scaled_value(&"1".repeat(19)),
+            Ok(1_111_111_111_111_111_111)
+        );
+    }
     #[test]
     fn no_keyword_is_declared_twice() {
         for (i, (name, _)) in KEYWORDS.iter().enumerate() {
@@ -870,7 +1848,7 @@ mod tests {
                 "{opcode:?}"
             );
         }
-        // The address-family and keepalive multistates route through the
+        // The address-family and keepalive states route through the
         // same `parse_multistate_value` as the plain flags, so they share
         // its `missing argument.` wording (openssh/readconf.c:1106).
         for opcode in [Opcode::AddressFamily, Opcode::TCPKeepAlive] {
@@ -946,7 +1924,7 @@ mod tests {
     }
 
     /// `parse_address_family` is the `multistate_addressfamily` set
-    /// (openssh/readconf.c:1016-1021), compared case-insensitively; a
+    /// (openssh/readconf.c:1038-1043), compared case-insensitively; a
     /// token outside it is `None` so the caller can refuse it.
     #[test]
     fn address_family_covers_the_multistate_set() {
@@ -1108,7 +2086,7 @@ mod tests {
     }
 
     /// `parse_pubkey_auth_value` is the `multistate_pubkey_auth` set
-    /// (openssh/readconf.c:1041-1048): the two bound-key selectors collapse
+    /// (openssh/readconf.c:1086-1094): the two bound-key selectors collapse
     /// onto "enabled", and a token outside the set is `None` so the caller
     /// can refuse it with the spelling. Gated with the helper, which exists
     /// only for the embedded reader.
@@ -1127,7 +2105,7 @@ mod tests {
     }
 
     /// `convtime` accepts the documented decimal-with-qualifier forms.
-    /// Every accepted row was measured against real `ssh -G`
+    /// Every accepted row was measured against the pinned 10.0p1 `ssh -G`
     /// (`ConnectTimeout <value>` in a fixture), not derived from the C.
     #[test]
     fn time_values_cover_convtimes_accepted_forms() {
@@ -1140,18 +2118,21 @@ mod tests {
             ("1h30m", 5400),
             ("2d", 172_800),
             ("1w", 604_800),
-            ("1.5", 1),
+            ("5s5", 10),
+            ("1s1s", 2),
+            ("1m1", 61),
+            ("1M", 60),
+            ("1w1d1h1m1s", 694_861),
             ("2147483647", i32::MAX as u32),
         ] {
             assert_eq!(parse_time_value(input), Some(expected), "{input}");
         }
     }
 
-    /// The refusals: negatives (first byte fails the digit test,
-    /// openssh/misc.c:669-670), a repeated seconds component
-    /// (openssh/misc.c:685-686), fractions outside seconds and a trailing
-    /// dot (openssh/misc.c:710-717), overflow past `INT_MAX`
-    /// (openssh/misc.c:740-741), and `none`, which is NOT convtime's to
+    /// The refusals, measured on the 10.0p1 oracle: a component without
+    /// digits (a sign, a dot, a lone qualifier, openssh/misc.c:630-637), a
+    /// doubled qualifier, a fraction, overflow past `INT_MAX`
+    /// (openssh/misc.c:667-674), and `none`, which is NOT convtime's to
     /// accept - the readconf arm strcmp's it case-SENSITIVELY before
     /// calling convtime (openssh/readconf.c:1222).
     #[test]
@@ -1165,9 +2146,12 @@ mod tests {
             "5x",
             "1.",
             ".",
+            "1.5",
             "1.5m",
-            "5s5",
+            "5ss",
+            "m",
             "5 s",
+            " 5",
             "2147483648",
             "1e3",
             "+5",
