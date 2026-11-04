@@ -33,6 +33,11 @@ impl PeerOutbox {
     }
 
     /// Takes every queued frame, or `None` when the queue is empty.
+    #[inline]
+    pub(crate) fn has_pending(&self) -> bool {
+        self.pending.load(Ordering::Acquire)
+    }
+
     pub(crate) fn take(&self) -> Option<VecDeque<(MessageCode, Vec<u8>)>> {
         if !self.pending.load(Ordering::Acquire) {
             return None;

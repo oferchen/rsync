@@ -134,7 +134,16 @@ impl<W: Write> MultiplexWriter<W> {
     }
 
     /// Sends the queued diagnostic frames, after the data buffered before them.
+    /// Runs before every write, so the empty check stays inline.
+    #[inline]
     fn send_outbox(&mut self) -> io::Result<()> {
+        match &self.outbox {
+            Some(outbox) if outbox.has_pending() => self.send_pending_outbox(),
+            _ => Ok(()),
+        }
+    }
+    #[cold]
+    fn send_pending_outbox(&mut self) -> io::Result<()> {
         let Some(frames) = self.outbox.as_ref().and_then(|outbox| outbox.take()) else {
             return Ok(());
         };

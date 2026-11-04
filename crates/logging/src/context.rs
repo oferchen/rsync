@@ -219,6 +219,10 @@ impl ThreadView {
         }
     }
 
+    fn is_current(&self) -> bool {
+        self.generation == self.context.generation.load(Ordering::Acquire)
+    }
+    #[cold]
     fn refreshed(&mut self) -> &Self {
         let generation = self.context.generation.load(Ordering::Acquire);
         if generation != self.generation {
@@ -239,9 +243,18 @@ thread_local! {
     static VIEW: RefCell<Option<ThreadView>> = const { RefCell::new(None) };
 }
 
+// Inlined into every `info_gte`/`debug_gte` caller: the fast path is a shared
+// borrow and one generation compare, as cheap as the plain thread-local read
+// these checks replaced.
+#[inline]
 fn with_view<R>(f: impl FnOnce(&ThreadView) -> R) -> R {
-    VIEW.with(|view| {
-        let mut view = view.borrow_mut();
+    VIEW.with(|slot| {
+        if let Some(view) = slot.borrow().as_ref()
+            && view.is_current()
+        {
+            return f(view);
+        }
+        let mut view = slot.borrow_mut();
         let view = view.get_or_insert_with(|| ThreadView::new(Arc::clone(&DEFAULT_CONTEXT)));
         f(view.refreshed())
     })
@@ -345,6 +358,7 @@ pub fn finfo_suppressed() -> bool {
 /// Check if the info flag is at or above the specified level.
 ///
 /// Equivalent to upstream's `INFO_GTE(flag, level)` macro (upstream: rsync.h:1475).
+#[inline]
 pub fn info_gte(flag: InfoFlag, level: u8) -> bool {
     with_view(|view| view.verbosity.info.get(flag) >= level)
 }
@@ -352,6 +366,7 @@ pub fn info_gte(flag: InfoFlag, level: u8) -> bool {
 /// Check if the debug flag is at or above the specified level.
 ///
 /// Equivalent to upstream's `DEBUG_GTE(flag, level)` macro (upstream: rsync.h:1477).
+#[inline]
 pub fn debug_gte(flag: DebugFlag, level: u8) -> bool {
     with_view(|view| view.verbosity.debug.get(flag) >= level)
 }
