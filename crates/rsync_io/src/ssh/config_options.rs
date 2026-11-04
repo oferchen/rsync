@@ -217,6 +217,25 @@ pub(in crate::ssh) enum Opcode {
     /// `RekeyLimit <bytes>|default [<time>|none]` - when to re-key.
     /// upstream: openssh/readconf.c:287 `oRekeyLimit`, arm at :1362.
     RekeyLimit,
+    /// `CanonicalizeHostname yes|no|always` - whether the host name is
+    /// canonicalized, and with `always` even through a proxy.
+    /// upstream: openssh/readconf.c:314 `oCanonicalizeHostname`, arm at :2281.
+    CanonicalizeHostname,
+    /// `CanonicalDomains <domain>...` - the suffixes canonicalization tries.
+    /// upstream: openssh/readconf.c:312 `oCanonicalDomains`, arm at :2201.
+    CanonicalDomains,
+    /// `CanonicalizeMaxDots <n>` - names with more dots are left as typed.
+    /// upstream: openssh/readconf.c:315 `oCanonicalizeMaxDots`, arm at :2286.
+    CanonicalizeMaxDots,
+    /// `CanonicalizeFallbackLocal yes|no` - whether a name no suffix
+    /// resolves is used as typed rather than refused.
+    /// upstream: openssh/readconf.c:313 `oCanonicalizeFallbackLocal`, arm at
+    /// :2290.
+    CanonicalizeFallbackLocal,
+    /// `CanonicalizePermittedCNAMEs <source>:<target>...` - the CNAME rules.
+    /// upstream: openssh/readconf.c:316 `oCanonicalizePermittedCNAMEs`, arm at
+    /// :2233.
+    CanonicalizePermittedCNAMEs,
     /// `Tag <name>` - the tag a later `Match tagged` line tests.
     /// upstream: openssh/readconf.c:262 `oTag`, arm at :1498 (`parse_string`).
     Tag,
@@ -260,11 +279,17 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("batchmode", Opcode::BatchMode),
     ("bindaddress", Opcode::BindAddress),
     ("bindinterface", Opcode::BindInterface),
-    ("canonicaldomains", Opcode::NotActedOn),
-    ("canonicalizefallbacklocal", Opcode::NotActedOn),
-    ("canonicalizehostname", Opcode::NotActedOn),
-    ("canonicalizemaxdots", Opcode::NotActedOn),
-    ("canonicalizepermittedcnames", Opcode::NotActedOn),
+    ("canonicaldomains", Opcode::CanonicalDomains),
+    (
+        "canonicalizefallbacklocal",
+        Opcode::CanonicalizeFallbackLocal,
+    ),
+    ("canonicalizehostname", Opcode::CanonicalizeHostname),
+    ("canonicalizemaxdots", Opcode::CanonicalizeMaxDots),
+    (
+        "canonicalizepermittedcnames",
+        Opcode::CanonicalizePermittedCNAMEs,
+    ),
     ("casignaturealgorithms", Opcode::NotActedOn),
     ("certificatefile", Opcode::CertificateFile),
     // Alias resolving to the same opcode as `KbdInteractiveAuthentication`.
@@ -468,6 +493,13 @@ pub(in crate::ssh) enum ValueKind {
     /// `parse_multistate` arm with `multistate_pubkey_auth`
     /// (openssh/readconf.c:1086-1094).
     PubkeyAuth,
+    /// One token, read as a canonicalization multistate (`yes`/`true`,
+    /// `no`/`false`, `always`). upstream: the `parse_multistate` arm with
+    /// `multistate_canonicalizehostname` (openssh/readconf.c:1078-1085).
+    CanonicalizeHostname,
+    /// A token list walked by its own arm, `none` allowed only alone; a
+    /// line with no tokens is fatal (openssh/readconf.c:2201-2279).
+    CanonicalLists,
     /// A byte count (or `default`) and an optional time (or `none`).
     /// upstream: the `oRekeyLimit` arm (openssh/readconf.c:1362-1393).
     RekeyLimit,
@@ -545,7 +577,10 @@ impl Opcode {
             | Self::CheckHostIP
             | Self::PasswordAuthentication
             | Self::KbdInteractiveAuthentication
-            | Self::BatchMode => ValueKind::Flag,
+            | Self::BatchMode
+            | Self::CanonicalizeFallbackLocal => ValueKind::Flag,
+            Self::CanonicalizeHostname => ValueKind::CanonicalizeHostname,
+            Self::CanonicalDomains | Self::CanonicalizePermittedCNAMEs => ValueKind::CanonicalLists,
             Self::PubkeyAuthentication => ValueKind::PubkeyAuth,
             Self::ProxyCommand | Self::ProxyJump => ValueKind::Command,
             Self::UserKnownHostsFile | Self::GlobalKnownHostsFile => ValueKind::KnownHostsFiles,
@@ -571,7 +606,8 @@ impl Opcode {
             Self::ConnectionAttempts
             | Self::ServerAliveCountMax
             | Self::NumberOfPasswordPrompts
-            | Self::RequiredRSASize => ValueKind::Int,
+            | Self::RequiredRSASize
+            | Self::CanonicalizeMaxDots => ValueKind::Int,
             Self::AddressFamily => ValueKind::AddressFamily,
             Self::TCPKeepAlive => ValueKind::KeepAlive,
             Self::IPQoS => ValueKind::IpQos,
@@ -603,7 +639,8 @@ impl Opcode {
             ValueKind::Flag
             | ValueKind::AddressFamily
             | ValueKind::KeepAlive
-            | ValueKind::PubkeyAuth => Some("missing argument."),
+            | ValueKind::PubkeyAuth
+            | ValueKind::CanonicalizeHostname => Some("missing argument."),
             ValueKind::Single | ValueKind::RekeyLimit => Some("Missing argument."),
             ValueKind::Time => Some("missing time value."),
             // `atoi_err(NULL)` returns `"missing"`, printed as
@@ -630,6 +667,7 @@ impl Opcode {
             // and an empty TOKEN is the per-token `keyword %s empty argument`
             // (openssh/readconf.c:1626), not an absent-value diagnostic.
             | ValueKind::KnownHostsFiles
+            | ValueKind::CanonicalLists
             | ValueKind::Command
             | ValueKind::Unknown => None,
         }
@@ -810,6 +848,83 @@ pub(in crate::ssh) fn parse_address_family(value: &str) -> Option<AddressFamily>
         "inet6" => Some(AddressFamily::Inet6),
         _ => None,
     }
+}
+
+/// A `CanonicalizeHostname` setting (openssh/readconf.c:1078-1085).
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(in crate::ssh) enum CanonicalizeHostname {
+    /// `no`/`false` - never canonicalize (the default).
+    No,
+    /// `yes`/`true` - canonicalize direct connections.
+    Yes,
+    /// `always` - canonicalize proxied connections too.
+    Always,
+}
+
+impl CanonicalizeHostname {
+    /// The spelling `ssh -G` dumps: the first table name for the value
+    /// (openssh/readconf.c:3497-3498 `fmt_multistate_int`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(in crate::ssh) fn as_str(self) -> &'static str {
+        match self {
+            Self::No => "false",
+            Self::Yes => "true",
+            Self::Always => "always",
+        }
+    }
+}
+
+/// Parses a [`ValueKind::CanonicalizeHostname`] value, case-insensitively as
+/// `parse_multistate_value` compares (openssh/readconf.c:1103-1117).
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn parse_canonicalize_hostname(value: &str) -> Option<CanonicalizeHostname> {
+    match value.to_ascii_lowercase().as_str() {
+        "yes" | "true" => Some(CanonicalizeHostname::Yes),
+        "no" | "false" => Some(CanonicalizeHostname::No),
+        "always" => Some(CanonicalizeHostname::Always),
+        _ => None,
+    }
+}
+
+/// Checks a `CanonicalDomains` entry and returns it lowercased without a
+/// trailing dot, or upstream's diagnostic - a port of `valid_domain` with
+/// `makelower` set (openssh/misc.c:2398-2441).
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn valid_domain(name: &str) -> Result<String, String> {
+    let shown: String = name.chars().take(100).collect();
+    let Some(&first) = name.as_bytes().first() else {
+        return Err("empty domain name".to_owned());
+    };
+    if !first.is_ascii_alphanumeric() && first != b'_' {
+        return Err(format!(
+            "domain name \"{shown}\" starts with invalid character"
+        ));
+    }
+    // Upstream lowercases in place as it scans, so a refused name is shown
+    // lowercased up to and including the offending byte (:2415-2431).
+    let shown_at = |i: usize| -> String {
+        let mut seen = name.as_bytes().to_vec();
+        seen[..=i].make_ascii_lowercase();
+        String::from_utf8_lossy(&seen).chars().take(100).collect()
+    };
+    let mut last = 0_u8;
+    for (i, c) in name.bytes().map(|c| c.to_ascii_lowercase()).enumerate() {
+        if last == b'.' && c == b'.' {
+            return Err(format!(
+                "domain name \"{}\" contains consecutive separators",
+                shown_at(i)
+            ));
+        }
+        if c != b'.' && c != b'-' && c != b'_' && !c.is_ascii_alphanumeric() {
+            return Err(format!(
+                "domain name \"{}\" contains invalid characters",
+                shown_at(i)
+            ));
+        }
+        last = c;
+    }
+    let lower = name.to_ascii_lowercase();
+    Ok(lower.strip_suffix('.').unwrap_or(&lower).to_owned())
 }
 
 /// Parses a [`ValueKind::Int`] value the way upstream's `atoi_err` does:
@@ -1056,6 +1171,17 @@ mod tests {
         ("HostKeyAlgorithms", Opcode::HostKeyAlgorithms),
         ("RekeyLimit", Opcode::RekeyLimit),
         ("Tag", Opcode::Tag),
+        ("CanonicalizeHostname", Opcode::CanonicalizeHostname),
+        ("CanonicalDomains", Opcode::CanonicalDomains),
+        ("CanonicalizeMaxDots", Opcode::CanonicalizeMaxDots),
+        (
+            "CanonicalizeFallbackLocal",
+            Opcode::CanonicalizeFallbackLocal,
+        ),
+        (
+            "CanonicalizePermittedCNAMEs",
+            Opcode::CanonicalizePermittedCNAMEs,
+        ),
         ("Port", Opcode::Port),
         ("IdentityFile", Opcode::IdentityFile),
         ("IdentitiesOnly", Opcode::IdentitiesOnly),
