@@ -188,7 +188,10 @@ fn decide_entry_action(
     let list_only = context.list_only_enabled();
 
     if entry_type.is_symlink() && effective_type.is_symlink() {
-        if context.links_enabled() || list_only {
+        // upstream: flist.c:482-506 readlink_stat() - `--copy-unsafe-links`
+        // dereferences an unsafe link before `-l` is consulted, so keep the
+        // link in play here; a safe one is demoted after that check.
+        if context.links_enabled() || list_only || context.copy_unsafe_links_enabled() {
             return Ok(EntryAction::CopySymlink);
         }
         *keep_name = false;
@@ -432,6 +435,16 @@ pub(crate) fn plan_directory_entries<'a>(
                     action = EntryAction::SkipNonRegular;
                 }
             }
+        }
+
+        // upstream: generator.c:2109-2115 - a link readlink_stat() left as a
+        // symlink is skipped as non-regular when `-l` is off.
+        if matches!(action, EntryAction::CopySymlink)
+            && !context.links_enabled()
+            && !context.list_only_enabled()
+        {
+            keep_name = false;
+            action = EntryAction::SkipNonRegular;
         }
 
         if matches!(action, EntryAction::CopyDirectory)
@@ -915,6 +928,16 @@ fn plan_directory_entries_with_prefetch<'a>(
                     action = EntryAction::SkipNonRegular;
                 }
             }
+        }
+
+        // upstream: generator.c:2109-2115 - a link readlink_stat() left as a
+        // symlink is skipped as non-regular when `-l` is off.
+        if matches!(action, EntryAction::CopySymlink)
+            && !context.links_enabled()
+            && !context.list_only_enabled()
+        {
+            keep_name = false;
+            action = EntryAction::SkipNonRegular;
         }
 
         #[cfg(unix)]

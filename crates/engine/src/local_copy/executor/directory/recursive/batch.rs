@@ -457,8 +457,7 @@ fn batch_source_acl(
 /// what the generator reads for a network send (`prepare_pending_acl`).
 ///
 /// Returns `None` for a symlink, which carries no ACL. Under `--fake-super`
-/// an ACL stashed in the source's `%aacl`/`%dacl` xattr wins over the real
-/// one, as on the network path.
+/// only the source's `%aacl`/`%dacl` stash is read, as on the network path.
 ///
 /// upstream: `flist.c:2048-2055 send_file_name()` calls `get_acl()` for every
 /// non-symlink under `preserve_acls`, and `flist.c:2077-2081` sends it right
@@ -473,12 +472,8 @@ fn read_batch_source_acl(
         return None;
     }
     let read = |is_default: bool| {
-        if fake_super
-            && let Ok(Some(acl)) = ::metadata::load_fake_super_acl(source_path, !is_default)
-        {
-            return acl;
-        }
-        ::metadata::get_rsync_acl(source_path, entry.mode(), is_default)
+        ::metadata::read_sender_acl(source_path, entry.mode(), is_default, fake_super)
+            .unwrap_or_default()
     };
     Some((read(false), entry.is_dir().then(|| read(true))))
 }

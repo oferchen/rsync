@@ -230,6 +230,12 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
             }
             continue;
         }
+        // upstream: generator.c:2109-2115 - a non-regular entry the receiver
+        // cannot create gets only the `skipping non-regular file` notice and
+        // `goto cleanup`, never an itemized row.
+        if matches!(event.kind(), ClientEventKind::SkippedNonRegular) {
+            continue;
+        }
         if should_suppress_event(event, context, format.itemizes()) {
             continue;
         }

@@ -473,6 +473,103 @@ pub fn store_fake_super_acl(
     )
 }
 
+/// Reads the ACL a sender transmits for `path`.
+///
+/// Under `--fake-super` only the `%aacl`/`%dacl` stash counts: a source
+/// without one sends the empty ACL, never its real filesystem ACL. `--fake-super`
+/// is never passed to the remote side, so this is the sending process's own
+/// setting.
+///
+/// # Errors
+///
+/// Returns an error when the stash exists but is corrupt.
+///
+/// # Upstream Reference
+///
+/// `get_rsync_acl()` (`acls.c:599-607`): under `am_root < 0` a missing
+/// `get_xattr_acl()` returns before the real ACL is read, leaving the
+/// `empty_rsync_acl` that `get_acl_fdat()` (`acls.c:766`) started with.
+pub fn read_sender_acl(
+    path: &Path,
+    mode: u32,
+    is_default: bool,
+    fake_super: bool,
+) -> io::Result<protocol::acl::RsyncAcl> {
+    if fake_super {
+        return Ok(load_fake_super_acl(path, !is_default)?.unwrap_or_default());
+    }
+    Ok(crate::get_rsync_acl(path, mode, is_default))
+}
+
+/// Stores an access ACL in `%aacl` unless the destination already holds an
+/// equivalent one.
+///
+/// A missing `%aacl` reads as the empty ACL, so a source whose ACL is only its
+/// permission bits stores nothing, as with upstream.
+///
+/// # Upstream Reference
+///
+/// Mirrors the access arm of `set_acl_fdat()` (`acls.c:1388-1399`): the store
+/// runs only when `rsync_acl_equal_enough()` finds the destination ACL, as
+/// `get_rsync_acl()` loads it under `am_root < 0` (`acls.c:601-631`), unequal.
+/// The `NO_ENTRY` slots of a loaded ACL are filled from `mode`, where upstream
+/// uses the destination's mode; `equal_enough` compares none of them except
+/// `group_obj` under a mask, so the outcome only differs when the mode changed,
+/// and then the stored bytes are the same either way.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn update_fake_super_access_acl(
+    path: &Path,
+    acl: &protocol::acl::RsyncAcl,
+    mode: u32,
+) -> io::Result<()> {
+    let mut wanted = acl.clone();
+    wanted.condense_for_fake_super_store(mode);
+    let current = load_fake_super_acl(path, true)?.map_or_else(
+        protocol::acl::RsyncAcl::default,
+        |mut held| {
+            let fill = |slot: &mut u8, bits: u32| {
+                if *slot == protocol::acl::NO_ENTRY {
+                    *slot = (bits & 7) as u8;
+                }
+            };
+            fill(&mut held.user_obj, mode >> 6);
+            fill(&mut held.group_obj, mode >> 3);
+            fill(&mut held.other_obj, mode);
+            held
+        },
+    );
+    if current.equal_enough(&wanted, mode) {
+        return Ok(());
+    }
+    store_fake_super_acl(path, true, acl, mode)
+}
+
+/// Brings a directory's `%dacl` in line with `acl`, writing only on a change.
+///
+/// An ACL without `user_obj` means "no default ACL" and removes the xattr.
+///
+/// # Upstream Reference
+///
+/// Mirrors the default arm of `set_acl_fdat()` (`acls.c:1405-1415`): strict
+/// `rsync_acl_equal()` against the loaded `%dacl` (empty when absent), then
+/// `set_rsync_acl()`'s delete (`acls.c:1176-1182`) or store branch.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn update_fake_super_default_acl(
+    path: &Path,
+    acl: &protocol::acl::RsyncAcl,
+    mode: u32,
+) -> io::Result<()> {
+    let current = load_fake_super_acl(path, false)?.unwrap_or_default();
+    if current.equal(acl) {
+        return Ok(());
+    }
+    if acl.has_user_obj() {
+        store_fake_super_acl(path, false, acl, mode)
+    } else {
+        remove_fake_super_default_acl(path)
+    }
+}
+
 /// Retrieves a fake-super ACL from a file's xattr.
 ///
 /// Returns `None` if the xattr does not exist. Returns an error if the xattr
@@ -739,6 +836,28 @@ pub fn load_fake_super_acl(
 #[cfg(not(all(unix, feature = "xattr")))]
 pub fn remove_fake_super_default_acl(_path: &Path) -> io::Result<()> {
     Ok(())
+}
+
+/// Returns `Unsupported` on platforms without xattr support, like
+/// [`store_fake_super_acl`].
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn update_fake_super_access_acl(
+    path: &Path,
+    acl: &protocol::acl::RsyncAcl,
+    mode: u32,
+) -> io::Result<()> {
+    store_fake_super_acl(path, true, acl, mode)
+}
+
+/// Returns `Unsupported` on platforms without xattr support, like
+/// [`store_fake_super_acl`].
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn update_fake_super_default_acl(
+    path: &Path,
+    acl: &protocol::acl::RsyncAcl,
+    mode: u32,
+) -> io::Result<()> {
+    store_fake_super_acl(path, false, acl, mode)
 }
 
 #[cfg(test)]
