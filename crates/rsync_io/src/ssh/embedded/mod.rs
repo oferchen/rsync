@@ -7,6 +7,8 @@
 pub mod cipher;
 
 #[cfg(feature = "embedded-ssh")]
+mod algorithms;
+#[cfg(feature = "embedded-ssh")]
 mod auth;
 #[cfg(feature = "embedded-ssh")]
 mod config;
