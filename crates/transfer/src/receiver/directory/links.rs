@@ -126,7 +126,7 @@ impl ReceiverContext {
     ///   (clientserver.c:1067-1068; a non-chroot module records its full path
     ///   length as `module_dirlen`), never in the client end of a daemon
     ///   connection, so the client of a pull stores the wire target verbatim.
-    ///   Measured against rsync 3.5.0: a pull client keeps
+    ///   Measured against rsync 3.5.1: a pull client keeps
     ///   `abs_link -> /etc/hostname` byte-for-byte.
     #[cfg(unix)]
     pub(in crate::receiver) fn stored_symlink_target<'e>(
@@ -216,7 +216,7 @@ impl ReceiverContext {
             // rejects every absolute target and munging makes every target
             // absolute, so a munging receiver under --safe-links skips every
             // symlink - safe ones included - and the notice quotes the munged
-            // target. Measured against rsync 3.5.0 (daemon push with
+            // target. Measured against rsync 3.5.1 (daemon push with
             // `munge symlinks = yes`, client --safe-links: every link skipped).
             if self.config.flags.safe_links
                 && crate::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative_path)
@@ -1276,7 +1276,7 @@ impl ReceiverContext {
 /// daemon configuration in which a peer-supplied target reaches the disk
 /// verbatim. It is never set in the client end of a daemon connection, so the
 /// caller gates this on `!client_mode`: a pull client stores the wire target
-/// byte-for-byte (measured against rsync 3.5.0).
+/// byte-for-byte (measured against rsync 3.5.1).
 ///
 /// This rewrite is what makes an absolute target relative, so a link to
 /// `/etc/hostname` becomes the in-tree `etc/hostname` and `--safe-links` no

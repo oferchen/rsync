@@ -18,7 +18,7 @@
 //! in production for this one option.
 //!
 //! Skip conditions (test passes with a printed reason):
-//! - The cross-implementation cell needs a built upstream 3.5.0 binary; without
+//! - The cross-implementation cell needs a built upstream 3.5.1 binary; without
 //!   it, it reports why it did not run.
 
 use std::fs;
@@ -31,11 +31,11 @@ fn oc_binary() -> PathBuf {
 
 fn upstream_binary() -> Option<PathBuf> {
     let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.0/rsync");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
     path.is_file().then_some(path)
 }
 
-/// Every spelling measured against the real 3.5.0 binary, with whether it is
+/// Every spelling measured against the real 3.5.1 binary, with whether it is
 /// accepted. `1M` and above exceed `MAX_BLOCK_SIZE` (131072) at protocol >= 30,
 /// so they are rejected for a reason unrelated to the grammar - which is what
 /// makes them useful: a parser that ignored the scale entirely would accept
@@ -111,8 +111,8 @@ fn block_size_accepts_the_upstream_size_grammar() {
 fn the_grammar_table_matches_the_real_upstream_binary() {
     let Some(upstream) = upstream_binary() else {
         println!(
-            "SKIP: upstream 3.5.0 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.0/rsync)"
+            "SKIP: upstream 3.5.1 oracle not built \
+             (target/interop/upstream-src/rsync-3.5.1/rsync)"
         );
         return;
     };
@@ -121,7 +121,7 @@ fn the_grammar_table_matches_the_real_upstream_binary() {
         assert_eq!(
             fixture.accepts(&upstream, value),
             *expected,
-            "upstream 3.5.0 --block-size={value} acceptance"
+            "upstream 3.5.1 --block-size={value} acceptance"
         );
     }
 }

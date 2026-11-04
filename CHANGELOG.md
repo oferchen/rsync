@@ -149,6 +149,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Step the zstd token decoder through a fixed output buffer (#8172)
 - Write received xattrs through a leaf pinned beneath the destination root, and on Linux ACLs too, special files included; macOS and the BSDs apply ACLs by path, as upstream does (CVE-2026-53799, #8167, #8201)
 - Bump `rustls-webpki` to 0.103.16, which rejects certificate paths through the distrusted emSign intermediates (RUSTSEC-2026-0382, #8228)
+- Bump `crypto-bigint`, `ctutils` and the `zstd` crates for RUSTSEC-2026-0385, 0387, 0391, 0398, 0403 and 0410; the bundled libzstd stays 1.5.7, so compressed bytes on the wire are unchanged (#8245)
 
 ### Added
 
@@ -191,6 +192,9 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A recursive local `--write-batch` records incremental recursion, as 3.5.1 does (header `81 ff`), and writes its file list in the incremental layout: the top level, then one sub-list per directory, placed among the file data by 3.5.1's 1000-entry lookahead. rsync 3.5.1 replays these batches, and `--delete-before`, `--delete-after`, `--delay-updates`, `-m`, `--qsort` and `--no-inc-recursive` still record a flat list (#8261)
 
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
+- The cross-implementation oracle tests (block-size grammar, empty size values, daemon auth username, hosts-allow sentinels, daemon log host rendering, daemon filter-file whitespace, filter-file open failures, local progress order, and the three upstream read-batch cells) run against an rsync 3.5.1 binary instead of 3.5.0 (#8314)
+- The path-confinement, rrsync and filter-provenance design notes and the legacy-oracle build script cite rsync 3.5.1, including its `--files-from` ownership walk, `/dev/fd` pins and rrsync root-relative paths (#8311)
+- The remaining design notes, comparison docs and code comments that cited rsync 3.5.0 as the source of truth now cite 3.5.1 (protocol 33, `MSG_BLOCK_STATS`), and the `refuse options` drift test reads 3.5.1's `options.c` (#8313)
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down to 33 instead of refused, and a peer outside 28-40 is refused with exit 2 after `@RSYNCD: OK`, as upstream does (#7916, #8209)
 - Every pull request is gated on upstream's 3.5.1 test suite, on Linux and macOS, over a pipe and a TCP daemon, as root and non-root (#7387, #7339, #7405, #7408, #7392, #7391, #7996, #8019)
 - Daemon `%` expansion matches upstream's `expand_vars()`: only `%NAME%` references expand, and the oc-only tokens are removed. Replace `%MODULE%`/`%m` with `%RSYNC_MODULE_NAME%`, `%ADDR%`/`%a` with `%RSYNC_HOST_ADDR%`, `%DIFFHOST%`/`%h` with `%RSYNC_HOST_NAME%`, `%P` with `%RSYNC_MODULE_PATH%` and `%u` with `%RSYNC_USER_NAME%`; `%p` has no hook-template equivalent (use `$RSYNC_PID` in the hook's shell), and `%%` is no longer an escape (#8080)
@@ -225,6 +229,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 ### Performance
 - Local `--checksum` compares source and destination through the parallel checksum service: same-size pairs of a directory are hashed in one rayon batch, and files of 8 MiB or more as 4 MiB block vectors in parallel; decisions and output are unchanged against rsync 3.5.1 (#8249)
+- A `--checksum` sender hashes the regular files of each file list and INC_RECURSE sub-list in one parallel batch through the same service; each sum is the exact negotiated whole-file digest, and the file-list bytes are unchanged against rsync 3.5.1 (#8312)
 
 - Probe OpenSSL MD4 once per process, as upstream does, instead of on every hasher; on OpenSSL 3 builds without the legacy provider this drops a failing `EVP_DigestInit_ex` per block (#8231)
 - The receiver no longer stats each destination before committing it under `--perms` (so every `-a` transfer): only `dest_mode()` reads that stat, and upstream runs `dest_mode()` only without `--perms`. This drops one lookup per file, a failing one for every new file (#8299)
@@ -256,6 +261,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A receiver that cannot create the `--delay-updates` / `--partial-dir` staging directory for a completed file now prints upstream's `Unable to create partial-dir for %s -- discarding completed file.`, drops that file and carries on without failing the run, instead of aborting on the first file (exit 23 locally, exit 3 on a push) (#8290)
 - A server over a remote shell writes its error and warning lines to its own stderr, which the remote shell hands to the client, instead of framing them into the protocol stream; it frames them, as rsync 3.5.1 does, under `--no-msgs2stderr`, at protocol 28 and older, and from a daemon not run over a remote shell. `--msgs2stderr` now also takes info lines off the wire, and a protocol 29 peer receives `MSG_ERROR` as `MSG_ERROR_XFER` (#8297)
 - A server picks the checksum and compression names it ranks best among those both sides offer, as rsync 3.5.1 does, instead of the client's first acceptable one; only the `v` capability letter turns on that negotiation, and the pre-release `V` sets only the varint flags encoding (#8328)
+- A receive that fails to write, sync or position the received file now prints rsync 3.5.1's own line for that site - `write failed on`, `fsync failed on`, `lseek of ... returned`, or `lseek returned` before `write failed on` for an in-place skip - at its upstream level, and ends on the bare `error in file IO (code 11)` trailer instead of a `transfer failed:` or `server error:` cause, on pulls, pushes and daemon pulls (#8304)
 - A `--fake-super` rerun compares the destination's `%stat` record, not its owner-writable real mode, so 0444, setuid and setgid files no longer itemize `.f...p.....`, locally or on a pull (#8251)
 - A destination `%stat` that does not parse ends a `--fake-super` copy or pull with upstream's `Corrupt ... xattr attached to` line and exit 11 instead of exit 0, and the local copy prints the cause and the `error in file IO` trailer as two lines with an absolute path, as upstream does (#8251)
 - A remote-shell server sender that fails no longer sends `MSG_ERROR_EXIT`, so its client exits 12 like upstream's; a daemon sender over a socket still delivers its own exit code (#8251)
@@ -292,6 +298,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A pushing client's `--stats` "Number of files" counts every INC_RECURSE sub-list it sent (#8282)
 - A disk error on one file (`ENOSPC`, a failed open, backup or `--append-verify` prefix) drains that file's queued data before reporting it, so a daemon worker no longer deadlocks its network thread and a QUIC push no longer stalls into a timeout, as upstream's `discard_receive_data()` does (`receiver.c:1254-1261`) (#8229)
 - `--remove-source-files --delay-updates` no longer lets the sender delete a source whose staged copy failed its final rename; the confirmation is sent only after the rename lands, as upstream does (#8232)
+- The network receiver creates the `--partial-dir` / `--delay-updates` staging directory 0700, as upstream `handle_partial_dir()` does, instead of 0777 less the umask; an existing staging directory keeps its mode (#8305)
 - A received file whose `close()` fails (where NFS-like filesystems report a failed write) now aborts with exit 11 and upstream's `close failed on` message instead of being committed (#8232)
 - An INC_RECURSE sender no longer mis-segments directories whose names are not valid UTF-8; an upstream receiver aborted with "invalid path from sender" (exit 4) (#8236)
 - `--inplace --sparse` local copies could write wrong content after a block ending in zeros (#7983); a related io_uring relative-seek defect is fixed and the network receiver is pinned unaffected (#7984)
@@ -314,6 +321,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A remote shell that dies before the protocol handshake exits 12 with upstream's message in either ordering; a failed version write exited 5 (#8283)
 - A failed pull reports from the process upstream would: `[Receiver]` before the file list is in, then the receiver and the generator, each with its own byte count. A daemon pull exits by error class (end of stream 12, reset socket 10, `--timeout` 30, an uncreatable destination root 11 with upstream's `mkdir ... failed` line) instead of 23 (#8287)
 - A run the peer ends with `MSG_ERROR_EXIT` exits with the peer's code and prints no exit trailer of its own, as upstream; a `--log-file` run without `--info=stats` keeps it (#8298)
+- `-z` with zlib or zlibx now cuts DEFLATED_DATA pieces where upstream's 16383-byte output buffer fills, instead of after every deflate call, so the token stream is framed exactly as 3.5.1 frames it; remaining size differences come from zlib-ng and are documented in docs/UPSTREAM_COMPARISON.md (#8315)
 - A receiver refuses a peer file-list index that no live list owns, including one in an incremental-recursion sub-list it has already freed, with upstream's `File-list index %d not in %d - %d (read_ndx_and_attrs)` error and exit 2 (#8240)
 - A `-m` push to an upstream daemon sends the filter list the receiver reads, so 3.5.1 no longer aborts with `buffer overflow: recv_rules` (#8232)
 - A basis block matches every repeat of its content, as upstream does: repeated data (zero runs in sparse or VM images) went out as literals where upstream sends copy tokens, changing the wire and the `--stats` Literal/Matched split (#8009)
@@ -606,6 +614,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `--existing` and `--ignore-existing` apply to non-regular entries (#8168)
 - `-z` is detected only in the server flag cluster, not inside an `-e` string (#8188)
 - Public rustdoc no longer links private items in `batch`, `test-support` and `transfer`, so the strict "rustdoc links" job passes (#8276)
+- `-c` with a `none` file checksum (`--checksum-choice=none` or `md5,none`) exits 4 with `Invalid checksum-choice for --checksum: none (0)` at the first regular file, as 3.5.1 does; it used MD4 and exited 0 (#8262)
 
 ### Removed
 - The unreachable `engine::AsyncBatchCopier` and its `RSYNC_MAX_CONCURRENT` environment read (#8236)

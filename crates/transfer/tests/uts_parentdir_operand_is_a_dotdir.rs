@@ -256,7 +256,7 @@ fn a_dotdot_that_is_not_the_last_component_is_a_normal_name() {
 /// forces `NORMAL_NAME` (`flist.c:2821-2823`) and then rejects the operand at
 /// `flist.c:2898-2907`; it never grants it contents semantics.
 ///
-/// oc does not implement that rejection yet (MEASURED: rsync 3.5.0 exits 1 with
+/// oc does not implement that rejection yet (MEASURED: rsync 3.5.1 exits 1 with
 /// `found ".." dir in relative path: ...`, oc does not - a KNOWN residual
 /// divergence, unchanged by this fix). What this cell pins is the SCOPE: the
 /// `--relative` names must not become the `.`-rooted DOTDIR listing.

@@ -1680,7 +1680,7 @@ comp_run_scenario() {
       #     -> sanitize_paths is on (clientserver.c:1068) and munging is off, so
       #        flist.c:1554 rewrites the target to the relative, in-tree
       #        "etc/hostname". --safe-links (generator.c:1951) then correctly
-      #        does not skip it. Measured: rsync 3.4.4 and 3.5.0 as daemon
+      #        does not skip it. Measured: rsync 3.4.4, 3.5.0 and 3.5.1 as daemon
       #        receivers both CREATE the link under this exact config.
       #   munge symlinks = on (upstream's default for a module with a path)
       #     -> the target gains the /rsyncd-munged/ prefix, stays absolute, and

@@ -1078,7 +1078,7 @@ fn link_dest_skips_symlink_in_reference() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    // Measured against rsync 3.5.0: exit 0 with a plain copy - the symlink
+    // Measured against rsync 3.5.1: exit 0 with a plain copy - the symlink
     // basis is skipped, never linked and never read through.
     assert!(dest_file.exists());
     assert_eq!(fs::read(&dest_file).expect("read dest"), b"real content");

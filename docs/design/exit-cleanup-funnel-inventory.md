@@ -9,7 +9,9 @@ error latches at the site where its RERR code is decided - the gap b1
 deliberately left open.
 
 All upstream citations are from rsync 3.5.0
-(`target/interop/upstream-src/rsync-3.5.0/`), read, not recalled. All
+(`target/interop/upstream-src/rsync-3.5.0/`), read, not recalled. Re-checked
+against 3.5.1: both cited files, `cleanup.c` and `log.c`, are byte-identical
+to 3.5.0. All
 oc citations are from master at 0870dafa3.
 
 ## 1. Upstream `_exit_cleanup` walk (cleanup.c:103-283)

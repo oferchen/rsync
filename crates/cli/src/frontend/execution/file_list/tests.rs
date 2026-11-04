@@ -320,7 +320,7 @@ fn resolve_file_list_entries_files_from_with_relative_still_inserts_marker() {
 /// A `--files-from` entry that climbs above the transfer root is CLAMPED to
 /// the root, not carried through verbatim.
 ///
-/// Measured against real upstream 3.5.0: given `src/secret/leak.txt` and a
+/// Measured against real upstream 3.5.1: given `src/secret/leak.txt` and a
 /// files-from line `../secret/leak.txt`, upstream clamps to `secret/leak.txt`,
 /// finds it under argv[0], and TRANSFERS it (exit 0). Before this clamp oc
 /// carried the `..` into the join, producing `src/./../secret/leak.txt`, which
@@ -389,7 +389,7 @@ fn resolve_file_list_entries_files_from_absolute_entry_is_taken_relative_to_the_
     // upstream: `sanitize_path` skips one leading slash before walking the
     // components (flist.c:2811 -> util1.c), so a `/absolute/path.txt`
     // files-from line names an entry INSIDE the transfer root, not a
-    // filesystem-absolute path. Measured against rsync 3.5.0: a `/file` entry
+    // filesystem-absolute path. Measured against rsync 3.5.1: a `/file` entry
     // transfers `<source>/file`; oc used to bail out on `is_absolute()` before
     // the clamp could run and failed with exit 23.
     let mut entries = vec![OsString::from("/absolute/path.txt")];

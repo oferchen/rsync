@@ -282,7 +282,7 @@ mod tests {
 
     /// The discriminating cell.
     ///
-    /// Ground truth, MEASURED 2026-09-07 against a real rsync 3.5.0 daemon on
+    /// Ground truth, MEASURED 2026-11-03 against a real rsync 3.5.1 daemon on
     /// loopback with `read only = no`, pushing `foo` and `keep` into a module
     /// declaring `filter = - foo` then `filter = clear`: BOTH files land.
     /// oc refused `foo` and exited 23, because the clear was dropped here and
@@ -320,7 +320,7 @@ mod tests {
     /// clear disabled filtering", which the first two tests alone cannot tell
     /// apart.
     ///
-    /// Same fixture measured against rsync 3.5.0 with a third directive
+    /// Same fixture measured against rsync 3.5.1 with a third directive
     /// `filter = - keep`: `foo` lands, `keep` is refused.
     #[test]
     fn a_rule_after_the_clear_still_applies() {

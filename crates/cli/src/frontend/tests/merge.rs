@@ -171,7 +171,7 @@ fn apply_merge_directive_still_fails_when_the_collapsed_name_is_absent() {
     );
 }
 
-/// MEASURED against rsync 3.5.0 (`filter-merge-content-echo`): an unparsable
+/// MEASURED against rsync 3.5.1 (`filter-merge-content-echo`): an unparsable
 /// line inside a merge file must be described, never echoed. The merge file is
 /// named by a rule the peer can choose, so echoing any line of it turns the
 /// filter parser into a read-any-line oracle for every file this process can

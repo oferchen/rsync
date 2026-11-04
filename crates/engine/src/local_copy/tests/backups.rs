@@ -743,7 +743,7 @@ fn cross_device_file_backup_preserves_mode_and_mtime() {
 // filesystem tiers already carry it, so a `--backup-dir` landing on another
 // mount was the one shape that silently lost it.
 //
-// Measured against rsync 3.5.0 with a `--backup-dir` on a second filesystem:
+// Measured against rsync 3.5.1 with a `--backup-dir` on a second filesystem:
 // upstream keeps the named-user entry on the copy-tier backup, and before this
 // carry oc dropped it while both same-filesystem tiers kept it.
 // Runs one cross-device copy-tier backup cell with `--acls` either on or off,
@@ -1852,7 +1852,7 @@ fn backup_dir_with_inplace_no_whole_file_copies_matched_blocks() {
 // never empties, the rmdir fails ENOTEMPTY, and upstream refuses the entry at
 // 23 with both diagnostics - even though --force was given.
 //
-// Measured against rsync 3.5.0 on this exact fixture: rc=23, `dest/source/item`
+// Measured against rsync 3.5.1 on this exact fixture: rc=23, `dest/source/item`
 // still a directory holding `inner.txt~`, `cannot delete non-empty directory:
 // source/item` on stdout and `could not make way for new regular file:
 // source/item` on stderr. This cell used to assert `item` had become a file.

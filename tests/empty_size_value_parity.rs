@@ -15,9 +15,9 @@
 //! | option | upstream call | empty resolves to |
 //! |---|---|---|
 //! | `--block-size` | min 0 (options.c:1808) | 0 -> default block size |
-//! | `--min-size` | min 0 (:1809) | 0 -> no lower bound |
+//! | `--min-size` | min 0 (:1821) | 0 -> no lower bound |
 //! | `--max-size` | min 0 (:1815) | 0 -> **excludes every non-empty file** |
-//! | `--bwlimit` | min 512, `unlimited_0` (:1821) | 0 -> unlimited |
+//! | `--bwlimit` | min 512, `unlimited_0` (:1827) | 0 -> unlimited |
 //! | `--max-alloc` | min 1 MiB, `unlimited_0` (:2073) | 0 -> the largest limit (SIZE_MAX/2) |
 //!
 //! `--max-size=` excluding everything is why a success-only assertion would be
@@ -25,7 +25,7 @@
 //! parser: each option decides what its 0 means.
 //!
 //! Skip conditions (test passes with a printed reason):
-//! - The cross-implementation cell needs a built upstream 3.5.0 binary.
+//! - The cross-implementation cell needs a built upstream 3.5.1 binary.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ fn oc_binary() -> PathBuf {
 
 fn upstream_binary() -> Option<PathBuf> {
     let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.0/rsync");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
     path.is_file().then_some(path)
 }
 
@@ -122,12 +122,12 @@ fn oc_resolves_an_empty_size_value_to_zero() {
 fn upstream_resolves_an_empty_size_value_to_zero() {
     let Some(upstream) = upstream_binary() else {
         println!(
-            "SKIP: upstream 3.5.0 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.0/rsync)"
+            "SKIP: upstream 3.5.1 oracle not built \
+             (target/interop/upstream-src/rsync-3.5.1/rsync)"
         );
         return;
     };
-    assert_empty_matches_zero(&upstream, "upstream 3.5.0");
+    assert_empty_matches_zero(&upstream, "upstream 3.5.1");
 }
 
 /// THE DISCRIMINATOR. `--max-size=` is not "no limit" and not "the default":
@@ -176,7 +176,7 @@ fn a_non_empty_size_value_still_parses_and_applies() {
 /// value below the minimum is still rejected.
 ///
 /// upstream: options.c:2073 `parse_size_arg(..., "max-alloc", 1024*1024, -1, True)`,
-/// options.c:2086 `if (!max_alloc) max_alloc = SIZE_ARG_MAX;`
+/// options.c:2085-2086 `if (!max_alloc) max_alloc = SIZE_ARG_MAX;`
 #[test]
 fn an_empty_max_alloc_means_the_largest_limit() {
     let fixture = Fixture::new();

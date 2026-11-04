@@ -51,6 +51,8 @@ mod writer;
 
 use std::fs::File;
 use std::io::{self, Write};
+
+use crate::CommitFailure;
 use std::os::windows::io::AsRawHandle;
 
 use windows_sys::Win32::Foundation::{HANDLE, TRUE};
@@ -271,13 +273,24 @@ impl IocpDiskBatch {
     ///
     /// Returns an error if flushing or `FlushFileBuffers` fails.
     pub fn commit_file(&mut self, do_fsync: bool) -> io::Result<(File, u64)> {
-        self.flush_current()?;
+        self.commit_file_staged(do_fsync)
+            .map_err(CommitFailure::into_inner)
+    }
+
+    /// [`Self::commit_file`], reporting which stage failed.
+    ///
+    /// # Errors
+    ///
+    /// [`CommitFailure::Write`] if draining the buffered writes fails,
+    /// [`CommitFailure::Fsync`] if `FlushFileBuffers` fails.
+    pub fn commit_file_staged(&mut self, do_fsync: bool) -> Result<(File, u64), CommitFailure> {
+        self.flush_current().map_err(CommitFailure::Write)?;
 
         let active = self.current_file.take().ok_or_else(|| {
-            io::Error::new(
+            CommitFailure::Write(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "no file active in batched IOCP disk writer",
-            )
+            ))
         })?;
 
         let bytes_written = active.bytes_written;
@@ -293,7 +306,7 @@ impl IocpDiskBatch {
             if ok != TRUE {
                 // `active` (including its overlapped-handle RAII guard) drops
                 // on this early return, closing the reopened handle.
-                return Err(io::Error::last_os_error());
+                return Err(CommitFailure::Fsync(io::Error::last_os_error()));
             }
         }
 
