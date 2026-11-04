@@ -18,6 +18,29 @@ pub(crate) struct DirectoryEntry {
     pub(crate) file_name: OsString,
     pub(crate) path: PathBuf,
     pub(crate) metadata: fs::Metadata,
+    /// Position of the entry in its directory's `readdir` order.
+    ///
+    /// Entries are sorted after the scan, but upstream sends each file list in
+    /// the order `readdir()` returned the names and sorts only afterwards, so
+    /// any writer that reproduces the wire file list needs the original order.
+    ///
+    /// upstream: flist.c:send_directory() - `send_file_name()` per `readdir()`
+    /// entry, then flist.c:flist_sort_and_clean().
+    pub(crate) readdir_index: u32,
+}
+
+/// Sort key that puts one file list's members in the order upstream sends
+/// them: the transfer root `.` first, then `readdir()` order, then walk order
+/// (which separates operands, all of which carry readdir index 0).
+///
+/// upstream: flist.c:send_directory() - names go out as `readdir()` returns
+/// them; flist.c:send_file_list() sends `.` before the directory's contents.
+pub(crate) const fn wire_order_key(
+    is_root: bool,
+    readdir_index: u32,
+    walk_index: usize,
+) -> (bool, u32, usize) {
+    (!is_root, readdir_index, walk_index)
 }
 
 /// Which resolver a directory scan enumerates through.
@@ -120,7 +143,7 @@ fn read_directory_entries_sorted_sequential(
     let read_dir =
         fs::read_dir(path).map_err(|error| LocalCopyError::io("read directory", path, error))?;
 
-    for entry in read_dir {
+    for (readdir_index, entry) in (0u32..).zip(read_dir) {
         let entry =
             entry.map_err(|error| LocalCopyError::io("read directory entry", path, error))?;
         let entry_path = entry.path();
@@ -131,6 +154,7 @@ fn read_directory_entries_sorted_sequential(
             file_name: entry.file_name(),
             path: entry_path,
             metadata,
+            readdir_index,
         });
     }
 
@@ -168,7 +192,7 @@ fn read_directory_entries_sorted_parallel(
 
     if pending.len() < PARALLEL_THRESHOLD {
         let mut entries = Vec::with_capacity(pending.len());
-        for (file_name, entry_path) in pending.drain(..) {
+        for (readdir_index, (file_name, entry_path)) in (0u32..).zip(pending.drain(..)) {
             let metadata = fs::symlink_metadata(&entry_path).map_err(|error| {
                 LocalCopyError::io("inspect directory entry", entry_path.clone(), error)
             })?;
@@ -176,6 +200,7 @@ fn read_directory_entries_sorted_parallel(
                 file_name,
                 path: entry_path,
                 metadata,
+                readdir_index,
             });
         }
         entries.sort_unstable_by(compare_directory_entries);
@@ -193,12 +218,14 @@ fn read_directory_entries_sorted_parallel(
     pending.reserve(capacity);
     let results: Vec<Result<DirectoryEntry, (PathBuf, std::io::Error)>> = batch
         .into_par_iter()
+        .enumerate()
         .map(
-            |(file_name, entry_path)| match fs::symlink_metadata(&entry_path) {
+            |(readdir_index, (file_name, entry_path))| match fs::symlink_metadata(&entry_path) {
                 Ok(metadata) => Ok(DirectoryEntry {
                     file_name,
                     path: entry_path,
                     metadata,
+                    readdir_index: readdir_index as u32,
                 }),
                 Err(error) => Err((entry_path, error)),
             },
@@ -312,6 +339,34 @@ pub(crate) fn is_device(file_type: fs::FileType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each entry keeps its position in `readdir()` order after the scan
+    /// sorts it, on both the sequential and the parallel stat path; the
+    /// local wire model sends file lists in that order (flist.c:send_directory()).
+    #[test]
+    fn scanned_entries_keep_their_readdir_position() {
+        for count in [PARALLEL_THRESHOLD - 1, PARALLEL_THRESHOLD + 8] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            for i in 0..count {
+                std::fs::write(temp.path().join(format!("entry_{i:03}")), b"x").expect("write");
+            }
+            let readdir: Vec<OsString> = std::fs::read_dir(temp.path())
+                .expect("read_dir")
+                .map(|entry| entry.expect("entry").file_name())
+                .collect();
+            let entries = read_directory_entries_sorted(temp.path()).expect("scan");
+            assert_eq!(entries.len(), count);
+            for entry in &entries {
+                let position = readdir.iter().position(|name| *name == entry.file_name);
+                assert_eq!(
+                    Some(entry.readdir_index as usize),
+                    position,
+                    "{count} entries: {:?}",
+                    entry.file_name
+                );
+            }
+        }
+    }
 
     #[test]
     fn compare_file_names_equal() {
@@ -457,6 +512,7 @@ mod tests {
             file_name: OsString::from("test.txt"),
             path,
             metadata,
+            readdir_index: 0,
         };
 
         let debug = format!("{entry:?}");
