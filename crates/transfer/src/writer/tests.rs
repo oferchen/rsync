@@ -1014,7 +1014,7 @@ fn errors_to_stderr_route_frames_only_info() {
     assert_eq!(frames, vec![(2, b"info\n".to_vec())]);
 }
 
-/// upstream: log.c:357 - `msgs2stderr == 1` keeps every line off the wire.
+/// upstream: log.c:357 - `msgs2stderr != 1` is false when it is 1, so every line stays off the wire.
 #[test]
 fn all_to_stderr_route_frames_nothing() {
     let frames = routed_frames(
