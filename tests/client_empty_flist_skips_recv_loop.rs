@@ -36,6 +36,9 @@
 //!
 //! Driving the real binary over a real socket is required: the empty-list path is
 //! defined by what the two processes do and do not read off the wire.
+// Windows refuses --daemon (cli frontend/server/daemon.rs:181-219), and every leg
+// here serves the source from an oc-rsync daemon.
+#![cfg(unix)]
 
 use std::fs;
 use std::io::Read;
