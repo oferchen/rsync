@@ -51,6 +51,7 @@ These differ from oc-rsync releases before 0.6.5. Each now matches OpenSSH 10.0p
 - `IdentityFile2` is read as `IdentityFile`.
 - `Ciphers`, `MACs`, `KexAlgorithms`, `HostKeyAlgorithms` and `RekeyLimit` change what the transport offers and when it re-keys. The `+`, `-` and `^` forms work.
 - `Tag` and `Match tagged` work.
+- A numeric host is rewritten the way `resolve_addr` rewrites it, whether or not canonicalization is on: `127.1` becomes `127.0.0.1` and `0:0::1` becomes `::1`. That form is what the transport connects to and looks up in `known_hosts`. A scoped IPv6 address keeps its scope as written.
 - Time-based re-keying happens only when `RekeyLimit` names an interval above `0`, as in OpenSSH. Before, the transport re-keyed every hour regardless.
 
 ### Host names and the final pass
@@ -75,5 +76,4 @@ These are tracked for a follow-up (task 594):
 - **Late composition errors:** a list that validates but cannot be composed (a stray `!` pattern) fails at connect time rather than when the file is read.
 - **Fill-time notes:** OpenSSH prints some notes after the file loads, such as `fill_default_options: ca_sign_algorithms: invalid argument` and `Cannot forward agent socket path`. The transport never uses those values, so oc does not print the notes.
 - **No CNAME following:** `CanonicalizePermittedCNAMEs` is parsed but CNAMEs are not followed, and the bare-host resolve check that goes with it is skipped (task 593).
-- **No address reformatting:** numeric addresses are not reformatted the way `resolve_addr` reformats them.
 - **10.6-only keywords:** `RefuseConnection` and `WarnWeakCrypto` exist only in OpenSSH 10.6 and are refused as unknown, as 10.0p1 refuses them.
