@@ -352,7 +352,7 @@ fn io_error_skip_deletion_emits_upstream_notice() {
         .into_iter()
         .filter_map(|event| match event {
             DiagnosticEvent::Info {
-                flag: InfoFlag::Nonreg,
+                flag: InfoFlag::Misc,
                 message,
                 ..
             } => Some(message),

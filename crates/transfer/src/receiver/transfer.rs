@@ -718,8 +718,9 @@ impl ReceiverContext {
             self.io_error_delete_warning_emitted = true;
             // upstream: log.c:rwrite() - a server frames the FINFO notice
             // as MSG_INFO for the client; only a client prints it locally.
+            // A level-0 event: no `--info` setting hides it, only `--quiet`.
             if self.config.connection.client_mode {
-                info_log!(Nonreg, 1, "IO error encountered -- skipping file deletion");
+                info_log!(Misc, 0, "IO error encountered -- skipping file deletion");
             } else {
                 let _ = writer.send_msg_info(b"IO error encountered -- skipping file deletion\n");
             }
