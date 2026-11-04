@@ -48,5 +48,7 @@ pub mod secrets;
 pub mod session_fork;
 /// Signal handler registration and shared atomic flags.
 pub mod signal;
+/// Per-session Windows identity (S4U logon) for the daemon uid/gid settings.
+pub mod windows_logon;
 /// Windows Service Control Manager (SCM) integration.
 pub mod windows_service;
