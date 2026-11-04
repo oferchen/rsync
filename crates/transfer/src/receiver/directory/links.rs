@@ -1144,24 +1144,36 @@ impl ReceiverContext {
                             let _ = (&link_meta, leader_meta);
                         }
                     }
-                    // Remove existing file so we can create the hard link.
+                    // upstream: hlink.c:244 maybe_hard_link() -> generator.c:2469-2483
+                    // atomic_create(..., DEL_FOR_FILE) - one decision for the
+                    // obstacle: rmdir a directory, back up or unlink anything
+                    // else. The refusal is reported inside.
                     //
-                    // On Unix, route the unlink through the
-                    // sandbox dirfd when the destination parent is the
-                    // sandbox root so a TOCTOU swap between the stat
-                    // above and the unlink cannot redirect the syscall
-                    // to an attacker-chosen parent. Windows stays on
-                    // the path-based `remove_file`.
+                    // DEVIATION: for a populated directory, 3.5.1 prints
+                    // delete.c:178-181 "cannot delete non-empty directory" and
+                    // delete.c:273-286 "could not make way for new regular
+                    // file", then hangs (measured). oc reports the same two
+                    // lines and skips the follower, ending the run with 23.
                     #[cfg(unix)]
-                    let _ = fast_io::unlink_via_sandbox_or_fallback(
-                        sandbox,
-                        dest_dir,
-                        relative_path,
+                    let cleared = self.make_way_for_replacement(
+                        writer,
                         &link_path,
-                        fast_io::UnlinkFlags::File,
+                        relative_path,
+                        dest_dir,
+                        sandbox,
+                        MakeWayFor::File,
                     );
                     #[cfg(not(unix))]
-                    let _ = fs::remove_file(&link_path);
+                    let cleared = self.make_way_for_replacement(
+                        writer,
+                        &link_path,
+                        relative_path,
+                        dest_dir,
+                        MakeWayFor::File,
+                    );
+                    if cleared.is_err() {
+                        continue;
+                    }
                 }
 
                 // Ensure parent directory exists.
@@ -1196,59 +1208,24 @@ impl ReceiverContext {
                 #[cfg(not(unix))]
                 let link_result = fast_io::hard_link(&leader_path, &link_path);
                 if let Err(e) = link_result {
-                    debug_log!(
-                        Recv,
-                        1,
-                        "failed to hard link {} => {}: {}",
-                        link_path.display(),
-                        leader_path.display(),
-                        e
+                    // upstream: hlink.c:478-488 hard_link_one() -
+                    // rsyserr(FERROR_XFER, errno, "link %s => %s failed",
+                    // full_fname(fname), oldname) whatever the errno, then on
+                    // to the next file. FERROR_XFER lifts the exit to
+                    // RERR_PARTIAL (23); no errno aborts the transfer.
+                    let _ = self.emit_generator_error_xfer(
+                        writer,
+                        &format!(
+                            "link {} => {} failed",
+                            self.full_fname_in_dest(dest_dir, &link_path),
+                            leader_path
+                                .strip_prefix(dest_dir)
+                                .unwrap_or(&leader_path)
+                                .display()
+                        ),
+                        &e,
                     );
-                    // Discriminate by error class. EACCES
-                    // is the upstream-parity non-fatal class (matches
-                    // `hlink.c:maybe_hard_link -> atomic_create` where a
-                    // permission failure leaves the follower missing and
-                    // the io_error bit drives the non-zero exit).
-                    // EMLINK (link-count exhaustion) and EXDEV
-                    // (cross-device link) are not transient: failing loud
-                    // surfaces the configuration error instead of leaving
-                    // the follower silently missing. ELOOP / EOPNOTSUPP
-                    // from sandbox-anchored refusals are also fail-loud.
-                    if e.kind() == std::io::ErrorKind::PermissionDenied {
-                        // upstream: hlink.c:486-487 hard_link_one() -
-                        // rsyserr(FERROR_XFER, errno, "link %s => %s failed",
-                        // full_fname(fname), oldname); FERROR_XFER lifts the
-                        // exit to RERR_PARTIAL (23) and the next member goes on.
-                        let _ = self.emit_generator_error_xfer(
-                            writer,
-                            &format!(
-                                "link {} => {} failed",
-                                self.full_fname_in_dest(dest_dir, &link_path),
-                                leader_path
-                                    .strip_prefix(dest_dir)
-                                    .unwrap_or(&leader_path)
-                                    .display()
-                            ),
-                            &e,
-                        );
-                        continue;
-                    }
-                    // upstream: hlink.c:260-295 check_prior() re-derives a group
-                    // whose prior member has gone away rather than aborting. A
-                    // NotFound here means the resolved leader's file vanished
-                    // after we stat'd it (its transfer errored, or a concurrent
-                    // unlink): leave this follower unlinked with a soft error
-                    // (IOERR_GENERAL -> RERR_PARTIAL, exit 23) instead of a fatal
-                    // receiver desync (exit 12).
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        self.flist_io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
-                        continue;
-                    }
-                    // Restore the tracker before propagating so the
-                    // receiver's invariant (`hardlink_tracker` always
-                    // populated when `hard_links` is set) is preserved.
-                    self.hardlink_tracker = Some(tracker);
-                    return Err(e);
+                    continue;
                 }
                 // upstream: hlink.c:finish_hard_link() - itemize new hardlink.
                 // The xname is the leader's transfer-relative name so the row

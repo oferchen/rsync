@@ -12,6 +12,7 @@ use crate::disk_commit::LiveAclCache;
 use metadata::AclIdMapper;
 
 use crate::delta_apply::ChecksumVerifier;
+use crate::full_fname::{FullFnamePaths, full_fname_path};
 use crate::pipeline::messages::{BeginMessage, ComputedChecksum};
 
 use super::super::config::DiskCommitConfig;
@@ -60,6 +61,7 @@ pub(super) fn apply_file_metadata(
                 // still holds the referenced value, so fall back to file_path.
                 basis_path: begin.xattr_basis.as_deref().unwrap_or(&begin.file_path),
                 dest_root: config.dest_dir.as_deref(),
+                fname_paths: config.full_fname_paths(),
             },
         )
     }
@@ -87,6 +89,8 @@ struct MetadataApplyInputs<'a> {
     basis_path: &'a Path,
     /// Destination tree the xattr writes are pinned beneath.
     dest_root: Option<&'a Path>,
+    /// Path context a failed step's name renders against.
+    fname_paths: FullFnamePaths<'a>,
 }
 
 /// Applies file metadata, ACLs, and xattrs from the receiver's caches.
@@ -112,6 +116,7 @@ fn apply_metadata_acls_and_xattrs(
         pre_transfer_meta,
         basis_path,
         dest_root,
+        fname_paths,
     } = inputs;
 
     let (opts, entry) = match (metadata_opts, file_entry) {
@@ -131,7 +136,14 @@ fn apply_metadata_acls_and_xattrs(
         None,
         pre_transfer_meta,
     ) {
-        return Some((file_path.to_path_buf(), e.to_string()));
+        // upstream: rsync.c:685-687, 784, 814-816 - set_file_attrs() reports
+        // the failed step in rsyserr() wording, naming the file it was handed
+        // (the temp file before the rename) through full_fname().
+        let fname = full_fname_path(e.path(), fname_paths);
+        let text = e
+            .set_file_attrs_text(&fname)
+            .unwrap_or_else(|| e.to_string());
+        return Some((file_path.to_path_buf(), text));
     }
 
     // upstream: set_file_attrs() calls set_acl() after perms/times/ownership

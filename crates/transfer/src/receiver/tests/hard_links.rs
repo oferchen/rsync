@@ -560,81 +560,73 @@ fn create_hardlinks_multiple_followers_same_group() {
     assert_eq!(nlink, 4, "link count should be 4");
 }
 
-/// EDG-SANDBOX.D regression: `create_hardlinks` now returns
-/// `io::Result<()>` and must surface a non-EACCES `linkat` failure as
-/// `Err` instead of debug-logging and continuing with the void pre-fix
-/// signature.
+/// A directory at a follower's destination is `dir_in_the_way`:
+/// `atomic_create()` sends it to `delete_item()`, whose `rmdir` clears an
+/// empty one, and the link is made.
 ///
-/// Before this fix, `create_hardlinks` returned `()` and the
-/// `Err(e) => debug_log!(...)` branch dropped every error class. An
-/// EMLINK (link-count exhaustion), EXDEV (cross-device link),
-/// or EEXIST on a planted obstacle all silently skipped the follower
-/// while the receiver exited `rc=0` with the hardlink missing.
-///
-/// This test plants a directory at the follower's destination path so
-/// the underlying `linkat`/`hard_link` syscall returns
-/// `AlreadyExists` (EEXIST), a non-EACCES class. The fix must surface
-/// it as `Err`. EACCES is covered by the discrimination test in the
-/// deletion module - one fail-loud regression per site is enough
-/// because all sites share the same upstream-parity rule
-/// (`PermissionDenied` is the only non-fatal class).
-///
-/// upstream: hlink.c:maybe_hard_link -> atomic_create - EACCES is
-/// non-fatal (increment io_error and continue); every other class is
-/// a security boundary the receiver must surface.
+/// upstream: generator.c:2469-2483 atomic_create(), delete.c:222-226
 #[cfg(unix)]
 #[test]
-fn create_hardlinks_surfaces_non_eacces_error() {
+fn create_hardlinks_replaces_an_empty_directory_obstacle() {
+    use std::os::unix::fs::MetadataExt;
     let temp_dir = tempfile::TempDir::new().unwrap();
     let dest = temp_dir.path();
-
-    // Leader file exists at `leader.txt`. Plant a directory at
-    // `follower` so the obstacle-removal logic (`unlink` with
-    // `UnlinkFlags::File`) returns EISDIR (swallowed by the
-    // pre-existing `let _ = ...` contract), the
-    // `lstat`/`metadata` check sees a directory, and the inode
-    // comparison fails so the flow reaches the `linkat`. `linkat`
-    // refuses to overwrite an existing directory and surfaces
-    // AlreadyExists/EEXIST.
     std::fs::write(dest.join("leader.txt"), "shared content").unwrap();
     std::fs::create_dir(dest.join("follower")).expect("plant directory obstacle");
 
-    let entries = vec![
+    let mut ctx = receiver_with_hardlinks(vec![
         make_hlink_leader("leader.txt", 14, 42),
         make_hlink_follower("follower", 14, 42),
-    ];
+    ]);
+    ctx.create_hardlinks(dest, None, &mut TestDeletionWriter)
+        .expect("an empty directory obstacle is cleared, not fatal");
 
-    let mut ctx = receiver_with_hardlinks(entries);
-    let mut writer = TestDeletionWriter;
-
-    #[cfg(unix)]
-    let result = ctx.create_hardlinks(dest, None, &mut writer);
-    #[cfg(not(unix))]
-    let result = ctx.create_hardlinks(dest, &mut writer);
-
-    let err =
-        result.expect_err("non-EACCES linkat failure must propagate as Err, not be coerced to ()");
-    assert_ne!(
-        err.kind(),
-        std::io::ErrorKind::PermissionDenied,
-        "EACCES is the upstream-parity non-fatal branch; this scenario \
-         plants a directory at the follower path to exercise the fail-loud \
-         branch via AlreadyExists/EEXIST",
+    let leader = std::fs::metadata(dest.join("leader.txt")).unwrap();
+    let follower = std::fs::symlink_metadata(dest.join("follower")).unwrap();
+    assert_eq!(
+        (follower.dev(), follower.ino()),
+        (leader.dev(), leader.ino()),
+        "the follower must be linked to the leader in place of the directory"
     );
-    // The planted obstacle must persist - the receiver must not silently
-    // replace it while reporting the hardlink failure as `()`.
     assert!(
-        dest.join("follower").is_dir(),
-        "the planted directory must persist - the receiver must not silently \
-         delete or replace it",
+        !ctx.got_xfer_error.get(),
+        "clearing the obstacle is no error"
     );
-    // The receiver-side invariant: tracker must be restored after the
-    // error propagates so subsequent incremental segments can still
-    // see the recorded leaders.
+}
+
+/// A populated directory at a follower's destination is refused without
+/// `--delete` or `--force`. The refusal is a per-file `FERROR_XFER`: the
+/// directory stays, the run goes on, and the tracker is handed back for
+/// later segments.
+///
+/// upstream: delete.c:178-181, delete.c:273-286
+#[cfg(unix)]
+#[test]
+fn create_hardlinks_reports_a_refused_obstacle_and_continues() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+    std::fs::write(dest.join("leader.txt"), "shared content").unwrap();
+    std::fs::create_dir(dest.join("follower")).expect("plant directory obstacle");
+    std::fs::write(dest.join("follower/occupant"), "x").unwrap();
+
+    let mut ctx = receiver_with_hardlinks(vec![
+        make_hlink_leader("leader.txt", 14, 42),
+        make_hlink_follower("follower", 14, 42),
+    ]);
+    ctx.create_hardlinks(dest, None, &mut TestDeletionWriter)
+        .expect("a refused obstacle is a per-file error, not a fatal one");
+
+    assert!(
+        dest.join("follower/occupant").exists(),
+        "the populated directory must be left alone"
+    );
+    assert!(
+        ctx.got_xfer_error.get(),
+        "the refusal is FERROR_XFER, so the run ends with exit 23"
+    );
     assert!(
         ctx.hardlink_tracker.is_some(),
-        "the hardlink tracker must be restored before propagating Err so \
-         incremental segments preserve their leader-path state",
+        "the tracker must be handed back so later segments keep their leaders"
     );
 }
 
