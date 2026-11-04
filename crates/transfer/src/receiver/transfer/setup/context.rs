@@ -190,6 +190,11 @@ impl ReceiverContext {
         })?;
 
         let (file_count, setup) = self.build_pipeline_setup(file_count)?;
+        // upstream: main.c:1259 - the server receiver's check_alt_basis_dirs()
+        // warning goes out before do_recv() starts the transfer.
+        if !self.config.connection.client_mode {
+            self.emit_thread_local_peer_messages(writer);
+        }
 
         self.check_server_temp_dir(writer, &setup.dest_dir)?;
 
@@ -829,6 +834,17 @@ impl ReceiverContext {
         // (clientserver.c:1067-1068) and keeps its basis module-relative.
         if self.config.connection.daemon_module_root.is_none() {
             let dest_dir_pending = self.config.flags.skip_dest_writes() && !dest_dir.is_dir();
+            // upstream: main.c:1259 / :1442 - the warning comes from the same
+            // call, so it reads curr_dir only now that it is known. A client
+            // handed an empty list never reaches get_local_name() and says
+            // nothing (main.c:1439-1442).
+            if !self.is_empty_client_flist(file_count) {
+                engine::local_copy::check_alt_basis_dirs(
+                    &self.config.reference_directories,
+                    &dest_dir,
+                    dest_dir_pending,
+                );
+            }
             for reference in &mut self.config.reference_directories {
                 *reference = reference.anchored_at(&dest_dir, dest_dir_pending);
             }

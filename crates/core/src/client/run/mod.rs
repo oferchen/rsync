@@ -51,7 +51,6 @@
 //! run_client_with_observer(config, Some(&mut observer))?;
 //! ```
 
-pub(crate) mod alt_basis;
 pub(crate) mod batch;
 mod checksum_refusal;
 mod filters;
@@ -331,27 +330,6 @@ fn run_client_internal(
         false
     });
 
-    let has_remote = config
-        .transfer_args()
-        .iter()
-        .any(|arg| remote::operand_is_remote(arg));
-
-    // upstream: main.c:1442 - the CLIENT receiver runs `check_alt_basis_dirs()`
-    // once its destination is known. On a PULL the client is the receiver, so
-    // the check belongs here, ahead of both remote transports. On a PUSH the
-    // remote server is the receiver and runs its own check from the forwarded
-    // argv - `options.c:2921-2944` emits the basis-dir args only in that
-    // direction, which is why neither side needs the other's copy.
-    //
-    // Gated on a remote operand so a purely local copy is not warned about
-    // twice: that path has its own call once `LocalCopyPlan` resolves the
-    // destination.
-    if alt_basis::client_checks_basis_dirs(config.is_pull(), has_daemon_url || has_remote)
-        && let Some(destination) = config.transfer_args().last()
-    {
-        alt_basis::check_alt_basis_dirs(config.reference_directories(), Path::new(destination));
-    }
-
     if has_daemon_url {
         // upstream: main.c:1611-1626 - when `-e`/`--rsh` is active with `::`,
         // the client spawns SSH with `rsync --server --daemon .` as the remote
@@ -539,12 +517,6 @@ fn run_client_internal(
     }
     #[cfg(unix)]
     resolve_destination_like_change_dir(plan.destination())?;
-
-    // upstream: main.c:1259 / main.c:1442 call `check_alt_basis_dirs()` once the
-    // destination is known, so a stale `--link-dest` is reported rather than
-    // silently costing the hard-link optimisation. Warn-only: the exit code is
-    // untouched, matching upstream's FWARNING.
-    alt_basis::check_alt_basis_dirs(config.reference_directories(), plan.destination());
 
     let filter_program =
         filters::compile_filter_program(config.filter_rules(), config.delete_excluded())?;

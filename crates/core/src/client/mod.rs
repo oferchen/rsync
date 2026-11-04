@@ -121,7 +121,6 @@ pub use self::module_list::{
 };
 pub use self::outcome::ClientOutcome;
 pub use self::progress::{ClientProgressObserver, ClientProgressUpdate};
-pub use self::run::alt_basis::{check_alt_basis_dir_at, check_alt_basis_dirs};
 pub use self::run::{run_client, run_client_with_observer};
 pub use self::summary::{
     ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, ClientSummary,
@@ -130,6 +129,7 @@ pub use self::summary::{
 pub use engine::SkipCompressList;
 pub use engine::batch::{BatchConfig, BatchMode};
 pub use engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
+pub use engine::local_copy::{check_alt_basis_dir_at, check_alt_basis_dirs};
 
 use std::time::Duration;
 

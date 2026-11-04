@@ -2,7 +2,11 @@
 //!
 //! upstream: `main.c:880` `check_alt_basis_dirs()`, called from both receiver
 //! entry points - `main.c:1259` (server receiver) and `main.c:1442` (client
-//! receiver) - once the destination directory is the current directory.
+//! receiver) - once `get_local_name()` has made the destination directory the
+//! current directory. That is the destination itself, or its parent for a
+//! single-file destination (`main.c:845-858`), so each caller runs this from
+//! the point where it has made the same decision: the network receiver's
+//! setup and the local copy's source orchestration.
 //!
 //! The check is advisory: upstream warns and continues, leaving the exit code
 //! untouched. Every `basis_link_stat()` caller in `generator.c` already treats
@@ -11,12 +15,12 @@
 //! operator learns their `--link-dest` is stale instead of silently getting a
 //! full copy.
 
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use engine::local_copy::{ReferenceDirectory, ReferenceDirectoryKind};
 use logging::warn_log;
+
+use super::{ReferenceDirectory, ReferenceDirectoryKind};
 
 /// Names the alt-dest option a basis directory came from.
 ///
@@ -33,7 +37,7 @@ fn alt_dest_opt(kind: ReferenceDirectoryKind) -> &'static str {
     }
 }
 
-/// Returns the destination as upstream's absolute `curr_dir`.
+/// Returns `curr_dir` in the absolute form upstream reports.
 ///
 /// upstream: `main.c:898-911` joins a relative basis onto `curr_dir`, which is
 /// the *destination* directory - upstream has already chdir'd there by the
@@ -41,36 +45,19 @@ fn alt_dest_opt(kind: ReferenceDirectoryKind) -> &'static str {
 /// "`../prev` relative to the destination", not to the invocation directory.
 ///
 /// `curr_dir` is absolute for upstream because it is a real working directory,
-/// so a relative destination is absolutised against the process cwd to print
-/// the same text. Deliberately not canonicalised: upstream string-joins and
-/// does not resolve symlinks or `..` for this message.
-fn absolute_destination(destination: &Path) -> PathBuf {
-    if destination.is_absolute() {
-        destination.to_path_buf()
+/// so a relative one is absolutised against the process cwd to print the same
+/// text. Deliberately not canonicalised: upstream string-joins and does not
+/// resolve symlinks or `..` for this message. An empty `curr_dir` (the parent
+/// of a bare single-file destination) is the process cwd itself.
+fn absolute_curr_dir(curr_dir: &Path) -> PathBuf {
+    let curr_dir = if curr_dir.as_os_str().is_empty() {
+        Path::new(".")
     } else {
-        match env::current_dir() {
-            Ok(cwd) => cwd.join(destination),
-            // Without a readable cwd there is no absolute form to report, so
-            // fall back to the operator's own spelling rather than dropping
-            // the warning entirely.
-            Err(_) => destination.to_path_buf(),
-        }
-    }
-}
-
-/// Whether the CLIENT should run the basis-dir check for a remote transfer.
-///
-/// upstream: `main.c:1442` runs `check_alt_basis_dirs()` on the client only
-/// when the client is the receiver, i.e. on a pull. On a push the remote server
-/// is the receiver and checks its own forwarded argv (`main.c:1259`), because
-/// `options.c:3114-3123` emits the basis-dir args only in that direction - so
-/// warning here too would double-report.
-///
-/// The remote-operand conjunct keeps a purely local copy out: that path has its
-/// own call once `LocalCopyPlan` resolves the destination, and without this the
-/// same run would warn twice.
-pub(crate) fn client_checks_basis_dirs(is_pull: bool, has_remote_operand: bool) -> bool {
-    is_pull && has_remote_operand
+        curr_dir
+    };
+    // Without a readable cwd there is no absolute form to report, so fall back
+    // to the operator's own spelling rather than dropping the warning.
+    std::path::absolute(curr_dir).unwrap_or_else(|_| curr_dir.to_path_buf())
 }
 
 /// Warns about each `--compare-dest` / `--copy-dest` / `--link-dest` argument
@@ -82,10 +69,19 @@ pub(crate) fn client_checks_basis_dirs(is_pull: bool, has_remote_operand: bool) 
 ///
 /// The stat follows symlinks (upstream uses `do_stat`, not `do_lstat`), so a
 /// basis directory reached through a symlink is accepted silently.
-pub fn check_alt_basis_dirs(references: &[ReferenceDirectory], destination: &Path) {
-    let curr_dir = absolute_destination(destination);
+///
+/// `curr_dir` is the directory `get_local_name()` left upstream in, and
+/// `dest_dir_pending` its `dry_run > 1`; both feed
+/// [`ReferenceDirectory::anchored_at`], the same rewrite the receiver opens
+/// through.
+pub fn check_alt_basis_dirs(
+    references: &[ReferenceDirectory],
+    curr_dir: &Path,
+    dest_dir_pending: bool,
+) {
+    let curr_dir = absolute_curr_dir(curr_dir);
     for reference in references {
-        let anchored = reference.anchored_at(&curr_dir, false);
+        let anchored = reference.anchored_at(&curr_dir, dest_dir_pending);
         check_alt_basis_dir_at(reference.kind, &anchored.path, &anchored.path);
     }
 }
@@ -132,10 +128,10 @@ mod tests {
     use logging::{DiagnosticEvent, VerbosityConfig, drain_events, init};
 
     /// Collects the warning texts `check_alt_basis_dirs` emitted.
-    fn warnings_for(references: &[ReferenceDirectory], destination: &Path) -> Vec<String> {
+    fn warnings_for(references: &[ReferenceDirectory], curr_dir: &Path) -> Vec<String> {
         init(VerbosityConfig::default());
         drain_events();
-        check_alt_basis_dirs(references, destination);
+        check_alt_basis_dirs(references, curr_dir, false);
         drain_events()
             .into_iter()
             .filter_map(|event| match event {
@@ -257,27 +253,30 @@ mod tests {
         );
     }
 
-    /// The client checks basis dirs only when it is the RECEIVER of a REMOTE
-    /// transfer. Exhaustive over both inputs: a push must stay silent (the
-    /// server reports it) and a local copy must stay silent here (the
-    /// local-copy path reports it), or the same run warns twice.
+    /// upstream: `main.c:900-906` - with `dry_run > 1` the destination was
+    /// never created, so one leading `../` is dropped and the rest joined onto
+    /// `curr_dir`'s parent, naming the sibling a live run would reach.
     #[test]
-    fn client_only_checks_basis_dirs_on_a_remote_pull() {
-        assert!(
-            client_checks_basis_dirs(true, true),
-            "remote pull must check"
-        );
-        assert!(
-            !client_checks_basis_dirs(false, true),
-            "remote push: the server receiver checks its own forwarded argv"
-        );
-        assert!(
-            !client_checks_basis_dirs(true, false),
-            "local copy: checked once the LocalCopyPlan destination resolves"
-        );
-        assert!(
-            !client_checks_basis_dirs(false, false),
-            "local push is local"
+    fn a_pending_destination_reports_the_sibling_without_the_missing_dir() {
+        let temp = test_support::create_tempdir();
+        let curr_dir = temp.path().join("not-created");
+
+        init(VerbosityConfig::default());
+        drain_events();
+        check_alt_basis_dirs(&[link("../absent")], &curr_dir, true);
+        let warnings: Vec<String> = drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Info { message, .. } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            warnings,
+            vec![format!(
+                "--link-dest arg does not exist: {}",
+                temp.path().join("absent").display()
+            )]
         );
     }
 

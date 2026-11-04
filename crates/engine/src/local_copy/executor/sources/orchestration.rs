@@ -670,6 +670,22 @@ pub(crate) fn copy_sources(
             let destination_behaves_like_directory =
                 destination_state.is_dir || plan.destination_spec().force_directory();
 
+            // upstream: main.c:1259 - check_alt_basis_dirs() runs once
+            // get_local_name() has fixed curr_dir: the destination itself, or
+            // its parent for a single-file destination (main.c:845-858).
+            let curr_dir = if destination_behaves_like_directory {
+                destination_path
+            } else {
+                destination_path.parent().unwrap_or(destination_path)
+            };
+            crate::local_copy::check_alt_basis_dirs(
+                context.reference_directories(),
+                curr_dir,
+                context.mode().is_dry_run()
+                    && destination_behaves_like_directory
+                    && !destination_path.is_dir(),
+            );
+
             // upstream: flist.c:2739 send_file_list() folds every operand into
             // ONE flist before the generator's delete passes run, so no sweep
             // can remove an entry a sibling operand supplies. Reproduce that

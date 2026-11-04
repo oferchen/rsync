@@ -356,6 +356,21 @@ impl ReceiverContext {
         self.emit_pipeline_messages(writer, messages);
     }
 
+    /// Sends the peer every diagnostic raised through `warn_log!` so far.
+    ///
+    /// upstream: log.c:357-366 - a server's `rwrite()` frames each message as
+    /// it is raised. Without this, a setup warning such as
+    /// `check_alt_basis_dirs()` (main.c:1259) waits for the first per-file
+    /// drain, which a run with nothing to transfer never reaches, so the
+    /// warning died with the thread.
+    pub(in crate::receiver) fn emit_thread_local_peer_messages<W>(&self, writer: &mut W)
+    where
+        W: crate::writer::MsgInfoSender + ?Sized,
+    {
+        let messages = drain_thread_local_peer_messages(self.config.connection.client_mode);
+        self.emit_pipeline_messages(writer, messages);
+    }
+
     /// Runs one commit drain, flushing whatever the drain queued for the peer
     /// even when the drain itself is fatal.
     ///

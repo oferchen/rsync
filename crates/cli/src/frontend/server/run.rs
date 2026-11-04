@@ -810,19 +810,9 @@ where
     // earlier revision did) escalated into a hard refusal - the abort arm
     // was explicitly rejected in favour of degrade-visibly.
     if role == ServerRole::Receiver {
-        // upstream: main.c:1259 - the SERVER receiver runs `check_alt_basis_dirs()`
-        // once the destination is known. This is the push direction: the client
-        // is the sender and forwards the basis-dir args to us
-        // (`options.c:3114-3123` emits them only when the server receives), so
-        // the values are already in our own decoded argv and no per-connection
-        // plumbing is involved. Warn-only, exit code untouched.
-        if let Some(dest) = config.args.last() {
-            ::core::client::check_alt_basis_dirs(
-                &config.reference_directories,
-                std::path::Path::new(dest),
-            );
-        }
-
+        // The `check_alt_basis_dirs()` warning (main.c:1259) is the receiver's:
+        // it needs curr_dir, which get_local_name() fixes only once the file
+        // list has arrived.
         if let Some(dest) = config.args.last() {
             let dest_path = std::path::PathBuf::from(dest);
             if let Some(root) = landlock_root_for_dest(&dest_path) {
