@@ -899,12 +899,12 @@ mod tests {
         async fn auth_publickey_offered(
             &mut self,
             _user: &str,
-            public_key: &russh::keys::PublicKey,
+            offer: russh::server::PublicKeyOffer<'_>,
         ) -> Result<russh::server::Auth, Self::Error> {
             self.offered
                 .lock()
                 .expect("offer log lock")
-                .push(public_key.clone());
+                .push(offer.public_key.clone());
             Ok(russh::server::Auth::Accept)
         }
 
@@ -921,11 +921,13 @@ mod tests {
         async fn auth_publickey(
             &mut self,
             _user: &str,
-            public_key: &russh::keys::PublicKey,
+            verified: russh::server::VerifiedPublicKey<'_>,
         ) -> Result<russh::server::Auth, Self::Error> {
             for accepted in &self.policy.accepted_keys {
                 if accepted.fingerprint(russh::keys::HashAlg::Sha256)
-                    == public_key.fingerprint(russh::keys::HashAlg::Sha256)
+                    == verified
+                        .public_key
+                        .fingerprint(russh::keys::HashAlg::Sha256)
                 {
                     return Ok(russh::server::Auth::Accept);
                 }
