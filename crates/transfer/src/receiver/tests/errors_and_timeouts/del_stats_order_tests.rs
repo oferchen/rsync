@@ -1,15 +1,19 @@
-//! Where the receiver's `NDX_DEL_STATS` frame sits among its phase `NDX_DONE`s.
+//! When the receiver's phase-ending `NDX_DONE`s and its `NDX_DEL_STATS` frame
+//! go out, relative to the sender's `NDX_DONE`s it reads.
 //!
-//! upstream: generator.c:2859-2916 - the generator sends the deletion counters
-//! ahead of the `NDX_DONE` that ends the sender's phase loop, never in the
-//! goodbye. A server sender reads them in `send_files()` and echoes them
-//! before its stats (rsync.c:338-341, main.c:357-358), which is the only way a
-//! pulling client's receiver learns how many files its generator deleted.
-//! Sending them one `NDX_DONE` later lets the sender leave its phase loop
-//! first, so the echo lands after the stats trailer instead.
+//! upstream: generator.c:2853-2872 - once the receiver has finished phase 0,
+//! the generator writes the redo phase's `NDX_DONE`, the delay phase's unless
+//! `--delay-updates` holds it back, and at protocol 31 an early delete's
+//! counters and the `NDX_DONE` after them, without waiting for the sender.
+//! generator.c:2883-2890 writes the held-back ones after the redo phase, and
+//! generator.c:2910-2915 sends a late delete's counters and `NDX_DONE` only
+//! after the receiver is done. rsync 3.5.1 pulling from a 3.5.1 daemon writes
+//! exactly these sequences.
 
+use std::cell::RefCell;
 use std::ffi::OsString;
-use std::io::Cursor;
+use std::io::{self, Cursor, Read, Write};
+use std::rc::Rc;
 
 use protocol::codec::{NDX_DEL_STATS, NdxCodec, create_ndx_codec};
 use protocol::{DeleteStats, ProtocolVersion};
@@ -31,10 +35,19 @@ const STATS: DeleteStats = DeleteStats {
     specials: 4,
 };
 
-/// Which wire slot a step of the expected stream occupies.
+/// Marks a read of one sender `NDX_DONE` in the transcript; no NDX encoding
+/// on a protocol 32 wire starts with this byte.
+const READ: u8 = 0xee;
+
+/// One step of the expected transcript.
+#[derive(Clone, Copy)]
 enum Wire {
+    /// The receiver writes `NDX_DONE`.
     Done,
+    /// The receiver writes `NDX_DEL_STATS` and the counters.
     DelStats,
+    /// The receiver reads the sender's `NDX_DONE`.
+    Read,
 }
 
 fn receiver(delete: bool, late_delete: bool, delay_updates: bool) -> ReceiverContext {
@@ -75,91 +88,102 @@ fn encode(steps: &[Wire]) -> Vec<u8> {
                 codec.write_ndx(&mut out, NDX_DEL_STATS).unwrap();
                 STATS.write_to(&mut out).unwrap();
             }
+            Wire::Read => out.push(READ),
         }
     }
     out
 }
 
-/// Runs the non-INC_RECURSE phase exchange against a sender that echoes each
-/// phase `NDX_DONE` and sends its post-loop final one.
-fn phase_exchange_output(ctx: &mut ReceiverContext) -> Vec<u8> {
-    let mut reader = Cursor::new(encode(&[Wire::Done, Wire::Done, Wire::Done]));
-    let mut output = Vec::new();
+/// The receiver's writes and its reads, in the order they happen.
+#[derive(Clone, Default)]
+struct Transcript(Rc<RefCell<Vec<u8>>>);
+
+impl Write for Transcript {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.borrow_mut().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl crate::writer::MsgInfoSender for Transcript {}
+
+/// A sender that answers with one `NDX_DONE` per read and logs each read.
+struct Sender {
+    dones: Cursor<Vec<u8>>,
+    transcript: Transcript,
+}
+
+impl Read for Sender {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.transcript.0.borrow_mut().push(READ);
+        self.dones.read(&mut buf[..1])
+    }
+}
+
+/// Runs the non-INC_RECURSE phase exchange and the goodbye against a sender
+/// that echoes every phase `NDX_DONE`, sends its post-loop one and echoes
+/// the goodbye.
+fn session(ctx: &mut ReceiverContext) -> Vec<u8> {
+    let transcript = Transcript::default();
+    let mut sender = Sender {
+        dones: Cursor::new(encode(&[Wire::Done; 4])),
+        transcript: transcript.clone(),
+    };
+    let mut writer = transcript.clone();
     let mut ndx_write = create_ndx_codec(PROTOCOL);
     let mut ndx_read = create_ndx_codec(PROTOCOL);
-    ctx.exchange_phase_done(&mut reader, &mut output, &mut ndx_write, &mut ndx_read)
+    ctx.exchange_phase_done(&mut sender, &mut writer, &mut ndx_write, &mut ndx_read)
         .unwrap();
-    output
+    ctx.handle_goodbye(&mut sender, &mut writer, &mut ndx_write, &mut ndx_read)
+        .unwrap();
+    transcript.0.take()
 }
 
-/// upstream: generator.c:2859-2871 - plain `--delete` (delete-during) without
-/// `--delay-updates` sends `NDX_DONE`, `NDX_DONE`, the counters, then the
-/// `NDX_DONE` that ends the sender's phase loop.
+use Wire::{DelStats as S, Done as D, Read as R};
+
+/// upstream: generator.c:2862-2871 - plain `--delete` (delete-during) without
+/// `--delay-updates`: the redo and delay phases' `NDX_DONE`s, the counters and
+/// the `NDX_DONE` after them all follow the sender's first `NDX_DONE`.
 #[test]
-fn early_delete_stats_precede_the_third_phase_done() {
+fn early_delete_writes_every_phase_end_after_the_first_sender_done() {
     let mut ctx = receiver(true, false, false);
-    assert_eq!(
-        phase_exchange_output(&mut ctx),
-        encode(&[Wire::Done, Wire::Done, Wire::DelStats, Wire::Done])
-    );
+    assert_eq!(session(&mut ctx), encode(&[D, R, D, D, S, D, R, R, R, D]));
 }
 
-/// upstream: generator.c:2911-2915 - `--delete-delay` / `--delete-after` send
-/// the counters right before the late `NDX_DONE`, which is still the one that
-/// ends the sender's phase loop.
+/// upstream: generator.c:2862-2871 + 2886-2889 - under `--delay-updates` the
+/// counters follow the redo phase's `NDX_DONE`; the delay phase's and the one
+/// after it wait for the sender's next `NDX_DONE`.
 #[test]
-fn late_delete_stats_precede_the_third_phase_done() {
-    let mut ctx = receiver(true, true, false);
-    assert_eq!(
-        phase_exchange_output(&mut ctx),
-        encode(&[Wire::Done, Wire::Done, Wire::DelStats, Wire::Done])
-    );
-}
-
-/// upstream: generator.c:2867-2871 + 2886-2889 - under `--delay-updates` the
-/// early counters follow the first `NDX_DONE` directly, because the delay
-/// phase's `NDX_DONE` is held back until the redo phase finishes.
-#[test]
-fn early_delete_stats_under_delay_updates_precede_the_second_phase_done() {
+fn early_delete_under_delay_updates_holds_the_delay_phase_end() {
     let mut ctx = receiver(true, false, true);
-    assert_eq!(
-        phase_exchange_output(&mut ctx),
-        encode(&[Wire::Done, Wire::DelStats, Wire::Done, Wire::Done])
-    );
+    assert_eq!(session(&mut ctx), encode(&[D, R, D, S, R, D, D, R, R, D]));
 }
 
-/// upstream: generator.c:2911-2915 - a late delete is unaffected by
-/// `--delay-updates`; the counters still precede the third `NDX_DONE`.
+/// upstream: generator.c:2910-2915 - `--delete-delay` / `--delete-after` send
+/// the counters and their `NDX_DONE` once the sender's phase loop is over.
 #[test]
-fn late_delete_stats_under_delay_updates_precede_the_third_phase_done() {
-    let mut ctx = receiver(true, true, true);
-    assert_eq!(
-        phase_exchange_output(&mut ctx),
-        encode(&[Wire::Done, Wire::Done, Wire::DelStats, Wire::Done])
-    );
+fn late_delete_stats_wait_for_the_sender_phase_loop() {
+    let mut ctx = receiver(true, true, false);
+    assert_eq!(session(&mut ctx), encode(&[D, R, D, D, R, R, S, D, R, D]));
 }
 
-/// No deletion mode, no counters (generator.c:2868 `delete_mode ||
-/// force_delete || read_batch`).
+/// upstream: generator.c:2883-2890 + 2910-2915 - a late delete under
+/// `--delay-updates` holds the delay phase's `NDX_DONE` for one sender
+/// `NDX_DONE` and the counters until the phase loop is over.
+#[test]
+fn late_delete_under_delay_updates_holds_both() {
+    let mut ctx = receiver(true, true, true);
+    assert_eq!(session(&mut ctx), encode(&[D, R, D, R, D, R, S, D, R, D]));
+}
+
+/// No deletion mode, no counters (main.c:229 `delete_mode || force_delete ||
+/// read_batch`); the protocol 31 `NDX_DONE` still goes out early.
 #[test]
 fn no_delete_sends_no_stats() {
     let mut ctx = receiver(false, false, false);
-    assert_eq!(
-        phase_exchange_output(&mut ctx),
-        encode(&[Wire::Done, Wire::Done, Wire::Done])
-    );
-}
-
-/// The goodbye carries only `NDX_DONE`s: the counters went out at the phase
-/// boundary, and sending them again would make the sender count them twice.
-#[test]
-fn goodbye_does_not_resend_delete_stats() {
-    let ctx = receiver(true, false, false);
-    let mut reader = Cursor::new(encode(&[Wire::Done]));
-    let mut output = Vec::new();
-    let mut ndx_write = create_ndx_codec(PROTOCOL);
-    let mut ndx_read = create_ndx_codec(PROTOCOL);
-    ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_write, &mut ndx_read)
-        .unwrap();
-    assert_eq!(output, encode(&[Wire::Done, Wire::Done]));
+    assert_eq!(session(&mut ctx), encode(&[D, R, D, D, D, R, R, R, D]));
 }

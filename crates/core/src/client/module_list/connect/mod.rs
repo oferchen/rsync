@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use super::super::{AddressMode, ClientError, TcpFastOpenMode, TransferTimeout};
 use super::{DaemonAddress, Transport};
+use crate::message::Role;
 pub(crate) use direct::{connect_direct, resolve_daemon_addresses};
 pub(crate) use program::ConnectProgramConfig;
 use program::ConnectProgramStream;
@@ -331,6 +332,7 @@ pub(crate) struct QuicDialParams {
 /// daemon transfers. The transport is read off [`DaemonAddress::transport`];
 /// `Transport::Tcp` (the default) establishes a plain TCP connection, while
 /// `Transport::Quic` dials the same daemon protocol over QUIC.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn open_daemon_stream(
     addr: &DaemonAddress,
     timeouts: DaemonConnectTimeouts,
@@ -340,6 +342,7 @@ pub(crate) fn open_daemon_stream(
     tfo: TcpFastOpenMode,
     sockopts: Option<&OsStr>,
     quic: &QuicDialParams,
+    role: Role,
 ) -> Result<DaemonStream, ClientError> {
     // The QUIC dial params are consumed only by the `Transport::Quic` arm, which
     // is compiled out in a default (non-`quic`) build.
@@ -359,6 +362,7 @@ pub(crate) fn open_daemon_stream(
             bind_address,
             tfo,
             sockopts,
+            role,
         ),
         // QUIC dials over UDP and hands the resulting blocking stream to the
         // same `@RSYNCD` handshake TCP uses; the daemon-protocol bytes after the
@@ -367,7 +371,7 @@ pub(crate) fn open_daemon_stream(
         // (design: `docs/design/quic-transport-policy.md`, Decision D, "No
         // silent downgrade").
         #[cfg(feature = "quic")]
-        Transport::Quic => open_quic_daemon_stream(addr, address_mode, quic),
+        Transport::Quic => open_quic_daemon_stream(addr, address_mode, quic, role),
     }
 }
 
@@ -388,6 +392,7 @@ fn open_quic_daemon_stream(
     addr: &DaemonAddress,
     address_mode: AddressMode,
     quic: &QuicDialParams,
+    role: Role,
 ) -> Result<DaemonStream, ClientError> {
     use rsync_io::quic::{ClientAuth, QuicConnector, QuicTransportTuning, resolve};
 
@@ -433,7 +438,7 @@ fn open_quic_daemon_stream(
         QuicConnector::with_trust_tuned_client_auth(trust, tuning, client_auth, quic.cipher)
             .map_err(|error| quic_dial_error(addr, &error.to_string()))?;
 
-    let candidates = resolve_daemon_addresses(addr, address_mode)?;
+    let candidates = resolve_daemon_addresses(addr, address_mode, role)?;
     let server_name = addr.host();
     let mut last_error: Option<io::Error> = None;
     for candidate in candidates {
@@ -491,6 +496,7 @@ fn quic_dial_error(addr: &DaemonAddress, detail: &str) -> ClientError {
 /// before `connect(2)` for both the direct and proxied paths; it has no effect
 /// on a connect program, matching upstream (a connect program bypasses
 /// `open_socket_out()` entirely).
+#[allow(clippy::too_many_arguments)]
 fn open_tcp_daemon_stream(
     addr: &DaemonAddress,
     connect_timeout: Option<Duration>,
@@ -500,6 +506,7 @@ fn open_tcp_daemon_stream(
     bind_address: Option<SocketAddr>,
     tfo: TcpFastOpenMode,
     sockopts: Option<&OsStr>,
+    role: Role,
 ) -> Result<DaemonStream, ClientError> {
     if let Some(program) = program::load_daemon_connect_program(connect_program)? {
         return program::connect_via_program(addr, &program);
@@ -516,6 +523,7 @@ fn open_tcp_daemon_stream(
             bind_address,
             tfo,
             sockopts,
+            role,
         )?,
         None => connect_direct(
             addr,
@@ -525,6 +533,7 @@ fn open_tcp_daemon_stream(
             bind_address,
             tfo,
             sockopts,
+            role,
         )?,
     };
 
@@ -844,6 +853,7 @@ mod quic_connect_tests {
             TcpFastOpenMode::Off,
             None,
             &quic,
+            Role::PreForkReceiver,
         )
     }
 
@@ -1324,6 +1334,7 @@ mod connect_timeout_tests {
             None,
             crate::client::TcpFastOpenMode::Auto,
             None,
+            Role::PreForkReceiver,
         )
         .expect("connect directly");
 
@@ -1376,6 +1387,7 @@ mod connect_timeout_tests {
             None,
             crate::client::TcpFastOpenMode::Auto,
             None,
+            Role::PreForkReceiver,
         )
         .expect("proxy connect");
 

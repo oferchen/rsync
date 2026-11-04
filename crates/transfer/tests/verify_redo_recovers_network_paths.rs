@@ -947,3 +947,78 @@ fn daemon_pull_redo_redeltas_against_the_retained_basis() {
         outcome.stdout,
     );
 }
+
+/// A daemon push whose redo runs alongside a new hard-link follower must
+/// still recover, with the follower linked to its leader.
+///
+/// Without INC_RECURSE the server receiver ends the request phase with
+/// `NDX_DONE` right after its last request (generator.c:2831-2833), then
+/// itemizes the follower once the leader is in (generator.c:2169), then sends
+/// the redo requests. The sender answers in that order: its phase-0
+/// `NDX_DONE`, the follower's echo, then the redo reply. Reading the follower
+/// echo where the `NDX_DONE` belongs desyncs the stream.
+#[cfg(unix)]
+#[test]
+fn daemon_push_redo_with_a_new_hard_link_follower_recovers() {
+    use std::os::unix::fs::MetadataExt;
+
+    let oc_bin = test_support::oc_rsync_bin();
+    let Some(scratch) = DaemonScratch::new() else {
+        eprintln!("skipping: tempdir allocation failed");
+        return;
+    };
+
+    let source_dir = scratch.root.join("source");
+    let module_root = scratch.root.join("dest");
+    let payload = seed_fixture(&source_dir, &module_root);
+    fs::hard_link(source_dir.join("payload.bin"), source_dir.join("twin.bin"))
+        .expect("link the follower");
+
+    write_daemon_config(
+        &scratch.config,
+        &scratch.pid,
+        &scratch.log,
+        "data",
+        &module_root,
+        false,
+    )
+    .expect("write daemon config");
+
+    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("skipping: could not start oc-rsync --daemon: {e}");
+            return;
+        }
+    };
+
+    let mut src_arg = source_dir.into_os_string();
+    src_arg.push("/");
+    let dest_url = OsString::from(format!("rsync://127.0.0.1:{port}/data/"));
+    let args: &[&OsStr] = &[
+        OsStr::new("-rH"),
+        OsStr::new("--no-inc-recursive"),
+        OsStr::new("--append-verify"),
+        OsStr::new("--ignore-times"),
+        OsStr::new("--stats"),
+        OsStr::new(VERBOSE),
+        &src_arg,
+        &dest_url,
+    ];
+
+    let outcome =
+        run_oc_rsync_deadlined(&oc_bin, args).expect("run daemon-push redo client with -H");
+    assert_recovered(
+        "daemon push -H",
+        &outcome,
+        &module_root.join("payload.bin"),
+        &payload,
+    );
+    let leader = fs::metadata(module_root.join("payload.bin")).expect("stat leader");
+    let follower = fs::metadata(module_root.join("twin.bin")).expect("stat follower");
+    assert_eq!(
+        (leader.dev(), leader.ino()),
+        (follower.dev(), follower.ino()),
+        "the follower must be hard-linked to its leader"
+    );
+}
