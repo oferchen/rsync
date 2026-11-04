@@ -36,7 +36,13 @@ These differ from oc-rsync releases before 0.6.5. Each now matches OpenSSH 10.0p
 - An invalid `Ciphers`, `MACs`, `KexAlgorithms` or `HostKeyAlgorithms` list, or a bad `RekeyLimit`, is refused, even inside a `Host` block that does not match.
 - The five `Canonicalize*` keywords are validated, with upstream's refusal texts.
 - The value of every keyword the transport does not act on is checked by its `readconf.c` arm, with upstream's refusal text. For example, `ForwardAgent maybe/x${` is refused, as are `LocalForward 0 host:80`, `ControlMaster maybe` and `TCPKeepAlive transport`.
-- A line with more values than its keyword takes is refused with `keyword <kw> extra arguments at end of line` (`readconf.c:2529-2534`). For now this applies only to the keywords the transport does not act on (task 594).
+- A line with more values than its keyword takes is refused with `keyword <kw> extra arguments at end of line` (`readconf.c:2529-2534`).
+- The keywords the transport acts on get the same checks:
+  - an empty value (`User ""`) is refused with `Missing argument.`;
+  - an absent flag value prints `missing argument.` and then `unsupported option "(null)".`;
+  - `Port` must resolve through `a2port` (`Bad port 'abc'.`), and a service name such as `Port ssh` resolves;
+  - `IdentitiesOnly` takes only a flag, and `IdentityAgent` gets the `${VAR}` and `$NAME` checks;
+  - a 101st `IdentityFile` or `CertificateFile` is refused.
 - Time values follow 10.0p1's `convtime`: whole seconds only, so `ConnectTimeout 1.5` is refused and `5s5` means 10 seconds.
 
 ### Keywords that now take effect
@@ -69,7 +75,6 @@ These are tracked for a follow-up (task 594):
   - an interval of `0` turns time-based re-keying off.
 - **HostKeyAlgorithms order:** the list is not reordered by the keys already in `known_hosts`.
 - **Late composition errors:** a list that validates but cannot be composed (a stray `!` pattern) fails at connect time rather than when the file is read.
-- **Values of acted-on keywords:** some keywords the transport acts on still skip checks their `readconf.c` arm makes. These are the extra-arguments check, an empty quoted value (`User ""`), `Port` (`Bad port`, service names), `IdentitiesOnly` and `IdentityAgent` values, the 100-file `IdentityFile`/`CertificateFile` cap, and the two-line `missing argument.` form for flags.
 - **Fill-time notes:** OpenSSH prints some notes after the file loads, such as `fill_default_options: ca_sign_algorithms: invalid argument` and `Cannot forward agent socket path`. The transport never uses those values, so oc does not print the notes.
 - **No CNAME following:** `CanonicalizePermittedCNAMEs` is parsed but CNAMEs are not followed, and the bare-host resolve check that goes with it is skipped (task 593).
 - **No address reformatting:** numeric addresses are not reformatted the way `resolve_addr` reformats them.

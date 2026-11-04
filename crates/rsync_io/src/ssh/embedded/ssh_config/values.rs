@@ -56,6 +56,19 @@ pub(super) fn check(
     let first = tokens.first().map(String::as_str);
     let verdict = match kind {
         ValueKind::Flag => multistate(&["true", "false", "yes", "no"], first),
+        // `multistate_addressfamily`, `multistate_pubkey_auth` and
+        // `multistate_canonicalizehostname` (openssh/readconf.c:1038-1093).
+        ValueKind::AddressFamily => multistate(&["inet", "inet6", "any"], first),
+        ValueKind::PubkeyAuth => multistate(
+            &["true", "false", "yes", "no", "unbound", "host-bound"],
+            first,
+        ),
+        ValueKind::CanonicalizeHostname => {
+            multistate(&["true", "false", "yes", "no", "always"], first)
+        }
+        // `RekeyLimit` reads a size and an optional interval; the reader's
+        // own arm checks both (openssh/readconf.c:1362-1393).
+        ValueKind::RekeyLimit => Ok(tokens.len().min(2)),
         ValueKind::Multistate(table) => multistate(table.keys(), first),
         ValueKind::Single => string(first),
         ValueKind::Time => parse_connect_timeout(first.unwrap_or_default())
@@ -90,28 +103,44 @@ pub(super) fn check(
         | ValueKind::MatchCriteria
         | ValueKind::IncludePatterns
         | ValueKind::KnownHostsFiles
-        | ValueKind::AddressFamily
-        | ValueKind::PubkeyAuth
-        | ValueKind::CanonicalizeHostname
         | ValueKind::CanonicalLists
-        | ValueKind::RekeyLimit
         | ValueKind::Unknown => Ok(tokens.len()),
     };
-    verdict.map_err(|bad| match bad {
-        Bad::Error(lines) => Refusal::Counted(
-            lines
-                .into_iter()
-                .map(|line| match line {
-                    Line::At(reason) => refuse(path, linenum, reason).to_string(),
-                    Line::Bare(note) => note,
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        ),
-        Bad::Fatal(reason) => Refusal::Fatal(SshError::SshConfigFatal {
-            reason: format!("{path} line {linenum}: {reason}"),
-        }),
-    })
+    verdict.map_err(|bad| bad.into_refusal(path, linenum))
+}
+
+/// The `oPort` arm's value check (openssh/readconf.c:1563-1578): `a2port`
+/// must resolve to a port above 0. Returns that port.
+pub(super) fn port(arg: &str, path: &str, linenum: usize) -> Result<u16, Refusal> {
+    a2port(arg)
+        .filter(|&p| p > 0)
+        .ok_or_else(|| Bad::at(format!("Bad port '{arg}'.")).into_refusal(path, linenum))
+}
+
+/// `parse_agent_path` for `IdentityAgent` (openssh/readconf.c:2381-2406).
+pub(super) fn identity_agent(arg: &str, path: &str, linenum: usize) -> Result<(), Refusal> {
+    agent_path(arg).map_err(|bad| bad.into_refusal(path, linenum))
+}
+
+impl Bad {
+    /// The reader's form of this verdict for `path` line `linenum`.
+    fn into_refusal(self, path: &str, linenum: usize) -> Refusal {
+        match self {
+            Bad::Error(lines) => Refusal::Counted(
+                lines
+                    .into_iter()
+                    .map(|line| match line {
+                        Line::At(reason) => refuse(path, linenum, reason).to_string(),
+                        Line::Bare(note) => note,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            Bad::Fatal(reason) => Refusal::Fatal(SshError::SshConfigFatal {
+                reason: format!("{path} line {linenum}: {reason}"),
+            }),
+        }
+    }
 }
 
 /// A non-empty token, or `None` for an absent or empty one - the
@@ -1145,6 +1174,110 @@ mod tests {
         for (line, text) in cases {
             let expected = format!("{text}\nc: terminating, 1 bad configuration options");
             assert_eq!(verdict(line).as_deref(), Some(expected.as_str()), "{line}");
+        }
+    }
+
+    /// The keywords the reader acts on run the same checks first, so an
+    /// absent, empty, malformed or surplus value is refused as `ssh -G`
+    /// refuses it (openssh/readconf.c:1103-1117, :1442-1451, :1563-1578,
+    /// :2389-2406, :2529-2534).
+    #[test]
+    fn acted_on_values_are_checked_like_upstream() {
+        let cases: &[(&str, Option<String>)] = &[
+            (
+                "IdentitiesOnly #c",
+                counted(&["missing argument.", "unsupported option \"(null)\"."]),
+            ),
+            (
+                "IdentitiesOnly maybe",
+                counted(&["unsupported option \"maybe\"."]),
+            ),
+            (
+                "AddressFamily #c",
+                counted(&["missing argument.", "unsupported option \"(null)\"."]),
+            ),
+            (
+                "PubkeyAuthentication \"\"",
+                counted(&["missing argument.", "unsupported option \"\"."]),
+            ),
+            (
+                "ProxyUseFdpass #c",
+                counted(&["missing argument.", "unsupported option \"(null)\"."]),
+            ),
+            (
+                "CheckHostIP yes no",
+                counted(&["keyword checkhostip extra arguments at end of line"]),
+            ),
+            (
+                "CanonicalizeHostname x y",
+                counted(&["unsupported option \"x\"."]),
+            ),
+            ("Ciphers \"\"", counted(&["Missing argument."])),
+            (
+                "RekeyLimit 1G 1h x",
+                counted(&["keyword rekeylimit extra arguments at end of line"]),
+            ),
+            (
+                "Port 22 23",
+                counted(&["keyword port extra arguments at end of line"]),
+            ),
+            ("Port abc", counted(&["Bad port 'abc'."])),
+            ("Port 0", counted(&["Bad port '0'."])),
+            ("Port 0x10", counted(&["Bad port '0x10'."])),
+            ("User \"\"", counted(&["Missing argument."])),
+            (
+                "User a b",
+                counted(&["keyword user extra arguments at end of line"]),
+            ),
+            ("IdentityFile \"\"", counted(&["Missing argument."])),
+            ("IdentityAgent $", counted(&["Invalid environment name $."])),
+            ("Port 65535", None),
+            ("RekeyLimit 1G 1h", None),
+        ];
+        for (line, expected) in cases {
+            assert_eq!(&verdict(line), expected, "{line}");
+        }
+        let unset = verdict("IdentityAgent ${OC_T589_UNSET}");
+        assert_eq!(
+            unset.as_deref(),
+            Some(
+                "vdollar_percent_expand: env var ${OC_T589_UNSET} has no value\n\
+                 c line 1: Invalid environment expansion ${OC_T589_UNSET}.\n\
+                 c: terminating, 1 bad configuration options"
+            )
+        );
+    }
+
+    /// `a2port` resolves a service name through the services file, as
+    /// `getservbyname(s, "tcp")` does (openssh/misc.c:536-548).
+    #[test]
+    fn a_port_service_name_resolves() {
+        let resolved = resolve_host_str("Port ssh\n", "a").expect("loads");
+        assert_eq!(resolved.port, Some(22));
+    }
+
+    /// The 101st identity or certificate file refuses its line
+    /// (openssh/readconf.c:1402-1409, :1422-1430).
+    #[test]
+    fn the_hundred_and_first_key_file_is_refused() {
+        for (keyword, what) in [
+            ("IdentityFile", "identity"),
+            ("CertificateFile", "certificate"),
+        ] {
+            let text: String = (1..=101).map(|i| format!("{keyword} /k{i}\n")).collect();
+            let err = resolve_host_str(&text, "a")
+                .expect_err("refused")
+                .to_string();
+            assert_eq!(
+                err,
+                format!(
+                    "<ssh_config> line 101: Too many {what} files specified (max 100).\n\
+                     <ssh_config>: terminating, 1 bad configuration options"
+                ),
+                "{keyword}"
+            );
+            let hundred: String = (1..=100).map(|i| format!("{keyword} /k{i}\n")).collect();
+            assert!(resolve_host_str(&hundred, "a").is_ok(), "{keyword}");
         }
     }
 
