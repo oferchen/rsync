@@ -179,6 +179,22 @@ impl ChecksumVerifier {
     }
 }
 
+/// The parallel checksum service hashes `--checksum` file sums with the
+/// negotiated verifier, so every sum is the exact whole-file digest the peer
+/// computes.
+impl checksums::parallel::FileHasher for ChecksumVerifier {
+    fn update(&mut self, data: &[u8]) {
+        Self::update(self, data);
+    }
+
+    fn finalize_into(self, out: &mut [u8; checksums::parallel::MAX_FILE_DIGEST_LEN]) -> usize {
+        let mut digest = [0u8; Self::MAX_DIGEST_LEN];
+        let len = Self::finalize_into(self, &mut digest);
+        out[..len].copy_from_slice(&digest[..len]);
+        len
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
