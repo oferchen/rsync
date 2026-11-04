@@ -409,23 +409,7 @@ fn push_link(out: &mut String, link: Option<(&str, &str)>, spec: &LogFmtSpec) {
 /// upstream: lib/permstring.c `permstring()`, whose leading type character
 /// log.c `case 'B'` skips.
 fn permission_bits(mode: u32) -> String {
-    const RWX: &[u8; 9] = b"rwxrwxrwx";
-    let mut perms = [b'-'; 9];
-    for (i, slot) in perms.iter_mut().enumerate() {
-        if mode & (0o400 >> i) != 0 {
-            *slot = RWX[i];
-        }
-    }
-    if mode & 0o4000 != 0 {
-        perms[2] = if mode & 0o100 != 0 { b's' } else { b'S' };
-    }
-    if mode & 0o2000 != 0 {
-        perms[5] = if mode & 0o010 != 0 { b's' } else { b'S' };
-    }
-    if mode & 0o1000 != 0 {
-        perms[8] = if mode & 0o001 != 0 { b't' } else { b'T' };
-    }
-    String::from_utf8_lossy(&perms).into_owned()
+    logging::permstring(mode)[1..].to_owned()
 }
 
 /// Renders a `%f` name: `dir` and `name` joined, cleaned, and stripped of a

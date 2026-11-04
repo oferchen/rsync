@@ -89,6 +89,7 @@ mod phase_timer;
 mod sequence;
 mod stream;
 mod thread_local;
+mod upstream_text;
 mod verify_failure;
 
 #[cfg(feature = "tracing")]
@@ -115,6 +116,7 @@ pub use thread_local::{
     emit_info, emit_info_bytes, emit_info_coded, emit_warning, finfo_suppressed, info_gte, init,
     limit_output_verbosity, set_quiet,
 };
+pub use upstream_text::{comma_num, permstring, timestring_at_offset};
 pub use verify_failure::{VerifyFailure, verification_failure};
 
 #[cfg(feature = "tracing")]

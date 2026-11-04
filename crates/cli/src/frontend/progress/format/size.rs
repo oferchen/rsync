@@ -46,30 +46,7 @@ pub(crate) fn format_count(count: u64, human_readable: HumanReadableMode) -> Str
 
 /// Formats an integer with comma thousands separators (`1,234,567`).
 pub(crate) fn format_decimal_bytes(bytes: u64) -> String {
-    if bytes == 0 {
-        return String::from("0");
-    }
-
-    // u64::MAX with commas is 26 chars: "18,446,744,073,709,551,615"
-    let mut buf = [0u8; 26];
-    let mut pos = buf.len();
-    let mut n = bytes;
-    let mut digit_count: u8 = 0;
-
-    while n > 0 {
-        if digit_count == 3 {
-            pos -= 1;
-            buf[pos] = b',';
-            digit_count = 0;
-        }
-        pos -= 1;
-        buf[pos] = b'0' + (n % 10) as u8;
-        n /= 10;
-        digit_count += 1;
-    }
-
-    // SAFETY: buf[pos..] contains only ASCII digits and commas.
-    String::from(std::str::from_utf8(&buf[pos..]).expect("ASCII-only content"))
+    logging::comma_num(bytes)
 }
 
 /// Formats a byte count with a `K`/`M`/`G`/`T`/`P` suffix and two fractional
