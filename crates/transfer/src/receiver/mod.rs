@@ -37,6 +37,7 @@ mod directory;
 mod existence;
 mod file_list;
 mod itemize;
+mod list_line;
 pub(crate) mod ndx_stream;
 mod pipeline_setup;
 mod quick_check;
