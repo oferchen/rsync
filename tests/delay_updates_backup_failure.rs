@@ -16,7 +16,7 @@
 //! failed was discarded with `let _ =`, so the diagnostic named the derived
 //! `ENOENT` from the rename instead of the real `EACCES`.
 //!
-//! Measured against rsync 3.5.0 (push and pull, `--backup-dir` under a mode
+//! Measured against rsync 3.5.1 (push and pull, `--backup-dir` under a mode
 //! 555 directory): `rc=0`, `backup mkdir <dir> failed: Permission denied
 //! (13)` on stderr, destination file UNCHANGED, `dst/sub/.~tmp~` left in
 //! place. `make_backup()` reports through `FERROR`, which `log.c:336-341`
@@ -157,7 +157,7 @@ fn a_failed_backup_leaves_the_destination_untouched() {
     assert!(
         fx.root.join("dst/sub/.~tmp~").exists(),
         "upstream leaves the staged file in the partial dir when it skips the \
-         rename (measured against 3.5.0); an absent .~tmp~ means the rename ran"
+         rename (measured against 3.5.1); an absent .~tmp~ means the rename ran"
     );
     assert!(
         !fx.root.join("dst/bak/sub").exists(),

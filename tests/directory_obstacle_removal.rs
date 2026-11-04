@@ -387,7 +387,7 @@ fn a_populated_directory_obstacle_under_backup_is_refused_not_backed_up() {
 ///
 /// The `-i` row is part of the expectation: `statret = -1` is what makes the
 /// entry `ITEM_IS_NEW`, so 3.5.0 prints `<f+++++++++ a` for a cleared
-/// obstacle. Measured against 3.5.0, not read off the source.
+/// obstacle. Measured against 3.5.1, not read off the source.
 ///
 /// upstream: `generator.c:2149` - `delete_item(fname, sx.st.st_mode,
 /// del_opts | DEL_FOR_FILE)`, then `statret = -1`.
@@ -511,7 +511,7 @@ fn a_regular_file_destination_with_no_obstacle_still_transfers() {
 /// with no field on `ParsedServerFlags`, so the obstacle arm always took the
 /// bare-`rmdir` branch and refused at 23.
 ///
-/// MEASURED against rsync 3.5.0 over the same `--server` shim: `--force`,
+/// MEASURED against rsync 3.5.1 over the same `--server` shim: `--force`,
 /// `--delete`, and both together each give rc=0 with the symlink in place and
 /// `deleting obstacle/occupant` on the wire; the bare run gives 23. oc gave 23
 /// in all four cells.

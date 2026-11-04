@@ -1,6 +1,6 @@
 /// End-to-end tests for the daemon `filter` parameter's `merge` and clear forms.
 ///
-/// Both rows were MEASURED against a real rsync 3.5.0 daemon over loopback TCP
+/// Both rows were MEASURED against a real rsync 3.5.1 daemon over loopback TCP
 /// before they were fixed, with an upstream 3.5.0 client listing the module:
 ///
 /// | `filter = ...`       | upstream 3.5.0 | oc before | oc after  |

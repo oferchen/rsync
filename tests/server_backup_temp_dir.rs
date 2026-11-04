@@ -163,7 +163,7 @@ fn without_backup_dir_the_backup_keeps_the_suffix_form() {
 /// unwritable staging directory is the discriminator: honoured means the file
 /// cannot be staged and fails, ignored means it lands anyway.
 ///
-/// Measured against real rsync 3.5.0: `rc=23`, destination file absent.
+/// Measured against real rsync 3.5.1: `rc=23`, destination file absent.
 #[test]
 fn temp_dir_is_honoured_so_an_unwritable_one_fails_the_file() {
     if running_as_root() {

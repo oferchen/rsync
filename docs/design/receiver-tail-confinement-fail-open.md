@@ -1,7 +1,7 @@
 # Receiver peer-tail confinement: the fail-open, and how to close it
 
 Implementation spec for U350-4d.2. Companion to
-`upstream-3.5.0-path-confinement-model.md` (the model) and
+`upstream-path-confinement-model.md` (the model) and
 `path-confinement-resolver-api.md` (the resolver this routes onto).
 
 ## 1. The defect, measured

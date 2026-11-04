@@ -76,7 +76,7 @@ pub(crate) fn read_directory_entries_sorted_reuse(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/flist.c` `send_directory()` enumerates the descriptor its
+/// - `rsync-3.5.1/flist.c:2328` `send_directory()` enumerates the descriptor its
 ///   confined open produced.
 /// - `rsync-3.5.1/flist.c:2262-2265` `secure_opendir()` - the `--files-from`
 ///   arm, `open_no_attacker_symlinks(fbuf, O_RDONLY | O_DIRECTORY, 0)`.

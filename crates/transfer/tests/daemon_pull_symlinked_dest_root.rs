@@ -24,7 +24,7 @@
 //! # Why this matters (Rule 9)
 //!
 //! A symlinked destination directory is an ordinary deployment shape
-//! (`/srv/backup -> /mnt/big/backup`). Measured against real rsync 3.5.0 on a
+//! (`/srv/backup -> /mnt/big/backup`). Measured against real rsync 3.5.1 on a
 //! loopback daemon, `rsync -a rsync://host/mod/ DEST` where `DEST` is such a
 //! symlink exits 0 and installs the file at the link target, with and without a
 //! trailing slash. Before this fix oc-rsync exited 23 on both spellings: the
@@ -331,7 +331,7 @@ fn assert_pull_follows_symlinked_dest(link_at: LinkAt, dest_suffix: &str) {
         // Its destination resolves through a link the sandbox open still
         // declines, so the receiver keeps running on the path-based syscalls -
         // and on that fall-back the metadata apply fails silently and forces
-        // exit 23. Measured on Linux against real rsync 3.5.0 on the same
+        // exit 23. Measured on Linux against real rsync 3.5.1 on the same
         // fixture: upstream exits 0 with mode 0640, oc exits 23 with 0644 and
         // prints nothing at any verbosity. That residual is a separate,
         // pre-existing defect of the no-sandbox metadata path - reachable from

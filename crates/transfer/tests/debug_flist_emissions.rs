@@ -1,7 +1,7 @@
 //! `--debug=flist` emission parity through the live flist send/receive paths.
 //!
 //! Upstream rsync's `DEBUG_GTE(FLIST, n)` sites (flist.c, io.c, rsync.c,
-//! generator.c, main.c, util1.c) were measured against upstream 3.5.0;
+//! generator.c, main.c, util1.c) were measured against upstream 3.5.1;
 //! each emission has exactly one oc owner in `protocol::flist::trace`. These
 //! tests drive the REAL paths - `GeneratorContext::build_file_list` +
 //! `send_file_list` and `ReceiverContext::receive_file_list` over the bytes
@@ -10,7 +10,7 @@
 //! uses (cli/frontend/execution/flags/debug.rs), and assert the EXACT
 //! set of `DebugFlag::Flist` messages per level.
 //!
-//! Level anchors (measured on upstream 3.5.0, same fixture shape; lines cite 3.5.1):
+//! Level anchors (measured on upstream 3.5.1, same fixture shape):
 //!
 //! - FLIST1 sender/receiver flist paths emit NOTHING (the only level-1 line,
 //!   `delta-transmission %s` from generator.c:2764, belongs to transfer setup

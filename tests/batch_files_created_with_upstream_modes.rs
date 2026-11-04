@@ -168,7 +168,7 @@ fn rerunning_write_batch_leaves_an_existing_files_mode_alone() {
     run_write_batch(temp.path(), &batch);
 
     // upstream passes the mode to `O_CREAT` and never chmods, so an existing
-    // file is truncated with its mode untouched. Measured against rsync 3.5.0:
+    // file is truncated with its mode untouched. Measured against rsync 3.5.1:
     // both files stay 0666.
     assert_eq!(
         mode_of(&batch),
