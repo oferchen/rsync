@@ -94,7 +94,7 @@ use crate::ssh::config_options::{
     parse_flag_value, parse_int_value, parse_pubkey_auth_value, parse_time_value, parse_token,
     split_directive,
 };
-use logging::{debug_log, warn_log};
+use logging::warn_log;
 
 /// upstream's `READCONF_MAX_DEPTH` - the nested-`Include` ceiling
 /// (openssh/readconf.c:2561). A top-level file is depth 0, each `Include`
@@ -1199,33 +1199,20 @@ impl FileScan<'_, '_> {
     }
 
     /// Whether `opcode` names a keyword this reader accepts without
-    /// reading its value, noting it as upstream does: an excused unknown
-    /// keyword and a deprecated one at debug level
-    /// (openssh/readconf.c:1211-1215, :2511-2515), an unsupported one at
-    /// error level although the line still succeeds (:2517-2521), and
-    /// `Protocol` and the keywords the embedded transport does not act on
-    /// silently (:1208-1210).
+    /// reading its value. An unsupported keyword is reported at error level
+    /// although the line still succeeds (openssh/readconf.c:2517-2521). The
+    /// rest pass without a word: `Protocol` (:1208-1210), and the excused
+    /// unknown and deprecated keywords, whose upstream notes are `ssh -v`
+    /// debug lines rsync has no counterpart for (:1211-1215, :2511-2515).
     fn accepts_unread(&self, opcode: Opcode, keyword: &str, linenum: usize) -> bool {
-        let path = self.path;
         match opcode {
-            Opcode::Unknown => {
-                debug_log!(
-                    Connect,
-                    1,
-                    "{path} line {linenum}: Ignored unknown option \"{keyword}\""
-                );
-            }
-            Opcode::Deprecated => {
-                debug_log!(
-                    Connect,
-                    1,
-                    "{path} line {linenum}: Deprecated option \"{keyword}\""
-                );
-            }
             Opcode::Unsupported => {
-                warn_log!("{path} line {linenum}: Unsupported option \"{keyword}\"");
+                warn_log!(
+                    "{} line {linenum}: Unsupported option \"{keyword}\"",
+                    self.path
+                );
             }
-            Opcode::Ignore | Opcode::NotActedOn => {}
+            Opcode::Unknown | Opcode::Deprecated | Opcode::Ignore | Opcode::NotActedOn => {}
             _ => return false,
         }
         true
