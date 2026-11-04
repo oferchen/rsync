@@ -402,6 +402,7 @@ fn server_writer_send_redo_multiplex() {
             .activate_multiplex()
             .unwrap();
         writer.send_redo(42).unwrap();
+        writer.flush().unwrap();
     }
     assert_eq!(buf.len(), 8);
     let payload = &buf[4..8];
@@ -431,6 +432,7 @@ fn server_writer_send_io_error_frame_encoding() {
             .unwrap();
         // IOERR_VANISHED (1) | IOERR_GENERAL (2) = 3.
         writer.send_io_error(3).unwrap();
+        writer.flush().unwrap();
     }
     assert_eq!(buf.len(), 8, "one 4-byte header + 4-byte payload frame");
     let header = protocol::MessageHeader::decode(&buf[0..4]).unwrap();
@@ -467,7 +469,7 @@ fn msg_info_sender_multiplex_sends_frame() {
         .activate_multiplex()
         .unwrap();
     writer.send_msg_info(b"test info").unwrap();
-    assert!(!buf.is_empty());
+    writer.flush().unwrap();
     assert_eq!(buf.len(), 4 + 9);
 }
 
@@ -479,6 +481,7 @@ fn counting_writer_delegates_msg_info() {
         .unwrap();
     let mut counting = CountingWriter::new(&mut server);
     counting.send_msg_info(b"hello").unwrap();
+    counting.flush().unwrap();
     assert!(!buf.is_empty());
 }
 
@@ -490,6 +493,7 @@ fn mut_ref_delegates_msg_info() {
         .unwrap();
     let writer: &mut ServerWriter<&mut Vec<u8>> = &mut server;
     writer.send_msg_info(b"ref test").unwrap();
+    writer.flush().unwrap();
     assert!(!buf.is_empty());
 }
 
@@ -691,13 +695,18 @@ fn multiplex_writer_msg_info_defers_flush() {
     assert_eq!(tracker.flush_count, 0, "MSG_INFO should not trigger flush");
 }
 
+/// upstream: io.c:1088 send_msg() only queues; no message code is written,
+/// let alone flushed, until the next write-out.
 #[test]
-fn multiplex_writer_msg_error_flushes_immediately() {
+fn multiplex_writer_queues_msg_error_until_written_out() {
     let mut tracker = FlushTracker::new();
-    let mut mux = MultiplexWriter::new(&mut tracker);
-
-    mux.send_message(MessageCode::Error, b"fatal").unwrap();
-    assert_eq!(tracker.flush_count, 1, "MSG_ERROR must flush immediately");
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        mux.send_message(MessageCode::Error, b"fatal").unwrap();
+        mux.flush().unwrap();
+    }
+    assert_eq!(tracker.flush_count, 1);
+    assert_eq!(&tracker.data[4..], b"fatal");
 }
 
 #[test]
@@ -718,8 +727,10 @@ fn server_writer_msg_info_defers_flush() {
     );
 }
 
+/// upstream: io.c:1088 send_msg() queues every code alike, so an error
+/// after a deferred info line waits for the same write-out, in order.
 #[test]
-fn server_writer_msg_error_flushes_past_deferred_info() {
+fn server_writer_msg_error_queues_behind_deferred_info() {
     let mut tracker = FlushTracker::new();
     {
         let mut writer = ServerWriter::new_plain(&mut tracker)
@@ -732,9 +743,10 @@ fn server_writer_msg_error_flushes_past_deferred_info() {
             .unwrap();
     }
     assert_eq!(
-        tracker.flush_count, 1,
-        "MSG_ERROR must flush even after deferred MSG_INFO"
+        tracker.flush_count, 0,
+        "nothing is written until a write-out"
     );
+    assert!(tracker.data.is_empty());
 }
 
 #[test]

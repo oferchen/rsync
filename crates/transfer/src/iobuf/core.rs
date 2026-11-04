@@ -8,6 +8,12 @@
 //! sit on a handle to the same core ([`CoreReader`], [`CoreWriter`]), so a
 //! write that has to wait still collects the peer's input, and that input is
 //! already buffered when the reader stack next asks for it.
+//!
+//! Output accounting lives here too: the core counts `stats.total_written`
+//! and paces `--bwlimit` on every byte it hands the transport, as perform_io
+//! does (upstream: io.c:952, io.c:977-980). That lets it write the multiplex
+//! output buffer out itself whenever it is about to wait for input
+//! (upstream: io.c:766-768), with no flush from the code that filled it.
 
 use std::cell::RefCell;
 use std::io::{self, Read, Write};
@@ -15,10 +21,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use bandwidth::BandwidthLimiter;
 use fast_io::transport::Transport;
 use protocol::iobuf::{IN_BUFFER_SIZE, InBuf};
 
 use super::timeout::IoTimeout;
+use crate::writer::SharedMuxOut;
 
 /// One connection's transport, input buffer and wire counters.
 pub(crate) struct Core<'a> {
@@ -36,6 +44,16 @@ pub(crate) struct Core<'a> {
     in_eof: bool,
     /// `--timeout`, checked whenever a wait comes back empty.
     timeout: IoTimeout,
+    /// `stats.total_written`, once output accounting has started; until then
+    /// writes are uncounted, like the setup exchange upstream writes with
+    /// safe_write() (io.c:977 counts only inside perform_io()).
+    write_counter: Option<Arc<AtomicU64>>,
+    /// The sender's `--bwlimit` pacing (upstream: io.c:952 clamps each write
+    /// to `bwlimit_writemax`, io.c:980 sleep_for_bwlimit()).
+    limiter: Option<BandwidthLimiter>,
+    /// The multiplexed output buffer, written out before every wait for input
+    /// (upstream: io.c:766-768 arms `iobuf.out` whenever it holds data).
+    mux: Option<SharedMuxOut>,
 }
 
 /// The handle both stacks hold. Each role runs its connection on one thread,
@@ -59,7 +77,30 @@ impl<'a> Core<'a> {
             read_counter: None,
             in_eof: false,
             timeout,
+            write_counter: None,
+            limiter: None,
+            mux: None,
         }))
+    }
+
+    /// Starts counting output into `write_counter` and pacing it by
+    /// `limiter`, from the point upstream's writes start going through
+    /// perform_io() (upstream: io.c:2693 io_start_multiplex_out(), or
+    /// io_start_buffering_out() below protocol 30).
+    pub(crate) fn start_output_accounting(
+        core: &SharedCore<'a>,
+        write_counter: Arc<AtomicU64>,
+        limiter: Option<BandwidthLimiter>,
+    ) {
+        let mut core = core.borrow_mut();
+        core.write_counter = Some(write_counter);
+        core.limiter = limiter;
+    }
+
+    /// Hands the core the multiplex output buffer to write out before it
+    /// waits for input.
+    pub(crate) fn attach_mux(core: &SharedCore<'a>, mux: SharedMuxOut) {
+        core.borrow_mut().mux = Some(mux);
     }
 
     /// Starts buffered, counted input, as upstream does once protocol setup
@@ -106,6 +147,22 @@ impl<'a> Core<'a> {
             }
             if self.in_eof || out.is_empty() {
                 return Ok(0);
+            }
+            if let Err(e) = self.drain_mux() {
+                // upstream: perform_io() services a readable descriptor
+                // (io.c:883-921) before a writable one (io.c:948) in the same
+                // pass, so a peer that has gone shows up as the end of its
+                // input, not as a write error. Stop writing to it and let the
+                // read below report what it finds.
+                if !crate::is_early_close_error(&e) {
+                    return Err(e);
+                }
+                self.mux = None;
+            }
+            // A drain that had to wait for room collected the peer's input
+            // meanwhile; serve that rather than wait for more.
+            if !self.input.is_empty() {
+                continue;
             }
             // A request at least as large as the buffer gains nothing from
             // staging, so it reads straight into the caller's slice.
@@ -163,8 +220,38 @@ impl<'a> Core<'a> {
         }
     }
 
+    /// [`Self::write`] with output accounting: each write is clamped to the
+    /// bandwidth limiter's burst, then counted and paced by what the
+    /// transport took (upstream: io.c:952, io.c:977-980).
+    fn write_out(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let len = match &self.limiter {
+            Some(limiter) => buf.len().min(limiter.write_max_bytes().max(1)),
+            None => buf.len(),
+        };
+        let n = self.write(&buf[..len])?;
+        if let Some(counter) = &self.write_counter {
+            counter.fetch_add(n as u64, Ordering::Relaxed);
+        }
+        if let Some(limiter) = &mut self.limiter {
+            let _ = limiter.register(n);
+        }
+        Ok(n)
+    }
+
     fn flush(&mut self) -> io::Result<()> {
         self.transport.flush()
+    }
+
+    /// Writes out whatever the multiplex buffer holds, so nothing the peer
+    /// may be waiting for stays buffered while this side waits for it
+    /// (upstream: io.c:766-768).
+    fn drain_mux(&mut self) -> io::Result<()> {
+        let Some(mux) = self.mux.clone() else {
+            return Ok(());
+        };
+        // The writer stack borrows the buffer only inside its own writes,
+        // and a write never waits for input, so the buffer is free here.
+        mux.borrow_mut().flush(&mut Output(self))
     }
 
     /// Reads whatever the transport has ready into the input buffer. `Some(0)`
@@ -217,6 +304,19 @@ impl<'a> Core<'a> {
     }
 }
 
+/// The core's own accounted output path, as a sink for the multiplex buffer.
+struct Output<'c, 'a>(&'c mut Core<'a>);
+
+impl Write for Output<'_, '_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write_out(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
 /// The reader stack's bottom: input served from the core.
 pub(crate) struct CoreReader<'a>(SharedCore<'a>);
 
@@ -245,7 +345,7 @@ impl<'a> CoreWriter<'a> {
 
 impl Write for CoreWriter<'_> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.borrow_mut().write(buf)
+        self.0.borrow_mut().write_out(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -427,6 +527,134 @@ mod tests {
         assert_eq!(&got, b"late");
         assert_eq!(reader.read(&mut got).unwrap(), 0);
         assert_eq!(counter.load(Ordering::Relaxed), 4);
+    }
+    /// A core over a socket with the multiplex output attached and counted,
+    /// and the writer that fills that output.
+    fn core_with_mux() -> (
+        SharedCore<'static>,
+        UnixStream,
+        Arc<AtomicU64>,
+        crate::writer::multiplex::MultiplexWriter<CoreWriter<'static>>,
+    ) {
+        let (core, peer, _) = core_over_socket();
+        let written = Arc::new(AtomicU64::new(0));
+        Core::start_output_accounting(&core, Arc::clone(&written), None);
+        let mux = crate::writer::multiplex::MultiplexWriter::new(CoreWriter::new(&core));
+        Core::attach_mux(&core, mux.shared_out());
+        (core, peer, written, mux)
+    }
+
+    /// What the peer can read right now, without waiting.
+    fn peer_ready(peer: &mut UnixStream) -> Vec<u8> {
+        peer.set_nonblocking(true).unwrap();
+        let mut got = vec![0u8; 64];
+        let n = match peer.read(&mut got) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => 0,
+            Err(e) => panic!("peer read: {e}"),
+        };
+        peer.set_nonblocking(false).unwrap();
+        got.truncate(n);
+        got
+    }
+
+    /// WHY: upstream writes `iobuf.out` whenever perform_io() is about to
+    /// wait for input (io.c:766-768), so the peer has everything this side
+    /// buffered before this side waits on the peer. That drain is the only
+    /// flush the sender's per-file loop gets, and the bytes it writes are
+    /// counted as `stats.total_written` (io.c:977).
+    #[test]
+    fn a_read_that_needs_the_transport_writes_the_buffered_frame_first() {
+        let (core, mut peer, written, mut mux) = core_with_mux();
+        mux.write_all(b"abc").unwrap();
+        assert!(peer_ready(&mut peer).is_empty(), "still buffered");
+
+        peer.write_all(b"x").unwrap();
+        let mut one = [0u8; 1];
+        CoreReader::new(&core).read_exact(&mut one).unwrap();
+
+        assert_eq!(peer_ready(&mut peer), b"\x03\x00\x00\x07abc");
+        assert_eq!(written.load(Ordering::Relaxed), 7);
+    }
+
+    /// WHY: a drain that waits for output room reads the peer's input in
+    /// the same wait (io.c:883-921); the read must serve that input, not go
+    /// on to wait for more. A peer that already sent its next request and
+    /// now waits for this side's reply would otherwise never be answered.
+    #[test]
+    fn a_drain_that_collects_input_serves_it_without_another_wait() {
+        let waits = Rc::new(RefCell::new(Vec::new()));
+        let core = Core::new(
+            Box::new(FullUntilWaited {
+                pending_input: b"req".to_vec(),
+                waited: false,
+                waits: Rc::clone(&waits),
+            }),
+            Vec::new(),
+            IoTimeout::new(None, "sender"),
+        );
+        Core::start_buffering(&core, Arc::new(AtomicU64::new(0)));
+        let mut mux = crate::writer::multiplex::MultiplexWriter::new(CoreWriter::new(&core));
+        Core::attach_mux(&core, mux.shared_out());
+        mux.write_all(b"abc").unwrap();
+
+        let mut got = [0u8; 3];
+        CoreReader::new(&core).read_exact(&mut got).unwrap();
+
+        assert_eq!(&got, b"req");
+        assert_eq!(*waits.borrow(), vec![(true, true)], "one wait, for room");
+    }
+
+    /// WHY: a read the input buffer can already satisfy never reaches
+    /// perform_io() (io.c:725-727), so it must not write anything: the next
+    /// bytes still join the same frame, as they do upstream.
+    #[test]
+    fn a_read_served_from_the_input_buffer_leaves_the_output_buffered() {
+        let (core, mut peer, _, mut mux) = core_with_mux();
+        peer.write_all(b"xy").unwrap();
+        let mut reader = CoreReader::new(&core);
+        let mut one = [0u8; 1];
+        reader.read_exact(&mut one).unwrap();
+
+        mux.write_all(b"abc").unwrap();
+        reader.read_exact(&mut one).unwrap();
+
+        assert!(peer_ready(&mut peer).is_empty(), "nothing written");
+    }
+
+    /// WHY: perform_io() reads a readable descriptor before it writes a
+    /// writable one (io.c:883-921, io.c:948), so a peer that has gone is
+    /// reported as the end of its input, the way upstream reports it
+    /// (whine_about_eof), not as a write error.
+    #[test]
+    fn a_peer_that_has_gone_reads_as_end_of_input_not_as_a_write_error() {
+        let (core, peer, _, mut mux) = core_with_mux();
+        mux.write_all(b"abc").unwrap();
+        drop(peer);
+
+        let mut one = [0u8; 1];
+        assert_eq!(CoreReader::new(&core).read(&mut one).unwrap(), 0);
+    }
+
+    /// WHY: `--bwlimit` paces every byte the transport takes and caps each
+    /// write at `bwlimit_writemax` (io.c:952, io.c:980), and every byte is
+    /// counted (io.c:977) - including the ones the input wait drains.
+    #[test]
+    fn output_accounting_clamps_counts_and_paces_each_write() {
+        let (core, mut peer, _) = core_over_socket();
+        let written = Arc::new(AtomicU64::new(0));
+        let limiter =
+            bandwidth::BandwidthLimiter::new(std::num::NonZeroU64::new(8 * 1024).unwrap());
+        let max = limiter.write_max_bytes();
+        Core::start_output_accounting(&core, Arc::clone(&written), Some(limiter));
+
+        let payload = vec![7u8; max + 10];
+        let n = CoreWriter::new(&core).write(&payload).unwrap();
+
+        assert_eq!(n, max, "one write is capped at bwlimit_writemax");
+        assert_eq!(written.load(Ordering::Relaxed), max as u64);
+        let mut got = vec![0u8; max];
+        peer.read_exact(&mut got).unwrap();
     }
 }
 
