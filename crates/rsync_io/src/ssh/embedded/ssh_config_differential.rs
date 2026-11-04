@@ -2024,6 +2024,46 @@ mod tests {
         assert_eq!(upstream, Some(oc));
     }
 
+    /// With `CanonicalizePermittedCNAMEs` set, the host is looked up as
+    /// typed even with canonicalization off, and a direct connection to a
+    /// name that does not resolve is refused with the resolver's reason
+    /// (openssh/ssh.c:274-276, :1263-1273); through a proxy it is not.
+    #[test]
+    fn a_bare_name_lookup_refuses_an_unresolvable_direct_host() {
+        for (text, alias, refused) in [
+            (
+                "CanonicalizePermittedCNAMEs *:*\n",
+                "nonexist.invalid",
+                true,
+            ),
+            ("CanonicalizePermittedCNAMEs *:*\n", "1.2.3.256", true),
+            (
+                "CanonicalizePermittedCNAMEs *:*\nProxyCommand nc %h %p\n",
+                "nonexist.invalid",
+                false,
+            ),
+            (
+                "CanonicalizePermittedCNAMEs none\n",
+                "nonexist.invalid",
+                false,
+            ),
+        ] {
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("ssh_config");
+            std::fs::write(&path, text).expect("write fixture");
+            let upstream = match upstream_refusal(&path, alias) {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("bare-name lookup refusal", &why);
+                    return;
+                }
+            };
+            let oc = resolve_host(&path, alias).err().map(|e| e.to_string());
+            assert_eq!(oc.is_some(), refused, "{alias} {text:?}: {oc:?}");
+            assert_eq!(upstream, oc, "{alias} {text:?}");
+        }
+    }
+
     /// Whether the oracle is the pinned 10.0p1 whose name tables and
     /// defaults the algorithm rows encode; a newer `ssh` dumps different
     /// defaults, so it cannot judge them.

@@ -1129,11 +1129,13 @@ pub(in crate::ssh) fn parse_canonicalize_hostname(value: &str) -> Option<Canonic
     }
 }
 
-/// Checks a `CanonicalDomains` entry and returns it lowercased without a
-/// trailing dot, or upstream's diagnostic - a port of `valid_domain` with
-/// `makelower` set (openssh/misc.c:2398-2441).
+/// Checks a domain name and returns it without a trailing dot, or
+/// upstream's diagnostic - a port of `valid_domain` (openssh/misc.c:2398-2441).
+/// With `makelower`, as for a `CanonicalDomains` entry, the name is
+/// returned lowercased; a resolver's canonical name is checked without it
+/// (openssh/ssh.c:285).
 #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
-pub(in crate::ssh) fn valid_domain(name: &str) -> Result<String, String> {
+pub(in crate::ssh) fn valid_domain(name: &str, makelower: bool) -> Result<String, String> {
     let shown: String = name.chars().take(100).collect();
     let Some(&first) = name.as_bytes().first() else {
         return Err("empty domain name".to_owned());
@@ -1147,7 +1149,9 @@ pub(in crate::ssh) fn valid_domain(name: &str) -> Result<String, String> {
     // lowercased up to and including the offending byte (:2415-2431).
     let shown_at = |i: usize| -> String {
         let mut seen = name.as_bytes().to_vec();
-        seen[..=i].make_ascii_lowercase();
+        if makelower {
+            seen[..=i].make_ascii_lowercase();
+        }
         String::from_utf8_lossy(&seen).chars().take(100).collect()
     };
     let mut last = 0_u8;
@@ -1166,8 +1170,12 @@ pub(in crate::ssh) fn valid_domain(name: &str) -> Result<String, String> {
         }
         last = c;
     }
-    let lower = name.to_ascii_lowercase();
-    Ok(lower.strip_suffix('.').unwrap_or(&lower).to_owned())
+    let name = if makelower {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_owned()
+    };
+    Ok(name.strip_suffix('.').unwrap_or(&name).to_owned())
 }
 
 /// Parses a [`ValueKind::Int`] value the way upstream's `atoi_err` does:
