@@ -178,15 +178,20 @@ fn pull_waiting_for_phase_end(extra: &[&str]) -> (Vec<u8>, Vec<Frame>) {
 /// Pulls `keep` with `extra` options from the daemon listening on `port`.
 fn pull(port: u16, extra: &[&str]) -> (TempDir, Output) {
     let tmp = TempDir::new().expect("tempdir");
-    let output = Command::new(oc_rsync_bin())
+    let output = pull_into(&tmp, port, extra);
+    (tmp, output)
+}
+
+/// Pulls `keep` into `dest` with `extra` options from the daemon on `port`.
+fn pull_into(dest: &TempDir, port: u16, extra: &[&str]) -> Output {
+    Command::new(oc_rsync_bin())
         .args(["--protocol=30", "-r"])
         .args(extra)
         .arg(format!("rsync://127.0.0.1:{port}/mod/keep"))
-        .arg(format!("{}/", tmp.path().display()))
+        .arg(format!("{}/", dest.path().display()))
         .stdin(Stdio::null())
         .output()
-        .expect("run oc-rsync");
-    (tmp, output)
+        .expect("run oc-rsync")
 }
 
 #[test]
@@ -233,33 +238,72 @@ fn redo_and_delay_phases_end_once_the_sender_ends_phase_zero() {
     );
 }
 
-/// upstream: generator.c:2853-2866 - the redo phase ends right after its last
-/// request. rsync 3.5.1 answers a failed whole-file checksum by re-requesting
-/// `keep` (the same index, so `0xFE` and a zero diff, then the item flags and
-/// an empty sum head) and writes the redo and delay phases' `NDX_DONE`s in the
-/// same frame, before any redo reply.
-#[test]
-fn redo_phase_ends_right_after_its_request() {
+/// Serves `keep` with a wrong file checksum after the client's request of
+/// `request_len` bytes and its phase-0 `NDX_DONE`, then the sender's phase-0
+/// `NDX_DONE`, and returns the next `redo_len` data bytes the client writes.
+fn redo_after_failed_checksum(dest: &TempDir, request_len: usize, redo_len: usize) -> Vec<u8> {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let port = listener.local_addr().expect("addr").port();
     let server = thread::spawn(move || {
         let (mut sock, mut reader) = accept_and_send_list(&listener);
-        read_data(&mut reader, REQUEST.len() + 1);
+        read_data(&mut reader, request_len + 1);
         let mut answer = reply_with_checksum(&[0u8; 16]);
         answer.push(NDX_DONE);
         sock.write_all(&frame(TAG_DATA, &answer))
             .expect("corrupt file data and the sender's phase end");
-        let redo = read_data(&mut reader, 3 + REQUEST.len() - 1 + 2);
+        let redo = read_data(&mut reader, redo_len);
         sock.shutdown(Shutdown::Both).expect("close");
         redo
     });
     // The daemon hangs up mid-transfer, so only the bytes it read matter.
-    pull(port, &[]);
-    let redo = server.join().expect("replayed daemon");
+    pull_into(dest, port, &[]);
+    server.join().expect("replayed daemon")
+}
+
+/// upstream: generator.c:2853-2866 - the redo phase ends right after its last
+/// request. rsync 3.5.1 answers a failed whole-file checksum by re-requesting
+/// `keep` - the same index (`0xFE` and a zero diff), `ITEM_TRANSFER |
+/// ITEM_IS_NEW` because the discarded temp leaves the destination absent
+/// (generator.c:584), and an empty sum head - and writes the redo and delay
+/// phases' `NDX_DONE`s in the same frame, before any redo reply.
+#[test]
+fn redo_phase_ends_right_after_its_request() {
+    let dest = TempDir::new().expect("tempdir");
+    let redo = redo_after_failed_checksum(&dest, REQUEST.len(), 3 + REQUEST.len() - 1 + 2);
+    let mut expected = vec![0xfe, 0x00, 0x00];
+    expected.extend_from_slice(&REQUEST[1..]);
+    expected.extend_from_slice(&[NDX_DONE, NDX_DONE]);
+    assert_eq!(redo, expected);
+}
+
+/// upstream: generator.c:2667-2705 - the redo re-enters recv_generator(),
+/// which re-stats the destination and itemizes the request against it
+/// (generator.c:2378-2384). An existing `keep` that differs in size and
+/// mtime is not new: rsync 3.5.1 sends `ITEM_TRANSFER | ITEM_REPORT_SIZE |
+/// ITEM_REPORT_TIME` (`0x800c`) on the redo, as on the first request.
+#[test]
+fn redo_request_itemizes_an_existing_destination() {
+    let dest = TempDir::new().expect("tempdir");
+    let existing = dest.path().join("keep");
+    std::fs::write(&existing, b"hello").expect("existing destination");
+    filetime::set_file_mtime(
+        &existing,
+        filetime::FileTime::from_unix_time(1_000_000_000, 0),
+    )
+    .expect("backdate destination");
+    // The first request's sum head and one 5-byte block: a 4-byte rolling sum
+    // and a 2-byte strong sum. The redo's block carries a full 16-byte one.
+    let request_len = 1 + 2 + 16 + 4 + 2;
+    let redo_len = 3 + 2 + 16 + 4 + 16 + 2;
+    let redo = redo_after_failed_checksum(&dest, request_len, redo_len);
     assert_eq!(redo[..3], [0xfe, 0x00, 0x00], "the redo request for ndx 0");
-    assert_eq!(redo[5..21], [0u8; 16], "an empty sum head");
     assert_eq!(
-        redo[21..],
+        redo[3..5],
+        [0x0c, 0x80],
+        "ITEM_TRANSFER | ITEM_REPORT_SIZE | ITEM_REPORT_TIME"
+    );
+    assert_eq!(
+        redo[redo_len - 2..],
         [NDX_DONE, NDX_DONE],
         "the redo and delay phases end before any redo reply"
     );
