@@ -260,6 +260,17 @@ pub struct DiskCommitConfig {
     pub daemon_module_root: Option<PathBuf>,
 }
 
+impl DiskCommitConfig {
+    /// The path context the receiver's diagnostics render against.
+    pub(crate) fn full_fname_paths(&self) -> crate::full_fname::FullFnamePaths<'_> {
+        crate::full_fname::FullFnamePaths::receiver(
+            self.daemon_module.as_deref(),
+            self.daemon_module_root.as_deref(),
+            self.dest_dir.as_deref(),
+        )
+    }
+}
+
 impl Default for DiskCommitConfig {
     fn default() -> Self {
         Self {

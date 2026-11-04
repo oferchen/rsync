@@ -309,17 +309,11 @@ impl PipelinedReceiver {
     /// `module_id < 0`); the `curr_dir` prefix applies to every process, so a
     /// non-daemon receiver still anchors at its working directory.
     fn full_fname_paths(&self) -> crate::full_fname::FullFnamePaths<'_> {
-        match (
+        crate::full_fname::FullFnamePaths::receiver(
             self.daemon_module.as_deref(),
             self.daemon_module_root.as_deref(),
-        ) {
-            (Some(module), Some(root)) => crate::full_fname::FullFnamePaths::daemon(
-                module,
-                root,
-                self.dest_dir.as_deref().unwrap_or(root),
-            ),
-            _ => crate::full_fname::FullFnamePaths::non_daemon(),
-        }
+            self.dest_dir.as_deref(),
+        )
     }
 
     /// Formats the receiver's temp-file creation failure the way upstream does.
@@ -371,11 +365,9 @@ impl PipelinedReceiver {
     /// on %s", full_fname(fname))` and then `goto cleanup`. The diagnostic is
     /// not verbosity-gated, so an operator sees it at the default `-a`.
     ///
-    /// `message` is [`metadata::MetadataError`]'s own rendering, which already
-    /// carries upstream's `failed to <op> <path>: <errno text>` shape and names
-    /// the failing attribute at the site that knows it. Re-deriving upstream's
-    /// per-attribute wording here would mean inventing a mapping the apply
-    /// chain does not report.
+    /// `message` is the disk thread's rendering of the failure: upstream's
+    /// `rsyserr()` text for a `set_file_attrs()` step, with the path through
+    /// `full_fname()`, or the error's own text for an ACL or xattr step.
     ///
     /// Emitting this as `FERROR_XFER` (not `FINFO`) is what makes the peer's
     /// `rwrite()` set `got_xfer_error`, matching the exit 23 the collected
@@ -877,6 +869,7 @@ mod tests {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                dest_mode_basis: None,
                 file_entry: None,
             })))
             .unwrap();
@@ -1235,6 +1228,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"test data".to_vec(),
@@ -1316,6 +1310,7 @@ mod tests {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                dest_mode_basis: None,
                 file_entry: None,
             })))
             .unwrap();
@@ -1379,6 +1374,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"next".to_vec(),
@@ -1472,6 +1468,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: Some(entry),
                 }),
                 data: b"test data".to_vec(),
@@ -1595,6 +1592,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: Some(entry),
                 }),
                 data: b"test data".to_vec(),
@@ -1869,6 +1867,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"test data".to_vec(),
@@ -1947,6 +1946,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"test data".to_vec(),
@@ -2026,6 +2026,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"test data".to_vec(),
@@ -2436,6 +2437,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"drop staged".to_vec(),
@@ -2499,6 +2501,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"shutdown stage".to_vec(),
@@ -2552,6 +2555,7 @@ mod tests {
                     append_offset: 0,
                     xattr_list: None,
                     xattr_basis: None,
+                    dest_mode_basis: None,
                     file_entry: None,
                 }),
                 data: b"e2e staged".to_vec(),
@@ -2615,6 +2619,7 @@ mod tests {
             append_offset: 0,
             xattr_list: None,
             xattr_basis: None,
+            dest_mode_basis: None,
             file_entry: None,
         };
         crate::disk_commit::close_fault::arm(libc::EIO);
@@ -2789,6 +2794,7 @@ mod tests {
                         append_offset: 0,
                         xattr_list: None,
                         xattr_basis: None,
+                        dest_mode_basis: None,
                         file_entry: None,
                     }),
                     data: b"payload".to_vec(),

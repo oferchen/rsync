@@ -7,7 +7,7 @@
 
 use std::ffi::OsString;
 use std::num::{NonZeroU8, NonZeroU32, NonZeroU64};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -118,6 +118,115 @@ impl ReferenceDirectory {
     pub fn path(&self) -> &std::path::Path {
         &self.path
     }
+
+    /// Anchors the basis on `curr_dir`, the directory the receiver writes
+    /// into.
+    ///
+    /// upstream: `main.c:889-911` `check_alt_basis_dirs()` strips one
+    /// trailing `/` and rewrites a relative `basis_dir[j]` to
+    /// `curr_dir/bdir`, so every later `pathjoin(basis_dir[j], fname)` is
+    /// independent of the process cwd. `dest_dir_pending` is upstream's
+    /// `dry_run > 1`, a dry run whose destination directory was never
+    /// created: one leading `../` is then dropped and the rest joined onto
+    /// `curr_dir`'s parent, so a sibling of the missing destination still
+    /// resolves as it would in a live run.
+    ///
+    /// Only `path` changes; [`Self::requested`] keeps what the peer wrote.
+    /// Upstream skips the rewrite under `sanitize_paths`, so a daemon
+    /// receiver must not call this.
+    #[must_use]
+    pub fn anchored_at(&self, curr_dir: &Path, dest_dir_pending: bool) -> Self {
+        let basis = strip_one_trailing_separator(&self.path);
+        let path = if basis.is_absolute() {
+            basis
+        } else {
+            match (
+                dest_dir_pending,
+                curr_dir.parent(),
+                strip_leading_parent(&basis),
+            ) {
+                (true, Some(parent), Some(rest)) => parent.join(rest),
+                _ => curr_dir.join(&basis),
+            }
+        };
+        Self {
+            kind: self.kind,
+            path,
+            requested: self.requested.clone(),
+        }
+    }
+}
+
+/// Removes at most ONE trailing separator, and never from a bare root.
+///
+/// upstream: `main.c:889-891`
+/// `if (bd_len > 1 && bdir[bd_len-1] == '/') bdir[--bd_len] = '\0';`
+///
+/// Exactly one, because the count decides *which* diagnostic fires. Measured
+/// against real 3.5.0 with a plain file at an absolute path:
+///
+/// | arg | upstream |
+/// |---|---|
+/// | `<abs>/f` | `is not a dir: <abs>/f` |
+/// | `<abs>/f/` | `is not a dir: <abs>/f` - stripped, so the stat lands on the file |
+/// | `<abs>/f//` | `does not exist: <abs>/f/` - one survives, `stat("f/")` is ENOTDIR |
+/// | `/` | silent - length 1, never stripped, and it is a directory |
+///
+/// A general path normalisation would collapse both separators and flip the
+/// third row to `is not a dir`.
+///
+/// Deviation from upstream: oc accepts either platform separator where upstream
+/// hardcodes `'/'`: a Windows operator writes `--link-dest=..\prev`, and
+/// `is_separator` is what the rest of this module tree already uses to decide
+/// the question.
+fn strip_one_trailing_separator(path: &Path) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let bytes = path.as_os_str().as_bytes();
+        match bytes.split_last() {
+            Some((last, rest))
+                if !rest.is_empty() && std::path::is_separator(char::from(*last)) =>
+            {
+                PathBuf::from(OsString::from_vec(rest.to_vec()))
+            }
+            _ => path.to_path_buf(),
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        let units: Vec<u16> = path.as_os_str().encode_wide().collect();
+        match units.split_last() {
+            Some((last, rest))
+                if !rest.is_empty()
+                    && char::from_u32(u32::from(*last)).is_some_and(std::path::is_separator) =>
+            {
+                PathBuf::from(OsString::from_wide(rest))
+            }
+            _ => path.to_path_buf(),
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        path.to_path_buf()
+    }
+}
+
+/// Returns what follows a leading `../`, or `None` when the path does not
+/// start with one.
+///
+/// upstream: `main.c:900` `strncmp(bdir, "../", 3) == 0` - a bare `..` has no
+/// separator after it and is not stripped.
+fn strip_leading_parent(path: &Path) -> Option<&Path> {
+    let mut components = path.components();
+    if components.next() != Some(Component::ParentDir) {
+        return None;
+    }
+    let rest = components.as_path();
+    (!rest.as_os_str().is_empty()).then_some(rest)
 }
 
 /// Options that influence how a [`LocalCopyPlan`](crate::local_copy::LocalCopyPlan) is executed.
@@ -431,6 +540,60 @@ pub(crate) struct LinkDestEntry {
 
 #[cfg(test)]
 mod tests {
+    mod anchored_at {
+        use super::super::*;
+
+        fn anchor(basis: &str, curr_dir: &str, pending: bool) -> PathBuf {
+            ReferenceDirectory::new(ReferenceDirectoryKind::Link, basis)
+                .anchored_at(Path::new(curr_dir), pending)
+                .path
+        }
+
+        #[test]
+        fn a_relative_basis_joins_the_destination_not_the_cwd() {
+            assert_eq!(
+                anchor("../alt", "/x/dst", false),
+                PathBuf::from("/x/dst/../alt")
+            );
+            assert_eq!(anchor("sub", "/x/dst", false), PathBuf::from("/x/dst/sub"));
+        }
+
+        #[test]
+        fn an_absolute_basis_is_kept_apart_from_one_trailing_separator() {
+            assert_eq!(
+                anchor("/srv/alt/", "/x/dst", false),
+                PathBuf::from("/srv/alt")
+            );
+            assert_eq!(
+                anchor("/srv/alt//", "/x/dst", false),
+                PathBuf::from("/srv/alt/")
+            );
+            assert_eq!(anchor("/", "/x/dst", true), PathBuf::from("/"));
+        }
+
+        /// upstream: main.c:900-906 - only `dry_run > 1` drops a leading
+        /// `../`, and only one of them, so the result names the same
+        /// directory a live run would reach through the created destination.
+        #[test]
+        fn a_pending_destination_drops_exactly_one_leading_parent() {
+            assert_eq!(anchor("../alt", "/x/dst", true), PathBuf::from("/x/alt"));
+            assert_eq!(
+                anchor("../../alt", "/x/dst", true),
+                PathBuf::from("/x/../alt")
+            );
+            assert_eq!(anchor("sub", "/x/dst", true), PathBuf::from("/x/dst/sub"));
+            assert_eq!(anchor("..", "/x/dst", true), PathBuf::from("/x/dst/.."));
+        }
+
+        #[test]
+        fn the_requested_spelling_survives_the_rewrite() {
+            let anchored = ReferenceDirectory::new(ReferenceDirectoryKind::Copy, "../alt/")
+                .anchored_at(Path::new("/x/dst"), false);
+            assert_eq!(anchored.requested(), Path::new("../alt/"));
+            assert_eq!(anchored.kind(), ReferenceDirectoryKind::Copy);
+        }
+    }
+
     use super::*;
 
     #[test]

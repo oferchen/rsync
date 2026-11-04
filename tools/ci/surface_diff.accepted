@@ -46,9 +46,12 @@ daemon-directives:upstream_only:name
 #     `address` (dual-stack TCP set when unset); same oc-only transport.
 #   quicretry - QUIC Retry policy (auto|always|never, RFC 9000 s8.1.2 address
 #     validation under load); same oc-only transport, no upstream peer.
+#   paralleldeltascan - server-side switch for --parallel-delta-scan on pulls;
+#     the client never forwards the option and nothing changes on the wire.
 daemon-directives:oc_only:acceptorthreads
 daemon-directives:oc_only:bwlimit
 daemon-directives:oc_only:motd
+daemon-directives:oc_only:paralleldeltascan
 daemon-directives:oc_only:quicaddress
 daemon-directives:oc_only:quiccertfile
 daemon-directives:oc_only:quicclientcafile

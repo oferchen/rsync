@@ -1553,3 +1553,112 @@ fn local_batch_carries_named_acl_entries_like_upstream() {
         }
     }
 }
+
+/// `getfattr` dump of every path under `dir`, keyed by path, values hex-encoded.
+fn xattr_snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
+    let out = Command::new("getfattr")
+        .args(["-R", "-d", "-e", "hex", "--absolute-names", "."])
+        .current_dir(dir)
+        .output()
+        .expect("run getfattr");
+    assert!(out.status.success(), "getfattr {}: {out:?}", dir.display());
+    let mut xattrs = std::collections::BTreeMap::new();
+    for block in String::from_utf8_lossy(&out.stdout).split("\n\n") {
+        let mut lines = block.lines().filter(|l| !l.is_empty());
+        let Some(file) = lines.next() else { continue };
+        xattrs.insert(file.to_owned(), lines.map(str::to_owned).collect());
+    }
+    xattrs
+}
+
+/// upstream: io.c:2747 start_write_batch() tees the sender's stream, so a
+/// batch carries each entry's xattrs in the file list (flist.c:2058-2068
+/// get_xattr(), send_xattr()) and, for a value longer than MAX_FULL_DATUM
+/// (xattrs.c:49), only its digest there: the full value follows the entry's
+/// iflags under ITEM_REPORT_XATTR (sender.c:482-484 send_xattr_request()).
+/// A batch without them replays every file, directory and nested entry with
+/// no xattrs at all.
+///
+/// A directory's xattrs replay through oc only. 3.5.1 replaying any batch
+/// whose new directory carries xattrs, its own included, races its forked
+/// receiver against its generator: the receiver acts on the directory's
+/// ITEM_REPORT_XATTR row before the generator has made it, and fails
+/// "stat ... failed" (exit 23) whenever it wins. With a value over
+/// MAX_FULL_DATUM it always wins.
+#[test]
+fn local_batch_carries_xattrs_like_upstream() {
+    if let Some(reason) = test_support::Capabilities::probe()
+        .skip_reason(&[test_support::capabilities::names::XATTRS])
+    {
+        eprintln!("skip: {reason}");
+        return;
+    }
+    if !test_support::skip::require_command_on_path("setfattr")
+        || !test_support::skip::require_command_on_path("getfattr")
+    {
+        return;
+    }
+    let long = "v".repeat(64);
+    let decorate = |fx: &Fixture, directory: bool| -> bool {
+        let files = [
+            ("user.short", "blue", "src/a.txt"),
+            ("user.long", long.as_str(), "src/a.txt"),
+            ("user.deep", "yes", "src/sub/b.log"),
+            ("user.long", long.as_str(), "src/sub/c.txt"),
+        ];
+        let dirs = [
+            ("user.dir", "d", "src/sub"),
+            ("user.long", long.as_str(), "src/sub"),
+        ];
+        files
+            .into_iter()
+            .chain(dirs.into_iter().filter(|_| directory))
+            .all(|(name, value, path)| {
+                Command::new("setfattr")
+                    .args(["-n", name, "-v", value])
+                    .arg(fx.root.join(path))
+                    .status()
+                    .is_ok_and(|s| s.success())
+            })
+    };
+    if !decorate(&Fixture::new(), true) {
+        eprintln!("skip: the temp filesystem does not take user xattrs");
+        return;
+    }
+    let modes = [&["-rX"][..], &["-rX", "--no-inc-recursive"]];
+    for (mode, directory) in modes.into_iter().flat_map(|m| [(m, false), (m, true)]) {
+        for (recorder, record_bin) in implementations() {
+            let fx = Fixture::new();
+            assert!(decorate(&fx, directory));
+            let want = xattr_snapshot(&fx.root.join("src"));
+            let mut args = mode.to_vec();
+            args.extend(["--write-batch=bf", "src/", "rec/"]);
+            let out = fx.run(&record_bin, &args);
+            assert!(out.status.success(), "{mode:?} {recorder} record: {out:?}");
+            assert_eq!(
+                xattr_snapshot(&fx.root.join("rec")),
+                want,
+                "{mode:?} {recorder}: the recording run's own copy"
+            );
+            let replayers = implementations()
+                .into_iter()
+                .filter(|(replayer, _)| !directory || *replayer == "oc");
+            for (replayer, replay_bin) in replayers {
+                let dest = format!("by-{replayer}");
+                let target = format!("{dest}/");
+                let mut args = mode.to_vec();
+                args.extend(["--read-batch=bf", target.as_str()]);
+                let out = fx.run(&replay_bin, &args);
+                assert!(
+                    out.status.success(),
+                    "{mode:?} {recorder}->{replayer}: {out:?}"
+                );
+                assert_eq!(
+                    xattr_snapshot(&fx.root.join(&dest)),
+                    want,
+                    "{mode:?} {recorder}->{replayer}: replayed xattrs"
+                );
+            }
+        }
+    }
+}

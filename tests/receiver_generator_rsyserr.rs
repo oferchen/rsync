@@ -24,6 +24,10 @@
 //! | root-owned dir, `-rg`         | 23, `chgrp "<dst>/d" failed: ...`               | push **0**, pull 23, silent  |
 //! | root-owned file, `-p`         | 23, `failed to set permissions on "<dst>/f": ...` | push **0**, pull 23, silent |
 //! | root-owned symlink, `-lt`     | 23, `failed to set times on "<dst>/l": ...`     | **0, silent**                |
+//! | hard link under a file `sub`  | 23, `link "<dst>/sub/b" => a failed: Not a ...` | **11, fatal abort**          |
+//! | empty dir in the way of link  | 0, the link replaces the directory              | **3, fatal abort**           |
+//! | root-owned file, `--inplace`  | 23, `[receiver] chgrp "<dst>/f" failed: ...`    | 23, oc-only wording          |
+//! | sender I/O error, `--delete`  | `IO error encountered -- skipping ...` notice   | **silent at `--info=nonreg0`** |
 //!
 //! Skipped (with a printed reason) as root, which ignores the denials. The
 //! attribute cells also need `sudo -n` to plant the root-owned entry.
@@ -102,6 +106,8 @@ fn mkfifo(path: &Path) {
 enum Direction {
     Push,
     Pull,
+    /// A local copy, for the cells whose generator code it shares.
+    Local,
 }
 
 const DIRECTIONS: [Direction; 2] = [Direction::Push, Direction::Pull];
@@ -145,6 +151,18 @@ impl Fixture {
     /// keeps `dst/` itself out of the file list, so neither implementation
     /// re-grants itself write permission on it.
     fn run(&self, flags: &[&str], names: &[&str], direction: Direction) -> (Option<i32>, String) {
+        let (status, _stdout, stderr) = self.run_output(flags, names, direction);
+        (status, stderr)
+    }
+
+    /// [`Self::run`], also returning the client's stdout, where a client
+    /// prints `FINFO` notices.
+    fn run_output(
+        &self,
+        flags: &[&str],
+        names: &[&str],
+        direction: Direction,
+    ) -> (Option<i32>, String, String) {
         let binary = oc_rsync_binary();
         let dest = format!("{}/dst/", self.root.display());
         let mut runner = test_support::OcRsyncCliRunner::new()
@@ -157,17 +175,18 @@ impl Fixture {
         for name in names {
             let source = self.src(name).display().to_string();
             runner = runner.arg(match direction {
-                Direction::Push => source,
+                Direction::Push | Direction::Local => source,
                 Direction::Pull => format!("h:{source}"),
             });
         }
         runner = runner.arg(match direction {
             Direction::Push => format!("h:{dest}"),
-            Direction::Pull => dest,
+            Direction::Pull | Direction::Local => dest,
         });
         let out = runner.run().expect("transfer did not finish");
         (
             out.status,
+            String::from_utf8_lossy(&out.stdout).into_owned(),
             String::from_utf8_lossy(&out.stderr).into_owned(),
         )
     }
@@ -236,6 +255,117 @@ fn failed_hard_link_is_reported_and_exits_23() {
             &stderr,
             &expected,
             "a failed hard link must not be skipped silently",
+        );
+    }
+}
+
+/// `hard_link_one()` reports every failed `link()` the same way, whatever the
+/// errno: `rsyserr(FERROR_XFER, ...)`, then on to the next file. No errno
+/// makes the failure fatal.
+///
+/// `--no-implied-dirs` keeps `sub` out of the file list, so the regular file
+/// planted at `dst/sub` stays and the follower's `link()` fails with `ENOTDIR`.
+#[test]
+fn hard_link_under_a_file_parent_is_reported_and_exits_23() {
+    for direction in DIRECTIONS {
+        let fx = Fixture::new();
+        fs::create_dir(fx.src("sub")).expect("create src/sub");
+        fs::write(fx.src("a"), b"data\n").expect("write src/a");
+        fs::hard_link(fx.src("a"), fx.src("sub/b")).expect("link src/sub/b");
+        backdate(&fx.src("a"));
+        fs::copy(fx.src("a"), fx.dst("a")).expect("seed dst/a");
+        backdate(&fx.dst("a"));
+        fs::write(fx.dst("sub"), b"not a directory\n").expect("plant dst/sub");
+
+        let (status, stderr) = fx.run(
+            &["-aRH", "--no-implied-dirs"],
+            &["./a", "./sub/b"],
+            direction,
+        );
+
+        let expected = format!(
+            "rsync: [generator] link {} => a failed: Not a directory (20)",
+            fx.full_fname("sub/b")
+        );
+        assert_reported(
+            direction,
+            status,
+            &stderr,
+            &expected,
+            "a link() failure other than EACCES is still a per-file error",
+        );
+    }
+}
+
+/// A directory where a hard-link follower goes is `dir_in_the_way`:
+/// `atomic_create()` hands it to `delete_item()`, which removes an empty one
+/// without `--delete` or `--force`, and the link is made.
+///
+/// upstream: generator.c:2469-2483 atomic_create(), delete.c:222-226
+#[test]
+fn empty_directory_in_the_way_of_a_hard_link_is_replaced() {
+    use std::os::unix::fs::MetadataExt;
+    for direction in DIRECTIONS {
+        let fx = Fixture::new();
+        fs::write(fx.src("a"), b"data\n").expect("write src/a");
+        fs::hard_link(fx.src("a"), fx.src("b")).expect("link src/b");
+        fs::create_dir(fx.dst("b")).expect("plant dst/b directory");
+
+        let (status, stderr) = fx.run(&["-aH"], &["a", "b"], direction);
+
+        assert_eq!(
+            status,
+            Some(0),
+            "{direction:?}: the empty directory must give way\nstderr:\n{stderr}"
+        );
+        let leader = fs::metadata(fx.dst("a")).expect("stat dst/a");
+        let follower = fs::symlink_metadata(fx.dst("b")).expect("stat dst/b");
+        assert_eq!(
+            (follower.dev(), follower.ino()),
+            (leader.dev(), leader.ino()),
+            "{direction:?}: dst/b must be a hard link to dst/a"
+        );
+    }
+}
+
+/// A populated directory where a hard-link follower goes is refused by
+/// `delete_item()` without `--delete` or `--force`, and the follower is
+/// skipped with exit 23.
+///
+/// DEVIATION: rsync 3.5.1 prints the same two lines and then hangs until it
+/// is killed (measured on push and pull), so this cell has no upstream oracle.
+/// The runner's wall-time limit is the hang guard: a hang fails the test.
+///
+/// upstream: delete.c:178-181 (FINFO), delete.c:273-286 (FERROR_XFER)
+#[test]
+fn populated_directory_in_the_way_of_a_hard_link_is_refused_without_hanging() {
+    for direction in DIRECTIONS {
+        let fx = Fixture::new();
+        fs::write(fx.src("a"), b"data\n").expect("write src/a");
+        fs::hard_link(fx.src("a"), fx.src("b")).expect("link src/b");
+        fs::create_dir(fx.dst("b")).expect("plant dst/b directory");
+        fs::write(fx.dst("b").join("x"), b"x\n").expect("populate dst/b");
+
+        let (status, stdout, stderr) = fx.run_output(&["-aH"], &["a", "b"], direction);
+
+        let output = format!("{stdout}{stderr}");
+        for expected in [
+            "cannot delete non-empty directory: b",
+            "could not make way for new regular file: b",
+        ] {
+            assert!(
+                output.lines().any(|line| line == expected),
+                "{direction:?}: expected line: {expected}\noutput:\n{output}"
+            );
+        }
+        assert_eq!(
+            status,
+            Some(23),
+            "{direction:?}: the refused follower is a per-file error\noutput:\n{output}"
+        );
+        assert!(
+            fx.dst("b").join("x").exists(),
+            "{direction:?}: the populated directory must be left alone"
         );
     }
 }
@@ -356,6 +486,104 @@ fn failed_set_file_attrs_is_reported_and_exits_23() {
                 &stderr,
                 &expected,
                 "a failed set_file_attrs() step is rsyserr(FERROR_XFER), not a debug trace",
+            );
+        }
+    }
+}
+
+/// The receiver applies attributes to the file it wrote through the same
+/// `set_file_attrs()`, so a failure there has the same wording, tagged
+/// `[receiver]`. `--inplace` writes through a root-owned 0666 file: the data
+/// lands, then the `chgrp` fails with `EPERM`.
+///
+/// upstream: receiver.c:1340 finish_transfer() -> rsync.c:685-687
+#[test]
+fn failed_receiver_set_file_attrs_uses_upstream_wording() {
+    if running_as_root() {
+        eprintln!("skip: root can change a root-owned file's group");
+        return;
+    }
+    if !sudo(&["true"]) {
+        eprintln!("skip: planting a root-owned destination file needs `sudo -n`");
+        return;
+    }
+    for direction in DIRECTIONS {
+        let fx = Fixture::new();
+        fs::write(fx.src("f"), b"newdata\n").expect("write src/f");
+        set_mode(&fx.src("f"), 0o644);
+        backdate(&fx.src("f"));
+        let seed = fx.root.join("seed");
+        fs::write(&seed, b"olddata\n").expect("write seed");
+        let dst = fx.dst("f");
+        let dst = dst.to_str().expect("utf-8 temp path");
+        assert!(
+            sudo(&["cp", seed.to_str().expect("utf-8 temp path"), dst])
+                && sudo(&["chmod", "666", dst])
+                && sudo(&["chown", "0:0", dst]),
+            "sudo could not plant dst/f"
+        );
+
+        let (status, stderr) = fx.run(&["-a", "--inplace"], &["f"], direction);
+
+        assert_eq!(
+            fs::read(fx.dst("f")).expect("read dst/f"),
+            b"newdata\n",
+            "{direction:?}: the in-place data must land before the attribute step"
+        );
+        let expected = format!(
+            "rsync: [receiver] chgrp {} failed: Operation not permitted (1)",
+            fx.full_fname("f")
+        );
+        assert_reported(
+            direction,
+            status,
+            &stderr,
+            &expected,
+            "the receiver's set_file_attrs() failure uses upstream's rsyserr() wording",
+        );
+    }
+}
+
+/// `delete_in_dir()` prints its notice with a plain `rprintf(FINFO, ...)` and
+/// no `INFO_GTE()` gate, so `--info=nonreg0` keeps it and only `--quiet`
+/// drops it (log.c:344-345). Measured on 3.5.1 for push, pull and a local
+/// copy.
+///
+/// upstream: generator.c:304-311 delete_in_dir()
+#[test]
+fn io_error_delete_notice_is_a_plain_finfo() {
+    if running_as_root() {
+        eprintln!("skip: root reads a mode-000 directory, so no I/O error occurs");
+        return;
+    }
+    const NOTICE: &str = "IO error encountered -- skipping file deletion";
+    for direction in [Direction::Push, Direction::Pull, Direction::Local] {
+        for (extra, printed) in [
+            (None, true),
+            (Some("--info=nonreg0"), true),
+            (Some("-q"), false),
+        ] {
+            let fx = Fixture::new();
+            fs::create_dir(fx.src("u")).expect("create src/u");
+            fs::write(fx.src("k"), b"k\n").expect("write src/k");
+            fs::write(fx.dst("extra"), b"e\n").expect("write dst/extra");
+            set_mode(&fx.src("u"), 0o000);
+            let mut flags = vec!["-a", "--delete"];
+            flags.extend(extra);
+
+            let (status, stdout, stderr) = fx.run_output(&flags, &[""], direction);
+            set_mode(&fx.src("u"), 0o755);
+
+            assert_eq!(
+                stdout.lines().any(|line| line == NOTICE),
+                printed,
+                "{direction:?} {extra:?}: the notice is FINFO, gated only by --quiet\n\
+                 stdout:\n{stdout}\nstderr:\n{stderr}"
+            );
+            assert_eq!(
+                status,
+                Some(23),
+                "{direction:?} {extra:?}: the sender's I/O error exits 23\nstderr:\n{stderr}"
             );
         }
     }

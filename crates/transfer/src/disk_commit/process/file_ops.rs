@@ -234,12 +234,6 @@ pub(in crate::disk_commit) fn process_file(
         Err(err) => return discard_file_messages(file_rx, buf_return_tx, err),
     };
 
-    // upstream: rsync.c:464 dest_mode() reads the PRE-transfer destination
-    // stat. An inplace open writes through the destination itself, so capture
-    // that stat now - once the open below runs, the prior mode is gone and the
-    // metadata apply would fall back to the brand-new-file formula.
-    let inplace_pre_transfer = inplace_pre_transfer_stat(&begin);
-
     let (file, mut cleanup_guard, needs_rename) = match open_output_file(&begin, config) {
         Ok(triple) => triple,
         Err(open_err) => {
@@ -474,12 +468,7 @@ pub(in crate::disk_commit) fn process_file(
                 // file is already correct when it appears at the final
                 // path. For inplace/device, metadata is applied after.
                 let pre_meta_error = if needs_rename {
-                    apply_file_metadata(
-                        cleanup_guard.path(),
-                        &begin,
-                        config,
-                        inplace_pre_transfer.as_ref(),
-                    )
+                    apply_file_metadata(cleanup_guard.path(), &begin, config)
                 } else {
                     None
                 };
@@ -513,16 +502,11 @@ pub(in crate::disk_commit) fn process_file(
                         .delayed_path
                         .as_ref()
                         .expect("delayed_path is Some on the staged-partial path");
-                    apply_file_metadata(staged, &begin, config, inplace_pre_transfer.as_ref())
+                    apply_file_metadata(staged, &begin, config)
                 } else if needs_rename && !outcome.was_copy {
                     pre_meta_error
                 } else {
-                    apply_file_metadata(
-                        &begin.file_path,
-                        &begin,
-                        config,
-                        inplace_pre_transfer.as_ref(),
-                    )
+                    apply_file_metadata(&begin.file_path, &begin, config)
                 };
 
                 return Ok(CommitResult {
@@ -623,9 +607,6 @@ pub(in crate::disk_commit) fn process_whole_file(
     // upstream: generator.c:2281-2301 - copy the pre-transfer contents aside
     // before rewriting the destination in place (see process_file).
     let inplace_backup_notice = make_inplace_backup(&begin, config)?;
-
-    // See `inplace_pre_transfer_stat`: capture before the open destroys it.
-    let inplace_pre_transfer = inplace_pre_transfer_stat(&begin);
 
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
     if needs_rename {
@@ -729,12 +710,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     // upstream: rsync.c:937-938 finish_transfer() - apply metadata to the
     // temp file before rename (see process_file for full rationale).
     let pre_meta_error = if needs_rename {
-        apply_file_metadata(
-            cleanup_guard.path(),
-            &begin,
-            config,
-            inplace_pre_transfer.as_ref(),
-        )
+        apply_file_metadata(cleanup_guard.path(), &begin, config)
     } else {
         None
     };
@@ -757,16 +733,11 @@ pub(in crate::disk_commit) fn process_whole_file(
             .delayed_path
             .as_ref()
             .expect("delayed_path checked is_some above");
-        apply_file_metadata(staged, &begin, config, inplace_pre_transfer.as_ref())
+        apply_file_metadata(staged, &begin, config)
     } else if needs_rename && !outcome.was_copy {
         pre_meta_error
     } else {
-        apply_file_metadata(
-            &begin.file_path,
-            &begin,
-            config,
-            inplace_pre_transfer.as_ref(),
-        )
+        apply_file_metadata(&begin.file_path, &begin, config)
     };
 
     Ok(CommitResult {
@@ -897,41 +868,6 @@ fn make_inplace_backup(
     }
     make_backup_copy(&begin.file_path, backup_config, config.backup_env())
         .map(|made| made.map(|(_, notice)| notice))
-}
-
-/// Stats the destination before an inplace write so `dest_mode()` keeps its
-/// permission bits.
-///
-/// Upstream computes the destination mode BEFORE opening the output file:
-///
-/// ```text
-/// int exists = fd1 != -1;                                     // receiver.c:1199
-/// file->mode = dest_mode(file->mode, st.st_mode, dflt_perms, exists);
-/// if (inplace || one_inplace) { ... }                         // receiver.c:1212
-/// ```
-///
-/// and for an existing destination `dest_mode()` returns
-/// `(flist_mode & ~CHMOD_BITS) | (stat_mode & CHMOD_BITS)` - the destination's
-/// own permission bits (rsync.c:464).
-///
-/// oc instead applies metadata at commit time. For the temp+rename path that is
-/// still equivalent, because the final path is untouched until the rename. An
-/// inplace write has no such luxury: it writes through the destination, so by
-/// commit time the pre-transfer stat is unrecoverable. Capture it here and hand
-/// it to [`super::metadata::apply_file_metadata`].
-///
-/// Returns `None` when the destination does not exist, which is upstream's
-/// `exists == 0` and selects `flist_mode & (~CHMOD_BITS | dflt_perms)`.
-///
-/// # Upstream Reference
-///
-/// - `receiver.c:1199-1208` - `dest_mode()` invocation before the output open
-/// - `rsync.c:464` - `dest_mode()` body
-fn inplace_pre_transfer_stat(begin: &BeginMessage) -> Option<fs::Metadata> {
-    if !begin.is_inplace || begin.is_device_target {
-        return None;
-    }
-    fs::symlink_metadata(&begin.file_path).ok()
 }
 
 /// Opens the in-place destination, anchored beneath the destination sandbox

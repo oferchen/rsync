@@ -125,7 +125,7 @@ pub use self::run::alt_basis::{check_alt_basis_dir_at, check_alt_basis_dirs};
 pub use self::run::{run_client, run_client_with_observer};
 pub use self::summary::{
     ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, ClientSummary,
-    ListOnlyEntryFields, RemoteItemizeFields,
+    ListOnlyEntryFields, RemoteItemizeFields, listing_order,
 };
 pub use engine::SkipCompressList;
 pub use engine::batch::{BatchConfig, BatchMode};

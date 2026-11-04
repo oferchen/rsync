@@ -712,21 +712,32 @@ fn compute_basis_signature<R: std::io::Read>(
 /// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
 /// - `generator.c:1400` - Reference directory checking
 pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileResult {
-    // Upstream `generator.c:1962`: when `whole_file` is set, no basis file
-    // is used - the entire file is sent as literals. This wins over
-    // `inplace_backup`: upstream's whole-file/read-batch branch backs up via
-    // `copy_file()` but deliberately keeps `fnamecmp_type == FNAMECMP_FNAME`
-    // (generator.c:2280-2301); oc's mirror of that copy is the disk thread's
-    // `make_inplace_backup`, not this function.
+    // upstream: generator.c:2280 - `whole_file` is tested only after the basis
+    // was chosen, so the choice (and its wire byte) survives; only the sums go.
     if config.whole_file {
-        return BasisFileResult::EMPTY;
+        return whole_file_basis(config);
     }
 
     let sig_config = SignatureGenerationConfig::from_basis_config(config);
 
-    // Try sources in priority order: exact match -> reference dirs -> fuzzy ->
-    // partial-dir. The exact destination basis is reported to the sender as
-    // FNAMECMP_FNAME (no basis-type byte).
+    // upstream: generator.c:2172-2178,2270-2275 - a regular file under
+    // --partial-dir becomes the basis at prepare_to_open whatever was chosen
+    // before it, the destination included. The destination quick check has
+    // already ruled out an up-to-date file by the time a basis is sought.
+    if let Some((file, size, path)) = try_partial_basis(config) {
+        return generate_basis_signature(
+            file,
+            size,
+            path,
+            protocol::FnameCmpType::PartialDir,
+            None,
+            sig_config,
+        );
+    }
+
+    // Then the exact destination, reference dirs, and fuzzy, in that order.
+    // The exact destination basis is reported to the sender as FNAMECMP_FNAME
+    // (no basis-type byte).
     if let Some((file, size, path)) = try_open_dest_basis(config) {
         // upstream: generator.c:2328-2356 - on the delta path, once the
         // destination basis has opened (`inplace && make_backups > 0 &&
@@ -797,24 +808,69 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
         );
     }
 
-    // upstream: generator.c:1759-1765 - when the destination stat fails and
-    // --partial-dir is set, fall back to the same-named regular file inside
-    // the partial directory as the delta basis and tag it FNAMECMP_PARTIAL_DIR
-    // (prepare_to_open at generator.c:1850-1855).
-    if let Some(dir) = config.partial_dir
-        && let Some(partial) = crate::temp_guard::partial_dir_fname(config.file_path, dir)
-        && let Some((file, size, path)) = try_open_file(&partial)
-    {
-        return generate_basis_signature(
-            file,
-            size,
-            path,
-            protocol::FnameCmpType::PartialDir,
-            None,
-            sig_config,
-        );
-    }
+    BasisFileResult::EMPTY
+}
 
+/// The same-named regular file under `--partial-dir`, when there is one.
+///
+/// upstream: generator.c:2172-2178 `partial_dir_fname()` + `S_ISREG`
+fn try_partial_basis(config: &BasisFileConfig<'_>) -> Option<(fs::File, u64, PathBuf)> {
+    let dir = config.partial_dir?;
+    let partial = crate::temp_guard::partial_dir_fname(config.file_path, dir)?;
+    try_open_file(&partial)
+}
+
+/// The basis a `--whole-file` request names, without reading it.
+///
+/// Upstream chooses the basis before it tests `whole_file`, sends its
+/// `fnamecmp_type` byte (and a fuzzy match's basename) with the request, and
+/// only then writes an empty sum head instead of block sums. The receiver
+/// opens that basis for `dest_mode()`. The destination itself is
+/// `FNAMECMP_FNAME`, which carries no byte, so it needs no lookup; nor does a
+/// transfer with no `--partial-dir`, `--fuzzy` or reference dir. The
+/// `--inplace --backup` retag is a delta-path step (generator.c:2328) and is
+/// not applied here.
+///
+/// upstream: generator.c:2155-2181,2270-2280 (choice), :2381-2386 (wire),
+/// :2400 (empty sum head)
+fn whole_file_basis(config: &BasisFileConfig<'_>) -> BasisFileResult {
+    let named = |path, fnamecmp_type, xname| BasisFileResult {
+        signature: None,
+        basis_path: Some(path),
+        fnamecmp_type,
+        xname,
+        backup_notice: None,
+    };
+    if let Some((_, _, path)) = try_partial_basis(config) {
+        return named(path, protocol::FnameCmpType::PartialDir, None);
+    }
+    if config.reference_directories.is_empty() && config.fuzzy_level == 0 {
+        return BasisFileResult::EMPTY;
+    }
+    // upstream: generator.c:2155,2181 - reference dirs and fuzzy are searched
+    // only for a destination that is not already a regular file.
+    let destination_exists = fast_io::destination_at::symlink_metadata(config.file_path)
+        .is_ok_and(|meta| meta.is_file());
+    if destination_exists {
+        return BasisFileResult::EMPTY;
+    }
+    if let Some((_, _, path, index)) =
+        try_reference_directories(config.relative_path, config.reference_directories)
+    {
+        return named(path, basis_dir_fnamecmp_type(index), None);
+    }
+    if config.fuzzy_level > 0
+        && let Some(fuzzy) = try_fuzzy_match(
+            config.relative_path,
+            config.dest_dir,
+            config.target_size,
+            config.target_mtime,
+            config.fuzzy_level,
+            config.reference_directories,
+        )
+    {
+        return named(fuzzy.path, fuzzy.fnamecmp_type, fuzzy.xname);
+    }
     BasisFileResult::EMPTY
 }
 
@@ -1344,11 +1400,13 @@ mod tests {
         );
     }
 
-    /// The partial-dir fallback must not fire when the destination file itself
-    /// exists: the ordinary destination basis wins and is tagged FNAMECMP_FNAME
-    /// (no basis-type byte on the wire), preserving the pre-existing encoding.
+    // WHY: upstream makes a regular --partial-dir file the basis at
+    // prepare_to_open even when the destination exists (generator.c:2270-2275),
+    // so the delta runs against the interrupted transfer's bytes and the
+    // receiver takes dest_mode()'s bits from the partial. Preferring the
+    // destination sent no basis byte and deltaed against older content.
     #[test]
-    fn dest_basis_preferred_over_partial_dir() {
+    fn partial_dir_basis_preferred_over_an_existing_destination() {
         use std::io::Write;
 
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1386,7 +1444,112 @@ mod tests {
         };
 
         let result = find_basis_file_with_config(&config);
-        assert_eq!(result.basis_path.as_deref(), Some(dest_file.as_path()));
+        assert_eq!(
+            result.basis_path.as_deref(),
+            Some(partial_dir.join("file.bin").as_path())
+        );
+        assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::PartialDir);
+        assert!(
+            result.signature.is_some(),
+            "a delta request signs the partial"
+        );
+    }
+
+    /// A `--whole-file` request against `dest_dir` for `file.bin`, with the
+    /// given partial dir, fuzzy level and reference dirs.
+    fn whole_file_config<'a>(
+        dest_dir: &'a std::path::Path,
+        dest_file: &'a std::path::Path,
+        partial_dir: Option<&'a std::path::Path>,
+        fuzzy_level: u8,
+        reference_directories: &'a [ReferenceDirectory],
+    ) -> BasisFileConfig<'a> {
+        BasisFileConfig {
+            #[cfg(unix)]
+            sandbox: None,
+            ndx: 0,
+            file_path: dest_file,
+            dest_dir,
+            relative_path: std::path::Path::new("file.bin"),
+            target_size: 4096,
+            target_mtime: 0,
+            fuzzy_level,
+            reference_directories,
+            partial_dir,
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            whole_file: true,
+            compat_flags: None,
+            block_size: None,
+            inplace_backup: None,
+        }
+    }
+
+    // WHY: upstream chooses the basis before it tests whole_file
+    // (generator.c:2270-2280) and still sends its type byte (:2381-2384); only
+    // the sum head is empty (:2400). Without the byte the receiver opens no
+    // partial and dest_mode() falls to the new-file mode.
+    #[test]
+    fn whole_file_still_names_a_partial_dir_basis() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        let partial_dir = dest_dir.join(".rsync-partial");
+        std::fs::create_dir(&partial_dir).expect("mkdir partial-dir");
+        std::fs::write(partial_dir.join("file.bin"), b"partial").expect("write partial");
+        std::fs::write(dest_dir.join("file.bin"), b"dest").expect("write dest");
+        let dest_file = dest_dir.join("file.bin");
+
+        let result = find_basis_file_with_config(&whole_file_config(
+            dest_dir,
+            &dest_file,
+            Some(std::path::Path::new(".rsync-partial")),
+            0,
+            &[],
+        ));
+        assert!(result.signature.is_none(), "-W sends no block sums");
+        assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::PartialDir);
+        assert_eq!(
+            result.basis_path.as_deref(),
+            Some(partial_dir.join("file.bin").as_path())
+        );
+    }
+
+    // WHY: under -W upstream still runs the fuzzy search for a missing
+    // destination (generator.c:2181) and sends Fuzzy(0) plus the basename as
+    // the xname (:2383-2386), so the receiver opens that same file.
+    #[test]
+    fn whole_file_still_names_a_fuzzy_basis_for_a_missing_destination() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        std::fs::write(dest_dir.join("file.bin.old"), vec![7u8; 4096]).expect("write fuzzy");
+        let dest_file = dest_dir.join("file.bin");
+
+        let result =
+            find_basis_file_with_config(&whole_file_config(dest_dir, &dest_file, None, 1, &[]));
+        assert!(result.signature.is_none(), "-W sends no block sums");
+        assert!(
+            result.fnamecmp_type.is_fuzzy(),
+            "got {:?}",
+            result.fnamecmp_type
+        );
+        assert_eq!(result.xname.as_deref(), Some(&b"file.bin.old"[..]));
+    }
+
+    // WHY: upstream searches fuzzy and reference dirs only for a destination
+    // that is not a regular file (generator.c:2155,2181); an existing one is
+    // FNAMECMP_FNAME, which sends no byte.
+    #[test]
+    fn whole_file_with_an_existing_destination_names_no_basis() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        std::fs::write(dest_dir.join("file.bin"), b"dest").expect("write dest");
+        std::fs::write(dest_dir.join("file.bin.old"), vec![7u8; 4096]).expect("write fuzzy");
+        let dest_file = dest_dir.join("file.bin");
+
+        let result =
+            find_basis_file_with_config(&whole_file_config(dest_dir, &dest_file, None, 1, &[]));
+        assert!(result.basis_path.is_none());
         assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::Fname);
     }
 
