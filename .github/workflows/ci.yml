@@ -800,6 +800,12 @@ jobs:
     if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
     timeout-minutes: 45
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
+    env:
+      # --all-features turns on openssl-vendored, whose openssl-src build runs
+      # OpenSSL's Configure with the first perl on PATH. In bash steps that is
+      # Git's msys perl, which lacks IPC::Cmd; the runner's Strawberry Perl
+      # is complete. Release builds use default features and never vendor it.
+      OPENSSL_SRC_PERL: C:\Strawberry\perl\bin\perl.exe
     strategy:
       fail-fast: false
       matrix:
