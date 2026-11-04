@@ -431,9 +431,9 @@ fn canonicalize_host(
     }
     if resolved.canonicalize_fallback_local == Some(false) {
         // upstream: fatal("%s: Could not resolve host \"%s\"", __progname, ...)
-        // (openssh/ssh.c:516-517); the program-name prefix is the caller's.
+        // (openssh/ssh.c:520), printed as `ssh` prints it.
         return Err(SshError::SshConfigFatal {
-            reason: format!("Could not resolve host \"{host}\""),
+            reason: format!("ssh: Could not resolve host \"{host}\""),
         });
     }
     Ok(())
@@ -2443,7 +2443,7 @@ mod tests {
         let off =
             "CanonicalizeHostname yes\nCanonicalizeFallbackLocal no\nCanonicalDomains first.test\n";
         let err = resolve_probed(off, "nope", knows_web).expect_err("refused");
-        assert_eq!(err.to_string(), "Could not resolve host \"nope\"");
+        assert_eq!(err.to_string(), "ssh: Could not resolve host \"nope\"");
         let on = "CanonicalizeHostname yes\nCanonicalDomains first.test\n";
         assert_eq!(
             resolve_probed(on, "Nope", knows_web)
