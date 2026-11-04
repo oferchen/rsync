@@ -863,9 +863,11 @@ jobs:
           # not wrapping them.
           OC_REQUIRE_TMP_RUNNER: "1"
         # `shell: bash` turns on pipefail, so the tee never hides a failure.
+        # --no-fail-fast reports every Windows failure in one run instead of
+        # stopping at the first.
         shell: bash
         run: |
-          cargo nextest run --locked --profile ci --workspace --all-features 2>&1 | tee nextest-run.log
+          cargo nextest run --locked --profile ci --workspace --all-features --no-fail-fast 2>&1 | tee nextest-run.log
           bash tools/ci/nextest_flaky_summary.sh nextest-run.log
 
       - name: Report UDP offload capabilities
