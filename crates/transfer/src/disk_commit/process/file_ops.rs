@@ -21,7 +21,7 @@ use crate::temp_guard::open_tmpfile_sandboxed;
 use crate::temp_guard::{CommitOp, TempFileGuard, attach_commit_op};
 
 use super::super::config::{DiskCommitConfig, PartialMode};
-use super::super::writer::{ReusableBufWriter, Writer, close_received_file};
+use super::super::writer::{ReusableBufWriter, Writer, close_received_file, write_failed};
 use super::commit::{
     SparseFinalize, commit_file, finalize_sparse, make_backup_copy, retain_partial_file,
 };
@@ -367,7 +367,7 @@ pub(in crate::disk_commit) fn process_file(
                     }
                     None => output.write_chunk(&data),
                 };
-                if let Err(err) = written {
+                if let Err(err) = written.map_err(|e| write_failed(&begin.file_path, e)) {
                     let _ = buf_return_tx.try_send(data);
                     return discard_file_messages(file_rx, buf_return_tx, err);
                 }
@@ -398,11 +398,12 @@ pub(in crate::disk_commit) fn process_file(
                     sparse
                         .skip_matched(output.buffered_for_sparse(), &data)
                         .map(drop)
+                        .map_err(|e| write_failed(&begin.file_path, e))
                 } else {
                     // upstream: fileio.c:304-313 skip_matched() - flush then
                     // lseek past the already-in-place bytes instead of
                     // rewriting identical data.
-                    output.skip_matched(data.len() as u64)
+                    output.skip_matched(data.len() as u64, &begin.file_path, write_offset)
                 };
                 if let Err(err) = skipped {
                     let _ = buf_return_tx.try_send(data);
@@ -417,7 +418,9 @@ pub(in crate::disk_commit) fn process_file(
                 // and hand the logical length + in-basis hole ranges to the
                 // commit step for ftruncate + punch (no materialized byte).
                 let sparse_final = if let Some(ref mut sparse) = sparse_state {
-                    let logical = sparse.finish(output.buffered_for_sparse())?;
+                    let logical = sparse
+                        .finish(output.buffered_for_sparse())
+                        .map_err(|e| write_failed(&begin.file_path, e))?;
                     Some(SparseFinalize {
                         logical_len: logical,
                         holes: sparse.take_holes(),
@@ -660,8 +663,12 @@ pub(in crate::disk_commit) fn process_whole_file(
     let (sparse_final, touched_blocks_4k) = if config.use_sparse {
         let mut sparse = SparseWriteState::default();
         sparse.set_preallocated_len(preallocated_len);
-        sparse.write(output.buffered_for_sparse(), &data)?;
-        let logical = sparse.finish(output.buffered_for_sparse())?;
+        sparse
+            .write(output.buffered_for_sparse(), &data)
+            .map_err(|e| write_failed(&begin.file_path, e))?;
+        let logical = sparse
+            .finish(output.buffered_for_sparse())
+            .map_err(|e| write_failed(&begin.file_path, e))?;
         let touched = sparse.touched_blocks();
         (
             Some(SparseFinalize {
@@ -671,7 +678,9 @@ pub(in crate::disk_commit) fn process_whole_file(
             touched,
         )
     } else {
-        output.write_chunk(&data)?;
+        output
+            .write_chunk(&data)
+            .map_err(|e| write_failed(&begin.file_path, e))?;
         (
             None,
             engine::BlockTouchTracker::blocks_spanned(begin.append_offset, bytes_written),
@@ -942,8 +951,7 @@ fn open_output_file(
         let mut file = open_inplace_dest(config, &begin.file_path).map_err(tag_open)?;
         // upstream: receiver.c:544-549 - in append mode, seek past existing content
         if begin.append_offset > 0 {
-            use std::io::Seek;
-            file.seek(io::SeekFrom::Start(begin.append_offset))?;
+            seek_to_append_offset(&mut file, &begin.file_path, begin.append_offset)?;
         }
         // The guard wraps the real destination file, not a temp file. On a
         // mid-transfer error the guard must LEAVE the partial write in place
@@ -974,6 +982,29 @@ fn open_output_file(
         let (file, guard) = open_tmpfile(&begin.file_path, config.temp_dir.as_deref())?;
         Ok((file, guard, true))
     }
+}
+
+/// Positions an `--append` destination after the bytes it already holds.
+///
+/// A failure is fatal and tagged [`CommitOp::Seek`](crate::temp_guard::CommitOp::Seek)
+/// with the offset sought, for upstream's `lseek of %s returned %s, not %s`
+/// (`receiver.c:545-548`).
+fn seek_to_append_offset(
+    file: &mut fs::File,
+    file_path: &std::path::Path,
+    offset: u64,
+) -> io::Result<()> {
+    use std::io::Seek;
+    file.seek(io::SeekFrom::Start(offset))
+        .map(drop)
+        .map_err(|e| {
+            crate::temp_guard::attach_commit_op_at(
+                crate::temp_guard::CommitOp::Seek,
+                file_path,
+                offset,
+                e,
+            )
+        })
 }
 
 /// Preallocates the destination file to its eventual length under

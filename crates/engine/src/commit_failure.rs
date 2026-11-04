@@ -21,7 +21,10 @@ use protocol::MessageCode;
 /// `open %s failed` (`rsync-3.5.1/receiver.c:1242-1244`),
 /// `rename %s -> "%s"` and `copy %s -> "%s"` (`rsync-3.5.1/rsync.c:919-921`),
 /// `keep_backup failed: %s -> "%s"` (`rsync-3.5.1/backup.c:402-403`),
-/// `close failed on %s` (`rsync-3.5.1/receiver.c:1297-1298`) and
+/// `close failed on %s` (`rsync-3.5.1/receiver.c:1297-1298`),
+/// `write failed on %s` (`rsync-3.5.1/receiver.c:658-660`),
+/// `fsync failed on %s` (`rsync-3.5.1/receiver.c:679-681`),
+/// `lseek of %s returned %s, not %s` (`rsync-3.5.1/receiver.c:545-548`) and
 /// `Unable to create partial-dir for %s -- discarding %s.`
 /// (`rsync-3.5.1/receiver.c:1319-1323`). oc runs
 /// these stages behind one `Result`, so the operation identity has to ride on
@@ -49,6 +52,21 @@ pub enum CommitOp {
     /// completed file is staged into. The operand is that directory and the
     /// destination is the file's final path.
     PartialDir,
+    /// Writing received data: a literal, a flush of the write buffer, the
+    /// sparse tail, or the in-place skip of a matched block. The operand is
+    /// the destination name, which upstream reports even when the bytes went
+    /// to a temp file (`rsync-3.5.1/receiver.c:658-660`). An in-place skip
+    /// whose seek failed also carries the offset it sought from, for the
+    /// `lseek returned` line `skip_matched()` prints first
+    /// (`rsync-3.5.1/fileio.c:307-310`).
+    Write,
+    /// Syncing the received file under `--fsync`. The operand is the
+    /// destination name (`rsync-3.5.1/receiver.c:679-681`).
+    Fsync,
+    /// Seeking to the `--append` offset before the received tail is written.
+    /// The operand is the destination name and the offset is the one sought
+    /// (`rsync-3.5.1/receiver.c:545-548`).
+    Seek,
 }
 
 impl CommitOp {
@@ -58,6 +76,8 @@ impl CommitOp {
     /// (quoted, with any daemon-module suffix); `target` is the second path
     /// the two-operand forms print - the rename/copy destination relative to
     /// the receiver's root, or the backup name. `reason` is the errno text.
+    /// `offset` is the position a failed [`Self::Seek`] sought
+    /// ([`commit_op_offset`]).
     ///
     /// # Upstream Reference
     ///
@@ -66,17 +86,33 @@ impl CommitOp {
     /// - `rsync.c:919-921` - `"%s %s -> \"%s\""` with `copy` or `rename`.
     /// - `backup.c:402-403` - `keep_backup failed: %s -> "%s"`.
     /// - `receiver.c:1297-1298` - `close failed on %s`.
+    /// - `receiver.c:659` - `write failed on %s`.
+    /// - `receiver.c:680` - `fsync failed on %s`.
+    /// - `receiver.c:546-547` - `lseek of %s returned %s, not %s`, with
+    ///   `big_num()` of the failed lseek's -1, then the offset sought.
     /// - `receiver.c:1319-1323` - `Unable to create partial-dir for %s --
     ///   discarding %s.`, a plain `rprintf(FERROR)` naming the file by its
     ///   transfer name (`target`) with no errno. oc stages only a completed
     ///   file, the `--delay-updates` arm, so the second `%s` is always
     ///   `completed file`.
     #[must_use]
-    pub fn failure_line(self, name: &str, target: Option<&Path>, reason: &str) -> String {
+    pub fn failure_line(
+        self,
+        name: &str,
+        target: Option<&Path>,
+        reason: &str,
+        offset: Option<u64>,
+    ) -> String {
         match (self, target) {
             (Self::Mkstemp, _) => format!("rsync: [receiver] mkstemp {name} failed: {reason}"),
             (Self::Open, _) => format!("rsync: [receiver] open {name} failed: {reason}"),
             (Self::Close, _) => format!("rsync: [receiver] close failed on {name}: {reason}"),
+            (Self::Write, _) => format!("rsync: [receiver] write failed on {name}: {reason}"),
+            (Self::Fsync, _) => format!("rsync: [receiver] fsync failed on {name}: {reason}"),
+            (Self::Seek, _) => format!(
+                "rsync: [receiver] lseek of {name} returned -1, not {}: {reason}",
+                offset.unwrap_or_default()
+            ),
             (Self::Rename | Self::Copy, target) => format!(
                 "rsync: [receiver] {} {name} -> \"{}\": {reason}",
                 if self == Self::Copy { "copy" } else { "rename" },
@@ -113,6 +149,7 @@ struct CommitOpError {
     op: CommitOp,
     operand: PathBuf,
     destination: Option<PathBuf>,
+    offset: Option<u64>,
     source: io::Error,
 }
 
@@ -156,6 +193,13 @@ pub fn commit_op_destination(error: &io::Error) -> Option<&Path> {
         .as_deref()
 }
 
+/// Returns the file offset a failed seek was made from or to, for the
+/// operations whose upstream diagnostic prints it: [`CommitOp::Seek`] and an
+/// in-place [`CommitOp::Write`] whose skip failed.
+pub fn commit_op_offset(error: &io::Error) -> Option<u64> {
+    error.get_ref()?.downcast_ref::<CommitOpError>()?.offset
+}
+
 /// Tags `source` with the operation that raised it, preserving its
 /// [`io::ErrorKind`] so existing predicates keep classifying it unchanged.
 ///
@@ -166,12 +210,33 @@ pub fn attach_commit_op(op: CommitOp, operand: &Path, source: io::Error) -> io::
     attach_commit_op_between(op, operand, None, source)
 }
 
+/// [`attach_commit_op`] for a failed seek, recording the `offset` the
+/// reporter prints after `not`.
+pub fn attach_commit_op_at(
+    op: CommitOp,
+    operand: &Path,
+    offset: u64,
+    source: io::Error,
+) -> io::Error {
+    tag(op, operand, None, Some(offset), source)
+}
+
 /// [`attach_commit_op`] for an operation that moved `operand` to
 /// `destination`, so the reporter can print both halves the way upstream does.
 pub fn attach_commit_op_between(
     op: CommitOp,
     operand: &Path,
     destination: Option<&Path>,
+    source: io::Error,
+) -> io::Error {
+    tag(op, operand, destination, None, source)
+}
+
+fn tag(
+    op: CommitOp,
+    operand: &Path,
+    destination: Option<&Path>,
+    offset: Option<u64>,
     source: io::Error,
 ) -> io::Error {
     if commit_op_failure(&source).is_some() {
@@ -183,6 +248,7 @@ pub fn attach_commit_op_between(
             op,
             operand: operand.to_path_buf(),
             destination: destination.map(Path::to_path_buf),
+            offset,
             source,
         },
     )
@@ -217,7 +283,10 @@ impl CommitDisposition {
     ///   0 and `recv_files()` moves on: per-file.
     /// - `rsync.c:897-900` - a failed backup is `exit_cleanup(RERR_FILEIO)`.
     /// - `receiver.c:1296-1300` - a failed `close()` is
-    ///   `rsyserr(FERROR, ...)` then `exit_cleanup(RERR_FILEIO)`.
+    ///   `rsyserr(FERROR, ...)` then `exit_cleanup(RERR_FILEIO)`, and so is a
+    ///   failed `--fsync` (`receiver.c:679-681`).
+    /// - `receiver.c:545-548` (append seek) and `receiver.c:658-660` (write)
+    ///   are `rsyserr(FERROR_XFER, ...)` then `exit_cleanup(RERR_FILEIO)`.
     /// - `receiver.c:1319-1325` - a failed staging-dir create is
     ///   `rprintf(FERROR, ...)`, `do_unlink_at(fnametmp)` and `recv_ok = -1`;
     ///   plain FERROR never sets `got_xfer_error`, so the run can still exit 0.
@@ -227,8 +296,10 @@ impl CommitDisposition {
             Some((CommitOp::Mkstemp | CommitOp::Open | CommitOp::Rename | CommitOp::Copy, _)) => {
                 Self::SkipFile
             }
-            Some((CommitOp::Backup, _)) => Self::Abort(MessageCode::ErrorXfer),
-            Some((CommitOp::Close, _)) => Self::Abort(MessageCode::Error),
+            Some((CommitOp::Backup | CommitOp::Write | CommitOp::Seek, _)) => {
+                Self::Abort(MessageCode::ErrorXfer)
+            }
+            Some((CommitOp::Close | CommitOp::Fsync, _)) => Self::Abort(MessageCode::Error),
             Some((CommitOp::PartialDir, _)) => Self::Discard,
             None => Self::Propagate,
         }
@@ -250,6 +321,8 @@ mod tests {
             (CommitOp::Mkstemp, None, "mkstemp \"/d/.a.XXXXXX\" failed"),
             (CommitOp::Open, None, "open \"/d/.a.XXXXXX\" failed"),
             (CommitOp::Close, None, "close failed on \"/d/.a.XXXXXX\""),
+            (CommitOp::Write, None, "write failed on \"/d/.a.XXXXXX\""),
+            (CommitOp::Fsync, None, "fsync failed on \"/d/.a.XXXXXX\""),
             (CommitOp::Rename, target, "rename \"/d/.a.XXXXXX\" -> \"a\""),
             (CommitOp::Copy, target, "copy \"/d/.a.XXXXXX\" -> \"a\""),
             (
@@ -265,12 +338,16 @@ mod tests {
         ];
         for (op, target, body) in cases {
             assert_eq!(
-                op.failure_line(name, target, reason),
+                op.failure_line(name, target, reason, None),
                 format!("rsync: [receiver] {body}: {reason}")
             );
         }
         assert_eq!(
-            CommitOp::PartialDir.failure_line(name, Some(Path::new("sub/a")), reason),
+            CommitOp::Seek.failure_line(name, None, reason, Some(4096)),
+            format!("rsync: [receiver] lseek of {name} returned -1, not 4096: {reason}")
+        );
+        assert_eq!(
+            CommitOp::PartialDir.failure_line(name, Some(Path::new("sub/a")), reason, None),
             "Unable to create partial-dir for sub/a -- discarding completed file."
         );
     }

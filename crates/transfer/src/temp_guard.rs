@@ -17,7 +17,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use engine::commit_failure::{
-    CommitOp, attach_commit_op, attach_commit_op_between, commit_op_destination, commit_op_failure,
+    CommitDisposition, CommitOp, attach_commit_op, attach_commit_op_at, attach_commit_op_between,
+    commit_op_destination, commit_op_failure, commit_op_offset,
 };
 
 /// Returns the temp-file name a failed [`open_tmpfile`] attempted, when `error`

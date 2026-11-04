@@ -289,14 +289,28 @@ pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError 
 /// The diagnostic a locally aborted transfer prints.
 ///
 /// upstream: exclude.c:133-137 filter_rule_err() prints its message alone, so
-/// a `RERR_SYNTAX` refusal keeps its text unwrapped; any other local failure
-/// says the transfer failed.
+/// a `RERR_SYNTAX` refusal keeps its text unwrapped. A receiver site that
+/// already printed its own line before `exit_cleanup(RERR_FILEIO)` - the
+/// write, seek, fsync, close or backup of a received file - ends on the bare
+/// `log_exit()` trailer, as upstream's does (cleanup.c:248). Any other local
+/// failure says the transfer failed.
 pub(crate) fn local_abort_text(error: &std::io::Error) -> String {
     if ExitCode::from_io_error(error) == ExitCode::Syntax {
         error.to_string()
+    } else if reported_fatal_commit(error) {
+        ExitCode::from_io_error(error).description().to_owned()
     } else {
         format!("transfer failed: {error}")
     }
+}
+
+/// Whether `error` came from a receiver site that has already reported itself
+/// and ends the transfer with `RERR_FILEIO`.
+pub(crate) fn reported_fatal_commit(error: &std::io::Error) -> bool {
+    matches!(
+        transfer::temp_guard::CommitDisposition::of(error),
+        transfer::temp_guard::CommitDisposition::Abort(_)
+    )
 }
 
 /// Maps a remote-operand parse failure to a syntax error prefixed by `context`.

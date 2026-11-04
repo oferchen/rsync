@@ -90,6 +90,22 @@ impl IocpDiskBatch {
         ))
     }
 
+    /// Commits the current file (always fails on this platform).
+    ///
+    /// # Errors
+    ///
+    /// Always returns [`crate::CommitFailure::Write`] carrying an
+    /// `io::ErrorKind::Unsupported` error on this platform.
+    pub fn commit_file_staged(
+        &mut self,
+        _do_fsync: bool,
+    ) -> Result<(std::fs::File, u64), crate::CommitFailure> {
+        Err(crate::CommitFailure::Write(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "IOCP is not available on this platform",
+        )))
+    }
+
     /// Returns bytes written (always 0 on this platform).
     #[must_use]
     pub fn bytes_written(&self) -> u64 {
