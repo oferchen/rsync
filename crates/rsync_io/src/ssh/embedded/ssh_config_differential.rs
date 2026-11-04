@@ -2185,6 +2185,21 @@ mod tests {
             "UpdateHostKeys ASK",
             "LocalCommand a b c",
             "Host other\n  ForwardAgent maybe/x${",
+            "IdentitiesOnly #c",
+            "AddressFamily #c",
+            "PubkeyAuthentication \"\"",
+            "ProxyUseFdpass #c",
+            "Ciphers \"\"",
+            "RekeyLimit 1G 1h x",
+            "Port 22 23",
+            "Port 0x10",
+            "Port ssh",
+            "User \"\"",
+            "IdentityFile \"\"",
+            "IdentityAgent ${OC_T589_UNSET}",
+            "IdentityAgent $",
+            "ConnectTimeout 1.5",
+            "ConnectTimeout 5s5",
         ];
         for line in LINES {
             let fixture = format!("{line}\n");

@@ -119,6 +119,12 @@ const SYSTEM_SSH_DIR: &str = "/etc/ssh";
 #[cfg(test)]
 const INLINE_CONFIG_NAME: &str = "<ssh_config>";
 
+/// `SSH_MAX_IDENTITY_FILES` (openssh/ssh.h:28).
+const SSH_MAX_IDENTITY_FILES: usize = 100;
+
+/// `SSH_MAX_CERTIFICATE_FILES` (openssh/ssh.h:22).
+const SSH_MAX_CERTIFICATE_FILES: usize = 100;
+
 /// Resolved directives for a single host alias, merged in declaration order
 /// across every matching `Host` block. Only the directives the embedded
 /// russh transport understands are tracked.
@@ -1015,40 +1021,32 @@ impl FileScan<'_, '_> {
             }
             return Ok(());
         }
-        if opcode == Opcode::ProxyUseFdpass {
-            // A multistate flag. An out-of-set token is upstream's
-            // `unsupported option "%s".` (openssh/readconf.c:1269), and an
-            // empty value (e.g. a lone `#comment`) is `missing argument.`
-            // (openssh/readconf.c:1106) - both refused whether or not the
-            // block is active, exactly as `AddressFamily` above.
-            let Some(tok) = tokens.first() else {
-                return Err(refuse(self.path, linenum, "missing argument.").into());
-            };
-            let Some(flag) = parse_flag_value(tok) else {
-                return Err(
-                    refuse(self.path, linenum, format!("unsupported option \"{tok}\".")).into(),
-                );
-            };
-            if self.in_matching_block && self.resolved.proxy_use_fdpass.is_none() {
-                self.resolved.proxy_use_fdpass = Some(flag);
+        // `ProxyUseFdpass`, `HashKnownHosts` and `CheckHostIP` are plain
+        // `parse_flag` multistates (openssh/readconf.c:1266-1280), checked
+        // whether or not the block is active.
+        if matches!(
+            opcode,
+            Opcode::ProxyUseFdpass | Opcode::HashKnownHosts | Opcode::CheckHostIP
+        ) {
+            let consumed = values::check(
+                ValueKind::Flag,
+                &keyword,
+                &tokens,
+                value,
+                self.path,
+                linenum,
+            )?;
+            self.no_extra_arguments(&keyword, consumed, tokens.len(), linenum)?;
+            let flag = tokens.first().and_then(|tok| parse_flag_value(tok));
+            if opcode == Opcode::ProxyUseFdpass {
+                if self.in_matching_block && self.resolved.proxy_use_fdpass.is_none() {
+                    self.resolved.proxy_use_fdpass = flag;
+                }
+                return Ok(());
             }
-            return Ok(());
-        }
-        // `HashKnownHosts` and `CheckHostIP` are plain `parse_flag`
-        // multistates, the same shape as `ProxyUseFdpass`: an out-of-set
-        // token is `unsupported option "%s".` (openssh/readconf.c:1269) and
-        // an absent value is `missing argument.` (openssh/readconf.c:1106),
-        // both refused whether or not the block is active.
-        if opcode == Opcode::HashKnownHosts || opcode == Opcode::CheckHostIP {
-            let Some(tok) = tokens.first() else {
-                return Err(refuse(self.path, linenum, "missing argument.").into());
-            };
-            let Some(flag) = parse_flag_value(tok) else {
-                return Err(
-                    refuse(self.path, linenum, format!("unsupported option \"{tok}\".")).into(),
-                );
-            };
-            if self.in_matching_block {
+            if let Some(flag) = flag
+                && self.in_matching_block
+            {
                 let slot = if opcode == Opcode::HashKnownHosts {
                     &mut self.resolved.hash_known_hosts
                 } else {
@@ -1088,8 +1086,10 @@ impl FileScan<'_, '_> {
         }
 
         // Every directive below is single-valued, so it consumes exactly
-        // one token - upstream's `arg = argv_next(&ac, &av)`. A `NULL`
-        // there is fatal, which is how `Port #comment` is refused. The
+        // one token - upstream's `arg = argv_next(&ac, &av)` - and its value
+        // first passes the check its readconf.c arm shares with the keywords
+        // this reader does not act on (`values::check`): an absent or empty
+        // token is refused, which is how `Port #comment` is refused. The
         // refusal fires BEFORE the block-activity gate: upstream
         // processes every line and `*activep` gates only the assignment
         // (e.g. openssh/readconf.c:1229 `if (*activep && *intptr == -1)`),
@@ -1101,6 +1101,7 @@ impl FileScan<'_, '_> {
         // is in the table with the same shape but belongs to the other
         // reader, which never refuses. Widening the refusal to every known
         // keyword is upstream's behaviour and a separate row.
+        let consumed;
         let arg = match opcode {
             Opcode::Hostname
             | Opcode::User
@@ -1132,6 +1133,14 @@ impl FileScan<'_, '_> {
             | Opcode::KexAlgorithms
             | Opcode::HostKeyAlgorithms
             | Opcode::RekeyLimit => {
+                consumed = values::check(
+                    opcode.value_kind(),
+                    &keyword,
+                    &tokens,
+                    value,
+                    self.path,
+                    linenum,
+                )?;
                 let Some(arg) = tokens.first() else {
                     let Some(reason) = opcode.missing_argument() else {
                         return Ok(());
@@ -1248,6 +1257,14 @@ impl FileScan<'_, '_> {
             Opcode::RekeyLimit => Some(self.rekey_limit(arg, tokens.get(1), linenum)?),
             _ => None,
         };
+        let port = match opcode {
+            Opcode::Port => Some(values::port(arg, self.path, linenum)?),
+            _ => None,
+        };
+        if opcode == Opcode::IdentityAgent {
+            values::identity_agent(arg, self.path, linenum)?;
+        }
+        self.no_extra_arguments(&keyword, consumed, tokens.len(), linenum)?;
         if !self.in_matching_block {
             return Ok(());
         }
@@ -1291,13 +1308,22 @@ impl FileScan<'_, '_> {
                 }
             }
             Opcode::Port => {
-                if self.resolved.port.is_none()
-                    && let Ok(parsed) = arg.parse::<u16>()
-                {
-                    self.resolved.port = Some(parsed);
+                if let Some(port) = port {
+                    set_if_unset(&mut self.resolved.port, port);
                 }
             }
             Opcode::IdentityFile => {
+                // upstream: openssh/readconf.c:1402-1409.
+                if self.resolved.identity_files.len() >= SSH_MAX_IDENTITY_FILES {
+                    return Err(refuse(
+                        self.path,
+                        linenum,
+                        format!(
+                            "Too many identity files specified (max {SSH_MAX_IDENTITY_FILES})."
+                        ),
+                    )
+                    .into());
+                }
                 let expanded = expand_tilde(arg);
                 if !self.resolved.identity_files.contains(&expanded) {
                     self.resolved.identity_files.push(expanded);
@@ -1386,6 +1412,17 @@ impl FileScan<'_, '_> {
             // appends, deduplicated on the expanded path exactly as upstream
             // (openssh/readconf.c:1385 `add_certificate_file`).
             Opcode::CertificateFile => {
+                // upstream: openssh/readconf.c:1422-1430.
+                if self.resolved.certificate_files.len() >= SSH_MAX_CERTIFICATE_FILES {
+                    return Err(refuse(
+                        self.path,
+                        linenum,
+                        format!(
+                            "Too many certificate files specified (max {SSH_MAX_CERTIFICATE_FILES})."
+                        ),
+                    )
+                    .into());
+                }
                 let expanded = expand_tilde(arg);
                 if !self.resolved.certificate_files.contains(&expanded) {
                     self.resolved.certificate_files.push(expanded);
@@ -3134,10 +3171,17 @@ mod tests {
         );
     }
 
+    /// A port `a2port` cannot resolve refuses the file, as upstream does
+    /// (openssh/readconf.c:1570-1575).
     #[test]
-    fn invalid_port_is_ignored() {
-        let text = "Host example\n  Port notanumber\n";
-        assert!(resolve(text, "example").port.is_none());
+    fn invalid_port_is_refused() {
+        assert_eq!(
+            refusal("Host example\n  Port notanumber\n", "example"),
+            one_bad(
+                "<ssh_config>",
+                "<ssh_config> line 2: Bad port 'notanumber'."
+            )
+        );
     }
 
     // -- argv_split boundary behaviour, as seen through the directives --
@@ -3359,7 +3403,13 @@ mod tests {
             ("Port", "Missing argument."),
             ("IdentityFile", "Missing argument."),
             ("IdentityAgent", "Missing argument."),
-            ("IdentitiesOnly", "missing argument."),
+            // A flag's arm adds its own line after the parser's, naming
+            // the absent token as glibc prints a NULL `%s`
+            // (openssh/readconf.c:1103-1117, :1266-1280).
+            (
+                "IdentitiesOnly",
+                "missing argument.\n<ssh_config> line 2: unsupported option \"(null)\".",
+            ),
         ] {
             let text = format!("Host a\n  {keyword} #x\n");
             assert_eq!(
