@@ -22,27 +22,31 @@ pub(crate) enum ReferenceDecision {
 
 /// Computes the full path for a reference directory candidate.
 ///
-/// Absolute bases are joined directly; relative bases are resolved from
-/// the destination ancestor at the same depth as `relative`. The result is
-/// lexically normalized (collapsing `..`/`.`) so the candidate resolves even
-/// when an intermediate directory (e.g. a not-yet-created dry-run destination)
-/// does not exist on disk.
+/// `curr_dir` is the destination ancestor at the same depth as `relative`;
+/// relative bases resolve from it. The name joined onto the base is the
+/// destination's own path below `curr_dir`, not the source's: upstream's
+/// `try_dests_reg()` joins `fname` (generator.c:1083), which for a
+/// single-file destination is the local name `get_local_name()` returned
+/// (main.c:858), so `src/f` copied to `dst/g` looks for `<base>/g`. The result
+/// is lexically normalized (collapsing `..`/`.`) so the candidate resolves
+/// even when an intermediate directory (e.g. a not-yet-created dry-run
+/// destination) does not exist on disk.
 pub(crate) fn resolve_reference_candidate(
     base: &Path,
     relative: &Path,
     destination: &Path,
 ) -> PathBuf {
-    if base.is_absolute() {
-        base.join(relative)
-    } else {
-        let mut ancestor = destination.to_path_buf();
-        let depth = relative.components().count();
-        for _ in 0..depth {
-            if !ancestor.pop() {
-                break;
-            }
+    let mut curr_dir = destination.to_path_buf();
+    for _ in 0..relative.components().count() {
+        if !curr_dir.pop() {
+            break;
         }
-        crate::local_copy::lexically_normalize(&ancestor.join(base).join(relative))
+    }
+    let name = destination.strip_prefix(&curr_dir).unwrap_or(relative);
+    if base.is_absolute() {
+        base.join(name)
+    } else {
+        crate::local_copy::lexically_normalize(&curr_dir.join(base).join(name))
     }
 }
 
@@ -497,7 +501,7 @@ mod tests {
     fn resolve_absolute_base_ignores_destination() {
         let base = Path::new("/absolute/ref");
         let relative = Path::new("file.txt");
-        let destination = Path::new("/some/other/dest");
+        let destination = Path::new("/some/other/file.txt");
         let result = resolve_reference_candidate(base, relative, destination);
         assert_eq!(result, PathBuf::from("/absolute/ref/file.txt"));
     }
@@ -506,7 +510,7 @@ mod tests {
     fn resolve_absolute_base_with_nested_relative() {
         let base = Path::new("/ref");
         let relative = Path::new("dir/subdir/file.txt");
-        let destination = Path::new("/dest");
+        let destination = Path::new("/dest/dir/subdir/file.txt");
         let result = resolve_reference_candidate(base, relative, destination);
         assert_eq!(result, PathBuf::from("/ref/dir/subdir/file.txt"));
     }
@@ -515,9 +519,9 @@ mod tests {
     fn resolve_relative_base_computes_from_destination() {
         let base = Path::new("../backup");
         let relative = Path::new("file.txt");
-        let destination = Path::new("/home/user/dest");
+        let destination = Path::new("/home/user/file.txt");
         let result = resolve_reference_candidate(base, relative, destination);
-        // destination "/home/user/dest" -> pop 1 level (for relative depth 1) -> "/home/user"
+        // destination "/home/user/file.txt" -> pop 1 level (for relative depth 1) -> "/home/user"
         // then join "../backup" -> "/home/user/../backup" -> normalized "/home/backup"
         // then join "file.txt" -> "/home/backup/file.txt"
         assert_eq!(result, PathBuf::from("/home/backup/file.txt"));
@@ -527,9 +531,9 @@ mod tests {
     fn resolve_relative_base_with_deeper_relative_path() {
         let base = Path::new("ref");
         let relative = Path::new("a/b/c/file.txt");
-        let destination = Path::new("/x/y/z/dest");
+        let destination = Path::new("/a/b/c/file.txt");
         // depth of relative is 4, so pop 4 levels from destination
-        // "/x/y/z/dest" -> "/x/y/z" -> "/x/y" -> "/x" -> "/"
+        // "/a/b/c/file.txt" -> "/a/b/c" -> "/a/b" -> "/a" -> "/"
         // then join "ref" -> "/ref"
         // then join "a/b/c/file.txt" -> "/ref/a/b/c/file.txt"
         let result = resolve_reference_candidate(base, relative, destination);
@@ -540,12 +544,29 @@ mod tests {
     fn resolve_relative_base_single_component() {
         let base = Path::new("backup");
         let relative = Path::new("file.txt");
-        let destination = Path::new("/dest/path");
-        // depth 1, pop 1 from "/dest/path" -> "/dest"
+        let destination = Path::new("/dest/file.txt");
+        // depth 1, pop 1 from "/dest/file.txt" -> "/dest"
         // join "backup" -> "/dest/backup"
         // join "file.txt" -> "/dest/backup/file.txt"
         let result = resolve_reference_candidate(base, relative, destination);
         assert_eq!(result, PathBuf::from("/dest/backup/file.txt"));
+    }
+
+    /// upstream: generator.c:1083 joins `fname`, the local name, onto the
+    /// basis dir: `src/f` copied to the single-file destination `dst/g`
+    /// looks for `<basis>/g`, never `<basis>/f`.
+    #[test]
+    fn a_renamed_single_file_looks_up_its_destination_name() {
+        let relative = Path::new("f");
+        let destination = Path::new("/x/dst/g");
+        assert_eq!(
+            resolve_reference_candidate(Path::new("../alt"), relative, destination),
+            PathBuf::from("/x/alt/g")
+        );
+        assert_eq!(
+            resolve_reference_candidate(Path::new("/alt"), relative, destination),
+            PathBuf::from("/alt/g")
+        );
     }
 
     #[test]
@@ -576,7 +597,7 @@ mod tests {
     fn resolve_dotdot_in_base() {
         let base = Path::new("/ref/../other");
         let relative = Path::new("file.txt");
-        let destination = Path::new("/dest");
+        let destination = Path::new("/file.txt");
         let result = resolve_reference_candidate(base, relative, destination);
         // base is absolute, so just join
         assert_eq!(result, PathBuf::from("/ref/../other/file.txt"));

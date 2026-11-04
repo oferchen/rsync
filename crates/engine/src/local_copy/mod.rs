@@ -49,6 +49,7 @@
 //! assert_eq!(summary.files_copied(), 1);
 //! ```
 
+mod alt_basis;
 pub mod buffer_pool;
 pub mod clonefile;
 mod compressor;
@@ -80,6 +81,7 @@ pub(crate) mod prefetch;
 mod skip_compress;
 pub mod win_copy;
 
+pub use alt_basis::{check_alt_basis_dir_at, check_alt_basis_dirs};
 pub use buffer_pool::{
     BorrowedBufferGuard, BufferAllocator, BufferGuard, BufferPool, BufferPoolStats,
     DEFAULT_BUFFER_POOL_BLOCK_SIZE, DEFAULT_BYTE_BUDGET, DefaultAllocator, GlobalBufferPoolConfig,
