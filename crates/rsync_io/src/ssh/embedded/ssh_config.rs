@@ -1992,7 +1992,7 @@ fn evaluate_match_line(
 
         match attrib_lc.as_str() {
             "host" => {
-                let matched = match_pattern_list_ci(match_host, arg);
+                let matched = match_hostname(match_host, arg);
                 let pass = if negate { !matched } else { matched };
                 if !pass {
                     result = false;
@@ -2002,7 +2002,7 @@ fn evaluate_match_line(
             // the alias as typed, before any `HostName` rewrite, matched
             // case-insensitively like `host`.
             "originalhost" => {
-                let matched = match_pattern_list_ci(ctx.host_alias, arg);
+                let matched = match_hostname(ctx.host_alias, arg);
                 let pass = if negate { !matched } else { matched };
                 if !pass {
                     result = false;
@@ -2012,7 +2012,7 @@ fn evaluate_match_line(
             // the remote user, case-sensitive, defaulting to the local user
             // when the operand supplied none.
             "user" => {
-                let matched = match_pattern_list_cs(ctx.ruser(), arg);
+                let matched = match_user(ctx.ruser(), arg);
                 let pass = if negate { !matched } else { matched };
                 if !pass {
                     result = false;
@@ -2021,7 +2021,7 @@ fn evaluate_match_line(
             // `match_pattern_list(pw->pw_name, arg, 0)`
             // (openssh/readconf.c:1182): the local user, case-sensitive.
             "localuser" => {
-                let matched = match_pattern_list_cs(ctx.local_user, arg);
+                let matched = match_user(ctx.local_user, arg);
                 let pass = if negate { !matched } else { matched };
                 if !pass {
                     result = false;
@@ -2077,62 +2077,17 @@ fn evaluate_match_line(
     Ok(result)
 }
 
-/// Case-INSENSITIVE glob-list match for `Match host`/`originalhost`, the
-/// rule `match_hostname` applies (openssh/match.c:193-203): lowercase the
-/// host and match it against a comma/whitespace-separated pattern list
-/// (openssh/match.c:143) where a leading `!` on any pattern negates and a
-/// negated hit fails the whole list. An empty input never matches.
-fn match_pattern_list_ci(input: &str, patterns: &str) -> bool {
-    if input.is_empty() {
-        return false;
-    }
-    let input_lc = input.to_ascii_lowercase();
-    let mut any_positive = false;
-    for token in patterns.split(|c: char| c.is_whitespace() || c == ',') {
-        let token = token.trim();
-        if token.is_empty() {
-            continue;
-        }
-        let (negate, pattern) = token
-            .strip_prefix('!')
-            .map_or((false, token), |stripped| (true, stripped));
-        if glob_matches(input_lc.as_bytes(), pattern.to_ascii_lowercase().as_bytes()) {
-            if negate {
-                return false;
-            }
-            any_positive = true;
-        }
-    }
-    any_positive
+/// `match_hostname` (openssh/match.c:193-203): the host lowercased and
+/// matched against the comma-separated list with lowercased subpatterns.
+/// Only a positive verdict counts (openssh/readconf.c:821, :826).
+fn match_hostname(host: &str, patterns: &str) -> bool {
+    match_pattern_list(&host.to_ascii_lowercase(), patterns, true) == PatternListMatch::Positive
 }
 
-/// Case-SENSITIVE glob-list match for `Match user`/`localuser`, the rule
-/// `match_pattern_list(string, arg, 0)` applies with the trailing `0`
-/// disabling case folding (openssh/readconf.c:1177, :1182; the list walker is
-/// `match_pattern_list`, openssh/match.c:143-184). A leading `!` on any
-/// pattern negates, and a negated hit fails the whole list. Unlike
-/// [`match_pattern_list_ci`] there is no empty-input guard: upstream's
-/// `ruser`/`pw_name` are never empty, and a bare `*` still matches an empty
-/// string, matching `match_pattern`'s glob semantics
-/// (openssh/match.c:57-114).
-fn match_pattern_list_cs(input: &str, patterns: &str) -> bool {
-    let mut any_positive = false;
-    for token in patterns.split(|c: char| c.is_whitespace() || c == ',') {
-        let token = token.trim();
-        if token.is_empty() {
-            continue;
-        }
-        let (negate, pattern) = token
-            .strip_prefix('!')
-            .map_or((false, token), |stripped| (true, stripped));
-        if glob_matches(input.as_bytes(), pattern.as_bytes()) {
-            if negate {
-                return false;
-            }
-            any_positive = true;
-        }
-    }
-    any_positive
+/// `match_pattern_list(string, arg, 0)` for `Match user`/`localuser`: the
+/// same comma list, compared case-sensitively (openssh/readconf.c:831, :836).
+fn match_user(user: &str, patterns: &str) -> bool {
+    match_pattern_list(user, patterns, false) == PatternListMatch::Positive
 }
 
 /// Runs a `Match exec` command through the user's shell and reports whether
@@ -2339,6 +2294,24 @@ mod tests {
 
     fn knows_web_v6_only(name: &str, family: Option<AddressFamily>) -> bool {
         name == "web.first.test." && family != Some(AddressFamily::Inet)
+    }
+
+    /// `Match user`/`localuser` lists split on commas only and compare
+    /// case-sensitively (openssh/readconf.c:831, :836, match.c:122-172).
+    #[test]
+    fn match_user_lists_split_on_commas_only() {
+        let port = |criteria: &str| {
+            let text = format!("Match {criteria}\n  Port 2222\n");
+            resolve_host_str_with_users(&text, "a", "r", "l")
+                .expect("loads")
+                .port
+        };
+        assert_eq!(port("user \"!b r\""), None);
+        assert_eq!(port("user \"z r\""), None);
+        assert_eq!(port("user z,r"), Some(2222));
+        assert_eq!(port("user R"), None);
+        assert_eq!(port("localuser \"x l\""), None);
+        assert_eq!(port("localuser x,,l"), Some(2222));
     }
 
     /// The suffixes are tried in order and the first that resolves wins;
