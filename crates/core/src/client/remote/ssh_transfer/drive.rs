@@ -505,8 +505,32 @@ mod transfer_failure_error_tests {
         );
     }
 
-    /// Control: any other local failure still yields to a worse child status
-    /// (upstream: cleanup.c:150-152 takes the higher code).
+    /// A push sender refusing its own --checksum-choice keeps RERR_UNSUPPORTED
+    /// and the refusal text: the remote receiver is still waiting for the file
+    /// list, so upstream's WNOHANG poll (cleanup.c:146-153) never sees its
+    /// later RERR_STREAMIO (checksum.c:549-551).
+    #[test]
+    fn local_refusal_keeps_its_code_over_the_child_eof() {
+        let err = transfer_failure_error(
+            std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "Invalid checksum-choice for --checksum: none (0)",
+            ),
+            ExitCode::StreamIo,
+            ReportingSide::Sender,
+            0,
+        );
+        assert_eq!(err.exit_code(), 4);
+        assert!(
+            err.to_string()
+                .contains("Invalid checksum-choice for --checksum: none (0)"),
+            "{err}"
+        );
+    }
+
+    /// Control: a failure of the stream itself means the peer went first, so
+    /// its worse status wins (upstream: cleanup.c:150-152 takes the higher
+    /// code).
     #[test]
     fn other_local_failures_still_take_the_worse_child_code() {
         let err = transfer_failure_error(
