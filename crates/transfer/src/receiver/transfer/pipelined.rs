@@ -397,6 +397,7 @@ impl ReceiverContext {
         // matching upstream's single-pass emission ordering.
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
+        self.publish_list_only_entries(&mut stats, writer)?;
 
         self.finalize_transfer(
             reader,

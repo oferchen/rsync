@@ -93,7 +93,7 @@ fn abs_path_modifier_keeps_an_infix_slash_pattern_tail_matching() {
     );
 }
 
-/// Measured on rsync 3.5.0: with `+ /bar` ahead of `- bar` under `:/`, the
+/// Measured on rsync 3.5.1: with `+ /bar` ahead of `- bar` under `:/`, the
 /// anchored include matches nothing below `sub/` and the unanchored exclude
 /// still takes both `bar` files. Guards the include half of the same rewrite:
 /// an anchored `+` must not be able to rescue what the rewrite would have
@@ -112,7 +112,7 @@ fn abs_path_modifier_include_stays_anchored_while_exclude_stays_free() {
     );
 }
 
-/// Negative control. Measured on rsync 3.5.0: `:/ .filt` with `- /bar` excludes
+/// Negative control. Measured on rsync 3.5.1: `:/ .filt` with `- /bar` excludes
 /// nothing under `sub/`, because skipping the merge-directory prefix leaves the
 /// anchor bound above `sub/`. Already-anchored patterns were the one case the
 /// old rewrite got right, so this cell must stay green across the fix.
@@ -149,7 +149,7 @@ fn plain_dir_merge_reanchors_an_anchored_rule_to_the_merge_directory() {
 }
 
 /// Negative control. Without the `/` modifier a slash-free rule already matched
-/// at every depth; the fix must not change it. Measured on rsync 3.5.0.
+/// at every depth; the fix must not change it. Measured on rsync 3.5.1.
 #[test]
 fn plain_dir_merge_leaves_a_slash_free_pattern_alone() {
     let (root, mut chain) = chain_for("- bar\n", false);

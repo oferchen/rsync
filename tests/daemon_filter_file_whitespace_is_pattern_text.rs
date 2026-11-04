@@ -28,7 +28,7 @@
 //! and a comment AFTER the trim. All four consequences change WHICH FILES THE
 //! DAEMON SERVES, at exit 0, with no diagnostic.
 //!
-//! MEASURED against a real rsync 3.5.0 daemon on Linux, module holding `a` and
+//! MEASURED against a real rsync 3.5.1 daemon on Linux, module holding `a` and
 //! `a ` (trailing space), `exclude from` file holding the single line `a `:
 //! upstream serves `a` and hides `a `; oc at f054c633b served `a ` and hid `a`.
 //! Every row below is asserted against that measured upstream behaviour.
@@ -38,7 +38,7 @@
 //!
 //! Skip conditions (the test passes with a printed reason):
 //! - Loopback TCP is unavailable.
-//! - The cross-implementation cell additionally needs a built upstream 3.5.0
+//! - The cross-implementation cell additionally needs a built upstream 3.5.1
 //!   binary; without it it reports why it did not run.
 
 #![cfg(unix)]
@@ -58,7 +58,7 @@ fn oc_binary() -> PathBuf {
 
 fn upstream_binary() -> Option<PathBuf> {
     let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.0/rsync");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
     path.is_file().then_some(path)
 }
 
@@ -248,10 +248,10 @@ fn oc_keeps_daemon_filter_file_whitespace_as_pattern_text() {
 fn upstream_keeps_daemon_filter_file_whitespace_as_pattern_text() {
     let Some(upstream) = upstream_binary() else {
         println!(
-            "SKIP: upstream 3.5.0 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.0/rsync)"
+            "SKIP: upstream 3.5.1 oracle not built \
+             (target/interop/upstream-src/rsync-3.5.1/rsync)"
         );
         return;
     };
-    assert_table(&upstream, "upstream 3.5.0");
+    assert_table(&upstream, "upstream 3.5.1");
 }

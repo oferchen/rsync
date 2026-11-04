@@ -1169,7 +1169,7 @@ fn dir_merge_bang_only_clears_its_own_mergelist() {
 ///
 /// upstream: exclude.c:1639-1665 - parse_filter_file() checks the merge
 /// file's module-relative name against `daemon_filter_list` before the open
-/// and returns silently on a hit. MEASURED against a real rsync 3.5.0 daemon
+/// and returns silently on a hit. MEASURED against a real rsync 3.5.1 daemon
 /// (module `filter = - .rules dir-merge .rules`, `.rules` holding `- bait`):
 /// `bait` is SERVED, because the daemon's own exclude keeps the merge file
 /// from being read. Reading the file and hiding `bait` is the divergence this

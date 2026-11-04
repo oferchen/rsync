@@ -330,12 +330,22 @@ impl ReceiverContext {
         writer: &mut W,
         line: &str,
     ) -> std::io::Result<()> {
+        self.emit_info_bytes(writer, line.as_bytes())
+    }
+
+    /// [`Self::emit_info_line`] for a line that need not be UTF-8, such as one
+    /// carrying a file name.
+    pub(in crate::receiver) fn emit_info_bytes<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        line: &[u8],
+    ) -> std::io::Result<()> {
         if self.config.connection.client_mode {
             use std::io::Write as _;
-            std::io::stdout().write_all(line.as_bytes())
+            std::io::stdout().write_all(line)
         } else {
-            self.log_daemon_message(line.as_bytes());
-            writer.send_msg_info(line.as_bytes())
+            self.log_daemon_message(line);
+            writer.send_msg_info(line)
         }
     }
 
