@@ -12,9 +12,8 @@
 //! full copy.
 
 use std::env;
-use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf, is_separator};
+use std::path::{Path, PathBuf};
 
 use engine::local_copy::{ReferenceDirectory, ReferenceDirectoryKind};
 use logging::warn_log;
@@ -34,81 +33,19 @@ fn alt_dest_opt(kind: ReferenceDirectoryKind) -> &'static str {
     }
 }
 
-/// Removes at most ONE trailing separator, and never from a bare root.
-///
-/// upstream: `main.c:889-891`
-/// `if (bd_len > 1 && bdir[bd_len-1] == '/') bdir[--bd_len] = '\0';`
-///
-/// Exactly one, because the count decides *which* diagnostic fires. Measured
-/// against real 3.5.0 with a plain file at an absolute path:
-///
-/// | arg | upstream |
-/// |---|---|
-/// | `<abs>/f` | `is not a dir: <abs>/f` |
-/// | `<abs>/f/` | `is not a dir: <abs>/f` - stripped, so the stat lands on the file |
-/// | `<abs>/f//` | `does not exist: <abs>/f/` - one survives, `stat("f/")` is ENOTDIR |
-/// | `/` | silent - length 1, never stripped, and it is a directory |
-///
-/// A general path normalisation would collapse both separators and flip the
-/// third row to `is not a dir`.
-///
-/// Deviation from upstream: oc accepts either platform separator where upstream
-/// hardcodes `'/'`: a Windows operator writes `--link-dest=..\prev`, and
-/// `is_separator` is what the rest of this module tree already uses to decide
-/// the question.
-fn strip_one_trailing_separator(path: &Path) -> PathBuf {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::{OsStrExt, OsStringExt};
-
-        let bytes = path.as_os_str().as_bytes();
-        match bytes.split_last() {
-            Some((last, rest)) if !rest.is_empty() && is_separator(char::from(*last)) => {
-                PathBuf::from(OsString::from_vec(rest.to_vec()))
-            }
-            _ => path.to_path_buf(),
-        }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::{OsStrExt, OsStringExt};
-
-        let units: Vec<u16> = path.as_os_str().encode_wide().collect();
-        match units.split_last() {
-            Some((last, rest))
-                if !rest.is_empty()
-                    && char::from_u32(u32::from(*last)).is_some_and(is_separator) =>
-            {
-                PathBuf::from(OsString::from_wide(rest))
-            }
-            _ => path.to_path_buf(),
-        }
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        path.to_path_buf()
-    }
-}
-
-/// Resolves a basis directory to the absolute path upstream reports.
+/// Returns the destination as upstream's absolute `curr_dir`.
 ///
 /// upstream: `main.c:898-911` joins a relative basis onto `curr_dir`, which is
 /// the *destination* directory - upstream has already chdir'd there by the
 /// time `check_alt_basis_dirs()` runs, so `--link-dest=../prev` means
 /// "`../prev` relative to the destination", not to the invocation directory.
-/// That resolution is already correct in oc's candidate lookup; reproducing it
-/// here is what makes the reported path match.
 ///
 /// `curr_dir` is absolute for upstream because it is a real working directory,
 /// so a relative destination is absolutised against the process cwd to print
 /// the same text. Deliberately not canonicalised: upstream string-joins and
 /// does not resolve symlinks or `..` for this message.
-fn resolve_against_destination(basis: &Path, destination: &Path) -> PathBuf {
-    if basis.is_absolute() {
-        return basis.to_path_buf();
-    }
-
-    let anchor = if destination.is_absolute() {
+fn absolute_destination(destination: &Path) -> PathBuf {
+    if destination.is_absolute() {
         destination.to_path_buf()
     } else {
         match env::current_dir() {
@@ -118,9 +55,7 @@ fn resolve_against_destination(basis: &Path, destination: &Path) -> PathBuf {
             // the warning entirely.
             Err(_) => destination.to_path_buf(),
         }
-    };
-
-    anchor.join(basis)
+    }
 }
 
 /// Whether the CLIENT should run the basis-dir check for a remote transfer.
@@ -148,10 +83,10 @@ pub(crate) fn client_checks_basis_dirs(is_pull: bool, has_remote_operand: bool) 
 /// The stat follows symlinks (upstream uses `do_stat`, not `do_lstat`), so a
 /// basis directory reached through a symlink is accepted silently.
 pub fn check_alt_basis_dirs(references: &[ReferenceDirectory], destination: &Path) {
+    let curr_dir = absolute_destination(destination);
     for reference in references {
-        let basis = strip_one_trailing_separator(&reference.path);
-        let resolved = resolve_against_destination(&basis, destination);
-        check_alt_basis_dir_at(reference.kind, &resolved, &resolved);
+        let anchored = reference.anchored_at(&curr_dir, false);
+        check_alt_basis_dir_at(reference.kind, &anchored.path, &anchored.path);
     }
 }
 

@@ -823,6 +823,16 @@ impl ReceiverContext {
         // created the dest root so the root entry's itemize row can OR in
         // ITEM_IS_NEW (cd+++++++++ ./) only when it was actually created.
         self.dest_root_created = created_dest_root;
+        // upstream: main.c:1259 - with get_local_name() done, curr_dir is
+        // `dest_dir`, and check_alt_basis_dirs() rewrites a relative basis
+        // onto it (main.c:898-911). A daemon module sets sanitize_paths
+        // (clientserver.c:1067-1068) and keeps its basis module-relative.
+        if self.config.connection.daemon_module_root.is_none() {
+            let dest_dir_pending = self.config.flags.skip_dest_writes() && !dest_dir.is_dir();
+            for reference in &mut self.config.reference_directories {
+                *reference = reference.anchored_at(&dest_dir, dest_dir_pending);
+            }
+        }
         if created_dest_root {
             debug_log!(Recv, 1, "created destination root {}", dest_dir.display());
         }

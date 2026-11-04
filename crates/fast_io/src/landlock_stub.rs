@@ -64,6 +64,19 @@ pub fn restrict_to_module_paths(_allowed_roots: &[&Path]) -> LandlockOutcome {
 /// # Errors
 ///
 /// The stub never returns the `Error` variant.
+pub fn restrict_to_paths(
+    _allowed_roots: &[&Path],
+    _readable_roots: &[&Path],
+    _link_source_roots: &[&Path],
+) -> LandlockOutcome {
+    LandlockOutcome::Unavailable
+}
+
+/// Always returns [`LandlockOutcome::Unavailable`] on this build.
+///
+/// # Errors
+///
+/// The stub never returns the `Error` variant.
 pub fn deny_all_filesystem_access() -> LandlockOutcome {
     LandlockOutcome::Unavailable
 }
