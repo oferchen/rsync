@@ -17,8 +17,7 @@ use std::path::Path;
 use compress::zlib::CompressionLevel;
 use logging::debug_log;
 use protocol::wire::{
-    CHUNK_SIZE, CompressedTokenEncoder, write_token_block_match, write_token_end,
-    write_token_literal,
+    CompressedTokenEncoder, write_token_block_match, write_token_end, write_token_literal,
 };
 #[cfg(test)]
 use protocol::wire::{DeltaOp, write_token_stream};
@@ -445,29 +444,18 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
         }
         encoder.finish(writer)?;
     } else {
-        // Reserve 4 bytes at front for the length prefix of each wire chunk.
-        // Data is read at buf[4..], then for each 32KB wire chunk the 4-byte
-        // length prefix is written into the space before the chunk data.
-        // The combined write (4 + 32768 = 32772 bytes) exceeds MultiplexWriter's
-        // 32KB buffer threshold, triggering direct-send to the socket layer
-        // and bypassing one memcpy. Upstream reference: match.c send_token().
-        buf.resize(4 + read_size, 0);
+        // upstream: token.c:323-324 simple_send_token() - each chunk's length
+        // and its bytes are two separate writes, so a length that fits the
+        // output buffer stays in the current frame even when the bytes start
+        // the next one.
+        buf.resize(read_size, 0);
         while remaining > 0 {
-            let to_read = (buf.len() - 4).min(remaining as usize);
-            if let Some(e) = read_window(&mut source, &mut buf[4..4 + to_read]) {
+            let to_read = buf.len().min(remaining as usize);
+            if let Some(e) = read_window(&mut source, &mut buf[..to_read]) {
                 read_error.get_or_insert(e);
             }
-            verifier.update(&buf[4..4 + to_read]);
-            // Write wire chunks with combined [length_prefix + data].
-            // For offset 0, the prefix uses the reserved buf[0..4].
-            // For subsequent offsets, the prefix overwrites already-sent bytes.
-            let mut wire_off = 0;
-            while wire_off < to_read {
-                let chunk = (to_read - wire_off).min(CHUNK_SIZE);
-                buf[wire_off..wire_off + 4].copy_from_slice(&(chunk as i32).to_le_bytes());
-                writer.write_all(&buf[wire_off..wire_off + 4 + chunk])?;
-                wire_off += chunk;
-            }
+            verifier.update(&buf[..to_read]);
+            write_token_literal(writer, &buf[..to_read])?;
             remaining -= to_read as u64;
         }
         write_token_end(writer)?;
@@ -553,20 +541,18 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
         }
         encoder.finish(writer)?;
     } else {
-        buf.resize(4 + read_size, 0);
+        // upstream: token.c:323-324 simple_send_token() - each chunk's length
+        // and its bytes are two separate writes, so a length that fits the
+        // output buffer stays in the current frame even when the bytes start
+        // the next one.
+        buf.resize(read_size, 0);
         while remaining > 0 {
-            let to_read = (buf.len() - 4).min(remaining as usize);
-            if let Some(e) = read_window(&mut source, &mut buf[4..4 + to_read]) {
+            let to_read = buf.len().min(remaining as usize);
+            if let Some(e) = read_window(&mut source, &mut buf[..to_read]) {
                 read_error.get_or_insert(e);
             }
-            verifier.update(&buf[4..4 + to_read]);
-            let mut wire_off = 0;
-            while wire_off < to_read {
-                let chunk = (to_read - wire_off).min(CHUNK_SIZE);
-                buf[wire_off..wire_off + 4].copy_from_slice(&(chunk as i32).to_le_bytes());
-                writer.write_all(&buf[wire_off..wire_off + 4 + chunk])?;
-                wire_off += chunk;
-            }
+            verifier.update(&buf[..to_read]);
+            write_token_literal(writer, &buf[..to_read])?;
             remaining -= to_read as u64;
         }
         write_token_end(writer)?;

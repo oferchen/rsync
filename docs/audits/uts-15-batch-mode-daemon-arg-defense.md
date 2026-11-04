@@ -81,11 +81,12 @@ exchange completes. Failure is propagated unless the peer already closed,
 following the existing `is_early_close_error` tolerance pattern.
 
 Test coverage:
-- `handle_goodbye_proto31_flushes_ndx_done_before_close` uses a
-  `FlushTrackingWriter` to record every `write` and `flush` call. The test
-  asserts (a) the wire buffer ends with the NDX_DONE marker bytes, (b) at
-  least one flush occurred, and (c) the final operation before return was
-  a flush (not a partial write).
+- `handle_goodbye_proto31_flushes_ndx_done_before_close` used a
+  `FlushTrackingWriter` to assert the goodbye flushed its NDX_DONE. Task 489
+  replaced it with `handle_goodbye_proto31_leaves_ndx_done_for_the_final_read`:
+  the transport core now drains buffered output before every wait for input,
+  as upstream's perform_io() does (io.c:766-768), so the goodbye itself no
+  longer flushes.
 
 ### UTS-15.g: fail-loud unknown args
 

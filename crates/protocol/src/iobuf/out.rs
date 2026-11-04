@@ -292,6 +292,25 @@ impl OutBuf {
         }
     }
 
+    /// Returns `true` while a run's flush has stalled part-way.
+    ///
+    /// upstream: `iobuf.raw_flushing_ends_before != 0` (io.c:768).
+    #[must_use]
+    pub fn is_flushing(&self) -> bool {
+        self.flush_ends_before != 0
+    }
+
+    /// Finishes a run whose flush stalled part-way, without starting a new one.
+    ///
+    /// upstream: io.c:628-636 rule 1 - an in-progress `MSG_DATA` sequence is
+    /// written out before anything else, the message buffer included.
+    pub fn finish_flush<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<()> {
+        while self.flush_ends_before != 0 {
+            self.drain_once(writer)?;
+        }
+        Ok(())
+    }
+
     /// Returns whether a `MSG_DATA` header slot is reserved.
     fn is_multiplexed(&self) -> bool {
         self.out_empty_len != 0

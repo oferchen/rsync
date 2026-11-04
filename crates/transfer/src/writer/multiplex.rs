@@ -1,20 +1,27 @@
 //! Buffered writer that frames output in `MSG_DATA` multiplex frames.
 //!
 //! Mirrors upstream rsync's buffering behavior in `io.c` where a single buffer
-//! accumulates data before flushing to the socket. Uses 64KB buffer size to
-//! compensate for frame headers and batch approximately 2 wire chunks per flush.
+//! accumulates data before flushing to the socket, sized like upstream's
+//! `iobuf.out` (io.c:1567) and flushed by the same rule (io.c:2487-2488).
 //!
 //! The frame header is reserved *inside* that buffer and back-filled at flush
 //! time (upstream io.c:2694-2695 and io.c:775-776), so a header and its payload
 //! are adjacent bytes of one buffer before any syscall runs. Nothing can be
 //! scheduled between them and no partial write can leave a header on the wire
 //! without its payload queued behind it.
+//!
+//! The buffer itself lives in [`MuxOut`], apart from the writer that fills it,
+//! so the connection's transport core can drain it too: upstream's
+//! `perform_io()` writes `iobuf.out` whenever it is about to wait for input
+//! (io.c:766-768), not only when the writer asks.
 
+use std::cell::RefCell;
 use std::io::{self, IoSlice, Write};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use protocol::iobuf::OutBuf;
+use protocol::iobuf::{OUT_BUFFER_SIZE, OutBuf};
 use protocol::{MESSAGE_HEADER_LEN, MessageCode, MessageHeader};
 
 /// Destination selector for bytes written through a batch-recording writer.
@@ -38,6 +45,204 @@ pub enum BatchRoute {
     Divert,
 }
 
+/// Payload bytes one buffered run holds: upstream's `iobuf.out` less the
+/// `MSG_DATA` header reserved at its front (io.c:1567, io.c:2690).
+const DEFAULT_BUFFER_SIZE: usize = OUT_BUFFER_SIZE - MESSAGE_HEADER_LEN;
+
+/// Capacity the control-frame staging buffer is allowed to retain.
+///
+/// A single oversized frame must not pin its staging allocation for the rest of
+/// the run; upstream keeps steady-state memory bounded by never growing its
+/// buffers at all (io.c:582-598 `restore_iobuf_size()`).
+const SCRATCH_RETAIN: usize = DEFAULT_BUFFER_SIZE + MESSAGE_HEADER_LEN;
+
+/// Size of the message queue. upstream: io.c:2688
+/// `alloc_xbuf(&iobuf.msg, ROUND_UP_1024(IO_BUFFER_SIZE))`.
+const MSG_BUFFER_SIZE: usize = 32 * 1024;
+
+/// Room `send_msg()` reserves beyond the payload: the 4-byte header plus up to
+/// 3 bytes lost when a header would straddle the circular end (io.c:1101-1114).
+const MSG_FRAME_SLACK: usize = MESSAGE_HEADER_LEN + 3;
+
+/// The buffered output of a multiplexed stream. upstream: `iobuf.out` and
+/// `iobuf.msg` (io.c:101-115).
+pub(crate) struct MuxOut {
+    /// Circular output buffer whose first four bytes are the reserved
+    /// `MSG_DATA` header. upstream: `iobuf.out` (io.c:101-115).
+    buffer: OutBuf,
+    /// Payload bytes buffered before a flush is forced. Matches upstream's
+    /// `IO_BUFFER_SIZE`-derived output sizing pattern.
+    buffer_size: usize,
+    /// Framed messages waiting to be written; they leave ahead of buffered
+    /// data. upstream: `iobuf.msg`, filled by `send_msg()` (io.c:1088).
+    msgs: Vec<u8>,
+    /// Reusable staging area for the oversized `MSG_DATA` frames that do not
+    /// fit the circular buffer, and for keepalives.
+    scratch: Vec<u8>,
+    /// True when data has been written to the sink since its last successful
+    /// `flush()`. Prevents redundant flush syscalls on transfer hot paths where
+    /// `flush()` is called per-iteration but many iterations produce no output.
+    dirty: bool,
+    /// Instant of the last actual write to the sink, tracking upstream's
+    /// `last_io_out`. A lull is measured from this point.
+    last_io_out: Instant,
+}
+
+/// The output buffer shared by a multiplex writer and the transport core
+/// that drains it.
+pub(crate) type SharedMuxOut = Rc<RefCell<MuxOut>>;
+
+impl MuxOut {
+    fn new() -> Self {
+        let mut buffer = OutBuf::new(DEFAULT_BUFFER_SIZE);
+        // upstream: io.c:2690-2695 io_start_multiplex_out() reserves the first
+        // MSG_DATA header before a single payload byte is buffered.
+        buffer.start_multiplex();
+        Self {
+            buffer,
+            buffer_size: DEFAULT_BUFFER_SIZE,
+            msgs: Vec::new(),
+            scratch: Vec::new(),
+            dirty: false,
+            last_io_out: Instant::now(),
+        }
+    }
+
+    /// True when messages or payload bytes are buffered and not yet written.
+    pub(crate) fn has_pending(&self) -> bool {
+        !self.msgs.is_empty() || !self.buffer.is_empty()
+    }
+
+    /// Writes everything buffered, in perform_io()'s priority order
+    /// (io.c:628-636): the rest of a `MSG_DATA` frame whose write stalled
+    /// part-way, then every queued message, then the buffered data as one
+    /// `MSG_DATA` frame.
+    ///
+    /// The data frame's header is back-filled into the four bytes reserved at
+    /// the front of the buffered run (upstream io.c:775-776) and the whole
+    /// frame leaves through one drain loop, so a short write can never separate
+    /// the header from its payload.
+    pub(crate) fn flush_buffer<W: Write + ?Sized>(&mut self, sink: &mut W) -> io::Result<()> {
+        self.write_messages(sink)?;
+        if !self.buffer.is_empty() {
+            self.buffer.flush(sink)?;
+            self.mark_written();
+        }
+        Ok(())
+    }
+
+    /// Writes the queued messages, after finishing a stalled data frame.
+    /// upstream: perform_io() with `PIO_NEED_MSGROOM` (io.c:768-803).
+    fn write_messages<W: Write + ?Sized>(&mut self, sink: &mut W) -> io::Result<()> {
+        if self.buffer.is_flushing() {
+            self.buffer.finish_flush(sink)?;
+            self.mark_written();
+        }
+        if !self.msgs.is_empty() {
+            sink.write_all(&self.msgs)?;
+            self.msgs.clear();
+            self.mark_written();
+        }
+        Ok(())
+    }
+
+    /// Queues one message frame without writing anything, unless the queue
+    /// lacks room for it, in which case the queued messages are written first.
+    /// upstream: io.c:1088-1180 `send_msg()`; the sender's
+    /// `perform_io(needed, PIO_NEED_MSGROOM)` at io.c:1115-1117.
+    fn queue_message<W: Write + ?Sized>(
+        &mut self,
+        sink: &mut W,
+        code: MessageCode,
+        payload: &[u8],
+    ) -> io::Result<()> {
+        let len = u32::try_from(payload.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "payload length overflow"))?;
+        let header = MessageHeader::new(code, len)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        if self.msgs.len() + payload.len() + MSG_FRAME_SLACK > MSG_BUFFER_SIZE {
+            self.write_messages(sink)?;
+        }
+        self.msgs.extend_from_slice(&header.encode());
+        self.msgs.extend_from_slice(payload);
+        Ok(())
+    }
+
+    /// [`Self::flush_buffer`], then flushes `sink` itself if anything reached
+    /// it since its last flush.
+    pub(crate) fn flush<W: Write + ?Sized>(&mut self, sink: &mut W) -> io::Result<()> {
+        self.flush_buffer(sink)?;
+        if self.dirty {
+            sink.flush()?;
+            self.dirty = false;
+            self.last_io_out = Instant::now();
+        }
+        Ok(())
+    }
+
+    /// Writes one frame whose header and payload are staged contiguously.
+    ///
+    /// upstream: `send_msg()` (io.c:1088) builds every non-`MSG_DATA` frame
+    /// header-then-payload in one shot inside `iobuf.msg`; the same treatment is
+    /// applied to a `MSG_DATA` payload too large for the circular buffer, which
+    /// would otherwise be the one place a header and its body could be split
+    /// across two `write_all` calls.
+    fn write_frame<'b, W: Write + ?Sized>(
+        &mut self,
+        sink: &mut W,
+        code: MessageCode,
+        payload_len: usize,
+        chunks: impl Iterator<Item = &'b [u8]>,
+    ) -> io::Result<()> {
+        let len = u32::try_from(payload_len)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "payload length overflow"))?;
+        let header = MessageHeader::new(code, len)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+        self.scratch.clear();
+        self.scratch.reserve(MESSAGE_HEADER_LEN + payload_len);
+        self.scratch.extend_from_slice(&header.encode());
+        for chunk in chunks {
+            self.scratch.extend_from_slice(chunk);
+        }
+        sink.write_all(&self.scratch)?;
+
+        if self.scratch.capacity() > SCRATCH_RETAIN {
+            self.scratch = Vec::new();
+        }
+        Ok(())
+    }
+
+    /// Buffers `buf` as `MSG_DATA` payload, writing the buffered run first
+    /// when it does not fit. upstream: io.c:2487-2488 write_buf() reaches
+    /// perform_io() only when the bytes do not fit, so a write that fits
+    /// costs no syscall at all.
+    ///
+    /// A payload that cannot fit the circular buffer is staged contiguously
+    /// and sent as its own `MSG_DATA` frame. upstream splits such a write into
+    /// buffer-sized chunks instead (io.c:2465-2476 write_bigbuf); keeping the
+    /// single frame preserves the bytes already on the wire while still
+    /// guaranteeing the header and payload leave together.
+    fn write_data<W: Write + ?Sized>(&mut self, sink: &mut W, buf: &[u8]) -> io::Result<()> {
+        if self.buffer.data_len() + buf.len() > self.buffer_size {
+            self.flush_buffer(sink)?;
+        }
+        if buf.len() > self.buffer_size {
+            self.write_frame(sink, MessageCode::Data, buf.len(), std::iter::once(buf))?;
+            self.mark_written();
+            return Ok(());
+        }
+        self.buffer.push(buf);
+        Ok(())
+    }
+
+    /// Records that bytes reached the sink, for the flush and lull logic.
+    fn mark_written(&mut self) {
+        self.dirty = true;
+        self.last_io_out = Instant::now();
+    }
+}
+
 /// Writer that wraps data in multiplex `MSG_DATA` frames.
 ///
 /// Buffers writes to avoid sending tiny multiplex frames for every write call.
@@ -56,30 +261,15 @@ pub enum BatchRoute {
 /// tees data before multiplex framing is applied.
 pub(crate) struct MultiplexWriter<W> {
     inner: W,
-    /// Circular output buffer whose first four bytes are the reserved
-    /// `MSG_DATA` header. upstream: `iobuf.out` (io.c:101-115).
-    buffer: OutBuf,
-    /// Payload bytes buffered before a flush is forced. Matches upstream's
-    /// `IO_BUFFER_SIZE`-derived output sizing pattern.
-    buffer_size: usize,
-    /// Reusable staging area for control frames, which upstream builds
-    /// header-and-payload in one shot (io.c:1088 `send_msg()`), and for the
-    /// oversized `MSG_DATA` frames that do not fit the circular buffer.
-    scratch: Vec<u8>,
-    /// True when data has been written to `inner` since the last successful
-    /// `inner.flush()`. Prevents redundant flush syscalls on transfer hot
-    /// paths where `flush()` is called per-iteration but many iterations
-    /// produce no output (control NDX handling, non-transfer items).
-    dirty: bool,
+    /// The buffered frame run, shared with the transport core that may drain
+    /// it while waiting for input.
+    out: SharedMuxOut,
     /// Optional recorder for batch mode - captures pre-mux data.
     /// upstream: `io.c` `write_batch_monitor_out` + `safe_write(batch_fd, buf, len)`
     pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
     /// Selects whether recorded bytes are also framed onto the wire.
     /// upstream: `sender.c:502` `f_xfer = write_batch < 0 ? batch_fd : f_out`
     pub(crate) batch_route: BatchRoute,
-    /// Instant of the last actual write to `inner`, tracking upstream's
-    /// `last_io_out`. A lull is measured from this point.
-    last_io_out: Instant,
     /// The keep-alive lull interval, `None` when `--timeout` is not set.
     ///
     /// upstream: `io.c:set_io_timeout()` sets `allowed_lull = (io_timeout + 1) / 2`
@@ -92,41 +282,23 @@ pub(crate) struct MultiplexWriter<W> {
     data_written: u64,
 }
 
-/// Default buffer size - 64KB to batch ~2 wire chunks per flush.
-const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
-
-/// Capacity the control-frame staging buffer is allowed to retain.
-///
-/// A single oversized frame must not pin its staging allocation for the rest of
-/// the run; upstream keeps steady-state memory bounded by never growing its
-/// buffers at all (io.c:582-598 `restore_iobuf_size()`).
-const SCRATCH_RETAIN: usize = DEFAULT_BUFFER_SIZE + MESSAGE_HEADER_LEN;
-
 impl<W: Write> MultiplexWriter<W> {
-    /// Creates a new multiplex writer with 64KB buffering.
-    ///
-    /// The 64KB buffer matches upstream rsync's `iobuf_out` pattern where a single
-    /// buffer accumulates data before flushing to the socket. Upstream uses
-    /// `IO_BUFFER_SIZE` (32KB) in `rsync.h`, but we use 64KB to compensate for
-    /// `MSG_DATA` frame headers (4 bytes per frame) and to batch ~2 wire chunks
-    /// per flush for better syscall efficiency.
+    /// Creates a new multiplex writer whose buffer is sized like upstream's
+    /// `iobuf.out` (io.c:1567).
     pub(crate) fn new(inner: W) -> Self {
-        let mut buffer = OutBuf::new(DEFAULT_BUFFER_SIZE);
-        // upstream: io.c:2690-2695 io_start_multiplex_out() reserves the first
-        // MSG_DATA header before a single payload byte is buffered.
-        buffer.start_multiplex();
         Self {
             inner,
-            buffer,
-            buffer_size: DEFAULT_BUFFER_SIZE,
-            scratch: Vec::new(),
-            dirty: false,
+            out: Rc::new(RefCell::new(MuxOut::new())),
             batch_recorder: None,
             batch_route: BatchRoute::default(),
-            last_io_out: Instant::now(),
             allowed_lull: None,
             data_written: 0,
         }
+    }
+
+    /// The buffered frame run, for a transport core to drain while it waits.
+    pub(crate) fn shared_out(&self) -> SharedMuxOut {
+        Rc::clone(&self.out)
     }
 
     /// Payload bytes written for the wire so far (upstream `total_data_written`).
@@ -141,7 +313,7 @@ impl<W: Write> MultiplexWriter<W> {
     /// the default transfer path stays byte-for-byte identical.
     pub(crate) fn set_allowed_lull(&mut self, lull: Option<Duration>) {
         self.allowed_lull = lull;
-        self.last_io_out = Instant::now();
+        self.out.borrow_mut().last_io_out = Instant::now();
     }
 
     /// Returns the configured keep-alive lull interval, or `None` when
@@ -189,28 +361,38 @@ impl<W: Write> MultiplexWriter<W> {
     /// [`Self::answer_keepalive`]: upstream `io.c:maybe_send_keepalive()`
     /// (io.c:1639-1667) with `allowed_lull` supplied by the caller.
     fn send_keepalive_after_lull(&mut self, lull: Duration) -> io::Result<bool> {
-        if self.last_io_out.elapsed() < lull {
+        let mut out = self.out.borrow_mut();
+        if out.last_io_out.elapsed() < lull {
             return Ok(false);
         }
 
-        // upstream: io.c:1660-1665 - pending output is flushed rather than
-        // emitting a keepalive; the flush itself is the I/O that resets the lull.
-        // "Empty" here is `out.len == out_empty_len`, not `len == 0`: the
-        // reserved header occupies the first four bytes (io.c:2694-2695).
-        if !self.buffer.is_empty() {
-            self.flush_buffer()?;
+        // upstream: io.c:1658-1665 - pending output is written rather than
+        // emitting a keepalive; the write itself is the I/O that resets the
+        // lull. Queued messages go alone (PIO_NEED_MSGROOM), buffered data
+        // only when no message is queued. "Empty" data is `out.len ==
+        // out_empty_len`, not `len == 0`: the reserved header occupies the
+        // first four bytes (io.c:2694-2695).
+        if !out.msgs.is_empty() {
+            out.write_messages(&mut self.inner)?;
             self.inner.flush()?;
-            self.dirty = false;
-            self.last_io_out = Instant::now();
+            out.dirty = false;
+            out.last_io_out = Instant::now();
+            return Ok(false);
+        }
+        if out.has_pending() {
+            out.flush_buffer(&mut self.inner)?;
+            self.inner.flush()?;
+            out.dirty = false;
+            out.last_io_out = Instant::now();
             return Ok(false);
         }
 
         // upstream: io.c:1658-1659 - only at a frame boundary, emit an empty
         // MSG_DATA that the peer absorbs as a no-op keepalive.
-        self.write_frame(MessageCode::Data, 0, std::iter::empty())?;
+        out.write_frame(&mut self.inner, MessageCode::Data, 0, std::iter::empty())?;
         self.inner.flush()?;
-        self.dirty = false;
-        self.last_io_out = Instant::now();
+        out.dirty = false;
+        out.last_io_out = Instant::now();
         Ok(true)
     }
 
@@ -239,75 +421,19 @@ impl<W: Write> MultiplexWriter<W> {
         Ok(self.batch_route == BatchRoute::Divert)
     }
 
-    /// Flushes the internal buffer by sending it as a `MSG_DATA` frame.
-    ///
-    /// The header is back-filled into the four bytes reserved at the front of
-    /// the buffered run (upstream io.c:775-776) and the whole frame leaves
-    /// through one drain loop, so a short write can never separate the header
-    /// from its payload.
-    fn flush_buffer(&mut self) -> io::Result<()> {
-        if !self.buffer.is_empty() {
-            self.buffer.flush(&mut self.inner)?;
-            self.dirty = true;
-            self.last_io_out = Instant::now();
-        }
-        Ok(())
-    }
-
-    /// Writes one frame whose header and payload are staged contiguously.
-    ///
-    /// upstream: `send_msg()` (io.c:1088) builds every non-`MSG_DATA` frame
-    /// header-then-payload in one shot inside `iobuf.msg`; the same treatment is
-    /// applied to a `MSG_DATA` payload too large for the circular buffer, which
-    /// would otherwise be the one place a header and its body could be split
-    /// across two `write_all` calls.
-    fn write_frame<'b>(
-        &mut self,
-        code: MessageCode,
-        payload_len: usize,
-        chunks: impl Iterator<Item = &'b [u8]>,
-    ) -> io::Result<()> {
-        let len = u32::try_from(payload_len)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "payload length overflow"))?;
-        let header = MessageHeader::new(code, len)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-
-        self.scratch.clear();
-        self.scratch.reserve(MESSAGE_HEADER_LEN + payload_len);
-        self.scratch.extend_from_slice(&header.encode());
-        for chunk in chunks {
-            self.scratch.extend_from_slice(chunk);
-        }
-        self.inner.write_all(&self.scratch)?;
-
-        if self.scratch.capacity() > SCRATCH_RETAIN {
-            self.scratch = Vec::new();
-        }
-        Ok(())
-    }
-
     /// Sends a control message with the specified message code.
     ///
     /// Unlike the `Write` trait which always sends `MSG_DATA`, this method
     /// allows sending other message types like `MSG_IO_TIMEOUT`.
-    /// Flushes buffered data first to maintain message ordering.
     ///
-    /// Batchable message codes (`MSG_INFO`, `MSG_WARNING`) skip the
-    /// immediate flush, letting the write buffer coalesce multiple
-    /// control frames into fewer TCP segments. This matches upstream
-    /// rsync's `send_msg()` in `io.c` which appends to `iobuf.msg`
-    /// without flushing. Latency-sensitive codes (ERROR, REDO, etc.)
-    /// still flush immediately.
+    /// The frame is queued, not written: upstream's `send_msg()` appends to
+    /// `iobuf.msg` (io.c:1088), and the queue leaves at the next write-out
+    /// ahead of any buffered data (io.c:628-636). No message code is written
+    /// at once.
     pub(crate) fn send_message(&mut self, code: MessageCode, payload: &[u8]) -> io::Result<()> {
-        self.flush_buffer()?;
-        self.write_frame(code, payload.len(), std::iter::once(payload))?;
-        self.dirty = true;
-        self.last_io_out = Instant::now();
-        if code.requires_immediate_flush() {
-            self.inner.flush()?;
-            self.dirty = false;
-        }
-        Ok(())
+        self.out
+            .borrow_mut()
+            .queue_message(&mut self.inner, code, payload)
     }
 
     /// Writes raw bytes directly to the inner writer, bypassing multiplex framing.
@@ -315,11 +441,12 @@ impl<W: Write> MultiplexWriter<W> {
     /// Used for protocol exchanges like goodbye handshakes where upstream rsync
     /// writes directly without `MSG_DATA` wrapping.
     pub(crate) fn write_raw(&mut self, data: &[u8]) -> io::Result<()> {
-        self.flush_buffer()?;
+        let mut out = self.out.borrow_mut();
+        out.flush_buffer(&mut self.inner)?;
         self.inner.write_all(data)?;
         self.inner.flush()?;
-        self.dirty = false;
-        self.last_io_out = Instant::now();
+        out.dirty = false;
+        out.last_io_out = Instant::now();
         Ok(())
     }
 }
@@ -336,38 +463,12 @@ impl<W: Write> Write for MultiplexWriter<W> {
             return Ok(buf.len());
         }
         self.data_written += buf.len() as u64;
-
-        if self.buffer.data_len() + buf.len() > self.buffer_size {
-            self.flush_buffer()?;
-        }
-
-        // A payload that cannot fit the circular buffer is staged contiguously
-        // and sent as its own MSG_DATA frame. upstream splits such a write into
-        // buffer-sized chunks instead (io.c:2465-2476 write_bigbuf); keeping the
-        // single frame preserves the bytes already on the wire while still
-        // guaranteeing the header and payload leave together.
-        if buf.len() >= self.buffer_size {
-            self.write_frame(MessageCode::Data, buf.len(), std::iter::once(buf))?;
-            self.dirty = true;
-            self.last_io_out = Instant::now();
-            return Ok(buf.len());
-        }
-
-        // upstream: io.c:2487-2488 write_buf() reaches perform_io() only when
-        // the bytes do not fit, so a write that fits costs no syscall at all.
-        self.buffer.push(buf);
+        self.out.borrow_mut().write_data(&mut self.inner, buf)?;
         Ok(buf.len())
     }
 
-    /// Writes multiple buffers, batching them into the internal buffer.
-    ///
-    /// Small writes are copied into the circular buffer and cost no syscall.
-    /// When the total exceeds the buffer size the slices are staged contiguously
-    /// behind their `MSG_DATA` header and written once, so the frame can never
-    /// be split across two `write_all` calls.
     fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
         let total_len: usize = bufs.iter().map(|b| b.len()).sum();
-
         if total_len == 0 {
             return Ok(0);
         }
@@ -379,37 +480,18 @@ impl<W: Write> Write for MultiplexWriter<W> {
         }
         self.data_written += total_len as u64;
 
-        // Fast path: if everything fits in remaining buffer space, copy all at once
-        if self.buffer.data_len() + total_len <= self.buffer_size {
-            for buf in bufs {
-                self.buffer.push(buf);
-            }
-            return Ok(total_len);
+        // Each slice is its own write_buf() call upstream, so each gets the
+        // fit check on its own: a length prefix that fits stays in this run
+        // even when the payload behind it starts the next one.
+        let mut out = self.out.borrow_mut();
+        for buf in bufs.iter().filter(|b| !b.is_empty()) {
+            out.write_data(&mut self.inner, buf)?;
         }
-
-        self.flush_buffer()?;
-
-        if total_len <= self.buffer_size {
-            for buf in bufs {
-                self.buffer.push(buf);
-            }
-        } else {
-            self.write_frame(MessageCode::Data, total_len, bufs.iter().map(|b| &b[..]))?;
-            self.dirty = true;
-            self.last_io_out = Instant::now();
-        }
-
         Ok(total_len)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.flush_buffer()?;
-        if self.dirty {
-            self.inner.flush()?;
-            self.dirty = false;
-            self.last_io_out = Instant::now();
-        }
-        Ok(())
+        self.out.borrow_mut().flush(&mut self.inner)
     }
 }
 
@@ -661,6 +743,7 @@ mod framing_tests {
             writer.inner.budget = usize::MAX;
             writer.flush().unwrap();
             writer.send_message(MessageCode::Info, b"after").unwrap();
+            writer.flush().unwrap();
 
             assert_eq!(
                 parse_frames(&writer.inner.sink),
@@ -673,28 +756,75 @@ mod framing_tests {
         }
     }
 
-    /// A control frame is never scheduled between a `MSG_DATA` header and the
-    /// end of its payload: buffered data is flushed as a complete frame first.
-    /// upstream keeps `MSG_*` in a separate buffer for exactly this reason
-    /// (io.c:768-776 puts the in-progress raw run first).
+    /// WHY: upstream queues messages in `iobuf.msg`, apart from the data in
+    /// `iobuf.out`, and writes the whole queue before the buffered data
+    /// (io.c:628-636 rule 2). A message neither ends the data run it was sent
+    /// in nor waits behind it, so 3.5.1 frames messages ahead of earlier data.
     #[test]
-    fn control_frame_never_splits_a_data_payload() {
+    fn queued_messages_leave_ahead_of_buffered_data() {
         let mut writer = MultiplexWriter::new(StallingWriter::new(usize::MAX));
         writer.write_all(b"data-one").unwrap();
         writer.send_message(MessageCode::Info, b"info").unwrap();
         writer.write_all(b"data-two").unwrap();
         writer.send_message(MessageCode::Error, b"err").unwrap();
+        assert_eq!(
+            writer.inner.writes, 0,
+            "nothing is written until a write-out"
+        );
         writer.flush().unwrap();
 
         assert_eq!(
             parse_frames(&writer.inner.sink),
             vec![
-                (MessageCode::Data, b"data-one".to_vec()),
                 (MessageCode::Info, b"info".to_vec()),
-                (MessageCode::Data, b"data-two".to_vec()),
                 (MessageCode::Error, b"err".to_vec()),
+                (MessageCode::Data, b"data-onedata-two".to_vec()),
             ]
         );
+    }
+
+    /// WHY: a data frame whose write stalled part-way is finished before any
+    /// queued message (io.c:628-636 rule 1), or the message would land inside
+    /// the frame and the peer would read it as payload.
+    #[test]
+    fn a_stalled_data_frame_finishes_before_queued_messages() {
+        let mut writer = MultiplexWriter::new(StallingWriter::new(6));
+        writer.write_all(b"payload").unwrap();
+        writer.flush().expect_err("the flush must stall mid-frame");
+        writer.send_message(MessageCode::Info, b"info").unwrap();
+        writer.inner.budget = usize::MAX;
+        writer.flush().unwrap();
+
+        assert_eq!(
+            parse_frames(&writer.inner.sink),
+            vec![
+                (MessageCode::Data, b"payload".to_vec()),
+                (MessageCode::Info, b"info".to_vec()),
+            ]
+        );
+    }
+
+    /// WHY: a sender whose message queue lacks room writes the queued
+    /// messages out and nothing else (io.c:1115-1117 `PIO_NEED_MSGROOM`); the
+    /// buffered data keeps accumulating in its own run.
+    #[test]
+    fn a_full_message_queue_writes_only_the_messages() {
+        let mut writer = MultiplexWriter::new(StallingWriter::new(usize::MAX));
+        writer.write_all(b"data").unwrap();
+        let line = vec![b'm'; 1000];
+        let mut sent = 0;
+        while writer.inner.writes == 0 {
+            writer.send_message(MessageCode::Info, &line).unwrap();
+            sent += 1;
+        }
+        let frames = parse_frames(&writer.inner.sink);
+        assert_eq!(frames.len(), sent - 1, "every message but the newest");
+        assert!(frames.iter().all(|(code, _)| *code == MessageCode::Info));
+        assert_eq!(
+            frames.len() * (MESSAGE_HEADER_LEN + line.len()),
+            writer.inner.sink.len()
+        );
+        assert!(sent - 1 <= MSG_BUFFER_SIZE / (MESSAGE_HEADER_LEN + line.len()));
     }
 
     /// A payload too large for the circular buffer is staged contiguously and
@@ -725,8 +855,37 @@ mod framing_tests {
             .write_all(&vec![7u8; DEFAULT_BUFFER_SIZE * 4])
             .unwrap();
         assert!(
-            writer.scratch.capacity() <= SCRATCH_RETAIN,
+            writer.out.borrow().scratch.capacity() <= SCRATCH_RETAIN,
             "a one-off large frame must not pin its staging allocation"
+        );
+    }
+
+    /// WHY: upstream's run holds `iobuf.out`'s 65536 bytes, header included
+    /// (io.c:1567), and each write_buf() call is fit-checked on its own
+    /// (io.c:2487-2488). A literal's length prefix that still fits stays in
+    /// the current frame while its bytes open the next one, as 3.5.1 frames
+    /// a whole-file send (token.c:323-324).
+    #[test]
+    fn each_vectored_slice_is_fit_checked_against_the_upstream_buffer_size() {
+        let mut writer = MultiplexWriter::new(StallingWriter::new(usize::MAX));
+        let lead = vec![1u8; OUT_BUFFER_SIZE - MESSAGE_HEADER_LEN - 8];
+        writer.write_all(&lead).unwrap();
+        let prefix = 4i32.to_le_bytes();
+        let body = [9u8; 8];
+        let n = writer
+            .write_vectored(&[IoSlice::new(&prefix), IoSlice::new(&body)])
+            .unwrap();
+        assert_eq!(n, 12);
+        writer.flush().unwrap();
+
+        let mut first = lead;
+        first.extend_from_slice(&prefix);
+        assert_eq!(
+            parse_frames(&writer.inner.sink),
+            vec![
+                (MessageCode::Data, first),
+                (MessageCode::Data, body.to_vec()),
+            ]
         );
     }
 }

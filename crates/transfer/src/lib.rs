@@ -1160,24 +1160,22 @@ fn run_server_on_core(
         });
     }
 
-    // upstream: main.c:1096 - only the sender paces its outbound writes; the
-    // receiver sets `bwlimit_writemax = 0`. On this server body that is the
-    // Generator role (SSH `--server --sender`, a client push, or a daemon-sender
-    // on a pull). Install the limiter at the bottom of the writer stack so it
-    // paces the exact wire bytes the descriptor accepts (io.c:952,979), below
-    // the multiplex framer.
-    let throttled_stdout = writer::ThrottlingWriter::new(stdout, sender_bandwidth_limiter(&config));
-
     // upstream: io.c:977 - stats.total_written counts every byte the raw
-    // descriptor accepts, multiplex frame headers included, in perform_io().
-    // Wrap the transport below the multiplex framer so the shared counter
-    // mirrors that raw wire total; the sender samples it at its handle_stats
-    // point (main.c:334-335) and reports it as "Total bytes sent".
-    let counting_stdout = writer::CountingWriter::new_shared(throttled_stdout);
-    let bytes_sent_counter = counting_stdout.counter();
+    // descriptor accepts, multiplex frame headers included, in perform_io();
+    // the sender samples it at its handle_stats point (main.c:334-335) and
+    // reports it as "Total bytes sent". upstream: main.c:1096 - only the
+    // sender paces its outbound writes; the receiver sets
+    // `bwlimit_writemax = 0`. On this server body that is the Generator role
+    // (SSH `--server --sender`, a client push, or a daemon-sender on a pull).
+    let bytes_sent_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    iobuf::Core::start_output_accounting(
+        &core,
+        std::sync::Arc::clone(&bytes_sent_counter),
+        sender_bandwidth_limiter(&config),
+    );
 
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
-    let mut writer = writer::ServerWriter::new_plain(counting_stdout);
+    let mut writer = writer::ServerWriter::new_plain(stdout);
 
     let mplex_out = requires_multiplex_output(
         config.connection.client_mode,
@@ -1187,6 +1185,9 @@ fn run_server_on_core(
     );
     if mplex_out {
         writer = writer.activate_multiplex()?;
+        if let Some(mux) = writer.mux_out() {
+            iobuf::Core::attach_mux(&core, mux);
+        }
     }
 
     // upstream: io.c:set_io_timeout() derives allowed_lull = (io_timeout + 1) / 2

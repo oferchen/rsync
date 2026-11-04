@@ -700,46 +700,6 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
 }
 
 #[test]
-fn flush_with_count_increments_global_counter() {
-    // INC_RECURSE diagnostics: every flush on the generator
-    // transfer hot path must bump the global FLUSH_CALLS counter. The
-    // assertion uses >= because the counter is shared across the process and
-    // other tests may run concurrently.
-    use super::{flush_rate_totals, flush_with_count};
-
-    let before = flush_rate_totals();
-
-    let mut sink: Vec<u8> = Vec::new();
-    flush_with_count(&mut sink).unwrap();
-    flush_with_count(&mut sink).unwrap();
-    flush_with_count(&mut sink).unwrap();
-
-    let after = flush_rate_totals();
-    assert!(
-        after >= before + 3,
-        "expected at least 3 new flush calls (before={before}, after={after})"
-    );
-}
-
-#[test]
-fn flush_rate_totals_is_observable_without_flushing() {
-    // INC_RECURSE diagnostics: the totals snapshot must be readable
-    // without triggering any flush. Constructing a generator must not bump
-    // the counter on its own, so two adjacent reads with no intervening
-    // flush_with_count call must return identical values.
-    use super::flush_rate_totals;
-
-    let (_handshake, _ctx) = test_generator();
-    let first = flush_rate_totals();
-    let second = flush_rate_totals();
-
-    assert_eq!(
-        first, second,
-        "flush_rate_totals must be a pure read (first={first}, second={second})"
-    );
-}
-
-#[test]
 fn prepare_acl_call_counter_increments() {
     // INC_RECURSE diagnostics: every record_prepare_acl invocation
     // must bump the global PREPARE_ACL_CALLS counter. The assertion uses >=
@@ -3291,18 +3251,12 @@ mod legacy_goodbye_tests {
         assert_eq!(max_phase, 2);
     }
 
-    // UTS-15.c: protocol 31+ extended goodbye must flush NDX_DONE into the
-    // wire buffer before the read loop blocks on the receiver's reply. The
-    // `FlushTrackingWriter` records every `flush()` invocation; we then
-    // assert the final wire bytes match the NDX_DONE marker and that at
-    // least one flush happened after the write.
-    //
-    // Without the flush after `write_ndx_done`, a buffered writer can hold
-    // the four marker bytes in user-space while the receiver is already
-    // shutting down the socket - the symptom upstream's batch-mode interop
-    // surfaced as a silent close at byte ~2241725. Mirroring
-    // `main.c:921-952 read_final_goodbye()` requires the flush to happen
-    // before close on every protocol-31+ goodbye.
+    // UTS-15.c: the protocol 31+ goodbye NDX_DONE must reach the wire before
+    // the sender blocks on the receiver's reply; batch-mode interop surfaced
+    // its loss as a silent close at byte ~2241725. The transport core drains
+    // buffered output before that read (io.c:766-768), and main.c:1011
+    // flushes again once the goodbye is done.
+
     /// A late NDX_DEL_STATS (--delete-after) arrives inside the goodbye; a
     /// server sender owes the client its echo ahead of the goodbye NDX_DONE.
     ///
@@ -3356,8 +3310,13 @@ mod legacy_goodbye_tests {
         assert_eq!(output, NDX_DONE_MODERN);
     }
 
+    /// WHY: upstream's read_final_goodbye() writes the goodbye NDX_DONE and
+    /// goes straight to its read, and that read is what puts the byte on the
+    /// wire (io.c:766-768). A flush here ends the frame early and sends one
+    /// more frame than 3.5.1 does; the transport core drains the buffer when
+    /// the final read waits.
     #[test]
-    fn handle_goodbye_proto31_flushes_ndx_done_before_close() {
+    fn handle_goodbye_proto31_leaves_ndx_done_for_the_final_read() {
         let handshake = test_handshake_with_protocol(31);
         let mut config = test_config();
         config.protocol = ProtocolVersion::try_from(31u8).unwrap();
@@ -3384,18 +3343,9 @@ mod legacy_goodbye_tests {
             "wire output must end with NDX_DONE: {:?}",
             output.buffer
         );
-        // And at least one flush must have happened to push it out.
-        assert!(
-            output.flushes >= 1,
-            "writer must flush at least once before goodbye returns; got {}",
-            output.flushes
-        );
-        // Defense-in-depth: the last write recorded must be a flush, not a
-        // partial-write. Without flush-before-close, the final NDX_DONE can
-        // sit in a user-space buffer when the FIN goes out.
-        assert!(
-            output.last_op_was_flush,
-            "the final operation before return must be a flush, not a write"
+        assert_eq!(
+            output.flushes, 0,
+            "the goodbye must leave its NDX_DONE buffered for the final read"
         );
     }
 
@@ -3473,27 +3423,22 @@ mod legacy_goodbye_tests {
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
 
-    /// Writer that records every `write` and `flush` so tests can assert
-    /// upstream's `io_flush(FULL_FLUSH)` contract is honoured before the
-    /// goodbye handshake returns. Mirrors the `main.c:1011` flush-before-
-    /// return pattern.
+    /// Writer that records every `write` and counts every `flush`, so a test
+    /// can tell where the goodbye leaves its output.
     #[derive(Default)]
     struct FlushTrackingWriter {
         buffer: Vec<u8>,
         flushes: usize,
-        last_op_was_flush: bool,
     }
 
     impl std::io::Write for FlushTrackingWriter {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             self.buffer.extend_from_slice(buf);
-            self.last_op_was_flush = false;
             Ok(buf.len())
         }
 
         fn flush(&mut self) -> std::io::Result<()> {
             self.flushes += 1;
-            self.last_op_was_flush = true;
             Ok(())
         }
     }
@@ -4601,6 +4546,7 @@ mod files_from {
                 .activate_multiplex()
                 .unwrap();
             ctx.flush_flist_diagnostics(&mut writer).unwrap();
+            writer.flush().unwrap();
         }
         let frames = decode_mux_frames(&buf);
         assert_eq!(frames.len(), 1, "one link_stat diagnostic: {frames:?}");
@@ -4842,6 +4788,7 @@ mod files_from {
                 .activate_multiplex()
                 .unwrap();
             ctx.flush_flist_diagnostics(&mut writer).unwrap();
+            writer.flush().unwrap();
         }
         let frames = decode_mux_frames(&buf);
         assert_eq!(frames.len(), 1, "one change_dir diagnostic: {frames:?}");
@@ -4883,6 +4830,7 @@ mod files_from {
                 .activate_multiplex()
                 .unwrap();
             ctx.flush_flist_diagnostics(&mut writer).unwrap();
+            writer.flush().unwrap();
         }
         let frames = decode_mux_frames(&buf);
         assert_eq!(frames.len(), 1, "one link_stat diagnostic: {frames:?}");
@@ -5753,10 +5701,9 @@ fn reclaim_oldest_segment_noop_without_inc_recurse() {
 
 /// Wire-byte parity regression test for batched generator flush (BPR-1.h).
 ///
-/// The generator transfer loop (sender.c:send_files) calls `flush_with_count`
-/// once per iteration rather than after each individual write. This batched
-/// flush reduces TCP segment count but must not alter the logical data the
-/// receiver sees on the wire.
+/// The sender leaves output buffered until it waits for input rather than
+/// flushing after each individual write. Batching reduces TCP segment count
+/// but must not alter the logical data the receiver sees on the wire.
 ///
 /// This test verifies the invariant by serializing a multi-entry file list
 /// through a `MultiplexWriter` with two flush disciplines:
@@ -5826,7 +5773,7 @@ fn batched_flush_wire_byte_parity() {
         }
         flist_writer.write_end(&mut mux, None).unwrap();
         // Single batched flush - matches the transfer loop pattern
-        flush_with_count(&mut mux).unwrap();
+        mux.flush().unwrap();
         drop(mux);
         inner
     };
@@ -5843,10 +5790,10 @@ fn batched_flush_wire_byte_parity() {
         let mut flist_writer = gen_ctx.build_flist_writer();
         for entry in &entries {
             flist_writer.write_entry(&mut mux, entry).unwrap();
-            flush_with_count(&mut mux).unwrap();
+            mux.flush().unwrap();
         }
         flist_writer.write_end(&mut mux, None).unwrap();
-        flush_with_count(&mut mux).unwrap();
+        mux.flush().unwrap();
         drop(mux);
         inner
     };
@@ -5884,7 +5831,7 @@ fn batched_flush_wire_byte_parity() {
 /// Wire-byte parity for NDX_DONE echoes under batched vs sequential flush.
 ///
 /// The transfer loop echoes `NDX_DONE` during phase transitions and
-/// INC_RECURSE flist-free paths. Each echo is followed by `flush_with_count`.
+/// INC_RECURSE flist-free paths. Each echo is followed by a flush.
 /// This test verifies that multiple NDX_DONE writes followed by a single
 /// batched flush produce byte-identical logical data as individual
 /// write+flush pairs.
@@ -5919,7 +5866,7 @@ fn batched_flush_ndx_done_echo_parity() {
         ndx_codec.write_ndx_done(&mut mux).unwrap();
         ndx_codec.write_ndx_done(&mut mux).unwrap();
         // Single batched flush
-        flush_with_count(&mut mux).unwrap();
+        mux.flush().unwrap();
         drop(mux);
         inner
     };
@@ -5929,11 +5876,11 @@ fn batched_flush_ndx_done_echo_parity() {
         let mut mux = MultiplexWriter::new(&mut inner);
         let mut ndx_codec = MonotonicNdxWriter::new(32);
         ndx_codec.write_ndx_done(&mut mux).unwrap();
-        flush_with_count(&mut mux).unwrap();
+        mux.flush().unwrap();
         ndx_codec.write_ndx_done(&mut mux).unwrap();
-        flush_with_count(&mut mux).unwrap();
+        mux.flush().unwrap();
         ndx_codec.write_ndx_done(&mut mux).unwrap();
-        flush_with_count(&mut mux).unwrap();
+        mux.flush().unwrap();
         drop(mux);
         inner
     };
@@ -5961,7 +5908,7 @@ fn batched_flush_ndx_done_echo_parity() {
 /// Wire-byte parity for mixed NDX writes and file data under batched flush.
 ///
 /// Simulates the transfer loop's write pattern: NDX (file index) + iflags +
-/// file data, followed by a single `flush_with_count`. Verifies that the
+/// file data, followed by a single flush. Verifies that the
 /// logical wire stream is identical to per-write flushing.
 #[test]
 fn batched_flush_mixed_ndx_and_data_parity() {
@@ -6000,10 +5947,10 @@ fn batched_flush_mixed_ndx_and_data_parity() {
             mux.write_all(data).unwrap();
         }
         // Single batched flush at end of iteration
-        flush_with_count(&mut mux).unwrap();
+        mux.flush().unwrap();
         // Final NDX_DONE
         ndx_codec.write_ndx_done(&mut mux).unwrap();
-        flush_with_count(&mut mux).unwrap();
+        mux.flush().unwrap();
         drop(mux);
         inner
     };
@@ -6016,10 +5963,10 @@ fn batched_flush_mixed_ndx_and_data_parity() {
             ndx_codec.write_ndx(&mut mux, i as i32).unwrap();
             mux.write_all(&iflags_transfer).unwrap();
             mux.write_all(data).unwrap();
-            flush_with_count(&mut mux).unwrap();
+            mux.flush().unwrap();
         }
         ndx_codec.write_ndx_done(&mut mux).unwrap();
-        flush_with_count(&mut mux).unwrap();
+        mux.flush().unwrap();
         drop(mux);
         inner
     };
@@ -6822,6 +6769,7 @@ fn open_failure_frames(
             .unwrap();
         ctx.record_open_failure(&mut writer, 7, &error, "src/gone.txt")
             .unwrap();
+        writer.flush().unwrap();
     }
     decode_mux_frames(&buf)
 }
@@ -6949,6 +6897,7 @@ fn diminished_skip_frames_a_warning_in_server_mode() {
             .unwrap();
         ctx.record_diminished_skip(&mut writer, 4, "src/shrunk.bin")
             .unwrap();
+        writer.flush().unwrap();
     }
     let frames = decode_mux_frames(&buf);
     assert_eq!(
@@ -7008,6 +6957,7 @@ fn flist_walk_frames(
             .activate_multiplex()
             .unwrap();
         ctx.flush_flist_diagnostics(&mut writer).unwrap();
+        writer.flush().unwrap();
     }
     (decode_mux_frames(&buf), ctx.io_error)
 }
@@ -7167,6 +7117,7 @@ fn flist_vanished_warning_downgrades_to_info_below_protocol_30() {
                 .activate_multiplex()
                 .unwrap();
             ctx.flush_flist_diagnostics(&mut writer).unwrap();
+            writer.flush().unwrap();
         }
         let frames = decode_mux_frames(&buf);
         assert_eq!(frames.len(), 1, "protocol {protocol_version}: {frames:?}");
