@@ -989,29 +989,25 @@ fn hard_link_reference_non(ref_path: &Path, dest_path: &Path) -> bool {
 /// Applies the source entry's metadata and ACLs onto a freshly materialised
 /// destination (hard link or copy), recording any failures in `metadata_errors`.
 ///
-/// The freshly-materialised file's own stat is passed as the cached stat so the
-/// `!--perms` `dest_mode()` chmod-on-commit path treats this as an existing
-/// destination and never rewrites the mode. For a `--link-dest` hard link that
-/// stat is the SHARED reference inode's mode, so passing it (rather than `None`,
-/// which the receiver-commit paths use to signal a brand-new data file) keeps
-/// `dest_mode()` from chmod'ing the reference tree when the source and basis
-/// perms differ under `--no-perms`. Under `-p`/`--chmod` the stat also lets the
-/// permission-apply path skip a redundant chmod when the mode already matches.
+/// `cached_meta` decides which `!--perms` `dest_mode()` rule applies. A
+/// `--link-dest` hard link passes its own stat, which is the SHARED reference
+/// inode's mode, so `dest_mode()` treats it as an existing destination and
+/// never chmods the reference tree when the source and basis perms differ.
+/// A `--copy-dest` copy passes `None`, the brand-new-file signal the
+/// receiver-commit paths use: upstream's `copy_altdest_file()` creates the
+/// copy with `file->mode`, which recv_generator() already set through
+/// `dest_mode(..., exists = 0)` (generator.c:935, rsync.c:464-487), so the
+/// basis file's own mode never reaches the destination.
 fn apply_altdest_metadata(
     entry: &FileEntry,
     dest_path: &Path,
+    cached_meta: Option<fast_io::EntryMetadata>,
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
     acl_cache: Option<&LiveAclCache>,
     acl_id_map: Option<&AclIdMapper>,
 ) {
-    let cached_meta = fs::symlink_metadata(dest_path).ok();
-    if let Err(e) = apply_metadata_with_cached_stat(
-        dest_path,
-        entry,
-        metadata_opts,
-        cached_meta.map(fast_io::EntryMetadata::from),
-    ) {
+    if let Err(e) = apply_metadata_with_cached_stat(dest_path, entry, metadata_opts, cached_meta) {
         metadata_errors.push((dest_path.to_path_buf(), e.to_string()));
     }
     if let Err(e) = apply_acls_from_receiver_cache(
@@ -1054,6 +1050,9 @@ fn link_reference_file(
     apply_altdest_metadata(
         entry,
         dest_path,
+        fs::symlink_metadata(dest_path)
+            .ok()
+            .map(fast_io::EntryMetadata::from),
         metadata_opts,
         metadata_errors,
         acl_cache,
@@ -1086,6 +1085,7 @@ fn copy_reference_file(
             apply_altdest_metadata(
                 entry,
                 dest_path,
+                None,
                 metadata_opts,
                 metadata_errors,
                 acl_cache,
