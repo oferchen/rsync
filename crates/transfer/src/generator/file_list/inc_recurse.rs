@@ -54,17 +54,17 @@ impl GeneratorContext {
         // seed the directory tree from it and defer every sub-list to the
         // transfer loop. Otherwise run the eager whole-list classify + reorder.
         if self.lazy_producer_active {
-            debug_log!(Flist, 3, "inc_recurse producer: lazy (LF-2c)");
+            debug_log!(Pipeline, 2, "inc_recurse producer: lazy (LF-2c)");
             self.seed_lazy_producer();
             debug_log!(
-                Flist,
-                2,
+                Pipeline,
+                1,
                 "seeded lazy producer: {} initial entries",
                 self.incremental.initial_segment_count.unwrap_or(0),
             );
             return;
         }
-        debug_log!(Flist, 3, "inc_recurse producer: eager");
+        debug_log!(Pipeline, 2, "inc_recurse producer: eager");
 
         let plan = protocol::flist::SubListPlan::new(self.file_list.as_slice());
         for &orphan in &plan.orphans {
@@ -82,8 +82,8 @@ impl GeneratorContext {
         self.apply_sublist_plan(&plan);
 
         debug_log!(
-            Flist,
-            2,
+            Pipeline,
+            1,
             "partitioned file list: {} initial entries, {} sub-segments",
             self.incremental.initial_segment_count.unwrap_or(0),
             self.incremental.pending_segments.len()

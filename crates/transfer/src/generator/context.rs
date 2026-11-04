@@ -1479,7 +1479,7 @@ impl GeneratorContext {
         let first = self.incremental.ndx_map.first_live();
 
         logging::debug_log!(
-            Flist,
+            Pipeline,
             2,
             "reclaiming segment {} entries [{start}..{end})",
             first

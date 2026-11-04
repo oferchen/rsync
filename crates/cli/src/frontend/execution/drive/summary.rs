@@ -158,19 +158,17 @@ where
     // for the local `local_server` case and `is_pull()` is false. Only the
     // in-process engine has its generator/sender diagnostics rendered post-hoc;
     // a local copy over a `--server` child prints them live, as a push does.
-    let in_process_local = !config.is_pull()
-        && !is_sender
-        && !core::client::local_copy_uses_server_child(&config);
-    let flist_banner =
-        if !info_gte(InfoFlag::Flist, 1) || config.quiet() || !in_process_local {
-            FlistBanner::None
-        } else if inc_recurse {
-            FlistBanner::Incremental
-        } else if config.recursive() || config.dirs() || config.list_only() {
-            FlistBanner::Building
-        } else {
-            FlistBanner::None
-        };
+    let in_process_local =
+        !config.is_pull() && !is_sender && !core::client::local_copy_uses_server_child(&config);
+    let flist_banner = if !info_gte(InfoFlag::Flist, 1) || config.quiet() || !in_process_local {
+        FlistBanner::None
+    } else if inc_recurse {
+        FlistBanner::Incremental
+    } else if config.recursive() || config.dirs() || config.list_only() {
+        FlistBanner::Building
+    } else {
+        FlistBanner::None
+    };
     // upstream: main.c:666-670 forces whole_file=1 for a local transfer unless
     // the user passed --[no-]whole-file; the local-copy default is therefore
     // whole-file. This decides the `delta-transmission` wording.

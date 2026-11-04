@@ -19,13 +19,15 @@ pub fn local_copy_uses_server_child(config: &ClientConfig) -> bool {
 }
 
 /// The per-role debug traces that `-vvv` enables (options.c:248) and that
-/// only the sender, generator and receiver roles emit.
+/// only the sender, generator and receiver roles emit, plus the oc-only
+/// PIPELINE internals of those same roles.
 fn role_trace_requested() -> bool {
     debug_gte(DebugFlag::Genr, 1)
         || debug_gte(DebugFlag::Recv, 1)
         || debug_gte(DebugFlag::Send, 1)
         || debug_gte(DebugFlag::Exit, 1)
         || debug_gte(DebugFlag::Flist, 2)
+        || debug_gte(DebugFlag::Pipeline, 1)
 }
 
 #[cfg(test)]
@@ -40,12 +42,14 @@ mod tests {
     }
 
     fn local_config() -> ClientConfig {
-        ClientConfig::builder().transfer_args(["src/", "dst/"]).build()
+        ClientConfig::builder()
+            .transfer_args(["src/", "dst/"])
+            .build()
     }
 
     #[test]
     fn a_role_trace_selects_the_server_child() {
-        for spec in ["genr", "recv", "send", "exit", "flist2"] {
+        for spec in ["genr", "recv", "send", "exit", "flist2", "pipeline"] {
             with_debug(spec);
             assert!(
                 local_copy_uses_server_child(&local_config()),
@@ -56,8 +60,10 @@ mod tests {
 
     #[test]
     fn an_untraced_copy_keeps_the_in_process_engine() {
+        init(VerbosityConfig::default());
+        assert!(!local_copy_uses_server_child(&local_config()));
         // FLIST1 is printed by the engine itself; only FLIST2 needs the roles.
-        for spec in ["none", "flist1", "deltasum2", "filter2"] {
+        for spec in ["flist1", "deltasum2", "filter2"] {
             with_debug(spec);
             assert!(
                 !local_copy_uses_server_child(&local_config()),

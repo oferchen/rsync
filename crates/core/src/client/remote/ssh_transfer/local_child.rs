@@ -48,8 +48,8 @@ pub fn run_local_child_transfer(
             IPC_EXIT_CODE,
         )
     })?;
-    let args = RemoteInvocationBuilder::new(&config, RemoteRole::Sender)
-        .build_local_child(destination);
+    let args =
+        RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build_local_child(destination);
 
     let mut command = SshCommand::new(OsString::new());
     command
@@ -58,9 +58,9 @@ pub fn run_local_child_transfer(
         .set_connect_timeout(None)
         .set_io_timeout(config.ssh_io_timeout())
         .set_remote_command(args);
-    let connection = command.spawn().map_err(|e| {
-        invalid_argument_error(&format!("fork: {e}"), IPC_EXIT_CODE)
-    })?;
+    let connection = command
+        .spawn()
+        .map_err(|e| invalid_argument_error(&format!("fork: {e}"), IPC_EXIT_CODE))?;
 
     run_push_transfer(&config, connection, sources, observer, batch_writer)
 }

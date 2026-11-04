@@ -77,7 +77,7 @@ pub(super) fn configure_wire(command: &mut Command, child_stdout_blocking: bool)
         let _ = child_stdout_blocking;
         install_pipes(command);
         debug_log!(
-            Connect,
+            Pipeline,
             2,
             "remote-shell wire: pipes (socketpair unavailable on this platform)"
         );
@@ -103,7 +103,7 @@ pub(super) fn configure_wire_with(
             // stdout is blocking only under `blocking_io`.
             if !child_stdout_blocking && let Err(error) = from_child_child.set_nonblocking(true) {
                 debug_log!(
-                    Connect,
+                    Pipeline,
                     1,
                     "remote-shell wire: cannot make child stdout non-blocking ({error})"
                 );
@@ -111,7 +111,7 @@ pub(super) fn configure_wire_with(
             command.stdin(Stdio::from(OwnedFd::from(to_child_child)));
             command.stdout(Stdio::from(OwnedFd::from(from_child_child)));
             debug_log!(
-                Connect,
+                Pipeline,
                 2,
                 "remote-shell wire: socketpair (child stdout {})",
                 if child_stdout_blocking {
@@ -127,7 +127,7 @@ pub(super) fn configure_wire_with(
         Err(error) => {
             install_pipes(command);
             debug_log!(
-                Connect,
+                Pipeline,
                 1,
                 "remote-shell wire: socketpair unavailable ({error}); falling back to pipes"
             );
@@ -273,12 +273,12 @@ impl WireReader {
                     policy.io_uring,
                 )? {
                     reader @ fast_io::IoUringOrStdSocketReader::IoUring(_) => {
-                        debug_log!(Connect, 2, "remote-shell wire: reading via io_uring RECV");
+                        debug_log!(Pipeline, 2, "remote-shell wire: reading via io_uring RECV");
                         uring = Some(reader);
                     }
                     fast_io::IoUringOrStdSocketReader::Std(_) => {
                         debug_log!(
-                            Connect,
+                            Pipeline,
                             2,
                             "remote-shell wire: io_uring ring setup failed; reading via read(2)"
                         );
@@ -366,7 +366,7 @@ impl WireWriter {
                 match writer {
                     writer @ fast_io::IoUringOrStdSocketWriter::IoUring(_) => {
                         debug_log!(
-                            Connect,
+                            Pipeline,
                             2,
                             "remote-shell wire: writing via io_uring SEND (zero-copy {})",
                             if zero_copy { "requested" } else { "off" }
@@ -375,7 +375,7 @@ impl WireWriter {
                     }
                     fast_io::IoUringOrStdSocketWriter::Std(_) => {
                         debug_log!(
-                            Connect,
+                            Pipeline,
                             2,
                             "remote-shell wire: io_uring ring setup failed; writing via write(2)"
                         );
