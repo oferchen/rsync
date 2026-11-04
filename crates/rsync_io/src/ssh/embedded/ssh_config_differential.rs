@@ -2104,6 +2104,105 @@ mod tests {
         }
     }
 
+    /// The keywords oc accepts without acting on still have their values
+    /// checked by their readconf.c arm: every line below loads or is
+    /// refused exactly as `ssh -G` loads or refuses it, refusal text and
+    /// helper notes included. GSSAPI is left out: the oracle build has no
+    /// GSSAPI, and oc models a build that does (unit-tested in
+    /// `ssh_config::values`).
+    #[test]
+    fn unread_keyword_values_match_the_oracle() {
+        const LINES: &[&str] = &[
+            "ForwardAgent yes",
+            "ForwardAgent $1bad",
+            "ForwardAgent ${OC_T589_UNSET}",
+            "ForwardAgent ${",
+            "ForwardAgent $",
+            "PKCS11Provider /usr/lib/p11.so",
+            "PKCS11Provider \"\"",
+            "ForwardX11 #c",
+            "ForwardX11 \"\"",
+            "ForwardX11 yes no",
+            "ForwardX11Timeout x",
+            "TCPKeepAlive transport",
+            "Compression true",
+            "ConnectionAttempts 3 4",
+            "IPQoS af11 cs1",
+            "IPQoS af11 bogus",
+            "IPQoS 1 2 3",
+            "BindInterface a b",
+            "LocalForward 8080 host:http",
+            "LocalForward [::1]:8080 host:80",
+            "LocalForward /tmp/s host:80",
+            "LocalForward 8080",
+            "LocalForward 0 host:80",
+            "LocalForward 8080 host:80:extra",
+            "LocalForward ${OC_T589_UNSET} h:1",
+            "RemoteForward 8080",
+            "RemoteForward 0 h:1",
+            "DynamicForward host:1080",
+            "DynamicForward a:b:c",
+            "PermitRemoteOpen h:* [::1]:22",
+            "PermitRemoteOpen any h:1",
+            "PermitRemoteOpen h",
+            "PermitRemoteOpen h/22",
+            "EscapeChar ^A",
+            "EscapeChar ab",
+            "StreamLocalBindMask 7x",
+            "StreamLocalBindMask 1000",
+            "TunnelDevice any:any",
+            "TunnelDevice 2147483646",
+            "FingerprintHash sha3",
+            "SyslogFacility nope",
+            "LogLevel loud",
+            "LogVerbose none a",
+            "LogVerbose \"\"",
+            "SendEnv A=B",
+            "SendEnv #c",
+            "SetEnv A",
+            "SetEnv #c",
+            "ControlPersist YES",
+            "ControlPersist 10m",
+            "ObscureKeystrokeTiming interval:0",
+            "ObscureKeystrokeTiming interval:",
+            "ObscureKeystrokeTiming yes no",
+            "ObscureKeystrokeTiming #c",
+            "ChannelTimeout session=5m",
+            "ChannelTimeout none x=1",
+            "ChannelTimeout =5",
+            "ChannelTimeout #c",
+            "VersionAddendum hello world",
+            "AddKeysToAgent confirm 5m",
+            "AddKeysToAgent confirm x",
+            "AddKeysToAgent yes 5m",
+            "AddKeysToAgent #c",
+            "CASignatureAlgorithms ssh-ed25519-cert-v01@openssh.com",
+            "CASignatureAlgorithms ssh-ed25519,*cert*",
+            "PubkeyAcceptedKeyTypes nope",
+            "StrictHostKeyChecking accept-new",
+            "ControlMaster maybe",
+            "SessionType maybe",
+            "UpdateHostKeys ASK",
+            "LocalCommand a b c",
+            "Host other\n  ForwardAgent maybe/x${",
+        ];
+        for line in LINES {
+            let fixture = format!("{line}\n");
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("ssh_config");
+            std::fs::write(&path, &fixture).expect("write fixture");
+            let upstream = match upstream_refusal(&path, "a") {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("unread keyword value parity", &why);
+                    return;
+                }
+            };
+            let oc = resolve_host(&path, "a").err().map(|err| err.to_string());
+            assert_eq!(oc, upstream, "fixture {fixture:?}");
+        }
+    }
+
     /// `AddressFamily` resolves to the same lower-case family `ssh -G`
     /// dumps, for each of the three multistate values.
     #[test]

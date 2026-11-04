@@ -35,6 +35,9 @@ These differ from oc-rsync releases before 0.6.5. Each now matches OpenSSH 10.0p
 - A keyword with no value is refused with `no argument after keyword "<kw>"` (`readconf.c:1190-1193`).
 - An invalid `Ciphers`, `MACs`, `KexAlgorithms` or `HostKeyAlgorithms` list, or a bad `RekeyLimit`, is refused, even inside a `Host` block that does not match.
 - The five `Canonicalize*` keywords are validated, with upstream's refusal texts.
+- The value of every keyword the transport does not act on is checked by its `readconf.c` arm, with upstream's refusal text. For example, `ForwardAgent maybe/x${` is refused, as are `LocalForward 0 host:80`, `ControlMaster maybe` and `TCPKeepAlive transport`.
+- A line with more values than its keyword takes is refused with `keyword <kw> extra arguments at end of line` (`readconf.c:2529-2534`). For now this applies only to the keywords the transport does not act on (task 594).
+- Time values follow 10.0p1's `convtime`: whole seconds only, so `ConnectTimeout 1.5` is refused and `5s5` means 10 seconds.
 
 ### Keywords that now take effect
 
@@ -53,6 +56,8 @@ These differ from oc-rsync releases before 0.6.5. Each now matches OpenSSH 10.0p
 
 - **Composition base.** `+`, `-` and `^` compose against the transport's own tuned defaults: the AES-NI-aware cipher order, the fast key-exchange order, and russh's MAC and host-key lists. They do not compose against OpenSSH's defaults.
 - **Unsupported names.** An algorithm OpenSSH knows but the transport cannot negotiate is dropped with one warning naming it. Examples are `umac-*`, `hmac-md5*`, `sntrup761*`, security-key and certificate host-key types. A list with nothing negotiable left fails the connection.
+- **GSSAPI and PKCS#11.** Which keywords exist depends on how OpenSSH was built (`readconf.c:212-226`). oc models a build with both, as Linux distributions ship: `GSSAPIAuthentication` and `GSSAPIDelegateCredentials` take a yes/no flag, and `PKCS11Provider` and `SmartcardDevice` take a string. Bad values are refused with upstream's text, and good values load silently. The pinned 10.0p1 oracle is built without GSSAPI and prints `Unsupported option` for those keywords instead. Mirroring it would print that error for every stock Debian or Fedora configuration, so the GSSAPI arms are pinned by unit tests rather than oracle cells.
+- **Service names.** A port given as a service name (`Port ssh`, `LocalForward 8080 host:http`) is looked up in the services file, which is `getservbyname`'s `files` source. A name served only by another NSS source is not found.
 
 ## Known deviations
 
@@ -64,7 +69,8 @@ These are tracked for a follow-up (task 594):
   - an interval of `0` turns time-based re-keying off.
 - **HostKeyAlgorithms order:** the list is not reordered by the keys already in `known_hosts`.
 - **Late composition errors:** a list that validates but cannot be composed (a stray `!` pattern) fails at connect time rather than when the file is read.
-- **Unvalidated values:** the values of keywords the transport does not act on are not validated (task 589).
+- **Values of acted-on keywords:** some keywords the transport acts on still skip checks their `readconf.c` arm makes. These are the extra-arguments check, an empty quoted value (`User ""`), `Port` (`Bad port`, service names), `IdentitiesOnly` and `IdentityAgent` values, the 100-file `IdentityFile`/`CertificateFile` cap, and the two-line `missing argument.` form for flags.
+- **Fill-time notes:** OpenSSH prints some notes after the file loads, such as `fill_default_options: ca_sign_algorithms: invalid argument` and `Cannot forward agent socket path`. The transport never uses those values, so oc does not print the notes.
 - **No CNAME following:** `CanonicalizePermittedCNAMEs` is parsed but CNAMEs are not followed, and the bare-host resolve check that goes with it is skipped (task 593).
 - **No address reformatting:** numeric addresses are not reformatted the way `resolve_addr` reformats them.
 - **Error prefix:** `Could not resolve host "x"` is printed without OpenSSH's `ssh: ` prefix.
