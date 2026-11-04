@@ -97,6 +97,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::algorithms::{AlgorithmList, assemble, openssh_defaults};
 use super::ssh_config::{resolve_host, resolve_host_str};
 #[cfg(feature = "ssh-config-parse")]
 use crate::ssh::config_lookup::{MatchContext, parse_enables_compression};
@@ -402,7 +403,39 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
             .server_alive_count_max
             .map(|count| vec![count.to_string()]),
     );
-
+    // The algorithm lists, composed against OpenSSH's own defaults the
+    // way `ssh -G` dumps them (openssh/readconf.c:2976-2997, :3630-3632).
+    // The transport composes against its own defaults instead, so these
+    // rows prove the parse and composition, not the negotiated list.
+    for (keyword, list, spec) in [
+        ("ciphers", AlgorithmList::Ciphers, &resolved.ciphers),
+        ("macs", AlgorithmList::Macs, &resolved.macs),
+        (
+            "kexalgorithms",
+            AlgorithmList::Kex,
+            &resolved.kex_algorithms,
+        ),
+        (
+            "hostkeyalgorithms",
+            AlgorithmList::HostKey,
+            &resolved.host_key_algorithms,
+        ),
+    ] {
+        let all = list.known_names().join(",");
+        let composed = assemble(spec.as_deref(), &openssh_defaults(list), &all)
+            .ok()
+            .map(|names| vec![names.join(",")]);
+        map.insert(keyword.to_owned(), composed);
+    }
+    // Both halves default to 0 (openssh/readconf.c:2958-2961).
+    map.insert(
+        "rekeylimit".to_owned(),
+        Some(vec![format!(
+            "{} {}",
+            resolved.rekey_limit.unwrap_or(0),
+            resolved.rekey_interval.unwrap_or(0)
+        )]),
+    );
     map
 }
 
@@ -1439,6 +1472,124 @@ mod tests {
                 oc.contains(needle),
                 "oc refused {fixture:?} with unexpected text: {oc}"
             );
+        }
+    }
+
+    /// Whether the oracle is the pinned 10.0p1 whose name tables and
+    /// defaults the algorithm rows encode; a newer `ssh` dumps different
+    /// defaults, so it cannot judge them.
+    fn pinned_oracle(diff: &Differential, what: &str) -> bool {
+        let pinned = diff.oracle_version.starts_with("OpenSSH_10.0p");
+        if !pinned {
+            report_skip(
+                what,
+                &Skipped::SshFailed(format!("oracle is {}, not 10.0p1", diff.oracle_version)),
+            );
+        }
+        pinned
+    }
+
+    /// `Ciphers`, `MACs`, `KexAlgorithms` and `HostKeyAlgorithms` compose
+    /// to the list `ssh -G` dumps for every operator: a bare list, `+`,
+    /// `-`, `^`, host-key patterns, and the empty-element quirks of
+    /// `kex_names_cat` (openssh/kex-names.c:202-329). `RekeyLimit` rides
+    /// along, scaled sizes and intervals included.
+    #[test]
+    fn algorithm_lists_and_rekeylimit_match_the_oracle() {
+        const FIXTURES: &[&str] = &[
+            "Host t\n",
+            "Host t\n  Ciphers aes256-ctr,aes128-ctr\n",
+            "Host t\n  Ciphers +aes128-cbc,3des-cbc\n",
+            "Host t\n  Ciphers -aes*\n",
+            "Host t\n  Ciphers ^aes256-ctr\n",
+            "Host t\n  Ciphers ^aes256-ctr,,bogus\n",
+            "Host t\n  Ciphers aes128-ctr,,bogus\n",
+            "Host t\n  MACs -hmac-sha1*,umac*\n",
+            "Host t\n  MACs -*\n",
+            "Host t\n  MACs hmac-md5-96\n",
+            "Host t\n  KexAlgorithms +diffie-hellman-group1-sha1\n",
+            "Host t\n  KexAlgorithms -sntrup*,mlkem*\n",
+            "Host t\n  HostKeyAlgorithms ssh-ed25519*\n",
+            "Host t\n  HostKeyAlgorithms ^ssh-ed*\n",
+            "Host t\n  HostKeyAlgorithms +webauthn*\n",
+            "Host t\n  HostKeyAlgorithms -ssh-ed25519*\n",
+            "Host t\n  HostKeyAlgorithms ssh-rsa,,nope\n",
+            "Host t\n  Ciphers aes128-ctr\n  Ciphers aes256-ctr\n",
+            "Host other\n  Ciphers aes128-ctr\nHost t\n  Ciphers aes256-ctr\n",
+            "Host t\n  RekeyLimit 1G 1h\n",
+            "Host t\n  RekeyLimit 1.5K\n",
+            "Host t\n  RekeyLimit 7E\n",
+            "Host t\n  RekeyLimit default none\n  RekeyLimit 4M 30\n",
+            "Host t\n  RekeyLimit 0 0\n",
+            "Host t\n  RekeyLimit 32 none\n  RekeyLimit 64 10m\n",
+        ];
+        for fixture in FIXTURES {
+            let diff = match run(fixture, "t") {
+                Ok(d) => d,
+                Err(why) => {
+                    report_skip("algorithm list parity", &why);
+                    return;
+                }
+            };
+            if !pinned_oracle(&diff, "algorithm list parity") {
+                return;
+            }
+            for keyword in [
+                "ciphers",
+                "macs",
+                "kexalgorithms",
+                "hostkeyalgorithms",
+                "rekeylimit",
+            ] {
+                let cell = diff.cell(keyword).expect("dumped");
+                assert_eq!(
+                    cell.verdict,
+                    Verdict::Match,
+                    "{keyword} on {fixture:?}: upstream {:?} vs oc {:?}",
+                    cell.upstream,
+                    cell.oc
+                );
+            }
+        }
+    }
+
+    /// The refusals: an unknown name, a cipher pattern (only host keys
+    /// take patterns), a bad size, a size below 16, an overflowing scale
+    /// and a bad interval each fail with upstream's exact text, from an
+    /// inactive block too (openssh/readconf.c:1362-1393, :1593-1664).
+    #[test]
+    fn algorithm_and_rekeylimit_refusals_match_the_oracle() {
+        const FIXTURES: &[&str] = &[
+            "Ciphers aes128-ctr,bogus\n",
+            "Ciphers aes*\n",
+            "Ciphers +\n",
+            "MACs hmac-sha3\n",
+            "KexAlgorithms ^nope\n",
+            "KexAlgorithms curve25519-sha256,bogus,alsobad\n",
+            "HostKeyAlgorithms nope\n",
+            "Host other\n  Ciphers bogus\nHost a\n",
+            "RekeyLimit 8\n",
+            "RekeyLimit -1\n",
+            "RekeyLimit 4x\n",
+            "RekeyLimit 1.2.3\n",
+            "RekeyLimit 8E\n",
+            "RekeyLimit 1G x\n",
+            "RekeyLimit\n",
+        ];
+        for fixture in FIXTURES {
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("ssh_config");
+            std::fs::write(&path, fixture).expect("write fixture");
+            let upstream = match upstream_refusal(&path, "a") {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("algorithm refusal parity", &why);
+                    return;
+                }
+            };
+            assert!(upstream.is_some(), "the oracle accepted {fixture:?}");
+            let oc = resolve_host(&path, "a").err().map(|err| err.to_string());
+            assert_eq!(oc, upstream, "fixture {fixture:?}");
         }
     }
 

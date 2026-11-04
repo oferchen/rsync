@@ -202,6 +202,21 @@ pub(in crate::ssh) enum Opcode {
     /// upstream: openssh/readconf.c:330 `oRequiredRSASize`, arm at :2412
     /// (`parse_int`).
     RequiredRSASize,
+    /// `Ciphers [+-^]<list>` - the cipher preference.
+    /// upstream: openssh/readconf.c:254 `oCiphers`, arm at :1593.
+    Ciphers,
+    /// `MACs [+-^]<list>` - the MAC preference.
+    /// upstream: openssh/readconf.c:255 `oMacs`, arm at :1610.
+    Macs,
+    /// `KexAlgorithms [+-^]<list>` - the key-exchange preference.
+    /// upstream: openssh/readconf.c:305 `oKexAlgorithms`, arm at :1627.
+    KexAlgorithms,
+    /// `HostKeyAlgorithms [+-^]<list>` - the host-key algorithm preference.
+    /// upstream: openssh/readconf.c:279 `oHostKeyAlgorithms`, arm at :1645.
+    HostKeyAlgorithms,
+    /// `RekeyLimit <bytes>|default [<time>|none]` - when to re-key.
+    /// upstream: openssh/readconf.c:287 `oRekeyLimit`, arm at :1362.
+    RekeyLimit,
     /// `IgnoreUnknown <pattern-list>` - unknown keywords matching the list
     /// are skipped instead of refused, from the line after it onwards.
     /// upstream: openssh/readconf.c:326 `oIgnoreUnknown`, arm at :2193
@@ -259,7 +274,7 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("channeltimeout", Opcode::NotActedOn),
     ("checkhostip", Opcode::CheckHostIP),
     ("cipher", Opcode::Deprecated),
-    ("ciphers", Opcode::NotActedOn),
+    ("ciphers", Opcode::Ciphers),
     ("clearallforwardings", Opcode::NotActedOn),
     ("compression", Opcode::Compression),
     ("compressionlevel", Opcode::Unsupported),
@@ -294,7 +309,7 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("hostbasedacceptedalgorithms", Opcode::NotActedOn),
     ("hostbasedauthentication", Opcode::NotActedOn),
     ("hostbasedkeytypes", Opcode::NotActedOn),
-    ("hostkeyalgorithms", Opcode::NotActedOn),
+    ("hostkeyalgorithms", Opcode::HostKeyAlgorithms),
     ("hostkeyalias", Opcode::HostKeyAlias),
     ("hostname", Opcode::Hostname),
     ("identitiesonly", Opcode::IdentitiesOnly),
@@ -314,13 +329,13 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("keepalive", Opcode::TCPKeepAlive),
     ("kerberosauthentication", Opcode::Unsupported),
     ("kerberostgtpassing", Opcode::Unsupported),
-    ("kexalgorithms", Opcode::NotActedOn),
+    ("kexalgorithms", Opcode::KexAlgorithms),
     ("knownhostscommand", Opcode::NotActedOn),
     ("localcommand", Opcode::NotActedOn),
     ("localforward", Opcode::NotActedOn),
     ("loglevel", Opcode::NotActedOn),
     ("logverbose", Opcode::NotActedOn),
-    ("macs", Opcode::NotActedOn),
+    ("macs", Opcode::Macs),
     ("match", Opcode::Match),
     ("nohostauthenticationforlocalhost", Opcode::NotActedOn),
     ("numberofpasswordprompts", Opcode::NumberOfPasswordPrompts),
@@ -338,7 +353,7 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("pubkeyacceptedalgorithms", Opcode::NotActedOn),
     ("pubkeyacceptedkeytypes", Opcode::NotActedOn),
     ("pubkeyauthentication", Opcode::PubkeyAuthentication),
-    ("rekeylimit", Opcode::NotActedOn),
+    ("rekeylimit", Opcode::RekeyLimit),
     ("remotecommand", Opcode::NotActedOn),
     ("remoteforward", Opcode::NotActedOn),
     ("requesttty", Opcode::NotActedOn),
@@ -450,6 +465,9 @@ pub(in crate::ssh) enum ValueKind {
     /// `parse_multistate` arm with `multistate_pubkey_auth`
     /// (openssh/readconf.c:1086-1094).
     PubkeyAuth,
+    /// A byte count (or `default`) and an optional time (or `none`).
+    /// upstream: the `oRekeyLimit` arm (openssh/readconf.c:1362-1393).
+    RekeyLimit,
     /// One or two tokens, each an IPQoS class or DSCP value.
     /// upstream: the two-token `oIPQoS` arm (openssh/readconf.c:2148-2170).
     IpQos,
@@ -539,7 +557,12 @@ impl Opcode {
             | Self::RevokedHostKeys
             | Self::CertificateFile
             | Self::PreferredAuthentications
-            | Self::IgnoreUnknown => ValueKind::Single,
+            | Self::IgnoreUnknown
+            | Self::Ciphers
+            | Self::Macs
+            | Self::KexAlgorithms
+            | Self::HostKeyAlgorithms => ValueKind::Single,
+            Self::RekeyLimit => ValueKind::RekeyLimit,
             Self::ConnectTimeout | Self::ServerAliveInterval => ValueKind::Time,
             Self::ConnectionAttempts
             | Self::ServerAliveCountMax
@@ -577,7 +600,7 @@ impl Opcode {
             | ValueKind::AddressFamily
             | ValueKind::KeepAlive
             | ValueKind::PubkeyAuth => Some("missing argument."),
-            ValueKind::Single => Some("Missing argument."),
+            ValueKind::Single | ValueKind::RekeyLimit => Some("Missing argument."),
             ValueKind::Time => Some("missing time value."),
             // `atoi_err(NULL)` returns `"missing"`, printed as
             // `integer value missing.` (openssh/readconf.c:1579,
@@ -832,28 +855,178 @@ pub(in crate::ssh) fn glob_matches(input: &[u8], glob: &[u8]) -> bool {
     }
 }
 
-/// Whether `keyword` (already lowercased) is excused by an `IgnoreUnknown`
-/// list.
+/// How a pattern list matched a string.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(in crate::ssh) enum PatternListMatch {
+    /// A `!`-negated subpattern matched, which excludes the string outright.
+    Negative,
+    /// No subpattern matched.
+    None,
+    /// A positive subpattern matched and no negated one did.
+    Positive,
+}
+
+/// Matches `string` against a comma-separated pattern list - a port of
+/// `match_pattern_list` (openssh/match.c:122-172).
 ///
-/// upstream: `parse_token` returns `oIgnoredUnknownOption` only when
-/// `match_pattern_list(cp, ignored_unknown, 1) == 1`
-/// (openssh/readconf.c:977-979). `match_pattern_list` cuts the list at
-/// commas, lowercases each subpattern (`dolower`), and lets a matching
-/// `!`-negated subpattern exclude the keyword outright; otherwise one
-/// positive match is required (openssh/match.c:122-172).
-#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
-pub(in crate::ssh) fn ignore_unknown_matches(keyword: &str, list: &str) -> bool {
+/// Each subpattern may be `!`-negated; a matching negated subpattern
+/// excludes the string outright, otherwise one positive match is needed.
+/// With `dolower` the subpatterns are lowercased first.
+pub(in crate::ssh) fn match_pattern_list(
+    string: &str,
+    list: &str,
+    dolower: bool,
+) -> PatternListMatch {
+    // Upstream copies each subpattern into `char sub[1024]` and gives up
+    // with "no match" on one that does not fit (openssh/match.c:147-149).
+    const SUB_MAX: usize = 1023;
+    // The scan ends at the list's end, so a trailing comma adds no empty
+    // subpattern while a leading or doubled one does (:130-156).
+    let body = list.strip_suffix(',').unwrap_or(list);
+    if list.is_empty() {
+        return PatternListMatch::None;
+    }
     let mut positive = false;
-    for sub in list.split(',') {
+    for sub in body.split(',') {
         let (negated, glob) = sub.strip_prefix('!').map_or((false, sub), |g| (true, g));
-        if glob_matches(keyword.as_bytes(), glob.to_ascii_lowercase().as_bytes()) {
+        if glob.len() >= SUB_MAX {
+            return PatternListMatch::None;
+        }
+        let glob = if dolower {
+            glob.to_ascii_lowercase()
+        } else {
+            glob.to_owned()
+        };
+        if glob_matches(string.as_bytes(), glob.as_bytes()) {
             if negated {
-                return false;
+                return PatternListMatch::Negative;
             }
             positive = true;
         }
     }
-    positive
+    if positive {
+        PatternListMatch::Positive
+    } else {
+        PatternListMatch::None
+    }
+}
+
+/// Whether `keyword` (already lowercased) is excused by an `IgnoreUnknown`
+/// list: upstream's `parse_token` returns `oIgnoredUnknownOption` only when
+/// `match_pattern_list(cp, ignored_unknown, 1) == 1`
+/// (openssh/readconf.c:977-979).
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn ignore_unknown_matches(keyword: &str, list: &str) -> bool {
+    match_pattern_list(keyword, list, true) == PatternListMatch::Positive
+}
+
+/// Why a scaled number did not parse: upstream's `errno`, rendered as its
+/// `strerror` text.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(in crate::ssh) enum ScaledError {
+    /// `EINVAL`: a stray character or unit.
+    Invalid,
+    /// `ERANGE`: too many digits, or overflow.
+    Range,
+}
+
+impl std::fmt::Display for ScaledError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Invalid => "Invalid argument",
+            #[cfg(target_os = "linux")]
+            Self::Range => "Numerical result out of range",
+            #[cfg(not(target_os = "linux"))]
+            Self::Range => "Result too large",
+        })
+    }
+}
+
+/// Parses a number with an optional `B`/`K`/`M`/`G`/`T`/`P`/`E` binary
+/// suffix and fraction (`1.5K` is 1536) - a port of `scan_scaled`
+/// (openssh/openbsd-compat/fmt_scaled.c:76-214).
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn parse_scaled_value(scaled: &str) -> Result<i64, ScaledError> {
+    // `SCALE_LENGTH * 3` (openssh/openbsd-compat/fmt_scaled.c:70).
+    const MAX_DIGITS: u32 = 21;
+    const SCALE_CHARS: &[u8] = b"BKMGTPE";
+    let bytes = scaled.trim_start().as_bytes();
+    let mut i = 0;
+    let mut sign = 0_i64;
+    while i < bytes.len() && (bytes[i] == b'-' || bytes[i] == b'+') {
+        if sign != 0 {
+            return Err(ScaledError::Invalid);
+        }
+        sign = if bytes[i] == b'-' { -1 } else { 1 };
+        i += 1;
+    }
+    let (mut whole, mut fpart) = (0_i64, 0_i64);
+    let (mut ndigits, mut fract_digits) = (0_u32, 0_u32);
+    while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+        let c = bytes[i];
+        i += 1;
+        if c == b'.' {
+            if fract_digits > 0 {
+                return Err(ScaledError::Invalid);
+            }
+            fract_digits = 1;
+            continue;
+        }
+        let digit = i64::from(c - b'0');
+        if fract_digits > 0 {
+            // Extra fractional digits are ignored (:124-126).
+            if fract_digits >= MAX_DIGITS - 1 {
+                continue;
+            }
+            fract_digits += 1;
+            fpart = fpart
+                .checked_mul(10)
+                .and_then(|f| f.checked_add(digit))
+                .ok_or(ScaledError::Range)?;
+        } else {
+            ndigits += 1;
+            if ndigits >= MAX_DIGITS {
+                return Err(ScaledError::Range);
+            }
+            whole = whole
+                .checked_mul(10)
+                .and_then(|w| w.checked_add(digit))
+                .ok_or(ScaledError::Range)?;
+        }
+    }
+    if sign != 0 {
+        whole *= sign;
+    }
+    // No unit: the fraction is discarded (:159-163).
+    let Some(&unit) = bytes.get(i) else {
+        return Ok(whole);
+    };
+    let Some(power) = SCALE_CHARS
+        .iter()
+        .position(|&c| c == unit.to_ascii_uppercase())
+    else {
+        return Err(ScaledError::Invalid);
+    };
+    if bytes.get(i + 1).is_some_and(u8::is_ascii_alphanumeric) {
+        return Err(ScaledError::Invalid);
+    }
+    let scale = 1_i64 << (10 * power);
+    whole = whole.checked_mul(scale).ok_or(ScaledError::Range)?;
+    // Truncate the fraction so scaling cannot overflow, then scale it
+    // (:189-201).
+    while fpart >= i64::MAX / scale || fpart <= i64::MIN / scale {
+        fpart /= 10;
+        fract_digits = fract_digits.saturating_sub(1);
+    }
+    fpart *= scale;
+    for _ in 1..fract_digits {
+        fpart /= 10;
+    }
+    Ok(if sign == -1 {
+        whole - fpart
+    } else {
+        whole + fpart
+    })
 }
 
 #[cfg(test)]
@@ -873,6 +1046,11 @@ mod tests {
         ("Compression", Opcode::Compression),
         ("HostName", Opcode::Hostname),
         ("User", Opcode::User),
+        ("Ciphers", Opcode::Ciphers),
+        ("MACs", Opcode::Macs),
+        ("KexAlgorithms", Opcode::KexAlgorithms),
+        ("HostKeyAlgorithms", Opcode::HostKeyAlgorithms),
+        ("RekeyLimit", Opcode::RekeyLimit),
         ("Port", Opcode::Port),
         ("IdentityFile", Opcode::IdentityFile),
         ("IdentitiesOnly", Opcode::IdentitiesOnly),
@@ -1170,6 +1348,58 @@ mod tests {
         assert!(!ignore_unknown_matches("bar", "!foo"));
     }
 
+    /// `match_pattern_list`'s subpattern scan: a trailing comma adds no
+    /// empty subpattern, a doubled one does, and a subpattern too long for
+    /// upstream's 1024-byte buffer fails the whole list
+    /// (openssh/match.c:122-172).
+    #[test]
+    fn match_pattern_list_follows_the_subpattern_scan() {
+        use PatternListMatch::{Negative, None, Positive};
+        assert_eq!(match_pattern_list("a", "", false), None);
+        assert_eq!(match_pattern_list("", "", false), None);
+        assert_eq!(match_pattern_list("", "a,", false), None);
+        assert_eq!(match_pattern_list("", "a,,", false), Positive);
+        assert_eq!(match_pattern_list("", ",a", false), Positive);
+        assert_eq!(match_pattern_list("ab", "a?,!x", false), Positive);
+        assert_eq!(match_pattern_list("ab", "a*,!ab", false), Negative);
+        assert_eq!(match_pattern_list("AB", "a*", false), None);
+        assert_eq!(match_pattern_list("ab", "A*", true), Positive);
+        let long = "a".repeat(1023);
+        assert_eq!(match_pattern_list(&long, &long, false), None);
+        assert_eq!(match_pattern_list("a", &format!("a,{long}"), false), None);
+        let fits = "a".repeat(1022);
+        assert_eq!(match_pattern_list(&fits, &fits, false), Positive);
+    }
+
+    /// `scan_scaled`: binary units, fractions (kept only with a unit),
+    /// one sign, and the `EINVAL`/`ERANGE` split
+    /// (openssh/openbsd-compat/fmt_scaled.c:76-214). The values with a
+    /// unit and a fraction are the ones `ssh -G` confirms in the
+    /// differential.
+    #[test]
+    fn parse_scaled_value_mirrors_scan_scaled() {
+        assert_eq!(parse_scaled_value("16"), Ok(16));
+        assert_eq!(parse_scaled_value("1.9"), Ok(1));
+        assert_eq!(parse_scaled_value("1.5K"), Ok(1536));
+        assert_eq!(parse_scaled_value("0.5k"), Ok(512));
+        assert_eq!(parse_scaled_value("1G"), Ok(1 << 30));
+        assert_eq!(parse_scaled_value("2B"), Ok(2));
+        assert_eq!(parse_scaled_value("7E"), Ok(7 << 60));
+        assert_eq!(parse_scaled_value("K"), Ok(0));
+        assert_eq!(parse_scaled_value("-1"), Ok(-1));
+        assert_eq!(parse_scaled_value("+1K"), Ok(1024));
+        assert_eq!(parse_scaled_value("-1.5K"), Ok(-1536));
+        assert_eq!(parse_scaled_value("4x"), Err(ScaledError::Invalid));
+        assert_eq!(parse_scaled_value("1Kb"), Err(ScaledError::Invalid));
+        assert_eq!(parse_scaled_value("1.2.3"), Err(ScaledError::Invalid));
+        assert_eq!(parse_scaled_value("+-1"), Err(ScaledError::Invalid));
+        assert_eq!(parse_scaled_value("8E"), Err(ScaledError::Range));
+        assert_eq!(parse_scaled_value(&"9".repeat(20)), Err(ScaledError::Range));
+        assert_eq!(
+            parse_scaled_value(&"1".repeat(19)),
+            Ok(1_111_111_111_111_111_111)
+        );
+    }
     #[test]
     fn no_keyword_is_declared_twice() {
         for (i, (name, _)) in KEYWORDS.iter().enumerate() {
