@@ -71,11 +71,6 @@ $EDITOR CHANGELOG.md
 # With:
 #   ## [X.Y.Z-beta.N] - YYYY-MM-DD
 # And add a fresh, empty [Unreleased] above it.
-
-# Beta release notes - replace the `v0.7.0-beta` / `vX.Y.0-beta`
-# placeholders throughout with the final tag name; pin the commit range
-# in the "Performance" section's chart URL.
-$EDITOR .github/RELEASE_NOTES_BETA.md
 ```
 
 Sanity-check the bump:
@@ -90,13 +85,13 @@ head -20 CHANGELOG.md
 
 ```bash
 git checkout -b release/vX.Y.Z-beta.N
-git add Cargo.toml README.md CHANGELOG.md .github/RELEASE_NOTES_BETA.md
+git add Cargo.toml README.md CHANGELOG.md
 git commit -m "chore(release): vX.Y.Z-beta.N"
 git push -u origin release/vX.Y.Z-beta.N
 
 gh pr create \
   --title "chore(release): vX.Y.Z-beta.N" \
-  --body "Version bump for vX.Y.Z-beta.N. See \`.github/RELEASE_NOTES_BETA.md\` and \`docs/design/br-6-sign-off-check-in-2026-05-21.md\`."
+  --body "Version bump for vX.Y.Z-beta.N. See \`CHANGELOG.md\` and \`docs/design/br-6-sign-off-check-in-2026-05-21.md\`."
 
 # Wait for required checks (fmt+clippy, nextest stable, Windows stable,
 # macOS stable, Linux musl stable).
@@ -125,23 +120,15 @@ git push origin refs/tags/vX.Y.Z-beta.N
 
 ## 5. GitHub release
 
+The tag push runs `.github/workflows/release-cross.yml`, which creates the
+release with `.github/RELEASE_TEMPLATE.md` as its body, with `{{VERSION}}`
+and `{{PREV_VERSION}}` filled in. Once that release exists, mark it as a
+pre-release:
+
 ```bash
-gh release create vX.Y.Z-beta.N \
+gh release edit vX.Y.Z-beta.N \
   --prerelease \
-  --title "oc-rsync vX.Y.Z-beta.N" \
-  --notes-file .github/RELEASE_NOTES_BETA.md
-```
-
-If `.github/RELEASE_NOTES_BETA.md` still has placeholders or you want
-the install/toolchain header from the standard template, splice
-`.github/RELEASE_TEMPLATE.md` in first:
-
-```bash
-{ sed "s/{{VERSION}}/vX.Y.Z-beta.N/g" .github/RELEASE_TEMPLATE.md
-  printf '\n'
-  cat .github/RELEASE_NOTES_BETA.md
-} > /tmp/release-body.md
-gh release edit vX.Y.Z-beta.N --notes-file /tmp/release-body.md
+  --title "oc-rsync vX.Y.Z-beta.N"
 ```
 
 The `--prerelease` flag is non-negotiable for a beta; without it the
@@ -187,8 +174,8 @@ gh workflow run benchmark.yml --ref vX.Y.Z-beta.N \
 
 ## 7. Beta-specific caveats (call these out in the release announcement)
 
-Lifted from `docs/design/br-6-sign-off-check-in-2026-05-21.md` and
-already in `.github/RELEASE_NOTES_BETA.md`. Re-state them in any
+Lifted from `docs/design/br-6-sign-off-check-in-2026-05-21.md`.
+Re-state them in the release body and in any
 external announcement copy (mailing list, blog post, GitHub Discussions
 thread) so operators do not have to dig:
 
@@ -259,7 +246,6 @@ CDN) treat tag identity as immutable.
 ## References
 
 - BR-6 sign-off check-in: `docs/design/br-6-sign-off-check-in-2026-05-21.md`
-- Beta release notes scaffold: `.github/RELEASE_NOTES_BETA.md`
 - Release body header template: `.github/RELEASE_TEMPLATE.md`
 - Release CI workflow: `.github/workflows/release-cross.yml`
 - Benchmark CI workflow: `.github/workflows/benchmark.yml`
