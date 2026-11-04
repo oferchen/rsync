@@ -170,13 +170,14 @@ impl AlgorithmList {
             return true;
         }
         let names = spec.strip_prefix(['+', '^']).unwrap_or(spec);
-        if names.is_empty() {
-            return false;
+        if self == Self::HostKey {
+            return key_types_valid(names, false);
         }
-        names
-            .split(',')
-            .take_while(|name| !name.is_empty())
-            .all(|name| self.name_is_valid(name))
+        !names.is_empty()
+            && names
+                .split(',')
+                .take_while(|name| !name.is_empty())
+                .all(|name| self.name_is_valid(name))
     }
 
     /// The line upstream's validator prints itself before the refusal:
@@ -195,18 +196,31 @@ impl AlgorithmList {
         Some(format!("Unsupported KEX algorithm \"{shown}\""))
     }
 
-    /// One element: an exact known name, or for `HostKeyAlgorithms` a
-    /// pattern that matches (positively or negatively) some known name
-    /// (openssh/sshkey.c:360-395 `sshkey_names_valid2` with
-    /// `allow_wildcard`).
+    /// One element of a cipher, MAC or KEX list: an exact known name.
     fn name_is_valid(self, name: &str) -> bool {
-        let known = self.known_names();
-        known.contains(&name)
-            || (self == Self::HostKey
-                && known
-                    .iter()
-                    .any(|alg| match_pattern_list(alg, name, false) != PatternListMatch::None))
+        self.known_names().contains(&name)
     }
+}
+
+/// Whether a key-type list (its `+`/`^` prefix already stripped) passes
+/// upstream's `sshkey_names_valid2(names, 1, plain_only)`
+/// (openssh/sshkey.c:360-400): every element up to the first empty one is
+/// a known key type - a certificate type only without `plain_only` - or a
+/// pattern that matches some known type, positively or negatively.
+pub(in crate::ssh) fn key_types_valid(names: &str, plain_only: bool) -> bool {
+    !names.is_empty()
+        && names
+            .split(',')
+            .take_while(|name| !name.is_empty())
+            .all(|name| {
+                if HOST_KEYS.contains(&name) {
+                    !(plain_only && name.contains("-cert-v01@openssh.com"))
+                } else {
+                    HOST_KEYS
+                        .iter()
+                        .any(|alg| match_pattern_list(alg, name, false) != PatternListMatch::None)
+                }
+            })
 }
 
 /// Why an algorithm list could not be assembled.
