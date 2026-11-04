@@ -462,7 +462,7 @@ jobs:
   surface-diff:
     name: surface diff (upstream 3.5.1)
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && github.event_name != 'push' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
