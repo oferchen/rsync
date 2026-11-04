@@ -86,13 +86,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::algorithms::AlgorithmList;
 use super::error::SshError;
 use crate::ssh::argv_split::argv_split;
 use crate::ssh::config_files::{ConfigFile, check_default_user_config_perms, home_dir as env_home};
 use crate::ssh::config_options::{
     AddressFamily, Opcode, glob_matches, ignore_unknown_matches, parse_address_family,
-    parse_flag_value, parse_int_value, parse_pubkey_auth_value, parse_time_value, parse_token,
-    split_directive,
+    parse_flag_value, parse_int_value, parse_pubkey_auth_value, parse_scaled_value,
+    parse_time_value, parse_token, split_directive,
 };
 use logging::warn_log;
 
@@ -215,6 +216,24 @@ pub(super) struct ResolvedHost {
     /// while parsing, so it excuses only unknown keywords on later lines
     /// (openssh/readconf.c:1195-1196), and in both passes.
     pub ignore_unknown: Option<String>,
+    /// `Ciphers`, the raw `[+-^]list` taken verbatim once it validates.
+    /// `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1593-1608). Assembled against the transport's
+    /// defaults at connect time.
+    pub ciphers: Option<String>,
+    /// `MACs`, as [`Self::ciphers`] (openssh/readconf.c:1610-1625).
+    pub macs: Option<String>,
+    /// `KexAlgorithms`, as [`Self::ciphers`] (openssh/readconf.c:1627-1643).
+    pub kex_algorithms: Option<String>,
+    /// `HostKeyAlgorithms`, as [`Self::ciphers`]; patterns are allowed
+    /// (openssh/readconf.c:1645-1664).
+    pub host_key_algorithms: Option<String>,
+    /// `RekeyLimit` bytes, `0` for `default`. `None` means no active line
+    /// claimed the slot (openssh/readconf.c:1362-1383).
+    pub rekey_limit: Option<i64>,
+    /// `RekeyLimit`'s optional interval in seconds, its own first-obtained
+    /// slot; `none` leaves it claimable (openssh/readconf.c:1384-1391).
+    pub rekey_interval: Option<u32>,
 }
 
 impl ResolvedHost {
@@ -991,7 +1010,12 @@ impl FileScan<'_, '_> {
             | Opcode::NumberOfPasswordPrompts
             | Opcode::CertificateFile
             | Opcode::RequiredRSASize
-            | Opcode::IgnoreUnknown => {
+            | Opcode::IgnoreUnknown
+            | Opcode::Ciphers
+            | Opcode::Macs
+            | Opcode::KexAlgorithms
+            | Opcode::HostKeyAlgorithms
+            | Opcode::RekeyLimit => {
                 let Some(arg) = tokens.first() else {
                     let Some(reason) = opcode.missing_argument() else {
                         return Ok(());
@@ -1063,12 +1087,51 @@ impl FileScan<'_, '_> {
             _ => None,
         };
 
+        // The algorithm lists: everything but a `-` list must name known
+        // algorithms, checked before the `*activep` test
+        // (openssh/readconf.c:1593-1664).
+        let algorithms = match opcode {
+            Opcode::Ciphers => Some(AlgorithmList::Ciphers),
+            Opcode::Macs => Some(AlgorithmList::Macs),
+            Opcode::KexAlgorithms => Some(AlgorithmList::Kex),
+            Opcode::HostKeyAlgorithms => Some(AlgorithmList::HostKey),
+            _ => None,
+        };
+        if let Some(list) = algorithms
+            && !list.spec_is_valid(arg)
+        {
+            let refusal = refuse(self.path, linenum, list.bad_spec(arg)).to_string();
+            return Err(Refusal::Counted(match list.validator_note(arg) {
+                Some(note) => format!("{note}\n{refusal}"),
+                None => refusal,
+            }));
+        }
+        let rekey = match opcode {
+            Opcode::RekeyLimit => Some(self.rekey_limit(arg, tokens.get(1), linenum)?),
+            _ => None,
+        };
         if !self.in_matching_block {
             return Ok(());
         }
 
         match opcode {
             Opcode::Hostname => set_if_unset(&mut self.resolved.hostname, arg.to_owned()),
+            Opcode::Ciphers => set_if_unset(&mut self.resolved.ciphers, arg.to_owned()),
+            Opcode::Macs => set_if_unset(&mut self.resolved.macs, arg.to_owned()),
+            Opcode::KexAlgorithms => {
+                set_if_unset(&mut self.resolved.kex_algorithms, arg.to_owned());
+            }
+            Opcode::HostKeyAlgorithms => {
+                set_if_unset(&mut self.resolved.host_key_algorithms, arg.to_owned());
+            }
+            Opcode::RekeyLimit => {
+                if let Some((limit, interval)) = rekey {
+                    set_if_unset(&mut self.resolved.rekey_limit, limit);
+                    if let Some(secs) = interval {
+                        set_if_unset(&mut self.resolved.rekey_interval, secs);
+                    }
+                }
+            }
             Opcode::User => set_if_unset(&mut self.resolved.user, arg.to_owned()),
             Opcode::IgnoreUnknown => {
                 set_if_unset(&mut self.resolved.ignore_unknown, arg.to_owned());
@@ -1180,6 +1243,33 @@ impl FileScan<'_, '_> {
         Ok(())
     }
 
+    /// Parses a `RekeyLimit` value: a scaled byte count or `default`, then
+    /// an optional interval through the shared `parse_time` arm, `none`
+    /// discarded (openssh/readconf.c:1362-1393).
+    fn rekey_limit(
+        &self,
+        arg: &str,
+        interval: Option<&String>,
+        linenum: usize,
+    ) -> Result<(i64, Option<u32>), SshError> {
+        let limit = if arg == "default" {
+            0
+        } else {
+            let bytes = parse_scaled_value(arg)
+                .map_err(|e| refuse(self.path, linenum, format!("Bad number '{arg}': {e}")))?;
+            if bytes != 0 && bytes < 16 {
+                return Err(refuse(self.path, linenum, "RekeyLimit too small"));
+            }
+            bytes
+        };
+        // `parse_connect_timeout` already reads `none` as "no value".
+        let interval = interval
+            .map(|time| parse_connect_timeout(time))
+            .transpose()
+            .map_err(|reason| refuse(self.path, linenum, reason))?
+            .flatten();
+        Ok((limit, interval))
+    }
     /// The diagnostic for an unknown `keyword`, or `None` when the
     /// `IgnoreUnknown` list in force excuses it
     /// (openssh/readconf.c:977-982). Upstream prints this one as `%s: line`,
