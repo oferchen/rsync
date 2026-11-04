@@ -20,6 +20,7 @@
 
 mod batch_stat;
 mod entry;
+mod flist_checksums;
 mod hardlinks;
 mod iconv;
 mod inc_recurse;

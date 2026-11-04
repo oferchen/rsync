@@ -22,6 +22,5 @@ mod device;
 mod fake_super;
 mod munge;
 
-pub(in crate::generator) use self::create::is_invalid_file_checksum;
 #[cfg(all(unix, test))]
 pub(in crate::generator) use self::device::rdev_to_major_minor;

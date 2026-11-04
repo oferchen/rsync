@@ -13,6 +13,36 @@ use crate::strong::StrongDigest;
 // upstream: rsync.h MAX_MAP_SIZE - the read window file_checksum() hashes through.
 const READ_CHUNK: usize = 256 * 1024;
 
+/// A batch holding at least this many bytes is hashed on the rayon pool.
+///
+/// Measured 2026-10-28 (8-core x86_64 Linux, `taskset` 4 CPUs, tmpfs, XXH128,
+/// the fastest negotiated digest, so the bar is highest for it): with few
+/// files the pool loses up to 32 MiB (16 x 1 MiB: 4.1 ms serial vs 6.9 ms;
+/// 32 x 1 MiB: 10.9 vs 11.2 ms) and first wins at 64 MiB (64 x 1 MiB: 19.7 vs
+/// 16.5 ms).
+const PARALLEL_MIN_BATCH_BYTES: u64 = 64 << 20;
+
+/// A batch of at least this many files is hashed on the rayon pool, whatever
+/// its size.
+///
+/// Measured with [`PARALLEL_MIN_BATCH_BYTES`]: per-file open and read costs
+/// dominate small files, and at 1024 files the pool saves about 60%
+/// (1024 x 4 KiB: 3.7 vs 1.5 ms; 1024 x 64 KiB: 11.8 vs 4.9 ms). Every pooled
+/// batch also adds rayon scheduling syscalls (`sched_yield`, `futex`, and a
+/// pool start on first use; 35 to 250 per process measured), so smaller
+/// batches, whose absolute saving is a few milliseconds at most, stay serial
+/// and add none.
+const PARALLEL_MIN_BATCH_FILES: usize = 1024;
+
+/// Whether `jobs` is large enough for the rayon pool to pay for itself.
+///
+/// The one place the serial/parallel decision is made, so every checksum site
+/// on the service inherits the same measured cutoff.
+fn runs_on_pool(jobs: &[FileJob<'_>]) -> bool {
+    jobs.len() >= PARALLEL_MIN_BATCH_FILES
+        || jobs.iter().map(|job| job.len).fold(0, u64::saturating_add) >= PARALLEL_MIN_BATCH_BYTES
+}
+
 /// Largest digest a [`FileHasher`] may produce, in bytes.
 ///
 /// Every whole-file checksum rsync negotiates fits: SHA1 is the longest at 20.
@@ -87,7 +117,8 @@ impl FileDigest {
 #[derive(Debug, Eq, PartialEq)]
 pub struct BlockDigests(Vec<FileDigest>);
 
-/// Hashes each job's whole file, in parallel across files.
+/// Hashes each job's whole file, in parallel across files when the batch is
+/// large enough for the pool to pay for itself, serially otherwise.
 ///
 /// Results are in `jobs` order so callers consume them in file-list order.
 /// A job fails when its file cannot be opened or holds fewer than `len` bytes.
@@ -97,7 +128,7 @@ where
     F: Fn() -> H + Sync,
 {
     let hash = |job: &FileJob<'_>| hash_range(job.path, 0, job.len, new_hasher());
-    if jobs.len() < 2 {
+    if jobs.len() < 2 || !runs_on_pool(jobs) {
         return jobs.iter().map(hash).collect();
     }
     // Ordering: callers zip results with jobs by position.
@@ -105,9 +136,11 @@ where
     jobs.par_iter().map(hash).collect()
 }
 
-/// Hashes each job as a vector of `block_len` block digests, in parallel across
-/// files and, for files of at least two blocks' length, across the blocks of
-/// one file. A shorter file is one block: its whole-file digest.
+/// Hashes each job as a vector of `block_len` block digests. A batch large
+/// enough for the pool is hashed in parallel across files and, for files of at
+/// least two blocks' length, across the blocks of one file; a smaller batch is
+/// hashed serially. A file shorter than two blocks is one block: its
+/// whole-file digest.
 ///
 /// Only for deciding whether two local files are identical: both sides of a
 /// comparison must use the same `block_len` and hasher, and files of equal
@@ -121,14 +154,21 @@ where
     H: FileHasher,
     F: Fn() -> H + Sync,
 {
+    let hash = |job: &FileJob<'_>, pooled| hash_blocks(job, block_len.get(), &new_hasher, pooled);
+    if !runs_on_pool(jobs) {
+        return jobs.iter().map(|job| hash(job, false)).collect();
+    }
     // Ordering: callers zip results with jobs by position.
     // Preserved by par_iter().map().collect() (rayon preserves index order).
-    jobs.par_iter()
-        .map(|job| hash_blocks(job, block_len.get(), &new_hasher))
-        .collect()
+    jobs.par_iter().map(|job| hash(job, true)).collect()
 }
 
-fn hash_blocks<H, F>(job: &FileJob<'_>, block_len: u64, new_hasher: &F) -> io::Result<BlockDigests>
+fn hash_blocks<H, F>(
+    job: &FileJob<'_>,
+    block_len: u64,
+    new_hasher: &F,
+    pooled: bool,
+) -> io::Result<BlockDigests>
 where
     H: FileHasher,
     F: Fn() -> H + Sync,
@@ -137,15 +177,21 @@ where
         let digest = hash_range(job.path, 0, job.len, new_hasher())?;
         return Ok(BlockDigests(vec![digest]));
     }
-    (0..job.len.div_ceil(block_len))
-        .into_par_iter()
-        .map(|index| {
-            let start = index * block_len;
-            let len = block_len.min(job.len - start);
-            hash_range(job.path, start, len, new_hasher())
-        })
-        .collect::<io::Result<Vec<_>>>()
-        .map(BlockDigests)
+    let block = |index: u64| {
+        let start = index * block_len;
+        let len = block_len.min(job.len - start);
+        hash_range(job.path, start, len, new_hasher())
+    };
+    let blocks = 0..job.len.div_ceil(block_len);
+    let digests = if pooled {
+        blocks
+            .into_par_iter()
+            .map(block)
+            .collect::<io::Result<Vec<_>>>()
+    } else {
+        blocks.map(block).collect::<io::Result<Vec<_>>>()
+    };
+    digests.map(BlockDigests)
 }
 
 thread_local! {
@@ -253,12 +299,13 @@ mod tests {
     }
 
     /// Results come back in job order even when files finish out of order:
-    /// the large first file finishes last on any pool.
+    /// the large first file finishes last on any pool. The batch is past the
+    /// file cutoff, so it runs on the pool.
     #[test]
     fn results_follow_job_order() {
         let dir = tempfile::tempdir().unwrap();
         let mut sizes = vec![8 * READ_CHUNK];
-        sizes.extend(std::iter::repeat_n(17, 64));
+        sizes.extend(std::iter::repeat_n(17, PARALLEL_MIN_BATCH_FILES));
         let files = write_files(dir.path(), &sizes);
         let results = hash_files(&jobs(&files), || Xxh3_128::with_seed(0));
         for ((_, data), result) in files.iter().zip(results) {
@@ -317,6 +364,82 @@ mod tests {
         }];
         let result = hash_files(&job, md5).remove(0).unwrap();
         assert_eq!(result.as_bytes(), Md5::digest(&files[0].1[..40]).as_ref());
+    }
+
+    /// Records whether each hash ran on a rayon worker thread.
+    struct WhereHashed(Md5, std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl FileHasher for WhereHashed {
+        fn update(&mut self, data: &[u8]) {
+            StrongDigest::update(&mut self.0, data);
+        }
+
+        fn finalize_into(self, out: &mut [u8; MAX_FILE_DIGEST_LEN]) -> usize {
+            if rayon::current_thread_index().is_some() {
+                self.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            FileHasher::finalize_into(self.0, out)
+        }
+    }
+
+    /// Counts the jobs hashed on a pool worker, by both entry points, for
+    /// files of `sizes` bytes. The files are sparse, so a batch past the byte
+    /// cutoff costs no disk.
+    fn pooled_hashes(sizes: &[u64]) -> (usize, usize) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let paths: Vec<PathBuf> = (0..sizes.len())
+            .map(|i| dir.path().join(format!("s{i}")))
+            .collect();
+        for (path, &len) in paths.iter().zip(sizes) {
+            std::fs::File::create(path).unwrap().set_len(len).unwrap();
+        }
+        let job_list: Vec<FileJob<'_>> = paths
+            .iter()
+            .zip(sizes)
+            .map(|(path, &len)| FileJob { path, len })
+            .collect();
+        let whole = Arc::new(AtomicUsize::new(0));
+        let blocked = Arc::new(AtomicUsize::new(0));
+        for result in hash_files(&job_list, || WhereHashed(Md5::new(), Arc::clone(&whole))) {
+            result.unwrap();
+        }
+        let block = block_len(READ_CHUNK as u64);
+        for result in hash_files_blocked(&job_list, block, || {
+            WhereHashed(Md5::new(), Arc::clone(&blocked))
+        }) {
+            result.unwrap();
+        }
+        (
+            whole.load(Ordering::Relaxed),
+            blocked.load(Ordering::Relaxed),
+        )
+    }
+
+    /// A small batch never touches the pool, so it adds no rayon scheduling
+    /// syscalls over a serial run: the caller thread hashes every file.
+    #[test]
+    fn small_batches_hash_on_the_calling_thread() {
+        let chunk = READ_CHUNK as u64;
+        assert_eq!(pooled_hashes(&[3 * chunk, 100, 0, 17]), (0, 0));
+        assert_eq!(
+            pooled_hashes(&vec![10; PARALLEL_MIN_BATCH_FILES - 1]),
+            (0, 0)
+        );
+        let just_under = PARALLEL_MIN_BATCH_BYTES / 2;
+        assert_eq!(pooled_hashes(&[just_under, just_under - 1]), (0, 0));
+    }
+
+    /// Reaching either cutoff, by file count or by bytes, moves the batch onto
+    /// the pool, where large trees get their speedup.
+    #[test]
+    fn batches_at_either_cutoff_hash_on_the_pool() {
+        let (whole, blocked) = pooled_hashes(&vec![10; PARALLEL_MIN_BATCH_FILES]);
+        assert!(whole > 0 && blocked > 0, "file cutoff: {whole} / {blocked}");
+        let half = PARALLEL_MIN_BATCH_BYTES / 2;
+        let (whole, blocked) = pooled_hashes(&[half, half]);
+        assert!(whole > 0 && blocked > 0, "byte cutoff: {whole} / {blocked}");
     }
 
     fn block_len(n: u64) -> NonZeroU64 {
