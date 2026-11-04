@@ -23,12 +23,15 @@
 //!
 //! # Scope
 //!
-//! The table holds the union of what oc's readers act on today, not
-//! upstream's full ~180 keywords. A keyword absent from it resolves to
-//! [`Opcode::Unknown`], which every reader ignores - the same answer both
-//! readers gave before the table existed. Widening the table is one row per
-//! keyword; oc's unknown-keyword *policy* (upstream counts bad options and
-//! then aborts the load, openssh/readconf.c:2667-2669) is a separate row.
+//! The table holds every keyword upstream recognises
+//! (openssh/readconf.c:192-337), so a valid `ssh -G` config is a valid oc
+//! config. Keywords oc acts on carry their own opcode; the rest keep
+//! upstream's accept-and-ignore categories ([`Opcode::Ignore`],
+//! [`Opcode::Deprecated`], [`Opcode::Unsupported`]) or, for keywords upstream
+//! implements and the embedded transport does not, [`Opcode::NotActedOn`].
+//! A spelling outside the table resolves to [`Opcode::Unknown`], upstream's
+//! `oBadOption`, which the embedded reader counts and then refuses the file
+//! on (openssh/readconf.c:2604-2613).
 //!
 //! # What this module does NOT own
 //!
@@ -39,119 +42,120 @@
 
 /// One ssh_config keyword, resolved from its spelling.
 ///
-/// Mirrors upstream's `OpCodes` (openssh/readconf.c:132-174), narrowed to
-/// the keywords oc resolves plus the catch-all. Upstream splits its
-/// catch-all three ways (`oBadOption`, `oIgnore`,
-/// `oIgnoredUnknownOption`) because it acts on the distinction; oc ignores
-/// every unrecognised keyword identically, so one variant is the honest
-/// model.
+/// Mirrors upstream's `OpCodes` (openssh/readconf.c:146-185): one variant
+/// per keyword oc acts on, upstream's three accept-and-ignore categories,
+/// one variant for the keywords upstream implements and oc does not act on,
+/// and the `oBadOption` catch-all. `oIgnoredUnknownOption` has no variant
+/// because it depends on the `IgnoreUnknown` list in force at the line, so
+/// the reader decides it, as upstream's `parse_token` does
+/// (openssh/readconf.c:977-979).
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(in crate::ssh) enum Opcode {
     /// `Host <patterns>` - opens a block gated on the target alias.
-    /// upstream: openssh/readconf.c:246 `oHost`, arm at :1823.
+    /// upstream: openssh/readconf.c:260 `oHost`, arm at :1827.
     Host,
     /// `Match <criteria>` - opens a conditionally active block.
-    /// upstream: openssh/readconf.c:247 `oMatch`, arm at :1864.
+    /// upstream: openssh/readconf.c:261 `oMatch`, arm at :1868.
     Match,
     /// `Include <pattern>...` - reads the glob-expanded file(s) inline.
-    /// upstream: openssh/readconf.c:248 `oInclude`, arm at :2073.
+    /// upstream: openssh/readconf.c:298 `oInclude`, arm at :2066.
     Include,
     /// `Compression yes|no`.
-    /// upstream: openssh/readconf.c:256 `oCompression`, arm at :1344.
+    /// upstream: openssh/readconf.c:270 `oCompression`, arm at :1345.
     Compression,
     /// `HostName <name>`.
-    /// upstream: openssh/readconf.c:236 `oHostname`, arm at :1493.
+    /// upstream: openssh/readconf.c:250 `oHostname`, arm at :1494.
     Hostname,
     /// `User <name>`.
-    /// upstream: openssh/readconf.c:245 `oUser`, arm at :1439.
+    /// upstream: openssh/readconf.c:259 `oUser`, arm at :1440.
     User,
     /// `Port <number>`.
-    /// upstream: openssh/readconf.c:239 `oPort`, arm at :1559.
+    /// upstream: openssh/readconf.c:253 `oPort`, arm at :1563.
     Port,
     /// `IdentityFile <path>`.
-    /// upstream: openssh/readconf.c:230 `oIdentityFile`, arm at :1394.
+    /// upstream: openssh/readconf.c:244 `oIdentityFile`, arm at :1395.
     IdentityFile,
     /// `IdentitiesOnly yes|no`.
-    /// upstream: openssh/readconf.c:232 `oIdentitiesOnly`, arm at :1914.
+    /// upstream: openssh/readconf.c:246 `oIdentitiesOnly`, arm at :1918.
     IdentitiesOnly,
     /// `IdentityAgent <path>`.
-    /// upstream: openssh/readconf.c:235 `oIdentityAgent`, arm at :2419.
+    /// upstream: openssh/readconf.c:249 `oIdentityAgent`, arm at :2381.
     IdentityAgent,
     /// `ConnectTimeout <time>|none`.
-    /// upstream: openssh/readconf.c:274 `oConnectTimeout`, arm at :1215.
+    /// upstream: openssh/readconf.c:288 `oConnectTimeout`, arm at :1216.
     ConnectTimeout,
     /// `AddressFamily any|inet|inet6`.
-    /// upstream: openssh/readconf.c:270 `oAddressFamily`, arm at :1903 via
-    /// `multistate_addressfamily` (:1016).
+    /// upstream: openssh/readconf.c:289 `oAddressFamily`, arm at :1909 via
+    /// `multistate_addressfamily` (:1038).
     AddressFamily,
     /// `BindAddress <addr>`.
-    /// upstream: openssh/readconf.c:262 `oBindAddress`, arm at :1507.
+    /// upstream: openssh/readconf.c:281 `oBindAddress`, arm at :1510.
     BindAddress,
     /// `BindInterface <iface>`.
-    /// upstream: openssh/readconf.c:263 `oBindInterface`, arm at :1511.
+    /// upstream: openssh/readconf.c:282 `oBindInterface`, arm at :1514.
     BindInterface,
     /// `ConnectionAttempts <count>`.
-    /// upstream: openssh/readconf.c:247 `oConnectionAttempts`, arm at :1574.
+    /// upstream: openssh/readconf.c:266 `oConnectionAttempts`, arm at :1580.
     ConnectionAttempts,
     /// `IPQoS <interactive> [bulk]`.
-    /// upstream: openssh/readconf.c:287 `oIPQoS`, arm at :2148.
+    /// upstream: openssh/readconf.c:306 `oIPQoS`, arm at :2154.
     IPQoS,
     /// `TCPKeepAlive yes|no|transport|all` (obsolete alias `KeepAlive`).
-    /// upstream: openssh/readconf.c:252 `oTCPKeepAlive`, arm at :1346 via
+    /// upstream: openssh/readconf.c:271 `oTCPKeepAlive`, arm at :1350 via
     /// `multistate_keepalives` (:1080).
     TCPKeepAlive,
     /// `ServerAliveInterval <time>`.
-    /// upstream: openssh/readconf.c:271 `oServerAliveInterval`, arm at :1916.
+    /// upstream: openssh/readconf.c:290 `oServerAliveInterval`, arm at :1922.
     ServerAliveInterval,
     /// `ServerAliveCountMax <count>`.
-    /// upstream: openssh/readconf.c:272 `oServerAliveCountMax`, arm at :1920.
+    /// upstream: openssh/readconf.c:291 `oServerAliveCountMax`, arm at :1926.
     ServerAliveCountMax,
     /// `ProxyCommand <command>` - the rest of the line taken verbatim and
     /// later run through a shell, its stdio replacing the direct socket.
-    /// upstream: openssh/readconf.c:249 `oProxyCommand`, arm at :1466
+    /// upstream: openssh/readconf.c:252 `oProxyCommand`, arm at :1530
     /// (`parse_command`); dialled by openssh/sshconnect.c:222
     /// `ssh_proxy_connect`.
     ProxyCommand,
     /// `ProxyJump [user@]host[:port][,...]` - a jump-host chain upstream
     /// synthesises into an equivalent `ProxyCommand`.
-    /// upstream: openssh/readconf.c:277 `oProxyJump`, arm at :1730
+    /// upstream: openssh/readconf.c:327 `oProxyJump`, arm at :1547
     /// (`parse_jump`); the synthesis is openssh/ssh.c:1310-1360.
     ProxyJump,
     /// `ProxyUseFdpass yes|no` - whether the `ProxyCommand` passes back a
     /// connected file descriptor rather than piping through stdio.
-    /// upstream: openssh/readconf.c:250 `oProxyUseFdpass`, arm at :1471.
+    /// upstream: openssh/readconf.c:311 `oProxyUseFdpass`, arm at :2197.
     ProxyUseFdpass,
     /// `UserKnownHostsFile <file>...` - the ordered list of per-user
     /// known_hosts files consulted for host-key verification and appended
     /// to when a new key is learned. `none` (alone) disables the user list.
-    /// upstream: openssh/readconf.c:243 `oUserKnownHostsFile`, arm at :1614
-    /// via the `parse_char_array` path (:1600-1652).
+    /// upstream: openssh/readconf.c:265 `oUserKnownHostsFile`, arm at :1488
+    /// via the `parse_char_array` path (:1457-1486).
     UserKnownHostsFile,
     /// `GlobalKnownHostsFile <file>...` - the ordered list of system-wide
     /// known_hosts files, consulted for verification only (never written).
     /// `none` (alone) disables the system list.
-    /// upstream: openssh/readconf.c:242 `oGlobalKnownHostsFile`, arm at
-    /// :1610 via the same `parse_char_array` path.
+    /// upstream: openssh/readconf.c:264 `oGlobalKnownHostsFile`, arm at
+    /// :1453 via the same `parse_char_array` path.
     GlobalKnownHostsFile,
     /// `HashKnownHosts yes|no` - whether a newly learned host entry is
     /// written hashed (`|1|salt|hash`) rather than as a plaintext hostname.
-    /// upstream: openssh/readconf.c:264 `oHashKnownHosts`, arm at :1873 via
+    /// upstream: openssh/readconf.c:297 `oHashKnownHosts`, arm at :2022 via
     /// `parse_flag`.
     HashKnownHosts,
     /// `HostKeyAlias <alias>` - the name used to look up and store the host
     /// key instead of the real hostname. Taken verbatim, never expanded.
-    /// upstream: openssh/readconf.c:237 `oHostKeyAlias`, arm at :1497 via
+    /// upstream: openssh/readconf.c:251 `oHostKeyAlias`, arm at :1502 via
     /// `parse_string`.
     HostKeyAlias,
     /// `CheckHostIP yes|no` - whether the host key is additionally checked
     /// against the server's resolved IP address.
-    /// upstream: openssh/readconf.c:238 `oCheckHostIP`, arm at :1466 via
+    /// upstream: openssh/readconf.c:268 `oCheckHostIP`, arm at :1331 via
     /// `parse_flag`.
     CheckHostIP,
     /// `RevokedHostKeys <file>` - a file of revoked host keys; a server key
     /// listed there is rejected. Path taken verbatim (tilde-expanded by the
     /// consumer).
-    /// upstream: openssh/readconf.c:290 `oRevokedHostKeys`, arm at :2444 via
+    /// upstream: openssh/readconf.c:319 `oRevokedHostKeys`, arm at :2314 via
     /// `parse_string`.
     RevokedHostKeys,
     /// `PubkeyAuthentication yes|no|unbound|host-bound` - whether public-key
@@ -159,46 +163,69 @@ pub(in crate::ssh) enum Opcode {
     /// A multistate whose `unbound`/`host-bound` rows select the
     /// session-bound-pubkey extension the embedded transport does not
     /// negotiate, so both collapse onto "public-key enabled" here.
-    /// upstream: openssh/readconf.c:239 `oPubkeyAuthentication`, arm at
-    /// :1264 via `multistate_pubkey_auth` (:1041-1048).
+    /// upstream: openssh/readconf.c:241 `oPubkeyAuthentication`, arm at
+    /// :1310 via `multistate_pubkey_auth` (:1086-1094).
     PubkeyAuthentication,
     /// `PasswordAuthentication yes|no` - whether password authentication may
     /// be attempted.
-    /// upstream: openssh/readconf.c:233 `oPasswordAuthentication`, arm at
-    /// :1252 (`parse_flag`).
+    /// upstream: openssh/readconf.c:235 `oPasswordAuthentication`, arm at
+    /// :1298 (`parse_flag`).
     PasswordAuthentication,
     /// `KbdInteractiveAuthentication yes|no` (aliases
     /// `ChallengeResponseAuthentication`, `SKeyAuthentication`,
     /// `TISAuthentication`) - whether keyboard-interactive authentication may
     /// be attempted.
-    /// upstream: openssh/readconf.c:234 `oKbdInteractiveAuthentication`, arm
-    /// at :1256 (`parse_flag`); the three aliases are :236-238.
+    /// upstream: openssh/readconf.c:236 `oKbdInteractiveAuthentication`, arm
+    /// at :1302 (`parse_flag`); the three aliases are :238-240.
     KbdInteractiveAuthentication,
     /// `PreferredAuthentications <comma-list>` - the order the client offers
     /// authentication methods in, most preferred first.
-    /// upstream: openssh/readconf.c:276 `oPreferredAuthentications`, arm at
-    /// :1460 (`parse_string`).
+    /// upstream: openssh/readconf.c:278 `oPreferredAuthentications`, arm at
+    /// :1506 (`parse_string`).
     PreferredAuthentications,
     /// `BatchMode yes|no` - when on, never prompt interactively for a
     /// password or passphrase.
-    /// upstream: openssh/readconf.c:265 `oBatchMode`, arm at :1281
+    /// upstream: openssh/readconf.c:267 `oBatchMode`, arm at :1327
     /// (`parse_flag`).
     BatchMode,
     /// `NumberOfPasswordPrompts <int>` - how many times a password may be
     /// prompted for before the method is abandoned.
-    /// upstream: openssh/readconf.c:271 `oNumberOfPasswordPrompts`, arm at
-    /// :1312 (`parse_int`).
+    /// upstream: openssh/readconf.c:273 `oNumberOfPasswordPrompts`, arm at
+    /// :1358 (`parse_int`).
     NumberOfPasswordPrompts,
     /// `CertificateFile <path>` - a certificate to offer alongside a key;
     /// accumulates across active lines.
-    /// upstream: openssh/readconf.c:245 `oCertificateFile`, arm at :1369
+    /// upstream: openssh/readconf.c:247 `oCertificateFile`, arm at :1415
     /// (`add_certificate_file`).
     CertificateFile,
     /// `RequiredRSASize <int>` - the minimum accepted RSA key length in bits.
-    /// upstream: openssh/readconf.c:328 `oRequiredRSASize`, arm at :2366
+    /// upstream: openssh/readconf.c:330 `oRequiredRSASize`, arm at :2412
     /// (`parse_int`).
     RequiredRSASize,
-    /// A keyword no reader resolves. Ignored by both.
+    /// `IgnoreUnknown <pattern-list>` - unknown keywords matching the list
+    /// are skipped instead of refused, from the line after it onwards.
+    /// upstream: openssh/readconf.c:326 `oIgnoreUnknown`, arm at :2193
+    /// (`parse_string`); read by `parse_token` (openssh/readconf.c:977-979).
+    IgnoreUnknown,
+    /// `Protocol` - accepted and ignored without a word.
+    /// upstream: openssh/readconf.c:194 `oIgnore`, arm at :1208.
+    Ignore,
+    /// A keyword upstream retired; accepted with a debug-level note.
+    /// upstream: openssh/readconf.c:195-202 `oDeprecated`, arm at :2511.
+    Deprecated,
+    /// A keyword upstream no longer supports; accepted after an error-level
+    /// note, without counting as a bad option.
+    /// upstream: openssh/readconf.c:205-210 `oUnsupported`, arm at :2517.
+    Unsupported,
+    /// A keyword upstream implements and the embedded transport does not act
+    /// on: forwarding, session shaping, interactive-terminal options, local
+    /// command execution, `RemoteCommand` (which would replace
+    /// `rsync --server`), and the options later rows of this table will
+    /// take over. Accepted so a config `ssh` loads, loads here too; its
+    /// value is not validated.
+    NotActedOn,
+    /// A spelling outside the table - upstream's `oBadOption`
+    /// (openssh/readconf.c:147, returned by `parse_token` at :980-982).
     Unknown,
 }
 
@@ -209,67 +236,152 @@ pub(in crate::ssh) enum Opcode {
 /// (openssh/readconf.c:1184 `lowercase(keyword)` into
 /// openssh/readconf.c:964-966).
 const KEYWORDS: &[(&str, Opcode)] = &[
+    ("addkeystoagent", Opcode::NotActedOn),
     ("addressfamily", Opcode::AddressFamily),
+    ("afstokenpassing", Opcode::Unsupported),
     ("batchmode", Opcode::BatchMode),
     ("bindaddress", Opcode::BindAddress),
     ("bindinterface", Opcode::BindInterface),
+    ("canonicaldomains", Opcode::NotActedOn),
+    ("canonicalizefallbacklocal", Opcode::NotActedOn),
+    ("canonicalizehostname", Opcode::NotActedOn),
+    ("canonicalizemaxdots", Opcode::NotActedOn),
+    ("canonicalizepermittedcnames", Opcode::NotActedOn),
+    ("casignaturealgorithms", Opcode::NotActedOn),
     ("certificatefile", Opcode::CertificateFile),
     // Alias resolving to the same opcode as `KbdInteractiveAuthentication`.
-    // upstream: openssh/readconf.c:236 `{ "challengeresponseauthentication",
+    // upstream: openssh/readconf.c:238 `{ "challengeresponseauthentication",
     // oKbdInteractiveAuthentication }`.
     (
         "challengeresponseauthentication",
         Opcode::KbdInteractiveAuthentication,
     ),
+    ("channeltimeout", Opcode::NotActedOn),
     ("checkhostip", Opcode::CheckHostIP),
+    ("cipher", Opcode::Deprecated),
+    ("ciphers", Opcode::NotActedOn),
+    ("clearallforwardings", Opcode::NotActedOn),
     ("compression", Opcode::Compression),
+    ("compressionlevel", Opcode::Unsupported),
     ("connectionattempts", Opcode::ConnectionAttempts),
     ("connecttimeout", Opcode::ConnectTimeout),
+    ("controlmaster", Opcode::NotActedOn),
+    ("controlpath", Opcode::NotActedOn),
+    ("controlpersist", Opcode::NotActedOn),
     // Alias resolving to the same opcode as `PubkeyAuthentication`.
-    // upstream: openssh/readconf.c:240 `{ "dsaauthentication",
+    // upstream: openssh/readconf.c:242 `{ "dsaauthentication",
     // oPubkeyAuthentication }`.
     ("dsaauthentication", Opcode::PubkeyAuthentication),
+    ("dynamicforward", Opcode::NotActedOn),
+    ("enableescapecommandline", Opcode::NotActedOn),
+    ("enablesshkeysign", Opcode::NotActedOn),
+    ("escapechar", Opcode::NotActedOn),
+    ("exitonforwardfailure", Opcode::NotActedOn),
+    ("fallbacktorsh", Opcode::Deprecated),
+    ("fingerprinthash", Opcode::NotActedOn),
+    ("forkafterauthentication", Opcode::NotActedOn),
+    ("forwardagent", Opcode::NotActedOn),
+    ("forwardx11", Opcode::NotActedOn),
+    ("forwardx11timeout", Opcode::NotActedOn),
+    ("forwardx11trusted", Opcode::NotActedOn),
+    ("gatewayports", Opcode::NotActedOn),
     ("globalknownhostsfile", Opcode::GlobalKnownHostsFile),
+    ("globalknownhostsfile2", Opcode::Deprecated),
+    ("gssapiauthentication", Opcode::NotActedOn),
+    ("gssapidelegatecredentials", Opcode::NotActedOn),
     ("hashknownhosts", Opcode::HashKnownHosts),
     ("host", Opcode::Host),
+    ("hostbasedacceptedalgorithms", Opcode::NotActedOn),
+    ("hostbasedauthentication", Opcode::NotActedOn),
+    ("hostbasedkeytypes", Opcode::NotActedOn),
+    ("hostkeyalgorithms", Opcode::NotActedOn),
     ("hostkeyalias", Opcode::HostKeyAlias),
     ("hostname", Opcode::Hostname),
     ("identitiesonly", Opcode::IdentitiesOnly),
     ("identityagent", Opcode::IdentityAgent),
     ("identityfile", Opcode::IdentityFile),
+    ("identityfile2", Opcode::IdentityFile),
+    ("ignoreunknown", Opcode::IgnoreUnknown),
     ("include", Opcode::Include),
     ("ipqos", Opcode::IPQoS),
     (
         "kbdinteractiveauthentication",
         Opcode::KbdInteractiveAuthentication,
     ),
+    ("kbdinteractivedevices", Opcode::NotActedOn),
     // Obsolete alias resolving to the same opcode as `TCPKeepAlive`.
-    // upstream: openssh/readconf.c:270 `{ "keepalive", oTCPKeepAlive }`.
+    // upstream: openssh/readconf.c:272 `{ "keepalive", oTCPKeepAlive }`.
     ("keepalive", Opcode::TCPKeepAlive),
+    ("kerberosauthentication", Opcode::Unsupported),
+    ("kerberostgtpassing", Opcode::Unsupported),
+    ("kexalgorithms", Opcode::NotActedOn),
+    ("knownhostscommand", Opcode::NotActedOn),
+    ("localcommand", Opcode::NotActedOn),
+    ("localforward", Opcode::NotActedOn),
+    ("loglevel", Opcode::NotActedOn),
+    ("logverbose", Opcode::NotActedOn),
+    ("macs", Opcode::NotActedOn),
     ("match", Opcode::Match),
+    ("nohostauthenticationforlocalhost", Opcode::NotActedOn),
     ("numberofpasswordprompts", Opcode::NumberOfPasswordPrompts),
+    ("obscurekeystroketiming", Opcode::NotActedOn),
     ("passwordauthentication", Opcode::PasswordAuthentication),
+    ("permitlocalcommand", Opcode::NotActedOn),
+    ("permitremoteopen", Opcode::NotActedOn),
+    ("pkcs11provider", Opcode::NotActedOn),
     ("port", Opcode::Port),
     ("preferredauthentications", Opcode::PreferredAuthentications),
+    ("protocol", Opcode::Ignore),
     ("proxycommand", Opcode::ProxyCommand),
     ("proxyjump", Opcode::ProxyJump),
     ("proxyusefdpass", Opcode::ProxyUseFdpass),
+    ("pubkeyacceptedalgorithms", Opcode::NotActedOn),
+    ("pubkeyacceptedkeytypes", Opcode::NotActedOn),
     ("pubkeyauthentication", Opcode::PubkeyAuthentication),
+    ("rekeylimit", Opcode::NotActedOn),
+    ("remotecommand", Opcode::NotActedOn),
+    ("remoteforward", Opcode::NotActedOn),
+    ("requesttty", Opcode::NotActedOn),
     ("requiredrsasize", Opcode::RequiredRSASize),
     ("revokedhostkeys", Opcode::RevokedHostKeys),
+    ("rhostsauthentication", Opcode::Deprecated),
+    ("rhostsrsaauthentication", Opcode::Unsupported),
+    ("rsaauthentication", Opcode::Unsupported),
+    ("securitykeyprovider", Opcode::NotActedOn),
+    ("sendenv", Opcode::NotActedOn),
     ("serveralivecountmax", Opcode::ServerAliveCountMax),
     ("serveraliveinterval", Opcode::ServerAliveInterval),
+    ("sessiontype", Opcode::NotActedOn),
+    ("setenv", Opcode::NotActedOn),
     // Alias resolving to the same opcode as `KbdInteractiveAuthentication`.
-    // upstream: openssh/readconf.c:237 `{ "skeyauthentication",
+    // upstream: openssh/readconf.c:239 `{ "skeyauthentication",
     // oKbdInteractiveAuthentication }`.
     ("skeyauthentication", Opcode::KbdInteractiveAuthentication),
+    ("smartcarddevice", Opcode::NotActedOn),
+    ("stdinnull", Opcode::NotActedOn),
+    ("streamlocalbindmask", Opcode::NotActedOn),
+    ("streamlocalbindunlink", Opcode::NotActedOn),
+    ("stricthostkeychecking", Opcode::NotActedOn),
+    ("syslogfacility", Opcode::NotActedOn),
+    ("tag", Opcode::NotActedOn),
     ("tcpkeepalive", Opcode::TCPKeepAlive),
     // Alias resolving to the same opcode as `KbdInteractiveAuthentication`.
-    // upstream: openssh/readconf.c:238 `{ "tisauthentication",
+    // upstream: openssh/readconf.c:240 `{ "tisauthentication",
     // oKbdInteractiveAuthentication }`.
     ("tisauthentication", Opcode::KbdInteractiveAuthentication),
+    ("tunnel", Opcode::NotActedOn),
+    ("tunneldevice", Opcode::NotActedOn),
+    ("updatehostkeys", Opcode::NotActedOn),
+    ("useprivilegedport", Opcode::Deprecated),
     ("user", Opcode::User),
     ("userknownhostsfile", Opcode::UserKnownHostsFile),
+    ("userknownhostsfile2", Opcode::Deprecated),
+    ("useroaming", Opcode::Deprecated),
+    ("usersh", Opcode::Deprecated),
+    ("verifyhostkeydns", Opcode::NotActedOn),
+    ("versionaddendum", Opcode::NotActedOn),
+    ("visualhostkey", Opcode::NotActedOn),
+    ("xauthlocation", Opcode::NotActedOn),
 ];
 
 /// Resolves a keyword spelling to its [`Opcode`], case-insensitively.
@@ -327,7 +439,7 @@ pub(in crate::ssh) enum ValueKind {
     /// One token, read as an address-family multistate (`any`, `inet`,
     /// `inet6`). upstream: the `parse_multistate` arm
     /// (openssh/readconf.c:1264-1276) with `multistate_addressfamily`
-    /// (openssh/readconf.c:1016-1021).
+    /// (openssh/readconf.c:1038-1043).
     AddressFamily,
     /// One token, read as a keepalive multistate (`yes`/`true`/`transport`,
     /// `no`/`false`, `all`). upstream: the `parse_multistate` arm with
@@ -336,7 +448,7 @@ pub(in crate::ssh) enum ValueKind {
     /// One token, read as a public-key-auth multistate
     /// (`yes`/`true`/`no`/`false`/`unbound`/`host-bound`). upstream: the
     /// `parse_multistate` arm with `multistate_pubkey_auth`
-    /// (openssh/readconf.c:1041-1048).
+    /// (openssh/readconf.c:1086-1094).
     PubkeyAuth,
     /// One or two tokens, each an IPQoS class or DSCP value.
     /// upstream: the two-token `oIPQoS` arm (openssh/readconf.c:2148-2170).
@@ -347,7 +459,7 @@ pub(in crate::ssh) enum ValueKind {
     /// arg (openssh/readconf.c:1465-1470), and `parse_jump` likewise acts
     /// on the whole remaining string `s` (openssh/readconf.c:1730-1735).
     Command,
-    /// No shape, because no reader resolves the keyword.
+    /// No shape, because no reader parses the keyword's value.
     Unknown,
 }
 
@@ -426,7 +538,8 @@ impl Opcode {
             | Self::HostKeyAlias
             | Self::RevokedHostKeys
             | Self::CertificateFile
-            | Self::PreferredAuthentications => ValueKind::Single,
+            | Self::PreferredAuthentications
+            | Self::IgnoreUnknown => ValueKind::Single,
             Self::ConnectTimeout | Self::ServerAliveInterval => ValueKind::Time,
             Self::ConnectionAttempts
             | Self::ServerAliveCountMax
@@ -435,7 +548,11 @@ impl Opcode {
             Self::AddressFamily => ValueKind::AddressFamily,
             Self::TCPKeepAlive => ValueKind::KeepAlive,
             Self::IPQoS => ValueKind::IpQos,
-            Self::Unknown => ValueKind::Unknown,
+            Self::Ignore
+            | Self::Deprecated
+            | Self::Unsupported
+            | Self::NotActedOn
+            | Self::Unknown => ValueKind::Unknown,
         }
     }
 
@@ -526,7 +643,7 @@ pub(in crate::ssh) fn parse_flag_value(value: &str) -> Option<bool> {
 /// Returns `None` for anything outside the multistate set so a typo cannot
 /// silently flip the setting.
 ///
-/// upstream: `multistate_pubkey_auth` (openssh/readconf.c:1041-1048) accepts
+/// upstream: `multistate_pubkey_auth` (openssh/readconf.c:1086-1094) accepts
 /// `true`/`yes` (`SSH_PUBKEY_AUTH_ALL`), `false`/`no` (`SSH_PUBKEY_AUTH_NO`)
 /// and the session-bound-key selectors `unbound`/`host-bound`, all compared
 /// with `strcasecmp` (openssh/readconf.c:1109-1112). The embedded transport
@@ -624,7 +741,7 @@ pub(in crate::ssh) fn parse_time_value(value: &str) -> Option<u32> {
 /// The address family a `AddressFamily` directive selects.
 ///
 /// upstream: the three non-sentinel rows of `multistate_addressfamily`
-/// (openssh/readconf.c:1016-1021), which map to `AF_INET`, `AF_INET6` and
+/// (openssh/readconf.c:1038-1043), which map to `AF_INET`, `AF_INET6` and
 /// `AF_UNSPEC`. Kept as a reader-neutral enum so the transport, not this
 /// table, owns the mapping onto its own IP-preference knob.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -715,6 +832,30 @@ pub(in crate::ssh) fn glob_matches(input: &[u8], glob: &[u8]) -> bool {
     }
 }
 
+/// Whether `keyword` (already lowercased) is excused by an `IgnoreUnknown`
+/// list.
+///
+/// upstream: `parse_token` returns `oIgnoredUnknownOption` only when
+/// `match_pattern_list(cp, ignored_unknown, 1) == 1`
+/// (openssh/readconf.c:977-979). `match_pattern_list` cuts the list at
+/// commas, lowercases each subpattern (`dolower`), and lets a matching
+/// `!`-negated subpattern exclude the keyword outright; otherwise one
+/// positive match is required (openssh/match.c:122-172).
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn ignore_unknown_matches(keyword: &str, list: &str) -> bool {
+    let mut positive = false;
+    for sub in list.split(',') {
+        let (negated, glob) = sub.strip_prefix('!').map_or((false, sub), |g| (true, g));
+        if glob_matches(keyword.as_bytes(), glob.to_ascii_lowercase().as_bytes()) {
+            if negated {
+                return false;
+            }
+            positive = true;
+        }
+    }
+    positive
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -777,14 +918,160 @@ mod tests {
         ("SKeyAuthentication", Opcode::KbdInteractiveAuthentication),
         ("TISAuthentication", Opcode::KbdInteractiveAuthentication),
         ("DSAAuthentication", Opcode::PubkeyAuthentication),
+        // Obsolete alias, same opcode (openssh/readconf.c:245).
+        ("IdentityFile2", Opcode::IdentityFile),
+        ("IgnoreUnknown", Opcode::IgnoreUnknown),
     ];
+
+    /// Every keyword upstream openssh-portable 10.0p1 recognises
+    /// (openssh/readconf.c:192-337, 130 initialisers naming 126 spellings).
+    /// Pinned here so a keyword dropped from [`KEYWORDS`] fails as a test
+    /// rather than becoming a fatal `Bad configuration option` in a config
+    /// `ssh` accepts.
+    const UPSTREAM_10_0P1: &[&str] = &[
+        "addkeystoagent",
+        "addressfamily",
+        "afstokenpassing",
+        "batchmode",
+        "bindaddress",
+        "bindinterface",
+        "canonicaldomains",
+        "canonicalizefallbacklocal",
+        "canonicalizehostname",
+        "canonicalizemaxdots",
+        "canonicalizepermittedcnames",
+        "casignaturealgorithms",
+        "certificatefile",
+        "challengeresponseauthentication",
+        "channeltimeout",
+        "checkhostip",
+        "cipher",
+        "ciphers",
+        "clearallforwardings",
+        "compression",
+        "compressionlevel",
+        "connectionattempts",
+        "connecttimeout",
+        "controlmaster",
+        "controlpath",
+        "controlpersist",
+        "dsaauthentication",
+        "dynamicforward",
+        "enableescapecommandline",
+        "enablesshkeysign",
+        "escapechar",
+        "exitonforwardfailure",
+        "fallbacktorsh",
+        "fingerprinthash",
+        "forkafterauthentication",
+        "forwardagent",
+        "forwardx11",
+        "forwardx11timeout",
+        "forwardx11trusted",
+        "gatewayports",
+        "globalknownhostsfile",
+        "globalknownhostsfile2",
+        "gssapiauthentication",
+        "gssapidelegatecredentials",
+        "hashknownhosts",
+        "host",
+        "hostbasedacceptedalgorithms",
+        "hostbasedauthentication",
+        "hostbasedkeytypes",
+        "hostkeyalgorithms",
+        "hostkeyalias",
+        "hostname",
+        "identitiesonly",
+        "identityagent",
+        "identityfile",
+        "identityfile2",
+        "ignoreunknown",
+        "include",
+        "ipqos",
+        "kbdinteractiveauthentication",
+        "kbdinteractivedevices",
+        "keepalive",
+        "kerberosauthentication",
+        "kerberostgtpassing",
+        "kexalgorithms",
+        "knownhostscommand",
+        "localcommand",
+        "localforward",
+        "loglevel",
+        "logverbose",
+        "macs",
+        "match",
+        "nohostauthenticationforlocalhost",
+        "numberofpasswordprompts",
+        "obscurekeystroketiming",
+        "passwordauthentication",
+        "permitlocalcommand",
+        "permitremoteopen",
+        "pkcs11provider",
+        "port",
+        "preferredauthentications",
+        "protocol",
+        "proxycommand",
+        "proxyjump",
+        "proxyusefdpass",
+        "pubkeyacceptedalgorithms",
+        "pubkeyacceptedkeytypes",
+        "pubkeyauthentication",
+        "rekeylimit",
+        "remotecommand",
+        "remoteforward",
+        "requesttty",
+        "requiredrsasize",
+        "revokedhostkeys",
+        "rhostsauthentication",
+        "rhostsrsaauthentication",
+        "rsaauthentication",
+        "securitykeyprovider",
+        "sendenv",
+        "serveralivecountmax",
+        "serveraliveinterval",
+        "sessiontype",
+        "setenv",
+        "skeyauthentication",
+        "smartcarddevice",
+        "stdinnull",
+        "streamlocalbindmask",
+        "streamlocalbindunlink",
+        "stricthostkeychecking",
+        "syslogfacility",
+        "tag",
+        "tcpkeepalive",
+        "tisauthentication",
+        "tunnel",
+        "tunneldevice",
+        "updatehostkeys",
+        "useprivilegedport",
+        "user",
+        "userknownhostsfile",
+        "userknownhostsfile2",
+        "useroaming",
+        "usersh",
+        "verifyhostkeydns",
+        "versionaddendum",
+        "visualhostkey",
+        "xauthlocation",
+    ];
+
+    /// Whether the reader accepts `opcode` without acting on it.
+    fn accepted_unread(opcode: Opcode) -> bool {
+        matches!(
+            opcode,
+            Opcode::Ignore | Opcode::Deprecated | Opcode::Unsupported | Opcode::NotActedOn
+        )
+    }
 
     #[test]
     fn every_keyword_both_readers_use_resolves_from_the_one_table() {
         for (spelling, expected) in UNION {
             assert_eq!(parse_token(spelling), *expected, "keyword {spelling}");
         }
-        assert_eq!(KEYWORDS.len(), UNION.len(), "table and union disagree");
+        let acted = KEYWORDS.iter().filter(|(_, op)| !accepted_unread(*op));
+        assert_eq!(acted.count(), UNION.len(), "table and union disagree");
     }
 
     /// upstream lowercases the keyword before the table scan
@@ -801,9 +1088,86 @@ mod tests {
     /// not a function that answers every question affirmatively.
     #[test]
     fn a_keyword_outside_the_table_is_unknown() {
-        for spelling in ["forwardagent", "ciphers", "", "hostnamex", "hos"] {
+        for spelling in ["", "hostnamex", "hos", "forwardagents", "identityfile3"] {
             assert_eq!(parse_token(spelling), Opcode::Unknown, "keyword {spelling}");
         }
+    }
+
+    /// The table is upstream's, entire: every 10.0p1 spelling resolves,
+    /// and nothing else is in it.
+    #[test]
+    fn the_table_is_exactly_upstreams_keyword_set() {
+        for spelling in UPSTREAM_10_0P1 {
+            assert_ne!(parse_token(spelling), Opcode::Unknown, "keyword {spelling}");
+        }
+        assert_eq!(KEYWORDS.len(), UPSTREAM_10_0P1.len());
+    }
+
+    /// upstream's accept-and-ignore categories keep their own opcodes,
+    /// because each prints a different note (openssh/readconf.c:194-210).
+    #[test]
+    fn upstream_accept_and_ignore_categories_are_kept_apart() {
+        assert_eq!(parse_token("protocol"), Opcode::Ignore);
+        for spelling in [
+            "cipher",
+            "fallbacktorsh",
+            "globalknownhostsfile2",
+            "rhostsauthentication",
+            "userknownhostsfile2",
+            "useroaming",
+            "usersh",
+            "useprivilegedport",
+        ] {
+            assert_eq!(parse_token(spelling), Opcode::Deprecated, "{spelling}");
+        }
+        for spelling in [
+            "afstokenpassing",
+            "kerberosauthentication",
+            "kerberostgtpassing",
+            "rsaauthentication",
+            "rhostsrsaauthentication",
+            "compressionlevel",
+        ] {
+            assert_eq!(parse_token(spelling), Opcode::Unsupported, "{spelling}");
+        }
+    }
+
+    /// The options a non-interactive single-channel transfer must never
+    /// honour are accepted and NOT acted on. `RemoteCommand` above all:
+    /// honouring it would replace `rsync --server`. The build-dependent
+    /// GSSAPI and PKCS#11 keywords are accepted as a build with those
+    /// features accepts them (openssh/readconf.c:213-226).
+    #[test]
+    fn options_the_transfer_must_not_honour_are_accepted_unread() {
+        for spelling in [
+            "remotecommand",
+            "forwardagent",
+            "localforward",
+            "localcommand",
+            "permitlocalcommand",
+            "requesttty",
+            "controlmaster",
+            "gssapiauthentication",
+            "gssapidelegatecredentials",
+            "pkcs11provider",
+            "smartcarddevice",
+        ] {
+            assert_eq!(parse_token(spelling), Opcode::NotActedOn, "{spelling}");
+        }
+    }
+
+    /// `IgnoreUnknown` is `match_pattern_list(keyword, list, 1)`: comma
+    /// separated, lowercased patterns, a matching negation excludes
+    /// (openssh/match.c:122-172). Oracle: `IgnoreUnknown foo*,!foox` still
+    /// refuses `foox` under `ssh -G`.
+    #[test]
+    fn ignore_unknown_follows_match_pattern_list() {
+        assert!(ignore_unknown_matches("foobar", "foo*"));
+        assert!(ignore_unknown_matches("foobar", "x,FOO*"));
+        assert!(!ignore_unknown_matches("foox", "foo*,!foox"));
+        assert!(!ignore_unknown_matches("foox", "!foox,foo*"));
+        assert!(!ignore_unknown_matches("bar", "foo*"));
+        assert!(!ignore_unknown_matches("bar", "!foo"));
     }
 
     #[test]
@@ -946,7 +1310,7 @@ mod tests {
     }
 
     /// `parse_address_family` is the `multistate_addressfamily` set
-    /// (openssh/readconf.c:1016-1021), compared case-insensitively; a
+    /// (openssh/readconf.c:1038-1043), compared case-insensitively; a
     /// token outside it is `None` so the caller can refuse it.
     #[test]
     fn address_family_covers_the_multistate_set() {
@@ -1108,7 +1472,7 @@ mod tests {
     }
 
     /// `parse_pubkey_auth_value` is the `multistate_pubkey_auth` set
-    /// (openssh/readconf.c:1041-1048): the two bound-key selectors collapse
+    /// (openssh/readconf.c:1086-1094): the two bound-key selectors collapse
     /// onto "enabled", and a token outside the set is `None` so the caller
     /// can refuse it with the spelling. Gated with the helper, which exists
     /// only for the embedded reader.
