@@ -97,7 +97,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::ssh_config::resolve_host_str;
+use super::ssh_config::{resolve_host, resolve_host_str};
 #[cfg(feature = "ssh-config-parse")]
 use crate::ssh::config_lookup::{MatchContext, parse_enables_compression};
 
@@ -233,6 +233,16 @@ impl Differential {
     }
 }
 
+/// The `ssh` the oracle runs: `OC_RSYNC_SSH_G_BIN` when set, else `ssh`
+/// on `PATH`.
+///
+/// The reader is pinned to openssh-portable 10.0p1, so the faithful oracle
+/// is an `ssh` built from that tarball. A distribution `ssh` of another
+/// release can disagree on keywords whose arms changed between releases.
+fn oracle_ssh() -> std::ffi::OsString {
+    std::env::var_os("OC_RSYNC_SSH_G_BIN").unwrap_or_else(|| "ssh".into())
+}
+
 /// Run `ssh -G <alias> -F <path>` and parse the dump.
 ///
 /// The output shape is one `keyword value` line per option, keyword
@@ -244,14 +254,14 @@ fn upstream_dump(
     alias: &str,
 ) -> Result<(String, BTreeMap<String, Vec<String>>), Skipped> {
     native_oracle()?;
-    let version = Command::new("ssh")
+    let version = Command::new(oracle_ssh())
         .arg("-V")
         .output()
         .map_err(|_| Skipped::NoSshBinary)?;
     // `ssh -V` prints to stderr.
     let version = String::from_utf8_lossy(&version.stderr).trim().to_owned();
 
-    let out = Command::new("ssh")
+    let out = Command::new(oracle_ssh())
         .arg("-G")
         .arg("-F")
         .arg(config)
@@ -415,7 +425,7 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
 /// [`Skipped::EmulatedOracle`] for an MSYS2 or Cygwin `ssh`.
 pub(super) fn upstream_refusal(config: &Path, alias: &str) -> Result<Option<String>, Skipped> {
     native_oracle()?;
-    let out = Command::new("ssh")
+    let out = Command::new(oracle_ssh())
         .arg("-G")
         .arg("-F")
         .arg(config)
@@ -425,11 +435,11 @@ pub(super) fn upstream_refusal(config: &Path, alias: &str) -> Result<Option<Stri
     if out.status.success() {
         return Ok(None);
     }
+    // upstream ends every stderr log line in CRLF (openssh/log.c:409);
+    // the line content is what is compared.
     Ok(Some(
         String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .next()
-            .unwrap_or_default()
+            .replace("\r\n", "\n")
             .trim()
             .to_owned(),
     ))
@@ -1136,6 +1146,42 @@ mod tests {
         resolve_host_str(text, alias)
             .err()
             .map(|err| err.to_string())
+    }
+
+    /// Unknown keywords and refused lines: oc's full refusal text equals
+    /// `ssh -G`'s stderr byte for byte - every refused line in file order,
+    /// then the count (openssh/readconf.c:977-982, :1190-1199,
+    /// :2604-2613). The accepting fixtures pin the other half: upstream's
+    /// accept-and-ignore categories and the keywords oc does not act on
+    /// still load, so a valid config is never refused.
+    #[test]
+    fn refused_and_accepted_keywords_match_upstream() {
+        const FIXTURES: &[&str] = &[
+            "Host a\n  ForwardAgentx yes\n  Bogus 1\n  Port 22\n",
+            "Host other\n  Bogus 1\nHost a\n",
+            "IgnoreUnknown foo*,!foox\nfoobar 1\nfoox 2\n",
+            "foobar 1\nIgnoreUnknown foo*\n",
+            "Port\n",
+            "Bogus \"x\nPort 22\n",
+            "Port #x\nBogus 1\nHostName #y\n",
+            "ForwardAgent yes\nControlMaster auto\nRemoteCommand ls\n\
+             Ciphers aes128-ctr\nTag t\nCanonicalizeHostname no\nHost a\n",
+            "Protocol 2\nCipher x\nUseRoaming no\nRSAAuthentication yes\nHost a\n",
+        ];
+        for fixture in FIXTURES {
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("ssh_config");
+            std::fs::write(&path, fixture).expect("write fixture");
+            let upstream = match upstream_refusal(&path, "a") {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("keyword refusal parity", &why);
+                    return;
+                }
+            };
+            let oc = resolve_host(&path, "a").err().map(|err| err.to_string());
+            assert_eq!(oc, upstream, "fixture {fixture:?}");
+        }
     }
 
     /// An empty `Host` token is a HARD ERROR on both sides.
