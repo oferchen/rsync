@@ -22,6 +22,7 @@
 
 use super::error::SshError;
 use crate::ssh::config_options::{PatternListMatch, match_pattern_list};
+use logging::warn_log;
 
 /// Which algorithm list a directive configures.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -316,9 +317,9 @@ fn filter_list(proposal: &str, filter: &str, deny: bool) -> String {
 /// `<name>: invalid argument` for the three transport lists
 /// (openssh/readconf.c:2986-2997), and `HostKeyAlgorithms` fails as
 /// `expand HostKeyAlgorithms` (openssh/sshconnect2.c:245-247). A name
-/// OpenSSH knows but `map` rejects is left out; upstream would still offer
-/// it, so a list left with nothing the transport supports is refused
-/// rather than sent empty.
+/// OpenSSH knows but `map` rejects is left out with a warning naming it;
+/// upstream would still offer it, so a list left with nothing the
+/// transport supports is refused rather than sent empty.
 pub(super) fn negotiable<T>(
     list: AlgorithmList,
     spec: &str,
@@ -329,7 +330,16 @@ pub(super) fn negotiable<T>(
     let names = assemble(Some(spec), defaults, &all).map_err(|_| SshError::SshConfigFatal {
         reason: format!("{}: invalid argument", list.assembly_name()),
     })?;
-    let supported: Vec<T> = names.iter().filter_map(|name| map(name)).collect();
+    let mut supported = Vec::with_capacity(names.len());
+    for name in &names {
+        match map(name) {
+            Some(alg) => supported.push(alg),
+            None => warn_log!(
+                "{}: dropping {name}, which the embedded ssh transport cannot negotiate",
+                list.directive()
+            ),
+        }
+    }
     if supported.is_empty() {
         return Err(SshError::SshConfigFatal {
             reason: format!(
