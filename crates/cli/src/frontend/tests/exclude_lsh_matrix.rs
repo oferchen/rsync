@@ -358,7 +358,6 @@ fn exclude_lsh_leg_5_side_specific_rules_delete_before() {
 }
 
 #[test]
-#[ignore = "UTS-V3.B.F.14 pending"]
 fn exclude_lsh_leg_6_dir_merge_excl_restricted() {
     // upstream: exclude.test:217-232
     let (_tmp, fromdir) = setup_fixture();
@@ -385,12 +384,15 @@ fn exclude_lsh_leg_6_dir_merge_excl_restricted() {
     ]);
     assert_eq!(code, 0, "leg 6 exited non-zero");
 
-    // The inner foo/.excl re-permits file3, so the keeper survives even
-    // though the outer down/.excl excludes file3 from its scope.
-    assert_dest_has(&dest, "bar/down/to/foo/file3");
-    // *.bak from the inner .excl still strips file1.bak.
+    // upstream: testsuite/exclude_test.py:280-282 removes file1.bak, file3 and `+ file3`
+    // from the expected tree. Under `-` every line is an exclude pattern
+    // (exclude.c:1273), so the inner `+ file3` names the file `+ file3` and
+    // cannot re-include the file3 the outer down/.excl excludes.
+    assert_dest_missing(&dest, "bar/down/to/foo/file3");
+    assert_dest_missing(&dest, "bar/down/to/foo/+ file3");
     assert_dest_missing(&dest, "bar/down/to/foo/file1.bak");
-    // The restricted modifier `-` means the rules are exclude-only;
-    // the matched .excl entries themselves are visible (not auto-hidden).
+    assert_dest_has(&dest, "bar/down/to/foo/file1");
+    // Without the `e` modifier the merge files themselves transfer.
     assert_dest_has(&dest, "bar/down/.excl");
+    assert_dest_has(&dest, "bar/down/to/foo/.excl");
 }

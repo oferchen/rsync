@@ -697,3 +697,59 @@ fn delete_loads_the_merge_files_of_an_extraneous_directory() {
         }
     }
 }
+
+/// Task 275: `exclude.test`'s rule-restricted leg. A nested per-directory merge
+/// file's rules go ahead of the inherited ones (push_local_filters clears
+/// `lp->tail`, exclude.c:900, and add_rule then links each new rule in front,
+/// exclude.c:395-401), so an unrestricted inner `+ file3` re-includes what the
+/// outer file excludes. Under `-` (FILTRULE_NO_PREFIXES, exclude.c:1273) every
+/// line is an exclude pattern, so the same `+ file3` line names the file
+/// `+ file3` and re-includes nothing. `n` drops the outer rules below the
+/// nested directory (exclude.c:901-902). The `.excl` pair is exclude.test's
+/// (exclude_test.py:273-276); the `.rules` pair carries prefixes, so the
+/// unrestricted and `n` runs parse cleanly.
+#[test]
+fn nested_merge_file_rules_scope_like_upstream() {
+    let files = [
+        ("bar/down/.excl", "file3\n"),
+        ("bar/down/to/foo/.excl", "+ file3\n*.bak\n"),
+        ("bar/down/.rules", "- file3\n"),
+        ("bar/down/to/foo/.rules", "+ file3\n- *.bak\n"),
+        ("bar/down/to/foo/file1", "1"),
+        ("bar/down/to/foo/file1.bak", "bak"),
+        ("bar/down/to/foo/file3", "3"),
+        ("bar/down/to/foo/+ file3", "weird"),
+        ("bar/down/to/file3", "outer"),
+    ];
+    for rule in [
+        "dir-merge,-_.excl",
+        "dir-merge,n-_.excl",
+        "dir-merge_.rules",
+        "dir-merge,n_.rules",
+    ] {
+        for source in [
+            Source::Local,
+            Source::Push,
+            Source::Pull,
+            Source::DaemonPush,
+            Source::DaemonPull,
+        ] {
+            assert_parity_from(&files, &["-f", rule], source);
+        }
+    }
+    let Some(outcome) = assert_parity(&files, &["-f", "dir-merge,-_.excl"]) else {
+        return;
+    };
+    for gone in ["file3", "+ file3", "file1.bak"] {
+        let path = format!("bar/down/to/foo/{gone}");
+        assert!(
+            !outcome.transferred.contains(&path),
+            "{path} must be excluded"
+        );
+    }
+    assert!(
+        outcome
+            .transferred
+            .contains(&"bar/down/to/foo/.excl".to_owned())
+    );
+}
