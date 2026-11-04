@@ -275,6 +275,7 @@ impl PollAcceptEngine {
             Err(error) if error.kind() == io::ErrorKind::Interrupted => AcceptOutcome::Idle,
             Err(error) => {
                 warn_transient_accept_failure(self.log_sink.as_ref(), local_addr, &error);
+                // Deliberate deviation from socket.c:745-757: back off so EMFILE cannot busy-spin.
                 thread::sleep(Duration::from_millis(50));
                 AcceptOutcome::Idle
             }
@@ -301,6 +302,7 @@ impl AcceptEngine for PollAcceptEngine {
                 if let Some((_, local_addr)) = self.listeners.first() {
                     warn_transient_accept_failure(self.log_sink.as_ref(), *local_addr, &error);
                 }
+                // Deliberate deviation from socket.c:745-757: back off so EMFILE cannot busy-spin.
                 thread::sleep(Duration::from_millis(50));
                 return Ok(AcceptOutcome::Idle);
             }
@@ -445,80 +447,96 @@ impl KqueueAcceptEngine {
 
     /// Accepts exactly one connection from a ready listener.
     ///
-    /// Returns the accepted (blocking) stream on success, `Ok(None)` if the
-    /// readiness was spurious / already consumed (`WouldBlock`) or the accepted
-    /// socket could not be reset to blocking, or the fatal accept error paired
-    /// with the listener's local address. Accepted streams are reset to blocking
-    /// because BSD kernels propagate the listener's `O_NONBLOCK` to the accepted
-    /// socket, which would otherwise break the synchronous handshake reader.
-    fn accept_one(
-        &self,
-        index: usize,
-    ) -> Result<Option<(TcpStream, SocketAddr)>, (SocketAddr, io::Error)> {
+    /// Returns the accepted (blocking) stream, or `None` when there is nothing
+    /// to serve this poll; see [`Self::accepted`] for how each `accept(2)`
+    /// result is classified.
+    fn accept_one(&self, index: usize) -> Option<(TcpStream, SocketAddr)> {
         let (listener, local_addr) = &self.listeners[index];
-        let local_addr = *local_addr;
-        loop {
-            match listener.accept() {
-                Ok((stream, peer_addr)) => {
-                    if let Err(error) = stream.set_nonblocking(false) {
-                        if let Some(log) = self.log_sink.as_ref() {
-                            let text =
-                                format!("failed to set accepted socket to blocking: {error}");
-                            let message = rsync_warning!(text).with_role(Role::Daemon);
-                            log_message(log, &message);
-                        }
-                        return Ok(None);
+        self.accepted(*local_addr, listener.accept())
+    }
+
+    /// Classifies one `accept(2)` result.
+    ///
+    /// Every failure is per-connection and leaves the listener serving.
+    /// `WouldBlock` (spurious or already consumed readiness) and `EINTR` yield
+    /// `None` at once; level-triggered readiness re-fires any remaining backlog
+    /// on the next poll. Any other error - `ECONNABORTED` when a client resets
+    /// before accept takes it, `EMFILE`/`ENFILE` under a burst - is logged and
+    /// backed off so a persistent one cannot hot-spin. Accepted streams are
+    /// reset to blocking because BSD kernels propagate the listener's
+    /// `O_NONBLOCK` to the accepted socket, which would otherwise break the
+    /// synchronous handshake reader.
+    ///
+    /// upstream: socket.c:756 `if (fd < 0) continue;`
+    fn accepted(
+        &self,
+        local_addr: SocketAddr,
+        result: io::Result<(TcpStream, SocketAddr)>,
+    ) -> Option<(TcpStream, SocketAddr)> {
+        match result {
+            Ok((stream, peer_addr)) => {
+                if let Err(error) = stream.set_nonblocking(false) {
+                    if let Some(log) = self.log_sink.as_ref() {
+                        let text = format!("failed to set accepted socket to blocking: {error}");
+                        let message = rsync_warning!(text).with_role(Role::Daemon);
+                        log_message(log, &message);
                     }
-                    return Ok(Some((stream, peer_addr)));
+                    return None;
                 }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(None),
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) => return Err((local_addr, error)),
+                Some((stream, peer_addr))
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                None
+            }
+            Err(error) => {
+                warn_transient_accept_failure(self.log_sink.as_ref(), local_addr, &error);
+                // Deliberate deviation from socket.c:745-757: back off so EMFILE cannot busy-spin.
+                thread::sleep(Duration::from_millis(50));
+                None
             }
         }
+    }
+
+    /// Serves the result of one `kevent(2)` wait.
+    ///
+    /// A failed wait is as transient as a failed accept: it is logged, backed
+    /// off, and the daemon keeps serving. Otherwise exactly one connection is
+    /// taken, so every admission is preceded by the loop body's worker-reap
+    /// step.
+    ///
+    /// upstream: socket.c:746 `if (poll(pfds, nsp, -1) < 1) continue;`
+    fn serve_events(&self, waited: io::Result<Vec<fast_io::KEvent>>) -> AcceptOutcome {
+        let events = match waited {
+            Ok(events) => events,
+            Err(error) => {
+                warn_transient_accept_failure(self.log_sink.as_ref(), self.listeners[0].1, &error);
+                // Deliberate deviation from socket.c:745-757: back off so EMFILE cannot busy-spin.
+                thread::sleep(Duration::from_millis(50));
+                return AcceptOutcome::Idle;
+            }
+        };
+        events
+            .iter()
+            .map(|event| event.user_data as usize)
+            .filter(|&index| index < self.listeners.len())
+            .find_map(|index| self.accept_one(index))
+            .map_or(AcceptOutcome::Idle, |(stream, peer_addr)| {
+                AcceptOutcome::Connection(stream, peer_addr)
+            })
     }
 }
 
 #[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 impl AcceptEngine for KqueueAcceptEngine {
     fn poll(&mut self) -> Result<AcceptOutcome, DaemonError> {
-        let events = match self.kq.wait(self.wait_timeout) {
-            Ok(events) => events,
-            // EINTR is folded into an empty result by KqueueLoop::wait; any
-            // other kevent failure means the readiness surface is unusable.
-            // Surface it against the first listener so the loop body exits
-            // rather than spinning on a broken kqueue.
-            Err(error) => return Err(accept_error(self.listeners[0].1, error)),
-        };
-        if events.is_empty() {
-            // Timeout with no readiness: let the caller re-check signal flags.
-            return Ok(AcceptOutcome::Idle);
-        }
-
-        // Take exactly one connection this poll so every admission is preceded
-        // by the loop body's worker-reap step. Level-triggered readiness re-
-        // fires the remaining backlog on the next poll, so nothing is stranded.
-        let mut fatal: Option<(SocketAddr, io::Error)> = None;
-        for event in events {
-            let index = event.user_data as usize;
-            if index >= self.listeners.len() {
-                continue;
-            }
-            match self.accept_one(index) {
-                Ok(Some((stream, peer_addr))) => {
-                    return Ok(AcceptOutcome::Connection(stream, peer_addr));
-                }
-                Ok(None) => continue,
-                Err(err) => {
-                    fatal.get_or_insert(err);
-                }
-            }
-        }
-
-        if let Some((local_addr, error)) = fatal {
-            return Err(accept_error(local_addr, error));
-        }
-        Ok(AcceptOutcome::Idle)
+        // EINTR is folded into an empty result by KqueueLoop::wait, so an empty
+        // event list is a timeout or a signal: the caller re-checks its flags.
+        Ok(self.serve_events(self.kq.wait(self.wait_timeout)))
     }
 
     fn shutdown(&mut self) {
