@@ -264,8 +264,7 @@ pub(super) struct ResolvedHost {
     pub canonicalize_fallback_local: Option<bool>,
     /// `CanonicalizePermittedCNAMEs` as `(source, target)` pattern lists;
     /// an empty list is a lone `none` (openssh/readconf.c:2233-2279,
-    /// normalised as fill_default_options does at :3037-3043). Parsed and
-    /// validated only: CNAME following is not implemented.
+    /// normalised as fill_default_options does at :3037-3043).
     pub permitted_cnames: Option<Vec<(String, String)>>,
 }
 impl ResolvedHost {
@@ -355,70 +354,160 @@ fn resolve_passes(
         .unwrap_or_else(|| ctx.host_alias.to_owned());
     let family = resolved.address_family;
     let was_addr = address::is_addr(&host, family);
+    let mut found = false;
     if was_addr {
-        if let Some(addr) = address::canonical_address(&host, family)
-            && !addr.eq_ignore_ascii_case(&host)
-        {
-            host = addr;
-            resolved.hostname = Some(host.clone());
+        if let Some(addr) = address::canonical_address(&host, family) {
+            found = true;
+            if !addr.eq_ignore_ascii_case(&host) {
+                host = addr;
+                resolved.hostname = Some(host.clone());
+            }
         }
     } else {
         host.make_ascii_lowercase();
+        if canonicalize != CanonicalizeHostname::No {
+            found = canonicalize_host(resolved, &mut host, ctx.probe)?;
+        }
+    }
+    // A name canonicalization left alone is still looked up as typed when
+    // CNAMEs are permitted, so a CNAME can rename it; a direct connection
+    // to a name that does not resolve is fatal (openssh/ssh.c:1255-1273).
+    let direct = is_direct(resolved);
+    if !found
+        && resolved
+            .permitted_cnames
+            .as_ref()
+            .is_some_and(|rules| !rules.is_empty())
+        && (direct || canonicalize == CanonicalizeHostname::Always)
+    {
+        match (ctx.probe)(&host, family) {
+            Ok(cname) => follow_cname(resolved, direct, &mut host, &cname),
+            Err(reason) if direct => {
+                // upstream: "%s: Could not resolve hostname %.100s: %s"
+                // (openssh/ssh.c:274-276), then cleanup_exit(255).
+                let shown: String = host.chars().take(100).collect();
+                return Err(SshError::SshConfigFatal {
+                    reason: format!("ssh: Could not resolve hostname {shown}: {reason}"),
+                });
+            }
+            Err(_) => {}
+        }
     }
     if canonicalize == CanonicalizeHostname::No && !want_final_pass {
         return Ok(());
-    }
-    if canonicalize != CanonicalizeHostname::No && !was_addr {
-        canonicalize_host(resolved, &mut host, ctx.probe)?;
     }
     resolved.hostname = Some(host);
     pass(resolved, true, &mut false)
 }
 
-/// Asks the system resolver whether `name` resolves, honouring
-/// `AddressFamily` as upstream's `resolve_host` hints do
-/// (openssh/ssh.c:282-330). Only existence is asked: the canonical name a
-/// CNAME would give is not available through `std` (task 593).
-fn dns_resolves(name: &str, family: Option<AddressFamily>) -> bool {
-    use std::net::ToSocketAddrs;
-    (name, 0).to_socket_addrs().is_ok_and(|mut addrs| {
-        addrs.any(|addr| match family {
-            Some(AddressFamily::Inet) => addr.is_ipv4(),
-            Some(AddressFamily::Inet6) => addr.is_ipv6(),
-            Some(AddressFamily::Any) | None => true,
+/// `AI_CANONNAME`: `0x0002` in every libc and in WinSock, so the flag is
+/// spelled out rather than taken from a platform crate.
+const AI_CANONNAME: i32 = 0x0002;
+
+/// The resolver's error text before the `gai_strerror` message upstream
+/// prints on its own.
+const LOOKUP_ERROR_PREFIX: &str = "failed to lookup address information: ";
+
+/// `resolve_host` asking for the canonical name (openssh/ssh.c:253-297):
+/// `getaddrinfo` with `AddressFamily` as the family hint and
+/// `AI_CANONNAME`. The canonical name is empty when the resolver gave none
+/// or one that is not a valid domain, which upstream reports and ignores.
+fn dns_canonical_name(name: &str, family: Option<AddressFamily>) -> Result<String, String> {
+    let address = match family {
+        Some(AddressFamily::Inet) => dns_lookup::AddrFamily::Inet.into(),
+        Some(AddressFamily::Inet6) => dns_lookup::AddrFamily::Inet6.into(),
+        Some(AddressFamily::Any) | None => 0,
+    };
+    let hints = dns_lookup::AddrInfoHints {
+        flags: AI_CANONNAME,
+        address,
+        socktype: dns_lookup::SockType::Stream.into(),
+        protocol: 0,
+    };
+    let reason = |err: &dyn std::fmt::Display| {
+        let text = err.to_string();
+        text.strip_prefix(LOOKUP_ERROR_PREFIX)
+            .map_or_else(|| text.clone(), str::to_owned)
+    };
+    let first = dns_lookup::getaddrinfo(Some(name), None, Some(hints))
+        .map_err(|err| reason(&err))?
+        .next()
+        .ok_or_else(|| "Name or service not known".to_owned())?
+        .map_err(|err| reason(&err))?;
+    Ok(first.canonname.map_or_else(String::new, |cname| {
+        valid_domain(&cname, false).unwrap_or_else(|why| {
+            warn_log!("ignoring bad CNAME \"{cname}\" for host \"{name}\": {why}");
+            String::new()
         })
-    })
+    }))
 }
 
-/// A port of `resolve_canonicalize` for a host that is not an address,
-/// without CNAME following (openssh/ssh.c:427-521): a direct connection (or any,
-/// under `always`) whose name has at most `CanonicalizeMaxDots` dots tries
-/// each `CanonicalDomains` suffix in order and takes the first that
-/// resolves; a name with a trailing dot is tried as it stands.
-fn canonicalize_host(
-    resolved: &ResolvedHost,
-    host: &mut String,
-    probe: CanonicalProbe,
-) -> Result<(), SshError> {
+/// Whether the connection dials the host itself rather than through
+/// `ProxyCommand`/`ProxyJump` (openssh/ssh.c:466-467, :1263-1264).
+fn is_direct(resolved: &ResolvedHost) -> bool {
     let unset_or_none = |slot: &Option<String>| {
         slot.as_deref()
             .is_none_or(|value| value.eq_ignore_ascii_case("none"))
     };
-    let direct = unset_or_none(&resolved.proxy_command) && unset_or_none(&resolved.jump_hosts);
+    unset_or_none(&resolved.proxy_command) && unset_or_none(&resolved.jump_hosts)
+}
+
+/// `check_follow_cname` (openssh/ssh.c:387-421): replaces `name` with the
+/// `cname` its lookup reported when canonicalization is on (and the
+/// connection direct, unless it is `always`) and a
+/// `CanonicalizePermittedCNAMEs` rule's source list matches `name` and its
+/// target list matches `cname`.
+fn follow_cname(resolved: &ResolvedHost, direct: bool, name: &mut String, cname: &str) {
+    let Some(rules) = resolved.permitted_cnames.as_deref() else {
+        return;
+    };
+    if cname.is_empty() || rules.is_empty() || name == cname {
+        return;
+    }
+    match resolved
+        .canonicalize_hostname
+        .unwrap_or(CanonicalizeHostname::No)
+    {
+        CanonicalizeHostname::No => return,
+        CanonicalizeHostname::Yes if !direct => return,
+        _ => {}
+    }
+    let permitted = rules.iter().any(|(source, target)| {
+        match_pattern_list(name, source, true) == PatternListMatch::Positive
+            && match_pattern_list(cname, target, true) == PatternListMatch::Positive
+    });
+    if permitted {
+        *name = cname.to_owned();
+    }
+}
+
+/// A port of `resolve_canonicalize` for a host that is not an address
+/// (openssh/ssh.c:427-521): a direct connection (or any, under `always`)
+/// whose name has at most `CanonicalizeMaxDots` dots tries each
+/// `CanonicalDomains` suffix in order and takes the first that resolves; a
+/// name with a trailing dot is tried as it stands. The name found may then
+/// follow its CNAME ([`follow_cname`]). Returns whether a name was found.
+fn canonicalize_host(
+    resolved: &ResolvedHost,
+    host: &mut String,
+    probe: CanonicalProbe,
+) -> Result<bool, SshError> {
+    let direct = is_direct(resolved);
     if !direct && resolved.canonicalize_hostname != Some(CanonicalizeHostname::Always) {
-        return Ok(());
+        return Ok(false);
     }
     let family = resolved.address_family;
     if host.ends_with('.') {
-        if probe(host, family) {
+        if let Ok(cname) = probe(host, family) {
             host.pop();
-            return Ok(());
+            follow_cname(resolved, direct, host, &cname);
+            return Ok(true);
         }
     } else {
         let max_dots = resolved.canonicalize_max_dots.unwrap_or(1);
         let dots = host.bytes().filter(|&b| b == b'.').count();
         if dots > max_dots as usize {
-            return Ok(());
+            return Ok(false);
         }
         let domains = resolved.canonical_domains.as_deref().unwrap_or_default();
         for domain in domains {
@@ -426,9 +515,10 @@ fn canonicalize_host(
                 break;
             }
             let full = format!("{host}.{domain}.");
-            if probe(&full, family) {
+            if let Ok(cname) = probe(&full, family) {
                 *host = full[..full.len() - 1].to_owned();
-                return Ok(());
+                follow_cname(resolved, direct, host, &cname);
+                return Ok(true);
             }
         }
     }
@@ -439,7 +529,7 @@ fn canonicalize_host(
             reason: format!("ssh: Could not resolve host \"{host}\""),
         });
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Applies the one expansion upstream performs as soon as the options are
@@ -631,7 +721,7 @@ pub(super) fn resolve_host_str_with_users(
         host_alias,
         remote_user,
         local_user,
-        probe: dns_resolves,
+        probe: dns_canonical_name,
     };
     resolve_host_str_with_ctx(text, &ctx)
 }
@@ -687,14 +777,16 @@ struct MatchCtx<'a> {
     host_alias: &'a str,
     remote_user: &'a str,
     local_user: &'a str,
-    /// Answers whether a canonicalization candidate resolves. The live
-    /// resolver is [`dns_resolves`]; tests substitute a fixed table.
+    /// Resolves a canonicalization candidate. The live resolver is
+    /// [`dns_canonical_name`]; tests substitute a fixed table.
     probe: CanonicalProbe,
 }
 
 /// The resolver question canonicalization asks: does this name resolve
-/// under this `AddressFamily`?
-type CanonicalProbe = fn(&str, Option<AddressFamily>) -> bool;
+/// under this `AddressFamily`, and to which canonical name? `Ok` carries
+/// the canonical name (empty when there is none), `Err` the resolver's
+/// reason.
+type CanonicalProbe = fn(&str, Option<AddressFamily>) -> Result<String, String>;
 
 impl<'a> MatchCtx<'a> {
     /// A context for the passive resolvers, whose only connection input is
@@ -709,7 +801,7 @@ impl<'a> MatchCtx<'a> {
             host_alias,
             remote_user: "",
             local_user: local_user_buf.as_str(),
-            probe: dns_resolves,
+            probe: dns_canonical_name,
         }
     }
 
@@ -728,7 +820,7 @@ impl<'a> MatchCtx<'a> {
             host_alias,
             remote_user,
             local_user: local_user_buf.as_str(),
-            probe: dns_resolves,
+            probe: dns_canonical_name,
         }
     }
 
@@ -1466,7 +1558,7 @@ impl FileScan<'_, '_> {
                 .into());
             }
             if opcode == Opcode::CanonicalDomains {
-                domains.push(valid_domain(tok).map_err(|e| refuse(self.path, linenum, e))?);
+                domains.push(valid_domain(tok, true).map_err(|e| refuse(self.path, linenum, e))?);
             } else if !is_none {
                 // `*` stands for both lists; anything else is
                 // `source:target`, lowercased first (:2250-2265).
@@ -2291,12 +2383,21 @@ mod tests {
         resolve_host_str_with_ctx(text, &ctx)
     }
 
-    fn knows_web(name: &str, _: Option<AddressFamily>) -> bool {
-        name == "web.second.test." || name == "web.third.test." || name == "anchored.test."
+    /// A fake resolver's answer: `name` resolves with no canonical name.
+    fn resolves(known: bool) -> Result<String, String> {
+        known
+            .then(String::new)
+            .ok_or_else(|| "Name or service not known".to_owned())
     }
 
-    fn knows_web_v6_only(name: &str, family: Option<AddressFamily>) -> bool {
-        name == "web.first.test." && family != Some(AddressFamily::Inet)
+    fn knows_web(name: &str, _: Option<AddressFamily>) -> Result<String, String> {
+        resolves(
+            name == "web.second.test." || name == "web.third.test." || name == "anchored.test.",
+        )
+    }
+
+    fn knows_web_v6_only(name: &str, family: Option<AddressFamily>) -> Result<String, String> {
+        resolves(name == "web.first.test." && family != Some(AddressFamily::Inet))
     }
 
     /// `Match user`/`localuser` lists split on commas only and compare
@@ -2315,6 +2416,119 @@ mod tests {
         assert_eq!(port("user R"), None);
         assert_eq!(port("localuser \"x l\""), None);
         assert_eq!(port("localuser x,,l"), Some(2222));
+    }
+
+    /// A resolver whose names are CNAMEs: `web.corp.test` and the bare
+    /// `www.dots.test` alias `edge.cdn.test`, `same.corp.test` is its own
+    /// canonical name, and nothing else resolves.
+    fn cname_table(name: &str, _: Option<AddressFamily>) -> Result<String, String> {
+        match name {
+            "web.corp.test." | "www.dots.test" => Ok("edge.cdn.test".to_owned()),
+            "same.corp.test." => Ok("same.corp.test".to_owned()),
+            _ => Err("Name or service not known".to_owned()),
+        }
+    }
+
+    /// `check_follow_cname` (openssh/ssh.c:387-421): a found name takes its
+    /// CNAME only when a rule's source list matches the name and its target
+    /// list the CNAME, on a direct connection or under `always`.
+    #[test]
+    fn a_permitted_cname_replaces_the_canonical_name() {
+        let base = "CanonicalizeHostname yes\nCanonicalDomains corp.test\n";
+        let always = "CanonicalizeHostname always\nCanonicalDomains corp.test\n";
+        let proxied = "ProxyCommand nc %h %p\n";
+        for (text, alias, hostname) in [
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *.corp.test:*.cdn.test\n"),
+                "web",
+                "edge.cdn.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *.corp.test:*.other.test\n"),
+                "web",
+                "web.corp.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *.else.test:*.cdn.test\n"),
+                "web",
+                "web.corp.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *.else.test:*.x *.corp.test:edge.*\n"),
+                "web",
+                "edge.cdn.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *:*\n"),
+                "web.corp.test.",
+                "edge.cdn.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs none\n"),
+                "web",
+                "web.corp.test",
+            ),
+            (
+                format!("{base}CanonicalizePermittedCNAMEs *:*\n"),
+                "same",
+                "same.corp.test",
+            ),
+            (
+                format!("{base}{proxied}CanonicalizePermittedCNAMEs *:*\n"),
+                "web",
+                "web",
+            ),
+            (
+                format!("{always}{proxied}CanonicalizePermittedCNAMEs *:*\n"),
+                "web",
+                "edge.cdn.test",
+            ),
+        ] {
+            let got = resolve_probed(&text, alias, cname_table).expect("accepted");
+            assert_eq!(got.hostname.as_deref(), Some(hostname), "{text:?}");
+        }
+    }
+
+    /// A name canonicalization did not find is looked up as typed when
+    /// CNAMEs are permitted (openssh/ssh.c:1255-1273): it may follow a CNAME
+    /// (only with canonicalization on), and on a direct connection a name
+    /// that does not resolve is fatal even with canonicalization off.
+    #[test]
+    fn a_bare_name_is_looked_up_when_cnames_are_permitted() {
+        let rules = "CanonicalizePermittedCNAMEs *:*\n";
+        let followed = format!("CanonicalizeHostname yes\nCanonicalizeMaxDots 0\n{rules}");
+        let got = resolve_probed(&followed, "www.dots.test", cname_table).expect("accepted");
+        assert_eq!(got.hostname.as_deref(), Some("edge.cdn.test"));
+        let proxied_always =
+            format!("CanonicalizeHostname always\nCanonicalizeMaxDots 0\nProxyJump j\n{rules}");
+        let got = resolve_probed(&proxied_always, "www.dots.test", cname_table).expect("accepted");
+        assert_eq!(got.hostname.as_deref(), Some("edge.cdn.test"));
+
+        let got = resolve_probed(rules, "www.dots.test", cname_table).expect("accepted");
+        assert_eq!(got.hostname, None, "canonicalization off follows no CNAME");
+
+        let err = resolve_probed(rules, "missing", cname_table).expect_err("direct");
+        assert_eq!(
+            err.to_string(),
+            "ssh: Could not resolve hostname missing: Name or service not known"
+        );
+        let proxied = format!("ProxyCommand nc %h %p\n{rules}");
+        let got = resolve_probed(&proxied, "missing", cname_table).expect("proxied");
+        assert_eq!(got.hostname, None);
+        let always = format!("CanonicalizeHostname always\nProxyJump j\n{rules}");
+        let got = resolve_probed(&always, "missing", cname_table).expect("proxied, always");
+        assert_eq!(got.hostname.as_deref(), Some("missing"));
+
+        assert!(
+            resolve_probed("", "missing", cname_table).is_ok(),
+            "no rules, no lookup"
+        );
+        // An address is canonicalized without a lookup (:1246-1247), and a
+        // resolver that reports no canonical name renames nothing (:390).
+        assert!(resolve_probed(rules, "127.1", cname_table).is_ok());
+        let no_cname = format!("CanonicalizeHostname yes\nCanonicalDomains second.test\n{rules}");
+        let got = resolve_probed(&no_cname, "web", knows_web).expect("accepted");
+        assert_eq!(got.hostname.as_deref(), Some("web.second.test"));
     }
 
     /// The suffixes are tried in order and the first that resolves wins;
@@ -2426,17 +2640,18 @@ mod tests {
         );
     }
 
-    /// The live resolver keeps only addresses of the configured family, as
-    /// upstream's `ai_family` hint does (openssh/ssh.c:282-330). Literal
+    /// The live resolver passes `AddressFamily` as the family hint, as
+    /// upstream's `resolve_host` does (openssh/ssh.c:269-270). Literal
     /// addresses resolve without DNS, so the cell is deterministic.
     #[test]
     fn the_live_probe_honours_address_family() {
-        assert!(dns_resolves("127.0.0.1", Some(AddressFamily::Inet)));
-        assert!(dns_resolves("127.0.0.1", Some(AddressFamily::Any)));
-        assert!(dns_resolves("127.0.0.1", None));
-        assert!(!dns_resolves("127.0.0.1", Some(AddressFamily::Inet6)));
-        assert!(dns_resolves("::1", Some(AddressFamily::Inet6)));
-        assert!(!dns_resolves("::1", Some(AddressFamily::Inet)));
+        let resolves = |name, family| dns_canonical_name(name, family).is_ok();
+        assert!(resolves("127.0.0.1", Some(AddressFamily::Inet)));
+        assert!(resolves("127.0.0.1", Some(AddressFamily::Any)));
+        assert!(resolves("127.0.0.1", None));
+        assert!(!resolves("127.0.0.1", Some(AddressFamily::Inet6)));
+        assert!(resolves("::1", Some(AddressFamily::Inet6)));
+        assert!(!resolves("::1", Some(AddressFamily::Inet)));
     }
 
     /// With fallback off, a name no suffix resolves is refused
