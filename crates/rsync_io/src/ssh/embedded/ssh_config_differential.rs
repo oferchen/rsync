@@ -1114,6 +1114,224 @@ mod tests {
         assert_eq!(produced + skipped, FIXTURES.len(), "a fixture went missing");
     }
 
+    /// One realistic configuration of the corpus: the files to write (the
+    /// first is the one `-F` names; `{dir}` becomes the temp directory) and
+    /// the aliases to resolve against it.
+    struct CorpusCase {
+        name: &'static str,
+        files: &'static [(&'static str, &'static str)],
+        aliases: &'static [&'static str],
+    }
+
+    /// The epic gate's corpus: layouts real configs use, each resolved for
+    /// several aliases so both the matching and the non-matching paths are
+    /// compared. Bastions with `ProxyJump` and `Match`, `Include`
+    /// directories with globs, `%h`/`%%` expansion, every `Match`
+    /// criterion oc evaluates, the algorithm lists, `RekeyLimit`, `Tag`,
+    /// and canonicalization without DNS.
+    const CORPUS: &[CorpusCase] = &[
+        CorpusCase {
+            name: "bastion_proxyjump_match",
+            files: &[(
+                "ssh_config",
+                "Host bastion\n  HostName bastion.example.com\n  User jump\n  Port 2222\n\
+                 Host *.internal\n  ProxyJump bastion\n  User deploy\n\
+                 Match host db.internal\n  Port 5432\n  ConnectTimeout 9\n\
+                 Match originalhost web.internal\n  ServerAliveInterval 15\n\
+                 Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 4\n  Compression yes\n",
+            )],
+            aliases: &[
+                "db.internal",
+                "web.internal",
+                "bastion",
+                "other.example.com",
+            ],
+        },
+        CorpusCase {
+            name: "include_directory",
+            files: &[
+                (
+                    "ssh_config",
+                    "Include {dir}/conf.d/*.conf\nHost *\n  User fallback\n  Port 22\n",
+                ),
+                (
+                    "conf.d/10-web.conf",
+                    "Host web*\n  HostName %h.example.com\n  Port 2200\n  AddressFamily inet\n",
+                ),
+                (
+                    "conf.d/20-db.conf",
+                    "Host db\n  HostName 10.0.0.9\n  User dba\n  IdentityFile ~/.ssh/db_key\n  \
+                     IdentitiesOnly yes\n\
+                     Host web1\n  Port 9999\n  User webuser\n",
+                ),
+                ("conf.d/README", "this file is not matched by the glob\n"),
+            ],
+            aliases: &["web1", "web2", "db", "zzz"],
+        },
+        CorpusCase {
+            name: "nested_include_and_match_final",
+            files: &[
+                (
+                    "ssh_config",
+                    "Host *\n  Include {dir}/inner\nMatch final host *.corp\n  User finaluser\n",
+                ),
+                (
+                    "inner",
+                    "Host app\n  HostName app.corp\nHost app2\n  HostName APP2.CORP\n  User early\n",
+                ),
+            ],
+            aliases: &["app", "app2", "elsewhere"],
+        },
+        CorpusCase {
+            name: "token_expansion",
+            files: &[(
+                "ssh_config",
+                "Host t*\n  HostName %h.lan\nHost x\n  HostName %%literal\n\
+                 Host y\n  HostName prefix-%h-%%\nHost Z\n  HostName %h\n",
+            )],
+            aliases: &["t1", "x", "y", "Z"],
+        },
+        CorpusCase {
+            name: "match_criteria",
+            files: &[(
+                "ssh_config",
+                "Match originalhost alias1\n  Port 1001\n\
+                 Host alias1\n  HostName real.example.com\n\
+                 Match host real.example.com !originalhost skipme\n  User matched\n\
+                 Match !host *.example.com\n  ConnectTimeout 3\n\
+                 Match all\n  ServerAliveCountMax 6\n\
+                 Match originalhost real.example.com\n  ServerAliveInterval 44\n\
+                 Host *\n  ServerAliveInterval 55\n",
+            )],
+            aliases: &["alias1", "skipme", "plain"],
+        },
+        CorpusCase {
+            name: "crypto_rekey_tag",
+            files: &[(
+                "ssh_config",
+                "Host secure*\n  Ciphers +aes128-cbc\n  MACs -umac*\n  \
+                 KexAlgorithms ^curve25519-sha256\n  HostKeyAlgorithms ssh-ed25519,rsa-sha2-512\n  \
+                 RekeyLimit 512M 1h\n  Tag prod\n\
+                 Match tagged prod\n  AddressFamily inet6\n\
+                 Host legacy\n  Ciphers aes256-ctr,aes128-ctr\n  KexAlgorithms -sntrup*,mlkem*\n  \
+                 RekeyLimit default none\n",
+            )],
+            aliases: &["secure1", "legacy", "plain"],
+        },
+        CorpusCase {
+            name: "canonicalization_without_dns",
+            files: &[(
+                "ssh_config",
+                "CanonicalizeHostname yes\nCanonicalDomains none\nCanonicalizeMaxDots 2\n\
+                 Host jumped\n  ProxyJump bastion\n\
+                 Match canonical host short\n  User canonical\n\
+                 Match canonical host jumped\n  Port 2022\n",
+            )],
+            aliases: &["Short", "jumped", "a.b.c.d"],
+        },
+    ];
+
+    /// What one corpus comparison found.
+    #[derive(Default)]
+    struct CorpusTally {
+        compared: usize,
+        matched: usize,
+        representation: usize,
+        mismatches: Vec<String>,
+    }
+
+    /// Whether a mismatch is only upstream dumping `~` before expanding it
+    /// (see `identityfile_is_dumped_unexpanded_by_upstream`): the same
+    /// file, named in two spellings.
+    fn tilde_only(cell: &Cell) -> bool {
+        let Some(oc) = &cell.oc else { return false };
+        let Some(home) = std::env::var_os("HOME") else {
+            return false;
+        };
+        let home = Path::new(&home);
+        cell.expansion == Expansion::Unexpanded
+            && cell.upstream.len() == oc.len()
+            && cell.upstream.iter().zip(oc).all(|(up, ours)| {
+                up.strip_prefix("~/")
+                    .map_or(up == ours, |rest| Path::new(ours) == home.join(rest))
+            })
+    }
+
+    /// THE EPIC GATE (task 359): over the whole corpus, every row oc resolves
+    /// agrees with `ssh -G` from the pinned 10.0p1 build. A `Mismatch`
+    /// fails the gate with every divergence listed, not just the first. A
+    /// floor on the number of matched rows keeps the gate from passing
+    /// vacuously if oc stopped resolving rows.
+    #[test]
+    fn corpus_matches_the_oracle_on_every_resolved_row() {
+        let mut tally = CorpusTally::default();
+        for case in CORPUS {
+            let dir = test_support::create_tempdir();
+            let root = dir.path().display().to_string();
+            for (name, text) in case.files {
+                let path = dir.path().join(name);
+                std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+                std::fs::write(&path, text.replace("{dir}", &root)).expect("write corpus file");
+            }
+            let top = dir.path().join(case.files[0].0);
+            let top_text = case.files[0].1.replace("{dir}", &root);
+            for alias in case.aliases {
+                let diff = match differential(&top, &top_text, alias) {
+                    Ok(d) => d,
+                    Err(why) => {
+                        report_skip(&format!("corpus {} / {alias}", case.name), &why);
+                        return;
+                    }
+                };
+                if !pinned_oracle(&diff, "corpus gate") {
+                    return;
+                }
+                for cell in &diff.cells {
+                    match cell.verdict {
+                        Verdict::Match => {
+                            tally.compared += 1;
+                            tally.matched += 1;
+                        }
+                        Verdict::Mismatch if tilde_only(cell) => {
+                            tally.compared += 1;
+                            tally.representation += 1;
+                        }
+                        Verdict::Mismatch => {
+                            tally.compared += 1;
+                            tally.mismatches.push(format!(
+                                "{} / {alias} / {}: upstream {:?} vs oc {:?}",
+                                case.name, cell.keyword, cell.upstream, cell.oc
+                            ));
+                        }
+                        Verdict::NotResolvedByOc | Verdict::OcUnset => {}
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "ssh -G corpus gate: {} rows compared, {} matched, {} tilde-only, {} mismatched",
+            tally.compared,
+            tally.matched,
+            tally.representation,
+            tally.mismatches.len()
+        );
+        assert!(
+            tally.mismatches.is_empty(),
+            "corpus divergences:\n{}",
+            tally.mismatches.join("\n")
+        );
+        // 7 cases, 24 aliases; the floor is the measured count.
+        assert!(
+            tally.matched >= MIN_CORPUS_MATCHES,
+            "only {} rows matched",
+            tally.matched
+        );
+    }
+
+    /// The measured number of matched corpus rows: a drop
+    /// means oc stopped resolving a row the gate used to prove.
+    const MIN_CORPUS_MATCHES: usize = 329;
+
     /// Materialise a fixture and ask `ssh -G` whether it REFUSES the file.
     fn refusal(text: &str, alias: &str) -> Result<Option<String>, Skipped> {
         let dir = test_support::create_tempdir();
