@@ -200,7 +200,11 @@ fn apply_hardlink_fields(
     let _ = metadata;
 }
 
-/// Captures a file entry to the batch file using the protocol wire format.
+/// Captures a file entry to the batch file and to the wire model, using the
+/// protocol wire format.
+///
+/// `readdir_index` is the entry's position in its directory's `readdir()`
+/// order, which is the order upstream sends a file list in.
 ///
 /// When batch mode is active, encodes the file entry using the protocol
 /// flist wire encoder (same format as network transfers) and writes the
@@ -217,8 +221,10 @@ pub(crate) fn capture_batch_file_entry(
     relative_path: &Path,
     metadata: &fs::Metadata,
     is_top_dir: bool,
+    readdir_index: u32,
 ) -> Result<(), LocalCopyError> {
-    if context.batch_writer().is_none() {
+    let batch = context.batch_writer().is_some();
+    if !batch && !context.wire_tally_active() {
         return Ok(());
     }
 
@@ -226,6 +232,19 @@ pub(crate) fn capture_batch_file_entry(
     let numeric_ids = context.numeric_ids_enabled();
     #[cfg(not(unix))]
     let numeric_ids = true;
+
+    if !batch {
+        // The wire model attaches owner names only where the writer emits
+        // them, so the entry it keeps is built without any. Its xattrs ride
+        // in the file list (flist.c:2058-2068 send_file_name()).
+        let mut entry =
+            build_protocol_file_entry(source_path, relative_path, metadata, is_top_dir, true);
+        let preserve = context.options().preserve_xattrs();
+        let report = capture_batch_xattrs(context, source_path, destination, &mut entry, preserve);
+        let wire = report.as_ref().map(XattrReport::wire_lengths);
+        context.tally_flist_entry(entry, readdir_index, wire);
+        return Ok(());
+    }
 
     // The stream flags recorded in the header are what the reader configures
     // itself from, so the hardlink decision has to come from the same place.
@@ -243,8 +262,18 @@ pub(crate) fn capture_batch_file_entry(
         numeric_ids,
     );
     apply_hardlink_fields(&mut entry, metadata, hlink_group, protocol_version);
-    let xattr_report = capture_batch_xattrs(context, source_path, destination, &mut entry);
-    context.set_batch_xattr_report(xattr_report);
+    let xattr_report = capture_batch_xattrs(
+        context,
+        source_path,
+        destination,
+        &mut entry,
+        context.batch_preserve_xattrs(),
+    );
+    if context.wire_tally_active() {
+        let wire = xattr_report.as_ref().map(XattrReport::wire_lengths);
+        context.tally_flist_entry(entry.clone(), readdir_index, wire);
+    }
+    context.set_batch_xattr_report(xattr_report.map(|report| report.sender));
     let acl = if context.batch_preserve_acls() {
         read_batch_source_acl(source_path, &entry, context.options().fake_super_enabled())
     } else {
@@ -307,7 +336,8 @@ fn capture_batch_xattrs(
     source_path: &Path,
     destination: &Path,
     entry: &mut protocol::flist::FileEntry,
-) -> Option<Vec<u8>> {
+    preserve: bool,
+) -> Option<XattrReport> {
     let options = context.options();
     let readable = protocol::xattr::entry_carries_xattrs(
         entry,
@@ -315,7 +345,7 @@ fn capture_batch_xattrs(
         options.devices_enabled(),
         options.specials_enabled(),
     );
-    if !context.batch_preserve_xattrs() || !readable {
+    if !preserve || !readable {
         return None;
     }
     let rules = context
@@ -350,7 +380,8 @@ fn capture_batch_xattrs(
     let dest = ::metadata::read_xattrs_for_wire(destination, &dest_opts).unwrap_or_default();
     let report = protocol::xattr::xattr_diff(&list, &dest, 0).then(|| {
         let mut request = list.clone();
-        for value in request.entries_mut() {
+        let mut todo = Vec::new();
+        for (index, value) in request.entries_mut().iter_mut().enumerate() {
             // upstream: xattrs.c:612-618 - only a long value is ever requested,
             // and only when the destination does not hold the same one.
             let held = dest
@@ -359,12 +390,18 @@ fn capture_batch_xattrs(
                 .any(|d| d.name() == value.name() && d.datum() == value.datum());
             if value.should_abbreviate() && !held {
                 value.mark_todo();
+                todo.push(index);
             }
         }
-        let mut block = Vec::new();
-        protocol::xattr::send_sender_xattr_response(&mut block, &mut request)
+        // upstream: generator.c:598-605 - the generator names the values it
+        // wants; sender.c:482-484 - the sender answers with them.
+        let mut generator = Vec::new();
+        protocol::xattr::send_xattr_request(&mut generator, &todo)
             .expect("writing to a Vec cannot fail");
-        block
+        let mut sender = Vec::new();
+        protocol::xattr::send_sender_xattr_response(&mut sender, &mut request)
+            .expect("writing to a Vec cannot fail");
+        XattrReport { generator, sender }
     });
     if !list.is_empty() {
         entry.set_xattr_list(list);
@@ -379,8 +416,24 @@ fn capture_batch_xattrs(
     _source_path: &Path,
     _destination: &Path,
     _entry: &mut protocol::flist::FileEntry,
-) -> Option<Vec<u8>> {
+    _preserve: bool,
+) -> Option<XattrReport> {
     None
+}
+
+/// The two blocks an entry's ITEM_REPORT_XATTR adds after its iflags.
+struct XattrReport {
+    /// The generator's request: the numbers of the values it wants.
+    generator: Vec<u8>,
+    /// The sender's answer: those values in full.
+    sender: Vec<u8>,
+}
+
+impl XattrReport {
+    /// `(generator, sender)` byte counts, as the wire model takes them.
+    fn wire_lengths(&self) -> (u64, u64) {
+        (self.generator.len() as u64, self.sender.len() as u64)
+    }
 }
 
 /// Reads a source entry's access ACL and, for a directory, its default ACL -
