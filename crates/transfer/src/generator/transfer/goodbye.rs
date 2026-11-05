@@ -196,9 +196,9 @@ impl GeneratorContext {
     /// is the point after which the peer stops reading, so anything the sender
     /// still owes the peer must already be on the wire.
     ///
-    /// The flush after the sender's `NDX_DONE` is the only barrier the
-    /// handshake needs: upstream's blocking `read_ndx_and_attrs()` drains the
-    /// output buffer in `perform_io()` before it waits for input.
+    /// Nothing is flushed here: the final read writes the buffered output
+    /// out before it waits, as upstream's `read_ndx_and_attrs()` does inside
+    /// `perform_io()` (io.c:766-768).
     pub(in crate::generator) fn answer_goodbye<R: Read, W: Write>(
         &mut self,
         reader: &mut R,
@@ -233,8 +233,7 @@ impl GeneratorContext {
                         self.delete_stats.total()
                     );
                 }
-                ndx_write_codec.write_ndx_done(writer)?;
-                writer.flush()
+                ndx_write_codec.write_ndx_done(writer)
             })();
 
             // A peer that closed early surfaces through the final read below:

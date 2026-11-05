@@ -10,9 +10,12 @@
 //! spliced in ahead of its first multiplexed frame, replayed into a fresh
 //! `oc-rsync --server`. The transcript is deterministic under the
 //! `TranscriptRecorder` normalization, so the replayed server's output
-//! must equal the recorded one plus exactly the forwarded frame: anything
-//! else (the raw text on stdout, a missing frame, a desynchronised tail)
-//! fails the cell.
+//! must carry what the recorded one carries plus exactly the forwarded
+//! frame: anything else (the raw text on stdout, a missing frame, a
+//! desynchronised tail) fails the cell. Frame boundaries are compared only
+//! through what the frames carry: a server writes its buffered output when
+//! it waits for input (io.c:766-768), and a replay that hands it the whole
+//! script up front waits less often than the live transfer did.
 
 #![cfg(unix)]
 
@@ -122,32 +125,76 @@ enum ServerSide {
     Sender,
 }
 
-/// Zeroes a pull server's end-of-transfer stats frame: the `MSG_DATA` frame
-/// just before the trailing 5-byte `NDX_DONE` goodbye frame.
+/// A server->client stream taken apart: the unframed handshake, the
+/// `MSG_DATA` payload as one run, and every other frame in order, each with
+/// the count of data bytes sent ahead of it.
+#[derive(Debug, PartialEq)]
+struct Demuxed {
+    head: Vec<u8>,
+    data: Vec<u8>,
+    messages: Vec<(usize, u8, Vec<u8>)>,
+}
+
+/// Splits `stream` at the smallest offset from which whole frames parse
+/// exactly to its end; the bytes before it are the unframed handshake.
+fn demux(stream: &[u8]) -> Demuxed {
+    (0..stream.len())
+        .find_map(|start| demux_from(stream, start))
+        .expect("no multiplexed tail in the server output")
+}
+
+fn demux_from(stream: &[u8], start: usize) -> Option<Demuxed> {
+    let mut out = Demuxed {
+        head: stream[..start].to_vec(),
+        data: Vec::new(),
+        messages: Vec::new(),
+    };
+    let mut rest = &stream[start..];
+    let mut frames = 0;
+    while !rest.is_empty() {
+        let header = u32::from_le_bytes(rest.get(..4)?.try_into().ok()?);
+        let tag = u8::try_from(header >> 24).ok()?.checked_sub(MPLEX_BASE)?;
+        let len = (header & 0x00FF_FFFF) as usize;
+        let payload = rest.get(4..4 + len)?;
+        if tag == MSG_DATA {
+            out.data.extend_from_slice(payload);
+        } else {
+            out.messages.push((out.data.len(), tag, payload.to_vec()));
+        }
+        rest = &rest[4 + len..];
+        frames += 1;
+    }
+    (frames > 1).then_some(out)
+}
+
+/// The most a pull server's data can carry after the last byte two runs
+/// share: five varlong30 stats values of up to nine bytes each, then the
+/// one-byte `NDX_DONE` goodbye.
 ///
-/// It carries `total_read`, `total_written`, `total_size` and the flist
+/// The stats are `total_read`, `total_written`, `total_size` and the flist
 /// timings (upstream: main.c:345-358 handle_stats()). The timings are wall
 /// clock, `total_written` grows by the forwarded frame, and `total_read`
 /// counts bytes read ahead from the socket, which a replay that delivers the
-/// whole script at once inflates - so the frame is excluded from the
-/// byte-identity check rather than predicted.
-fn mask_sender_stats(stream: &mut [u8]) {
-    const GOODBYE: [u8; 5] = [1, 0, 0, MPLEX_BASE + MSG_DATA, 0];
-    let end = stream.len() - GOODBYE.len();
-    assert_eq!(
-        stream[end..],
-        GOODBYE,
-        "a pull must end with the NDX_DONE goodbye"
+/// whole script at once inflates - so they are excluded from the comparison
+/// rather than predicted.
+const STATS_TAIL: usize = 5 * 9 + 1;
+
+fn assert_same_data_but_stats(left: &[u8], right: &[u8]) {
+    for data in [left, right] {
+        assert_eq!(
+            data.last(),
+            Some(&0),
+            "a pull must end with the NDX_DONE goodbye"
+        );
+    }
+    let keep = left.len().min(right.len()).saturating_sub(STATS_TAIL);
+    assert!(
+        left[..keep] == right[..keep],
+        "Sender: removing the forwarded frame must leave the recorded data ahead \
+         of the stats ({} vs {} bytes)",
+        left.len(),
+        right.len()
     );
-    let start = (0..end.saturating_sub(4))
-        .rev()
-        .find(|&i| {
-            let header = u32::from_le_bytes(stream[i..i + 4].try_into().unwrap());
-            header >> 24 == u32::from(MPLEX_BASE + MSG_DATA)
-                && (header & 0x00FF_FFFF) as usize == end - i - 4
-        })
-        .expect("stats frame before the goodbye");
-    stream[start + 4..end].fill(0);
 }
 
 /// Records one rsh transfer, replays its client->server stream into a fresh
@@ -256,18 +303,25 @@ fn assert_server_frames_peer_info(side: ServerSide) {
     );
     let mut left = replayed;
     left.drain(framed_at[0]..framed_at[0] + forwarded.len());
-    let mut right = recorded.server_to_client;
-    if let ServerSide::Sender = side {
-        mask_sender_stats(&mut left);
-        mask_sender_stats(&mut right);
-    }
-    assert!(
-        left == right,
-        "{side:?}: removing the forwarded frame must leave the recorded \
-         server->client stream ({} vs {} bytes)",
-        left.len(),
-        right.len()
+    let (left, right) = (demux(&left), demux(&recorded.server_to_client));
+    assert_eq!(
+        left.head, right.head,
+        "{side:?}: the handshake must not change"
     );
+    assert_eq!(
+        left.messages, right.messages,
+        "{side:?}: no frame but the forwarded one may be added, changed or moved"
+    );
+    match side {
+        ServerSide::Receiver => assert!(
+            left.data == right.data,
+            "Receiver: removing the forwarded frame must leave the recorded data \
+             ({} vs {} bytes)",
+            left.data.len(),
+            right.data.len()
+        ),
+        ServerSide::Sender => assert_same_data_but_stats(&left.data, &right.data),
+    }
 }
 
 /// WHY: on an rsh server, stdout is the stream. A peer's `MSG_INFO` written

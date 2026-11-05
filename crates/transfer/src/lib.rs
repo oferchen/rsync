@@ -646,6 +646,67 @@ pub fn run_server_stdio(
     stdout: &mut dyn Write,
     progress: Option<&mut dyn TransferProgressCallback>,
 ) -> ServerResult {
+    let handshake = server_stdio_handshake(&config, stdin, stdout)?;
+    run_server_with_handshake(config, handshake, stdin, stdout, progress, None, None)
+}
+
+/// [`run_server_stdio`] over the process's own standard input and output
+/// descriptors, which the transport core polls together (upstream:
+/// main.c:1304-1305 sets both non-blocking for perform_io()).
+///
+/// `stdin` and `stdout` are handles on descriptors 0 and 1. Every byte from
+/// the version exchange on crosses the one transport core, so `--timeout`
+/// bounds the handshake as well as the transfer (upstream: io.c:335
+/// safe_read() checks it too).
+///
+/// # Errors
+///
+/// As [`run_server_stdio`], plus the error switching the descriptors to
+/// non-blocking mode.
+#[cfg(unix)]
+pub fn run_server_fds(
+    config: ServerConfig,
+    stdin: std::fs::File,
+    stdout: std::fs::File,
+    progress: Option<&mut dyn TransferProgressCallback>,
+) -> ServerResult {
+    let transport = fast_io::transport::FdTransport::pair(stdin, stdout)?;
+    let timeout = iobuf::IoTimeout::new(
+        config.connection.io_timeout.map(u64::from),
+        io_timeout_who(config.role),
+    );
+    let core = iobuf::Core::new(Box::new(transport), Vec::new(), timeout);
+    let handshake = server_stdio_handshake(
+        &config,
+        &mut iobuf::CoreReader::new(&core),
+        &mut iobuf::CoreWriter::new(&core),
+    )?;
+    run_server_on_core(
+        config,
+        handshake,
+        core,
+        ServerTransferHooks {
+            progress,
+            ..ServerTransferHooks::default()
+        },
+    )
+}
+
+/// The role name `--timeout` reports, as upstream's who_am_i() does before the
+/// receiver side forks (upstream: rsync.c:991-994).
+fn io_timeout_who(role: ServerRole) -> &'static str {
+    match role {
+        ServerRole::Generator => "sender",
+        ServerRole::Receiver => "Receiver",
+    }
+}
+
+/// The `--server` side of the version exchange over standard I/O.
+fn server_stdio_handshake(
+    config: &ServerConfig,
+    stdin: &mut dyn Read,
+    stdout: &mut dyn Write,
+) -> io::Result<HandshakeResult> {
     // upstream: compat.c:602-604 - the non-local server reconciles the client's
     // pre-release subprotocol (carried in its `-e` capability string) before it
     // writes its protocol version. For a stock release peer this is a no-op and
@@ -663,7 +724,7 @@ pub fn run_server_stdio(
     // `ceil(N/2)`. Without a forwarded `--timeout` this stays `None` and the
     // wire is unchanged.
     handshake.io_timeout = config.connection.io_timeout.map(u64::from);
-    run_server_with_handshake(config, handshake, stdin, stdout, progress, None, None)
+    Ok(handshake)
 }
 
 /// Executes the native server with a pre-negotiated protocol version.
@@ -814,9 +875,25 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 /// As [`run_server_with_handshake_adopting`].
 #[cfg_attr(feature = "tracing", instrument(skip(transport, hooks), fields(role = ?config.role, protocol = %handshake.protocol)))]
 pub fn run_server_over_transport<'a>(
-    mut config: ServerConfig,
+    config: ServerConfig,
     mut handshake: HandshakeResult,
     transport: Box<dyn fast_io::transport::Transport + 'a>,
+    hooks: ServerTransferHooks<'_, '_>,
+) -> ServerResult {
+    // The handshake reader may have buffered compat exchange bytes (TCP
+    // coalescing in daemon mode); the core serves them before reading more,
+    // since discarding them breaks protocol negotiation.
+    let pending = std::mem::take(&mut handshake.buffered);
+    let timeout = iobuf::IoTimeout::new(handshake.io_timeout, io_timeout_who(config.role));
+    let core = iobuf::Core::new(transport, pending, timeout);
+    run_server_on_core(config, handshake, core, hooks)
+}
+
+/// The server transfer from protocol setup on, over `core`.
+fn run_server_on_core(
+    mut config: ServerConfig,
+    mut handshake: HandshakeResult,
+    core: iobuf::SharedCore<'_>,
     hooks: ServerTransferHooks<'_, '_>,
 ) -> ServerResult {
     let ServerTransferHooks {
@@ -840,12 +917,6 @@ pub fn run_server_over_transport<'a>(
 
     // upstream: setup_protocol() skips binary exchange when remote_protocol != 0
     // (already set by @RSYNCD greeting or SSH handshake).
-    let buffered_data = std::mem::take(&mut handshake.buffered);
-
-    // The handshake BufReader may have buffered compat exchange bytes (TCP
-    // coalescing in daemon mode); the core serves them before reading more,
-    // since discarding them breaks protocol negotiation.
-    let core = iobuf::Core::new(transport, buffered_data);
     let mut stdin = iobuf::CoreReader::new(&core);
     let mut stdout = iobuf::CoreWriter::new(&core);
 
@@ -1099,24 +1170,22 @@ pub fn run_server_over_transport<'a>(
         });
     }
 
-    // upstream: main.c:1096 - only the sender paces its outbound writes; the
-    // receiver sets `bwlimit_writemax = 0`. On this server body that is the
-    // Generator role (SSH `--server --sender`, a client push, or a daemon-sender
-    // on a pull). Install the limiter at the bottom of the writer stack so it
-    // paces the exact wire bytes the descriptor accepts (io.c:952,979), below
-    // the multiplex framer.
-    let throttled_stdout = writer::ThrottlingWriter::new(stdout, sender_bandwidth_limiter(&config));
-
     // upstream: io.c:977 - stats.total_written counts every byte the raw
-    // descriptor accepts, multiplex frame headers included, in perform_io().
-    // Wrap the transport below the multiplex framer so the shared counter
-    // mirrors that raw wire total; the sender samples it at its handle_stats
-    // point (main.c:334-335) and reports it as "Total bytes sent".
-    let counting_stdout = writer::CountingWriter::new_shared(throttled_stdout);
-    let bytes_sent_counter = counting_stdout.counter();
+    // descriptor accepts, multiplex frame headers included, in perform_io();
+    // the sender samples it at its handle_stats point (main.c:334-335) and
+    // reports it as "Total bytes sent". upstream: main.c:1096 - only the
+    // sender paces its outbound writes; the receiver sets
+    // `bwlimit_writemax = 0`. On this server body that is the Generator role
+    // (SSH `--server --sender`, a client push, or a daemon-sender on a pull).
+    let bytes_sent_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    iobuf::Core::start_output_accounting(
+        &core,
+        std::sync::Arc::clone(&bytes_sent_counter),
+        sender_bandwidth_limiter(&config),
+    );
 
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
-    let mut writer = writer::ServerWriter::new_plain(counting_stdout);
+    let mut writer = writer::ServerWriter::new_plain(stdout);
 
     let mplex_out = requires_multiplex_output(
         config.connection.client_mode,
@@ -1133,6 +1202,9 @@ pub fn run_server_over_transport<'a>(
                 writer::MessageRoute::resolve(config.connection.msgs2stderr, handshake.protocol),
                 handshake.protocol,
             );
+        }
+        if let Some(mux) = writer.mux_out() {
+            iobuf::Core::attach_mux(&core, mux);
         }
     }
 
