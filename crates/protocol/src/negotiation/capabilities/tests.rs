@@ -1400,7 +1400,7 @@ fn test_checksum_with_whitespace() {
 #[test]
 fn test_compression_with_leading_trailing_space() {
     // split_whitespace handles leading/trailing spaces
-    let list = "  zlib   zlibx  none  ";
+    let list = "  zlib     none  ";
     let result = choose_compression_algorithm(list, true).unwrap();
     assert_eq!(result, CompressionAlgorithm::Zlib);
 }
@@ -2358,28 +2358,22 @@ fn phase5_negotiate_mixed_supported_unsupported() {
 
 #[test]
 fn phase5_negotiate_order_preference() {
-    // First supported algorithm should win
-    let list1 = "xxh128 md5 sha1";
-    let list2 = "md5 xxh128 sha1";
-    let list3 = "sha1 md5 xxh128";
-
-    assert_eq!(
-        choose_checksum_algorithm(list1, true).unwrap(),
-        ChecksumAlgorithm::XXH128
-    );
-    assert_eq!(
-        choose_checksum_algorithm(list2, true).unwrap(),
-        ChecksumAlgorithm::MD5
-    );
-    assert_eq!(
-        choose_checksum_algorithm(list3, true).unwrap(),
-        ChecksumAlgorithm::SHA1
-    );
+    // The peer's ordering never changes the result: each side keeps the
+    // mutual name it ranks best itself (compat.c:333-366).
+    for list in ["xxh128 md5 sha1", "md5 xxh128 sha1", "sha1 md5 xxh128"] {
+        for is_server in [true, false] {
+            assert_eq!(
+                choose_checksum_algorithm(list, is_server).unwrap(),
+                ChecksumAlgorithm::XXH128,
+                "{list} (server: {is_server})"
+            );
+        }
+    }
 }
 
 #[test]
 fn phase5_negotiate_xxh3_support() {
-    let list = "xxh3 xxh128";
+    let list = "md5 xxh3";
     let result = choose_checksum_algorithm(list, true).unwrap();
     assert_eq!(result, ChecksumAlgorithm::XXH3);
 }
@@ -2617,8 +2611,9 @@ fn capability_fallback_unknown_compression_strings() {
 fn capability_fallback_mixed_unknown_known_checksum() {
     let remote_list = "blake3 blake2b sha1 md5";
     let result = choose_checksum_algorithm(remote_list, true).unwrap();
-    // Should skip unknown and pick first known (sha1)
-    assert_eq!(result, ChecksumAlgorithm::SHA1);
+    // Unknown names are skipped; of the known ones the server ranks md5
+    // above sha1.
+    assert_eq!(result, ChecksumAlgorithm::MD5);
 }
 
 /// Tests mixed known and unknown compressions - unknown first.
@@ -2854,11 +2849,11 @@ fn capability_fallback_no_varint_flist_flags() {
 /// Tests graceful handling when remote sends preference order we disagree with.
 #[test]
 fn capability_fallback_disagreeing_preference_order() {
-    // Remote prefers md4 over md5, but we still respect their order
+    // The remote prefers md4 over md5; the server keeps its own ranking
+    // and picks md5 (compat.c:333-366).
     let remote_list = "md4 md5 sha1";
     let result = choose_checksum_algorithm(remote_list, true).unwrap();
-    // We pick first from THEIR list that we support
-    assert_eq!(result, ChecksumAlgorithm::MD4);
+    assert_eq!(result, ChecksumAlgorithm::MD5);
 }
 
 /// Tests that we handle duplicate algorithm names gracefully.
@@ -3292,15 +3287,14 @@ fn negotiate_picks_best_validated_algorithm() {
 }
 
 #[test]
-fn test_choose_checksum_server_picks_first_client_match() {
-    // Server iterates remote (client's) list, picks first entry in server's local list.
-    // upstream 3.4.x compat.c:353 `if (best == 1 || am_server) break;`. Deviation
-    // from upstream 3.5.1: compat.c:354 dropped the `am_server` arm.
+fn test_choose_checksum_server_picks_its_own_best_preference() {
+    // The server keeps the mutual name its own list ranks best, not the
+    // client's first acceptable one: 3.5.1 dropped 3.4.x's `|| am_server`
+    // early break (compat.c:333-366 `parse_negotiate_str`).
     // Client sends: md5 xxh128 xxh3
-    // Server supports: xxh128 xxh3 xxh64 md5 md4 sha1 none
-    // Server iterates client list: md5 is first match → picks md5
+    // Server prefers: xxh128 xxh3 xxh64 md5 md4 sha1 none
     let result = choose_checksum_algorithm("md5 xxh128 xxh3", true).unwrap();
-    assert_eq!(result, ChecksumAlgorithm::MD5);
+    assert_eq!(result, ChecksumAlgorithm::XXH128);
 }
 
 #[test]
@@ -3325,10 +3319,11 @@ fn test_choose_checksum_server_client_converge_when_same_order() {
 }
 
 #[test]
-fn test_choose_compression_server_picks_first_client_match() {
-    // Server iterates remote (client's) list, picks first entry in server's local list.
+fn test_choose_compression_server_picks_its_own_best_preference() {
+    // upstream: compat.c:333-366 - the server ranks by its own list
+    // (zstd lz4 zlibx zlib none), so zlibx beats the client's leading zlib.
     let result = choose_compression_algorithm("zlib zlibx none", true).unwrap();
-    assert_eq!(result, CompressionAlgorithm::Zlib);
+    assert_eq!(result, CompressionAlgorithm::ZlibX);
 }
 
 #[test]
