@@ -111,7 +111,7 @@ pub use skip_compress::{SkipCompressList, SkipCompressParseError};
 pub(crate) use compressor::ActiveCompressor;
 pub(crate) use context::{
     CopyContext, CopyOutcome, CreatedEntryKind, DeferredUpdate, FinalizeMetadataParams,
-    MATCHED_NONE, MetadataPathContext, OwnedPathContext,
+    MATCHED_NONE, MetadataPathContext, OwnedPathContext, SourceAttrs,
 };
 
 #[allow(unused_imports)] // REASON: convenience re-export; not all items used in every module
@@ -136,10 +136,10 @@ pub use hard_links::{HardlinkApplyResult, HardlinkApplyTracker};
 pub(crate) use metadata_sync::map_metadata_error;
 
 #[cfg(all(any(unix, windows), feature = "xattr"))]
-pub(crate) use metadata_sync::xattrs_differ_from_source;
+pub(crate) use metadata_sync::xattrs_differ;
 
 #[cfg(all(any(unix, windows), feature = "acl"))]
-pub(crate) use metadata_sync::sync_acls_if_requested;
+pub(crate) use metadata_sync::{apply_source_acls_if_requested, sync_acls_if_requested};
 
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) use metadata_sync::{

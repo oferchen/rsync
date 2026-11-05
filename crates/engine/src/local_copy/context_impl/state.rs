@@ -108,6 +108,7 @@ impl<'a> CopyContext<'a> {
             batch_pending_entries: Vec::new(),
             batch_pending_acls: Vec::new(),
             batch_xattr_report: None,
+            entry_attrs: SourceAttrs::default(),
             batch_traversal_to_ndx: None,
             batch_list_count: 1,
             batch_pending_sublists: Vec::new(),
@@ -422,6 +423,7 @@ impl<'a> CopyContext<'a> {
             mode,
             path_context,
             pre_transfer_meta,
+            source_attrs,
             #[cfg(unix)]
             fd,
             #[cfg(all(unix, feature = "xattr"))]
@@ -429,6 +431,7 @@ impl<'a> CopyContext<'a> {
             #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls,
         } = params;
+        let source_attrs = source_attrs.unwrap_or_else(|| self.take_entry_attrs());
         #[cfg(not(unix))]
         let _ = pre_transfer_meta;
 
@@ -518,7 +521,7 @@ impl<'a> CopyContext<'a> {
             sync_xattrs_if_requested(
                 preserve_xattrs,
                 mode,
-                source,
+                source_attrs.xattrs.as_ref(),
                 destination,
                 true,
                 self.filter_program.as_ref(),
@@ -537,11 +540,12 @@ impl<'a> CopyContext<'a> {
 
         #[cfg(all(any(unix, windows), feature = "acl"))]
         {
-            sync_acls_if_requested(
+            apply_source_acls_if_requested(
                 preserve_acls,
                 self.options.fake_super_enabled(),
                 mode,
                 source,
+                &source_attrs,
                 destination,
                 true,
                 Some(self.destination_root()),
@@ -549,7 +553,7 @@ impl<'a> CopyContext<'a> {
         }
 
         #[cfg(not(any(all(unix, feature = "xattr"), all(any(unix, windows), feature = "acl"))))]
-        let _ = mode;
+        let _ = (mode, source_attrs);
 
         // upstream: xattrs.c:set_stat_xattr() reads the *source* stat via
         // x_lstat() (get_stat_xattr layered over lstat), so a placeholder that
