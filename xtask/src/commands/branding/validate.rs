@@ -115,8 +115,10 @@ pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
     Ok(())
 }
 
+// The daemon paths are Unix install locations, so they must start at `/` on
+// every build host; `Path::is_absolute` would demand a drive prefix on Windows.
 fn ensure_absolute(path: &Path, label: &str) -> TaskResult<()> {
-    if !path.is_absolute() {
+    if !path.as_os_str().as_encoded_bytes().starts_with(b"/") {
         return Err(TaskError::Validation(format!(
             "{label} '{}' must be an absolute path",
             path.display()

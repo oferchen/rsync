@@ -82,7 +82,7 @@ clippy, nextest (stable), Windows (stable), macOS (stable), Linux musl
 | Criterion | Linux | macOS | Windows |
 |-----------|-------|-------|---------|
 | T1-1 required native gate | Yes - `nextest (stable)` and `Linux musl (stable)` gating (`ci.yml` jobs `test`, `linux-musl`) | Yes - `macOS (stable)` gating (`ci.yml` job `macos-test`) | Yes - `Windows (stable)` gating (`ci.yml` job `windows-test`) |
-| T1-2 native test scope | Yes - full workspace, all features (`ci.yml` `test` job: `cargo nextest run --workspace --all-features`) | Partial - required cell runs core, engine, cli, metadata, apple-fs, fast_io; transfer and daemon crates are not in any macOS cell | Partial - required cell runs core, engine, cli, then metadata, fast_io, transfer; daemon crate runs in the separate non-gating `windows-daemon` job |
+| T1-2 native test scope | Yes - full workspace, all features (`ci.yml` `test` job: `cargo nextest run --workspace --all-features`) | Partial - required cell runs core, engine, cli, metadata, apple-fs, fast_io; transfer and daemon crates are not in any macOS cell | Yes - full workspace, all features (`ci.yml` `windows-test` job: `cargo nextest run --workspace --all-features`) |
 | T1-3 upstream-testsuite legs | Yes - four legs ({nonroot, root} x {pipe, tcp}), all four gating, manifests committed (`_upstream-testsuite.yml`) | Yes (non-gating) - four legs run on every PR with committed macOS manifests (`_upstream-testsuite-macos.yml`); registering the contexts as required is pending repo-admin action | No - no Windows upstream-testsuite workflow exists |
 | T1-4 interop harness | Yes - gating (`interop / interop with upstream rsync`, `_interop.yml`) | Yes (non-gating) - smoke harness against Homebrew rsync runs on every PR (`_interop-macos.yml`); not in the ruleset | Partial - best-effort smoke against MSYS2 rsync with `continue-on-error: true` (`_interop-windows.yml`), so a failure is invisible on the PR |
 | T1-5 metadata fidelity | Yes - POSIX ACLs, xattrs, devices, FIFOs (`exacl`, `crates/metadata/`) | Yes - ACLs, flat-namespace xattrs, AppleDouble resource forks (`crates/apple-fs/`) | Partial - NTFS DACL mapping drops deny ACEs, inherited ACEs, the SACL, and non-rwx bits with a one-time warning, not a per-entry counted outcome (`crates/metadata/src/acl_windows/posix_map.rs`); xattrs ship via NTFS ADS and preflight accepts `--xattrs` when built with the `xattr` feature (`crates/cli/.../workflow/preflight.rs:244-252`); devices/FIFOs/sockets are counted skips with per-entry warnings |
@@ -94,7 +94,7 @@ clippy, nextest (stable), Windows (stable), macOS (stable), Linux musl
 Windows also carries eight scheduled nightly workflows (case folding,
 daemon, IOCP, long paths, NTFS ACL, OpenSSH, reparse symlinks, xattr/ADS
 - `windows-nightly-*.yml`) plus non-gating PR jobs `windows-iocp`,
-`windows-acl-xattr`, `windows-daemon`, and `windows-gnu-cross-check`.
+`windows-acl-xattr`, and `windows-gnu-cross-check`.
 These are depth, not gates; they do not satisfy T1-3 or T1-4.
 
 Reading of the table: Linux meets every Tier 1 criterion and is the

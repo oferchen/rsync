@@ -68,6 +68,13 @@ path = "src/bin/transcript-ab.rs"
 # Stand-in for an orphaned `oc-rsync --daemon`: carries the production SIGTERM
 # disposition and never exits on its own, so `ReapOnDrop` can be tested against
 # a child that genuinely survives SIGTERM.
+# Cargo target runner that gives every test process a private temp directory,
+# so tempfile names drawn by different processes cannot collide (see
+# src/tmp_runner.rs). CI selects it on Windows via CARGO_TARGET_<TRIPLE>_RUNNER.
+[[bin]]
+name = "tmp-runner"
+path = "src/bin/tmp-runner.rs"
+
 [[bin]]
 name = "sigterm-flag-stub"
 path = "src/bin/sigterm-flag-stub.rs"
