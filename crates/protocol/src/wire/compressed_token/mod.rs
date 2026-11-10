@@ -59,17 +59,39 @@ use std::io::{self, Write};
 pub use self::decoder::CompressedTokenDecoder;
 pub use self::encoder::CompressedTokenEncoder;
 
-/// Wraps a compression library failure as a protocol data stream error.
+/// A compression library failure, carrying the line upstream prints for it.
 ///
-/// The error is [`io::ErrorKind::InvalidData`], which the exit-code mapper
-/// reports as `RERR_STREAMIO` (12).
-///
-/// upstream: token.c - every deflate, inflate, ZSTD and LZ4 failure ends in
-/// `exit_cleanup(RERR_STREAMIO)` (token.c:449-450, :505-507, :626-628,
-/// :667-668, :723-724, :803-804, :902-903, :980-981, :1046-1047); only a
+/// Every deflate, inflate, ZSTD and LZ4 failure in upstream's token codec is
+/// `rprintf(FERROR, ...)` with a fixed format, then
+/// `exit_cleanup(RERR_STREAMIO)`; the line is that format, filled in. Only a
 /// failed codec init is `RERR_PROTOCOL`.
-pub(super) fn codec_error(error: impl std::fmt::Display) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, error.to_string())
+///
+/// upstream: token.c:449-450, :505-507, :626-628, :641-643, :667-668,
+/// :723-724, :803-804, :902-903, :980-981, :1046-1047
+#[derive(Debug)]
+pub struct CodecFailure(String);
+
+impl CodecFailure {
+    /// The codec failure `error` carries, if it is one.
+    #[must_use]
+    pub fn of(error: &io::Error) -> Option<&Self> {
+        error.get_ref()?.downcast_ref()
+    }
+}
+
+impl std::fmt::Display for CodecFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for CodecFailure {}
+
+/// Builds the [`io::ErrorKind::InvalidData`] error for a codec failure whose
+/// upstream line is `line`; the exit-code mapper reports it as
+/// `RERR_STREAMIO` (12).
+pub(super) fn codec_failure(line: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, CodecFailure(line))
 }
 
 /// End of file marker.

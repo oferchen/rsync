@@ -8,12 +8,12 @@
 
 use std::io::{self, Read};
 
-use zstd::stream::raw::{Decoder as ZstdRawDecoder, Operation};
+use zstd::zstd_safe::{DCtx, InBuffer, OutBuffer};
 
 #[cfg(feature = "tokio-transfer")]
 use super::super::step::drive_async;
 use super::super::step::{DeflateSink, TokenDecodeCore, drive_sync};
-use super::super::{CompressedToken, MAX_DATA_COUNT, codec_error};
+use super::super::{CompressedToken, MAX_DATA_COUNT, codec_failure};
 
 /// Zstd decoder state for receiving compressed tokens.
 ///
@@ -52,7 +52,7 @@ pub(in crate::wire::compressed_token) struct ZstdTokenDecoder {
 /// never reset between files (lines 866-869 only reset rx_token)
 struct ZstdDeflate {
     /// Persistent zstd decompression context.
-    decoder: ZstdRawDecoder<'static>,
+    decoder: DCtx<'static>,
     /// Scratch buffer for decompression output.
     /// upstream: out_buffer_size = ZSTD_DStreamOutSize() * 2
     output_buf: Vec<u8>,
@@ -85,14 +85,19 @@ impl DeflateSink for ZstdDeflate {
         // upstream: token.c:895-919 r_inflating - one ZSTD_decompressStream
         // into the fixed out_buffer_size dbuf; its output is returned before
         // any more input is decompressed.
-        let mut in_buf =
-            zstd::stream::raw::InBuffer::around(&self.compressed_input_buf[self.input_pos..]);
-        let mut out_buf = zstd::stream::raw::OutBuffer::around(self.output_buf.as_mut_slice());
-        self.decoder
-            .run(&mut in_buf, &mut out_buf)
-            .map_err(codec_error)?;
-        self.input_pos += in_buf.pos();
+        let mut in_buf = InBuffer::around(&self.compressed_input_buf[self.input_pos..]);
+        let mut out_buf = OutBuffer::around(self.output_buf.as_mut_slice());
+        let result = self.decoder.decompress_stream(&mut out_buf, &mut in_buf);
         let produced = out_buf.pos();
+        if let Err(code) = result {
+            // upstream: token.c:899-903 - `%d` of the size_t error code prints
+            // its low 32 bits as a negative int.
+            return Err(codec_failure(format!(
+                "ZSTD decomp returned {} ({produced} bytes)",
+                code as i32
+            )));
+        }
+        self.input_pos += in_buf.pos();
         output.extend_from_slice(&self.output_buf[..produced]);
         // upstream: token.c:911-912 - input consumed and output buffer not full
         // means the block is finished; read the next flag.
@@ -105,9 +110,11 @@ impl ZstdTokenDecoder {
     /// The `ZSTD_DCtx` lives for the whole transfer session and is never reset
     /// between files; see the type-level documentation.
     pub(in crate::wire::compressed_token) fn new() -> io::Result<Self> {
-        let decoder = ZstdRawDecoder::new()?;
+        // upstream: token.c:847-851 - a fresh DCtx, no parameters.
+        let decoder =
+            DCtx::try_create().ok_or_else(|| io::Error::other("ZSTD_createDStream failed"))?;
         // upstream: token.c line 854 - out_buffer_size = ZSTD_DStreamOutSize() * 2
-        let out_size = zstd::zstd_safe::DCtx::out_size() * 2;
+        let out_size = DCtx::out_size() * 2;
         Ok(Self {
             core: TokenDecodeCore::new(false),
             deflate: ZstdDeflate {

@@ -18,12 +18,18 @@
 //! (upstream: io.c:264-266 check_timeout()). The client still exits with
 //! its own 12 (cleanup.c:113-117), so the cells assert that no side reported
 //! the timeout, not only the exit code.
+//!
+//! The receiver's report is the codec's own line, then log_exit()'s trailer:
+//! `rprintf(FERROR, ...)` before `exit_cleanup(RERR_STREAMIO)` (token.c:667,
+//! token.c:902). The pull cells pin both lines and, when a 3.5.1 binary is
+//! installed, compare them with 3.5.1 at both ends.
 #![cfg(unix)]
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use test_support::{
-    CliOutput, LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binaries,
+    CliOutput, LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, UpstreamVersion, create_tempdir,
+    require_binaries, require_upstream_rsync,
 };
 
 /// A 300 KB pseudo-random file, so the stream holds several compressed blocks.
@@ -59,18 +65,20 @@ fn rewriting_rsh(root: &Path, from: &str, to: &str) -> PathBuf {
     script
 }
 
-fn run(root: &Path, client_choice: &str, rsh: &Path, pull: bool) -> CliOutput {
+/// Runs `bin` at both ends; the destination is recreated for each run.
+fn run(bin: &Path, root: &Path, client_choice: &str, rsh: &Path, pull: bool) -> CliOutput {
     let src = source(root);
     let dest = root.join("dest");
+    if dest.exists() {
+        fs::remove_dir_all(&dest).expect("clear dest");
+    }
     fs::create_dir_all(&dest).expect("mkdir dest");
     let runner = OcRsyncCliRunner::new()
+        .binary(bin)
         .args(["-r", "-z", "--timeout=5"])
         .arg(format!("--compress-choice={client_choice}"))
         .arg(format!("--rsh={}", rsh.display()))
-        .arg(format!(
-            "--rsync-path={}",
-            test_support::oc_rsync_bin().display()
-        ));
+        .arg(format!("--rsync-path={}", bin.display()));
     let runner = if pull {
         runner
             .arg(format!("localhost:{}/", src.display()))
@@ -94,25 +102,120 @@ fn assert_streamio_without_timeout(out: &CliOutput) {
     );
 }
 
-/// The client receiver fails to decode the server's zlib stream as zstd. It
-/// must exit 12 instead of waiting forever on a server that is still waiting
-/// for input.
-#[test]
-fn pull_with_mismatched_compressors_exits_streamio() {
+/// The receiver's report: its cause line, then the trailer's message with the
+/// program name, source position and version left out.
+fn receiver_report(out: &CliOutput) -> (String, String) {
+    let stderr = out.stderr_str();
+    let lines: Vec<&str> = stderr.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.contains("[receiver="))
+        .unwrap_or_else(|| panic!("no receiver trailer, stderr:\n{stderr}"));
+    assert!(
+        at > 0,
+        "no cause line before the trailer, stderr:\n{stderr}"
+    );
+    let message = lines[at]
+        .split_once(" error: ")
+        .and_then(|(_, rest)| rest.split_once(" at "))
+        .map(|(message, _)| message)
+        .unwrap_or_else(|| panic!("malformed trailer: {}", lines[at]));
+    (lines[at - 1].to_owned(), message.to_owned())
+}
+
+/// Pulls with the client decompressing `client_choice` while the server,
+/// told `server_option`, compresses with another codec. The client receiver
+/// must exit 12 at once with `expected` as its cause line, the same report
+/// 3.5.1 gives for the same desync.
+fn assert_pull_desync_report(client_choice: &str, server_option: &str, expected: &str) {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
     let tmp = create_tempdir();
     // upstream: options.c:2994-2999 server_options() - a zlib choice is sent
     // as --old-compress, any other codec as --compress-choice=NAME.
-    let rsh = rewriting_rsh(tmp.path(), "--compress-choice=zstd", "--old-compress");
-    assert_streamio_without_timeout(&run(tmp.path(), "zstd", &rsh, true));
+    let sent = if client_choice == "zlib" {
+        "--old-compress".to_owned()
+    } else {
+        format!("--compress-choice={client_choice}")
+    };
+    let rsh = rewriting_rsh(tmp.path(), &sent, server_option);
+    let oc = run(
+        &test_support::oc_rsync_bin(),
+        tmp.path(),
+        client_choice,
+        &rsh,
+        true,
+    );
+    assert_streamio_without_timeout(&oc);
+    let report = receiver_report(&oc);
+    assert_eq!(
+        report,
+        (
+            expected.to_owned(),
+            "error in rsync protocol data stream (code 12)".to_owned()
+        )
+    );
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
+        let reference = run(upstream.binary(), tmp.path(), client_choice, &rsh, true);
+        reference.assert_exit(12);
+        assert_eq!(
+            receiver_report(&reference),
+            report,
+            "oc pull against 3.5.1 pull"
+        );
+    }
+}
+
+/// The client receiver fails to decode the server's zlib stream as zstd.
+///
+/// upstream: token.c:899-903 - ZSTD_decompressStream() rejects the zlib
+/// bytes as an unknown frame descriptor (ZSTD_error_prefix_unknown, 10).
+#[test]
+fn pull_zstd_client_of_a_zlib_stream_reports_the_zstd_failure() {
+    assert_pull_desync_report(
+        "zstd",
+        "--old-compress",
+        "ZSTD decomp returned -10 (0 bytes)",
+    );
+}
+
+/// The client receiver fails to inflate the server's zstd stream.
+///
+/// upstream: token.c:664-668 - inflate() returns Z_DATA_ERROR (-3) before
+/// producing any output.
+#[test]
+fn pull_zlib_client_of_a_zstd_stream_reports_the_inflate_failure() {
+    assert_pull_desync_report(
+        "zlib",
+        "--compress-choice=zstd",
+        "inflate returned -3 (0 bytes)",
+    );
 }
 
 /// The server receiver fails to decode the client's zlib stream as zstd and
 /// exits 12, which the client reports.
+///
+/// 3.5.1's server receiver prints the same codec line, but its client does
+/// not show it (measured), so this cell pins only oc's line.
 #[test]
 fn push_with_mismatched_compressors_exits_streamio() {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
     let tmp = create_tempdir();
     let rsh = rewriting_rsh(tmp.path(), "--old-compress", "--compress-choice=zstd");
-    assert_streamio_without_timeout(&run(tmp.path(), "zlib", &rsh, false));
+    let out = run(
+        &test_support::oc_rsync_bin(),
+        tmp.path(),
+        "zlib",
+        &rsh,
+        false,
+    );
+    assert_streamio_without_timeout(&out);
+    // upstream: token.c:899-903 - the server receiver prints the codec's own
+    // line, unprefixed, before log_exit()'s trailer.
+    let stderr = out.stderr_str();
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line == "ZSTD decomp returned -10 (0 bytes)"),
+        "no codec line from the server receiver, stderr:\n{stderr}"
+    );
 }
