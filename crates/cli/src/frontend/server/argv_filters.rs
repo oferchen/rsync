@@ -11,7 +11,7 @@ use std::io::Write;
 
 use core::client::remote::build_wire_format_rules;
 use core::message::{Message, Role};
-use protocol::filters::FilterRuleWireFormat;
+use protocol::filters::{FilterRuleWireFormat, RuleType};
 
 use super::flags::{FILTER_OPTIONS, split_at_end_of_options};
 use crate::frontend::execution::{FilterInputs, build_filter_rules, exit_trailer};
@@ -41,7 +41,27 @@ pub(super) fn server_argv_filter_rules(
     }
     let cvs = filters::CvsSession::default();
     let specs = build_filter_rules(FilterInputs { order, from0 }, &cvs)?;
-    build_wire_format_rules(&specs, false).map_err(|error| error.message().clone())
+    let rules = build_wire_format_rules(&specs, false).map_err(|error| error.message().clone())?;
+    Ok(rules.into_iter().map(side_blind).collect())
+}
+
+/// An argv rule as the server applies it: on whichever side it names.
+///
+/// upstream: check_filter() never consults `FILTRULES_SIDES`. A rule's side
+/// only steers what send_rules() puts on the wire (exclude.c:1904-1906) and the
+/// add-time drop under `XFLG_ANCHORED2ABS|XFLG_ABS_IF_SLASH` (exclude.c:279-285),
+/// and parse_arguments() adds argv rules with neither (options.c:1620-1656). So
+/// `P a` (`-r a`) hides `a` from a server sender and `H a` (`-s a`) keeps
+/// `a` from a server receiver's deletions.
+fn side_blind(mut rule: FilterRuleWireFormat) -> FilterRuleWireFormat {
+    rule.rule_type = match rule.rule_type {
+        RuleType::Protect => RuleType::Exclude,
+        RuleType::Risk => RuleType::Include,
+        other => other,
+    };
+    rule.sender_side = false;
+    rule.receiver_side = false;
+    rule
 }
 
 /// The filter options in a normalized server argv, in argv order.

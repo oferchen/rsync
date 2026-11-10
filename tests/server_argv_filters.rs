@@ -293,3 +293,26 @@ fn clustered_filter_on_a_daemon_argv_protects_from_delete() {
     assert_eq!(reference, ["a", "x"], "3.5.1 itself");
     assert_eq!(daemon_push(&oc_rsync(), "-rf- x"), reference);
 }
+
+/// A side-specific argv rule applies on the server whichever side it names:
+/// `check_filter()` never looks at `FILTRULES_SIDES`, which only steer what
+/// goes on the wire (exclude.c:1904-1906) and the add-time drop under
+/// `XFLG_ANCHORED2ABS|XFLG_ABS_IF_SLASH` (exclude.c:279-285), neither of which
+/// an argv rule meets. So a receiver-side `P a` hides `a` from a pull and a
+/// sender-side `H gone` keeps `gone` from a `--delete` push.
+#[test]
+fn side_specific_argv_rules_apply_on_either_side() {
+    if upstream().is_none() {
+        return;
+    }
+    let without_a = outcome(0, &[".rsync-filter", "d/b", "d/g.tmp"], &[]);
+    for rule in ["P a", "-r a", "protect a"] {
+        cell(Direction::Pull, &[], &["-f", rule], &without_a);
+    }
+    cell(
+        Direction::DeletePush,
+        &[],
+        &["-f", "H gone"],
+        &outcome(0, &[".rsync-filter", "d/a", "d/b", "d/g.tmp", "gone"], &[]),
+    );
+}
