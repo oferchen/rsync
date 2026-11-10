@@ -3451,11 +3451,54 @@ mod normalize_server_argv_tests {
             normalized(&["rsync", "--server", "-re", ".iLs", ".", "d/"]),
             ["rsync", "--server", "-re.iLs", ".", "d/"]
         );
-        // task 617: a server-argv filter is consumed, not applied yet.
+    }
+
+    /// Filter options join their values behind the flag string in argv order;
+    /// those ahead of `--server` count twice (options.c:1517-1524 restarts the
+    /// pass without clearing `filter_list` or `F_option_cnt`).
+    #[test]
+    fn filter_options_are_joined_and_doubled_ahead_of_server() {
         assert_eq!(
-            normalized(&["rsync", "-f", "- *.tmp", "--server", ".", "d/"]),
-            ["rsync", "--server", ".", "d/"]
+            normalized(&["rsync", "-f", "- *.tmp", "--server", "-r", ".", "d/"]),
+            [
+                "rsync",
+                "--server",
+                "-r",
+                "--filter=- *.tmp",
+                "--filter=- *.tmp",
+                ".",
+                "d/"
+            ]
         );
+        assert_eq!(
+            normalized(&["rsync", "--server", "-rF", "--exclude", "b", "--include=a", ".", "d/"]),
+            [
+                "rsync",
+                "--server",
+                "-r",
+                "--filter=: /.rsync-filter",
+                "--exclude=b",
+                "--include=a",
+                ".",
+                "d/"
+            ]
+        );
+        // One `-F` ahead of `--server` is two, and a third adds nothing.
+        assert_eq!(
+            normalized(&["rsync", "-F", "--server", "-rF", ".", "d/"]),
+            [
+                "rsync",
+                "--server",
+                "-r",
+                "--filter=: /.rsync-filter",
+                "--filter=- .rsync-filter",
+                ".",
+                "d/"
+            ]
+        );
+        let once = normalized(&["rsync", "-f", "- x", "--server", "-r", ".", "d/"]);
+        let once: Vec<OsString> = once.into_iter().map(OsString::from).collect();
+        assert_eq!(normalize_server_argv(&once).unwrap(), once);
     }
 
     /// popt's refusals, worded and attributed as 3.5.1 prints them.
