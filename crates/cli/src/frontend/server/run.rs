@@ -10,6 +10,7 @@ use core::rsync_error;
 use engine::local_copy::{ReferenceDirectory, ReferenceDirectoryKind};
 use logging_sink::MessageSink;
 
+use super::argv_filters::{server_argv_filter_rules, write_filter_refusal};
 use super::flags::{
     ArgvRefusal, detect_secluded_args_flag, normalize_server_argv, parse_server_long_flags,
     refused_server_option,
@@ -565,6 +566,12 @@ where
         config.connection.confine_root.clone(),
     );
     config.file_selection.from0 = long_flags.from0;
+    // upstream: options.c:1620-1656 - filter options on the server's own argv
+    // join `filter_list` ahead of the rules received from the client.
+    match server_argv_filter_rules(effective_slice, long_flags.from0) {
+        Ok(rules) => config.argv_filter_rules = rules,
+        Err(message) => return write_filter_refusal(stderr, program_brand, &message),
+    }
     config.write.inplace = long_flags.inplace;
     // upstream: options.c:2551-2561 - append mode implies inplace. The promotion
     // is applied once for every role by `ServerConfig::apply_append_implies_inplace`

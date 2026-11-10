@@ -261,7 +261,15 @@ fn wire_receiver_side(spec: &FilterRuleSpec) -> bool {
     spec.applies_to_receiver() && (spec.names_sides() || !spec.applies_to_sender())
 }
 
-pub(crate) fn build_wire_format_rules(
+/// Converts client filter rules to the wire form the filter list carries.
+///
+/// A remote-shell server reuses it for the rules on its own argv, which
+/// upstream parses with the client's code (options.c:1620-1656).
+///
+/// # Errors
+///
+/// A rule the negotiated wire form cannot carry.
+pub fn build_wire_format_rules(
     client_rules: &[FilterRuleSpec],
     delete_excluded: bool,
 ) -> Result<Vec<FilterRuleWireFormat>, ClientError> {
