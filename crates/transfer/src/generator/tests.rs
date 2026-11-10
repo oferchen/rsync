@@ -7497,15 +7497,17 @@ fn inc_recurse_partitions_an_already_materialised_file_list() {
     );
 }
 
-/// Under INC_RECURSE a hard-link follower names its leader by the wire NDX the
-/// send path gives that leader, and the leader is the group's first member in
-/// send order.
+/// Under INC_RECURSE a hard-link follower names its leader by the sub-list's
+/// first NDX plus the leader's send position in it, and the leader is the
+/// group's first member in send order.
 ///
 /// upstream: flist.c:824-831 numbers groups in `send_file_entry()`, so the gnum
 /// is `first_ndx + ndx` of the first member *sent*, gaps included
-/// (flist.c:3511). The sorted, pre-partition position is not a wire NDX: an
-/// upstream receiver rejects it (`hard-link gnum N precedes flist start M`,
-/// hlink.c:125-141) and exits with a protocol error.
+/// (flist.c:3511), with `ndx` counted before the sub-list is sorted. The sorted
+/// position names a different entry whenever readdir order differs from name
+/// order, and a pre-partition position is not a wire NDX at all: an upstream
+/// receiver rejects it (`hard-link gnum N precedes flist start M`,
+/// hlink.c:125-141).
 #[cfg(unix)]
 #[test]
 fn inc_recurse_hardlink_gnum_is_the_leaders_send_order_wire_ndx() {
@@ -7546,6 +7548,22 @@ fn inc_recurse_hardlink_gnum_is_the_leaders_send_order_wire_ndx() {
             .unwrap_or_else(|| panic!("{name} missing from the file list"))
     };
 
+    let initial_len = ctx.incremental.initial_segment_count.unwrap();
+    let lists: Vec<std::ops::Range<usize>> = std::iter::once(0..initial_len)
+        .chain(
+            ctx.incremental
+                .pending_segments
+                .iter()
+                .map(|seg| seg.flist_start..seg.flist_start + seg.count),
+        )
+        .collect();
+    let sent_ndx = |i: usize| {
+        let list = lists.iter().find(|r| r.contains(&i)).unwrap().clone();
+        let start = ctx.incremental.ndx_map.flat_to_wire(list.start);
+        let rank = ctx.send_order(list).iter().position(|&j| j == i).unwrap();
+        (start + rank as i32) as u32
+    };
+
     for (leader, follower) in [("dir0/f1", "dir2/hl"), ("dir0/y", "dir0/sub/x")] {
         let (l, f) = (flat_of(leader), flat_of(follower));
         assert!(l < f, "{leader} must be sent before {follower}");
@@ -7556,8 +7574,8 @@ fn inc_recurse_hardlink_gnum_is_the_leaders_send_order_wire_ndx() {
         );
         assert_eq!(
             ctx.file_list()[f].hardlink_idx(),
-            Some(ctx.incremental.ndx_map.flat_to_wire(l) as u32),
-            "{follower} must name {leader}'s wire NDX"
+            Some(sent_ndx(l)),
+            "{follower} must name the NDX {leader} was sent under"
         );
     }
 }

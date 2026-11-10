@@ -97,6 +97,26 @@ fn build_fixture(scratch: &TempDir) -> PathBuf {
     PathBuf::from(format!("{}/", src.display()))
 }
 
+/// The fixture's names in upstream's send order: the root's children as
+/// readdir returns them, then `sub/b.txt` once the root scan is done.
+///
+/// upstream: flist.c:2397-2439 send_directory() - children go out in readdir
+/// order and subdirectories are recursed into only after the scan.
+fn send_order(src: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(src)
+        .expect("read_dir src")
+        .map(|entry| {
+            entry
+                .expect("dir entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.push("sub/b.txt".to_owned());
+    names
+}
+
 fn sender_config(src: &Path) -> ServerConfig {
     ServerConfig::from_flag_string_and_args(
         ServerRole::Generator,
@@ -156,18 +176,14 @@ fn flist2_sender_emissions_exact() {
     init_debug("flist2");
     let _wire = send_fixture_flist(&src);
 
-    let mut messages = flist_messages();
-    // The walk order of sibling entries is filesystem-dependent; the SET is not.
-    messages.sort();
-    let mut expected = vec![
-        "[sender] make_file(.,*,0)".to_owned(),
-        "[sender] make_file(a.txt,*,2)".to_owned(),
-        "[sender] make_file(sub,*,2)".to_owned(),
-        "[sender] make_file(sub/b.txt,*,2)".to_owned(),
-        "send_file_list done".to_owned(),
-    ];
-    expected.sort();
-    assert_eq!(messages, expected);
+    let mut expected = vec!["[sender] make_file(.,*,0)".to_owned()];
+    expected.extend(
+        send_order(&src)
+            .iter()
+            .map(|name| format!("[sender] make_file({name},*,2)")),
+    );
+    expected.push("send_file_list done".to_owned());
+    assert_eq!(flist_messages(), expected);
 }
 
 /// upstream: flist.c:3079/3105 - at level 3 the sender additionally dumps the
@@ -254,18 +270,16 @@ fn flist2_receiver_emissions_exact() {
         .expect("receive_file_list");
     assert_eq!(count, 4);
 
-    // The wire carries the sender's sorted order: ".", files before dirs.
-    assert_eq!(
-        flist_messages(),
-        vec![
-            "recv_file_name(.)".to_owned(),
-            "recv_file_name(a.txt)".to_owned(),
-            "recv_file_name(sub)".to_owned(),
-            "recv_file_name(sub/b.txt)".to_owned(),
-            "received 4 names".to_owned(),
-            "recv_file_list done".to_owned(),
-        ]
+    // The receiver logs names in wire order, which is the sender's send order.
+    let mut expected = vec!["recv_file_name(.)".to_owned()];
+    expected.extend(
+        send_order(&src)
+            .iter()
+            .map(|name| format!("recv_file_name({name})")),
     );
+    expected.push("received 4 names".to_owned());
+    expected.push("recv_file_list done".to_owned());
+    assert_eq!(flist_messages(), expected);
 }
 
 /// upstream: flist.c:3302/3329 - level 3 adds `[Receiver] flist_eof=1` (the
