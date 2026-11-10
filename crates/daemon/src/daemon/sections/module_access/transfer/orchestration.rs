@@ -1026,7 +1026,7 @@ fn process_approved_module(
         io_timeout,
     );
     let supports_tcp_shutdown = streams.supports_tcp_shutdown;
-    let exit_status = execute_transfer(
+    let outcome = execute_transfer(
         ctx,
         config,
         handshake,
@@ -1036,6 +1036,11 @@ fn process_approved_module(
         module,
         auth_user.as_deref(),
     );
+    let exit_status = outcome.unwrap_or_else(|code| code);
+    // upstream: cleanup.c:264 - the session's process exits with that code.
+    if exit_status != 0 {
+        *ctx.session_exit_code = Some(ExitCode::from_raw(exit_status));
+    }
 
     // #503: stop and join the background delta-drain thread before the TCP
     // goodbye drain below reads the socket via a different clone. The engine's
@@ -1135,7 +1140,7 @@ fn process_approved_module(
     // Bytes the drain thread read but the transfer never consumed are that
     // same unread data, so a zero linger gives the close the reset the kernel
     // gives a socket closed with data still queued.
-    let abortive_close = role == ServerRole::Receiver && exit_status != 0;
+    let abortive_close = role == ServerRole::Receiver && outcome.is_err();
     if abortive_close {
         std::thread::sleep(Duration::from_millis(100));
         if drain_holds_unread && let Some(tcp) = ctx.reader.get_mut().tcp_stream() {
