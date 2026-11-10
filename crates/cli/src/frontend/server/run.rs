@@ -10,7 +10,9 @@ use core::rsync_error;
 use engine::local_copy::{ReferenceDirectory, ReferenceDirectoryKind};
 use logging_sink::MessageSink;
 
-use super::flags::{detect_secluded_args_flag, parse_server_long_flags, refused_server_option};
+use super::flags::{
+    detect_secluded_args_flag, parse_server_long_flags, refused_server_option, strip_remote_options,
+};
 use super::parse::{
     parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
     parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
@@ -284,6 +286,15 @@ where
         );
     }
 
+    let stripped = match strip_remote_options(args) {
+        Ok(stripped) => stripped,
+        Err(text) => {
+            write_server_error(stderr, program_brand, text);
+            return 1;
+        }
+    };
+    let args = stripped.as_slice();
+
     // Detect secluded-args mode: `-s` flag appears as a standalone argument
     // after --server. upstream: options.c:2795-2796 - protect_args in server mode.
     let secluded_args = detect_secluded_args_flag(args);
@@ -331,6 +342,24 @@ where
         // `mod_name` is NULL. The peer here is whoever already got a shell,
         // so the daemon's anti-amplification bound does not apply.
         match protocol::secluded_args::recv_secluded_args(&mut stdin, None, None, None) {
+            // upstream: main.c:1956-1969 - the received list replaces argv,
+            // and a list with nothing after its arg0 leaves no operands, so
+            // the server prints its usage and exits RERR_SYNTAX instead of
+            // starting a transfer on a stream it has already read from.
+            Ok(received_args) if received_args.len() < 2 => {
+                let _ = stderr.write_all(
+                    super::super::help::help_text(super::super::detect_program_name(
+                        args.first().map(OsString::as_os_str),
+                    ))
+                    .as_bytes(),
+                );
+                let trailer = exit_trailer(SYNTAX_ERROR, Role::Server);
+                let mut sink = MessageSink::with_brand(&mut *stderr, program_brand);
+                if super::super::write_message(&trailer, &mut sink).is_err() {
+                    let _ = writeln!(sink.writer_mut(), "{trailer}");
+                }
+                return 1;
+            }
             Ok(received_args) => {
                 // Discard the synthetic "rsync" arg0 from the wire and
                 // prepend the command-line tail so the server-options
