@@ -55,7 +55,10 @@ pub(crate) fn apply_merge_directive(
         (PathBuf::from("-"), String::from("-"), None)
     } else {
         let raw_path = PathBuf::from(directive.source());
-        let joined = if raw_path.is_absolute() {
+        // upstream: exclude.c:704-715 parse_merge_name() returns a name with
+        // no slash unchanged, so it opens from the cwd, never from `dirbuf`.
+        let has_slash = directive.source().as_encoded_bytes().contains(&b'/');
+        let joined = if raw_path.is_absolute() || !has_slash {
             raw_path
         } else {
             base_dir.join(raw_path)

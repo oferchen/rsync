@@ -215,7 +215,7 @@ fn a_merge_file_named_by_another_file_reports_where_it_was_named() {
     let inner = temp.path().join("inner-bad");
     std::fs::write(&inner, format!("{SECRET}\n")).expect("write inner");
     let outer = temp.path().join("outer-known");
-    std::fs::write(&outer, ". inner-bad\n").expect("write outer");
+    std::fs::write(&outer, ". ./inner-bad\n").expect("write outer");
 
     let directive = MergeDirective::new(outer.into_os_string(), None);
     let mut rules = Vec::new();

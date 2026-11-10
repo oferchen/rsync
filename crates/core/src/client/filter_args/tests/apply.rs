@@ -2,7 +2,9 @@ use super::*;
 
 /// A merge named inside a merge file resolves from the base directory, not the
 /// naming file's directory: parse_merge_name() joins it onto the still-empty
-/// `dirbuf` (exclude.c:696-745).
+/// `dirbuf` (exclude.c:696-745). A name with no slash at all is returned
+/// unchanged (exclude.c:704-715) and opens from the cwd, so the outer name
+/// carries one.
 #[test]
 fn apply_merge_directive_resolves_relative_paths() {
     let temp = test_support::create_tempdir();
@@ -18,7 +20,7 @@ fn apply_merge_directive_resolves_relative_paths() {
 
     let mut rules = Vec::new();
     let mut visited = Vec::new();
-    let directive = MergeDirective::new(OsString::from("outer.rules"), None)
+    let directive = MergeDirective::new(OsString::from("./outer.rules"), None)
         .with_options(DirMergeOptions::default().allow_list_clearing(true));
     super::apply_merge_directive(
         directive,

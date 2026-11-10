@@ -48,7 +48,14 @@ pub fn server_argv_filter_rules(
 /// and parse_arguments() adds argv rules with neither (options.c:1620-1656). So
 /// `P a` (`-r a`) hides `a` from a server sender and `H a` (`-s a`) keeps
 /// `a` from a server receiver's deletions.
+///
+/// A per-directory merge rule keeps its sides: they are the template the
+/// merged file's rules inherit, and a sided rule inside a sided file is
+/// refused (exclude.c:1447-1456).
 pub(super) fn side_blind(mut rule: FilterRuleWireFormat) -> FilterRuleWireFormat {
+    if rule.rule_type == RuleType::DirMerge {
+        return rule;
+    }
     rule.rule_type = match rule.rule_type {
         RuleType::Protect => RuleType::Exclude,
         RuleType::Risk => RuleType::Include,

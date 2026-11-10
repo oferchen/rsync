@@ -15,6 +15,7 @@ use crate::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, Filte
 use crate::message::Message;
 
 mod apply;
+mod filter_str;
 mod load;
 mod merge_directive;
 mod parse_filter;
@@ -22,6 +23,7 @@ mod process;
 
 fn load_filter_file_patterns(path: &Path) -> Result<Vec<String>, Message> {
     super::sources::load_filter_file_patterns(path, false, false, &TestFiles, &[])
+        .map(|records| records.into_iter().map(|(pattern, _)| pattern).collect())
 }
 
 fn parse_merge_modifiers(

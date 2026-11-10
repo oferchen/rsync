@@ -48,6 +48,7 @@ pub(crate) fn append_filter_rules_from_files(
     // parses into the caller's own list, so the clear empties every rule
     // ahead of it, argv rules included.
     for path in names {
+        let name = path.to_string_lossy();
         let patterns = load_filter_file_patterns(
             Path::new(path.as_os_str()),
             eol_nulls,
@@ -55,19 +56,14 @@ pub(crate) fn append_filter_rules_from_files(
             files,
             destination,
         )?;
-        for pattern in patterns {
+        for (pattern, line) in patterns {
             if honor_old_prefixes {
-                // ⚠ RESIDUAL: these are the CONTENTS of an
-                // `--exclude-from`/`--include-from` file, which upstream also
-                // redacts - `rule_src_file` is set for the whole read, so
-                // `TEXT_FROM_FILE` holds and the text is replaced by
-                // `FILE line N` (exclude.c:71, the wording `rule_src_where`
-                // builds at exclude.c:85). oc does not carry a
-                // line number through `load_filter_file_patterns`, and naming the
-                // file without one would claim upstream's word-split arm
-                // (`rule_src_line < 0`) for a line-counted read. Left as
-                // `Argument` - unchanged behaviour, not a claim that it is right.
-                match parse_old_prefix_rule(&pattern, kind, RuleSource::Argument)? {
+                // upstream: exclude.c:1749-1761 - these are the CONTENTS of a
+                // file, so `rule_src_file` is set for the whole read and a bad
+                // record is reported as `<rule from FILE line N>`, never echoed
+                // (exclude.c:71-86).
+                let source = RuleSource::File { name: &name, line };
+                match parse_old_prefix_rule(&pattern, kind, source)? {
                     FilterDirective::Rule(rule) => add_rule(destination, rule, xflags),
                     FilterDirective::Clear => destination.clear(),
                     // A blank line in an exclude-from/include-from file is skipped.
@@ -146,16 +142,17 @@ fn filter_file_open_error(
 }
 
 /// Reads the raw pattern lines from a filter file, or from standard input when
-/// `path` is `-`. `eol_nulls` selects NUL-delimited records (`--from0`).
-/// `include` selects upstream's include/exclude wording if the open fails.
-/// `list` is the list built so far, which the open may consult.
+/// `path` is `-`, each with its line number (see [`read_filter_patterns`]).
+/// `eol_nulls` selects NUL-delimited records (`--from0`). `include` selects
+/// upstream's include/exclude wording if the open fails. `list` is the list
+/// built so far, which the open may consult.
 pub(crate) fn load_filter_file_patterns(
     path: &Path,
     eol_nulls: bool,
     include: bool,
     files: &dyn FilterFileSource,
     list: &[FilterRuleSpec],
-) -> Result<Vec<String>, Message> {
+) -> Result<Vec<(String, usize)>, Message> {
     // `--include-from` / `--exclude-from` name the file on the command line, so
     // this is always upstream's non-file arm: the operator already knows the
     // path they typed, and errno is theirs to see.
@@ -211,12 +208,18 @@ fn read_failure(path: &Path, error: &io::Error) -> Message {
 /// `\n`, at `\r`, or at `\r\n` - the boundary
 /// [`filters::filter_file_records`] owns - or on NUL when `eol_nulls` is set
 /// (`--from0`), in which case embedded newlines are literal pattern bytes.
+///
+/// Each pattern is paired with its 1-based record number: upstream's
+/// `rule_src_line` counts every record read (exclude.c:1759-1761), before the
+/// comment and empty-record test, so a bad rule is reported at the line an
+/// editor shows.
 pub(super) fn read_filter_patterns<R: BufRead>(
     reader: &mut R,
     eol_nulls: bool,
-) -> io::Result<Vec<String>> {
+) -> io::Result<Vec<(String, usize)>> {
     let mut buffer = Vec::new();
     let mut patterns = Vec::new();
+    let mut line = 0;
 
     // upstream: exclude.c:1774 parse_filter_file - `if (eol_nulls? !ch : (ch ==
     // '\n' || ch == '\r'))` splits records on NUL when --from0/-0 is set, so an
@@ -240,12 +243,13 @@ pub(super) fn read_filter_patterns<R: BufRead>(
         let chunk = String::from_utf8_lossy(&buffer);
 
         if eol_nulls {
-            let mut line = chunk.into_owned();
-            if line.as_bytes().last() == Some(&b'\0') {
-                line.pop();
+            let mut record = chunk.into_owned();
+            if record.as_bytes().last() == Some(&b'\0') {
+                record.pop();
             }
-            if filters::filter_file_line_is_rule(&line, true) {
-                patterns.push(line);
+            line += 1;
+            if filters::filter_file_line_is_rule(&record, true) {
+                patterns.push((record, line));
             }
             continue;
         }
@@ -253,11 +257,12 @@ pub(super) fn read_filter_patterns<R: BufRead>(
         // `read_until(b'\n')` is only a buffering boundary: a lone `\r` also
         // ends a record (exclude.c:1774-1793), so the chunk is re-split by the
         // single owner `filters::filter_file_records`, terminator and all.
-        patterns.extend(
-            filters::filter_file_records(&chunk)
-                .filter(|line| filters::filter_file_line_is_rule(line, true))
-                .map(str::to_owned),
-        );
+        for record in filters::filter_file_records(&chunk) {
+            line += 1;
+            if filters::filter_file_line_is_rule(record, true) {
+                patterns.push((record.to_owned(), line));
+            }
+        }
     }
 
     Ok(patterns)
@@ -269,11 +274,16 @@ mod tests {
     use crate::client::filter_args::{TestFiles, set_filter_stdin_input};
     use std::io::Cursor;
 
+    /// The pattern texts of numbered records.
+    fn texts(records: Vec<(String, usize)>) -> Vec<String> {
+        records.into_iter().map(|(pattern, _)| pattern).collect()
+    }
+
     #[test]
     fn read_filter_patterns_parses_simple_lines() {
         let input = b"pattern1\npattern2\npattern3\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2", "pattern3"]);
     }
 
@@ -281,7 +291,7 @@ mod tests {
     fn read_filter_patterns_skips_empty_lines() {
         let input = b"pattern1\n\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -289,7 +299,7 @@ mod tests {
     fn read_filter_patterns_skips_hash_comments() {
         let input = b"pattern1\n# this is a comment\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -297,7 +307,7 @@ mod tests {
     fn read_filter_patterns_skips_semicolon_comments() {
         let input = b"pattern1\n; this is a comment\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -305,7 +315,7 @@ mod tests {
     fn read_filter_patterns_handles_crlf_line_endings() {
         let input = b"pattern1\r\npattern2\r\npattern3\r\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2", "pattern3"]);
     }
 
@@ -313,7 +323,7 @@ mod tests {
     fn read_filter_patterns_handles_no_trailing_newline() {
         let input = b"pattern1\npattern2";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -321,7 +331,7 @@ mod tests {
     fn read_filter_patterns_handles_empty_input() {
         let input = b"";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert!(result.is_empty());
     }
 
@@ -329,7 +339,7 @@ mod tests {
     fn read_filter_patterns_handles_only_comments() {
         let input = b"# comment 1\n; comment 2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert!(result.is_empty());
     }
 
@@ -341,7 +351,7 @@ mod tests {
         // `   ` excludes a file literally named `   `.
         let input = b"pattern1\n   \n\t\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "   ", "\t", "pattern2"]);
     }
 
@@ -352,7 +362,7 @@ mod tests {
         // holding only `  #a` excludes a file literally named `  #a`.
         let input = b"  #a\n  ;b\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["  #a", "  ;b"]);
     }
 
@@ -360,7 +370,7 @@ mod tests {
     fn read_filter_patterns_preserves_leading_whitespace() {
         let input = b"  pattern_with_leading_space\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["  pattern_with_leading_space"]);
     }
 
@@ -369,7 +379,8 @@ mod tests {
         let temp = test_support::create_tempdir();
         let path = temp.path().join("filter.txt");
         std::fs::write(&path, "pattern1\npattern2\n").expect("write");
-        let result = load_filter_file_patterns(&path, false, false, &TestFiles, &[]).expect("load");
+        let result =
+            texts(load_filter_file_patterns(&path, false, false, &TestFiles, &[]).expect("load"));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -479,8 +490,9 @@ mod tests {
     #[test]
     fn read_filter_patterns_from_stdin_uses_test_input() {
         set_filter_stdin_input(b"stdin_pattern1\nstdin_pattern2\n".to_vec());
-        let result =
-            load_filter_file_patterns(Path::new("-"), false, false, &TestFiles, &[]).expect("read");
+        let result = texts(
+            load_filter_file_patterns(Path::new("-"), false, false, &TestFiles, &[]).expect("read"),
+        );
         assert_eq!(result, vec!["stdin_pattern1", "stdin_pattern2"]);
     }
 
@@ -495,8 +507,9 @@ mod tests {
     #[test]
     fn load_filter_file_patterns_handles_dash_path() {
         set_filter_stdin_input(b"stdin_pattern\n".to_vec());
-        let result =
-            load_filter_file_patterns(Path::new("-"), false, false, &TestFiles, &[]).expect("load");
+        let result = texts(
+            load_filter_file_patterns(Path::new("-"), false, false, &TestFiles, &[]).expect("load"),
+        );
         assert_eq!(result, vec!["stdin_pattern"]);
     }
 
@@ -584,7 +597,7 @@ mod tests {
         // NUL-separated record rather than one per line.
         let input = b"*.log\nwith space\0*.tmp\0";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, true).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, true).expect("read"));
         assert_eq!(result, vec!["*.log\nwith space", "*.tmp"]);
     }
 
@@ -594,7 +607,7 @@ mod tests {
         // even without a trailing delimiter.
         let input = b"only\0last";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, true).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, true).expect("read"));
         assert_eq!(result, vec!["only", "last"]);
     }
 
@@ -639,6 +652,6 @@ mod tests {
 
         let patterns = load_filter_file_patterns(&link, false, false, &TestFiles, &[])
             .expect("a self-owned symlink must be followed, not refused");
-        assert_eq!(patterns, vec!["*.bak"]);
+        assert_eq!(texts(patterns), vec!["*.bak"]);
     }
 }

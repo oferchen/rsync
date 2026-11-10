@@ -90,8 +90,24 @@ pub(crate) fn parse_filter_str(
             rule_len(rest)
         };
         let (rule, tail) = rest.split_at(len);
-        parse_rule(list, OsStr::new(rule), template, xflags, ctx)?;
+        parse_rule(list, OsStr::new(rule), template, xflags, ctx)
+            .map_err(|error| reported_from(error, rule, rest))?;
         rest = tail;
+    }
+}
+
+/// A word-split rule's refusal, naming the string from the rule onward.
+///
+/// upstream: filter_rule_err() prints `*rulestr_ptr` (exclude.c:1363-1475),
+/// which still runs to the end of the string, so `filter = - foo clear,- keep`
+/// reports `clear,- keep` rather than the one rule `clear,-`.
+fn reported_from(error: Message, rule: &str, rest: &str) -> Message {
+    match error.text().strip_suffix(rule) {
+        Some(head) => {
+            let text = format!("{head}{rest}");
+            error.with_text(text)
+        }
+        None => error,
     }
 }
 
@@ -269,7 +285,7 @@ fn word_len(s: &str) -> usize {
 /// character or keyword, its modifier run, ONE separator byte, then a pattern
 /// ending at whitespace. The walk never looks at the next word, so `- foo bar`
 /// is two rules and `- !bait` is one.
-fn rule_len(s: &str) -> usize {
+pub(super) fn rule_len(s: &str) -> usize {
     let b = s.as_bytes();
     let n = b.len();
     // `i` tracks upstream's `s`: the LAST byte of the prefix, where

@@ -2223,26 +2223,26 @@ mod module_access_tests {
     // upstream: exclude.c:1595-1597 - a non-merge `-C` rule triggers
     // `get_cvs_excludes()`, loading the built-in `DEFAULT_CVSIGNORE` set. A
     // module `filter = -C` must therefore hide `*.o`, `core`, `CVS/` and the
-    // rest, not drop the rule. The rule is emitted as a `cvs_exclude` marker
-    // (empty pattern) that the transfer-side `parse_received_filters` and the
-    // pre-open `daemon_filter_set` both expand from `filters::DEFAULT_CVSIGNORE`.
+    // rest, not drop the rule. The shared parser expands it in place into the
+    // CVS ignore list `get_cvs_excludes` builds.
     #[test]
-    fn build_daemon_filter_rules_non_merge_cvs_emits_marker() {
+    fn build_daemon_filter_rules_non_merge_cvs_loads_the_defaults() {
         let module = ModuleRuntime::from(ModuleDefinition {
             filter: vec!["-C".to_string()],
             ..Default::default()
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
-        assert_eq!(rules.len(), 1, "the -C rule must not be dropped");
+        for default in ["*.o", "core"] {
+            assert!(
+                rules.iter().any(|rule| rule.pattern == default
+                    && rule.rule_type == protocol::filters::RuleType::Exclude),
+                "-C must exclude {default}: {rules:?}"
+            );
+        }
         assert!(
-            rules[0].cvs_exclude,
-            "the marker carries the cvs_exclude bit"
+            rules.iter().all(|rule| !rule.pattern.is_empty()),
+            "no patternless rule may match everything: {rules:?}"
         );
-        assert!(
-            rules[0].pattern.is_empty(),
-            "the marker has no pattern; the defaults are expanded downstream"
-        );
-        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
     }
 
     // The behavioural pin: the pre-open daemon filter gate compiled from a
@@ -2259,7 +2259,7 @@ mod module_access_tests {
             ..Default::default()
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
-        let set = daemon_filter_set(&rules).expect("the -C marker compiles to a filter set");
+        let set = daemon_filter_set(&rules).expect("the -C rules compile to a filter set");
         assert!(
             !set.allows(Path::new("foo.o"), false),
             "object files hidden"
@@ -2314,10 +2314,10 @@ mod module_access_tests {
 
     /// The whitespace reaches the RULE, not merely the reader.
     ///
-    /// `read_patterns_from_file` is the reader; `build_pattern_rule` then
-    /// decides anchoring and the `DIR2WILD3` suffix from the pattern text. This
-    /// pins the composed result, so a later "tidy the pattern up" inside the
-    /// builder cannot silently undo the fix while the reader test stays green.
+    /// The reader hands the record over verbatim and `add_rule` then decides
+    /// anchoring and the `DIR2WILD3` suffix from the pattern text. This pins
+    /// the composed result, so a later "tidy the pattern up" in either step
+    /// cannot silently undo the fix.
     ///
     /// MEASURED against a real rsync 3.5.1 daemon (module holding `a` and `a `,
     /// `exclude from` file holding the one line `a `): upstream served `a` and
@@ -2390,7 +2390,7 @@ mod module_access_tests {
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].pattern, "/secret");
+        assert_eq!(rules[0].pattern, "secret");
         assert!(rules[0].anchored);
     }
 
@@ -2409,7 +2409,7 @@ mod module_access_tests {
     }
 
     #[test]
-    fn build_daemon_filter_rules_directory_only_include_keeps_slash() {
+    fn build_daemon_filter_rules_directory_only_include_stays_directory_only() {
         // upstream: exclude.c:310 - DIR2WILD3 only applies to exclude rules,
         // not include rules (BITS_SETnUNSET(FILTRULE_DIRECTORY, FILTRULE_INCLUDE)).
         let module = ModuleRuntime::from(ModuleDefinition {
@@ -2418,7 +2418,7 @@ mod module_access_tests {
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].pattern, "cache/");
+        assert_eq!(rules[0].pattern, "cache");
         assert!(rules[0].directory_only);
     }
 
@@ -2491,7 +2491,7 @@ mod module_access_tests {
     fn exclude_from_rules(
         dir: &tempfile::TempDir,
         contents: &str,
-    ) -> Result<Vec<FilterRuleWireFormat>, std::io::Error> {
+    ) -> Result<Vec<FilterRuleWireFormat>, ModuleFilterRefusal> {
         let file = dir.path().join("excludes.txt");
         fs::write(&file, contents).unwrap();
         build_daemon_filter_rules(&ModuleRuntime::from(ModuleDefinition {
@@ -2505,7 +2505,7 @@ mod module_access_tests {
     fn include_from_rules(
         dir: &tempfile::TempDir,
         contents: &str,
-    ) -> Result<Vec<FilterRuleWireFormat>, std::io::Error> {
+    ) -> Result<Vec<FilterRuleWireFormat>, ModuleFilterRefusal> {
         let file = dir.path().join("includes.txt");
         fs::write(&file, contents).unwrap();
         build_daemon_filter_rules(&ModuleRuntime::from(ModuleDefinition {
@@ -2588,16 +2588,15 @@ mod module_access_tests {
 
     /// A record that is exactly `!` clears the list.
     ///
-    /// upstream: `exclude.c:1283-1284` sets `FILTRULE_CLEAR_LIST`, and
-    /// `exclude.c:1472-1473` keeps it only when the measured length is 1.
+    /// upstream: `exclude.c:1283-1284` sets `FILTRULE_CLEAR_LIST`,
+    /// `exclude.c:1472-1473` keeps it only when the measured length is 1, and
+    /// `exclude.c:1542-1551` empties the list on the spot.
     #[test]
     fn exclude_from_bare_bang_clears_the_list() {
         let dir = tempfile::tempdir().unwrap();
         let rules = exclude_from_rules(&dir, "*.tmp\n!\n*.bak\n").unwrap();
-        assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern, "*.tmp");
-        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Clear);
-        assert_eq!(rules[2].pattern, "*.bak");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "*.bak");
     }
 
     /// `!` with anything after it is a PATTERN, and it keeps the `!`.
@@ -2885,112 +2884,27 @@ mod module_access_tests {
             ..Default::default()
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
-        assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern, "*.rs");
-        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Clear);
-        assert_eq!(rules[2].pattern, "*.toml");
-        assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "*.toml");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Include);
     }
 
-    #[test]
-    fn build_pattern_rule_exclude() {
-        let rule = build_pattern_rule("*.tmp", false, RuleXflags::Daemon);
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
-        assert_eq!(rule.pattern, "*.tmp");
-        assert!(!rule.anchored);
-        assert!(!rule.directory_only);
+    /// The rules one `filter` directive value builds, through the module parse.
+    fn filter_directive_rules(
+        text: &str,
+    ) -> Result<Vec<FilterRuleWireFormat>, ModuleFilterRefusal> {
+        build_daemon_filter_rules(&ModuleRuntime::from(ModuleDefinition {
+            filter: vec![text.to_owned()],
+            ..Default::default()
+        }))
     }
 
-    #[test]
-    fn build_pattern_rule_include() {
-        let rule = build_pattern_rule("*.rs", true, RuleXflags::Daemon);
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
-        assert_eq!(rule.pattern, "*.rs");
-    }
-
-    #[test]
-    fn build_pattern_rule_anchored() {
-        let rule = build_pattern_rule("/etc", false, RuleXflags::Daemon);
-        assert!(rule.anchored);
-        assert_eq!(rule.pattern, "/etc");
-    }
-
-    #[test]
-    fn build_pattern_rule_doublestar_prefix_stays_unanchored() {
-        // A `**`-prefixed daemon exclude contains a slash but must NOT be
-        // anchored: upstream sets WILD2_PREFIX independently of ABS_PATH, and
-        // anchoring would prepend `/` (-> `/**/*.o`) and stop `**/*.o` from
-        // matching a root-level `build.o`. Regression for the
-        // daemon-filter-doublestar interop test.
-        let rule = build_pattern_rule("**/*.o", false, RuleXflags::Daemon);
-        assert!(!rule.anchored, "`**/*.o` must stay unanchored");
-        assert_eq!(rule.pattern, "**/*.o");
-
-        // A slash-containing pattern that does NOT start with `**` is still
-        // anchored (XFLG_ABS_IF_SLASH).
-        let nested = build_pattern_rule("sub/file.o", false, RuleXflags::Daemon);
-        assert!(nested.anchored, "`sub/file.o` is anchored by ABS_IF_SLASH");
-    }
-
-    #[test]
-    fn build_pattern_rule_directory_only_exclude_dir2wild3() {
-        // upstream: exclude.c:308-314 - XFLG_DIR2WILD3 transforms dir/ to dir/***
-        let rule = build_pattern_rule("build/", false, RuleXflags::Daemon);
-        assert!(!rule.directory_only);
-        assert_eq!(rule.pattern, "build/***");
-    }
-
-    #[test]
-    fn build_pattern_rule_directory_only_include_preserved() {
-        let rule = build_pattern_rule("build/", true, RuleXflags::Daemon);
-        assert!(rule.directory_only);
-        assert_eq!(rule.pattern, "build/");
-    }
-
-    #[test]
-    fn pattern_leading_slash_is_anchored() {
-        let rule = build_pattern_rule("/foo", false, RuleXflags::Daemon);
-        assert!(rule.anchored);
-    }
-
-    #[test]
-    fn pattern_no_slash_is_not_anchored() {
-        let rule = build_pattern_rule("*.txt", false, RuleXflags::Daemon);
-        assert!(!rule.anchored);
-    }
-
-    #[test]
-    fn pattern_embedded_slash_is_anchored() {
-        // upstream: exclude.c:297-299 - XFLG_ABS_IF_SLASH anchors patterns
-        // with any slash, not just leading slash
-        let rule = build_pattern_rule("subdir/file.txt", false, RuleXflags::Daemon);
-        assert!(rule.anchored);
-    }
-
-    #[test]
-    fn pattern_deep_path_is_anchored() {
-        let rule = build_pattern_rule("a/b/c", false, RuleXflags::Daemon);
-        assert!(rule.anchored);
-    }
-
-    #[test]
-    fn directory_exclude_gets_wild3() {
-        let rule = build_pattern_rule("foo/", false, RuleXflags::Daemon);
-        assert!(rule.anchored); // has embedded '/'
-        assert!(!rule.directory_only); // cleared by DIR2WILD3
-        assert!(rule.pattern.to_string_lossy().ends_with("/***"));
-    }
-
-    #[test]
-    fn directory_include_keeps_directory_flag() {
-        let rule = build_pattern_rule("bar/", true, RuleXflags::Daemon);
-        assert!(rule.directory_only);
-    }
-
-    #[test]
-    fn include_with_embedded_slash_is_anchored() {
-        let rule = build_pattern_rule("src/main.rs", true, RuleXflags::Daemon);
-        assert!(rule.anchored);
+    /// One `filter` token: the rule it adds, `None` when it adds none, or the
+    /// refusal.
+    fn filter_token(token: &str) -> Result<Option<FilterRuleWireFormat>, ModuleFilterRefusal> {
+        let mut rules = filter_directive_rules(token)?;
+        assert!(rules.len() <= 1, "{token:?} built {rules:?}");
+        Ok(rules.pop())
     }
 
     /// A token the parser accepts and turns into a rule.
@@ -2998,17 +2912,14 @@ mod module_access_tests {
     /// Panics on a refusal AND on an empty token, so a cell using this can
     /// never pass by silently skipping the token it means to assert about.
     fn accepted_rule(token: &str) -> FilterRuleWireFormat {
-        parse_daemon_filter_token(token, RuleXflags::Daemon)
+        filter_token(token)
             .expect("token refused")
             .expect("token produced no rule")
     }
 
-    /// A token the parser accepts and skips - `Ok(None)`, not a refusal.
+    /// A token the parser accepts and adds no rule for, not a refusal.
     fn is_skipped(token: &str) -> bool {
-        matches!(
-            parse_daemon_filter_token(token, RuleXflags::Daemon),
-            Ok(None)
-        )
+        matches!(filter_token(token), Ok(None))
     }
 
     /// The patternless CVS dir-merge, both spellings.
@@ -3063,14 +2974,15 @@ mod module_access_tests {
     /// pattern never matches - `check_filter` short-circuits CVS_IGNORE rules
     /// to the global CVS list (exclude.c:1201-1206) - and it loads the built-in
     /// `DEFAULT_CVSIGNORE` set through `get_cvs_excludes` (exclude.c:1595-1597).
-    /// oc emits a `cvs_exclude` marker (empty pattern) that both consumers of
-    /// the daemon list expand from that same default set.
+    /// The parser expands it in place into that default set.
     #[test]
     fn a_patternless_non_merge_cvs_rule_loads_the_defaults() {
-        let rule = accepted_rule("-C");
-        assert!(rule.cvs_exclude, "-C carries the CVS-ignore marker bit");
-        assert!(rule.pattern.is_empty(), "the marker has no pattern");
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        let rules = filter_directive_rules("-C").expect("-C accepted");
+        assert!(
+            rules.iter().any(|rule| rule.pattern == "*.o"),
+            "-C loads the defaults: {rules:?}"
+        );
+        assert!(rules.iter().all(|rule| !rule.pattern.is_empty()));
     }
 
     /// The NO_PREFIXES interlock on the CVS modifier.
@@ -3084,7 +2996,7 @@ mod module_access_tests {
     fn cvs_modifier_pairs_with_no_prefixes_refuse() {
         for token in [":C-", ":C+", ":CC", ":-C", ":+C"] {
             assert!(
-                parse_daemon_filter_token(token, RuleXflags::Daemon).is_err(),
+                filter_token(token).is_err(),
                 "{token} must refuse like upstream's goto invalid"
             );
         }
@@ -3118,7 +3030,7 @@ mod module_access_tests {
     #[test]
     fn parse_daemon_filter_token_bare_pattern_is_refused() {
         assert!(
-            parse_daemon_filter_token("*.bak", RuleXflags::Daemon).is_err(),
+            filter_token("*.bak").is_err(),
             "a bare pattern is not a `filter` rule"
         );
     }
@@ -3143,8 +3055,7 @@ mod module_access_tests {
         // a bare `-` an EXCLUDE OF THE LITERAL STRING `-`, which is neither
         // the old behaviour nor upstream's.
         for token in ["-", "+"] {
-            let err =
-                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
+            let err = filter_token(token).expect_err("must refuse");
             assert!(
                 err.to_string().starts_with("unexpected end of filter rule"),
                 "{token}: {err}"
@@ -3211,8 +3122,7 @@ mod module_access_tests {
                 "invalid modifier 'b' at position 8 in filter rule: include,bar",
             ),
         ] {
-            let err =
-                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
+            let err = filter_token(token).expect_err("must refuse");
             assert_eq!(err.to_string(), msg, "{token}");
         }
     }
@@ -3224,14 +3134,12 @@ mod module_access_tests {
         // :1429-1430); `C` refuses likewise (exclude.c:1403-1404). MEASURED:
         //   filter = hide,r keep  -> rc 5 "invalid modifier 'r' at position 5..."
         //   filter = hide,C keep  -> rc 5 "invalid modifier 'C' at position 5..."
-        let err =
-            parse_daemon_filter_token("hide,r keep", RuleXflags::Daemon).expect_err("must refuse");
+        let err = filter_token("hide,r keep").expect_err("must refuse");
         assert_eq!(
             err.to_string(),
             "invalid modifier 'r' at position 5 in filter rule: hide,r keep"
         );
-        let err =
-            parse_daemon_filter_token("hide,C keep", RuleXflags::Daemon).expect_err("must refuse");
+        let err = filter_token("hide,C keep").expect_err("must refuse");
         assert_eq!(
             err.to_string(),
             "invalid modifier 'C' at position 5 in filter rule: hide,C keep"
@@ -3319,10 +3227,7 @@ mod module_access_tests {
     #[test]
     fn an_uppercase_bare_word_in_rule_position_is_refused() {
         for token in ["Pictures", "README", "Series7", "Home"] {
-            assert!(
-                parse_daemon_filter_token(token, RuleXflags::Daemon).is_err(),
-                "{token} must be refused"
-            );
+            assert!(filter_token(token).is_err(), "{token} must be refused");
         }
     }
 
@@ -3356,11 +3261,11 @@ mod module_access_tests {
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
         assert_eq!(rule.pattern, "foo");
 
-        // `/` presets FILTRULE_ABS_PATH (exclude.c:1392-1394), anchoring the
-        // pattern at the module root.
+        // `/` presets FILTRULE_ABS_PATH (exclude.c:1392-1394): the rule matches
+        // the name below the module root (exclude.c:1022-1027).
         let rule = accepted_rule("-/ keep");
         assert_eq!(rule.pattern, "keep");
-        assert!(rule.anchored, "-/ keep must anchor");
+        assert!(rule.abs_path, "-/ keep must match the absolute path");
 
         // A side-naming short prefix takes a modifier run too.
         assert_eq!(accepted_rule("P,p bar").pattern, "bar");
@@ -3391,13 +3296,11 @@ mod module_access_tests {
                 "invalid modifier 'e' at position 3 in filter rule: -p!e foo",
             ),
         ] {
-            let err =
-                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
+            let err = filter_token(token).expect_err("must refuse");
             assert_eq!(err.to_string(), msg, "{token}");
         }
         for token in ["-", "+", "P", "-p", "P,"] {
-            let err =
-                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
+            let err = filter_token(token).expect_err("must refuse");
             assert_eq!(
                 err.to_string(),
                 format!("unexpected end of filter rule: {token}"),
@@ -3432,8 +3335,7 @@ mod module_access_tests {
                 "invalid modifier 's' at position 2 in filter rule: S,s bar",
             ),
         ] {
-            let err =
-                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
+            let err = filter_token(token).expect_err("must refuse");
             assert_eq!(err.to_string(), msg, "{token}");
         }
     }
@@ -3467,7 +3369,7 @@ mod module_access_tests {
         }
         let rule = accepted_rule("exclude,/ keep");
         assert_eq!(rule.pattern, "keep");
-        assert!(rule.anchored, "exclude,/ keep must anchor");
+        assert!(rule.abs_path, "exclude,/ keep must match the absolute path");
     }
 
     /// The `s` modifier is the add-time DROP, and `r` is not.
@@ -3488,33 +3390,23 @@ mod module_access_tests {
         assert_eq!(accepted_rule("exclude,r keep").pattern, "keep");
     }
 
-    /// `!`, `x` and `C` are ACCEPTED by upstream and dropped here.
+    /// `!` and `x` are ACCEPTED by upstream and carried on the rule.
     ///
-    /// Splitting the run off the pattern makes each modifier's meaning
-    /// observable for the first time, and these three have meanings the daemon
-    /// rule cannot carry: `xattr_only` and `negate` are read on oc's SENDER
-    /// path and dropped on its RECEIVER path, so setting either would give the
-    /// two directions different answers.
-    ///
-    /// MEASURED against rsync 3.5.0, both directions:
-    ///   filter = exclude,x keep -> rc 0, ALL FOUR served (an xattr rule never
-    ///                              matches the file name)
-    ///   filter = -x keep        -> rc 0, ALL FOUR served
-    /// Dropping the rule reproduces both EXACTLY.
-    ///
-    /// `C` is deliberately NOT in this set: `exclude,C` is EXPRESSIBLE - it
-    /// loads the built-in CVS defaults (`get_cvs_excludes`, exclude.c:1595-1597),
-    /// so dropping it would fail to hide `*.o`/`core`/`*~`. That path is covered
-    /// by [`daemon_cvs_filter_hides_the_built_in_defaults`], not here.
-    ///
-    /// ⚠ `!` is the one it does NOT reproduce: `filter = exclude,! keep` serves
-    /// ONLY `keep` upstream, where dropping serves everything. Left open rather
-    /// than half-closed - a `negate` bit honoured on the sender path alone
-    /// would INVERT the served set on a push. RESIDUAL.
+    /// `x` makes an xattr-name rule, which never matches a file name, and `!`
+    /// negates the match. MEASURED against rsync 3.5.0, both directions:
+    ///   filter = exclude,x keep -> rc 0, ALL FOUR served
+    ///   filter = exclude,! keep -> rc 0, ONLY `keep` served
+    /// Both reach the daemon's matchers through the same rule flags a client's
+    /// rules carry.
     #[test]
-    fn an_inexpressible_modifier_drops_the_rule_rather_than_refusing_it() {
-        for token in ["exclude,x keep", "-x keep", "exclude,! keep", "-,! keep"] {
-            assert!(is_skipped(token), "{token}");
+    fn the_negate_and_xattr_modifiers_are_carried_on_the_rule() {
+        for token in ["exclude,x keep", "-x keep"] {
+            assert!(accepted_rule(token).xattr_only, "{token}");
+        }
+        for token in ["exclude,! keep", "-,! keep", "-! keep"] {
+            let rule = accepted_rule(token);
+            assert!(rule.negate, "{token}");
+            assert_eq!(rule.pattern, "keep", "{token}");
         }
     }
 
@@ -3574,11 +3466,12 @@ mod module_access_tests {
         assert!(!rule.receiver_side);
     }
 
+    /// upstream: exclude.c:1542-1551 - a clear empties the list as it is
+    /// parsed, so no clear rule survives.
     #[test]
     fn parse_daemon_filter_token_clear_keyword() {
-        let rule = accepted_rule("clear");
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
-        assert!(rule.pattern.is_empty());
+        assert!(is_skipped("clear"));
+        assert!(filter_directive_rules("- foo clear").unwrap().is_empty());
     }
 
     /// Both spellings of a per-directory merge produce a `DirMerge` rule whose
@@ -3624,18 +3517,12 @@ mod module_access_tests {
     #[test]
     fn a_dir_merge_filename_is_not_rewritten_as_a_pattern() {
         let nested = accepted_rule(": sub/.rsync-filter");
-        assert_eq!(nested.pattern, "sub/.rsync-filter");
+        assert_eq!(nested.rule_type, protocol::filters::RuleType::DirMerge);
+        assert!(nested.pattern.to_string_lossy().ends_with(".rsync-filter"));
         assert!(
             !nested.anchored,
             "an embedded slash in a merge filename sets nothing"
         );
-
-        let trailing = accepted_rule(": rules/");
-        assert_eq!(
-            trailing.pattern, "rules/",
-            "DIR2WILD3 must not append `***` to a merge filename"
-        );
-        assert!(!trailing.directory_only);
     }
 
     /// Every modifier upstream's grammar accepts on a `:` rule, and where each
@@ -3652,7 +3539,6 @@ mod module_access_tests {
 
         let cases: &[(&str, ModifierSet)] = &[
             (":n .filt", |r| r.no_inherit),
-            (":e .filt", |r| r.exclude_from_merge),
             (":w .filt", |r| r.word_split),
             (":p .filt", |r| r.perishable),
             (":r .filt", |r| r.receiver_side),
@@ -3717,14 +3603,13 @@ mod module_access_tests {
                 "invalid modifier '!' at position 1 in filter rule: :! .filt",
             ),
         ] {
-            let err =
-                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
+            let err = filter_token(token).expect_err("must refuse");
             assert_eq!(err.to_string(), msg, "{token}");
         }
         // A patternless merge rule is the same refusal every other prefix gets
         // (exclude.c:1474-1476).
-        assert!(parse_daemon_filter_token(":", RuleXflags::Daemon).is_err());
-        assert!(parse_daemon_filter_token("dir-merge", RuleXflags::Daemon).is_err());
+        assert!(filter_token(":").is_err());
+        assert!(filter_token("dir-merge").is_err());
     }
 
     /// The merge-only modifiers stay REFUSED on a non-merge rule.
@@ -3737,7 +3622,7 @@ mod module_access_tests {
     fn merge_only_modifiers_are_still_invalid_on_a_plain_rule() {
         for token in ["-,e keep", "-,n keep", "-,w keep", "exclude,e keep"] {
             assert!(
-                parse_daemon_filter_token(token, RuleXflags::Daemon).is_err(),
+                filter_token(token).is_err(),
                 "{token} must stay refused on a non-merge rule"
             );
         }
@@ -3750,15 +3635,8 @@ mod module_access_tests {
     /// note calling itself "a KNOWN DIVERGENCE, NOT FIDELITY ... must be
     /// FLIPPED, not deleted, when that arm lands".
     ///
-    /// Two things turned out to be true when it was measured. Upstream refuses
-    /// `filter = .git` - `.` is a rule character and `g` is then an invalid
-    /// modifier (`exclude.c:1370-1379`). And oc ALREADY refused it end to end:
-    /// MEASURED rc 5 on the PRE-CHANGE binary, because [`push_token_rules`]
-    /// consults [`merge_rule`] before this parser and the eager `.` arm rejects
-    /// `g` there. The old cell reached the literal-exclude fall-through only by
-    /// calling this function DIRECTLY, bypassing that arm, so the behaviour it
-    /// pinned was already unreachable from a real config and its "oc serves the
-    /// module ... (rc 0)" note was stale.
+    /// Upstream refuses `filter = .git` - `.` is a rule character and `g` is
+    /// then an invalid modifier (`exclude.c:1370-1379`). MEASURED rc 5.
     ///
     /// The neighbouring spelling is unaffected: `- .git` is ONE rule whose
     /// pattern is `.git`, rc 0 on both, because the `.` is pattern text there.
@@ -3768,7 +3646,7 @@ mod module_access_tests {
     #[test]
     fn a_leading_dot_token_in_rule_position_is_refused() {
         assert!(
-            parse_daemon_filter_token(".git", RuleXflags::Daemon).is_err(),
+            filter_token(".git").is_err(),
             "`.git` in rule position must be refused"
         );
 
@@ -3779,10 +3657,9 @@ mod module_access_tests {
 
     /// Recognising `:` as a rule PREFIX must not make it a token BOUNDARY.
     ///
-    /// The two are separate mechanisms and only the first changed here:
-    /// [`short_rule_prefix`] decides what a token that ALREADY begins a rule
-    /// means, while [`RULE_KEYWORDS`] / `split_filter_tokens` decide where a new
-    /// token starts. Upstream keeps them separate the same way - `parse_rule_tok`
+    /// The two are separate mechanisms: the rule parser decides what a token
+    /// that ALREADY begins a rule means, while the word-split walk decides
+    /// where a new token starts. Upstream keeps them separate - `parse_rule_tok`
     /// dispatches on the first character of a rule it has already been handed
     /// (exclude.c:1325-1338), and the word-split loop is what hands rules over.
     ///
@@ -3831,8 +3708,7 @@ mod module_access_tests {
             ("clear,x", "'!' rule has trailing characters: clear,x"),
             ("clear_", "'!' rule has trailing characters: clear_"),
         ] {
-            let err =
-                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
+            let err = filter_token(token).expect_err("must refuse");
             assert_eq!(err.to_string(), msg, "{token}");
         }
     }
@@ -3843,15 +3719,12 @@ mod module_access_tests {
         // `rule_strcmp` leaves `s` on the comma and `if (*s) s++`
         // (exclude.c:1444-1445) consumes it, ending the token at `len == 0`.
         // MEASURED: `filter = - foo clear,` is rc 0 with every file served.
-        let rule = accepted_rule("clear,");
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
-        // A glued FOLLOWING word is upstream's next token, not this rule's
-        // trailer - `filter = clear P keep` is accepted upstream (a clear plus
-        // a `P keep` protect). oc's splitter glues it here; only the first
-        // word may decide the refusal. The tail stays ignored - that gluing
-        // gap is tracked with the bare-word class.
+        assert!(filter_directive_rules("- foo clear,").unwrap().is_empty());
+        // The FOLLOWING word is upstream's next rule, not this rule's trailer:
+        // `filter = clear P keep` is a clear plus a `P keep` protect.
         let rule = accepted_rule("clear P keep");
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "keep");
     }
 
     /// ⚠ FLIPPED: `excluder` used to become a literal pattern. `rule_strcmp`
@@ -3865,7 +3738,7 @@ mod module_access_tests {
     #[test]
     fn parse_daemon_filter_token_keyword_not_partial_match() {
         assert!(
-            parse_daemon_filter_token("excluder", RuleXflags::Daemon).is_err(),
+            filter_token("excluder").is_err(),
             "`excluder` is not the `exclude` keyword"
         );
         // NON-VACUITY CONTROL: the real keyword still parses, so the refusal
@@ -3891,8 +3764,7 @@ mod module_access_tests {
         // hidden - a successful-looking transfer of a module upstream refuses
         // to serve at all.
         for token in ["hide", "exclude", "include", "protect", "hide,"] {
-            let err =
-                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
+            let err = filter_token(token).expect_err("must refuse");
             assert_eq!(
                 err.to_string(),
                 format!("unexpected end of filter rule: {token}"),
@@ -3902,8 +3774,7 @@ mod module_access_tests {
         // The old pin's second row, kept refusing: a keyword whose "pattern"
         // is only whitespace. (Real tokens are trimmed by the splitter; this
         // spelling reaches the parser only through direct calls.)
-        let err =
-            parse_daemon_filter_token("include ", RuleXflags::Daemon).expect_err("must refuse");
+        let err = filter_token("include ").expect_err("must refuse");
         assert!(
             err.to_string().starts_with("unexpected end of filter rule"),
             "{err}"
@@ -3930,7 +3801,7 @@ mod module_access_tests {
         // The message names the offending BYTE and its offset, as upstream's
         // modifier arm does - a bare "invalid rule" would not tell an
         // operator which character of their config is wrong.
-        let err = parse_daemon_filter_token("-foo", RuleXflags::Daemon).expect_err("must refuse");
+        let err = filter_token("-foo").expect_err("must refuse");
         assert_eq!(
             err.to_string(),
             "invalid modifier 'f' at position 1 in filter rule: -foo"
@@ -3939,7 +3810,7 @@ mod module_access_tests {
 
     #[test]
     fn a_plus_prefix_without_a_separator_is_refused() {
-        let err = parse_daemon_filter_token("+foo", RuleXflags::Daemon).expect_err("must refuse");
+        let err = filter_token("+foo").expect_err("must refuse");
         assert_eq!(
             err.to_string(),
             "invalid modifier 'f' at position 1 in filter rule: +foo"
@@ -3955,7 +3826,7 @@ mod module_access_tests {
         // upstream's modifier scan is `while (ch != '!' && ...)` and so never
         // runs for `!`. The two arms are distinct, and asserting the wrong
         // one here would pin a message upstream cannot produce for this token.
-        let err = parse_daemon_filter_token("!name", RuleXflags::Daemon).expect_err("must refuse");
+        let err = filter_token("!name").expect_err("must refuse");
         assert_eq!(err.to_string(), "'!' rule has trailing characters: !name");
     }
 
@@ -3969,8 +3840,8 @@ mod module_access_tests {
         // holding `bait` + `keep` + `ctl` and a file literally named `!`:
         // `filter = !` serves every one of them, `!` included. oc hid the file
         // named `!` - a planted bait the wrong rule matched exactly.
-        let rule = accepted_rule("!");
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
+        assert!(is_skipped("!"));
+        assert!(filter_directive_rules("- bait !").unwrap().is_empty());
     }
 
     #[test]
@@ -3980,8 +3851,8 @@ mod module_access_tests {
         // with `len == 0` and clears. MEASURED: `filter = !,` is rc 0 upstream
         // with every file served; oc REFUSED the module, because the guard this
         // replaced fired on any token longer than one byte.
-        let rule = accepted_rule("!,");
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
+        assert!(is_skipped("!,"));
+        assert!(filter_directive_rules("- bait !,").unwrap().is_empty());
     }
 
     /// A module whose `filter` parameter is `value`, rooted at `root`.
@@ -3994,7 +3865,10 @@ mod module_access_tests {
     }
 
     /// The rules `filter = <value>` builds, or the refusal it earns.
-    fn filter_rules(root: &Path, value: &str) -> Result<Vec<FilterRuleWireFormat>, io::Error> {
+    fn filter_rules(
+        root: &Path,
+        value: &str,
+    ) -> Result<Vec<FilterRuleWireFormat>, ModuleFilterRefusal> {
         build_daemon_filter_rules(&filter_module(root, value))
     }
 
@@ -4095,9 +3969,8 @@ mod module_access_tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = merge_file(dir.path(), "rules", "- bait\n!\n- ctl\n");
         let rules = filter_rules(dir.path(), &format!("merge {path}")).expect("merge refused");
-        assert_eq!(rules.len(), 3);
-        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Clear);
-        assert_eq!(rules[2].pattern, "ctl");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "ctl");
     }
 
     #[test]
@@ -4126,7 +3999,8 @@ mod module_access_tests {
         let path = merge_file(dir.path(), "rules", "- sub/f\n- d/\n");
         let rules = filter_rules(dir.path(), &format!("merge {path}")).expect("merge refused");
         assert!(!rules[0].anchored, "an embedded slash must not anchor");
-        assert_eq!(rules[1].pattern, "d/", "no /*** suffix in a merge file");
+        assert_eq!(rules[1].pattern, "d", "no /*** suffix in a merge file");
+        assert!(rules[1].directory_only);
         // Non-vacuity: the DIRECTIVE spelling still does both.
         let direct = filter_rules(dir.path(), "- sub/f - d/").expect("directive refused");
         assert!(direct[0].anchored);
@@ -4442,7 +4316,13 @@ mod module_access_tests {
         let path = merge_file(dir.path(), "rules", "#note\n");
         assert!(filter_patterns(dir.path(), &format!("merge {path}")).is_empty());
         let err = filter_rules(dir.path(), &format!("merge,w {path}")).expect_err("must refuse");
-        assert_eq!(err.to_string(), "Unknown filter rule: #note");
+        // MEASURED against rsync 3.5.1: the daemon log reads
+        // `Unknown filter rule: <rule from FILE>` - a word-split read has no
+        // line count (exclude.c:71-86).
+        assert_eq!(
+            err.to_string(),
+            format!("Unknown filter rule: <rule from {path}>")
+        );
     }
 
     #[test]
@@ -4493,7 +4373,9 @@ mod module_access_tests {
                 "{token}: the self-exclude matches the basename everywhere"
             );
             assert_eq!(rules[1].rule_type, protocol::filters::RuleType::DirMerge);
-            assert!(rules[1].exclude_from_merge, "{token}");
+            // exclude.c:1571 clears FILTRULE_EXCLUDE_SELF once the exclude is
+            // in place, so the merge rule itself no longer carries it.
+            assert!(!rules[1].exclude_from_merge, "{token}");
         }
 
         // A path-bearing merge name self-excludes only its BASENAME, and the
@@ -4523,7 +4405,12 @@ mod module_access_tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = merge_file(dir.path(), "rules", "bait\n");
         let err = filter_rules(dir.path(), &format!("merge {path}")).expect_err("must refuse");
-        assert_eq!(err.to_string(), "Unknown filter rule: bait");
+        // MEASURED against rsync 3.5.1: a rule read from a FILE is reported
+        // by where it came from, never echoed (exclude.c:71-136).
+        assert_eq!(
+            err.to_string(),
+            format!("Unknown filter rule: <rule from {path} line 1>")
+        );
         let err = filter_rules(dir.path(), "bait").expect_err("directive must refuse too");
         assert_eq!(err.to_string(), "Unknown filter rule: bait");
     }
@@ -4536,19 +4423,16 @@ mod module_access_tests {
         // `ctl !` - `bait` stayed hidden.
         let dir = tempfile::tempdir().expect("temp dir");
         let rules = filter_rules(dir.path(), "- bait - ctl !").expect("filter refused");
-        assert_eq!(rules.len(), 3);
-        assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Clear);
+        assert!(rules.is_empty(), "{rules:?}");
         // MEASURED: `filter = - keep ! - ctl` serves `keep` and hides `ctl`.
         let after = filter_rules(dir.path(), "- keep ! - ctl").expect("filter refused");
-        assert_eq!(after.len(), 3);
-        assert_eq!(after[1].rule_type, protocol::filters::RuleType::Clear);
-        assert_eq!(after[2].pattern, "ctl");
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].pattern, "ctl");
     }
 
     #[test]
     fn a_bang_that_opens_a_pattern_is_not_a_token_boundary() {
-        // The non-vacuity companion to the cell above, and the reason
-        // `opens_clear_rule` is narrower than upstream's rule character.
+        // The non-vacuity companion to the cell above.
         // MEASURED: `filter = - !bait` is ONE rule whose pattern is `!bait`
         // (rc 0, every file served). Opening a token on every leading `!` would
         // leave a patternless `-` and refuse it.
@@ -4578,7 +4462,8 @@ mod module_access_tests {
             ..Default::default()
         });
         let err = build_daemon_filter_rules(&module).expect_err("must refuse");
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        // upstream: filter_rule_err() exits RERR_SYNTAX (exclude.c:133-137).
+        assert_eq!(err.exit_code(), ExitCode::Syntax);
         assert_eq!(
             err.to_string(),
             "invalid modifier 'f' at position 1 in filter rule: -foo"
@@ -4596,112 +4481,47 @@ mod module_access_tests {
         assert_eq!(rules[0].pattern, "*.tmp");
     }
 
-    /// The remainder now keeps its TERMINATOR, because `rule_strcmp` returns
-    /// two different addresses for the two terminator classes
-    /// (`exclude.c:1222-1226`) and the callers act on the difference: a `,`
-    /// opens upstream's modifier scan, a space or `_` leads straight to the
-    /// pattern.
-    #[test]
-    fn strip_matched_keyword_space_separator() {
-        assert_eq!(
-            strip_matched_keyword("exclude *.tmp", "exclude"),
-            Some(" *.tmp")
-        );
-    }
-
-    #[test]
-    fn strip_matched_keyword_comma_separator() {
-        assert_eq!(
-            strip_matched_keyword("exclude,*.tmp", "exclude"),
-            Some(",*.tmp")
-        );
-    }
-
-    #[test]
-    fn strip_matched_keyword_no_separator() {
-        // "excluder" should not match "exclude"
-        assert_eq!(strip_matched_keyword("excluder *.tmp", "exclude"), None);
-    }
-
-    #[test]
-    fn strip_matched_keyword_exact_keyword_no_pattern() {
-        assert_eq!(strip_matched_keyword("exclude", "exclude"), Some(""));
-    }
-
-    #[test]
-    fn strip_matched_keyword_no_match() {
-        assert_eq!(strip_matched_keyword("include *.tmp", "exclude"), None);
-    }
-
-    /// upstream: `exclude.c:1222` - `rule_strcmp` accepts `_` as a keyword
-    /// separator. The set this replaced was `' '` or `','` alone, so `_` made
-    /// the token not-a-keyword and it fell through to the bare-pattern arm.
-    #[test]
-    fn strip_matched_keyword_underscore_separator() {
-        assert_eq!(strip_matched_keyword("hide_bar", "hide"), Some("_bar"));
-    }
-
-    /// upstream: `exclude.c:1222` - `rule_strcmp` tests `isspace`, so a TAB is
-    /// in the terminator set this function shares with the tokenizer. Keeping
-    /// one terminator set with one owner is why the arm exists.
-    ///
-    /// ⚠ THE PREMISE IS UPSTREAM'S, THE CONCLUSION IS NOT UPSTREAM'S FOR THIS
-    /// DIRECTIVE, and the distinction is measured rather than reasoned. Against
-    /// a real rsync 3.5.0 daemon, `filter = exclude\tbar` REFUSES the module
-    /// (`unexpected end of filter rule`), because the word-split loop
-    /// (`exclude.c:1250-1255`) consumes the tab BEFORE `rule_strcmp` is ever
-    /// reached, leaving the keyword patternless. Upstream therefore never
-    /// exercises its own tab branch here; `_` behaves differently and IS
-    /// faithful, since it is not whitespace and survives the split.
-    ///
-    /// So this cell pins oc's terminator set, NOT a shape upstream accepts.
-    /// oc builds a rule where upstream refuses the module - the same
-    /// accept-where-upstream-refuses class the doubled-separator shapes fall
-    /// into, tracked separately. Do NOT read it as "upstream parses
-    /// `exclude\tbar` as an exclude of `bar`" - it does not.
-    #[test]
-    fn strip_matched_keyword_tab_separator() {
-        assert_eq!(strip_matched_keyword("hide\tbar", "hide"), Some("\tbar"));
-    }
-
-    #[test]
-    fn read_patterns_from_file_basic() {
+    /// The patterns an `exclude from` file holding `contents` adds.
+    fn exclude_from_patterns(contents: &str) -> Vec<String> {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("patterns.txt");
-        fs::write(&file, "*.tmp\n*.bak\n").unwrap();
+        fs::write(&file, contents).unwrap();
+        exclude_from_file_patterns(&file).unwrap()
+    }
 
-        let patterns = read_patterns_from_file(&file).unwrap();
+    /// The patterns the `exclude from` file at `file` adds, all excludes.
+    fn exclude_from_file_patterns(file: &Path) -> Result<Vec<String>, ModuleFilterRefusal> {
+        let rules = build_daemon_filter_rules(&ModuleRuntime::from(ModuleDefinition {
+            exclude_from: Some(file.to_path_buf()),
+            ..Default::default()
+        }))?;
+        Ok(rules
+            .into_iter()
+            .map(|rule| {
+                assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+                rule.pattern.to_string_lossy().into_owned()
+            })
+            .collect())
+    }
+
+    #[test]
+    fn exclude_from_reads_one_pattern_per_line() {
+        assert_eq!(exclude_from_patterns("*.tmp\n*.bak\n"), ["*.tmp", "*.bak"]);
+    }
+
+    #[test]
+    fn exclude_from_skips_comments() {
         assert_eq!(
-            patterns,
-            vec![("*.tmp".to_owned(), 1), ("*.bak".to_owned(), 2)]
+            exclude_from_patterns("# comment\n*.tmp\n; another\n*.bak\n"),
+            ["*.tmp", "*.bak"]
         );
     }
 
     #[test]
-    fn read_patterns_from_file_skips_comments() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("patterns.txt");
-        fs::write(&file, "# comment\n*.tmp\n; another\n*.bak\n").unwrap();
-
-        // Comments keep their line slot: `rule_src_line` counts every record
-        // read (`exclude.c:1759-1760`), not every rule kept.
-        let patterns = read_patterns_from_file(&file).unwrap();
+    fn exclude_from_skips_empty_lines() {
         assert_eq!(
-            patterns,
-            vec![("*.tmp".to_owned(), 2), ("*.bak".to_owned(), 4)]
-        );
-    }
-
-    #[test]
-    fn read_patterns_from_file_skips_empty_lines() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("patterns.txt");
-        fs::write(&file, "\n*.tmp\n\n*.bak\n").unwrap();
-
-        let patterns = read_patterns_from_file(&file).unwrap();
-        assert_eq!(
-            patterns,
-            vec![("*.tmp".to_owned(), 2), ("*.bak".to_owned(), 4)]
+            exclude_from_patterns("\n*.tmp\n\n*.bak\n"),
+            ["*.tmp", "*.bak"]
         );
     }
 
@@ -4714,22 +4534,12 @@ mod module_access_tests {
     ///
     /// MEASURED against rsync 3.5.1: a module whose `exclude from` file holds
     /// the single line `a ` over a directory holding `a` and `a ` serves `a` and
-    /// hides `a `. oc trimmed the rule, so it hid `a` and SERVED `a ` - a
-    /// different set of files, at exit 0, with no diagnostic.
+    /// hides `a `.
     #[test]
-    fn read_patterns_from_file_keeps_trailing_whitespace() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("patterns.txt");
-        fs::write(&file, "a \nb\t\n *.log\n").unwrap();
-
-        let patterns = read_patterns_from_file(&file).unwrap();
+    fn exclude_from_keeps_trailing_whitespace() {
         assert_eq!(
-            patterns,
-            vec![
-                ("a ".to_owned(), 1),
-                ("b\t".to_owned(), 2),
-                (" *.log".to_owned(), 3)
-            ]
+            exclude_from_patterns("a \nb\t\n *.log\n"),
+            ["a ", "b\t", " *.log"]
         );
     }
 
@@ -4737,71 +4547,45 @@ mod module_access_tests {
     ///
     /// upstream: `exclude.c:1806` tests `*line` - the FIRST BYTE - so `   ` is
     /// not empty and becomes a rule matching a file literally named `   `.
-    /// Trimming first collapsed it to `""` and dropped it.
     #[test]
-    fn read_patterns_from_file_keeps_a_whitespace_only_record() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("patterns.txt");
-        fs::write(&file, "   \n*.tmp\n").unwrap();
-
-        let patterns = read_patterns_from_file(&file).unwrap();
-        assert_eq!(
-            patterns,
-            vec![("   ".to_owned(), 1), ("*.tmp".to_owned(), 2)]
-        );
+    fn exclude_from_keeps_a_whitespace_only_record() {
+        assert_eq!(exclude_from_patterns("   \n*.tmp\n"), ["   ", "*.tmp"]);
     }
 
     /// `#`/`;` open a comment only in COLUMN ZERO.
     ///
     /// upstream: `exclude.c:1806` tests `*line != ';' && *line != '#'` on the
-    /// untrimmed record, so ` #a` is a pattern. oc trimmed before the test and
-    /// dropped it, which SERVED a file the operator had asked the daemon to
-    /// hide.
+    /// untrimmed record, so ` #a` is a pattern.
     #[test]
-    fn read_patterns_from_file_comment_marker_counts_only_in_column_zero() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("patterns.txt");
-        fs::write(&file, "#dropped\n  #kept\n ;kept\n;dropped\n").unwrap();
-
-        let patterns = read_patterns_from_file(&file).unwrap();
+    fn exclude_from_comment_marker_counts_only_in_column_zero() {
         assert_eq!(
-            patterns,
-            vec![("  #kept".to_owned(), 2), (" ;kept".to_owned(), 3)]
+            exclude_from_patterns("#dropped\n  #kept\n ;kept\n;dropped\n"),
+            ["  #kept", " ;kept"]
         );
     }
 
     /// A lone `\r` ends a record, and `\r\n` ends exactly one.
     ///
-    /// upstream: `exclude.c:1774-1793`. `str::lines` breaks only on `\n`, so a
-    /// `\r`-separated filter file collapsed into ONE pattern carrying the `\r`
-    /// and every later rule as literal bytes - it matched nothing and the files
-    /// those rules named all transferred.
+    /// upstream: `exclude.c:1774-1793`.
     #[test]
-    fn read_patterns_from_file_splits_on_a_lone_carriage_return() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("patterns.txt");
-        fs::write(&file, "a \r*.tmp\r\n*.bak\n").unwrap();
-
-        // Every terminator ends one record and one LINE: upstream bumps
-        // `rule_src_line` per record read, and a lone `\r` ends a record
-        // (`exclude.c:1759-1760,1774-1793`).
-        let patterns = read_patterns_from_file(&file).unwrap();
+    fn exclude_from_splits_on_a_lone_carriage_return() {
         assert_eq!(
-            patterns,
-            vec![
-                ("a ".to_owned(), 1),
-                ("*.tmp".to_owned(), 2),
-                ("*.bak".to_owned(), 3)
-            ]
+            exclude_from_patterns("a \r*.tmp\r\n*.bak\n"),
+            ["a ", "*.tmp", "*.bak"]
         );
     }
 
+    /// upstream: `clientserver.c:946-948` passes XFLG_FATAL_ERRORS, so a
+    /// missing file refuses the module (exclude.c:1703-1720).
     #[test]
-    fn read_patterns_from_file_missing_file() {
-        let result = read_patterns_from_file(Path::new("/nonexistent/file.txt"));
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("failed to read filter file"));
+    fn exclude_from_a_missing_file_refuses() {
+        let err = exclude_from_file_patterns(Path::new("/nonexistent/file.txt"))
+            .expect_err("a missing exclude-from file is fatal");
+        assert!(
+            err.to_string()
+                .starts_with("failed to open exclude file /nonexistent/file.txt"),
+            "{err}"
+        );
     }
 
     /// The reader takes the OPERATOR arm of the ownership walk, not the
@@ -4810,18 +4594,13 @@ mod module_access_tests {
     ///
     /// ⚠ THIS IS THE NON-VACUITY COMPANION FOR THE OWNERSHIP-WALK ROUTING, AND
     /// IT IS THE ONLY HALF THAT IS PORTABLE. The walk refuses a symlink
-    /// component owned by neither uid 0 nor the euid, so the ESCAPE it now
-    /// blocks needs root plus a second uid and cannot be reproduced in a
-    /// single-uid test process - a `#[test]` that planted its own symlink would
-    /// own it, the walk would trust it, and the cell would pass while being
-    /// structurally unable to observe the defect. The escape is measured
-    /// instead by `probe_1170_red.sh` on a Linux host as root (recorded on task
-    /// 1170); what this cell pins is the half that a single uid CAN decide:
-    /// that routing through the walk did NOT become a blanket symlink refusal,
-    /// which is the realistic regression the change could introduce.
+    /// component owned by neither uid 0 nor the euid, so the ESCAPE it blocks
+    /// needs root plus a second uid and cannot be reproduced in a single-uid
+    /// test process. What this cell pins is the half a single uid CAN decide:
+    /// that routing through the walk did NOT become a blanket symlink refusal.
     #[cfg(unix)]
     #[test]
-    fn read_patterns_from_file_follows_a_trusted_owner_symlink() {
+    fn exclude_from_follows_a_trusted_owner_symlink() {
         let dir = tempfile::tempdir().expect("tempdir");
         let target = dir.path().join("real-excludes");
         std::fs::write(&target, "keep\n").expect("write target");
@@ -4829,27 +4608,9 @@ mod module_access_tests {
         let link = dir.path().join("link-excludes");
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
 
-        let patterns = read_patterns_from_file(&link).expect("trusted-owner symlink is followed");
-        assert_eq!(patterns, vec![("keep".to_string(), 1)]);
-    }
-
-    /// A plain file still reads identically after the routing change.
-    ///
-    /// Guards the happy path the swap could have broken: `operator_read_to_string`
-    /// resolves per component where `fs::read_to_string` did not, so a
-    /// regression here would be a total outage of both `include from` and
-    /// `exclude from` rather than a subtle one.
-    #[test]
-    fn read_patterns_from_file_reads_a_plain_file_unchanged() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let file = dir.path().join("excludes");
-        std::fs::write(&file, "first\n; comment\nsecond\n").expect("write");
-
-        let patterns = read_patterns_from_file(&file).expect("plain file reads");
-        assert_eq!(
-            patterns,
-            vec![("first".to_string(), 1), ("second".to_string(), 3)]
-        );
+        let patterns =
+            exclude_from_file_patterns(&link).expect("trusted-owner symlink is followed");
+        assert_eq!(patterns, ["keep"]);
     }
 
     #[test]
@@ -4993,244 +4754,6 @@ mod module_access_tests {
         assert_eq!(config.effective_backup_suffix(), ".old");
     }
 
-    #[test]
-    fn split_filter_tokens_single_exclude() {
-        let tokens = split_filter_tokens("- *.tmp");
-        assert_eq!(tokens, vec!["- *.tmp"]);
-    }
-
-    #[test]
-    fn split_filter_tokens_single_include() {
-        let tokens = split_filter_tokens("+ *.rs");
-        assert_eq!(tokens, vec!["+ *.rs"]);
-    }
-
-    #[test]
-    fn split_filter_tokens_multiple_rules() {
-        let tokens = split_filter_tokens("+ *.txt + *.rs + */ - *");
-        assert_eq!(tokens, vec!["+ *.txt", "+ *.rs", "+ */", "- *"]);
-    }
-
-    #[test]
-    fn split_filter_tokens_mixed_include_exclude() {
-        let tokens = split_filter_tokens("+ important.log + .keep.tmp - *.log - *.tmp");
-        assert_eq!(
-            tokens,
-            vec!["+ important.log", "+ .keep.tmp", "- *.log", "- *.tmp"]
-        );
-    }
-
-    #[test]
-    fn split_filter_tokens_excludes_only() {
-        let tokens = split_filter_tokens("- *.tmp - *.bak - *.cache");
-        assert_eq!(tokens, vec!["- *.tmp", "- *.bak", "- *.cache"]);
-    }
-
-    #[test]
-    fn split_filter_tokens_empty() {
-        let tokens = split_filter_tokens("");
-        assert!(tokens.is_empty());
-    }
-
-    #[test]
-    fn split_filter_tokens_whitespace_only() {
-        let tokens = split_filter_tokens("   ");
-        assert!(tokens.is_empty());
-    }
-
-    #[test]
-    fn split_filter_tokens_keyword_rules() {
-        let tokens = split_filter_tokens("exclude *.tmp include *.rs");
-        assert_eq!(tokens, vec!["exclude *.tmp", "include *.rs"]);
-    }
-
-    #[test]
-    fn split_filter_tokens_bare_pattern() {
-        let tokens = split_filter_tokens("*.bak");
-        assert_eq!(tokens, vec!["*.bak"]);
-    }
-
-    /// A one-character side prefix opens its own token.
-    ///
-    /// upstream: the `default:` arm of `parse_rule_tok` (`exclude.c:1325-1329`)
-    /// makes `P` a rule character, and `parse_filter_str`'s word-split loop
-    /// hands it to that arm as its own token.
-    ///
-    /// ⚠ NON-VACUITY: `- foo P bar` is the shape where the boundary is
-    /// OBSERVABLE. MEASURED against rsync 3.5.0 (module `foo`+`bar`+`keep`
-    /// +`ctl`): upstream serves `keep` and `ctl` only, hiding BOTH named files.
-    /// With the old `["+ ", "- ", "+/", "-/"]` table this line collapsed into
-    /// one rule whose pattern was the literal `foo P bar`, and oc served all
-    /// four - including `foo`, which even the `- foo` half names.
-    #[test]
-    fn split_filter_tokens_short_side_prefix_opens_its_own_token() {
-        assert_eq!(
-            split_filter_tokens("- foo P bar"),
-            vec!["- foo", "P bar"],
-            "P"
-        );
-        assert_eq!(
-            split_filter_tokens("P bar H foo"),
-            vec!["P bar", "H foo"],
-            "H"
-        );
-        assert_eq!(
-            split_filter_tokens("- foo R keep - k*"),
-            vec!["- foo", "R keep", "- k*"],
-            "R"
-        );
-        assert_eq!(
-            split_filter_tokens("S bar - b*"),
-            vec!["S bar", "- b*"],
-            "S"
-        );
-    }
-
-    /// An uppercase-initial bare word after a rule IS its own token.
-    ///
-    /// ⚠ THIS EXPECTATION IS THE REVERSE OF WHAT IT WAS, and deliberately so.
-    /// It used to read `vec!["- foo Pictures"]`, which was the boundary
-    /// heuristic's answer rather than upstream's: the scanner asked "does
-    /// `Pictures` LOOK like a rule prefix?", decided no, and glued it onto the
-    /// pattern before it. Upstream never asks. `- ` takes one separator and a
-    /// pattern that ends at whitespace (`exclude.c:1444-1462`), so `Pictures`
-    /// starts a fresh rule - `P` plus the invalid modifier `i`, which
-    /// `exclude.c:1371-1380` refuses with `RERR_SYNTAX`.
-    ///
-    /// MEASURED on loopback TCP, module holding
-    /// `foo bar baz keep ctl core Pictures README`: `filter = - foo Pictures` is
-    /// rc 5 upstream, was rc 0 in oc with EVERY FILE SERVED, and is rc 5 now.
-    #[test]
-    fn split_filter_tokens_bare_word_in_rule_position_is_its_own_token() {
-        assert_eq!(
-            split_filter_tokens("- foo Pictures"),
-            vec!["- foo", "Pictures"],
-            "Pictures"
-        );
-        assert_eq!(
-            split_filter_tokens("- foo README"),
-            vec!["- foo", "README"],
-            "README"
-        );
-    }
-
-    /// A keyword at END OF STRING terminates and opens its own token.
-    ///
-    /// upstream: `exclude.c:1218-1227` `rule_strcmp` accepts the end of the
-    /// string as a terminator. The prefix table this replaced required a
-    /// trailing SPACE on every keyword, so a line-final `clear` matched
-    /// nothing, no boundary opened, and the whole line collapsed into ONE rule
-    /// whose pattern was the literal text `foo clear`.
-    #[test]
-    fn split_filter_tokens_line_final_keyword_opens_its_own_token() {
-        let tokens = split_filter_tokens("- foo clear");
-        assert_eq!(tokens, vec!["- foo", "clear"]);
-    }
-
-    /// `_` terminates a keyword exactly as whitespace does.
-    ///
-    /// upstream: `exclude.c:1222` - `rule_strcmp` accepts `_` as a separator.
-    #[test]
-    fn split_filter_tokens_underscore_terminated_keyword_opens_its_own_token() {
-        let tokens = split_filter_tokens("- foo hide_bar");
-        assert_eq!(tokens, vec!["- foo", "hide_bar"]);
-    }
-
-    /// NON-VACUITY COMPANION for the two cells above: `hideout` is NOT a `hide`
-    /// rule, because `o` is not a separator - `rule_strcmp`
-    /// (`exclude.c:1218-1227`) returns NULL. Without this cell both would also
-    /// pass if the keyword test had been loosened to "any token STARTING WITH a
-    /// keyword", which is the obvious wrong fix.
-    ///
-    /// ⚠ THIS EXPECTATION FLIPPED TOO, from `vec!["- foo hideout"]`. Failing
-    /// `rule_strcmp` does not make the word a pattern: upstream assigns
-    /// `s = RULE_STRCMP(...)` unconditionally, so a miss leaves `ch == 0` and
-    /// falls to `filter_rule_err("Unknown filter rule")` (`exclude.c:1363`).
-    /// The word is a REFUSED RULE, and the refusal is what the end-to-end cell
-    /// below pins. The old note here called that over-acceptance "a SEPARATE
-    /// defect tracked on its own" - this is that tracked defect, closed, and the
-    /// same measurement covers `mergeX` and every other unrecognised word.
-    #[test]
-    fn split_filter_tokens_unterminated_keyword_is_its_own_token() {
-        let tokens = split_filter_tokens("- foo hideout");
-        assert_eq!(tokens, vec!["- foo", "hideout"]);
-    }
-
-    /// THE POSITIONAL RULE: a `FILTRULE_WORD_SPLIT` pattern ends at the first
-    /// whitespace, and the next word is a fresh RULE.
-    ///
-    /// upstream: `exclude.c:1457-1462` measures the pattern with
-    /// `while (!isspace(*cp) && *cp != '\0') cp++`, and `exclude.c:1485` resumes
-    /// the walk at `*pat_ptr + len`. Nothing looks ahead at the next word.
-    ///
-    /// ⚠ NON-VACUITY: the heuristic returned ONE token for every row here.
-    /// MEASURED on loopback TCP against rsync 3.5.0 and oc daemons, module
-    /// holding `foo bar baz keep ctl core Pictures README`: `filter = - foo bar`
-    /// is rc 5 upstream and was rc 0 in oc WITH EVERY FILE SERVED - including
-    /// `foo`, which the rule's own first half names - because the glued pattern
-    /// `foo bar` matched nothing on disk.
-    #[test]
-    fn split_filter_tokens_pattern_ends_at_the_first_whitespace() {
-        assert_eq!(split_filter_tokens("- foo bar"), vec!["- foo", "bar"]);
-        assert_eq!(
-            split_filter_tokens("+ keep - bar baz"),
-            vec!["+ keep", "- bar", "baz"]
-        );
-        // A TAB ends the pattern exactly as a space does.
-        assert_eq!(split_filter_tokens("- foo\tbar"), vec!["- foo", "bar"]);
-    }
-
-    /// A separator RUN is not one separator.
-    ///
-    /// upstream consumes exactly ONE byte (`if (*s) s++`, `exclude.c:1444-1445`),
-    /// so a second separator lands where the pattern should start, the pattern
-    /// comes out EMPTY, and `exclude.c:1474-1476` refuses the rule. The word
-    /// after it is a rule of its own.
-    ///
-    /// ⚠ THE RUN THAT MATTERS IS THE ONE BEFORE THE PATTERN. A run AFTER the
-    /// pattern (`- foo  bar`) is just the next lap's whitespace skip and proves
-    /// nothing about this decision: a mutant that consumed a whole run here
-    /// passed such a cell unharmed, which is why the rows below lead instead.
-    ///
-    /// MEASURED, loopback TCP: `filter = -  foo` is rc 5 upstream and was rc 0
-    /// in oc WITH `foo` HIDDEN - oc built the operator's rule out of a config
-    /// upstream rejects outright. Same shape for `+  keep`, `P  bar` and
-    /// `exclude  bar`.
-    #[test]
-    fn split_filter_tokens_consumes_exactly_one_separator() {
-        // The prefix keeps ONE separator, the pattern is empty, so the token
-        // ends at the second space and `foo` opens a rule of its own.
-        assert_eq!(split_filter_tokens("-  foo"), vec!["- ", "foo"]);
-        assert_eq!(split_filter_tokens("exclude  bar"), vec!["exclude ", "bar"]);
-        // NON-VACUITY CONTROL: `_` is a separator too, and ONE of it still
-        // yields a pattern - MEASURED rc 0 on both for `filter = -_foo`.
-        assert_eq!(split_filter_tokens("-_foo"), vec!["-_foo"]);
-        // The after-the-pattern run, kept as the companion the note describes.
-        assert_eq!(split_filter_tokens("- foo  bar"), vec!["- foo", "bar"]);
-    }
-
-    /// The WORD_SPLIT STEP-BACK: a keyword separated by a TAB gets NO pattern.
-    ///
-    /// upstream: `exclude.c:1367-1370` - inside the modifier scan a
-    /// `FILTRULE_WORD_SPLIT` whitespace that is not `' '` ends the run by moving
-    /// `s` BACK one byte, so the `if (*s) s++` that follows lands ON the tab and
-    /// the pattern length comes out zero. The token is the bare keyword, and the
-    /// word after it is a separate rule.
-    ///
-    /// ⚠ THIS IS THE CELL ONLY A TRUE POSITIONAL PORT PASSES - a boundary
-    /// scanner has no step-back to reproduce, and no amount of prefix-table
-    /// tuning produces it. MEASURED: `filter = exclude<TAB>foo` is rc 5 upstream
-    /// (`unexpected end of filter rule`) where oc-base was rc 0 and served the
-    /// module with `foo` excluded - a DIFFERENT SERVED SET, not merely a
-    /// different exit code.
-    #[test]
-    fn split_filter_tokens_tab_after_a_keyword_empties_the_pattern() {
-        assert_eq!(split_filter_tokens("exclude\tfoo"), vec!["exclude", "foo"]);
-        // NON-VACUITY CONTROL: a single SPACE does not step back, so the very
-        // same keyword keeps its pattern.
-        assert_eq!(split_filter_tokens("exclude foo"), vec!["exclude foo"]);
-    }
-
     /// END-TO-END: a word in RULE position that names no rule is REFUSED.
     ///
     /// upstream: `exclude.c:1363` `filter_rule_err("Unknown filter rule")` ->
@@ -5293,24 +4816,21 @@ mod module_access_tests {
         }
     }
 
-    /// The END-TO-END cell: a line-final `clear` must reach the rule list as a
-    /// CLEAR rule, not as pattern text.
+    /// The END-TO-END cell: a line-final `clear` must empty the rule list, not
+    /// become pattern text.
     ///
     /// The tokenizer cells above cannot show this on their own - splitting the
     /// token is necessary but not sufficient, since the token still has to
     /// parse into a rule. This is the assertion that would have caught the
     /// defect from the outside.
     #[test]
-    fn build_daemon_filter_rules_line_final_clear_builds_a_clear_rule() {
+    fn build_daemon_filter_rules_line_final_clear_empties_the_list() {
         let module = ModuleRuntime::from(ModuleDefinition {
             filter: vec!["- foo clear".to_string()],
             ..Default::default()
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
-        assert_eq!(rules.len(), 2, "expected an exclude and a clear: {rules:?}");
-        assert_eq!(rules[0].pattern, "foo");
-        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
-        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Clear);
+        assert!(rules.is_empty(), "the clear empties the list: {rules:?}");
     }
 
     #[test]
@@ -5326,7 +4846,8 @@ mod module_access_tests {
         assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Include);
         assert_eq!(rules[1].pattern, "*.rs");
         assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Include);
-        assert_eq!(rules[2].pattern, "*/");
+        assert_eq!(rules[2].pattern, "*");
+        assert!(rules[2].directory_only);
         assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Include);
         assert_eq!(rules[3].pattern, "*");
         assert_eq!(rules[3].rule_type, protocol::filters::RuleType::Exclude);

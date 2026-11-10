@@ -7,7 +7,7 @@ use protocol::SUPPORTED_PROTOCOL_BOUNDS;
 /// rule is tagged with a CVS origin so the wire projection can honor upstream's
 /// local-only / protocol-gated forwarding.
 ///
-/// upstream: exclude.c:1951-1954 send_filter_list() parses `:C` and then `-C`
+/// upstream: exclude.c:1951-1954 send_filter_list() parses `:C` before `-C`
 /// after every other rule, and `-C` goes through rule_template(0), so it is a
 /// plain `C` rule like any other (exclude.c:1595-1597).
 pub(crate) fn append_cvs_exclude_rules(destination: &mut Vec<FilterRuleSpec>, cvs: &CvsSession) {

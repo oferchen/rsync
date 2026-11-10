@@ -49,7 +49,7 @@ fn process_merge_directive_applies_parent_overrides_to_nested_merges() {
     let mut rules = Vec::new();
     let mut visited = Vec::new();
     super::process_merge_directive(
-        "merge nested.rules",
+        "merge ./nested.rules",
         &options,
         temp.path(),
         filters::RuleSource::File {
