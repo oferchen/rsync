@@ -324,6 +324,13 @@ pub fn rerr_for_io_error(error: &io::Error) -> i32 {
         return 22;
     }
 
+    // upstream: main.c:817-821 get_local_name() - a failed mkdir of the
+    // destination root is `exit_cleanup(RERR_FILEIO)` whatever the errno; the
+    // usual EACCES would otherwise grade RERR_FILESELECT below.
+    if crate::receiver::DestRootMkdirError::of(error).is_some() {
+        return 11;
+    }
+
     // upstream: rsync.c:897-900 - a denied backup must not be graded by `ErrorKind`
     // like the per-file open failures below. Without this arm the usual `EACCES`
     // reaches the `PermissionDenied => RERR_FILESELECT` arm and reports 3.

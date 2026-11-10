@@ -456,6 +456,17 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             let message = rsync_error!(code.as_i32(), text).with_role(Role::Sender);
             ClientError::with_code(code, message)
         }
+        LocalCopyErrorKind::DestinationMkdirFailed { path, source } => {
+            // upstream: main.c:817-821 get_local_name() runs before the fork,
+            // so rsyserr() and log_exit() both name the `Receiver`
+            // (rsync.c:987-995 who_am_i()).
+            let line = format!(
+                "[Receiver] mkdir {} failed: {}",
+                logging::full_fname(&path),
+                upstream_io_error(&source)
+            );
+            program_line_error(line, ExitCode::FileIo, Role::PreForkReceiver)
+        }
         LocalCopyErrorKind::Timeout { duration } => {
             let code = ExitCode::Timeout;
             let text = format!(
@@ -1260,6 +1271,28 @@ mod tests {
             let msg = client_error.to_string();
             assert!(msg.contains("link_stat \"/tmp/nope\" failed"), "{msg}");
             assert!(!msg.contains("file has vanished"), "{msg}");
+        }
+
+        /// upstream: main.c:817-821 get_local_name() - `rsyserr(FERROR, errno,
+        /// "mkdir %s failed", full_fname(dest_path))` then
+        /// `exit_cleanup(RERR_FILEIO)`. It runs before the fork, so both the
+        /// line and the trailer name the `Receiver`.
+        #[test]
+        fn map_destination_mkdir_failed_reports_file_io_as_receiver() {
+            let io_err = io::Error::from_raw_os_error(13);
+            let local_error =
+                LocalCopyError::destination_mkdir_failed(Path::new("/tmp/ro/new"), io_err);
+            let client_error = map_local_copy_error(local_error);
+
+            assert_eq!(client_error.code(), ExitCode::FileIo);
+            assert_eq!(client_error.exit_code(), 11);
+            assert_eq!(
+                client_error.program_line(),
+                Some("[Receiver] mkdir \"/tmp/ro/new\" failed: Permission denied (13)")
+            );
+            let msg = client_error.to_string();
+            assert!(msg.contains("(code 11)"), "{msg}");
+            assert!(msg.contains("[Receiver="), "{msg}");
         }
 
         /// upstream: rsync.c:sig_int -> exit_cleanup(RERR_SIGNAL) (20);
