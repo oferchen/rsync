@@ -14,7 +14,8 @@ use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use logging::info_log;
+use logging::{debug_log, info_log};
+use protocol::flist::ProcessRole;
 
 use crate::full_fname::full_fname_path;
 use crate::role_trailer::error_location;
@@ -41,6 +42,39 @@ fn filter_chain_error(dir: &Path, error: filters::FilterChainError) -> io::Error
             crate::role_trailer::sender()
         )),
     }
+}
+
+/// Renders `dir` the way upstream names a filter directory in its FILTER
+/// traces: absolute, lexically cleaned, with a trailing slash.
+///
+/// upstream: exclude.c:756-778 set_filter_dir() - a relative `dir` is joined
+/// to `curr_dir`, `clean_fname(CFN_COLLAPSE_DOT_DOT_DIRS)` drops `.` and
+/// folds `..`, and a `/` is appended unless the result is the root itself.
+fn filter_dir_display(dir: &Path) -> String {
+    use std::path::Component;
+
+    let joined;
+    let dir = if dir.is_absolute() {
+        dir
+    } else {
+        joined = std::env::current_dir().map_or_else(|_| dir.to_path_buf(), |cwd| cwd.join(dir));
+        joined.as_path()
+    };
+    let mut cleaned = PathBuf::new();
+    for component in dir.components() {
+        match component {
+            Component::ParentDir => {
+                cleaned.pop();
+            }
+            Component::CurDir => {}
+            other => cleaned.push(other),
+        }
+    }
+    let mut rendered = cleaned.to_string_lossy().into_owned();
+    if rendered != "/" {
+        rendered.push('/');
+    }
+    rendered
 }
 
 /// One pending step of the directory walk.
@@ -622,13 +656,21 @@ impl GeneratorContext {
                     // upstream: exclude.c:push_local_filters() - read the
                     // directory's merge files before scanning it.
                     let guard = self.enter_filter_scope(&dir)?;
-                    // LIFO: the scan runs before the scope is released.
-                    stack.push(WalkStep::LeaveDir(guard));
+                    if scope.descends_into_subdirs() {
+                        // LIFO: the scan runs before the scope is released.
+                        stack.push(WalkStep::LeaveDir(guard));
+                    } else {
+                        // upstream: flist.c:2999-3002 - under INC_RECURSE the
+                        // dot-dir root is pushed at depth 0 and stays pushed
+                        // for every sub-list scan; only the walk popping past
+                        // the root at flist EOF releases it (flist.c:2723).
+                        self.lazy_root_scope = Some(guard);
+                    }
                     stack.push(WalkStep::ScanChildren { dir });
                     None
                 }
                 WalkStep::LeaveDir(guard) => {
-                    self.filter_chain.leave_directory(guard);
+                    self.leave_filter_scope(guard);
                     None
                 }
             };
@@ -789,7 +831,7 @@ impl GeneratorContext {
     ) -> io::Result<()> {
         let guard = self.enter_filter_scope(dir_path)?;
         let result = self.scan_directory_batched(base, dir_path);
-        self.filter_chain.leave_directory(guard);
+        self.leave_filter_scope(guard);
         result
     }
 
@@ -840,14 +882,36 @@ impl GeneratorContext {
 
     /// Pushes `dir`'s per-directory merge files onto the filter chain.
     ///
-    /// upstream: exclude.c:push_local_filters()
+    /// upstream: exclude.c:858-867 push_local_filters() - every directory the
+    /// sender enters is announced at FILTER2, whether or not a per-dir merge
+    /// rule is registered.
     pub(in crate::generator) fn enter_filter_scope(
         &mut self,
         dir: &Path,
     ) -> io::Result<filters::DirFilterGuard> {
+        debug_log!(
+            Filter,
+            2,
+            "[{}] pushing local filters for {}",
+            ProcessRole::Sender,
+            filter_dir_display(dir)
+        );
         self.filter_chain
             .enter_directory(dir)
             .map_err(|e| filter_chain_error(dir, e))
+    }
+
+    /// Pops the per-directory merge scope `guard` entered.
+    ///
+    /// upstream: exclude.c:925-933 pop_local_filters() announces the pop, but
+    /// change_local_filter_dir() (exclude.c:986-995) only pops a scope whose
+    /// push saved state, and push_local_filters() saves none while no per-dir
+    /// merge rule is registered (exclude.c:869-872).
+    pub(in crate::generator) fn leave_filter_scope(&mut self, guard: filters::DirFilterGuard) {
+        if self.filter_chain.has_per_dir_merge() {
+            debug_log!(Filter, 2, "[{}] popping local filters", ProcessRole::Sender);
+        }
+        self.filter_chain.leave_directory(guard);
     }
 
     /// Opens `dir_path` and schedules its children.
@@ -1550,4 +1614,41 @@ fn name_depth(relative: &Path) -> usize {
         .components()
         .filter(|component| matches!(component, std::path::Component::Normal(_)))
         .count()
+}
+
+#[cfg(test)]
+mod filter_dir_display_tests {
+    //! The directory a FILTER trace names is upstream's `dirbuf`
+    //! (exclude.c:756-778 `set_filter_dir()`): absolute, cleaned, and ending
+    //! in `/`, so a log line can be compared with 3.5.1's verbatim.
+    use std::path::Path;
+
+    use super::filter_dir_display;
+
+    #[test]
+    fn an_absolute_directory_gains_a_trailing_slash() {
+        assert_eq!(filter_dir_display(Path::new("/srv/src")), "/srv/src/");
+    }
+
+    #[test]
+    fn dot_and_dot_dot_are_folded_lexically() {
+        assert_eq!(
+            filter_dir_display(Path::new("/srv/./src/a/../b/.")),
+            "/srv/src/b/"
+        );
+    }
+
+    #[test]
+    fn the_root_is_not_doubled() {
+        assert_eq!(filter_dir_display(Path::new("/")), "/");
+    }
+
+    #[test]
+    fn a_relative_directory_is_anchored_to_the_working_directory() {
+        let cwd = std::env::current_dir().expect("cwd");
+        assert_eq!(
+            filter_dir_display(Path::new("src/a")),
+            format!("{}/", cwd.join("src/a").display())
+        );
+    }
 }

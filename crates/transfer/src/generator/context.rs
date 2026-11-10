@@ -183,6 +183,10 @@ pub struct GeneratorContext {
     /// and consumed by
     /// [`produce_next_lazy_segment`](Self::produce_next_lazy_segment).
     pub(crate) lazy_producer: Option<super::LazyFlistProducer>,
+    /// The dot-dir transfer root's per-directory merge scope, held from the
+    /// lazy producer's one-level root scan until
+    /// [`seed_lazy_producer`](Self::seed_lazy_producer) adopts it at depth 0.
+    pub(crate) lazy_root_scope: Option<filters::DirFilterGuard>,
     /// Test-only override for [`Self::lazy_flist`], so unit tests can force the
     /// lazy producer on or off deterministically without mutating the
     /// process-global `OC_RSYNC_LAZY_FLIST` env var (which is `unsafe` to set
@@ -426,6 +430,7 @@ impl GeneratorContext {
             incremental: IncrementalState::new(initial_ndx_start),
             lazy_producer_active: false,
             lazy_producer: None,
+            lazy_root_scope: None,
             #[cfg(test)]
             lazy_flist_override: None,
             #[cfg(test)]
