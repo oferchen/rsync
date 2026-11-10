@@ -296,6 +296,8 @@ include!("daemon/sections/module_definition.rs");
 
 include!("daemon/sections/config_helpers.rs");
 
+include!("daemon/sections/session_process.rs");
+
 /// Runs the daemon orchestration using the provided configuration.
 ///
 /// Parses runtime options from the `DaemonConfig` arguments, loads
@@ -343,7 +345,13 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         return serve_inetd_session(options);
     }
 
-    serve_connections(options, external_signal_flags, pre_bound_listener)
+    serve_connections(
+        options,
+        external_signal_flags,
+        pre_bound_listener,
+        #[cfg(windows)]
+        SessionSpawn::for_config(&config),
+    )
 }
 
 /// Seeds the thread-local [`logging::VerbosityConfig`] from the daemon's

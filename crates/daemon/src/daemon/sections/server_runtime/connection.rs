@@ -3,6 +3,10 @@
 /// Groups the mutable and immutable context needed by both the single-listener
 /// and dual-stack accept loops, avoiding excessive parameter lists.
 struct AcceptLoopState<'a> {
+    /// How a Windows daemon starts a session process per connection; `None`
+    /// serves sessions on threads (embedding harnesses only).
+    #[cfg(windows)]
+    session_spawn: Option<SessionSpawn>,
     signal_flags: &'a SignalFlags,
     workers: Vec<SessionWorker>,
     served: usize,
@@ -249,6 +253,26 @@ fn spawn_connection_worker(
     );
     let slot = state.connection_counter.acquire();
 
+    #[cfg(windows)]
+    if let Some(spawn) = state.session_spawn.as_ref() {
+        // upstream: socket.c:761-777 - one child per connection; the parent
+        // keeps only the child and closes its copy of the socket.
+        let backing = match spawn.start(&stream) {
+            Ok(child) => SessionBacking::Process(child),
+            Err(error) => {
+                // upstream: socket.c:774-778 - a failed child ends this
+                // connection, never the daemon.
+                report_fork_failure(&error, peer_addr, state.log_sink.as_ref());
+                return None;
+            }
+        };
+        drop(stream);
+        return Some(SessionWorker {
+            backing,
+            _slot: slot,
+        });
+    }
+
     #[cfg(not(unix))]
     let backing = {
         let handle = thread::spawn(move || {
@@ -260,9 +284,7 @@ fn spawn_connection_worker(
                 Err(error) => Err((Some(peer_addr), error)),
             }
         });
-        SessionBacking {
-            handle: Some(handle),
-        }
+        SessionBacking::Thread(Some(handle))
     };
 
     #[cfg(unix)]
@@ -344,11 +366,12 @@ fn serve_forked_session(
     }
 }
 
-/// Reports a `fork` that failed, against the peer whose connection it ends.
+/// Reports a session child that could not be created (a failed `fork` on
+/// Unix, a failed session process start on Windows), against the peer whose
+/// connection it ends.
 ///
 /// upstream: `socket.c:774-778` `rsyserr(FERROR, errno, "could not create
 /// child server process")`.
-#[cfg(unix)]
 fn report_fork_failure(error: &io::Error, peer: SocketAddr, log_sink: Option<&SharedLogSink>) {
     let text = format!("could not create child server process for {peer}: {error}");
     match log_sink {

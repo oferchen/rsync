@@ -46,6 +46,8 @@ pub mod privilege;
 pub mod secrets;
 /// Per-connection process splitting for the daemon (Unix only).
 pub mod session_fork;
+/// Per-connection session processes for the Windows daemon.
+pub mod session_process;
 /// Signal handler registration and shared atomic flags.
 pub mod signal;
 /// Windows Service Control Manager (SCM) integration.
