@@ -1187,10 +1187,8 @@ fn bind_listeners_per_family_applies_socket_options_before_listen() {
     );
 }
 
-// Unix-only: asserts POSIX SO_REUSEADDR semantics (a second bind on an active
-// listener is refused). Windows SO_REUSEADDR instead permits re-binding, so this
-// exact-refusal invariant is a Unix property.
-#[cfg(unix)]
+// Runs on every platform: Windows refuses the second bind only because the
+// listener does not set SO_REUSEADDR there (bind_with_backlog).
 #[test]
 fn default_single_listener_refuses_a_second_bind_on_the_same_port() {
     // upstream: socket.c:605-606 - open_socket_in() sets SO_REUSEADDR only, never

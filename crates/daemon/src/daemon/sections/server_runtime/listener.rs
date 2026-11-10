@@ -254,7 +254,13 @@ fn bind_with_backlog(
     // Allow port reuse so the daemon can restart quickly without waiting for
     // TIME_WAIT sockets to expire.
     // upstream: socket.c:605-606 - open_socket_in() sets SO_REUSEADDR (and only
-    // SO_REUSEADDR) on every listener.
+    // SO_REUSEADDR) on every listener. Unix only: a native WinSock SO_REUSEADDR
+    // lets a second socket co-bind a port an active listener holds, so two
+    // daemons would split one port's connections (Cygwin, where upstream runs on
+    // Windows, emulates the POSIX meaning). Without it Windows refuses that bind
+    // with WSAEADDRINUSE. Guarding against other processes as well needs
+    // SO_EXCLUSIVEADDRUSE, which is task 601's.
+    #[cfg(unix)]
     socket.set_reuse_address(true)?;
 
     // upstream: socket.c:607-610 - set_socket_options(s, sockopts) runs here,
