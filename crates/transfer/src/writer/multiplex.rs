@@ -443,6 +443,30 @@ impl<W: Write> MultiplexWriter<W> {
         Ok(self.batch_route == BatchRoute::Divert)
     }
 
+    /// Admits a `MSG_DATA` payload: the one gate both `Write` entry points
+    /// pass before any byte is buffered or written. Returns `true` when the
+    /// payload was diverted to the batch file and must not reach the wire.
+    ///
+    /// upstream: io.c:997 - perform_io() checks got_kill_signal after each
+    /// output flush too, so a sender that never reads (a pull server streaming
+    /// one large file) still stops at the next frame. Control frames
+    /// (`send_message`) stay open so the exit path can still report the signal
+    /// and send `MSG_ERROR_EXIT`.
+    fn admit_data<'b>(
+        &mut self,
+        chunks: impl Iterator<Item = &'b [u8]>,
+        len: usize,
+    ) -> io::Result<bool> {
+        crate::shared::check_shutdown()?;
+        // upstream: io.c:write_buf() - tee pre-mux data to batch_fd, or divert
+        // to it entirely when this stream is upstream's `f_xfer`.
+        if self.record_to_batch(chunks)? {
+            return Ok(true);
+        }
+        self.data_written += len as u64;
+        Ok(false)
+    }
+
     /// Sends a control message with the specified message code.
     ///
     /// Unlike the `Write` trait which always sends `MSG_DATA`, this method
@@ -478,13 +502,9 @@ impl<W: Write> Write for MultiplexWriter<W> {
         if buf.is_empty() {
             return Ok(0);
         }
-
-        // upstream: io.c:write_buf() - tee pre-mux data to batch_fd, or divert
-        // to it entirely when this stream is upstream's `f_xfer`.
-        if self.record_to_batch(std::iter::once(buf))? {
+        if self.admit_data(std::iter::once(buf), buf.len())? {
             return Ok(buf.len());
         }
-        self.data_written += buf.len() as u64;
         self.out.borrow_mut().write_data(&mut self.inner, buf)?;
         Ok(buf.len())
     }
@@ -494,13 +514,9 @@ impl<W: Write> Write for MultiplexWriter<W> {
         if total_len == 0 {
             return Ok(0);
         }
-
-        // upstream: io.c:write_buf() - tee pre-mux data to batch_fd, or divert
-        // to it entirely when this stream is upstream's `f_xfer`.
-        if self.record_to_batch(bufs.iter().map(|b| &b[..]))? {
+        if self.admit_data(bufs.iter().map(|b| &b[..]), total_len)? {
             return Ok(total_len);
         }
-        self.data_written += total_len as u64;
 
         // Each slice is its own write_buf() call upstream, so each gets the
         // fit check on its own: a length prefix that fits stays in this run
@@ -514,6 +530,46 @@ impl<W: Write> Write for MultiplexWriter<W> {
 
     fn flush(&mut self) -> io::Result<()> {
         self.out.borrow_mut().flush(&mut self.inner)
+    }
+}
+
+/// A pending signal stops every `MSG_DATA` write before it reaches the wire,
+/// whichever `Write` entry point carries it.
+///
+/// upstream: io.c:997 checks got_kill_signal on the output side of
+/// perform_io(), io.c:600-605 handle_kill_signal() then exits RERR_SIGNAL.
+#[cfg(test)]
+mod signal_tests {
+    use super::*;
+    use std::io::IoSlice;
+
+    #[test]
+    fn a_pending_signal_stops_plain_and_vectored_data_writes() {
+        fast_io::signal::mark_shutdown();
+        let mut out = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+
+        let plain = w.write(b"data").expect_err("write must stop");
+        let vectored = w
+            .write_vectored(&[IoSlice::new(b"da"), IoSlice::new(b"ta")])
+            .expect_err("write_vectored must stop");
+        // Control frames stay open for the exit path's MSG_ERROR_EXIT: the
+        // frame is queued (io.c:1088 send_msg()) and the flush that sends it
+        // is not gated either.
+        let control = w
+            .send_message(MessageCode::ErrorExit, &20i32.to_le_bytes())
+            .and_then(|()| w.flush());
+        fast_io::signal::reset_shutdown_for_testing();
+
+        assert!(crate::shared::is_signal_shutdown(&plain), "{plain}");
+        assert!(crate::shared::is_signal_shutdown(&vectored), "{vectored}");
+        control.expect("control frames are not gated");
+        drop(w);
+        assert_eq!(
+            &out[4..],
+            &20i32.to_le_bytes(),
+            "only the control frame reached the wire"
+        );
     }
 }
 

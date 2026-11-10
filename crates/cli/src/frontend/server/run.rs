@@ -1004,30 +1004,71 @@ where
             if let Some(code) = core::server::remote_exit_code(&e) {
                 return code;
             }
-            if let Some(code) = core::exit_code::cause_line_exit_code(&e) {
-                let who = if role == ServerRole::Generator {
-                    Role::Sender
-                } else {
-                    Role::Generator
-                };
-                write_fatal_cause(stderr, program_brand, who, &e, code);
-                return code.as_i32();
-            }
-            let exit_code = core::exit_code::ExitCode::from_io_error(&e);
-            // upstream: receiver.c:658-660 and the other RERR_FILEIO sites of
-            // the receive path print their own line first; log_exit() then
-            // prints only the code's description (cleanup.c:248).
-            let text = if matches!(
-                core::server::temp_guard::CommitDisposition::of(&e),
-                core::server::temp_guard::CommitDisposition::Abort(_)
-            ) {
-                exit_code.description().to_owned()
+            let who = if role == ServerRole::Generator {
+                Role::Sender
             } else {
-                format!("server error: {e}")
+                Role::Generator
             };
-            write_server_error_with_code(stderr, program_brand, exit_code, text);
-            exit_code.as_i32()
+            let signalled = core::signal::shutdown_reason().is_some();
+            report_server_failure(stderr, program_brand, who, &e, signalled)
         }
+    }
+}
+
+/// Reports the failure that ended a server transfer and returns the exit code.
+///
+/// A pending signal wins over whatever error the transfer was unwinding with:
+/// upstream's handle_kill_signal() calls exit_cleanup(RERR_SIGNAL) itself, so
+/// log_exit() prints the bare trailer and no cause line, even when the code
+/// path it interrupted had one to print.
+///
+/// upstream: io.c:600-605 handle_kill_signal(), log.c:937-963 log_exit()
+fn report_server_failure<Err: Write>(
+    stderr: &mut Err,
+    brand: Brand,
+    who: Role,
+    error: &std::io::Error,
+    signalled: bool,
+) -> i32 {
+    if signalled {
+        let code = core::exit_code::ExitCode::Signal;
+        write_exit_trailer(stderr, brand, who, code);
+        return code.as_i32();
+    }
+    if let Some(code) = core::exit_code::cause_line_exit_code(error) {
+        write_fatal_cause(stderr, brand, who, error, code);
+        return code.as_i32();
+    }
+    let exit_code = core::exit_code::ExitCode::from_io_error(error);
+    // upstream: receiver.c:658-660 and the other RERR_FILEIO sites of
+    // the receive path print their own line first; log_exit() then
+    // prints only the code's description (cleanup.c:248).
+    let text = if matches!(
+        core::server::temp_guard::CommitDisposition::of(error),
+        core::server::temp_guard::CommitDisposition::Abort(_)
+    ) {
+        exit_code.description().to_owned()
+    } else {
+        format!("server error: {error}")
+    };
+    write_server_error_with_code(stderr, brand, exit_code, text);
+    exit_code.as_i32()
+}
+
+/// Prints log_exit()'s trailer for `code` alone, naming the process that hit it.
+///
+/// upstream: log.c:937-963 log_exit()
+fn write_exit_trailer<Err: Write>(
+    stderr: &mut Err,
+    brand: Brand,
+    role: Role,
+    code: core::exit_code::ExitCode,
+) {
+    let trailer = rsync_error!(code.as_i32(), "{}", code.description())
+        .with_role(role)
+        .with_brand(brand);
+    if let Ok(line) = trailer.to_line_bytes() {
+        let _ = stderr.write_all(&line);
     }
 }
 
@@ -1404,6 +1445,53 @@ fn write_server_error_with_code<Err: Write>(
     message = message.with_role(Role::Server);
     if super::super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod failure_report_tests {
+    use super::*;
+
+    /// A signal that arrives while a failure with its own cause line is
+    /// unwinding reports the signal alone: handle_kill_signal() exits with
+    /// RERR_SIGNAL before the interrupted site prints anything.
+    ///
+    /// upstream: io.c:600-605, log.c:937-963
+    #[test]
+    fn a_signal_reports_only_its_trailer_over_a_pending_cause() {
+        let pending = protocol::malloc_failure("[receiver] exceeded --max-alloc=1048576 setting");
+
+        let mut unsignalled = Vec::new();
+        let code = report_server_failure(
+            &mut unsignalled,
+            Brand::Upstream,
+            Role::Generator,
+            &pending,
+            false,
+        );
+        let unsignalled = String::from_utf8(unsignalled).expect("utf-8");
+        assert_eq!(code, 22);
+        assert!(
+            unsignalled.starts_with("[receiver] exceeded --max-alloc"),
+            "the fixture's failure prints a cause line of its own:\n{unsignalled}"
+        );
+
+        let mut signalled = Vec::new();
+        let code = report_server_failure(
+            &mut signalled,
+            Brand::Upstream,
+            Role::Generator,
+            &pending,
+            true,
+        );
+        let signalled = String::from_utf8(signalled).expect("utf-8");
+        assert_eq!(code, 20);
+        assert_eq!(signalled.lines().count(), 1, "{signalled}");
+        assert!(
+            signalled.starts_with("rsync error: received SIGINT, SIGTERM, or SIGHUP (code 20) at "),
+            "{signalled}"
+        );
+        assert!(signalled.contains("[generator="), "{signalled}");
     }
 }
 

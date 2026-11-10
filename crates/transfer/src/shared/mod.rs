@@ -16,4 +16,4 @@ pub mod interrupt;
 
 pub use checksum::ChecksumFactory;
 pub use deadline::TransferDeadline;
-pub use interrupt::check_shutdown;
+pub use interrupt::{SignalShutdown, check_shutdown, is_signal_shutdown};

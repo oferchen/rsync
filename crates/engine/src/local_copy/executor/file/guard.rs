@@ -584,15 +584,13 @@ impl DestinationWriteGuard {
             match create_new_temp(&temp_path, temp_dir.is_some()) {
                 Ok(file) => {
                     let final_path = destination.to_path_buf();
-                    // Only --partial/--partial-dir temps need the abort-path
-                    // registry; a plain temp is unlinked by its own guard, so
-                    // registering it would only add global-lock traffic to the
-                    // hot non-partial copy path. The temp holds no literal data
-                    // yet, so the abort path may only unlink it; the
-                    // `LiteralLatch` upgrades the entry once data lands.
-                    if partial {
-                        CleanupManager::global().register_partial(temp_path.clone(), None, false);
-                    }
+                    // upstream: receiver.c:1251 `cleanup_set()` names every
+                    // temp, partial or not, so the abort path that cannot wait
+                    // for this guard still unlinks it (cleanup.c:200-201). The
+                    // temp holds no literal data yet, so the abort path may only
+                    // unlink it; the `LiteralLatch` upgrades the entry once data
+                    // lands.
+                    CleanupManager::global().register_partial(temp_path.clone(), None, false);
                     return Ok((
                         Self {
                             final_path,
@@ -910,7 +908,10 @@ impl DestinationWriteGuard {
                             let _ = fs::remove_dir(dir);
                         }
                     }
-                    _ => {}
+                    Some(PartialKind::Discard) => {
+                        CleanupManager::global().unregister_partial(&temp_path);
+                    }
+                    None => {}
                 }
                 cross
             }
@@ -1172,10 +1173,7 @@ impl DestinationWriteGuard {
                 None
             };
             crate::finalize_partial(temp_path, partial_dest, partial.tweak_mtime());
-            // Only partial temps were registered on the abort path.
-            if !matches!(partial, PartialKind::Discard) {
-                CleanupManager::global().unregister_partial(temp_path);
-            }
+            CleanupManager::global().unregister_partial(temp_path);
         }
     }
 
@@ -1312,6 +1310,33 @@ mod tests {
         guard.discard();
 
         assert_eq!(fs::read(&dest).expect("read"), b"partial");
+    }
+
+    // upstream: cleanup.c:200-201 - the abort path (a second signal, which
+    // cannot wait for the copy thread) unlinks the in-flight temp of a plain
+    // transfer too, not only a --partial one.
+    #[test]
+    fn abort_path_unlinks_a_plain_temp() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("file.txt");
+        let (guard, mut file) =
+            DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+        file.write_all(b"in flight").expect("write");
+        drop(file);
+        let staging = guard.staging_path().to_path_buf();
+        assert!(
+            staging.exists(),
+            "the plain temp is a named directory entry"
+        );
+
+        CleanupManager::global().finalize_partials();
+
+        assert!(
+            !staging.exists(),
+            "the abort path must unlink the plain temp"
+        );
+        assert!(!dest.exists(), "and must not create the destination");
+        drop(guard);
     }
 
     // The abort path that cannot wait for the copy thread (a second signal)

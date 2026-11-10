@@ -13,25 +13,46 @@
 //! wake-up into an ordered stop rather than a torn protocol state, and it is
 //! what stops the loops on transports that carry no wakeable socket.
 
+use std::fmt;
 use std::io;
 
-/// Returns an `Interrupted` error when a shutdown signal has been received.
+/// Source of the error [`check_shutdown`] returns; graded `RERR_SIGNAL` (20).
+#[derive(Debug)]
+pub struct SignalShutdown;
+
+impl fmt::Display for SignalShutdown {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("received SIGINT, SIGTERM, or SIGHUP")
+    }
+}
+
+impl std::error::Error for SignalShutdown {}
+
+/// Returns a [`SignalShutdown`] error when a shutdown signal has been received.
 ///
-/// Call at a transfer-loop boundary - never between the halves of a wire
-/// frame. The returned error unwinds through the same teardown as a dropped
-/// connection, so in-progress temp files are finalised by their guards
+/// Call at a loop boundary or before a frame - never between the halves of a
+/// wire frame. The returned error unwinds through the same teardown as a
+/// dropped connection, so in-progress temp files are finalised by their guards
 /// according to `--partial` / `--partial-dir`.
+///
+/// The kind is `Other`, not `Interrupted`: the multiplex reader calls this
+/// beneath the `EINTR`-retry loops, which would spin on an `Interrupted` error.
 ///
 /// upstream: `io.c:600 handle_kill_signal()` -> `exit_cleanup(RERR_SIGNAL)`.
 #[inline]
 pub fn check_shutdown() -> io::Result<()> {
     if fast_io::signal::shutdown_requested() {
-        return Err(io::Error::new(
-            io::ErrorKind::Interrupted,
-            "received SIGINT, SIGTERM, or SIGHUP",
-        ));
+        return Err(io::Error::other(SignalShutdown));
     }
     Ok(())
+}
+
+/// Whether `error` is the one [`check_shutdown`] returned.
+#[must_use]
+pub fn is_signal_shutdown(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<SignalShutdown>())
 }
 
 #[cfg(test)]
@@ -54,7 +75,10 @@ mod tests {
         fast_io::signal::reset_shutdown_for_testing();
         fast_io::signal::mark_shutdown();
         let err = check_shutdown().expect_err("a pending shutdown must stop the loop");
-        assert_eq!(err.kind(), io::ErrorKind::Interrupted);
+        assert!(is_signal_shutdown(&err));
+        // An Interrupted kind would be retried as EINTR by the frame readers.
+        assert_ne!(err.kind(), io::ErrorKind::Interrupted);
+        assert_eq!(crate::error::rerr_for_io_error(&err), 20);
         fast_io::signal::reset_shutdown_for_testing();
         assert!(
             check_shutdown().is_ok(),

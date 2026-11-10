@@ -1157,6 +1157,12 @@ impl<R: Read> MultiplexReader<R> {
     /// discarded and the error propagated, which resynchronised the
     /// demultiplexer on the middle of a frame.
     fn next_frame(&mut self) -> io::Result<protocol::MessageCode> {
+        // upstream: io.c:849/997/1022 - perform_io() acts on a pending
+        // got_kill_signal on every pass, so a signalled process stops at the
+        // next frame instead of the next file. Never mid-frame.
+        if !self.frames.in_progress() {
+            crate::shared::check_shutdown()?;
+        }
         let code = self.frames.read_frame(&mut self.inner, &mut self.buffer)?;
         self.pos = 0;
         Ok(code)
