@@ -62,7 +62,7 @@ impl ReceiverContext {
     ///   the same runtime signal gated on here.
     pub fn run<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
-        reader: crate::reader::ServerReader<R>,
+        reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
         progress: Option<&mut dyn crate::TransferProgressCallback>,
     ) -> io::Result<TransferStats> {

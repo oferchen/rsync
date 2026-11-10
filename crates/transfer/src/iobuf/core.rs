@@ -83,6 +83,12 @@ impl<'a> Core<'a> {
         }))
     }
 
+    /// Bounds the core's waits at `secs` when no `--timeout` was set
+    /// (upstream: io.c:1079-1081).
+    pub(crate) fn arm_timeout_if_unset(core: &SharedCore<'a>, secs: u64) {
+        core.borrow_mut().timeout.arm_if_unset(secs);
+    }
+
     /// Starts counting output into `write_counter` and pacing it by
     /// `limiter`, from the point upstream's writes start going through
     /// perform_io() (upstream: io.c:2693 io_start_multiplex_out(), or

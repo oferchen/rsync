@@ -34,7 +34,7 @@ impl ReceiverContext {
     /// - `generator.c:2646-2650` - phase 1 vs phase 2 checksum length
     pub fn run_pipelined<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
-        reader: crate::reader::ServerReader<R>,
+        reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
         pipeline_config: PipelineConfig,
         mut progress: Option<&mut dyn crate::TransferProgressCallback>,
@@ -57,8 +57,7 @@ impl ReceiverContext {
             && matches!(self.select_mode(), ReceiverMode::Transfer);
         self.names_to_stderr = self.config.flags.msgs_to_stderr;
         self.progress_active = progress.is_some();
-        let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
-        let reader = &mut reader;
+        let (file_count, mut setup) = self.setup_transfer(reader, writer)?;
 
         // upstream: main.c:1438-1446 - a client handed an empty list skips
         // do_recv() entirely and reports the io_error the end marker carried.

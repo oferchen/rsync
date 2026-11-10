@@ -2051,7 +2051,7 @@ impl GeneratorContext {
     ) -> io::Result<TransferLoopResult> {
         let mut io = IoBuf::new(reader, writer.take());
         let result = self.run_transfer_loop(&mut io, progress, itemize);
-        *writer = io.into_output();
+        *writer = io.into_parts().1;
         result
     }
 }

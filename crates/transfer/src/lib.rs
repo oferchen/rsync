@@ -125,6 +125,7 @@ pub mod delta_apply;
 pub mod delta_config;
 pub mod delta_transfer;
 pub mod error;
+mod error_exit;
 pub mod flags;
 mod flist_banner;
 pub mod fork_point;
@@ -1307,6 +1308,12 @@ fn run_server_on_core(
     let negotiated_protocol = handshake.protocol.as_u8();
     let error_exit_reaches_peer =
         error_exit_reaches_peer(config.role, config.connection.is_daemon_connection);
+    let over_daemon_socket = config.connection.is_daemon_connection;
+    let death_log = daemon_log.as_ref().map(|dl| dl.log.clone());
+    let role = config.role;
+    // upstream: main.c:1077 - the receiving side forks once its file list is
+    // in; where a failure struck decides who answers the peer's exit frame.
+    let fork_point = fork_point.unwrap_or_default();
 
     let outcome: ServerResult = 'dispatch: {
         match config.role {
@@ -1325,12 +1332,10 @@ fn run_server_on_core(
                 // upstream: flist.c:3130/3334 - recv_file_list() measures its span
                 // against the raw read counter to accumulate stats.flist_size.
                 ctx.set_raw_read_counter(std::sync::Arc::clone(&bytes_received_counter));
-                if let Some(point) = fork_point {
-                    ctx.set_fork_point(point);
-                }
+                ctx.set_fork_point(Arc::clone(&fork_point));
                 // upstream: io.c:977 - stats.total_written tracking
                 let mut counting_writer = writer::CountingWriter::new(&mut writer);
-                let mut stats = match ctx.run(chained_reader, &mut counting_writer, progress) {
+                let mut stats = match ctx.run(&mut chained_reader, &mut counting_writer, progress) {
                     Ok(stats) => stats,
                     Err(error) => break 'dispatch Err(error),
                 };
@@ -1401,7 +1406,7 @@ fn run_server_on_core(
                 // `announce_error_exit` sends on it.
                 let mut io = iobuf::IoBuf::new(chained_reader, writer.take());
                 let result = ctx.run(&mut io, &paths, progress, itemize);
-                writer = io.into_output();
+                (chained_reader, writer) = io.into_parts();
                 let stats = match result {
                     Ok(stats) => stats,
                     Err(error) => break 'dispatch Err(error),
@@ -1425,17 +1430,69 @@ fn run_server_on_core(
     match outcome {
         Ok(stats) => Ok(stats),
         Err(error) => {
-            announce_error_exit(
-                &mut writer,
-                &error,
+            let exit_reader = match role {
+                ServerRole::Generator => error_exit::ExitReader::Sender,
+                ServerRole::Receiver if fork_point.total_read_at_fork().is_some() => {
+                    error_exit::ExitReader::ForkedReceiver
+                }
+                ServerRole::Receiver => error_exit::ExitReader::UnforkedReceiver,
+            };
+            let exit_code = match remote_exit_code(&error) {
+                // upstream: io.c:1892-1930 - the peer's code is answered, then
+                // _exit_cleanup(val) runs with it.
+                Some(received) => {
+                    let received = (received != 0).then_some(received);
+                    if let Some(echo) =
+                        error_exit::echo_for(exit_reader, received, negotiated_protocol)
+                    {
+                        let _ = error_exit::send_echo(&mut writer, echo);
+                    }
+                    chained_reader.take_error_exit();
+                    received.unwrap_or(0)
+                }
+                None => {
+                    announce_error_exit(
+                        &mut writer,
+                        &error,
+                        negotiated_protocol,
+                        error_exit_reaches_peer,
+                        fatal_report,
+                    );
+                    error_exit::local_exit_code(&error)
+                }
+            };
+            if error_exit::waits_for_peer(
+                exit_code,
                 negotiated_protocol,
-                error_exit_reaches_peer,
-                fatal_report,
-            );
+                exit_reader,
+                over_daemon_socket,
+            ) {
+                // upstream: io.c:1079-1081 - with no `--timeout` the wait is
+                // bounded at 60 seconds.
+                iobuf::Core::arm_timeout_if_unset(&core, DEATH_WAIT_SECS);
+                if let Some(line) = error_exit::drain_until_peer_exits(
+                    &mut chained_reader,
+                    &mut writer,
+                    exit_reader,
+                    negotiated_protocol,
+                ) {
+                    // upstream: log.c:310-327 - a daemon logit()s the line; a
+                    // client's FERROR goes to stderr (log.c:357-366).
+                    match &death_log {
+                        Some(log) => log.write(line.as_bytes()),
+                        None if client_mode => eprintln!("{line}"),
+                        None => {}
+                    }
+                }
+            }
             Err(error)
         }
     }
 }
+
+/// The bound noop_io_until_death() puts on its wait when no `--timeout` is set
+/// (upstream: io.c:1080-1081 `set_io_timeout(60)`).
+const DEATH_WAIT_SECS: u64 = 60;
 
 /// Tells the peer which `RERR_*` this side is exiting with, so it exits with the
 /// same code instead of inferring one from the connection dropping.
