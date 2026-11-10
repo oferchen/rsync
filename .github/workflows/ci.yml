@@ -54,11 +54,16 @@ on:
     - cron: '30 3 * * *'
 
 concurrency:
-  # Pull requests wait in one first-in-first-out queue per workflow, so each
-  # PR's run starts only when the previous PR's run has finished; nothing is
-  # cancelled. Every other event (master push, schedule, dispatch) gets its own
-  # group per commit, so it never waits behind the PR queue and every merge
-  # commit keeps a completed run for bisection.
+  # Pull requests wait in one first-in-first-out queue, and nothing is
+  # cancelled. This run carries EVERY check a pull request needs - the upstream
+  # testsuite legs and the Windows bake legs are called from here rather than
+  # triggered separately - so the queue hands one pull request the whole runner
+  # pool at a time instead of splitting it between pull requests across
+  # workflows. A run for a commit its pull request has since replaced is
+  # cancelled by the merge train, since queue: max cannot cancel it. Every
+  # other event (master push, schedule, dispatch) gets its own group per commit,
+  # so it never waits behind the pull request queue and every merge commit
+  # keeps a completed run for bisection.
   group: ci-${{ github.event_name == 'pull_request' && 'pr-queue' || format('{0}-{1}', github.ref, github.sha) }}
   queue: max
 
@@ -89,6 +94,67 @@ jobs:
   changes:
     name: changes (CI)
     uses: ./.github/workflows/_changes.yml
+
+  # The upstream testsuite legs (required contexts), called with the same
+  # caller job ids as upstream-testsuite-3.5.1.yml so each context is still
+  # `<caller job> / <reusable job>`. The reasoning behind each leg and its
+  # manifests is in that file. Pull requests only: master pushes skip the
+  # testsuite as before, and its nightly and `bootstrap` runs stay in that file.
+  upstream-testsuite:
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      expect_result_nonroot: 'tools/ci/upstream-3.5.1-expect.nonroot.txt'
+      expect_result_root: 'tools/ci/upstream-3.5.1-expect.root.txt'
+
+  upstream-testsuite-tcp:
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      transport: 'tcp'
+      expect_result_nonroot: 'tools/ci/upstream-3.5.1-expect.nonroot.tcp.txt'
+      expect_result_root: 'tools/ci/upstream-3.5.1-expect.root.tcp.txt'
+
+  upstream-testsuite-macos:
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/_upstream-testsuite-macos.yml
+    with:
+      variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      expect_result_macos: 'tools/ci/upstream-3.5.1-expect.macos.nonroot.txt'
+      expect_result_macos_root: 'tools/ci/upstream-3.5.1-expect.macos.root.txt'
+
+  upstream-testsuite-macos-tcp:
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/_upstream-testsuite-macos.yml
+    with:
+      variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      transport: 'tcp'
+      expect_result_macos: 'tools/ci/upstream-3.5.1-expect.macos.nonroot.tcp.txt'
+      expect_result_macos_root: 'tools/ci/upstream-3.5.1-expect.macos.root.tcp.txt'
+
+  # Non-blocking Windows bake legs. Called here, not triggered separately, so
+  # they share this run's place in the pull request queue.
+  windows-long-path:
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/windows-nightly-long-path.yml
+
+  windows-case-insensitive:
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/windows-nightly-case-insensitive.yml
 
   # ===========================================================================
   # Lint Job - Fast feedback on formatting and clippy issues
