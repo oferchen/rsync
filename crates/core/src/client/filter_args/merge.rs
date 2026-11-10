@@ -102,11 +102,10 @@ pub(crate) fn apply_merge_directive(
     // onto `dirbuf`, which set_filter_dir() has not filled while the options
     // are parsed, so a merge named inside a merge file opens from the current
     // directory - not the naming file's own.
-    // upstream: exclude.c:1542-1551 resolves FILTRULE_CLEAR_LIST via
-    // pop_filter_list (exclude.c:671-687), which truncates only the local
-    // section of the per-merge-file rule list. Mirror that by parsing the
-    // merge file into a scope-local buffer so a '!' inside the file cannot
-    // wipe parent-scope rules already in `destination`.
+    // upstream: exclude.c:1587 parse_filter_file() parses a merge file into
+    // the naming rule's own list, so a `!` inside it empties every rule ahead
+    // of it too (`pop_filter_list(listp); listp->head = NULL`,
+    // exclude.c:1542-1551).
     // upstream: exclude.c:1735-1755 - `named_by_file = TEXT_FROM_FILE(template)`.
     // When a rule we READ named this file, the file's OWN path is file content
     // too, so upstream clears `rule_src_file` and reports only the LOCATION that
@@ -123,19 +122,17 @@ pub(crate) fn apply_merge_directive(
         ));
     }
 
-    let mut local: Vec<FilterRuleSpec> = Vec::new();
     let result = (|| -> Result<(), Message> {
-        let contents = {
-            // upstream: exclude.c:1711,1716 - the include/exclude wording of a
-            // failed open follows FILTRULE_INCLUDE, which a `+` modifier on the
-            // merge rule (`.+ FILE`, `merge,+ FILE`) sets.
-            read_merge_file(
-                &resolved_path,
-                options.enforced_kind() == Some(DirMergeEnforcedKind::Include),
-                source,
-                files,
-            )?
-        };
+        // upstream: exclude.c:1711,1716 - the include/exclude wording of a
+        // failed open follows FILTRULE_INCLUDE, which a `+` modifier on the
+        // merge rule (`.+ FILE`, `merge,+ FILE`) sets.
+        let contents = read_merge_file(
+            &resolved_path,
+            options.enforced_kind() == Some(DirMergeEnforcedKind::Include),
+            source,
+            files,
+            destination,
+        )?;
 
         parse_merge_contents(
             &contents,
@@ -143,16 +140,13 @@ pub(crate) fn apply_merge_directive(
             base_dir,
             &display,
             named_at.as_deref(),
-            &mut local,
+            destination,
             visited,
             cvs,
             files,
         )
     })();
     visited.pop();
-    if result.is_ok() {
-        destination.extend(local);
-    }
     result
 }
 

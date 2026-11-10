@@ -466,6 +466,38 @@ fn a_nested_merge_file_opens_from_the_current_directory() {
     }
 }
 
+/// A `!` read from a merge file or an `-from` file empties the whole list the
+/// file is parsed into, the argv rules ahead of it included:
+/// `pop_filter_list(listp); listp->head = NULL` (exclude.c:1542-1551), and a
+/// nested merge file is parsed into that same list (exclude.c:1587). oc used
+/// to clear only the file's own rules, so `a` stayed excluded.
+#[test]
+fn a_clear_inside_a_file_empties_the_rules_ahead_of_it() {
+    let files = [
+        ("a", "a"),
+        ("b", "b"),
+        ("c", "c"),
+        ("clr", "!\n- c\n"),
+        ("outer", "- b\n. src/clr\n"),
+    ];
+    for args in [
+        &["--exclude=a", "--filter=. src/clr"][..],
+        &["--exclude=a", "--exclude-from=src/clr"],
+        &["--exclude=a", "--filter=. src/outer"],
+    ] {
+        for source in [Source::Local, Source::Push, Source::Pull] {
+            if let Some(outcome) = assert_parity_from(&files, args, source) {
+                assert_eq!(outcome.exit, 0, "{args:?} {source:?}");
+                assert!(
+                    outcome.transferred.iter().any(|name| name == "a"),
+                    "{args:?} {source:?}: {:?}",
+                    outcome.transferred
+                );
+            }
+        }
+    }
+}
+
 /// The local copy matches through the same wildmatch port as the transfer
 /// roles. upstream rejects no pattern (exclude.c add_rule) and lib/wildmatch.c
 /// fails an unclosed `[`, so `-[` transfers a file named `[`. The local copy's

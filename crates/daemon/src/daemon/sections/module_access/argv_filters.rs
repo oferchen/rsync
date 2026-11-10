@@ -84,6 +84,7 @@ impl core::client::filter_args::FilterFileSource for ModuleArgvFiles<'_> {
         &self,
         path: &Path,
         kind: core::client::filter_args::FilterFileKind,
+        _list: &[core::client::FilterRuleSpec],
     ) -> io::Result<Box<dyn std::io::Read>> {
         use core::client::filter_args::FilterFileKind;
         // A merge name arrives joined onto `base_dir`; a `-from` name as sent.

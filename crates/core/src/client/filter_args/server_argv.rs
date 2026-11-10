@@ -48,7 +48,7 @@ pub fn server_argv_filter_rules(
 /// and parse_arguments() adds argv rules with neither (options.c:1620-1656). So
 /// `P a` (`-r a`) hides `a` from a server sender and `H a` (`-s a`) keeps
 /// `a` from a server receiver's deletions.
-fn side_blind(mut rule: FilterRuleWireFormat) -> FilterRuleWireFormat {
+pub(super) fn side_blind(mut rule: FilterRuleWireFormat) -> FilterRuleWireFormat {
     rule.rule_type = match rule.rule_type {
         RuleType::Protect => RuleType::Exclude,
         RuleType::Risk => RuleType::Include,

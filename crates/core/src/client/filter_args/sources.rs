@@ -10,19 +10,22 @@ use engine::local_copy::upstream_io_error;
 use filters::RuleSource;
 
 use super::directive::FilterDirective;
+use super::filter_str::{Xflags, add_rule};
 use super::parsing::parse_old_prefix_rule;
 use super::{FilterFileKind, FilterFileSource};
 
 /// Loads filter patterns from `--include-from` / `--exclude-from` files and
 /// appends the resulting rules to `destination`. Include/exclude files honor the
-/// old-prefix syntax (`- `/`+ `/`!`) with each file's `!` clear scoped locally;
-/// dir-merge is rejected. `eol_nulls` selects NUL-delimited records (`--from0`).
+/// old-prefix syntax (`- `/`+ `/`!`), and a `!` empties the whole list;
+/// dir-merge is rejected. `eol_nulls` selects NUL-delimited records (`--from0`),
+/// and `xflags` are the flags the rules are added with (exclude.c:279-314).
 pub(crate) fn append_filter_rules_from_files(
     destination: &mut Vec<FilterRuleSpec>,
     names: &[OsString],
     kind: FilterRuleKind,
     eol_nulls: bool,
     files: &dyn FilterFileSource,
+    xflags: Xflags,
 ) -> Result<(), Message> {
     if matches!(kind, FilterRuleKind::DirMerge) {
         let message = rsync_error!(
@@ -40,19 +43,18 @@ pub(crate) fn append_filter_rules_from_files(
     // we keep the legacy raw-pattern behavior to preserve existing semantics.
     let honor_old_prefixes = matches!(kind, FilterRuleKind::Include | FilterRuleKind::Exclude);
 
-    // upstream: exclude.c:1542-1551 resolves FILTRULE_CLEAR_LIST via
-    // pop_filter_list (exclude.c:671-687), truncating only the local section
-    // of the per-file rule list. Buffer each --include-from/--exclude-from
-    // file's rules locally so a `!` inside the file clears only that scope
-    // and parent CLI rules survive.
+    // upstream: exclude.c:1542-1551 - a `!` read from the file runs
+    // `pop_filter_list(listp); listp->head = NULL`, and parse_filter_file()
+    // parses into the caller's own list, so the clear empties every rule
+    // ahead of it, argv rules included.
     for path in names {
         let patterns = load_filter_file_patterns(
             Path::new(path.as_os_str()),
             eol_nulls,
             matches!(kind, FilterRuleKind::Include),
             files,
+            destination,
         )?;
-        let mut local: Vec<FilterRuleSpec> = Vec::new();
         for pattern in patterns {
             if honor_old_prefixes {
                 // ⚠ RESIDUAL: these are the CONTENTS of an
@@ -66,8 +68,8 @@ pub(crate) fn append_filter_rules_from_files(
                 // (`rule_src_line < 0`) for a line-counted read. Left as
                 // `Argument` - unchanged behaviour, not a claim that it is right.
                 match parse_old_prefix_rule(&pattern, kind, RuleSource::Argument)? {
-                    FilterDirective::Rule(rule) => local.push(rule),
-                    FilterDirective::Clear => local.clear(),
+                    FilterDirective::Rule(rule) => add_rule(destination, rule, xflags),
+                    FilterDirective::Clear => destination.clear(),
                     // A blank line in an exclude-from/include-from file is skipped.
                     FilterDirective::Noop => {}
                     FilterDirective::Merge(_) | FilterDirective::CvsDefaults(_) => {
@@ -77,7 +79,7 @@ pub(crate) fn append_filter_rules_from_files(
                     }
                 }
             } else {
-                local.push(match kind {
+                destination.push(match kind {
                     FilterRuleKind::Include => FilterRuleSpec::include(pattern),
                     FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
                     FilterRuleKind::Protect => FilterRuleSpec::protect(pattern),
@@ -86,7 +88,6 @@ pub(crate) fn append_filter_rules_from_files(
                 });
             }
         }
-        destination.extend(local);
     }
     Ok(())
 }
@@ -147,17 +148,19 @@ fn filter_file_open_error(
 /// Reads the raw pattern lines from a filter file, or from standard input when
 /// `path` is `-`. `eol_nulls` selects NUL-delimited records (`--from0`).
 /// `include` selects upstream's include/exclude wording if the open fails.
+/// `list` is the list built so far, which the open may consult.
 pub(crate) fn load_filter_file_patterns(
     path: &Path,
     eol_nulls: bool,
     include: bool,
     files: &dyn FilterFileSource,
+    list: &[FilterRuleSpec],
 ) -> Result<Vec<String>, Message> {
     // `--include-from` / `--exclude-from` name the file on the command line, so
     // this is always upstream's non-file arm: the operator already knows the
     // path they typed, and errno is theirs to see.
     let reader = files
-        .open(path, FilterFileKind::RuleList)
+        .open(path, FilterFileKind::RuleList, list)
         .map_err(|error| filter_file_open_error(path, include, &error, RuleSource::Argument))?;
     let mut reader = BufReader::new(reader);
     read_filter_patterns(&mut reader, eol_nulls).map_err(|error| read_failure(path, &error))
@@ -172,12 +175,13 @@ pub(super) fn read_merge_file(
     include: bool,
     source: RuleSource<'_>,
     files: &dyn FilterFileSource,
+    list: &[FilterRuleSpec],
 ) -> Result<String, Message> {
     // Opened separately from the read so that only a genuine open failure takes
     // upstream's wording and exit code; a mid-file read error (or non-UTF-8
     // contents) is a different condition and keeps its own report.
     let mut reader = files
-        .open(path, FilterFileKind::MergeFile)
+        .open(path, FilterFileKind::MergeFile, list)
         .map_err(|error| filter_file_open_error(path, include, &error, source))?;
     let mut contents = String::new();
     reader
@@ -365,7 +369,7 @@ mod tests {
         let temp = test_support::create_tempdir();
         let path = temp.path().join("filter.txt");
         std::fs::write(&path, "pattern1\npattern2\n").expect("write");
-        let result = load_filter_file_patterns(&path, false, false, &TestFiles).expect("load");
+        let result = load_filter_file_patterns(&path, false, false, &TestFiles, &[]).expect("load");
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -377,7 +381,7 @@ mod tests {
         let path = temp.path().join("nonexistent.txt");
 
         let excluded =
-            load_filter_file_patterns(&path, false, false, &TestFiles).expect_err("must fail");
+            load_filter_file_patterns(&path, false, false, &TestFiles, &[]).expect_err("must fail");
         assert_eq!(excluded.code(), Some(11));
         assert!(
             excluded.text().starts_with("failed to open exclude file "),
@@ -386,7 +390,7 @@ mod tests {
         );
 
         let included =
-            load_filter_file_patterns(&path, false, true, &TestFiles).expect_err("must fail");
+            load_filter_file_patterns(&path, false, true, &TestFiles, &[]).expect_err("must fail");
         assert!(
             included.text().starts_with("failed to open include file "),
             "unexpected text: {}",
@@ -399,7 +403,8 @@ mod tests {
         let temp = test_support::create_tempdir();
         let path = temp.path().join("merge.txt");
         std::fs::write(&path, "content here").expect("write");
-        let result = read_merge_file(&path, false, RuleSource::Argument, &TestFiles).expect("read");
+        let result =
+            read_merge_file(&path, false, RuleSource::Argument, &TestFiles, &[]).expect("read");
         assert_eq!(result, "content here");
     }
 
@@ -415,8 +420,8 @@ mod tests {
     fn read_merge_file_reports_a_missing_file_like_upstream() {
         let temp = test_support::create_tempdir();
         let path = temp.path().join("nonexistent.txt");
-        let error =
-            read_merge_file(&path, false, RuleSource::Argument, &TestFiles).expect_err("must fail");
+        let error = read_merge_file(&path, false, RuleSource::Argument, &TestFiles, &[])
+            .expect_err("must fail");
         assert_eq!(error.code(), Some(11));
         assert!(
             error.text().starts_with("failed to open exclude file "),
@@ -449,7 +454,7 @@ mod tests {
             name: "outer.rules",
             line: 1,
         };
-        let error = read_merge_file(&path, false, source, &TestFiles).expect_err("must fail");
+        let error = read_merge_file(&path, false, source, &TestFiles, &[]).expect_err("must fail");
 
         // Same exit code as the operator arm - upstream never varies it.
         assert_eq!(error.code(), Some(11));
@@ -475,15 +480,15 @@ mod tests {
     fn read_filter_patterns_from_stdin_uses_test_input() {
         set_filter_stdin_input(b"stdin_pattern1\nstdin_pattern2\n".to_vec());
         let result =
-            load_filter_file_patterns(Path::new("-"), false, false, &TestFiles).expect("read");
+            load_filter_file_patterns(Path::new("-"), false, false, &TestFiles, &[]).expect("read");
         assert_eq!(result, vec!["stdin_pattern1", "stdin_pattern2"]);
     }
 
     #[test]
     fn read_merge_from_stdin_uses_test_input() {
         set_filter_stdin_input(b"stdin content here".to_vec());
-        let result =
-            read_merge_file(Path::new("-"), false, RuleSource::Argument, &TestFiles).expect("read");
+        let result = read_merge_file(Path::new("-"), false, RuleSource::Argument, &TestFiles, &[])
+            .expect("read");
         assert_eq!(result, "stdin content here");
     }
 
@@ -491,7 +496,7 @@ mod tests {
     fn load_filter_file_patterns_handles_dash_path() {
         set_filter_stdin_input(b"stdin_pattern\n".to_vec());
         let result =
-            load_filter_file_patterns(Path::new("-"), false, false, &TestFiles).expect("load");
+            load_filter_file_patterns(Path::new("-"), false, false, &TestFiles, &[]).expect("load");
         assert_eq!(result, vec!["stdin_pattern"]);
     }
 
@@ -507,6 +512,7 @@ mod tests {
             FilterRuleKind::Include,
             false,
             &TestFiles,
+            Xflags::default(),
         )
         .expect("append");
         assert_eq!(rules.len(), 2);
@@ -528,6 +534,7 @@ mod tests {
             FilterRuleKind::Exclude,
             false,
             &TestFiles,
+            Xflags::default(),
         )
         .expect("append");
         assert_eq!(rules.len(), 1);
@@ -544,6 +551,7 @@ mod tests {
             FilterRuleKind::DirMerge,
             false,
             &TestFiles,
+            Xflags::default(),
         );
         assert!(result.is_err());
     }
@@ -562,6 +570,7 @@ mod tests {
             FilterRuleKind::Include,
             false,
             &TestFiles,
+            Xflags::default(),
         )
         .expect("append");
         assert_eq!(rules.len(), 2);
@@ -603,6 +612,7 @@ mod tests {
             FilterRuleKind::Exclude,
             true,
             &TestFiles,
+            Xflags::default(),
         )
         .expect("append");
         assert_eq!(rules.len(), 2);
@@ -627,7 +637,7 @@ mod tests {
         let link = dir.path().join("link.rules");
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
 
-        let patterns = load_filter_file_patterns(&link, false, false, &TestFiles)
+        let patterns = load_filter_file_patterns(&link, false, false, &TestFiles, &[])
             .expect("a self-owned symlink must be followed, not refused");
         assert_eq!(patterns, vec!["*.bak"]);
     }

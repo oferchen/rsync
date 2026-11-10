@@ -21,7 +21,7 @@ mod parse_filter;
 mod process;
 
 fn load_filter_file_patterns(path: &Path) -> Result<Vec<String>, Message> {
-    super::sources::load_filter_file_patterns(path, false, false, &TestFiles)
+    super::sources::load_filter_file_patterns(path, false, false, &TestFiles, &[])
 }
 
 fn parse_merge_modifiers(

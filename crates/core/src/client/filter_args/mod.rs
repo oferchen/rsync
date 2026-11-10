@@ -1,15 +1,19 @@
-//! Filter options from an argv, parsed as upstream's `parse_arguments()`
-//! parses them.
+//! Filter rules from an argv or a daemon module, parsed as upstream parses
+//! them.
 //!
 //! upstream: options.c:1620-1656 (`--filter`, `--exclude`, `--include` and the
-//! `-from` pair) and :1718-1727 (`-F`). The client and a remote-shell server
-//! parse their argv with this one code path, relative to the process cwd.
+//! `-from` pair) and :1718-1727 (`-F`); clientserver.c:933-952 for a module's
+//! directives. The client, a remote-shell server and a daemon all parse through
+//! one parse_filter_str() (`filter_str`); only the `xflags` and where files
+//! are read from differ.
 
 mod apple_double;
 mod build;
 mod cvs;
 mod directive;
+mod filter_str;
 mod merge;
+mod module;
 mod order;
 mod parsing;
 mod server_argv;
@@ -21,7 +25,10 @@ mod tests;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+use crate::client::FilterRuleSpec;
+
 pub use build::{FilterInputs, build_filter_rules};
+pub use module::{ModuleFilterDirectives, daemon_list_rules, module_filter_rules};
 pub use order::FilterOrderToken;
 pub use server_argv::server_argv_filter_rules;
 
@@ -38,11 +45,20 @@ pub trait FilterFileSource {
 
     /// Opens `path` for reading; `-` names standard input.
     ///
+    /// `list` is the list this parse has built so far, upstream's `listp`.
+    /// While a daemon parses its module's own directives that list IS
+    /// `daemon_filter_list`, which gates the open (exclude.c:1639-1664).
+    ///
     /// # Errors
     ///
     /// The open failed. The parser reports it as upstream's open failure
     /// under `XFLG_FATAL_ERRORS` (exclude.c:1703-1720).
-    fn open(&self, path: &Path, kind: FilterFileKind) -> io::Result<Box<dyn Read>>;
+    fn open(
+        &self,
+        path: &Path,
+        kind: FilterFileKind,
+        list: &[FilterRuleSpec],
+    ) -> io::Result<Box<dyn Read>>;
 }
 
 /// What a filter file is opened for.
@@ -78,7 +94,12 @@ impl FilterFileSource for TestFiles {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 
-    fn open(&self, path: &Path, _kind: FilterFileKind) -> io::Result<Box<dyn Read>> {
+    fn open(
+        &self,
+        path: &Path,
+        _kind: FilterFileKind,
+        _list: &[FilterRuleSpec],
+    ) -> io::Result<Box<dyn Read>> {
         if path == Path::new("-") {
             let data = TEST_STDIN
                 .with(|slot| slot.borrow_mut().take())

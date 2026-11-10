@@ -3,6 +3,7 @@
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+use core::client::FilterRuleSpec;
 use core::client::filter_args::{FilterFileKind, FilterFileSource};
 
 /// Opens the client's (and a remote-shell server's) filter files: relative to
@@ -17,7 +18,12 @@ impl FilterFileSource for ProcessFilterFiles {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 
-    fn open(&self, path: &Path, _kind: FilterFileKind) -> io::Result<Box<dyn Read>> {
+    fn open(
+        &self,
+        path: &Path,
+        _kind: FilterFileKind,
+        _list: &[FilterRuleSpec],
+    ) -> io::Result<Box<dyn Read>> {
         if path == Path::new("-") {
             #[cfg(test)]
             if let Some(data) = TEST_STDIN.with(|slot| slot.borrow_mut().take()) {

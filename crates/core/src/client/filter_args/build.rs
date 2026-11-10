@@ -1,18 +1,26 @@
-use std::ffi::OsString;
-use std::path::PathBuf;
-
-use filters::RuleSource;
-
 use super::FilterFileSource;
 use super::apple_double::append_apple_double_exclude_rules;
-use super::cvs::{append_cvs_exclude_rules, cvs_default_exclude_rules};
-use super::directive::{FilterDirective, merge_directive_options, os_string_to_pattern};
-use super::merge::apply_merge_directive;
+use super::cvs::append_cvs_exclude_rules;
+use super::filter_str::{ParseContext, Template, Xflags, parse_filter_str};
 use super::order::FilterOrderToken;
-use super::parsing::{parse_filter_directive, parse_old_prefix_rule};
 use super::sources::append_filter_rules_from_files;
-use crate::client::{DirMergeOptions, FilterRuleKind, FilterRuleSpec};
+use crate::client::{FilterRuleKind, FilterRuleSpec};
 use crate::message::Message;
+
+/// `--include`/`--exclude`: XFLG_OLD_PREFIXES alone (options.c:1625-1633).
+const OLD_PREFIXES: Xflags = Xflags {
+    old_prefixes: true,
+    abs_if_slash: false,
+    dir2wild3: false,
+};
+
+/// The template an argv option parses against: one rule, not word-split.
+const fn argument(kind: FilterRuleKind) -> Template {
+    Template {
+        kind,
+        word_split: false,
+    }
+}
 
 /// Filter configuration supplied by the command line.
 ///
@@ -54,21 +62,39 @@ pub fn build_filter_rules(
     let merge_base = files.base_dir();
     let from0 = inputs.from0;
     let mut delete_excluded_at = None;
+    let mut ctx = ParseContext {
+        base_dir: &merge_base,
+        merge_stack: &mut merge_stack,
+        cvs,
+        files,
+    };
 
     for token in inputs.order {
         let result = match token {
-            FilterOrderToken::Include(pattern) => {
-                push_old_prefix_rule(&mut filter_rules, pattern, FilterRuleKind::Include)
-            }
-            FilterOrderToken::Exclude(pattern) => {
-                push_old_prefix_rule(&mut filter_rules, pattern, FilterRuleKind::Exclude)
-            }
+            // upstream: options.c:1625-1633 - `--include`/`--exclude` parse
+            // with XFLG_OLD_PREFIXES, so `- pat`/`+ pat` flip the kind and `!`
+            // clears the list.
+            FilterOrderToken::Include(pattern) => parse_filter_str(
+                &mut filter_rules,
+                &pattern,
+                argument(FilterRuleKind::Include),
+                OLD_PREFIXES,
+                &mut ctx,
+            ),
+            FilterOrderToken::Exclude(pattern) => parse_filter_str(
+                &mut filter_rules,
+                &pattern,
+                argument(FilterRuleKind::Exclude),
+                OLD_PREFIXES,
+                &mut ctx,
+            ),
             FilterOrderToken::IncludeFrom(file) => append_filter_rules_from_files(
                 &mut filter_rules,
                 std::slice::from_ref(&file),
                 FilterRuleKind::Include,
                 from0,
                 files,
+                Xflags::default(),
             ),
             FilterOrderToken::ExcludeFrom(file) => append_filter_rules_from_files(
                 &mut filter_rules,
@@ -76,14 +102,15 @@ pub fn build_filter_rules(
                 FilterRuleKind::Exclude,
                 from0,
                 files,
+                Xflags::default(),
             ),
-            FilterOrderToken::Filter(rule) => push_filter_directive(
+            // upstream: options.c:1620-1623 - rule_template(0), no xflags.
+            FilterOrderToken::Filter(rule) => parse_filter_str(
                 &mut filter_rules,
                 &rule,
-                merge_base.as_path(),
-                &mut merge_stack,
-                cvs,
-                files,
+                argument(FilterRuleKind::Exclude),
+                Xflags::default(),
+                &mut ctx,
             ),
             FilterOrderToken::CvsExclude => {
                 cvs_exclude = true;
@@ -114,75 +141,6 @@ pub fn build_filter_rules(
     Ok(filter_rules)
 }
 
-/// Parses one `--filter`/`-f`/`-F` directive and appends its rules.
-fn push_filter_directive(
-    filter_rules: &mut Vec<FilterRuleSpec>,
-    rule: &OsString,
-    merge_base: &std::path::Path,
-    merge_stack: &mut Vec<PathBuf>,
-    cvs: &filters::CvsSession,
-    files: &dyn FilterFileSource,
-) -> Result<(), Message> {
-    // The operator typed this `--filter` value, so its text is theirs to see:
-    // `rule_text` returns an argument-sourced rule unchanged
-    // (exclude.c:111-113 rule_text_len()).
-    match parse_filter_directive(rule.as_os_str(), RuleSource::Argument)? {
-        FilterDirective::Rule(spec) => filter_rules.push(spec),
-        FilterDirective::Merge(directive) => {
-            let effective_options =
-                merge_directive_options(&DirMergeOptions::default(), &directive);
-            let directive = directive.with_options(effective_options);
-            // The operator typed this `--filter='. FILE'` themselves, so the
-            // merge file's name is theirs to see: upstream's non-redacted
-            // open-failure arm (exclude.c:1713-1717, errno included).
-            apply_merge_directive(
-                directive,
-                merge_base,
-                filter_rules,
-                merge_stack,
-                RuleSource::Argument,
-                cvs,
-                files,
-            )?;
-        }
-        FilterDirective::Clear => filter_rules.clear(),
-        FilterDirective::CvsDefaults(template) => {
-            filter_rules.extend(cvs_default_exclude_rules(template, cvs));
-        }
-        // A blank rule contributes nothing (upstream parse_rule_tok returns NULL).
-        FilterDirective::Noop => {}
-    }
-    Ok(())
-}
-
-/// Adds a CLI-supplied `--exclude`/`--include` pattern to `destination`,
-/// honoring upstream's `XFLG_OLD_PREFIXES` compatibility mode.
-///
-/// upstream: options.c:1625-1633 routes `--exclude`/`--include` through
-/// `parse_filter_str(..., XFLG_OLD_PREFIXES)`, so a value of `- pat` (or
-/// `+ pat`) flips the rule kind and `!` clears the list. Plain patterns
-/// retain `default_kind`.
-fn push_old_prefix_rule(
-    destination: &mut Vec<FilterRuleSpec>,
-    pattern: OsString,
-    default_kind: FilterRuleKind,
-) -> Result<(), Message> {
-    let text = os_string_to_pattern(pattern);
-    // Likewise for a `--exclude`/`--include` value given on the command line.
-    match parse_old_prefix_rule(&text, default_kind, RuleSource::Argument)? {
-        FilterDirective::Rule(rule) => destination.push(rule),
-        // upstream: exclude.c:1541-1551 parse_filter_str - a clear pops the
-        // list as it is parsed; no clear rule survives to be sent.
-        FilterDirective::Clear => destination.clear(),
-        // A blank `--exclude`/`--include` value contributes nothing.
-        FilterDirective::Noop => {}
-        FilterDirective::Merge(_) | FilterDirective::CvsDefaults(_) => {
-            unreachable!("parse_old_prefix_rule only emits Rule, Clear, or Noop")
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,11 +150,19 @@ mod tests {
     /// would be sent to the peer, and a pre-29 peer cannot carry it at all.
     #[test]
     fn old_prefix_clear_empties_the_list_instead_of_adding_a_rule() {
-        let mut rules = Vec::new();
-        for value in ["*.tmp", "!", "keep"] {
-            push_old_prefix_rule(&mut rules, OsString::from(value), FilterRuleKind::Exclude)
-                .expect("rule parses");
-        }
+        let order = ["*.tmp", "!", "keep"]
+            .into_iter()
+            .map(|value| FilterOrderToken::Exclude(value.into()))
+            .collect();
+        let rules = build_filter_rules(
+            FilterInputs {
+                order,
+                from0: false,
+            },
+            &filters::CvsSession::default(),
+            &super::super::TestFiles,
+        )
+        .expect("rules parse");
         assert_eq!(rules, [FilterRuleSpec::exclude("keep")]);
     }
 }
