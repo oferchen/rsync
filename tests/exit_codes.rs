@@ -431,7 +431,8 @@ mod embedded_ssh_connect_failure {
             let output = run_rsync(&args);
             assert_eq!(output.status.code(), Some(255), "{role}");
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let lines: Vec<&str> = stderr.lines().collect();
+            // split_terminator keeps ssh's CR; str::lines() would strip it.
+            let lines: Vec<&str> = stderr.split_terminator('\n').collect();
             assert_eq!(lines.len(), 3, "{role}: {stderr}");
             // ssh ends its own line in CRLF (openssh/log.c:409).
             assert!(
