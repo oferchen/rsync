@@ -5,8 +5,10 @@
 //! client's wire rules (exclude.c:1971-1986), relative to the server's cwd.
 //! The pass restarts at `--server` (options.c:1517-1524) without clearing that
 //! list, so an option ahead of `--server` applies twice. A missing filter file
-//! is `rsyserr()` plus RERR_FILEIO (exclude.c:1714-1719). Every transfer is
-//! driven by the 3.5.1 client under a deadline, so a hang fails as a TIMEOUT.
+//! is `rsyserr()` plus RERR_FILEIO (exclude.c:1714-1719). A daemon parses the
+//! client's `-M` options in the same pass, short clusters included. Every
+//! transfer is driven by the 3.5.1 client under a deadline, so a hang fails as
+//! a TIMEOUT.
 
 #![cfg(unix)]
 
@@ -16,7 +18,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use test_support::{Deadlined, UpstreamVersion, require_upstream_rsync, run_deadlined};
+use test_support::{
+    DaemonProcess, Deadlined, UpstreamVersion, require_upstream_rsync, run_deadlined,
+};
 
 const BUDGET: Duration = Duration::from_secs(30);
 
@@ -81,7 +85,10 @@ fn transfer(server: &Path, direction: Direction, before: &[&str], after: &[&str]
         Direction::DeletePush => {
             fs::write(root.join("dst/keep"), "k\n").unwrap();
             fs::write(root.join("dst/gone"), "x\n").unwrap();
-            command.arg("--delete").arg(&src).arg(format!("localhost:{dst}"))
+            command
+                .arg("--delete")
+                .arg(&src)
+                .arg(format!("localhost:{dst}"))
         }
     };
     let (status, stderr) = match run_deadlined(&mut command, BUDGET).unwrap() {
@@ -128,7 +135,11 @@ fn refusal(stderr: &str) -> Vec<String> {
             match (line.find(" at "), line.rfind('[')) {
                 (Some(at), Some(open)) if !line.contains("] ") => {
                     let tag = &line[open..];
-                    format!("{}{}", &line[..at], &tag[..tag.find('=').unwrap_or(tag.len())])
+                    format!(
+                        "{}{}",
+                        &line[..at],
+                        &tag[..tag.find('=').unwrap_or(tag.len())]
+                    )
                 }
                 _ => line.to_owned(),
             }
@@ -140,7 +151,10 @@ fn refusal(stderr: &str) -> Vec<String> {
 /// against the outcome the cell exists to show.
 fn cell(direction: Direction, before: &[&str], after: &[&str], expected: &Outcome) {
     let reference = transfer(&upstream().unwrap(), direction, before, after);
-    assert_eq!(&reference, expected, "3.5.1 itself: {before:?} --server {after:?}");
+    assert_eq!(
+        &reference, expected,
+        "3.5.1 itself: {before:?} --server {after:?}"
+    );
     let actual = transfer(&oc_rsync(), direction, before, after);
     assert_eq!(actual, reference, "{before:?} --server {after:?}");
 }
@@ -179,7 +193,12 @@ fn rsync_filter_shortcut_counts_like_upstream() {
         &["-F"],
         &outcome(0, &[".rsync-filter", "d/b", "d/g.tmp"], &[]),
     );
-    cell(Direction::Pull, &["-F"], &[], &outcome(0, &["d/b", "d/g.tmp"], &[]));
+    cell(
+        Direction::Pull,
+        &["-F"],
+        &[],
+        &outcome(0, &["d/b", "d/g.tmp"], &[]),
+    );
 }
 
 /// A missing `--exclude-from` file ends the server with RERR_FILEIO, the
@@ -217,4 +236,60 @@ fn argv_protect_rule_survives_a_delete_push() {
         &["-f", "P keep"],
         &outcome(0, &[".rsync-filter", "d/a", "d/b", "d/g.tmp", "keep"], &[]),
     );
+}
+
+/// Pushes `src/` (`a`) with `--delete` and `option` forwarded by `-M` into a
+/// `daemon` module holding the extraneous `keep` and `x`.
+fn daemon_push(daemon: &Path, option: &str) -> Vec<String> {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let module = root.join("mod");
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::create_dir_all(&module).unwrap();
+    fs::write(root.join("src/a"), "a\n").unwrap();
+    fs::write(module.join("keep"), "k\n").unwrap();
+    fs::write(module.join("x"), "x\n").unwrap();
+    let config = root.join("rsyncd.conf");
+    fs::write(
+        &config,
+        format!(
+            "use chroot = no\n[m]\n    path = {}\n    read only = no\n",
+            module.display()
+        ),
+    )
+    .unwrap();
+    let process = DaemonProcess::spawn_binary(daemon, &config, std::iter::empty::<&str>())
+        .expect("spawn daemon");
+    let mut command = Command::new(upstream().unwrap());
+    command
+        .arg("-r")
+        .arg("--delete")
+        .arg(format!("-M{option}"))
+        .arg(format!("{}/", root.join("src").display()))
+        .arg(format!("rsync://127.0.0.1:{}/m/", process.port()));
+    match run_deadlined(&mut command, BUDGET).unwrap() {
+        Deadlined::Finished { status, stderr, .. } => assert_eq!(
+            status.code(),
+            Some(0),
+            "{}: {}",
+            daemon.display(),
+            String::from_utf8_lossy(&stderr)
+        ),
+        Deadlined::Expired { budget, stderr, .. } => panic!(
+            "TIMEOUT: daemon push with -M{option} to {} still running after {budget:?}: {}",
+            daemon.display(),
+            String::from_utf8_lossy(&stderr)
+        ),
+    }
+    files_under(&module)
+}
+
+/// A filter inside a short cluster on a daemon's argv (`-M-rf- x`) protects
+/// `x` from a `--delete` push, as 3.5.1's popt pass reads it.
+#[test]
+fn clustered_filter_on_a_daemon_argv_protects_from_delete() {
+    let Some(upstream) = upstream() else { return };
+    let reference = daemon_push(&upstream, "-rf- x");
+    assert_eq!(reference, ["a", "x"], "3.5.1 itself");
+    assert_eq!(daemon_push(&oc_rsync(), "-rf- x"), reference);
 }
