@@ -179,7 +179,16 @@ pub(super) enum Skipped {
 /// nowhere and its dump stops being upstream's answer. `ssh -V` does not name
 /// the layer, so the runtime DLL beside the binary identifies it.
 fn native_oracle() -> Result<(), Skipped> {
-    native_oracle_on(&env::var_os("PATH").unwrap_or_default())
+    // An explicit oracle binary is judged by its own directory; only the
+    // bare `ssh` goes through PATH.
+    match env::var_os("OC_RSYNC_SSH_G_BIN") {
+        Some(bin) => native_oracle_on(
+            Path::new(&bin)
+                .parent()
+                .map_or(OsStr::new(""), Path::as_os_str),
+        ),
+        None => native_oracle_on(&env::var_os("PATH").unwrap_or_default()),
+    }
 }
 
 fn native_oracle_on(path: &OsStr) -> Result<(), Skipped> {
@@ -659,6 +668,7 @@ mod tests {
     /// `ssh -G`'s stderr for a fixture that it accepts, CRLF line ends
     /// folded (openssh/log.c:409).
     fn upstream_stderr(text: &str, alias: &str) -> Result<String, Skipped> {
+        native_oracle()?;
         let dir = test_support::create_tempdir();
         let path = dir.path().join("ssh_config");
         std::fs::write(&path, text).expect("write fixture");
