@@ -12,6 +12,7 @@ mod directive;
 mod merge;
 mod order;
 mod parsing;
+mod server_argv;
 mod sources;
 
 #[cfg(test)]
@@ -22,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 pub use build::{FilterInputs, build_filter_rules};
 pub use order::FilterOrderToken;
+pub use server_argv::server_argv_filter_rules;
 
 /// Where the files that filter options name are read from.
 ///
@@ -40,7 +42,16 @@ pub trait FilterFileSource {
     ///
     /// The open failed. The parser reports it as upstream's open failure
     /// under `XFLG_FATAL_ERRORS` (exclude.c:1703-1720).
-    fn open(&self, path: &Path) -> io::Result<Box<dyn Read>>;
+    fn open(&self, path: &Path, kind: FilterFileKind) -> io::Result<Box<dyn Read>>;
+}
+
+/// What a filter file is opened for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FilterFileKind {
+    /// A `--exclude-from` / `--include-from` list (options.c:1636-1655).
+    RuleList,
+    /// A `merge` rule's file (exclude.c:1581-1590).
+    MergeFile,
 }
 
 /// A source for the parser's own tests: the cwd, with a standard input the
@@ -67,7 +78,7 @@ impl FilterFileSource for TestFiles {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 
-    fn open(&self, path: &Path) -> io::Result<Box<dyn Read>> {
+    fn open(&self, path: &Path, _kind: FilterFileKind) -> io::Result<Box<dyn Read>> {
         if path == Path::new("-") {
             let data = TEST_STDIN
                 .with(|slot| slot.borrow_mut().take())

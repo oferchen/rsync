@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 
 pub(super) use core::server::server_argv::{
-    ArgvRefusal, FILTER_OPTIONS, SHORT_OPTIONS_WITH_VALUE, is_joined_filter_option,
-    is_two_arg_server_long_flag, normalize_server_argv, split_at_end_of_options,
+    ArgvRefusal, SHORT_OPTIONS_WITH_VALUE, is_joined_filter_option, is_two_arg_server_long_flag,
+    normalize_server_argv, split_at_end_of_options,
 };
 
 /// Returns the first long option the server must refuse as unknown.

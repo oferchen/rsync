@@ -9,9 +9,9 @@ use engine::local_copy::upstream_io_error;
 
 use filters::RuleSource;
 
-use super::FilterFileSource;
 use super::directive::FilterDirective;
 use super::parsing::parse_old_prefix_rule;
+use super::{FilterFileKind, FilterFileSource};
 
 /// Loads filter patterns from `--include-from` / `--exclude-from` files and
 /// appends the resulting rules to `destination`. Include/exclude files honor the
@@ -157,7 +157,7 @@ pub(crate) fn load_filter_file_patterns(
     // this is always upstream's non-file arm: the operator already knows the
     // path they typed, and errno is theirs to see.
     let reader = files
-        .open(path)
+        .open(path, FilterFileKind::RuleList)
         .map_err(|error| filter_file_open_error(path, include, &error, RuleSource::Argument))?;
     let mut reader = BufReader::new(reader);
     read_filter_patterns(&mut reader, eol_nulls).map_err(|error| read_failure(path, &error))
@@ -177,7 +177,7 @@ pub(super) fn read_merge_file(
     // upstream's wording and exit code; a mid-file read error (or non-UTF-8
     // contents) is a different condition and keeps its own report.
     let mut reader = files
-        .open(path)
+        .open(path, FilterFileKind::MergeFile)
         .map_err(|error| filter_file_open_error(path, include, &error, source))?;
     let mut contents = String::new();
     reader

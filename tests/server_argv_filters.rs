@@ -316,3 +316,67 @@ fn side_specific_argv_rules_apply_on_either_side() {
         &outcome(0, &[".rsync-filter", "d/a", "d/b", "d/g.tmp", "gone"], &[]),
     );
 }
+
+/// Pulls a module holding `a`, `d/a` and `b.tmp` from `daemon` with `rule`
+/// forwarded by `-M--filter=`, and returns what arrived.
+fn daemon_filtered_pull(daemon: &Path, rule: &str) -> Vec<String> {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let module = root.join("mod");
+    fs::create_dir_all(module.join("d")).unwrap();
+    fs::create_dir_all(root.join("dst")).unwrap();
+    for name in ["a", "d/a", "b.tmp"] {
+        fs::write(module.join(name), "x\n").unwrap();
+    }
+    let config = root.join("rsyncd.conf");
+    fs::write(
+        &config,
+        format!("use chroot = no\n[m]\n    path = {}\n", module.display()),
+    )
+    .unwrap();
+    let process = DaemonProcess::spawn_binary(daemon, &config, std::iter::empty::<&str>())
+        .expect("spawn daemon");
+    let mut command = Command::new(upstream().unwrap());
+    command
+        .arg("-r")
+        .arg(format!("-M--filter={rule}"))
+        .arg(format!("rsync://127.0.0.1:{}/m/", process.port()))
+        .arg(format!("{}/", root.join("dst").display()));
+    match run_deadlined(&mut command, BUDGET).unwrap() {
+        Deadlined::Finished { status, stderr, .. } => assert_eq!(
+            status.code(),
+            Some(0),
+            "{}: {}",
+            daemon.display(),
+            String::from_utf8_lossy(&stderr)
+        ),
+        Deadlined::Expired { budget, stderr, .. } => panic!(
+            "TIMEOUT: daemon pull with -M--filter={rule} from {} still running after {budget:?}: {}",
+            daemon.display(),
+            String::from_utf8_lossy(&stderr)
+        ),
+    }
+    files_under(&root.join("dst"))
+}
+
+/// The `!` (negate) and `/` (absolute-path) modifiers on a daemon-forwarded
+/// rule hide exactly what 3.5.1 hides. Before the daemon shared the client's
+/// parser it ignored both and served every file.
+#[test]
+fn daemon_forwarded_rule_modifiers_hide_like_upstream() {
+    let Some(upstream) = upstream() else { return };
+    let cases: [(&str, &[&str]); 3] = [
+        ("-! *.tmp", &["b.tmp"]),
+        ("exclude,! *.tmp", &["b.tmp"]),
+        ("-/ a", &["b.tmp"]),
+    ];
+    for (rule, expected) in cases {
+        let reference = daemon_filtered_pull(&upstream, rule);
+        assert_eq!(reference, expected, "3.5.1 itself: {rule:?}");
+        assert_eq!(
+            daemon_filtered_pull(&oc_rsync(), rule),
+            reference,
+            "{rule:?}"
+        );
+    }
+}
