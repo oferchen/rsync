@@ -296,3 +296,31 @@ fn access_methods_block_lists_all_connection_forms_feature_gated() {
         "multi-source DEST-must-be-a-directory note missing"
     );
 }
+
+/// `--help` ends the run before the process pass opens anything the options
+/// name: the missing file list is never read and the log file never created.
+///
+/// upstream: options.c parse_arguments() handles `--help` with usage(FINFO)
+/// and exit_cleanup(0) while still parsing, so main() never reaches the
+/// files-from open or log_init(). MEASURED: rsync 3.5.1 exits 0 and creates
+/// no log file.
+#[test]
+fn help_returns_before_the_process_pass_reads_its_files() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let log = dir.path().join("log");
+    let missing = dir.path().join("missing-list");
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(OC_RSYNC),
+        OsString::from("--help"),
+        OsString::from(format!("--files-from={}", missing.display())),
+        OsString::from(format!("--log-file={}", log.display())),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
+    assert!(!stdout.is_empty());
+    assert!(
+        !log.exists(),
+        "the log file was opened before --help returned"
+    );
+}
