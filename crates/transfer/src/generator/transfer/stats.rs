@@ -45,9 +45,9 @@ impl GeneratorContext {
         let stats = TransferStats::with_bytes(total_read, total_written, total_size)
             .with_flist_times(flist_buildtime_ms, flist_xfertime_ms);
 
-        stats.write_to(writer, self.protocol)?;
-        writer.flush()?;
-        Ok(())
+        // No flush: upstream handle_stats() only buffers; the goodbye read
+        // that follows writes them out (io.c:766-768).
+        stats.write_to(writer, self.protocol)
     }
 
     /// Writes the `--write-batch` stats trailer into the batch file.

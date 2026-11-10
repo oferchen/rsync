@@ -57,6 +57,15 @@ impl<W: Write> ServerWriter<W> {
         }
     }
 
+    /// The multiplex output buffer, for the transport core to write out
+    /// before it waits for input; `None` until multiplexing is active.
+    pub(crate) fn mux_out(&self) -> Option<crate::writer::SharedMuxOut> {
+        match self {
+            Self::Multiplex(mux) => Some(mux.shared_out()),
+            Self::Plain(_) | Self::Taken => None,
+        }
+    }
+
     /// Returns true if multiplex is active.
     #[inline]
     pub const fn is_multiplexed(&self) -> bool {

@@ -85,6 +85,7 @@ fn a_framed_diagnostic_is_in_the_daemon_log_before_it_reaches_the_wire() {
 
     logging::emit_warning("sender warning".to_owned());
     ctx.flush_thread_local_diagnostics(&mut writer).unwrap();
+    writer.flush().unwrap();
 
     assert_eq!(*lines.lock().unwrap(), [b"sender warning".to_vec()]);
     let writes = logged_at_write.lock().unwrap();
@@ -112,6 +113,7 @@ fn a_sender_without_a_daemon_log_still_frames_the_diagnostic() {
 
     logging::emit_warning("sender warning".to_owned());
     ctx.flush_thread_local_diagnostics(&mut writer).unwrap();
+    writer.flush().unwrap();
 
     assert!(!logged_at_write.lock().unwrap().is_empty());
 }

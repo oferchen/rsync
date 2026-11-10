@@ -13,10 +13,12 @@
 //! buffered input when output fails - have one place to live.
 
 mod core;
+mod timeout;
 
 use std::io::{self, IoSlice, Read, Write};
 
-pub(crate) use self::core::{Core, CoreReader, CoreWriter};
+pub(crate) use self::core::{Core, CoreReader, CoreWriter, SharedCore};
+pub(crate) use self::timeout::IoTimeout;
 use crate::reader::{BufferedInputHint, ServerReader};
 use crate::writer::ServerWriter;
 

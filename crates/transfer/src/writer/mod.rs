@@ -29,6 +29,7 @@ pub use self::discard::DiscardSink;
 pub use self::msg_info::MsgInfoSender;
 pub use self::msg_route::{MessageRoute, frame_code};
 pub use self::multiplex::BatchRoute;
+pub(crate) use self::multiplex::SharedMuxOut;
 pub use self::server::{ServerWriter, shutdown_send_side};
 pub use bandwidth::ThrottlingWriter;
 

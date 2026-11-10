@@ -161,17 +161,6 @@ impl GeneratorContext {
             })?;
         }
 
-        // upstream: main.c:1284-1294 - flush pending multiplex output before
-        // blocking on recv_filter_list(). Upstream's perform_io() flushes the
-        // output buffer while waiting for input via select(), but our separate
-        // read/write streams cannot do that. Without this flush, any buffered
-        // data (e.g. MSG_IO_TIMEOUT) stays unsent while we block reading the
-        // client's filter list, causing a protocol ordering deadlock in daemon
-        // pull mode where the client waits for server output before proceeding.
-        if !self.config.connection.client_mode {
-            io.output().flush()?;
-        }
-
         // upstream: main.c:1294 - recv_filter_list() in server mode
         self.receive_filter_list_if_server(io.input())?;
 
@@ -386,24 +375,6 @@ impl GeneratorContext {
             calls = ndx_calls,
             partition_point_depth = ndx_cmps,
             "generator ndx_convert totals"
-        );
-
-        // INC_RECURSE diagnostics: emit cumulative io.output().flush()
-        // call count from the generator transfer hot path. Aggregated across
-        // all generator transfers in this process so operators can see how
-        // often the sender forces a flush relative to file counts.
-        let flush_calls = super::super::flush_rate_totals();
-        debug_log!(
-            Send,
-            1,
-            "generator io.output().flush totals: calls={}",
-            flush_calls
-        );
-        #[cfg(feature = "tracing")]
-        ::tracing::debug!(
-            target: "rsync::generator::flush_rate",
-            calls = flush_calls,
-            "generator io.output().flush totals"
         );
 
         // INC_RECURSE diagnostics: emit cumulative
