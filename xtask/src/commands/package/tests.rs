@@ -281,20 +281,12 @@ fn tarball_resolution_skips_targets_without_cross_tooling() {
 
 fn fake_rpmbuild_path() -> (tempfile::TempDir, PathBuf) {
     let dir = test_support::create_tempdir();
-    let rpmbuild_name = if cfg!(windows) {
-        "rpmbuild.cmd"
-    } else {
-        "rpmbuild"
-    };
-    let rpmbuild_path = dir.path().join(rpmbuild_name);
-
-    #[cfg(windows)]
-    let script = b"@echo off\r\nexit /b 0\r\n".to_vec();
-
-    #[cfg(not(windows))]
-    let script = b"#!/bin/sh\nexit 0\n".to_vec();
-
-    std::fs::write(&rpmbuild_path, script).expect("write fake rpmbuild script");
+    // `ensure_command_available` only probes `rpmbuild` plus EXE_SUFFIX by name;
+    // the fake is never run.
+    let rpmbuild_path = dir
+        .path()
+        .join(format!("rpmbuild{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&rpmbuild_path, b"#!/bin/sh\nexit 0\n").expect("write fake rpmbuild script");
 
     #[cfg(unix)]
     {

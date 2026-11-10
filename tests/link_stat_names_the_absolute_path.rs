@@ -64,6 +64,11 @@ struct Scratch {
 impl Scratch {
     fn new() -> Self {
         let root = TempDir::new().expect("tempdir");
+        // On Windows canonicalize yields a `\\?\` verbatim path, which the child
+        // never reports as its working directory, so use the tempdir path as is.
+        #[cfg(windows)]
+        let working_dir = root.path().to_path_buf();
+        #[cfg(not(windows))]
         let working_dir = fs::canonicalize(root.path()).expect("canonicalize tempdir");
         fs::create_dir_all(working_dir.join("dst")).expect("create dst");
         fs::create_dir_all(working_dir.join("sub")).expect("create sub");
