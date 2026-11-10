@@ -27,7 +27,7 @@ fn a_session_child_without_a_handoff_pipe_fails_closed() {
     // RERR_IPC: the hand-off is inter-process communication that failed.
     assert_eq!(output.status.code(), Some(14), "stderr: {stderr}");
     assert!(
-        stderr.contains("cannot read the session hand-off"),
+        stderr.contains("could not create child server process"),
         "stderr: {stderr}"
     );
 }

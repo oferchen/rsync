@@ -93,17 +93,9 @@ impl SessionSpawn {
 pub fn run_daemon_session_child(brand: Brand) -> Result<(), DaemonError> {
     use std::os::windows::ffi::OsStringExt;
 
-    let handoff = read_connection_handoff().map_err(|error| {
-        let code = ExitCode::Ipc;
-        DaemonError::with_code(
-            code,
-            rsync_error!(
-                code.as_i32(),
-                format!("cannot read the session hand-off: {error}")
-            )
-            .with_role(Role::Daemon),
-        )
-    })?;
+    use std::os::windows::io::AsRawSocket;
+
+    let handoff = read_connection_handoff().map_err(child_not_created)?;
     let arguments: Vec<OsString> = handoff
         .arguments
         .iter()
@@ -111,11 +103,28 @@ pub fn run_daemon_session_child(brand: Brand) -> Result<(), DaemonError> {
         .collect();
     let options = RuntimeOptions::parse_with_brand(&arguments, brand, handoff.load_default_paths)?;
     apply_verbosity(options.verbosity());
-    serve_socket_session(
-        options,
-        platform::session_process::adopt_socket(&handoff.socket_info),
-        "the handed-over connection",
-        "daemon session failed",
+    let socket =
+        platform::session_process::adopt_socket(&handoff.socket_info).map_err(child_not_created)?;
+    let fd = socket.as_raw_socket();
+    serve_socket_session(options, socket, fd, "daemon session failed")
+}
+
+/// A session child that cannot take over its connection is, to 3.5.1, a child
+/// that was never created: under Cygwin `fork()` carries the socket into the
+/// child itself, and its failure is reported as below.
+///
+/// upstream: socket.c:773-779 `rsyserr(FERROR, errno, "could not create child
+/// server process")`.
+#[cfg(windows)]
+fn child_not_created(error: io::Error) -> DaemonError {
+    let code = ExitCode::Ipc;
+    DaemonError::with_code(
+        code,
+        rsync_error!(
+            code.as_i32(),
+            format!("could not create child server process: {error}")
+        )
+        .with_role(Role::Daemon),
     )
 }
 

@@ -71,12 +71,19 @@ fn is_stdin_socket() -> bool {
 fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     // upstream: clientserver.c:1759 - start_daemon(STDIN_FILENO, STDIN_FILENO)
     // reads and writes the one inherited socket; stdout is not the client.
-    serve_socket_session(
-        options,
-        inherited_stdin_socket(),
-        "the inherited stdin socket",
-        "inetd daemon session failed",
-    )
+    let socket = inherited_stdin_socket().map_err(|err| {
+        let code = ExitCode::SocketIo;
+        DaemonError::with_code(
+            code,
+            rsync_error!(
+                code.as_i32(),
+                format!("failed to adopt the inherited stdin socket: {err}")
+            )
+            .with_role(Role::Daemon),
+        )
+    })?;
+    // upstream: clientserver.c:1759 - the session socket is STDIN_FILENO.
+    serve_socket_session(options, socket, 0, "inetd daemon session failed")
 }
 
 /// Serves one session on an already-connected socket, then returns.
@@ -87,8 +94,8 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
 /// (clientserver.c:1434).
 fn serve_socket_session(
     options: RuntimeOptions,
-    socket: io::Result<TcpStream>,
-    source: &str,
+    socket: TcpStream,
+    fd: u64,
     failure_context: &str,
 ) -> Result<(), DaemonError> {
     let brand = options.brand;
@@ -146,18 +153,6 @@ fn serve_socket_session(
         ));
     }
 
-    let socket = match socket {
-        Ok(socket) => socket,
-        Err(err) => {
-            let code = ExitCode::SocketIo;
-            return Err(DaemonError::with_code(
-                code,
-                rsync_error!(code.as_i32(), format!("failed to adopt {source}: {err}"))
-                    .with_role(Role::Daemon),
-            ));
-        }
-    };
-
     // upstream: clientserver.c:1759 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
     // Under inetd, fd 0 IS the connected socket, so `client_addr()` skips the
     // environment arm entirely and `client_sockaddr()` reads the real peer via
@@ -175,7 +170,7 @@ fn serve_socket_session(
                 code,
                 rsync_error!(
                     code.as_i32(),
-                    format!("getpeername on {source} failed: {err}")
+                    format!("getpeername on fd{fd} failed: {err}")
                 )
                 .with_role(Role::Daemon),
             ));

@@ -260,9 +260,7 @@ fn spawn_connection_worker(
         let backing = match spawn.start(&stream) {
             Ok(child) => SessionBacking::Process(child),
             Err(error) => {
-                // upstream: socket.c:774-778 - a failed child ends this
-                // connection, never the daemon.
-                report_fork_failure(&error, peer_addr, state.log_sink.as_ref());
+                refuse_unforkable_connection(&error, stream, state.log_sink.as_ref());
                 return None;
             }
         };
@@ -334,11 +332,7 @@ fn fork_session_backing(
             Some(SessionBacking { child_pid })
         }
         Err(error) => {
-            // upstream: `socket.c:774-778` reports the failure, closes the
-            // socket and KEEPS ACCEPTING - a fork failure ends one connection,
-            // never the daemon.
-            report_fork_failure(&error, peer_addr, state.log_sink.as_ref());
-            drop(stream);
+            refuse_unforkable_connection(&error, stream, state.log_sink.as_ref());
             None
         }
     }
@@ -366,14 +360,24 @@ fn serve_forked_session(
     }
 }
 
-/// Reports a session child that could not be created (a failed `fork` on
-/// Unix, a failed session process start on Windows), against the peer whose
-/// connection it ends.
+/// How long the accept loop pauses after a session child could not be
+/// created. upstream: `socket.c:776-779` - "This might have happened because
+/// we're overloaded. Sleep briefly before trying to accept again."
+const CHILD_FAILURE_PAUSE: Duration = Duration::from_secs(2);
+
+/// Ends a connection whose session child could not be created (a failed
+/// `fork` on Unix; a failed start, socket duplication or hand-off of the
+/// session process on Windows): reports it, closes the socket and pauses
+/// before the accept loop accepts again. The daemon itself carries on.
 ///
-/// upstream: `socket.c:774-778` `rsyserr(FERROR, errno, "could not create
-/// child server process")`.
-fn report_fork_failure(error: &io::Error, peer: SocketAddr, log_sink: Option<&SharedLogSink>) {
-    let text = format!("could not create child server process for {peer}: {error}");
+/// upstream: `socket.c:773-779` `rsyserr(FERROR, errno, "could not create
+/// child server process")`, `close(fd)`, `sleep(2)`.
+fn refuse_unforkable_connection(
+    error: &io::Error,
+    stream: DaemonStream,
+    log_sink: Option<&SharedLogSink>,
+) {
+    let text = format!("could not create child server process: {error}");
     match log_sink {
         Some(log) => {
             let message = rsync_error!(SOCKET_IO_EXIT_CODE, text).with_role(Role::Daemon);
@@ -381,6 +385,8 @@ fn report_fork_failure(error: &io::Error, peer: SocketAddr, log_sink: Option<&Sh
         }
         None => eprintln!("{text} [daemon={}]", env!("CARGO_PKG_VERSION")),
     }
+    drop(stream);
+    thread::sleep(CHILD_FAILURE_PAUSE);
 }
 
 /// Applies socket options to a stream the async accept path accepted.
