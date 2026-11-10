@@ -27,20 +27,7 @@ use super::filter_program::{
 /// stack would silently drop the errno upstream always prints.
 #[must_use]
 pub fn upstream_io_error(error: &io::Error) -> String {
-    let full = error.to_string();
-    if let Some(code) = error.raw_os_error() {
-        let strerror = full
-            .strip_suffix(&format!(" (os error {code})"))
-            .unwrap_or(full.as_str());
-        return format!("{strerror} ({code})");
-    }
-    match full.rsplit_once(" (os error ") {
-        Some((strerror, tail)) => match tail.strip_suffix(')') {
-            Some(code) if code.parse::<i32>().is_ok() => format!("{strerror} ({code})"),
-            _ => full,
-        },
-        None => full,
-    }
+    logging::upstream_errno_text(error)
 }
 
 /// A `NotFound` is a vanished source only when no receiver stage claimed it:
@@ -514,7 +501,7 @@ pub enum LocalCopyErrorKind {
     #[error("{}", .0.message())]
     InvalidArgument(LocalCopyArgumentError),
     /// Filesystem interaction failed.
-    #[error("failed to {action} '{}': {source}", path.display())]
+    #[error("failed to {action} '{}': {}", path.display(), upstream_io_error(source))]
     Io {
         /// Action being performed.
         action: &'static str,

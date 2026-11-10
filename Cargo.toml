@@ -186,6 +186,7 @@ platform = { path = "crates/platform" }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
+logging = { path = "crates/logging" }
 core = { path = "crates/core" }
 filetime = { workspace = true }
 libc = { workspace = true }

@@ -1763,7 +1763,11 @@ fn process_include(
                     return Err(refuse(
                         path,
                         linenum,
-                        format!("Can't open user config file {}: {err}", matched.display()),
+                        format!(
+                            "Can't open user config file {}: {}",
+                            matched.display(),
+                            logging::upstream_strerror(&err)
+                        ),
                     ));
                 }
             };

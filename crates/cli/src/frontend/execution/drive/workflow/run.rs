@@ -994,11 +994,17 @@ where
                     format: template.clone(),
                 });
             }
+            // upstream: log.c:175-182 logfile_open() - a log file that cannot
+            // be opened is reported and ignored; the transfer carries on.
             Some(Err(error)) => {
-                let message =
-                    rsync_error!(1, "failed to open log file {}: {error}", path.display())
-                        .with_role(Role::Client);
-                let _ = stderr.write(&message);
+                let line = logging::rsyserr_io(
+                    stderr.brand().client_program_name(),
+                    "client",
+                    format_args!("failed to open log-file {}", path.display()),
+                    &error,
+                );
+                let _ = writeln!(stderr.writer_mut(), "{line}");
+                let _ = writeln!(stdout, "Ignoring \"log file\" setting.");
             }
         }
     }

@@ -206,17 +206,27 @@ pub(crate) fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
     // handle. This mirrors upstream rsync's approach and avoids time-of-check
     // to time-of-use races where an attacker swaps the path after the
     // metadata check but before the read.
+    // upstream: authenticate.c:245-247 - rsyserr(FERROR, errno,
+    // "could not open password file %s") then exit_cleanup(RERR_SYNTAX).
     let mut file = open_operator_named(path).map_err(|error| {
         rsync_error!(
             1,
-            format!("failed to access password file '{}': {}", display, error)
+            format!(
+                "could not open password file {}: {}",
+                display,
+                logging::upstream_errno_text(&error)
+            )
         )
         .with_role(Role::Client)
     })?;
     let metadata = file.metadata().map_err(|error| {
         rsync_error!(
             1,
-            format!("failed to access password file '{}': {}", display, error)
+            format!(
+                "could not open password file {}: {}",
+                display,
+                logging::upstream_errno_text(&error)
+            )
         )
         .with_role(Role::Client)
     })?;

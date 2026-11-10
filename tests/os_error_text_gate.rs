@@ -81,18 +81,14 @@ fn fixture() -> tempfile::TempDir {
     fs::create_dir_all(src.join("locked")).expect("src dirs");
     fs::write(src.join("a"), b"payload\n").expect("write a");
     fs::write(src.join("locked/b"), b"hidden\n").expect("write b");
-    fs::set_permissions(src.join("locked"), fs::Permissions::from_mode(0o000))
-        .expect("lock dir");
+    fs::set_permissions(src.join("locked"), fs::Permissions::from_mode(0o000)).expect("lock dir");
     fs::create_dir(tmp.path().join("dst")).expect("dst dir");
     tmp
 }
 
 /// Restores the locked directory so the tempdir can be removed.
 fn unlock(root: &Path) {
-    let _ = fs::set_permissions(
-        root.join("src/locked"),
-        fs::Permissions::from_mode(0o755),
-    );
+    let _ = fs::set_permissions(root.join("src/locked"), fs::Permissions::from_mode(0o755));
 }
 
 /// Root opens a 0000 directory anyway, so `EACCES` cannot be provoked.
@@ -139,14 +135,12 @@ fn run(binary: &Path, root: &Path, leg: Leg, failure: &Failure) -> Output {
     command.current_dir(root).args(failure.flags);
     let (source, dest) = match leg {
         Leg::Local => (failure.source.to_owned(), failure.dest.to_owned()),
-        Leg::ShellPush | Leg::DaemonPush => (
-            failure.source.to_owned(),
-            remote(leg, root, failure.dest),
-        ),
-        Leg::ShellPull | Leg::DaemonPull => (
-            remote(leg, root, failure.source),
-            failure.dest.to_owned(),
-        ),
+        Leg::ShellPush | Leg::DaemonPush => {
+            (failure.source.to_owned(), remote(leg, root, failure.dest))
+        }
+        Leg::ShellPull | Leg::DaemonPull => {
+            (remote(leg, root, failure.source), failure.dest.to_owned())
+        }
     };
     match leg {
         Leg::ShellPush | Leg::ShellPull => {
@@ -266,4 +260,51 @@ fn errno_tails_pick_only_strerror_and_number() {
     let stderr = "rsync: [sender] link_stat \"/x\" failed: No such file or directory (2)\n\
                   rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1338) [sender=3.5.1]\n";
     assert_eq!(errno_tails(stderr), ["No such file or directory (2)"]);
+}
+
+/// Static half of the gate: no code may build or expect Rust's OS-error
+/// rendering. Only `logging::strerror`, which derives upstream's text from it,
+/// may spell it; every other site reports through `logging::rsyserr` and
+/// friends with the raw errno, as upstream's call sites use `rsyserr()`.
+#[test]
+fn no_test_expects_rust_os_error_text() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let needle = ["(os", " error "].concat();
+    let mut hits = Vec::new();
+    for base in ["crates", "src", "tests"] {
+        visit_rust_files(&root.join(base), &mut |path| {
+            let relative = path.strip_prefix(root).unwrap_or(path);
+            // The one place that turns std's rendering into strerror text.
+            if relative.ends_with("crates/logging/src/errno_text.rs") {
+                return;
+            }
+            let Ok(text) = fs::read_to_string(path) else {
+                return;
+            };
+            for (number, line) in text.lines().enumerate() {
+                if line.contains(&needle) && !line.trim_start().starts_with("//") {
+                    hits.push(format!("{}:{}", relative.display(), number + 1));
+                }
+            }
+        });
+    }
+    assert!(
+        hits.is_empty(),
+        "Rust os-error text in source:\n{}",
+        hits.join("\n")
+    );
+}
+
+fn visit_rust_files(dir: &Path, visit: &mut dyn FnMut(&Path)) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            visit_rust_files(&path, visit);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            visit(&path);
+        }
+    }
 }

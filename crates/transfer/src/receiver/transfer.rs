@@ -1014,7 +1014,11 @@ pub(in crate::receiver) fn handle_delayed_updates(
                     // No io_error bit: make_backup() reports through FERROR,
                     // which log.c:336-341 routes to stderr without setting
                     // got_xfer_error, so upstream still exits 0 here.
-                    eprintln!("rsync: backup failed for {}: {e}", final_path.display());
+                    eprintln!(
+                        "rsync: backup failed for {}: {}",
+                        final_path.display(),
+                        logging::upstream_errno_text(&e)
+                    );
                     continue;
                 }
             }

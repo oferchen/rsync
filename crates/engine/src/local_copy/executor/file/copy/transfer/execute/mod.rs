@@ -527,18 +527,13 @@ pub(in crate::local_copy) fn execute_transfer_once(
                 // candidate; failing to open it is the local-copy analog of
                 // upstream's `copy_file()` failure. Wording mirrors
                 // `rsyserr`'s `copy_file SRC => DST: STRERROR (ERRNO)` form.
-                let errno = error.raw_os_error().unwrap_or(0);
-                let display = error.to_string();
-                let suffix = format!(" (os error {errno})");
-                let trimmed = display.strip_suffix(&suffix).unwrap_or(&display);
                 info_log!(
                     Copy,
                     1,
-                    "copy_file {} => {}: {} ({})",
+                    "copy_file {} => {}: {}",
                     override_path.display(),
                     destination.display(),
-                    trimmed,
-                    errno
+                    logging::upstream_errno_text(&error)
                 );
                 return Err(LocalCopyError::io(
                     "copy file",

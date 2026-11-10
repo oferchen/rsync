@@ -309,6 +309,7 @@ dependencies = [
  "fast_io",
  "filetime",
  "libc",
+ "logging",
  "mimalloc",
  "nix",
  "platform",

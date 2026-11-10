@@ -237,7 +237,11 @@ fn apply_privilege_restrictions_with_upstream_errors(
         let entered = fast_io::confinement::pin_session_root_fd(module_root)
             .and_then(|()| enter_pinned_module_root(module_root));
         if let Err(err) = entered {
-            let flog = format!("chdir {} failed: {err}", module_root.display());
+            let flog = format!(
+                "chdir {} failed: {}",
+                module_root.display(),
+                logging::upstream_errno_text(&err)
+            );
             log_message(log_sink, &rsync_error!(1, flog).with_role(Role::Daemon));
             send_error(ctx.reader.get_mut(), ctx.limiter, &AtError::ChdirFailed)?;
             let host_owned = ctx.host_display().to_owned();

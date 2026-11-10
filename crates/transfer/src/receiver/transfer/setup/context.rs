@@ -248,11 +248,7 @@ impl ReceiverContext {
                 format!("The temp-dir does not exist: {}", shown.display()),
             ),
             Err(err) => {
-                let text = err.to_string();
-                let strerror = err
-                    .raw_os_error()
-                    .and_then(|code| text.strip_suffix(&format!(" (os error {code})")))
-                    .unwrap_or(&text);
+                let strerror = logging::upstream_strerror(&err);
                 io::Error::other(format!(
                     "Failed to stat temp-dir {}: {strerror}",
                     shown.display()
@@ -1329,7 +1325,8 @@ impl ReceiverContext {
             io::Error::new(
                 err.kind(),
                 format!(
-                    "failed to open files-from file '{path}': {err} {}{}",
+                    "failed to open files-from file {path}: {} {}{}",
+                    logging::upstream_strerror(&err),
                     crate::role_trailer::error_location!(),
                     crate::role_trailer::receiver()
                 ),

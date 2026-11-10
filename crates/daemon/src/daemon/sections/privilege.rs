@@ -181,8 +181,10 @@ fn resolve_use_chroot(module: &ModuleDefinition, log_sink: &SharedLogSink) -> bo
     match probe_chroot_capability() {
         Ok(()) => true,
         Err(err) => {
-            let notice =
-                format!("chroot test failed: {err}. Switching 'use chroot' from unset to false.");
+            let notice = format!(
+                "chroot test failed: {}. Switching 'use chroot' from unset to false.",
+                logging::upstream_strerror(&err)
+            );
             let message = rsync_warning!(notice).with_role(Role::Daemon);
             log_message(log_sink, &message);
             false
