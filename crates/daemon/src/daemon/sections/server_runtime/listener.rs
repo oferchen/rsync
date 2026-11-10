@@ -406,6 +406,10 @@ fn warn_transient_accept_failure(
 /// with `EADDRNOTAVAIL` or `EAFNOSUPPORT`, oc-rsync logs the per-family error,
 /// and the listener degrades to IPv4 instead of producing an opaque exit 10.
 ///
+/// A `port` of 0 binds the first family to a kernel-chosen port and every
+/// later family to that same port, so a dual-stack listener answers on one
+/// port as it does for an explicit one.
+///
 /// Returns the listeners in `bind_addresses` order (skipping families that
 /// failed) along with the matching `local_addr()` for status reporting. Returns
 /// `Err(io::Error)` only when every family in `bind_addresses` failed to bind;
@@ -423,6 +427,7 @@ fn bind_listeners_per_family(
     let mut bound_addresses = Vec::with_capacity(bind_addresses.len());
     let dual_stack = bind_addresses.len() > 1;
     let mut last_error: Option<io::Error> = None;
+    let mut port = port;
 
     for addr in bind_addresses {
         let requested_addr = SocketAddr::new(*addr, port);
@@ -435,7 +440,9 @@ fn bind_listeners_per_family(
             log_sink,
         ) {
             Ok(listener) => {
-                bound_addresses.push(listener.local_addr().unwrap_or(requested_addr));
+                let bound = listener.local_addr().unwrap_or(requested_addr);
+                port = bound.port();
+                bound_addresses.push(bound);
                 listeners.push(listener);
             }
             // A family that fails to bind is tolerated in dual-stack mode so a

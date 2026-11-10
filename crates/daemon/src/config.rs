@@ -9,6 +9,7 @@
 //! and default-path behaviour across the workspace.
 
 use std::ffi::OsString;
+use std::io::PipeWriter;
 use std::net::{TcpListener, UdpSocket};
 
 use core::branding::Brand;
@@ -33,6 +34,9 @@ pub struct DaemonConfig {
     /// and daemon bind in tests.
     pre_bound_listener: Option<TcpListener>,
     pre_bound_quic_sockets: Vec<UdpSocket>,
+    /// Test seam: where to report the bound listener port, see
+    /// [`DaemonConfigBuilder::report_bound_port`].
+    bound_port_report: Option<PipeWriter>,
 }
 
 impl Clone for DaemonConfig {
@@ -44,6 +48,7 @@ impl Clone for DaemonConfig {
             signal_flags: self.signal_flags.clone(),
             pre_bound_listener: None,
             pre_bound_quic_sockets: Vec::new(),
+            bound_port_report: None,
         }
     }
 }
@@ -110,6 +115,12 @@ impl DaemonConfig {
         std::mem::take(&mut self.pre_bound_quic_sockets)
     }
 
+    /// Takes the bound-port report pipe set through
+    /// [`DaemonConfigBuilder::report_bound_port`], leaving none behind.
+    pub fn take_bound_port_report(&mut self) -> Option<PipeWriter> {
+        self.bound_port_report.take()
+    }
+
     /// Reports whether any daemon-specific arguments were provided.
     #[must_use]
     pub const fn has_runtime_request(&self) -> bool {
@@ -126,6 +137,7 @@ pub struct DaemonConfigBuilder {
     signal_flags: Option<SignalFlags>,
     pre_bound_listener: Option<TcpListener>,
     pre_bound_quic_sockets: Vec<UdpSocket>,
+    bound_port_report: Option<PipeWriter>,
 }
 
 impl Clone for DaemonConfigBuilder {
@@ -137,6 +149,7 @@ impl Clone for DaemonConfigBuilder {
             signal_flags: self.signal_flags.clone(),
             pre_bound_listener: None,
             pre_bound_quic_sockets: Vec::new(),
+            bound_port_report: None,
         }
     }
 }
@@ -160,6 +173,7 @@ impl Default for DaemonConfigBuilder {
             signal_flags: None,
             pre_bound_listener: None,
             pre_bound_quic_sockets: Vec::new(),
+            bound_port_report: None,
         }
     }
 }
@@ -173,6 +187,7 @@ impl From<DaemonConfig> for DaemonConfigBuilder {
             signal_flags: config.signal_flags,
             pre_bound_listener: config.pre_bound_listener,
             pre_bound_quic_sockets: config.pre_bound_quic_sockets,
+            bound_port_report: config.bound_port_report,
         }
     }
 }
@@ -239,6 +254,20 @@ impl DaemonConfigBuilder {
         self
     }
 
+    /// Test seam: binds an ephemeral port and reports it on `writer`.
+    ///
+    /// The daemon binds port 0 for its first address family, reuses the
+    /// port the kernel chose for every other family, then writes that port
+    /// as one decimal line to `writer` and closes it before it accepts. The
+    /// line is the test's ready signal; EOF without one means the daemon
+    /// ended before it listened. `--port` is not consulted, and a
+    /// pre-bound listener reports its own port.
+    #[must_use]
+    pub fn report_bound_port(mut self, writer: PipeWriter) -> Self {
+        self.bound_port_report = Some(writer);
+        self
+    }
+
     /// Finalises the builder and constructs the [`DaemonConfig`].
     #[must_use]
     pub fn build(self) -> DaemonConfig {
@@ -249,6 +278,7 @@ impl DaemonConfigBuilder {
             signal_flags: self.signal_flags,
             pre_bound_listener: self.pre_bound_listener,
             pre_bound_quic_sockets: self.pre_bound_quic_sockets,
+            bound_port_report: self.bound_port_report,
         }
     }
 }
