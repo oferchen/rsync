@@ -39,7 +39,8 @@ fn quic_server_identity(identity: &QuicIdentity) -> QuicServerIdentity {
 /// separate `[::]` and `0.0.0.0` socket, and without v6-only isolation the
 /// IPv6 wildcard would also claim IPv4 traffic and the paired IPv4 bind would
 /// fail with `EADDRINUSE`. `SO_REUSEADDR` mirrors the TCP path so a restart can
-/// rebind without waiting out the previous socket.
+/// rebind without waiting out the previous socket, and is Unix-only for the
+/// same reason: on Windows it would let a second socket co-bind the port.
 fn bind_quic_socket(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
     let domain = if addr.is_ipv4() {
         socket2::Domain::IPV4
@@ -47,6 +48,7 @@ fn bind_quic_socket(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
         socket2::Domain::IPV6
     };
     let socket = socket2::Socket::new(domain, socket2::Type::DGRAM, Some(socket2::Protocol::UDP))?;
+    #[cfg(unix)]
     socket.set_reuse_address(true)?;
     if addr.is_ipv6() {
         socket.set_only_v6(true)?;
