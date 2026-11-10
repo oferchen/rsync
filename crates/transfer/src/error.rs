@@ -292,6 +292,11 @@ pub fn rerr_for_io_error(error: &io::Error) -> i32 {
         return 2;
     }
 
+    // upstream: io.c:600-605 handle_kill_signal() - exit_cleanup(RERR_SIGNAL).
+    if crate::shared::is_signal_shutdown(error) {
+        return 20;
+    }
+
     // upstream: errcode.h RERR_SYNTAX=1 - an option-usage refusal is tagged at
     // its call site, exactly as the protocol-violation class above; without the
     // tag it would fall through to the `_ => RERR_FILEIO` arm.

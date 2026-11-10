@@ -168,7 +168,7 @@ pub(crate) fn local_failure_error(
         )
     {
         let line = format!("[{who}] read error: {}", upstream_io_error(error));
-        let report = program_line_error(line, ExitCode::SocketIo, role);
+        let report = program_line_error(line, worse(ExitCode::SocketIo), role);
         return side.finish(report, ExitCode::StreamIo);
     }
     let transfer_exit = ExitCode::from_io_error(error);
