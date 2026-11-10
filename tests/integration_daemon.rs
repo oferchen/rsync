@@ -15,155 +15,19 @@ mod integration;
 
 use integration::helpers::*;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU16, Ordering};
-use std::thread;
-use std::time::{Duration, Instant};
 
-/// Global mutex for environment variable isolation between tests.
-#[allow(dead_code)]
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-/// Global port counter for test isolation.
-static TEST_PORT_COUNTER: AtomicU16 = AtomicU16::new(45_000);
-
-/// Allocate a unique test port.
-#[allow(dead_code)]
-fn allocate_test_port() -> u16 {
-    loop {
-        let port = TEST_PORT_COUNTER.fetch_add(1, Ordering::SeqCst);
-        if port > 59_000 {
-            TEST_PORT_COUNTER.store(45_000, Ordering::SeqCst);
-            continue;
-        }
-        // Try to bind to verify port is available
-        if let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, port)) {
-            drop(listener);
-            return port;
-        }
-    }
-}
-
-/// Connect to daemon with retries.
-#[allow(dead_code)]
-fn connect_with_retries(port: u16) -> TcpStream {
-    const INITIAL_BACKOFF: Duration = Duration::from_millis(50);
-    const MAX_BACKOFF: Duration = Duration::from_millis(500);
-    const TIMEOUT: Duration = Duration::from_secs(30);
-
-    let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let deadline = Instant::now() + TIMEOUT;
-    let mut backoff = INITIAL_BACKOFF;
-
-    loop {
-        match TcpStream::connect_timeout(&target, backoff) {
-            Ok(stream) => {
-                stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
-                stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
-                return stream;
-            }
-            Err(error) => {
-                if Instant::now() >= deadline {
-                    panic!("failed to connect to daemon within timeout: {error}");
-                }
-
-                thread::sleep(backoff);
-                backoff = (backoff.saturating_mul(2)).min(MAX_BACKOFF);
-            }
-        }
-    }
-}
-
-/// Helper to perform rsync protocol handshake.
-#[allow(dead_code)]
-fn perform_handshake(stream: &mut TcpStream, version: &str) -> Result<String, String> {
-    let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
-
-    // Read server greeting
-    let mut greeting = String::new();
-    reader
-        .read_line(&mut greeting)
-        .map_err(|e| format!("failed to read greeting: {e}"))?;
-
-    if !greeting.starts_with("@RSYNCD:") {
-        return Err(format!("invalid greeting: {greeting}"));
-    }
-
-    // Send client version response
-    stream
-        .write_all(format!("@RSYNCD: {version}\n").as_bytes())
-        .map_err(|e| format!("failed to send version: {e}"))?;
-    stream.flush().map_err(|e| e.to_string())?;
-
-    Ok(greeting)
-}
-
-/// Helper to request module listing.
-#[allow(dead_code)]
-fn request_module_list(stream: &mut TcpStream) -> Result<Vec<String>, String> {
-    let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
-
-    // Send list request
-    stream
-        .write_all(b"#list\n")
-        .map_err(|e| format!("failed to send list request: {e}"))?;
-    stream.flush().map_err(|e| e.to_string())?;
-
-    // Read capabilities
-    let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .map_err(|e| format!("failed to read capabilities: {e}"))?;
-
-    if !line.contains("CAP") {
-        return Err(format!("expected CAP line, got: {line}"));
-    }
-
-    // Read OK
-    line.clear();
-    reader
-        .read_line(&mut line)
-        .map_err(|e| format!("failed to read OK: {e}"))?;
-
-    if !line.contains("OK") {
-        return Err(format!("expected OK, got: {line}"));
-    }
-
-    // Read modules until EXIT
-    let mut modules = Vec::new();
-    loop {
-        line.clear();
-        reader
-            .read_line(&mut line)
-            .map_err(|e| format!("failed to read module: {e}"))?;
-
-        if line.contains("EXIT") {
-            break;
-        }
-
-        let module_name = line.split('\t').next().unwrap_or(&line).trim().to_string();
-        if !module_name.is_empty() && !module_name.starts_with('@') {
-            modules.push(module_name);
-        }
-    }
-
-    Ok(modules)
-}
-
+/// A module listing served by a running daemon names every module with its
+/// comment. The daemon listens on a listener bound before it starts, so the
+/// client connects without waiting for it.
+#[cfg(unix)]
 #[test]
 fn daemon_list_modules_via_cli() {
-    let port = allocate_test_port();
-    let test_dir = TestDir::new().expect("create test dir");
+    use test_support::oc_daemon::OcDaemon;
 
-    // Create module directories
+    let test_dir = TestDir::new().expect("create test dir");
     let docs_dir = test_dir.mkdir("docs").expect("create docs dir");
     let data_dir = test_dir.mkdir("data").expect("create data dir");
-    fs::write(docs_dir.join("readme.txt"), b"Documentation").expect("create readme");
-    fs::write(data_dir.join("file.dat"), b"Data content").expect("create data file");
 
-    // Create config file
     let config_path = test_dir.path().join("rsyncd.conf");
     let config = format!(
         "[docs]\npath = {}\ncomment = Documentation files\nuse chroot = false\n\n\
@@ -172,16 +36,29 @@ fn daemon_list_modules_via_cli() {
         data_dir.display()
     );
     fs::write(&config_path, config).expect("write config");
+    let daemon = OcDaemon::builder(&config_path)
+        .spawn()
+        .expect("spawn daemon");
 
-    // Use CLI to list modules
     let mut cmd = RsyncCommand::new();
-    cmd.args(["--list-only", &format!("rsync://127.0.0.1:{port}/")]);
+    cmd.args([
+        "--list-only",
+        &format!("rsync://127.0.0.1:{}/", daemon.port()),
+    ]);
+    let output = cmd.run().expect("run the module listing");
 
-    // This will fail since we're not running a daemon, but the test structure is here
-    // In a full implementation, you would start the daemon in a thread using daemon::run_daemon
-    let _result = cmd.run();
-    // Note: This test demonstrates the pattern for CLI-based module listing
-    // A real daemon would need to be started via the daemon crate
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "listing failed: {output:?}");
+    let rows: Vec<(&str, &str)> = stdout
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(name, comment)| (name.trim(), comment.trim()))
+        .collect();
+    assert_eq!(
+        rows,
+        [("docs", "Documentation files"), ("data", "Data storage")],
+        "module listing:\n{stdout}"
+    );
 }
 
 #[test]
