@@ -543,7 +543,7 @@ jobs:
 
       - name: Install cargo-nextest
         if: needs.changes.outputs.docs_only != 'true'
-        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
         with:
           tool: cargo-nextest
 
@@ -629,7 +629,7 @@ jobs:
           key: ssh-throughput
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
         with:
           tool: cargo-nextest
 
@@ -724,7 +724,7 @@ jobs:
           key: linux-quic
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
         with:
           tool: cargo-nextest
 
@@ -1234,7 +1234,7 @@ jobs:
 
       - name: Install cargo-nextest
         if: needs.changes.outputs.docs_only != 'true'
-        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
         with:
           tool: cargo-nextest
 
@@ -1384,7 +1384,7 @@ jobs:
 
       - name: Install cargo-nextest
         if: needs.changes.outputs.docs_only != 'true'
-        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
         with:
           tool: cargo-nextest
 
