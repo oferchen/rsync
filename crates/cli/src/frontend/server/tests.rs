@@ -252,6 +252,24 @@ fn detect_secluded_args_ignores_s_in_capability_string() {
 }
 
 #[test]
+fn detect_secluded_args_ignores_s_in_an_option_value() {
+    // popt hands the rest of a cluster to the first option that takes a
+    // value: `-fs` is the filter `s` and `-rM--fake-super` is a remote
+    // option, so neither turns on secluded args.
+    for token in ["-fs", "-rM--fake-super", "-T/tmp/s", "-B1s"] {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from(token),
+            OsString::from("--server"),
+            OsString::from("-re.iLsfxCIvu"),
+            OsString::from("."),
+            OsString::from("dest/"),
+        ];
+        assert!(!detect_secluded_args_flag(&args), "{token}");
+    }
+}
+
+#[test]
 fn detect_secluded_args_both_transfer_and_capability_s() {
     // When 's' appears in both the transfer portion (secluded-args) AND
     // the capability string (symlink-iconv), should detect it.
