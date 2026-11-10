@@ -43,50 +43,175 @@ pub(super) fn split_at_end_of_options(args: &[OsString]) -> (&[OsString], &[OsSt
     }
 }
 
-/// Removes `-M`/`--remote-option` and their values from a server argv.
+/// A server argv rejected the way 3.5.1's popt pass rejects it.
 ///
-/// A server only records these: upstream keeps the value in `remote_options`
-/// (options.c:1762-1777), and only a local copy's forked server re-parses that
-/// list (pipe.c:143-150). Left in place, the value would be read as the
-/// compact flag string, and an `s` in it (`-M--fake-super`) turns on secluded
-/// args, which then reads the client's protocol version as an argument list.
-/// Only tokens before the `--` marker are options.
+/// upstream: main.c:1909-1912 - a failed parse_arguments() is option_error()
+/// (options.c:907-918, `"rsync: %s"`) then `exit_cleanup(RERR_SYNTAX)`. The
+/// trailer names the process `server` only once `--server` has been parsed:
+/// am_server is set by that option (options.c:889), so an option refused before
+/// it reports `[client=...]`. popt's own errors also gain `on remote machine: `
+/// under am_server (options.c:2051-2054); rsync's own refusals never do.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ArgvRefusal {
+    /// The refusal text, without the program-name prefix.
+    pub(super) text: String,
+    /// Whether `--server` preceded the refused token.
+    pub(super) after_server: bool,
+}
+
+impl ArgvRefusal {
+    fn popt(token: &str, error: &str, after_server: bool) -> Self {
+        let prefix = if after_server {
+            "on remote machine: "
+        } else {
+            ""
+        };
+        Self {
+            text: format!("{prefix}{token}: {error}"),
+            after_server,
+        }
+    }
+}
+
+/// Rewrites a server argv into the form the server's argv scanners read.
+///
+/// The server parses its whole argv with one popt pass (options.c:1497), so a
+/// short-option cluster counts wherever it sits, before `--server` included.
+/// Each cluster is read as popt reads it: letters are options up to the first
+/// one that takes a value ([`SHORT_OPTIONS_WITH_VALUE`]), whose value is the
+/// rest of the token or else the next token. The rewrite puts every option
+/// letter, in order, into one compact flag string right after `--server`, with
+/// the last `-e` value (upstream's `shell_cmd`, compat.c:165) appended, so the
+/// flag-string parser and the capability decoder read it exactly as they read
+/// a single cluster.
+///
+/// - `-M` values are only recorded on a server (options.c:1762-1777; only a
+///   local copy's forked server re-parses them, pipe.c:143-150), so they are
+///   dropped, and so is `--remote-option`.
+/// - `-B`, `-@` and `-T` become the `-B<n>`, `-@<n>` and `--temp-dir=<dir>`
+///   tokens the long-option pass reads.
+/// - `-f` values are consumed here and not yet applied: a server-argv filter
+///   list is task 617.
+///
+/// Tokens after the `--` marker are operands and pass through untouched. The
+/// rewrite is idempotent, so it can run again over a secluded-args list.
 ///
 /// # Errors
 ///
-/// Returns upstream's refusal text for a value that does not start with a
-/// dash (options.c:1764-1767), or for a `-M` with no value.
-pub(super) fn strip_remote_options(args: &[OsString]) -> Result<Vec<OsString>, String> {
+/// Returns 3.5.1's refusal for an unknown short letter, a value-taking option
+/// with no value, or a remote option that does not start with a dash
+/// (options.c:1764-1767).
+pub(super) fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, ArgvRefusal> {
     let (options, operands) = split_at_end_of_options(args);
-    let mut kept = Vec::with_capacity(args.len());
-    let mut tokens = options.iter();
-    while let Some(arg) = tokens.next() {
+    let mut kept = Vec::with_capacity(args.len() + 1);
+    let mut letters = String::new();
+    let mut rsh: Option<String> = None;
+    let mut server_at: Option<usize> = None;
+    let mut first_cluster_at: Option<usize> = None;
+    let mut after_server = false;
+    let mut tokens = options.iter().enumerate();
+    while let Some((index, arg)) = tokens.next() {
         let text = arg.to_string_lossy();
-        let value = match text.as_ref() {
-            "-M" | "--remote-option" => match tokens.next() {
-                Some(value) => value.to_string_lossy().into_owned(),
-                None => return Err(format!("{text}: missing argument")),
-            },
-            _ => match text
-                .strip_prefix("--remote-option=")
-                .or_else(|| text.strip_prefix("-M"))
-            {
-                Some(value) => value.to_owned(),
-                None => {
-                    kept.push(arg.clone());
-                    continue;
-                }
-            },
-        };
-        if !value.starts_with('-') {
-            return Err(format!("Remote option must start with a dash: {value}"));
+        if index == 0 || !text.starts_with('-') || text == "-" {
+            kept.push(arg.clone());
+            continue;
         }
+        if text == "--server" {
+            // upstream: options.c:1517-1524 - the first `--server` restarts
+            // the popt pass from argv[1], so every option ahead of it is
+            // parsed twice and a counting letter (`-v`, `-X`, `-x`) counts
+            // twice.
+            if !after_server {
+                letters.push_str(&letters.clone());
+            }
+            after_server = true;
+            kept.push(arg.clone());
+            server_at.get_or_insert(kept.len());
+            continue;
+        }
+        if is_two_arg_server_long_flag(&text) {
+            kept.push(arg.clone());
+            if let Some((_, value)) = tokens.next() {
+                kept.push(value.clone());
+            }
+            continue;
+        }
+        if text == "--remote-option" {
+            let value = tokens
+                .next()
+                .map(|(_, value)| value.to_string_lossy().into_owned())
+                .ok_or_else(|| ArgvRefusal::popt(&text, "missing argument", after_server))?;
+            check_remote_option(&value, after_server)?;
+            continue;
+        }
+        if let Some(value) = text.strip_prefix("--remote-option=") {
+            check_remote_option(value, after_server)?;
+            continue;
+        }
+        if text.starts_with("--") {
+            kept.push(arg.clone());
+            continue;
+        }
+        first_cluster_at.get_or_insert(kept.len());
+        let cluster = &text[1..];
+        for (offset, letter) in cluster.char_indices() {
+            if !SHORT_OPTIONS.contains(letter) {
+                return Err(ArgvRefusal::popt(&text, "unknown option", after_server));
+            }
+            if !SHORT_OPTIONS_WITH_VALUE.contains(&letter) {
+                letters.push(letter);
+                continue;
+            }
+            let rest = &cluster[offset + letter.len_utf8()..];
+            let value = if rest.is_empty() {
+                tokens
+                    .next()
+                    .map(|(_, value)| value.to_string_lossy().into_owned())
+                    .ok_or_else(|| ArgvRefusal::popt(&text, "missing argument", after_server))?
+            } else {
+                rest.to_owned()
+            };
+            match letter {
+                'e' => rsh = Some(value),
+                'M' => check_remote_option(&value, after_server)?,
+                'B' => kept.push(OsString::from(format!("-B{value}"))),
+                '@' => kept.push(OsString::from(format!("-@{value}"))),
+                'T' => kept.push(OsString::from(format!("--temp-dir={value}"))),
+                // A server-argv filter rule (options.c:752 `-f`, OPT_FILTER at
+                // :1620). Not applied yet: the server filter list is task 617.
+                _ => {}
+            }
+            break;
+        }
+    }
+    if !letters.is_empty() || rsh.is_some() {
+        let mut flag_string = format!("-{letters}");
+        if let Some(value) = rsh {
+            flag_string.push('e');
+            flag_string.push_str(&value);
+        }
+        // Right after `--server`, where the flag-string parser looks.
+        let at = server_at.or(first_cluster_at).unwrap_or(kept.len());
+        kept.insert(at, OsString::from(flag_string));
     }
     if options.len() < args.len() {
         kept.push(OsString::from(END_OF_OPTIONS));
         kept.extend(operands.iter().cloned());
     }
     Ok(kept)
+}
+
+/// Refuses a remote-option value without a leading dash, as options.c:1764-1767
+/// does.
+fn check_remote_option(value: &str, after_server: bool) -> Result<(), ArgvRefusal> {
+    if value.starts_with('-') {
+        Ok(())
+    } else {
+        Err(ArgvRefusal {
+            text: format!("Remote option must start with a dash: {value}"),
+            after_server,
+        })
+    }
 }
 
 /// Returns the first long option the server must refuse as unknown.
@@ -99,15 +224,18 @@ pub(super) fn strip_remote_options(args: &[OsString]) -> Result<Vec<OsString>, S
 /// option here: `safe_arg()` sends a filename that starts with `-` as `./-...`
 /// (options.c:2709). Only tokens before the `--` marker are options, and the
 /// value slot of a two-argument long option is not one.
-pub(super) fn refused_server_option(args: &[OsString]) -> Option<&OsString> {
+pub(super) fn refused_server_option(args: &[OsString]) -> Option<ArgvRefusal> {
     let (args, _operands) = split_at_end_of_options(args);
+    let mut after_server = false;
     let mut tokens = args.iter();
     while let Some(arg) = tokens.next() {
         let text = arg.to_string_lossy();
-        if is_two_arg_server_long_flag(&text) {
+        if text == "--server" {
+            after_server = true;
+        } else if is_two_arg_server_long_flag(&text) {
             tokens.next();
         } else if text.starts_with("--") && !is_known_server_long_flag(&text) {
-            return Some(arg);
+            return Some(ArgvRefusal::popt(&text, "unknown option", after_server));
         }
     }
     None
@@ -144,6 +272,13 @@ pub(crate) fn detect_secluded_args_flag(args: &[OsString]) -> bool {
         }
     })
 }
+
+/// Every short option letter in 3.5.1's popt table.
+///
+/// upstream: options.c long_options[], named entries plus the unnamed `-D`,
+/// `-F` and `-P` aliases. A letter outside this set is popt's
+/// `unknown option`.
+const SHORT_OPTIONS: &str = "0468@ABCDEFHIJKLMNOPRSTUVWXabcdefghiklmnopqrstuvxyz";
 
 /// The short options whose value follows in the same or the next token.
 ///
