@@ -52,7 +52,8 @@ impl LocalAcls {
     ///
     /// Returns the read upstream fails on, so the caller can drop the entry.
     ///
-    /// upstream: acls.c:586-759 get_rsync_acl(), its `am_root < 0` arm first.
+    /// upstream: acls.c:601 get_rsync_acl()'s `am_root < 0` arm, ahead of its
+    /// real-ACL read (acls.c:586-759).
     pub fn read(
         path: &Path,
         mode: u32,
