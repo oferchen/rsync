@@ -978,11 +978,20 @@ where
     // learns the code from the `MSG_ERROR_EXIT` the transfer body already sent
     // (transfer::announce_error_exit); this is the process status the remote
     // shell reports on top of it.
+    // upstream: main.c:1077 do_recv() - a server receiver forks into
+    // receiver and generator once the file list is in.
+    let fork_point = std::sync::Arc::new(core::server::ForkPoint::default());
     #[cfg(unix)]
     let outcome = {
         // The protocol stream is descriptor 1 itself, not the caller's handle.
         let _ = stdout;
-        core::session::run_server_fds(config, stdio.stdin, stdio.stdout, None)
+        core::session::run_server_fds(
+            config,
+            stdio.stdin,
+            stdio.stdout,
+            None,
+            Some(std::sync::Arc::clone(&fork_point)),
+        )
     };
     #[cfg(not(unix))]
     let outcome = run_server_stdio(config, &mut stdin, stdout, None);
@@ -1004,12 +1013,32 @@ where
             if let Some(code) = core::server::remote_exit_code(&e) {
                 return code;
             }
+            let signalled = core::signal::shutdown_reason().is_some();
+            // upstream: cleanup.c:241-256 - a forked receiver dying with one of
+            // the unannounced codes flushes none of its queued messages, so its
+            // own report never leaves it; the generator meets end-of-file on
+            // the error pipe and reports that instead (io.c:299-303). A signal
+            // exits with RERR_SIGNAL first (io.c:600-605), which is announced.
+            if !signalled
+                && role == ServerRole::Receiver
+                && let Some(generator_read) = fork_point.total_read_at_fork()
+                && core::exit_code::receiver_exit_is_unannounced(
+                    core::exit_code::cause_line_exit_code(&e)
+                        .unwrap_or_else(|| core::exit_code::ExitCode::from_io_error(&e)),
+                )
+            {
+                for line in
+                    core::exit_code::generator_eof_report_lines(generator_read, program_brand)
+                {
+                    let _ = stderr.write_all(&line);
+                }
+                return core::exit_code::ExitCode::StreamIo.as_i32();
+            }
             let who = if role == ServerRole::Generator {
                 Role::Sender
             } else {
                 Role::Generator
             };
-            let signalled = core::signal::shutdown_reason().is_some();
             report_server_failure(stderr, program_brand, who, &e, signalled)
         }
     }

@@ -82,10 +82,7 @@ impl ReportingSide {
     pub(crate) fn finish(self, report: ClientError, generator_exit: ExitCode) -> ClientError {
         match self {
             Self::PostFork { generator_read }
-                if matches!(
-                    report.code(),
-                    ExitCode::SocketIo | ExitCode::StreamIo | ExitCode::Signal1 | ExitCode::Timeout
-                ) =>
+                if crate::exit_code::receiver_exit_is_unannounced(report.code()) =>
             {
                 connection_unexpectedly_closed_error(
                     generator_read,

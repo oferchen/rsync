@@ -12,8 +12,7 @@ use crate::message::Role;
 /// followed by `exit_cleanup(code)`, or `None` for any other failure.
 ///
 /// upstream: xattrs.c:1253-1258 get_stat_xattr() (RERR_FILEIO),
-/// util2.c:73-80 my_alloc() (RERR_MALLOC), token.c's codec failures
-/// (RERR_STREAMIO)
+/// util2.c:73-80 my_alloc() (RERR_MALLOC)
 #[must_use]
 pub fn cause_line_exit_code(error: &io::Error) -> Option<ExitCode> {
     if metadata::is_corrupt_fake_super(error) {
@@ -23,8 +22,6 @@ pub fn cause_line_exit_code(error: &io::Error) -> Option<ExitCode> {
         .is_some_and(|inner| inner.is::<protocol::MallocFailure>())
     {
         Some(ExitCode::Malloc)
-    } else if protocol::wire::CodecFailure::of(error).is_some() {
-        Some(ExitCode::StreamIo)
     } else {
         None
     }
@@ -48,6 +45,45 @@ pub fn fatal_report_lines(
     }
     let trailer = crate::rsync_error!(code.as_i32(), "{}", code.description())
         .with_role(role)
+        .with_brand(brand);
+    if let Ok(line) = trailer.to_line_bytes() {
+        lines.push(line);
+    }
+    lines
+}
+
+/// Whether a forked receiver child exiting with `code` leaves its report
+/// unsent, so its generator meets end-of-file on the error pipe instead.
+///
+/// upstream: cleanup.c:241-256 - only a code other than `RERR_SOCKETIO`,
+/// `RERR_STREAMIO`, `RERR_SIGNAL1` and `RERR_TIMEOUT` sends `MSG_ERROR_EXIT`
+/// and flushes the queued messages (`io_flush(MSG_FLUSH)`).
+#[must_use]
+pub const fn receiver_exit_is_unannounced(code: ExitCode) -> bool {
+    matches!(
+        code,
+        ExitCode::SocketIo | ExitCode::StreamIo | ExitCode::Signal1 | ExitCode::Timeout
+    )
+}
+
+/// The newline-terminated lines a server's generator reports when its forked
+/// receiver dies unannounced: the end-of-file whine naming the generator's
+/// own read count, then its `RERR_STREAMIO` trailer.
+///
+/// upstream: io.c:299-303 whine_about_eof(), log.c:937-963 log_exit()
+#[must_use]
+pub fn generator_eof_report_lines(total_read: u64, brand: Brand) -> Vec<Vec<u8>> {
+    let mut lines = vec![
+        format!(
+            "{}: connection unexpectedly closed ({total_read} bytes received so far) [{}]\n",
+            brand.client_program_name(),
+            Role::Generator.as_str()
+        )
+        .into_bytes(),
+    ];
+    let code = ExitCode::StreamIo;
+    let trailer = crate::rsync_error!(code.as_i32(), "{}", code.description())
+        .with_role(Role::Generator)
         .with_brand(brand);
     if let Ok(line) = trailer.to_line_bytes() {
         lines.push(line);

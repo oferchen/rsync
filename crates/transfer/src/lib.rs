@@ -669,6 +669,7 @@ pub fn run_server_fds(
     stdin: std::fs::File,
     stdout: std::fs::File,
     progress: Option<&mut dyn TransferProgressCallback>,
+    fork_point: Option<Arc<ForkPoint>>,
 ) -> ServerResult {
     let transport = fast_io::transport::FdTransport::pair(stdin, stdout)?;
     let timeout = iobuf::IoTimeout::new(
@@ -687,6 +688,7 @@ pub fn run_server_fds(
         core,
         ServerTransferHooks {
             progress,
+            fork_point,
             ..ServerTransferHooks::default()
         },
     )

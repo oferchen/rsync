@@ -33,8 +33,15 @@ use test_support::{
 };
 
 /// A 300 KB pseudo-random file, so the stream holds several compressed blocks.
+///
+/// Written once per root: a rewrite would change the mtime, whose nanoseconds
+/// go on the wire as a varint (flist.c:907-908), and with them the byte count
+/// the generator reports.
 fn source(root: &Path) -> PathBuf {
     let src = root.join("src");
+    if src.exists() {
+        return src;
+    }
     fs::create_dir_all(&src).expect("mkdir src");
     let mut state: u32 = 0x2545_f491;
     let data: Vec<u8> = (0..300_000)
@@ -102,15 +109,16 @@ fn assert_streamio_without_timeout(out: &CliOutput) {
     );
 }
 
-/// The receiver's report: its cause line, then the trailer's message with the
-/// program name, source position and version left out.
-fn receiver_report(out: &CliOutput) -> (String, String) {
+/// The report `role` closes with: its cause line, then the trailer's message
+/// with the source position and version left out. The cause keeps its program
+/// prefix in upstream's spelling, since oc names itself `oc-rsync`.
+fn report(out: &CliOutput, role: &str) -> (String, String) {
     let stderr = out.stderr_str();
     let lines: Vec<&str> = stderr.lines().collect();
     let at = lines
         .iter()
-        .position(|line| line.contains("[receiver="))
-        .unwrap_or_else(|| panic!("no receiver trailer, stderr:\n{stderr}"));
+        .position(|line| line.contains(&format!("[{role}=")))
+        .unwrap_or_else(|| panic!("no {role} trailer, stderr:\n{stderr}"));
     assert!(
         at > 0,
         "no cause line before the trailer, stderr:\n{stderr}"
@@ -120,7 +128,9 @@ fn receiver_report(out: &CliOutput) -> (String, String) {
         .and_then(|(_, rest)| rest.split_once(" at "))
         .map(|(message, _)| message)
         .unwrap_or_else(|| panic!("malformed trailer: {}", lines[at]));
-    (lines[at - 1].to_owned(), message.to_owned())
+    let cause = lines[at - 1];
+    let cause = cause.strip_prefix("oc-").unwrap_or(cause);
+    (cause.to_owned(), message.to_owned())
 }
 
 /// Pulls with the client decompressing `client_choice` while the server,
@@ -146,7 +156,7 @@ fn assert_pull_desync_report(client_choice: &str, server_option: &str, expected:
         true,
     );
     assert_streamio_without_timeout(&oc);
-    let report = receiver_report(&oc);
+    let report = report(&oc, "receiver");
     assert_eq!(
         report,
         (
@@ -158,7 +168,7 @@ fn assert_pull_desync_report(client_choice: &str, server_option: &str, expected:
         let reference = run(upstream.binary(), tmp.path(), client_choice, &rsh, true);
         reference.assert_exit(12);
         assert_eq!(
-            receiver_report(&reference),
+            self::report(&reference, "receiver"),
             report,
             "oc pull against 3.5.1 pull"
         );
@@ -191,13 +201,16 @@ fn pull_zlib_client_of_a_zstd_stream_reports_the_inflate_failure() {
     );
 }
 
-/// The server receiver fails to decode the client's zlib stream as zstd and
-/// exits 12, which the client reports.
+/// The server receiver fails to decode the client's zlib stream as zstd; the
+/// push ends with exit 12 and the generator's end-of-file report, as on 3.5.1.
 ///
-/// 3.5.1's server receiver prints the same codec line, but its client does
-/// not show it (measured), so this cell pins only oc's line.
+/// upstream: cleanup.c:241-256 - the forked server receiver exits
+/// `RERR_STREAMIO` without flushing its queued messages, so its
+/// `ZSTD decomp returned` line (token.c:902) never reaches the client. Its
+/// generator meets end-of-file on the error pipe and reports
+/// `connection unexpectedly closed` with its own read count (io.c:299-303).
 #[test]
-fn push_with_mismatched_compressors_exits_streamio() {
+fn push_with_mismatched_compressors_reports_the_generators_eof() {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
     let tmp = create_tempdir();
     let rsh = rewriting_rsh(tmp.path(), "--old-compress", "--compress-choice=zstd");
@@ -209,13 +222,25 @@ fn push_with_mismatched_compressors_exits_streamio() {
         false,
     );
     assert_streamio_without_timeout(&out);
-    // upstream: token.c:899-903 - the server receiver prints the codec's own
-    // line, unprefixed, before log_exit()'s trailer.
-    let stderr = out.stderr_str();
     assert!(
-        stderr
-            .lines()
-            .any(|line| line == "ZSTD decomp returned -10 (0 bytes)"),
-        "no codec line from the server receiver, stderr:\n{stderr}"
+        !out.stderr_contains("ZSTD decomp returned"),
+        "the server receiver's codec line reached the client, stderr:\n{}",
+        out.stderr_str()
     );
+    let (cause, message) = report(&out, "generator");
+    assert!(
+        cause.starts_with("rsync: connection unexpectedly closed (")
+            && cause.ends_with(" bytes received so far) [generator]"),
+        "{cause}"
+    );
+    assert_eq!(message, "error in rsync protocol data stream (code 12)");
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
+        let reference = run(upstream.binary(), tmp.path(), "zlib", &rsh, false);
+        reference.assert_exit(12);
+        assert_eq!(
+            report(&reference, "generator"),
+            (cause, message),
+            "oc push against 3.5.1 push"
+        );
+    }
 }
