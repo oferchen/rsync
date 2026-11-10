@@ -74,6 +74,18 @@ pub struct GeneratorContext {
     /// valid indices, and `reconstruct_source_path(i)` reproduces the exact
     /// on-disk path the walk recorded for entry `i`.
     pub(crate) source_bases: Vec<Arc<Path>>,
+    /// Send position of each entry in `file_list` (parallel array, filled by
+    /// the sort).
+    ///
+    /// The sender builds its list in the order upstream's `send_file_name()`
+    /// calls emit it, which is the order the entries go out on the wire; the
+    /// list is then sorted so NDX values follow `f_name_cmp`. This records,
+    /// for each sorted entry, where the walk put it. Only the order within one
+    /// sub-list is meaningful.
+    ///
+    /// upstream: flist.c:3046-3059 - `send_file_list()` writes each entry as it
+    /// is made and sorts afterwards.
+    pub(crate) send_positions: Vec<u32>,
     /// One-entry interning cache for [`Self::push_file_item`].
     ///
     /// Consecutive entries from the same source argument derive the identical
@@ -399,6 +411,7 @@ impl GeneratorContext {
             config,
             file_list: DualFileList::new(),
             source_bases: Vec::new(),
+            send_positions: Vec::new(),
             last_source_base: None,
             last_dirname: None,
             filter_chain: FilterChain::empty(),
@@ -1127,6 +1140,19 @@ impl GeneratorContext {
         Some(path)
     }
 
+    /// Returns the flat indices of `range` in the order they are sent.
+    ///
+    /// Falls back to flat order when the range has no recorded send positions
+    /// (a list that was never sorted by the build).
+    pub(crate) fn send_order(&self, range: std::ops::Range<usize>) -> Vec<usize> {
+        let start = range.start;
+        let mut order: Vec<usize> = range.clone().collect();
+        if let Some(positions) = self.send_positions.get(range) {
+            order.sort_unstable_by_key(|&i| positions[i - start]);
+        }
+        order
+    }
+
     /// Clears both the file list and the source-base array.
     ///
     /// This method maintains the invariant that both arrays are cleared together
@@ -1134,6 +1160,7 @@ impl GeneratorContext {
     pub(crate) fn clear_file_list(&mut self) {
         self.file_list = DualFileList::new();
         self.source_bases.clear();
+        self.send_positions.clear();
         self.last_source_base = None;
         self.last_dirname = None;
     }
