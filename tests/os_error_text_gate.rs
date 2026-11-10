@@ -165,19 +165,31 @@ fn run(binary: &Path, root: &Path, leg: Leg, failure: &Failure) -> Output {
     command.output().expect("run client")
 }
 
-/// The `strerror (errno)` tails of every stderr line, sorted.
+/// Every `strerror (errno)` that follows a `": "` on a stderr line, sorted.
+///
+/// The errno can sit before oc's trailer on the same line, so it is found
+/// where it occurs rather than only at the end of the line.
 fn errno_tails(stderr: &str) -> Vec<String> {
     let mut tails: Vec<String> = stderr
         .lines()
-        .filter_map(|line| {
-            let (_, tail) = line.rsplit_once(": ")?;
-            let (text, number) = tail.strip_suffix(')')?.rsplit_once(" (")?;
-            (!text.is_empty() && number.parse::<i32>().is_ok()).then(|| tail.to_owned())
-        })
+        .flat_map(|line| line.match_indices(": ").map(move |(at, _)| &line[at + 2..]))
+        .filter_map(errno_tail)
         .collect();
     tails.sort();
     tails.dedup();
     tails
+}
+
+/// `rest` up to and including its first ` (N)`, if the text before it is one
+/// strerror message.
+fn errno_tail(rest: &str) -> Option<String> {
+    let (text, after) = rest.split_once(" (")?;
+    let (number, _) = after.split_once(')')?;
+    let is_errno = !text.is_empty()
+        && !text.contains(": ")
+        && !number.is_empty()
+        && number.bytes().all(|b| b.is_ascii_digit());
+    is_errno.then(|| format!("{text} ({number})"))
 }
 
 fn assert_upstream_errno_text(root: &Path, leg: Leg, failure: &Failure) {
@@ -207,9 +219,14 @@ fn assert_matches_upstream(root: &Path, leg: Leg, failure: &Failure) {
     };
     let oc = run(&oc_binary(), root, leg, failure);
     let up = run(upstream.binary(), root, leg, failure);
-    assert_eq!(
-        errno_tails(&String::from_utf8_lossy(&oc.stderr)),
-        errno_tails(&String::from_utf8_lossy(&up.stderr)),
+    let oc_tails = errno_tails(&String::from_utf8_lossy(&oc.stderr));
+    let up_tails = errno_tails(&String::from_utf8_lossy(&up.stderr));
+    // 3.5.1 can add a late `write error: Broken pipe (32)` after its trailer
+    // depending on scheduling, so oc's errno set must be contained in
+    // upstream's rather than equal to it.
+    assert!(
+        up_tails.iter().any(|tail| tail == failure.errno_text)
+            && oc_tails.iter().all(|tail| up_tails.contains(tail)),
         "{leg:?} {}: errno text differs from 3.5.1\noc:\n{}\n3.5.1:\n{}",
         failure.source,
         String::from_utf8_lossy(&oc.stderr),
@@ -255,11 +272,173 @@ fn a_full_device_reports_enospc_like_upstream() {
     }
 }
 
+/// A failure reported at one of upstream's own `rsyserr()` call sites rather
+/// than by the transfer: the client arguments, the cause text both
+/// implementations must print, and whether the run still succeeds.
+struct Site {
+    args: Vec<String>,
+    connect_prog: Option<PathBuf>,
+    cause: String,
+    succeeds: bool,
+}
+
+fn run_site(binary: &Path, root: &Path, site: &Site) -> Output {
+    let mut command = Command::new(binary);
+    command.current_dir(root).args(&site.args);
+    if let Some(conf) = &site.connect_prog {
+        command.env(
+            "RSYNC_CONNECT_PROG",
+            format!("{} --daemon --config={}", binary.display(), conf.display()),
+        );
+    }
+    command.output().expect("run client")
+}
+
+/// oc prints the cause text without Rust's rendering and, when a 3.5.1
+/// binary is available, upstream prints the very same text, so the expected
+/// string is upstream's and not one this test made up.
+fn assert_site(root: &Path, name: &str, site: &Site) {
+    let oc = run_site(&oc_binary(), root, site);
+    let stderr = String::from_utf8_lossy(&oc.stderr);
+    assert_eq!(
+        oc.status.success(),
+        site.succeeds,
+        "{name}: unexpected exit status\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("os error"),
+        "{name}: Rust's io::Error text reached the user\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&site.cause),
+        "{name}: expected {:?}\n{stderr}",
+        site.cause
+    );
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+        return;
+    };
+    let up = run_site(upstream.binary(), root, site);
+    let up_stderr = String::from_utf8_lossy(&up.stderr);
+    assert_eq!(
+        up.status.success(),
+        site.succeeds,
+        "{name}: 3.5.1\n{up_stderr}"
+    );
+    assert!(
+        up_stderr.contains(&site.cause),
+        "{name}: 3.5.1 does not print {:?}\n{up_stderr}",
+        site.cause
+    );
+}
+
+/// upstream: options.c:2667-2669 - strerror without the errno number.
+#[test]
+fn a_missing_files_from_file_is_reported_like_upstream() {
+    let tmp = fixture();
+    let list = tmp.path().join("nonexist");
+    let site = Site {
+        args: vec![
+            format!("--files-from={}", list.display()),
+            ".".into(),
+            "dst/".into(),
+        ],
+        connect_prog: None,
+        cause: format!(
+            "failed to open files-from file {}: No such file or directory",
+            list.display()
+        ),
+        succeeds: false,
+    };
+    assert_site(tmp.path(), "files-from", &site);
+    unlock(tmp.path());
+}
+
+/// upstream: log.c:175-182 logfile_open() - reported, then ignored.
+#[test]
+fn an_unopenable_log_file_is_reported_and_ignored_like_upstream() {
+    let tmp = fixture();
+    let log = tmp.path().join("nodir/x.log");
+    let site = Site {
+        args: vec![
+            format!("--log-file={}", log.display()),
+            "src/a".into(),
+            "dst/".into(),
+        ],
+        connect_prog: None,
+        cause: format!(
+            "[client] failed to open log-file {}: No such file or directory (2)\n",
+            log.display()
+        ),
+        succeeds: true,
+    };
+    assert_site(tmp.path(), "log-file", &site);
+    unlock(tmp.path());
+}
+
+/// upstream: clientserver.c:306-307 - rsyserr "failed to open %s".
+#[test]
+fn a_missing_early_input_file_is_reported_like_upstream() {
+    let tmp = fixture();
+    let input = tmp.path().join("nonexist");
+    let site = Site {
+        args: vec![
+            format!("--early-input={}", input.display()),
+            "rsync://localhost/m/".into(),
+        ],
+        connect_prog: Some(daemon_config(tmp.path())),
+        cause: format!(
+            "failed to open {}: No such file or directory (2)",
+            input.display()
+        ),
+        succeeds: false,
+    };
+    assert_site(tmp.path(), "early-input", &site);
+    unlock(tmp.path());
+}
+
+/// upstream: authenticate.c:245-247 - rsyserr "could not open password file
+/// %s". Upstream opens the file only when the module asks for a password.
+#[test]
+fn a_missing_password_file_is_reported_like_upstream() {
+    let tmp = fixture();
+    let conf = tmp.path().join("auth.conf");
+    fs::write(
+        &conf,
+        format!(
+            "use chroot = no\n[m]\npath = {}\nauth users = u\nsecrets file = {}\n",
+            tmp.path().display(),
+            tmp.path().join("secrets").display()
+        ),
+    )
+    .expect("write config");
+    let password = tmp.path().join("nonexist");
+    let site = Site {
+        args: vec![
+            format!("--password-file={}", password.display()),
+            "rsync://u@localhost/m/".into(),
+        ],
+        connect_prog: Some(conf),
+        cause: format!(
+            "could not open password file {}: No such file or directory (2)",
+            password.display()
+        ),
+        succeeds: false,
+    };
+    assert_site(tmp.path(), "password-file", &site);
+    unlock(tmp.path());
+}
+
 #[test]
 fn errno_tails_pick_only_strerror_and_number() {
     let stderr = "rsync: [sender] link_stat \"/x\" failed: No such file or directory (2)\n\
                   rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1338) [sender=3.5.1]\n";
     assert_eq!(errno_tails(stderr), ["No such file or directory (2)"]);
+}
+
+#[test]
+fn errno_tails_find_the_errno_before_an_oc_trailer() {
+    let stderr = "oc-rsync error: failed to copy file 'src/a': No space left on device (28) (code 23) at error.rs(560) [sender=0.6.4]\n";
+    assert_eq!(errno_tails(stderr), ["No space left on device (28)"]);
 }
 
 /// Static half of the gate: no code may build or expect Rust's OS-error
