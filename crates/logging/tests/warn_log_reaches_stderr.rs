@@ -72,6 +72,24 @@ fn warn_log_emits_a_warning_coded_event() {
     );
 }
 
+/// `warn_log!` must expand to an expression, so a match arm can be just the
+/// macro call. A trailing `;` in the expansion makes that use the
+/// `semicolon_in_expressions_from_non_local_macros` case, which rustc 1.99+
+/// rejects under `-D warnings` (the pinned 1.89 does not lint macros from
+/// other crates). This test is a separate crate from `logging`, so the macro
+/// is non-local here exactly as it is at production call sites.
+#[test]
+fn warn_log_is_usable_as_a_match_arm_expression() {
+    init(VerbosityConfig::default());
+    drain_events();
+
+    match Some("arm") {
+        Some(arm) => warn_log!("planted {arm} warning"),
+        None => unreachable!("the scrutinee is Some"),
+    }
+    emit_and_take_one("planted arm warning");
+}
+
 /// Link 2: `Warning` routes to stderr, and keeps doing so under every
 /// `StreamContext` an operator can produce - including `--quiet`, which
 /// suppresses only `FINFO` upstream.
