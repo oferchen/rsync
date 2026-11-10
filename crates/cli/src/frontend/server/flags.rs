@@ -43,6 +43,52 @@ pub(super) fn split_at_end_of_options(args: &[OsString]) -> (&[OsString], &[OsSt
     }
 }
 
+/// Removes `-M`/`--remote-option` and their values from a server argv.
+///
+/// A server only records these: upstream keeps the value in `remote_options`
+/// (options.c:1762-1777), and only a local copy's forked server re-parses that
+/// list (pipe.c:143-150). Left in place, the value would be read as the
+/// compact flag string, and an `s` in it (`-M--fake-super`) turns on secluded
+/// args, which then reads the client's protocol version as an argument list.
+/// Only tokens before the `--` marker are options.
+///
+/// # Errors
+///
+/// Returns upstream's refusal text for a value that does not start with a
+/// dash (options.c:1764-1767), or for a `-M` with no value.
+pub(super) fn strip_remote_options(args: &[OsString]) -> Result<Vec<OsString>, String> {
+    let (options, operands) = split_at_end_of_options(args);
+    let mut kept = Vec::with_capacity(args.len());
+    let mut tokens = options.iter();
+    while let Some(arg) = tokens.next() {
+        let text = arg.to_string_lossy();
+        let value = match text.as_ref() {
+            "-M" | "--remote-option" => match tokens.next() {
+                Some(value) => value.to_string_lossy().into_owned(),
+                None => return Err(format!("{text}: missing argument")),
+            },
+            _ => match text
+                .strip_prefix("--remote-option=")
+                .or_else(|| text.strip_prefix("-M"))
+            {
+                Some(value) => value.to_owned(),
+                None => {
+                    kept.push(arg.clone());
+                    continue;
+                }
+            },
+        };
+        if !value.starts_with('-') {
+            return Err(format!("Remote option must start with a dash: {value}"));
+        }
+    }
+    if options.len() < args.len() {
+        kept.push(OsString::from(END_OF_OPTIONS));
+        kept.extend(operands.iter().cloned());
+    }
+    Ok(kept)
+}
+
 /// Returns the first long option the server must refuse as unknown.
 ///
 /// upstream: the server parses its argv with the same popt table as the client
