@@ -539,15 +539,14 @@ mod tests {
     }
 
     #[test]
-    fn server_config_rejects_empty_inputs() {
+    fn server_config_accepts_empty_inputs() {
         let config =
             ServerConfig::from_flag_string_and_args(ServerRole::Receiver, String::new(), vec![]);
 
         assert!(
-            config.is_err(),
-            "ServerConfig should reject empty flag string without args"
+            config.is_ok(),
+            "upstream's server accepts an argv with no flag string"
         );
-        assert_eq!(config.unwrap_err(), "missing rsync server flag string");
     }
 
     #[test]
