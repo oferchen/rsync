@@ -673,6 +673,7 @@ pub(in crate::ssh) enum Multistate {
     /// `multistate_strict_hostkey` (openssh/readconf.c:1019-1028).
     StrictHostKey,
     /// `multistate_yesnoaskconfirm` (openssh/readconf.c:1029-1037).
+    #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
     YesNoAskConfirm,
     /// `multistate_controlmaster` (openssh/readconf.c:1044-1053).
     ControlMaster,
@@ -689,6 +690,7 @@ pub(in crate::ssh) enum Multistate {
 
 impl Multistate {
     /// The table's keywords, compared with `strcasecmp`.
+    #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
     pub(in crate::ssh) fn keys(self) -> &'static [&'static str] {
         match self {
             Self::YesNoAsk => &["true", "false", "yes", "no", "ask"],
@@ -1019,6 +1021,7 @@ pub(in crate::ssh) fn strtonum(s: &str, min: i64, max: i64) -> Result<i64, &'sta
 /// it (openssh/misc.c:536-548): `strtonum(s, 0, 65535)`, then
 /// `getservbyname(s, "tcp")`. `None` is upstream's `-1`; 0 is a valid
 /// answer the callers refuse themselves.
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
 pub(in crate::ssh) fn a2port(s: &str) -> Option<u16> {
     match strtonum(s, 0, 65535) {
         Ok(port) => u16::try_from(port).ok(),
@@ -1029,6 +1032,7 @@ pub(in crate::ssh) fn a2port(s: &str) -> Option<u16> {
 /// `getservbyname(name, "tcp")` through the services file, which is the
 /// `files` source every libc consults; a name served only by another NSS
 /// source is not found.
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
 fn service_port(name: &str) -> Option<u16> {
     #[cfg(windows)]
     let path = std::path::PathBuf::from(std::env::var_os("SystemRoot")?)
@@ -1107,7 +1111,7 @@ pub(in crate::ssh) enum CanonicalizeHostname {
 impl CanonicalizeHostname {
     /// The spelling `ssh -G` dumps: the first table name for the value
     /// (openssh/readconf.c:3497-3498 `fmt_multistate_int`).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(all(test, feature = "embedded-ssh")), allow(dead_code))]
     pub(in crate::ssh) fn as_str(self) -> &'static str {
         match self {
             Self::No => "false",
