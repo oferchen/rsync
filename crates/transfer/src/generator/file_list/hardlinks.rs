@@ -1,7 +1,7 @@
 //! Hardlink index assignment and UID/GID collection for the generator role.
 //!
-//! After sorting the file list, hardlink indices are assigned so that
-//! entries sharing the same (dev, ino) pair reference a leader entry.
+//! After sorting the file list, hardlink indices are assigned in send order so
+//! that entries sharing the same (dev, ino) pair reference a leader entry.
 //! UID/GID collection gathers unique ownership values for name-based
 //! transfer.
 //!
@@ -18,17 +18,20 @@ use super::super::GeneratorContext;
 impl GeneratorContext {
     /// Assigns hardlink indices to entries sharing the same (dev, ino) pair.
     ///
-    /// Must run on the final send order: after sorting, and under INC_RECURSE
+    /// Must run on the final layout: after sorting, and under INC_RECURSE
     /// after `partition_file_list_for_inc_recurse` has reordered the list into
-    /// segments. The first entry of a group in send order becomes the leader (`u32::MAX`, XMIT_HLINK_FIRST on the
-    /// wire); later ones become followers carrying the leader's wire NDX.
+    /// segments. Entries are numbered in send order, sub-list by sub-list. The
+    /// first entry of a group sent becomes the leader (`u32::MAX`,
+    /// XMIT_HLINK_FIRST on the wire); later ones become followers carrying the
+    /// number the leader was sent under.
     ///
-    /// The wire NDX of flat index `i` is `ndx_start + i` plus one gap for every
-    /// sub-list opened at or before `i` (flist.c:3511 opens each sub-list at
-    /// `prev->ndx_start + prev->used + 1`). A follower whose leader sits in an earlier sub-list
-    /// therefore names that leader's absolute NDX, which upstream's receiver
-    /// resolves through `prior_hlinks` (hlink.c:125-141) and rejects when it
-    /// lands before the current sub-list without a recorded leader.
+    /// That number is the sub-list's `ndx_start` plus the leader's send
+    /// position in it, and a sub-list opens one NDX past the previous one's end
+    /// (flist.c:3511 `prev->ndx_start + prev->used + 1`). A follower whose
+    /// leader sits in an earlier sub-list therefore names that leader's
+    /// absolute NDX, which upstream's receiver resolves through `prior_hlinks`
+    /// (hlink.c:125-141) and rejects when it lands before the current sub-list
+    /// without a recorded leader.
     ///
     /// Entries with `hardlink_dev`/`hardlink_ino` set during `create_entry()` are
     /// matched here. After assignment, the temporary dev/ino fields are cleared for
@@ -37,44 +40,61 @@ impl GeneratorContext {
     /// # Upstream Reference
     ///
     /// - `flist.c:824-831` `send_file_entry()` - the idev table persists across
-    ///   sub-lists and stores `first_ndx + ndx`, the send-time wire NDX
+    ///   sub-lists and stores `first_ndx + ndx`, `ndx` being `flist->used`
+    ///   before the sub-list is sorted
     /// - `hlink.c:idev_find()` - two-level (dev, ino) hashtable lookup
     #[cfg(unix)]
     pub(in crate::generator) fn assign_hardlink_indices(&mut self) {
         let mut table = HardlinkTable::new();
         let ndx_start = self.incremental.ndx_map.first_ndx_start() as u32;
-        let segments = &self.incremental.pending_segments;
-        let mut gaps = 0usize;
+        let initial_len = self
+            .incremental
+            .initial_segment_count
+            .unwrap_or(self.file_list.len());
+        let lists: Vec<(std::ops::Range<usize>, u32)> =
+            std::iter::once((0..initial_len, ndx_start))
+                .chain(
+                    self.incremental
+                        .pending_segments
+                        .iter()
+                        .enumerate()
+                        .map(|(j, seg)| {
+                            (
+                                seg.flist_start..seg.flist_start + seg.count,
+                                ndx_start + (seg.flist_start + j + 1) as u32,
+                            )
+                        }),
+                )
+                .collect();
 
-        for i in 0..self.file_list.len() {
-            while segments.get(gaps).is_some_and(|seg| seg.flist_start <= i) {
-                gaps += 1;
-            }
-            let entry = &self.file_list[i];
-            let (Some(dev), Some(ino)) = (entry.hardlink_dev(), entry.hardlink_ino()) else {
-                continue;
-            };
+        for (range, wire_start) in lists {
+            for (k, i) in self.send_order(range).into_iter().enumerate() {
+                let entry = &self.file_list[i];
+                let (Some(dev), Some(ino)) = (entry.hardlink_dev(), entry.hardlink_ino()) else {
+                    continue;
+                };
 
-            let wire_ndx = ndx_start + (i + gaps) as u32;
-            let dev_ino = DevIno::new(dev as u64, ino as u64);
-            // upstream: hlink.c HLINK debug emissions - announce per-device
-            // hashtable creation on first observation.
-            table.announce_device(ProcessRole::Generator, dev_ino.dev);
-            match table.find_or_insert(dev_ino, wire_ndx) {
-                HardlinkLookup::First(_) => {
-                    // Leader: mark with u32::MAX (XMIT_HLINK_FIRST on wire)
-                    self.file_list[i].set_hardlink_idx(u32::MAX);
+                let wire_ndx = wire_start + k as u32;
+                let dev_ino = DevIno::new(dev as u64, ino as u64);
+                // upstream: hlink.c HLINK debug emissions - announce per-device
+                // hashtable creation on first observation.
+                table.announce_device(ProcessRole::Generator, dev_ino.dev);
+                match table.find_or_insert(dev_ino, wire_ndx) {
+                    HardlinkLookup::First(_) => {
+                        // Leader: mark with u32::MAX (XMIT_HLINK_FIRST on wire)
+                        self.file_list[i].set_hardlink_idx(u32::MAX);
+                    }
+                    HardlinkLookup::LinkTo(leader_wire_ndx) => {
+                        // Follower: point to leader's wire NDX
+                        self.file_list[i].set_hardlink_idx(leader_wire_ndx);
+                    }
                 }
-                HardlinkLookup::LinkTo(leader_wire_ndx) => {
-                    // Follower: point to leader's wire NDX
-                    self.file_list[i].set_hardlink_idx(leader_wire_ndx);
-                }
-            }
 
-            // Clear temporary dev/ino for proto 30+ (not sent on wire)
-            if self.protocol.as_u8() >= 30 {
-                self.file_list[i].set_hardlink_dev(0);
-                self.file_list[i].set_hardlink_ino(0);
+                // Clear temporary dev/ino for proto 30+ (not sent on wire)
+                if self.protocol.as_u8() >= 30 {
+                    self.file_list[i].set_hardlink_dev(0);
+                    self.file_list[i].set_hardlink_ino(0);
+                }
             }
         }
     }

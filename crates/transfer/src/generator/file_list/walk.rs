@@ -51,8 +51,13 @@ fn filter_chain_error(dir: &Path, error: filters::FilterChainError) -> io::Error
 /// upstream's producer does - `send_directory()` scans ONE directory and
 /// `send_extra_file_list()` (`flist.c`) decides when to scan the next.
 ///
-/// Making the stack explicit preserves the traversal order and the guard
-/// nesting exactly while turning every pop into a point the walk can stop at.
+/// Making the stack explicit keeps the guard nesting while turning every pop
+/// into a point the walk can stop at.
+///
+/// The visit order is upstream's send order, which is the order the entries go
+/// out on the wire: `send_directory()` emits every child of a directory in
+/// readdir order, and only then recurses into the child directories, in the
+/// order they were emitted (`flist.c:2434-2439`).
 enum WalkStep {
     /// A path whose metadata is already final: the entry points, which resolve
     /// metadata before they call in.
@@ -65,23 +70,21 @@ enum WalkStep {
     ///
     /// The `--copy-dirlinks` / `--copy-unsafe-links` re-stat is deliberately
     /// NOT applied when the child is scheduled. It runs when the child is
-    /// reached, because its `copying unsafe symlink` notice must print after
-    /// the previous sibling's subtree, exactly as the recursion printed it.
+    /// reached, so its `copying unsafe symlink` notice prints in send order.
     VisitChild(StatResult),
     /// Read `dir`'s children, batch-stat them, and schedule each one.
+    ScanChildren { dir: PathBuf },
+    /// Descend into the directories found by the scan this step closes, in the
+    /// order its children were visited.
     ///
-    /// `opened` carries a handle the caller already holds. The two arms are not
-    /// interchangeable: the recursive arm opens the directory BEFORE pushing
-    /// that directory's own entry, so an `opendir` failure is reported ahead of
-    /// the entry; the transfer-root arm opens it after entering the filter
-    /// scope. Which side opens is what keeps diagnostic ordering unchanged.
+    /// upstream: `flist.c:2434-2439` - the `send_if_directory()` loop after
+    /// `closedir()`.
+    DescendFound,
+    /// Enter `dir`'s filter scope, then scan it.
     ///
-    /// The handle is boxed because Windows' `std::fs::ReadDir` embeds a
-    /// `WIN32_FIND_DATAW`, which would otherwise size every pending step.
-    ScanChildren {
-        dir: PathBuf,
-        opened: Option<Box<fast_io::pinned_root::ReadDir>>,
-    },
+    /// upstream: `flist.c:send_if_directory()` - `push_local_filters()` then
+    /// `send_directory()`.
+    Descend(PathBuf),
     /// Release one per-directory filter scope.
     ///
     /// upstream: `exclude.c:pop_local_filters()`
@@ -543,50 +546,74 @@ impl GeneratorContext {
     /// Runs the explicit walk stack to exhaustion.
     ///
     /// Steps pop LIFO, so a directory that schedules `[LeaveDir, ScanChildren]`
-    /// scans first and releases its filter scope after - the same nesting the
-    /// recursion produced. An error abandons the remaining steps, which is what
-    /// the `?` in the recursive version did by unwinding.
+    /// scans first and releases its filter scope after. A scan opens a frame
+    /// that collects the directories its children turn up; its `DescendFound`
+    /// step, pushed beneath the children, descends into them once the last
+    /// child is emitted. A directory visited outside any scan - a top-level
+    /// operand - is descended into at once, as `send_file_list()` does with
+    /// `send_if_directory()` right after `send_file_name()` (`flist.c:3006`).
+    /// An error abandons the remaining steps.
     fn drive_walk(&mut self, scope: WalkScope<'_>, stack: &mut Vec<WalkStep>) -> io::Result<()> {
+        let mut found: Vec<Vec<PathBuf>> = Vec::new();
         while let Some(step) = stack.pop() {
-            match step {
+            let descend = match step {
                 WalkStep::Visit {
                     path,
                     metadata,
                     is_top_level,
-                } => self.visit_walk_entry(scope, path, metadata, is_top_level, stack)?,
+                } => self.visit_walk_entry(scope, path, metadata, is_top_level)?,
                 WalkStep::VisitChild(result) => {
-                    if let Some((path, metadata)) = self.resolve_child_metadata(scope.base, result)
-                    {
-                        self.visit_walk_entry(scope, path, metadata, false, stack)?;
+                    match self.resolve_child_metadata(scope.base, result) {
+                        Some((path, metadata)) => {
+                            self.visit_walk_entry(scope, path, metadata, false)?
+                        }
+                        None => None,
                     }
                 }
-                WalkStep::ScanChildren { dir, opened } => {
-                    self.scan_children_onto(
-                        scope.base,
-                        &dir,
-                        opened.map(|entries| *entries),
-                        stack,
-                    )?;
+                WalkStep::ScanChildren { dir } => {
+                    found.push(Vec::new());
+                    stack.push(WalkStep::DescendFound);
+                    self.scan_children_onto(scope.base, &dir, stack)?;
+                    None
                 }
-                WalkStep::LeaveDir(guard) => self.filter_chain.leave_directory(guard),
+                WalkStep::DescendFound => {
+                    let dirs = found.pop().unwrap_or_default();
+                    stack.extend(dirs.into_iter().rev().map(WalkStep::Descend));
+                    None
+                }
+                WalkStep::Descend(dir) => {
+                    // upstream: exclude.c:push_local_filters() - read the
+                    // directory's merge files before scanning it.
+                    let guard = self.enter_filter_scope(&dir)?;
+                    // LIFO: the scan runs before the scope is released.
+                    stack.push(WalkStep::LeaveDir(guard));
+                    stack.push(WalkStep::ScanChildren { dir });
+                    None
+                }
+                WalkStep::LeaveDir(guard) => {
+                    self.filter_chain.leave_directory(guard);
+                    None
+                }
+            };
+            if let Some(dir) = descend {
+                match found.last_mut() {
+                    Some(frame) => frame.push(dir),
+                    None => stack.push(WalkStep::Descend(dir)),
+                }
             }
         }
         Ok(())
     }
 
-    /// Emits one path's entry and schedules its children when it is a directory
-    /// to descend into.
-    ///
-    /// This is the body the recursion used to run per frame, with the two
-    /// recursive calls replaced by pushes onto `stack`.
+    /// Emits one path's entry, returning the path when it is a directory the
+    /// walk descends into.
     fn visit_walk_entry(
         &mut self,
         scope: WalkScope<'_>,
         path: PathBuf,
         metadata: fast_io::EntryMetadata,
         is_top_level: bool,
-        stack: &mut Vec<WalkStep>,
-    ) -> io::Result<()> {
+    ) -> io::Result<Option<PathBuf>> {
         let relative = path.strip_prefix(scope.base).unwrap_or(&path).to_path_buf();
 
         // upstream: flist.c:2850-2861 - non-relative single-file sources split
@@ -614,18 +641,7 @@ impl GeneratorContext {
             let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata, 0)?;
             dot_entry.set_top_dir(true);
             self.push_file_item(dot_entry, path.clone());
-
-            // upstream: exclude.c:push_local_filters() - read per-directory
-            // merge files when entering the root transfer directory.
-            let guard = self.enter_filter_scope(&path)?;
-
-            // LIFO: the scan runs before the scope is released.
-            stack.push(WalkStep::LeaveDir(guard));
-            stack.push(WalkStep::ScanChildren {
-                dir: path,
-                opened: None,
-            });
-            return Ok(());
+            return Ok(Some(path));
         }
 
         // upstream: flist.c:send_file_name() - skip unsupported file types
@@ -639,10 +655,10 @@ impl GeneratorContext {
                 && !self.config.flags.devices
                 && !self.config.flags.copy_devices
             {
-                return Ok(());
+                return Ok(None);
             }
             if (ft.is_fifo() || ft.is_socket()) && !self.config.flags.specials {
-                return Ok(());
+                return Ok(None);
             }
         }
 
@@ -650,7 +666,7 @@ impl GeneratorContext {
         // FilterChain evaluates per-directory scoped rules (innermost first)
         // then global rules. If no rules are configured, allows() returns true.
         if !self.filter_chain.allows(&relative, metadata.is_dir()) {
-            return Ok(());
+            return Ok(None);
         }
 
         // No --safe-links check here: upstream's sender transmits every
@@ -661,7 +677,6 @@ impl GeneratorContext {
         // recursion goes through send_directory() with ALL_FILTERS (2)
         // (flist.c:2501-2508).
         let filter_level = if is_top_level { 0 } else { 2 };
-        let depth = name_depth(&relative);
         let mut entry = match self.create_entry(&path, relative, &metadata, filter_level) {
             Ok(e) => e,
             // upstream: xattrs.c:1253-1258 - a corrupt %stat ends the run.
@@ -690,7 +705,7 @@ impl GeneratorContext {
                 };
                 self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
                 self.add_io_error(io_error_flags::IOERR_GENERAL);
-                return Ok(());
+                return Ok(None);
             }
         };
 
@@ -702,59 +717,14 @@ impl GeneratorContext {
             entry.set_top_dir(true);
         }
 
-        // upstream: flist.c:send_file_list() - scan directory before recording entry
-        //
         // Under `FLAG_DIVERT_DIRS` the entry is still emitted; only the descent
         // is withheld, so the directory becomes work for a later scan instead
         // of being expanded into this one.
-        let should_recurse =
-            metadata.is_dir() && self.config.flags.recursive && scope.descends_into_subdirs();
-        let dir_read = if should_recurse {
-            match self.scan_source_dir(&path, depth) {
-                Ok(entries) => Some(entries),
-                Err(e) => {
-                    // upstream: flist.c:2374 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
-                    let text = format!(
-                        "rsync: [sender] opendir {} failed: {}\n",
-                        full_fname_path(&path, self.full_fname_paths()),
-                        engine::local_copy::upstream_io_error(&e),
-                    );
-                    self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
-                    self.record_io_error(&e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        // Keep a clone of the path before moving it into the file list,
-        // needed for enter_directory() if this is a directory we'll recurse into.
-        let dir_path = if dir_read.is_some() {
-            Some(path.clone())
-        } else {
-            None
-        };
-
+        let descend =
+            (metadata.is_dir() && self.config.flags.recursive && scope.descends_into_subdirs())
+                .then(|| path.clone());
         self.push_file_item(entry, path);
-
-        if let Some(entries) = dir_read {
-            // Safety: dir_path is always Some when dir_read is Some
-            let dir_path = dir_path.expect("dir_path is Some whenever dir_read is Some");
-
-            // upstream: exclude.c:push_local_filters() - read per-directory
-            // merge files when entering a subdirectory during recursive walk.
-            let guard = self.enter_filter_scope(&dir_path)?;
-
-            // LIFO: the scan runs before the scope is released.
-            stack.push(WalkStep::LeaveDir(guard));
-            stack.push(WalkStep::ScanChildren {
-                dir: dir_path,
-                opened: Some(Box::new(entries)),
-            });
-        }
-
-        Ok(())
+        Ok(descend)
     }
 
     /// Scans the children of a `--files-from` SLASH_ENDING_NAME directory.
@@ -780,10 +750,7 @@ impl GeneratorContext {
         base: &Path,
         dir_path: &Path,
     ) -> io::Result<()> {
-        let guard = self
-            .filter_chain
-            .enter_directory(dir_path)
-            .map_err(|e| filter_chain_error(dir_path, e))?;
+        let guard = self.enter_filter_scope(dir_path)?;
         let result = self.scan_directory_batched(base, dir_path);
         self.filter_chain.leave_directory(guard);
         result
@@ -802,7 +769,6 @@ impl GeneratorContext {
     fn scan_directory_batched(&mut self, base: &Path, dir_path: &Path) -> io::Result<()> {
         let mut stack = vec![WalkStep::ScanChildren {
             dir: dir_path.to_path_buf(),
-            opened: None,
         }];
         self.drive_walk(WalkScope::recursive(base), &mut stack)
     }
@@ -831,7 +797,6 @@ impl GeneratorContext {
     ) -> io::Result<()> {
         let mut stack = vec![WalkStep::ScanChildren {
             dir: dir_path.to_path_buf(),
-            opened: None,
         }];
         self.drive_walk(WalkScope::one_level(base), &mut stack)
     }
@@ -848,7 +813,7 @@ impl GeneratorContext {
             .map_err(|e| filter_chain_error(dir, e))
     }
 
-    /// Opens `dir_path` when the caller did not, then schedules its children.
+    /// Opens `dir_path` and schedules its children.
     ///
     /// A failed `opendir` is reported and the directory skipped; it does not
     /// abort the walk.
@@ -860,28 +825,22 @@ impl GeneratorContext {
         &mut self,
         base: &Path,
         dir_path: &Path,
-        opened: Option<fast_io::pinned_root::ReadDir>,
         stack: &mut Vec<WalkStep>,
     ) -> io::Result<()> {
-        let entries = match opened {
-            Some(entries) => entries,
-            None => match self.scan_source_dir(
-                dir_path,
-                name_depth(dir_path.strip_prefix(base).unwrap_or(dir_path)),
-            ) {
-                Ok(entries) => entries,
-                Err(e) => {
-                    // upstream: flist.c:2374 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
-                    let text = format!(
-                        "rsync: [sender] opendir {} failed: {}\n",
-                        full_fname_path(dir_path, self.full_fname_paths()),
-                        engine::local_copy::upstream_io_error(&e),
-                    );
-                    self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
-                    self.record_io_error(&e);
-                    return Ok(());
-                }
-            },
+        let depth = name_depth(dir_path.strip_prefix(base).unwrap_or(dir_path));
+        let entries = match self.scan_source_dir(dir_path, depth) {
+            Ok(entries) => entries,
+            Err(e) => {
+                // upstream: flist.c:2374 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
+                let text = format!(
+                    "rsync: [sender] opendir {} failed: {}\n",
+                    full_fname_path(dir_path, self.full_fname_paths()),
+                    engine::local_copy::upstream_io_error(&e),
+                );
+                self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
+                self.record_io_error(&e);
+                return Ok(());
+            }
         };
         self.push_dir_entries_onto(dir_path, entries, stack)
     }
@@ -889,8 +848,7 @@ impl GeneratorContext {
     /// Collects paths from a `ReadDir` iterator, batch-stats them, and schedules
     /// each child on the walk stack.
     ///
-    /// Children are pushed in reverse so they pop in readdir order, matching the
-    /// order the recursion visited them.
+    /// Children are pushed in reverse so they pop in readdir order.
     ///
     /// # Upstream Reference
     ///

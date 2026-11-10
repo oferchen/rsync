@@ -126,6 +126,10 @@ impl DualFileList {
     /// so the sender must too or every NDX past the first divergence names a
     /// different entry on each side.
     ///
+    /// Returns, for each sorted entry, the position it held before the sort.
+    /// A sender builds its list in send order, so this is the order the
+    /// entries go out on the wire.
+    ///
     /// # Panics
     ///
     /// Panics in debug builds when `parallel.len() != self.len()`.
@@ -137,10 +141,10 @@ impl DualFileList {
         parallel: &mut [P],
         use_qsort: bool,
         protocol_pre29: bool,
-    ) {
+    ) -> Vec<u32> {
         let n = self.legacy.len();
         if n == 0 {
-            return;
+            return Vec::new();
         }
         debug_assert_eq!(parallel.len(), n);
 
@@ -157,7 +161,9 @@ impl DualFileList {
             indices.sort_by(cmp);
         }
 
+        let positions = indices.iter().map(|&i| i as u32).collect();
         super::sort::apply_permutation_in_place(&mut self.legacy, parallel, indices);
+        positions
     }
 
     /// Sort only the tail of the list - entries from `start` to the end - using
@@ -170,6 +176,9 @@ impl DualFileList {
     /// `use_qsort` selects the unstable sort matching upstream `--qsort`,
     /// mirroring [`sort_with_parallel`](Self::sort_with_parallel).
     ///
+    /// Returns, for each sorted tail entry, its offset from `start` before the
+    /// sort, as [`sort_with_parallel`](Self::sort_with_parallel) does.
+    ///
     /// # Panics
     ///
     /// Panics in debug builds when `parallel.len() != self.len()`.
@@ -180,11 +189,11 @@ impl DualFileList {
         start: usize,
         parallel: &mut [P],
         use_qsort: bool,
-    ) {
+    ) -> Vec<u32> {
         let n = self.legacy.len();
         debug_assert_eq!(parallel.len(), n);
         if start >= n {
-            return;
+            return Vec::new();
         }
         let mut indices: Vec<usize> = (0..n - start).collect();
         let cmp = |&a: &usize, &b: &usize| {
@@ -195,11 +204,13 @@ impl DualFileList {
         } else {
             indices.sort_by(cmp);
         }
+        let positions = indices.iter().map(|&i| i as u32).collect();
         super::sort::apply_permutation_in_place(
             &mut self.legacy[start..],
             &mut parallel[start..],
             indices,
         );
+        positions
     }
 
     /// Removes duplicate-name entries in-place after sorting, keeping the
