@@ -30,25 +30,49 @@ pub(crate) struct FilterInputs {
 
 /// Applies CLI-provided filter rules to the [`ClientConfigBuilder`].
 ///
-/// Rules are appended in command-line order so the filter engine's
-/// first-match-wins evaluation matches upstream rsync, where each
-/// `--include`/`--exclude`/`--filter`/`--include-from`/`--exclude-from`/`-F` is
-/// fed to the rule list at its argv position (exclude.c:parse_filter_str
-/// appends in encounter order). `-C` is the exception: it only sets
-/// `cvs_exclude`, and send_filter_list() appends its rules after all of them
-/// (exclude.c:1951-1954).
+/// See [`build_filter_rules`] for the order the rules take.
 pub(crate) fn apply_filters<Err>(
-    mut builder: ClientConfigBuilder,
+    builder: ClientConfigBuilder,
     inputs: FilterInputs,
     stderr: &mut MessageSink<Err>,
 ) -> Result<ClientConfigBuilder, i32>
 where
     Err: std::io::Write,
 {
+    let cvs = filters::CvsSession::default();
+    let filter_rules =
+        build_filter_rules(inputs, &cvs).map_err(|message| fail_with_message(message, stderr))?;
+    let builder = if filter_rules.is_empty() {
+        builder
+    } else {
+        builder.extend_filter_rules(filter_rules)
+    };
+    Ok(builder.cvs_session(cvs))
+}
+
+/// Builds the rules a run's filter options add, in argv order.
+///
+/// The client and an rsh server share this: upstream parses both argvs in the
+/// same `parse_arguments()` (options.c:1620-1656, :1718-1727), relative to the
+/// process's cwd. Rules are appended in command-line order so the filter engine's
+/// first-match-wins evaluation matches upstream rsync, where each
+/// `--include`/`--exclude`/`--filter`/`--include-from`/`--exclude-from`/`-F` is
+/// fed to the rule list at its argv position (exclude.c:parse_filter_str
+/// appends in encounter order). `-C` is the exception: it only sets
+/// `cvs_exclude`, and send_filter_list() appends its rules after all of them
+/// (exclude.c:1951-1954).
+///
+/// # Errors
+///
+/// The first malformed rule or unreadable filter file, as the message upstream
+/// prints before exiting.
+pub(crate) fn build_filter_rules(
+    inputs: FilterInputs,
+    cvs: &filters::CvsSession,
+) -> Result<Vec<FilterRuleSpec>, Message> {
     let mut filter_rules = Vec::new();
     let mut merge_stack = Vec::new();
     let mut cvs_exclude = false;
-    let cvs = filters::CvsSession::default();
     let merge_base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let from0 = inputs.from0;
     let mut delete_excluded_at = None;
@@ -78,7 +102,7 @@ where
                 &rule,
                 merge_base.as_path(),
                 &mut merge_stack,
-                &cvs,
+                cvs,
             ),
             FilterOrderToken::CvsExclude => {
                 cvs_exclude = true;
@@ -92,12 +116,10 @@ where
                 Ok(())
             }
         };
-        if let Err(message) = result {
-            return Err(fail_with_message(message, stderr));
-        }
+        result?;
     }
     if cvs_exclude {
-        append_cvs_exclude_rules(&mut filter_rules, &cvs);
+        append_cvs_exclude_rules(&mut filter_rules, cvs);
     }
 
     // upstream: exclude.c:1478-1481 parse_rule_tok() - rules parsed before
@@ -108,11 +130,7 @@ where
             .for_each(FilterRuleSpec::mark_parsed_before_delete_excluded);
     }
 
-    if !filter_rules.is_empty() {
-        builder = builder.extend_filter_rules(filter_rules);
-    }
-
-    Ok(builder.cvs_session(cvs))
+    Ok(filter_rules)
 }
 
 /// Parses one `--filter`/`-f`/`-F` directive and appends its rules.
