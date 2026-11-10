@@ -4,11 +4,11 @@ use std::time::{Duration, SystemTime};
 use crate::{ServerConfig, ServerRole};
 
 #[test]
-fn config_rejects_empty_flag_string() {
+fn config_accepts_empty_flag_string() {
     let result =
         ServerConfig::from_flag_string_and_args(ServerRole::Receiver, String::new(), Vec::new());
 
-    assert!(result.is_err());
+    assert!(result.is_ok(), "upstream requires no flag string");
 }
 
 #[test]
