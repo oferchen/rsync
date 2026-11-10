@@ -5,6 +5,7 @@
 
 #![deny(unsafe_code)]
 
+mod argv_filters;
 mod daemon;
 mod flags;
 mod parallel_delta_env;
