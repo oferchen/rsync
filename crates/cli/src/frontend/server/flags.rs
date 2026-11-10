@@ -90,8 +90,11 @@ impl ArgvRefusal {
 ///   dropped, and so is `--remote-option`.
 /// - `-B`, `-@` and `-T` become the `-B<n>`, `-@<n>` and `--temp-dir=<dir>`
 ///   tokens the long-option pass reads.
-/// - `-f` values are consumed here and not yet applied: a server-argv filter
-///   list is task 617.
+/// - Filter options (`-f`, `-F`, `--filter`, `--exclude`, `--include` and
+///   the `-from` pair) become joined `--opt=VALUE` tokens behind the flag
+///   string, in argv order, each `-F` already expanded to its rule. Those ahead
+///   of `--server` are kept twice: upstream's restarted pass parses them again
+///   without clearing `filter_list` or `F_option_cnt`.
 ///
 /// Tokens after the `--` marker are operands and pass through untouched. The
 /// rewrite is idempotent, so it can run again over a secluded-args list.
@@ -109,6 +112,7 @@ pub(super) fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, 
     let mut server_at: Option<usize> = None;
     let mut first_cluster_at: Option<usize> = None;
     let mut after_server = false;
+    let mut filters: Vec<ArgvFilter> = Vec::new();
     let mut tokens = options.iter().enumerate();
     while let Some((index, arg)) = tokens.next() {
         let text = arg.to_string_lossy();
@@ -123,6 +127,7 @@ pub(super) fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, 
             // twice.
             if !after_server {
                 letters.push_str(&letters.clone());
+                filters.extend_from_within(..);
             }
             after_server = true;
             kept.push(arg.clone());
@@ -134,6 +139,19 @@ pub(super) fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, 
             if let Some((_, value)) = tokens.next() {
                 kept.push(value.clone());
             }
+            continue;
+        }
+        if FILTER_OPTIONS.contains(&&*text) {
+            let (_, value) = tokens
+                .next()
+                .ok_or_else(|| ArgvRefusal::popt(&text, "missing argument", after_server))?;
+            let mut joined = OsString::from(format!("{text}="));
+            joined.push(value);
+            filters.push(ArgvFilter::Option(joined));
+            continue;
+        }
+        if is_joined_filter_option(&text) {
+            filters.push(ArgvFilter::Option(arg.clone()));
             continue;
         }
         if text == "--remote-option" {
@@ -158,6 +176,10 @@ pub(super) fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, 
             if !SHORT_OPTIONS.contains(letter) {
                 return Err(ArgvRefusal::popt(&text, "unknown option", after_server));
             }
+            if letter == 'F' {
+                filters.push(ArgvFilter::RsyncFilter);
+                continue;
+            }
             if !SHORT_OPTIONS_WITH_VALUE.contains(&letter) {
                 letters.push(letter);
                 continue;
@@ -177,28 +199,80 @@ pub(super) fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, 
                 'B' => kept.push(OsString::from(format!("-B{value}"))),
                 '@' => kept.push(OsString::from(format!("-@{value}"))),
                 'T' => kept.push(OsString::from(format!("--temp-dir={value}"))),
-                // A server-argv filter rule (options.c:752 `-f`, OPT_FILTER at
-                // :1620). Not applied yet: the server filter list is task 617.
-                _ => {}
+                // upstream: options.c:752 `-f`, OPT_FILTER at :1620.
+                _ => filters.push(ArgvFilter::Option(OsString::from(format!(
+                    "--filter={value}"
+                )))),
             }
             break;
         }
     }
+    let mut inserted = Vec::new();
     if !letters.is_empty() || rsh.is_some() {
         let mut flag_string = format!("-{letters}");
         if let Some(value) = rsh {
             flag_string.push('e');
             flag_string.push_str(&value);
         }
-        // Right after `--server`, where the flag-string parser looks.
-        let at = server_at.or(first_cluster_at).unwrap_or(kept.len());
-        kept.insert(at, OsString::from(flag_string));
+        inserted.push(OsString::from(flag_string));
     }
+    let mut rsync_filter_count = 0;
+    inserted.extend(filters.into_iter().filter_map(|filter| match filter {
+        ArgvFilter::Option(token) => Some(token),
+        ArgvFilter::RsyncFilter => {
+            rsync_filter_count += 1;
+            rsync_filter_rule(rsync_filter_count).map(OsString::from)
+        }
+    }));
+    // Right after `--server`, where the flag-string parser looks.
+    let at = server_at.or(first_cluster_at).unwrap_or(kept.len());
+    kept.splice(at..at, inserted);
     if options.len() < args.len() {
         kept.push(OsString::from(END_OF_OPTIONS));
         kept.extend(operands.iter().cloned());
     }
     Ok(kept)
+}
+
+/// A filter option from the server argv, held in argv order until the
+/// `-F` occurrences can be numbered.
+#[derive(Clone)]
+enum ArgvFilter {
+    /// A joined `--opt=VALUE` filter token.
+    Option(OsString),
+    /// One `-F`.
+    RsyncFilter,
+}
+
+/// The long filter options, each taking one value.
+///
+/// upstream: options.c:1620-1656 - OPT_FILTER, OPT_EXCLUDE, OPT_INCLUDE,
+/// OPT_EXCLUDE_FROM and OPT_INCLUDE_FROM.
+pub(super) const FILTER_OPTIONS: [&str; 5] = [
+    "--filter",
+    "--exclude",
+    "--include",
+    "--exclude-from",
+    "--include-from",
+];
+
+/// Whether `arg` is a filter option with its value joined by `=`.
+pub(super) fn is_joined_filter_option(arg: &str) -> bool {
+    FILTER_OPTIONS.iter().any(|name| {
+        arg.strip_prefix(name)
+            .is_some_and(|rest| rest.starts_with('='))
+    })
+}
+
+/// The rule the `count`th `-F` adds; a third and later add nothing.
+///
+/// upstream: options.c:1718-1727.
+fn rsync_filter_rule(count: usize) -> Option<String> {
+    match count {
+        1 => Some("--filter=: /.rsync-filter".to_owned()),
+        2 => Some("--filter=- .rsync-filter".to_owned()),
+        _ => None,
+    }
 }
 
 /// Refuses a remote-option value without a leading dash, as options.c:1764-1767
@@ -1378,6 +1452,9 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--min-size=")
         || arg.starts_with("--max-size=")
         || arg.starts_with("--max-alloc=")
+        // upstream: options.c:1620-1656 - argv filter options, which
+        // `normalize_server_argv` has joined to their value.
+        || is_joined_filter_option(arg)
         || arg.starts_with("--stop-at=")
         || arg.starts_with("--stop-after=")
         || arg.starts_with("--files-from=")
