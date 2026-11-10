@@ -18,13 +18,15 @@ name: Upstream Testsuite 3.5.1
 # its logs artifact), and without a manifest that covers the whole corpus,
 # which is how a new release or a new leg gets its first measured manifest.
 #
+# Pull requests run these legs inside ci.yml, which calls the same reusable
+# workflows under the same caller job ids, so the required contexts are
+# unchanged. One run per pull request is what lets the pull request queue give
+# a single pull request the whole runner pool. This workflow keeps the nightly
+# schedule, which feeds the README badge, and manual dispatch with `bootstrap`.
+#
 # No push trigger: every commit reaching master already passed this gate on its
-# pull request. Master coverage, and the README badge, come from the nightly
-# schedule instead.
+# pull request.
 on:
-  # Unfiltered for the reason given on ci.yml's pull_request trigger: this
-  # workflow publishes required contexts, so it must run on every pull request.
-  pull_request:
   schedule:
     # Staggered after ci.yml's 03:30 nightly so the two do not compete for
     # runners.
@@ -36,17 +38,9 @@ on:
         type: boolean
         default: false
 
-# Same keying as ci.yml: a newer push to a pull request cancels the older run,
-# while every master push gets its own group, so a master run is never shown
-# as cancelled by the next merge.
+# One group per commit: a scheduled or dispatched run never cancels another.
 concurrency:
-  # Pull requests wait in one first-in-first-out queue per workflow, so each
-  # PR's run starts only when the previous PR's run has finished; nothing is
-  # cancelled. Every other event (master push, schedule, dispatch) gets its own
-  # group per commit, so it never waits behind the PR queue and every merge
-  # commit keeps a completed run for bisection.
-  group: upstream-testsuite-3.5.1-${{ github.event_name == 'pull_request' && 'pr-queue' || format('{0}-{1}', github.ref, github.sha) }}
-  queue: max
+  group: upstream-testsuite-3.5.1-${{ github.ref }}-${{ github.sha }}
 
 permissions:
   contents: read
