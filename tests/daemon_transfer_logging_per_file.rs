@@ -25,13 +25,11 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime};
+use std::process::Command;
+use std::time::{Duration, SystemTime};
 
 use filetime::{FileTime, set_file_mtime};
-use test_support::ReapOnDrop;
 
 const LOG_FORMAT: &str = "%o %f %l %i";
 
@@ -40,10 +38,7 @@ fn oc_binary() -> PathBuf {
 }
 
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
 /// Writes an rsyncd.conf for a single read-write module named `m` that logs
@@ -66,49 +61,27 @@ fn make_daemon(root: &Path, port: u16, module_dir: &Path, log: &Path) {
     fs::write(root.join("rsyncd.conf"), conf).expect("config");
 }
 
-fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> ReapOnDrop {
+fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> test_support::inetd_server::InetdServer {
     spawn_daemon_with(binary, conf, port, &[])
 }
 
-/// Starts the daemon with extra command-line arguments. It runs with `TZ=UTC`
-/// so a `%M` field renders a fixed wall-clock string.
-fn spawn_daemon_with(binary: &Path, conf: &Path, port: u16, args: &[&str]) -> ReapOnDrop {
-    let child = ReapOnDrop::new(
-        Command::new(binary)
-            .env("TZ", "UTC")
-            .args(args)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg(format!("--config={}", conf.display()))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon"),
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return child;
-        }
-        std::thread::sleep(Duration::from_millis(20));
+/// Serves the daemon in inetd mode on the listener reserved for `port`, with
+/// extra command-line arguments. Sessions run with `TZ=UTC` so a `%M` field
+/// renders a fixed wall-clock string.
+fn spawn_daemon_with(
+    binary: &Path,
+    conf: &Path,
+    port: u16,
+    args: &[&str],
+) -> test_support::inetd_server::InetdServer {
+    let mut command = test_support::inetd_server::InetdCommand::discarding_stderr(binary)
+        .expect("open /dev/null")
+        .env("TZ", "UTC");
+    for arg in args {
+        command = command.arg(*arg);
     }
-    child
-}
-
-/// Blocks until the daemon log holds at least `want` transfer-op lines, so a
-/// caller never races the post-disconnect FLOG writes.
-fn wait_for_lines(log: &Path, op: &str, want: usize) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if let Ok(bytes) = fs::read(log) {
-            let text = String::from_utf8_lossy(&bytes);
-            let count = text.lines().filter(|l| l.contains(op)).count();
-            if count >= want {
-                return;
-            }
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    let command = command.arg(format!("--config={}", conf.display()));
+    test_support::inetd_server::InetdServer::start_reserved(port, command).expect("start daemon")
 }
 
 /// Returns the per-file transfer-log lines (those carrying the `recv`/`send`
@@ -159,8 +132,7 @@ fn push_logs_one_recv_line_per_entry() {
         ])
         .status()
         .expect("run push client");
-    wait_for_lines(&log, "recv ", 4);
-    drop(daemon);
+    daemon.finish().expect("daemon sessions end");
     assert!(status.success(), "push failed");
 
     let text = fs::read_to_string(&log).expect("read log");
@@ -249,8 +221,7 @@ fn pull_logs_one_send_line_per_file() {
         ])
         .status()
         .expect("run pull client");
-    wait_for_lines(&log, "send ", 3);
-    drop(daemon);
+    daemon.finish().expect("daemon sessions end");
     assert!(status.success(), "pull failed");
 
     let text = fs::read_to_string(&log).expect("read log");
@@ -333,8 +304,7 @@ fn push_logs_the_authenticated_user_for_percent_u() {
         ])
         .status()
         .expect("run push client");
-    wait_for_lines(&log, "recv ", 1);
-    drop(daemon);
+    daemon.finish().expect("daemon sessions end");
     assert!(status.success(), "authenticated push failed");
 
     let text = fs::read_to_string(&log).expect("read log");
@@ -421,21 +391,7 @@ fn push_logs_name_link_owner_group_mtime_and_perms() {
     );
     fs::write(root.join("rsyncd.conf"), conf).expect("config");
     let oc = oc_binary();
-    let daemon = ReapOnDrop::new(
-        Command::new(&oc)
-            .env("TZ", "UTC")
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg(format!("--config={}", root.join("rsyncd.conf").display()))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon"),
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline && std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    let daemon = spawn_daemon(&oc, &root.join("rsyncd.conf"), port);
 
     let status = Command::new(&oc)
         .args([
@@ -445,8 +401,7 @@ fn push_logs_name_link_owner_group_mtime_and_perms() {
         ])
         .status()
         .expect("run push client");
-    wait_for_lines(&log, "recv|", 4);
-    drop(daemon);
+    daemon.finish().expect("daemon sessions end");
     assert!(status.success(), "push failed");
 
     let text = fs::read_to_string(&log).expect("read log");
@@ -512,8 +467,7 @@ fn pull_without_owner_or_group_logs_zero_uid_and_default_gid() {
         ])
         .status()
         .expect("run pull client");
-    wait_for_lines(&log, "send|", 1);
-    drop(daemon);
+    daemon.finish().expect("daemon sessions end");
     assert!(status.success(), "pull failed");
 
     let text = fs::read_to_string(&log).expect("read log");
@@ -607,8 +561,7 @@ fn push_of_foreign_group_file_logs_default_gid() {
         ])
         .status()
         .expect("run push client");
-    wait_for_lines(&log, "recv|", 1);
-    drop(daemon);
+    daemon.finish().expect("daemon sessions end");
     assert!(status.success(), "push of {} failed", foreign.display());
 
     let text = fs::read_to_string(&log).expect("read log");
@@ -643,8 +596,8 @@ fn module_log_lines(
 }
 
 /// Runs one transfer against a fresh daemon started with `daemon_args` whose
-/// module logs `format`, waits for a log line containing `marker`, and returns
-/// the whole log.
+/// module logs `format`, checks the log holds a line containing `marker`, and
+/// returns the whole log.
 fn module_log(
     format: &str,
     daemon_args: &[&str],
@@ -756,9 +709,15 @@ fn run_module_log_bytes(
         .args([from, to])
         .status()
         .expect("run client");
-    wait_for_lines(&log, marker, 1);
-    drop(daemon);
-    Some((fs::read(&log).expect("read log"), status))
+    daemon.finish().expect("daemon sessions end");
+    let text = fs::read(&log).expect("read log");
+    // The old poll waited for this line; with every session ended it must be
+    // on disk, so its absence is a logging failure, not a race.
+    assert!(
+        String::from_utf8_lossy(&text).contains(marker),
+        "the daemon log has no line containing {marker:?}"
+    );
+    Some((text, status))
 }
 
 fn assert_has_line(lines: &[String], want: &str) {
@@ -1166,8 +1125,7 @@ fn single_file_push_to_a_new_name_logs_the_file_list_name() {
         .arg(format!("rsync://127.0.0.1:{port}/m/a/newname"))
         .status()
         .expect("run client");
-    wait_for_lines(&log, "recv|", 1);
-    drop(daemon);
+    daemon.finish().expect("daemon sessions end");
     assert!(status.success(), "single-file push failed");
     assert!(module_dir.join("a/newname").is_file(), "file not renamed");
     let text = fs::read_to_string(&log).expect("read log");

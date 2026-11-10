@@ -50,22 +50,15 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-
-use std::time::{Duration, Instant};
-use test_support::ReapOnDrop;
+use std::process::Command;
 
 fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
 fn running_as_root() -> bool {
@@ -88,32 +81,13 @@ fn id_of(args: &[&str]) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
-/// Starts a daemon and waits until its port answers.
-///
-/// `stdin` is `/dev/null` deliberately: with an inherited terminal or pipe the
-/// daemon takes its single-connection inetd path and never listens, and the
-/// client then reports "connection refused" instead of the behaviour under
-/// test.
-fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> ReapOnDrop {
-    let child = ReapOnDrop::new(
-        Command::new(binary)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg(format!("--config={}", conf.display()))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon"),
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return child;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    child
+/// Serves the daemon in inetd mode on the listener reserved for `port`, so
+/// a client connect queues until its session starts: no readiness wait.
+fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> test_support::inetd_server::InetdServer {
+    let command = test_support::inetd_server::InetdCommand::discarding_stderr(binary)
+        .expect("open /dev/null")
+        .arg(format!("--config={}", conf.display()));
+    test_support::inetd_server::InetdServer::start_reserved(port, command).expect("start daemon")
 }
 
 struct Outcome {
@@ -180,7 +154,7 @@ fn push_into_chrooted_module(identity: &str, drop_uid: &str) -> Option<Outcome> 
         .expect("run client");
 
     let landed = module.join("f.txt").exists();
-    drop(daemon);
+    daemon.finish().expect("daemon sessions end");
 
     Some(Outcome {
         transferred: status.success(),

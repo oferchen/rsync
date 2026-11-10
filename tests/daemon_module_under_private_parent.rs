@@ -20,7 +20,6 @@ use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 
 fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
@@ -75,23 +74,14 @@ fn backdate(path: &Path) {
     assert!(status.success(), "touch failed: {status}");
 }
 
-/// Stops the root daemon and hands the module back so the temp dir can go.
+/// Hands the module back so the temp dir can go.
 struct Cleanup {
     prefix: Vec<&'static str>,
-    pid_file: PathBuf,
     module: PathBuf,
-    /// The `sudo` (or direct) daemon process, reaped once the kill lands.
-    daemon: Option<std::process::Child>,
 }
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        if let Ok(pid) = fs::read_to_string(&self.pid_file) {
-            let _ = root_cmd(&self.prefix, "kill").arg(pid.trim()).status();
-        }
-        if let Some(mut daemon) = self.daemon.take() {
-            let _ = daemon.wait();
-        }
         let owner = format!("{}:{}", nix_like_id("-u"), nix_like_id("-g"));
         let _ = root_cmd(&self.prefix, "chown")
             .args(["-R", &owner])
@@ -103,17 +93,6 @@ impl Drop for Cleanup {
 fn nix_like_id(flag: &str) -> String {
     let out = Command::new("id").arg(flag).output().expect("spawn id");
     String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
-fn wait_for_port(port: u16) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    false
 }
 
 /// Which push a cell makes into the module.
@@ -177,43 +156,29 @@ fn run_cell(cell: Cell) {
         module.clone()
     };
 
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|l| l.local_addr())
-        .expect("free port")
-        .port();
-    // The pid file must be writable by the root daemon before it drops.
-    let pid_file = std::env::temp_dir().join(format!("oc-private-parent-{port}.pid"));
+    let port = test_support::inetd_server::reserve_port().expect("reserve port");
     let conf = std::env::temp_dir().join(format!("oc-private-parent-{port}.conf"));
     fs::write(
         &conf,
         format!(
-            "use chroot = no\npid file = {}\n[m]\n\tpath = {}\n\tread only = no\n",
-            pid_file.display(),
+            "use chroot = no\n[m]\n\tpath = {}\n\tread only = no\n",
             module_path.display()
         ),
     )
     .expect("write config");
-    let mut cleanup = Cleanup {
+    let _cleanup = Cleanup {
         prefix: prefix.clone(),
-        pid_file: pid_file.clone(),
         module: module.clone(),
-        daemon: None,
     };
     let binary = oc_binary();
-    let daemon = root_cmd(&prefix, binary.to_str().expect("utf-8 path"))
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--port={port}"))
-        .arg(format!("--config={}", conf.display()))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn root daemon");
-    cleanup.daemon = Some(daemon);
-    assert!(
-        wait_for_port(port),
-        "the root daemon never listened on {port}"
-    );
+    // Each session starts as root through the same prefix, as an inetd
+    // daemon would; the listener is reserved, so nothing waits for a listen.
+    let command = test_support::inetd_server::InetdCommand::discarding_stderr(&binary)
+        .expect("open /dev/null")
+        .wrapped_by(prefix.iter().copied())
+        .arg(format!("--config={}", conf.display()));
+    let daemon = test_support::inetd_server::InetdServer::start_reserved(port, command)
+        .expect("start root daemon");
 
     let mut push = Command::new(&binary);
     push.arg("-a").arg("--timeout=20");
@@ -235,6 +200,7 @@ fn run_cell(cell: Cell) {
         .arg(format!("rsync://127.0.0.1:{port}/m/"))
         .output()
         .expect("run push");
+    daemon.finish().expect("daemon sessions end");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         out.status.code(),
@@ -343,42 +309,29 @@ fn a_module_path_through_another_uids_symlink_is_refused() {
     let link = root.join("modlink");
     std::os::unix::fs::symlink("mod", &link).expect("link module");
 
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|l| l.local_addr())
-        .expect("free port")
-        .port();
-    let pid_file = std::env::temp_dir().join(format!("oc-attacker-link-{port}.pid"));
+    let port = test_support::inetd_server::reserve_port().expect("reserve port");
     let conf = std::env::temp_dir().join(format!("oc-attacker-link-{port}.conf"));
     fs::write(
         &conf,
         format!(
-            "use chroot = no\npid file = {}\n[m]\n\tpath = {}\n\tread only = no\n",
-            pid_file.display(),
+            "use chroot = no\n[m]\n\tpath = {}\n\tread only = no\n",
             link.display()
         ),
     )
     .expect("write config");
-    let mut cleanup = Cleanup {
+    let _cleanup = Cleanup {
         prefix: prefix.clone(),
-        pid_file,
         module: module.clone(),
-        daemon: None,
     };
     let binary = oc_binary();
-    let daemon = root_cmd(&prefix, binary.to_str().expect("utf-8 path"))
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--port={port}"))
-        .arg(format!("--config={}", conf.display()))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn root daemon");
-    cleanup.daemon = Some(daemon);
-    assert!(
-        wait_for_port(port),
-        "the root daemon never listened on {port}"
-    );
+    // Each session starts as root through the same prefix, as an inetd
+    // daemon would; the listener is reserved, so nothing waits for a listen.
+    let command = test_support::inetd_server::InetdCommand::discarding_stderr(&binary)
+        .expect("open /dev/null")
+        .wrapped_by(prefix.iter().copied())
+        .arg(format!("--config={}", conf.display()));
+    let daemon = test_support::inetd_server::InetdServer::start_reserved(port, command)
+        .expect("start root daemon");
 
     let out = Command::new(&binary)
         .args(["-a", "--timeout=20"])
@@ -386,6 +339,7 @@ fn a_module_path_through_another_uids_symlink_is_refused() {
         .arg(format!("rsync://127.0.0.1:{port}/m/"))
         .output()
         .expect("run push");
+    daemon.finish().expect("daemon sessions end");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("@ERROR: chdir failed"),

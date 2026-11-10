@@ -37,6 +37,7 @@ pub struct OcDaemonBuilder {
     env: Vec<(&'static str, OsString)>,
     current_dir: Option<PathBuf>,
     quic: bool,
+    listener: Option<TcpListener>,
 }
 
 impl OcDaemon {
@@ -52,6 +53,7 @@ impl OcDaemon {
             env: Vec::new(),
             current_dir: None,
             quic: false,
+            listener: None,
         }
     }
 
@@ -126,6 +128,18 @@ impl OcDaemonBuilder {
         self
     }
 
+    /// Serves the listener `inetd_server::reserve_port` bound for `port`
+    /// instead of binding one, for a test that wrote the port into its config
+    /// before the daemon existed.
+    ///
+    /// # Errors
+    ///
+    /// When no reserved listener holds `port`.
+    pub fn reserved_port(mut self, port: u16) -> io::Result<Self> {
+        self.listener = Some(crate::inetd_server::take_reserved(port)?);
+        Ok(self)
+    }
+
     /// Binds the loopback listener and forks the daemon onto it.
     ///
     /// # Errors
@@ -160,7 +174,10 @@ impl OcDaemonBuilder {
     }
 
     fn bind(self) -> io::Result<(Ports, impl FnOnce() -> RunResult)> {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let listener = match self.listener {
+            Some(listener) => listener,
+            None => TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?,
+        };
         let port = listener.local_addr()?.port();
         let quic_socket = if self.quic {
             Some(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?)

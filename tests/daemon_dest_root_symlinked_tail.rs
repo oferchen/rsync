@@ -19,27 +19,21 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
-
-use test_support::ReapOnDrop;
 
 fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
-/// Starts a daemon serving `module` read-write as `m` and waits for its port.
-fn spawn_daemon(root: &Path, port: u16, module: &Path) -> ReapOnDrop {
+/// Serves `module` read-write as `m` in inetd mode on the listener reserved
+/// for `port`: a client connect queues until its session starts.
+fn spawn_daemon(root: &Path, port: u16, module: &Path) -> test_support::inetd_server::InetdServer {
     let conf = root.join("rsyncd.conf");
     fs::write(
         &conf,
@@ -57,22 +51,10 @@ fn spawn_daemon(root: &Path, port: u16, module: &Path) -> ReapOnDrop {
         ),
     )
     .expect("write config");
-    let child = ReapOnDrop::new(
-        Command::new(oc_binary())
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg(format!("--config={}", conf.display()))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon"),
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline && TcpStream::connect(("127.0.0.1", port)).is_err() {
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    child
+    let command = test_support::inetd_server::InetdCommand::discarding_stderr(oc_binary())
+        .expect("open /dev/null")
+        .arg(format!("--config={}", conf.display()));
+    test_support::inetd_server::InetdServer::start_reserved(port, command).expect("start daemon")
 }
 
 #[test]

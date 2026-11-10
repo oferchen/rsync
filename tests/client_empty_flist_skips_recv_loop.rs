@@ -41,30 +41,15 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::io::Read;
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::process::{Command, Stdio};
 
 use tempfile::TempDir;
+use test_support::inetd_server::{InetdCommand, InetdServer};
 
 /// Upstream `RERR_PARTIAL`: some files were not transferred (`errcode.h`).
-///
-/// Only the unreadable-source leg expects this code, and that leg is Unix-only
-/// (its trigger is a POSIX permission bit), so on Windows the constant has no
-/// use and `-D warnings` would reject it as dead code.
-#[cfg(unix)]
 const RERR_PARTIAL: i32 = 23;
-
-/// Wall-clock budget for one client run. Nothing is transferred in these
-/// scenarios, so anything near this bound is the hang under test, not slowness.
-const CLIENT_DEADLINE: Duration = Duration::from_secs(45);
-
-/// How long to wait for a spawned daemon to bind its listening socket.
-const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Path to the binary under test, resolved by Cargo at compile time so a stale
 /// build in `target/` can never be picked up by a directory scan.
@@ -107,124 +92,26 @@ fn upstream_rsync() -> Option<PathBuf> {
     })
 }
 
-/// Reserves an ephemeral port by binding it and immediately releasing it.
-fn allocate_port() -> u16 {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).expect("bind ephemeral port");
-    let port = listener.local_addr().expect("local addr").port();
-    drop(listener);
-    port
-}
-
-/// One end of a child's stdio, boxed so both pipes share a drain loop.
-enum Pipe {
-    Out(std::process::ChildStdout),
-    Err(std::process::ChildStderr),
-}
-
-impl Pipe {
-    fn into_reader(self) -> Box<dyn Read> {
-        match self {
-            Self::Out(out) => Box::new(out),
-            Self::Err(err) => Box::new(err),
-        }
-    }
-}
-
-/// Takes both of a child's pipes, if present, tagged for reporting.
-fn take_pipes(child: &mut Child) -> [(&'static str, Option<Pipe>); 2] {
-    [
-        ("stdout", child.stdout.take().map(Pipe::Out)),
-        ("stderr", child.stderr.take().map(Pipe::Err)),
-    ]
-}
-
-/// A spawned read-only rsync daemon serving one module, stdio drained
-/// continuously so a full pipe buffer can never masquerade as the hang under
-/// test.
-struct Daemon {
-    child: Child,
-    port: u16,
-    /// Collects the daemon's stderr, so a daemon that never listens can say why.
-    stderr: Option<JoinHandle<Vec<u8>>>,
-}
+/// A daemon served in inetd mode on a listener bound before any session
+/// starts, so a client connect queues instead of racing the daemon's start.
+/// Dropping it kills every session.
+struct Daemon(InetdServer);
 
 impl Daemon {
     fn spawn(binary: &Path, config: &Path) -> Self {
-        let port = allocate_port();
-        let mut child = Command::new(binary)
-            .arg("--daemon")
-            .arg("--no-detach")
+        let stderr = fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .expect("open /dev/null");
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind daemon listener");
+        let command = InetdCommand::new(binary, stderr)
             .arg("--config")
-            .arg(config)
-            .arg("--port")
-            .arg(port.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn rsync daemon");
-
-        let mut stderr = None;
-        for (name, pipe) in take_pipes(&mut child) {
-            let Some(pipe) = pipe else { continue };
-            let drain = thread::spawn(move || {
-                let mut sink = Vec::new();
-                let _ = pipe.into_reader().read_to_end(&mut sink);
-                sink
-            });
-            if name == "stderr" {
-                stderr = Some(drain);
-            }
-        }
-
-        let mut daemon = Self {
-            child,
-            port,
-            stderr,
-        };
-        daemon.wait_until_listening();
-        daemon
-    }
-
-    /// Polls the listening socket until the daemon accepts connections.
-    ///
-    /// A daemon that exits, or never listens, fails the test with its exit
-    /// status and stderr, so the cause is in the report rather than lost.
-    fn wait_until_listening(&mut self) {
-        let target = SocketAddr::from((Ipv4Addr::LOCALHOST, self.port));
-        let deadline = Instant::now() + DAEMON_READY_TIMEOUT;
-        while Instant::now() < deadline {
-            if TcpStream::connect_timeout(&target, Duration::from_millis(250)).is_ok() {
-                return;
-            }
-            if matches!(self.child.try_wait(), Ok(Some(_))) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-        let _ = self.child.kill();
-        let status = self.child.wait();
-        let stderr = self
-            .stderr
-            .take()
-            .and_then(|drain| drain.join().ok())
-            .unwrap_or_default();
-        panic!(
-            "daemon did not start listening on port {} (status {status:?}); stderr:\n{}",
-            self.port,
-            String::from_utf8_lossy(&stderr)
-        );
+            .arg(config);
+        Self(InetdServer::start(listener, command).expect("start daemon"))
     }
 
     fn url(&self, path: &str) -> String {
-        format!("rsync://127.0.0.1:{}/mod/{path}", self.port)
-    }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        format!("rsync://127.0.0.1:{}/mod/{path}", self.0.port())
     }
 }
 
@@ -242,7 +129,7 @@ fn write_config(dir: &Path, module_root: &Path) -> PathBuf {
     config
 }
 
-/// Outcome of one bounded client run.
+/// Outcome of one client run.
 struct ClientRun {
     code: i32,
     output: String,
@@ -257,55 +144,25 @@ impl ClientRun {
 }
 
 /// Runs one client pull to completion and returns its exit code and combined
-/// output, failing the test if it does not finish inside [`CLIENT_DEADLINE`].
+/// output.
 ///
-/// Both child pipes are drained on their own threads while we poll. Polling
-/// `try_wait()` without draining deadlocks the moment the child fills a pipe
-/// buffer, which would hang this harness for a reason unrelated to the bug under
-/// test.
-fn run_client_bounded(args: &[String], label: &str) -> ClientRun {
-    let mut child = Command::new(oc_rsync_binary())
+/// The nextest per-test timeout is the only bound: a hang under test fails
+/// as a TIMEOUT naming the test.
+fn run_client(args: &[String], label: &str) -> ClientRun {
+    let out = Command::new(oc_rsync_binary())
         .args(args)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn oc-rsync client");
-
-    let (tx, rx) = mpsc::channel::<String>();
-    for (_, pipe) in take_pipes(&mut child) {
-        let Some(pipe) = pipe else { continue };
-        let tx = tx.clone();
-        thread::spawn(move || {
-            let mut text = String::new();
-            let _ = pipe.into_reader().read_to_string(&mut text);
-            let _ = tx.send(text);
-        });
-    }
-    drop(tx);
-
-    let deadline = Instant::now() + CLIENT_DEADLINE;
-    let status = loop {
-        match child.try_wait().expect("poll client") {
-            Some(status) => break status,
-            None => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    panic!(
-                        "{label}: client did not finish within {CLIENT_DEADLINE:?} \
-                         (it re-entered the receive loop on an empty file list)"
-                    );
-                }
-                thread::sleep(Duration::from_millis(25));
-            }
-        }
-    };
-
-    let output: String = rx.iter().collect();
+        .output()
+        .expect("run oc-rsync client");
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     eprintln!("{label} client output:\n{output}");
 
-    let code = status
+    let code = out
+        .status
         .code()
         .unwrap_or_else(|| panic!("{label}: client terminated by signal instead of exiting"));
     ClientRun { code, output }
@@ -359,11 +216,8 @@ fn module_with_locked_dir(locked: bool) -> (TempDir, PathBuf) {
     fs::write(module_root.join("good.txt"), b"ok\n").expect("write good.txt");
     fs::write(inner.join("inner.txt"), b"inner\n").expect("write inner.txt");
     if locked {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&inner, fs::Permissions::from_mode(0o000)).expect("chmod 000");
-        }
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&inner, fs::Permissions::from_mode(0o000)).expect("chmod 000");
     }
     (root, module_root)
 }
@@ -373,8 +227,7 @@ fn module_with_locked_dir(locked: bool) -> (TempDir, PathBuf) {
 /// (`flist.c:2667-2674` -> `flist.c:2748-2757`). Upstream prints the summary and
 /// exits 23 (`cleanup.c:217-218`) without ever creating the destination root.
 ///
-/// Unix-only: the fault is POSIX DAC (`chmod 000`), which root bypasses.
-#[cfg(unix)]
+/// The fault is POSIX DAC (`chmod 000`), which root bypasses.
 #[test]
 fn unreadable_source_path_prints_summary_and_exits_partial() {
     use std::os::unix::fs::PermissionsExt;
@@ -402,7 +255,7 @@ fn unreadable_source_path_prints_summary_and_exits_partial() {
         let dest = root.path().join("dest");
         let dest_arg = format!("{}{}", dest.display(), std::path::MAIN_SEPARATOR);
         let label = format!("unreadable-path via {name}");
-        let run = run_client_bounded(
+        let run = run_client(
             &["-av".to_owned(), daemon.url("locked/inner.txt"), dest_arg],
             &label,
         );
@@ -434,7 +287,7 @@ fn fully_excluded_source_prints_summary_and_exits_zero() {
         let dest = root.path().join("dest");
         let dest_arg = format!("{}{}", dest.display(), std::path::MAIN_SEPARATOR);
         let label = format!("fully-excluded via {name}");
-        let run = run_client_bounded(
+        let run = run_client(
             &[
                 "-av".to_owned(),
                 "--exclude=good.txt".to_owned(),

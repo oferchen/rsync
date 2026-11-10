@@ -26,7 +26,9 @@ use std::thread;
 #[derive(Debug)]
 pub struct InetdCommand {
     binary: PathBuf,
+    wrapper: Vec<OsString>,
     arguments: Vec<OsString>,
+    env: Vec<(OsString, OsString)>,
     stderr: File,
 }
 
@@ -36,9 +38,40 @@ impl InetdCommand {
     pub fn new(binary: impl Into<PathBuf>, stderr: File) -> Self {
         Self {
             binary: binary.into(),
+            wrapper: Vec::new(),
             arguments: Vec::new(),
+            env: Vec::new(),
             stderr,
         }
+    }
+
+    /// `binary --daemon`, with every session's stderr discarded.
+    ///
+    /// # Errors
+    ///
+    /// When `/dev/null` cannot be opened.
+    pub fn discarding_stderr(binary: impl Into<PathBuf>) -> io::Result<Self> {
+        let null = std::fs::OpenOptions::new().write(true).open("/dev/null")?;
+        Ok(Self::new(binary, null))
+    }
+
+    /// Runs each session as `wrapper... binary --daemon <args>`, such as under
+    /// `sudo -n` for a daemon that must start as root.
+    #[must_use]
+    pub fn wrapped_by<I, S>(mut self, wrapper: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.wrapper = wrapper.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Sets an environment variable in every session.
+    #[must_use]
+    pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
     }
 
     /// Appends a daemon argument.
@@ -50,7 +83,16 @@ impl InetdCommand {
 
     fn spawn(&self, stream: TcpStream) -> io::Result<Child> {
         let stdout = OwnedFd::from(stream.try_clone()?);
-        Command::new(&self.binary)
+        let mut command = match self.wrapper.split_first() {
+            Some((program, rest)) => {
+                let mut command = Command::new(program);
+                command.args(rest).arg(&self.binary);
+                command
+            }
+            None => Command::new(&self.binary),
+        };
+        command
+            .envs(self.env.iter().map(|(key, value)| (key, value)))
             .arg("--daemon")
             .args(&self.arguments)
             .stdin(Stdio::from(OwnedFd::from(stream)))
@@ -108,15 +150,38 @@ impl InetdServer {
         })
     }
 
+    /// Serves the listener [`reserve_port`] bound for `port`.
+    ///
+    /// # Errors
+    ///
+    /// When no reserved listener holds `port`.
+    pub fn start_reserved(port: u16, command: InetdCommand) -> io::Result<Self> {
+        Self::start(take_reserved(port)?, command)
+    }
+
     /// The port the listener serves.
     #[must_use]
     pub fn port(&self) -> u16 {
         self.port
     }
-}
 
-impl Drop for InetdServer {
-    fn drop(&mut self) {
+    /// Stops accepting, then waits for every session to end on its own, so
+    /// everything a session writes on its way out, such as its log lines, is
+    /// on disk when this returns.
+    ///
+    /// # Errors
+    ///
+    /// When waiting on a session fails.
+    pub fn finish(mut self) -> io::Result<()> {
+        self.stop_accepting();
+        for mut child in lock(&self.sessions).drain(..) {
+            child.wait()?;
+        }
+        Ok(())
+    }
+
+    /// Stops the accept thread. Every session it started is then recorded.
+    fn stop_accepting(&mut self) {
         self.stopping.store(true, Ordering::Release);
         // Wakes the blocked accept so the thread sees the flag and drops the
         // listener; a later connect is then refused.
@@ -124,11 +189,44 @@ impl Drop for InetdServer {
         if let Some(acceptor) = self.acceptor.take() {
             let _ = acceptor.join();
         }
+    }
+}
+
+impl Drop for InetdServer {
+    fn drop(&mut self) {
+        self.stop_accepting();
         for mut child in lock(&self.sessions).drain(..) {
             let _ = child.kill();
             let _ = child.wait();
         }
     }
+}
+
+/// Listeners bound by [`reserve_port`] and not yet served.
+static RESERVED: Mutex<Vec<TcpListener>> = Mutex::new(Vec::new());
+
+/// Binds a loopback listener and keeps it open until
+/// [`InetdServer::start_reserved`] serves it, so a test can write the port into
+/// a config before the daemon exists without ever releasing the port.
+///
+/// # Errors
+///
+/// When binding the listener fails.
+pub fn reserve_port() -> io::Result<u16> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))?;
+    let port = listener.local_addr()?.port();
+    lock(&RESERVED).push(listener);
+    Ok(port)
+}
+
+/// Takes the listener [`reserve_port`] bound for `port`.
+pub(crate) fn take_reserved(port: u16) -> io::Result<TcpListener> {
+    let mut reserved = lock(&RESERVED);
+    let index = reserved
+        .iter()
+        .position(|listener| listener.local_addr().is_ok_and(|addr| addr.port() == port))
+        .ok_or_else(|| io::Error::other(format!("no listener reserved for port {port}")))?;
+    Ok(reserved.swap_remove(index))
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
