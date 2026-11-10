@@ -77,6 +77,8 @@
 
 mod config;
 mod context;
+#[cfg(any(windows, test))]
+mod cygwin_errno;
 mod errno_text;
 /// Upstream-compatible error and warning formatting.
 pub mod error_format;
