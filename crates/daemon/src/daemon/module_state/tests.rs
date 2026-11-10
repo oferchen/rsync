@@ -2,7 +2,6 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 
 use super::*;
 // Host pattern types are defined in the parent daemon module (via include!() of config_helpers.rs).
@@ -312,9 +311,6 @@ fn negative_max_connections_refuses_every_connection() {
         }
         _ => panic!("a disabled module must refuse the first connection"),
     }
-
-    // The refusal never enters upstream's slot loop, so no slot is consumed.
-    assert_eq!(runtime.active_connections.load(Ordering::Acquire), 0);
 }
 
 #[test]
@@ -411,47 +407,34 @@ fn module_connection_error_debug() {
     assert!(debug.contains("Limit"));
 }
 
-#[test]
-fn module_connection_guard_unlimited() {
-    let guard = ModuleConnectionGuard::unlimited();
-    assert!(guard.module.is_none());
-    assert!(guard.lock_guard.is_none());
-}
-
+// A daemon transfer holds its connection slot via the RAII
+// `ModuleConnectionGuard` acquired in `process_approved_module`. When a
+// transfer fails or aborts, the guard drops on unwind and must release the
+// slot so the module keeps accepting new connections. The slot is the lock
+// file's range lock (connection.c:39-42), the only state upstream keeps.
+//
+// Needs locks owned by the open file so acquisitions in one process contend:
+// Linux open file description locks and Windows `LockFileEx` ranges.
+#[cfg(any(target_os = "linux", windows))]
 #[test]
 fn aborted_transfer_releases_connection_slot() {
-    // A daemon transfer holds its connection slot via the RAII
-    // `ModuleConnectionGuard` acquired in `process_approved_module`. When a
-    // transfer fails or aborts, the guard drops on unwind and must release the
-    // slot so the module keeps accepting new connections. A connection thread
-    // that never unwinds never drops its guard, so four wedged connections
-    // would exhaust a `max connections = 4` module. This test pins the invariant that a slot acquired and then
-    // released (the drop that a failed/aborted transfer performs) frees the
-    // module for a fresh connection - so even N aborted transfers never wedge
-    // the module at its limit.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let limiter = std::sync::Arc::new(ConnectionLimiter::open(dir.path().join("lock")));
     let limit = NonZeroU32::new(4).unwrap();
     let def = ModuleDefinition {
         name: "abort_release".to_owned(),
         max_connections: MaxConnections::Limited(limit),
         ..Default::default()
     };
-    let runtime: ModuleRuntime = def.into();
+    let runtime = ModuleRuntime::new(def, Some(limiter));
 
-    // Simulate five sequential failed/aborted transfers on a 4-slot module.
-    // Each acquisition must succeed because the previous guard was dropped
-    // (as it would be when a transfer returns Err or the thread unwinds).
+    // Five sequential aborted transfers on a 4-slot module: each acquisition
+    // succeeds only because the previous guard's drop released its slot.
     for _ in 0..5 {
         let guard = runtime
             .try_acquire_connection()
             .expect("slot must be free after the prior aborted transfer released it");
-        assert_eq!(runtime.active_connections.load(Ordering::Acquire), 1);
-        // Dropping the guard is exactly what a failed/aborted transfer does.
         drop(guard);
-        assert_eq!(
-            runtime.active_connections.load(Ordering::Acquire),
-            0,
-            "aborted transfer must release its connection slot"
-        );
     }
 
     // Fill every slot, confirm the limit is enforced, then release one and
@@ -464,17 +447,17 @@ fn aborted_transfer_releases_connection_slot() {
                 .expect("slots below the limit must be acquirable"),
         );
     }
-    assert!(
-        matches!(
-            runtime.try_acquire_connection(),
-            Err(ModuleConnectionError::Limit { .. })
-        ),
-        "the module must refuse once the limit is reached"
-    );
+    assert!(matches!(
+        runtime.try_acquire_connection(),
+        Err(ModuleConnectionError::Limit {
+            configured: 4,
+            active: 4
+        })
+    ));
     guards.pop();
     runtime
         .try_acquire_connection()
-        .expect("releasing a slot must let a new connection in");
+        .expect("a released slot must admit a new connection");
 }
 
 #[test]
