@@ -477,6 +477,7 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             let role = match side {
                 LocalCopySide::Sender => Role::Sender,
                 LocalCopySide::Generator => Role::Generator,
+                LocalCopySide::Receiver => Role::Receiver,
             };
             file_io_error(message, role)
         }
@@ -918,6 +919,7 @@ mod tests {
             for (side, role) in [
                 (LocalCopySide::Sender, Role::Sender),
                 (LocalCopySide::Generator, Role::Generator),
+                (LocalCopySide::Receiver, Role::Receiver),
             ] {
                 let cause = "Corrupt user.rsync.%stat xattr attached to \"/d/f\": \"x\"";
                 let error = map_local_copy_error(LocalCopyError::file_io(side, cause));

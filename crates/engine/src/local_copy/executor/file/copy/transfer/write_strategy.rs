@@ -248,8 +248,20 @@ pub(in crate::local_copy) fn open_destination_writer(
                 .truncate(false)
                 .open(destination)
                 .map_err(|error| open_failure(destination, error))?;
-            file.seek(SeekFrom::Start(append_offset))
-                .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+            // upstream: receiver.c:545-548 - a failed seek to the --append
+            // offset is `lseek of %s returned ...` and exit_cleanup(RERR_FILEIO).
+            file.seek(SeekFrom::Start(append_offset)).map_err(|error| {
+                LocalCopyError::io(
+                    "copy file",
+                    destination,
+                    crate::commit_failure::attach_commit_op_at(
+                        crate::commit_failure::CommitOp::Seek,
+                        destination,
+                        append_offset,
+                        error,
+                    ),
+                )
+            })?;
             Ok(file)
         }
         WriteStrategy::Inplace => {
