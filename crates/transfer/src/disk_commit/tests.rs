@@ -1192,6 +1192,7 @@ mod staging_dir_mode {
                 append_offset: 0,
                 xattr_list: None,
                 xattr_basis: None,
+                dest_mode_basis: None,
                 file_entry: None,
             })))
             .unwrap();
