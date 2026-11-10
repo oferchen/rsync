@@ -641,6 +641,9 @@ mod tests {
         assert!(!covers(&implied, "evil", false));
     }
 
+    // Windows splits a Path on `\` and NTFS names cannot contain one, so a
+    // literal-backslash name only exists off Windows.
+    #[cfg(not(windows))]
     #[test]
     fn backslash_name_round_trips_as_literal() {
         // A valid filename containing a literal backslash (an ordinary byte on
@@ -663,6 +666,9 @@ mod tests {
         assert!(!covers(&implied, "evil", false));
     }
 
+    // Windows splits a Path on `\` and NTFS names cannot contain one, so a
+    // literal-backslash name only exists off Windows.
+    #[cfg(not(windows))]
     #[test]
     fn wild_arg_backslash_is_doubled_to_stay_literal() {
         // upstream: exclude.c:527-530 - in a wildcard arg, a `\` that does not
@@ -713,6 +719,9 @@ mod tests {
         assert!(!covers(&implied, "a\\]b", true));
     }
 
+    // Windows splits a Path on `\` and NTFS names cannot contain one, so a
+    // literal-backslash name only exists off Windows.
+    #[cfg(not(windows))]
     #[test]
     fn nonwild_backslash_arg_recurse_rule_stays_literal() {
         // upstream: exclude.c:640-647 - appending `/**` to a non-wild arg
@@ -729,6 +738,9 @@ mod tests {
         assert!(!covers(&implied, "ab/inner", false));
     }
 
+    // Windows splits a Path on `\` and NTFS names cannot contain one, so a
+    // literal-backslash name only exists off Windows.
+    #[cfg(not(windows))]
     #[test]
     fn relative_wild_arg_parent_with_bracket_escape_matches_literal_bracket() {
         // upstream: exclude.c:592-624 - parent-dir rules derive from the

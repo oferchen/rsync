@@ -38,6 +38,9 @@
 //!
 //! These assert on the DESTINATION TREE rather than on a parsed pattern
 //! string, because the destination tree is the property that matters.
+// Win32 path normalisation strips the trailing spaces the `a ` and `   `
+// fixtures need, so they cannot exist on Windows.
+#![cfg(not(windows))]
 
 mod integration;
 

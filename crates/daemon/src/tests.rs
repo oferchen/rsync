@@ -81,8 +81,8 @@ use crate::daemon::{
     single_session_exit,
 };
 
-// QUIC listener identity enum, only present under the `quic` feature.
-#[cfg(feature = "quic")]
+// QUIC listener identity enum, read only by the Unix QUIC chunks.
+#[cfg(all(unix, feature = "quic"))]
 use crate::daemon::QuicIdentity;
 
 // Only the unix-only post-xfer-exec abort test references this constant, so
@@ -389,11 +389,13 @@ include!("tests/chunks/runtime_options_parse_motd_sources.rs");
 include!("tests/chunks/runtime_options_parse_no_bwlimit_argument.rs");
 include!("tests/chunks/runtime_options_parse_pid_file_argument.rs");
 include!("tests/chunks/runtime_options_per_module_max_connections_overrides_global.rs");
-#[cfg(feature = "quic")]
+// A Windows daemon refuses every QUIC directive at parse (parsing.rs), so the
+// chunks that need one to parse are Unix-only; quic_windows_refusal covers Windows.
+#[cfg(all(unix, feature = "quic"))]
 include!("tests/chunks/runtime_options_quic_cert_key_pairing.rs");
-#[cfg(feature = "quic")]
+#[cfg(all(unix, feature = "quic"))]
 include!("tests/chunks/runtime_options_quic_identity_resolution.rs");
-#[cfg(feature = "quic")]
+#[cfg(all(unix, feature = "quic"))]
 include!("tests/chunks/runtime_options_quic_port_directive.rs");
 #[cfg(all(unix, feature = "quic"))]
 include!("tests/chunks/runtime_options_quic_retry_directive.rs");
@@ -401,7 +403,7 @@ include!("tests/chunks/runtime_options_quic_retry_directive.rs");
 include!("tests/chunks/runtime_options_quic_address_directive.rs");
 #[cfg(feature = "quic")]
 include!("tests/chunks/runtime_options_quic_windows_refusal.rs");
-#[cfg(feature = "quic")]
+#[cfg(all(unix, feature = "quic"))]
 include!("tests/chunks/runtime_options_quic_listener_enabled.rs");
 include!("tests/chunks/runtime_options_privilege_drop_windows_refusal.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_bwlimit.rs");

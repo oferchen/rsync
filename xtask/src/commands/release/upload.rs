@@ -376,7 +376,6 @@ mod tests {
     use crate::test_support;
     use crate::util::test_env::EnvGuard;
     use std::ffi::OsString;
-    use std::io::Write;
 
     fn sample_branding() -> WorkspaceBranding {
         test_support::workspace_branding_snapshot()
@@ -491,8 +490,12 @@ mod tests {
         assert_eq!(artifacts, expected);
     }
 
+    // The fake `gh` is a shebang script, which Windows cannot execute.
+    #[cfg(unix)]
     #[test]
     fn upload_release_artifacts_invokes_command_with_assets() {
+        use std::io::Write;
+
         let temp = ::test_support::create_tempdir();
         let workspace = temp.path();
 

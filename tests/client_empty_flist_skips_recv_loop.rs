@@ -36,6 +36,9 @@
 //!
 //! Driving the real binary over a real socket is required: the empty-list path is
 //! defined by what the two processes do and do not read off the wire.
+// Windows refuses --daemon (cli frontend/server/daemon.rs:181-219), and every leg
+// here serves the source from an oc-rsync daemon.
+#![cfg(unix)]
 
 use std::fs;
 use std::io::Read;
@@ -43,7 +46,7 @@ use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
@@ -141,6 +144,8 @@ fn take_pipes(child: &mut Child) -> [(&'static str, Option<Pipe>); 2] {
 struct Daemon {
     child: Child,
     port: u16,
+    /// Collects the daemon's stderr, so a daemon that never listens can say why.
+    stderr: Option<JoinHandle<Vec<u8>>>,
 }
 
 impl Daemon {
@@ -159,30 +164,56 @@ impl Daemon {
             .spawn()
             .expect("spawn rsync daemon");
 
-        for (_, pipe) in take_pipes(&mut child) {
+        let mut stderr = None;
+        for (name, pipe) in take_pipes(&mut child) {
             let Some(pipe) = pipe else { continue };
-            thread::spawn(move || {
+            let drain = thread::spawn(move || {
                 let mut sink = Vec::new();
                 let _ = pipe.into_reader().read_to_end(&mut sink);
+                sink
             });
+            if name == "stderr" {
+                stderr = Some(drain);
+            }
         }
 
-        let daemon = Self { child, port };
+        let mut daemon = Self {
+            child,
+            port,
+            stderr,
+        };
         daemon.wait_until_listening();
         daemon
     }
 
     /// Polls the listening socket until the daemon accepts connections.
-    fn wait_until_listening(&self) {
+    ///
+    /// A daemon that exits, or never listens, fails the test with its exit
+    /// status and stderr, so the cause is in the report rather than lost.
+    fn wait_until_listening(&mut self) {
         let target = SocketAddr::from((Ipv4Addr::LOCALHOST, self.port));
         let deadline = Instant::now() + DAEMON_READY_TIMEOUT;
         while Instant::now() < deadline {
             if TcpStream::connect_timeout(&target, Duration::from_millis(250)).is_ok() {
                 return;
             }
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                break;
+            }
             thread::sleep(Duration::from_millis(50));
         }
-        panic!("daemon did not start listening on port {}", self.port);
+        let _ = self.child.kill();
+        let status = self.child.wait();
+        let stderr = self
+            .stderr
+            .take()
+            .and_then(|drain| drain.join().ok())
+            .unwrap_or_default();
+        panic!(
+            "daemon did not start listening on port {} (status {status:?}); stderr:\n{}",
+            self.port,
+            String::from_utf8_lossy(&stderr)
+        );
     }
 
     fn url(&self, path: &str) -> String {

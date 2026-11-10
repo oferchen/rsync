@@ -92,7 +92,9 @@
 //!   expanded by `-G` but read raw from [`ResolvedHost`].
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::env;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::ssh_config::resolve_host_str;
@@ -164,6 +166,43 @@ pub(super) enum Skipped {
     NoSshBinary,
     /// `ssh -G` ran but failed; carries its stderr.
     SshFailed(String),
+    /// The `ssh` on PATH runs on MSYS2 or Cygwin; names it and why it is
+    /// not an oracle.
+    EmulatedOracle(String),
+}
+
+/// Refuse an `ssh` built for MSYS2 or Cygwin, such as Git for Windows ships.
+///
+/// That build reads a `C:\` path as relative, so `Include C:\...` resolves
+/// nowhere and its dump stops being upstream's answer. `ssh -V` does not name
+/// the layer, so the runtime DLL beside the binary identifies it.
+fn native_oracle() -> Result<(), Skipped> {
+    native_oracle_on(&env::var_os("PATH").unwrap_or_default())
+}
+
+fn native_oracle_on(path: &OsStr) -> Result<(), Skipped> {
+    match emulated_ssh(path) {
+        Some(ssh) => Err(Skipped::EmulatedOracle(format!(
+            "{} is an MSYS2 or Cygwin build, which does not read a `C:\\` Include path as absolute",
+            ssh.display()
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// The first `ssh` on `path` when it has an MSYS2 or Cygwin runtime beside it.
+fn emulated_ssh(path: &OsStr) -> Option<PathBuf> {
+    let (dir, ssh) = env::split_paths(path).find_map(|dir| {
+        ["ssh", "ssh.exe"]
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|candidate| candidate.is_file())
+            .map(|ssh| (dir, ssh))
+    })?;
+    ["msys-2.0.dll", "cygwin1.dll"]
+        .iter()
+        .any(|dll| dir.join(dll).is_file())
+        .then_some(ssh)
 }
 
 /// A completed differential run.
@@ -204,6 +243,7 @@ fn upstream_dump(
     config: &Path,
     alias: &str,
 ) -> Result<(String, BTreeMap<String, Vec<String>>), Skipped> {
+    native_oracle()?;
     let version = Command::new("ssh")
         .arg("-V")
         .output()
@@ -371,8 +411,10 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
 ///
 /// # Errors
 ///
-/// [`Skipped::NoSshBinary`] when no `ssh` is on PATH.
+/// [`Skipped::NoSshBinary`] when no `ssh` is on PATH, and
+/// [`Skipped::EmulatedOracle`] for an MSYS2 or Cygwin `ssh`.
 pub(super) fn upstream_refusal(config: &Path, alias: &str) -> Result<Option<String>, Skipped> {
+    native_oracle()?;
     let out = Command::new("ssh")
         .arg("-G")
         .arg("-F")
@@ -509,6 +551,64 @@ mod tests {
     const REQUIRE_ORACLE: &str = "OC_RSYNC_REQUIRE_SSH_G";
 
     /// Report a skip loudly, or fail outright when the oracle was required.
+    fn path_dir(files: &[&str]) -> tempfile::TempDir {
+        let dir = test_support::create_tempdir();
+        for name in files {
+            std::fs::write(dir.path().join(name), b"").expect("write fixture file");
+        }
+        dir
+    }
+
+    fn joined(dirs: &[&tempfile::TempDir]) -> std::ffi::OsString {
+        env::join_paths(dirs.iter().map(|d| d.path())).expect("join PATH")
+    }
+
+    /// Git for Windows' MSYS2 ssh produced the two false mismatches on
+    /// #8316's Windows cell, so its runtime DLL must disqualify the oracle.
+    #[test]
+    fn an_msys_or_cygwin_ssh_is_not_an_oracle() {
+        let msys = path_dir(&["ssh.exe", "msys-2.0.dll"]);
+        let cygwin = path_dir(&["ssh", "cygwin1.dll"]);
+        assert_eq!(
+            emulated_ssh(joined(&[&msys]).as_os_str()),
+            Some(msys.path().join("ssh.exe"))
+        );
+        assert_eq!(
+            emulated_ssh(joined(&[&cygwin]).as_os_str()),
+            Some(cygwin.path().join("ssh"))
+        );
+    }
+
+    /// Only the `ssh` a bare `Command::new("ssh")` would run counts: an earlier
+    /// native one wins, and a stray DLL without an `ssh` beside it is ignored.
+    /// The skip names the refused binary and the reason, so a skipped
+    /// Windows cell says what it did not check.
+    #[test]
+    fn the_skip_names_the_binary_and_the_reason() {
+        let msys = path_dir(&["ssh.exe", "msys-2.0.dll"]);
+        let native = path_dir(&["ssh"]);
+        let Err(Skipped::EmulatedOracle(why)) = native_oracle_on(joined(&[&msys]).as_os_str())
+        else {
+            panic!("an MSYS ssh must be refused");
+        };
+        assert!(why.contains(&msys.path().join("ssh.exe").display().to_string()));
+        assert!(why.contains("`C:\\` Include path as absolute"));
+        assert_eq!(native_oracle_on(joined(&[&native]).as_os_str()), Ok(()));
+    }
+
+    #[test]
+    fn the_first_ssh_on_path_decides() {
+        let native = path_dir(&["ssh"]);
+        let msys = path_dir(&["ssh.exe", "msys-2.0.dll"]);
+        let dll_only = path_dir(&["msys-2.0.dll"]);
+        assert_eq!(emulated_ssh(joined(&[&native, &msys]).as_os_str()), None);
+        assert_eq!(
+            emulated_ssh(joined(&[&dll_only, &msys]).as_os_str()),
+            Some(msys.path().join("ssh.exe"))
+        );
+        assert_eq!(emulated_ssh(joined(&[&dll_only]).as_os_str()), None);
+    }
+
     fn report_skip(what: &str, why: &Skipped) {
         if std::env::var_os(REQUIRE_ORACLE).is_some() {
             panic!(

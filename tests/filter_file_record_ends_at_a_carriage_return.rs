@@ -30,6 +30,16 @@
 //!
 //! These assert on the DESTINATION TREE rather than on a parsed record list,
 //! because the destination tree is the property that matters.
+//!
+//! Not built on Windows. Win32 path normalisation, which `CreateFileW` and the
+//! other path-taking calls apply to every path without the `\\?\` prefix,
+//! strips trailing spaces and periods from each path component, so creating
+//! `src/a ` opens `src/a`: the `a ` fixture every cell depends on cannot exist
+//! there. The filter-file reader under test is platform-independent and runs on
+//! every Unix cell.
+
+// Win32 path normalisation strips the trailing space the `a ` fixture needs.
+#![cfg(not(windows))]
 
 mod integration;
 

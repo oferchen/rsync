@@ -222,6 +222,9 @@ fn escaped_brackets() {
 /// escapes. Verified against rsync 3.4.4 (`- path\\file` excludes the file named
 /// `path\\file` and leaves `path\file` untouched). A pattern is only de-escaped
 /// on the wildmatch path, which non-wild rules never take.
+// Windows splits a Path on `\` and NTFS names cannot contain one, so a
+// literal-backslash name only exists off Windows.
+#[cfg(not(windows))]
 #[test]
 fn escaped_backslash() {
     let set = FilterSet::from_rules([FilterRule::exclude("path\\\\file")]).unwrap();

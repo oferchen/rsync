@@ -36,6 +36,9 @@
 //!
 //! SSH masks the divergence - the child process's own exit status rescues the
 //! client - so every leg here runs over a daemon.
+// Windows refuses --daemon (cli frontend/server/daemon.rs:181-219), and every leg
+// here runs over a daemon.
+#![cfg(unix)]
 
 use std::fs;
 use std::io::Read;

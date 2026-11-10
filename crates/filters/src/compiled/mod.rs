@@ -406,6 +406,9 @@ mod tests {
     /// strcmp (exclude.c:1064-1077) where `\` is an ordinary byte. oc matches via
     /// wildmatch(), which treats `\` as an escape, so the literal backslash had
     /// to be escaped at compile time to reproduce upstream's literal match.
+    // Windows splits a Path on `\` and NTFS names cannot contain one, so a
+    // literal-backslash name only exists off Windows.
+    #[cfg(not(windows))]
     #[test]
     fn non_wild_literal_backslash_matches_its_own_name() {
         use crate::FilterRule;
