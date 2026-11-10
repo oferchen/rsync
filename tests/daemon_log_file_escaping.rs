@@ -39,10 +39,9 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// A module name carrying `ESC`, the byte that starts a terminal control
 /// sequence and so forges log output if it lands raw.
@@ -71,10 +70,7 @@ fn oc_binary() -> PathBuf {
 /// Returns `None` when loopback TCP is unavailable, which is the sandbox
 /// condition this test skips on rather than fails on.
 fn reserve_port() -> Option<u16> {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).ok()?;
-    let port = listener.local_addr().ok()?.port();
-    drop(listener);
-    Some(port)
+    test_support::inetd_server::reserve_port().ok()
 }
 
 /// Writes the daemon config: a global `log file` plus the two modules whose
@@ -98,18 +94,6 @@ fn write_config(dir: &Path, log: &Path, module_root: &Path, port: u16) -> PathBu
     );
     fs::write(&path, body).expect("write daemon config");
     path
-}
-
-/// Polls the daemon's port until it answers, so the test never races startup.
-fn wait_until_listening(port: u16) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    false
 }
 
 /// Requests one module over a raw `@RSYNCD` handshake.
@@ -137,17 +121,6 @@ fn request_module(port: u16, module: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Reaps the daemon whatever the test's outcome, so a failed assertion cannot
-/// leave a listener behind.
-struct DaemonGuard(Child);
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 #[test]
 fn daemon_log_file_escapes_a_peer_requested_module_name() {
     let temp = tempfile::tempdir().expect("temp dir");
@@ -162,23 +135,15 @@ fn daemon_log_file_escapes_a_peer_requested_module_name() {
     };
     let config = write_config(root, &log, &module_root, port);
 
-    let child = Command::new(oc_binary())
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--config={}", config.display()))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn daemon");
-    let _guard = DaemonGuard(child);
-
-    if !wait_until_listening(port) {
-        eprintln!("skipping: daemon did not answer on 127.0.0.1:{port}");
-        return;
-    }
+    let command = test_support::inetd_server::InetdCommand::discarding_stderr(oc_binary())
+        .expect("open /dev/null")
+        .arg(format!("--config={}", config.display()));
+    let daemon = test_support::inetd_server::InetdServer::start_reserved(port, command)
+        .expect("start daemon");
 
     request_module(port, HOSTILE_MODULE).expect("request the hostile module name");
     request_module(port, PLAIN_MODULE).expect("request the control module name");
+    daemon.finish().expect("daemon sessions end");
 
     let contents = fs::read(&log).expect("read daemon log");
     let rendered = String::from_utf8_lossy(&contents).into_owned();
