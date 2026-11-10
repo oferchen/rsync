@@ -32,7 +32,7 @@ use super::step::drive_async;
 use super::step::{DeflateSink, TokenDecodeCore, drive_sync};
 use super::{
     CHUNK_SIZE, CompressedToken, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG,
-    TOKENRUN_REL, write_deflated_data_header,
+    TOKENRUN_REL, codec_error, write_deflated_data_header,
 };
 
 /// LZ4 encoder state for sending compressed tokens.
@@ -218,13 +218,11 @@ impl Lz4TokenEncoder {
                     // upstream: token.c line 976
                     available_in /= 2;
                     if available_in == 0 {
-                        return Err(io::Error::other(
-                            "LZ4 compression failed: output exceeds limit",
-                        ));
+                        return Err(codec_error("LZ4 compression failed: output exceeds limit"));
                     }
                 }
                 Err(e) => {
-                    return Err(io::Error::other(e.to_string()));
+                    return Err(codec_error(e));
                 }
             }
         }

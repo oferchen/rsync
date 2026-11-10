@@ -59,6 +59,19 @@ use std::io::{self, Write};
 pub use self::decoder::CompressedTokenDecoder;
 pub use self::encoder::CompressedTokenEncoder;
 
+/// Wraps a compression library failure as a protocol data stream error.
+///
+/// The error is [`io::ErrorKind::InvalidData`], which the exit-code mapper
+/// reports as `RERR_STREAMIO` (12).
+///
+/// upstream: token.c - every deflate, inflate, ZSTD and LZ4 failure ends in
+/// `exit_cleanup(RERR_STREAMIO)` (token.c:449-450, :505-507, :626-628,
+/// :667-668, :723-724, :803-804, :902-903, :980-981, :1046-1047); only a
+/// failed codec init is `RERR_PROTOCOL`.
+pub(super) fn codec_error(error: impl std::fmt::Display) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error.to_string())
+}
+
 /// End of file marker.
 ///
 /// Signals the end of a compressed token stream. No additional data follows.

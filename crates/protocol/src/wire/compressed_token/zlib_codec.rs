@@ -16,7 +16,7 @@ use super::step::drive_async;
 use super::step::{DeflateSink, TokenDecodeCore, drive_sync};
 use super::{
     CHUNK_SIZE, CompressedToken, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG,
-    TOKENRUN_REL, write_deflated_data_pieces,
+    TOKENRUN_REL, codec_error, write_deflated_data_pieces,
 };
 
 /// Zlib encoder state for sending compressed tokens.
@@ -184,7 +184,7 @@ impl ZlibTokenEncoder {
 
                 self.compressor
                     .compress(input, &mut self.compress_buf, FlushCompress::Sync)
-                    .map_err(|e| io::Error::other(e.to_string()))?;
+                    .map_err(codec_error)?;
 
                 let consumed = (self.compressor.total_in() - before_in) as usize;
                 let produced = (self.compressor.total_out() - before_out) as usize;
@@ -239,7 +239,7 @@ impl ZlibTokenEncoder {
 
             self.compressor
                 .compress(input, &mut self.compress_buf[..avail_out], flush)
-                .map_err(|e| io::Error::other(e.to_string()))?;
+                .map_err(codec_error)?;
 
             consumed_total += (self.compressor.total_in() - before_in) as usize;
             let produced = (self.compressor.total_out() - before_out) as usize;
@@ -371,7 +371,7 @@ impl DeflateSink for ZlibDeflate {
                     &mut self.output_buf,
                     FlushDecompress::None,
                 )
-                .map_err(|e| io::Error::other(e.to_string()))?;
+                .map_err(codec_error)?;
 
             let consumed = (self.decompressor.total_in() - before_in) as usize;
             let produced = (self.decompressor.total_out() - before_out) as usize;
@@ -409,7 +409,7 @@ impl DeflateSink for ZlibDeflate {
 
             self.decompressor
                 .decompress(input, &mut self.output_buf, FlushDecompress::Sync)
-                .map_err(|e| io::Error::other(e.to_string()))?;
+                .map_err(codec_error)?;
 
             let consumed = (self.decompressor.total_in() - before_in) as usize;
             let produced = (self.decompressor.total_out() - before_out) as usize;
@@ -589,7 +589,7 @@ impl ZlibTokenDecoder {
                 self.deflate
                     .decompressor
                     .decompress(input, &mut self.deflate.output_buf, FlushDecompress::Sync)
-                    .map_err(|e| io::Error::other(e.to_string()))?;
+                    .map_err(codec_error)?;
 
                 let consumed = (self.deflate.decompressor.total_in() - before_in) as usize;
                 if consumed > 0 {

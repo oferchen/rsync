@@ -13,7 +13,7 @@ use zstd::stream::raw::{Decoder as ZstdRawDecoder, Operation};
 #[cfg(feature = "tokio-transfer")]
 use super::super::step::drive_async;
 use super::super::step::{DeflateSink, TokenDecodeCore, drive_sync};
-use super::super::{CompressedToken, MAX_DATA_COUNT};
+use super::super::{CompressedToken, MAX_DATA_COUNT, codec_error};
 
 /// Zstd decoder state for receiving compressed tokens.
 ///
@@ -88,7 +88,9 @@ impl DeflateSink for ZstdDeflate {
         let mut in_buf =
             zstd::stream::raw::InBuffer::around(&self.compressed_input_buf[self.input_pos..]);
         let mut out_buf = zstd::stream::raw::OutBuffer::around(self.output_buf.as_mut_slice());
-        self.decoder.run(&mut in_buf, &mut out_buf)?;
+        self.decoder
+            .run(&mut in_buf, &mut out_buf)
+            .map_err(codec_error)?;
         self.input_pos += in_buf.pos();
         let produced = out_buf.pos();
         output.extend_from_slice(&self.output_buf[..produced]);

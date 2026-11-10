@@ -12,7 +12,7 @@ use zstd::stream::raw::{Encoder as ZstdRawEncoder, Operation};
 
 use super::super::{
     CHUNK_SIZE, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG, TOKENRUN_REL,
-    write_deflated_data_header,
+    codec_error, write_deflated_data_header,
 };
 
 /// Zstd encoder state for sending compressed tokens.
@@ -274,7 +274,9 @@ impl ZstdTokenEncoder {
                 let mut out_buf =
                     zstd::stream::raw::OutBuffer::around(&mut self.output_buf[self.output_pos..]);
 
-                self.encoder.run(&mut in_buf, &mut out_buf)?;
+                self.encoder
+                    .run(&mut in_buf, &mut out_buf)
+                    .map_err(codec_error)?;
                 input_pos += in_buf.pos();
                 self.output_pos += out_buf.pos();
             }
@@ -321,7 +323,7 @@ impl ZstdTokenEncoder {
             {
                 let mut out_buf =
                     zstd::stream::raw::OutBuffer::around(&mut self.output_buf[self.output_pos..]);
-                remaining = self.encoder.flush(&mut out_buf)?;
+                remaining = self.encoder.flush(&mut out_buf).map_err(codec_error)?;
                 self.output_pos += out_buf.pos();
             }
 
