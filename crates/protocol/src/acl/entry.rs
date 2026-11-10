@@ -519,20 +519,28 @@ impl RsyncAcl {
     /// Composing the two leaves `mask_obj` unchanged whenever step 1 stripped it
     /// (it strips only when the mask already equals those group bits), which is
     /// why a stored `%aacl` keeps a real mask while `user_obj` and `other_obj`
-    /// read `NO_ENTRY`. The composition is idempotent, so applying it to an ACL
-    /// that already arrived over the wire is a no-op beyond that restoration.
+    /// read `NO_ENTRY`.
+    ///
+    /// An ACL that already arrived over the wire may lack the mask step 1
+    /// stripped, and stripping it again would then also blank a `group_obj`
+    /// that differs from the mask. The restoration therefore runs first as
+    /// well, which makes the result the same whether the ACL was read from
+    /// the filesystem or received over the wire.
     ///
     /// Default ACLs take no condensing: `send_acl()` strips only `acc_acl`, so
     /// a `%dacl` blob holds the fully populated ACL.
     pub fn condense_for_fake_super_store(&mut self, mode: u32) {
-        self.strip_perms_for_send(mode);
-
         // upstream: acls.c:1000-1007 recv_rsync_acl() - "Mask must be non-empty
         // with lists", and for SMB_ACL_TYPE_ACCESS the replacement value is
         // `(mode >> 3) & 7` rather than the OR of the named entries' bits.
-        if !self.names.is_empty() && self.mask_obj == NO_ENTRY {
-            self.mask_obj = ((mode >> 3) & 7) as u8;
-        }
+        let restore_mask = |acl: &mut Self| {
+            if !acl.names.is_empty() && acl.mask_obj == NO_ENTRY {
+                acl.mask_obj = ((mode >> 3) & 7) as u8;
+            }
+        };
+        restore_mask(self);
+        self.strip_perms_for_send(mode);
+        restore_mask(self);
     }
 
     /// Reports whether two ACLs are exactly equal in every object and named
