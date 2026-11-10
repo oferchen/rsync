@@ -840,6 +840,12 @@ fn process_approved_module(
             privilege_outcome.inner_module_path.as_deref(),
         ));
         &effective_module
+    } else if let Some(anchored_root) = privilege_outcome.anchored_root.as_deref() {
+        effective_module = ModuleRuntime::from(chroot_adjusted_definition(
+            &module.definition,
+            Some(anchored_root),
+        ));
+        &effective_module
     } else {
         module
     };
