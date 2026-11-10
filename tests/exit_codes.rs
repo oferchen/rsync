@@ -250,6 +250,7 @@ mod exit_code_4_unsupported {
 }
 
 /// Tests that socket I/O errors return exit code 10.
+#[cfg(target_os = "linux")]
 mod exit_code_10_socket_io {
     use super::*;
 
@@ -265,7 +266,6 @@ mod exit_code_10_socket_io {
     /// clientserver.c:164-165 exits RERR_SOCKETIO. rsync 3.5.1 prints exactly
     /// these lines for a pull and a module listing (the lone `Receiver`) and a
     /// push (`sender`).
-    #[cfg(target_os = "linux")]
     #[test]
     fn a_refused_daemon_connection_reports_upstreams_lines() {
         let test_dir = TestDir::new().expect("create test dir");
