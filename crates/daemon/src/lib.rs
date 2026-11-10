@@ -182,6 +182,7 @@ mod daemon;
 /// Unified stream abstraction for plain TCP and stdio connections.
 pub mod daemon_stream;
 mod error;
+mod posix_path;
 mod systemd;
 
 /// Test-only accessors for the LSM-SECCOMP worker filter.

@@ -24,8 +24,9 @@ use std::path::Path;
 /// Wraps [`fast_io::operator_read_to_string`] so the single platform seam lives
 /// here rather than at each call site. On non-Unix targets the ownership walk
 /// has no meaning (there is no `st_uid` to trust) and this degrades to a plain
-/// read, matching how the rest of the tree gates `fast_io`'s operator-path
-/// helpers.
+/// read of the stored value resolved as Cygwin opens it
+/// (`crate::posix_path`), matching how the rest of the tree gates `fast_io`'s
+/// operator-path helpers.
 pub(crate) fn read_to_string(path: &Path) -> io::Result<String> {
     #[cfg(unix)]
     {
@@ -33,6 +34,21 @@ pub(crate) fn read_to_string(path: &Path) -> io::Result<String> {
     }
     #[cfg(not(unix))]
     {
-        std::fs::read_to_string(path)
+        std::fs::read_to_string(crate::posix_path::resolve_daemon_path(path)?)
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    /// Operator files are resolved when read, so a value that names nothing
+    /// fails the read with not-found, the native counterpart of Cygwin's
+    /// `ENOENT` (mount.cc:749-750).
+    #[test]
+    fn a_value_that_names_nothing_fails_the_read_as_not_found() {
+        let error =
+            read_to_string(Path::new("/cygdrive/cd/rsyncd.conf")).expect_err("names nothing");
+        assert_eq!(error.kind(), io::ErrorKind::NotFound, "{error}");
     }
 }
