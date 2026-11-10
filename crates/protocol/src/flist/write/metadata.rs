@@ -136,7 +136,7 @@ impl FileListWriter {
         } else {
             write_varint(writer, entry_uid as i32)?;
             if (xflags & ((XMIT_USER_NAME_FOLLOWS as u32) << 8)) != 0 {
-                self.write_owner_name(writer, entry.user_name())?;
+                self.write_owner_name(writer, self.user_name_of(entry))?;
             }
         }
         if self.name_follows {
@@ -164,7 +164,7 @@ impl FileListWriter {
         } else {
             write_varint(writer, entry_gid as i32)?;
             if (xflags & ((XMIT_GROUP_NAME_FOLLOWS as u32) << 8)) != 0 {
-                self.write_owner_name(writer, entry.group_name())?;
+                self.write_owner_name(writer, self.group_name_of(entry))?;
             }
         }
         if self.name_follows {

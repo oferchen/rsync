@@ -310,19 +310,6 @@ impl GeneratorContext {
                 .as_ref()
                 .map_or_else(|| metadata.uid(), |s| s.uid);
             entry.set_uid(uid);
-            // upstream: flist.c:703-707 - add_uid() looks up name for inline
-            // sending via XMIT_USER_NAME_FOLLOWS when INC_RECURSE is active.
-            // Without names, the receiver can't map uid->name on the remote.
-            if self.config.flags.numeric_ids.is_off() {
-                // A name converter that could not answer stops the file list
-                // here; only a host-database miss is "this uid has no name".
-                if let Some(name_bytes) = metadata::id_lookup::no_id_unless_converter_failed(
-                    metadata::id_lookup::lookup_user_name_cached(uid),
-                )? && let Ok(name) = String::from_utf8(name_bytes)
-                {
-                    entry.set_user_name(name);
-                }
-            }
         }
         #[cfg(unix)]
         if self.config.flags.group {
@@ -330,17 +317,6 @@ impl GeneratorContext {
                 .as_ref()
                 .map_or_else(|| metadata.gid(), |s| s.gid);
             entry.set_gid(gid);
-            // upstream: flist.c:713-717 - add_gid() looks up name for inline
-            // sending via XMIT_GROUP_NAME_FOLLOWS when INC_RECURSE is active.
-            if self.config.flags.numeric_ids.is_off() {
-                // As above: only a host-database miss means "no name".
-                if let Some(name_bytes) = metadata::id_lookup::no_id_unless_converter_failed(
-                    metadata::id_lookup::lookup_group_name_cached(gid),
-                )? && let Ok(name) = String::from_utf8(name_bytes)
-                {
-                    entry.set_group_name(name);
-                }
-            }
         }
 
         // Store dev/ino for hardlink detection (post-sort assignment).
@@ -1803,5 +1779,65 @@ mod windows_ads_xattr_tests {
         };
         let names = stream_names(&generator(false), &path);
         assert!(names.is_empty(), "no xattrs without -X, got {names:?}");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod owner_name_tests {
+    use crate::config::ServerConfig;
+    use crate::generator::GeneratorContext;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use protocol::ProtocolVersion;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    /// upstream: uidlist.c:340-371 - add_uid()/add_gid() keep one name per id
+    /// in the transfer's id list; a file entry (rsync.h:844-855 file_struct)
+    /// holds only the ids. A name per entry cost a boxed extras record on
+    /// every file of the list.
+    #[test]
+    fn created_entries_carry_ids_but_no_owner_names() {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        config.flags.owner = true;
+        config.flags.group = true;
+        config.flags.numeric_ids = crate::NumericIds::Off;
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let tmp = TempDir::new().expect("tempdir");
+        let path = tmp.path().join("owned");
+        std::fs::write(&path, b"x").expect("write");
+        let meta = std::fs::symlink_metadata(&path).expect("stat");
+        let entry = ctx
+            .create_entry(
+                &path,
+                PathBuf::from("owned"),
+                &fast_io::EntryMetadata::from(meta.clone()),
+                2,
+            )
+            .expect("create entry");
+
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(entry.uid(), Some(meta.uid()));
+        assert_eq!(entry.gid(), Some(meta.gid()));
+        assert_eq!(entry.user_name(), None);
+        assert_eq!(entry.group_name(), None);
     }
 }
