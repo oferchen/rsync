@@ -118,6 +118,7 @@ pub(super) fn handle_directory_contents_copy(
         Path::new("."),
         metadata,
         true,
+        0,
     )?;
 
     // upstream: flist.c:2992 - trailing-slash sources (DOTDIR_NAME /
@@ -216,7 +217,7 @@ pub(super) fn handle_directory_copy(
     // upstream: flist.c:send_file_list() - the source directory is sent as
     // the first flist entry with FLAG_TOP_DIR | FLAG_CONTENT_DIR. Capture
     // it so the batch file matches upstream's wire format.
-    capture_batch_file_entry(context, source_path, &target, &relative, metadata, true)?;
+    capture_batch_file_entry(context, source_path, &target, &relative, metadata, true, 0)?;
 
     copy_directory_recursive(
         context,
@@ -440,6 +441,7 @@ pub(super) fn handle_non_directory_source(
                 rel,
                 &effective_metadata,
                 false,
+                0,
             )?;
         }
         context.begin_batch_file_delta()?;

@@ -161,6 +161,7 @@ mod tests {
             path,
             file_name,
             metadata,
+            readdir_index: 0,
         }
     }
 

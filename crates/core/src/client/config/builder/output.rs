@@ -27,6 +27,17 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Requests the local wire-model `sent`/`received` totals.
+    ///
+    /// Set it when the run prints its totals (`--stats`, `-v` or a log file);
+    /// a local copy then reports what upstream's two forked halves would have
+    /// exchanged instead of the literal data alone.
+    #[must_use]
+    pub const fn wire_totals(mut self, totals: Option<engine::local_copy::WireTotals>) -> Self {
+        self.wire_totals = totals;
+        self
+    }
+
     /// Enables or disables human-readable output formatting.
     #[must_use]
     #[doc(alias = "--human-readable")]

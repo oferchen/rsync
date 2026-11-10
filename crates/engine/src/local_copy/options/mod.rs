@@ -20,6 +20,7 @@ mod path_behavior;
 mod platform_copy;
 pub(crate) mod staging;
 mod types;
+mod wire_totals;
 
 pub use builder::{BuilderError, LocalCopyOptionsBuilder};
 pub use types::{DeleteTiming, LocalCopyOptions, ReferenceDirectory, ReferenceDirectoryKind};

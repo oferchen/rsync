@@ -567,6 +567,7 @@ impl<'a> CopyContext<'a> {
         {
             self.record_batch_transfer_report(batch_report_iflags(&record.change_set(), true));
         }
+        self.tally_item(&record);
         if let Some(observer) = &mut self.observer {
             observer.handle(record.clone());
         }
@@ -831,6 +832,7 @@ impl<'a> CopyContext<'a> {
                 .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
 
             self.register_progress();
+            self.tally_whole_file_data(&buffer[..read]);
 
             let mut compressed_delta = None;
             if let Some(encoder) = compressor.as_mut() {
@@ -959,6 +961,7 @@ impl<'a> CopyContext<'a> {
             write_sparse_chunk(writer, &mut sparse_state, &buffer[..read], destination)?;
 
             self.register_progress();
+            self.tally_whole_file_data(&buffer[..read]);
 
             let mut compressed_delta = None;
             if let Some(encoder) = compressor.as_mut() {

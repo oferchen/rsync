@@ -545,13 +545,23 @@ impl LocalCopySummary {
     /// `bytes_sent` via `record_file`, so it must NOT fold the enumerated path
     /// lengths on top - doing so inflated `sent` ~2x. Zeroing here matches
     /// upstream's `File list size: 0` and leaves `bytes_sent` as the data-only
-    /// figure. A local copy transmits nothing over a wire, so the residual gap
-    /// versus upstream's socketpair framing bytes is irreducible and not
-    /// synthesised.
+    /// figure. When the run prints its totals, the local wire model replaces
+    /// both byte totals with upstream's socketpair counts
+    /// (`record_wire_totals`).
     ///
     /// upstream: main.c output_summary (`File list size: 0` for local copies)
     pub fn clear_file_list_size(&mut self) {
         self.file_list_size = 0;
+    }
+
+    /// Replaces the literal-data byte totals with the wire model's.
+    ///
+    /// `sent` and `received` are what upstream's client half would have
+    /// counted on the socketpair it shares with its forked server half
+    /// (main.c:334-335 handle_stats), as replayed by the local wire model.
+    pub(in crate::local_copy) const fn record_wire_totals(&mut self, sent: u64, received: u64) {
+        self.bytes_sent = sent;
+        self.bytes_received = received;
     }
 
     /// Returns the time spent enumerating the file list.

@@ -796,6 +796,7 @@ pub(crate) fn copy_sources(
             context.write_batch_id_lists()?;
             context.write_batch_flist_io_error()?;
             context.flush_batch_delta_to_batch()?;
+            context.finish_wire_tally();
             // Stats are written by core::client::run::batch::finalize_batch()
             // after the engine returns, using actual transfer byte counts.
 

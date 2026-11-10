@@ -361,6 +361,9 @@ impl<'a> CopyContext<'a> {
         chunk: &[u8],
         path: &std::path::Path,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
+        if let Some(tally) = self.wire_tally.as_mut() {
+            tally.literal_data(chunk);
+        }
         let Some(delta_file) = self.batch_delta_buf.as_mut() else {
             return Ok(());
         };
@@ -391,6 +394,9 @@ impl<'a> CopyContext<'a> {
         see_data: &[u8],
         path: &std::path::Path,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
+        if let Some(tally) = self.wire_tally.as_mut() {
+            tally.block_match(block_index, Some(see_data));
+        }
         let Some(delta_file) = self.batch_delta_buf.as_mut() else {
             return Ok(());
         };
@@ -461,6 +467,9 @@ impl<'a> CopyContext<'a> {
     ) -> Result<(), crate::local_copy::LocalCopyError> {
         use std::io::Write;
 
+        if let Some(tally) = self.wire_tally.as_mut() {
+            tally.begin_transfer();
+        }
         let delta_file = match self.batch_delta_buf.as_mut() {
             Some(f) => f,
             None => return Ok(()),
@@ -547,6 +556,9 @@ impl<'a> CopyContext<'a> {
     /// A file that never reaches the delta path keeps the whole-file head,
     /// matching upstream's `write_sum_head(f, NULL)`.
     pub(crate) fn record_batch_delta_geometry(&mut self, head: protocol::wire::SumHead) {
+        if let Some(tally) = self.wire_tally.as_mut() {
+            tally.sum_head(head);
+        }
         if self.batch_delta_buf.is_some() {
             self.batch_delta_sum_head = head;
         }
@@ -716,6 +728,9 @@ impl<'a> CopyContext<'a> {
     ) -> Result<(), crate::local_copy::LocalCopyError> {
         use std::io::{Read, Write};
 
+        if let Some(tally) = self.wire_tally.as_mut() {
+            tally.end_transfer();
+        }
         if self.batch_delta_buf.is_none() {
             return Ok(());
         }
@@ -850,6 +865,9 @@ impl<'a> CopyContext<'a> {
         source: &std::path::Path,
         file_size: u64,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
+        if let Some(tally) = self.wire_tally.as_mut() {
+            tally.literal(file_size);
+        }
         if self.batch_delta_buf.is_none() {
             return Ok(());
         }
