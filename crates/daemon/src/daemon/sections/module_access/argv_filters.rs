@@ -14,10 +14,11 @@ const ARGV_FILTER_OPTIONS_REJECTED: &str = "Your options have been rejected by t
 
 /// One filter option from the client's server argv, in argv order.
 ///
-/// upstream: `options.c:1620-1656` and the `-F` arm at `options.c:1718-1727`.
+/// upstream: `options.c:1620-1656`. Each `-F` reaches here already expanded
+/// to its `--filter` rule (`options.c:1718-1727`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ArgvFilter<'a> {
-    /// `--filter=RULE` / `-f RULE`: one rule in the full grammar.
+    /// `--filter=RULE`: one rule in the full grammar.
     Rule(&'a str),
     /// `--exclude=PATTERN`, read under `XFLG_OLD_PREFIXES`.
     Exclude(&'a str),
@@ -27,8 +28,6 @@ enum ArgvFilter<'a> {
     ExcludeFrom(&'a str),
     /// `--include-from=FILE`.
     IncludeFrom(&'a str),
-    /// One `-F`.
-    RsyncFilter,
 }
 
 /// Why a client argv filter option ends the session.
@@ -75,46 +74,36 @@ fn fatal_exit_code(err: &io::Error) -> ExitCode {
     }
 }
 
-/// Collects the filter options that precede the `.` operand separator.
+/// The client's options, read the way the server's popt pass reads them.
 ///
-/// Both spellings popt accepts are recognised: `--opt=VALUE` and `--opt VALUE`
-/// (and `-fVALUE` / `-f VALUE`). `-FF` counts as two `-F`.
-fn collect_argv_filters(client_args: &[String]) -> Vec<ArgvFilter<'_>> {
+/// Only the tokens ahead of the `.` operand separator are options. They go
+/// through the same `normalize_server_argv` as a remote-shell server's argv,
+/// so a filter inside a short cluster (`-rf- x`), a split `--exclude x` and a
+/// `-F` all arrive as joined `--opt=VALUE` tokens, those ahead of `--server`
+/// twice (options.c:1517-1524). An argv that pass refuses is read as sent:
+/// refusing it is not this reader's job.
+fn normalized_client_options(client_args: &[String]) -> Vec<String> {
     let end = client_args
         .iter()
         .position(|arg| arg == ".")
         .unwrap_or(client_args.len());
-    let mut options = client_args[..end].iter().map(String::as_str);
-    let mut filters = Vec::new();
-    while let Some(arg) = options.next() {
-        if let Some(make) = separate_value_filter(arg) {
-            if let Some(value) = options.next() {
-                filters.push(make(value));
-            }
-        } else if let Some(filter) = joined_value_filter(arg) {
-            filters.push(filter);
-        } else if arg == "-F" {
-            filters.push(ArgvFilter::RsyncFilter);
-        } else if arg == "-FF" {
-            filters.extend([ArgvFilter::RsyncFilter, ArgvFilter::RsyncFilter]);
-        }
-    }
-    filters
-}
-
-/// The filter an option spelled `--opt VALUE` builds from its next argument.
-fn separate_value_filter<'a>(arg: &str) -> Option<fn(&'a str) -> ArgvFilter<'a>> {
-    match arg {
-        "--filter" | "-f" => Some(ArgvFilter::Rule),
-        "--exclude" => Some(ArgvFilter::Exclude),
-        "--include" => Some(ArgvFilter::Include),
-        "--exclude-from" => Some(ArgvFilter::ExcludeFrom),
-        "--include-from" => Some(ArgvFilter::IncludeFrom),
-        _ => None,
+    let options = &client_args[..end];
+    // The rewrite takes an argv, whose first slot is the program name.
+    let argv: Vec<std::ffi::OsString> = std::iter::once("rsyncd")
+        .chain(options.iter().map(String::as_str))
+        .map(std::ffi::OsString::from)
+        .collect();
+    match core::server::server_argv::normalize_server_argv(&argv) {
+        Ok(normalized) => normalized
+            .into_iter()
+            .skip(1)
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect(),
+        Err(_) => options.to_vec(),
     }
 }
 
-/// The filter an option spelled `--opt=VALUE` or `-fVALUE` builds.
+/// The filter an option spelled `--opt=VALUE` builds.
 fn joined_value_filter(arg: &str) -> Option<ArgvFilter<'_>> {
     if let Some(rule) = arg.strip_prefix("--filter=") {
         Some(ArgvFilter::Rule(rule))
@@ -124,12 +113,9 @@ fn joined_value_filter(arg: &str) -> Option<ArgvFilter<'_>> {
         Some(ArgvFilter::Include(pattern))
     } else if let Some(file) = arg.strip_prefix("--exclude-from=") {
         Some(ArgvFilter::ExcludeFrom(file))
-    } else if let Some(file) = arg.strip_prefix("--include-from=") {
-        Some(ArgvFilter::IncludeFrom(file))
     } else {
-        arg.strip_prefix("-f")
-            .filter(|rule| !rule.is_empty())
-            .map(ArgvFilter::Rule)
+        arg.strip_prefix("--include-from=")
+            .map(ArgvFilter::IncludeFrom)
     }
 }
 
@@ -179,8 +165,6 @@ impl MergeFileSource for ClientArgvMerges<'_> {
 ///
 /// - `options.c:1620-1656` - the `--filter`, `--exclude`, `--include` and
 ///   `-from` arms of `parse_arguments()`.
-/// - `options.c:1718-1727` - the first `-F` adds `: /.rsync-filter`, the
-///   second `- .rsync-filter`.
 fn build_argv_filter_rules(
     client_args: &[String],
     daemon_rules: &[FilterRuleWireFormat],
@@ -191,8 +175,8 @@ fn build_argv_filter_rules(
         daemon_rules,
     };
     let mut rules = Vec::new();
-    let mut rsync_filter_count = 0usize;
-    for filter in collect_argv_filters(client_args) {
+    let options = normalized_client_options(client_args);
+    for filter in options.iter().filter_map(|arg| joined_value_filter(arg)) {
         match filter {
             ArgvFilter::Rule(rule) => {
                 push_token_rules(&mut rules, rule, &merges, 0, RuleXflags::MergeFile)
@@ -212,16 +196,6 @@ fn build_argv_filter_rules(
             ArgvFilter::ExcludeFrom(file) | ArgvFilter::IncludeFrom(file) => {
                 let include = matches!(filter, ArgvFilter::IncludeFrom(_));
                 push_argv_from_file_rules(&mut rules, file, include, &merges)?;
-            }
-            ArgvFilter::RsyncFilter => {
-                rsync_filter_count += 1;
-                let rule = match rsync_filter_count {
-                    1 => ": /.rsync-filter",
-                    2 => "- .rsync-filter",
-                    _ => continue,
-                };
-                push_token_rules(&mut rules, rule, &merges, 0, RuleXflags::MergeFile)
-                    .map_err(ArgvFilterRefusal::Fatal)?;
             }
         }
     }
