@@ -1,4 +1,3 @@
-use super::common::*;
 use super::*;
 
 /// A merge named inside a merge file resolves from the base directory, not the

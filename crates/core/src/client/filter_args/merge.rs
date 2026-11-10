@@ -1,17 +1,18 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
-use core::message::{Message, Role};
-use core::rsync_error;
+use crate::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
+use crate::message::{Message, Role};
+use crate::rsync_error;
 use filters::{CvsSession, RuleSource};
 
+use super::FilterFileSource;
 use super::cvs::cvs_default_exclude_rules;
 use super::directive::{
     FilterDirective, MergeDirective, merge_directive_options, os_string_to_pattern,
 };
 use super::parsing::parse_filter_directive;
-use super::sources::{read_merge_file, read_merge_from_standard_input};
+use super::sources::read_merge_file;
 
 /// The merge-file name to put in diagnostics, which is not the path we open.
 ///
@@ -44,6 +45,7 @@ pub(crate) fn apply_merge_directive(
     visited: &mut Vec<PathBuf>,
     source: RuleSource<'_>,
     cvs: &CvsSession,
+    files: &dyn FilterFileSource,
 ) -> Result<(), Message> {
     let options = directive.options().clone();
     let original_source_text = os_string_to_pattern(directive.source().to_os_string());
@@ -123,9 +125,7 @@ pub(crate) fn apply_merge_directive(
 
     let mut local: Vec<FilterRuleSpec> = Vec::new();
     let result = (|| -> Result<(), Message> {
-        let contents = if is_stdin {
-            read_merge_from_standard_input()?
-        } else {
+        let contents = {
             // upstream: exclude.c:1711,1716 - the include/exclude wording of a
             // failed open follows FILTRULE_INCLUDE, which a `+` modifier on the
             // merge rule (`.+ FILE`, `merge,+ FILE`) sets.
@@ -133,6 +133,7 @@ pub(crate) fn apply_merge_directive(
                 &resolved_path,
                 options.enforced_kind() == Some(DirMergeEnforcedKind::Include),
                 source,
+                files,
             )?
         };
 
@@ -145,6 +146,7 @@ pub(crate) fn apply_merge_directive(
             &mut local,
             visited,
             cvs,
+            files,
         )
     })();
     visited.pop();
@@ -154,6 +156,7 @@ pub(crate) fn apply_merge_directive(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn parse_merge_contents(
     contents: &str,
     options: &DirMergeOptions,
@@ -163,6 +166,7 @@ fn parse_merge_contents(
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
     cvs: &CvsSession,
+    files: &dyn FilterFileSource,
 ) -> Result<(), Message> {
     if options.uses_whitespace() {
         for token in contents.split_whitespace() {
@@ -210,6 +214,7 @@ fn parse_merge_contents(
                 destination,
                 visited,
                 cvs,
+                files,
             )?;
         }
         return Ok(());
@@ -271,6 +276,7 @@ fn parse_merge_contents(
             destination,
             visited,
             cvs,
+            files,
         )?;
     }
 
@@ -288,6 +294,7 @@ pub(crate) fn process_merge_directive(
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
     cvs: &CvsSession,
+    files: &dyn FilterFileSource,
 ) -> Result<(), Message> {
     // `source` says where this line came from, and every diagnostic the parser
     // builds from it now crosses `rule_text`/`rule_detail` (exclude.c:88-131).
@@ -334,7 +341,7 @@ pub(crate) fn process_merge_directive(
             // and text: upstream's open failure (exclude.c:1708-1719) and
             // filter_rule_err() (exclude.c:133-137) exit straight away, with no
             // word from the file that named the nested one.
-            apply_merge_directive(nested, base_dir, destination, visited, source, cvs)?;
+            apply_merge_directive(nested, base_dir, destination, visited, source, cvs, files)?;
         }
         Ok(FilterDirective::Clear) => destination.clear(),
         // A blank line inside a merge file contributes no rule.

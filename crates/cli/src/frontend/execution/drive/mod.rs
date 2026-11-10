@@ -16,7 +16,6 @@ mod workflow;
 use logging_sink::MessageSink;
 use std::io::Write;
 
-pub(crate) use filters::{FilterInputs, build_filter_rules};
 pub(crate) use workflow::execute;
 
 #[cfg(test)]

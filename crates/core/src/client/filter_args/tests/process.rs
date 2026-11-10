@@ -1,4 +1,3 @@
-use super::common::*;
 use super::*;
 
 /// #224: `.e` adds `- rules` once, ahead of the rules the file holds

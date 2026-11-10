@@ -1,4 +1,3 @@
-use super::common::*;
 use super::*;
 
 #[test]
@@ -51,9 +50,6 @@ fn apply_merge_directive_rejects_exclude_if_present_in_whitespace_file() {
 
 #[test]
 fn apply_merge_directive_rejects_per_dir_alias() {
-    use std::collections::HashSet;
-    use tempfile::tempdir;
-
     let temp = test_support::create_tempdir();
     let merge_file = temp.path().join("rules.txt");
     std::fs::write(&merge_file, "per-dir .rsync-filter\n").expect("write merge rules");
@@ -115,9 +111,6 @@ fn merge_directive_options_respect_child_overrides() {
 // upstream: exclude.c parse_merge_name(); util1.c clean_fname()
 #[test]
 fn apply_merge_directive_collapses_dot_dot_before_opening_the_file() {
-    use std::collections::HashSet;
-    use tempfile::tempdir;
-
     let temp = test_support::create_tempdir();
     std::fs::create_dir(temp.path().join("a")).expect("mkdir a");
     std::fs::write(temp.path().join("a/rules.txt"), "- *.log\n").expect("write merge rules");
@@ -149,9 +142,6 @@ fn apply_merge_directive_collapses_dot_dot_before_opening_the_file() {
 // upstream: exclude.c parse_merge_name(); util1.c clean_fname()
 #[test]
 fn apply_merge_directive_still_fails_when_the_collapsed_name_is_absent() {
-    use std::collections::HashSet;
-    use tempfile::tempdir;
-
     let temp = test_support::create_tempdir();
     std::fs::create_dir(temp.path().join("a")).expect("mkdir a");
 
@@ -182,8 +172,6 @@ fn apply_merge_directive_still_fails_when_the_collapsed_name_is_absent() {
 /// `FILE line N`.
 #[test]
 fn an_unparsable_line_in_a_merge_file_is_described_not_echoed() {
-    use tempfile::tempdir;
-
     const SECRET: &str = "TOP-SECRET-PASSWORD-abc123";
 
     let temp = test_support::create_tempdir();
@@ -221,8 +209,6 @@ fn an_unparsable_line_in_a_merge_file_is_described_not_echoed() {
 /// inner path would leak a name the peer chose.
 #[test]
 fn a_merge_file_named_by_another_file_reports_where_it_was_named() {
-    use tempfile::tempdir;
-
     const SECRET: &str = "TOP-SECRET-PASSWORD-abc123";
 
     let temp = test_support::create_tempdir();

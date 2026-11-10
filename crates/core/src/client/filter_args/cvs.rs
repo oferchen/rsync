@@ -1,4 +1,4 @@
-use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
+use crate::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
 use filters::{CvsIgnorePattern, CvsSession, CvsTemplate};
 use protocol::SUPPORTED_PROTOCOL_BOUNDS;
 
@@ -76,7 +76,7 @@ fn cvs_rule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::client::FilterRuleKind;
+    use crate::client::FilterRuleKind;
 
     #[test]
     fn append_cvs_exclude_rules_marks_every_rule_cvs_origin() {

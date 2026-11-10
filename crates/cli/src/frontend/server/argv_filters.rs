@@ -14,8 +14,9 @@ use core::message::{Message, Role};
 use protocol::filters::{FilterRuleWireFormat, RuleType};
 
 use super::flags::{FILTER_OPTIONS, split_at_end_of_options};
-use crate::frontend::execution::{FilterInputs, build_filter_rules, exit_trailer};
-use crate::frontend::filter_rules::FilterOrderToken;
+use crate::frontend::execution::exit_trailer;
+use crate::frontend::filter_rules::{FilterOrderToken, ProcessFilterFiles};
+use core::client::filter_args::{FilterInputs, build_filter_rules};
 
 /// The `RERR_FILEIO` exit a filter file that fails to open ends with.
 ///
@@ -40,7 +41,7 @@ pub(super) fn server_argv_filter_rules(
         return Ok(Vec::new());
     }
     let cvs = filters::CvsSession::default();
-    let specs = build_filter_rules(FilterInputs { order, from0 }, &cvs)?;
+    let specs = build_filter_rules(FilterInputs { order, from0 }, &cvs, &ProcessFilterFiles)?;
     let rules = build_wire_format_rules(&specs, false).map_err(|error| error.message().clone())?;
     Ok(rules.into_iter().map(side_blind).collect())
 }

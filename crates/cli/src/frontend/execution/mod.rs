@@ -28,7 +28,6 @@ pub(crate) use compression::{
 };
 #[cfg(test)]
 pub(crate) use drive::CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE;
-pub(crate) use drive::{FilterInputs, build_filter_rules};
 #[cfg(test)]
 pub(crate) use file_list::read_file_list_from_reader;
 pub(crate) use file_list::{

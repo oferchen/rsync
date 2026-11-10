@@ -1,0 +1,202 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+use filters::RuleSource;
+
+use super::FilterFileSource;
+use super::apple_double::append_apple_double_exclude_rules;
+use super::cvs::{append_cvs_exclude_rules, cvs_default_exclude_rules};
+use super::directive::{FilterDirective, merge_directive_options, os_string_to_pattern};
+use super::merge::apply_merge_directive;
+use super::order::FilterOrderToken;
+use super::parsing::{parse_filter_directive, parse_old_prefix_rule};
+use super::sources::append_filter_rules_from_files;
+use crate::client::{DirMergeOptions, FilterRuleKind, FilterRuleSpec};
+use crate::message::Message;
+
+/// Filter configuration supplied by the command line.
+///
+/// The ordered token stream preserves the argv position of every
+/// filter-producing option so evaluation is first-match-wins over encounter
+/// order, mirroring upstream options.c.
+pub struct FilterInputs {
+    /// The filter options in argv order.
+    pub order: Vec<FilterOrderToken>,
+    /// `--from0`/`-0`: makes `--exclude-from`/`--include-from` files
+    /// NUL-delimited (upstream exclude.c:1774 parse_filter_file() eol_nulls).
+    pub from0: bool,
+}
+
+/// Builds the rules a run's filter options add, in argv order.
+///
+/// The client and an rsh server share this: upstream parses both argvs in the
+/// same `parse_arguments()` (options.c:1620-1656, :1718-1727), relative to the
+/// process's cwd. Rules are appended in command-line order so the filter engine's
+/// first-match-wins evaluation matches upstream rsync, where each
+/// `--include`/`--exclude`/`--filter`/`--include-from`/`--exclude-from`/`-F` is
+/// fed to the rule list at its argv position (exclude.c:parse_filter_str
+/// appends in encounter order). `-C` is the exception: it only sets
+/// `cvs_exclude`, and send_filter_list() appends its rules after all of them
+/// (exclude.c:1951-1954).
+///
+/// # Errors
+///
+/// The first malformed rule or unreadable filter file, as the message upstream
+/// prints before exiting.
+pub fn build_filter_rules(
+    inputs: FilterInputs,
+    cvs: &filters::CvsSession,
+    files: &dyn FilterFileSource,
+) -> Result<Vec<FilterRuleSpec>, Message> {
+    let mut filter_rules = Vec::new();
+    let mut merge_stack = Vec::new();
+    let mut cvs_exclude = false;
+    let merge_base = files.base_dir();
+    let from0 = inputs.from0;
+    let mut delete_excluded_at = None;
+
+    for token in inputs.order {
+        let result = match token {
+            FilterOrderToken::Include(pattern) => {
+                push_old_prefix_rule(&mut filter_rules, pattern, FilterRuleKind::Include)
+            }
+            FilterOrderToken::Exclude(pattern) => {
+                push_old_prefix_rule(&mut filter_rules, pattern, FilterRuleKind::Exclude)
+            }
+            FilterOrderToken::IncludeFrom(file) => append_filter_rules_from_files(
+                &mut filter_rules,
+                std::slice::from_ref(&file),
+                FilterRuleKind::Include,
+                from0,
+                files,
+            ),
+            FilterOrderToken::ExcludeFrom(file) => append_filter_rules_from_files(
+                &mut filter_rules,
+                std::slice::from_ref(&file),
+                FilterRuleKind::Exclude,
+                from0,
+                files,
+            ),
+            FilterOrderToken::Filter(rule) => push_filter_directive(
+                &mut filter_rules,
+                &rule,
+                merge_base.as_path(),
+                &mut merge_stack,
+                cvs,
+                files,
+            ),
+            FilterOrderToken::CvsExclude => {
+                cvs_exclude = true;
+                Ok(())
+            }
+            FilterOrderToken::AppleDoubleSkip => {
+                append_apple_double_exclude_rules(&mut filter_rules)
+            }
+            FilterOrderToken::DeleteExcluded => {
+                delete_excluded_at.get_or_insert(filter_rules.len());
+                Ok(())
+            }
+        };
+        result?;
+    }
+    if cvs_exclude {
+        append_cvs_exclude_rules(&mut filter_rules, cvs);
+    }
+
+    // upstream: exclude.c:1478-1481 parse_rule_tok() - rules parsed before
+    // --delete-excluded get no implicit FILTRULE_SENDER_SIDE.
+    if let Some(at) = delete_excluded_at {
+        filter_rules[..at]
+            .iter_mut()
+            .for_each(FilterRuleSpec::mark_parsed_before_delete_excluded);
+    }
+
+    Ok(filter_rules)
+}
+
+/// Parses one `--filter`/`-f`/`-F` directive and appends its rules.
+fn push_filter_directive(
+    filter_rules: &mut Vec<FilterRuleSpec>,
+    rule: &OsString,
+    merge_base: &std::path::Path,
+    merge_stack: &mut Vec<PathBuf>,
+    cvs: &filters::CvsSession,
+    files: &dyn FilterFileSource,
+) -> Result<(), Message> {
+    // The operator typed this `--filter` value, so its text is theirs to see:
+    // `rule_text` returns an argument-sourced rule unchanged
+    // (exclude.c:111-113 rule_text_len()).
+    match parse_filter_directive(rule.as_os_str(), RuleSource::Argument)? {
+        FilterDirective::Rule(spec) => filter_rules.push(spec),
+        FilterDirective::Merge(directive) => {
+            let effective_options =
+                merge_directive_options(&DirMergeOptions::default(), &directive);
+            let directive = directive.with_options(effective_options);
+            // The operator typed this `--filter='. FILE'` themselves, so the
+            // merge file's name is theirs to see: upstream's non-redacted
+            // open-failure arm (exclude.c:1713-1717, errno included).
+            apply_merge_directive(
+                directive,
+                merge_base,
+                filter_rules,
+                merge_stack,
+                RuleSource::Argument,
+                cvs,
+                files,
+            )?;
+        }
+        FilterDirective::Clear => filter_rules.clear(),
+        FilterDirective::CvsDefaults(template) => {
+            filter_rules.extend(cvs_default_exclude_rules(template, cvs));
+        }
+        // A blank rule contributes nothing (upstream parse_rule_tok returns NULL).
+        FilterDirective::Noop => {}
+    }
+    Ok(())
+}
+
+/// Adds a CLI-supplied `--exclude`/`--include` pattern to `destination`,
+/// honoring upstream's `XFLG_OLD_PREFIXES` compatibility mode.
+///
+/// upstream: options.c:1625-1633 routes `--exclude`/`--include` through
+/// `parse_filter_str(..., XFLG_OLD_PREFIXES)`, so a value of `- pat` (or
+/// `+ pat`) flips the rule kind and `!` clears the list. Plain patterns
+/// retain `default_kind`.
+fn push_old_prefix_rule(
+    destination: &mut Vec<FilterRuleSpec>,
+    pattern: OsString,
+    default_kind: FilterRuleKind,
+) -> Result<(), Message> {
+    let text = os_string_to_pattern(pattern);
+    // Likewise for a `--exclude`/`--include` value given on the command line.
+    match parse_old_prefix_rule(&text, default_kind, RuleSource::Argument)? {
+        FilterDirective::Rule(rule) => destination.push(rule),
+        // upstream: exclude.c:1541-1551 parse_filter_str - a clear pops the
+        // list as it is parsed; no clear rule survives to be sent.
+        FilterDirective::Clear => destination.clear(),
+        // A blank `--exclude`/`--include` value contributes nothing.
+        FilterDirective::Noop => {}
+        FilterDirective::Merge(_) | FilterDirective::CvsDefaults(_) => {
+            unreachable!("parse_old_prefix_rule only emits Rule, Clear, or Noop")
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// upstream: exclude.c:1541-1551 parse_filter_str - `--exclude=!` pops the
+    /// list while parsing, so no clear rule exists afterwards. A surviving one
+    /// would be sent to the peer, and a pre-29 peer cannot carry it at all.
+    #[test]
+    fn old_prefix_clear_empties_the_list_instead_of_adding_a_rule() {
+        let mut rules = Vec::new();
+        for value in ["*.tmp", "!", "keep"] {
+            push_old_prefix_rule(&mut rules, OsString::from(value), FilterRuleKind::Exclude)
+                .expect("rule parses");
+        }
+        assert_eq!(rules, [FilterRuleSpec::exclude("keep")]);
+    }
+}
