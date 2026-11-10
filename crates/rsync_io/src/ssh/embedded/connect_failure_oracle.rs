@@ -168,7 +168,7 @@ fn refused_connection_matches_ssh() {
     assert_eq!(oc_stderr(&config(port, &known_hosts)), expected);
 }
 
-/// openssh/kex.c:1299-1301 and openssh/packet.c `SSH_ERR_CONN_TIMEOUT`.
+/// openssh/kex.c:1302-1303 and openssh/packet.c:2005-2008.
 #[test]
 fn silent_server_banner_timeout_matches_ssh() {
     let Some(ssh) = oracle_or_skip("silent_server_banner_timeout_matches_ssh") else {
@@ -186,7 +186,7 @@ fn silent_server_banner_timeout_matches_ssh() {
     assert_eq!(oc_stderr(&config), expected);
 }
 
-/// openssh/packet.c `SSH_ERR_CONN_CLOSED`: the server reads the client's
+/// openssh/packet.c:2002-2004: the server reads the client's
 /// banner, then closes cleanly.
 #[test]
 fn server_closing_after_the_banner_matches_ssh() {
@@ -230,7 +230,7 @@ fn unknown_host_key_under_strict_checking_matches_ssh() {
     assert_eq!(oc_stderr(&config(port, &known_hosts)), expected);
 }
 
-/// openssh/sshconnect.c:1309-1331 `HOST_CHANGED` and :1667-1687
+/// openssh/sshconnect.c:1280-1333 `HOST_CHANGED` and :1669-1688
 /// `warn_changed_key()`.
 #[test]
 fn changed_host_key_matches_ssh() {

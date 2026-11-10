@@ -30,8 +30,8 @@ pub enum SshError {
     /// The server accepted the TCP connection but sent no identification
     /// string within `ConnectTimeout`.
     ///
-    /// upstream: openssh/kex.c:1299-1301 `kex_exchange_identification()`,
-    /// then openssh/packet.c:2006-2009 `sshpkt_vfatal()` for
+    /// upstream: openssh/kex.c:1302-1303 `kex_exchange_identification()`,
+    /// then openssh/packet.c:2005-2008 `sshpkt_vfatal()` for
     /// `SSH_ERR_CONN_TIMEOUT`.
     #[error("{}", lines(&banner_timeout_messages(.remote)))]
     BannerTimeout {
@@ -64,8 +64,8 @@ pub enum SshError {
 
     /// The server's host key differs from the key `known_hosts` records.
     ///
-    /// upstream: openssh/sshconnect.c:1309-1331 `check_host_key()`
-    /// `HOST_CHANGED`, openssh/sshconnect.c:1667-1687 `warn_changed_key()`,
+    /// upstream: openssh/sshconnect.c:1280-1333 `check_host_key()`
+    /// `HOST_CHANGED`, openssh/sshconnect.c:1669-1688 `warn_changed_key()`,
     /// then openssh/sshconnect2.c:102-103 `verify_host_key_callback()`.
     #[error("{}", lines(&changed_host_key_messages(.host, .changed)))]
     HostKeyMismatch {
@@ -356,7 +356,7 @@ fn revoked_host_key_messages(key_type: &str, fingerprint: &str, file: &str) -> V
 
 /// One message per upstream `error()`/`fatal()` call. The fingerprint
 /// message carries an embedded newline, as `warn_changed_key()`'s format
-/// does (openssh/sshconnect.c:1683-1684).
+/// does (openssh/sshconnect.c:1684).
 fn changed_host_key_messages(host: &str, changed: &ChangedHostKey) -> Vec<String> {
     let banner = "@".repeat(59);
     let mut messages = vec![
@@ -523,7 +523,7 @@ mod tests {
     }
 
     /// With no `known_hosts` file configured upstream omits the
-    /// `Add correct host key` line (openssh/sshconnect.c:1315).
+    /// `Add correct host key` line (openssh/sshconnect.c:1316).
     #[test]
     fn changed_host_key_without_a_file_omits_the_add_line() {
         let changed = SshError::HostKeyMismatch {

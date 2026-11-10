@@ -703,7 +703,7 @@ fn build_host_key_options(cfg: &SshConfig, resolved_ip: Option<String>) -> HostK
 const PROXY_REMOTE_ID: &str = "UNKNOWN port 65535";
 
 /// `ETIMEDOUT`, the errno upstream's `timeout_connect()` reports when the
-/// `ConnectTimeout` deadline passes (openssh/misc.c `waitfd()`).
+/// `ConnectTimeout` deadline passes (openssh/misc.c:378 `waitfd()`).
 const ETIMEDOUT: Option<i32> = if cfg!(any(target_os = "linux", target_os = "android")) {
     Some(110)
 } else if cfg!(any(
@@ -766,7 +766,7 @@ async fn dial(
 /// Runs the SSH handshake under the rest of the `ConnectTimeout` budget,
 /// reporting a stalled or closed peer the way upstream's packet layer does.
 ///
-/// Upstream bounds only the banner wait (openssh/kex.c:1295-1301); the
+/// Upstream bounds only the banner wait (openssh/kex.c:1296-1306); the
 /// deadline here also covers key exchange, so any expiry reads as the
 /// banner timeout.
 async fn handshake(

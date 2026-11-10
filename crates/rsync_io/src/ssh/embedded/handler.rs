@@ -837,7 +837,7 @@ mod tests {
 
         // The refusal carries what upstream's warning names: the key sent,
         // the file to fix, and the offending entry's file and line
-        // (openssh/sshconnect.c:1315-1323).
+        // (openssh/sshconnect.c:1316-1323).
         let kh = kh_path.display().to_string();
         match handler.verify_host_key(&different_key) {
             Err(SshError::HostKeyMismatch { host, changed }) => {
