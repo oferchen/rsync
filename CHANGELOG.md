@@ -254,6 +254,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
 
 ### Fixed
+- A server picks the checksum and compression names it ranks best among those both sides offer, as rsync 3.5.1 does, instead of the client's first acceptable one; only the `v` capability letter turns on that negotiation, and the pre-release `V` sets only the varint flags encoding (#8328)
 - A local `-vv` copy, with or without `--progress`, now prints its `is uptodate` and skip notices interleaved with the transferred names as rsync 3.5.1 does: each notice as the generator checks the entry, and the names a list holds back when the generator reaches a list the sender has not sent yet (#8324).
 - A receiver that cannot create its temp file, open an `--inplace` destination, or rename (or, across devices, copy) a file into place now skips that file with upstream's `FERROR_XFER` line and exits 23 for every errno, not only `EACCES`; an `--inplace` failure reads `open "%s" failed` instead of `mkstemp` (#8284)
 - An `--inplace` destination the receiver creates is owner-only (0600) until its final mode is applied, as upstream's `O_CREAT, 0600` open makes it (#8284)

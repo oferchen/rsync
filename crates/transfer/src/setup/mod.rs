@@ -165,13 +165,8 @@ pub fn setup_protocol_with<'a>(
 
             // Determine whether capability negotiation should happen.
             // upstream compat.c:740-742 - do_negotiated_strings requires CF_VARINT_FLIST_FLAGS.
-            let do_negotiation = should_negotiate(
-                config.is_server,
-                &client_info,
-                our_flags,
-                compat_flags,
-                negotiator,
-            );
+            let do_negotiation =
+                should_negotiate(config.is_server, &client_info, our_flags, compat_flags);
 
             // upstream: compat.c:819 parse_compress_choice(1) - when an
             // explicit compress_choice is set (--compress-choice=ALGO,
@@ -403,25 +398,27 @@ fn build_default_flags(allow_inc_recurse: bool) -> CompatibilityFlags {
 
 /// Determines whether capability negotiation (vstring exchange) should occur.
 ///
-/// Server side: checks if the client has `'v'` or pre-release `'V'` capability.
+/// Server side: checks if the client's capability string has `'v'`. The
+/// pre-release `'V'` turns on `CF_VARINT_FLIST_FLAGS` but not negotiation.
 /// Client side: checks if the server's compat flags include
 /// `CF_VARINT_FLIST_FLAGS`.
 ///
 /// # Upstream reference
 ///
-/// `compat.c:740-742` - `do_negotiated_strings` is set when the peer's flags
-/// contain `CF_VARINT_FLIST_FLAGS`.
+/// - `compat.c:741-743` - the server sets `do_negotiated_strings` for `'v'` only
+/// - `compat.c:745-749` - `'V'` sets `CF_VARINT_FLIST_FLAGS` and nothing more
+/// - `compat.c:751-753` - the client negotiates when the server's flags carry
+///   `CF_VARINT_FLIST_FLAGS`
 fn should_negotiate(
     is_server: bool,
     client_info: &Option<std::borrow::Cow<'_, str>>,
     our_flags: CompatibilityFlags,
     peer_flags: CompatibilityFlags,
-    negotiator: &dyn ProtocolNegotiator,
 ) -> bool {
     if is_server {
         client_info.as_deref().map_or(
             our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
-            |info| info.contains('v') || negotiator.has_pre_release_v_flag(info),
+            |info| info.contains('v'),
         )
     } else {
         // Client checks SERVER's compat flags

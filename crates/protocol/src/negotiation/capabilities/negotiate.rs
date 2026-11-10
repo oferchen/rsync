@@ -581,18 +581,16 @@ fn resolved_compress_level(compression: CompressionAlgorithm, raw_level: i32) ->
 /// - A recognised token must also be in `local` (upstream's `nno->saw`, which
 ///   the env override reorders/restricts); the token with the lowest `local`
 ///   ordinal wins, matching upstream's `best` tracking.
-/// - The client keeps scanning for its best own-preference match and stops
-///   early only on a perfect one (compat.c:354 `if (best == 1) break;`).
-/// - Deviation from upstream 3.5.1: the server also stops at the first
-///   acceptable client choice. That is the 3.4.x rule
-///   (`if (best == 1 || am_server) break;`); since 3.5.0 the server scans for
-///   its own best preference like the client.
+/// - Both sides keep scanning for their best own-preference match and stop
+///   early only on a perfect one (compat.c:354 `if (best == 1) break;`). The
+///   server does not settle for the client's first acceptable name: 3.4.x's
+///   `|| am_server` arm is gone in 3.5.x, so each side picks the strongest
+///   mutual choice by its own list.
 ///
 /// Returns `None` when nothing matched, which callers turn into upstream's
 /// hard `RERR_UNSUPPORTED` failure (compat.c:369-406 `recv_negotiate_str`).
 fn select_from_peer_list<'a>(
     remote_list: &str,
-    is_server: bool,
     local: &[&'a str],
     resolve: impl Fn(&str) -> Option<&'static str>,
 ) -> Option<&'a str> {
@@ -607,10 +605,8 @@ fn select_from_peer_list<'a>(
         };
         if best.is_none_or(|current| pos < current) {
             best = Some(pos);
-            // upstream 3.4.x compat.c:353 - the server stops at the first
-            // acceptable client choice; the client stops only on its own
-            // top preference (3.5.1 compat.c:354 drops the server arm).
-            if pos == 0 || is_server {
+            // upstream: compat.c:354 - nothing beats our own first choice.
+            if pos == 0 {
                 break;
             }
         }
@@ -652,7 +648,7 @@ pub(super) fn choose_checksum_algorithm_in(
     is_server: bool,
     local: &[&str],
 ) -> io::Result<ChecksumAlgorithm> {
-    match select_from_peer_list(remote_list, is_server, local, resolve_checksum_name) {
+    match select_from_peer_list(remote_list, local, resolve_checksum_name) {
         Some(name) => ChecksumAlgorithm::parse(name)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         // upstream: compat.c:381-406 recv_negotiate_str - "Failed to negotiate
@@ -701,7 +697,7 @@ pub(super) fn choose_compression_algorithm_in(
     is_server: bool,
     local: &[&str],
 ) -> io::Result<CompressionAlgorithm> {
-    match select_from_peer_list(remote_list, is_server, local, resolve_compression_name) {
+    match select_from_peer_list(remote_list, local, resolve_compression_name) {
         Some(name) => CompressionAlgorithm::parse(name)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         // upstream: compat.c:381-406 recv_negotiate_str - a compression list
