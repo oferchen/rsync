@@ -174,6 +174,7 @@ pub use self::config::{
     ServerConfigBuilder,
 };
 pub use self::delta_config::DeltaGeneratorConfig;
+pub use self::error_exit::{ExitWaitFailure, split_exit_wait};
 pub use self::flags::{InfoFlags, NumericIds, ParseFlagError, ParsedServerFlags};
 pub use self::fork_point::ForkPoint;
 pub use self::generator::{GeneratorContext, GeneratorStats, io_error_flags};
@@ -1468,17 +1469,20 @@ fn run_server_on_core(
                 // upstream: io.c:1079-1081 - with no `--timeout` the wait is
                 // bounded at 60 seconds.
                 iobuf::Core::arm_timeout_if_unset(&core, DEATH_WAIT_SECS);
-                if let Some(line) = error_exit::drain_until_peer_exits(
+                if let Some(failure) = error_exit::drain_until_peer_exits(
                     &mut chained_reader,
                     &mut writer,
                     exit_reader,
                     negotiated_protocol,
                 ) {
                     // upstream: log.c:310-327 - a daemon logit()s the line; a
-                    // client's FERROR goes to stderr (log.c:357-366).
+                    // client's FERROR goes to stderr (log.c:357-366), after
+                    // the trailer its caller prints (cleanup.c:221-253).
                     match &death_log {
-                        Some(log) => log.write(line.as_bytes()),
-                        None if client_mode => eprintln!("{line}"),
+                        Some(log) => log.write(failure.log_line().as_bytes()),
+                        None if client_mode => {
+                            return Err(error_exit::after_exit_wait(error, failure));
+                        }
                         None => {}
                     }
                 }

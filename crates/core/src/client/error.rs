@@ -49,6 +49,7 @@ pub struct ClientError {
     completed: Option<Box<ClientSummary>>,
     preceding: Option<Box<ClientError>>,
     peer_error_exit: bool,
+    after_trailer: Option<Box<LeadLine>>,
 }
 
 /// The line upstream prints before log_exit()'s trailer, if a failure has one.
@@ -69,6 +70,39 @@ impl ClientError {
             completed: None,
             preceding: None,
             peer_error_exit: false,
+            after_trailer: None,
+        }
+    }
+
+    /// Attaches the line the wait for the peer's exit printed when it failed,
+    /// which upstream writes after this failure's trailer: _exit_cleanup()
+    /// calls log_exit() before noop_io_until_death() (cleanup.c:221-253).
+    #[must_use]
+    pub(crate) fn followed_by_exit_wait(mut self, failure: crate::server::ExitWaitFailure) -> Self {
+        let line = match failure {
+            crate::server::ExitWaitFailure::ReadError(text) => LeadLine::Program(text),
+            crate::server::ExitWaitFailure::Timeout(text) => LeadLine::Cause(text),
+        };
+        self.after_trailer = Some(Box::new(line));
+        self
+    }
+
+    /// Returns the `RSYNC_NAME ": <text>"` line printed after the exit
+    /// trailer, if the wait for the peer's exit failed with one. The caller
+    /// prefixes the program name, as for [`Self::program_line`].
+    pub fn trailing_program_line(&self) -> Option<&str> {
+        match self.after_trailer.as_deref() {
+            Some(LeadLine::Program(line)) => Some(line),
+            _ => None,
+        }
+    }
+
+    /// Returns the unprefixed line printed after the exit trailer, if the wait
+    /// for the peer's exit failed with one.
+    pub fn trailing_cause_line(&self) -> Option<&str> {
+        match self.after_trailer.as_deref() {
+            Some(LeadLine::Cause(line)) => Some(line),
+            _ => None,
         }
     }
 
