@@ -12,13 +12,15 @@
 //! `OC_RSYNC_DAEMON_ADDRESS_FAMILY` configurations and verify a TCP client
 //! on the expected family receives the `@RSYNCD:` greeting.
 //!
+//! Each daemon binds an ephemeral port through the bound-port test seam and
+//! reports it before it accepts, so the test connects once, to a port the
+//! daemon already listens on.
+//!
 //! upstream: socket.c:560-658 (`open_socket_in`) iterates every
 //! getaddrinfo result and only fails when zero sockets bound.
 
 use std::io::{BufRead, BufReader};
 use std::net::{Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
-use std::thread;
-use std::time::Duration;
 
 #[cfg(not(unix))]
 use daemon::DaemonConfigBuilder;
@@ -30,66 +32,35 @@ use daemon::{DaemonConfig, DaemonError, run_daemon};
 mod daemon_process;
 use daemon_process::DaemonHandle;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const READ_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Reserves an ephemeral IPv4 port by binding then dropping a probe
-/// listener. `SO_REUSEADDR` on the daemon's listener (set by `socket2`)
-/// closes the rebind window quickly enough for these tests.
-fn reserve_port_ipv4() -> u16 {
-    let probe = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("probe bind ipv4");
-    let port = probe.local_addr().expect("local addr").port();
-    drop(probe);
-    port
-}
-
-fn spawn_daemon_with_args(args: Vec<String>) -> DaemonHandle {
+/// Starts a daemon with `args` and returns it with the port it listens on.
+///
+/// The daemon reports the port once every family it could bind is listening,
+/// so a client connects without retrying. A daemon that closes the pipe
+/// without a port fails the test with how it ended.
+fn spawn_daemon(args: &[&str]) -> (DaemonHandle, u16) {
+    let (reader, writer) = std::io::pipe().expect("bound-port pipe");
     let config = DaemonConfig::builder()
         .disable_default_paths()
-        .arguments(args)
+        .arguments(args.iter().copied())
+        .report_bound_port(writer)
         .build();
-    DaemonHandle::spawn(config)
-}
-
-fn connect_ipv4(port: u16) -> Option<TcpStream> {
-    let addr = std::net::SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    // Daemon startup is asynchronous; retry briefly so the test does not
-    // race the accept-loop bind.
-    let deadline = std::time::Instant::now() + CONNECT_TIMEOUT;
-    loop {
-        match TcpStream::connect_timeout(&addr, Duration::from_millis(200)) {
-            Ok(stream) => return Some(stream),
-            Err(_) if std::time::Instant::now() < deadline => {
-                thread::sleep(Duration::from_millis(20));
-                continue;
-            }
-            Err(_) => return None,
-        }
-    }
-}
-
-fn connect_ipv6(port: u16) -> Option<TcpStream> {
-    let addr = std::net::SocketAddr::from((Ipv6Addr::LOCALHOST, port));
-    let deadline = std::time::Instant::now() + CONNECT_TIMEOUT;
-    loop {
-        match TcpStream::connect_timeout(&addr, Duration::from_millis(200)) {
-            Ok(stream) => return Some(stream),
-            Err(_) if std::time::Instant::now() < deadline => {
-                thread::sleep(Duration::from_millis(20));
-                continue;
-            }
-            Err(_) => return None,
+    let handle = DaemonHandle::spawn(config);
+    let mut line = String::new();
+    BufReader::new(reader)
+        .read_line(&mut line)
+        .expect("read the bound port");
+    match line.trim().parse() {
+        Ok(port) => (handle, port),
+        Err(_) => {
+            // No port means no listener; stop a daemon still running so the
+            // join reports how it ended instead of waiting on it.
+            handle.terminate();
+            panic!("daemon reported no port {line:?}: {:?}", handle.join())
         }
     }
 }
 
 fn expect_greeting(stream: TcpStream) {
-    stream
-        .set_read_timeout(Some(READ_TIMEOUT))
-        .expect("set_read_timeout");
-    stream
-        .set_write_timeout(Some(READ_TIMEOUT))
-        .expect("set_write_timeout");
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader
@@ -147,14 +118,10 @@ impl Drop for EnvGuard {
 /// previously masked the IPv4 listener startup.
 #[test]
 fn default_daemon_serves_ipv4_client_via_dual_stack() {
-    let port = reserve_port_ipv4();
-    let handle = spawn_daemon_with_args(vec![
-        "--no-detach".to_string(),
-        "--port".to_string(),
-        port.to_string(),
-    ]);
+    let (handle, port) = spawn_daemon(&["--no-detach"]);
 
-    let stream = connect_ipv4(port).expect("IPv4 client must connect to default daemon");
+    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+        .expect("IPv4 client must connect to default daemon");
     expect_greeting(stream);
     shutdown_daemon(handle);
 }
@@ -164,14 +131,10 @@ fn default_daemon_serves_ipv4_client_via_dual_stack() {
 #[test]
 fn env_override_ipv4_serves_ipv4_client() {
     let _env = EnvGuard::set("OC_RSYNC_DAEMON_ADDRESS_FAMILY", "ipv4");
-    let port = reserve_port_ipv4();
-    let handle = spawn_daemon_with_args(vec![
-        "--no-detach".to_string(),
-        "--port".to_string(),
-        port.to_string(),
-    ]);
+    let (handle, port) = spawn_daemon(&["--no-detach"]);
 
-    let stream = connect_ipv4(port).expect("IPv4 client must connect with env=ipv4");
+    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+        .expect("IPv4 client must connect with env=ipv4");
     expect_greeting(stream);
     shutdown_daemon(handle);
 }
@@ -183,14 +146,10 @@ fn env_override_ipv4_serves_ipv4_client() {
 #[test]
 fn env_override_both_serves_ipv4_client() {
     let _env = EnvGuard::set("OC_RSYNC_DAEMON_ADDRESS_FAMILY", "both");
-    let port = reserve_port_ipv4();
-    let handle = spawn_daemon_with_args(vec![
-        "--no-detach".to_string(),
-        "--port".to_string(),
-        port.to_string(),
-    ]);
+    let (handle, port) = spawn_daemon(&["--no-detach"]);
 
-    let stream = connect_ipv4(port).expect("IPv4 client must connect under dual-stack");
+    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+        .expect("IPv4 client must connect under dual-stack");
     expect_greeting(stream);
     shutdown_daemon(handle);
 }
@@ -201,17 +160,10 @@ fn env_override_both_serves_ipv4_client() {
 /// to keep this test stable across environments.
 #[test]
 fn both_family_flags_enable_dual_stack_listener() {
-    let port = reserve_port_ipv4();
-    let handle = spawn_daemon_with_args(vec![
-        "--no-detach".to_string(),
-        "--port".to_string(),
-        port.to_string(),
-        "--ipv4".to_string(),
-        "--ipv6".to_string(),
-    ]);
+    let (handle, port) = spawn_daemon(&["--no-detach", "--ipv4", "--ipv6"]);
 
-    let stream =
-        connect_ipv4(port).expect("IPv4 client must connect when both family flags are set");
+    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+        .expect("IPv4 client must connect when both family flags are set");
     expect_greeting(stream);
     shutdown_daemon(handle);
 }
@@ -219,29 +171,17 @@ fn both_family_flags_enable_dual_stack_listener() {
 /// `--ipv6` forces IPv6-only binding. On environments where IPv6
 /// loopback is functional, the daemon serves an IPv6 client. We probe
 /// for IPv6 loopback support first and skip when the runner lacks it
-/// (some CI runners disable `::1`); this keeps the test deterministic
-/// across the macOS / Linux / Windows matrix.
+/// (some CI runners disable `::1`).
 #[test]
 fn ipv6_flag_forces_ipv6_only() {
-    let probe = TcpListener::bind((Ipv6Addr::LOCALHOST, 0));
-    let Ok(probe) = probe else {
+    if TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).is_err() {
         eprintln!("skipping ipv6_flag_forces_ipv6_only: no IPv6 loopback on this runner");
         return;
-    };
-    let port = probe.local_addr().expect("local addr").port();
-    drop(probe);
-
-    let handle = spawn_daemon_with_args(vec![
-        "--no-detach".to_string(),
-        "--port".to_string(),
-        port.to_string(),
-        "--ipv6".to_string(),
-    ]);
-
-    if let Some(stream) = connect_ipv6(port) {
-        expect_greeting(stream);
-    } else {
-        eprintln!("ipv6_flag_forces_ipv6_only: IPv6 connect skipped (no loopback connectivity)");
     }
+    let (handle, port) = spawn_daemon(&["--no-detach", "--ipv6"]);
+
+    let stream = TcpStream::connect((Ipv6Addr::LOCALHOST, port))
+        .expect("IPv6 client must connect to an --ipv6 daemon");
+    expect_greeting(stream);
     shutdown_daemon(handle);
 }

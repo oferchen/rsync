@@ -11,6 +11,7 @@ fn serve_connections(
     external_signal_flags: Option<platform::signal::SignalFlags>,
     pre_bound_listener: Option<TcpListener>,
     pre_bound_quic_sockets: Vec<std::net::UdpSocket>,
+    bound_port_report: Option<std::io::PipeWriter>,
 ) -> Result<(), DaemonError> {
     // Use externally injected signal flags (from the Windows Service dispatcher)
     // when available, otherwise register platform signal handlers so SIGPIPE is
@@ -233,9 +234,12 @@ fn serve_connections(
         // family is unavailable (e.g., GitHub Actions runners with IPv6
         // partially configured but unroutable) succeeds as long as the
         // other family binds.
+        // The bound-port test seam binds ephemerally; `--port 0` itself
+        // still means 873 (RuntimeOptions, clientserver.c:1784-1785).
+        let bind_port = if bound_port_report.is_some() { 0 } else { port };
         match bind_listeners_per_family(
             &bind_addresses,
-            port,
+            bind_port,
             backlog,
             tcp_fastopen_mode,
             &socket_options,
@@ -246,10 +250,15 @@ fn serve_connections(
                 bound_addresses = bound_local_addrs;
             }
             Err(error) => {
-                let requested_addr = SocketAddr::new(bind_addresses[0], port);
+                let requested_addr = SocketAddr::new(bind_addresses[0], bind_port);
                 return Err(bind_error(requested_addr, error));
             }
         }
+    }
+
+    if let Some(mut writer) = bound_port_report {
+        // A test that is gone has no use for the port; serving goes on.
+        let _ = writeln!(writer, "{}", bound_addresses[0].port());
     }
 
     // QUIC/UDP listener (oc extension): bind the UDP sockets alongside the TCP

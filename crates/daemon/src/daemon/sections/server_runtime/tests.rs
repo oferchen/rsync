@@ -1320,6 +1320,46 @@ fn bind_listeners_per_family_falls_back_from_ipv6_to_ipv4() {
 }
 
 #[test]
+fn bind_listeners_per_family_shares_an_ephemeral_port_across_families() {
+    // Port 0 lets the kernel pick the first family's port; every later family
+    // must bind that same port, so a dual-stack daemon answers on the one port
+    // it reports. Binding each family to its own ephemeral port would leave
+    // the IPv4 listener somewhere no client is told to look.
+    let v6 = IpAddr::V6(std::net::Ipv6Addr::LOCALHOST);
+    let v4 = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    if std::net::TcpListener::bind((v6, 0)).is_err() {
+        eprintln!("skipping: no IPv6 loopback, so there is no second family to share with");
+        return;
+    }
+
+    let (listeners, bound_addresses) = bind_listeners_per_family(
+        &[v6, v4],
+        0,
+        DEFAULT_LISTEN_BACKLOG,
+        TcpFastOpenMode::Off,
+        "",
+        None,
+    )
+    .expect("both loopback families bind");
+
+    assert_eq!(
+        listeners.len(),
+        2,
+        "both families must bind: {bound_addresses:?}"
+    );
+    assert_ne!(
+        bound_addresses[0].port(),
+        0,
+        "the kernel must choose a port"
+    );
+    assert_eq!(
+        bound_addresses[0].port(),
+        bound_addresses[1].port(),
+        "the IPv4 listener must reuse the IPv6 listener's port: {bound_addresses:?}"
+    );
+}
+
+#[test]
 fn bind_listeners_per_family_single_family_propagates_error() {
     // When only one address is provided (no dual-stack), the helper must
     // propagate the bind failure immediately - there is no other family to
