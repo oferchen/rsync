@@ -4,7 +4,6 @@ fn connection_limiter_propagates_io_errors() {
     let lock_path = temp.path().join("daemon.lock");
     let limiter = Arc::new(ConnectionLimiter::open(lock_path.clone()));
 
-    fs::remove_file(&lock_path).expect("remove original lock file");
     fs::create_dir(&lock_path).expect("replace lock file with directory");
 
     match limiter.acquire(
