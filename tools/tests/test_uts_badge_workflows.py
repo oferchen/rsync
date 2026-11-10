@@ -1,12 +1,17 @@
 """The upstream testsuite legs have one workflow, and one README badge.
 
-`upstream-testsuite-3.5.1.yml` is the required gate: its caller jobs publish
-contexts such as `upstream-testsuite / upstream testsuite`, which the branch
-ruleset lists by NAME. GitHub matches a required context by name alone and a
-context carries no workflow name, so the tests compose check names the way
-GitHub does (`<caller job name> / <reusable job name>`) and assert that the gate
-publishes every required testsuite context, that no other workflow calls the
-testsuite at all, and that the gate runs wherever a required check must arrive.
+The testsuite legs publish contexts such as `upstream-testsuite / upstream
+testsuite`, which the branch ruleset lists by NAME. GitHub matches a required
+context by name alone and a context carries no workflow name, so the tests
+compose check names the way GitHub does (`<caller job name> / <reusable job
+name>`).
+
+Pull requests run the legs inside ci.yml, so each pull request is ONE run and
+the pull request queue gives that run the whole runner pool.
+`upstream-testsuite-3.5.1.yml` keeps the same legs for the nightly badge and
+`bootstrap` dispatches. The tests assert that ci.yml publishes every required
+testsuite context, that the two files call the legs identically, and that no
+other workflow publishes them on a pull request.
 """
 
 from __future__ import annotations
@@ -42,6 +47,11 @@ REQUIRED_CONTEXTS = {
     "upstream-testsuite-tcp / upstream testsuite (root)",
 }
 MATRIX_REF = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}")
+# The gate's `${{ !inputs.bootstrap && '<manifest>' || '' }}`; ci.yml passes the
+# manifest itself.
+BOOTSTRAP_BRANCH = re.compile(r"\$\{\{ !inputs\.bootstrap && '([^']+)' \|\| '' \}\}")
+# Non-blocking Windows legs that run on pull requests only through ci.yml.
+BAKE_LEGS = ("windows-nightly-long-path.yml", "windows-nightly-case-insensitive.yml")
 
 
 def _load(path: Path) -> dict:
@@ -65,6 +75,11 @@ def _expand(template: str, row: dict) -> str:
     return MATRIX_REF.sub(lambda m: str(row[m.group(1)]), template)
 
 
+def _testsuite_callers(path: Path) -> dict[str, dict]:
+    return {job_id: job for job_id, job in (_load(path).get("jobs") or {}).items()
+            if job.get("uses", "").rsplit("/", 1)[-1] in TESTSUITE_REUSABLES}
+
+
 def _reusable_job_names(uses: str) -> list[str]:
     called = _load(REPO / uses.removeprefix("./"))
     return [job.get("name", job_id) for job_id, job in called["jobs"].items()]
@@ -86,39 +101,61 @@ def _published_contexts(path: Path, only_reusable: bool = False) -> set[str]:
 class UtsBadgeWorkflowTests(unittest.TestCase):
     REQUIRED_TESTSUITE = {c for c in REQUIRED_CONTEXTS if c.startswith("upstream-testsuite")}
 
-    def test_the_gate_publishes_every_required_testsuite_context(self) -> None:
-        # The gate moved workflow, not name: the ruleset lists these contexts
-        # verbatim, so a renamed caller job would leave them permanently pending.
-        published = _published_contexts(GATE, only_reusable=True)
+    def test_ci_publishes_every_required_testsuite_context(self) -> None:
+        # The ruleset lists these contexts verbatim, so a renamed caller job
+        # would leave them permanently pending.
+        published = _published_contexts(CI_YML, only_reusable=True)
         self.assertEqual(self.REQUIRED_TESTSUITE - published, set())
 
-    def test_only_the_gate_runs_the_testsuite(self) -> None:
-        # One caller per upstream release keeps one publisher per context and
-        # one badge per suite. The 3.5.0 corpus was retired rather than kept
-        # alongside: its test names are a subset of 3.5.1's apart from two
-        # cells asserting 3.5.0 behaviour that 3.5.1 changed.
-        callers = set()
-        for path in WORKFLOWS_DIR.glob("*.yml"):
-            if path.name.startswith("_"):
-                continue
-            for job in (_load(path).get("jobs") or {}).values():
-                if job.get("uses", "").rsplit("/", 1)[-1] in TESTSUITE_REUSABLES:
-                    callers.add(path.name)
-        self.assertEqual(callers, {GATE.name})
+    def test_ci_and_the_gate_call_the_testsuite_identically(self) -> None:
+        # The nightly badge must measure what pull requests are gated on. ci.yml
+        # has no `bootstrap` input, so its manifest paths are the gate's
+        # non-bootstrap branch, and pull requests only.
+        ci, gate = _testsuite_callers(CI_YML), _testsuite_callers(GATE)
+        self.assertEqual(set(ci), set(gate))
+        for job_id, job in gate.items():
+            self.assertEqual(ci[job_id]["uses"], job["uses"], job_id)
+            expected = {key: BOOTSTRAP_BRANCH.sub(r"\1", str(value))
+                        for key, value in job["with"].items()}
+            self.assertEqual({k: str(v) for k, v in ci[job_id]["with"].items()},
+                             expected, job_id)
+            self.assertIn("github.event_name == 'pull_request'", ci[job_id]["if"], job_id)
 
-    def test_ci_publishes_no_required_testsuite_context(self) -> None:
-        contexts = _published_contexts(CI_YML)
-        self.assertTrue(contexts, "ci.yml expanded to no contexts")
-        self.assertEqual(contexts & self.REQUIRED_TESTSUITE, set())
+    def test_only_ci_and_the_gate_run_the_testsuite(self) -> None:
+        # The 3.5.0 corpus was retired rather than kept alongside: its test
+        # names are a subset of 3.5.1's apart from two cells asserting 3.5.0
+        # behaviour that 3.5.1 changed.
+        callers = {path.name for path in WORKFLOWS_DIR.glob("*.yml")
+                   if not path.name.startswith("_") and _testsuite_callers(path)}
+        self.assertEqual(callers, {CI_YML.name, GATE.name})
 
     def test_triggers(self) -> None:
-        # The gate must run on every pull request, unfiltered, or a required
-        # check never arrives. It has no push trigger - the pull request already
-        # ran it - so the nightly schedule is what feeds its badge.
-        gate = _triggers(_load(GATE))
-        self.assertEqual(set(gate), {"pull_request", "schedule", "workflow_dispatch"})
-        self.assertIsNone(gate["pull_request"])
+        # ci.yml runs on every pull request, unfiltered, or a required check
+        # never arrives. The gate no longer triggers on pull requests: a second
+        # publisher of the same context would let the ruleset resolve it from
+        # either run.
+        ci, gate = _triggers(_load(CI_YML)), _triggers(_load(GATE))
+        self.assertIsNone(ci["pull_request"])
+        self.assertEqual(set(gate), {"schedule", "workflow_dispatch"})
         self.assertTrue(gate["schedule"], "the gate has no nightly cron")
+
+    def test_every_pull_request_check_runs_in_one_queued_run(self) -> None:
+        # One run per pull request, queued first-in-first-out, so the runner
+        # pool serves one pull request at a time. A queued run is never
+        # cancelled, so every master push keeps its own group.
+        ci = _load(CI_YML)["concurrency"]
+        self.assertEqual(ci["queue"], "max")
+        self.assertNotIn("cancel-in-progress", ci)
+        self.assertIn("pr-queue", ci["group"])
+        self.assertIn("github.sha", ci["group"])
+        called = {job["uses"].removeprefix("./.github/workflows/")
+                  for job in _load(CI_YML)["jobs"].values() if "uses" in job}
+        for name in BAKE_LEGS:
+            triggers = _triggers(_load(WORKFLOWS_DIR / name))
+            self.assertIn(name, called)
+            self.assertIn("workflow_call", triggers, name)
+            self.assertNotIn("pull_request", triggers, name)
+            self.assertNotIn("queue", _load(WORKFLOWS_DIR / name)["concurrency"], name)
 
     def test_the_badge_reads_the_scheduled_runs(self) -> None:
         # A badge filtered on an event the workflow never runs on shows no
@@ -127,22 +164,9 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(badge, "README carries no 3.5.1 testsuite badge")
         self.assertIn("event=schedule", badge.group(0))
 
-    def test_the_gate_queues_like_ci(self) -> None:
-        # Pull requests wait in one FIFO queue and nothing is cancelled, while
-        # every master push keeps its own group, so no master run waits behind
-        # the pull request queue or shows as cancelled.
-        ci, gate = _load(CI_YML)["concurrency"], _load(GATE)["concurrency"]
-        self.assertEqual(gate["queue"], ci["queue"])
-        self.assertEqual(gate["queue"], "max")
-        self.assertNotIn("cancel-in-progress", gate)
-        self.assertEqual(gate["group"].removeprefix("upstream-testsuite-3.5.1-"),
-                         ci["group"].removeprefix("ci-"))
-        self.assertIn("github.sha", gate["group"])
-
     def test_every_leg_runs_the_gate_release(self) -> None:
         # One cache key across the legs, so they share the built upstream tree.
-        gate_jobs = [job for job in _load(GATE)["jobs"].values()
-                     if job.get("uses", "").rsplit("/", 1)[-1] in TESTSUITE_REUSABLES]
+        gate_jobs = [*_testsuite_callers(GATE).values(), *_testsuite_callers(CI_YML).values()]
         self.assertEqual(len({job["with"]["cache_version"] for job in gate_jobs}), 1)
         for job in gate_jobs:
             self.assertEqual(job["with"]["upstream_rsync_version"],

@@ -39,20 +39,15 @@ on:
     # nightly Windows wall-time across the runner schedule.
     - cron: '0 7 * * *'
   workflow_dispatch:
-  # Deliberately UNFILTERED, matching ci.yml: once this leg is promoted to a
-  # required context it must run on every pull request or the required check
-  # never arrives and the pull request is unmergeable. Until the branch-
-  # protection flip it runs per-PR as a non-blocking bake.
-  pull_request:
+  # Pull requests reach this leg through ci.yml, which calls it for every pull
+  # request as a non-blocking bake. Running inside ci.yml's run keeps each pull
+  # request's checks in one run, so the pull request queue gives one pull
+  # request the whole runner pool at a time.
+  workflow_call:
 
 concurrency:
-  # Pull requests wait in one first-in-first-out queue per workflow, so each
-  # PR's run starts only when the previous PR's run has finished; nothing is
-  # cancelled. Every other event (master push, schedule, dispatch) gets its own
-  # group per commit, so it never waits behind the PR queue and every merge
-  # commit keeps a completed run for bisection.
-  group: windows-nightly-long-path-${{ github.event_name == 'pull_request' && 'pr-queue' || format('{0}-{1}', github.ref, github.sha) }}
-  queue: max
+  # One group per commit: a scheduled or dispatched run never cancels another.
+  group: windows-nightly-long-path-${{ github.ref }}-${{ github.sha }}
 
 permissions:
   contents: read
