@@ -162,6 +162,16 @@ pub(crate) fn local_failure_error(
         let report = program_line_error(line, ExitCode::StreamIo, role);
         return side.finish(report, ExitCode::StreamIo);
     }
+    // upstream: every RERR_PROTOCOL refusal is rprintf(FERROR, <line>) then
+    // exit_cleanup(RERR_PROTOCOL), e.g. exclude.c:1924-1926 and
+    // hlink.c:141-149; the line stands bare above log_exit()'s trailer.
+    if let Some(violation) = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<protocol::ProtocolViolation>())
+    {
+        let report = cause_line_error(violation.to_string(), ExitCode::Protocol, role);
+        return side.finish(report, ExitCode::Protocol);
+    }
     // upstream: io.c:930-946 perform_io() - a failed read of the peer's
     // stream is rsyserr(FERROR_SOCKET, errno, "read error") and
     // exit_cleanup(RERR_SOCKETIO).
@@ -349,6 +359,26 @@ mod tests {
         assert_eq!(report.code(), ExitCode::FileIo);
         assert!(report.to_string().contains("[receiver="), "{report}");
         assert!(report.preceding().is_none());
+    }
+
+    /// A protocol refusal prints its own line bare, then log_exit()'s
+    /// RERR_PROTOCOL trailer (hlink.c:141-149), not a read error or a code
+    /// derived from the error kind.
+    #[test]
+    fn a_protocol_refusal_is_its_bare_line_then_the_code_2_trailer() {
+        let refusal = protocol::protocol_violation("hard-link gnum 2 precedes flist start 5");
+        let report = local_failure_error(&refusal, None, ReportingSide::PreFork, 0, None);
+        assert_eq!(report.code(), ExitCode::Protocol);
+        assert_eq!(
+            report.cause_line(),
+            Some("hard-link gnum 2 precedes flist start 5")
+        );
+        assert!(
+            report
+                .to_string()
+                .starts_with("rsync error: protocol incompatibility (code 2) at "),
+            "{report}"
+        );
     }
 
     #[test]

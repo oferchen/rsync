@@ -96,11 +96,13 @@ impl StreamRole {
         matches!(self, Self::Sender)
     }
 
-    /// The `[role=VERSION]` trailer standing in for upstream's `who_am_i()`.
-    fn trailer(self) -> String {
+    /// Upstream's `who_am_i()` for the process reading this stream.
+    ///
+    /// upstream: rsync.c:987-995
+    const fn who(self) -> &'static str {
         match self {
-            Self::Sender => crate::role_trailer::sender(),
-            Self::Receiver => crate::role_trailer::receiver(),
+            Self::Sender => "sender",
+            Self::Receiver => "receiver",
         }
     }
 }
@@ -357,25 +359,23 @@ pub(crate) enum NdxFrame {
 
 /// Builds upstream's `rsync.c:350-352` rejection.
 ///
-/// Keeps upstream's wording - `Invalid file index: %d (%d - %d)` - and appends
-/// oc's source location plus the `[role=VERSION]` trailer that stands in for
-/// `who_am_i()`. Tagged as a protocol violation so the exit-code mapper yields
-/// `RERR_PROTOCOL` (2), matching `exit_cleanup(RERR_PROTOCOL)` at
+/// Upstream's line, `Invalid file index: %d (%d - %d) [%s]`, with `who_am_i()`
+/// in the brackets. Tagged as a protocol violation so the exit-code mapper
+/// yields `RERR_PROTOCOL` (2), matching `exit_cleanup(RERR_PROTOCOL)` at
 /// `rsync.c:353`.
 pub(crate) fn invalid_file_index(ndx: i32, last: i32, role: StreamRole) -> io::Error {
     protocol::protocol_violation(format!(
-        "Invalid file index: {ndx} ({NDX_DONE} - {last}) {}{}",
-        crate::role_trailer::error_location!(),
-        role.trailer()
+        "Invalid file index: {ndx} ({NDX_DONE} - {last}) [{}]",
+        role.who()
     ))
 }
 
 /// Builds upstream's `flist_for_ndx()` rejection of an index no live list
 /// owns.
 ///
-/// Keeps upstream's wording - `File-list index %d not in %d - %d (%s)` - with
-/// oc's source location and `[role=VERSION]` trailer standing in for
-/// `who_am_i()`. Tagged as a protocol violation for `RERR_PROTOCOL` (2).
+/// Upstream's line, `File-list index %d not in %d - %d (%s) [%s]`, with
+/// `who_am_i()` in the last brackets. Tagged as a protocol violation for
+/// `RERR_PROTOCOL` (2).
 ///
 /// # Upstream Reference
 ///
@@ -387,68 +387,57 @@ pub(crate) fn file_list_index_not_live(
     role: StreamRole,
 ) -> io::Error {
     protocol::protocol_violation(format!(
-        "File-list index {ndx} not in {first} - {last} (read_ndx_and_attrs) {}{}",
-        crate::role_trailer::error_location!(),
-        role.trailer()
+        "File-list index {ndx} not in {first} - {last} (read_ndx_and_attrs) [{}]",
+        role.who()
     ))
 }
 
 /// Builds upstream's cleared-entry rejection.
 ///
 /// Upstream prints the bare `rsync: refusing transfer of cleared file index %d`
-/// at both sites; oc appends its source location and the `[role=VERSION]`
-/// trailer that stands in for `who_am_i()`, as every other diagnostic in this
-/// module does. Tagged as a protocol violation so the exit-code mapper yields
-/// `RERR_PROTOCOL` (2), matching `exit_cleanup(RERR_PROTOCOL)` at both sites.
+/// at both sites, with no role. Tagged as a protocol violation so the
+/// exit-code mapper yields `RERR_PROTOCOL` (2), matching
+/// `exit_cleanup(RERR_PROTOCOL)` at both sites.
 ///
 /// # Upstream Reference
 ///
 /// - `receiver.c:887-897` - `recv_files()`.
 /// - `sender.c:559-564` - `send_files()`.
-pub(crate) fn cleared_file_index(ndx: i32, role: StreamRole) -> io::Error {
+pub(crate) fn cleared_file_index(ndx: i32) -> io::Error {
     protocol::protocol_violation(format!(
-        "rsync: refusing transfer of cleared file index {ndx} {}{}",
-        crate::role_trailer::error_location!(),
-        role.trailer()
+        "rsync: refusing transfer of cleared file index {ndx}"
     ))
 }
 
 /// Builds upstream's `rsync.c:439-441` rejection of an `ITEM_TRANSFER` frame
 /// that does not name a regular file.
 ///
-/// Keeps upstream's wording - `received request to transfer non-regular file:
-/// %d` - and appends oc's source location plus the `[role=VERSION]` trailer
-/// that stands in for `who_am_i()`, as every other diagnostic in this module
-/// does. Tagged as a protocol violation so the exit-code mapper yields
-/// `RERR_PROTOCOL` (2), matching `exit_cleanup(RERR_PROTOCOL)` at
-/// `rsync.c:442`.
+/// Upstream's line, `received request to transfer non-regular file: %d [%s]`,
+/// with `who_am_i()` in the brackets. Tagged as a protocol violation so the
+/// exit-code mapper yields `RERR_PROTOCOL` (2), matching
+/// `exit_cleanup(RERR_PROTOCOL)` at `rsync.c:442`.
 ///
 /// Shared by [`read_ndx_and_attrs`] and the sender's open-coded request read
 /// (`generator/transfer/transfer_loop.rs`) so the message has a single owner.
 pub(crate) fn non_regular_transfer_request(ndx: i32, role: StreamRole) -> io::Error {
     protocol::protocol_violation(format!(
-        "received request to transfer non-regular file: {ndx} {}{}",
-        crate::role_trailer::error_location!(),
-        role.trailer()
+        "received request to transfer non-regular file: {ndx} [{}]",
+        role.who()
     ))
 }
 
 /// Builds the refusal for a sub-list marker that arrives after the sender's
 /// `NDX_DONE`s have freed every received flist.
 ///
-/// Keeps upstream's wording and, like the other diagnostics here, is tagged as
-/// a protocol violation so the exit-code mapper yields `RERR_PROTOCOL` (2).
+/// Upstream's bare line, with no role. Tagged as a protocol violation so the
+/// exit-code mapper yields `RERR_PROTOCOL` (2).
 ///
 /// # Upstream Reference
 ///
 /// - `flist.c:3137-3148` - `recv_file_list()` refuses `dir_ndx >= 0` while
 ///   `first_flist` is NULL, before touching the stale `dir_flist`.
-pub(crate) fn subflist_after_final_flist_freed(role: StreamRole) -> io::Error {
-    protocol::protocol_violation(format!(
-        "rsync: refusing sub-flist after final flist was freed {}{}",
-        crate::role_trailer::error_location!(),
-        role.trailer()
-    ))
+pub(crate) fn subflist_after_final_flist_freed() -> io::Error {
+    protocol::protocol_violation("rsync: refusing sub-flist after final flist was freed")
 }
 
 /// Reads and classifies exactly one NDX frame, running the marker side effects
@@ -500,7 +489,7 @@ where
     // with `first_flist` already NULL. Checked ahead of the rsync.c:344 gate
     // because a phase-boundary sink reports no lazy file list of its own.
     if ndx <= NDX_FLIST_OFFSET && sink.all_flists_freed() {
-        return Err(subflist_after_final_flist_freed(sink.role()));
+        return Err(subflist_after_final_flist_freed());
     }
 
     // upstream: rsync.c:344-354 - every remaining negative value is a file-list

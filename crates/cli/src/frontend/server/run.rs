@@ -1522,6 +1522,32 @@ mod failure_report_tests {
         );
         assert!(signalled.contains("[generator="), "{signalled}");
     }
+
+    /// A server's protocol refusal is its bare line, then log_exit()'s
+    /// RERR_PROTOCOL trailer, and the process exits 2.
+    ///
+    /// upstream: rsync.c:439-442, log.c:937-963
+    #[test]
+    fn a_protocol_refusal_prints_its_bare_line_then_the_code_2_trailer() {
+        let refusal = protocol::protocol_violation(
+            "received request to transfer non-regular file: 1 [sender]",
+        );
+        let mut stderr = Vec::new();
+        let code =
+            report_server_failure(&mut stderr, Brand::Upstream, Role::Sender, &refusal, false);
+        let stderr = String::from_utf8(stderr).expect("utf-8");
+        assert_eq!(code, 2);
+        let lines: Vec<&str> = stderr.lines().collect();
+        assert_eq!(lines.len(), 2, "{stderr}");
+        assert_eq!(
+            lines[0],
+            "received request to transfer non-regular file: 1 [sender]"
+        );
+        assert!(
+            lines[1].starts_with("rsync error: protocol incompatibility (code 2) at "),
+            "{stderr}"
+        );
+    }
 }
 
 #[cfg(test)]

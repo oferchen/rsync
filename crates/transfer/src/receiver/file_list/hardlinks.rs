@@ -73,10 +73,9 @@ pub(in crate::receiver) fn match_hard_links(
                 if let Some(ndx_start) = inc_recurse_ndx_start
                     && i64::from(gnum) < i64::from(ndx_start)
                 {
+                    // upstream: hlink.c:138-140 - the bare line, no role.
                     return Err(protocol::protocol_violation(format!(
-                        "hard-link gnum {gnum} precedes flist start {ndx_start} {}{}",
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver()
+                        "hard-link gnum {gnum} precedes flist start {ndx_start}"
                     )));
                 }
                 // First occurrence of this gnum across all segments - this is the leader.
@@ -257,11 +256,7 @@ mod tests {
             is_protocol_violation(&err),
             "must map to RERR_PROTOCOL: {err:?}"
         );
-        assert!(
-            err.to_string()
-                .contains("hard-link gnum 2 precedes flist start 5"),
-            "unexpected message: {err}"
-        );
+        assert_eq!(err.to_string(), "hard-link gnum 2 precedes flist start 5");
     }
     /// The same back-reference is legitimate once an earlier segment recorded
     /// the leader: the entry stays a follower.

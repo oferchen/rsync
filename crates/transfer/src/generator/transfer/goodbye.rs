@@ -18,7 +18,6 @@ use protocol::stats::DeleteStats;
 
 use super::super::{GeneratorContext, is_early_close_error};
 use crate::receiver::ndx_stream::{FlistMarkerSink, NdxFrame, StreamRole, read_marker_aware_ndx};
-use crate::role_trailer::error_location;
 
 /// What the receiver's half of the goodbye handshake delivered.
 ///
@@ -181,9 +180,7 @@ impl GeneratorContext {
             // upstream: main.c:1128 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
             // error so the core exit-code mapper yields 2, not RERR_STREAMIO(12).
             return Err(protocol::protocol_violation(format!(
-                "expected goodbye NDX_DONE (-1) from receiver, got {ndx} {}{}",
-                error_location!(),
-                crate::role_trailer::sender()
+                "Invalid packet at end of run ({ndx}) [sender]"
             )));
         }
         Ok(GoodbyeArrival::Done)
@@ -254,9 +251,7 @@ impl GeneratorContext {
                         // upstream: main.c:1128 exit_cleanup(RERR_PROTOCOL)
                         // (exit 2); tagged so the mapper yields 2 not streamio.
                         return Err(protocol::protocol_violation(format!(
-                            "expected final goodbye NDX_DONE (-1) from receiver, got {final_ndx} {}{}",
-                            error_location!(),
-                            crate::role_trailer::sender()
+                            "Invalid packet at end of run ({final_ndx}) [sender]"
                         )));
                     }
                 }

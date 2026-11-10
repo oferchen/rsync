@@ -934,11 +934,9 @@ impl GeneratorContext {
             // the loop fails loud with the same exit code instead of hanging or
             // silently servicing the request. The wire text is unchanged.
             if phase == 2 {
-                return Err(protocol::protocol_violation(format!(
-                    "got transfer request in phase 2 [sender] {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::sender()
-                )));
+                return Err(protocol::protocol_violation(
+                    "got transfer request in phase 2 [sender]",
+                ));
             }
 
             // upstream: sender.c:348-351 - dry_run (!do_xfers) logs the item and
@@ -2953,14 +2951,10 @@ mod non_regular_request_guard_tests {
         wire.extend_from_slice(&ITEM_TRANSFER_LE);
 
         let err = drive(&mut ctx, wire).expect_err(case);
-        assert!(
-            err.to_string()
-                .contains("received request to transfer non-regular file: 0"),
-            "{case}: expected upstream's rejection text, got {err}"
-        );
-        assert!(
-            err.to_string().contains("[sender="),
-            "{case}: the who_am_i() tag must name the sender: {err}"
+        assert_eq!(
+            err.to_string(),
+            "received request to transfer non-regular file: 0 [sender]",
+            "{case}: upstream's rejection line with who_am_i() naming the sender"
         );
         assert!(
             err.get_ref()
@@ -4146,13 +4140,9 @@ mod sum_head_block_length_tests {
         let err = drive_multiplexed(&mut ctx, request_with_blength(32, MAX_BLOCK_SIZE + 1))
             .expect_err("a 128 KiB + 1 block must be refused at protocol 32");
         let text = err.to_string();
-        assert!(
-            text.contains("Invalid block length 131073"),
-            "expected upstream's rejection text, got {text}"
-        );
-        assert!(
-            text.contains("[sender="),
-            "the who_am_i() tag must name the sender: {text}"
+        assert_eq!(
+            text, "Invalid block length 131073 [sender]",
+            "upstream's rejection line with who_am_i() naming the sender"
         );
         assert!(
             err.get_ref()

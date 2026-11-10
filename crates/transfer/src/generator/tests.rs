@@ -2163,11 +2163,10 @@ fn flist_for_ndx_refuses_one_past_the_list_with_upstreams_text() {
     let ctx = two_entry_sender();
     let err = ctx.flist_for_ndx(2).expect_err("past the list");
     let text = err.to_string();
-    assert!(
-        text.starts_with("File-list index 2 not in -1 - 1 (read_ndx_and_attrs) at "),
-        "{text}"
+    assert_eq!(
+        text,
+        "File-list index 2 not in -1 - 1 (read_ndx_and_attrs) [sender]"
     );
-    assert!(text.ends_with(&crate::role_trailer::sender()), "{text}");
     assert!(
         err.get_ref()
             .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),
@@ -3209,7 +3208,7 @@ mod legacy_goodbye_tests {
         let result = ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("expected goodbye NDX_DONE"));
+        assert_eq!(err_msg, "Invalid packet at end of run (5) [sender]");
     }
 
     #[test]

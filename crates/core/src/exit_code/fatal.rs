@@ -12,7 +12,8 @@ use crate::message::Role;
 /// followed by `exit_cleanup(code)`, or `None` for any other failure.
 ///
 /// upstream: xattrs.c:1253-1258 get_stat_xattr() (RERR_FILEIO),
-/// util2.c:73-80 my_alloc() (RERR_MALLOC)
+/// util2.c:73-80 my_alloc() (RERR_MALLOC), and every RERR_PROTOCOL refusal,
+/// e.g. exclude.c:1924-1926
 #[must_use]
 pub fn cause_line_exit_code(error: &io::Error) -> Option<ExitCode> {
     if metadata::is_corrupt_fake_super(error) {
@@ -22,6 +23,11 @@ pub fn cause_line_exit_code(error: &io::Error) -> Option<ExitCode> {
         .is_some_and(|inner| inner.is::<protocol::MallocFailure>())
     {
         Some(ExitCode::Malloc)
+    } else if error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>())
+    {
+        Some(ExitCode::Protocol)
     } else {
         None
     }

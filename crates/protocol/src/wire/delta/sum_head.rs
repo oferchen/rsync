@@ -79,7 +79,7 @@ pub enum SumHeadError {
     /// table from it would overflow.
     ///
     /// upstream: `io.c:2237-2256`.
-    #[error("invalid checksum count {count}")]
+    #[error("Invalid checksum count {count}")]
     InvalidCount {
         /// The rejected count.
         count: i32,
@@ -118,7 +118,7 @@ pub enum SumHeadError {
     /// The strong-sum width is negative or past [`MAX_STRONG_SUM_LEN`].
     ///
     /// upstream: `io.c:2279-2283`.
-    #[error("invalid checksum length {s2length}")]
+    #[error("Invalid checksum length {s2length}")]
     InvalidStrongSumLength {
         /// The rejected strong-sum width.
         s2length: i32,
@@ -127,7 +127,7 @@ pub enum SumHeadError {
     /// The trailing-block length is negative or wider than a whole block.
     ///
     /// upstream: `io.c:2285-2289`.
-    #[error("invalid remainder length {remainder}")]
+    #[error("Invalid remainder length {remainder}")]
     InvalidRemainder {
         /// The rejected remainder.
         remainder: i32,
