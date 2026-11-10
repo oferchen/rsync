@@ -486,10 +486,10 @@ pub fn sync_xattrs(
 /// reading the source again.
 ///
 /// `list` is the source's [`read_xattrs_for_wire`] result, already shaped by
-/// the sender's `x`-filter side. Its names return from the wire form through
-/// [`protocol::xattr::wire_to_local`], the round trip upstream's forked
-/// local sender and receiver make, and the destination is then written and
-/// pruned exactly as [`sync_xattrs`] does.
+/// the sender's `x`-filter side. Its names return to the local form through
+/// [`protocol::xattr::local_from_own_wire`], the inverse of the mapping that
+/// built them, and the destination is then written and pruned exactly as
+/// [`sync_xattrs`] does.
 ///
 /// upstream: xattrs.c:rsync_xal_get() on the sender, receive_xattr() and
 /// rsync_xal_set() on the receiver.
@@ -501,14 +501,11 @@ pub fn sync_xattrs_from_list(
     confine_root: Option<&Path>,
 ) -> Result<(), MetadataError> {
     let screen = namespace_screen(filters.governs_selection(), receiver_user_only());
-    let am_root = !receiver_user_only();
     let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(list.len());
     let dest = DestinationXattrs::open(destination, follow_symlinks, confine_root);
 
     for entry in list.iter() {
-        let Some(name) = protocol::xattr::wire_to_local(entry.name(), am_root) else {
-            continue;
-        };
+        let name = protocol::xattr::local_from_own_wire(entry.name());
         if !screen.admits(&name) {
             continue;
         }
