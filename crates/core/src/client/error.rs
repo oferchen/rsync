@@ -62,6 +62,7 @@ enum LeadLine {
     /// An unprefixed `rprintf(FERROR, ...)` cause.
     Cause(String),
     /// A cause another process printed, then a program-prefixed line.
+    #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
     CauseThenProgram(String, String),
 }
 impl ClientError {
@@ -755,6 +756,7 @@ fn eof_whine(bytes_received: u64, role: Role) -> String {
 /// (io.c:299-303, cleanup.c:146-153). An ssh that cannot connect exits 255,
 /// which log_exit() names "unexplained error".
 #[cold]
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
 pub(crate) fn remote_shell_failed_error(
     shell_line: String,
     exit_code: ExitCode,
