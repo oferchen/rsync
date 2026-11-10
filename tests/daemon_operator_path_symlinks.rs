@@ -28,13 +28,15 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::{TcpListener, TcpStream};
+use std::io::{BufRead, BufReader};
+use std::net::TcpStream;
 use std::os::unix::fs::{lchown, symlink};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
-use test_support::ReapOnDrop;
+use test_support::forked_server::RunResult;
+use test_support::oc_daemon::OcDaemon;
 
 const VICTIM: &str = "VICTIM-ORIGINAL\n";
 
@@ -43,10 +45,7 @@ fn oc_binary() -> PathBuf {
 }
 
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
 fn id_of(args: &[&str]) -> Option<u32> {
@@ -93,38 +92,47 @@ fn write_config(dir: &Path, port: u16, globals: &str) -> PathBuf {
     conf
 }
 
-/// A daemon that either reached `listen()` or exited first.
+/// A daemon that either serves or refused its configuration and returned.
 enum Daemon {
-    Listening(ReapOnDrop),
-    Exited(ExitStatus),
+    Listening(OcDaemon),
+    Exited(RunResult),
 }
 
-/// Starts a daemon and waits until its port answers or the process exits.
+/// Starts a daemon on the listener reserved for `port` and reports whether it
+/// serves or refused its configuration.
 ///
-/// `stdin` is `/dev/null` so the daemon listens instead of taking its inetd
-/// path on an inherited terminal or pipe.
+/// `args` starts with `--config=<path>`. The listener exists before the
+/// daemon does, so the probe connect queues instead of racing the start: a
+/// serving daemon greets it, and a daemon that refused its configuration has
+/// closed the listener on its way out.
 fn start_daemon(port: u16, args: &[String]) -> Daemon {
-    let mut child = ReapOnDrop::new(
-        Command::new(oc_binary())
-            .args(["--daemon", "--no-detach"])
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon"),
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if let Some(status) = child.try_wait().expect("poll daemon") {
-            return Daemon::Exited(status);
-        }
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return Daemon::Listening(child);
-        }
-        std::thread::sleep(Duration::from_millis(20));
+    let (config, rest) = args.split_first().expect("a --config argument");
+    let config = config
+        .strip_prefix("--config=")
+        .expect("--config= comes first");
+    let daemon = rest
+        .iter()
+        .fold(OcDaemon::builder(config), |builder, arg| builder.arg(arg))
+        .reserved_port(port)
+        .expect("reserved listener")
+        .spawn()
+        .expect("spawn daemon");
+    if greets(port) {
+        Daemon::Listening(daemon)
+    } else {
+        Daemon::Exited(daemon.join().expect("the daemon returned"))
     }
-    panic!("daemon neither listened nor exited within 10s");
+}
+
+/// Whether the daemon on `port` answers a connect with its `@RSYNCD:` greeting.
+fn greets(port: u16) -> bool {
+    let Ok(stream) = TcpStream::connect(("127.0.0.1", port)) else {
+        return false;
+    };
+    let mut line = String::new();
+    BufReader::new(stream)
+        .read_line(&mut line)
+        .is_ok_and(|_| line.starts_with("@RSYNCD:"))
 }
 
 /// Lists the daemon's modules and returns everything the client printed.
@@ -152,7 +160,7 @@ fn config_through_untrusted_symlink_is_refused() {
     plant(&link, &conf, owner);
 
     match start_daemon(port, &[format!("--config={}", link.display())]) {
-        Daemon::Exited(status) => assert!(!status.success(), "refusal must be an error exit"),
+        Daemon::Exited(result) => assert!(result.is_err(), "refusal must be an error exit"),
         Daemon::Listening(_) => panic!(
             "the daemon read its config through a symlink owned by uid {owner} \
              (params.c:586 opens it with open_no_attacker_symlinks())"
@@ -315,7 +323,7 @@ fn pid_file_symlink_is_replaced_not_written_through() {
     };
     let leaf = fs::symlink_metadata(&pid_path).expect("pid file");
     let recorded = fs::read_to_string(&pid_path).unwrap_or_default();
-    let expected_pid = daemon.id().to_string();
+    let expected_pid = daemon.pid().to_string();
     drop(daemon);
 
     assert_eq!(

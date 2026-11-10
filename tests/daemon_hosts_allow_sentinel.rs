@@ -34,12 +34,8 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-
-use std::time::{Duration, Instant};
-use test_support::ReapOnDrop;
+use std::process::Command;
 
 fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
@@ -52,10 +48,7 @@ fn upstream_binary() -> Option<PathBuf> {
 }
 
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
 /// One row of the access-control table.
@@ -163,37 +156,18 @@ impl Fixture {
             ])
             .status()
             .expect("run client");
-        drop(daemon);
+        daemon.finish().expect("daemon sessions end");
         status.success() && dest.is_file()
     }
 }
 
-/// Starts a daemon and waits until its port answers.
-///
-/// `stdin` is `/dev/null` deliberately: with an inherited terminal or pipe the
-/// daemon takes its single-connection path and never listens, and every row
-/// then reports "connection refused" - identical output for rows that must
-/// differ. That is a broken instrument, not a result.
-fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> ReapOnDrop {
-    let child = ReapOnDrop::new(
-        Command::new(binary)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg(format!("--config={}", conf.display()))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon"),
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return child;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    child
+/// Serves the daemon in inetd mode on the listener reserved for `port`, so
+/// a client connect queues until its session starts: no readiness wait.
+fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> test_support::inetd_server::InetdServer {
+    let command = test_support::inetd_server::InetdCommand::discarding_stderr(binary)
+        .expect("open /dev/null")
+        .arg(format!("--config={}", conf.display()));
+    test_support::inetd_server::InetdServer::start_reserved(port, command).expect("start daemon")
 }
 
 fn assert_table(binary: &Path, label: &str) {

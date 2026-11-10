@@ -22,13 +22,9 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
-
-use test_support::ReapOnDrop;
 
 const SECRET: &[u8] = b"PROTECTED-IN-EXCLUDED-SUBTREE\n";
 
@@ -37,10 +33,7 @@ fn oc_binary() -> PathBuf {
 }
 
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
 /// A test tree plus a daemon serving `/` as module `m`, dropping to the owner
@@ -48,7 +41,7 @@ fn free_port() -> Option<u16> {
 struct Served {
     root: PathBuf,
     port: u16,
-    _daemon: ReapOnDrop,
+    _daemon: test_support::inetd_server::InetdServer,
     _temp: tempfile::TempDir,
 }
 
@@ -83,21 +76,11 @@ impl Served {
             ),
         )
         .expect("write config");
-        let daemon = ReapOnDrop::new(
-            Command::new(oc_binary())
-                .arg("--daemon")
-                .arg("--no-detach")
-                .arg(format!("--config={}", conf.display()))
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .expect("spawn daemon"),
-        );
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline && TcpStream::connect(("127.0.0.1", port)).is_err() {
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        let command = test_support::inetd_server::InetdCommand::discarding_stderr(oc_binary())
+            .expect("open /dev/null")
+            .arg(format!("--config={}", conf.display()));
+        let daemon = test_support::inetd_server::InetdServer::start_reserved(port, command)
+            .expect("start daemon");
         Some(Self {
             root,
             port,
