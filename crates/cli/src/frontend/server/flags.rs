@@ -130,21 +130,27 @@ pub(crate) fn detect_secluded_args_flag(args: &[OsString]) -> bool {
     let (options, _operands) = split_at_end_of_options(args);
     options.iter().skip(1).any(|a| {
         let s = a.to_string_lossy();
-        if s == "-s" {
-            return true;
-        }
-        // Check compact flag strings: starts with `-`, not `--`.
-        // Only scan the transfer-flag portion (before the first `.`)
-        // because `s` after the dot is the symlink-iconv capability char,
-        // not secluded-args.
+        // A short-option cluster, read as popt reads it: letters up to the
+        // first one that takes an argument, whose value is the rest of the
+        // token. That stops the scan at `e` in `-logDtpre.iLsfxCIvu`, so the
+        // `s` among the capability letters is never read as secluded args.
         // upstream: options.c:2795-2796 - protect_args placed at argstr[1]
-        if s.starts_with('-') && !s.starts_with("--") && s.len() > 1 {
-            let transfer_portion = s[1..].split('.').next().unwrap_or("");
-            return transfer_portion.contains('s');
+        match s.strip_prefix('-') {
+            Some(cluster) if !cluster.starts_with('-') => cluster
+                .chars()
+                .take_while(|letter| !SHORT_OPTIONS_WITH_VALUE.contains(letter))
+                .any(|letter| letter == 's'),
+            _ => false,
         }
-        false
     })
 }
+
+/// The short options whose value follows in the same or the next token.
+///
+/// upstream: options.c long_options[] - `-@` (modify-window), `-B`
+/// (block-size), `-M` (remote-option), `-T` (temp-dir), `-e` (rsh) and `-f`
+/// (filter) are the only short options with `POPT_ARG_STRING`/`POPT_ARG_INT`.
+const SHORT_OPTIONS_WITH_VALUE: [char; 6] = ['@', 'B', 'M', 'T', 'e', 'f'];
 
 /// Long-form flags extracted from the server argument list.
 ///
