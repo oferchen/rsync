@@ -654,6 +654,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `-c` with a `none` file checksum (`--checksum-choice=none` or `md5,none`) exits 4 with `Invalid checksum-choice for --checksum: none (0)` at the first regular file, as 3.5.1 does; it used MD4 and exited 0 (#8262)
 
 ### Removed
+- The unreachable `transfer::receiver::IncrementalFileListReceiver` streaming file-list reader and its `ReceiverContext::incremental_file_list_receiver` constructor, which only tests used; every live receive path reads the list through `receive_file_list` (#8358)
 - The unreachable `engine::AsyncBatchCopier` and its `RSYNC_MAX_CONCURRENT` environment read (#8236)
 
 - The planned `--windows-acls`, `--audit-acls` and `--fail-on-windows-acl-loss` options from the man page and Windows ACL docs; the CLI never had them (#8236)

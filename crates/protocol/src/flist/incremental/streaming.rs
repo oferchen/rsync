@@ -110,12 +110,6 @@ impl<R: std::io::Read> StreamingFileList<R> {
         self.incremental.pending_count()
     }
 
-    /// Returns whether reading from the wire is complete.
-    #[must_use]
-    pub const fn is_finished_reading(&self) -> bool {
-        self.finished_reading
-    }
-
     /// Marks a directory as created (for external directory creation).
     pub fn mark_directory_created(&mut self, path: &str) {
         self.incremental.mark_directory_created(path);

@@ -1,12 +1,9 @@
-//! Higher-level incremental receive flow: end-to-end reads via the
-//! `next_ready` / `collect_sorted` / `Iterator` surface, the
-//! `create_directory_incremental` helper used by the receive loop,
-//! and feature-gated checks for `incremental-flist` invariants.
+//! Higher-level incremental receive flow: the `create_directory_incremental`
+//! helper used by the receive loop and feature-gated checks for
+//! `incremental-flist` invariants.
 
-use std::io::Cursor;
 use std::io::{Read, Write};
 
-use protocol::ProtocolVersion;
 use protocol::flist::FileEntry;
 use protocol::stats::DeleteStats;
 
@@ -15,135 +12,6 @@ use super::super::super::directory::FailedDirectories;
 use super::super::super::stats::TransferStats;
 use super::super::support::{test_config, test_handshake};
 use crate::pipeline::PipelineConfig;
-
-#[test]
-fn incremental_receiver_reads_entries() {
-    let protocol = ProtocolVersion::try_from(32u8).unwrap();
-    let mut data = Vec::new();
-    let mut writer = protocol::flist::FileListWriter::new(protocol);
-
-    let dir = FileEntry::new_directory("testdir".into(), 0o755);
-    let file = FileEntry::new_file("testdir/file.txt".into(), 100, 0o644);
-
-    writer.write_entry(&mut data, &dir).unwrap();
-    writer.write_entry(&mut data, &file).unwrap();
-    writer.write_end(&mut data, None).unwrap();
-
-    let handshake = test_handshake();
-    let config = test_config();
-    let ctx = ReceiverContext::new_for_test(&handshake, config);
-
-    let mut receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
-
-    // The directory has no parent dependency, so it is ready first.
-    let entry1 = receiver.next_ready().unwrap().unwrap();
-    assert!(entry1.is_dir());
-    assert_eq!(entry1.name(), "testdir");
-
-    // The file is released once its parent dir exists.
-    let entry2 = receiver.next_ready().unwrap().unwrap();
-    assert!(entry2.is_file());
-    assert_eq!(entry2.name(), "testdir/file.txt");
-
-    assert!(receiver.next_ready().unwrap().is_none());
-    assert!(receiver.is_empty());
-    assert_eq!(receiver.entries_read(), 2);
-}
-
-#[test]
-fn incremental_receiver_handles_empty_list() {
-    let protocol = ProtocolVersion::try_from(32u8).unwrap();
-    let mut data = Vec::new();
-    let writer = protocol::flist::FileListWriter::new(protocol);
-    writer.write_end(&mut data, None).unwrap();
-
-    let handshake = test_handshake();
-    let config = test_config();
-    let ctx = ReceiverContext::new_for_test(&handshake, config);
-
-    let mut receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
-
-    assert!(receiver.next_ready().unwrap().is_none());
-    assert!(receiver.is_empty());
-    assert_eq!(receiver.entries_read(), 0);
-}
-
-#[test]
-fn incremental_receiver_collect_sorted() {
-    let protocol = ProtocolVersion::try_from(32u8).unwrap();
-    let mut data = Vec::new();
-    let mut writer = protocol::flist::FileListWriter::new(protocol);
-
-    // Entries are supplied out of order to exercise the sort.
-    let file1 = FileEntry::new_file("z_file.txt".into(), 50, 0o644);
-    let file2 = FileEntry::new_file("a_file.txt".into(), 100, 0o644);
-    let dir = FileEntry::new_directory("m_dir".into(), 0o755);
-
-    writer.write_entry(&mut data, &file1).unwrap();
-    writer.write_entry(&mut data, &file2).unwrap();
-    writer.write_entry(&mut data, &dir).unwrap();
-    writer.write_end(&mut data, None).unwrap();
-
-    let handshake = test_handshake();
-    let config = test_config();
-    let ctx = ReceiverContext::new_for_test(&handshake, config);
-
-    let receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
-
-    let entries = receiver.collect_sorted().unwrap();
-    assert_eq!(entries.len(), 3);
-
-    // Files should come before directories at the same level
-    assert_eq!(entries[0].name(), "a_file.txt");
-    assert_eq!(entries[1].name(), "z_file.txt");
-    assert_eq!(entries[2].name(), "m_dir");
-}
-
-#[test]
-fn incremental_receiver_iterator_interface() {
-    let protocol = ProtocolVersion::try_from(32u8).unwrap();
-    let mut data = Vec::new();
-    let mut writer = protocol::flist::FileListWriter::new(protocol);
-
-    let file = FileEntry::new_file("test.txt".into(), 100, 0o644);
-    writer.write_entry(&mut data, &file).unwrap();
-    writer.write_end(&mut data, None).unwrap();
-
-    let handshake = test_handshake();
-    let config = test_config();
-    let ctx = ReceiverContext::new_for_test(&handshake, config);
-
-    let receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
-
-    let entries: Vec<_> = receiver.collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].name(), "test.txt");
-}
-
-#[test]
-fn incremental_receiver_mark_directory_created() {
-    let protocol = ProtocolVersion::try_from(32u8).unwrap();
-    let mut data = Vec::new();
-    let mut writer = protocol::flist::FileListWriter::new(protocol);
-
-    // Add only a nested file (no directory entry)
-    let file = FileEntry::new_file("existing/nested.txt".into(), 100, 0o644);
-    writer.write_entry(&mut data, &file).unwrap();
-    writer.write_end(&mut data, None).unwrap();
-
-    let handshake = test_handshake();
-    let config = test_config();
-    let ctx = ReceiverContext::new_for_test(&handshake, config);
-
-    let mut receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
-
-    // Mark the parent directory as already created
-    receiver.mark_directory_created("existing");
-
-    // Now the nested file should be immediately ready
-    let entry = receiver.next_ready().unwrap().unwrap();
-    assert_eq!(entry.name(), "existing/nested.txt");
-}
 
 #[test]
 fn transfer_stats_has_incremental_fields() {
