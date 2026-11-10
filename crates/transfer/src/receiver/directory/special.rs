@@ -406,6 +406,7 @@ impl ReceiverContext {
                 acl_id_map,
                 true,
                 Some(dest_dir),
+                self.config.fake_super,
             ) {
                 let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
             }

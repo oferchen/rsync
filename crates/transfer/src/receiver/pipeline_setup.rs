@@ -61,7 +61,8 @@ pub(in crate::receiver) struct PipelineSetup {
 /// is `None` or the entry has no ACL index.
 ///
 /// `dest_root`, when supplied, is the destination tree the ACL write is pinned
-/// beneath (see `metadata::apply_acls_from_cache`).
+/// beneath (see `metadata::apply_acls_from_cache`). With `fake_super` the ACL
+/// is stashed in the `%aacl`/`%dacl` xattrs instead of being applied.
 ///
 /// # Upstream Reference
 ///
@@ -74,6 +75,7 @@ pub(in crate::receiver) fn apply_acls_from_receiver_cache(
     id_map: Option<&AclIdMapper>,
     follow_symlinks: bool,
     dest_root: Option<&std::path::Path>,
+    fake_super: bool,
 ) -> Result<(), metadata::MetadataError> {
     let cache = match acl_cache {
         Some(c) => c,
@@ -83,9 +85,22 @@ pub(in crate::receiver) fn apply_acls_from_receiver_cache(
         Some(ndx) => ndx,
         None => return Ok(()),
     };
+    let cache = &*cache.read().expect("ACL cache lock poisoned");
+    // upstream: acls.c:1228 set_rsync_acl() - under --fake-super every
+    // set_acl() caller stashes the ACL in %aacl/%dacl instead of applying it.
+    if fake_super {
+        return metadata::store_acls_via_fake_super(
+            destination,
+            cache,
+            access_ndx,
+            entry.def_acl_ndx(),
+            follow_symlinks,
+            entry.mode(),
+        );
+    }
     metadata::apply_acls_from_cache(
         destination,
-        &cache.read().expect("ACL cache lock poisoned"),
+        cache,
         access_ndx,
         entry.def_acl_ndx(),
         follow_symlinks,
