@@ -14,6 +14,7 @@
 mod integration;
 
 use integration::helpers::*;
+#[cfg(unix)]
 use std::fs;
 
 /// A module listing served by a running daemon names every module with its

@@ -390,11 +390,13 @@ pub struct CappingProxy {
 /// Released once when the proxy drops: parked pumps return and the accept
 /// thread exits on its next connection.
 #[derive(Default)]
+#[allow(dead_code)]
 struct Stop {
     stopped: Mutex<bool>,
     released: Condvar,
 }
 
+#[allow(dead_code)]
 impl Stop {
     fn is_set(&self) -> bool {
         *self.stopped.lock().unwrap_or_else(|e| e.into_inner())
