@@ -14,8 +14,10 @@
 //!
 //! Both cells pass `--timeout=5`, which reaches the server. A client that
 //! failed to close its end would leave the server waiting for input until
-//! that timeout ends it with `RERR_TIMEOUT` (30), so a regression fails on
-//! the exit code rather than on the runner's wall-time limit.
+//! that timeout ends it with an `io timeout after 5 seconds` line
+//! (upstream: io.c:264-266 check_timeout()). The client still exits with
+//! its own 12 (cleanup.c:113-117), so the cells assert that no side reported
+//! the timeout, not only the exit code.
 #![cfg(unix)]
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -81,6 +83,17 @@ fn run(root: &Path, client_choice: &str, rsh: &Path, pull: bool) -> CliOutput {
     runner.run().expect("transfer finishes instead of hanging")
 }
 
+/// Asserts the run ended on the codec failure with exit 12, not by a peer
+/// waiting out `--timeout` for input the client never closed.
+fn assert_streamio_without_timeout(out: &CliOutput) {
+    out.assert_exit(12);
+    assert!(
+        !out.stderr_contains("io timeout after"),
+        "a side waited for input instead of seeing EOF, stderr:\n{}",
+        out.stderr_str()
+    );
+}
+
 /// The client receiver fails to decode the server's zlib stream as zstd. It
 /// must exit 12 instead of waiting forever on a server that is still waiting
 /// for input.
@@ -91,7 +104,7 @@ fn pull_with_mismatched_compressors_exits_streamio() {
     // upstream: options.c:2994-2999 server_options() - a zlib choice is sent
     // as --old-compress, any other codec as --compress-choice=NAME.
     let rsh = rewriting_rsh(tmp.path(), "--compress-choice=zstd", "--old-compress");
-    run(tmp.path(), "zstd", &rsh, true).assert_exit(12);
+    assert_streamio_without_timeout(&run(tmp.path(), "zstd", &rsh, true));
 }
 
 /// The server receiver fails to decode the client's zlib stream as zstd and
@@ -101,5 +114,5 @@ fn push_with_mismatched_compressors_exits_streamio() {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
     let tmp = create_tempdir();
     let rsh = rewriting_rsh(tmp.path(), "--old-compress", "--compress-choice=zstd");
-    run(tmp.path(), "zlib", &rsh, false).assert_exit(12);
+    assert_streamio_without_timeout(&run(tmp.path(), "zlib", &rsh, false));
 }
