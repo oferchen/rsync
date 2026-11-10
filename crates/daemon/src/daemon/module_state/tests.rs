@@ -335,7 +335,6 @@ fn negative_max_connections_still_opens_the_lock_file_first() {
     let dir = tempfile::tempdir().expect("tempdir");
     let lock_path = dir.path().join("module.lock");
     let limiter = std::sync::Arc::new(ConnectionLimiter::open(lock_path.clone()));
-    std::fs::remove_file(&lock_path).expect("remove lock file");
     std::fs::create_dir(&lock_path).expect("obstruct the lock path with a directory");
 
     let def = ModuleDefinition {
@@ -580,7 +579,11 @@ fn build_module_runtimes_with_lock_file_shares_the_daemon_wide_limiter() {
         ),
         "a module without its own `lock file` must share the daemon-wide limiter",
     );
-    assert!(lock.exists(), "the daemon-wide lock file must be created");
+    // upstream opens the file only inside claim_connection() (connection.c:35).
+    assert!(
+        !lock.exists(),
+        "building the runtimes must not create the lock file"
+    );
 }
 
 // upstream: clientserver.c:791 `claim_connection(lp_lock_file(i), ...)` - the

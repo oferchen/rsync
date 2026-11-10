@@ -170,6 +170,8 @@ pub mod path_limit;
 pub mod physical_memory;
 /// Source lookups anchored on the daemon's pinned module root.
 pub mod pinned_root;
+/// Non-blocking exclusive byte-range locks (Windows `LockFileEx`).
+pub mod range_lock;
 /// Unix-only: read-only in-place recovery, mirroring upstream
 /// `open_readonly_inplace` (`receiver.c:213`).
 #[cfg(unix)]
