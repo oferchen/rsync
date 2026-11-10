@@ -11,6 +11,11 @@
 //! The desync is forced by an rsh wrapper that rewrites the server's
 //! compression option, so the server compresses with one codec while the
 //! client decompresses with another.
+//!
+//! Both cells pass `--timeout=5`, which reaches the server. A client that
+//! failed to close its end would leave the server waiting for input until
+//! that timeout ends it with `RERR_TIMEOUT` (30), so a regression fails on
+//! the exit code rather than on the runner's wall-time limit.
 #![cfg(unix)]
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -57,7 +62,7 @@ fn run(root: &Path, client_choice: &str, rsh: &Path, pull: bool) -> CliOutput {
     let dest = root.join("dest");
     fs::create_dir_all(&dest).expect("mkdir dest");
     let runner = OcRsyncCliRunner::new()
-        .args(["-r", "-z"])
+        .args(["-r", "-z", "--timeout=5"])
         .arg(format!("--compress-choice={client_choice}"))
         .arg(format!("--rsh={}", rsh.display()))
         .arg(format!(
