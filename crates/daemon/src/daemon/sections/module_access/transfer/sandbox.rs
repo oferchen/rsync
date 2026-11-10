@@ -349,15 +349,19 @@ impl PrivilegeOutcome {
     }
 }
 
-/// Validates that the module path exists.
+/// Validates that the module path exists and resolves it for this session.
 ///
-/// Returns `true` if the path exists, or sends an error and returns `false`.
+/// Returns the path the session serves from - the stored value resolved as
+/// Cygwin opens it (`crate::posix_path::resolve_module_path`) - or sends an
+/// error and returns `None`.
 fn validate_module_path(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
-) -> io::Result<bool> {
-    if Path::new(&module.path).exists() {
-        return Ok(true);
+) -> io::Result<Option<PathBuf>> {
+    if let Ok(resolved) = crate::posix_path::resolve_module_path(&module.path)
+        && resolved.exists()
+    {
+        return Ok(Some(resolved));
     }
 
     let error = AtError::message(format!(
@@ -379,7 +383,7 @@ fn validate_module_path(
         log_message(log, &message);
     }
 
-    Ok(false)
+    Ok(None)
 }
 
 /// Outcome of [`validate_client_paths_in_module`].

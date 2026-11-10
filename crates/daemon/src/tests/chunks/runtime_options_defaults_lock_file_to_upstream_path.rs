@@ -12,3 +12,23 @@ fn runtime_options_defaults_lock_file_to_upstream_path() {
 
     assert_eq!(options.lock_file(), Some(Path::new("/var/run/rsyncd.lock")));
 }
+
+/// Daemon path options are stored as written, as loadparm.c stores them; the
+/// Cygwin-style mapping applies only when the daemon opens the file
+/// (`crate::posix_path`).
+#[test]
+fn runtime_options_store_daemon_paths_as_written() {
+    let options = RuntimeOptions::parse(&[
+        OsString::from("--log-file"),
+        OsString::from("/var/log/oc.log"),
+        OsString::from("--pid-file"),
+        OsString::from("/var/run/oc.pid"),
+    ])
+    .expect("parse arguments");
+
+    assert_eq!(
+        options.log_file().map(PathBuf::as_path),
+        Some(Path::new("/var/log/oc.log"))
+    );
+    assert_eq!(options.pid_file(), Some(Path::new("/var/run/oc.pid")));
+}

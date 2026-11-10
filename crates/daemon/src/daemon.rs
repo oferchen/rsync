@@ -143,10 +143,10 @@ const DEFAULT_PORT: u16 = 873;
 ///
 /// upstream: rsync.h:33 `#define DEFAULT_LOCK_FILE "/var/run/rsyncd.lock"`,
 /// installed as the `lock_file` default by daemon-parm.txt:34. Upstream has
-/// no per-platform default: under Cygwin the path resolves below the Cygwin
-/// root, and natively Windows resolves it against the current drive
-/// (`<drive>:\var\run\rsyncd.lock`). It is opened lazily, per connection,
-/// only for a non-zero `max connections` (connection.c:30-36).
+/// no per-platform default; on Windows the string resolves below the
+/// installation root when it is opened, as Cygwin maps it
+/// (`crate::posix_path`). It is opened lazily, per connection, only for a
+/// non-zero `max connections` (connection.c:30-36).
 const DEFAULT_LOCK_FILE: &str = "/var/run/rsyncd.lock";
 
 /// Environment variable that overrides the default config file path (branded).

@@ -55,13 +55,15 @@ fn resolve_gid(value: &str) -> Result<u32, String> {
 }
 
 fn validate_cli_secrets_file(path: PathBuf) -> Result<PathBuf, DaemonError> {
-    let metadata = fs::metadata(&path).map_err(|error| {
-        config_error(format!(
-            "failed to access secrets file '{}': {}",
-            path.display(),
-            error
-        ))
-    })?;
+    let metadata = crate::posix_path::resolve_daemon_path(&path)
+        .and_then(fs::metadata)
+        .map_err(|error| {
+            config_error(format!(
+                "failed to access secrets file '{}': {}",
+                path.display(),
+                error
+            ))
+        })?;
 
     if let Err(detail) = ensure_secrets_file(&path, &metadata) {
         return Err(config_error(detail));

@@ -6,7 +6,7 @@ fn validate_secrets_file_from_env(
     path: &Path,
     env: &'static str,
 ) -> Result<Option<PathBuf>, DaemonError> {
-    let metadata = match fs::metadata(path) {
+    let metadata = match crate::posix_path::resolve_daemon_path(path).and_then(fs::metadata) {
         Ok(metadata) => metadata,
         Err(error) => {
             if error.kind() == io::ErrorKind::NotFound {
