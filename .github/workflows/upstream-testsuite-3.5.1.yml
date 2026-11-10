@@ -40,8 +40,13 @@ on:
 # while every master push gets its own group, so a master run is never shown
 # as cancelled by the next merge.
 concurrency:
-  group: upstream-testsuite-3.5.1-${{ github.ref }}${{ github.ref == 'refs/heads/master' && format('-{0}', github.sha) || '' }}
-  cancel-in-progress: true
+  # Pull requests wait in one first-in-first-out queue per workflow, so each
+  # PR's run starts only when the previous PR's run has finished; nothing is
+  # cancelled. Every other event (master push, schedule, dispatch) gets its own
+  # group per commit, so it never waits behind the PR queue and every merge
+  # commit keeps a completed run for bisection.
+  group: upstream-testsuite-3.5.1-${{ github.event_name == 'pull_request' && 'pr-queue' || format('{0}-{1}', github.ref, github.sha) }}
+  queue: max
 
 permissions:
   contents: read

@@ -41,10 +41,13 @@ on:
   pull_request:
 
 concurrency:
-  group: windows-nightly-case-insensitive-${{ github.ref }}
-  # Cancel a superseded run only on pull-request pushes; never cancel a
-  # nightly schedule run.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Pull requests wait in one first-in-first-out queue per workflow, so each
+  # PR's run starts only when the previous PR's run has finished; nothing is
+  # cancelled. Every other event (master push, schedule, dispatch) gets its own
+  # group per commit, so it never waits behind the PR queue and every merge
+  # commit keeps a completed run for bisection.
+  group: windows-nightly-case-insensitive-${{ github.event_name == 'pull_request' && 'pr-queue' || format('{0}-{1}', github.ref, github.sha) }}
+  queue: max
 
 permissions:
   contents: read

@@ -127,11 +127,14 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(badge, "README carries no 3.5.1 testsuite badge")
         self.assertIn("event=schedule", badge.group(0))
 
-    def test_the_gate_cancels_like_ci(self) -> None:
-        # A newer push to a pull request supersedes the older run, but every
-        # master push keeps its own group, so no master run shows as cancelled.
+    def test_the_gate_queues_like_ci(self) -> None:
+        # Pull requests wait in one FIFO queue and nothing is cancelled, while
+        # every master push keeps its own group, so no master run waits behind
+        # the pull request queue or shows as cancelled.
         ci, gate = _load(CI_YML)["concurrency"], _load(GATE)["concurrency"]
-        self.assertEqual(gate["cancel-in-progress"], ci["cancel-in-progress"])
+        self.assertEqual(gate["queue"], ci["queue"])
+        self.assertEqual(gate["queue"], "max")
+        self.assertNotIn("cancel-in-progress", gate)
         self.assertEqual(gate["group"].removeprefix("upstream-testsuite-3.5.1-"),
                          ci["group"].removeprefix("ci-"))
         self.assertIn("github.sha", gate["group"])

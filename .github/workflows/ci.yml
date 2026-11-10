@@ -54,13 +54,13 @@ on:
     - cron: '30 3 * * *'
 
 concurrency:
-  group: ci-${{ github.ref }}${{ github.ref == 'refs/heads/master' && format('-{0}', github.sha) || '' }}
-  # Superseded pull request pushes still cancel; pushes to master do not, so
-  # every merge commit keeps a completed run for bisection. The master
-  # exemption lives in the GROUP KEY, not in cancel-in-progress: giving each
-  # master commit its own group means there is never an older run in the group
-  # to evict, which holds regardless of how the flag is evaluated.
-  cancel-in-progress: true
+  # Pull requests wait in one first-in-first-out queue per workflow, so each
+  # PR's run starts only when the previous PR's run has finished; nothing is
+  # cancelled. Every other event (master push, schedule, dispatch) gets its own
+  # group per commit, so it never waits behind the PR queue and every merge
+  # commit keeps a completed run for bisection.
+  group: ci-${{ github.event_name == 'pull_request' && 'pr-queue' || format('{0}-{1}', github.ref, github.sha) }}
+  queue: max
 
 permissions:
   contents: read
