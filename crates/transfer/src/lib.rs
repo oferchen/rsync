@@ -141,6 +141,7 @@ pub(crate) mod role_trailer;
 /// Kept as a path here because this crate's own call sites (and the daemon's)
 /// name it as `transfer::sanitize_path`.
 pub use filters::sanitize_path;
+pub mod server_argv;
 pub mod setup;
 pub mod shared;
 pub mod symlink_safety;
