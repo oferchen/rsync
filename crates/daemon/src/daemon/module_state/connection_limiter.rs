@@ -78,7 +78,7 @@ fn open_lock_file(path: &Path) -> io::Result<File> {
             .truncate(false)
             .read(true)
             .write(true)
-            .open(path)
+            .open(crate::posix_path::resolve_daemon_path(path)?)
     }
 }
 

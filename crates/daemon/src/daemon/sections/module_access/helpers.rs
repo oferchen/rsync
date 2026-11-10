@@ -105,7 +105,10 @@ fn open_log_file(path: &Path) -> io::Result<std::fs::File> {
     }
     #[cfg(not(unix))]
     {
-        OpenOptions::new().create(true).append(true).open(path)
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(crate::posix_path::resolve_daemon_path(path)?)
     }
 }
 
@@ -1058,7 +1061,7 @@ fn read_filter_file_contents(path: &Path) -> io::Result<String> {
     }
     #[cfg(not(unix))]
     {
-        fs::read_to_string(path)
+        fs::read_to_string(crate::posix_path::resolve_daemon_path(path)?)
     }
 }
 
