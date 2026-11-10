@@ -813,8 +813,9 @@ impl ReceiverContext {
                 Err(e) => io::Error::new(
                     e.kind(),
                     format!(
-                        "failed to create destination root {}: {e} {}{}",
+                        "failed to create destination root {}: {} {}{}",
                         dest_dir.display(),
+                        logging::upstream_errno_text(&e),
                         crate::role_trailer::error_location!(),
                         crate::role_trailer::receiver()
                     ),
