@@ -110,9 +110,7 @@ pub use self::context::GeneratorContext;
 pub(crate) use self::context::SenderFstatError;
 #[cfg(test)]
 pub(crate) use self::context::sender_fstat_error;
-pub use self::diagnostics::{
-    flush_rate_totals, ndx_convert_totals, prepare_acl_totals, segment_dispatch_totals,
-};
+pub use self::diagnostics::{ndx_convert_totals, prepare_acl_totals, segment_dispatch_totals};
 pub use self::item_flags::ItemFlags;
 pub use self::protocol_io::{
     calculate_duration_ms, read_signature_blocks, read_signature_blocks_keepalive,
@@ -122,7 +120,7 @@ pub use self::stats::GeneratorStats;
 
 // Re-exports for sibling submodules accessing diagnostics, segments, and stats
 // through `super::*` (matches the pre-decomposition import surface).
-pub(crate) use self::diagnostics::{flush_with_count, record_prepare_acl, record_segment_dispatch};
+pub(crate) use self::diagnostics::{record_prepare_acl, record_segment_dispatch};
 pub(crate) use self::segments::{LazyFlistProducer, PendingSegment, SegmentScheduler};
 pub(crate) use self::stats::{FlistSendStats, TransferLoopResult, is_early_close_error};
 

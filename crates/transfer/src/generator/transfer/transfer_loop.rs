@@ -24,8 +24,7 @@ use super::super::protocol_io::NdxAttrs;
 use super::super::segments::{MAX_FILECNT_LOOKAHEAD, MIN_FILECNT_LOOKAHEAD};
 use super::super::source_prefetch::{RequestShape, SourcePrefetcher, prefetched_reader};
 use super::super::{
-    GeneratorContext, SegmentScheduler, SenderFstatError, TransferLoopResult, flush_with_count,
-    is_early_close_error,
+    GeneratorContext, SegmentScheduler, SenderFstatError, TransferLoopResult, is_early_close_error,
 };
 use crate::adaptive_buffer::adaptive_buffer_size;
 use crate::delta_config::DeltaGeneratorConfig;
@@ -665,7 +664,6 @@ impl GeneratorContext {
                     )?;
                 }
                 self.flush_thread_local_diagnostics(io.output())?;
-                flush_with_count(io.output())?;
             }
 
             // upstream: generator.c:2610-2616 - during the send loop, emit a
@@ -733,10 +731,7 @@ impl GeneratorContext {
                             // counter ran one step ahead of the receiver, the goodbye
                             // desynced, and the receiver reported "connection
                             // unexpectedly closed (io.c 232)".
-                            if let Err(e) = ndx_write_codec
-                                .write_ndx_done(io.output())
-                                .and_then(|()| flush_with_count(io.output()))
-                            {
+                            if let Err(e) = ndx_write_codec.write_ndx_done(io.output()) {
                                 if tolerant && is_early_close_error(&e) {
                                     break;
                                 }
@@ -755,10 +750,7 @@ impl GeneratorContext {
                         // upstream: sender.c:546-547
                         // rprintf(FINFO, "send_files phase=%d\n", phase)
                         debug_log!(Send, 1, "send_files phase={}", phase);
-                        if let Err(e) = ndx_write_codec
-                            .write_ndx_done(io.output())
-                            .and_then(|()| flush_with_count(io.output()))
-                        {
+                        if let Err(e) = ndx_write_codec.write_ndx_done(io.output()) {
                             if tolerant && is_early_close_error(&e) {
                                 break;
                             }
@@ -980,7 +972,6 @@ impl GeneratorContext {
                 self.emit_client_item(io.output(), &iflags, ndx, xname.as_deref(), itemize, true)?;
                 files_transferred += 1;
                 transferred_file_size += file_entry.size();
-                flush_with_count(io.output())?;
                 continue;
             }
 
@@ -1591,9 +1582,7 @@ impl GeneratorContext {
         // upstream: sender.c:820 - the final NDX_DONE is the "goodbye" that
         // tells the client's generator to proceed with its own goodbye
         // handshake. Without it, the client hangs waiting for this marker.
-        if let Err(e) = ndx_write_codec
-            .write_ndx_done(io.output())
-            .and_then(|()| flush_with_count(io.output()))
+        if let Err(e) = ndx_write_codec.write_ndx_done(io.output())
             && !(tolerant && is_early_close_error(&e))
         {
             return Err(e);
