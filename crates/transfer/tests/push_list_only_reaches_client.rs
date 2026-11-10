@@ -21,15 +21,17 @@
 #![cfg(unix)]
 
 use std::fs;
+use std::net::{Ipv4Addr, TcpListener};
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use filetime::{FileTime, set_file_mtime, set_symlink_file_times};
 use platform::env::EnvGuard;
+use test_support::inetd_server::{InetdCommand, InetdServer};
 use test_support::{
-    CliOutput, DaemonProcess, LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, UpstreamVersion,
-    create_tempdir, oc_rsync_bin, require_binaries, require_upstream_rsync,
+    CliOutput, LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, UpstreamVersion, create_tempdir,
+    oc_rsync_bin, require_binaries, require_upstream_rsync,
 };
 
 /// 2020-01-02 03:04:05 UTC.
@@ -235,7 +237,7 @@ fn rsh_pull_control_lists_on_the_oc_client() {
 }
 
 /// Starts `daemon` serving `root/dst` as module `m`.
-fn spawn_daemon(daemon: &Path, root: &Path) -> DaemonProcess {
+fn spawn_daemon(daemon: &Path, root: &Path) -> InetdServer {
     let config = root.join("rsyncd.conf");
     fs::write(
         &config,
@@ -245,10 +247,15 @@ fn spawn_daemon(daemon: &Path, root: &Path) -> DaemonProcess {
         ),
     )
     .expect("write rsyncd.conf");
-    DaemonProcess::spawn_binary(daemon, &config, std::iter::empty::<&str>()).expect("spawn daemon")
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind daemon listener");
+    let command = InetdCommand::discarding_stderr(daemon)
+        .expect("open /dev/null")
+        .arg("--config")
+        .arg(&config);
+    InetdServer::start(listener, command).expect("start daemon")
 }
 
-fn daemon_args(root: &Path, daemon: &DaemonProcess) -> Vec<String> {
+fn daemon_args(root: &Path, daemon: &InetdServer) -> Vec<String> {
     vec![
         "-rl".to_owned(),
         "--list-only".to_owned(),
