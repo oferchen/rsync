@@ -252,6 +252,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - SHA-256 and SHA-512 use the ARMv8 hardware path on macOS aarch64 again (#8064)
 - Skip the sender seek between adjacent matched blocks and batch receiver signature buffers: daemon push 282K to 158K syscalls and 0.536 s to 0.472 s, pull 361K to 208K and 0.491 s to 0.419 s (#8210)
 - Reuse the sender delta buffers across files and read block sums without a per-block allocation: daemon push of 50 x 8 MiB files 152K to 6K client allocations, 2,000 x 16 KiB files 160K to 82K (#8246)
+- On Linux, oc-rsync opts out of transparent huge pages at startup. On a host with THP set to `always`, the kernel backed jemalloc extents with 2 MiB pages, adding about 40 MiB to peak memory and making it swing from run to run: a 100k-file pull now peaks at about 24 MiB instead of 61-66 MiB, and a 1 GiB delta pull at 30 MiB (client) and 93 MiB (server) instead of 67-71 MiB and 133-141 MiB, with CPU unchanged (#8342)
 
 ### Fixed
 - A server picks the checksum and compression names it ranks best among those both sides offer, as rsync 3.5.1 does, instead of the client's first acceptable one; only the `v` capability letter turns on that negotiation, and the pre-release `V` sets only the varint flags encoding (#8328)

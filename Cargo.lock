@@ -311,6 +311,7 @@ dependencies = [
  "libc",
  "mimalloc",
  "nix",
+ "platform",
  "protocol",
  "tempfile",
  "test-support",
