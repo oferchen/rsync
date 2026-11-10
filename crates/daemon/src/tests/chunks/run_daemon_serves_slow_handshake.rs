@@ -58,7 +58,6 @@ fn run_daemon_serves_slow_handshake() {
     reader.read_line(&mut line).expect("greeting");
     assert_eq!(line, expected_greeting);
 
-
     // Complete the handshake before requesting, so this exercises the timeout
     // (what the test is for) rather than the startup-error path.
     send_client_greeting(&mut stream);
