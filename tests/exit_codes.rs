@@ -433,8 +433,10 @@ mod embedded_ssh_connect_failure {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let lines: Vec<&str> = stderr.lines().collect();
             assert_eq!(lines.len(), 3, "{role}: {stderr}");
+            // ssh ends its own line in CRLF (openssh/log.c:409).
             assert!(
-                lines[0].starts_with("ssh: Could not resolve hostname nonexist.invalid: "),
+                lines[0].starts_with("ssh: Could not resolve hostname nonexist.invalid: ")
+                    && lines[0].ends_with('\r'),
                 "{role}: {stderr}"
             );
             assert!(
@@ -449,6 +451,38 @@ mod embedded_ssh_connect_failure {
                 "{role}: {stderr}"
             );
         }
+    }
+}
+
+#[cfg(all(unix, feature = "embedded-ssh"))]
+mod embedded_ssh_connect_refused {
+    use super::*;
+
+    /// A refused dial prints ssh's own line, CRLF-terminated, before the
+    /// whine and the code-255 trailer (openssh/sshconnect.c:525-526).
+    #[test]
+    fn a_refused_connection_prints_ssh_connect_line_and_exits_255() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("reserve a port")
+            .port();
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let src = temp.path().join("f");
+        fs::write(&src, b"x").expect("write");
+        let remote = format!("ssh://127.0.0.1:{port}/tmp/f");
+        let output = run_rsync(&[src.display().to_string().as_str(), remote.as_str()]);
+        assert_eq!(output.status.code(), Some(255));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.starts_with(&format!(
+                "ssh: connect to host 127.0.0.1 port {port}: Connection refused\r\n"
+            )),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains(": connection unexpectedly closed (0 bytes received so far) [sender]"),
+            "{stderr}"
+        );
     }
 }
 

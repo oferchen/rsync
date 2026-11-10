@@ -698,6 +698,95 @@ fn build_host_key_options(cfg: &SshConfig, resolved_ip: Option<String>) -> HostK
     }
 }
 
+/// The peer upstream names for a connection that is not a socket, such as a
+/// `ProxyCommand` pipe (openssh/packet.c:528-529).
+const PROXY_REMOTE_ID: &str = "UNKNOWN port 65535";
+
+/// `ETIMEDOUT`, the errno upstream's `timeout_connect()` reports when the
+/// `ConnectTimeout` deadline passes (openssh/misc.c `waitfd()`).
+const ETIMEDOUT: Option<i32> = if cfg!(any(target_os = "linux", target_os = "android")) {
+    Some(110)
+} else if cfg!(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+)) {
+    Some(60)
+} else if cfg!(windows) {
+    // WSAETIMEDOUT
+    Some(10060)
+} else {
+    None
+};
+
+/// The error a dial that outlived its deadline reports.
+fn connect_timed_out() -> std::io::Error {
+    ETIMEDOUT.map_or_else(
+        || std::io::Error::from(std::io::ErrorKind::TimedOut),
+        std::io::Error::from_raw_os_error,
+    )
+}
+
+/// `strerror(errno)` for an OS error: its text without the
+/// `" (os error N)"` suffix `io::Error` appends.
+fn strerror(error: &std::io::Error) -> String {
+    let text = error.to_string();
+    error
+        .raw_os_error()
+        .and_then(|code| text.strip_suffix(&format!(" (os error {code})")))
+        .map_or_else(|| text.clone(), str::to_owned)
+}
+
+/// Opens the TCP connection, reporting a failure the way upstream's
+/// `ssh_connect_direct()` does (openssh/sshconnect.c:525-526).
+async fn dial(
+    host: &str,
+    addr: std::net::SocketAddr,
+    deadline: tokio::time::Instant,
+    nodelay: bool,
+) -> Result<tokio::net::TcpStream, SshError> {
+    let stream = tokio::time::timeout_at(deadline, tokio::net::TcpStream::connect(addr))
+        .await
+        .unwrap_or_else(|_| Err(connect_timed_out()))
+        .map_err(|error| SshError::ConnectFailed {
+            host: host.to_owned(),
+            port: addr.port(),
+            reason: strerror(&error),
+        })?;
+    // russh's own `connect` applies the same option before the handshake.
+    if nodelay && let Err(error) = stream.set_nodelay(true) {
+        logging::debug_log!(Io, 1, "set_nodelay() failed: {}", error);
+    }
+    Ok(stream)
+}
+
+/// Runs the SSH handshake under the rest of the `ConnectTimeout` budget,
+/// reporting a stalled or closed peer the way upstream's packet layer does.
+///
+/// Upstream bounds only the banner wait (openssh/kex.c:1295-1301); the
+/// deadline here also covers key exchange, so any expiry reads as the
+/// banner timeout.
+async fn handshake(
+    deadline: tokio::time::Instant,
+    remote: &str,
+    connect: impl std::future::Future<
+        Output = Result<russh::client::Handle<SshClientHandler>, SshError>,
+    >,
+) -> Result<russh::client::Handle<SshClientHandler>, SshError> {
+    match tokio::time::timeout_at(deadline, connect).await {
+        Err(_) => Err(SshError::BannerTimeout {
+            remote: remote.to_owned(),
+        }),
+        Ok(Err(SshError::Connect(russh::Error::Disconnect))) => Err(SshError::ConnectionClosed {
+            remote: remote.to_owned(),
+        }),
+        Ok(result) => result,
+    }
+}
+
 /// Performs SSH connection setup: DNS resolution, connect, auth, channel
 /// open, exec, and optional initial stdin data delivery.
 async fn ssh_setup(
@@ -749,13 +838,18 @@ async fn ssh_setup(
                 ssh_config,
                 Some(addr.ip().to_string()),
             ));
-            tokio::time::timeout(ssh_config.connect_timeout, async {
-                russh::client::connect(client_config, addr, handler).await
-            })
-            .await
-            .map_err(|_| SshError::Timeout {
-                secs: ssh_config.connect_timeout.as_secs(),
-            })??
+            // One `ConnectTimeout` budget covers the dial and the banner,
+            // as upstream's `timeout_ms` does (openssh/sshconnect.c:503-505,
+            // :1607).
+            let deadline = tokio::time::Instant::now() + ssh_config.connect_timeout;
+            let stream = dial(&ssh_config.host, addr, deadline, client_config.nodelay).await?;
+            let remote = format!("{} port {}", addr.ip(), addr.port());
+            handshake(
+                deadline,
+                &remote,
+                russh::client::connect_stream(client_config, stream, handler),
+            )
+            .await?
         }
         ProxyDial::Command(template) => {
             let handler = SshClientHandler::with_options(build_host_key_options(ssh_config, None));
@@ -775,13 +869,13 @@ async fn ssh_setup(
                 ssh_config.username.as_deref(),
             )?;
             let stream = spawn_proxy_command(&command)?;
-            tokio::time::timeout(ssh_config.connect_timeout, async {
-                russh::client::connect_stream(client_config, stream, handler).await
-            })
-            .await
-            .map_err(|_| SshError::Timeout {
-                secs: ssh_config.connect_timeout.as_secs(),
-            })??
+            let deadline = tokio::time::Instant::now() + ssh_config.connect_timeout;
+            handshake(
+                deadline,
+                PROXY_REMOTE_ID,
+                russh::client::connect_stream(client_config, stream, handler),
+            )
+            .await?
         }
     };
 

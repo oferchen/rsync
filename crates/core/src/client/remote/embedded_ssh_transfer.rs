@@ -379,7 +379,7 @@ fn run_transfer_over_embedded_ssh(
     // started (cleanup.c:146-153).
     .map_err(|e| {
         remote_shell_failed_error(
-            e.to_string(),
+            e.ssh_stderr(),
             ExitCode::from_raw(255),
             local_client_role(server_config.role),
         )

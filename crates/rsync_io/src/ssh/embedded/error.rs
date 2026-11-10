@@ -14,37 +14,104 @@ pub enum SshError {
     #[error("SSH connection error: {0}")]
     Connect(#[from] russh::Error),
 
-    /// All authentication methods were exhausted without success.
-    #[error("authentication failed (tried: {tried})")]
+    /// The TCP connection to the server could not be made.
+    ///
+    /// upstream: openssh/sshconnect.c:525-526 `ssh_connect_direct()`.
+    #[error("ssh: connect to host {host} port {port}: {reason}")]
+    ConnectFailed {
+        /// The host as given on the command line (after `HostName`).
+        host: String,
+        /// The port dialled.
+        port: u16,
+        /// `strerror(errno)` of the failed `connect()`.
+        reason: String,
+    },
+
+    /// The server accepted the TCP connection but sent no identification
+    /// string within `ConnectTimeout`.
+    ///
+    /// upstream: openssh/kex.c:1299-1301 `kex_exchange_identification()`,
+    /// then openssh/packet.c:2006-2009 `sshpkt_vfatal()` for
+    /// `SSH_ERR_CONN_TIMEOUT`.
+    #[error("{}", lines(&banner_timeout_messages(.remote)))]
+    BannerTimeout {
+        /// The peer as upstream's `remote_id` prints it: `<ip> port <port>`.
+        remote: String,
+    },
+
+    /// The server closed the connection before the session was set up.
+    ///
+    /// upstream: openssh/packet.c:2002-2004 `sshpkt_vfatal()` for
+    /// `SSH_ERR_CONN_CLOSED`.
+    #[error("Connection closed by {remote}")]
+    ConnectionClosed {
+        /// The peer as upstream's `remote_id` prints it: `<ip> port <port>`.
+        remote: String,
+    },
+
+    /// Every authentication method was exhausted without success.
+    ///
+    /// upstream: openssh/sshconnect2.c:541-543 `userauth()`.
+    #[error("{user}@{host}: Permission denied ({methods}).")]
     AuthenticationFailed {
-        /// Comma-separated list of methods attempted.
-        tried: String,
+        /// The remote user name.
+        user: String,
+        /// The host as given on the command line (after `HostName`).
+        host: String,
+        /// The method list the server last advertised, comma-separated.
+        methods: String,
     },
 
-    /// Server's host key does not match the known key.
-    #[error("host key mismatch for {host}")]
+    /// The server's host key differs from the key `known_hosts` records.
+    ///
+    /// upstream: openssh/sshconnect.c:1309-1331 `check_host_key()`
+    /// `HOST_CHANGED`, openssh/sshconnect.c:1667-1687 `warn_changed_key()`,
+    /// then openssh/sshconnect2.c:102-103 `verify_host_key_callback()`.
+    #[error("{}", lines(&changed_host_key_messages(.host, .changed)))]
     HostKeyMismatch {
-        /// Hostname or IP that presented the mismatched key.
+        /// `hostfile_hostname`: `HostKeyAlias`, else `[host]:port` (bare
+        /// host on port 22).
         host: String,
+        /// The offending entry and the key the server sent.
+        changed: Box<ChangedHostKey>,
     },
 
-    /// Server's host key is not in the known hosts file and strict checking is enabled.
-    #[error("unknown host: {host}")]
+    /// The server's host key is not in `known_hosts` and
+    /// `StrictHostKeyChecking yes` forbids learning it.
+    ///
+    /// upstream: openssh/sshconnect.c:1169-1178 `check_host_key()`, then
+    /// openssh/sshconnect2.c:102-103.
+    #[error("{}", lines(&unknown_host_messages(.host, .key_type)))]
     UnknownHost {
-        /// Hostname or IP with no known key.
+        /// `hostfile_hostname`, as for [`SshError::HostKeyMismatch`].
         host: String,
+        /// `sshkey_type()` of the server's key.
+        key_type: &'static str,
     },
+
+    /// Host key verification failed without a reason line of its own: the
+    /// key was unknown under `StrictHostKeyChecking ask` and no answer
+    /// accepted it.
+    ///
+    /// upstream: openssh/sshconnect2.c:102-103.
+    #[error("Host key verification failed.")]
+    HostKeyVerificationFailed,
 
     /// The server's host key is listed in the `RevokedHostKeys` file.
     ///
-    /// upstream: openssh/sshconnect.c:1050-1064 - a key found in the revoked
-    /// list is refused before any `known_hosts` check, under every
-    /// `StrictHostKeyChecking` mode. A revoked key is never learned or
-    /// accepted, so the connection is refused rather than downgraded.
-    #[error("host key for {host} is revoked")]
+    /// upstream: openssh/sshconnect.c:1517-1528 `verify_host_key()` - a key
+    /// found in the revoked list is refused before any `known_hosts` check,
+    /// under every `StrictHostKeyChecking` mode. A revoked key is never
+    /// learned or accepted, so the connection is refused rather than
+    /// downgraded. openssh/sshconnect2.c:102-103 adds the final line.
+    #[error("{}", lines(&revoked_host_key_messages(.key_type, .fingerprint, .file)))]
     HostKeyRevoked {
-        /// Hostname or IP that presented the revoked key.
-        host: String,
+        /// `sshkey_type()` of the server's key.
+        key_type: &'static str,
+        /// The server key's `SHA256:` fingerprint.
+        fingerprint: String,
+        /// The `RevokedHostKeys` file, as configured.
+        file: String,
     },
 
     /// Server authenticated with an OpenSSH host certificate.
@@ -72,13 +139,6 @@ pub enum SshError {
     /// Failed to load an SSH private key.
     #[error("key load error: {0}")]
     KeyLoad(String),
-
-    /// Connection or operation timed out.
-    #[error("timeout after {secs}s")]
-    Timeout {
-        /// Number of seconds before timeout.
-        secs: u64,
-    },
 
     /// The SSH goodbye phase did not complete within the configured budget.
     ///
@@ -244,4 +304,245 @@ pub enum SshError {
 /// Renders each refused line on its own line, ahead of the fatal summary.
 fn render_lines(lines: &[String]) -> String {
     lines.iter().map(|line| format!("{line}\n")).collect()
+}
+
+/// A `known_hosts` entry that records a different key than the server sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangedHostKey {
+    /// `sshkey_type()` of the server's key.
+    pub key_type: &'static str,
+    /// The server key's `SHA256:` fingerprint.
+    pub fingerprint: String,
+    /// The file `Add correct host key in` names: the first user
+    /// `known_hosts` file, else the first system one; `None` when neither
+    /// list has a file.
+    pub add_to: Option<String>,
+    /// The file holding the offending entry.
+    pub offending_file: String,
+    /// The offending entry's 1-based line number.
+    pub offending_line: usize,
+}
+
+/// upstream: openssh/sshconnect2.c:103 `fatal("Host key verification failed.")`.
+const HOST_KEY_VERIFICATION_FAILED: &str = "Host key verification failed.";
+
+/// Joins log messages for `Display`, one per line.
+fn lines(messages: &[String]) -> String {
+    messages.join("\n")
+}
+
+fn banner_timeout_messages(remote: &str) -> Vec<String> {
+    vec![
+        "Connection timed out during banner exchange".to_owned(),
+        format!("Connection to {remote} timed out"),
+    ]
+}
+
+fn unknown_host_messages(host: &str, key_type: &str) -> Vec<String> {
+    vec![
+        format!(
+            "No {key_type} host key is known for {host} and you have requested strict checking."
+        ),
+        HOST_KEY_VERIFICATION_FAILED.to_owned(),
+    ]
+}
+
+fn revoked_host_key_messages(key_type: &str, fingerprint: &str, file: &str) -> Vec<String> {
+    vec![
+        format!("Host key {key_type} {fingerprint} revoked by file {file}"),
+        HOST_KEY_VERIFICATION_FAILED.to_owned(),
+    ]
+}
+
+/// One message per upstream `error()`/`fatal()` call. The fingerprint
+/// message carries an embedded newline, as `warn_changed_key()`'s format
+/// does (openssh/sshconnect.c:1683-1684).
+fn changed_host_key_messages(host: &str, changed: &ChangedHostKey) -> Vec<String> {
+    let banner = "@".repeat(59);
+    let mut messages = vec![
+        banner.clone(),
+        "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @".to_owned(),
+        banner,
+        "IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!".to_owned(),
+        "Someone could be eavesdropping on you right now (man-in-the-middle attack)!".to_owned(),
+        "It is also possible that a host key has just been changed.".to_owned(),
+        format!(
+            "The fingerprint for the {} key sent by the remote host is\n{}.",
+            changed.key_type, changed.fingerprint
+        ),
+        "Please contact your system administrator.".to_owned(),
+    ];
+    if let Some(add_to) = &changed.add_to {
+        messages.push(format!(
+            "Add correct host key in {add_to} to get rid of this message."
+        ));
+    }
+    messages.push(format!(
+        "Offending {} key in {}:{}",
+        changed.key_type, changed.offending_file, changed.offending_line
+    ));
+    messages.push(format!(
+        "Host key for {host} has changed and you have requested strict checking."
+    ));
+    messages.push(HOST_KEY_VERIFICATION_FAILED.to_owned());
+    messages
+}
+
+impl SshError {
+    /// The log messages an `ssh` child would print for this failure, one per
+    /// upstream `error()`/`fatal()` call.
+    ///
+    /// A failure with no OpenSSH counterpart yields its own text as the
+    /// single message.
+    pub fn ssh_messages(&self) -> Vec<String> {
+        match self {
+            Self::BannerTimeout { remote } => banner_timeout_messages(remote),
+            Self::HostKeyMismatch { host, changed } => changed_host_key_messages(host, changed),
+            Self::UnknownHost { host, key_type } => unknown_host_messages(host, key_type),
+            Self::HostKeyRevoked {
+                key_type,
+                fingerprint,
+                file,
+            } => revoked_host_key_messages(key_type, fingerprint, file),
+            other => vec![other.to_string()],
+        }
+    }
+
+    /// The bytes an `ssh` child writes to stderr for this failure: each log
+    /// message followed by `"\r\n"`.
+    ///
+    /// upstream: openssh/log.c:409 `do_log()` - `"%s%s%.*s\r\n"`.
+    pub fn ssh_stderr(&self) -> String {
+        self.ssh_messages()
+            .iter()
+            .map(|message| format!("{message}\r\n"))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each message ends in CRLF, as ssh's `do_log()` writes it.
+    #[test]
+    fn single_message_failures_end_in_crlf() {
+        let refused = SshError::ConnectFailed {
+            host: "localhost".to_owned(),
+            port: 1,
+            reason: "Connection refused".to_owned(),
+        };
+        assert_eq!(
+            refused.ssh_stderr(),
+            "ssh: connect to host localhost port 1: Connection refused\r\n"
+        );
+        let denied = SshError::AuthenticationFailed {
+            user: "nobody".to_owned(),
+            host: "127.0.0.1".to_owned(),
+            methods: "publickey,password".to_owned(),
+        };
+        assert_eq!(
+            denied.ssh_stderr(),
+            "nobody@127.0.0.1: Permission denied (publickey,password).\r\n"
+        );
+        let closed = SshError::ConnectionClosed {
+            remote: "127.0.0.1 port 22979".to_owned(),
+        };
+        assert_eq!(
+            closed.ssh_stderr(),
+            "Connection closed by 127.0.0.1 port 22979\r\n"
+        );
+        assert_eq!(
+            SshError::HostKeyVerificationFailed.ssh_stderr(),
+            "Host key verification failed.\r\n"
+        );
+    }
+
+    /// A failure upstream reports in two calls prints two CRLF lines.
+    #[test]
+    fn two_message_failures_print_two_lines() {
+        let timeout = SshError::BannerTimeout {
+            remote: "127.0.0.1 port 22978".to_owned(),
+        };
+        assert_eq!(
+            timeout.ssh_stderr(),
+            "Connection timed out during banner exchange\r\n\
+             Connection to 127.0.0.1 port 22978 timed out\r\n"
+        );
+        let unknown = SshError::UnknownHost {
+            host: "[127.0.0.1]:22977".to_owned(),
+            key_type: "ED25519",
+        };
+        assert_eq!(
+            unknown.ssh_stderr(),
+            "No ED25519 host key is known for [127.0.0.1]:22977 and you have requested \
+             strict checking.\r\nHost key verification failed.\r\n"
+        );
+        let revoked = SshError::HostKeyRevoked {
+            key_type: "ED25519",
+            fingerprint: "SHA256:abc".to_owned(),
+            file: "/tmp/revoked".to_owned(),
+        };
+        assert_eq!(
+            revoked.ssh_stderr(),
+            "Host key ED25519 SHA256:abc revoked by file /tmp/revoked\r\n\
+             Host key verification failed.\r\n"
+        );
+    }
+
+    /// The changed-key block: the fingerprint message keeps its embedded
+    /// bare newline, and every message ends in CRLF.
+    #[test]
+    fn changed_host_key_block_matches_upstream_layout() {
+        let changed = SshError::HostKeyMismatch {
+            host: "[127.0.0.1]:22977".to_owned(),
+            changed: Box::new(ChangedHostKey {
+                key_type: "ED25519",
+                fingerprint: "SHA256:abc".to_owned(),
+                add_to: Some("/tmp/kh".to_owned()),
+                offending_file: "/tmp/kh".to_owned(),
+                offending_line: 1,
+            }),
+        };
+        let banner = "@".repeat(59);
+        let expected = format!(
+            "{banner}\r\n\
+             @    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\r\n\
+             {banner}\r\n\
+             IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!\r\n\
+             Someone could be eavesdropping on you right now (man-in-the-middle attack)!\r\n\
+             It is also possible that a host key has just been changed.\r\n\
+             The fingerprint for the ED25519 key sent by the remote host is\nSHA256:abc.\r\n\
+             Please contact your system administrator.\r\n\
+             Add correct host key in /tmp/kh to get rid of this message.\r\n\
+             Offending ED25519 key in /tmp/kh:1\r\n\
+             Host key for [127.0.0.1]:22977 has changed and you have requested strict checking.\r\n\
+             Host key verification failed.\r\n"
+        );
+        assert_eq!(changed.ssh_stderr(), expected);
+    }
+
+    /// With no `known_hosts` file configured upstream omits the
+    /// `Add correct host key` line (openssh/sshconnect.c:1315).
+    #[test]
+    fn changed_host_key_without_a_file_omits_the_add_line() {
+        let changed = SshError::HostKeyMismatch {
+            host: "h".to_owned(),
+            changed: Box::new(ChangedHostKey {
+                key_type: "RSA",
+                fingerprint: "SHA256:abc".to_owned(),
+                add_to: None,
+                offending_file: "/tmp/kh".to_owned(),
+                offending_line: 3,
+            }),
+        };
+        assert!(!changed.ssh_stderr().contains("Add correct host key"));
+    }
+
+    /// A failure with no ssh counterpart keeps its own text as one line.
+    #[test]
+    fn other_failures_print_their_own_text() {
+        let error = SshError::KeyLoad("bad key".to_owned());
+        assert_eq!(error.ssh_stderr(), "key load error: bad key\r\n");
+    }
 }

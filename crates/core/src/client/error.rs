@@ -61,9 +61,10 @@ enum LeadLine {
     Program(Vec<String>),
     /// An unprefixed `rprintf(FERROR, ...)` cause.
     Cause(String),
-    /// A cause another process printed, then a program-prefixed line.
+    /// Bytes another process wrote to stderr verbatim, line endings
+    /// included, then a program-prefixed line.
     #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
-    CauseThenProgram(String, String),
+    ShellStderrThenProgram(String, String),
 }
 impl ClientError {
     /// Creates a new [`ClientError`] from the supplied exit code and message.
@@ -212,7 +213,7 @@ impl ClientError {
     pub fn program_lines(&self) -> &[String] {
         match self.lead_line.as_deref() {
             Some(LeadLine::Program(lines)) => lines,
-            Some(LeadLine::CauseThenProgram(_, line)) => std::slice::from_ref(line),
+            Some(LeadLine::ShellStderrThenProgram(_, line)) => std::slice::from_ref(line),
             _ => &[],
         }
     }
@@ -221,7 +222,16 @@ impl ClientError {
     /// this failure has one.
     pub fn cause_line(&self) -> Option<&str> {
         match self.lead_line.as_deref() {
-            Some(LeadLine::Cause(line) | LeadLine::CauseThenProgram(line, _)) => Some(line),
+            Some(LeadLine::Cause(line)) => Some(line),
+            _ => None,
+        }
+    }
+
+    /// Returns the bytes a remote shell wrote to stderr before this failure,
+    /// to be written verbatim, line endings included.
+    pub fn shell_stderr(&self) -> Option<&str> {
+        match self.lead_line.as_deref() {
+            Some(LeadLine::ShellStderrThenProgram(text, _)) => Some(text),
             _ => None,
         }
     }
@@ -750,7 +760,8 @@ fn eof_whine(bytes_received: u64, role: Role) -> String {
 
 /// Reports a remote shell that exited before the protocol started.
 ///
-/// The shell prints its own diagnostic (`shell_line`), the client then
+/// The shell prints its own diagnostic (`shell_stderr`, exactly as the shell
+/// wrote it - ssh ends each message in `"\r\n"`), the client then
 /// finds the stream closed and whines about it, and `exit_cleanup()` takes
 /// the shell's status over `RERR_STREAMIO` for the trailer
 /// (io.c:299-303, cleanup.c:146-153). An ssh that cannot connect exits 255,
@@ -758,13 +769,13 @@ fn eof_whine(bytes_received: u64, role: Role) -> String {
 #[cold]
 #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
 pub(crate) fn remote_shell_failed_error(
-    shell_line: String,
+    shell_stderr: String,
     exit_code: ExitCode,
     role: Role,
 ) -> ClientError {
     let mut error = remote_exit_error(exit_code, role);
-    error.lead_line = Some(Box::new(LeadLine::CauseThenProgram(
-        shell_line,
+    error.lead_line = Some(Box::new(LeadLine::ShellStderrThenProgram(
+        shell_stderr,
         eof_whine(0, role),
     )));
     error
@@ -1408,15 +1419,16 @@ mod tests {
         #[test]
         fn a_failed_remote_shell_prints_its_line_the_whine_and_its_status() {
             let error = remote_shell_failed_error(
-                "ssh: Could not resolve hostname nope: Name or service not known".to_owned(),
+                "ssh: Could not resolve hostname nope: Name or service not known\r\n".to_owned(),
                 ExitCode::from_raw(255),
                 Role::Sender,
             );
             assert_eq!(error.exit_code(), 255);
             assert_eq!(
-                error.cause_line(),
-                Some("ssh: Could not resolve hostname nope: Name or service not known")
+                error.shell_stderr(),
+                Some("ssh: Could not resolve hostname nope: Name or service not known\r\n")
             );
+            assert_eq!(error.cause_line(), None);
             assert_eq!(
                 error.program_line(),
                 Some("connection unexpectedly closed (0 bytes received so far) [sender]")
