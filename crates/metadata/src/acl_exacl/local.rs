@@ -45,8 +45,8 @@ impl AclReadError {
 impl LocalAcls {
     /// Reads `path`'s ACLs; `mode` fills a filesystem without ACLs.
     ///
-    /// Under `--fake-super` an ACL stashed in the source's own `%aacl`/`%dacl`
-    /// attribute wins over the filesystem ACL.
+    /// Under `--fake-super` only the source's own `%aacl`/`%dacl` stash is
+    /// read ([`crate::read_sender_acl`]); without one the ACL is empty.
     ///
     /// # Errors
     ///
@@ -60,10 +60,9 @@ impl LocalAcls {
         fake_super: bool,
     ) -> Result<Self, AclReadError> {
         let read = |is_default: bool| {
-            if fake_super
-                && let Ok(Some(acl)) = crate::fake_super::load_fake_super_acl(path, !is_default)
-            {
-                return Ok(acl);
+            if fake_super {
+                return crate::fake_super::read_sender_acl(path, mode, is_default, true)
+                    .map_err(|error| AclReadError { is_default, error });
             }
             read_rsync_acl(path, mode, is_default)
                 .map_err(|error| AclReadError { is_default, error })

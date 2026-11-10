@@ -945,6 +945,29 @@ mod tests {
             assert_eq!(stash(&path, FAKE_SUPER_DEFAULT_ACL_XATTR), None);
         }
 
+        /// upstream: acls.c:1390-1415 - an equal ACL never reaches
+        /// set_rsync_acl(), so the stash is not rewritten (its ctime holds).
+        #[test]
+        fn an_equal_stash_is_left_untouched() {
+            use std::os::unix::fs::MetadataExt;
+
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            let mut default = named();
+            default.user_obj = 7;
+            update_fake_super_access_acl(&path, &named(), 0o644).expect("update");
+            update_fake_super_default_acl(&path, &default, 0o755).expect("update");
+            let ctime = |p: &Path| {
+                let meta = fs::metadata(p).expect("stat");
+                (meta.ctime(), meta.ctime_nsec())
+            };
+            let before = ctime(&path);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            update_fake_super_access_acl(&path, &named(), 0o644).expect("update");
+            update_fake_super_default_acl(&path, &default, 0o755).expect("update");
+            assert_eq!(ctime(&path), before, "an equal stash was rewritten");
+        }
+
         /// upstream: acls.c:599-607 - no stash reads as the empty ACL.
         #[test]
         fn a_fake_super_sender_reads_only_the_stash() {
