@@ -11,7 +11,10 @@
 //!
 //! Every expected listing is the verbatim stdout of rsync 3.5.1 on the same
 //! fixture with `TZ=UTC` on both ends. A directory's size is its filesystem
-//! `st_size`, which is not portable, so that column is blanked. When rsync
+//! `st_size`, which is not portable, so that column is blanked. The symlink's
+//! permission column is its `lstat` mode, which `symlink(2)` takes from the
+//! umask on macOS but fixes at 0777 on Linux, so it is rebuilt from the
+//! fixture's own link (see `for_this_host`). When rsync
 //! 3.5.1 is installed the same command also runs with upstream on both ends
 //! and with an upstream client against the oc server, and the outputs must be
 //! byte-identical.
@@ -95,6 +98,16 @@ fn fixture(root: &Path) {
     }
 }
 
+/// `listing` as it reads on this host: the oracle captured Linux's
+/// `lrwxrwxrwx`, and the symlink row carries the fixture link's real mode.
+fn for_this_host(listing: &str, root: &Path) -> String {
+    let mode = fs::symlink_metadata(root.join("src/link"))
+        .expect("lstat link")
+        .permissions()
+        .mode();
+    listing.replace("lrwxrwxrwx", &logging::permstring(mode))
+}
+
 /// Blanks the size column of directory rows (see the module docs).
 fn normalise(listing: &str) -> String {
     listing
@@ -174,7 +187,8 @@ fn rsh_push_lists_through_the_oc_server() {
         fixture(tmp.path());
         let oc = oc_rsync_bin();
         let out = run(&oc, &rsh_args(tmp.path(), flags, &oc, true));
-        assert_listing(&out, expected, &format!("oc -> oc rsh push {flags}"));
+        let expected = for_this_host(expected, tmp.path());
+        assert_listing(&out, &expected, &format!("oc -> oc rsh push {flags}"));
         assert_destination_untouched(tmp.path());
 
         let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
@@ -206,7 +220,7 @@ fn rsh_pull_control_lists_on_the_oc_client() {
     fixture(tmp.path());
     let oc = oc_rsync_bin();
     let out = run(&oc, &rsh_args(tmp.path(), "-rl", &oc, false));
-    assert_listing(&out, LISTING_RL, "oc pull");
+    assert_listing(&out, &for_this_host(LISTING_RL, tmp.path()), "oc pull");
     if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
         let reference = run(
             upstream.binary(),
@@ -256,7 +270,8 @@ fn daemon_push_lists_through_the_oc_daemon() {
     // A `use chroot = no` module munges symlinks by default (rsyncd.conf.5
     // `munge symlinks`), and the receiver lists the target as it stores it,
     // prefix included (upstream: flist.c:1521-1524, generator.c:1345).
-    let munged = LISTING_RL.replace("-> a.txt", "-> /rsyncd-munged/a.txt");
+    let munged =
+        for_this_host(LISTING_RL, tmp.path()).replace("-> a.txt", "-> /rsyncd-munged/a.txt");
     assert_listing(&out, &munged, "oc -> oc daemon push");
     assert_destination_untouched(tmp.path());
 

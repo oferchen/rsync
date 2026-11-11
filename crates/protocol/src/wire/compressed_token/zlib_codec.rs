@@ -16,8 +16,25 @@ use super::step::drive_async;
 use super::step::{DeflateSink, TokenDecodeCore, drive_sync};
 use super::{
     CHUNK_SIZE, CompressedToken, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG,
-    TOKENRUN_REL, write_deflated_data_pieces,
+    TOKENRUN_REL, codec_failure, write_deflated_data_pieces,
 };
+
+/// The code zlib's `deflate()` returns for its one failure flate2 reports.
+///
+/// flate2 1.1.11 ffi/c.rs:353 maps only `MZ_STREAM_ERROR` to an error;
+/// `Z_BUF_ERROR` is a status. zlib-ng deflate.c returns no other failure for
+/// a stream flate2 initialised.
+const Z_STREAM_ERROR: i32 = -2;
+
+/// The code zlib's `inflate()` returns for every failure flate2 reports.
+///
+/// flate2 1.1.11 ffi/c.rs:226 folds `Z_DATA_ERROR`, `Z_STREAM_ERROR` and
+/// `Z_MEM_ERROR` into one error. zlib-ng's inflate.c returns `Z_STREAM_ERROR`
+/// only for a null state, output or input pointer, which flate2 never passes,
+/// and never `Z_MEM_ERROR` (the window is allocated at init), so the failure
+/// is always the bad-data mode's `Z_DATA_ERROR`. The non-default zlib-rs
+/// backend can also fold an allocation failure (`Z_MEM_ERROR`) into it.
+const Z_DATA_ERROR: i32 = -3;
 
 /// Zlib encoder state for sending compressed tokens.
 ///
@@ -182,9 +199,18 @@ impl ZlibTokenEncoder {
                 let before_in = self.compressor.total_in();
                 let before_out = self.compressor.total_out();
 
-                self.compressor
+                if self
+                    .compressor
                     .compress(input, &mut self.compress_buf, FlushCompress::Sync)
-                    .map_err(|e| io::Error::other(e.to_string()))?;
+                    .is_err()
+                {
+                    // upstream: token.c:504-507 - avail_in is the input the
+                    // failing call left unconsumed.
+                    let left = input.len() - (self.compressor.total_in() - before_in) as usize;
+                    return Err(codec_failure(format!(
+                        "deflate on token returned {Z_STREAM_ERROR} ({left} bytes left)"
+                    )));
+                }
 
                 let consumed = (self.compressor.total_in() - before_in) as usize;
                 let produced = (self.compressor.total_out() - before_out) as usize;
@@ -237,9 +263,14 @@ impl ZlibTokenEncoder {
             let before_in = self.compressor.total_in();
             let before_out = self.compressor.total_out();
 
-            self.compressor
+            if self
+                .compressor
                 .compress(input, &mut self.compress_buf[..avail_out], flush)
-                .map_err(|e| io::Error::other(e.to_string()))?;
+                .is_err()
+            {
+                // upstream: token.c:447-450
+                return Err(codec_failure(format!("deflate returned {Z_STREAM_ERROR}")));
+            }
 
             consumed_total += (self.compressor.total_in() - before_in) as usize;
             let produced = (self.compressor.total_out() - before_out) as usize;
@@ -365,16 +396,21 @@ impl DeflateSink for ZlibDeflate {
             let before_in = self.decompressor.total_in();
             let before_out = self.decompressor.total_out();
 
-            self.decompressor
-                .decompress(
-                    &self.pending[self.pending_pos..],
-                    &mut self.output_buf,
-                    FlushDecompress::None,
-                )
-                .map_err(|e| io::Error::other(e.to_string()))?;
+            let result = self.decompressor.decompress(
+                &self.pending[self.pending_pos..],
+                &mut self.output_buf,
+                FlushDecompress::None,
+            );
 
             let consumed = (self.decompressor.total_in() - before_in) as usize;
             let produced = (self.decompressor.total_out() - before_out) as usize;
+            if result.is_err() {
+                // upstream: token.c:664-668 - n is the output the failing
+                // call produced.
+                return Err(codec_failure(format!(
+                    "inflate returned {Z_DATA_ERROR} ({produced} bytes)"
+                )));
+            }
             self.pending_pos += consumed;
 
             if produced > 0 {
@@ -407,12 +443,18 @@ impl DeflateSink for ZlibDeflate {
             let before_in = self.decompressor.total_in();
             let before_out = self.decompressor.total_out();
 
-            self.decompressor
-                .decompress(input, &mut self.output_buf, FlushDecompress::Sync)
-                .map_err(|e| io::Error::other(e.to_string()))?;
+            let result =
+                self.decompressor
+                    .decompress(input, &mut self.output_buf, FlushDecompress::Sync);
 
             let consumed = (self.decompressor.total_in() - before_in) as usize;
             let produced = (self.decompressor.total_out() - before_out) as usize;
+            if result.is_err() {
+                // upstream: token.c:619-628
+                return Err(codec_failure(format!(
+                    "inflate flush returned {Z_DATA_ERROR} ({produced} bytes)"
+                )));
+            }
 
             if consumed > 0 {
                 input = &input[consumed..];
@@ -448,13 +490,7 @@ impl DeflateSink for ZlibDeflate {
         // impact: a valid stream always consumes the trailer, so this only fires
         // on an already-corrupt or desynced stream.
         if !input.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "zlib token decompressor lost sync: {} sync-trailer byte(s) unconsumed",
-                    input.len()
-                ),
-            ));
+            return Err(codec_failure("decompressor lost sync!".to_owned()));
         }
 
         Ok(())
@@ -586,10 +622,17 @@ impl ZlibTokenDecoder {
                 let before_in = self.deflate.decompressor.total_in();
                 let before_out = self.deflate.decompressor.total_out();
 
-                self.deflate
+                if self
+                    .deflate
                     .decompressor
                     .decompress(input, &mut self.deflate.output_buf, FlushDecompress::Sync)
-                    .map_err(|e| io::Error::other(e.to_string()))?;
+                    .is_err()
+                {
+                    // upstream: token.c:720-724
+                    return Err(codec_failure(format!(
+                        "inflate (token) returned {Z_DATA_ERROR}"
+                    )));
+                }
 
                 let consumed = (self.deflate.decompressor.total_in() - before_in) as usize;
                 if consumed > 0 {

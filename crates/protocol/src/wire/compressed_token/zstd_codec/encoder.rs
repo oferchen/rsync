@@ -8,11 +8,11 @@
 
 use std::io::{self, Write};
 
-use zstd::stream::raw::{Encoder as ZstdRawEncoder, Operation};
+use zstd::zstd_safe::{CCtx, CParameter, ErrorCode, InBuffer, OutBuffer};
 
 use super::super::{
     CHUNK_SIZE, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG, TOKENRUN_REL,
-    write_deflated_data_header,
+    codec_failure, write_deflated_data_header,
 };
 
 /// Zstd encoder state for sending compressed tokens.
@@ -46,7 +46,7 @@ use super::super::{
 /// through a bounded output buffer (lines 786-829)
 pub(in crate::wire::compressed_token) struct ZstdTokenEncoder {
     /// Persistent zstd compression context.
-    encoder: ZstdRawEncoder<'static>,
+    encoder: CCtx<'static>,
     /// Output buffer for compression results.
     /// Sized to `MAX_DATA_COUNT` to match upstream's `zstd_out_buff.size`
     /// (token.c:794).
@@ -95,13 +95,17 @@ impl ZstdTokenEncoder {
         level: i32,
         workers: Option<std::num::NonZeroU8>,
     ) -> io::Result<Self> {
-        let mut encoder = ZstdRawEncoder::new(level)?;
+        // upstream: token.c:743-751 - a fresh CCtx with the level set.
+        let mut encoder =
+            CCtx::try_create().ok_or_else(|| io::Error::other("compression init failed"))?;
+        encoder
+            .set_parameter(CParameter::CompressionLevel(level))
+            .map_err(|code| io::Error::other(zstd::zstd_safe::get_error_name(code)))?;
         if let Some(n) = workers {
             // Silently ignore failures - zstd rejects ZSTD_c_nbWorkers
             // when built without multi-thread support (the `zstdmt` Cargo
             // feature). The encoder still works in single-threaded mode.
-            let _ =
-                encoder.set_parameter(zstd::stream::raw::CParameter::NbWorkers(u32::from(n.get())));
+            let _ = encoder.set_parameter(CParameter::NbWorkers(u32::from(n.get())));
         }
         Ok(Self {
             encoder,
@@ -269,12 +273,12 @@ impl ZstdTokenEncoder {
             }
 
             {
-                let mut in_buf =
-                    zstd::stream::raw::InBuffer::around(&self.literal_buf[input_pos..len]);
-                let mut out_buf =
-                    zstd::stream::raw::OutBuffer::around(&mut self.output_buf[self.output_pos..]);
+                let mut in_buf = InBuffer::around(&self.literal_buf[input_pos..len]);
+                let mut out_buf = OutBuffer::around(&mut self.output_buf[self.output_pos..]);
 
-                self.encoder.run(&mut in_buf, &mut out_buf)?;
+                self.encoder
+                    .compress_stream(&mut out_buf, &mut in_buf)
+                    .map_err(zstd_compress_failure)?;
                 input_pos += in_buf.pos();
                 self.output_pos += out_buf.pos();
             }
@@ -319,9 +323,11 @@ impl ZstdTokenEncoder {
         loop {
             let remaining;
             {
-                let mut out_buf =
-                    zstd::stream::raw::OutBuffer::around(&mut self.output_buf[self.output_pos..]);
-                remaining = self.encoder.flush(&mut out_buf)?;
+                let mut out_buf = OutBuffer::around(&mut self.output_buf[self.output_pos..]);
+                remaining = self
+                    .encoder
+                    .flush_stream(&mut out_buf)
+                    .map_err(zstd_compress_failure)?;
                 self.output_pos += out_buf.pos();
             }
 
@@ -375,4 +381,12 @@ impl ZstdTokenEncoder {
         self.last_run_end = self.last_token;
         Ok(())
     }
+}
+
+/// The line upstream prints when `ZSTD_compressStream2()` fails.
+///
+/// upstream: token.c:801-804 - `%d` of the size_t error code prints its low
+/// 32 bits as a negative int.
+fn zstd_compress_failure(code: ErrorCode) -> io::Error {
+    codec_failure(format!("ZSTD_compressStream returned {}", code as i32))
 }

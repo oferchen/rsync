@@ -39,6 +39,7 @@ pub fn run_server_fds(
     stdin: std::fs::File,
     stdout: std::fs::File,
     progress: Option<&mut dyn TransferProgressCallback>,
+    fork_point: Option<std::sync::Arc<crate::server::ForkPoint>>,
 ) -> ServerResult {
-    transfer::run_server_fds(config, stdin, stdout, progress)
+    transfer::run_server_fds(config, stdin, stdout, progress, fork_point)
 }

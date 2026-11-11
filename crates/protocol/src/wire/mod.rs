@@ -29,8 +29,8 @@ pub mod signature;
 pub mod vectored;
 
 pub use self::compressed_token::{
-    CompressedToken, CompressedTokenDecoder, CompressedTokenEncoder, DEFLATED_DATA, END_FLAG,
-    MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG, TOKENRUN_REL,
+    CodecFailure, CompressedToken, CompressedTokenDecoder, CompressedTokenEncoder, DEFLATED_DATA,
+    END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG, TOKENRUN_REL,
 };
 pub use self::delta::{
     // Upstream wire format
