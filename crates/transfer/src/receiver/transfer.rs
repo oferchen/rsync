@@ -14,6 +14,7 @@
 //! - `mode` - the single drive-mode decision both pipelined drivers share, plus
 //!   the one implementation of every mode that moves no file data.
 
+pub(in crate::receiver) mod candidate_feed;
 mod candidates;
 pub(in crate::receiver) mod mode;
 mod phases;

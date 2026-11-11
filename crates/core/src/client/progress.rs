@@ -174,9 +174,16 @@ impl ClientProgressUpdate {
     ///
     /// Used by the SSH/daemon transfer adapter to convert per-file progress
     /// events from the transfer crate into client progress updates.
+    ///
+    /// `files_done` is the `xfr#` counter; `files_remaining` and `total_files`
+    /// are the `to-chk=M/N` pair, counted by file-list position like upstream
+    /// (progress.c:79-82), so they are passed through rather than derived from
+    /// `files_done`.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_transfer_event(
         event: ClientEvent,
         files_done: usize,
+        files_remaining: usize,
         total_files: usize,
         total_bytes: Option<u64>,
         overall_transferred: u64,
@@ -186,7 +193,7 @@ impl ClientProgressUpdate {
         Self {
             event,
             total: total_files,
-            remaining: total_files.saturating_sub(files_done),
+            remaining: files_remaining,
             index: files_done,
             total_bytes,
             final_update: true,
@@ -755,8 +762,44 @@ mod tests {
             Duration::ZERO,
             Arc::from(Path::new("/d")),
         );
-        let update =
-            ClientProgressUpdate::from_transfer_event(event, 1, 2, None, 0, Duration::ZERO, false);
+        let update = ClientProgressUpdate::from_transfer_event(
+            event,
+            1,
+            1,
+            2,
+            None,
+            0,
+            Duration::ZERO,
+            false,
+        );
         assert!(!update.flist_eof());
+    }
+
+    /// upstream: progress.c:79-82 - `to-chk` counts down by file-list
+    /// position, not by transferred files: 3.5.1 prints `xfr#3, to-chk=2/7`
+    /// when the third transfer sits at index 4 of a 7-entry list.
+    #[test]
+    fn transfer_event_keeps_file_list_position_for_to_chk() {
+        let event = ClientEvent::from_progress(
+            Path::new("a/f2"),
+            0,
+            None,
+            Duration::ZERO,
+            Arc::from(Path::new("/d")),
+        );
+        let update = ClientProgressUpdate::from_transfer_event(
+            event,
+            3,
+            2,
+            7,
+            None,
+            0,
+            Duration::ZERO,
+            true,
+        );
+        assert_eq!(
+            (update.index(), update.remaining(), update.total()),
+            (3, 2, 7)
+        );
     }
 }

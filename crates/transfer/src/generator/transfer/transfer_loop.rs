@@ -1483,6 +1483,7 @@ impl GeneratorContext {
                     total_file_bytes: Some(file_entry.size()),
                     files_done: files_transferred,
                     total_files: self.file_list.len(),
+                    files_remaining: self.file_list.len().saturating_sub(files_transferred),
                     flist_eof,
                 };
                 cb.on_file_transferred(&event);

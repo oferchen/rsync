@@ -19,6 +19,7 @@ use crate::receiver::ndx_stream::{NdxFrame, read_marker_aware_ndx, read_ndx_and_
 use crate::receiver::stats::TransferStats;
 use crate::receiver::{REDO_CHECKSUM_LENGTH, ReceiverContext};
 
+use super::candidate_feed::CandidateFeed;
 use super::mode::ReceiverMode;
 
 impl ReceiverContext {
@@ -313,7 +314,6 @@ impl ReceiverContext {
                             .push((idx, iflags as u16));
                     }
                 }
-                let total_files = files_to_transfer.len();
                 // Stage 0: hand the pipeline the transfer set by flist index;
                 // the in-flight window clones each FileEntry as it is pushed
                 // (O(window)), so the loop no longer borrows `self.file_list`.
@@ -340,10 +340,9 @@ impl ReceiverContext {
                     writer,
                     pipeline_config,
                     &setup,
-                    files_to_transfer,
+                    CandidateFeed::Ready(files_to_transfer),
                     &mut metadata_errors,
                     false,
-                    total_files,
                     0,
                     true,
                     &mut progress,
@@ -391,10 +390,9 @@ impl ReceiverContext {
                         writer,
                         redo_config,
                         &setup,
-                        redo_files,
+                        CandidateFeed::Ready(redo_files),
                         &mut metadata_errors,
                         true,
-                        total_files,
                         0,
                         true,
                         &mut progress,
@@ -823,7 +821,6 @@ impl ReceiverContext {
                     transferred_file_size += seg_size;
                 }
                 ReceiverMode::Transfer => {
-                    let total_files = files_to_transfer.len();
                     // Progress accounting: `files_transferred` is the running total from
                     // prior segments (the offset so `files_done` keeps climbing across
                     // segments), and `flist_eof` reports whether the sub-list stream has
@@ -844,10 +841,9 @@ impl ReceiverContext {
                         writer,
                         pipeline_config.clone(),
                         &setup,
-                        files_to_transfer,
+                        CandidateFeed::Ready(files_to_transfer),
                         &mut metadata_errors,
                         false,
-                        total_files,
                         files_done_offset,
                         flist_complete,
                         &mut progress,
@@ -925,7 +921,6 @@ impl ReceiverContext {
                     })
                 })
                 .collect();
-            let redo_total = redo_files.len();
             // The redo pass runs after the whole walk, so the sub-list stream has
             // ended (flist complete) and `files_transferred` is the running total
             // across every segment.
@@ -936,10 +931,9 @@ impl ReceiverContext {
                     writer,
                     pipeline_config,
                     &setup,
-                    redo_files,
+                    CandidateFeed::Ready(redo_files),
                     &mut metadata_errors,
                     true,
-                    redo_total,
                     redo_files_done_offset,
                     true,
                     &mut progress,

@@ -18,10 +18,19 @@ pub struct TransferProgressEvent<'a> {
     pub file_bytes: u64,
     /// Total size of the file, if known from the file list.
     pub total_file_bytes: Option<u64>,
-    /// Number of files transferred so far (including this one).
+    /// Number of files transferred so far (including this one): the `xfr#N`
+    /// counter.
     pub files_done: usize,
-    /// Total number of files to transfer.
+    /// File-list entries received so far, the `N` of `to-chk=M/N`.
+    ///
+    /// upstream: progress.c:81-82 - `stats.num_files`.
     pub total_files: usize,
+    /// File-list entries after this one, the `M` of `to-chk=M/N`.
+    ///
+    /// upstream: progress.c:81 - `stats.num_files - current_file_index - 1`,
+    /// where `current_file_index` is the entry's position in the file list
+    /// (progress.c:147-156), not a count of transferred files.
+    pub files_remaining: usize,
     /// Whether the file list is complete (no more INC_RECURSE sub-lists pending).
     ///
     /// Mirrors upstream's global `flist_eof` flag, which controls the
