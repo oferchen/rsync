@@ -211,4 +211,3 @@ mod failure_report_tests {
         assert!(signalled.contains("[generator="), "{signalled}");
     }
 }
-

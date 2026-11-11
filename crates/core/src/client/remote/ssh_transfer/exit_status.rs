@@ -259,7 +259,8 @@ impl PeerChild for rsync_io::ssh::SshChildHandle {
     }
 
     fn reap(self) -> PeerExit {
-        self.wait().map_or(PeerExit::WAIT_FAILED, PeerExit::of_status)
+        self.wait()
+            .map_or(PeerExit::WAIT_FAILED, PeerExit::of_status)
     }
 }
 

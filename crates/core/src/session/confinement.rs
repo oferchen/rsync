@@ -152,7 +152,6 @@ pub fn confine_receiver(config: &ServerConfig) {
             }
         }
     }
-
 }
 
 /// Resolves the Landlock allowlist root for a receiver's destination operand.
@@ -791,23 +790,5 @@ mod landlock_surfacing_tests {
             let events = landlock_events(0, &outcome);
             assert!(events.is_empty(), "{events:?}");
         }
-    }
-}
-
-/// Unbuffered handles on the server's descriptors 0 and 1.
-#[cfg(unix)]
-struct ServerStdio {
-    stdin: std::fs::File,
-    stdout: std::fs::File,
-}
-
-#[cfg(unix)]
-impl ServerStdio {
-    fn open() -> io::Result<Self> {
-        use std::os::fd::AsFd;
-        Ok(Self {
-            stdin: io::stdin().as_fd().try_clone_to_owned()?.into(),
-            stdout: io::stdout().as_fd().try_clone_to_owned()?.into(),
-        })
     }
 }
