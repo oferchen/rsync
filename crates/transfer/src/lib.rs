@@ -1186,6 +1186,13 @@ fn run_server_on_core(
         sender_bandwidth_limiter(&config),
     );
 
+    // upstream: log.c:357-366 rwrite() - a server frames each diagnostic for
+    // its peer the moment it is produced. Installed before the writer exists
+    // so the multiplex writer it becomes sends the queue in production order.
+    let _peer_diagnostics = (!config.connection.client_mode).then(|| {
+        writer::peer_sink::PeerDiagnostics::install(daemon_log.as_ref().map(|dl| dl.log.clone()))
+    });
+
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
     let mut writer = writer::ServerWriter::new_plain(stdout);
 

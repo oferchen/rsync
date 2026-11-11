@@ -242,6 +242,7 @@ mod tests {
             xattr_basis: None,
             dest_mode_basis: None,
             file_entry: entry,
+            log_name: None,
         }
     }
 

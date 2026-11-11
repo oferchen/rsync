@@ -5,6 +5,7 @@
 
 use std::cell::Cell;
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::frontend::escape::{EscapeStyle, escape_for_output};
 pub use logging::DiagnosticEvent;
@@ -236,6 +237,88 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
         }
     }
     Ok(())
+}
+
+/// Whether the process writes its own stdout/stderr, so diagnostics can go
+/// to them the moment they are produced. Set once by the binary; a caller of
+/// [`crate::run`] that hands in its own writers keeps the buffered path.
+static LIVE_STDIO: AtomicBool = AtomicBool::new(false);
+
+/// Marks the process stdout/stderr as the client's output streams.
+///
+/// Called by the `oc-rsync` binary before [`crate::run`], so a remote
+/// transfer writes each diagnostic as it is produced, as upstream's
+/// `rwrite()` does (log.c:272-373).
+pub fn enable_live_stdio() {
+    LIVE_STDIO.store(true, Ordering::Relaxed);
+}
+
+/// The client's live diagnostic sink: every event goes to stdout or stderr,
+/// one write per line, at the moment it is produced.
+///
+/// upstream: log.c:420-427 rwrite() - `filtered_fwrite()` then `fflush()` for
+/// each line, so a line never waits for the next one.
+struct StdioSink {
+    msgs_to_stderr: bool,
+    style: EscapeStyle,
+}
+
+impl logging::DiagnosticSink for StdioSink {
+    fn write(&self, event: &Stamped<DiagnosticEvent>) {
+        let event = event.value();
+        let code = event.code();
+        let stream = match logging::message_stream(code, stream_context(self.msgs_to_stderr)) {
+            Ok(logging::MessageStream::Stdout) => Some(false),
+            Ok(logging::MessageStream::Stderr) => Some(true),
+            Ok(logging::MessageStream::LogOnly | logging::MessageStream::Suppressed) => None,
+            Err(_) => {
+                // upstream: log.c:352-354 reports the bad code on stderr.
+                let _ = writeln!(io::stderr(), "Bad logcode in rwrite(): {}", code.as_u8());
+                None
+            }
+        };
+        let Some(to_stderr) = stream else {
+            return;
+        };
+        let mut line = escape_for_output(event_message_bytes(event), self.style);
+        line.push(b'\n');
+        // One write per line keeps a line whole when another thread writes too.
+        let _ = if to_stderr {
+            io::stderr().write_all(&line)
+        } else {
+            let mut out = io::stdout().lock();
+            out.write_all(&line).and_then(|()| out.flush())
+        };
+    }
+}
+
+/// Keeps the live sink installed for a transfer; removing it on drop returns
+/// later diagnostics to the buffer the end-of-run flush renders.
+pub(crate) struct LiveDiagnostics {
+    installed: bool,
+}
+
+impl LiveDiagnostics {
+    /// Installs the live sink when the process owns its stdio, else does
+    /// nothing so the buffered renderer keeps the output.
+    pub(crate) fn install(msgs_to_stderr: bool, eight_bit_output: bool) -> Self {
+        let installed = LIVE_STDIO.load(Ordering::Relaxed);
+        if installed {
+            logging::current().install_sink(std::sync::Arc::new(StdioSink {
+                msgs_to_stderr,
+                style: EscapeStyle::terminal(eight_bit_output),
+            }));
+        }
+        Self { installed }
+    }
+}
+
+impl Drop for LiveDiagnostics {
+    fn drop(&mut self) {
+        if self.installed {
+            logging::current().remove_sink();
+        }
+    }
 }
 
 /// Drain any pending diagnostic events from the thread-local queue and render them.
