@@ -219,7 +219,7 @@ pub(crate) fn copy_file(
             destination,
             metadata,
             record_path.as_path(),
-            metadata_options.fake_super_enabled(),
+            context.sender_options().fake_super_enabled(),
         );
         return Ok(true);
     }
@@ -243,7 +243,7 @@ pub(crate) fn copy_file(
             context,
             source,
             metadata,
-            metadata_options.fake_super_enabled(),
+            context.sender_options().fake_super_enabled(),
             record_path.as_path(),
             LocalCopyAction::SkippedOverMaxSize,
         );
@@ -257,7 +257,7 @@ pub(crate) fn copy_file(
             context,
             source,
             metadata,
-            metadata_options.fake_super_enabled(),
+            context.sender_options().fake_super_enabled(),
             record_path.as_path(),
             LocalCopyAction::SkippedUnderMinSize,
         );

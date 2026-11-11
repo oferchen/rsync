@@ -161,7 +161,7 @@ pub(super) fn try_copy(
     reconcile_copied_ads(context, source, destination, flags)?;
 
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
-        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+        .virtualize_fake_super(source, context.sender_options().fake_super_enabled());
     let total_bytes = Some(metadata_snapshot.len());
     let change_set = LocalCopyChangeSet::for_file(
         metadata,
