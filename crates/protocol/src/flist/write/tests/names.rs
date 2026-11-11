@@ -196,3 +196,73 @@ fn returning_owner_is_not_named_again() {
     }
     assert_eq!(named, [true, true, false]);
 }
+
+/// upstream: flist.c:787-800 - the sender names an owner from its id list
+/// (`add_uid()`/`add_gid()`), not from the file entry. A nameless entry
+/// still sends the names the caller hands the writer, and only on the ids'
+/// first sighting.
+#[test]
+fn pending_owner_names_name_a_nameless_entry_once() {
+    use super::super::super::read::FileListReader;
+    use std::io::Cursor;
+
+    let protocol = ProtocolVersion::try_from(32u8).unwrap();
+    let mut writer = FileListWriter::new(protocol)
+        .with_preserve_uid(true)
+        .with_preserve_gid(true)
+        .with_name_follows(true);
+    let mut buf = Vec::new();
+    for name in ["a", "b"] {
+        let mut entry = FileEntry::new_file(name.into(), 1, 0o644);
+        entry.set_uid(1000);
+        entry.set_gid(2000);
+        let user = writer.needs_user_name(1000).then(|| "alice".to_string());
+        let group = writer.needs_group_name(2000).then(|| "staff".to_string());
+        writer.set_pending_owner_names(user, group);
+        writer.write_entry(&mut buf, &entry).unwrap();
+    }
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = FileListReader::new(protocol)
+        .with_preserve_uid(true)
+        .with_preserve_gid(true);
+    let first = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(first.user_name(), Some("alice"));
+    assert_eq!(first.group_name(), Some("staff"));
+    let second = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(second.user_name(), None);
+    assert_eq!(second.group_name(), None);
+}
+
+/// A pending name belongs to one entry: the next entry, a new owner the
+/// caller did not name, must not inherit it.
+#[test]
+fn pending_owner_names_do_not_leak_into_the_next_entry() {
+    let protocol = ProtocolVersion::try_from(32u8).unwrap();
+    let mut writer = FileListWriter::new(protocol)
+        .with_preserve_uid(true)
+        .with_name_follows(true);
+    let mut first = FileEntry::new_file("a".into(), 1, 0o644);
+    first.set_uid(1000);
+    writer.set_pending_owner_names(Some("alice".to_string()), None);
+    writer.write_entry(&mut Vec::new(), &first).unwrap();
+
+    let mut second = FileEntry::new_file("b".into(), 1, 0o644);
+    second.set_uid(1001);
+    let mut buf = Vec::new();
+    writer.write_entry(&mut buf, &second).unwrap();
+    assert!(!buf.windows(5).any(|w| w == b"alice"));
+}
+
+/// upstream: flist.c:789-790 - inline names need `inc_recurse`; without it
+/// the names travel only in the trailing id list, so none is asked for.
+#[test]
+fn no_inline_owner_name_is_needed_without_name_follows() {
+    let protocol = ProtocolVersion::try_from(32u8).unwrap();
+    let writer = FileListWriter::new(protocol)
+        .with_preserve_uid(true)
+        .with_preserve_gid(true);
+    assert!(!writer.needs_user_name(1000));
+    assert!(!writer.needs_group_name(2000));
+}

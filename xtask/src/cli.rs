@@ -429,6 +429,9 @@ pub struct CitationsArgs {
     /// Regenerate the committed line-count manifest from the pinned source.
     #[arg(long)]
     pub write_manifest: bool,
+    /// Regenerate the committed OpenSSH line-count manifest from the pinned OpenSSH source.
+    #[arg(long, conflicts_with = "write_manifest")]
+    pub write_openssh_manifest: bool,
 }
 
 /// Arguments for the `release-notes` command.

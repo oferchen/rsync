@@ -107,6 +107,8 @@ fn run_command(cli: Cli) -> Result<(), TaskError> {
         Command::Citations(args) => {
             if args.write_manifest {
                 citations::write_manifest(&workspace)
+            } else if args.write_openssh_manifest {
+                citations::write_openssh_manifest(&workspace)
             } else {
                 citations::execute(&workspace)
             }

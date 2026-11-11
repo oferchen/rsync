@@ -190,10 +190,10 @@ fn run_pipelined_incremental_compiles() {
     // This test just verifies the method signature is correct
     fn _check_signature<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         ctx: &mut ReceiverContext,
-        reader: crate::reader::ServerReader<R>,
+        mut reader: crate::reader::ServerReader<R>,
         writer: &mut W,
     ) {
-        let _ = ctx.run_pipelined_incremental(reader, writer, PipelineConfig::default(), None);
+        let _ = ctx.run_pipelined_incremental(&mut reader, writer, PipelineConfig::default(), None);
     }
 }
 
