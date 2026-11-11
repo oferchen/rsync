@@ -6,7 +6,7 @@ use super::daemon::{
     server_mode_requested,
 };
 use super::flags::{
-    detect_secluded_args_flag, is_known_server_long_flag, parse_server_long_flags,
+    ArgvRefusal, detect_secluded_args_flag, is_known_server_long_flag, parse_server_long_flags,
     refused_server_option,
 };
 use super::parse::{
@@ -249,6 +249,24 @@ fn detect_secluded_args_ignores_s_in_capability_string() {
         OsString::from("dest/"),
     ];
     assert!(!detect_secluded_args_flag(&args));
+}
+
+#[test]
+fn detect_secluded_args_ignores_s_in_an_option_value() {
+    // popt hands the rest of a cluster to the first option that takes a
+    // value: `-fs` is the filter `s` and `-rM--fake-super` is a remote
+    // option, so neither turns on secluded args.
+    for token in ["-fs", "-rM--fake-super", "-T/tmp/s", "-B1s"] {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from(token),
+            OsString::from("--server"),
+            OsString::from("-re.iLsfxCIvu"),
+            OsString::from("."),
+            OsString::from("dest/"),
+        ];
+        assert!(!detect_secluded_args_flag(&args), "{token}");
+    }
 }
 
 #[test]
@@ -3151,17 +3169,23 @@ fn unknown_long_options_are_refused_and_nothing_else_is() {
         let args = argv(&["--server", "-logDtpre.iLsfxC", unknown, ".", "dst/"]);
         assert_eq!(
             refused_server_option(&args),
-            Some(&OsString::from(unknown)),
+            Some(ArgvRefusal {
+                text: format!("on remote machine: {unknown}: unknown option"),
+                after_server: true,
+            }),
             "{unknown}"
         );
         assert!(!is_known_server_long_flag(unknown), "{unknown}");
     }
-    // Ahead of `--server`, where an unknown token would otherwise be taken
-    // for the compact flag string.
+    // Ahead of `--server`, popt runs before am_server is set (options.c:889),
+    // so the text carries no `on remote machine: ` and the role is client.
     let args = argv(&["--bogus-opt", "--server", "-logDtpre.iLsfxC", ".", "dst/"]);
     assert_eq!(
         refused_server_option(&args),
-        Some(&OsString::from("--bogus-opt"))
+        Some(ArgvRefusal {
+            text: "--bogus-opt: unknown option".to_owned(),
+            after_server: false,
+        })
     );
 
     let accepted = [

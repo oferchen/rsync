@@ -5,13 +5,18 @@
 //! rules supplied earlier in the filter chain win under first-match-wins
 //! evaluation, matching the precedence semantics of `--cvs-exclude`.
 //!
-//! See [`crate::frontend::defaults::APPLE_DOUBLE_EXCLUDE_PATTERNS`] for the
-//! authoritative pattern list.
+//! [`APPLE_DOUBLE_EXCLUDE_PATTERNS`] is the authoritative pattern list.
 
-use core::client::FilterRuleSpec;
-use core::message::Message;
+use crate::client::FilterRuleSpec;
+use crate::message::Message;
 
-use crate::frontend::defaults::APPLE_DOUBLE_EXCLUDE_PATTERNS;
+/// Default patterns excluded by `--apple-double-skip` (macOS AppleDouble sidecars).
+///
+/// These files (`._foo`) carry FinderInfo, resource forks, and extended
+/// attributes for files on filesystems that cannot represent them natively.
+/// They are rarely useful when transferred to other systems and clutter
+/// destinations.
+const APPLE_DOUBLE_EXCLUDE_PATTERNS: &[&str] = &["._*"];
 
 /// Appends AppleDouble sidecar exclusion rules to the destination chain.
 ///
@@ -29,7 +34,7 @@ pub(crate) fn append_apple_double_exclude_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::client::FilterRuleKind;
+    use crate::client::FilterRuleKind;
 
     #[test]
     fn append_apple_double_adds_dot_underscore_pattern() {

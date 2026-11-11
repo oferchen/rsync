@@ -1,5 +1,5 @@
-use core::message::{Message, Role};
-use core::rsync_error;
+use crate::message::{Message, Role};
+use crate::rsync_error;
 
 use super::rule_line::RuleLine;
 

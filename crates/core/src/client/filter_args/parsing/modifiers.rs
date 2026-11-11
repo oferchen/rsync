@@ -1,5 +1,5 @@
-use core::client::FilterRuleSpec;
-use core::message::Message;
+use crate::client::FilterRuleSpec;
+use crate::message::Message;
 use filters::{CvsTemplate, ModifierScope, RuleModifiers};
 
 use super::super::directive::FilterDirective;

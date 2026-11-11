@@ -58,6 +58,7 @@ pub use async_ssh_transport::{
 pub use daemon_transfer::{run_daemon_over_remote_shell, run_daemon_transfer};
 #[cfg(feature = "embedded-ssh")]
 pub use embedded_ssh_transfer::run_embedded_ssh_transfer;
+pub use flags::build_wire_format_rules;
 pub use invocation::{
     RemoteInvocationBuilder, RemoteOperands, RemoteRole, SecludedInvocation, TransferSpec,
     determine_transfer_role, operand_is_remote,

@@ -7,9 +7,9 @@
 use std::borrow::Cow;
 use std::ffi::OsStr;
 
-use core::client::{FilterRuleKind, FilterRuleSpec};
-use core::message::{Message, Role};
-use core::rsync_error;
+use crate::client::{FilterRuleKind, FilterRuleSpec};
+use crate::message::{Message, Role};
+use crate::rsync_error;
 use filters::{ClearToken, RuleSource, classify_clear_token};
 
 use super::super::directive::FilterDirective;

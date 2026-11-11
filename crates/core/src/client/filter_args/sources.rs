@@ -1,27 +1,31 @@
 use std::ffi::OsString;
-use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
 
-use core::client::{FILE_IO_EXIT_CODE, FilterRuleKind, FilterRuleSpec};
-use core::message::{Message, Role};
-use core::rsync_error;
+use crate::client::{FILE_IO_EXIT_CODE, FilterRuleKind, FilterRuleSpec};
+use crate::message::{Message, Role};
+use crate::rsync_error;
 use engine::local_copy::upstream_io_error;
 
 use filters::RuleSource;
 
 use super::directive::FilterDirective;
+use super::filter_str::{Xflags, add_rule};
 use super::parsing::parse_old_prefix_rule;
+use super::{FilterFileKind, FilterFileSource};
 
 /// Loads filter patterns from `--include-from` / `--exclude-from` files and
 /// appends the resulting rules to `destination`. Include/exclude files honor the
-/// old-prefix syntax (`- `/`+ `/`!`) with each file's `!` clear scoped locally;
-/// dir-merge is rejected. `eol_nulls` selects NUL-delimited records (`--from0`).
+/// old-prefix syntax (`- `/`+ `/`!`), and a `!` empties the whole list;
+/// dir-merge is rejected. `eol_nulls` selects NUL-delimited records (`--from0`),
+/// and `xflags` are the flags the rules are added with (exclude.c:279-314).
 pub(crate) fn append_filter_rules_from_files(
     destination: &mut Vec<FilterRuleSpec>,
-    files: &[OsString],
+    names: &[OsString],
     kind: FilterRuleKind,
     eol_nulls: bool,
+    files: &dyn FilterFileSource,
+    xflags: Xflags,
 ) -> Result<(), Message> {
     if matches!(kind, FilterRuleKind::DirMerge) {
         let message = rsync_error!(
@@ -39,33 +43,29 @@ pub(crate) fn append_filter_rules_from_files(
     // we keep the legacy raw-pattern behavior to preserve existing semantics.
     let honor_old_prefixes = matches!(kind, FilterRuleKind::Include | FilterRuleKind::Exclude);
 
-    // upstream: exclude.c:1542-1551 resolves FILTRULE_CLEAR_LIST via
-    // pop_filter_list (exclude.c:671-687), truncating only the local section
-    // of the per-file rule list. Buffer each --include-from/--exclude-from
-    // file's rules locally so a `!` inside the file clears only that scope
-    // and parent CLI rules survive.
-    for path in files {
+    // upstream: exclude.c:1542-1551 - a `!` read from the file runs
+    // `pop_filter_list(listp); listp->head = NULL`, and parse_filter_file()
+    // parses into the caller's own list, so the clear empties every rule
+    // ahead of it, argv rules included.
+    for path in names {
+        let name = path.to_string_lossy();
         let patterns = load_filter_file_patterns(
             Path::new(path.as_os_str()),
             eol_nulls,
             matches!(kind, FilterRuleKind::Include),
+            files,
+            destination,
         )?;
-        let mut local: Vec<FilterRuleSpec> = Vec::new();
-        for pattern in patterns {
+        for (pattern, line) in patterns {
             if honor_old_prefixes {
-                // ⚠ RESIDUAL: these are the CONTENTS of an
-                // `--exclude-from`/`--include-from` file, which upstream also
-                // redacts - `rule_src_file` is set for the whole read, so
-                // `TEXT_FROM_FILE` holds and the text is replaced by
-                // `FILE line N` (exclude.c:71, the wording `rule_src_where`
-                // builds at exclude.c:85). oc does not carry a
-                // line number through `load_filter_file_patterns`, and naming the
-                // file without one would claim upstream's word-split arm
-                // (`rule_src_line < 0`) for a line-counted read. Left as
-                // `Argument` - unchanged behaviour, not a claim that it is right.
-                match parse_old_prefix_rule(&pattern, kind, RuleSource::Argument)? {
-                    FilterDirective::Rule(rule) => local.push(rule),
-                    FilterDirective::Clear => local.clear(),
+                // upstream: exclude.c:1749-1761 - these are the CONTENTS of a
+                // file, so `rule_src_file` is set for the whole read and a bad
+                // record is reported as `<rule from FILE line N>`, never echoed
+                // (exclude.c:71-86).
+                let source = RuleSource::File { name: &name, line };
+                match parse_old_prefix_rule(&pattern, kind, source)? {
+                    FilterDirective::Rule(rule) => add_rule(destination, rule, xflags),
+                    FilterDirective::Clear => destination.clear(),
                     // A blank line in an exclude-from/include-from file is skipped.
                     FilterDirective::Noop => {}
                     FilterDirective::Merge(_) | FilterDirective::CvsDefaults(_) => {
@@ -75,7 +75,7 @@ pub(crate) fn append_filter_rules_from_files(
                     }
                 }
             } else {
-                local.push(match kind {
+                destination.push(match kind {
                     FilterRuleKind::Include => FilterRuleSpec::include(pattern),
                     FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
                     FilterRuleKind::Protect => FilterRuleSpec::protect(pattern),
@@ -84,7 +84,6 @@ pub(crate) fn append_filter_rules_from_files(
                 });
             }
         }
-        destination.extend(local);
     }
     Ok(())
 }
@@ -142,56 +141,26 @@ fn filter_file_open_error(
     rsync_error!(FILE_IO_EXIT_CODE, text).with_role(Role::Client)
 }
 
-/// Opens an operator-named filter file, refusing a component symlink owned by
-/// a uid that is neither root nor our own.
-///
-/// A refusal is reported through the caller's existing open-failure arm: to
-/// upstream a refused open is indistinguishable from any other `fp == NULL`,
-/// and both `--*clude-from` and a `merge` rule run with `XFLG_FATAL_ERRORS`,
-/// so the failure is fatal either way.
-///
-/// The walk itself lives in [`crate::frontend::operator_file`], the crate's
-/// single platform seam for operator-named opens, so the Unix-only `cfg` is
-/// written once rather than once per option.
-///
-/// # Upstream Reference
-///
-/// - `rsync-3.5.1/exclude.c:1683` - `parse_filter_file()` opens the file with
-///   `open_no_attacker_symlinks(open_path, O_RDONLY, 0)`.
-/// - `rsync-3.5.1/options.c:1654-1656` (`--*clude-from`) and
-///   `rsync-3.5.1/exclude.c:1587` (`merge`) pass `XFLG_FATAL_ERRORS`.
-/// - `rsync-3.5.1/syscall.c:675` - `open_no_attacker_symlinks()`; the trust
-///   rule is at `syscall.c:499`.
-fn open_operator_named(path: &Path) -> io::Result<File> {
-    crate::frontend::operator_file::open_read_confined(path)
-}
-
 /// Reads the raw pattern lines from a filter file, or from standard input when
-/// `path` is `-`. `eol_nulls` selects NUL-delimited records (`--from0`).
-/// `include` selects upstream's include/exclude wording if the open fails.
+/// `path` is `-`, each with its line number (see [`read_filter_patterns`]).
+/// `eol_nulls` selects NUL-delimited records (`--from0`). `include` selects
+/// upstream's include/exclude wording if the open fails. `list` is the list
+/// built so far, which the open may consult.
 pub(crate) fn load_filter_file_patterns(
     path: &Path,
     eol_nulls: bool,
     include: bool,
-) -> Result<Vec<String>, Message> {
-    if path == Path::new("-") {
-        return read_filter_patterns_from_standard_input(eol_nulls);
-    }
-
+    files: &dyn FilterFileSource,
+    list: &[FilterRuleSpec],
+) -> Result<Vec<(String, usize)>, Message> {
     // `--include-from` / `--exclude-from` name the file on the command line, so
     // this is always upstream's non-file arm: the operator already knows the
     // path they typed, and errno is theirs to see.
-    let file = open_operator_named(path)
+    let reader = files
+        .open(path, FilterFileKind::RuleList, list)
         .map_err(|error| filter_file_open_error(path, include, &error, RuleSource::Argument))?;
-
-    let mut reader = BufReader::new(file);
-    read_filter_patterns(&mut reader, eol_nulls).map_err(|error| {
-        // Upstream has no analogue: its getc loop cannot distinguish a read
-        // error from EOF, so a post-open failure silently ends the file. Keep
-        // oc's louder report rather than inventing an upstream citation for it.
-        let text = format!("failed to read filter file '{}': {error}", path.display());
-        rsync_error!(1, text).with_role(Role::Client)
-    })
+    let mut reader = BufReader::new(reader);
+    read_filter_patterns(&mut reader, eol_nulls).map_err(|error| read_failure(path, &error))
 }
 
 /// Reads a merge file's entire contents as a string. `include` selects
@@ -202,58 +171,34 @@ pub(super) fn read_merge_file(
     path: &Path,
     include: bool,
     source: RuleSource<'_>,
+    files: &dyn FilterFileSource,
+    list: &[FilterRuleSpec],
 ) -> Result<String, Message> {
     // Opened separately from the read so that only a genuine open failure takes
     // upstream's wording and exit code; a mid-file read error (or non-UTF-8
     // contents) is a different condition and keeps its own report.
-    let mut file = open_operator_named(path)
+    let mut reader = files
+        .open(path, FilterFileKind::MergeFile, list)
         .map_err(|error| filter_file_open_error(path, include, &error, source))?;
     let mut contents = String::new();
-    file.read_to_string(&mut contents).map_err(|error| {
-        let text = format!("failed to read filter file '{}': {error}", path.display());
-        rsync_error!(1, text).with_role(Role::Client)
-    })?;
+    reader
+        .read_to_string(&mut contents)
+        .map_err(|error| read_failure(path, &error))?;
     Ok(contents)
 }
 
-/// Reads an entire merge file from standard input.
-pub(super) fn read_merge_from_standard_input() -> Result<String, Message> {
-    #[cfg(test)]
-    if let Some(data) = take_filter_stdin_input() {
-        return String::from_utf8(data).map_err(|error| {
-            let text = format!("failed to read filter patterns from standard input: {error}");
-            rsync_error!(1, text).with_role(Role::Client)
-        });
-    }
-
-    let mut buffer = String::new();
-    io::stdin().read_to_string(&mut buffer).map_err(|error| {
-        let text = format!("failed to read filter patterns from standard input: {error}");
-        rsync_error!(1, text).with_role(Role::Client)
-    })?;
-    Ok(buffer)
-}
-
-/// Reads filter pattern lines from standard input. `eol_nulls` selects
-/// NUL-delimited records (`--from0`).
-pub(crate) fn read_filter_patterns_from_standard_input(
-    eol_nulls: bool,
-) -> Result<Vec<String>, Message> {
-    #[cfg(test)]
-    if let Some(data) = take_filter_stdin_input() {
-        let mut cursor = io::Cursor::new(data);
-        return read_filter_patterns(&mut cursor, eol_nulls).map_err(|error| {
-            let text = format!("failed to read filter patterns from standard input: {error}");
-            rsync_error!(1, text).with_role(Role::Client)
-        });
-    }
-
-    let stdin = io::stdin();
-    let mut reader = stdin.lock();
-    read_filter_patterns(&mut reader, eol_nulls).map_err(|error| {
-        let text = format!("failed to read filter patterns from standard input: {error}");
-        rsync_error!(1, text).with_role(Role::Client)
-    })
+/// Reports a filter file that opened but could not be read.
+///
+/// Upstream has no analogue: its getc loop cannot distinguish a read error
+/// from EOF, so a post-open failure silently ends the file. Keep oc's louder
+/// report rather than inventing an upstream citation for it.
+fn read_failure(path: &Path, error: &io::Error) -> Message {
+    let text = if path == Path::new("-") {
+        format!("failed to read filter patterns from standard input: {error}")
+    } else {
+        format!("failed to read filter file '{}': {error}", path.display())
+    };
+    rsync_error!(1, text).with_role(Role::Client)
 }
 
 /// Splits a reader into filter pattern records, skipping EMPTY records and
@@ -263,12 +208,18 @@ pub(crate) fn read_filter_patterns_from_standard_input(
 /// `\n`, at `\r`, or at `\r\n` - the boundary
 /// [`filters::filter_file_records`] owns - or on NUL when `eol_nulls` is set
 /// (`--from0`), in which case embedded newlines are literal pattern bytes.
+///
+/// Each pattern is paired with its 1-based record number: upstream's
+/// `rule_src_line` counts every record read (exclude.c:1759-1761), before the
+/// comment and empty-record test, so a bad rule is reported at the line an
+/// editor shows.
 pub(super) fn read_filter_patterns<R: BufRead>(
     reader: &mut R,
     eol_nulls: bool,
-) -> io::Result<Vec<String>> {
+) -> io::Result<Vec<(String, usize)>> {
     let mut buffer = Vec::new();
     let mut patterns = Vec::new();
+    let mut line = 0;
 
     // upstream: exclude.c:1774 parse_filter_file - `if (eol_nulls? !ch : (ch ==
     // '\n' || ch == '\r'))` splits records on NUL when --from0/-0 is set, so an
@@ -292,12 +243,13 @@ pub(super) fn read_filter_patterns<R: BufRead>(
         let chunk = String::from_utf8_lossy(&buffer);
 
         if eol_nulls {
-            let mut line = chunk.into_owned();
-            if line.as_bytes().last() == Some(&b'\0') {
-                line.pop();
+            let mut record = chunk.into_owned();
+            if record.as_bytes().last() == Some(&b'\0') {
+                record.pop();
             }
-            if filters::filter_file_line_is_rule(&line, true) {
-                patterns.push(line);
+            line += 1;
+            if filters::filter_file_line_is_rule(&record, true) {
+                patterns.push((record, line));
             }
             continue;
         }
@@ -305,43 +257,33 @@ pub(super) fn read_filter_patterns<R: BufRead>(
         // `read_until(b'\n')` is only a buffering boundary: a lone `\r` also
         // ends a record (exclude.c:1774-1793), so the chunk is re-split by the
         // single owner `filters::filter_file_records`, terminator and all.
-        patterns.extend(
-            filters::filter_file_records(&chunk)
-                .filter(|line| filters::filter_file_line_is_rule(line, true))
-                .map(str::to_owned),
-        );
+        for record in filters::filter_file_records(&chunk) {
+            line += 1;
+            if filters::filter_file_line_is_rule(record, true) {
+                patterns.push((record.to_owned(), line));
+            }
+        }
     }
 
     Ok(patterns)
 }
 
 #[cfg(test)]
-thread_local! {
-    static FILTER_STDIN_INPUT: std::cell::RefCell<Option<Vec<u8>>> = const {
-        std::cell::RefCell::new(None)
-    };
-}
-
-#[cfg(test)]
-pub(super) fn take_filter_stdin_input() -> Option<Vec<u8>> {
-    FILTER_STDIN_INPUT.with(|slot| slot.borrow_mut().take())
-}
-
-#[cfg(test)]
-pub(crate) fn set_filter_stdin_input(data: Vec<u8>) {
-    FILTER_STDIN_INPUT.with(|slot| *slot.borrow_mut() = Some(data));
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::filter_args::{TestFiles, set_filter_stdin_input};
     use std::io::Cursor;
+
+    /// The pattern texts of numbered records.
+    fn texts(records: Vec<(String, usize)>) -> Vec<String> {
+        records.into_iter().map(|(pattern, _)| pattern).collect()
+    }
 
     #[test]
     fn read_filter_patterns_parses_simple_lines() {
         let input = b"pattern1\npattern2\npattern3\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2", "pattern3"]);
     }
 
@@ -349,7 +291,7 @@ mod tests {
     fn read_filter_patterns_skips_empty_lines() {
         let input = b"pattern1\n\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -357,7 +299,7 @@ mod tests {
     fn read_filter_patterns_skips_hash_comments() {
         let input = b"pattern1\n# this is a comment\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -365,7 +307,7 @@ mod tests {
     fn read_filter_patterns_skips_semicolon_comments() {
         let input = b"pattern1\n; this is a comment\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -373,7 +315,7 @@ mod tests {
     fn read_filter_patterns_handles_crlf_line_endings() {
         let input = b"pattern1\r\npattern2\r\npattern3\r\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2", "pattern3"]);
     }
 
@@ -381,7 +323,7 @@ mod tests {
     fn read_filter_patterns_handles_no_trailing_newline() {
         let input = b"pattern1\npattern2";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -389,7 +331,7 @@ mod tests {
     fn read_filter_patterns_handles_empty_input() {
         let input = b"";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert!(result.is_empty());
     }
 
@@ -397,7 +339,7 @@ mod tests {
     fn read_filter_patterns_handles_only_comments() {
         let input = b"# comment 1\n; comment 2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert!(result.is_empty());
     }
 
@@ -409,7 +351,7 @@ mod tests {
         // `   ` excludes a file literally named `   `.
         let input = b"pattern1\n   \n\t\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["pattern1", "   ", "\t", "pattern2"]);
     }
 
@@ -420,7 +362,7 @@ mod tests {
         // holding only `  #a` excludes a file literally named `  #a`.
         let input = b"  #a\n  ;b\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["  #a", "  ;b"]);
     }
 
@@ -428,7 +370,7 @@ mod tests {
     fn read_filter_patterns_preserves_leading_whitespace() {
         let input = b"  pattern_with_leading_space\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, false).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
         assert_eq!(result, vec!["  pattern_with_leading_space"]);
     }
 
@@ -437,7 +379,8 @@ mod tests {
         let temp = test_support::create_tempdir();
         let path = temp.path().join("filter.txt");
         std::fs::write(&path, "pattern1\npattern2\n").expect("write");
-        let result = load_filter_file_patterns(&path, false, false).expect("load");
+        let result =
+            texts(load_filter_file_patterns(&path, false, false, &TestFiles, &[]).expect("load"));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -448,7 +391,8 @@ mod tests {
         let temp = test_support::create_tempdir();
         let path = temp.path().join("nonexistent.txt");
 
-        let excluded = load_filter_file_patterns(&path, false, false).expect_err("must fail");
+        let excluded =
+            load_filter_file_patterns(&path, false, false, &TestFiles, &[]).expect_err("must fail");
         assert_eq!(excluded.code(), Some(11));
         assert!(
             excluded.text().starts_with("failed to open exclude file "),
@@ -456,7 +400,8 @@ mod tests {
             excluded.text()
         );
 
-        let included = load_filter_file_patterns(&path, false, true).expect_err("must fail");
+        let included =
+            load_filter_file_patterns(&path, false, true, &TestFiles, &[]).expect_err("must fail");
         assert!(
             included.text().starts_with("failed to open include file "),
             "unexpected text: {}",
@@ -469,7 +414,8 @@ mod tests {
         let temp = test_support::create_tempdir();
         let path = temp.path().join("merge.txt");
         std::fs::write(&path, "content here").expect("write");
-        let result = read_merge_file(&path, false, RuleSource::Argument).expect("read");
+        let result =
+            read_merge_file(&path, false, RuleSource::Argument, &TestFiles, &[]).expect("read");
         assert_eq!(result, "content here");
     }
 
@@ -485,7 +431,8 @@ mod tests {
     fn read_merge_file_reports_a_missing_file_like_upstream() {
         let temp = test_support::create_tempdir();
         let path = temp.path().join("nonexistent.txt");
-        let error = read_merge_file(&path, false, RuleSource::Argument).expect_err("must fail");
+        let error = read_merge_file(&path, false, RuleSource::Argument, &TestFiles, &[])
+            .expect_err("must fail");
         assert_eq!(error.code(), Some(11));
         assert!(
             error.text().starts_with("failed to open exclude file "),
@@ -518,7 +465,7 @@ mod tests {
             name: "outer.rules",
             line: 1,
         };
-        let error = read_merge_file(&path, false, source).expect_err("must fail");
+        let error = read_merge_file(&path, false, source, &TestFiles, &[]).expect_err("must fail");
 
         // Same exit code as the operator arm - upstream never varies it.
         assert_eq!(error.code(), Some(11));
@@ -543,21 +490,26 @@ mod tests {
     #[test]
     fn read_filter_patterns_from_stdin_uses_test_input() {
         set_filter_stdin_input(b"stdin_pattern1\nstdin_pattern2\n".to_vec());
-        let result = read_filter_patterns_from_standard_input(false).expect("read");
+        let result = texts(
+            load_filter_file_patterns(Path::new("-"), false, false, &TestFiles, &[]).expect("read"),
+        );
         assert_eq!(result, vec!["stdin_pattern1", "stdin_pattern2"]);
     }
 
     #[test]
     fn read_merge_from_stdin_uses_test_input() {
         set_filter_stdin_input(b"stdin content here".to_vec());
-        let result = read_merge_from_standard_input().expect("read");
+        let result = read_merge_file(Path::new("-"), false, RuleSource::Argument, &TestFiles, &[])
+            .expect("read");
         assert_eq!(result, "stdin content here");
     }
 
     #[test]
     fn load_filter_file_patterns_handles_dash_path() {
         set_filter_stdin_input(b"stdin_pattern\n".to_vec());
-        let result = load_filter_file_patterns(Path::new("-"), false, false).expect("load");
+        let result = texts(
+            load_filter_file_patterns(Path::new("-"), false, false, &TestFiles, &[]).expect("load"),
+        );
         assert_eq!(result, vec!["stdin_pattern"]);
     }
 
@@ -572,6 +524,8 @@ mod tests {
             &[OsString::from(path)],
             FilterRuleKind::Include,
             false,
+            &TestFiles,
+            Xflags::default(),
         )
         .expect("append");
         assert_eq!(rules.len(), 2);
@@ -592,6 +546,8 @@ mod tests {
             &[OsString::from(path)],
             FilterRuleKind::Exclude,
             false,
+            &TestFiles,
+            Xflags::default(),
         )
         .expect("append");
         assert_eq!(rules.len(), 1);
@@ -602,8 +558,14 @@ mod tests {
     #[test]
     fn append_filter_rules_from_files_rejects_dir_merge() {
         let mut rules = Vec::new();
-        let result =
-            append_filter_rules_from_files(&mut rules, &[], FilterRuleKind::DirMerge, false);
+        let result = append_filter_rules_from_files(
+            &mut rules,
+            &[],
+            FilterRuleKind::DirMerge,
+            false,
+            &TestFiles,
+            Xflags::default(),
+        );
         assert!(result.is_err());
     }
 
@@ -620,6 +582,8 @@ mod tests {
             &[OsString::from(path1), OsString::from(path2)],
             FilterRuleKind::Include,
             false,
+            &TestFiles,
+            Xflags::default(),
         )
         .expect("append");
         assert_eq!(rules.len(), 2);
@@ -633,7 +597,7 @@ mod tests {
         // NUL-separated record rather than one per line.
         let input = b"*.log\nwith space\0*.tmp\0";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, true).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, true).expect("read"));
         assert_eq!(result, vec!["*.log\nwith space", "*.tmp"]);
     }
 
@@ -643,7 +607,7 @@ mod tests {
         // even without a trailing delimiter.
         let input = b"only\0last";
         let mut reader = Cursor::new(input.to_vec());
-        let result = read_filter_patterns(&mut reader, true).expect("read");
+        let result = texts(read_filter_patterns(&mut reader, true).expect("read"));
         assert_eq!(result, vec!["only", "last"]);
     }
 
@@ -660,6 +624,8 @@ mod tests {
             &[OsString::from(path)],
             FilterRuleKind::Exclude,
             true,
+            &TestFiles,
+            Xflags::default(),
         )
         .expect("append");
         assert_eq!(rules.len(), 2);
@@ -684,8 +650,8 @@ mod tests {
         let link = dir.path().join("link.rules");
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
 
-        let patterns = load_filter_file_patterns(&link, false, false)
+        let patterns = load_filter_file_patterns(&link, false, false, &TestFiles, &[])
             .expect("a self-owned symlink must be followed, not refused");
-        assert_eq!(patterns, vec!["*.bak"]);
+        assert_eq!(texts(patterns), vec!["*.bak"]);
     }
 }

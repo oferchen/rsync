@@ -1,17 +1,18 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
-use core::message::{Message, Role};
-use core::rsync_error;
+use crate::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
+use crate::message::{Message, Role};
+use crate::rsync_error;
 use filters::{CvsSession, RuleSource};
 
+use super::FilterFileSource;
 use super::cvs::cvs_default_exclude_rules;
 use super::directive::{
     FilterDirective, MergeDirective, merge_directive_options, os_string_to_pattern,
 };
 use super::parsing::parse_filter_directive;
-use super::sources::{read_merge_file, read_merge_from_standard_input};
+use super::sources::read_merge_file;
 
 /// The merge-file name to put in diagnostics, which is not the path we open.
 ///
@@ -44,6 +45,7 @@ pub(crate) fn apply_merge_directive(
     visited: &mut Vec<PathBuf>,
     source: RuleSource<'_>,
     cvs: &CvsSession,
+    files: &dyn FilterFileSource,
 ) -> Result<(), Message> {
     let options = directive.options().clone();
     let original_source_text = os_string_to_pattern(directive.source().to_os_string());
@@ -53,7 +55,10 @@ pub(crate) fn apply_merge_directive(
         (PathBuf::from("-"), String::from("-"), None)
     } else {
         let raw_path = PathBuf::from(directive.source());
-        let joined = if raw_path.is_absolute() {
+        // upstream: exclude.c:704-715 parse_merge_name() returns a name with
+        // no slash unchanged, so it opens from the cwd, never from `dirbuf`.
+        let has_slash = directive.source().as_encoded_bytes().contains(&b'/');
+        let joined = if raw_path.is_absolute() || !has_slash {
             raw_path
         } else {
             base_dir.join(raw_path)
@@ -100,11 +105,10 @@ pub(crate) fn apply_merge_directive(
     // onto `dirbuf`, which set_filter_dir() has not filled while the options
     // are parsed, so a merge named inside a merge file opens from the current
     // directory - not the naming file's own.
-    // upstream: exclude.c:1542-1551 resolves FILTRULE_CLEAR_LIST via
-    // pop_filter_list (exclude.c:671-687), which truncates only the local
-    // section of the per-merge-file rule list. Mirror that by parsing the
-    // merge file into a scope-local buffer so a '!' inside the file cannot
-    // wipe parent-scope rules already in `destination`.
+    // upstream: exclude.c:1587 parse_filter_file() parses a merge file into
+    // the naming rule's own list, so a `!` inside it empties every rule ahead
+    // of it too (`pop_filter_list(listp); listp->head = NULL`,
+    // exclude.c:1542-1551).
     // upstream: exclude.c:1735-1755 - `named_by_file = TEXT_FROM_FILE(template)`.
     // When a rule we READ named this file, the file's OWN path is file content
     // too, so upstream clears `rule_src_file` and reports only the LOCATION that
@@ -121,20 +125,17 @@ pub(crate) fn apply_merge_directive(
         ));
     }
 
-    let mut local: Vec<FilterRuleSpec> = Vec::new();
     let result = (|| -> Result<(), Message> {
-        let contents = if is_stdin {
-            read_merge_from_standard_input()?
-        } else {
-            // upstream: exclude.c:1711,1716 - the include/exclude wording of a
-            // failed open follows FILTRULE_INCLUDE, which a `+` modifier on the
-            // merge rule (`.+ FILE`, `merge,+ FILE`) sets.
-            read_merge_file(
-                &resolved_path,
-                options.enforced_kind() == Some(DirMergeEnforcedKind::Include),
-                source,
-            )?
-        };
+        // upstream: exclude.c:1711,1716 - the include/exclude wording of a
+        // failed open follows FILTRULE_INCLUDE, which a `+` modifier on the
+        // merge rule (`.+ FILE`, `merge,+ FILE`) sets.
+        let contents = read_merge_file(
+            &resolved_path,
+            options.enforced_kind() == Some(DirMergeEnforcedKind::Include),
+            source,
+            files,
+            destination,
+        )?;
 
         parse_merge_contents(
             &contents,
@@ -142,18 +143,17 @@ pub(crate) fn apply_merge_directive(
             base_dir,
             &display,
             named_at.as_deref(),
-            &mut local,
+            destination,
             visited,
             cvs,
+            files,
         )
     })();
     visited.pop();
-    if result.is_ok() {
-        destination.extend(local);
-    }
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn parse_merge_contents(
     contents: &str,
     options: &DirMergeOptions,
@@ -163,6 +163,7 @@ fn parse_merge_contents(
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
     cvs: &CvsSession,
+    files: &dyn FilterFileSource,
 ) -> Result<(), Message> {
     if options.uses_whitespace() {
         for token in contents.split_whitespace() {
@@ -210,6 +211,7 @@ fn parse_merge_contents(
                 destination,
                 visited,
                 cvs,
+                files,
             )?;
         }
         return Ok(());
@@ -271,6 +273,7 @@ fn parse_merge_contents(
             destination,
             visited,
             cvs,
+            files,
         )?;
     }
 
@@ -288,6 +291,7 @@ pub(crate) fn process_merge_directive(
     destination: &mut Vec<FilterRuleSpec>,
     visited: &mut Vec<PathBuf>,
     cvs: &CvsSession,
+    files: &dyn FilterFileSource,
 ) -> Result<(), Message> {
     // `source` says where this line came from, and every diagnostic the parser
     // builds from it now crosses `rule_text`/`rule_detail` (exclude.c:88-131).
@@ -334,7 +338,7 @@ pub(crate) fn process_merge_directive(
             // and text: upstream's open failure (exclude.c:1708-1719) and
             // filter_rule_err() (exclude.c:133-137) exit straight away, with no
             // word from the file that named the nested one.
-            apply_merge_directive(nested, base_dir, destination, visited, source, cvs)?;
+            apply_merge_directive(nested, base_dir, destination, visited, source, cvs, files)?;
         }
         Ok(FilterDirective::Clear) => destination.clear(),
         // A blank line inside a merge file contributes no rule.

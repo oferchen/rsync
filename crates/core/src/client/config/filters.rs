@@ -447,6 +447,13 @@ impl FilterRuleSpec {
         self.implied_partial_dir
     }
 
+    /// Replaces the pattern, keeping every flag.
+    #[must_use]
+    pub(crate) fn with_pattern(mut self, pattern: String) -> Self {
+        self.pattern = pattern;
+        self
+    }
+
     /// Reports whether the rule carries the `/` modifier (`FILTRULE_ABS_PATH`),
     /// as opposed to a pattern that merely starts with `/`.
     #[must_use]

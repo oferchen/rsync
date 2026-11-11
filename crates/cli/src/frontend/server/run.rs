@@ -10,14 +10,16 @@ use core::rsync_error;
 use engine::local_copy::{ReferenceDirectory, ReferenceDirectoryKind};
 use logging_sink::MessageSink;
 
-use super::flags::{detect_secluded_args_flag, parse_server_long_flags, refused_server_option};
+use super::argv_filters::{server_argv_filter_rules, write_filter_refusal};
+use super::flags::{
+    ArgvRefusal, detect_secluded_args_flag, normalize_server_argv, parse_server_long_flags,
+    refused_server_option,
+};
 use super::parse::{
     parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
     parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
 };
-use crate::frontend::execution::{
-    SYNTAX_ERROR, UnsupportedOption, exit_trailer, parse_max_delete_argument,
-};
+use crate::frontend::execution::{SYNTAX_ERROR, exit_trailer, parse_max_delete_argument};
 
 /// Resolves the Landlock allowlist root for a receiver's destination operand.
 ///
@@ -284,6 +286,15 @@ where
         );
     }
 
+    let normalized = match normalize_server_argv(args) {
+        Ok(normalized) => normalized,
+        Err(refusal) => {
+            write_argv_refusal(stderr, program_brand, &refusal);
+            return 1;
+        }
+    };
+    let args = normalized.as_slice();
+
     // Detect secluded-args mode: `-s` flag appears as a standalone argument
     // after --server. upstream: options.c:2795-2796 - protect_args in server mode.
     let secluded_args = detect_secluded_args_flag(args);
@@ -331,16 +342,47 @@ where
         // `mod_name` is NULL. The peer here is whoever already got a shell,
         // so the daemon's anti-amplification bound does not apply.
         match protocol::secluded_args::recv_secluded_args(&mut stdin, None, None, None) {
+            // upstream: main.c:1956-1969 - the received list replaces argv,
+            // and a list with nothing after its arg0 leaves no operands, so
+            // the server prints its usage and exits RERR_SYNTAX instead of
+            // starting a transfer on a stream it has already read from.
+            Ok(received_args) if received_args.len() < 2 => {
+                let _ = stderr.write_all(
+                    super::super::help::help_text(super::super::detect_program_name(
+                        args.first().map(OsString::as_os_str),
+                    ))
+                    .as_bytes(),
+                );
+                let trailer = exit_trailer(SYNTAX_ERROR, Role::Server);
+                let mut sink = MessageSink::with_brand(&mut *stderr, program_brand);
+                if super::super::write_message(&trailer, &mut sink).is_err() {
+                    let _ = writeln!(sink.writer_mut(), "{trailer}");
+                }
+                return 1;
+            }
             Ok(received_args) => {
                 // Discard the synthetic "rsync" arg0 from the wire and
                 // prepend the command-line tail so the server-options
                 // head (flag string + long flags) is in effective_args.
                 let mut received_iter = received_args.into_iter();
                 let _arg0 = received_iter.next();
-                let cmdline_tail = args.iter().skip(1).cloned();
-                effective_args = cmdline_tail
+                let merged: Vec<OsString> = args
+                    .iter()
+                    .cloned()
                     .chain(received_iter.map(OsString::from))
                     .collect();
+                // upstream: main.c:1959-1960 - the received list goes through
+                // the same popt pass as the command line.
+                effective_args = match normalize_server_argv(&merged) {
+                    Ok(mut normalized) => {
+                        normalized.remove(0);
+                        normalized
+                    }
+                    Err(refusal) => {
+                        write_argv_refusal(stderr, program_brand, &refusal);
+                        return 1;
+                    }
+                };
                 &effective_args
             }
             Err(e) => {
@@ -356,18 +398,10 @@ where
         &args[1..]
     };
 
-    // upstream: popt reports "on remote machine: <opt>: unknown option"
-    // (options.c:2051-2054) and main.c:1911-1913 exits RERR_SYNTAX before any transfer
-    // state exists.
-    if let Some(option) = refused_server_option(effective_slice) {
-        let refusal = UnsupportedOption::new(option.clone())
-            .remote_refusal_line(program_brand.client_program_name());
-        let _ = writeln!(stderr, "{refusal}");
-        let trailer = exit_trailer(SYNTAX_ERROR, Role::Server);
-        let mut sink = MessageSink::with_brand(&mut *stderr, program_brand);
-        if super::super::write_message(&trailer, &mut sink).is_err() {
-            let _ = writeln!(sink.writer_mut(), "{trailer}");
-        }
+    // upstream: popt refuses an unknown long option (options.c:2051-2054) and
+    // main.c:1909-1912 exits RERR_SYNTAX before any transfer state exists.
+    if let Some(refusal) = refused_server_option(effective_slice) {
+        write_argv_refusal(stderr, program_brand, &refusal);
         return 1;
     }
     let long_flags = parse_server_long_flags(effective_slice);
@@ -532,6 +566,12 @@ where
         config.connection.confine_root.clone(),
     );
     config.file_selection.from0 = long_flags.from0;
+    // upstream: options.c:1620-1656 - filter options on the server's own argv
+    // join `filter_list` ahead of the rules received from the client.
+    match server_argv_filter_rules(effective_slice, long_flags.from0) {
+        Ok(rules) => config.argv_filter_rules = rules,
+        Err(message) => return write_filter_refusal(stderr, program_brand, &message),
+    }
     config.write.inplace = long_flags.inplace;
     // upstream: options.c:2551-2561 - append mode implies inplace. The promotion
     // is applied once for every role by `ServerConfig::apply_append_implies_inplace`
@@ -1434,6 +1474,26 @@ fn apply_value_flags<Err: Write>(
     }
 
     Ok(())
+}
+
+/// Prints a refused server argv as 3.5.1 does: option_error()'s line, then
+/// the RERR_SYNTAX trailer.
+///
+/// upstream: options.c:915 `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`, then
+/// main.c:1911 `exit_cleanup(RERR_SYNTAX)`. The trailer's role is `client`
+/// until `--server` has been parsed, because am_server is set by that option.
+fn write_argv_refusal<Err: Write>(stderr: &mut Err, brand: Brand, refusal: &ArgvRefusal) {
+    let _ = writeln!(stderr, "{}: {}", brand.client_program_name(), refusal.text);
+    let role = if refusal.after_server {
+        Role::Server
+    } else {
+        Role::Client
+    };
+    let trailer = exit_trailer(SYNTAX_ERROR, role);
+    let mut sink = MessageSink::with_brand(&mut *stderr, brand);
+    if super::super::write_message(&trailer, &mut sink).is_err() {
+        let _ = writeln!(sink.writer_mut(), "{trailer}");
+    }
 }
 
 fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt::Display) {

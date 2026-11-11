@@ -91,6 +91,7 @@
 
 mod config;
 mod error;
+pub mod filter_args;
 mod module_list;
 mod outcome;
 mod progress;

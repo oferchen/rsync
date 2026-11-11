@@ -6,8 +6,8 @@
 
 use std::ffi::OsString;
 
-use core::client::{DirMergeEnforcedKind, FilterRuleKind, FilterRuleSpec};
-use core::message::Message;
+use crate::client::{DirMergeEnforcedKind, FilterRuleKind, FilterRuleSpec};
+use crate::message::Message;
 
 use super::super::directive::{FilterDirective, MergeDirective};
 use super::helpers::{split_long_keyword_tail, unexpected_end_of_filter_rule};

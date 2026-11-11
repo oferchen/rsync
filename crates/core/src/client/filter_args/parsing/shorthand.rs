@@ -1,5 +1,5 @@
-use core::client::FilterRuleSpec;
-use core::message::Message;
+use crate::client::FilterRuleSpec;
+use crate::message::Message;
 
 use super::super::directive::FilterDirective;
 use super::helpers::{split_short_modifiers, unexpected_end_of_filter_rule};

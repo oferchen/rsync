@@ -261,7 +261,15 @@ fn wire_receiver_side(spec: &FilterRuleSpec) -> bool {
     spec.applies_to_receiver() && (spec.names_sides() || !spec.applies_to_sender())
 }
 
-pub(crate) fn build_wire_format_rules(
+/// Converts client filter rules to the wire form the filter list carries.
+///
+/// A remote-shell server reuses it for the rules on its own argv, which
+/// upstream parses with the client's code (options.c:1620-1656).
+///
+/// # Errors
+///
+/// A rule the negotiated wire form cannot carry.
+pub fn build_wire_format_rules(
     client_rules: &[FilterRuleSpec],
     delete_excluded: bool,
 ) -> Result<Vec<FilterRuleWireFormat>, ClientError> {
@@ -331,6 +339,10 @@ pub(crate) fn build_wire_format_rules(
         if let Some(options) = spec.dir_merge_options() {
             wire_rule.no_inherit = !options.inherit_rules();
             wire_rule.word_split = options.uses_whitespace();
+            // upstream: exclude.c:1421 - `p` on a merge rule sets
+            // FILTRULE_PERISHABLE on the rule itself, which get_rule_prefix()
+            // sends like any other rule's (exclude.c:1872-1876).
+            wire_rule.perishable |= options.perishable();
             wire_rule.exclude_from_merge = options.excludes_self();
             // upstream: exclude.c:1381-1390 - the `-`/`+` modifier on a
             // dir-merge rule sets FILTRULE_NO_PREFIXES (and FILTRULE_INCLUDE for

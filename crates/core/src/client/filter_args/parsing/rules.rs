@@ -5,8 +5,8 @@
 //! `+`/`-` short rules, and the long
 //! `include`/`exclude`/`show`/`hide`/`protect`/`risk` keyword rules.
 
-use core::client::FilterRuleSpec;
-use core::message::Message;
+use crate::client::FilterRuleSpec;
+use crate::message::Message;
 
 use super::super::directive::FilterDirective;
 use super::helpers::{split_keyword_modifiers, split_short_modifiers, unknown_filter_rule};

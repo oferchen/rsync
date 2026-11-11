@@ -318,12 +318,22 @@ fn process_approved_module(
     // behavioural difference.
     //
     // The parse precedes the post-xfer fork (:967), so a refusal here runs no
-    // hook at all.
+    // hook at all. It also precedes `@RSYNCD: OK`, and upstream's refusal is
+    // exit_cleanup() with the cause in the daemon log only, so the client sees
+    // the connection close with nothing sent. MEASURED against rsync 3.5.1:
+    // `filter = - foo clear,- keep` logs `'!' rule has trailing characters:
+    // clear,- keep` and the client reports `didn't get server startup line`.
     let daemon_filter_rules = match build_daemon_filter_rules(module) {
         Ok(rules) => rules,
-        Err(err) => {
-            let error = AtError::message(format!("failed to load module filter rules: {err}"));
-            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+        Err(refusal) => {
+            let code = refusal.exit_code();
+            *ctx.session_exit_code = Some(code);
+            if let Some(log) = ctx.log_sink {
+                log_message(
+                    log,
+                    &rsync_error!(code.as_i32(), refusal.to_string()).with_role(Role::Daemon),
+                );
+            }
             return Ok(());
         }
     };

@@ -21,12 +21,17 @@ fn transfer_request_with_include_from_reinstate_patterns() {
     std::fs::write(&include_file, "keep/\nkeep/**\n").expect("write include file");
 
     // With first-match-wins, includes must come before excludes
-    let mut expected_rules = Vec::new();
-    append_filter_rules_from_files(
-        &mut expected_rules,
-        &[include_file.as_os_str().to_os_string()],
-        FilterRuleKind::Include,
-        false,
+    let mut expected_rules = core::client::filter_args::build_filter_rules(
+        core::client::filter_args::FilterInputs {
+            order: vec![
+                crate::frontend::filter_rules::FilterOrderToken::IncludeFrom(
+                    include_file.as_os_str().to_os_string(),
+                ),
+            ],
+            from0: false,
+        },
+        &filters::CvsSession::default(),
+        &crate::frontend::filter_rules::ProcessFilterFiles,
     )
     .expect("load include patterns");
     expected_rules.push(FilterRuleSpec::exclude("*".to_owned()));

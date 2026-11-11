@@ -28,7 +28,7 @@ pub(crate) use entry::{parse_filter_directive, parse_old_prefix_rule};
 pub(crate) fn parse_merge_modifiers_from_argument(
     modifiers: &str,
     directive: &str,
-) -> Result<(core::client::DirMergeOptions, bool), core::message::Message> {
+) -> Result<(crate::client::DirMergeOptions, bool), crate::message::Message> {
     merge::parse_merge_modifiers(
         modifiers,
         rule_line::RuleLine::new(directive, filters::RuleSource::Argument),
@@ -41,7 +41,7 @@ pub(crate) fn parse_merge_modifiers_from_argument(
 use std::ffi::OsStr;
 
 #[cfg(test)]
-use core::client::{FilterRuleKind, FilterRuleSpec};
+use crate::client::{FilterRuleKind, FilterRuleSpec};
 
 #[cfg(test)]
 use super::directive::FilterDirective;

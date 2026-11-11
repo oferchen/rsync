@@ -1,32 +1,14 @@
-//! Utilities for parsing and loading filter rules supplied via the CLI.
+//! Collecting the CLI's filter options in argv order.
+//!
+//! The rules themselves are built by `core::client::filter_args`, the one
+//! parser the client and a remote-shell server share.
 
-mod apple_double;
 mod arguments;
-mod cvs;
-mod directive;
-mod merge;
-mod parsing;
-mod sources;
+mod files;
 
-pub(crate) use apple_double::append_apple_double_exclude_rules;
-pub(crate) use arguments::{FilterOrderToken, build_filter_order};
-pub(crate) use cvs::{append_cvs_exclude_rules, cvs_default_exclude_rules};
-pub(crate) use directive::{FilterDirective, merge_directive_options, os_string_to_pattern};
-pub(crate) use merge::apply_merge_directive;
-pub(crate) use parsing::{parse_filter_directive, parse_old_prefix_rule};
-pub(crate) use sources::append_filter_rules_from_files;
+pub(crate) use arguments::build_filter_order;
+pub(crate) use core::client::filter_args::FilterOrderToken;
+pub(crate) use files::ProcessFilterFiles;
 
 #[cfg(test)]
-pub(crate) use directive::MergeDirective;
-
-#[cfg(test)]
-pub(crate) use merge::process_merge_directive;
-
-#[cfg(test)]
-pub(crate) use parsing::parse_merge_modifiers_from_argument;
-
-#[cfg(test)]
-pub(crate) use sources::load_filter_file_patterns;
-
-#[cfg(test)]
-pub(crate) use sources::set_filter_stdin_input;
+pub(crate) use files::set_filter_stdin_input;

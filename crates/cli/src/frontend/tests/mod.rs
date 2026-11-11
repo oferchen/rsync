@@ -25,8 +25,6 @@ use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
 
 #[path = "acls.rs"]
 mod acls_tests;
-#[path = "apply.rs"]
-mod apply_tests;
 #[path = "archive.rs"]
 mod archive_tests;
 #[path = "backup.rs"]
@@ -93,14 +91,10 @@ mod invalid_tests;
 mod itemize_format_upstream_tests;
 #[path = "list_only.rs"]
 mod list_only_tests;
-#[path = "load.rs"]
-mod load_tests;
 #[path = "log_file.rs"]
 mod log_file_tests;
 #[path = "long.rs"]
 mod long_tests;
-#[path = "merge.rs"]
-mod merge_tests;
 #[path = "module.rs"]
 mod module_tests;
 #[path = "non.rs"]
@@ -253,8 +247,6 @@ mod parse_args_sets_tests;
 mod parse_checksum_tests;
 #[path = "parse_compress.rs"]
 mod parse_compress_tests;
-#[path = "parse_filter.rs"]
-mod parse_filter_tests;
 #[path = "parse_max_alloc.rs"]
 mod parse_max_alloc_tests;
 #[path = "parse_max.rs"]
@@ -265,8 +257,6 @@ mod parse_modify_tests;
 mod parse_size_tests;
 #[path = "password.rs"]
 mod password_tests;
-#[path = "process.rs"]
-mod process_tests;
 #[path = "progress2_format_parity.rs"]
 mod progress2_format_parity_tests;
 #[path = "progress_format_upstream.rs"]
