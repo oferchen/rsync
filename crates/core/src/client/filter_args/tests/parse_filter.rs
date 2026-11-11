@@ -1,4 +1,3 @@
-use super::common::*;
 use super::*;
 
 #[test]
@@ -708,4 +707,60 @@ fn parse_filter_directive_accepts_dir_merge_with_anchor_modifier() {
         .dir_merge_options()
         .expect("dir-merge rule returns options");
     assert!(options.anchor_root_enabled());
+}
+
+#[test]
+fn parse_filter_directive_include_keyword_via_filter_arg() {
+    let result = parse_filter_directive(OsStr::new("include *.rs"), filters::RuleSource::Argument)
+        .expect("keyword include parses");
+    match result {
+        FilterDirective::Rule(spec) => {
+            assert_eq!(spec.kind(), FilterRuleKind::Include);
+            assert_eq!(spec.pattern(), "*.rs");
+        }
+        _ => panic!("expected Rule directive"),
+    }
+}
+
+#[test]
+fn parse_filter_directive_exclude_keyword_via_filter_arg() {
+    let result = parse_filter_directive(OsStr::new("exclude *.bak"), filters::RuleSource::Argument)
+        .expect("keyword exclude parses");
+    match result {
+        FilterDirective::Rule(spec) => {
+            assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+            assert_eq!(spec.pattern(), "*.bak");
+        }
+        _ => panic!("expected Rule directive"),
+    }
+}
+
+#[test]
+fn parse_filter_directive_dir_merge_long_keyword() {
+    let result = parse_filter_directive(
+        OsStr::new("dir-merge .rsync-filter"),
+        filters::RuleSource::Argument,
+    )
+    .expect("dir-merge keyword parses");
+    match result {
+        FilterDirective::Rule(spec) => {
+            assert_eq!(spec.kind(), FilterRuleKind::DirMerge);
+            assert_eq!(spec.pattern(), ".rsync-filter");
+        }
+        _ => panic!("expected Rule directive"),
+    }
+}
+
+#[test]
+fn parse_filter_directive_colon_dir_merge_shorthand() {
+    let result =
+        parse_filter_directive(OsStr::new(": .rsync-filter"), filters::RuleSource::Argument)
+            .expect("colon dir-merge parses");
+    match result {
+        FilterDirective::Rule(spec) => {
+            assert_eq!(spec.kind(), FilterRuleKind::DirMerge);
+            assert_eq!(spec.pattern(), ".rsync-filter");
+        }
+        _ => panic!("expected Rule directive"),
+    }
 }
