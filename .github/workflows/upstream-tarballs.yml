@@ -26,14 +26,13 @@ permissions:
   contents: read
 
 concurrency:
-  # Pull requests wait in two first-in-first-out lanes per workflow, chosen by
-  # pull request number parity, so two pull requests' runs share the runner
-  # pool and each lane starts its next run only when the previous one has
-  # finished; nothing is cancelled. Every other event (master push, schedule,
-  # dispatch) gets its own group per commit, so it never waits behind a lane and
-  # every merge commit keeps a completed run for bisection.
-  group: upstream-tarballs-${{ github.event_name == 'pull_request' && format('pr-queue-{0}', (endsWith(github.event.pull_request.number, '0') || endsWith(github.event.pull_request.number, '2') || endsWith(github.event.pull_request.number, '4') || endsWith(github.event.pull_request.number, '6') || endsWith(github.event.pull_request.number, '8')) && 'even' || 'odd') || format('{0}-{1}', github.ref, github.sha) }}
-  queue: max
+  # One group per pull request: its runs are light and run in parallel with
+  # other pull requests', and a newer push cancels the run it supersedes.
+  # Every other event (master push, schedule, dispatch) gets its own group per
+  # commit, so nothing cancels it and every merge commit keeps a completed run
+  # for bisection.
+  group: upstream-tarballs-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   warm:
