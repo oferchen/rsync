@@ -140,6 +140,12 @@ jobs:
         run: |
           cargo build --locked -p test-support --bin tmp-runner
           cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
+      # The ssh_config differential oracle: the pinned OpenSSH, not the
+      # image's ssh (ubuntu-24.04 ships 9.6p1, which accepts lines 10.0 refuses).
+      - name: Build pinned OpenSSH (ssh_config oracle)
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/build-openssh
+
       - name: Test (${{ matrix.row.name }})
         env:
           # Read only when the target is Windows MSVC.
@@ -303,6 +309,11 @@ jobs:
       - name: Build oc-rsync (for subprocess integration tests)
         if: matrix.needs_bin
         run: cargo build --locked -p bin --bin oc-rsync
+
+      # The ssh_config differential oracle: the pinned OpenSSH, not the
+      # image's ssh (ubuntu-24.04 ships 9.6p1, which accepts lines 10.0 refuses).
+      - name: Build pinned OpenSSH (ssh_config oracle)
+        uses: ./.github/actions/build-openssh
 
       - name: Test (${{ matrix.name }})
         # `shell: bash` turns on pipefail, so the tee never hides a failure.
