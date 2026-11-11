@@ -140,18 +140,16 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
         self.assertEqual(set(gate), {"schedule", "workflow_dispatch"})
         self.assertTrue(gate["schedule"], "the gate has no nightly cron")
 
-    def test_every_pull_request_check_runs_in_one_queued_run(self) -> None:
-        # One run per pull request, queued first-in-first-out in one of two
-        # lanes by pull request number parity, so two pull requests share the
-        # runner pool. A queued run is never cancelled, so every master push
-        # keeps its own group.
+    def test_every_pull_request_check_runs_in_one_run_per_pull_request(self) -> None:
+        # One group per pull request: a newer push cancels the superseded
+        # run, and pull requests do not queue behind each other. Cancelling
+        # is limited to pull requests, so every master push keeps its own
+        # per-commit group and a completed run for bisection.
         ci = _load(CI_YML)["concurrency"]
-        self.assertEqual(ci["queue"], "max")
-        self.assertNotIn("cancel-in-progress", ci)
-        self.assertIn("pr-queue-{0}", ci["group"])
-        self.assertIn("'even'", ci["group"])
-        self.assertIn("'odd'", ci["group"])
+        self.assertIn("format('pr-{0}', github.event.pull_request.number)", ci["group"])
         self.assertIn("github.sha", ci["group"])
+        self.assertEqual(ci["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}")
+        self.assertNotIn("queue", ci)
         called = {job["uses"].removeprefix("./.github/workflows/")
                   for job in _load(CI_YML)["jobs"].values() if "uses" in job}
         for name in BAKE_LEGS:
