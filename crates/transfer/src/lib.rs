@@ -1318,6 +1318,18 @@ fn run_server_on_core(
     let outcome: ServerResult = 'dispatch: {
         match config.role {
             ServerRole::Receiver => {
+                // upstream: main.c:1198-1199 do_server_recv(). Its argc still
+                // holds argv[0], the chdir slot (main.c:1208-1211) that the
+                // server argv parser has already taken out of `args`.
+                if !client_mode {
+                    logging::debug_log!(
+                        Recv,
+                        1,
+                        "server_recv({}) starting pid={}",
+                        config.args.len() + 1,
+                        std::process::id()
+                    );
+                }
                 let mut ctx = ReceiverContext::new(&handshake, config, pipeline);
                 // upstream: receiver.c:823 - a daemon receiver's `itemizing` is
                 // `logfile_format_has_i`, and every processed entry reaches

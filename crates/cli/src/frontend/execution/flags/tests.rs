@@ -567,7 +567,9 @@ fn the_debug_table_is_upstream_plus_exactly_six_named_oc_extensions() {
         "recv", "send", "time",
     ];
     // Accepted by oc, refused by upstream. See DEBUG_HELP_TEXT's extensions block.
-    const OC_EXTENSIONS: [&str; 6] = ["iouring", "clone", "sockopt", "iocp", "seccomp", "landlock"];
+    const OC_EXTENSIONS: [&str; 7] = [
+        "iouring", "clone", "sockopt", "iocp", "seccomp", "landlock", "pipeline",
+    ];
 
     // `all1` routes through the live parse path to set every word the applying
     // table knows, so this enumerates the real accepted set rather than a copy.
@@ -1184,7 +1186,7 @@ fn no_debug_word_accepts_a_negation_prefix() {
         "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
         "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own", "proto",
         "recv", "send", "time", "iouring", "clone", "sockopt", "iocp", "seccomp", "landlock",
-        "sandbox",
+        "pipeline", "sandbox",
     ] {
         for token in [format!("no{word}"), format!("-{word}")] {
             let _ = parse_debug_flags(&[OsString::from(token.clone())]).expect_err(&format!(

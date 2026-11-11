@@ -408,6 +408,12 @@ impl ReceiverContext {
         ndx_write_codec: &mut NdxCodecEnum,
         ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<()> {
+        // upstream: generator.c:2927-2928 - generate_files() returns after its
+        // last NDX_DONE, before do_recv() writes the final goodbye
+        // (main.c:1172); once that goes out the client stops reading.
+        if !self.protocol.supports_extended_goodbye() {
+            debug_log!(Genr, 1, "generate_files finished");
+        }
         if !self.protocol.supports_goodbye_exchange() {
             return Ok(());
         }
@@ -447,6 +453,7 @@ impl ReceiverContext {
             if !self.config.connection.client_mode && self.protocol.supports_block_stats() {
                 writer.send_msg_block_stats(self.touched_blocks_4k)?;
             }
+            debug_log!(Genr, 1, "generate_files finished");
 
             ndx_write_codec.write_ndx_done(&mut *writer)?;
             writer.flush()?;
@@ -535,6 +542,9 @@ impl ReceiverContext {
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
 
         self.exchange_phase_done(reader, writer, &mut ndx_write_codec, ndx_read_codec)?;
+        // upstream: receiver.c:1393-1394 - recv_files() ends once the last
+        // phase's NDX_DONE is read, before do_recv() reads the stats.
+        debug_log!(Recv, 1, "recv_files finished");
         self.flush_daemon_log_rows();
 
         if self.config.connection.client_mode {
@@ -579,19 +589,12 @@ impl ReceiverContext {
             return Err(e);
         }
 
-        // upstream: receiver.c:1393-1394 DEBUG_GTE(RECV, 1)
-        debug_log!(Recv, 1, "recv_files finished");
-
-        // upstream: generator.c:2928-2929 - "generate_files finished" emitted at
-        // the bottom of generate_files() after the final goodbye handshake.
-        debug_log!(Genr, 1, "generate_files finished");
-
         // INC_RECURSE diagnostic: emit cumulative NDX conversion
         // call count and partition_point comparison depth from the receiver
         // side. Aggregated across all receiver transfers in this process.
         let (ndx_calls, ndx_cmps) = crate::receiver::ndx_convert_totals();
         debug_log!(
-            Genr,
+            Pipeline,
             1,
             "receiver ndx_convert totals: calls={} partition_point_depth={}",
             ndx_calls,
