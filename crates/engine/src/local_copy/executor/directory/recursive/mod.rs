@@ -168,7 +168,7 @@ fn copy_directory_recursive_inner(
     // the generator never looks at a destination (generator.c:1638-1643).
     let list_only = context.list_only_enabled();
 
-    let root_device = if context.one_file_system_enabled() {
+    let root_device = if context.sender_options().one_file_system_enabled() {
         root_device.or_else(|| device_identifier(source, metadata))
     } else {
         None
@@ -677,7 +677,7 @@ fn copy_directory_recursive_inner(
     reorder_hardlink_group_holders(
         context.options().hard_links_enabled() && !list_only,
         !context.reference_directories().is_empty(),
-        context.options().fake_super_enabled(),
+        context.sender_options().fake_super_enabled(),
         destination,
         &mut plan.planned_entries,
     );

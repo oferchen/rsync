@@ -22,7 +22,7 @@ use super::types::SourceMetadataResult;
 /// follows symlinks and demands a real directory, which is exactly what the
 /// unstripped `lstat("operand/")` already reports.
 fn marker_governs_operand_stat(context: &CopyContext, source: &SourceSpec) -> bool {
-    context.relative_paths_enabled() && source.copy_contents()
+    context.sender_options().relative_paths_enabled() && source.copy_contents()
 }
 
 /// Returns the path a source operand is stat'd and read through, with any
@@ -128,7 +128,7 @@ pub(super) fn fetch_source_metadata(
 ) -> Result<SourceMetadataResult, LocalCopyError> {
     // upstream: flist.c:2914-2921 - the operand's `dir` half is entered before
     // its `.` half is stat'd, so this precedes `link_stat` and `--missing-args`.
-    if !context.relative_paths_enabled()
+    if !context.sender_options().relative_paths_enabled()
         && let Some((dir, error)) = crate::local_copy::operand_change_dir_failure(source.path())
     {
         context.record_file_list_generation(metadata_start.elapsed());
@@ -164,7 +164,7 @@ pub(super) fn compute_relative_paths(
     context: &CopyContext,
     source: &SourceSpec,
 ) -> (Option<PathBuf>, Option<PathBuf>) {
-    let relative_enabled = context.relative_paths_enabled();
+    let relative_enabled = context.sender_options().relative_paths_enabled();
     let relative_root = if relative_enabled {
         source.relative_root()
     } else {

@@ -174,7 +174,14 @@ impl<'a> CopyContext<'a> {
         stacks: &DirectoryFilterHandles,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
         let source = directory;
-        let Some(program) = &self.filter_program else {
+        // The destination scan loads the receiver's merge rules, the source
+        // walk the sender's.
+        let program = if capture_cleared_layers {
+            &self.receiver_filter_program
+        } else {
+            &self.filter_program
+        };
+        let Some(program) = program else {
             return Ok(DirectoryFilterGuard::new(
                 stacks.clone(),
                 Vec::new(),

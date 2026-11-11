@@ -481,6 +481,7 @@ impl ClientConfigBuilder {
             recursive: self.recursive,
             dirs: self.dirs,
             dirs_explicit: self.dirs_explicit,
+            local_sender: None,
             min_file_size: self.min_file_size,
             max_file_size: self.max_file_size,
             block_size_override: self.block_size_override,

@@ -71,6 +71,13 @@ pub struct ParsedArgs {
     /// transfer's server side refuses instead of the client.
     pub refused_remote_option: Option<OsString>,
 
+    /// The client's own option set when a local transfer applied `-M` values
+    /// to its receiver half; `self` is then the receiver's.
+    ///
+    /// upstream: pipe.c:143-148 local_child() re-runs parse_arguments() over
+    /// the `-M` values in the forked receiver only.
+    pub local_sender: Option<Box<ParsedArgs>>,
+
     /// `--rsync-path` - path to rsync on the remote system.
     pub rsync_path: Option<OsString>,
 

@@ -94,6 +94,8 @@ pub fn sync_acls_via_fake_super(
     source: &Path,
     destination: &Path,
     follow_symlinks: bool,
+    sender_fake_super: bool,
 ) -> Result<(), MetadataError> {
+    let _ = sender_fake_super;
     sync_acls(source, destination, follow_symlinks)
 }
