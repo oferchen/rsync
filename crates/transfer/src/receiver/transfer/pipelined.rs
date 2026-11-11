@@ -289,8 +289,10 @@ impl ReceiverContext {
                     &mut progress,
                     &mut ndx_write_codec,
                     &mut ndx_read_codec,
+                    true,
                 )?;
                 all_delayed_updates.extend(delayed);
+                self.finish_request_phase(&mut *reader, writer, &mut ndx_read_codec)?;
 
                 // Phase 2: redo pass for files that failed checksum verification.
                 redo_count = redo_indices.len();
@@ -299,23 +301,32 @@ impl ReceiverContext {
 
                     // upstream: generator.c:2672 - the phase-2 redo re-enters the
                     // ordinary recv_generator() for the redo index, so the retry
-                    // is a full re-request: ITEM_TRANSFER (generator.c:2378), a
-                    // re-stat of the destination, and a fresh block signature
-                    // built from it (generator.c:2405).
-                    let redo_files: Vec<(usize, PathBuf, u32)> = redo_indices
-                        .iter()
-                        .filter_map(|&idx| {
-                            self.file_list.get(idx).map(|entry| {
-                                let p = entry.path();
-                                let file_path = if p.as_os_str() == "." {
-                                    setup.dest_dir.clone()
-                                } else {
-                                    setup.dest_dir.join(p)
-                                };
-                                (idx, file_path, crate::generator::ItemFlags::ITEM_TRANSFER)
-                            })
-                        })
-                        .collect();
+                    // is a full re-request: a re-stat of the destination, the
+                    // request itemized against it (generator.c:2378-2384), and a
+                    // fresh block signature built from it (generator.c:2405).
+                    let mut redo_files: Vec<(usize, PathBuf, u32)> =
+                        Vec::with_capacity(redo_indices.len());
+                    for &idx in &redo_indices {
+                        let Some(entry) = self.file_list.get(idx) else {
+                            continue;
+                        };
+                        let p = entry.path();
+                        let file_path = if p.as_os_str() == "." {
+                            setup.dest_dir.clone()
+                        } else {
+                            setup.dest_dir.join(p)
+                        };
+                        if let Some(iflags) = self.redo_request_iflags(
+                            writer,
+                            idx,
+                            &file_path,
+                            &setup.dest_dir,
+                            #[cfg(unix)]
+                            setup.sandbox.as_deref(),
+                        )? {
+                            redo_files.push((idx, file_path, iflags));
+                        }
+                    }
 
                     let (
                         redo_transferred,
@@ -339,6 +350,7 @@ impl ReceiverContext {
                         &mut progress,
                         &mut ndx_write_codec,
                         &mut ndx_read_codec,
+                        true,
                     )?;
 
                     files_transferred += redo_transferred;

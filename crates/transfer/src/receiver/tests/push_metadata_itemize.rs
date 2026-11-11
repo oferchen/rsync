@@ -121,6 +121,7 @@ fn server_push_pipeline_forwards_metadata_only_record_and_drains_echo() {
             &mut None,
             &mut ndx_write_codec,
             &mut ndx_read_codec,
+            false,
         )
         .expect("metadata-only phase must complete without hanging on the echo");
 

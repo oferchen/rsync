@@ -187,6 +187,12 @@ pub fn run_daemon_transfer(
         config.tcp_fastopen(),
         config.sockopts(),
         &quic_dial,
+        // upstream: who_am_i() before any fork - a push client is the sender,
+        // a pulling one the lone Receiver.
+        match &transfer_spec {
+            TransferSpec::Push { .. } => crate::message::Role::Sender,
+            TransferSpec::Pull { .. } => crate::message::Role::PreForkReceiver,
+        },
     )?;
 
     // upstream: socket.c:434 - set_socket_options(s, sockopts) is applied

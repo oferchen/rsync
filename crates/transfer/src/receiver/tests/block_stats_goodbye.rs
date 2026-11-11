@@ -12,7 +12,9 @@
 //!   and `MSG_STATS` when `protocol_version >= 33`.
 //! - `io.c:1728-1729` - the server generator forwards it to the client, ahead
 //!   of the final goodbye `NDX_DONE` written at `main.c:1172` (measured against
-//!   rsync 3.5.1: `..., MSG_DATA "\0", MSG_BLOCK_STATS, MSG_DATA "\0"`).
+//!   rsync 3.5.1: `..., MSG_DATA "\0", MSG_BLOCK_STATS, MSG_DATA "\0"`). The
+//!   first of those is the generator's last phase `NDX_DONE`
+//!   (generator.c:2868-2872), which goes out before the goodbye starts.
 
 use std::ffi::OsString;
 use std::io::Cursor;
@@ -53,18 +55,27 @@ fn server_receiver(protocol: ProtocolVersion, touched_blocks_4k: u64) -> Receive
     ctx
 }
 
-/// Runs the receiver's goodbye against a sender that echoes one `NDX_DONE`
-/// and returns every byte the receiver wrote to the multiplexed stream.
-fn goodbye_bytes(ctx: &ReceiverContext) -> Vec<u8> {
+/// Runs the phase exchange against a sender that echoes every phase
+/// `NDX_DONE`, then the goodbye against its goodbye echo, and returns every
+/// byte the receiver wrote to the multiplexed stream during the goodbye.
+fn goodbye_bytes(ctx: &mut ReceiverContext) -> Vec<u8> {
     let proto = ctx.protocol.as_u8();
-    let mut reader = Cursor::new(vec![0x00]);
+    let mut reader = Cursor::new(vec![0x00; 4]);
+    let mut ndx_write = create_ndx_codec(proto);
+    let mut ndx_read = create_ndx_codec(proto);
+    let mut phases = Vec::new();
+    ctx.exchange_phase_done(&mut reader, &mut phases, &mut ndx_write, &mut ndx_read)
+        .unwrap();
+    assert_eq!(
+        phases.last(),
+        Some(&0x00),
+        "the phase exchange must end on the generator's last NDX_DONE"
+    );
     let mut out = Vec::new();
     {
         let mut writer = ServerWriter::new_plain(&mut out)
             .activate_multiplex()
             .unwrap();
-        let mut ndx_write = create_ndx_codec(proto);
-        let mut ndx_read = create_ndx_codec(proto);
         ctx.handle_goodbye(&mut reader, &mut writer, &mut ndx_write, &mut ndx_read)
             .unwrap();
     }
@@ -82,13 +93,12 @@ fn block_stats_frame(count: i64) -> Vec<u8> {
 /// protocol-32 stream (a 3.5.0 peer treats tag 11 as a fatal unknown tag).
 #[test]
 fn proto32_goodbye_is_byte_identical_and_carries_no_block_stats() {
-    let mut golden = NDX_DONE_FRAME.to_vec();
-    golden.extend_from_slice(&NDX_DONE_FRAME);
+    let golden = NDX_DONE_FRAME.to_vec();
 
     for touched in [0, 5, 1_024] {
-        let ctx = server_receiver(ProtocolVersion::V32, touched);
+        let mut ctx = server_receiver(ProtocolVersion::V32, touched);
         assert_eq!(
-            goodbye_bytes(&ctx),
+            goodbye_bytes(&mut ctx),
             golden,
             "protocol 32 goodbye changed with {touched} touched blocks"
         );
@@ -101,22 +111,20 @@ fn proto32_goodbye_is_byte_identical_and_carries_no_block_stats() {
 /// `Number of 4 KiB logical blocks touched`.
 #[test]
 fn proto33_goodbye_sends_block_stats_before_final_ndx_done() {
-    let ctx = server_receiver(ProtocolVersion::V33, 1_024);
-    let mut expected = NDX_DONE_FRAME.to_vec();
-    expected.extend_from_slice(&block_stats_frame(1_024));
+    let mut ctx = server_receiver(ProtocolVersion::V33, 1_024);
+    let mut expected = block_stats_frame(1_024);
     expected.extend_from_slice(&NDX_DONE_FRAME);
-    assert_eq!(goodbye_bytes(&ctx), expected);
+    assert_eq!(goodbye_bytes(&mut ctx), expected);
 }
 
 /// WHY: upstream sends the frame even for a zero count (main.c:1112 gates only
 /// on the protocol), and the client prints 0 either way.
 #[test]
 fn proto33_goodbye_sends_zero_count() {
-    let ctx = server_receiver(ProtocolVersion::V33, 0);
-    let mut expected = NDX_DONE_FRAME.to_vec();
-    expected.extend_from_slice(&block_stats_frame(0));
+    let mut ctx = server_receiver(ProtocolVersion::V33, 0);
+    let mut expected = block_stats_frame(0);
     expected.extend_from_slice(&NDX_DONE_FRAME);
-    assert_eq!(goodbye_bytes(&ctx), expected);
+    assert_eq!(goodbye_bytes(&mut ctx), expected);
 }
 
 /// WHY: a client receiver (pull) keeps its count local - upstream's receiver
@@ -126,7 +134,5 @@ fn proto33_goodbye_sends_zero_count() {
 fn proto33_client_receiver_goodbye_sends_no_block_stats() {
     let mut ctx = server_receiver(ProtocolVersion::V33, 9);
     ctx.config.connection.client_mode = true;
-    let mut expected = NDX_DONE_FRAME.to_vec();
-    expected.extend_from_slice(&NDX_DONE_FRAME);
-    assert_eq!(goodbye_bytes(&ctx), expected);
+    assert_eq!(goodbye_bytes(&mut ctx), NDX_DONE_FRAME.to_vec());
 }

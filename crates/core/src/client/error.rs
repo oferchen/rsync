@@ -1,5 +1,6 @@
 use std::fmt;
 use std::io;
+use std::net::SocketAddr;
 use std::path::Path;
 
 use thiserror::Error;
@@ -54,8 +55,9 @@ pub struct ClientError {
 /// The line upstream prints before log_exit()'s trailer, if a failure has one.
 #[derive(Clone, Debug)]
 enum LeadLine {
-    /// `rprintf(FERROR, RSYNC_NAME ": ...")`, prefixed with the program name.
-    Program(String),
+    /// `rprintf(FERROR, RSYNC_NAME ": ...")` lines, each prefixed with the
+    /// program name.
+    Program(Vec<String>),
     /// An unprefixed `rprintf(FERROR, ...)` cause.
     Cause(String),
 }
@@ -165,9 +167,15 @@ impl ClientError {
     /// exit trailer, if this failure has one. The caller prefixes the program
     /// name so the line carries the same brand as the trailer.
     pub fn program_line(&self) -> Option<&str> {
+        self.program_lines().first().map(String::as_str)
+    }
+
+    /// Returns every line upstream prints as `RSYNC_NAME ": <text>"` before
+    /// the exit trailer, in order; empty when this failure has none.
+    pub fn program_lines(&self) -> &[String] {
         match self.lead_line.as_deref() {
-            Some(LeadLine::Program(line)) => Some(line),
-            _ => None,
+            Some(LeadLine::Program(lines)) => lines,
+            _ => &[],
         }
     }
 
@@ -632,24 +640,17 @@ pub(crate) fn socket_error(
     ClientError::with_code(code, message)
 }
 
-/// Builds the diagnostic for a `--contimeout` expiry during `connect(2)`.
+/// Builds the report for a `--contimeout` expiry during `connect(2)`.
 ///
 /// Upstream's `open_socket_out()` calls `exit_cleanup(RERR_CONTIMEOUT)` (exit
-/// code 35) when the `SIGALRM` armed by `--contimeout` fires mid-connect, rather
-/// than the generic socket-I/O code 10. This mirrors that, and matches the SSH
-/// path which already maps a connect-watchdog expiry to `ConnectionTimeout`.
+/// code 35) when the `SIGALRM` armed by `--contimeout` fires mid-connect,
+/// before it reports any address, so only log_exit()'s trailer is printed.
 ///
 /// upstream: socket.c:436-437 open_socket_out() - a failed connect exits
 /// RERR_CONTIMEOUT once the alarm has set connect_timeout to -1.
 #[cold]
-pub(crate) fn connect_timeout_error(target: impl fmt::Display, error: io::Error) -> ClientError {
-    let code = ExitCode::ConnectionTimeout;
-    let text = format!(
-        "failed to connect to {target}: {}",
-        upstream_io_error(&error)
-    );
-    let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
-    ClientError::with_code(code, message)
+pub(crate) fn connect_timeout_error(role: Role) -> ClientError {
+    remote_exit_error(ExitCode::ConnectionTimeout, role)
 }
 
 /// Reports that a daemon connection made through a remote shell was not
@@ -703,9 +704,66 @@ pub fn connection_unexpectedly_closed_error(
 /// log_exit() prints the trailer (log.c:937-963).
 #[cold]
 pub(crate) fn program_line_error(line: String, exit_code: ExitCode, role: Role) -> ClientError {
+    program_lines_error(vec![line], exit_code, role)
+}
+
+/// Reports a fatal failure upstream announces with several
+/// `RSYNC_NAME ": ..."` lines before log_exit()'s trailer for `exit_code`.
+#[cold]
+fn program_lines_error(lines: Vec<String>, exit_code: ExitCode, role: Role) -> ClientError {
     let mut error = remote_exit_error(exit_code, role);
-    error.lead_line = Some(Box::new(LeadLine::Program(line)));
+    error.lead_line = Some(Box::new(LeadLine::Program(lines)));
     error
+}
+
+/// Reports a daemon host every resolved address of which refused or failed
+/// the connection.
+///
+/// upstream: socket.c:464-475 open_socket_out() - one `rsyserr(FERROR, errno,
+/// "failed to connect to %s (%s)", h, addr)` per failed address, in
+/// resolution order, then clientserver.c:164-165 `exit_cleanup(RERR_SOCKETIO)`.
+#[cold]
+pub(crate) fn connect_failure_error(
+    host: &str,
+    failures: &[(SocketAddr, io::Error)],
+    role: Role,
+) -> ClientError {
+    let who = role.as_str();
+    let lines = failures
+        .iter()
+        .map(|(address, error)| {
+            format!(
+                "[{who}] failed to connect to {host} ({}): {}",
+                address.ip(),
+                upstream_io_error(error)
+            )
+        })
+        .collect();
+    program_lines_error(lines, ExitCode::SocketIo, role)
+}
+
+/// Reports a daemon host name that did not resolve.
+///
+/// upstream: socket.c:402-406 open_socket_out() - `rprintf(FERROR, RSYNC_NAME
+/// ": getaddrinfo: %s %s: %s\n", h, portbuf, gai_strerror(error))`, then
+/// `exit_cleanup(RERR_SOCKETIO)`.
+#[cold]
+pub(crate) fn getaddrinfo_error(
+    host: &str,
+    port: u16,
+    error: &io::Error,
+    role: Role,
+) -> ClientError {
+    let text = error.to_string();
+    // std renders a resolver failure as this prefix plus gai_strerror().
+    let reason = text
+        .strip_prefix("failed to lookup address information: ")
+        .unwrap_or(&text);
+    program_line_error(
+        format!("getaddrinfo: {host} {port}: {reason}"),
+        ExitCode::SocketIo,
+        role,
+    )
 }
 
 /// Reports a fatal failure upstream announces with one unprefixed line before

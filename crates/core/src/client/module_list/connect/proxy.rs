@@ -28,6 +28,7 @@ pub(crate) fn connect_via_proxy(
     bind_address: Option<SocketAddr>,
     tfo: TcpFastOpenMode,
     sockopts: Option<&OsStr>,
+    role: Role,
 ) -> Result<TcpStream, ClientError> {
     let target = (proxy.host.as_str(), proxy.port);
     let addrs: Vec<SocketAddr> = target
@@ -53,8 +54,13 @@ pub(crate) fn connect_via_proxy(
     let mut stream =
         match connect_first_reachable(&addrs, bind_address, connect_timeout, tfo, sockopts) {
             Ok(stream) => stream,
-            Err((candidate, error)) => {
-                return Err(map_connect_failure(connect_timeout, candidate, error));
+            Err(failures) => {
+                return Err(map_connect_failure(
+                    connect_timeout,
+                    &proxy.host,
+                    failures,
+                    role,
+                ));
             }
         };
 
