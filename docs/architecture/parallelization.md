@@ -65,11 +65,11 @@ decoupled by a lock-free single-producer / single-consumer channel
 (`crates/transfer/src/pipeline/spsc.rs`).
 
 - Built on `crossbeam_queue::ArrayQueue` with `AtomicBool` disconnection flags.
-- Zero syscalls: pure userspace spin-wait via `std::hint::spin_loop`. No
-  futex, no `thread::park`, no condvar.
+- A ready slot costs no syscall. A failed probe spins a short fixed budget,
+  then parks on a per-side `Condvar` until the counterpart signals.
 - Default capacity: `DEFAULT_CHANNEL_CAPACITY = 128` slots
-  (`crates/transfer/src/disk_commit.rs`).
-  At ~32 KB average chunk size, this is ~4 MB of peak buffered data.
+  (`crates/transfer/src/disk_commit/config.rs`, overridable through
+  `OC_RSYNC_DISK_COMMIT_CHANNEL_CAP` within 8..=4096).
 - Protocol: the network thread sends `FileMessage` items (`Begin`, `Chunk`,
   `Commit`, `Abort`, `Shutdown`). The disk thread replies with
   `io::Result<CommitResult>` on a second SPSC channel.
@@ -78,6 +78,29 @@ decoupled by a lock-free single-producer / single-consumer channel
   malloc/free overhead.
 - Checksum computation is done on the disk thread to overlap hashing with
   disk I/O and remove the work from the network-critical path.
+
+#### Queue bounds
+
+Upstream has none of these queues: the receiver decodes each literal into
+one static `CHUNK_SIZE` buffer (`token.c:289 simple_recv_token()`,
+`rsync.h:158` `CHUNK_SIZE (32*1024)`) and writes it before reading the next.
+oc's bounds follow from the largest item each queue carries:
+
+| Queue | Capacity | Largest item | Worst case |
+|-------|----------|--------------|------------|
+| `FileMessage` (network to disk) | 128 | one literal chunk, at most `CHUNK_SIZE` | 4 MiB of literal data in flight |
+| Recycled `Vec<u8>` (disk to network) | 256 (2 x capacity) | a returned chunk buffer, at most `CHUNK_SIZE` | 8 MiB of spare buffers |
+| `io::Result<CommitResult>` (disk to network) | 256 | one per-file result record | small, independent of file size |
+| Pipeline window (`PendingTransfer`) | 64 (`DEFAULT_PIPELINE_WINDOW`) | one outstanding request record | small, independent of file size |
+
+The worst case, about 12 MiB above upstream, is reachable only by transfers
+with long literal runs. On a 100k-file pull of 32-byte files, the first two
+queues reached 128 of 128 and 130 of 256 items, with each item tens of
+bytes. jemalloc reported about 5 MiB allocated at the peak.
+
+The run-to-run peak-RSS swing of about 40 MiB seen on such pulls comes from
+transparent huge pages backing jemalloc's 2 MiB extents, not from these
+queues. oc opts out of THP at startup (`platform::memory`).
 
 ### Parallelism thresholds
 
