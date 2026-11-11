@@ -14,7 +14,8 @@ use ::metadata::MetadataOptions;
 
 use super::super::{
     capture_batch_file_entry, copy_device, copy_directory_recursive, copy_directory_walk_one_level,
-    copy_fifo, copy_file, copy_symlink, non_empty_path, transcode_filename_component,
+    copy_fifo, copy_file, copy_symlink, non_empty_path, symlink_target_is_safe,
+    transcode_filename_component,
 };
 use super::destination::{compute_special_target_path, compute_target_path};
 use super::metadata::resolve_effective_metadata;
@@ -54,6 +55,25 @@ fn record_skipped_symlink(
                 context.record_skipped_non_regular(Some(relative_path));
             }
         }
+    }
+}
+
+/// Reads an operand's ACL and xattrs into the entry slot as the sender half
+/// lists it; `false` when the read failed and the operand is dropped.
+///
+/// upstream: flist.c:2050-2087 send_file_name().
+fn read_operand_attrs(
+    context: &mut CopyContext,
+    source_path: &Path,
+    metadata: &Metadata,
+    name: &Path,
+) -> bool {
+    match context.read_source_attrs(source_path, metadata, name) {
+        Some(attrs) => {
+            context.set_entry_attrs(attrs);
+            true
+        }
+        None => false,
     }
 }
 
@@ -108,6 +128,9 @@ pub(super) fn handle_directory_contents_copy(
     // so no extra prefix in the relative path.
     context.set_safety_depth_offset(0);
 
+    if !read_operand_attrs(context, source_path, metadata, Path::new(".")) {
+        return Ok(true);
+    }
     // upstream: flist.c:send_file_list() - a trailing-slash source becomes
     // "." (DOTDIR_NAME) as the first flist entry. Capture this root entry
     // so the batch file matches upstream's wire format.
@@ -214,6 +237,9 @@ pub(super) fn handle_directory_copy(
     // Record an offset of 1 so that safety-relative paths exclude it.
     context.set_safety_depth_offset(1);
 
+    if !read_operand_attrs(context, source_path, metadata, &relative) {
+        return Ok(());
+    }
     // upstream: flist.c:send_file_list() - the source directory is sent as
     // the first flist entry with FLAG_TOP_DIR | FLAG_CONTENT_DIR. Capture
     // it so the batch file matches upstream's wire format.
@@ -247,7 +273,10 @@ pub(super) fn handle_symlink_copy(
     // upstream: generator.c:1642 list_file_entry() lists every flist entry,
     // so `--list-only` must record the symlink (dry-run only reports it) even
     // when `--links` is off; a real transfer without `--links` still skips it.
-    if context.links_enabled() || context.list_only_enabled() {
+    if context.links_enabled()
+        || context.list_only_enabled()
+        || dereferences_unsafe_operand(context, source_path, record_path)
+    {
         let target = compute_special_target_path(
             destination_path,
             destination_base,
@@ -269,6 +298,25 @@ pub(super) fn handle_symlink_copy(
         record_skipped_symlink(context, source_path, metadata, record_path);
         Ok(())
     }
+}
+
+/// Reports whether `--copy-unsafe-links` turns this operand symlink into a
+/// copy of its referent.
+///
+/// upstream: flist.c:482-506 readlink_stat() dereferences an unsafe link
+/// before `-l` is consulted, so the operand reaches [`copy_symlink`] (which
+/// performs the copy) even when links are not preserved.
+fn dereferences_unsafe_operand(
+    context: &CopyContext,
+    source_path: &Path,
+    record_path: Option<&Path>,
+) -> bool {
+    context.copy_unsafe_links_enabled()
+        && record_path.is_some_and(|relative| {
+            fs::read_link(source_path).is_ok_and(|target| {
+                !symlink_target_is_safe(&target, context.strip_safety_prefix(relative))
+            })
+        })
 }
 
 /// Handles copying a FIFO (named pipe) source.
@@ -401,6 +449,10 @@ pub(super) fn handle_non_directory_source(
         {
             return Ok(());
         }
+    }
+
+    if !read_operand_attrs(context, source_path, &effective_metadata, &relative) {
+        return Ok(());
     }
 
     let prefer_root_destination = proc_ctx.destination_behaves_like_directory

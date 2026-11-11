@@ -143,6 +143,10 @@ fn copy_directory_recursive_inner(
         ));
     }
 
+    // The directory's own ACL and xattrs, read when it was listed; its
+    // children reuse the slot, so the frame keeps them until it finalizes.
+    let dir_attrs = context.take_entry_attrs();
+
     #[cfg(any(
         all(unix, any(feature = "acl", feature = "xattr")),
         all(windows, feature = "acl")
@@ -610,6 +614,7 @@ fn copy_directory_recursive_inner(
                     relative,
                     pre_transfer_meta: dir_pre_transfer,
                 },
+                &dir_attrs,
                 #[cfg(any(
                     all(unix, any(feature = "acl", feature = "xattr")),
                     all(windows, feature = "acl")
@@ -712,7 +717,7 @@ fn copy_directory_recursive_inner(
     // a per-entry PathBuf allocation from Path::join.
     let mut target_buf = destination.to_path_buf();
 
-    for planned in &plan.planned_entries {
+    for planned in &mut plan.planned_entries {
         let result = process_planned_entry(
             context,
             planned,
@@ -794,6 +799,7 @@ fn copy_directory_recursive_inner(
                 relative,
                 pre_transfer_meta: dir_pre_transfer,
             },
+            &dir_attrs,
             #[cfg(any(
                 all(unix, any(feature = "acl", feature = "xattr")),
                 all(windows, feature = "acl")
@@ -880,18 +886,21 @@ mod tests {
                 relative: PathBuf::from("file1.txt"),
                 action: EntryAction::CopyFile,
                 metadata_override: None,
+                attrs: Default::default(),
             },
             PlannedEntry {
                 entry: &entries[1],
                 relative: PathBuf::from("file2.txt"),
                 action: EntryAction::CopyFile,
                 metadata_override: None,
+                attrs: Default::default(),
             },
             PlannedEntry {
                 entry: &entries[2],
                 relative: PathBuf::from("dir"),
                 action: EntryAction::CopyDirectory,
                 metadata_override: None,
+                attrs: Default::default(),
             },
         ];
 
@@ -925,6 +934,7 @@ mod tests {
             relative: PathBuf::from("file.txt"),
             action: EntryAction::CopyFile,
             metadata_override: None,
+            attrs: Default::default(),
         }];
 
         let plan = DirectoryPlan {
@@ -957,6 +967,7 @@ mod tests {
             relative: PathBuf::from("file.txt"),
             action: EntryAction::CopyFile,
             metadata_override: None,
+            attrs: Default::default(),
         }];
 
         let plan = DirectoryPlan {
@@ -989,6 +1000,7 @@ mod tests {
             relative: PathBuf::from("file.txt"),
             action: EntryAction::CopyFile,
             metadata_override: None,
+            attrs: Default::default(),
         }];
 
         let plan = DirectoryPlan {
@@ -1048,6 +1060,7 @@ mod tests {
             relative: PathBuf::from("file.txt"),
             action: EntryAction::CopyFile,
             metadata_override: None,
+            attrs: Default::default(),
         }];
 
         let plan = DirectoryPlan {
@@ -1093,6 +1106,7 @@ mod tests {
             relative: PathBuf::from("file.txt"),
             action: EntryAction::CopyFile,
             metadata_override: None,
+            attrs: Default::default(),
         }];
 
         let plan = DirectoryPlan {

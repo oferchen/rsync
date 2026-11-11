@@ -151,10 +151,10 @@ pub fn sync_acls(
 /// Mirrors [`sync_acls`], but the destination write stashes the ACL in
 /// `%aacl`/`%dacl` rather than calling `sys_acl_set_file`/`setfacl` -
 /// matching how the network receive path stashes ACLs under fake-super
-/// (`store_acls_via_fake_super`). The *effective* source ACL is used: a prior
-/// fake-super receive at `source` may have stashed the ACL rather than
-/// applying it for real, so that stash - not the placeholder's real (and
-/// possibly reset) filesystem ACL - is preferred when present.
+/// (`store_acls_via_fake_super`). The sender side of a local copy runs under
+/// the same `--fake-super`, so the source ACL is its `%aacl`/`%dacl` stash
+/// alone ([`crate::read_sender_acl`]); a source without one sends the empty
+/// ACL, and the destination then gets no xattr.
 ///
 /// Symbolic links do not support ACLs; when `follow_symlinks` is `false`,
 /// this function returns immediately without performing any work.
@@ -194,14 +194,12 @@ pub fn sync_acls_via_fake_super(
         .permissions()
         .mode();
 
-    // Prefer a stashed access ACL (an earlier fake-super receive at `source`);
-    // otherwise read the real filesystem ACL.
-    let access_acl = crate::fake_super::load_fake_super_acl(source, true)
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| super::read::get_rsync_acl(source, source_mode, false));
+    // A local copy's sender runs under the same --fake-super, so it sends only
+    // the stash (an earlier fake-super receive at `source`), never the real ACL.
+    let access_acl = crate::fake_super::read_sender_acl(source, source_mode, false, true)
+        .map_err(|e| MetadataError::new("read fake-super access ACL", source, e))?;
 
-    crate::fake_super::store_fake_super_acl(destination, true, &access_acl, source_mode)
+    crate::fake_super::update_fake_super_access_acl(destination, &access_acl, source_mode)
         .map_err(|e| MetadataError::new("store fake-super access ACL", destination, e))?;
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -211,26 +209,16 @@ pub fn sync_acls_via_fake_super(
             .is_dir();
 
         if is_dir {
-            let default_acl = crate::fake_super::load_fake_super_acl(source, false)
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| super::read::get_rsync_acl(source, source_mode, true));
+            let default_acl =
+                crate::fake_super::read_sender_acl(source, source_mode, true, true)
+                    .map_err(|e| MetadataError::new("read fake-super default ACL", source, e))?;
 
-            // upstream: acls.c:1176-1177 - user_obj == NO_ENTRY means "no default
-            // ACL", so the xattr is removed rather than storing an empty ACL.
-            if default_acl.has_user_obj() {
-                crate::fake_super::store_fake_super_acl(
-                    destination,
-                    false,
-                    &default_acl,
-                    source_mode,
-                )
-                .map_err(|e| MetadataError::new("store fake-super default ACL", destination, e))?;
-            } else {
-                crate::fake_super::remove_fake_super_default_acl(destination).map_err(|e| {
-                    MetadataError::new("remove fake-super default ACL", destination, e)
-                })?;
-            }
+            crate::fake_super::update_fake_super_default_acl(
+                destination,
+                &default_acl,
+                source_mode,
+            )
+            .map_err(|e| MetadataError::new("store fake-super default ACL", destination, e))?;
         }
     }
 

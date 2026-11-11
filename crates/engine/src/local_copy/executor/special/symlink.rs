@@ -14,9 +14,9 @@ use std::time::Duration;
 
 use logging::info_log;
 
-use crate::local_copy::remove_existing_destination;
 #[cfg(all(any(unix, windows), feature = "acl"))]
-use crate::local_copy::sync_acls_if_requested;
+use crate::local_copy::apply_source_acls_if_requested;
+use crate::local_copy::remove_existing_destination;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
@@ -253,6 +253,14 @@ pub(crate) fn copy_symlink(
                 target.display()
             );
             let target_metadata = follow_symlink_metadata(source)?;
+            // The operand was listed as the link; what is copied is its
+            // referent. upstream's get_acl() reads the referent's ACL through
+            // the followed path, while its xattr read stays on the link itself
+            // (xattrs.c:162,200 sys_llistxattr/sys_lgetxattr).
+            match context.read_source_attrs(source, &target_metadata, relative.unwrap_or(source)) {
+                Some(attrs) => context.set_entry_attrs(attrs),
+                None => return Ok(()),
+            }
             let target_type = target_metadata.file_type();
 
             if target_type.is_dir() {
@@ -774,18 +782,19 @@ pub(crate) fn copy_symlink(
     sync_xattrs_if_requested(
         preserve_xattrs,
         mode,
-        source,
+        context.entry_attrs().xattrs.as_ref(),
         destination,
         false,
         context.filter_program(),
         Some(context.destination_root()),
     )?;
     #[cfg(all(any(unix, windows), feature = "acl"))]
-    sync_acls_if_requested(
+    apply_source_acls_if_requested(
         preserve_acls,
         context.options().fake_super_enabled(),
         mode,
         source,
+        context.entry_attrs(),
         destination,
         false,
         Some(context.destination_root()),

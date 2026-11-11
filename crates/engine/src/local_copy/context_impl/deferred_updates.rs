@@ -98,6 +98,7 @@ impl<'a> CopyContext<'a> {
             mode,
             path_context,
             destination,
+            source_attrs,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
             #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -127,6 +128,7 @@ impl<'a> CopyContext<'a> {
                 // at the original commit site, so there is no pre-transfer stat to recover
                 // here.
                 pre_transfer_meta: None,
+                source_attrs: Some(source_attrs),
                 #[cfg(unix)]
                 fd: None, // No fd available for deferred updates
                 #[cfg(all(unix, feature = "xattr"))]

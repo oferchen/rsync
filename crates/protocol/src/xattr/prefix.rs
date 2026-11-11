@@ -110,6 +110,30 @@ pub fn local_to_wire(name: &[u8], allow_system_namespace: bool) -> Option<Vec<u8
     }
 }
 
+/// Undoes [`local_to_wire`] for a list this process built for itself.
+///
+/// A local copy's sender and receiver halves share oc's own mapping, so the
+/// receiver half reverses exactly what [`local_to_wire`] wrote. It must not
+/// apply [`wire_to_local`]: that mirrors upstream's `receive_xattr()`
+/// (`xattrs.c:887-901`), which assumes upstream's sender already stripped
+/// `rsync.` from a disguised name (`xattrs.c:537-544`). [`local_to_wire`]
+/// keeps such a name verbatim, so the pair would disguise it twice
+/// (`rsync.rsync.<name>`) on a non-Linux host.
+///
+/// On Linux the names are verbatim both ways. Elsewhere the `user.` prefix
+/// [`local_to_wire`] added is removed, and an `rsync.` name it kept is kept.
+#[must_use]
+pub fn local_from_own_wire(wire_name: &[u8]) -> Vec<u8> {
+    // A non-UTF-8 name crossed verbatim, and so did every name on Linux.
+    #[cfg(not(target_os = "linux"))]
+    if std::str::from_utf8(wire_name).is_ok()
+        && let Some(stripped) = wire_name.strip_prefix(USER_PREFIX_NON_LINUX.as_bytes())
+    {
+        return stripped.to_vec();
+    }
+    wire_name.to_vec()
+}
+
 /// User namespace prefix added by the non-Linux sender path.
 ///
 /// Non-Linux platforms (macOS, BSD) only expose a single namespace, so
@@ -247,6 +271,25 @@ pub fn is_rsync_internal(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A local copy round-trips names through oc's own mapping, so the
+    /// inverse must return every local name unchanged; on a non-Linux host
+    /// `wire_to_local` would disguise `rsync.nonuser` as `rsync.rsync.nonuser`.
+    #[test]
+    fn local_from_own_wire_inverts_local_to_wire() {
+        let names: [&[u8]; 6] = [
+            b"user.plain",
+            b"plain",
+            b"rsync.nonuser.equal",
+            b"rsync.%stat",
+            b"user.user.nested",
+            b"user.\xff\xfe",
+        ];
+        for name in names {
+            let wire = local_to_wire(name, true).expect("representable");
+            assert_eq!(local_from_own_wire(&wire), name, "{name:?} via {wire:?}");
+        }
+    }
 
     #[test]
     fn rsync_internal_detection() {

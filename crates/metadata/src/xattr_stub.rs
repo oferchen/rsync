@@ -83,6 +83,21 @@ pub fn read_xattrs_for_wire(
     Ok(XattrList::new())
 }
 
+/// Applies a local copy's source attribute list to `destination`.
+///
+/// On platforms without xattr support, emits a one-time warning and
+/// returns `Ok(())`.
+pub fn sync_xattrs_from_list(
+    _list: &XattrList,
+    _destination: &Path,
+    _follow_symlinks: bool,
+    _filters: crate::XattrSyncFilters<'_>,
+    _confine_root: Option<&Path>,
+) -> Result<(), MetadataError> {
+    warn_xattr_unsupported();
+    Ok(())
+}
+
 /// Applies parsed xattrs from a wire protocol [`XattrList`] to a destination file.
 ///
 /// On platforms without xattr support, emits a one-time warning and

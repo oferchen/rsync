@@ -22,12 +22,12 @@ use super::filter_program::{
 
 #[cfg(all(unix, feature = "xattr"))]
 use super::store_effective_fake_super_if_requested;
-#[cfg(all(any(unix, windows), feature = "acl"))]
-use super::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use super::sync_nfsv4_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use super::sync_xattrs_if_requested;
+#[cfg(all(any(unix, windows), feature = "acl"))]
+use super::{apply_source_acls_if_requested, sync_acls_if_requested};
 
 use super::{
     BackupDirCache, CopyComparison, DeleteTiming, DestinationWriteGuard, HardLinkTracker,
@@ -120,6 +120,21 @@ impl CopyOutcome {
 /// A source entry's access ACL and, for a directory, its default ACL, as
 /// `FileListWriter::set_pending_acl` takes them.
 pub(crate) type BatchSourceAcl = (protocol::acl::RsyncAcl, Option<protocol::acl::RsyncAcl>);
+
+/// One entry's ACL and xattrs, read once by the sender half of a local copy.
+///
+/// upstream: flist.c:2050-2087 send_file_name() reads both as it lists the
+/// entry; the receiver half applies what the list carried and never reads
+/// the source again.
+#[derive(Default)]
+pub(crate) struct SourceAttrs {
+    /// The sender's xattr list, in wire form.
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
+    pub(crate) xattrs: Option<protocol::xattr::XattrList>,
+    /// The access ACL and, for a directory, the default ACL.
+    #[cfg(all(target_os = "linux", feature = "acl"))]
+    pub(crate) acls: Option<::metadata::LocalAcls>,
+}
 
 pub(crate) struct CopyContext<'a> {
     mode: LocalCopyExecution,
@@ -481,6 +496,8 @@ pub(crate) struct CopyContext<'a> {
     /// The `ITEM_REPORT_XATTR` value block of the entry captured last, written
     /// after that entry's iflags; `None` when its xattrs match the destination.
     batch_xattr_report: Option<Vec<u8>>,
+    /// The ACL and xattrs the sender half read for the entry being copied.
+    entry_attrs: SourceAttrs,
     /// Traversal index to wire NDX once an incremental batch file list has
     /// been written; `None` for a flat list, whose NDX is the sorted index.
     batch_traversal_to_ndx: Option<Vec<i32>>,
@@ -554,6 +571,10 @@ pub(crate) struct FinalizeMetadataParams<'a> {
     /// upstream `receiver.c:1208` + `rsync.c:504` `set_file_attrs()` chmod-on-rename loop.
     pre_transfer_meta: Option<&'a fast_io::EntryMetadata>,
 
+    /// The sender half's ACL and xattrs, carried by a delayed update; `None`
+    /// takes the entry being copied now.
+    source_attrs: Option<SourceAttrs>,
+
     #[cfg(unix)]
     fd: Option<std::os::fd::BorrowedFd<'a>>,
 
@@ -579,6 +600,7 @@ impl<'a> FinalizeMetadataParams<'a> {
             mode,
             path_context,
             pre_transfer_meta: None,
+            source_attrs: None,
             #[cfg(unix)]
             fd: None,
             #[cfg(all(unix, feature = "xattr"))]
@@ -804,6 +826,7 @@ pub(crate) struct DeferredUpdate {
     mode: LocalCopyExecution,
     path_context: OwnedPathContext,
     destination: PathBuf,
+    source_attrs: SourceAttrs,
     #[cfg(all(unix, feature = "xattr"))]
     preserve_xattrs: bool,
     #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -811,6 +834,7 @@ pub(crate) struct DeferredUpdate {
 }
 
 impl DeferredUpdate {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         guard: DestinationWriteGuard,
         metadata: fs::Metadata,
@@ -818,6 +842,7 @@ impl DeferredUpdate {
         mode: LocalCopyExecution,
         path_context: OwnedPathContext,
         destination: PathBuf,
+        source_attrs: SourceAttrs,
         #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
         #[cfg(all(any(unix, windows), feature = "acl"))] preserve_acls: bool,
     ) -> Self {
@@ -828,6 +853,7 @@ impl DeferredUpdate {
             mode,
             path_context,
             destination,
+            source_attrs,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
             #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -884,6 +910,7 @@ include!("context_impl/state.rs");
 include!("context_impl/batch_setup.rs");
 include!("context_impl/link_dest.rs");
 include!("context_impl/backup.rs");
+include!("context_impl/source_attrs.rs");
 include!("context_impl/deferred_updates.rs");
 include!("context_impl/options/metadata.rs");
 include!("context_impl/options/transfer.rs");

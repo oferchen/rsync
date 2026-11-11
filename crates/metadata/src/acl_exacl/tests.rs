@@ -62,15 +62,14 @@ fn sync_acls_via_fake_super_skips_when_not_following_symlinks() {
     assert!(result.is_ok());
 }
 
-// A named-user ACL entry set on the source (via a real `setfacl`) must land
-// in the destination's `%aacl` xattr - not as a real ACL - confirming the
-// fake-super local-copy path stashes rather than applies. Mirrors the
-// wire/receive-path coverage in `fake_super.rs`'s
-// `store_and_load_fake_super_acl_roundtrips`, but exercised through the
-// source-to-destination sync entry point used by `engine::local_copy`.
+// upstream: acls.c:599-607 - a local `--fake-super` copy runs its sender under
+// am_root < 0 too, so it sends the source's `%aacl` stash and never the real
+// filesystem ACL. A real named entry therefore reaches the destination neither
+// as a stash nor as a real ACL, while a stashed one is carried over.
+#[cfg(feature = "xattr")]
 #[test]
-fn sync_acls_via_fake_super_stashes_named_entry_instead_of_applying() {
-    use crate::fake_super::load_fake_super_acl;
+fn sync_acls_via_fake_super_carries_the_stash_not_the_real_acl() {
+    use crate::fake_super::{FAKE_SUPER_ACCESS_ACL_XATTR, load_fake_super_acl};
 
     let dir = test_support::create_tempdir();
     let source = dir.path().join("src");
@@ -93,20 +92,12 @@ fn sync_acls_via_fake_super_stashes_named_entry_instead_of_applying() {
         return;
     }
 
-    if sync_acls_via_fake_super(&source, &destination, true).is_err() {
-        return;
-    }
-
-    let stashed = load_fake_super_acl(&destination, true)
-        .expect("load must succeed")
-        .expect("access ACL xattr must be present");
-    assert!(
-        !stashed.names.is_empty(),
-        "named entry must be stashed in the destination's %aacl xattr"
+    sync_acls_via_fake_super(&source, &destination, true).expect("sync");
+    assert_eq!(
+        load_fake_super_acl(&destination, true).expect("load"),
+        None,
+        "the real named entry must not be stashed"
     );
-
-    // The destination must NOT have picked up a real POSIX ACL: fake-super
-    // stashes instead of applying.
     let real_acl = exacl::getfacl(&destination, None).unwrap_or_default();
     assert!(
         !real_acl
@@ -114,6 +105,20 @@ fn sync_acls_via_fake_super_stashes_named_entry_instead_of_applying() {
             .any(|e| e.kind == AclEntryKind::User && e.name == "1000"),
         "fake-super must not apply a real ACL to the destination"
     );
+
+    // A stash on the source is what travels.
+    let stash: [u8; 24] = [
+        0x80, 0, 0, 0, 0x80, 0, 0, 0, 0x04, 0, 0, 0, 0x80, 0, 0, 0, 0xfe, 0xff, 0, 0, 0x04, 0, 0,
+        0x80,
+    ];
+    if xattr::set(&source, FAKE_SUPER_ACCESS_ACL_XATTR, &stash).is_err() {
+        return;
+    }
+    sync_acls_via_fake_super(&source, &destination, true).expect("sync");
+    let stashed = load_fake_super_acl(&destination, true)
+        .expect("load")
+        .expect("the source stash is carried");
+    assert!(!stashed.names.is_empty());
 }
 
 #[test]

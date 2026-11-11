@@ -13,8 +13,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::local_copy::{
-    CopyContext, DeleteTiming, LocalCopyArgumentError, LocalCopyError, delete_extraneous_entries,
-    follow_symlink_metadata, upstream_io_error,
+    CopyContext, DeleteTiming, LocalCopyArgumentError, LocalCopyError, SourceAttrs,
+    delete_extraneous_entries, follow_symlink_metadata, upstream_io_error,
 };
 
 use super::super::create_failure::full_fname;
@@ -55,6 +55,8 @@ pub(crate) struct PlannedEntry<'a> {
     pub(crate) relative: PathBuf,
     pub(crate) action: EntryAction,
     pub(crate) metadata_override: Option<fs::Metadata>,
+    /// The ACL and xattrs the sender half read when it listed the entry.
+    pub(crate) attrs: SourceAttrs,
 }
 
 impl<'a> PlannedEntry<'a> {
@@ -186,7 +188,10 @@ fn decide_entry_action(
     let list_only = context.list_only_enabled();
 
     if entry_type.is_symlink() && effective_type.is_symlink() {
-        if context.links_enabled() || list_only {
+        // upstream: flist.c:482-506 readlink_stat() - `--copy-unsafe-links`
+        // dereferences an unsafe link before `-l` is consulted, so keep the
+        // link in play here; a safe one is demoted after that check.
+        if context.links_enabled() || list_only || context.copy_unsafe_links_enabled() {
             return Ok(EntryAction::CopySymlink);
         }
         *keep_name = false;
@@ -464,6 +469,16 @@ pub(crate) fn plan_directory_entries<'a>(
             }
         }
 
+        // upstream: generator.c:2109-2115 - a link readlink_stat() left as a
+        // symlink is skipped as non-regular when `-l` is off.
+        if matches!(action, EntryAction::CopySymlink)
+            && !context.links_enabled()
+            && !context.list_only_enabled()
+        {
+            keep_name = false;
+            action = EntryAction::SkipNonRegular;
+        }
+
         if matches!(action, EntryAction::CopyDirectory)
             && context.one_file_system_enabled()
             && let Some(root) = root_device
@@ -475,6 +490,22 @@ pub(crate) fn plan_directory_entries<'a>(
         {
             action = EntryAction::SkipMountPoint;
         }
+
+        // upstream: flist.c:2050-2087 send_file_name() reads the entry's ACL
+        // and xattrs as it lists it. A failed read drops the entry here, before
+        // this directory's delete pass, as an unconvertible name does above.
+        let Some(attrs) = read_planned_attrs(
+            context,
+            entry,
+            action,
+            metadata_override.as_ref(),
+            &relative_path,
+        ) else {
+            if let Some(buf) = &mut relative_buf {
+                buf.pop();
+            }
+            continue;
+        };
 
         if deletion_enabled && keep_name {
             // upstream: generator.c:346 delete_in_dir() keeps any destination
@@ -499,6 +530,7 @@ pub(crate) fn plan_directory_entries<'a>(
             relative: relative_path,
             action,
             metadata_override,
+            attrs,
         });
         if let Some(buf) = &mut relative_buf {
             buf.pop();
@@ -511,6 +543,29 @@ pub(crate) fn plan_directory_entries<'a>(
         deletion_enabled,
         delete_timing,
     })
+}
+
+/// Reads a planned entry's ACL and xattrs, or `None` after reporting the
+/// failed read that drops it. A skipped entry is never listed, so nothing is
+/// read for it.
+fn read_planned_attrs(
+    context: &mut CopyContext,
+    entry: &DirectoryEntry,
+    action: EntryAction,
+    metadata_override: Option<&fs::Metadata>,
+    relative_path: &Path,
+) -> Option<SourceAttrs> {
+    if matches!(
+        action,
+        EntryAction::SkipExcluded | EntryAction::SkipNonRegular | EntryAction::SkipMountPoint
+    ) {
+        return Some(SourceAttrs::default());
+    }
+    context.read_source_attrs(
+        entry.path.as_path(),
+        metadata_override.unwrap_or(&entry.metadata),
+        relative_path,
+    )
 }
 
 /// Reorders each hard-link cohort so the *last* name-sorted member is the
@@ -907,6 +962,16 @@ fn plan_directory_entries_with_prefetch<'a>(
             }
         }
 
+        // upstream: generator.c:2109-2115 - a link readlink_stat() left as a
+        // symlink is skipped as non-regular when `-l` is off.
+        if matches!(action, EntryAction::CopySymlink)
+            && !context.links_enabled()
+            && !context.list_only_enabled()
+        {
+            keep_name = false;
+            action = EntryAction::SkipNonRegular;
+        }
+
         #[cfg(unix)]
         if matches!(action, EntryAction::CopyDirectory)
             && context.one_file_system_enabled()
@@ -929,6 +994,22 @@ fn plan_directory_entries_with_prefetch<'a>(
         {
             action = EntryAction::SkipMountPoint;
         }
+
+        // upstream: flist.c:2050-2087 send_file_name() reads the entry's ACL
+        // and xattrs as it lists it. A failed read drops the entry here, before
+        // this directory's delete pass, as an unconvertible name does above.
+        let Some(attrs) = read_planned_attrs(
+            context,
+            entry,
+            action,
+            metadata_override.as_ref(),
+            &relative_path,
+        ) else {
+            if let Some(buf) = &mut relative_buf {
+                buf.pop();
+            }
+            continue;
+        };
 
         if deletion_enabled && keep_name {
             // upstream: generator.c:346 delete_in_dir() keeps any destination
@@ -953,6 +1034,7 @@ fn plan_directory_entries_with_prefetch<'a>(
             relative: relative_path,
             action,
             metadata_override,
+            attrs,
         });
         if let Some(buf) = &mut relative_buf {
             buf.pop();
@@ -1090,6 +1172,7 @@ mod tests {
             relative: PathBuf::from(&entry.file_name),
             action: EntryAction::CopyFile,
             metadata_override: None,
+            attrs: SourceAttrs::default(),
         }
     }
 

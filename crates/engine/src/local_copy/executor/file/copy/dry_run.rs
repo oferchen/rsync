@@ -96,14 +96,7 @@ pub(super) fn handle_dry_run(
             modify_window: context.options().modify_window(),
             prefetched_match,
         }) {
-            record_dry_run_skip(
-                context,
-                metadata,
-                source,
-                destination,
-                record_path,
-                existing,
-            );
+            record_dry_run_skip(context, metadata, destination, record_path, existing);
             return Ok(());
         }
     }
@@ -187,8 +180,8 @@ pub(super) fn handle_dry_run(
     // the comparison always sees the pre-transfer state.
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     let xattrs_changed = context.xattrs_enabled()
-        && crate::local_copy::xattrs_differ_from_source(
-            source,
+        && crate::local_copy::xattrs_differ(
+            context.entry_attrs().xattrs.as_ref(),
             destination,
             false,
             context.metadata_options().fake_super_enabled(),
@@ -250,7 +243,6 @@ pub(super) fn handle_dry_run(
 fn record_dry_run_skip(
     context: &mut CopyContext,
     metadata: &fs::Metadata,
-    source: &Path,
     destination: &Path,
     record_path: &Path,
     existing: &fast_io::EntryMetadata,
@@ -262,18 +254,15 @@ fn record_dry_run_skip(
     // nothing else changed - in a dry run exactly as in a real one.
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     let xattrs_changed = context.xattrs_enabled()
-        && crate::local_copy::xattrs_differ_from_source(
-            source,
+        && crate::local_copy::xattrs_differ(
+            context.entry_attrs().xattrs.as_ref(),
             destination,
             false,
             metadata_options.fake_super_enabled(),
             context.filter_program(),
         );
     #[cfg(not(all(any(unix, windows), feature = "xattr")))]
-    let xattrs_changed = {
-        let _ = source;
-        false
-    };
+    let xattrs_changed = false;
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_regular_file_matched();
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);

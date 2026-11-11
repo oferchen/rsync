@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::link_special_from_link_dest;
-use crate::local_copy::remove_existing_destination;
 #[cfg(all(any(unix, windows), feature = "acl"))]
-use crate::local_copy::sync_acls_if_requested;
+use crate::local_copy::apply_source_acls_if_requested;
+use crate::local_copy::remove_existing_destination;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
@@ -83,8 +83,8 @@ pub(crate) fn copy_device(
     // reports against.
     #[cfg(all(unix, feature = "xattr"))]
     let itemize_xattrs = preserve_xattrs
-        && crate::local_copy::xattrs_differ_from_source(
-            source,
+        && crate::local_copy::xattrs_differ(
+            context.entry_attrs().xattrs.as_ref(),
             destination,
             false,
             metadata_options.fake_super_enabled(),
@@ -257,18 +257,19 @@ pub(crate) fn copy_device(
             sync_xattrs_if_requested(
                 preserve_xattrs,
                 mode,
-                source,
+                context.entry_attrs().xattrs.as_ref(),
                 destination,
                 true,
                 context.filter_program(),
                 Some(context.destination_root()),
             )?;
             #[cfg(feature = "acl")]
-            sync_acls_if_requested(
+            apply_source_acls_if_requested(
                 preserve_acls,
                 context.options().fake_super_enabled(),
                 mode,
                 source,
+                context.entry_attrs(),
                 destination,
                 true,
                 Some(context.destination_root()),
@@ -409,18 +410,19 @@ pub(crate) fn copy_device(
             sync_xattrs_if_requested(
                 preserve_xattrs,
                 mode,
-                source,
+                context.entry_attrs().xattrs.as_ref(),
                 destination,
                 true,
                 context.filter_program(),
                 Some(context.destination_root()),
             )?;
             #[cfg(all(any(unix, windows), feature = "acl"))]
-            sync_acls_if_requested(
+            apply_source_acls_if_requested(
                 preserve_acls,
                 context.options().fake_super_enabled(),
                 mode,
                 source,
+                context.entry_attrs(),
                 destination,
                 true,
                 Some(context.destination_root()),
@@ -515,18 +517,19 @@ pub(crate) fn copy_device(
         sync_xattrs_if_requested(
             preserve_xattrs,
             mode,
-            source,
+            context.entry_attrs().xattrs.as_ref(),
             destination,
             true,
             context.filter_program(),
             Some(context.destination_root()),
         )?;
         #[cfg(feature = "acl")]
-        sync_acls_if_requested(
+        apply_source_acls_if_requested(
             preserve_acls,
             context.options().fake_super_enabled(),
             mode,
             source,
+            context.entry_attrs(),
             destination,
             true,
             Some(context.destination_root()),
