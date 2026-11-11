@@ -185,7 +185,7 @@ fn read_capped_del_stat(raw: i32, field: &str) -> io::Result<u32> {
         // error so the core exit-code mapper yields RERR_PROTOCOL, not the
         // generic RERR_STREAMIO (12) that a bare InvalidData maps to.
         return Err(crate::protocol_violation::protocol_violation(format!(
-            "delete stat '{field}' value {raw} exceeds MAX_WIRE_DEL_STAT ({MAX_WIRE_DEL_STAT})"
+            "wire value deleted_{field} out of range: {raw} not in [0,{MAX_WIRE_DEL_STAT}]"
         )));
     }
     Ok(raw as u32)

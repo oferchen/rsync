@@ -94,7 +94,7 @@ impl FileListReader {
             let raw = read_varint(reader)?;
             if !(0..=MAX_WIRE_NSEC).contains(&raw) {
                 return Err(crate::protocol_violation::protocol_violation(format!(
-                    "modtime_nsec {raw} out of range: not in [0,{MAX_WIRE_NSEC}]"
+                    "wire value modtime_nsec out of range: {raw} not in [0,{MAX_WIRE_NSEC}]"
                 )));
             }
             raw as u32

@@ -12,7 +12,8 @@ use crate::message::Role;
 /// followed by `exit_cleanup(code)`, or `None` for any other failure.
 ///
 /// upstream: xattrs.c:1253-1258 get_stat_xattr() (RERR_FILEIO),
-/// util2.c:73-80 my_alloc() (RERR_MALLOC)
+/// util2.c:73-80 my_alloc() (RERR_MALLOC), and every RERR_PROTOCOL refusal,
+/// e.g. exclude.c:1924-1926
 #[must_use]
 pub fn cause_line_exit_code(error: &io::Error) -> Option<ExitCode> {
     if metadata::is_corrupt_fake_super(error) {
@@ -22,6 +23,11 @@ pub fn cause_line_exit_code(error: &io::Error) -> Option<ExitCode> {
         .is_some_and(|inner| inner.is::<protocol::MallocFailure>())
     {
         Some(ExitCode::Malloc)
+    } else if error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>())
+    {
+        Some(ExitCode::Protocol)
     } else {
         None
     }
@@ -40,7 +46,11 @@ pub fn fatal_report_lines(
     brand: Brand,
 ) -> Vec<Vec<u8>> {
     let mut lines = Vec::with_capacity(2);
-    if cause_line_exit_code(error).is_some() {
+    let bare = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<protocol::ProtocolViolation>())
+        .is_some_and(|violation| violation.cause_line().is_none());
+    if cause_line_exit_code(error).is_some() && !bare {
         lines.push(format!("{error}\n").into_bytes());
     }
     let trailer = crate::rsync_error!(code.as_i32(), "{}", code.description())
@@ -94,6 +104,24 @@ pub fn generator_eof_report_lines(total_read: u64, brand: Brand) -> Vec<Vec<u8>>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bare exit_cleanup(RERR_PROTOCOL) prints the code-2 trailer alone
+    /// (sender.c:409-411).
+    #[test]
+    fn a_bare_protocol_exit_reports_the_trailer_alone() {
+        let lines = fatal_report_lines(
+            &protocol::bare_protocol_exit(),
+            ExitCode::Protocol,
+            Role::Sender,
+            Brand::Upstream,
+        );
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].starts_with(b"rsync error: protocol incompatibility (code 2) at "),
+            "{}",
+            String::from_utf8_lossy(&lines[0])
+        );
+    }
 
     /// A failure upstream prints a cause for is reported with that cause
     /// before the trailer; any other failure gets the trailer alone.

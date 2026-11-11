@@ -504,10 +504,7 @@ fn read_response_header<R: Read>(
     // comparison so the specific fault wins over the generic one: a cleared
     // index is reported as cleared, not as "echoed the wrong NDX".
     if !flist_sink.ndx_is_active(echoed_ndx) {
-        return Err(crate::receiver::ndx_stream::cleared_file_index(
-            echoed_ndx,
-            flist_sink.role(),
-        ));
+        return Err(crate::receiver::ndx_stream::cleared_file_index(echoed_ndx));
     }
 
     // upstream: sender.c emits responses in NDX order; out-of-order is a protocol violation.
@@ -1150,13 +1147,9 @@ mod tests {
             panic!("a non-regular ITEM_TRANSFER echo must be refused");
         };
         let text = err.to_string();
-        assert!(
-            text.contains("received request to transfer non-regular file: 1"),
-            "unexpected diagnostic: {text}"
-        );
-        assert!(
-            text.contains("[receiver="),
-            "the who_am_i() tag must name the receiver: {text}"
+        assert_eq!(
+            text, "received request to transfer non-regular file: 1 [receiver]",
+            "the who_am_i() tag must name the receiver"
         );
         assert!(
             err.get_ref()

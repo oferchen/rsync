@@ -223,7 +223,7 @@ pub use negotiation::{
     read_and_parse_legacy_daemon_greeting, read_and_parse_legacy_daemon_greeting_details,
     read_legacy_daemon_line,
 };
-pub use protocol_violation::{ProtocolViolation, protocol_violation};
+pub use protocol_violation::{ProtocolViolation, bare_protocol_exit, protocol_violation};
 pub use stats::{CreatedStats, DeleteStats, TransferStats};
 pub use syntax_violation::{SyntaxViolation, syntax_violation};
 pub use varint::{
