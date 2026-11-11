@@ -31,12 +31,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # Pull requests wait in one first-in-first-out queue per workflow, so each
-  # PR's run starts only when the previous PR's run has finished; nothing is
-  # cancelled. Every other event (master push, schedule, dispatch) gets its own
-  # group per commit, so it never waits behind the PR queue and every merge
-  # commit keeps a completed run for bisection.
-  group: iouring-kernel-compat-${{ github.event_name == 'pull_request' && 'pr-queue' || format('{0}-{1}', github.ref, github.sha) }}
+  # Pull requests wait in two first-in-first-out lanes per workflow, chosen by
+  # pull request number parity, so two pull requests' runs share the runner
+  # pool and each lane starts its next run only when the previous one has
+  # finished; nothing is cancelled. Every other event (master push, schedule,
+  # dispatch) gets its own group per commit, so it never waits behind a lane and
+  # every merge commit keeps a completed run for bisection.
+  group: iouring-kernel-compat-${{ github.event_name == 'pull_request' && format('pr-queue-{0}', (endsWith(github.event.pull_request.number, '0') || endsWith(github.event.pull_request.number, '2') || endsWith(github.event.pull_request.number, '4') || endsWith(github.event.pull_request.number, '6') || endsWith(github.event.pull_request.number, '8')) && 'even' || 'odd') || format('{0}-{1}', github.ref, github.sha) }}
   queue: max
 
 permissions:
