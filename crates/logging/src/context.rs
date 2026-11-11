@@ -149,6 +149,25 @@ impl LogContext {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
+    /// Creates a child session's context: this one's verbosity and `quiet`,
+    /// with no sink and nothing buffered.
+    ///
+    /// A local copy's receiver runs as its own session, as upstream's forked
+    /// child starts from the parent's parsed output levels and owns its own
+    /// output channel. upstream: pipe.c:123 local_child() `do_fork()`.
+    #[must_use]
+    pub fn fork(&self) -> Arc<Self> {
+        let verbosity = self
+            .verbosity
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        Arc::new(Self {
+            verbosity: RwLock::new(verbosity),
+            quiet: AtomicBool::new(self.quiet.load(Ordering::Acquire)),
+            ..Self::default()
+        })
+    }
 
     /// Installs `sink`, first writing every event buffered so far through it,
     /// in production order.
@@ -700,6 +719,33 @@ pub fn apply_debug_flag(token: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // A local copy's receiver must print exactly what the client asked for,
+    // and its lines must not leak into the client's own session.
+    #[test]
+    fn a_forked_context_inherits_levels_but_not_the_parents_events() {
+        let parent = LogContext::new();
+        {
+            let _parent = enter(Arc::clone(&parent));
+            let mut config = VerbosityConfig::default();
+            config.debug.recv = 2;
+            init(config);
+            set_quiet(true);
+            emit_debug(DebugFlag::Recv, 1, "parent".to_owned());
+        }
+        let child = parent.fork();
+        {
+            let _child = enter(child);
+            assert!(debug_gte(DebugFlag::Recv, 2));
+            assert!(!debug_gte(DebugFlag::Recv, 3));
+            assert!(finfo_suppressed());
+            assert!(drain_events().is_empty(), "the child starts with no events");
+            emit_debug(DebugFlag::Recv, 1, "child".to_owned());
+            assert_eq!(drain_events().len(), 1);
+        }
+        let _parent = enter(parent);
+        let events = drain_events();
+        assert_eq!(events.len(), 1, "the child's line stays out of the parent");
+    }
 
     #[test]
     fn test_init_and_check() {
