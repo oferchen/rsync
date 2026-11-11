@@ -67,18 +67,24 @@ const PARALLEL_THRESHOLD: usize = 32;
 #[cfg(test)]
 fn read_directory_entries_sorted(path: &Path) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
     let mut pending = Vec::new();
-    read_directory_entries_sorted_reuse(path, &mut pending, ScanRoot::Unconfined)
+    read_directory_entries_sorted_reuse(path, &mut pending, ScanRoot::Unconfined, &mut Vec::new())
 }
 
 /// Reads directory entries into a reusable `pending` buffer, avoiding a fresh
 /// heap allocation for the intermediate `(OsString, PathBuf)` collection on
 /// every directory visited during recursive traversal.
+///
+/// An entry whose own `lstat` fails is moved to `unstatable` with its error
+/// instead of failing the scan: upstream lists the directory and then reports
+/// each such name from `make_file()` (`flist.c:1658-1697`), so one unreadable
+/// entry never hides its siblings.
 pub(crate) fn read_directory_entries_sorted_reuse(
     path: &Path,
     pending: &mut Vec<(OsString, PathBuf)>,
     root: ScanRoot<'_>,
+    unstatable: &mut Vec<(PathBuf, std::io::Error)>,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
-    read_directory_entries_sorted_parallel(path, pending, root)
+    read_directory_entries_sorted_parallel(path, pending, root, unstatable)
 }
 
 /// Lists `path`'s entry names, resolving every component beneath `anchor`
@@ -178,6 +184,7 @@ fn read_directory_entries_sorted_parallel(
     path: &Path,
     pending: &mut Vec<(OsString, PathBuf)>,
     root: ScanRoot<'_>,
+    unstatable: &mut Vec<(PathBuf, std::io::Error)>,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
     // Phase 1: Collect paths sequentially - directory enumeration is
     // inherently sequential on every platform, and it is the step the
@@ -193,15 +200,15 @@ fn read_directory_entries_sorted_parallel(
     if pending.len() < PARALLEL_THRESHOLD {
         let mut entries = Vec::with_capacity(pending.len());
         for (readdir_index, (file_name, entry_path)) in (0u32..).zip(pending.drain(..)) {
-            let metadata = fs::symlink_metadata(&entry_path).map_err(|error| {
-                LocalCopyError::io("inspect directory entry", entry_path.clone(), error)
-            })?;
-            entries.push(DirectoryEntry {
-                file_name,
-                path: entry_path,
-                metadata,
-                readdir_index,
-            });
+            match fs::symlink_metadata(&entry_path) {
+                Ok(metadata) => entries.push(DirectoryEntry {
+                    file_name,
+                    path: entry_path,
+                    metadata,
+                    readdir_index,
+                }),
+                Err(error) => unstatable.push((entry_path, error)),
+            }
         }
         entries.sort_unstable_by(compare_directory_entries);
         return Ok(entries);
@@ -236,13 +243,7 @@ fn read_directory_entries_sorted_parallel(
     for result in results {
         match result {
             Ok(entry) => entries.push(entry),
-            Err((entry_path, error)) => {
-                return Err(LocalCopyError::io(
-                    "inspect directory entry",
-                    entry_path,
-                    error,
-                ));
-            }
+            Err(unreadable) => unstatable.push(unreadable),
         }
     }
 
@@ -615,6 +616,7 @@ mod tests {
             temp.path(),
             &mut Vec::new(),
             super::ScanRoot::Unconfined,
+            &mut Vec::new(),
         )
         .unwrap();
         let sequential = read_directory_entries_sorted_sequential(temp.path()).unwrap();
@@ -643,6 +645,7 @@ mod tests {
             temp.path(),
             &mut Vec::new(),
             super::ScanRoot::Unconfined,
+            &mut Vec::new(),
         );
         assert!(result.is_ok());
         let entries = result.unwrap();
@@ -669,6 +672,7 @@ mod tests {
             temp.path(),
             &mut Vec::new(),
             super::ScanRoot::Unconfined,
+            &mut Vec::new(),
         );
         assert!(result.is_ok());
         let entries = result.unwrap();
@@ -700,6 +704,7 @@ mod tests {
             temp.path(),
             &mut Vec::new(),
             super::ScanRoot::Unconfined,
+            &mut Vec::new(),
         )
         .expect("read entries");
         let order: Vec<String> = entries
@@ -732,6 +737,7 @@ mod tests {
             temp.path(),
             &mut Vec::new(),
             super::ScanRoot::Unconfined,
+            &mut Vec::new(),
         );
         assert!(result.is_ok());
         let _entries = result.unwrap();
@@ -772,6 +778,7 @@ mod tests {
             &dir_a,
             &mut buf,
             super::ScanRoot::Unconfined,
+            &mut Vec::new(),
         )
         .unwrap();
         assert_eq!(entries_a.len(), 10);
@@ -783,6 +790,7 @@ mod tests {
             &dir_b,
             &mut buf,
             super::ScanRoot::Unconfined,
+            &mut Vec::new(),
         )
         .unwrap();
         assert_eq!(entries_b.len(), 3);
