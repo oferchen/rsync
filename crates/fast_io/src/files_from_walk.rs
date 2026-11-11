@@ -186,7 +186,7 @@ impl FilesFromBase {
     /// As [`Self::symlink_metadata`], plus the `readdir` setup error.
     pub fn read_dir(&self, path: &Path) -> io::Result<Vec<OsString>> {
         let (dir, _) = self.walk(self.entry(path), OFlags::RDONLY | OFlags::DIRECTORY)?;
-        crate::confined_readdir::read_dir_names_at(dir.as_fd())
+        crate::confined_readdir::read_dir_names_owned(dir)
     }
 }
 

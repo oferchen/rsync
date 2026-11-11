@@ -218,6 +218,14 @@ impl GeneratorContext {
         path: &Path,
         depth: usize,
     ) -> io::Result<fast_io::pinned_root::ReadDir> {
+        // upstream: flist.c:2355-2361 - every other scan keeps the legacy
+        // opendir(), which lists a readable directory without searching it.
+        if !self.scan_is_secure() {
+            return fast_io::pinned_root::read_dir(path);
+        }
+        // upstream: flist.c:2356 secure_opendir() walks the name's every
+        // component, so the confined scan stops at the resolver's depth.
+        fast_io::walk_depth::check_secure_walk_depth(depth)?;
         // upstream: flist.c:2262-2265 - a `--files-from` directory opens
         // through the ownership walk before any other arm is considered.
         #[cfg(unix)]
@@ -227,23 +235,52 @@ impl GeneratorContext {
         }
         #[cfg(unix)]
         if let Some(root) = self.confine_root() {
-            fast_io::walk_depth::check_secure_walk_depth(depth)?;
             return fast_io::pinned_root::read_dir_under(&root, path);
         }
         // upstream: flist.c:2265-2266 - outside a daemon the scan opens through
         // the operand's held root, so a root whose identity changed since
-        // flist.c:302-305 recorded it fails with ELOOP (flist.c:325-329). The
-        // symlink-following modes keep the plain opendir (flist.c:2355-2361).
-        let flags = &self.config.flags;
-        if !(flags.copy_links || flags.copy_unsafe_links || flags.copy_dirlinks) {
-            // upstream: flist.c:2356 secure_opendir() walks the name's every
-            // component, so the confined scan stops at the resolver's depth.
-            fast_io::walk_depth::check_secure_walk_depth(depth)?;
-            if let Some(Err(error)) = self.source_roots.held_root(path) {
-                return Err(error);
-            }
+        // flist.c:302-305 recorded it fails with ELOOP (flist.c:325-329).
+        if let Some(Err(error)) = self.source_roots.held_root(path) {
+            return Err(error);
         }
+        // upstream: syscall.c:3172/:3218 - secure_opendir() reopens "."
+        // beneath a traversal descriptor, so a directory without search
+        // permission fails here with EACCES.
+        #[cfg(unix)]
+        return fast_io::pinned_root::read_dir_searchable(path);
+        #[cfg(not(unix))]
         fast_io::pinned_root::read_dir(path)
+    }
+
+    /// Whether this scan opens its directory through upstream's
+    /// `secure_opendir()` rather than the legacy `opendir()`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.1/flist.c:2357-2361` - `!symlink_optout_allowed() &&
+    ///   (secure_relpath_active() || !(copy_links || copy_unsafe_links ||
+    ///   copy_dirlinks || insecure_links))`.
+    /// - `rsync-3.5.1/syscall.c:139-144` `symlink_optout_allowed()` - the
+    ///   module's `insecure links` for a daemon, `--insecure-links` otherwise.
+    ///   A non-daemon's `insecure_links` term is therefore already the opt-out.
+    /// - `rsync-3.5.1/syscall.c:117-131` `secure_relpath_active()` - for a
+    ///   sender only a daemon, and a chrooted one only while a module
+    ///   directory remains inside the chroot.
+    fn scan_is_secure(&self) -> bool {
+        let connection = &self.config.connection;
+        let opted_out = if connection.is_daemon_connection {
+            connection.daemon_insecure_links
+        } else {
+            fast_io::confinement::session_optout_allowed()
+        };
+        if opted_out {
+            return false;
+        }
+        let relpath_active = connection.is_daemon_connection
+            && (!fast_io::confinement::session_is_chrooted()
+                || connection.daemon_module_root.is_some());
+        let flags = &self.config.flags;
+        relpath_active || !(flags.copy_links || flags.copy_unsafe_links || flags.copy_dirlinks)
     }
 
     /// Pre-checks a top-level source entry and walks it if it exists.
@@ -989,7 +1026,18 @@ impl GeneratorContext {
             self.add_io_error(io_error_flags::IOERR_GENERAL);
             return;
         }
-        self.log_stat_error(path, e);
+        if e.kind() == io::ErrorKind::NotFound {
+            self.log_stat_error(path, e);
+        } else {
+            // upstream: flist.c:1693 - make_file()'s own stat failure is
+            // `readlink_stat(%s) failed`; `link_stat` is for operands.
+            let text = format!(
+                "rsync: [sender] readlink_stat({}) failed: {}\n",
+                full_fname_path(path, self.full_fname_paths()),
+                engine::local_copy::upstream_io_error(e),
+            );
+            self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
+        }
         self.record_io_error(e);
     }
 

@@ -136,6 +136,43 @@ pub fn read_dir(path: &Path) -> io::Result<ReadDir> {
     Ok(ReadDir(Source::Std(std::fs::read_dir(path)?)))
 }
 
+/// [`read_dir`] for the sender's confined scan, which also requires search
+/// permission on the directory itself.
+///
+/// Upstream 3.5.1 opens a scanned directory as a traversal-only descriptor and
+/// then reopens `"."` beneath it with `O_RDONLY | O_DIRECTORY`. Resolving `"."`
+/// inside a directory needs its search bit, so a readable directory without
+/// one (mode `0400`) fails to open with `EACCES` instead of listing names whose
+/// every `lstat` then fails. The traversal descriptor is `O_PATH` where the
+/// platform has it and `O_RDONLY` elsewhere, as upstream's
+/// `directory_traverse_flags()` chooses.
+///
+/// # Errors
+///
+/// The traversal open's or the `"."` reopen's error.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.1/flist.c:2257-2295` `secure_opendir()`, chosen at `:2355-2359`.
+/// - `rsync-3.5.1/syscall.c:83-92` `directory_traverse_flags()`.
+/// - `rsync-3.5.1/syscall.c:3172`, `:3218` - the `openat(fd, ".", flags |
+///   O_NOFOLLOW)` that carries the search check.
+#[cfg(unix)]
+pub fn read_dir_searchable(path: &Path) -> io::Result<ReadDir> {
+    use std::os::fd::AsFd;
+    let traversal = match crate::confinement::pinned_root_relative(path) {
+        Some((fd, relative)) => imp::open_traversal_at(fd.as_fd(), &relative)?,
+        None => imp::open_at_cwd(path, imp::TRAVERSAL_FLAGS)?,
+    };
+    // `read_dir_names_at` reads through `"."` beneath the descriptor, which is
+    // the reopen that carries the search check.
+    let names = crate::confined_readdir::read_dir_names_at(traversal.as_fd())?;
+    Ok(ReadDir(Source::Names {
+        dir: path.to_path_buf(),
+        names: names.into_iter(),
+    }))
+}
+
 /// Like [`read_dir`], but anchored on a root the CALLER supplies instead of the
 /// ambient session pin.
 ///
@@ -376,6 +413,24 @@ mod imp {
     /// Open `path` as an `O_PATH` descriptor with no anchor.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) fn open_o_path_at_cwd(path: &Path) -> io::Result<OwnedFd> {
+        open_at_cwd(path, libc::O_PATH | libc::O_CLOEXEC)
+    }
+
+    /// Flags for a descriptor that only anchors further lookups.
+    ///
+    /// upstream: `rsync-3.5.1/syscall.c:83-92` `directory_traverse_flags()`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) const TRAVERSAL_FLAGS: i32 = libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    pub(super) const TRAVERSAL_FLAGS: i32 = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC;
+
+    /// Open `relative` beneath `dirfd` as a traversal-only directory descriptor.
+    pub(super) fn open_traversal_at(dirfd: BorrowedFd<'_>, relative: &Path) -> io::Result<OwnedFd> {
+        openat(dirfd, relative, TRAVERSAL_FLAGS)
+    }
+
+    /// Open `path` relative to the process cwd with `flags`.
+    pub(super) fn open_at_cwd(path: &Path, flags: i32) -> io::Result<OwnedFd> {
         // `AT_FDCWD` is the documented "resolve from the process cwd"
         // sentinel, not a descriptor, and an absolute path ignores it
         // entirely. Wrapping it as a `BorrowedFd` would misstate ownership, so
@@ -388,13 +443,7 @@ mod imp {
         // non-negative fd transfers immediately to `OwnedFd::from_raw_fd`,
         // which is its only owner and closes it on drop.
         #[allow(unsafe_code)]
-        let raw = unsafe {
-            libc::openat(
-                libc::AT_FDCWD,
-                c_path.as_ptr(),
-                libc::O_PATH | libc::O_CLOEXEC,
-            )
-        };
+        let raw = unsafe { libc::openat(libc::AT_FDCWD, c_path.as_ptr(), flags) };
         owned_or_errno(raw)
     }
 

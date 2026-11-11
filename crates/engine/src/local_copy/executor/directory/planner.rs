@@ -246,6 +246,38 @@ fn drop_unfollowable_symlink(
     context.record_flist_io_error();
 }
 
+/// Reports a scanned entry whose own `lstat` failed, which drops it from the
+/// listing.
+///
+/// upstream: flist.c:1658-1697 make_file() - a name the filters exclude is
+/// dropped silently; `ENOENT` warns `file has vanished` (IOERR_VANISHED, exit
+/// 24); any other errno reports `readlink_stat(...) failed` with
+/// `io_error |= IOERR_GENERAL`. The walk continues either way.
+///
+/// Returns the vanished error, already reported, for the caller's end-of-frame
+/// re-raise.
+pub(crate) fn report_unstatable_entry(
+    context: &mut CopyContext,
+    path: &Path,
+    relative: &Path,
+    error: io::Error,
+) -> Option<LocalCopyError> {
+    if !context.allows(relative, false) || !context.allows(relative, true) {
+        return None;
+    }
+    if error.kind() == io::ErrorKind::NotFound {
+        eprintln!("file has vanished: {}", full_fname(path));
+        return Some(LocalCopyError::io("inspect directory entry", path, error).reported());
+    }
+    eprintln!(
+        "rsync: [sender] readlink_stat({}) failed: {}",
+        full_fname(path),
+        upstream_io_error(&error)
+    );
+    context.record_flist_io_error();
+    None
+}
+
 /// Plans actions for all entries in a directory.
 ///
 /// Iterates over pre-sorted directory entries, applies filter rules,
