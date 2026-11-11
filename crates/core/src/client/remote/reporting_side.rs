@@ -162,14 +162,18 @@ pub(crate) fn local_failure_error(
         let report = program_line_error(line, ExitCode::StreamIo, role);
         return side.finish(report, ExitCode::StreamIo);
     }
-    // upstream: every RERR_PROTOCOL refusal is rprintf(FERROR, <line>) then
+    // upstream: a RERR_PROTOCOL refusal is rprintf(FERROR, <line>) then
     // exit_cleanup(RERR_PROTOCOL), e.g. exclude.c:1924-1926 and
-    // hlink.c:141-149; the line stands bare above log_exit()'s trailer.
+    // hlink.c:141-149; the line stands bare above log_exit()'s trailer. A
+    // bare exit_cleanup(RERR_PROTOCOL) prints the trailer alone.
     if let Some(violation) = error
         .get_ref()
         .and_then(|inner| inner.downcast_ref::<protocol::ProtocolViolation>())
     {
-        let report = cause_line_error(violation.to_string(), ExitCode::Protocol, role);
+        let report = match violation.cause_line() {
+            Some(line) => cause_line_error(line.to_owned(), ExitCode::Protocol, role),
+            None => remote_exit_error(ExitCode::Protocol, role),
+        };
         return side.finish(report, ExitCode::Protocol);
     }
     // upstream: io.c:930-946 perform_io() - a failed read of the peer's
@@ -373,6 +377,27 @@ mod tests {
             report.cause_line(),
             Some("hard-link gnum 2 precedes flist start 5")
         );
+        assert!(
+            report
+                .to_string()
+                .starts_with("rsync error: protocol incompatibility (code 2) at "),
+            "{report}"
+        );
+    }
+
+    /// A bare exit_cleanup(RERR_PROTOCOL) prints only the trailer
+    /// (sender.c:409-411).
+    #[test]
+    fn a_bare_protocol_exit_is_the_code_2_trailer_alone() {
+        let report = local_failure_error(
+            &protocol::bare_protocol_exit(),
+            None,
+            ReportingSide::PreFork,
+            0,
+            None,
+        );
+        assert_eq!(report.code(), ExitCode::Protocol);
+        assert!(report.cause_line().is_none(), "{report}");
         assert!(
             report
                 .to_string()

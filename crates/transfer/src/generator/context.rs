@@ -1986,7 +1986,7 @@ mod confinement_root_tests {
 /// A bare `exit_cleanup(RERR_PROTOCOL)`: the run ends on the standard exit
 /// line alone, whose text is upstream's name for the code (log.c:83).
 fn silent_protocol_exit() -> io::Error {
-    protocol::protocol_violation("protocol incompatibility")
+    protocol::bare_protocol_exit()
 }
 
 /// Where a peer-supplied NDX is read, which decides what a gap slot means.

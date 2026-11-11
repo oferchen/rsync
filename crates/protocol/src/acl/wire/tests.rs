@@ -334,7 +334,10 @@ fn recv_ida_entries_exceeds_max_count_is_protocol_violation() {
     let mut cursor = Cursor::new(buf);
     let err = recv_ida_entries(&mut cursor).expect_err("oversized ACL count must be rejected");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    assert!(err.to_string().contains("exceeds maximum"));
+    assert!(
+        err.to_string()
+            .starts_with("wire value ACL count out of range: ")
+    );
     assert!(
         err.get_ref()
             .is_some_and(|e| e.is::<crate::protocol_violation::ProtocolViolation>()),
@@ -548,7 +551,10 @@ fn recv_ida_entries_exceeds_max_count() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    assert!(err.to_string().contains("exceeds maximum"));
+    assert!(
+        err.to_string()
+            .starts_with("wire value ACL count out of range: ")
+    );
 }
 
 #[test]

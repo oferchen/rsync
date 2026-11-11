@@ -46,7 +46,7 @@ fn checked_wire_len(raw: i32, what: &str) -> io::Result<usize> {
     let max = effective_max_alloc();
     if raw < 0 || raw as usize > max {
         return Err(protocol_violation(format!(
-            "{what} {raw} out of range (maximum {max})"
+            "wire size {what} out of range: {raw} > {max}"
         )));
     }
     Ok(raw as usize)

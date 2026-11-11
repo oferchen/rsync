@@ -140,7 +140,7 @@ impl From<SumHeadError> for io::Error {
     /// upstream: `io.c:2233-2290` `read_sum_head()` calls
     /// `exit_cleanup(RERR_PROTOCOL)` on any out-of-range field.
     fn from(error: SumHeadError) -> Self {
-        protocol_violation(format!("malformed sum_head: {error}"))
+        protocol_violation(error.to_string())
     }
 }
 
@@ -707,7 +707,7 @@ mod tests {
         let mut bytes = [0u8; SumHead::WIRE_LEN];
         bytes[0] = 0x93;
         let error = SumHead::read(&mut bytes.as_slice()).expect_err("malformed");
-        assert!(error.to_string().contains("malformed sum_head"));
+        assert_eq!(error.to_string(), "Invalid zero block length");
         assert!(
             error
                 .get_ref()
