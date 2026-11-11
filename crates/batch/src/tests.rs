@@ -1370,9 +1370,10 @@ mod integration {
             !out.status.success(),
             "zstd-framed batch body must not be auto-detected as zstd: {out:?}"
         );
+        // upstream: token.c:667 rprintf(FERROR, "inflate returned %d (%d bytes)\n")
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
-            stderr.contains("deflate decompression error"),
+            stderr.contains("inflate returned"),
             "the zlib inflater must be what rejects the zstd frame: {stderr}"
         );
         assert!(
