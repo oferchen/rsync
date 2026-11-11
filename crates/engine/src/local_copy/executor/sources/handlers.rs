@@ -609,7 +609,7 @@ fn placeholder_kind(
             return Ok(None);
         }
         let recorded = crate::local_copy::ensure_fake_super_source_stat(
-            context.options().fake_super_enabled(),
+            context.sender_options().fake_super_enabled(),
             source,
         )?;
         Ok(recorded.and_then(|recorded| match recorded.mode & S_IFMT {

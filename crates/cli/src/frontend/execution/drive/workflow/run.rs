@@ -66,6 +66,206 @@ where
     Out: Write,
     Err: Write,
 {
+    let mut parsed = parsed;
+    let Some(client) = parsed.local_sender.take() else {
+        return match translate(parsed, &mut Pass::process(), stdout, stderr) {
+            Ok(translated) => run_translated(translated, stdout, stderr),
+            Err(code) => code,
+        };
+    };
+    // upstream: main() sets the process up from the client's own options,
+    // which stay the sender's; pipe.c:131-148 local_child() re-parses `-M` in
+    // the forked receiver alone, after clearing its log file and chmod modes.
+    let mut pass = Pass::process();
+    let mut run = match translate(*client, &mut pass, stdout, stderr) {
+        Ok(translated) => translated,
+        Err(code) => return code,
+    };
+    let receiver = match translate(parsed, &mut pass.receiver(), stdout, stderr) {
+        Ok(translated) => translated,
+        Err(code) => return code,
+    };
+    if run.log_file.is_none() {
+        run.log_file = receiver.log_file;
+    }
+    let sender = std::mem::replace(&mut run.config, receiver.config);
+    run.config = run.config.with_local_sender(sender);
+    run_translated(run, stdout, stderr)
+}
+
+/// What a translation pass may do beyond turning options into a config.
+///
+/// upstream: main() runs the process setup once on the client's own options;
+/// pipe.c:109-148 local_child() later re-runs parse_arguments() over `-M` in the
+/// forked receiver without repeating it. The process pass owns every global and
+/// every read a second pass must not repeat.
+pub(crate) struct Pass {
+    process: bool,
+    /// The `--files-from` list the process pass read, replayed to a later pass
+    /// so a list read from standard input is not read twice.
+    file_list: Option<Vec<std::ffi::OsString>>,
+    /// Whether the process pass opened a log file.
+    logs: bool,
+}
+
+impl Pass {
+    /// The process's own options: sets globals and reads files.
+    const fn process() -> Self {
+        Self {
+            process: true,
+            file_list: None,
+            logs: false,
+        }
+    }
+
+    /// The local receiver's option set, translated after the process pass.
+    fn receiver(&self) -> Self {
+        Self {
+            process: false,
+            file_list: self.file_list.clone(),
+            logs: self.logs,
+        }
+    }
+
+    const fn is_process(&self) -> bool {
+        self.process
+    }
+
+    fn set_checksum_threads_policy(&self, policy: core::server::receiver::ChecksumThreadsPolicy) {
+        if self.is_process() {
+            core::server::receiver::set_checksum_threads_policy(policy);
+        }
+    }
+
+    fn password(
+        &self,
+        command: Option<&std::ffi::OsStr>,
+        file: Option<&Path>,
+    ) -> Result<Option<Vec<u8>>, core::message::Message> {
+        if self.is_process() {
+            crate::frontend::password::resolve_password(command, file)
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn file_list_operands(
+        &mut self,
+        files_from: &[std::ffi::OsString],
+        from0: bool,
+    ) -> Result<Vec<std::ffi::OsString>, core::message::Message> {
+        if let Some(list) = self.file_list.as_ref().filter(|_| !self.process) {
+            return Ok(list.clone());
+        }
+        let list = load_file_list_operands(files_from, from0)?;
+        self.file_list = Some(list.clone());
+        Ok(list)
+    }
+
+    /// upstream: pipe.c:136-140 clears the receiver's inherited log file, and
+    /// a `-M--log-file` parsed after it (:143-148) opens the receiver's own.
+    fn open_log_file(&mut self, path: &Path) -> Option<io::Result<File>> {
+        if self.logs {
+            return None;
+        }
+        self.logs = self.process;
+        Some(open_log_file(path))
+    }
+}
+
+/// A translated pass: the client config and the output settings the run
+/// renders with.
+pub(crate) struct Translated {
+    config: core::client::ClientConfig,
+    msgs_to_stderr: bool,
+    stderr_mode: StderrMode,
+    progress_mode: Option<crate::frontend::progress::ProgressMode>,
+    human_readable_mode: HumanReadableMode,
+    itemize_changes: bool,
+    itemize_repeated: bool,
+    stats_level: u8,
+    verbosity: u8,
+    list_only: bool,
+    dry_run: bool,
+    only_write_batch: bool,
+    show_copy_method: bool,
+    show_atimes: bool,
+    show_crtimes: bool,
+    out_format_template: Option<crate::frontend::out_format::OutFormat>,
+    name_level: crate::frontend::progress::NameOutputLevel,
+    name_overridden: bool,
+    eight_bit_output: bool,
+    log_file: Option<summary::LogFileConfig>,
+}
+
+/// Runs a translated pass.
+fn run_translated<Out, Err>(
+    translated: Translated,
+    stdout: &mut Out,
+    stderr: &mut MessageSink<Err>,
+) -> i32
+where
+    Out: Write,
+    Err: Write,
+{
+    // upstream: progress.c:234-238 checks `tcgetpgrp(STDOUT_FILENO)` to
+    // suppress progress when the process is not in the foreground terminal
+    // group. We detect terminal status on the output destination (stdout
+    // by default, stderr when msgs_to_stderr is active) to decide between
+    // `\r` (in-place overwrite on terminals) and `\n` (readable when piped).
+    let progress_is_terminal = if translated.msgs_to_stderr {
+        std::io::stderr().is_terminal()
+    } else {
+        std::io::stdout().is_terminal()
+    };
+    summary::execute_transfer(
+        stdout,
+        stderr,
+        summary::TransferExecutionInputs {
+            config: translated.config,
+            msgs_to_stderr: translated.msgs_to_stderr,
+            stderr_mode: translated.stderr_mode,
+            progress_mode: translated.progress_mode,
+            progress_output_config: ProgressOutputConfig {
+                is_terminal: progress_is_terminal,
+            },
+            human_readable_mode: translated.human_readable_mode,
+            itemize_changes: translated.itemize_changes,
+            itemize_repeated: translated.itemize_repeated,
+            stats_level: translated.stats_level,
+            verbosity: translated.verbosity,
+            list_only: translated.list_only,
+            dry_run: translated.dry_run,
+            // `--only-write-batch` (upstream `write_batch < 0`) drives the
+            // `" (BATCH ONLY)"` speedup suffix in the summary trailer.
+            only_write_batch: translated.only_write_batch,
+            // `--info=copy` opts into the oc-rsync `Copy method` stats line.
+            show_copy_method: translated.show_copy_method,
+            // `-U`/`--atimes` and `--crtimes` add the ATIME/CRTIME columns to
+            // `--list-only` output (upstream: generator.c list_file_entry()).
+            show_atimes: translated.show_atimes,
+            show_crtimes: translated.show_crtimes,
+            out_format_template: translated.out_format_template.as_ref(),
+            name_level: translated.name_level,
+            name_overridden: translated.name_overridden,
+            eight_bit_output: translated.eight_bit_output,
+            log_file: translated.log_file,
+        },
+    )
+}
+
+/// Translates one parse into a client config, running the process setup only
+/// on the process pass.
+fn translate<Out, Err>(
+    parsed: ParsedArgs,
+    pass: &mut Pass,
+    stdout: &mut Out,
+    stderr: &mut MessageSink<Err>,
+) -> Result<Translated, i32>
+where
+    Out: Write,
+    Err: Write,
+{
     let ParsedArgs {
         program_name,
         show_help,
@@ -94,6 +294,7 @@ where
         quic_cipher,
         remote_options,
         refused_remote_option,
+        local_sender: _,
         rsync_path: _,
         protect_args,
         old_args,
@@ -274,7 +475,8 @@ where
         checksum_threads,
     } = parsed;
 
-    if let Some(level) = simd_override
+    if pass.is_process()
+        && let Some(level) = simd_override
         && let Err(previous) = checksums::set_simd_override(level)
     {
         let message = rsync_error!(
@@ -287,7 +489,7 @@ where
             )
         )
         .with_role(Role::Client);
-        return fail_with_message(message, stderr);
+        return Err(fail_with_message(message, stderr));
     }
 
     let password_file = password_file.map(PathBuf::from);
@@ -309,26 +511,36 @@ where
     // backup notice emitted by the local-copy executor) to the same stream
     // the workflow itself uses. Without this, leftover Info events were
     // hardcoded to stderr and invisible to upstream tests that grep stdout.
-    crate::frontend::progress::diagnostic::set_msgs_to_stderr(msgs_to_stderr_enabled);
+    if pass.is_process() {
+        crate::frontend::progress::diagnostic::set_msgs_to_stderr(msgs_to_stderr_enabled);
+    }
     // Record `--8-bit-output` alongside the stderr routing so the notice render
     // boundary escapes a filename operand's bytes with the same `use_isprint`
     // switch upstream's `rwrite()` applies (log.c:425 `!allow_8bit_chars`).
-    crate::frontend::progress::diagnostic::set_eight_bit_output(eight_bit_output);
+    if pass.is_process() {
+        crate::frontend::progress::diagnostic::set_eight_bit_output(eight_bit_output);
+    }
     // Publish the same decision process-wide so the transfer engine's remote-frame
     // sink (a demuxed MSG_INFO/MSG_ERROR from the peer, written straight to the
     // terminal) escapes with the same switch. This mirrors upstream's file-scope
     // `allow_8bit_chars` global, which every `rwrite()` boundary reads (log.c:425).
-    logging::escape::set_eight_bit_output(eight_bit_output);
+    if pass.is_process() {
+        logging::escape::set_eight_bit_output(eight_bit_output);
+    }
 
     let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
-    logging::init(verbosity_config);
+    if pass.is_process() {
+        logging::init(verbosity_config);
+    }
     // The parser already folded `--quiet` into `verbosity = 0`, which is what
     // silences every verbosity-gated line. Upstream additionally keeps `quiet`
     // as its own global and consults it in the `FINFO` arm of `rwrite()`
     // (log.c:344-345), so a notice it prints at DEFAULT verbosity - `skipping
     // directory %s` (flist.c:1709) - still disappears under `-q`. Carrying the
     // flag past the parser is what makes those two states distinguishable.
-    logging::set_quiet(quiet);
+    if pass.is_process() {
+        logging::set_quiet(quiet);
+    }
 
     // Publish `--insecure-links` and `--confine-root` for the operator-path
     // ownership walk. Upstream reads its `insecure_links` and `confine_root`
@@ -343,10 +555,12 @@ where
     // selected, and upstream is explicit that a peer-supplied
     // `--insecure-links` must never reach it (syscall.c:134-138). Leaving the
     // daemon on the default keeps the confinement fully engaged there.
-    fast_io::confinement::install_local_session(
-        fast_io::confinement::LocalInsecureLinks::from_local_flag(insecure_links),
-        confine_root.clone(),
-    );
+    if pass.is_process() {
+        fast_io::confinement::install_local_session(
+            fast_io::confinement::LocalInsecureLinks::from_local_flag(insecure_links),
+            confine_root.clone(),
+        );
+    }
 
     let rayon_thread_count = rayon_threads.and_then(|n| NonZeroUsize::new(n as usize));
     let tokio_thread_count = tokio_threads.and_then(|n| NonZeroUsize::new(n as usize));
@@ -358,21 +572,17 @@ where
     // regardless of thread count).
     let checksum_rayon_cap = match checksum_threads {
         Some(ChecksumThreadsSetting::Auto) => {
-            core::server::receiver::set_checksum_threads_policy(
-                core::server::receiver::ChecksumThreadsPolicy::Auto,
-            );
+            pass.set_checksum_threads_policy(core::server::receiver::ChecksumThreadsPolicy::Auto);
             None
         }
         Some(ChecksumThreadsSetting::Sequential) => {
-            core::server::receiver::set_checksum_threads_policy(
+            pass.set_checksum_threads_policy(
                 core::server::receiver::ChecksumThreadsPolicy::Sequential,
             );
             None
         }
         Some(ChecksumThreadsSetting::Capped(n)) => {
-            core::server::receiver::set_checksum_threads_policy(
-                core::server::receiver::ChecksumThreadsPolicy::Auto,
-            );
+            pass.set_checksum_threads_policy(core::server::receiver::ChecksumThreadsPolicy::Auto);
             NonZeroUsize::new(n as usize)
         }
         None => None,
@@ -380,43 +590,35 @@ where
 
     // `--rayon-threads` takes precedence over the `--checksum-threads=N` cap
     // when both are supplied; either way the global pool is installed once.
-    if let Some(threads) = rayon_thread_count.or(checksum_rayon_cap) {
+    if pass.is_process()
+        && let Some(threads) = rayon_thread_count.or(checksum_rayon_cap)
+    {
         super::super::thread_tunables::install_rayon_thread_count(threads, stderr);
     }
 
-    if let Err(code) = validate_stdin_sources_conflict(&password_file, &files_from, stderr) {
-        return code;
-    }
+    validate_stdin_sources_conflict(&password_file, &files_from, stderr)?;
 
     // Resolve daemon password from the available sources in precedence order:
     // --password-command > --password-file > RSYNC_PASSWORD (handled later in core)
-    let password_override = match crate::frontend::password::resolve_password(
-        password_command.as_deref(),
-        password_file.as_deref(),
-    ) {
-        Ok(password) => password,
-        Err(message) => return fail_with_message(message, stderr),
-    };
+    let password_override =
+        match pass.password(password_command.as_deref(), password_file.as_deref()) {
+            Ok(password) => password,
+            Err(message) => return Err(fail_with_message(message, stderr)),
+        };
 
-    let timeout_setting = match resolve_timeout(timeout.as_ref(), stderr) {
-        Ok(setting) => setting,
-        Err(code) => return code,
-    };
+    let timeout_setting = resolve_timeout(timeout.as_ref(), stderr)?;
 
-    let connect_timeout_setting = match resolve_timeout(contimeout.as_ref(), stderr) {
-        Ok(setting) => setting,
-        Err(code) => return code,
-    };
+    let connect_timeout_setting = resolve_timeout(contimeout.as_ref(), stderr)?;
 
     let stop_request = if let Some(value) = stop_after.as_ref() {
         match parse_stop_after_argument(value.as_os_str()) {
             Ok(deadline) => Some(StopRequest::new_stop_after(value.clone(), deadline)),
-            Err(message) => return fail_with_message(message, stderr),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         }
     } else if let Some(value) = stop_at.as_ref() {
         match parse_stop_at_argument(value.as_os_str()) {
             Ok(deadline) => Some(StopRequest::new_stop_at(value.clone(), deadline)),
-            Err(message) => return fail_with_message(message, stderr),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         }
     } else {
         None
@@ -424,7 +626,7 @@ where
 
     let iconv_setting = match resolve_iconv_setting(iconv.as_deref(), no_iconv) {
         Ok(setting) => setting,
-        Err(message) => return fail_with_message(message, stderr),
+        Err(message) => return Err(fail_with_message(message, stderr)),
     };
 
     if let Some(code) = maybe_print_help_or_version(
@@ -435,16 +637,16 @@ where
         program_name,
         stdout,
     ) {
-        return code;
+        return Err(code);
     }
 
-    let bind_address = match resolve_bind_address(bind_address_raw.as_ref(), stderr) {
-        Ok(address) => address,
-        Err(code) => return code,
-    };
+    let bind_address = resolve_bind_address(bind_address_raw.as_ref(), stderr)?;
 
     if let Some(option) = refused_remote_option {
-        return refuse_local_remote_option(UnsupportedOption::new(option), stderr);
+        return Err(refuse_local_remote_option(
+            UnsupportedOption::new(option),
+            stderr,
+        ));
     }
 
     let remainder = match extract_operands(raw_remainder) {
@@ -452,7 +654,7 @@ where
         Err(unsupported) => {
             let line = unsupported.refusal_line(stderr.brand().client_program_name());
             let _ = writeln!(stderr.writer_mut(), "{line}");
-            return fail_with_message(unsupported.to_message(), stderr);
+            return Err(fail_with_message(unsupported.to_message(), stderr));
         }
     };
 
@@ -477,7 +679,7 @@ where
             "--files-from requires a single source and a single destination argument"
         )
         .with_role(Role::Client);
-        return fail_with_message(message, stderr);
+        return Err(fail_with_message(message, stderr));
     }
 
     // `--protocol` is resolved once operands are known: upstream accepts it on a
@@ -485,11 +687,7 @@ where
     // the protocol-gated `--stats` lines; a legacy (< 28) value is validated
     // against the wire range only when an operand is remote.
     let has_remote_operand = remainder.iter().any(|op| operand_is_remote(op));
-    let desired_protocol =
-        match resolve_desired_protocol(protocol.as_ref(), has_remote_operand, stderr) {
-            Ok(protocol) => protocol,
-            Err(code) => return code,
-        };
+    let desired_protocol = resolve_desired_protocol(protocol.as_ref(), has_remote_operand, stderr)?;
 
     // upstream: options.c:2189-2193 `if (do_stats) parse_output_words("stats2", ...)`
     // (or "stats3" with `-vv`). The legacy `--stats` flag maps to level 2; with
@@ -556,7 +754,7 @@ where
         log_file_template,
     } = match options::derive_settings(stdout, stderr, settings_inputs) {
         options::SettingsOutcome::Proceed(settings) => *settings,
-        options::SettingsOutcome::Exit(code) => return code,
+        options::SettingsOutcome::Exit(code) => return Err(code),
     };
 
     let log_file_path_buf = log_file_path.as_ref().map(PathBuf::from);
@@ -575,14 +773,12 @@ where
     #[allow(unused_variables)] // REASON: used on unix or windows with feature "acl"
     let preserve_acls = acls.unwrap_or(false);
 
-    if let Err(code) = validate_feature_support(preserve_acls, xattrs, stderr) {
-        return code;
-    }
+    validate_feature_support(preserve_acls, xattrs, stderr)?;
 
     let parsed_chown = match chown.as_ref() {
         Some(value) => match parse_chown_argument(value.as_os_str()) {
             Ok(parsed) => Some(parsed),
-            Err(message) => return fail_with_message(message, stderr),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         },
         None => None,
     };
@@ -601,9 +797,9 @@ where
     let mut file_list_operands = if files_from_resolved.is_remote() {
         Vec::new()
     } else {
-        match load_file_list_operands(&files_from, from0) {
+        match pass.file_list_operands(&files_from, from0) {
             Ok(operands) => operands,
-            Err(message) => return fail_with_message(message, stderr),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         }
     };
 
@@ -652,7 +848,7 @@ where
             blocking_io,
         },
     ) {
-        return exit_code;
+        return Err(exit_code);
     }
 
     let implied_dirs_option = implied_dirs;
@@ -788,8 +984,9 @@ where
 
     let mut log_file_for_local = None;
     if let (Some(path), Some(template)) = (log_file_path_buf.as_ref(), log_file_template.as_ref()) {
-        match open_log_file(path) {
-            Ok(file) => {
+        match pass.open_log_file(path) {
+            None => {}
+            Some(Ok(file)) => {
                 log_file_for_local = Some(summary::LogFileConfig {
                     // upstream: log.c:125-141 logit() - every log-file line is
                     // stamped with `%Y/%m/%d %H:%M:%S [pid] `.
@@ -797,7 +994,7 @@ where
                     format: template.clone(),
                 });
             }
-            Err(error) => {
+            Some(Err(error)) => {
                 let message =
                     rsync_error!(1, "failed to open log file {}: {error}", path.display())
                         .with_role(Role::Client);
@@ -847,14 +1044,10 @@ where
             stderr,
         )
     {
-        return exit_code;
+        return Err(exit_code);
     }
 
-    if let Err(code) =
-        ensure_transfer_operands_present(&transfer_operands, program_name, stdout, stderr)
-    {
-        return code;
-    }
+    ensure_transfer_operands_present(&transfer_operands, program_name, stdout, stderr)?;
 
     let has_daemon_operand = transfer_operands
         .iter()
@@ -864,7 +1057,7 @@ where
         has_daemon_operand,
         stderr,
     ) {
-        return exit_code;
+        return Err(exit_code);
     }
 
     // upstream: batch.c:291 write_batch_shell_file() - the replay script reconstructs the original
@@ -943,7 +1136,7 @@ where
         chmod: &chmod,
     }) {
         Ok(settings) => settings,
-        Err(message) => return fail_with_message(message, stderr),
+        Err(message) => return Err(fail_with_message(message, stderr)),
     };
 
     let MetadataSettings {
@@ -1197,10 +1390,7 @@ where
         from0,
     };
 
-    let mut builder = match filters::apply_filters(builder, filter_inputs, stderr) {
-        Ok(builder) => builder,
-        Err(code) => return code,
-    };
+    let mut builder = filters::apply_filters(builder, filter_inputs, stderr)?;
 
     // upstream: main.c:output_summary() prints the totals at INFO_GTE(STATS, 1)
     // (`--stats` or `-v`), and log.c:log_exit() writes them to a log file
@@ -1233,57 +1423,33 @@ where
 
     if let Err(conflict) = builder.validate() {
         let message = rsync_error!(1, "{}", conflict).with_role(Role::Client);
-        return fail_with_message(message, stderr);
+        return Err(fail_with_message(message, stderr));
     }
 
     let config = builder.build();
 
-    // upstream: progress.c:234-238 checks `tcgetpgrp(STDOUT_FILENO)` to
-    // suppress progress when the process is not in the foreground terminal
-    // group. We detect terminal status on the output destination (stdout
-    // by default, stderr when msgs_to_stderr is active) to decide between
-    // `\r` (in-place overwrite on terminals) and `\n` (readable when piped).
-    let progress_is_terminal = if msgs_to_stderr_enabled {
-        std::io::stderr().is_terminal()
-    } else {
-        std::io::stdout().is_terminal()
-    };
-    let progress_output_config = ProgressOutputConfig {
-        is_terminal: progress_is_terminal,
-    };
-
-    summary::execute_transfer(
-        stdout,
-        stderr,
-        summary::TransferExecutionInputs {
-            config,
-            msgs_to_stderr: msgs_to_stderr_enabled,
-            stderr_mode: stderr_mode_setting,
-            progress_mode,
-            progress_output_config,
-            human_readable_mode,
-            itemize_changes,
-            itemize_repeated,
-            stats_level,
-            verbosity,
-            list_only,
-            dry_run,
-            // `--only-write-batch` (upstream `write_batch < 0`) drives the
-            // `" (BATCH ONLY)"` speedup suffix in the summary trailer.
-            only_write_batch: only_write_batch.is_some(),
-            // `--info=copy` opts into the oc-rsync `Copy method` stats line.
-            show_copy_method,
-            // `-U`/`--atimes` and `--crtimes` add the ATIME/CRTIME columns to
-            // `--list-only` output (upstream: generator.c list_file_entry()).
-            show_atimes: preserve_atimes,
-            show_crtimes: preserve_crtimes,
-            out_format_template: out_format_template.as_ref(),
-            name_level,
-            name_overridden,
-            eight_bit_output,
-            log_file: log_file_for_local,
-        },
-    )
+    Ok(Translated {
+        config,
+        msgs_to_stderr: msgs_to_stderr_enabled,
+        stderr_mode: stderr_mode_setting,
+        progress_mode,
+        human_readable_mode,
+        itemize_changes,
+        itemize_repeated,
+        stats_level,
+        verbosity,
+        list_only,
+        dry_run,
+        only_write_batch: only_write_batch.is_some(),
+        show_copy_method,
+        show_atimes: preserve_atimes,
+        show_crtimes: preserve_crtimes,
+        out_format_template,
+        name_level,
+        name_overridden,
+        eight_bit_output,
+        log_file: log_file_for_local,
+    })
 }
 
 /// Resolves the effective `old_style_args` level from the CLI counter and env.

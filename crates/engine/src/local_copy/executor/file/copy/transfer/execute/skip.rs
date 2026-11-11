@@ -155,7 +155,7 @@ pub(super) fn record_metadata_only_skip(
     #[cfg(all(any(unix, windows), feature = "acl"))]
     apply_source_acls_if_requested(
         flags.preserve_acls,
-        context.options().fake_super_enabled(),
+        context.options().fake_super_sides(),
         mode,
         source,
         context.entry_attrs(),

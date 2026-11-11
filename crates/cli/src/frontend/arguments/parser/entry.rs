@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use compress::algorithm::CompressionAlgorithm;
 
+use crate::frontend::ProgramName;
 use crate::frontend::arguments::short_options::{
     expand_short_options, hoist_options_before_operands,
 };
@@ -460,13 +461,15 @@ where
     let command = popt_last_wins(clap_command(program_name.as_str()));
     let raw = args;
     let args = hoist_options_before_operands(&command, raw.clone());
-    let args = expand_short_options(&command, args);
+    let mut args = expand_short_options(&command, args);
     let mut matches = command.try_get_matches_from(args.clone())?;
 
-    // A local transfer applies its `-M` values to itself, exactly as upstream's
-    // forked server child does. Re-parsed here, before any check below, so every
-    // later validation sees the final option set.
+    // A local transfer applies its `-M` values to its receiver half, exactly as
+    // upstream's forked server child does: pipe.c:143-148 local_child() re-runs
+    // parse_arguments() over them in the child only. The fold is the receiver's
+    // option set; the client's own parse stays the sender's.
     let mut refused_remote_option = None;
+    let mut sender = None;
     // Fold into the argv as typed: re-hoisting an already hoisted argv would
     // double a leading `--` a second time.
     if let Some(folded) = local_remote_option_argv(&matches, &raw) {
@@ -474,9 +477,30 @@ where
         let command = popt_last_wins(clap_command(program_name.as_str()));
         let folded = hoist_options_before_operands(&command, folded);
         let folded = expand_short_options(&command, folded);
-        matches = command.try_get_matches_from(folded)?;
-        refused_remote_option = refused_local_remote_option(&direct, &leftover_tokens(&matches));
+        let receiver = command.try_get_matches_from(folded.clone())?;
+        refused_remote_option = refused_local_remote_option(&direct, &leftover_tokens(&receiver));
+        sender = Some((std::mem::replace(&mut matches, receiver), args));
+        args = folded;
     }
+    let mut parsed = parsed_args_from_matches(matches, &args, program_name, refused_remote_option)?;
+    if let Some((matches, args)) = sender {
+        parsed.local_sender = Some(Box::new(parsed_args_from_matches(
+            matches,
+            &args,
+            program_name,
+            None,
+        )?));
+    }
+    Ok(parsed)
+}
+
+/// Builds one option set from its matches and the argv they were parsed from.
+fn parsed_args_from_matches(
+    mut matches: clap::ArgMatches,
+    args: &[OsString],
+    program_name: ProgramName,
+    refused_remote_option: Option<OsString>,
+) -> Result<ParsedArgs, clap::Error> {
     check_basis_dir_limit(&matches)?;
     #[cfg(not(feature = "quic"))]
     check_quic_feature(&matches)?;
@@ -1161,7 +1185,7 @@ where
         matches.get_count("itemize-changes") > 1 && !matches.get_flag("no-itemize-changes");
     let no_itemize_changes_flag = matches.get_flag("no-itemize-changes");
     let name_overridden = itemize_changes_flag || no_itemize_changes_flag;
-    let mut verbosity = matches.get_count("verbose") as u8;
+    let mut verbosity = matches.get_count("verbose");
     if matches.get_flag("no-verbose") {
         verbosity = 0;
     }
@@ -1249,7 +1273,7 @@ where
     // the per-option values below are drained. upstream: options.c dispatches
     // each --include/--exclude/--filter/--include-from/--exclude-from/-C/-F at
     // its argv position, so evaluation is first-match-wins over encounter order.
-    let mut filter_order = build_filter_order(&matches, &args);
+    let mut filter_order = build_filter_order(&matches, args);
     let excludes = matches
         .remove_many::<OsString>("exclude")
         .map(Iterator::collect)
@@ -1516,6 +1540,7 @@ where
         connect_program,
         remote_options,
         refused_remote_option,
+        local_sender: None,
         rsync_path,
         protect_args,
         old_args,

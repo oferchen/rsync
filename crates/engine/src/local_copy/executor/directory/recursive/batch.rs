@@ -450,7 +450,11 @@ fn batch_source_acl(
     source_path: &Path,
     entry: &protocol::flist::FileEntry,
 ) -> Option<crate::local_copy::context::BatchSourceAcl> {
-    read_batch_source_acl(source_path, entry, context.options().fake_super_enabled())
+    read_batch_source_acl(
+        source_path,
+        entry,
+        context.sender_options().fake_super_enabled(),
+    )
 }
 
 /// Reads a source entry's access ACL and, for a directory, its default ACL -

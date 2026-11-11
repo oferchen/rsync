@@ -1,10 +1,11 @@
 impl<'a> CopyContext<'a> {
-    /// Returns the filter program used by xattr sync logic.
+    /// Returns the receiver's filter program, which the xattr sync logic
+    /// consults for the names it may set.
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     pub(super) const fn filter_program(
         &self,
     ) -> Option<&crate::local_copy::filter_program::FilterProgram> {
-        self.filter_program.as_ref()
+        self.receiver_filter_program.as_ref()
     }
 
     /// Evaluates filter rules to determine whether the entry is allowed for
@@ -30,7 +31,7 @@ impl<'a> CopyContext<'a> {
                     FilterContext::Transfer,
                 )
                 .allows_transfer()
-        } else if let Some(filters) = self.options.filter_set() {
+        } else if let Some(filters) = self.options.sender_half().filter_set() {
             filters.allows(relative, is_dir)
         } else {
             true
@@ -53,7 +54,7 @@ impl<'a> CopyContext<'a> {
             let ephemeral = self.dir_merge.ephemeral.borrow();
             let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
             program.excluded_dir_by_non_dir_rule(relative, layers.as_slice(), temp_layers)
-        } else if let Some(filters) = self.options.filter_set() {
+        } else if let Some(filters) = self.options.sender_half().filter_set() {
             filters.excluded_dir_by_non_dir_rule(relative)
         } else {
             false
@@ -67,7 +68,7 @@ impl<'a> CopyContext<'a> {
     /// a rule is parsed, by making an unsided include/exclude sender-side
     /// (exclude.c:1479-1481), and rule_matches() has no delete_excluded term.
     pub(super) fn allows_deletion(&self, relative: &Path, is_dir: bool) -> bool {
-        if let Some(program) = &self.filter_program {
+        if let Some(program) = &self.receiver_filter_program {
             if let Some(outcome) =
                 self.evaluate_dynamic_segments(relative, is_dir, FilterContext::Deletion)
                 && outcome.transfer_decided()
@@ -96,7 +97,7 @@ impl<'a> CopyContext<'a> {
     /// so an extraneous directory must be emptied one checked child at a time
     /// (delete.c:91-183 delete_dir_contents) rather than removed wholesale.
     pub(crate) fn deletion_filters_active(&self) -> bool {
-        match &self.filter_program {
+        match &self.receiver_filter_program {
             Some(program) => !program.is_empty(),
             None => self.options.filter_set().is_some_and(|set| !set.is_empty()),
         }
@@ -123,7 +124,7 @@ impl<'a> CopyContext<'a> {
             .map(|frame| frame.loaded_segments.clone())
             .unwrap_or_default();
         DeletionFilterSnapshot {
-            program: self.filter_program.clone(),
+            program: self.receiver_filter_program.clone(),
             layers: self.delete_dir_merge.layers.borrow().clone(),
             ephemeral_last: self.delete_dir_merge.ephemeral.borrow().last().cloned(),
             dynamic_loaded_segments,
@@ -148,9 +149,9 @@ impl<'a> CopyContext<'a> {
         // Deletion decisions read the isolated destination delete chain; the
         // transfer decision reads the source-side chain. upstream keeps the
         // sender filter_list and the receiver delete_filt list separate.
-        let handles = match context {
-            FilterContext::Deletion => &self.delete_dir_merge,
-            _ => &self.dir_merge,
+        let (handles, program) = match context {
+            FilterContext::Deletion => (&self.delete_dir_merge, &self.receiver_filter_program),
+            _ => (&self.dir_merge, &self.filter_program),
         };
         let stack = handles.dynamic.borrow();
         let frame = stack.last()?;
@@ -162,8 +163,7 @@ impl<'a> CopyContext<'a> {
             if outcome.transfer_decided() {
                 break;
             }
-            let abs_root = self
-                .filter_program
+            let abs_root = program
                 .as_ref()
                 .and_then(|program| program.abs_root(context));
             loaded

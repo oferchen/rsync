@@ -67,6 +67,9 @@ pub struct ClientConfig {
     pub(super) recursive: bool,
     pub(super) dirs: bool,
     pub(super) dirs_explicit: bool,
+    /// The local sender's own config when `-M` gave this, the receiver's, a
+    /// different option set.
+    pub(super) local_sender: Option<Box<ClientConfig>>,
     pub(super) min_file_size: Option<u64>,
     pub(super) max_file_size: Option<u64>,
     pub(super) block_size_override: Option<NonZeroU32>,
@@ -386,6 +389,7 @@ impl Default for ClientConfig {
             recursive: false,
             dirs: false,
             dirs_explicit: false,
+            local_sender: None,
             min_file_size: None,
             max_file_size: None,
             block_size_override: None,
@@ -613,6 +617,23 @@ impl ClientConfig {
     #[must_use]
     pub const fn dirs_explicit(&self) -> bool {
         self.dirs_explicit
+    }
+
+    /// Gives a local transfer's sender half its own config; `self` stays the
+    /// receiver's.
+    ///
+    /// upstream: pipe.c:143-148 local_child() re-runs parse_arguments() over
+    /// the `-M` values in the forked receiver only.
+    #[must_use]
+    pub fn with_local_sender(mut self, sender: ClientConfig) -> Self {
+        self.local_sender = Some(Box::new(sender));
+        self
+    }
+
+    /// The local sender's own config, when it differs from this one.
+    #[must_use]
+    pub fn local_sender(&self) -> Option<&ClientConfig> {
+        self.local_sender.as_deref()
     }
 }
 

@@ -457,7 +457,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_regular_file_matched();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
-            .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+            .virtualize_fake_super(source, context.sender_options().fake_super_enabled());
         let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             record_path.to_path_buf(),
@@ -884,7 +884,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     }
 
     let mut metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
-        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+        .virtualize_fake_super(source, context.sender_options().fake_super_enabled());
     if let Some(size) = device_as_file_size {
         metadata_snapshot = metadata_snapshot.virtualize_copy_device_as_file(size);
     }

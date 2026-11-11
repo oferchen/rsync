@@ -48,8 +48,9 @@ pub fn sync_acls_via_fake_super(
     source: &Path,
     destination: &Path,
     follow_symlinks: bool,
+    sender_fake_super: bool,
 ) -> Result<(), MetadataError> {
-    let _ = (source, destination, follow_symlinks);
+    let _ = (source, destination, follow_symlinks, sender_fake_super);
     warn_acl_unsupported();
     Ok(())
 }
@@ -152,7 +153,7 @@ mod tests {
     fn sync_acls_via_fake_super_returns_ok() {
         let src = Path::new("/nonexistent/src");
         let dst = Path::new("/nonexistent/dst");
-        let result = sync_acls_via_fake_super(src, dst, false);
+        let result = sync_acls_via_fake_super(src, dst, false, false);
         assert!(result.is_ok());
     }
 

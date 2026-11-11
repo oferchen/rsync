@@ -158,9 +158,9 @@ fn merged_contents_worklist(
     let sources = plan.sources();
     let engaged = sources.len() > 1
         && sources.iter().all(SourceSpec::copy_contents)
-        && !context.relative_paths_enabled()
+        && !context.sender_options().relative_paths_enabled()
         && context.xfer_dirs_enabled()
-        && !context.one_file_system_enabled()
+        && !context.sender_options().one_file_system_enabled()
         && context.options().get_batch_writer().is_none()
         && !(destination_root_created && context.mode().is_dry_run());
     if !engaged {
@@ -659,7 +659,7 @@ pub(crate) fn copy_sources(
             // notice flag either way; count the root only for a non-relative
             // copy-contents "." top entry (multiple sources keep their tally).
             if destination_root_created {
-                let count_root = !context.relative_paths_enabled()
+                let count_root = !context.sender_options().relative_paths_enabled()
                     && (multiple_sources
                         || plan.sources().first().is_some_and(|s| s.copy_contents()));
                 context
@@ -682,7 +682,7 @@ pub(crate) fn copy_sources(
             // does not model; they keep the legacy deferred behaviour.
             if multiple_sources
                 && context.options().delete_timing().is_some()
-                && !context.relative_paths_enabled()
+                && !context.sender_options().relative_paths_enabled()
             {
                 let cross = build_cross_source_keep(context, plan, destination_path);
                 context.set_cross_source_keep(cross);
@@ -718,10 +718,13 @@ pub(crate) fn copy_sources(
                         )?;
                         entries
                     }
-                    None => ordered_operands(plan.sources(), context.relative_paths_enabled())
-                        .into_iter()
-                        .cloned()
-                        .collect(),
+                    None => ordered_operands(
+                        plan.sources(),
+                        context.sender_options().relative_paths_enabled(),
+                    )
+                    .into_iter()
+                    .cloned()
+                    .collect(),
                 };
 
             let mut first_io_error: Option<LocalCopyError> = None;
@@ -1033,7 +1036,7 @@ fn process_single_source(
         destination_path.to_path_buf()
     };
 
-    let root_device = if context.one_file_system_enabled() {
+    let root_device = if context.sender_options().one_file_system_enabled() {
         device_identifier(source_path, &metadata)
     } else {
         None
@@ -1041,7 +1044,7 @@ fn process_single_source(
 
     // With -xx (level >= 2), skip root-level source directories that are mount
     // points - i.e. their device ID differs from their parent directory.
-    if context.one_file_system_level() >= 2
+    if context.sender_options().one_file_system_level() >= 2
         && file_type.is_dir()
         && let Some(parent) = source_path.parent()
         && let Ok(parent_meta) = fs::symlink_metadata(parent)
@@ -1199,7 +1202,7 @@ fn emit_relative_implied_parents(
     relative_root: Option<&Path>,
     destination_root_created: bool,
 ) -> Result<(), LocalCopyError> {
-    if !context.relative_paths_enabled() {
+    if !context.sender_options().relative_paths_enabled() {
         return Ok(());
     }
     let Some(relative) = relative_root else {
@@ -1449,7 +1452,7 @@ fn retouch_relative_implied_dirs(
     relative_root: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     if context.mode().is_dry_run()
-        || !context.relative_paths_enabled()
+        || !context.sender_options().relative_paths_enabled()
         || !context.implied_dirs_enabled()
     {
         return Ok(());

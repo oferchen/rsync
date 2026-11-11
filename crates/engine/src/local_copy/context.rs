@@ -144,6 +144,9 @@ pub(crate) struct CopyContext<'a> {
     summary: LocalCopySummary,
     events: Option<Vec<LocalCopyRecord>>,
     filter_program: Option<FilterProgram>,
+    /// The receiver half's rules, which protect and delete; `filter_program`
+    /// is the sender's, which hides.
+    receiver_filter_program: Option<FilterProgram>,
     /// Source-side per-directory merge filter stacks, maintained by the
     /// recursive transfer walk (`enter_directory`) and read by the transfer
     /// filter decision (`allows`). Each stack frame matches one

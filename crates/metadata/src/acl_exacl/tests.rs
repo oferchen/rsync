@@ -58,7 +58,7 @@ fn sync_acls_via_fake_super_skips_when_not_following_symlinks() {
     File::create(&source).expect("create src");
     File::create(&destination).expect("create dst");
 
-    let result = sync_acls_via_fake_super(&source, &destination, false);
+    let result = sync_acls_via_fake_super(&source, &destination, false, true);
     assert!(result.is_ok());
 }
 
@@ -92,7 +92,7 @@ fn sync_acls_via_fake_super_carries_the_stash_not_the_real_acl() {
         return;
     }
 
-    sync_acls_via_fake_super(&source, &destination, true).expect("sync");
+    sync_acls_via_fake_super(&source, &destination, true, true).expect("sync");
     assert_eq!(
         load_fake_super_acl(&destination, true).expect("load"),
         None,
@@ -114,10 +114,46 @@ fn sync_acls_via_fake_super_carries_the_stash_not_the_real_acl() {
     if xattr::set(&source, FAKE_SUPER_ACCESS_ACL_XATTR, &stash).is_err() {
         return;
     }
-    sync_acls_via_fake_super(&source, &destination, true).expect("sync");
+    sync_acls_via_fake_super(&source, &destination, true, true).expect("sync");
     let stashed = load_fake_super_acl(&destination, true)
         .expect("load")
         .expect("the source stash is carried");
+    assert!(!stashed.names.is_empty());
+}
+
+// upstream: pipe.c:143-148 local_child() appends `-M--fake-super` to the
+// forked receiver's argv only, so the sender reads the source's real ACL
+// (acls.c:609-631) and the receiver stashes it in `%aacl` (acls.c:933-971).
+// MEASURED: the 3.5.1 testsuite's fake-super-acl-xattr leg 1, a local
+// `-rA -M--fake-super`, needs `%aacl` on the destination.
+#[cfg(feature = "xattr")]
+#[test]
+fn a_receiver_only_fake_super_stashes_the_real_source_acl() {
+    use crate::fake_super::load_fake_super_acl;
+
+    let dir = test_support::create_tempdir();
+    let source = dir.path().join("src");
+    let destination = dir.path().join("dst");
+    File::create(&source).expect("create src");
+    File::create(&destination).expect("create dst");
+    if load_fake_super_acl(&source, true).is_err() {
+        return;
+    }
+    let entries = vec![
+        exacl::AclEntry::allow_user("", Perm::READ | Perm::WRITE, None),
+        exacl::AclEntry::allow_user("1000", Perm::READ | Perm::WRITE, None),
+        exacl::AclEntry::allow_group("", Perm::READ, None),
+        exacl::AclEntry::allow_mask(Perm::READ | Perm::WRITE, None),
+        exacl::AclEntry::allow_other(Perm::empty(), None),
+    ];
+    if exacl::setfacl(&[&source], &entries, None).is_err() {
+        return;
+    }
+
+    sync_acls_via_fake_super(&source, &destination, true, false).expect("sync");
+    let stashed = load_fake_super_acl(&destination, true)
+        .expect("load")
+        .expect("the real named entry is stashed");
     assert!(!stashed.names.is_empty());
 }
 

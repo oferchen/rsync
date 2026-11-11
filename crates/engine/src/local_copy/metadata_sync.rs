@@ -163,7 +163,7 @@ pub(crate) const fn xattrs_differ(
 #[cfg(all(any(unix, windows), feature = "acl"))]
 pub(crate) fn sync_acls_if_requested(
     preserve_acls: bool,
-    fake_super: bool,
+    fake_super: FakeSuperSides,
     mode: LocalCopyExecution,
     source: &Path,
     destination: &Path,
@@ -171,8 +171,8 @@ pub(crate) fn sync_acls_if_requested(
     confine_root: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     if preserve_acls && !mode.is_dry_run() {
-        if fake_super {
-            sync_acls_via_fake_super(source, destination, follow_symlinks)
+        if fake_super.receiver {
+            sync_acls_via_fake_super(source, destination, follow_symlinks, fake_super.sender)
                 .map_err(map_metadata_error)?;
         } else {
             // upstream: rsync.c:555-599,800 - the receiver half of a local copy
@@ -182,6 +182,31 @@ pub(crate) fn sync_acls_if_requested(
         }
     }
     Ok(())
+}
+
+/// The `--fake-super` setting of each half of a local copy.
+///
+/// A local transfer applies its `-M` values to the forked receiver only
+/// (upstream: pipe.c:143-148 local_child()), so `-M--fake-super` stashes the
+/// destination's ACLs while the sender still reads the source's real ones.
+#[cfg(all(any(unix, windows), feature = "acl"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FakeSuperSides {
+    /// The sender reads ACLs and xattrs from the source's stash.
+    pub(crate) sender: bool,
+    /// The receiver stashes ACLs and xattrs instead of applying them.
+    pub(crate) receiver: bool,
+}
+
+#[cfg(all(any(unix, windows), feature = "acl"))]
+impl FakeSuperSides {
+    /// Both halves under the same setting, for a file the receiver reads back.
+    pub(crate) const fn both(enabled: bool) -> Self {
+        Self {
+            sender: enabled,
+            receiver: enabled,
+        }
+    }
 }
 
 /// Applies the ACLs the sender half read for this entry, if requested.
@@ -199,7 +224,7 @@ pub(crate) fn sync_acls_if_requested(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_source_acls_if_requested(
     preserve_acls: bool,
-    fake_super: bool,
+    fake_super: FakeSuperSides,
     mode: LocalCopyExecution,
     source: &Path,
     attrs: &super::SourceAttrs,
@@ -212,7 +237,7 @@ pub(crate) fn apply_source_acls_if_requested(
         let _ = (source, follow_symlinks);
         match attrs.acls.as_ref() {
             Some(acls) if preserve_acls && !mode.is_dry_run() => acls
-                .apply(destination, fake_super, confine_root)
+                .apply(destination, fake_super.receiver, confine_root)
                 .map_err(map_metadata_error),
             _ => Ok(()),
         }
@@ -265,17 +290,20 @@ pub(crate) fn sync_nfsv4_acls_if_requested(
 /// recorded permissions, and the destination `%stat` is written or removed
 /// depending on whether the real mode, owner and group can represent it.
 ///
-/// No-op unless `--fake-super` is active. Without `--owner` or `--group` the
-/// recorded id is 0, as for any other fake-super receive.
+/// No-op unless `--fake-super` is active on the receiver. The source record is
+/// read only when the sender runs under `--fake-super` too, as its x_lstat()
+/// does. Without `--owner` or `--group` the recorded id is 0, as for any other
+/// fake-super receive.
 /// upstream: xattrs.c:set_stat_xattr() driven by x_lstat()/get_stat_xattr()
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) fn store_effective_fake_super_if_requested(
     options: &::metadata::MetadataOptions,
+    sender_fake_super: bool,
     source: &Path,
     destination: &Path,
     metadata: &std::fs::Metadata,
 ) -> Result<(), LocalCopyError> {
-    if !options.fake_super_enabled() {
+    if !options.fake_super_enabled() || !sender_fake_super {
         return Ok(());
     }
 
