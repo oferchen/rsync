@@ -175,13 +175,14 @@ where
 
 /// Allocates a free TCP port for daemon tests.
 ///
-/// Binds to port 0 (OS-assigned ephemeral port) to guarantee no collision
-/// at allocation time. The listener is kept alive and returned alongside the
+/// Binds to port 0 (OS-assigned ephemeral port) through
+/// [`bind_test_listener`], which keeps the port off any that another daemon
+/// holds on the wildcard. The listener is kept alive and returned alongside the
 /// port so the caller can hold it until the daemon is ready to bind,
 /// minimizing the TOCTOU window between release and daemon bind.
 pub(super) fn allocate_test_port() -> (u16, TcpListener) {
     let listener =
-        TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind ephemeral port for test");
+        bind_test_listener((Ipv4Addr::LOCALHOST, 0).into()).expect("bind ephemeral port for test");
     let port = listener.local_addr().expect("local addr").port();
     (port, listener)
 }

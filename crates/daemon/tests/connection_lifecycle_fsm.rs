@@ -37,7 +37,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn allocate_listener() -> (u16, TcpListener) {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind ephemeral");
+    let listener = daemon_process::bind_test_listener((Ipv4Addr::LOCALHOST, 0).into())
+        .expect("bind ephemeral");
     let port = listener.local_addr().expect("local addr").port();
     (port, listener)
 }
