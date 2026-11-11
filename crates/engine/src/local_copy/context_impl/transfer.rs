@@ -751,7 +751,14 @@ impl<'a> CopyContext<'a> {
                 expected_remaining,
                 buffer,
             )
-            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+            .map_err(|failure| match failure {
+                fast_io::copy_file_range::CopyFailure::Read(error) => {
+                    LocalCopyError::io("copy file", source, error)
+                }
+                fast_io::copy_file_range::CopyFailure::Write(error) => {
+                    LocalCopyError::destination_write("copy file", destination, error)
+                }
+            })?;
             // A short return here is the kernel telling us the source ran out
             // early - the same condition upstream's read loop reports.
             self.note_short_source_read(source, copied, expected_remaining);
@@ -827,9 +834,9 @@ impl<'a> CopyContext<'a> {
             }
             self.note_literal();
 
-            writer
-                .write_all(&buffer[..read])
-                .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+            writer.write_all(&buffer[..read]).map_err(|error| {
+                LocalCopyError::destination_write("copy file", destination, error)
+            })?;
 
             self.register_progress();
             self.tally_whole_file_data(&buffer[..read]);

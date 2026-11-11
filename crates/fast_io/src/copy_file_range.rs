@@ -98,6 +98,21 @@ pub fn copy_file_contents(source: &File, destination: &File, length: u64) -> io:
     copy_file_contents_readwrite(source, destination, length)
 }
 
+/// Which side of a buffered copy failed, carrying that side's error.
+///
+/// Upstream reads a local copy's source in the sender (`fileio.c:401-409`
+/// `map_ptr`) and writes it in the receiver (`fileio.c:252-256` `write_file`),
+/// and each side reports its own failure in its own words, so the caller has to
+/// know which one failed. The error is returned unwrapped inside the variant,
+/// keeping its OS error code.
+#[derive(Debug)]
+pub enum CopyFailure {
+    /// Reading the source failed.
+    Read(io::Error),
+    /// Writing the destination failed.
+    Write(io::Error),
+}
+
 /// Like [`copy_file_contents`] but uses a caller-provided buffer for the
 /// read/write fallback path, avoiding per-file heap allocation.
 ///
@@ -108,13 +123,15 @@ pub fn copy_file_contents(source: &File, destination: &File, length: u64) -> io:
 ///
 /// # Errors
 ///
-/// Returns any I/O error from the zero-copy syscall or the read/write fallback.
+/// Returns the failing side of the read/write fallback. A failed zero-copy
+/// attempt is not an error: the fallback repeats the copy and reports whichever
+/// side then fails.
 pub fn copy_file_contents_buffered(
     source: &File,
     destination: &File,
     length: u64,
     buffer: &mut [u8],
-) -> io::Result<u64> {
+) -> Result<u64, CopyFailure> {
     if length >= IO_URING_COPY_THRESHOLD
         && let Ok(copied) = try_io_uring_copy(source, destination, length)
     {
@@ -391,7 +408,7 @@ fn copy_file_contents_readwrite_with_buffer(
     destination: &File,
     length: u64,
     buffer: &mut [u8],
-) -> io::Result<u64> {
+) -> Result<u64, CopyFailure> {
     use std::io::{Read, Write};
 
     let mut source = source;
@@ -401,11 +418,15 @@ fn copy_file_contents_readwrite_with_buffer(
 
     while remaining > 0 {
         let to_read = (remaining as usize).min(buffer.len());
-        let n = source.read(&mut buffer[..to_read])?;
+        let n = source
+            .read(&mut buffer[..to_read])
+            .map_err(CopyFailure::Read)?;
         if n == 0 {
             break;
         }
-        destination.write_all(&buffer[..n])?;
+        destination
+            .write_all(&buffer[..n])
+            .map_err(CopyFailure::Write)?;
         total += n as u64;
         remaining -= n as u64;
     }
@@ -692,5 +713,39 @@ mod tests {
         dest.seek(SeekFrom::Start(0)).unwrap();
         let dest_content = read_file_contents(dest.as_file()).unwrap();
         assert_eq!(dest_content, content);
+    }
+
+    /// A destination that cannot be written fails on the write side, so the
+    /// caller names the destination as upstream's receiver does
+    /// (`receiver.c:658-660`, `write failed on %s`).
+    #[test]
+    fn buffered_copy_reports_a_destination_failure_as_the_write_side() {
+        let source = create_temp_file(b"sixteen bytes!!!").unwrap();
+        let dest = new_temp_file().unwrap();
+        let reader = File::open(source.path()).unwrap();
+        let read_only = File::open(dest.path()).unwrap();
+        let mut buffer = vec![0u8; 64];
+
+        let failure =
+            copy_file_contents_buffered(&reader, &read_only, 16, &mut buffer).unwrap_err();
+
+        assert!(matches!(failure, CopyFailure::Write(_)), "{failure:?}");
+    }
+
+    /// A source that cannot be read fails on the read side.
+    #[test]
+    fn buffered_copy_reports_a_source_failure_as_the_read_side() {
+        let source = create_temp_file(b"sixteen bytes!!!").unwrap();
+        let write_only = std::fs::OpenOptions::new()
+            .write(true)
+            .open(source.path())
+            .unwrap();
+        let dest = new_temp_file().unwrap();
+        let mut buffer = vec![0u8; 64];
+
+        let failure =
+            copy_file_contents_buffered(&write_only, dest.as_file(), 16, &mut buffer).unwrap_err();
+
+        assert!(matches!(failure, CopyFailure::Read(_)), "{failure:?}");
     }
 }

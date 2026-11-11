@@ -90,7 +90,7 @@ use super::super::super::guard::{DestinationWriteGuard, remove_incomplete_destin
 use super::super::super::preallocate::{Reservation, maybe_preallocate_destination};
 use super::finalize::finalize_guard_and_metadata;
 use super::open::{open_source_file, source_open_error};
-use super::write_strategy::{open_destination_writer, select_write_strategy};
+use super::write_strategy::{WriteStrategy, open_destination_writer, select_write_strategy};
 use super::{TransferFlags, TransferOutcome};
 
 use skip::try_skip_up_to_date;
@@ -576,6 +576,10 @@ pub(in crate::local_copy) fn execute_transfer_once(
         one_inplace_partial_file.is_some(),
         destination,
     );
+    // upstream: receiver.c:1242-1246 registers no cleanup name for a file
+    // written in place, so an aborted transfer keeps what it wrote there
+    // (cleanup.c:197 only unlinks `cleanup_fname`, the temp file).
+    let writes_in_place = matches!(strategy, WriteStrategy::Append | WriteStrategy::Inplace);
 
     // Opt-in (`iouring-data-writes`): route eligible whole-file writes through the io_uring
     // registered-buffer path.
@@ -830,7 +834,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
             if let Some(guard) = guard.take() {
                 guard.abort();
             }
-            if existing_metadata.is_none() && !partial_enabled {
+            if existing_metadata.is_none() && !partial_enabled && !writes_in_place {
                 remove_incomplete_destination(destination);
             }
             return Err(error);

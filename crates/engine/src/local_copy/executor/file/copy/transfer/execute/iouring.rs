@@ -240,7 +240,11 @@ fn dispatch_iouring_data_write(
             }))
         }
         Err(error) if error.kind() == std::io::ErrorKind::Unsupported => Ok(None),
-        Err(error) => Err(LocalCopyError::io("copy file", destination, error)),
+        Err(error) => Err(LocalCopyError::destination_write(
+            "copy file",
+            destination,
+            error,
+        )),
     }
 }
 
