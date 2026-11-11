@@ -1,0 +1,33 @@
+name: 'Build pinned OpenSSH'
+description: >-
+  Build the pinned OpenSSH `ssh` (tools/ci/openssh.sha256) as the ssh_config
+  differential oracle, cached by pin and build script, and export its path as
+  OC_RSYNC_SSH_G_BIN.
+
+# The differential tests used to run the runner's /usr/bin/ssh, so a cell's
+# verdict depended on whichever OpenSSH the image shipped: ubuntu-24.04's
+# 9.6p1 accepts lines 10.0 refuses. With OC_RSYNC_SSH_G_BIN set, a test whose
+# oracle reports any other version fails instead of comparing against it.
+#
+# The step also extracts the pinned source into
+# target/interop/upstream-src/openssh-<ver>/ on every run, cache hit or not.
+#
+# Linux only: the build needs libssl-dev and zlib1g-dev, which the ubuntu
+# images ship. Requires the repository to be checked out.
+
+runs:
+  using: composite
+  steps:
+    - name: Restore OpenSSH build
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: target/interop/openssh
+        key: openssh-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/ci/openssh.sha256', 'tools/ci/build_openssh.sh') }}
+
+    - name: Build OpenSSH ssh
+      shell: bash
+      run: |
+        set -euo pipefail
+        ssh_bin="$(bash tools/ci/build_openssh.sh)"
+        "$ssh_bin" -V
+        echo "OC_RSYNC_SSH_G_BIN=$ssh_bin" >> "$GITHUB_ENV"

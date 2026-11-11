@@ -1,0 +1,10 @@
+# Pinned SHA-256 of the OpenSSH portable release whose `ssh -G` is the oracle for
+# the ssh_config differential tests, and whose source tree the OpenSSH citations
+# in this repository name. tools/ci/build_openssh.sh refuses any tarball that
+# does not match, and the build-openssh action keys its cache on this file.
+#
+# The 10.0p1 tarball's version.h declares SSH_PORTABLE "p2", so the ssh it
+# builds reports "OpenSSH_10.0p2"; the mirrors serve openssh-10.0p2.tar.gz as a
+# byte-identical copy. https://www.openssh.com/txt/release-10.0 lists this
+# digest, base64-encoded, as AhoucJoO30JQsSVr1anlAEEakN3avqgw7VnO+Q652Fw=.
+021a2e709a0edf4250b1256bd5a9e500411a90dddabea830ed59cef90eb9d85c  openssh-10.0p1.tar.gz
