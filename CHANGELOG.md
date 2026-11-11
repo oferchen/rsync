@@ -236,6 +236,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 ### Performance
 - Local `--checksum` compares source and destination through the parallel checksum service: same-size pairs of a directory are hashed in one rayon batch, and files of 8 MiB or more as 4 MiB block vectors in parallel; decisions and output are unchanged against rsync 3.5.1 (#8249)
 - A `--checksum` sender hashes the regular files of each file list and INC_RECURSE sub-list in one parallel batch through the same service; each sum is the exact negotiated whole-file digest, and the file-list bytes are unchanged against rsync 3.5.1 (#8312)
+- A sender keeps owner names in its id list instead of on every file entry, looking a name up only when it goes on the wire, as rsync 3.5.1 does (uidlist.c add_uid/add_gid): sender peak RSS on a 1M-file pull drops from 350 MB to 145 MB (3.5.1: 71 MB) with the file-list bytes unchanged (#8359)
 - A non-incremental receiver decides its file list 8192 entries at a time as the request window drains, as upstream's generator decides each entry while the receiver works, instead of building every candidate before the first request: receiver peak RSS on a 1M-file pull drops from 461 MB to 127 MB (3.5.1: 71 MB) with the wire bytes unchanged (#8355)
 
 - Probe OpenSSL MD4 once per process, as upstream does, instead of on every hasher; on OpenSSL 3 builds without the legacy provider this drops a failing `EVP_DigestInit_ex` per block (#8231)
