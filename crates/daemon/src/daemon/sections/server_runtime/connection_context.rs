@@ -74,7 +74,11 @@ impl ConnectionContext {
     ///
     /// upstream: socket.c:761-773 forks a child per connection, which runs
     /// clientserver.c:1414 `start_daemon()` and then `rsync_module()`.
-    fn serve_session(&self, stream: DaemonStream, raw_peer_addr: SocketAddr) -> io::Result<()> {
+    fn serve_session(
+        &self,
+        stream: DaemonStream,
+        raw_peer_addr: SocketAddr,
+    ) -> io::Result<Option<ExitCode>> {
         let peer_addr = normalize_peer_address(raw_peer_addr);
         let log_for_worker = self.log_sink.clone();
 
@@ -104,7 +108,7 @@ impl ConnectionContext {
                     let message = rsync_error!(SOCKET_IO_EXIT_CODE, text).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
-                Ok(())
+                Ok(None)
             }
         }
     }
@@ -128,6 +132,6 @@ impl ConnectionContext {
         enable_accepted_stream_keepalive(&tcp_stream, self.log_sink.as_ref());
         let stream = DaemonStream::plain(tcp_stream);
         apply_client_options(&stream, &self.client_socket_options, self.log_sink.as_ref());
-        self.serve_session(stream, raw_peer_addr)
+        self.serve_session(stream, raw_peer_addr).map(|_| ())
     }
 }

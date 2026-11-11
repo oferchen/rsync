@@ -311,6 +311,22 @@ fn map_server_transfer_error(
     bytes_received: u64,
     io_timeout: Option<u64>,
 ) -> ClientError {
+    let (error, exit_wait) = crate::server::split_exit_wait(error);
+    let report = classify_server_transfer_error(error, side, bytes_received, io_timeout);
+    match exit_wait {
+        Some(failure) => report.followed_by_exit_wait(failure),
+        None => report,
+    }
+}
+
+/// Maps the error itself, once any failed wait for the peer's exit has been
+/// split off it.
+fn classify_server_transfer_error(
+    error: std::io::Error,
+    side: ReportingSide,
+    bytes_received: u64,
+    io_timeout: Option<u64>,
+) -> ClientError {
     // An interrupted transfer surfaces as whatever I/O failure the teardown
     // produced (a truncated multiplex frame, a closed socket). Upstream never
     // reports that: `rsync.c:843-874 sig_int()` short-circuits to
@@ -413,6 +429,7 @@ impl TransferProgressCallback for DaemonProgressAdapter<'_> {
         let update = crate::client::progress::ClientProgressUpdate::from_transfer_event(
             client_event,
             event.files_done,
+            event.files_remaining,
             event.total_files,
             event.total_file_bytes,
             self.overall_transferred,

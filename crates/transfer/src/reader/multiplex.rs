@@ -333,8 +333,7 @@ pub(crate) struct MultiplexReader<R> {
     /// upstream: log.c:338 - receipt of FERROR_XFER sets `got_xfer_error = 1`.
     /// When the remote daemon's generator rejects files matching server-side
     /// module exclude rules, it emits FERROR_XFER for each rejected file and
-    /// then exits with RERR_PARTIAL (23). This count is informational - the
-    /// exit code 23 suppression in `check_error_exit` is unconditional.
+    /// then exits with RERR_PARTIAL (23).
     pub(super) xfer_error_count: u32,
     /// Optional recorder for batch mode - captures post-demux data.
     /// upstream: `io.c` `write_batch_monitor_in` + `safe_write(batch_fd, buf, len)`
@@ -384,6 +383,7 @@ pub(crate) struct MultiplexReader<R> {
 ///
 /// upstream: errcode.h `RERR_PARTIAL = 23`. Produced only when
 /// `got_xfer_error` is set (cleanup.c:217-218, main.c:1710-1711).
+#[cfg(test)]
 pub(super) const RERR_PARTIAL: i32 = 23;
 
 /// Typed error carrying the exit code a remote peer requested via
@@ -651,52 +651,28 @@ impl<R> MultiplexReader<R> {
         std::mem::take(&mut self.success_indices)
     }
 
+    /// Takes the code of a received `MSG_ERROR_EXIT` (0 for the zero-length
+    /// frame), leaving none pending.
+    pub(super) fn take_error_exit(&mut self) -> Option<i32> {
+        self.error_exit_code.take()
+    }
+
     /// Returns an error if MSG_ERROR_EXIT has been received.
     ///
     /// Called after dispatching non-DATA messages to abort the read loop,
-    /// matching upstream's NORETURN `_exit_cleanup(val)` behavior.
+    /// matching upstream's NORETURN `_exit_cleanup(val)`. Every code ends the
+    /// read, RERR_PARTIAL (23) included: any `MSG_ERROR_XFER` still in flight
+    /// behind the frame is read by the wait for the peer's exit that follows.
     ///
-    /// When the remote daemon exits with RERR_PARTIAL (23) solely because its
-    /// generator rejected files matching server-side module exclude rules
-    /// (tracked by `xfer_error_count` from MSG_ERROR_XFER messages), this is
-    /// non-fatal. The daemon successfully transferred all allowed files and
-    /// only exited 23 because `got_xfer_error` was set. Suppressing the abort
-    /// lets the transfer loop drain normally and exit 0, matching the behavior
-    /// of oc-rsync's own receiver which silently skips daemon-excluded files.
-    ///
-    /// # Wire ordering race
-    ///
-    /// The upstream daemon's sender process may emit MSG_ERROR_EXIT(23) before
-    /// the FERROR_XFER messages that caused it arrive on the wire. This happens
-    /// because the sender reads the generator's exit code from `waitpid()`
-    /// before fully draining the msg2sndr IPC pipe. When this occurs,
-    /// `error_exit_code` is set but `xfer_error_count` is still zero.
-    ///
-    /// To handle this, exit code 23 never aborts immediately - the read loop
-    /// continues draining control messages until either FERROR_XFER arrives
-    /// (confirming the daemon filter scenario) or the connection closes
-    /// naturally via EOF.
-    ///
-    /// upstream: generator.c:1670-1672 - `rprintf(FERROR_XFER, "daemon refused...")`
-    /// upstream: log.c:338 - `got_xfer_error = 1;` on FERROR_XFER receipt
-    /// upstream: main.c:1710-1711 - `if (got_xfer_error) _exit(RERR_PARTIAL);`
+    /// upstream: io.c:1892-1930 read_a_msg(); cleanup.c:242-253 then waits in
+    /// noop_io_until_death(), which prints the late messages.
     fn check_error_exit(&self) -> io::Result<()> {
-        if let Some(code) = self.error_exit_code {
-            // RERR_PARTIAL is only produced when got_xfer_error is set
-            // (upstream cleanup.c:217-218, main.c:1710-1711), so receiving
-            // exit code 23 guarantees that FERROR_XFER messages exist in the
-            // wire even if we haven't read them yet. Suppression is always
-            // safe - FERROR_XFER may still be in flight due to the msg2sndr
-            // IPC pipe drain race between the generator and sender processes.
-            if code == RERR_PARTIAL {
-                return Ok(());
-            }
-            Err(io::Error::new(
+        match self.error_exit_code {
+            Some(code) => Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
                 RemoteExitError { code },
-            ))
-        } else {
-            Ok(())
+            )),
+            None => Ok(()),
         }
     }
 
@@ -1009,6 +985,10 @@ impl<R> MultiplexReader<R> {
                     _ => 0,
                 };
                 self.error_exit_code = Some(exit_code);
+                // The payload is consumed: the read this frame aborts must not
+                // leave it behind as data for the next one.
+                self.buffer.clear();
+                self.pos = 0;
             }
             protocol::MessageCode::NoOp => {
                 // upstream: io.c:1770-1777 - the protocol-30 keep-alive of a
@@ -1600,13 +1580,14 @@ mod remote_exit_error_tests {
         assert_eq!(inner.code, 1);
     }
 
-    /// RERR_PARTIAL (23) suppression must remain: the msg2sndr race means a
-    /// bare exit-23 is non-fatal and must not abort the read loop.
+    /// RERR_PARTIAL ends the read like any other code; upstream's read_a_msg()
+    /// has no special case for it (io.c:1892-1930).
     #[test]
-    fn check_error_exit_suppresses_rerr_partial() {
+    fn check_error_exit_aborts_on_rerr_partial() {
         let mut reader = MultiplexReader::new(io::empty());
         reader.error_exit_code = Some(RERR_PARTIAL);
-        assert!(reader.check_error_exit().is_ok());
+        let err = reader.check_error_exit().expect_err("code 23 must abort");
+        assert_eq!(err.kind(), io::ErrorKind::ConnectionAborted);
     }
 }
 

@@ -24,6 +24,8 @@ use crate::pipeline::receiver::DelayedUpdate;
 use crate::pipeline::{PipelineConfig, PipelineState};
 use crate::receiver::basis::{BasisFileConfig, find_basis_file_with_config};
 use crate::receiver::{PipelineSetup, ReceiverContext};
+
+use super::candidate_feed::{CandidateFeed, CandidateQueue};
 use crate::transfer_ops::{
     RequestConfig, ResponseContext, process_file_response_streaming, send_file_request,
     send_file_request_xattr,
@@ -408,18 +410,16 @@ impl ReceiverContext {
         writer: &mut W,
         pipeline_config: PipelineConfig,
         setup: &PipelineSetup,
-        files_to_transfer: Vec<(usize, PathBuf, u32)>,
+        mut feed: CandidateFeed<'_>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         is_redo_pass: bool,
-        total_files: usize,
-        // Progress accounting across multiple invocations. The batch drivers make
-        // one phase-1 call over the whole (already complete) list and pass
-        // `files_done_offset = 0`, `flist_complete = true`. The streaming
-        // INC_RECURSE driver calls once per sub-list segment and passes the
-        // running transferred-file count as the offset (so `files_done` keeps
-        // climbing across segments instead of restarting at 0) and `flist_eof`
-        // as `flist_complete` (false while more segments may still arrive - the
-        // `ir-chk` phase upstream renders before the list is final).
+        // Progress accounting across multiple invocations. Every driver calls
+        // this once per batch of the file list (a candidate chunk or an
+        // INC_RECURSE sub-list segment) and passes the running transferred-file
+        // count as the offset, so `files_done` keeps climbing across calls
+        // instead of restarting at 0, and `flist_eof` as `flist_complete` (false
+        // while more segments may still arrive - the `ir-chk` phase upstream
+        // renders before the list is final).
         files_done_offset: usize,
         flist_complete: bool,
         progress: &mut Option<&mut dyn crate::TransferProgressCallback>,
@@ -446,47 +446,25 @@ impl ReceiverContext {
         use crate::pipeline::receiver::{PipelinedReceiver, VerifyReport};
         use crate::shared::TransferDeadline;
 
-        // upstream: generator.c:582-593 - itemize() also writes NDX + iflags
-        // for entries with significant attribute diffs but no ITEM_TRANSFER,
-        // interleaved with the transfer requests in flist order; the peer's
-        // sender prints each row and echoes the attrs back (sender.c:295-297).
-        // Merge the recorded metadata-only rows into the request stream so the
-        // wire order matches upstream's single flist walk. The recording passes
-        // (directories, then symlinks, then specials, then the candidate scan)
-        // are each ascending but run back to back, so restore global
-        // flist-index order before merging with the ascending transfer list.
-        let mut no_transfer_rows =
-            std::mem::take(&mut *self.server_no_transfer_itemize.borrow_mut());
-        // A released INC_RECURSE sub-list head sorts ahead of its sub-list
-        // (generator.c:2780-2787), not at its own place in the parent's list.
-        no_transfer_rows.sort_by_key(|&(idx, _)| self.itemize_walk_key(idx));
-        let files_to_transfer = if no_transfer_rows.is_empty() {
-            files_to_transfer
-        } else {
-            let mut merged = Vec::with_capacity(files_to_transfer.len() + no_transfer_rows.len());
-            let mut rows = no_transfer_rows.into_iter().peekable();
-            for item in files_to_transfer {
-                while let Some(&(idx, iflags)) = rows
-                    .peek()
-                    .filter(|&&(idx, _)| self.itemize_walk_key(idx) < (item.0, true))
-                {
-                    rows.next();
-                    merged.push((idx, PathBuf::new(), u32::from(iflags)));
-                }
-                merged.push(item);
-            }
-            for (idx, iflags) in rows {
-                merged.push((idx, PathBuf::new(), u32::from(iflags)));
-            }
-            merged
-        };
+        // The recording passes (directories, then symlinks, then specials, then
+        // the candidate scan) each record no-transfer itemize rows; the queue
+        // merges them into the request stream in flist order.
+        let mut candidates = CandidateQueue::new();
+        self.fill_candidates(
+            &mut feed,
+            &mut candidates,
+            pipeline_config.window_size,
+            writer,
+            setup,
+            metadata_errors,
+        )?;
 
         // Early return when there is nothing to transfer - avoids spawning
         // the disk-commit thread, creating codecs, and pipeline state.
         // Flush buffered itemize messages from build_files_to_transfer()
         // so the generator sees them before the NDX_DONE handshake.
         // upstream: generator.c sends itemize immediately per-file via rwrite()
-        if files_to_transfer.is_empty() {
+        if candidates.len() == 0 {
             writer.flush()?;
             return Ok((0, 0, 0, 0, 0, Vec::new(), Vec::new()));
         }
@@ -548,7 +526,6 @@ impl ReceiverContext {
         // bounded to the pipeline window = O(window)), so the loop no longer
         // holds a borrow into `self.file_list`.
         let mut pipeline = InFlightRequests::new(pipeline_config);
-        let mut file_iter = files_to_transfer.into_iter();
         let mut files_transferred = 0usize;
         // upstream: receiver.c:800 stats.total_transferred_size += F_LENGTH(file),
         // summed at the same point as files_transferred.
@@ -699,8 +676,15 @@ impl ReceiverContext {
                     // FileEntry clone as it enters the window (bounded by
                     // available_slots <= window size), releasing the borrow on
                     // `self.file_list` before the rest of the loop body.
-                    let batch: Vec<(usize, FileEntry, PathBuf, u32)> = file_iter
-                        .by_ref()
+                    self.fill_candidates(
+                        &mut feed,
+                        &mut candidates,
+                        pipeline.available_slots(),
+                        writer,
+                        setup,
+                        metadata_errors,
+                    )?;
+                    let batch: Vec<(usize, FileEntry, PathBuf, u32)> = candidates
                         .take(pipeline.available_slots())
                         .map(|(idx, path, iflags)| (idx, self.itemize_row_entry(idx), path, iflags))
                         .collect();
@@ -877,9 +861,22 @@ impl ReceiverContext {
                     }
                 }
 
-                if end_phase_after_requests && !phase_ended && file_iter.len() == 0 {
-                    self.write_phase_end(writer)?;
-                    phase_ended = true;
+                if end_phase_after_requests && !phase_ended {
+                    // An empty queue may still have a chunk left to decide.
+                    if candidates.len() == 0 {
+                        self.fill_candidates(
+                            &mut feed,
+                            &mut candidates,
+                            1,
+                            writer,
+                            setup,
+                            metadata_errors,
+                        )?;
+                    }
+                    if candidates.is_finished() {
+                        self.write_phase_end(writer)?;
+                        phase_ended = true;
+                    }
                 }
 
                 if pipeline.is_empty() {
@@ -1113,7 +1110,11 @@ impl ReceiverContext {
                         file_bytes: result.total_bytes,
                         total_file_bytes: Some(file_entry.size()),
                         files_done: files_done_offset + files_transferred,
-                        total_files,
+                        // upstream: progress.c:79-82 - `to-chk` counts down by
+                        // file-list position (set_current_file_index(), the
+                        // flat index here) over every entry received so far.
+                        total_files: self.file_list.len(),
+                        files_remaining: self.file_list.len().saturating_sub(file_idx + 1),
                         // The batch drivers pass `flist_complete = true` (the
                         // whole list is materialized before transfer). The
                         // streaming INC_RECURSE driver passes `flist_eof`, which

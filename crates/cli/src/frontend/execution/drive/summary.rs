@@ -444,15 +444,23 @@ fn emit_error_report<Err>(
     for line in error.program_lines() {
         let _ = writeln!(stderr.writer_mut(), "{program}: {line}");
     }
-    if !trailer {
-        return;
+    if trailer {
+        let message: &Message = error.message();
+        emit_message_with_fallback(
+            message,
+            "rsync error: client functionality is unavailable in this build (code 1)",
+            stderr,
+        );
     }
-    let message: &Message = error.message();
-    emit_message_with_fallback(
-        message,
-        "rsync error: client functionality is unavailable in this build (code 1)",
-        stderr,
-    );
+    // upstream: cleanup.c:221-253 - a failed wait for the peer's exit prints
+    // after log_exit()'s trailer, e.g. io.c:918-925 `read error`.
+    if let Some(line) = error.trailing_program_line() {
+        let program = stderr.brand().client_program_name();
+        let _ = writeln!(stderr.writer_mut(), "{program}: {line}");
+    }
+    if let Some(line) = error.trailing_cause_line() {
+        let _ = writeln!(stderr.writer_mut(), "{line}");
+    }
 }
 
 /// Prints the closing `rsync error: ... (code N)` line a remote transfer owes

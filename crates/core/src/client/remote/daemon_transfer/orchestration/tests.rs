@@ -2090,6 +2090,7 @@ mod daemon_progress_adapter_tests {
             total_file_bytes: Some(1000),
             files_done: 1,
             total_files: 3,
+            files_remaining: 2,
             flist_eof: true,
         };
         adapter.on_file_transferred(&event1);
@@ -2100,6 +2101,7 @@ mod daemon_progress_adapter_tests {
             total_file_bytes: Some(2000),
             files_done: 2,
             total_files: 3,
+            files_remaining: 1,
             flist_eof: true,
         };
         adapter.on_file_transferred(&event2);
@@ -2127,6 +2129,7 @@ mod daemon_progress_adapter_tests {
             total_file_bytes: Some(500),
             files_done: 1,
             total_files: 2,
+            files_remaining: 1,
             flist_eof: false,
         };
         adapter.on_file_transferred(&event);
@@ -2147,6 +2150,7 @@ mod daemon_progress_adapter_tests {
             total_file_bytes: Some(4096),
             files_done: 1,
             total_files: 1,
+            files_remaining: 0,
             flist_eof: true,
         };
         adapter.on_file_transferred(&event);
@@ -2170,6 +2174,7 @@ mod daemon_progress_adapter_tests {
             total_file_bytes: Some(0),
             files_done: 1,
             total_files: 2,
+            files_remaining: 1,
             flist_eof: true,
         };
         adapter.on_file_transferred(&event);
