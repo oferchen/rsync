@@ -34,12 +34,15 @@ pub fn recv_ida_entries<R: Read + ?Sized>(reader: &mut R) -> io::Result<(IdaEntr
     // which aborts with exit_cleanup(RERR_PROTOCOL) (exit 2) on an over-range
     // value. Tag it so the core exit-code mapper yields RERR_PROTOCOL, not the
     // RERR_STREAMIO (12) that a bare InvalidData maps to.
-    let count = read_varint(reader)? as usize;
-    if count > MAX_WIRE_ACL_ENTRIES {
+    let raw = read_varint(reader)?;
+    let Some(count) = usize::try_from(raw)
+        .ok()
+        .filter(|count| *count <= MAX_WIRE_ACL_ENTRIES)
+    else {
         return Err(crate::protocol_violation::protocol_violation(format!(
-            "ACL entry count {count} exceeds maximum {MAX_WIRE_ACL_ENTRIES}"
+            "wire value ACL count out of range: {raw} not in [0,{MAX_WIRE_ACL_ENTRIES}]"
         )));
-    }
+    };
     let mut entries = IdaEntries::with_capacity(count);
     let mut computed_mask: u8 = 0;
 

@@ -487,9 +487,14 @@ mod transfer_failure_error_tests {
             0,
         );
         assert_eq!(err.exit_code(), 2);
+        assert_eq!(
+            err.cause_line(),
+            Some("filter rules are too modern for remote rsync."),
+            "{err}"
+        );
         assert!(
             err.to_string()
-                .contains("filter rules are too modern for remote rsync."),
+                .starts_with("rsync error: protocol incompatibility (code 2) at "),
             "{err}"
         );
     }

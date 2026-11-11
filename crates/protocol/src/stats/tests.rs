@@ -381,7 +381,7 @@ fn delete_stats_rejects_oversized_wire_value() {
     let err = DeleteStats::read_from(&mut cursor).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(
-        err.to_string().contains("MAX_WIRE_DEL_STAT"),
+        err.to_string().starts_with("wire value deleted_"),
         "error should mention MAX_WIRE_DEL_STAT, got: {err}"
     );
     // WHY: upstream main.c reads these via read_varint_bounded, exiting
@@ -409,7 +409,7 @@ fn delete_stats_rejects_negative_wire_value() {
     let err = DeleteStats::read_from(&mut cursor).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(
-        err.to_string().contains("MAX_WIRE_DEL_STAT"),
+        err.to_string().starts_with("wire value deleted_"),
         "negative value should be rejected, got: {err}"
     );
     assert!(
@@ -465,7 +465,7 @@ fn delete_stats_rejects_value_above_lowered_cap() {
     let err = DeleteStats::read_from(&mut cursor).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(
-        err.to_string().contains("MAX_WIRE_DEL_STAT"),
+        err.to_string().starts_with("wire value deleted_"),
         "error should mention MAX_WIRE_DEL_STAT, got: {err}"
     );
     assert!(

@@ -17,8 +17,6 @@ use protocol::idlist::IdList;
 use protocol::stats::DeleteStats;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
-use crate::role_trailer::error_location;
-
 use super::diagnostics::{NDX_CONVERT_CALLS, NDX_CONVERT_CMPS, partition_point_depth};
 use super::io_error_flags;
 use super::ndx_map::{NdxOutOfRange, NdxSlot};
@@ -658,10 +656,8 @@ impl GeneratorContext {
         let slot = map.resolve(wire_ndx, self.file_list.len()).map_err(
             |NdxOutOfRange { first, last }| {
                 protocol::protocol_violation(format!(
-                    "File-list index {wire_ndx} not in {first} - {last} ({}) {}{}",
-                    site.name(),
-                    error_location!(),
-                    crate::role_trailer::sender()
+                    "File-list index {wire_ndx} not in {first} - {last} ({}) [sender]",
+                    site.name()
                 ))
             },
         )?;
@@ -1552,11 +1548,9 @@ fn source_device_guard(
         if !copy_devices {
             // upstream: sender.c:741-743 - rprintf(FERROR, "attempt to copy
             // device contents without --copy-devices\n") + exit_cleanup(RERR_PROTOCOL).
-            return Err(protocol::protocol_violation(format!(
-                "attempt to copy device contents without --copy-devices {}{}",
-                crate::role_trailer::error_location!(),
-                crate::role_trailer::sender()
-            )));
+            return Err(protocol::protocol_violation(
+                "attempt to copy device contents without --copy-devices",
+            ));
         }
         if metadata.len() == 0 {
             return Ok(None);
@@ -1992,7 +1986,7 @@ mod confinement_root_tests {
 /// A bare `exit_cleanup(RERR_PROTOCOL)`: the run ends on the standard exit
 /// line alone, whose text is upstream's name for the code (log.c:83).
 fn silent_protocol_exit() -> io::Error {
-    protocol::protocol_violation("protocol incompatibility")
+    protocol::bare_protocol_exit()
 }
 
 /// Where a peer-supplied NDX is read, which decides what a gap slot means.

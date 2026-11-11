@@ -79,7 +79,7 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
 
         if name_len > MAX_WIRE_XATTR_NAME_LEN {
             return Err(crate::protocol_violation::protocol_violation(format!(
-                "xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"
+                "wire size xattr name_len out of range: {name_len} > {MAX_WIRE_XATTR_NAME_LEN}"
             )));
         }
         // upstream: xattrs.c:854 new_array() -> my_alloc() aborts once the
@@ -177,7 +177,7 @@ pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
 
         if name_len > MAX_WIRE_XATTR_NAME_LEN {
             return Err(crate::protocol_violation::protocol_violation(format!(
-                "xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"
+                "wire size xattr name_len out of range: {name_len} > {MAX_WIRE_XATTR_NAME_LEN}"
             )));
         }
         // upstream: xattrs.c:854 new_array() -> my_alloc() bounds the datum by

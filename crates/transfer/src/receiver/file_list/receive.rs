@@ -542,27 +542,23 @@ impl ReceiverContext {
     ) -> io::Result<()> {
         match self.dir_flist.resolve(dir_ndx) {
             None => {
+                // upstream: flist.c:3150
                 return Err(protocol::protocol_violation(format!(
-                    "refusing invalid dir_ndx {dir_ndx} >= {} {}{}",
-                    self.dir_flist.used(),
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
+                    "rsync: refusing invalid dir_ndx {dir_ndx} >= {}",
+                    self.dir_flist.used()
                 )));
             }
             Some(DirSlot::Cleared) => {
+                // upstream: flist.c:3160-3162
                 return Err(protocol::protocol_violation(format!(
-                    "refusing flist for cleared dir_ndx {dir_ndx} {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
+                    "rsync: refusing flist for cleared dir_ndx {dir_ndx}"
                 )));
             }
             Some(DirSlot::Active { .. }) => {}
         }
         if !self.served_dir_flists.insert(dir_ndx) {
             return Err(protocol::protocol_violation(format!(
-                "refusing malicious duplicate flist for dir {dir_ndx} {}{}",
-                crate::role_trailer::error_location!(),
-                crate::role_trailer::receiver()
+                "rsync: refusing malicious duplicate flist for dir {dir_ndx}"
             )));
         }
         Ok(())

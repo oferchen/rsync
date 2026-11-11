@@ -826,7 +826,7 @@ impl FileListReader {
         {
             // upstream: flist.c:1358 exit_cleanup(RERR_PROTOCOL) (exit 2).
             return Err(crate::protocol_violation::protocol_violation(format!(
-                "rejecting non-directory transfer-root entry: {}",
+                "ERROR: rejecting non-directory transfer-root entry: {}",
                 String::from_utf8_lossy(&cleaned_name)
             )));
         }

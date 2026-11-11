@@ -343,9 +343,7 @@ impl ReceiverContext {
 
             let Some(flat_idx) = self.wire_to_flat_ndx(ndx) else {
                 return Err(protocol::protocol_violation(format!(
-                    "recorded batch names file index {ndx} outside the file list {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
+                    "recorded batch names file index {ndx} outside the file list"
                 )));
             };
             let file_entry = self.file_list[flat_idx].clone();
@@ -353,21 +351,17 @@ impl ReceiverContext {
 
             // upstream: receiver.c:942-946 - phase 2 carries no transfers.
             if phase == 2 {
-                return Err(protocol::protocol_violation(format!(
-                    "got transfer request in phase 2 {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
-                )));
+                return Err(protocol::protocol_violation(
+                    "got transfer request in phase 2 [receiver]",
+                ));
             }
 
             // upstream: receiver.c:1060-1066 - a transfer row must name a
             // regular file.
             if !file_entry.is_file() {
                 return Err(protocol::protocol_violation(format!(
-                    "recorded transfer for non-regular file {} {}{}",
-                    relative_path.display(),
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
+                    "recorded transfer for non-regular file {}",
+                    relative_path.display()
                 )));
             }
 

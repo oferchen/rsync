@@ -234,9 +234,7 @@ impl ReceiverContext {
             // aborts with exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the error so
             // the core exit-code mapper yields RERR_PROTOCOL, not RERR_STREAMIO.
             NdxFrame::File(ndx) => Err(protocol::protocol_violation(format!(
-                "expected NDX_DONE (-1) from sender during {context}, got {ndx} {}{}",
-                crate::role_trailer::error_location!(),
-                crate::role_trailer::receiver()
+                "expected NDX_DONE (-1) from sender during {context}, got {ndx}"
             ))),
         }
     }
@@ -429,10 +427,9 @@ impl ReceiverContext {
                 // non-NDX_DONE goodbye echo is a protocol violation, tagged so
                 // the core exit-code mapper yields 2 rather than RERR_STREAMIO(12).
                 NdxFrame::File(ndx) => {
+                    // upstream: main.c:947-949 read_final_goodbye().
                     return Err(protocol::protocol_violation(format!(
-                        "expected goodbye NDX_DONE echo (-1) from sender, got {ndx} {}{}",
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver()
+                        "Invalid packet at end of run ({ndx}) [receiver]"
                     )));
                 }
             }

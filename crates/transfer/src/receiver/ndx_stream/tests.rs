@@ -436,14 +436,10 @@ fn marker_rejected_by_sender_with_upstream_text() {
         let err = read_ndx_step(&mut reader, &mut read_codec, &mut IncRecurseSender)
             .expect_err("the sender must reject every file-list marker");
 
-        assert!(
-            err.to_string()
-                .starts_with(&format!("Invalid file index: {marker} (-1 - 5)")),
-            "unexpected message: {err}"
-        );
-        assert!(
-            err.to_string().contains("[sender="),
-            "the who_am_i() tag must name the sender: {err}"
+        assert_eq!(
+            err.to_string(),
+            format!("Invalid file index: {marker} (-1 - 5) [sender]"),
+            "the who_am_i() tag must name the sender"
         );
         assert!(
             err.get_ref()
@@ -472,12 +468,10 @@ fn marker_rejected_by_receiver_without_inc_recurse() {
     let err = read_ndx_step(&mut reader, &mut read_codec, &mut sink)
         .expect_err("a no-lazy-flist sink must reject markers");
 
-    assert!(
-        err.to_string()
-            .starts_with(&format!("Invalid file index: {NDX_FLIST_OFFSET} (-1 - 11)")),
-        "unexpected message: {err}"
+    assert_eq!(
+        err.to_string(),
+        format!("Invalid file index: {NDX_FLIST_OFFSET} (-1 - 11) [receiver]")
     );
-    assert!(err.to_string().contains("[receiver="), "message: {err}");
 }
 
 /// The receiver's `last_file_ndx` tracks the newest segment, matching upstream's
@@ -524,12 +518,10 @@ fn receiver_without_negotiated_inc_recurse_rejects_markers() {
     let err = read_ndx_step(&mut reader, &mut read_codec, &mut ctx)
         .expect_err("a receiver outside the INC_RECURSE window must reject markers");
 
-    assert!(
-        err.to_string()
-            .starts_with(&format!("Invalid file index: {NDX_FLIST_OFFSET} (-1 - ")),
-        "unexpected message: {err}"
+    assert_eq!(
+        err.to_string(),
+        format!("Invalid file index: {NDX_FLIST_OFFSET} (-1 - -1) [receiver]")
     );
-    assert!(err.to_string().contains("[receiver="), "message: {err}");
     assert!(ctx.file_list().is_empty(), "no segment may be absorbed");
 }
 
@@ -568,14 +560,10 @@ fn item_transfer_frame_for_non_regular_entry_is_refused_with_upstream_wording() 
 
     let err = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut ctx, false, false)
         .expect_err("an ITEM_TRANSFER frame naming a symlink must be refused");
-    assert!(
-        err.to_string()
-            .starts_with("received request to transfer non-regular file: 1"),
-        "unexpected message: {err}"
-    );
-    assert!(
-        err.to_string().contains("[receiver="),
-        "the who_am_i() tag must name the receiver: {err}"
+    assert_eq!(
+        err.to_string(),
+        "received request to transfer non-regular file: 1 [receiver]",
+        "the who_am_i() tag must name the receiver"
     );
     assert!(
         err.get_ref()
@@ -753,13 +741,10 @@ fn read_item(ctx: &mut ReceiverContext, ndx: i32) -> io::Result<Option<(i32, Sen
 }
 
 fn assert_not_live(err: &io::Error, ndx: i32, first: i32, last: i32) {
-    assert!(
-        err.to_string().starts_with(&format!(
-            "File-list index {ndx} not in {first} - {last} (read_ndx_and_attrs) "
-        )),
-        "unexpected message: {err}"
+    assert_eq!(
+        err.to_string(),
+        format!("File-list index {ndx} not in {first} - {last} (read_ndx_and_attrs) [receiver]")
     );
-    assert!(err.to_string().contains("[receiver="), "message: {err}");
     assert!(
         err.get_ref()
             .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()),

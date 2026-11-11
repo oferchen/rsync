@@ -194,12 +194,10 @@ fn handle_goodbye_proto32_rejects_garbage_in_place_of_ndx_done() {
             .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
         "goodbye garbage must be tagged RERR_PROTOCOL",
     );
-    // The error message must be informative and reference the role
-    // trailer so upstream-style log scraping keeps working.
-    let msg = err.to_string();
-    assert!(
-        msg.contains("expected goodbye NDX_DONE"),
-        "error message should mention the expected NDX_DONE; got: {msg}"
+    // upstream main.c:947-949: the bare "Invalid packet at end of run" line.
+    assert_eq!(
+        err.to_string(),
+        "Invalid packet at end of run (5) [receiver]"
     );
 }
 

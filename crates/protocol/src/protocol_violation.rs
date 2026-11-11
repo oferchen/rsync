@@ -33,12 +33,25 @@ use std::io;
 /// mapper. Its [`Display`](fmt::Display) renders exactly the wrapped message,
 /// so wrapping an existing diagnostic changes neither the error text nor its
 /// [`io::ErrorKind`].
+///
+/// An empty message marks a bare `exit_cleanup(RERR_PROTOCOL)`, a site where
+/// upstream prints no line of its own; it displays as the code's name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProtocolViolation(pub String);
 
+impl ProtocolViolation {
+    /// The line upstream prints before log_exit()'s RERR_PROTOCOL trailer, or
+    /// `None` for a bare `exit_cleanup(RERR_PROTOCOL)` (e.g. sender.c:409-411).
+    #[must_use]
+    pub fn cause_line(&self) -> Option<&str> {
+        (!self.0.is_empty()).then_some(self.0.as_str())
+    }
+}
+
 impl fmt::Display for ProtocolViolation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        // upstream: log.c:83 rerr_names - the name log_exit() prints for 2.
+        f.write_str(self.cause_line().unwrap_or("protocol incompatibility"))
     }
 }
 
@@ -58,6 +71,12 @@ impl Error for ProtocolViolation {}
 /// `errcode.h` - `RERR_PROTOCOL = 2`.
 pub fn protocol_violation(msg: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, ProtocolViolation(msg.into()))
+}
+
+/// Builds a [`ProtocolViolation`] for a bare `exit_cleanup(RERR_PROTOCOL)`:
+/// upstream prints no line of its own, only log_exit()'s trailer.
+pub fn bare_protocol_exit() -> io::Error {
+    protocol_violation(String::new())
 }
 
 #[cfg(test)]

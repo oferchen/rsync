@@ -764,11 +764,7 @@ mod tests {
                 .is_some(),
             "must map to RERR_PROTOCOL, got {err:?}"
         );
-        assert!(
-            err.to_string()
-                .contains("hard-link gnum 0 precedes flist start 2"),
-            "unexpected message: {err}"
-        );
+        assert_eq!(err.to_string(), "hard-link gnum 0 precedes flist start 2");
     }
     /// Control: the same follower is accepted when an earlier sub-list sent its
     /// leader, and it stays a follower of that leader's gnum.

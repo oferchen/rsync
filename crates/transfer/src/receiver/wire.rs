@@ -302,13 +302,7 @@ impl SumHead {
     ) -> io::Result<Self> {
         let head = protocol::wire::SumHead::decode_for_protocol(*buf, protocol_version)
             .and_then(|head| head.ensure_s2length_within(xfer_sum_len))
-            .map_err(|detail| {
-                protocol::protocol_violation(format!(
-                    "malformed sum_head: {detail} {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::sender()
-                ))
-            })?;
+            .map_err(|detail| protocol::protocol_violation(format!("{detail} [sender]")))?;
         Ok(Self {
             count: head.count(),
             blength: head.blength(),
@@ -325,11 +319,7 @@ impl SumHead {
     /// rather than RERR_STREAMIO(12), and carries the role trailer upstream
     /// prints via `who_am_i()`.
     fn malformed(detail: protocol::wire::SumHeadError) -> io::Error {
-        protocol::protocol_violation(format!(
-            "malformed sum_head: {detail} {}{}",
-            crate::role_trailer::error_location!(),
-            crate::role_trailer::receiver()
-        ))
+        protocol::protocol_violation(format!("{detail} [receiver]"))
     }
 
     /// Reads a sum_head from the wire in rsync format.
@@ -931,7 +921,10 @@ mod xattr_abbrev_guard_tests {
                 .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
             "malformed sum_head must be tagged RERR_PROTOCOL"
         );
-        assert!(err.to_string().contains("malformed sum_head"));
+        assert!(
+            err.to_string().starts_with("Invalid checksum count -1"),
+            "{err}"
+        );
     }
 
     #[test]

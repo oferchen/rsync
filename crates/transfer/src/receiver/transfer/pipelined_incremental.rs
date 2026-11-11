@@ -1200,11 +1200,9 @@ impl ReceiverContext {
         )?;
         for _ in 0..self.hardlink_follower_echoes.take() {
             if read_ndx_and_attrs(reader, ndx_read_codec, self, false, false)?.is_none() {
-                return Err(protocol::protocol_violation(format!(
-                    "expected the echo of a hard-link follower row, got NDX_DONE {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
-                )));
+                return Err(protocol::protocol_violation(
+                    "expected the echo of a hard-link follower row, got NDX_DONE",
+                ));
             }
         }
         Ok(())

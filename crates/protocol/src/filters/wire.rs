@@ -760,7 +760,7 @@ fn serialize_rule(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> io:
         // error so the core exit-code mapper yields RERR_PROTOCOL, not
         // RERR_STREAMIO(12).
         crate::protocol_violation::protocol_violation(
-            "filter rules are too modern for remote rsync",
+            "filter rules are too modern for remote rsync.",
         )
     })?;
     Ok(rule_bytes(prefix, rule))
