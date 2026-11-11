@@ -826,6 +826,8 @@ impl ReceiverContext {
                 // INC_RECURSE (flist_eof set on entry) no marker ever arrives and
                 // this reads the identical bytes it did before - byte-neutral on
                 // the live path. upstream: rsync.c:322-431 read_ndx_and_attrs().
+                // upstream: receiver.c:900-901 - every row read, transfer or not.
+                debug_log!(Recv, 1, "recv_files({})", file_entry.path().display());
                 if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
                     if crate::receiver::ndx_stream::read_ndx_and_attrs(
                         &mut *reader,
@@ -844,9 +846,6 @@ impl ReceiverContext {
                     }
                     continue;
                 }
-
-                // upstream: receiver.c:724-725 DEBUG_GTE(RECV, 1)
-                debug_log!(Recv, 1, "recv_files({})", file_entry.path().display());
 
                 let response_ctx = ResponseContext {
                     config: &request_config,

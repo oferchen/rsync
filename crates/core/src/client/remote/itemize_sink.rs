@@ -5,8 +5,6 @@
 //! row to one of two destinations depending on whether a custom `--out-format`
 //! template is active.
 
-use std::io::Write;
-
 use super::super::summary::{ClientEvent, RemoteItemizeFields};
 
 /// Routes a transport's client-visible itemize rows to the right destination.
@@ -36,9 +34,13 @@ impl ItemizeEventSink {
         std::mem::take(&mut self.events)
     }
 
+    /// Writes a client line through the session's diagnostic sink, so it
+    /// interleaves with any trace line in production order.
+    ///
+    /// upstream: log.c:272-373 rwrite() writes every client line and trace
+    /// line to stdout the moment it is produced.
     fn write_line(line: &str) {
-        let mut out = std::io::stdout().lock();
-        let _ = out.write_all(line.as_bytes());
+        logging::emit_line(logging::LogCode::Info, line.as_bytes());
     }
 }
 

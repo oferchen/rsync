@@ -574,8 +574,8 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // local receiver config or it is silently ignored (unbounded deletion).
     server_config.deletion.max_delete = config.max_delete();
     logging::debug_log!(
-        Del,
-        2,
+        Pipeline,
+        1,
         "receiver config: delete_excluded={} delete_mode={:?} max_delete={:?}",
         config.delete_excluded(),
         config.delete_mode(),

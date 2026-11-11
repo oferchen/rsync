@@ -2267,8 +2267,7 @@ fn parity_verbose_v3_produces_output_with_debug_info() {
     let mut src_operand = source_dir.into_os_string();
     src_operand.push("/");
 
-    let (code, stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
+    let (code, out, err) = run_binary([
         OsString::from("-vvv"),
         // upstream recurse defaults to 0 (options.c:117); a trailing-slash
         // directory operand is "skipping directory ." without -r/-d, so it
@@ -2281,8 +2280,7 @@ fn parity_verbose_v3_produces_output_with_debug_info() {
     ]);
 
     assert_eq!(code, 0, "transfer should succeed at -vvv");
-    let out = String::from_utf8(stdout).expect("utf8");
-    let err = String::from_utf8(stderr).expect("utf8 stderr");
+
     let combined = format!("{out}{err}");
 
     // At -vvv with recursion, the transferred file is listed by name.
@@ -2572,6 +2570,21 @@ fn parity_debug_flag_filter_accepted_without_error() {
     assert_eq!(code, 0, "--debug=filter should not fail: {err}");
 }
 
+/// Runs the built `oc-rsync` binary with `args`, returning its exit code,
+/// stdout and stderr. A role trace (`-vvv`, `ALL`, `FLIST2`) runs a local copy
+/// over a `--server` child of the current executable, which only the real
+/// binary can serve.
+fn run_binary<I: IntoIterator<Item = OsString>>(args: I) -> (i32, String, String) {
+    let output = std::process::Command::new(test_support::oc_rsync_bin())
+        .args(args)
+        .output()
+        .expect("run oc-rsync");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
 #[test]
 fn parity_debug_flag_all_accepted_without_error() {
     use std::fs;
@@ -2582,14 +2595,11 @@ fn parity_debug_flag_all_accepted_without_error() {
     fs::create_dir(&dest_dir).expect("create dest");
     fs::write(&source, b"all debug").expect("write");
 
-    let (code, _stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
+    let (code, _out, err) = run_binary([
         OsString::from("--debug=ALL"),
         source.into_os_string(),
         dest_dir.into_os_string(),
     ]);
-
-    let err = String::from_utf8(stderr).expect("utf8");
     assert_eq!(code, 0, "--debug=ALL should not fail: {err}");
 }
 
@@ -2634,15 +2644,12 @@ fn parity_debug_flist_produces_file_list_detail() {
     let mut src_operand = source_dir.into_os_string();
     src_operand.push("/");
 
-    let (code, _stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
+    let (code, _out, err) = run_binary([
         OsString::from("--debug=flist2"),
         OsString::from("-r"),
         src_operand,
         dest_dir.into_os_string(),
     ]);
-
-    let err = String::from_utf8(stderr).expect("utf8");
     assert_eq!(code, 0, "--debug=flist2 should not fail: {err}");
 }
 

@@ -227,6 +227,7 @@ pub(super) fn commit_file(
             create_dir_all_sandboxed(config.backup_env(), parent, 0o700)
                 .map_err(tag_partial_dir)?;
         }
+        trace_finish_rename(config, cleanup_guard.path(), &staging_path);
         let result =
             stage_into_partial_dir(config, cleanup_guard.path(), &staging_path).map_err(|e| {
                 crate::temp_guard::attach_commit_op_between(
@@ -246,6 +247,7 @@ pub(super) fn commit_file(
     }
 
     let was_copy = if needs_rename {
+        trace_finish_rename(config, cleanup_guard.path(), &begin.file_path);
         let result = commit_rename(
             config,
             cleanup_guard.path(),
@@ -301,6 +303,30 @@ pub(super) fn commit_file(
     })
 }
 
+/// Logs the temp-to-final rename under `--debug=RECV`, both names relative
+/// to the destination root as the receiver's cwd makes them upstream.
+///
+/// upstream: rsync.c:916-917 finish_transfer()
+fn trace_finish_rename(config: &DiskCommitConfig, from: &Path, to: &Path) {
+    if !logging::debug_gte(logging::DebugFlag::Recv, 1) {
+        return;
+    }
+    let relative = |path: &'_ Path| -> PathBuf {
+        config
+            .dest_dir
+            .as_deref()
+            .and_then(|root| path.strip_prefix(root).ok())
+            .unwrap_or(path)
+            .to_path_buf()
+    };
+    logging::debug_log!(
+        Recv,
+        1,
+        "renaming {} to {}",
+        relative(from).display(),
+        relative(to).display()
+    );
+}
 /// Removes the `--partial-dir` basis file after a successful commit and
 /// rmdir's the (now-possibly-empty) partial directory for a relative
 /// `--partial-dir`, mirroring upstream `handle_partial_dir(PDIR_DELETE)`.

@@ -119,6 +119,7 @@ where
     // Threaded into `OutFormatContext` so the itemize renderer picks the correct
     // direction arrow (upstream: log.c:739-742 - `<` for sender, `>` otherwise).
     let is_sender = config.is_local_sender();
+    let pulling = config.is_pull();
     // upstream: log.c `%o` reports `recv` on the receiving client (a pull) and
     // `send` otherwise (a push or a local copy) - a different split than the
     // itemize arrow, so it needs its own signal rather than `is_sender`.
@@ -154,21 +155,21 @@ where
     // and drops under `quiet` (log.c:310, log.c:345). Neither banner has a
     // verbosity gate: `-P` raises FLIST to 2 without `-v` (options.c:2514).
     let inc_recurse = config.local_inc_recurse();
-    let flist_banner =
-        if !info_gte(InfoFlag::Flist, 1) || config.quiet() || config.is_pull() || is_sender {
-            FlistBanner::None
-        } else if inc_recurse {
-            FlistBanner::Incremental
-        } else if config.recursive() || config.dirs() || config.list_only() {
-            FlistBanner::Building
-        } else {
-            FlistBanner::None
-        };
     // A pure-local copy (no remote operand): `is_local_sender()` reports false
-    // for the local `local_server` case and `is_pull()` is false, so their
-    // conjunction uniquely identifies the in-process local-copy path whose
-    // generator/sender diagnostics oc renders post-hoc.
-    let is_local_transfer = !config.is_pull() && !is_sender;
+    // for the local `local_server` case and `is_pull()` is false. Only the
+    // in-process engine has its generator/sender diagnostics rendered post-hoc;
+    // a local copy over a `--server` child prints them live, as a push does.
+    let in_process_local =
+        !config.is_pull() && !is_sender && !core::client::local_copy_uses_server_child(&config);
+    let flist_banner = if !info_gte(InfoFlag::Flist, 1) || config.quiet() || !in_process_local {
+        FlistBanner::None
+    } else if inc_recurse {
+        FlistBanner::Incremental
+    } else if config.recursive() || config.dirs() || config.list_only() {
+        FlistBanner::Building
+    } else {
+        FlistBanner::None
+    };
     // upstream: main.c:666-670 forces whole_file=1 for a local transfer unless
     // the user passed --[no-]whole-file; the local-copy default is therefore
     // whole-file. This decides the `delta-transmission` wording.
@@ -184,12 +185,12 @@ where
         DeltaTransmissionState::Enabled
     };
     let delta_notice = DeltaTransmissionSummary {
-        notice: (is_local_transfer && debug_gte(DebugFlag::Flist, 1)).then_some(delta_state),
+        notice: (in_process_local && debug_gte(DebugFlag::Flist, 1)).then_some(delta_state),
         // upstream: match_report() (match.c:480-483) is gated on DEBUG_GTE(DELTASUM, 1)
         // alone - `--whole-file` does not suppress it, it just leaves the match
         // counters at zero. MEASURED against rsync 3.4.4: both `-rvv` and
         // `-rvv --no-whole-file` print the line.
-        emit_total: is_local_transfer && debug_gte(DebugFlag::Deltasum, 1),
+        emit_total: in_process_local && debug_gte(DebugFlag::Deltasum, 1),
     };
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
@@ -236,7 +237,7 @@ where
     // under `--progress` they interleave with the live progress lines instead of
     // trailing them. `--list-only`, and an `--out-format` that upstream logs
     // after the transfer, stay with the post-hoc renderer.
-    if is_local_transfer && !list_only {
+    if in_process_local && !list_only {
         let listing = match out_format_template {
             None => Some(LiveListing::Names {
                 verbosity,
@@ -413,7 +414,7 @@ where
         if code != 0 {
             emit_exit_diagnostic(code, is_sender, stderr);
         }
-        return core::exit_code::record_exit(core::exit_code::process_latch(), code);
+        return latch_exit(0, code, pulling, dry_run);
     };
 
     // upstream: cleanup.c:221-225 - after the peer's MSG_ERROR_EXIT only a
@@ -424,7 +425,36 @@ where
     // 430: latch the decided error code at the site that maps it, so a
     // second interrupt during unwinding cannot overwrite it with
     // RERR_SIGNAL (upstream: cleanup.c:113-117).
-    core::exit_code::record_exit(core::exit_code::process_latch(), error.exit_code())
+    let code = error.exit_code();
+    latch_exit(code, code, pulling, dry_run)
+}
+
+/// Latches the run's exit code and traces upstream's `_exit_cleanup()`
+/// decision under `--debug=EXIT`. The deciding Rust site stands in for
+/// upstream's C one, as in the `at FILE(LINE)` error trailer.
+///
+/// `first_code` is the code the run ended with and `exit_code` the one the
+/// process exits with: a clean run whose io_error maps to a code prints
+/// `code=0 ... exit(23)` (cleanup.c:210-218). upstream: cleanup.c:231-236,
+/// with who_am_i() (rsync.c) `generator` on a pulling client - its parent
+/// runs generate_files() once do_recv() forks the receiver - and `sender`
+/// otherwise.
+#[track_caller]
+fn latch_exit(first_code: i32, exit_code: i32, pulling: bool, dry_run: bool) -> i32 {
+    let site = std::panic::Location::caller();
+    let code = core::exit_code::record_exit(core::exit_code::process_latch(), exit_code);
+    logging::debug_log!(
+        Exit,
+        1,
+        "[{}] _exit_cleanup(code={first_code}, file={}, line={}): about to call exit({code}){}",
+        if pulling { "generator" } else { "sender" },
+        std::path::Path::new(site.file())
+            .file_name()
+            .map_or_else(|| site.file().into(), |name| name.to_string_lossy()),
+        site.line(),
+        if dry_run { " (DRY RUN)" } else { "" }
+    );
+    code
 }
 
 /// Prints a failed run's report: any report another process printed first,
