@@ -8,10 +8,11 @@ use super::super::config::ClientConfig;
 /// Upstream runs every local copy that way (main.c:666-667 `local_child()`).
 /// A listing has no receiver (main.c:721 `get_local_name()` returns NULL
 /// under `list_only`) and a batch run is replayed or recorded by the engine,
-/// which owns both outputs, so only those two stay on the engine.
+/// which owns both outputs, so those two stay on the engine, as does an
+/// operand list without a destination, which the engine refuses.
 #[must_use]
 pub fn local_copy_uses_server_child(config: &ClientConfig) -> bool {
-    !config.list_only() && config.batch_config().is_none()
+    !config.list_only() && config.batch_config().is_none() && config.transfer_args().len() > 1
 }
 
 #[cfg(test)]
@@ -29,6 +30,14 @@ mod tests {
     #[test]
     fn every_local_copy_runs_the_split_roles() {
         assert!(local_copy_uses_server_child(&local_config()));
+    }
+
+    // WHY: without a destination there is no receiver; the engine reports
+    // the missing operand with its RERR_PARTIAL.
+    #[test]
+    fn a_lone_operand_keeps_the_engine() {
+        let config = ClientConfig::builder().transfer_args(["src/"]).build();
+        assert!(!local_copy_uses_server_child(&config));
     }
 
     // WHY: a listing has no receiver to split off.
