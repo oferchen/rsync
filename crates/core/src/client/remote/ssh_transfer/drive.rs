@@ -401,6 +401,15 @@ fn run_server_over_ssh_connection(
 
     // Close the writer to signal EOF so the remote process can exit.
     drop(writer);
+    // A failed transfer also closes the read half before reaping. On a
+    // socketpair wire both halves share one socket, so the peer sees EOF
+    // only once both are closed; a peer still waiting for input would
+    // otherwise keep the child alive and this wait would never return.
+    // upstream: cleanup.c:146-153 _exit_cleanup() reaps with WNOHANG and
+    // exits, closing every descriptor.
+    if transfer_result.is_err() {
+        drop(reader);
+    }
 
     let collected_events = itemize_sink.take_events();
 

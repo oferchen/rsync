@@ -13,6 +13,7 @@
 use std::io;
 
 use engine::local_copy::upstream_io_error;
+use protocol::wire::CodecFailure;
 
 use crate::client::error::{
     ClientError, cause_line_error, connection_unexpectedly_closed_error, local_abort_text,
@@ -81,10 +82,7 @@ impl ReportingSide {
     pub(crate) fn finish(self, report: ClientError, generator_exit: ExitCode) -> ClientError {
         match self {
             Self::PostFork { generator_read }
-                if matches!(
-                    report.code(),
-                    ExitCode::SocketIo | ExitCode::StreamIo | ExitCode::Signal1 | ExitCode::Timeout
-                ) =>
+                if crate::exit_code::receiver_exit_is_unannounced(report.code()) =>
             {
                 connection_unexpectedly_closed_error(
                     generator_read,
@@ -126,6 +124,12 @@ pub(crate) fn local_failure_error(
             upstream_io_error(failed.source_error())
         );
         return program_line_error(line, ExitCode::FileIo, role);
+    }
+    // upstream: token.c - a compression library failure is
+    // rprintf(FERROR, ...) of a fixed line, then exit_cleanup(RERR_STREAMIO).
+    if let Some(failed) = CodecFailure::of(error) {
+        let report = cause_line_error(failed.to_string(), ExitCode::StreamIo, role);
+        return side.finish(report, ExitCode::StreamIo);
     }
     // upstream: io.c:282-304 whine_about_eof() - the peer closed the stream.
     // The forked receiver cannot reap the parent's child, so only a lone

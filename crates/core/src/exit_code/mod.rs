@@ -32,7 +32,10 @@ mod latch;
 mod traits;
 
 pub use codes::ExitCode;
-pub use fatal::{cause_line_exit_code, fatal_report_lines};
+pub use fatal::{
+    cause_line_exit_code, fatal_report_lines, generator_eof_report_lines,
+    receiver_exit_is_unannounced,
+};
 pub use funnel::{abort, io_error_exit_code, record_exit};
 pub use latch::{ExitCodeLatch, process_latch};
 pub use traits::{ErrorCodification, HasExitCode};
