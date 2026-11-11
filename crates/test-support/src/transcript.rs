@@ -98,48 +98,49 @@ impl WireTranscript {
     /// identical runs without changing the stream length. The stream is
     /// demultiplexed from the end of the unmultiplexed handshake (the last
     /// handshake write is the fixed checksum seed; upstream: compat.c
-    /// setup_protocol()); the final `MSG_DATA` frame must be the sender's
-    /// lone `NDX_DONE` goodbye (upstream: main.c:933-935
-    /// read_final_goodbye(), protocol >= 31), preceded by the two 3-byte
-    /// time fields.
+    /// setup_protocol()). The sender flushes before its stats (upstream:
+    /// main.c:1007-1008 `io_flush(FULL_FLUSH); handle_stats()`), so they open
+    /// a MSG_DATA frame; after them the data must hold exactly the goodbye
+    /// (main.c:933-935 read_final_goodbye(), protocol >= 31) in one of two
+    /// layouts: `NDX_DONE` alone, or the echo of the client's `NDX_DEL_STATS`
+    /// (rsync.c:336-342) and then `NDX_DONE`. The goodbye may share the stats'
+    /// frame: the sender does not flush between them when the client's input
+    /// is already buffered (io.c perform_io()).
     /// Anything else is refused rather than guessed at, so a layout change
-    /// fails loudly instead of masking the wrong bytes.
+    /// fails loudly instead of masking the wrong bytes: a zero byte that merely
+    /// ends the stats is not a goodbye.
     pub fn mask_pull_flist_times(&mut self) -> Result<(), TranscriptError> {
         let malformed = |reason: &'static str| TranscriptError::Malformed {
             direction: "server-to-client",
             reason,
         };
-        let mut data: Vec<(usize, usize)> = self
+        let mut data = Vec::new();
+        let mut frame_starts = Vec::new();
+        for (_, start, len) in self
             .server_frame_spans()?
             .into_iter()
             .filter(|&(code, _, _)| code == 0)
-            .map(|(_, start, len)| (start, len))
-            .collect();
-        let stream = &mut self.server_to_client;
-
-        // The sender blocks reading the client's NDX_DONE before writing its
-        // own, and that read flushes the stats first (upstream: io.c
-        // perform_io()), so the goodbye is always a lone 1-byte frame.
-        match data.pop() {
-            Some((start, 1)) if stream[start] == 0 => {}
-            _ => return Err(malformed("stream does not end with an NDX_DONE frame")),
+        {
+            frame_starts.push(data.len());
+            data.extend(start..start + len);
         }
-        let tail_len = 2 * VARLONG30_WIDTH;
-        let mut tail: Vec<usize> = data
+        let stream = &self.server_to_client;
+        let times = frame_starts
             .iter()
             .rev()
-            .flat_map(|&(start, len)| (start..start + len).rev())
-            .take(tail_len)
-            .collect();
-        tail.reverse();
-        if tail.len() != tail_len {
-            return Err(malformed("data stream too short for the stats trailer"));
-        }
-        if stream[tail[0]] >= 0x80 || stream[tail[VARLONG30_WIDTH]] >= 0x80 {
+            .find_map(|&at| {
+                let fields = stats_fields(stream, &data, at)?;
+                goodbye_follows(stream, &data[fields[4].0 + fields[4].1..])
+                    .then_some([fields[3], fields[4]])
+            })
+            .ok_or_else(|| malformed("stats are not followed by the NDX_DONE goodbye"))?;
+        if times.iter().any(|&(_, len)| len != VARLONG30_WIDTH) {
             return Err(malformed("flist time field is not a 3-byte varlong30"));
         }
-        for offset in tail {
-            stream[offset] = 0;
+        for (start, len) in times {
+            for &offset in &data[start..start + len] {
+                self.server_to_client[offset] = 0;
+            }
         }
         Ok(())
     }
@@ -203,6 +204,57 @@ impl WireTranscript {
         }
         Ok(frames)
     }
+}
+
+/// The five stats fields starting at `data[at]`, as `(index into data, len)`
+/// pairs, or `None` when they run past the data.
+///
+/// Each is a `write_varlong30(f, x, 3)` (upstream: main.c:353-358
+/// handle_stats()): three bytes plus one per leading one bit of the first
+/// (io.c read_varlong(), `int_byte_extra`).
+fn stats_fields(stream: &[u8], data: &[usize], at: usize) -> Option<[(usize, usize); 5]> {
+    let mut fields = [(0, 0); 5];
+    let mut pos = at;
+    for field in &mut fields {
+        let len = VARLONG30_WIDTH + stream[*data.get(pos)?].leading_ones() as usize;
+        if pos + len > data.len() {
+            return None;
+        }
+        *field = (pos, len);
+        pos += len;
+    }
+    Some(fields)
+}
+
+/// Whether `rest` is exactly the sender's goodbye after its stats: a lone
+/// `NDX_DONE`, or its echo of `NDX_DEL_STATS` and then `NDX_DONE`
+/// (upstream: rsync.c:336-342 read_final_goodbye()).
+///
+/// The echo is a negative NDX (`0xFF` and a one-byte diff; io.c write_ndx())
+/// and five varints (main.c:229-242 write_del_stats()), each one byte plus one
+/// per leading one bit of the first (io.c write_varint()).
+fn goodbye_follows(stream: &[u8], rest: &[usize]) -> bool {
+    let byte = |i: usize| stream[rest[i]];
+    let Some((&last, echo)) = rest.split_last() else {
+        return false;
+    };
+    if stream[last] != 0 {
+        return false;
+    }
+    if echo.is_empty() {
+        return true;
+    }
+    if echo.len() < 2 || byte(0) != 0xFF || byte(1) >= 0xFE {
+        return false;
+    }
+    let mut at = 2;
+    for _ in 0..5 {
+        if at >= echo.len() {
+            return false;
+        }
+        at += 1 + byte(at).leading_ones() as usize;
+    }
+    at == echo.len()
 }
 
 /// Error reading back a capture: the instrument itself failed.
@@ -466,6 +518,51 @@ mod tests {
             (7, &[0]),
         ]);
         assert_eq!(masked_split, expect);
+    }
+
+    /// The sender's `NDX_DEL_STATS` echo: a negative NDX (`0xFF` and a
+    /// one-byte diff) and five one-byte varints.
+    const DEL_STATS_ECHO: [u8; 7] = [0xFF, 0x02, 1, 0, 0, 0, 0];
+
+    #[test]
+    fn mask_skips_the_del_stats_echo_before_the_goodbye() {
+        // Why: at protocol 31 the sender echoes NDX_DEL_STATS after its stats
+        // (rsync.c:336-342), so the time fields sit before the echo, not
+        // before NDX_DONE. Both framings a flush can produce must mask the
+        // times and leave the echo intact.
+        let mut echo_goodbye = DEL_STATS_ECHO.to_vec();
+        echo_goodbye.push(0);
+        for frames in [
+            vec![(7, stats(1, 2)), (7, echo_goodbye.clone())],
+            vec![(7, stats(1, 2)), (7, DEL_STATS_ECHO.to_vec()), (7, vec![0])],
+        ] {
+            let zeroed: Vec<(u8, Vec<u8>)> = frames
+                .iter()
+                .enumerate()
+                .map(|(i, (tag, p))| (*tag, if i == 0 { stats(0, 0) } else { p.clone() }))
+                .collect();
+            let as_refs = |f: &[(u8, Vec<u8>)]| -> Vec<u8> {
+                pull_stream(
+                    &f.iter()
+                        .map(|(t, p)| (*t, p.as_slice()))
+                        .collect::<Vec<_>>(),
+                )
+            };
+            assert_eq!(masked(as_refs(&frames)).unwrap(), as_refs(&zeroed));
+        }
+    }
+
+    #[test]
+    fn mask_accepts_the_goodbye_in_the_stats_frame() {
+        // Why: when the client's NDX_DONE is already buffered the sender does
+        // not flush between its stats and its goodbye (io.c perform_io()), so
+        // both ride one MSG_DATA frame; the frame boundary carries no meaning.
+        let shared = |stats: Vec<u8>| {
+            let mut frame = stats;
+            frame.push(0);
+            pull_stream(&[(7, &[0, 0]), (7, &frame)])
+        };
+        assert_eq!(masked(shared(stats(7, 9))).unwrap(), shared(stats(0, 0)));
     }
 
     #[test]

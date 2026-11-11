@@ -249,57 +249,54 @@ mod exit_code_4_unsupported {
     }
 }
 
-/// Tests that connection failures return exit code 5.
-mod exit_code_5_start_client {
-    use super::*;
-
-    #[test]
-    #[ignore = "requires daemon connection error handling implementation"]
-    fn connection_to_closed_port_returns_start_client_error() {
-        // Attempt to connect to a port that should be closed
-        // Using high port number that's unlikely to have a service
-        let output = run_rsync(&["rsync://127.0.0.1:59999/module/"]);
-
-        // Note: This might return 10 (socket I/O) instead depending on implementation
-        let code = output.status.code().unwrap_or(-1);
-        assert!(
-            code == 5 || code == 10,
-            "Connection to closed port should return 5 (start client) or 10 (socket I/O), got {code}"
-        );
-    }
-
-    #[test]
-    #[ignore = "requires daemon connection error handling implementation"]
-    fn connection_to_invalid_daemon_url_returns_error() {
-        let output = run_rsync(&["rsync://localhost:39873/nonexistent_module/"]);
-
-        let code = output.status.code().unwrap_or(-1);
-        assert!(
-            code == 5 || code == 10,
-            "Connection to invalid daemon should return 5 or 10, got {code}"
-        );
-    }
-}
-
 /// Tests that socket I/O errors return exit code 10.
+#[cfg(target_os = "linux")]
 mod exit_code_10_socket_io {
     use super::*;
 
-    // Note: Socket I/O errors are difficult to trigger reliably in tests
-    // as they typically require network-level failures during transfer.
+    /// A loopback port nothing listens on: bound to learn it, then released.
+    fn refused_port() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        listener.local_addr().expect("listener address").port()
+    }
 
+    /// upstream: socket.c:464-475 open_socket_out() reports each failed
+    /// address as `failed to connect to %s (%s)`, naming the host as given and
+    /// the numeric address, from the process that dialled; then
+    /// clientserver.c:164-165 exits RERR_SOCKETIO. rsync 3.5.1 prints exactly
+    /// these lines for a pull and a module listing (the lone `Receiver`) and a
+    /// push (`sender`).
     #[test]
-    #[ignore = "requires daemon connection error handling implementation"]
-    fn connection_refused_may_return_socket_io_error() {
-        // Some connection failures may manifest as socket I/O errors
-        let output = run_rsync(&["rsync://127.0.0.1:59998/module/"]);
-
-        let code = output.status.code().unwrap_or(-1);
-        // Connection refused can return either 5 (start client) or 10 (socket I/O)
-        assert!(
-            code == 5 || code == 10,
-            "Connection refused should return 5 or 10, got {code}"
-        );
+    fn a_refused_daemon_connection_reports_upstreams_lines() {
+        let test_dir = TestDir::new().expect("create test dir");
+        let source = test_dir.write_file("file", b"data").unwrap();
+        let dest = format!("{}/", test_dir.path().join("dest").display());
+        let port = refused_port();
+        let url = format!("rsync://127.0.0.1:{port}/mod/");
+        for (args, who) in [
+            (vec![format!("{url}file"), dest.clone()], "Receiver"),
+            (vec![source.display().to_string(), url.clone()], "sender"),
+            (vec![format!("rsync://127.0.0.1:{port}/")], "Receiver"),
+        ] {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let output = run_rsync(&args);
+            assert_exit_code(&output, ExitCode::SocketIo, "refused daemon connection");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let lines: Vec<&str> = stderr.lines().collect();
+            assert_eq!(lines.len(), 2, "{who}: {stderr}");
+            assert!(
+                lines[0].ends_with(&format!(
+                    ": [{who}] failed to connect to 127.0.0.1 (127.0.0.1): \
+                     Connection refused (111)"
+                )),
+                "{who}: {stderr}"
+            );
+            assert!(
+                lines[1].contains("error in socket IO (code 10)")
+                    && lines[1].ends_with(&format!("[{who}={}]", env!("CARGO_PKG_VERSION"))),
+                "{who}: {stderr}"
+            );
+        }
     }
 }
 
