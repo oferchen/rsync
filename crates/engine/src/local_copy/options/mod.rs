@@ -18,6 +18,7 @@ mod logging;
 mod metadata;
 mod path_behavior;
 mod platform_copy;
+mod sides;
 pub(crate) mod staging;
 mod types;
 mod wire_totals;

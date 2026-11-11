@@ -142,7 +142,9 @@ pub(crate) use metadata_sync::map_metadata_error;
 pub(crate) use metadata_sync::xattrs_differ;
 
 #[cfg(all(any(unix, windows), feature = "acl"))]
-pub(crate) use metadata_sync::{apply_source_acls_if_requested, sync_acls_if_requested};
+pub(crate) use metadata_sync::{
+    FakeSuperSides, apply_source_acls_if_requested, sync_acls_if_requested,
+};
 
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) use metadata_sync::{

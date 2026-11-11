@@ -384,7 +384,7 @@ pub(crate) fn plan_directory_entries<'a>(
         // before any filter, and a corrupt one ends the run.
         #[cfg(all(unix, feature = "xattr"))]
         let recorded = crate::local_copy::ensure_fake_super_source_stat(
-            context.options().fake_super_enabled(),
+            context.sender_options().fake_super_enabled(),
             &entry.path,
         )?;
 
@@ -480,7 +480,7 @@ pub(crate) fn plan_directory_entries<'a>(
         }
 
         if matches!(action, EntryAction::CopyDirectory)
-            && context.one_file_system_enabled()
+            && context.sender_options().one_file_system_enabled()
             && let Some(root) = root_device
             && let Some(entry_device) = crate::local_copy::overrides::device_identifier(
                 entry.path.as_path(),
@@ -757,7 +757,7 @@ pub(crate) fn plan_directory_entries_parallel<'a>(
     let config = PrefetchConfig {
         follow_symlinks: context.copy_links_enabled() || context.copy_dirlinks_enabled(),
         read_symlink_targets: context.copy_unsafe_links_enabled(),
-        check_devices: context.one_file_system_enabled() && root_device.is_some(),
+        check_devices: context.sender_options().one_file_system_enabled() && root_device.is_some(),
     };
 
     let prefetched = prefetch_entry_metadata(entries, config);
@@ -862,7 +862,7 @@ fn plan_directory_entries_with_prefetch<'a>(
         // before any filter, and a corrupt one ends the run.
         #[cfg(all(unix, feature = "xattr"))]
         let recorded = crate::local_copy::ensure_fake_super_source_stat(
-            context.options().fake_super_enabled(),
+            context.sender_options().fake_super_enabled(),
             &entry.path,
         )?;
 
@@ -974,7 +974,7 @@ fn plan_directory_entries_with_prefetch<'a>(
 
         #[cfg(unix)]
         if matches!(action, EntryAction::CopyDirectory)
-            && context.one_file_system_enabled()
+            && context.sender_options().one_file_system_enabled()
             && let Some(root) = root_device
             && let Some(entry_device) = prefetch.device_id
             && entry_device != root
@@ -984,7 +984,7 @@ fn plan_directory_entries_with_prefetch<'a>(
 
         #[cfg(not(unix))]
         if matches!(action, EntryAction::CopyDirectory)
-            && context.one_file_system_enabled()
+            && context.sender_options().one_file_system_enabled()
             && let Some(root) = root_device
             && let Some(entry_device) = crate::local_copy::overrides::device_identifier(
                 entry.path.as_path(),

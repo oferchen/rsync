@@ -285,6 +285,8 @@ pub struct LocalCopyOptions {
     pub(super) preserve_acls: bool,
     pub(super) filters: Option<FilterSet>,
     pub(super) filter_program: Option<FilterProgram>,
+    /// The local sender's option set when it differs from this, the receiver's.
+    pub(super) sender: Option<std::sync::Arc<LocalCopyOptions>>,
     /// The session's CVS ignore list, shared with the caller's own `C` rules.
     pub(super) cvs_session: filters::CvsSession,
     /// Optional filename charset converter resolved from the user's
@@ -461,6 +463,7 @@ impl LocalCopyOptions {
             preserve_acls: false,
             filters: None,
             filter_program: None,
+            sender: None,
             cvs_session: filters::CvsSession::default(),
             iconv: None,
             numeric_ids: false,

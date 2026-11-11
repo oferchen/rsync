@@ -25,7 +25,7 @@ impl CopyContext<'_> {
                 source,
                 metadata.permissions().mode(),
                 metadata.is_dir(),
-                self.options.fake_super_enabled(),
+                self.options.sender_half().fake_super_enabled(),
             ) {
                 Ok(acls) => attrs.acls = Some(acls),
                 Err(error) => {
@@ -93,7 +93,7 @@ impl CopyContext<'_> {
                 am_root: false,
                 // The local-copy options carry `-X` as a bool. upstream: xattrs.c:274.
                 preserve_xattrs: 1,
-                fake_super: self.options.fake_super_enabled(),
+                fake_super: self.options.sender_half().fake_super_enabled(),
                 filter: sender_filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
                 checksum_seed: 0,
             },

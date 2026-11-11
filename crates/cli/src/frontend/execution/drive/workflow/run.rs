@@ -66,10 +66,31 @@ where
     Out: Write,
     Err: Write,
 {
-    match translate(parsed, &mut Pass::Process, stdout, stderr) {
-        Ok(translated) => run_translated(translated, stdout, stderr),
-        Err(code) => code,
+    let mut parsed = parsed;
+    let Some(client) = parsed.local_sender.take() else {
+        return match translate(parsed, &mut Pass::process(), stdout, stderr) {
+            Ok(translated) => run_translated(translated, stdout, stderr),
+            Err(code) => code,
+        };
+    };
+    // upstream: main() sets the process up from the client's own options,
+    // which stay the sender's; pipe.c:131-148 local_child() re-parses `-M` in
+    // the forked receiver alone, after clearing its log file and chmod modes.
+    let mut pass = Pass::process();
+    let mut run = match translate(*client, &mut pass, stdout, stderr) {
+        Ok(translated) => translated,
+        Err(code) => return code,
+    };
+    let receiver = match translate(parsed, &mut pass.receiver(), stdout, stderr) {
+        Ok(translated) => translated,
+        Err(code) => return code,
+    };
+    if run.log_file.is_none() {
+        run.log_file = receiver.log_file;
     }
+    let sender = std::mem::replace(&mut run.config, receiver.config);
+    run.config = run.config.with_local_sender(sender);
+    run_translated(run, stdout, stderr)
 }
 
 /// What a translation pass may do beyond turning options into a config.
@@ -78,14 +99,36 @@ where
 /// pipe.c:109-148 local_child() later re-runs parse_arguments() over `-M` in the
 /// forked receiver without repeating it. The process pass owns every global and
 /// every read a second pass must not repeat.
-pub(crate) enum Pass {
-    /// The process's own options: sets globals and reads files.
-    Process,
+pub(crate) struct Pass {
+    process: bool,
+    /// The `--files-from` list the process pass read, replayed to a later pass
+    /// so a list read from standard input is not read twice.
+    file_list: Option<Vec<std::ffi::OsString>>,
+    /// Whether the process pass opened a log file.
+    logs: bool,
 }
 
 impl Pass {
+    /// The process's own options: sets globals and reads files.
+    const fn process() -> Self {
+        Self {
+            process: true,
+            file_list: None,
+            logs: false,
+        }
+    }
+
+    /// The local receiver's option set, translated after the process pass.
+    fn receiver(&self) -> Self {
+        Self {
+            process: false,
+            file_list: self.file_list.clone(),
+            logs: self.logs,
+        }
+    }
+
     const fn is_process(&self) -> bool {
-        matches!(self, Self::Process)
+        self.process
     }
 
     fn set_checksum_threads_policy(&self, policy: core::server::receiver::ChecksumThreadsPolicy) {
@@ -99,19 +142,34 @@ impl Pass {
         command: Option<&std::ffi::OsStr>,
         file: Option<&Path>,
     ) -> Result<Option<Vec<u8>>, core::message::Message> {
-        crate::frontend::password::resolve_password(command, file)
+        if self.is_process() {
+            crate::frontend::password::resolve_password(command, file)
+        } else {
+            Ok(None)
+        }
     }
 
     fn file_list_operands(
-        &self,
+        &mut self,
         files_from: &[std::ffi::OsString],
         from0: bool,
     ) -> Result<Vec<std::ffi::OsString>, core::message::Message> {
-        load_file_list_operands(files_from, from0)
+        if let Some(list) = self.file_list.as_ref().filter(|_| !self.process) {
+            return Ok(list.clone());
+        }
+        let list = load_file_list_operands(files_from, from0)?;
+        self.file_list = Some(list.clone());
+        Ok(list)
     }
 
-    fn open_log_file(&self, path: &Path) -> io::Result<File> {
-        open_log_file(path)
+    /// upstream: pipe.c:136-140 clears the receiver's inherited log file, and
+    /// a `-M--log-file` parsed after it (:143-148) opens the receiver's own.
+    fn open_log_file(&mut self, path: &Path) -> Option<io::Result<File>> {
+        if self.logs {
+            return None;
+        }
+        self.logs = self.process;
+        Some(open_log_file(path))
     }
 }
 
@@ -197,7 +255,7 @@ where
 }
 
 /// Translates one parse into a client config, running the process setup only
-/// on [`Pass::Process`].
+/// on the process pass.
 fn translate<Out, Err>(
     parsed: ParsedArgs,
     pass: &mut Pass,
@@ -236,6 +294,7 @@ where
         quic_cipher,
         remote_options,
         refused_remote_option,
+        local_sender: _,
         rsync_path: _,
         protect_args,
         old_args,
@@ -926,7 +985,8 @@ where
     let mut log_file_for_local = None;
     if let (Some(path), Some(template)) = (log_file_path_buf.as_ref(), log_file_template.as_ref()) {
         match pass.open_log_file(path) {
-            Ok(file) => {
+            None => {}
+            Some(Ok(file)) => {
                 log_file_for_local = Some(summary::LogFileConfig {
                     // upstream: log.c:125-141 logit() - every log-file line is
                     // stamped with `%Y/%m/%d %H:%M:%S [pid] `.
@@ -934,7 +994,7 @@ where
                     format: template.clone(),
                 });
             }
-            Err(error) => {
+            Some(Err(error)) => {
                 let message =
                     rsync_error!(1, "failed to open log file {}: {error}", path.display())
                         .with_role(Role::Client);

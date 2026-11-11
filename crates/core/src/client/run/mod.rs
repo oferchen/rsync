@@ -549,6 +549,11 @@ fn run_client_internal(
     let filter_program =
         filters::compile_filter_program(config.filter_rules(), config.delete_excluded())?;
     let mut options = build_local_copy_options(&config, filter_program);
+    if let Some(sender) = config.local_sender() {
+        let sender_program =
+            filters::compile_filter_program(sender.filter_rules(), sender.delete_excluded())?;
+        options = options.with_local_sender(build_local_copy_options(sender, sender_program));
+    }
 
     // A local copy bypasses the wire, so the capability negotiator - the only
     // place trace_checksum_summary/trace_compress_summary fire on the wire path

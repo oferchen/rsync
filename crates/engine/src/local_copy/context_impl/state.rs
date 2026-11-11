@@ -18,7 +18,8 @@ impl<'a> CopyContext<'a> {
                 Err(_) => Instant::now(),
             }
         });
-        let filter_program = options.filter_program().cloned();
+        let filter_program = options.sender_half().filter_program().cloned();
+        let receiver_filter_program = options.filter_program().cloned();
         let timeout = options.timeout();
 
         let buffer_pool = global_buffer_pool();
@@ -50,9 +51,10 @@ impl<'a> CopyContext<'a> {
                 None
             },
             dir_merge: DirectoryFilterHandles::new(filter_program.as_ref()),
-            delete_dir_merge: DirectoryFilterHandles::new(filter_program.as_ref()),
+            delete_dir_merge: DirectoryFilterHandles::new(receiver_filter_program.as_ref()),
             delete_filter_chain: RefCell::new(Vec::new()),
             filter_program,
+            receiver_filter_program,
             observer,
             deferred_ops: DeferredOperationQueue::default(),
             timeout,
@@ -233,14 +235,16 @@ impl<'a> CopyContext<'a> {
         &self.options
     }
 
+    /// The option set the sender half reads.
+    ///
+    /// upstream: pipe.c:143-148 local_child() applies `-M` to the receiver only.
+    pub(super) fn sender_options(&self) -> &LocalCopyOptions {
+        self.options.sender_half()
+    }
+
     /// Returns whether `--one-file-system` (`-x`) is enabled.
     pub(super) const fn one_file_system_enabled(&self) -> bool {
         self.options.one_file_system_enabled()
-    }
-
-    /// Returns the `--one-file-system` nesting level (0, 1, or 2).
-    pub(super) const fn one_file_system_level(&self) -> u8 {
-        self.options.one_file_system_level()
     }
 
     /// Records a hard-link source if `--hard-links` is enabled.
@@ -304,7 +308,11 @@ impl<'a> CopyContext<'a> {
                 .source_roots
                 .remember_operand(root, true, metadata.dev(), metadata.ino());
         }
-        if let Some(program) = self.filter_program.as_mut() {
+        for program in self
+            .filter_program
+            .iter_mut()
+            .chain(self.receiver_filter_program.iter_mut())
+        {
             let sender_dir = anchor.as_deref().unwrap_or(Path::new("."));
             program.set_abs_roots(
                 current_dir_abs_root(sender_dir),
@@ -348,7 +356,7 @@ impl<'a> CopyContext<'a> {
     /// upstream: `rsync-3.5.1/syscall.c:149-154` `filesfrom_owner_walk_active()`.
     #[cfg(unix)]
     fn filesfrom_owner_walk_active(&self) -> bool {
-        self.options.files_from_enabled()
+        self.options.sender_half().files_from_enabled()
             && !self.follow_source_symlinks()
             && !fast_io::confinement::session_optout_allowed()
     }
@@ -528,7 +536,7 @@ impl<'a> CopyContext<'a> {
                 source_attrs.xattrs.as_ref(),
                 destination,
                 true,
-                self.filter_program.as_ref(),
+                self.receiver_filter_program.as_ref(),
                 Some(self.destination_root()),
             )?;
 
@@ -546,7 +554,7 @@ impl<'a> CopyContext<'a> {
         {
             apply_source_acls_if_requested(
                 preserve_acls,
-                self.options.fake_super_enabled(),
+                self.options.fake_super_sides(),
                 mode,
                 source,
                 &source_attrs,
@@ -566,7 +574,13 @@ impl<'a> CopyContext<'a> {
         // `set_owner_like` only saw the placeholder's `fs::Metadata`, so rewrite
         // the destination xattr here from the effective source stat.
         #[cfg(all(unix, feature = "xattr"))]
-        store_effective_fake_super_if_requested(&metadata_options, source, destination, metadata)?;
+        store_effective_fake_super_if_requested(
+            &metadata_options,
+            self.options.sender_half().fake_super_enabled(),
+            source,
+            destination,
+            metadata,
+        )?;
 
         self.record_hard_link(metadata, destination);
         remove_source_entry_if_requested(self, source, destination, metadata, relative, file_type)?;

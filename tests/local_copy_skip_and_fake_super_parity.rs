@@ -187,6 +187,111 @@ fn local_fake_super_stashes_only_what_the_source_stash_carries() {
     assert_eq!(seen[1].1, *upstream, "oc stashes differ from 3.5.1");
 }
 
+/// `-M--fake-super` on a local copy reaches the receiver half only, so the
+/// sender reads the source's real named-user ACL and the receiver stashes it.
+///
+/// upstream: pipe.c:143-148 local_child() appends the `-M` values to the forked
+/// receiver's argv; acls.c:609-631 then reads the real ACL on the sender and
+/// acls.c:933-971 stores `%aacl` on the receiver. The 3.5.1 testsuite's
+/// fake-super-acl-xattr leg 1 is this transfer.
+#[test]
+fn receiver_only_fake_super_stashes_the_real_source_acl() {
+    let Some(impls) = oracle_and_oc() else { return };
+    if !has_tool("getfattr") || !has_tool("setfacl") {
+        eprintln!("skipping: getfattr/setfacl not installed");
+        return;
+    }
+    let fx = Fixture::new();
+    let named = fx.root.join("src/named");
+    std::fs::write(&named, "named\n").unwrap();
+    let uid = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&named).unwrap());
+    let set = Command::new("setfacl")
+        .args(["-m", &format!("u:{uid}:rwx")])
+        .arg(&named)
+        .status()
+        .unwrap();
+    if !set.success() {
+        eprintln!("skipping: the filesystem refuses ACLs");
+        return;
+    }
+
+    let mut seen = Vec::new();
+    for (label, bin) in &impls {
+        let dest = fx.dest(label);
+        let out = fx.run(
+            bin,
+            ".",
+            &["-rA", "-M--fake-super", "src/", dest.to_str().unwrap()],
+        );
+        assert!(out.status.success(), "{label}: {out:?}");
+        seen.push((label, acl_stashes(&dest)));
+    }
+    let (_, upstream) = &seen[0];
+    assert!(
+        upstream.contains("named user.rsync.%aacl"),
+        "oracle: the real ACL is stashed: {upstream:?}",
+    );
+    assert_eq!(seen[1].1, *upstream, "oc stashes differ from 3.5.1");
+}
+
+/// `-M--fake-super` leaves the sender reading the source's real stat, so a
+/// `%stat` record already on the source does not stand in for it.
+///
+/// upstream: pipe.c:143-148 local_child() gives `--fake-super` to the receiver
+/// alone; the sender's flist.c make_file() reads plain lstat() rather than
+/// xattrs.c:1372 x_lstat(). MEASURED (3.5.1): a 0644 source recorded as
+/// `100600 0,0 0:0` lands as 0644 with `%stat` `100644 0,0 0:0`; with
+/// `--fake-super` on both halves it lands as 0600.
+#[test]
+fn receiver_only_fake_super_ignores_the_source_stat_record() {
+    if !has_tool("getfattr") || !has_tool("setfattr") {
+        eprintln!("skipping: getfattr/setfattr not installed");
+        return;
+    }
+    let fx = Fixture::new();
+    let plain = fx.root.join("src/plain");
+    fs::set_permissions(&plain, fs::Permissions::from_mode(0o644)).unwrap();
+    let set = Command::new("setfattr")
+        .args(["-n", "user.rsync.%stat", "-v", "100600 0,0 0:0"])
+        .arg(&plain)
+        .status()
+        .unwrap();
+    if !set.success() {
+        eprintln!("skipping: the filesystem refuses user xattrs");
+        return;
+    }
+    let stat_of = |dest: &Path| {
+        let out = Command::new("getfattr")
+            .args(["--only-values", "-n", "user.rsync.%stat"])
+            .arg(dest.join("plain"))
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let mode_of = |dest: &Path| {
+        fs::metadata(dest.join("plain"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777
+    };
+
+    for (flag, record, mode) in [
+        ("-M--fake-super", "100644 0,0 0:0", 0o644),
+        ("--fake-super", "100600 0,0 0:0", 0o600),
+    ] {
+        let dest = fx.dest(flag);
+        let out = fx.run(
+            &oc_rsync(),
+            ".",
+            &["-r", flag, "src/", dest.to_str().unwrap()],
+        );
+        assert!(out.status.success(), "{flag}: {out:?}");
+        assert_eq!(stat_of(&dest), record, "{flag}");
+        assert_eq!(mode_of(&dest), mode, "{flag}");
+    }
+}
+
 /// A `--fake-super -A` push sends only the stash, so a real named-user ACL
 /// on the source does not reach a 3.5.1 receiver.
 #[test]

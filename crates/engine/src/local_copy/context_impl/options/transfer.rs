@@ -1,16 +1,16 @@
 use std::num::NonZeroU32;
 
 impl<'a> CopyContext<'a> {
-    pub(super) const fn copy_links_enabled(&self) -> bool {
-        self.options.copy_links_enabled()
+    pub(super) fn copy_links_enabled(&self) -> bool {
+        self.options.sender_half().copy_links_enabled()
     }
 
     pub(super) const fn links_enabled(&self) -> bool {
         self.options.links_enabled()
     }
 
-    pub(super) const fn copy_unsafe_links_enabled(&self) -> bool {
-        self.options.copy_unsafe_links_enabled()
+    pub(super) fn copy_unsafe_links_enabled(&self) -> bool {
+        self.options.sender_half().copy_unsafe_links_enabled()
     }
 
     pub(super) const fn safe_links_enabled(&self) -> bool {
@@ -21,8 +21,8 @@ impl<'a> CopyContext<'a> {
         self.options.munge_links_enabled()
     }
 
-    pub(super) const fn copy_dirlinks_enabled(&self) -> bool {
-        self.options.copy_dirlinks_enabled()
+    pub(super) fn copy_dirlinks_enabled(&self) -> bool {
+        self.options.sender_half().copy_dirlinks_enabled()
     }
 
     pub(super) const fn keep_dirlinks_enabled(&self) -> bool {
@@ -63,10 +63,10 @@ impl<'a> CopyContext<'a> {
     ///
     /// `--insecure-links` is upstream's fourth term; oc does not implement that
     /// option yet, so it cannot be spelled here.
-    pub(super) const fn follow_source_symlinks(&self) -> bool {
-        self.options.copy_links_enabled()
-            || self.options.copy_unsafe_links_enabled()
-            || self.options.copy_dirlinks_enabled()
+    pub(super) fn follow_source_symlinks(&self) -> bool {
+        self.options.sender_half().copy_links_enabled()
+            || self.options.sender_half().copy_unsafe_links_enabled()
+            || self.options.sender_half().copy_dirlinks_enabled()
     }
 
     pub(super) const fn sparse_enabled(&self) -> bool {

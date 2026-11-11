@@ -22,17 +22,17 @@ impl<'a> CopyContext<'a> {
         self.options.relative_paths_enabled()
     }
 
-    pub(super) const fn recursive_enabled(&self) -> bool {
-        self.options.recursive_enabled()
+    pub(super) fn recursive_enabled(&self) -> bool {
+        self.options.sender_half().recursive_enabled()
     }
 
-    pub(super) const fn dirs_enabled(&self) -> bool {
-        self.options.dirs_enabled()
+    pub(super) fn dirs_enabled(&self) -> bool {
+        self.options.sender_half().dirs_enabled()
     }
 
     /// Mirrors upstream `xfer_dirs`: `recurse || -d || (list_only when
     /// neither was given)` (options.c:2324-2329).
-    pub(super) const fn xfer_dirs_enabled(&self) -> bool {
+    pub(super) fn xfer_dirs_enabled(&self) -> bool {
         self.recursive_enabled() || self.dirs_enabled() || self.list_only_enabled()
     }
 
