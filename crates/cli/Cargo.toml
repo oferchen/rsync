@@ -95,7 +95,7 @@ uzers = "0.12"
 xattr = { workspace = true }
 
 # fast_io's `landlock` feature carries the rust-landlock dispatch used by
-# the `--server` receiver sandbox in `frontend/server/run.rs`. Linux gets the
+# the `--server` receiver sandbox in core's `session/confinement.rs`. Linux gets the
 # real LSM backend; on every other target the stub module compiles with the
 # same public surface and every call short-circuits to `Unavailable`, so
 # the wire-in does not need `#[cfg]` branching at the call site.

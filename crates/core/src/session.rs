@@ -4,6 +4,10 @@
 //! (`run_server_stdio`) forwards directly to the threaded
 //! `transfer::run_server_stdio`.
 
+mod confinement;
+
+pub use confinement::confine_receiver;
+
 use std::io::{Read, Write};
 
 use crate::branding::Brand;

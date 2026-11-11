@@ -36,6 +36,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true, optional = true }
 libc = { workspace = true }
 base64 = { workspace = true }
+rayon = { workspace = true }
 tempfile = { workspace = true }
 socket2 = { workspace = true }
 filetime = { workspace = true }
@@ -116,6 +117,12 @@ sd-notify = []
 
 # Structured logging instrumentation for performance analysis and diagnostics
 tracing = ["dep:tracing"]
+
+# fast_io's `landlock` feature carries the rust-landlock dispatch used by
+# the receiver sandbox in `session/confinement.rs`. Linux gets the real LSM
+# backend; every other target compiles the stub with the same public surface.
+[target.'cfg(target_os = "linux")'.dependencies]
+fast_io = { path = "../fast_io", default-features = false, features = ["landlock"] }
 
 [dev-dependencies]
 filetime = { workspace = true }
