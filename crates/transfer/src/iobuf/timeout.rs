@@ -42,6 +42,16 @@ impl IoTimeout {
         }
     }
 
+    /// Bounds the connection at `secs` when no `--timeout` was set.
+    ///
+    /// upstream: io.c:1079-1081 - `if (!io_timeout) set_io_timeout(60);`.
+    pub(crate) fn arm_if_unset(&mut self, secs: u64) {
+        if self.limit.is_none() {
+            self.limit = Some(Duration::from_secs(secs));
+            self.last_io = None;
+        }
+    }
+
     /// How long one wait may last: `ceil(timeout / 2)`, at most a minute, or
     /// unbounded with no timeout, where upstream's wake-ups do nothing
     /// (upstream: io.c:1306-1310 set_io_timeout(), io.c:143 poll_timeout_ms()).

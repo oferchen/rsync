@@ -281,6 +281,17 @@ impl<R: Read> ServerReader<R> {
         }
     }
 
+    /// Takes the code of a `MSG_ERROR_EXIT` the peer sent (0 for the
+    /// zero-length frame), so the next read no longer reports it.
+    ///
+    /// upstream: io.c:1892-1930 - each frame is handled once, as read.
+    pub(crate) fn take_error_exit(&mut self) -> Option<i32> {
+        match &mut self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.take_error_exit(),
+            ServerReaderInner::Plain(_) | ServerReaderInner::Taken => None,
+        }
+    }
+
     /// Returns the count of `MSG_ERROR_XFER` frames received from the peer.
     ///
     /// A non-zero count is upstream's `got_xfer_error`: the peer reported a
