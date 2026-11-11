@@ -639,3 +639,64 @@ fn a_reset_during_the_handshake_is_safe_reads_failure() {
         );
     }
 }
+
+/// Plays a protocol-31 daemon that sends the file list, reads the client's
+/// `MSG_ERROR_EXIT` and then resets the connection, so the client's wait for
+/// the daemon's exit ends in a read error.
+#[cfg(target_os = "linux")]
+fn serve_list_then_reset_after_error_exit(listener: TcpListener) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let (mut sock, mut reader) = accept_arguments(listener, b"@RSYNCD: 31.0\n");
+        sock.write_all(&SETUP).expect("setup");
+        reader
+            .read_exact(&mut [0u8; CLIENT_FILTER_LIST])
+            .expect("client filter list");
+        sock.write_all(&post_setup_stream()[..FLIST.len() + 4])
+            .expect("file list");
+        reader
+            .read_exact(&mut [0u8; 8])
+            .expect("the client's MSG_ERROR_EXIT");
+        socket2::SockRef::from(&sock)
+            .set_linger(Some(Duration::ZERO))
+            .expect("zero linger");
+    })
+}
+
+/// upstream: cleanup.c:221-253 - _exit_cleanup() calls log_exit() before
+/// noop_io_until_death(), so the trailer of a client's own fatal error comes
+/// before the `read error` the wait for the daemon's exit then hits
+/// (io.c:918-925). rsync 3.5.1 against this stream prints exactly these three
+/// lines in this order and exits 11.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_failed_wait_for_the_daemon_prints_after_the_trailer() {
+    let tmp = TempDir::new().expect("tempdir");
+    let parent = tmp.path().join("ro");
+    fs::create_dir(&parent).expect("mkdir ro");
+    set_mode(&parent, 0o555);
+    if fs::write(parent.join("probe"), b"").is_ok() {
+        set_mode(&parent, 0o755);
+        eprintln!("skip: the 0555 parent stays writable here (running as root)");
+        return;
+    }
+    let target = parent.join("inner");
+    let (code, text) = pull_from(
+        serve_list_then_reset_after_error_exit,
+        &["--protocol=31"],
+        &format!("{}/", target.display()),
+    );
+    set_mode(&parent, 0o755);
+    assert_eq!(code, Some(11), "{text}");
+    assert_eq!(
+        report_lines(&text),
+        [
+            format!(
+                "[Receiver] mkdir \"{}\" failed: Permission denied (13)",
+                target.display()
+            ),
+            trailer("error in file IO", 11, "Receiver"),
+            "[Receiver] read error: Connection reset by peer (104)".to_owned(),
+        ],
+        "{text}"
+    );
+}

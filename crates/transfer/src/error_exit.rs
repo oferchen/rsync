@@ -57,6 +57,73 @@ pub(crate) fn local_exit_code(error: &io::Error) -> i32 {
 /// upstream: errcode.h `RERR_TIMEOUT`.
 const RERR_TIMEOUT: i32 = 30;
 
+/// How the wait for the peer's exit failed, in upstream's words.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExitWaitFailure {
+    /// io.c:918-925 `rsyserr(FERROR_SOCKET, errno, "read error")`: the text
+    /// after the `RSYNC_NAME ": "` prefix log.c:483-500 puts in front of it.
+    ReadError(String),
+    /// io.c:261-262 `[who] io timeout after N seconds -- exiting`, unprefixed.
+    Timeout(String),
+}
+
+impl ExitWaitFailure {
+    /// The line as a daemon logs it, with the `rsync: ` prefix a read error
+    /// carries (log.c:483-500).
+    #[must_use]
+    pub fn log_line(&self) -> String {
+        match self {
+            Self::ReadError(text) => format!("rsync: {text}"),
+            Self::Timeout(text) => text.clone(),
+        }
+    }
+}
+
+/// A client transfer's error carried together with the failed wait that
+/// followed it, so the caller prints the wait's line after the `rsync error:`
+/// trailer the error produces, as _exit_cleanup() does (cleanup.c:221-253:
+/// log_exit() runs before noop_io_until_death()).
+#[derive(Debug)]
+struct AfterExitWait {
+    error: io::Error,
+    failure: ExitWaitFailure,
+}
+
+impl std::fmt::Display for AfterExitWait {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl std::error::Error for AfterExitWait {}
+
+/// Attaches the failed wait to the error that ended the transfer, keeping the
+/// error's kind.
+pub(crate) fn after_exit_wait(error: io::Error, failure: ExitWaitFailure) -> io::Error {
+    io::Error::new(error.kind(), AfterExitWait { error, failure })
+}
+
+/// Separates a client transfer's error from the failed wait for the peer's
+/// exit that followed it, if one did.
+#[must_use]
+pub fn split_exit_wait(error: io::Error) -> (io::Error, Option<ExitWaitFailure>) {
+    if !error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<AfterExitWait>())
+    {
+        return (error, None);
+    }
+    let kind = error.kind();
+    match error
+        .into_inner()
+        .map(|inner| inner.downcast::<AfterExitWait>())
+    {
+        Some(Ok(wait)) => (wait.error, Some(wait.failure)),
+        Some(Err(inner)) => (io::Error::new(kind, inner), None),
+        None => (io::Error::from(kind), None),
+    }
+}
+
 /// The `MSG_ERROR_EXIT` frame a side writes to the socket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Echo {
@@ -136,10 +203,8 @@ pub(crate) fn send_echo<W: Write>(writer: &mut ServerWriter<W>, echo: Echo) -> i
 /// handle it. The read is bounded by the connection's `--timeout`, or by 60
 /// seconds when none is set, through the transport the reader sits on.
 ///
-/// Returns the line upstream prints when the wait itself fails, without its
-/// newline: the read error (io.c:918-925 `rsyserr(FERROR_SOCKET, errno,
-/// "read error")`, rendered by log.c:483-500) or the `--timeout` expiry
-/// (io.c:261-262, already worded so by the transport).
+/// Returns how the wait itself failed, if it did: a read error or the
+/// `--timeout` expiry (io.c:261-262, already worded so by the transport).
 ///
 /// upstream: io.c:1066-1085 noop_io_until_death(); io.c:828 - end of input
 /// there is a quiet exit (`kluge_around_eof == 2`); a `MSG_ERROR_EXIT` read
@@ -149,7 +214,7 @@ pub(crate) fn drain_until_peer_exits<R: Read, W: Write>(
     writer: &mut ServerWriter<W>,
     reader_side: ExitReader,
     protocol: u8,
-) -> Option<String> {
+) -> Option<ExitWaitFailure> {
     let mut sink = [0u8; 1024];
     loop {
         let read = reader.read(&mut sink);
@@ -174,14 +239,14 @@ pub(crate) fn drain_until_peer_exits<R: Read, W: Write>(
                 ) => {}
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::TimedOut => {
-                return Some(error.to_string());
+                return Some(ExitWaitFailure::Timeout(error.to_string()));
             }
             Err(error) => {
-                return Some(format!(
-                    "rsync: [{}] read error: {}",
+                return Some(ExitWaitFailure::ReadError(format!(
+                    "[{}] read error: {}",
                     reader_side.who(),
                     logging::upstream_errno_text(&error)
-                ));
+                )));
             }
         }
     }
@@ -361,12 +426,36 @@ mod tests {
         let mut writer = ServerWriter::new_plain(Vec::new())
             .activate_multiplex()
             .unwrap();
-        let line = drain_until_peer_exits(&mut reader, &mut writer, ExitReader::Sender, 32);
+        let failure = drain_until_peer_exits(&mut reader, &mut writer, ExitReader::Sender, 32)
+            .expect("the reset ends the wait");
         let errno_text = logging::upstream_errno_text(&io::Error::from_raw_os_error(104));
         assert_eq!(
-            line.as_deref(),
-            Some(format!("rsync: [sender] read error: {errno_text}").as_str())
+            failure.log_line(),
+            format!("rsync: [sender] read error: {errno_text}")
         );
+    }
+
+    /// WHY: the failed wait rides out of a client transfer behind the error
+    /// that ended it, which must come back unchanged - kind, text and any
+    /// typed inner error - for the caller to classify, with the wait's line
+    /// beside it to print after the trailer.
+    #[test]
+    fn a_failed_wait_travels_behind_the_error_and_splits_off_intact() {
+        let failure = ExitWaitFailure::ReadError("[Receiver] read error: x (104)".to_owned());
+        let wrapped = after_exit_wait(
+            io::Error::new(io::ErrorKind::PermissionDenied, "mkdir failed"),
+            failure.clone(),
+        );
+        assert_eq!(wrapped.kind(), io::ErrorKind::PermissionDenied);
+        let (error, split) = split_exit_wait(wrapped);
+        assert_eq!(split, Some(failure));
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "mkdir failed");
+
+        let plain = io::Error::from_raw_os_error(13);
+        let (error, split) = split_exit_wait(plain);
+        assert_eq!(split, None);
+        assert_eq!(error.raw_os_error(), Some(13));
     }
 
     /// WHY: the wait ends at the peer's close without writing anything; the
