@@ -286,3 +286,6 @@ package-lock.json
 # python bytecode caches
 .github/**/__pycache__
 tools/**/__pycache__
+
+# graphify knowledge-graph output
+graphify-out/**
