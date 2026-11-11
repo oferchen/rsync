@@ -21,7 +21,7 @@ mod roundtrip_tests;
 mod windows_osstring_tests;
 
 pub(crate) use daemon::{
-    daemon_mode_arguments, run_daemon_mode, run_server_daemon_mode, server_daemon_mode_requested,
-    server_mode_requested,
+    daemon_mode_arguments, daemon_session_requested, run_daemon_mode, run_daemon_session,
+    run_server_daemon_mode, server_daemon_mode_requested, server_mode_requested,
 };
 pub(crate) use run::run_server_mode;

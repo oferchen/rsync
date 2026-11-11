@@ -300,9 +300,7 @@ fn ended_session_worker(counter: &ConnectionCounter, exit_code: i32) -> SessionW
         thread::yield_now();
     }
     SessionWorker {
-        backing: SessionBacking {
-            handle: Some(handle),
-        },
+        backing: SessionBacking::Thread(Some(handle)),
         _slot: slot,
     }
 }
@@ -764,6 +762,8 @@ fn test_accept_loop_state<'a>(
     max_connections: Option<usize>,
 ) -> AcceptLoopState<'a> {
     AcceptLoopState {
+        #[cfg(windows)]
+        session_spawn: None,
         signal_flags,
         workers: Vec::new(),
         served: 0,

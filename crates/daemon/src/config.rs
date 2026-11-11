@@ -10,6 +10,7 @@
 
 use std::ffi::OsString;
 use std::net::TcpListener;
+use std::path::PathBuf;
 
 use core::branding::Brand;
 use platform::signal::SignalFlags;
@@ -32,6 +33,8 @@ pub struct DaemonConfig {
     /// binding a new socket, eliminating the TOCTOU race between port allocation
     /// and daemon bind in tests.
     pre_bound_listener: Option<TcpListener>,
+    /// Program a Windows daemon starts for each accepted connection.
+    session_executable: Option<PathBuf>,
 }
 
 impl Clone for DaemonConfig {
@@ -42,6 +45,7 @@ impl Clone for DaemonConfig {
             load_default_paths: self.load_default_paths,
             signal_flags: self.signal_flags.clone(),
             pre_bound_listener: None,
+            session_executable: self.session_executable.clone(),
         }
     }
 }
@@ -100,6 +104,16 @@ impl DaemonConfig {
         self.pre_bound_listener.take()
     }
 
+    /// Program a Windows daemon starts to serve each accepted connection.
+    ///
+    /// `None` serves sessions on threads inside the daemon, which only an
+    /// embedding test harness should do. Unix daemons fork per connection
+    /// and ignore this.
+    #[must_use]
+    pub fn session_executable(&self) -> Option<&std::path::Path> {
+        self.session_executable.as_deref()
+    }
+
     /// Reports whether any daemon-specific arguments were provided.
     #[must_use]
     pub const fn has_runtime_request(&self) -> bool {
@@ -115,6 +129,7 @@ pub struct DaemonConfigBuilder {
     load_default_paths: bool,
     signal_flags: Option<SignalFlags>,
     pre_bound_listener: Option<TcpListener>,
+    session_executable: Option<PathBuf>,
 }
 
 impl Clone for DaemonConfigBuilder {
@@ -125,6 +140,7 @@ impl Clone for DaemonConfigBuilder {
             load_default_paths: self.load_default_paths,
             signal_flags: self.signal_flags.clone(),
             pre_bound_listener: None,
+            session_executable: self.session_executable.clone(),
         }
     }
 }
@@ -147,6 +163,7 @@ impl Default for DaemonConfigBuilder {
             load_default_paths: true,
             signal_flags: None,
             pre_bound_listener: None,
+            session_executable: None,
         }
     }
 }
@@ -159,6 +176,7 @@ impl From<DaemonConfig> for DaemonConfigBuilder {
             load_default_paths: config.load_default_paths,
             signal_flags: config.signal_flags,
             pre_bound_listener: config.pre_bound_listener,
+            session_executable: config.session_executable,
         }
     }
 }
@@ -211,6 +229,18 @@ impl DaemonConfigBuilder {
         self
     }
 
+    /// Names the program a Windows daemon starts for each accepted connection.
+    ///
+    /// The program is run as `PROGRAM --daemon-session` and serves exactly one
+    /// connection, as upstream's forked child does (socket.c:755-780). The
+    /// `oc-rsync` front end passes its own executable; leaving this unset
+    /// serves sessions on threads. Unix daemons fork and ignore it.
+    #[must_use]
+    pub fn session_executable(mut self, program: impl Into<PathBuf>) -> Self {
+        self.session_executable = Some(program.into());
+        self
+    }
+
     /// Finalises the builder and constructs the [`DaemonConfig`].
     #[must_use]
     pub fn build(self) -> DaemonConfig {
@@ -220,6 +250,7 @@ impl DaemonConfigBuilder {
             load_default_paths: self.load_default_paths,
             signal_flags: self.signal_flags,
             pre_bound_listener: self.pre_bound_listener,
+            session_executable: self.session_executable,
         }
     }
 }

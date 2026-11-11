@@ -77,9 +77,16 @@ struct SessionBacking {
 }
 
 #[cfg(not(unix))]
-struct SessionBacking {
-    /// Taken when the session is collected, so the handle is joined once.
-    handle: Option<thread::JoinHandle<WorkerResult>>,
+enum SessionBacking {
+    /// A session served on a thread of this process - only an embedding
+    /// harness without a session program runs sessions this way. Taken when
+    /// the session is collected, so the handle is joined once.
+    Thread(Option<thread::JoinHandle<WorkerResult>>),
+    /// A session process started for this connection.
+    ///
+    /// upstream: socket.c:761-777 - the parent keeps the child and reaps it.
+    #[cfg(windows)]
+    Process(platform::session_process::SessionChild),
 }
 
 #[cfg(unix)]
@@ -116,22 +123,63 @@ impl SessionBacking {
 #[cfg(not(unix))]
 impl SessionBacking {
     fn try_collect(&mut self) -> Option<SessionOutcome> {
-        let handle = self.handle.take()?;
-        if handle.is_finished() {
-            // `is_finished` already reported the thread has ended, so this
-            // join returns without blocking.
-            Some(join_backing(handle))
-        } else {
-            self.handle = Some(handle);
-            None
+        match self {
+            Self::Thread(slot) => {
+                let handle = slot.take()?;
+                if handle.is_finished() {
+                    // `is_finished` already reported the thread has ended, so
+                    // this join returns without blocking.
+                    Some(join_backing(handle))
+                } else {
+                    *slot = Some(handle);
+                    None
+                }
+            }
+            #[cfg(windows)]
+            Self::Process(child) => match child.try_wait() {
+                Ok(Some(code)) => Some(SessionOutcome::from_process_exit(child.pid(), code)),
+                Ok(None) => None,
+                Err(error) => Some(SessionOutcome::Died(format!(
+                    "cannot reap session process {}: {error}",
+                    child.pid()
+                ))),
+            },
         }
     }
 
     fn collect(&mut self) -> SessionOutcome {
-        self.handle.take().map_or_else(
-            || SessionOutcome::Died("session backing was already collected".to_owned()),
-            join_backing,
-        )
+        match self {
+            Self::Thread(slot) => slot.take().map_or_else(
+                || SessionOutcome::Died("session backing was already collected".to_owned()),
+                join_backing,
+            ),
+            #[cfg(windows)]
+            Self::Process(child) => match child.wait() {
+                Ok(code) => SessionOutcome::from_process_exit(child.pid(), code),
+                Err(error) => SessionOutcome::Died(format!(
+                    "cannot reap session process {}: {error}",
+                    child.pid()
+                )),
+            },
+        }
+    }
+}
+
+#[cfg(windows)]
+impl SessionOutcome {
+    /// Classifies how a session process ended.
+    ///
+    /// An NTSTATUS failure code (top two bits set, e.g. `0xC0000005`) is the
+    /// process dying, which the child cannot report for itself - the Windows
+    /// counterpart of a fatal signal.
+    fn from_process_exit(pid: u32, code: u32) -> Self {
+        match code {
+            0 => Self::Ok,
+            code if code >= 0xC000_0000 => Self::Died(format!(
+                "session process {pid} ended with status {code:#010x}"
+            )),
+            code => Self::EndedWithStatus(code as i32),
+        }
     }
 }
 
@@ -165,10 +213,6 @@ enum SessionOutcome {
     /// Only a forked child can end this way, so this is the exact mirror of
     /// [`SessionOutcome::Failed`]: each backing constructs one of the two, and
     /// the variant the other backing cannot reach is dead on that platform.
-    #[cfg_attr(
-        not(unix),
-        expect(dead_code, reason = "fork backing only; see SessionBacking")
-    )]
     EndedWithStatus(i32),
     /// The session died abnormally: a panic that escaped `catch_unwind` under
     /// a thread backing, or a fatal signal under a forked one.

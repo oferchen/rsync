@@ -69,6 +69,35 @@ fn is_stdin_socket() -> bool {
 /// is true, `daemon_main()` redirects stdout/stderr to `/dev/null` and calls
 /// `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
 fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
+    // upstream: clientserver.c:1759 - start_daemon(STDIN_FILENO, STDIN_FILENO)
+    // reads and writes the one inherited socket; stdout is not the client.
+    let socket = inherited_stdin_socket().map_err(|err| {
+        let code = ExitCode::SocketIo;
+        DaemonError::with_code(
+            code,
+            rsync_error!(
+                code.as_i32(),
+                format!("failed to adopt the inherited stdin socket: {err}")
+            )
+            .with_role(Role::Daemon),
+        )
+    })?;
+    // upstream: clientserver.c:1759 - the session socket is STDIN_FILENO.
+    serve_socket_session(options, socket, 0, "inetd daemon session failed")
+}
+
+/// Serves one session on an already-connected socket, then returns.
+///
+/// The inetd path and a Windows daemon's per-connection session child both
+/// end up here: each process serves exactly one connection after loading the
+/// configuration itself, as upstream's `start_daemon()` does
+/// (clientserver.c:1434).
+fn serve_socket_session(
+    options: RuntimeOptions,
+    socket: TcpStream,
+    fd: u64,
+    failure_context: &str,
+) -> Result<(), DaemonError> {
     let brand = options.brand;
 
     let RuntimeOptions {
@@ -124,29 +153,12 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         ));
     }
 
-    // upstream: clientserver.c:1759 - start_daemon(STDIN_FILENO, STDIN_FILENO)
-    // reads and writes the one inherited socket; stdout is not the client.
-    let mut stream = match inherited_stdin_socket() {
-        Ok(socket) => DaemonStream::plain(socket),
-        Err(err) => {
-            let code = ExitCode::SocketIo;
-            return Err(DaemonError::with_code(
-                code,
-                rsync_error!(
-                    code.as_i32(),
-                    format!("failed to adopt the inherited stdin socket: {err}")
-                )
-                .with_role(Role::Daemon),
-            ));
-        }
-    };
-
     // upstream: clientserver.c:1759 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
     // Under inetd, fd 0 IS the connected socket, so `client_addr()` skips the
     // environment arm entirely and `client_sockaddr()` reads the real peer via
     // `getpeername` (clientname.c:319-327). A fabricated address here would
     // evaluate every `hosts allow` / `hosts deny` rule against the wrong peer.
-    let peer_addr = match crate::daemon::peer_address::inherited_socket_peer_addr() {
+    let peer_addr = match socket.peer_addr() {
         Ok(addr) => addr,
         // upstream: clientname.c:323-326 - `getpeername` failure is fatal
         // (`exit_cleanup(RERR_SOCKETIO)`), never a fallback address. Serving a
@@ -158,12 +170,13 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
                 code,
                 rsync_error!(
                     code.as_i32(),
-                    format!("getpeername on the inherited stdin socket failed: {err}")
+                    format!("getpeername on fd{fd} failed: {err}")
                 )
                 .with_role(Role::Daemon),
             ));
         }
     };
+    let mut stream = DaemonStream::plain(socket);
 
     // upstream: clientserver.c:1442-1445 - the inetd child runs the same
     // `proxy protocol` gate as a forked listener child: start_daemon() is the
@@ -219,7 +232,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         },
     );
 
-    single_session_exit(outcome, "inetd daemon session failed")
+    single_session_exit(outcome, failure_context)
 }
 
 #[cfg(test)]
