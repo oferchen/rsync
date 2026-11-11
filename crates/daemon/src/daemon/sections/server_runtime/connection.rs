@@ -278,7 +278,7 @@ fn spawn_connection_worker(
             // connection cannot tear down the daemon - the thread-backed
             // stand-in for the crash isolation a forked child gets for free.
             match context.serve_session(stream, raw_peer_addr) {
-                Ok(()) => Ok(()),
+                Ok(_) => Ok(()),
                 Err(error) => Err((Some(peer_addr), error)),
             }
         });
@@ -352,7 +352,8 @@ fn serve_forked_session(
     peer_addr: SocketAddr,
 ) -> i32 {
     match context.serve_session(stream, raw_peer_addr) {
-        Ok(()) => 0,
+        // upstream: cleanup.c:264 - the child exits with its session's code.
+        Ok(code) => code.map_or(0, ExitCode::as_i32),
         Err(error) => {
             report_session_failure(Some(peer_addr), &error, context.log_sink.as_ref());
             SOCKET_IO_EXIT_CODE

@@ -57,7 +57,7 @@ fn handle_session(
     stream: DaemonStream,
     peer_addr: SocketAddr,
     params: SessionParams<'_>,
-) -> io::Result<()> {
+) -> io::Result<Option<ExitCode>> {
     let SessionParams {
         modules,
         motd_lines,
@@ -103,7 +103,7 @@ fn handle_session(
     let Some(peer_addr) =
         admit_proxy_protocol_peer(&mut stream, peer_addr, &proxy_policy, log_sink.as_ref())?
     else {
-        return Ok(());
+        return Ok(None);
     };
 
     // upstream: clientname.c `client_name` forward-confirms the reverse-DNS
@@ -123,12 +123,13 @@ fn handle_session(
     }
 
     match style {
-        SessionStyle::Binary => handle_binary_session(stream, daemon_limit, log_sink),
+        SessionStyle::Binary => {
+            handle_binary_session(stream, daemon_limit, log_sink).map(|()| None)
+        }
         SessionStyle::Legacy => {
             // upstream: clientserver.c - the per-connection child owns its own
-            // `exit_cleanup()`, so a session-fatal refusal never reaches the
-            // listening parent. Drop the code here for the same reason: it must
-            // not tear down the accept loop.
+            // `exit_cleanup()`, so the code is the child's exit status and never
+            // reaches the listening parent's accept loop (cleanup.c:264).
             handle_legacy_session(
                 stream,
                 peer_addr,
@@ -142,7 +143,6 @@ fn handle_session(
                     daemon_timeout,
                 },
             )
-            .map(|_| ())
         }
     }
 }

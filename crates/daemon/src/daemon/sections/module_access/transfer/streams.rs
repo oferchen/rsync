@@ -346,15 +346,8 @@ fn run_daemon_transfer(
     // frames. A receiver's trailer names the generator, the process upstream's
     // fatal stat and %stat errors come from. The brand is the daemon binary's
     // own, from argv[0].
-    let brand = branding::detect_brand(std::env::args_os().next().as_deref());
-    let role = match config.role {
-        ServerRole::Generator => Role::Sender,
-        ServerRole::Receiver => Role::Generator,
-    };
-    let fatal_report = move |error: &io::Error, code: i32| {
-        let code = core::exit_code::ExitCode::from_raw(code);
-        core::exit_code::fatal_report_lines(error, code, role, brand)
-    };
+    let role = config.role;
+    let fatal_report = move |error: &io::Error, code: i32| fatal_lines(error, code, role);
     run_server_with_handshake_adopting(
         config,
         handshake,
@@ -366,6 +359,22 @@ fn run_daemon_transfer(
             ..ServerTransferHooks::default()
         },
     )
+}
+
+/// The lines a daemon server reports for a transfer that `error` ended with
+/// `code`: the cause, when upstream prints one, then the `rsync error:` trailer.
+///
+/// A receiver's trailer names the generator, the process upstream's fatal
+/// stat and %stat errors come from. The brand is the daemon binary's own,
+/// from argv[0].
+fn fatal_lines(error: &io::Error, code: i32, role: ServerRole) -> Vec<Vec<u8>> {
+    let brand = branding::detect_brand(std::env::args_os().next().as_deref());
+    let role = match role {
+        ServerRole::Generator => Role::Sender,
+        ServerRole::Receiver => Role::Generator,
+    };
+    let code = core::exit_code::ExitCode::from_raw(code);
+    core::exit_code::fatal_report_lines(error, code, role, brand)
 }
 
 /// Renders one per-file daemon transfer-log line into the module's `log format`.
@@ -473,7 +482,12 @@ impl DaemonFileLog for DaemonFileLogWriter {
 /// a per-transfer log line is emitted using the module's configured format
 /// string (or `DEFAULT_LOG_FORMAT` as fallback).
 ///
-/// Returns the transfer exit status: `0` on success, non-zero on failure.
+/// Returns the code the session exits with: `Ok` for a transfer that ran to
+/// its end (0, or the RERR_* its I/O errors map to), `Err` for one a fatal
+/// error stopped.
+///
+/// upstream: cleanup.c:213-218 maps the run's `io_error` and `got_xfer_error`
+/// into the exit code; cleanup.c:223-224 has a daemon always call log_exit().
 fn execute_transfer(
     ctx: &ModuleRequestContext<'_>,
     config: ServerConfig,
@@ -483,7 +497,7 @@ fn execute_transfer(
     role: ServerRole,
     module: &ModuleRuntime,
     auth_user: Option<&str>,
-) -> i32 {
+) -> Result<i32, i32> {
     if let Some(log) = ctx.log_sink {
         // upstream: the daemon sender announces the walk with the FLOG-only
         // `building file list` (flist.c:2760) and the daemon receiver mirrors
@@ -577,7 +591,19 @@ fn execute_transfer(
 
     match result {
         Ok(server_stats) => {
-            if let Some(log) = ctx.log_sink {
+            let (io_error, got_xfer_error) = match &server_stats {
+                ServerStats::Generator(stats) => (stats.io_error, stats.got_xfer_error),
+                ServerStats::Receiver(stats) => (stats.io_error, stats.got_xfer_error),
+            };
+            let code = core::exit_code::io_error_exit_code(io_error, got_xfer_error).unwrap_or(0);
+            // upstream: log.c:941 - only the sender's totals are whole before
+            // the run ends, so a receiver logs them only for a clean exit. The
+            // end-of-run exit_cleanup(0) sets `am_server = 2`, which keeps a
+            // nonzero code's trailer out of the log (cleanup.c:121-122,
+            // log.c:947).
+            if let Some(log) = ctx.log_sink
+                && (code == 0 || role == ServerRole::Generator)
+            {
                 // The per-file transfer-log lines are written by the transfer
                 // engine's daemon-log hook (see `DaemonFileLogWriter`), one row
                 // per processed entry in flist-index order - mirroring upstream's
@@ -604,21 +630,23 @@ fn execute_transfer(
                 );
                 log_message(log, &rsync_info!(text).with_role(Role::Daemon));
             }
-            0
+            Ok(code)
         }
         Err(err) => {
-            if let Some(log) = ctx.log_sink {
-                let text = format!(
-                    "transfer failed to {} ({}): module={} error={}",
-                    ctx.host_display(),
-                    ctx.peer_ip,
-                    ctx.request,
-                    err
-                );
-                let message = rsync_error!(1, text).with_role(Role::Daemon);
-                log_message(log, &message);
+            // upstream: cleanup.c:113-117 - the session exits with the peer's
+            // MSG_ERROR_EXIT value (io.c:1930) or its own RERR_*, and a
+            // daemon logit()s the cause and the log_exit() trailer it reports
+            // (log.c:310-327, log.c:947-963).
+            let code = core::server::remote_exit_code(&err)
+                .unwrap_or_else(|| core::server::error::rerr_for_io_error(&err));
+            if let Some(log) = ctx.log_sink
+                && code != 0
+            {
+                for line in fatal_lines(&err, code, role) {
+                    log_raw_line(log, line.strip_suffix(b"\n").unwrap_or(&line));
+                }
             }
-            1
+            Err(code)
         }
     }
 }
