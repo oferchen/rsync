@@ -851,8 +851,7 @@ impl GeneratorContext {
         // them; the list is sorted only afterwards (flist.c:3059).
         for i in self.send_order(0..count) {
             let entry = &self.file_list[i];
-            self.prepare_pending_acl(entry, i, &mut flist_writer);
-            flist_writer.write_entry(&mut probed, entry)?;
+            self.send_flist_entry(i, &mut flist_writer, &mut probed)?;
             // upstream: flist.c:730-746,998-999 - send_file_entry() tallies the
             // per-type counts and total_size as each entry is written.
             self.flist_send_stats.record(entry);
@@ -1050,8 +1049,7 @@ impl GeneratorContext {
         let mut growth = FlistGrowth::default();
         for i in self.send_order(segment.flist_start..end) {
             let entry = &self.file_list[i];
-            self.prepare_pending_acl(entry, i, flist_writer);
-            flist_writer.write_entry(writer, entry)?;
+            self.send_flist_entry(i, flist_writer, writer)?;
             // upstream: flist.c:730-746,998-999 - send_file_entry() tallies the
             // per-type counts and total_size as each entry is written.
             self.flist_send_stats.record(entry);
@@ -1095,6 +1093,80 @@ impl GeneratorContext {
         self.incremental
             .dir_flist_growth
             .append(dirs, ProcessRole::Sender)
+    }
+
+    /// Writes file-list entry `index` with the ACLs and owner names it sends.
+    ///
+    /// upstream: flist.c:send_file_entry() - one entry, its owner names from
+    /// `add_uid()`/`add_gid()` and its ACLs (`send_acl()`, flist.c:654).
+    fn send_flist_entry<W: Write>(
+        &self,
+        index: usize,
+        flist_writer: &mut protocol::flist::FileListWriter,
+        out: &mut W,
+    ) -> io::Result<()> {
+        let entry = &self.file_list[index];
+        self.prepare_pending_acl(entry, index, flist_writer);
+        self.prepare_pending_owner_names(entry, flist_writer)?;
+        flist_writer.write_entry(out, entry)
+    }
+
+    /// Looks up the owner names the writer will send inline for `entry`.
+    ///
+    /// Only an owner id's first sighting under INC_RECURSE sends its name, so
+    /// the lookup runs once per id and the entry itself holds no name.
+    ///
+    /// # Errors
+    ///
+    /// A name converter that could not answer stops the file list; only a
+    /// host-database miss means "this id has no name" (clientserver.c:1326,
+    /// :1333).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:787-800` - `user_name = add_uid(uid)` / `group_name =
+    ///   add_gid(gid)` as each entry is sent.
+    /// - `uidlist.c:340-371` - `add_uid()` / `add_gid()` look the name up on
+    ///   the id's first sighting and return NULL afterwards.
+    #[cfg(unix)]
+    fn prepare_pending_owner_names(
+        &self,
+        entry: &protocol::flist::FileEntry,
+        flist_writer: &mut protocol::flist::FileListWriter,
+    ) -> io::Result<()> {
+        use metadata::id_lookup::{
+            lookup_group_name_cached, lookup_user_name_cached, no_id_unless_converter_failed,
+        };
+
+        if !self.config.flags.numeric_ids.is_off() {
+            return Ok(());
+        }
+        let user = match entry.uid() {
+            Some(uid) if flist_writer.needs_user_name(uid) => {
+                no_id_unless_converter_failed(lookup_user_name_cached(uid))?
+                    .and_then(|name| String::from_utf8(name).ok())
+            }
+            _ => None,
+        };
+        let group = match entry.gid() {
+            Some(gid) if flist_writer.needs_group_name(gid) => {
+                no_id_unless_converter_failed(lookup_group_name_cached(gid))?
+                    .and_then(|name| String::from_utf8(name).ok())
+            }
+            _ => None,
+        };
+        flist_writer.set_pending_owner_names(user, group);
+        Ok(())
+    }
+
+    /// No-op on non-Unix platforms: entries carry no owner ids to name.
+    #[cfg(not(unix))]
+    fn prepare_pending_owner_names(
+        &self,
+        _entry: &protocol::flist::FileEntry,
+        _flist_writer: &mut protocol::flist::FileListWriter,
+    ) -> io::Result<()> {
+        Ok(())
     }
 
     /// Reads filesystem ACLs and sets them on the writer for the next entry.

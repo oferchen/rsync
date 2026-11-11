@@ -126,6 +126,12 @@ pub struct FileListWriter {
     ///
     /// Tuple: (access_acl, optional_default_acl_for_dirs).
     pending_acl: Option<(RsyncAcl, Option<RsyncAcl>)>,
+    /// Owner names for the next `write_entry` call, looked up by the caller
+    /// on the owner ids' first sighting (see [`Self::needs_user_name`]).
+    ///
+    /// upstream: uidlist.c:340-371 add_uid()/add_gid() - the name lives in the
+    /// per-transfer id list, not in each file entry. Reset after every entry.
+    pending_owner_names: (Option<String>, Option<String>),
     /// Whether to write user/group name strings for named ACL entries.
     ///
     /// Upstream writes ACL names only when `inc_recurse && !numeric_ids`
@@ -174,6 +180,7 @@ impl FileListWriter {
             first_ndx: 0,
             acl_cache: AclCache::new(),
             pending_acl: None,
+            pending_owner_names: (None, None),
             acl_send_names: false,
             name_follows: false,
             id_sightings: IdSightings::default(),
@@ -201,6 +208,7 @@ impl FileListWriter {
             first_ndx: 0,
             acl_cache: AclCache::new(),
             pending_acl: None,
+            pending_owner_names: (None, None),
             acl_send_names: false,
             name_follows: false,
             id_sightings: IdSightings::default(),
@@ -323,6 +331,56 @@ impl FileListWriter {
     #[must_use]
     pub const fn acl_cache(&self) -> &AclCache {
         &self.acl_cache
+    }
+
+    /// Reports whether the next entry owned by `uid` sends its user name
+    /// inline: names are on, `uid` is preserved, and no earlier entry named it.
+    ///
+    /// upstream: flist.c:787-790 - `user_name = add_uid(uid)` is non-NULL only
+    /// on the id's first sighting, and only then is `XMIT_USER_NAME_FOLLOWS`
+    /// set under `inc_recurse`.
+    #[inline]
+    #[must_use]
+    pub fn needs_user_name(&self, uid: u32) -> bool {
+        self.name_follows
+            && self.preserve.uid
+            && self.protocol.as_u8() >= 30
+            && !self.id_sightings.has_uid(uid)
+    }
+
+    /// Group counterpart of [`Self::needs_user_name`].
+    ///
+    /// upstream: flist.c:797-800 - `group_name = add_gid(gid)`.
+    #[inline]
+    #[must_use]
+    pub fn needs_group_name(&self, gid: u32) -> bool {
+        self.name_follows
+            && self.preserve.gid
+            && self.protocol.as_u8() >= 30
+            && !self.id_sightings.has_gid(gid)
+    }
+
+    /// Sets the owner names for the next `write_entry` call.
+    ///
+    /// A sender passes the names [`Self::needs_user_name`] and
+    /// [`Self::needs_group_name`] ask for, so the file entries themselves
+    /// carry no names. An entry decoded from the wire still carries the
+    /// names it arrived with, and `write_entry` falls back to them when no
+    /// pending name is set.
+    pub fn set_pending_owner_names(&mut self, user: Option<String>, group: Option<String>) {
+        self.pending_owner_names = (user, group);
+    }
+
+    /// The user name `entry` sends: the pending name, else its own.
+    #[inline]
+    fn user_name_of<'a>(&'a self, entry: &'a FileEntry) -> Option<&'a str> {
+        self.pending_owner_names.0.as_deref().or(entry.user_name())
+    }
+
+    /// The group name `entry` sends: the pending name, else its own.
+    #[inline]
+    fn group_name_of<'a>(&'a self, entry: &'a FileEntry) -> Option<&'a str> {
+        self.pending_owner_names.1.as_deref().or(entry.group_name())
     }
 
     /// Sets the ACL data for the next `write_entry` call.
@@ -573,6 +631,7 @@ impl FileListWriter {
         }
 
         self.update_stats(entry);
+        self.pending_owner_names = (None, None);
 
         Ok(())
     }
