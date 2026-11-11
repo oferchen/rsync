@@ -63,7 +63,7 @@ pub(crate) fn punch_hole(
     match fallocate(fd, punch_flags, pos, len) {
         Ok(()) => {
             file.seek(SeekFrom::Start(pos + len))
-                .map_err(|e| LocalCopyError::io("seek after hole punch", path, e))?;
+                .map_err(|e| LocalCopyError::destination_write("seek after hole punch", path, e))?;
             return Ok(());
         }
         Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {}
@@ -75,7 +75,7 @@ pub(crate) fn punch_hole(
     match fallocate(fd, FallocateFlags::ZERO_RANGE, pos, len) {
         Ok(()) => {
             file.seek(SeekFrom::Start(pos + len))
-                .map_err(|e| LocalCopyError::io("seek after zero range", path, e))?;
+                .map_err(|e| LocalCopyError::destination_write("seek after zero range", path, e))?;
             return Ok(());
         }
         Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {}
@@ -107,7 +107,7 @@ pub(crate) fn punch_hole(
     }
 
     file.seek(SeekFrom::Start(pos))
-        .map_err(|e| LocalCopyError::io("seek before writing zeros", path, e))?;
+        .map_err(|e| LocalCopyError::destination_write("seek before writing zeros", path, e))?;
 
     write_zeros_fallback(file, path, len)
 }
@@ -125,8 +125,9 @@ pub(super) fn write_zeros_fallback(
 
     while len > 0 {
         let chunk_size = len.min(ZERO_WRITE_BUFFER_SIZE as u64) as usize;
-        file.write_all(&zeros[..chunk_size])
-            .map_err(|e| LocalCopyError::io("write zeros for sparse hole", path, e))?;
+        file.write_all(&zeros[..chunk_size]).map_err(|e| {
+            LocalCopyError::destination_write("write zeros for sparse hole", path, e)
+        })?;
         len -= chunk_size as u64;
     }
 

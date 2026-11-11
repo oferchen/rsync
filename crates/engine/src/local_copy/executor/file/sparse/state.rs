@@ -88,9 +88,9 @@ impl SparseWriteState {
             return Ok(());
         }
 
-        let start = writer
-            .stream_position()
-            .map_err(|error| LocalCopyError::io("seek in destination file", destination, error))?;
+        let start = writer.stream_position().map_err(|error| {
+            LocalCopyError::destination_write("seek in destination file", destination, error)
+        })?;
 
         if start >= self.preallocated_len {
             self.seek_over(writer, destination)?;
@@ -114,7 +114,11 @@ impl SparseWriteState {
             writer
                 .seek(SeekFrom::Current(step as i64))
                 .map_err(|error| {
-                    LocalCopyError::io("seek in destination file", destination, error)
+                    LocalCopyError::destination_write(
+                        "seek in destination file",
+                        destination,
+                        error,
+                    )
                 })?;
             remaining -= step;
         }
@@ -144,9 +148,9 @@ impl SparseWriteState {
     ) -> Result<u64, LocalCopyError> {
         // The logical end of file is the current position plus any trailing
         // pending zero run that becomes a hole.
-        let position = writer
-            .stream_position()
-            .map_err(|error| LocalCopyError::io("seek in destination file", destination, error))?;
+        let position = writer.stream_position().map_err(|error| {
+            LocalCopyError::destination_write("seek in destination file", destination, error)
+        })?;
         let logical_end = position.saturating_add(self.pending_zero_run);
         self.flush(writer, destination)?;
         Ok(logical_end)
@@ -244,7 +248,9 @@ fn write_sparse_spans(
                 SpanWrite::Data => {
                     writer
                         .write_all(&chunk[data_start..data_end])
-                        .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+                        .map_err(|error| {
+                            LocalCopyError::destination_write("copy file", destination, error)
+                        })?;
                     state.touched.record(
                         state.logical_offset + data_start as u64,
                         (data_end - data_start) as u64,
@@ -256,7 +262,11 @@ fn write_sparse_spans(
                     writer
                         .seek(SeekFrom::Current((data_end - data_start) as i64))
                         .map_err(|error| {
-                            LocalCopyError::io("seek in destination file", destination, error)
+                            LocalCopyError::destination_write(
+                                "seek in destination file",
+                                destination,
+                                error,
+                            )
                         })?;
                 }
             }

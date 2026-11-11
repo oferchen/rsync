@@ -496,9 +496,9 @@ impl<'a> CopyContext<'a> {
                             destination,
                         )?;
                     } else {
-                        writer
-                            .write_all(matched_bytes)
-                            .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+                        writer.write_all(matched_bytes).map_err(|error| {
+                            LocalCopyError::destination_write("copy file", destination, error)
+                        })?;
                         touched.record(total_bytes, block_len as u64);
                     }
                     self.write_batch_block_match_token(
@@ -727,9 +727,9 @@ impl<'a> CopyContext<'a> {
                     let _ =
                         write_sparse_chunk(writer, &mut sparse_state, matched_bytes, destination)?;
                 } else {
-                    writer
-                        .write_all(matched_bytes)
-                        .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+                    writer.write_all(matched_bytes).map_err(|error| {
+                        LocalCopyError::destination_write("copy file", destination, error)
+                    })?;
                     touched.record(total_bytes, block_len as u64);
                 }
                 self.write_batch_block_match_token(
@@ -937,9 +937,9 @@ impl<'a> CopyContext<'a> {
         let written = if sparse {
             write_sparse_chunk(writer, state, chunk, destination)?
         } else {
-            writer
-                .write_all(chunk)
-                .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+            writer.write_all(chunk).map_err(|error| {
+                LocalCopyError::destination_write("copy file", destination, error)
+            })?;
             chunk.len()
         };
 
@@ -1079,9 +1079,9 @@ impl<'a> CopyContext<'a> {
             if sparse.enabled {
                 let _ = write_sparse_chunk(writer, sparse.state, &buffer[..read], destination)?;
             } else {
-                writer
-                    .write_all(&buffer[..read])
-                    .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+                writer.write_all(&buffer[..read]).map_err(|error| {
+                    LocalCopyError::destination_write("copy file", destination, error)
+                })?;
             }
 
             remaining -= read;

@@ -5,7 +5,9 @@ use std::time::{Duration, SystemTime};
 
 use thiserror::Error;
 
-use crate::commit_failure::{CommitDisposition, commit_op_destination, commit_op_failure};
+use crate::commit_failure::{
+    CommitDisposition, CommitOp, attach_commit_op, commit_op_destination, commit_op_failure,
+};
 
 use super::LocalCopyReport;
 use super::filter_program::{
@@ -165,6 +167,23 @@ impl LocalCopyError {
             path: path.into(),
             source,
         })
+    }
+
+    /// Constructs a failed write of the received file at `path`.
+    ///
+    /// The error is tagged as the receiver's write stage, so it is reported as
+    /// upstream's `write failed on %s` and ends the copy with `RERR_FILEIO`.
+    /// Upstream names the destination even when the bytes went to a temp file.
+    ///
+    /// upstream: receiver.c:658-660 - `rsyserr(FERROR_XFER, errno, "write
+    /// failed on %s", full_fname(fname))` then `exit_cleanup(RERR_FILEIO)`.
+    #[must_use]
+    pub fn destination_write(action: &'static str, path: &Path, source: io::Error) -> Self {
+        Self::io(
+            action,
+            path,
+            attach_commit_op(CommitOp::Write, path, source),
+        )
     }
 
     /// Constructs an error for a source argument whose initial `link_stat`
@@ -398,12 +417,7 @@ impl LocalCopyError {
             return Err(self);
         };
         let disposition = CommitDisposition::of(source);
-        if self.reported
-            || !matches!(
-                disposition,
-                CommitDisposition::SkipFile | CommitDisposition::Discard
-            )
-        {
+        if self.reported || disposition == CommitDisposition::Propagate {
             return Err(self);
         }
         let Some((op, operand)) = commit_op_failure(source) else {
@@ -411,15 +425,19 @@ impl LocalCopyError {
         };
         let target = commit_op_destination(source)
             .map(|target| target.strip_prefix(destination_root).unwrap_or(target));
-        eprintln!(
-            "{}",
-            op.failure_line(
-                &logging::full_fname(operand),
-                target,
-                &upstream_io_error(source),
-                crate::commit_failure::commit_op_offset(source),
-            )
+        let line = op.failure_line(
+            &logging::full_fname(operand),
+            target,
+            &upstream_io_error(source),
+            crate::commit_failure::commit_op_offset(source),
         );
+        // upstream: rsync.c:897-900, receiver.c:545-548, receiver.c:658-660,
+        // receiver.c:679-681 and receiver.c:1296-1300 print their line, then
+        // exit_cleanup(RERR_FILEIO) from the receiver.
+        if let CommitDisposition::Abort(_) = disposition {
+            return Err(Self::file_io(LocalCopySide::Receiver, line));
+        }
+        eprintln!("{line}");
         match disposition {
             CommitDisposition::Discard => Ok(T::default()),
             _ => Err(self.reported()),
@@ -466,6 +484,8 @@ pub enum LocalCopySide {
     Sender,
     /// The half that stats and compares the destination.
     Generator,
+    /// The half that writes the received files.
+    Receiver,
 }
 
 /// Classification of local copy failures.
@@ -988,6 +1008,37 @@ mod tests {
         assert!(!open_failed.is_vanished_error());
         assert_eq!(open_failed.vanished_path(), None);
         assert_eq!(open_failed.exit_code(), INVALID_OPERAND_EXIT_CODE);
+    }
+
+    /// A failed write of the received file ends the copy the way upstream's
+    /// receiver does: `write failed on %s` naming the destination, then
+    /// `RERR_FILEIO` from the receiver (receiver.c:658-660).
+    ///
+    /// Unix only: raw errno 28 is `ENOSPC` there but Win32
+    /// `ERROR_OUT_OF_PAPER` on Windows, where the reason text comes from the
+    /// Cygwin-style errno rendering of task 630.
+    #[cfg(unix)]
+    #[test]
+    fn a_destination_write_failure_aborts_with_the_receivers_write_line() {
+        let error = LocalCopyError::destination_write(
+            "copy file",
+            Path::new("/dst/a"),
+            io::Error::from_raw_os_error(28),
+        )
+        .report_commit_failure::<()>(Path::new("/dst"))
+        .expect_err("a failed write ends the copy");
+
+        assert_eq!(error.exit_code(), FILE_IO_EXIT_CODE);
+        match error.kind() {
+            LocalCopyErrorKind::FileIo { side, message } => {
+                assert_eq!(*side, LocalCopySide::Receiver);
+                assert_eq!(
+                    message,
+                    "rsync: [receiver] write failed on \"/dst/a\": No space left on device (28)"
+                );
+            }
+            other => panic!("expected a file I/O abort, got {other:?}"),
+        }
     }
 
     /// Only the per-file commit failures are printed and marked reported, so
