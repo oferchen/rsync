@@ -133,7 +133,13 @@ where
     }
     // Ordering: callers zip results with jobs by position.
     // Preserved by par_iter().map().collect() (rayon preserves index order).
-    jobs.par_iter().map(hash).collect()
+    let session = logging::Session::capture();
+    jobs.par_iter()
+        .map(|job| {
+            let _log = session.enter();
+            hash(job)
+        })
+        .collect()
 }
 
 /// Hashes each job as a vector of `block_len` block digests. A batch large
@@ -160,7 +166,13 @@ where
     }
     // Ordering: callers zip results with jobs by position.
     // Preserved by par_iter().map().collect() (rayon preserves index order).
-    jobs.par_iter().map(|job| hash(job, true)).collect()
+    let session = logging::Session::capture();
+    jobs.par_iter()
+        .map(|job| {
+            let _log = session.enter();
+            hash(job, true)
+        })
+        .collect()
 }
 
 fn hash_blocks<H, F>(
@@ -184,9 +196,13 @@ where
     };
     let blocks = 0..job.len.div_ceil(block_len);
     let digests = if pooled {
+        let session = logging::Session::capture();
         blocks
             .into_par_iter()
-            .map(block)
+            .map(|index| {
+                let _log = session.enter();
+                block(index)
+            })
             .collect::<io::Result<Vec<_>>>()
     } else {
         blocks.map(block).collect::<io::Result<Vec<_>>>()

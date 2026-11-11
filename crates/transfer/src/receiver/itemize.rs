@@ -341,8 +341,8 @@ impl ReceiverContext {
         line: &[u8],
     ) -> std::io::Result<()> {
         if self.config.connection.client_mode {
-            use std::io::Write as _;
-            std::io::stdout().write_all(line)
+            logging::emit_line(logging::LogCode::Info, line);
+            Ok(())
         } else {
             self.log_daemon_message(line);
             writer.send_msg_info(line)
@@ -380,8 +380,8 @@ impl ReceiverContext {
     ) -> std::io::Result<()> {
         self.got_xfer_error.set(true);
         if self.config.connection.client_mode {
-            use std::io::Write as _;
-            std::io::stderr().write_all(line.as_ref())
+            logging::emit_line(logging::LogCode::ErrorXfer, line.as_ref());
+            Ok(())
         } else {
             let line = line.as_ref();
             self.log_daemon_message(line);
@@ -543,8 +543,8 @@ impl ReceiverContext {
         line: &str,
     ) -> std::io::Result<()> {
         if self.config.connection.client_mode {
-            use std::io::Write as _;
-            return std::io::stderr().write_all(line.as_bytes());
+            logging::emit_line(logging::LogCode::Warning, line.as_bytes());
+            return Ok(());
         }
         self.log_daemon_message(line.as_bytes());
         writer.send_msg_warning(line.as_bytes())
@@ -566,8 +566,8 @@ impl ReceiverContext {
         line: &str,
     ) -> std::io::Result<()> {
         if self.config.connection.client_mode {
-            use std::io::Write as _;
-            std::io::stderr().write_all(line.as_bytes())
+            logging::emit_line(logging::LogCode::Error, line.as_bytes());
+            Ok(())
         } else {
             self.log_daemon_message(line.as_bytes());
             writer.send_msg_error(line.as_bytes())
@@ -1580,15 +1580,14 @@ impl ReceiverContext {
         Ok(())
     }
 
-    /// Writes one `-v` name line to the client's own output stream, honouring
-    /// `--msgs2stderr` (upstream FINFO routes to stderr when set, else stdout).
+    /// Writes one `-v` name line through the client's diagnostic sink, which
+    /// honours `--msgs2stderr` (upstream FINFO routes to stderr when set).
     ///
     /// Client-mode only: this is the local-pull equivalent of upstream
     /// `log_item(FCLIENT, ...)`. A server receiver's names travel as wire
     /// itemize and are printed by the peer's sender, so this is never called
     /// off the client.
     fn emit_name_line(&self, line: &str) -> std::io::Result<()> {
-        use std::io::Write as _;
         // Under a custom `--out-format`, upstream logs exactly one templated line
         // per entry via `log_item`; the plain `-v` name would double it. The
         // per-entry line is produced from collected events instead (see
@@ -1596,11 +1595,8 @@ impl ReceiverContext {
         if self.collect_out_format_events() {
             return Ok(());
         }
-        if self.names_to_stderr {
-            std::io::stderr().write_all(line.as_bytes())
-        } else {
-            std::io::stdout().write_all(line.as_bytes())
-        }
+        logging::emit_line(logging::LogCode::Info, line.as_bytes());
+        Ok(())
     }
 
     /// Buffers a pre-transfer `-v` name (a directory reached in phase 1) under
@@ -1614,22 +1610,33 @@ impl ReceiverContext {
             .push(line);
     }
 
-    /// Records a transferred file's `-v` name at its flist index and flushes
-    /// every buffered name up to and including that index, in ascending order,
-    /// so any directories that precede the file print immediately before it -
-    /// interleaved with `--progress`. Mirrors upstream `log_before_transfer`
-    /// (`receiver.c:1263-1267`, name printed per file just before its data).
-    pub(in crate::receiver) fn emit_name_in_order(
+    /// Returns the client's `-v` name line for a file about to be received,
+    /// first releasing the buffered directory names that precede it.
+    ///
+    /// The line rides on the file's begin message and the disk thread prints
+    /// it once the output opens (upstream `receiver.c:1254-1264`: a failed
+    /// open names no file). `--progress` prints the name with its bar, `-i`
+    /// prints it in the itemize row, a custom `--out-format` prints its own
+    /// templated line, and the phase-2 redo re-sends files already named.
+    pub(in crate::receiver) fn client_name_line(
         &self,
         flist_idx: usize,
-        line: String,
-    ) -> std::io::Result<()> {
-        self.name_rows
-            .borrow_mut()
-            .entry(flist_idx)
-            .or_default()
-            .push(line);
-        self.flush_names_through(flist_idx)
+        entry: &protocol::flist::FileEntry,
+        is_redo_pass: bool,
+    ) -> Option<String> {
+        if !(self.config.flags.verbose && self.config.connection.client_mode) {
+            return None;
+        }
+        let named = if self.interleave_names {
+            if is_redo_pass {
+                return None;
+            }
+            let _ = self.flush_names_through(flist_idx);
+            !self.progress_active && !self.collect_out_format_events()
+        } else {
+            !self.should_emit_itemize()
+        };
+        named.then(|| entry.path().display().to_string())
     }
 
     /// Drains buffered `-v` name lines with a flist index `<= upto`, in
