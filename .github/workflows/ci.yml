@@ -63,17 +63,16 @@ on:
     - cron: '30 3 * * *'
 
 concurrency:
-  # Pull requests wait in two first-in-first-out lanes chosen by pull request
-  # number parity, and nothing is cancelled. A pull request run carries only
-  # the light jobs (see the trigger policy above); the full set, including the
-  # upstream testsuite legs and the Windows bake legs called from here, runs
-  # once per merge-train batch. A run for a commit its pull request has since
-  # replaced is cancelled by the merge train, since queue: max cannot cancel
-  # it. Every other event (master push, schedule, batch dispatch) gets its own
-  # group per commit, so it never waits behind a lane and every merge commit
-  # keeps a completed run for bisection.
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-queue-{0}', (endsWith(github.event.pull_request.number, '0') || endsWith(github.event.pull_request.number, '2') || endsWith(github.event.pull_request.number, '4') || endsWith(github.event.pull_request.number, '6') || endsWith(github.event.pull_request.number, '8')) && 'even' || 'odd') || format('{0}-{1}', github.ref, github.sha) }}
-  queue: max
+  # One group per pull request. A pull request run carries only the light jobs
+  # (see the trigger policy above), so pull requests run in parallel rather
+  # than queueing behind each other, and a newer push cancels the run it
+  # supersedes. The full set, including the upstream testsuite legs and the
+  # Windows bake legs called from here, runs once per merge-train batch. Every
+  # other event (master push, schedule, batch dispatch) gets its own group per
+  # commit, so nothing cancels it and every merge commit keeps a completed run
+  # for bisection.
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
