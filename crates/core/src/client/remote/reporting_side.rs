@@ -196,9 +196,10 @@ pub(crate) fn local_failure_error(
     // filter rule (exclude.c:1924-1926), an unenterable destination
     // (main.c:778-781), a --checksum-choice the file list cannot use
     // (checksum.c:549-551) - leaves the remote side blocked on its input, so
-    // the poll finds it running and the local code stands. oc closes the
-    // pipes and waits, which makes that child exit with its own EOF code (12);
-    // only a failure of the stream itself means the peer went first.
+    // the poll finds it running and the local code stands. A status learned
+    // only after the stream closed - the embedded transport's exit report -
+    // is that child's own EOF code (12) instead, so only a failure of the
+    // stream itself means the peer went first.
     let peer_went_first = matches!(
         error.kind(),
         io::ErrorKind::BrokenPipe

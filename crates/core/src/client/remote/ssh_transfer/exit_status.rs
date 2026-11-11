@@ -9,6 +9,8 @@
 
 use std::time::Duration;
 
+use rsync_io::ssh::SshChildHandle;
+
 use super::super::super::summary::{
     ClientEntryMetadata, ClientEvent, ClientSummary, ListOnlyEntryFields,
 };
@@ -190,6 +192,21 @@ pub(in crate::client::remote) fn map_cleanup_child_exit_status(
     }
     map_child_exit_status(status)
 }
+
+/// Polls the remote-shell child the way an aborting client does.
+///
+/// upstream: cleanup.c:146-153 `_exit_cleanup()` folds in the child's status
+/// only when `wait_process(..., WNOHANG)` finds it already gone. A child still
+/// running, or one `waitpid()` cannot report, leaves the local code standing
+/// and is not waited for.
+pub(in crate::client::remote) fn poll_cleanup_child(child: SshChildHandle) -> Option<ExitCode> {
+    child
+        .poll_exit()
+        .ok()
+        .flatten()
+        .map(map_cleanup_child_exit_status)
+}
+
 /// Maps the embedded SSH transport's remote exit report to an rsync exit code.
 ///
 /// The embedded transport has no child to `waitpid()`; the server's

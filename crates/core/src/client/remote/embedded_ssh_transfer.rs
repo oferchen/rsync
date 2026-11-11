@@ -519,7 +519,7 @@ fn resolve_embedded_outcome(
         },
         // Same worst-wins resolution as the subprocess transport.
         Err(e) => match remote_exit {
-            Some(code) => Err(transfer_failure_error(e, code, side, bytes_received)),
+            Some(code) => Err(transfer_failure_error(e, Some(code), side, bytes_received)),
             None => Err(local_failure_error(&e, None, side, bytes_received, None)),
         },
     }
