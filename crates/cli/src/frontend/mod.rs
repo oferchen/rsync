@@ -281,6 +281,10 @@ where
     // Check for --server --daemon (remote-shell daemon mode) BEFORE plain
     // --server. upstream: main.c:1971-1975 dispatches start_daemon() when both
     // am_server and am_daemon are set, before the normal server path.
+    if server::daemon_session_requested(&args) {
+        return server::run_daemon_session(&args, stderr);
+    }
+
     if server::server_daemon_mode_requested(&args) {
         return server::run_server_daemon_mode(&args, stderr);
     }

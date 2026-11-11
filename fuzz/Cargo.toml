@@ -230,6 +230,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "connection_handoff"
+path = "fuzz_targets/connection_handoff.rs"
+test = false
+doc = false
+bench = false
+
 # Standalone workspace - excluded from the root workspace so that
 # `cargo build` does not pull libfuzzer-sys into ordinary builds.
 [workspace]

@@ -108,6 +108,57 @@ pub(crate) fn server_daemon_arguments(args: &[OsString]) -> Vec<OsString> {
     daemon_args
 }
 
+/// Reports whether this process is a Windows daemon's per-connection session
+/// child: exactly `oc-rsync --daemon-session`, the command line the daemon
+/// starts it with.
+pub(crate) fn daemon_session_requested(args: &[OsString]) -> bool {
+    args.len() == 2 && args[1] == "--daemon-session"
+}
+
+/// Serves the one connection a Windows daemon handed to this process.
+///
+/// upstream: socket.c:761-773 - the forked child runs `start_daemon()` on the
+/// accepted socket. Windows has no `fork`, so the daemon starts this process
+/// and passes the connection over its standard input.
+#[cfg(windows)]
+pub(crate) fn run_daemon_session<Err: Write>(args: &[OsString], stderr: &mut Err) -> i32 {
+    let brand = super::super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
+    match daemon::run_daemon_session_child(brand) {
+        Ok(()) => 0,
+        Err(error) => {
+            write_daemon_error(stderr, brand, error.exit_code(), &error.to_string());
+            error.exit_code()
+        }
+    }
+}
+
+/// Refuses `--daemon-session` outside Windows: a Unix daemon forks its
+/// session children and never starts this mode.
+#[cfg(unix)]
+pub(crate) fn run_daemon_session<Err: Write>(args: &[OsString], stderr: &mut Err) -> i32 {
+    let brand = super::super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
+    write_daemon_error(
+        stderr,
+        brand,
+        1,
+        "--daemon-session is internal to the Windows daemon",
+    );
+    1
+}
+
+/// Writes one daemon-role error line in the caller's branding.
+fn write_daemon_error<Err: Write>(stderr: &mut Err, brand: Brand, code: i32, text: &str) {
+    use core::message::Role;
+    use core::rsync_error;
+    use logging_sink::MessageSink;
+
+    let mut sink = MessageSink::with_brand(stderr, brand);
+    let message = rsync_error!(code, text.to_owned()).with_role(Role::Daemon);
+    if super::super::write_message(&message, &mut sink).is_err() {
+        let _ = writeln!(sink.writer_mut(), "{text}");
+    }
+}
+
 /// Delegates execution to the daemon front-end (Unix) or reports that daemon
 /// mode is unavailable (Windows).
 #[cfg(unix)]

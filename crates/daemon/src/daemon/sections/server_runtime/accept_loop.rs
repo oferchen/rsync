@@ -2,14 +2,17 @@
 ///
 /// On Unix every session - TCP or relayed from the QUIC front process - runs
 /// in a forked child, as upstream does, and the parent stays single-threaded:
-/// it never chroots, changes uid/gid or starts a thread. Windows has no `fork`
-/// and serves each session on a thread with `catch_unwind` isolating panics.
+/// it never chroots, changes uid/gid or starts a thread. Windows has no `fork`:
+/// the daemon starts a session process per connection instead (see
+/// `SessionSpawn`), and only an embedding harness without a session program
+/// serves sessions on threads with `catch_unwind` isolating panics.
 ///
 /// upstream: socket.c:761-773 `start_accept_loop()` forks per connection.
 fn serve_connections(
     options: RuntimeOptions,
     external_signal_flags: Option<platform::signal::SignalFlags>,
     pre_bound_listener: Option<TcpListener>,
+    #[cfg(windows)] session_spawn: Option<SessionSpawn>,
 ) -> Result<(), DaemonError> {
     // Use externally injected signal flags (from the Windows Service dispatcher)
     // when available, otherwise register platform signal handlers so SIGPIPE is
@@ -416,6 +419,8 @@ fn serve_connections(
     };
 
     let mut state = AcceptLoopState {
+        #[cfg(windows)]
+        session_spawn,
         signal_flags: &signal_flags,
         workers: Vec::new(),
         served: 0,

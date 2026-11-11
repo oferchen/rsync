@@ -176,6 +176,8 @@ mod cli;
 mod config;
 /// Typed daemon connection lifecycle state machine.
 pub mod connection;
+/// Parent-to-child hand-off of one accepted connection on Windows.
+pub mod connection_handoff;
 mod daemon;
 /// Unified stream abstraction for plain TCP and stdio connections.
 pub mod daemon_stream;
@@ -212,6 +214,8 @@ pub use config::{DaemonConfig, DaemonConfigBuilder};
 #[cfg(feature = "async-daemon")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async-daemon")))]
 pub use daemon::run_async_daemon;
+#[cfg(windows)]
+pub use daemon::run_daemon_session_child;
 pub use daemon::{is_daemon_parameter, run_daemon, run_daemon_stdio, run_stdio_session};
 pub use daemon_stream::{DaemonStream, StdioPair};
 pub use error::DaemonError;
