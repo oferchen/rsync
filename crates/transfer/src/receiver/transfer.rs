@@ -206,7 +206,7 @@ impl ReceiverContext {
             // source argument produces, and `flist.c:2671` leaves io_error clear
             // for it, so the MSG_ERROR_XFER frames read while draining the list
             // are the only evidence the run must exit 23.
-            got_xfer_error: reader.xfer_error_count() > 0,
+            got_xfer_error: reader.xfer_error_count() > 0 || logging::xfer_error_reported(),
             ..TransferStats::default()
         })
     }

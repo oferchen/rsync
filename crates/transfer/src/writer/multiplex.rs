@@ -284,6 +284,10 @@ pub(crate) struct MultiplexWriter<W> {
     /// frame codes are chosen for. `None` until a server sets it: a client
     /// writer frames what it is given unchanged.
     message_routing: Option<(super::MessageRoute, protocol::ProtocolVersion)>,
+    /// Diagnostic lines a server session queued from any thread; they join
+    /// the message queue ahead of the next bytes this writer handles.
+    /// upstream: log.c:357-366.
+    outbox: Option<Arc<super::peer_sink::PeerOutbox>>,
 }
 
 impl<W: Write> MultiplexWriter<W> {
@@ -298,7 +302,52 @@ impl<W: Write> MultiplexWriter<W> {
             allowed_lull: None,
             data_written: 0,
             message_routing: None,
+            outbox: super::peer_sink::session_outbox(),
         }
+    }
+
+    /// Queues the diagnostic lines other threads produced, ahead of whatever
+    /// this writer handles next. Runs before every write, so the empty check
+    /// stays inline.
+    #[inline]
+    fn send_outbox(&mut self) -> io::Result<()> {
+        match &self.outbox {
+            Some(outbox) if outbox.has_pending() => self.send_pending_outbox(),
+            _ => Ok(()),
+        }
+    }
+
+    #[cold]
+    fn send_pending_outbox(&mut self) -> io::Result<()> {
+        let Some(frames) = self.outbox.as_ref().and_then(|outbox| outbox.take()) else {
+            return Ok(());
+        };
+        for (code, payload) in frames {
+            self.send_routed(code, &payload)?;
+        }
+        Ok(())
+    }
+
+    /// Delivers one queued diagnostic line the way upstream's `rwrite()` does
+    /// on a server: to this process's stderr when the route keeps it local,
+    /// else into the message queue with the code downgraded for a pre-30 peer.
+    ///
+    /// upstream: log.c:357-366 (the msgs2stderr branch runs before any
+    /// send_msg()); the local write escapes like log.c:425; the queued frame
+    /// leaves ahead of buffered data (io.c:628-636).
+    fn send_routed(&mut self, code: MessageCode, line: &[u8]) -> io::Result<()> {
+        let code = match self.message_routing {
+            Some((route, _)) if route.writes_locally(code) => {
+                let escaped =
+                    crate::reader::escape_terminal_line(line, logging::escape::terminal_style());
+                return io::stderr().lock().write_all(&escaped);
+            }
+            Some((_, protocol)) => super::frame_code(code, protocol),
+            None => code,
+        };
+        self.out
+            .borrow_mut()
+            .queue_message(&mut self.inner, code, line)
     }
 
     /// The buffered frame run, for a transport core to drain while it waits.
@@ -477,6 +526,7 @@ impl<W: Write> MultiplexWriter<W> {
     /// ahead of any buffered data (io.c:628-636). No message code is written
     /// at once.
     pub(crate) fn send_message(&mut self, code: MessageCode, payload: &[u8]) -> io::Result<()> {
+        self.send_outbox()?;
         self.out
             .borrow_mut()
             .queue_message(&mut self.inner, code, payload)
@@ -487,6 +537,7 @@ impl<W: Write> MultiplexWriter<W> {
     /// Used for protocol exchanges like goodbye handshakes where upstream rsync
     /// writes directly without `MSG_DATA` wrapping.
     pub(crate) fn write_raw(&mut self, data: &[u8]) -> io::Result<()> {
+        self.send_outbox()?;
         let mut out = self.out.borrow_mut();
         out.flush_buffer(&mut self.inner)?;
         self.inner.write_all(data)?;
@@ -502,6 +553,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
         if buf.is_empty() {
             return Ok(0);
         }
+        self.send_outbox()?;
         if self.admit_data(std::iter::once(buf), buf.len())? {
             return Ok(buf.len());
         }
@@ -514,6 +566,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
         if total_len == 0 {
             return Ok(0);
         }
+        self.send_outbox()?;
         if self.admit_data(bufs.iter().map(|b| &b[..]), total_len)? {
             return Ok(total_len);
         }
@@ -529,6 +582,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        self.send_outbox()?;
         self.out.borrow_mut().flush(&mut self.inner)
     }
 }

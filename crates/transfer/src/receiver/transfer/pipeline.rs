@@ -173,99 +173,7 @@ fn sparse_enabled_for_pass(sparse: bool, append: bool, is_redo_pass: bool) -> bo
     sparse && !(is_redo_pass && append)
 }
 
-/// Maps a diagnostic's log code to the multiplex frame a server sends for it.
-///
-/// `None` means the code is not peer-facing and must never be framed;
-/// [`logging::drain_events_for_peer`] is expected to withhold those, and the
-/// unit test below pins that the two agree. Matching every variant rather than
-/// falling through on `_` is deliberate: a log code added later must be
-/// classified here instead of silently inheriting a frame.
-///
-/// The protocol < 30 remaps upstream applies alongside this (`MSG_ERROR` ->
-/// `MSG_ERROR_XFER`, `MSG_WARNING` -> `MSG_INFO`, log.c:359-363) are not
-/// repeated here - they already live in the emitters, which gate on
-/// `supports_generator_messages()`.
-/// upstream: log.c:358 rwrite() `enum msgcode msg = (enum msgcode)code;`
-const fn peer_message_code(code: logging::LogCode) -> Option<protocol::MessageCode> {
-    match code {
-        logging::LogCode::ErrorXfer => Some(protocol::MessageCode::ErrorXfer),
-        logging::LogCode::Warning => Some(protocol::MessageCode::Warning),
-        // upstream: log.c:303-308 - FERROR_SOCKET and FERROR_UTF8 both
-        // simplify to FERROR before the stream switch.
-        logging::LogCode::Error | logging::LogCode::ErrorSocket | logging::LogCode::ErrorUtf8 => {
-            Some(protocol::MessageCode::Error)
-        }
-        // upstream: log.c:331-333 - FLOG returns before the switch, so it is
-        // never framed; it belongs to the daemon's log-file drain.
-        logging::LogCode::Log => None,
-        // upstream: log.c:344-366 - FINFO reaches send_msg() as MSG_INFO
-        // unless quiet; `drain_events_for_peer` applies the quiet gate.
-        logging::LogCode::Info => Some(protocol::MessageCode::Info),
-        // FCLIENT is not taken by `drain_events_for_peer`; FNONE is never
-        // sent (upstream: rsync.h:283).
-        logging::LogCode::Client | logging::LogCode::None => None,
-    }
-}
-
-/// Takes the thread-local diagnostics a server owes its peer, as wire messages.
-///
-/// Separated from the emit so it can be tested without standing up a whole
-/// receiver: the pairing that matters is that whatever
-/// [`logging::drain_events_for_peer`] hands back is exactly what
-/// [`peer_message_code`] can classify, and that is checkable here directly.
-///
-/// `client_mode` (a pull) takes only the error and warning codes: the
-/// receiver's own `FINFO` output belongs to the client's summary renderer,
-/// not to a frame.
-fn drain_thread_local_peer_messages(client_mode: bool) -> Vec<(protocol::MessageCode, String)> {
-    let events = if client_mode {
-        logging::drain_error_events()
-    } else {
-        logging::drain_events_for_peer()
-    };
-    events
-        .into_iter()
-        .filter_map(|event| {
-            let (code, message) = match event {
-                logging::DiagnosticEvent::Info { code, message, .. }
-                | logging::DiagnosticEvent::Debug { code, message, .. } => (code, message),
-                // Peer framing is String-based; a byte-faithful notice degrades
-                // to a lossy string on this path. Byte-exact peer framing is a
-                // follow-up (see the notice-channel migration inventory).
-                logging::DiagnosticEvent::Bytes { code, message, .. } => {
-                    (code, String::from_utf8_lossy(&message).into_owned())
-                }
-            };
-            peer_message_code(code).map(|code| (code, message))
-        })
-        .collect()
-}
-
 impl ReceiverContext {
-    /// Emits `MSG_SUCCESS(ndx)` to the sender for every file whose commit was
-    /// confirmed since the last drain, when `--remove-source-files` is active.
-    ///
-    /// The sender defers its source unlink until it receives this confirmation,
-    /// so this is what lets the sender remove a source only after the file has
-    /// safely landed at the destination. When the flag is off the confirmed
-    /// indices are drained and discarded, keeping the accumulator bounded.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `receiver.c:1079-1085` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
-    /// - `io.c:1649-1663` - sender-side `MSG_SUCCESS` handler -> `successful_send`.
-    fn emit_confirmed_source_removals<W>(
-        &self,
-        writer: &mut W,
-        pipelined_receiver: &mut crate::pipeline::receiver::PipelinedReceiver,
-    ) -> io::Result<()>
-    where
-        W: crate::writer::MsgInfoSender + ?Sized,
-    {
-        let confirmed = pipelined_receiver.drain_new_success_indices();
-        self.send_source_removals(writer, confirmed)
-    }
-
     /// Sends `MSG_SUCCESS(ndx)` for each confirmed flat index when
     /// `--remove-source-files` is active; otherwise discards them.
     ///
@@ -329,31 +237,32 @@ impl ReceiverContext {
         }
     }
 
-    /// Emits everything queued for the peer this iteration, from both sources.
+    /// Emits the per-file outcomes the last drain queued, in the order the
+    /// disk thread produced them, so a file's `MSG_SUCCESS` and the warnings
+    /// of the files around it reach the peer in file order.
     ///
-    /// The pipeline's own queue carries diagnostics the receiver raised about a
-    /// specific file - verification failures, permission errors - pushed
-    /// explicitly as it walks the batch. The thread-local diagnostic buffer
-    /// carries everything raised through `warn_log!` from outside that loop,
-    /// notably the destination-anchoring warning raised during setup.
-    ///
-    /// Upstream has no such split: `rwrite()` frames any peer-facing code from
-    /// wherever it was raised (upstream: log.c:357-366). Draining only the
-    /// pipeline queue is why a daemon receiver could lose its per-component
-    /// path confinement without the warning that says so ever reaching the
-    /// operator - the event stayed in the buffer and died with the thread.
-    fn emit_peer_messages<W>(
+    /// upstream: receiver.c:1345-1376 - each file's success or
+    /// failed-verification report is sent before the next file is received.
+    fn emit_drain_events<W>(
         &self,
         writer: &mut W,
         pipelined_receiver: &mut crate::pipeline::receiver::PipelinedReceiver,
-    ) where
+    ) -> io::Result<()>
+    where
         W: crate::writer::MsgInfoSender + ?Sized,
     {
-        let mut messages = pipelined_receiver.drain_warnings();
-        messages.extend(drain_thread_local_peer_messages(
-            self.config.connection.client_mode,
-        ));
-        self.emit_pipeline_messages(writer, messages);
+        use crate::pipeline::receiver::PeerEvent;
+        for event in pipelined_receiver.drain_peer_events() {
+            match event {
+                PeerEvent::Message(code, text) => {
+                    self.emit_pipeline_messages(writer, vec![(code, text)]);
+                }
+                PeerEvent::Success(flat_idx) => {
+                    self.send_source_removals(writer, vec![flat_idx])?
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Runs one commit drain, flushing whatever the drain queued for the peer
@@ -387,7 +296,8 @@ impl ReceiverContext {
     {
         let outcome = drain(pipelined_receiver);
         if outcome.is_err() {
-            self.emit_peer_messages(writer, pipelined_receiver);
+            // The drain's own error outranks a failure to report it.
+            let _ = self.emit_drain_events(writer, pipelined_receiver);
         }
         outcome
     }
@@ -747,10 +657,12 @@ impl ReceiverContext {
                         // Preserved by par_iter().map().collect() + sequential zip/send loop below.
                         // Violation sends signatures for wrong files, corrupting delta transfer.
                         let sig_results: Vec<_> = if batch.len() >= sig_threshold {
+                            let session = logging::Session::capture();
                             batch
                                 .par_iter()
                                 .zip(batch_ndxs.par_iter())
                                 .map(|((_, file_entry, file_path, base_iflags), &ndx)| {
+                                    let _log = session.enter();
                                     // A metadata-only record transfers no data,
                                     // so no basis search is needed.
                                     if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0
@@ -843,7 +755,7 @@ impl ReceiverContext {
                             // selection. Emitted here, on the session thread,
                             // because a rayon signature worker's thread-local
                             // verbosity is never seeded (same reason as
-                            // `emit_backup_notice` for the disk thread).
+                            // `queue_backup_notice` for the disk thread).
                             if let Some(notice) = basis_result.backup_notice.take() {
                                 info_log!(
                                     Backup,
@@ -952,6 +864,7 @@ impl ReceiverContext {
                 let xattr_list = self.resolve_xattr_list(&file_entry);
                 let is_device_target =
                     self.config.write.write_devices && destination_is_device(&file_path);
+                let log_name = self.client_name_line(file_idx, &file_entry, is_redo_pass);
                 let response = process_file_response_streaming(
                     reader,
                     &mut *ndx_read_codec,
@@ -965,6 +878,7 @@ impl ReceiverContext {
                     &file_entry,
                     is_device_target,
                     xattr_list,
+                    log_name,
                     &mut token_reader,
                 );
                 let result = match response? {
@@ -1046,9 +960,7 @@ impl ReceiverContext {
                 // gets an immediate MSG_SUCCESS so the sender can unlink its
                 // --remove-source-files source. Emit for every file the drain
                 // just confirmed committed.
-                self.emit_confirmed_source_removals(writer, &mut pipelined_receiver)?;
-
-                self.emit_peer_messages(writer, &mut pipelined_receiver);
+                self.emit_drain_events(writer, &mut pipelined_receiver)?;
 
                 // upstream: io.c:838 stats.total_read only counts bytes read
                 // off the wire. Matched-from-basis bytes never traverse the
@@ -1059,35 +971,7 @@ impl ReceiverContext {
                 files_transferred += 1;
                 transferred_file_size += file_entry.size();
 
-                // upstream: receiver.c:966 - log_item() after successful file transfer
                 {
-                    if self.config.flags.verbose && self.config.connection.client_mode {
-                        if self.interleave_names && !is_redo_pass {
-                            // upstream: receiver.c:1024-1028 - the client prints
-                            // each file's name per file (log_before_transfer),
-                            // in flist order, interleaved with --progress,
-                            // instead of buffering for an end-of-run block. The
-                            // phase-2 redo re-transfers already-named files, so
-                            // it must not re-emit.
-                            if self.progress_active {
-                                // The live --progress renderer already prints
-                                // this file's name before its bar; only release
-                                // the directory names that precede it (the
-                                // renderer never sees directory entries).
-                                let _ = self.flush_names_through(file_idx);
-                            } else {
-                                let _ = self.emit_name_in_order(
-                                    file_idx,
-                                    format!("{}\n", file_entry.path().display()),
-                                );
-                            }
-                        } else if !self.should_emit_itemize() {
-                            // Plain `-v`: bare name. Under `-i`/`-vi` the
-                            // itemize row already carries the name, so suppress
-                            // this to avoid a duplicate line.
-                            info_log!(Name, 1, "{}", file_entry.path().display());
-                        }
-                    }
                     // upstream: generator.c:1925-1937 - the transfer itemize is
                     // emitted right after the file request. With
                     // log_before_transfer == 0 (`am_server`) the row is logged
@@ -1135,9 +1019,7 @@ impl ReceiverContext {
             // upstream: receiver.c:1079-1085 - flush MSG_SUCCESS for the final
             // batch of files the blocking drain just confirmed committed, so the
             // sender unlinks their --remove-source-files sources.
-            self.emit_confirmed_source_removals(writer, &mut pipelined_receiver)?;
-
-            self.emit_peer_messages(writer, &mut pipelined_receiver);
+            self.emit_drain_events(writer, &mut pipelined_receiver)?;
 
             // upstream: generator.c:2169 finish_hard_link() itemizes every
             // follower once the leader completes, before the phase-1 NDX_DONE.
@@ -1613,102 +1495,5 @@ mod tests {
         // Without --sparse there is nothing to negate in any pass.
         assert!(!sparse_enabled_for_pass(false, true, true));
         assert!(!sparse_enabled_for_pass(false, false, false));
-    }
-}
-
-#[cfg(test)]
-mod peer_message_tests {
-    use super::{drain_thread_local_peer_messages, peer_message_code};
-    use logging::{LogCode, drain_events};
-
-    /// Every code the drain hands back must be classifiable.
-    ///
-    /// `drain_events_for_peer` (logging) and `peer_message_code` (here) encode
-    /// the same upstream rule in two crates, and nothing in the type system
-    /// ties them together - a code added to one and not the other would be
-    /// silently dropped by the `filter_map`. This walks every `LogCode`
-    /// variant through a real emit and asserts the pairing holds, so the two
-    /// cannot drift apart unnoticed.
-    #[test]
-    fn everything_the_peer_drain_yields_is_classifiable() {
-        let _ = drain_events();
-        for code in [
-            LogCode::ErrorXfer,
-            LogCode::Error,
-            LogCode::Warning,
-            LogCode::ErrorSocket,
-            LogCode::ErrorUtf8,
-            LogCode::Info,
-            LogCode::Client,
-            LogCode::Log,
-            LogCode::None,
-        ] {
-            logging::emit_info_coded(logging::InfoFlag::Misc, 0, code, format!("{code:?}"));
-        }
-
-        for event in logging::drain_events_for_peer() {
-            let (logging::DiagnosticEvent::Info { code, .. }
-            | logging::DiagnosticEvent::Debug { code, .. }
-            | logging::DiagnosticEvent::Bytes { code, .. }) = event;
-            assert!(
-                peer_message_code(code).is_some(),
-                "drain_events_for_peer yielded {code:?}, which peer_message_code \
-                 discards - the two classifications have drifted and the \
-                 diagnostic would be silently dropped"
-            );
-        }
-        let _ = drain_events();
-    }
-
-    /// A `warn_log!` raised outside the pipeline loop reaches the wire list.
-    ///
-    /// This is the defect this module exists to fix: the destination-anchoring
-    /// warning is emitted during receiver setup, never queued on the pipeline's
-    /// own list, and before this drain existed it stayed in the thread-local
-    /// buffer until the thread ended.
-    #[test]
-    fn a_warning_raised_outside_the_pipeline_becomes_a_peer_message() {
-        let _ = drain_events();
-        logging::warn_log!("receiver: could not anchor destination 'x'");
-
-        let messages = drain_thread_local_peer_messages(false);
-
-        assert_eq!(
-            messages,
-            vec![(
-                protocol::MessageCode::Warning,
-                "receiver: could not anchor destination 'x'".to_string()
-            )],
-            "a warn_log! outside the pipeline loop must be framed for the peer \
-             as MSG_WARNING (upstream: log.c:357-366)"
-        );
-    }
-
-    /// FLOG stays queued for the daemon's log-file drain.
-    ///
-    /// The non-vacuity companion to the test above: without it, a drain that
-    /// took *everything* would also satisfy that assertion while breaking
-    /// upstream's rule that FLOG never travels to the client
-    /// (upstream: log.c:331-333) and stealing the events
-    /// `drain_events_coded(Log)` expects to find at streams.rs.
-    #[test]
-    fn flog_is_left_for_the_daemon_log_drain() {
-        let _ = drain_events();
-        logging::emit_info_coded(
-            logging::InfoFlag::Misc,
-            0,
-            LogCode::Log,
-            "module accessed".to_string(),
-        );
-
-        assert!(
-            drain_thread_local_peer_messages(false).is_empty(),
-            "FLOG must not be framed for the client"
-        );
-        assert_eq!(
-            logging::drain_events_coded(LogCode::Log).len(),
-            1,
-            "and it must still be there for the daemon's log-file drain"
-        );
     }
 }
