@@ -93,9 +93,10 @@
 
 use std::collections::BTreeMap;
 use std::env;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use super::algorithms::{AlgorithmList, Filled, assemble, fill_default_lists, openssh_defaults};
 use super::ssh_config::{resolve_host, resolve_host_str};
@@ -244,14 +245,64 @@ impl Differential {
     }
 }
 
-/// The `ssh` the oracle runs: `OC_RSYNC_SSH_G_BIN` when set, else `ssh`
-/// on `PATH`.
+/// Names the `ssh` the oracle runs in place of the first one on PATH.
+const ORACLE_BIN: &str = "OC_RSYNC_SSH_G_BIN";
+
+/// What `ssh -V` prints for the pinned oracle, tools/ci/openssh.sha256.
+///
+/// The pinned openssh-10.0p1 tarball's version.h declares
+/// `SSH_PORTABLE "p2"`, so the `ssh` built from it reports 10.0p2.
+const PINNED_ORACLE: &str = "OpenSSH_10.0p2";
+
+/// The `ssh` the oracle runs: [`ORACLE_BIN`] when set, else `ssh` on `PATH`.
 ///
 /// The reader is pinned to openssh-portable 10.0p1, so the faithful oracle
 /// is an `ssh` built from that tarball. A distribution `ssh` of another
-/// release can disagree on keywords whose arms changed between releases.
-fn oracle_ssh() -> std::ffi::OsString {
-    std::env::var_os("OC_RSYNC_SSH_G_BIN").unwrap_or_else(|| "ssh".into())
+/// release can disagree on keywords whose arms changed between releases:
+/// ubuntu-24.04's 9.6p1 accepts `CanonicalDomains #x`, which 10.0p1 refuses
+/// (openssh/readconf.c:2221-2223). So a binary named by [`ORACLE_BIN`] that
+/// reports another release panics, failing every test that consults it, and
+/// a PATH `ssh` is named with its version on every run.
+fn oracle_ssh() -> OsString {
+    static ORACLE: OnceLock<OsString> = OnceLock::new();
+    ORACLE
+        .get_or_init(|| match env::var_os(ORACLE_BIN) {
+            Some(bin) => {
+                let version = ssh_version(&bin).unwrap_or_else(|err| {
+                    panic!("{ORACLE_BIN}={} cannot be run: {err}", bin.display())
+                });
+                if let Err(why) = check_pinned_version(&version) {
+                    panic!("{ORACLE_BIN}={}: {why}", bin.display());
+                }
+                bin
+            }
+            None => {
+                let bin = OsString::from("ssh");
+                if let Ok(version) = ssh_version(&bin) {
+                    eprintln!(
+                        "ssh -G oracle: `ssh` from PATH reports {version:?}; set {ORACLE_BIN} to the pinned {PINNED_ORACLE} build"
+                    );
+                }
+                bin
+            }
+        })
+        .clone()
+}
+
+/// The line `ssh -V` prints, on stderr.
+fn ssh_version(bin: &OsStr) -> std::io::Result<String> {
+    let out = Command::new(bin).arg("-V").output()?;
+    Ok(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+}
+
+/// Accepts only the pinned release's `ssh -V` line.
+fn check_pinned_version(version: &str) -> Result<(), String> {
+    match version.strip_prefix(PINNED_ORACLE) {
+        Some(rest) if rest.is_empty() || rest.starts_with(',') => Ok(()),
+        _ => Err(format!(
+            "reports {version:?}, not the pinned {PINNED_ORACLE}"
+        )),
+    }
 }
 
 /// Run `ssh -G <alias> -F <path>` and parse the dump.
@@ -265,14 +316,10 @@ fn upstream_dump(
     alias: &str,
 ) -> Result<(String, BTreeMap<String, Vec<String>>), Skipped> {
     native_oracle()?;
-    let version = Command::new(oracle_ssh())
-        .arg("-V")
-        .output()
-        .map_err(|_| Skipped::NoSshBinary)?;
-    // `ssh -V` prints to stderr.
-    let version = String::from_utf8_lossy(&version.stderr).trim().to_owned();
+    let ssh = oracle_ssh();
+    let version = ssh_version(&ssh).map_err(|_| Skipped::NoSshBinary)?;
 
-    let out = Command::new(oracle_ssh())
+    let out = Command::new(&ssh)
         .arg("-G")
         .arg("-F")
         .arg(config)
@@ -735,6 +782,27 @@ mod tests {
         assert!(why.contains(&msys.path().join("ssh.exe").display().to_string()));
         assert!(why.contains("`C:\\` Include path as absolute"));
         assert_eq!(native_oracle_on(joined(&[&native]).as_os_str()), Ok(()));
+    }
+
+    /// A CI cell that pins the oracle must not compare against another
+    /// release: ubuntu-24.04's 9.6p1 accepts `CanonicalDomains #x`, which the
+    /// pinned 10.0p1 refuses (openssh/readconf.c:2221-2223).
+    #[test]
+    fn only_the_pinned_release_is_an_oracle() {
+        assert_eq!(
+            check_pinned_version("OpenSSH_10.0p2, OpenSSL 3.6.5 29 Sep 2026"),
+            Ok(())
+        );
+        for other in [
+            "OpenSSH_9.6p1 Ubuntu-3ubuntu13.14, OpenSSL 3.0.13 30 Jan 2024",
+            "OpenSSH_10.0p20, OpenSSL 3.6.5 29 Sep 2026",
+            "OpenSSH_10.0p2 Debian-5, OpenSSL 3.5.1 1 Jul 2025",
+            "OpenSSH_10.6p1, OpenSSL 3.6.5 29 Sep 2026",
+            "",
+        ] {
+            let why = check_pinned_version(other).expect_err(other);
+            assert!(why.contains(PINNED_ORACLE), "{why}");
+        }
     }
 
     #[test]
