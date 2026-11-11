@@ -791,7 +791,7 @@ pub(crate) fn copy_symlink(
     #[cfg(all(any(unix, windows), feature = "acl"))]
     apply_source_acls_if_requested(
         preserve_acls,
-        context.options().fake_super_enabled(),
+        context.options().fake_super_sides(),
         mode,
         source,
         context.entry_attrs(),

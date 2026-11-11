@@ -49,7 +49,7 @@ pub(crate) fn copy_device(
     let source_stat = crate::local_copy::fake_super_source_stat(
         source,
         metadata,
-        metadata_options.fake_super_enabled(),
+        context.sender_options().fake_super_enabled(),
     )?;
     #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
@@ -249,6 +249,7 @@ pub(crate) fn copy_device(
             #[cfg(feature = "xattr")]
             crate::local_copy::store_effective_fake_super_if_requested(
                 metadata_options,
+                context.sender_options().fake_super_enabled(),
                 source,
                 destination,
                 metadata,
@@ -266,7 +267,7 @@ pub(crate) fn copy_device(
             #[cfg(feature = "acl")]
             apply_source_acls_if_requested(
                 preserve_acls,
-                context.options().fake_super_enabled(),
+                context.options().fake_super_sides(),
                 mode,
                 source,
                 context.entry_attrs(),
@@ -419,7 +420,7 @@ pub(crate) fn copy_device(
             #[cfg(all(any(unix, windows), feature = "acl"))]
             apply_source_acls_if_requested(
                 preserve_acls,
-                context.options().fake_super_enabled(),
+                context.options().fake_super_sides(),
                 mode,
                 source,
                 context.entry_attrs(),
@@ -526,7 +527,7 @@ pub(crate) fn copy_device(
         #[cfg(feature = "acl")]
         apply_source_acls_if_requested(
             preserve_acls,
-            context.options().fake_super_enabled(),
+            context.options().fake_super_sides(),
             mode,
             source,
             context.entry_attrs(),

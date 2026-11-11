@@ -219,7 +219,7 @@ pub(super) fn process_links(
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display)
-            .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+            .virtualize_fake_super(source, context.sender_options().fake_super_enabled());
         let total_bytes = Some(metadata_snapshot.len());
         context.record(
             LocalCopyRecord::new(
@@ -271,7 +271,7 @@ pub(super) fn process_links(
             #[cfg(all(any(unix, windows), feature = "acl"))]
             apply_source_acls_if_requested(
                 preserve_acls,
-                context.options().fake_super_enabled(),
+                context.options().fake_super_sides(),
                 mode,
                 source,
                 context.entry_attrs(),
@@ -316,7 +316,7 @@ pub(super) fn process_links(
             #[cfg(all(any(unix, windows), feature = "acl"))]
             apply_source_acls_if_requested(
                 preserve_acls,
-                context.options().fake_super_enabled(),
+                context.options().fake_super_sides(),
                 mode,
                 source,
                 context.entry_attrs(),
@@ -383,7 +383,7 @@ pub(super) fn process_links(
             // instead of '.'; omitting `.with_creation(true)` keeps
             // positions 2-10 as deltas instead of `+++++++++`.
             let reuse_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
-                .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+                .virtualize_fake_super(source, context.sender_options().fake_super_enabled());
             context.record(
                 LocalCopyRecord::new(
                     record_path.to_path_buf(),
@@ -490,7 +490,7 @@ pub(super) fn process_links(
             .unwrap_or_else(|_| existing_target.clone());
         let metadata_snapshot =
             LocalCopyMetadata::from_metadata(metadata, Some(link_target_display))
-                .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+                .virtualize_fake_super(source, context.sender_options().fake_super_enabled());
         let total_bytes = Some(metadata_snapshot.len());
         // upstream: hlink.c:246-249 - `itemize(..., ITEM_LOCAL_CHANGE, ...)`
         // is emitted whether the alias was created from scratch or the
@@ -677,7 +677,10 @@ pub(super) fn process_links(
                             LocalCopyError::io("inspect compare-dest basis", basis.clone(), error)
                         })?;
                     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
-                        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+                        .virtualize_fake_super(
+                            source,
+                            context.sender_options().fake_super_enabled(),
+                        );
                     let total_bytes = Some(metadata_snapshot.len());
                     let change_set = LocalCopyChangeSet::for_file(
                         metadata,
@@ -812,7 +815,7 @@ pub(super) fn process_links(
                     if context.register_acl_cohort_leader(&path) {
                         apply_source_acls_if_requested(
                             preserve_acls,
-                            context.options().fake_super_enabled(),
+                            context.options().fake_super_sides(),
                             mode,
                             source,
                             context.entry_attrs(),
@@ -827,7 +830,10 @@ pub(super) fn process_links(
                     context.record_hard_link(metadata, destination);
                     context.summary_mut().record_hard_link();
                     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
-                        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
+                        .virtualize_fake_super(
+                            source,
+                            context.sender_options().fake_super_enabled(),
+                        );
                     let total_bytes = Some(metadata_snapshot.len());
                     context.record(LocalCopyRecord::new(
                         record_path.to_path_buf(),

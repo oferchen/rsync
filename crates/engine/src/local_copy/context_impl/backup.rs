@@ -258,9 +258,11 @@ impl<'a> CopyContext<'a> {
                 // tier duplicates it and leaves the original for the caller's
                 // rename to replace, so the ACL read below finds it.
                 #[cfg(all(any(unix, windows), feature = "acl"))]
+                // The backup copies the receiver's own file, so both halves
+                // read it as the receiver does.
                 sync_acls_if_requested(
                     self.options.acls_enabled(),
-                    self.options.fake_super_enabled(),
+                    crate::local_copy::FakeSuperSides::both(self.options.fake_super_enabled()),
                     self.mode(),
                     destination,
                     &backup_path,
@@ -274,6 +276,7 @@ impl<'a> CopyContext<'a> {
             #[cfg(all(unix, feature = "xattr"))]
             store_effective_fake_super_if_requested(
                 &metadata_options,
+                metadata_options.fake_super_enabled(),
                 destination,
                 &backup_path,
                 &source_meta,
@@ -388,6 +391,7 @@ impl<'a> CopyContext<'a> {
             #[cfg(all(unix, feature = "xattr"))]
             store_effective_fake_super_if_requested(
                 &metadata_options,
+                metadata_options.fake_super_enabled(),
                 destination,
                 &backup_path,
                 &source_meta,
