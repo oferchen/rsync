@@ -794,6 +794,7 @@ dependencies = [
  "metadata",
  "nix",
  "protocol",
+ "rayon",
  "rsync_io",
  "rustix",
  "socket2",

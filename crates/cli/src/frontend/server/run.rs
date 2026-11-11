@@ -7,7 +7,6 @@ use std::io::{self, Write};
 use core::branding::Brand;
 use core::message::Role;
 use core::rsync_error;
-use engine::local_copy::{ReferenceDirectory, ReferenceDirectoryKind};
 use logging_sink::MessageSink;
 
 use super::flags::{detect_secluded_args_flag, parse_server_long_flags, refused_server_option};
@@ -645,8 +644,6 @@ where
     core::session::server_exit_status(outcome, role, &fork_point, program_brand, stderr)
 }
 
-
-
 /// Derives upstream's `stdout_format_has_i` from the `--log-format` the client
 /// forwarded, and records it on `info`.
 ///
@@ -679,7 +676,6 @@ fn apply_log_format_itemize(fmt: &str, info: &mut core::server::InfoFlags) {
         info.itemize_unchanged = true;
     }
 }
-
 
 /// Applies `--fake-super` to the server config.
 ///
@@ -934,7 +930,6 @@ fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt
     write_server_error_with_code(stderr, brand, core::exit_code::ExitCode::Syntax, text);
 }
 
-
 /// Renders a server-side `rsync error:` trailer carrying an explicit `RERR_*`.
 ///
 /// upstream: log.c:937 `log_exit()` prints the code the process is exiting with,
@@ -954,6 +949,23 @@ fn write_server_error_with_code<Err: Write>(
     }
 }
 
+/// Unbuffered handles on the server's descriptors 0 and 1.
+#[cfg(unix)]
+struct ServerStdio {
+    stdin: std::fs::File,
+    stdout: std::fs::File,
+}
+
+#[cfg(unix)]
+impl ServerStdio {
+    fn open() -> io::Result<Self> {
+        use std::os::fd::AsFd;
+        Ok(Self {
+            stdin: io::stdin().as_fd().try_clone_to_owned()?.into(),
+            stdout: io::stdout().as_fd().try_clone_to_owned()?.into(),
+        })
+    }
+}
 #[cfg(test)]
 mod log_format_itemize_tests {
     use super::apply_log_format_itemize;
@@ -1005,4 +1017,3 @@ mod log_format_itemize_tests {
         assert_eq!(derive("%n%L"), InfoFlags::default());
     }
 }
-

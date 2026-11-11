@@ -135,17 +135,20 @@ impl PeerChild for LocalReceiver {
 /// ends in `exit_cleanup()` (main.c:1336).
 fn run_receiver(config: ServerConfig, input: PipeReader, output: PipeWriter) -> i32 {
     crate::session::confine_receiver(&config);
-    match receiver_pool() {
-        Ok(pool) => pool.install(|| serve_receiver(config, input, output)),
-        Err(e) => {
-            let _ = writeln!(std::io::stderr(), "fork: {e}");
-            IPC_EXIT_CODE
-        }
-    }
+    run_confined(|| serve_receiver(config, input, output)).unwrap_or_else(|e| {
+        let _ = writeln!(std::io::stderr(), "fork: {e}");
+        IPC_EXIT_CODE
+    })
 }
 
-/// Builds the receiver's worker pool from the calling, already confined,
-/// thread.
+/// Runs `work` on a worker pool built from the calling, already confined,
+/// thread, so every pool thread inherits the confinement.
+fn run_confined<T: Send>(
+    work: impl FnOnce() -> T + Send,
+) -> Result<T, rayon::ThreadPoolBuildError> {
+    Ok(receiver_pool()?.install(work))
+}
+
 fn receiver_pool() -> Result<rayon::ThreadPool, rayon::ThreadPoolBuildError> {
     let session = logging::Session::capture();
     rayon::ThreadPoolBuilder::new()
@@ -212,8 +215,8 @@ mod tests {
                 ::metadata::ChmodModifiers::parse("u+x").expect("valid --chmod"),
             ))
             .build();
-        let receiver = local_receiver_config(&config, std::ffi::OsStr::new("dst/"))
-            .expect("receiver config");
+        let receiver =
+            local_receiver_config(&config, std::ffi::OsStr::new("dst/")).expect("receiver config");
         assert!(receiver.chmod.is_none());
         assert_eq!(receiver.role, ServerRole::Receiver);
         assert_eq!(receiver.args, ["dst/"]);
@@ -237,12 +240,11 @@ mod tests {
         let config = ClientConfig::builder()
             .transfer_args(["src/", dest.path().to_str().expect("utf-8")])
             .build();
-        let receiver = local_receiver_config(&config, dest.path().as_os_str())
-            .expect("receiver config");
+        let receiver =
+            local_receiver_config(&config, dest.path().as_os_str()).expect("receiver config");
         let denied = std::thread::spawn(move || {
             crate::session::confine_receiver(&receiver);
-            let pool = receiver_pool().expect("pool");
-            pool.install(|| rayon::join(|| std::fs::write(&target, b"x"), || ()).0)
+            run_confined(|| rayon::join(|| std::fs::write(&target, b"x"), || ()).0).expect("pool")
         })
         .join()
         .expect("receiver thread");
