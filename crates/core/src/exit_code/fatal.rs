@@ -175,16 +175,23 @@ mod tests {
     /// upstream: main.c:817-821, main.c:1248, rsync.c:987-995
     #[test]
     fn a_dest_root_mkdir_failure_reports_as_the_unforked_receiver() {
+        // The errno a failed mkdir reports for a read-only parent.
+        #[cfg(unix)]
+        let (raw, cause) = (13, "Permission denied (13)");
+        // Windows reports ERROR_ACCESS_DENIED. 3.5.1 under Cygwin prints
+        // "Permission denied (13)"; task 630 changes this expectation.
+        #[cfg(not(unix))]
+        let (raw, cause) = (5, "Access is denied. (5)");
         let failed = DestRootMkdirError::into_io(
             "\"/srv/ro/new\"".to_owned(),
-            io::Error::from_raw_os_error(13),
+            io::Error::from_raw_os_error(raw),
         );
         assert_eq!(cause_line_exit_code(&failed), Some(ExitCode::FileIo));
         let lines = fatal_report_lines(&failed, ExitCode::FileIo, Role::Generator, Brand::Upstream);
         assert_eq!(lines.len(), 2);
         assert_eq!(
             String::from_utf8(lines[0].clone()).expect("utf-8"),
-            "rsync: [Receiver] mkdir \"/srv/ro/new\" failed: Permission denied (13)\n"
+            format!("rsync: [Receiver] mkdir \"/srv/ro/new\" failed: {cause}\n")
         );
         let trailer = String::from_utf8(lines[1].clone()).expect("utf-8");
         assert!(

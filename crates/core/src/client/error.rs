@@ -1279,7 +1279,14 @@ mod tests {
         /// line and the trailer name the `Receiver`.
         #[test]
         fn map_destination_mkdir_failed_reports_file_io_as_receiver() {
-            let io_err = io::Error::from_raw_os_error(13);
+            // The errno a failed mkdir reports for a read-only parent.
+            #[cfg(unix)]
+            let (raw, cause) = (13, "Permission denied (13)");
+            // Windows reports ERROR_ACCESS_DENIED. 3.5.1 under Cygwin prints
+            // "Permission denied (13)"; task 630 changes this expectation.
+            #[cfg(not(unix))]
+            let (raw, cause) = (5, "Access is denied. (5)");
+            let io_err = io::Error::from_raw_os_error(raw);
             let local_error =
                 LocalCopyError::destination_mkdir_failed(Path::new("/tmp/ro/new"), io_err);
             let client_error = map_local_copy_error(local_error);
@@ -1288,7 +1295,7 @@ mod tests {
             assert_eq!(client_error.exit_code(), 11);
             assert_eq!(
                 client_error.program_line(),
-                Some("[Receiver] mkdir \"/tmp/ro/new\" failed: Permission denied (13)")
+                Some(format!("[Receiver] mkdir \"/tmp/ro/new\" failed: {cause}").as_str())
             );
             let msg = client_error.to_string();
             assert!(msg.contains("(code 11)"), "{msg}");
