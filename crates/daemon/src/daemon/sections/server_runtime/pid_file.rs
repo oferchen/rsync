@@ -8,6 +8,8 @@ struct PidFileGuard {
 
 impl PidFileGuard {
     fn create(path: PathBuf) -> Result<Self, DaemonError> {
+        let path = crate::posix_path::resolve_daemon_path(&path)
+            .map_err(|error| pid_file_error(&path, error))?;
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {

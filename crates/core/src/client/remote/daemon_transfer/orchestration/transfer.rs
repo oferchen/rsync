@@ -429,6 +429,7 @@ impl TransferProgressCallback for DaemonProgressAdapter<'_> {
         let update = crate::client::progress::ClientProgressUpdate::from_transfer_event(
             client_event,
             event.files_done,
+            event.files_remaining,
             event.total_files,
             event.total_file_bytes,
             self.overall_transferred,

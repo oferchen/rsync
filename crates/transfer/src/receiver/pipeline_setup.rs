@@ -110,96 +110,25 @@ pub(in crate::receiver) fn apply_acls_from_receiver_cache(
 pub(in crate::receiver) fn compile_daemon_filter_set(
     rules: &[FilterRuleWireFormat],
 ) -> Option<FilterSet> {
-    use filters::FilterRule;
     use protocol::filters::RuleType;
 
-    if rules.is_empty() {
+    // A per-directory merge contributes no flat rule here apart from its `e`
+    // self-exclude (see `compile_daemon_merge_configs`), and an eager `merge`
+    // was expanded when the list was built.
+    let flat = rules.iter().any(|rule| match rule.rule_type {
+        RuleType::Merge => false,
+        RuleType::DirMerge => rule.exclude_from_merge,
+        _ => true,
+    });
+    if !flat {
         return None;
     }
-
-    let filter_rules: Vec<FilterRule> = rules
-        .iter()
-        .filter_map(|wire_rule| {
-            // The filters model stores patterns as raw bytes (upstream:
-            // exclude.c:add_rule keeps the `char *` verbatim), so the wire
-            // pattern's bytes are handed over unaltered - no lossy re-encoding
-            // between the wire and the local match set.
-            let pat =
-                filters::path_pattern_bytes(std::path::Path::new(&wire_rule.pattern)).into_owned();
-            let mut rule = match wire_rule.rule_type {
-                RuleType::Include => FilterRule::include(pat),
-                RuleType::Exclude => FilterRule::exclude(pat),
-                RuleType::Protect => FilterRule::protect(pat),
-                RuleType::Risk => FilterRule::risk(pat),
-                // A clear pops the rules accumulated before it, so it must
-                // survive into the compiled set rather than being discarded
-                // here. `FilterSet::from_rules` already honours
-                // `FilterAction::Clear` on both chains, so this arm only has to
-                // stop dropping the rule.
-                //
-                // The sides are applied only when the wire rule names one:
-                // `FilterRule::clear()` pre-sets both, and `apply_clear_rule`
-                // returns without clearing anything when neither side is set,
-                // so narrowing an unsided clear to `with_sides(false, false)`
-                // would silently reinstate the drop.
-                //
-                // upstream: receiver.c:903-905 checks each file against
-                // `daemon_filter_list`, which `clientserver.c:933-952` builds
-                // from the module's filter directives - a `clear` among them
-                // pops the earlier rules for the receiver exactly as it does
-                // for the sender.
-                RuleType::Clear => {
-                    let mut rule = FilterRule::clear();
-                    if wire_rule.sender_side || wire_rule.receiver_side {
-                        rule = rule.with_sides(wire_rule.sender_side, wire_rule.receiver_side);
-                    }
-                    return Some(rule);
-                }
-                // A per-directory merge is not a flat rule and has no place in
-                // this set, apart from the basename exclude its `e` modifier
-                // adds ahead of it (exclude.c:1558-1572): upstream keeps it as a
-                // `FILTRULE_PERDIR_MERGE`
-                // entry that `check_filter` recurses into
-                // (exclude.c:1195-1198), holding whatever the current
-                // directory's merge file last supplied. That state lives in
-                // `DaemonFilterGate`, which takes these rules through
-                // [`compile_daemon_merge_configs`].
-                //
-                // A `merge` rule is eager: the daemon reads the named file at
-                // parse time (exclude.c:1583-1590), so its contents reach this
-                // function as ordinary rules and the directive itself carries
-                // nothing further.
-                RuleType::DirMerge => {
-                    return crate::receiver::transfer::dir_merge_self_exclude(wire_rule);
-                }
-                RuleType::Merge => return None,
-            };
-
-            if wire_rule.sender_side || wire_rule.receiver_side {
-                rule = rule.with_sides(wire_rule.sender_side, wire_rule.receiver_side);
-            }
-
-            // upstream: exclude.c:1392-1394 - the `/` modifier is FILTRULE_ABS_PATH.
-
-            if wire_rule.abs_path {
-                rule = rule.with_abs_path(true);
-            }
-            if wire_rule.perishable {
-                rule = rule.with_perishable(true);
-            }
-            if wire_rule.anchored {
-                rule = rule.anchor_to_root();
-            }
-
-            Some(rule)
-        })
-        .collect();
-
-    if filter_rules.is_empty() {
-        return None;
-    }
-
-    FilterSet::from_rules(filter_rules).ok()
+    // The module's rules compile exactly as a received list does, so every
+    // flag a rule carries - negate, xattr-only, directory-only - reaches the
+    // match.
+    crate::receiver::transfer::parse_wire_filters_for_receiver(rules)
+        .ok()
+        .map(|(set, _merge_configs)| set)
 }
 
 /// Compiles the per-directory merge directives out of a module's filter rules.

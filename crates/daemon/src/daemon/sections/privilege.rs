@@ -1,8 +1,8 @@
 /// Applies a chroot jail.
 ///
-/// Delegates to `platform::privilege::apply_chroot()`. Failure is propagated to
-/// the caller so the daemon refuses to serve rather than continuing without the
-/// requested isolation.
+/// Delegates to [`enter_chroot`]. Failure is propagated to the caller so the
+/// daemon refuses to serve rather than continuing without the requested
+/// isolation.
 ///
 /// On success, fires the `--debug=CHDIR` emission to mirror upstream
 /// `util1.c:1493` (`[%s] change_dir(%s)`). Upstream's
@@ -14,17 +14,16 @@
 /// daemon's pre-fork code path (`"Receiver"`, see `rsync.c:987` `who_am_i()`).
 ///
 /// Caveat: chroot is process-wide. On Unix each session runs in its own
-/// forked child, so the chroot is confined to that session; a session served
-/// on a thread (Windows, which has no chroot anyway) would share it. See
+/// forked child, so the chroot is confined to that session. See
 /// `docs/DAEMON_PROCESS_MODEL.md`.
 ///
 /// upstream: `clientserver.c:1040-1059` `rsync_module()` - `chroot(module_chdir)`
 /// then `change_dir(module_chdir, CD_NORMAL)` after sanitising the module
 /// path; `@ERROR: chroot failed` returned to the client when chroot fails.
-#[cfg(unix)]
 fn apply_chroot(module_path: &Path, log_sink: &SharedLogSink) -> io::Result<()> {
-    if let Err(err) = platform::privilege::apply_chroot(module_path) {
-        let text = format!("chroot to '{}' failed: {}", module_path.display(), err);
+    if let Err(err) = enter_chroot(module_path) {
+        // upstream: clientserver.c:1051 rsyserr(FLOG, errno, "chroot(\"%s\") failed", ...)
+        let text = format!("chroot(\"{}\") failed: {err}", module_path.display());
         let message = rsync_error!(1, text).with_role(Role::Daemon);
         log_message(log_sink, &message);
         return Err(err);
@@ -39,10 +38,58 @@ fn apply_chroot(module_path: &Path, log_sink: &SharedLogSink) -> io::Result<()> 
     Ok(())
 }
 
-/// No-op chroot stub for non-Unix platforms.
+/// Makes `path` the process root and working directory.
+#[cfg(unix)]
+fn enter_chroot(path: &Path) -> io::Result<()> {
+    platform::privilege::apply_chroot(path)
+}
+
+/// Accepts `path` as a chroot target the way Cygwin's `chroot()` does.
+///
+/// Cygwin's chroot needs no privilege. It checks that the target is an
+/// existing directory and records it as the root that later POSIX lookups
+/// resolve below; it is a path prefix, not a jail, and confines nothing. The
+/// session is anchored below the target by [`chroot_or_fallback`].
+///
+/// Cygwin: winsup/cygwin/syscalls.cc:3836-3859 `chroot()`.
 #[cfg(not(unix))]
-fn apply_chroot(_module_path: &Path, _log_sink: &SharedLogSink) -> io::Result<()> {
-    Ok(())
+fn enter_chroot(path: &Path) -> io::Result<()> {
+    cygwin_chroot_root(path).map(drop)
+}
+
+/// The directory a Cygwin `chroot(path)` makes the root: `path` resolved as
+/// Cygwin resolves it, which must be an existing directory (`ENOENT`,
+/// `ENOTDIR` otherwise).
+///
+/// Cygwin: winsup/cygwin/syscalls.cc:3841-3848.
+#[cfg(any(not(unix), test))]
+fn cygwin_chroot_root(path: &Path) -> io::Result<PathBuf> {
+    let root = crate::posix_path::resolve_daemon_path(path)?;
+    if std::fs::metadata(&root)?.is_dir() {
+        Ok(root)
+    } else {
+        Err(io::Error::from(io::ErrorKind::NotADirectory))
+    }
+}
+
+/// Probes whether this process can chroot, with upstream's no-op
+/// `chroot("/")`.
+///
+/// Under Cygwin that call succeeds whenever the root is a directory, so an
+/// unset `use chroot` resolves to yes there. Upstream's `chdir("/")` after a
+/// successful probe is not repeated on Windows: the module `change_dir()` at
+/// clientserver.c:1059 supersedes it.
+///
+/// upstream: clientserver.c:886 `chroot("/") < 0`.
+fn probe_chroot_capability() -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        platform::privilege::probe_chroot_capability()
+    }
+    #[cfg(not(unix))]
+    {
+        cygwin_chroot_root(Path::new("/")).map(drop)
+    }
 }
 
 /// Drops process privileges to the specified uid and gid.
@@ -131,7 +178,7 @@ fn resolve_use_chroot(module: &ModuleDefinition, log_sink: &SharedLogSink) -> bo
     if module.path.to_str().is_some_and(|s| s.contains("/./")) {
         return true;
     }
-    match platform::privilege::probe_chroot_capability() {
+    match probe_chroot_capability() {
         Ok(()) => true,
         Err(err) => {
             let notice =
@@ -143,31 +190,55 @@ fn resolve_use_chroot(module: &ModuleDefinition, log_sink: &SharedLogSink) -> bo
     }
 }
 
+/// How a module's `use chroot` was carried out for one session.
+#[derive(Debug, PartialEq, Eq)]
+enum ChrootDecision {
+    /// No chroot: `use chroot` is off, or was unset and the probe failed.
+    Skipped,
+    /// The process is jailed at the outer path and the session starts at
+    /// `inner` inside it: `/` unless the path carried a `/./` marker.
+    Jailed { inner: PathBuf },
+    /// Windows: no jail. As under Cygwin, where chroot is a path prefix, the
+    /// session is served from `root`, the inner path below the outer one.
+    Anchored { root: PathBuf },
+}
+
 /// Applies chroot for a module, resolving the tri-state `use chroot`
 /// decision and (when enabled) chrooting into the possibly `/./`-split
 /// module path.
 ///
-/// Returns `Ok((chroot_applied, inner_dir))`. `chroot_applied` is `false`
-/// when chroot is disabled outright (`use chroot = no`) or was unset and the
-/// capability probe failed; `inner_dir` is the post-chroot working directory
-/// the caller must serve from (`/` unless the path carried a `/./`
-/// inner/outer marker). Once `use_chroot` resolves true - explicitly, via
-/// `/./`, or via a successful probe - a failure of the real `chroot(2)` call
-/// is always fatal, matching upstream's unconditional `@ERROR: chroot
-/// failed` once the tri-state is settled.
+/// Once `use_chroot` resolves true - explicitly, via `/./`, or via a
+/// successful probe - a failure of the chroot itself is always fatal,
+/// matching upstream's unconditional `@ERROR: chroot failed` once the
+/// tri-state is settled.
 ///
 /// upstream: clientserver.c:883-1059 `rsync_module()`.
 fn chroot_or_fallback(
     module: &ModuleDefinition,
     log_sink: &SharedLogSink,
-) -> io::Result<(bool, PathBuf)> {
+) -> io::Result<ChrootDecision> {
     if !resolve_use_chroot(module, log_sink) {
-        return Ok((false, module.path.clone()));
+        return Ok(ChrootDecision::Skipped);
     }
 
     let (outer, inner) = split_chroot_path(&module.path);
     apply_chroot(&outer, log_sink)?;
-    Ok((true, inner))
+    Ok(if cfg!(unix) {
+        ChrootDecision::Jailed { inner }
+    } else {
+        ChrootDecision::Anchored {
+            root: anchor_below(&outer, &inner),
+        }
+    })
+}
+
+/// The host path of the post-chroot path `inner` (absolute, `/` for the root
+/// itself) under a chroot at `outer`.
+fn anchor_below(outer: &Path, inner: &Path) -> PathBuf {
+    match inner.strip_prefix("/") {
+        Ok(relative) if !relative.as_os_str().is_empty() => outer.join(relative),
+        _ => outer.to_path_buf(),
+    }
 }
 
 /// The uid and complete group set the daemon will drop to for a connection.
@@ -803,9 +874,85 @@ mod privilege_tests {
             ..Default::default()
         };
         let sink = test_log_sink();
-        let (applied, _inner) =
+        let decision =
             chroot_or_fallback(&module, &sink).expect("unset use chroot must fall back, not error");
-        assert!(!applied, "rootless fallback must report chroot NOT applied");
+        assert_eq!(
+            decision,
+            ChrootDecision::Skipped,
+            "rootless fallback must report chroot NOT applied"
+        );
+    }
+
+    /// The inner path after a `/./` marker lands below the chroot target, and
+    /// the root itself is the target: the host path the session serves from
+    /// when chroot is a path prefix (Cygwin) rather than a jail.
+    #[test]
+    fn anchor_below_places_the_inner_path_under_the_chroot_target() {
+        let outer = Path::new("/srv/outer");
+        assert_eq!(anchor_below(outer, Path::new("/")), outer);
+        assert_eq!(
+            anchor_below(outer, Path::new("/in/ner")),
+            Path::new("/srv/outer/in/ner")
+        );
+    }
+
+    /// Cygwin's chroot accepts an existing directory and refuses anything
+    /// else with `ENOENT` or `ENOTDIR` (syscalls.cc:3841-3848), without
+    /// needing privilege.
+    #[test]
+    fn a_cygwin_chroot_needs_an_existing_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            cygwin_chroot_root(temp.path()).expect("a directory is accepted"),
+            temp.path()
+        );
+
+        let missing = cygwin_chroot_root(&temp.path().join("missing")).expect_err("missing");
+        assert_eq!(missing.kind(), io::ErrorKind::NotFound);
+
+        let file = temp.path().join("file");
+        std::fs::write(&file, b"x").expect("write file");
+        let not_dir = cygwin_chroot_root(&file).expect_err("a file is no root");
+        assert_eq!(not_dir.kind(), io::ErrorKind::NotADirectory);
+    }
+
+    /// On Windows an unset `use chroot` resolves to yes, as Cygwin's
+    /// `chroot("/")` probe succeeds, and the session is anchored below the
+    /// outer path instead of being served from the drive root.
+    #[cfg(windows)]
+    #[test]
+    fn windows_chroot_anchors_the_session_below_the_outer_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("inner")).expect("inner dir");
+        let module = ModuleDefinition {
+            path: PathBuf::from(format!("{}/./inner", temp.path().display())),
+            use_chroot: true,
+            use_chroot_explicit: false,
+            ..Default::default()
+        };
+        let decision = chroot_or_fallback(&module, &test_log_sink()).expect("chroot accepted");
+        assert_eq!(
+            decision,
+            ChrootDecision::Anchored {
+                root: temp.path().join("inner")
+            }
+        );
+    }
+
+    /// An explicit `use chroot` on a missing outer path is still fatal on
+    /// Windows, as Cygwin's chroot fails with `ENOENT`.
+    #[cfg(windows)]
+    #[test]
+    fn windows_chroot_to_a_missing_path_is_fatal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let module = ModuleDefinition {
+            path: temp.path().join("missing"),
+            use_chroot: true,
+            use_chroot_explicit: true,
+            ..Default::default()
+        };
+        let error = chroot_or_fallback(&module, &test_log_sink()).expect_err("missing outer");
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
     /// WHY: upstream clientserver.c:698-703 / 833-838 - a uid/gid NAME that

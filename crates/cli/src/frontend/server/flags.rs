@@ -3,45 +3,15 @@
 //! Extracts `--flag` and `--flag=value` arguments from the server argument
 //! list into a structured representation.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 
-/// The bare `--` that ends option processing.
-///
-/// upstream: options.c:1497 - the server runs the same popt parser as the
-/// client (`poptGetContext(RSYNC_NAME, argc, argv, long_options, 0)`), and popt
-/// consumes a bare `--` and hands back every following argv entry as a plain
-/// operand, whatever it looks like.
-///
-/// `support/rrsync:655` builds its command as
-/// `(RSYNC, *rsync_opts, '--', '.', *rsync_args)` and depends on precisely that
-/// property; its comment at `:558` states it outright: "an arg that starts with
-/// a '-' is safe due to our use of '--' in the cmd tuple".
-const END_OF_OPTIONS: &str = "--";
-
-/// Splits a server argument list at the end-of-options marker.
-///
-/// Returns `(options, operands)`. The marker itself is consumed, as popt
-/// consumes it. When no bare `--` is present the whole list is options and
-/// `operands` is empty, so a peer that never sends the marker is parsed exactly
-/// as before.
-///
-/// Every scanner over the server argv applies this for itself rather than
-/// trusting its caller. Upstream gets the property once, from a single popt
-/// pass; oc walks the same argv from three places
-/// ([`detect_secluded_args_flag`], [`parse_server_long_flags`], and
-/// `parse_server_flag_string_and_args`), and one of them forgetting is exactly
-/// the defect this closes - a path operand that looks like an option would be
-/// obeyed as one.
-pub(super) fn split_at_end_of_options(args: &[OsString]) -> (&[OsString], &[OsString]) {
-    let marker = OsStr::new(END_OF_OPTIONS);
-    match args.iter().position(|arg| arg.as_os_str() == marker) {
-        Some(at) => (&args[..at], &args[at + 1..]),
-        None => (args, &[]),
-    }
-}
+pub(super) use core::server::server_argv::{
+    ArgvRefusal, SHORT_OPTIONS_WITH_VALUE, is_joined_filter_option, is_two_arg_server_long_flag,
+    normalize_server_argv, split_at_end_of_options,
+};
 
 /// Returns the first long option the server must refuse as unknown.
 ///
@@ -53,15 +23,18 @@ pub(super) fn split_at_end_of_options(args: &[OsString]) -> (&[OsString], &[OsSt
 /// option here: `safe_arg()` sends a filename that starts with `-` as `./-...`
 /// (options.c:2709). Only tokens before the `--` marker are options, and the
 /// value slot of a two-argument long option is not one.
-pub(super) fn refused_server_option(args: &[OsString]) -> Option<&OsString> {
+pub(super) fn refused_server_option(args: &[OsString]) -> Option<ArgvRefusal> {
     let (args, _operands) = split_at_end_of_options(args);
+    let mut after_server = false;
     let mut tokens = args.iter();
     while let Some(arg) = tokens.next() {
         let text = arg.to_string_lossy();
-        if is_two_arg_server_long_flag(&text) {
+        if text == "--server" {
+            after_server = true;
+        } else if is_two_arg_server_long_flag(&text) {
             tokens.next();
         } else if text.starts_with("--") && !is_known_server_long_flag(&text) {
-            return Some(arg);
+            return Some(ArgvRefusal::popt(&text, "unknown option", after_server));
         }
     }
     None
@@ -84,19 +57,18 @@ pub(crate) fn detect_secluded_args_flag(args: &[OsString]) -> bool {
     let (options, _operands) = split_at_end_of_options(args);
     options.iter().skip(1).any(|a| {
         let s = a.to_string_lossy();
-        if s == "-s" {
-            return true;
-        }
-        // Check compact flag strings: starts with `-`, not `--`.
-        // Only scan the transfer-flag portion (before the first `.`)
-        // because `s` after the dot is the symlink-iconv capability char,
-        // not secluded-args.
+        // A short-option cluster, read as popt reads it: letters up to the
+        // first one that takes an argument, whose value is the rest of the
+        // token. That stops the scan at `e` in `-logDtpre.iLsfxCIvu`, so the
+        // `s` among the capability letters is never read as secluded args.
         // upstream: options.c:2795-2796 - protect_args placed at argstr[1]
-        if s.starts_with('-') && !s.starts_with("--") && s.len() > 1 {
-            let transfer_portion = s[1..].split('.').next().unwrap_or("");
-            return transfer_portion.contains('s');
+        match s.strip_prefix('-') {
+            Some(cluster) if !cluster.starts_with('-') => cluster
+                .chars()
+                .take_while(|letter| !SHORT_OPTIONS_WITH_VALUE.contains(letter))
+                .any(|letter| letter == 's'),
+            _ => false,
         }
-        false
     })
 }
 
@@ -1191,6 +1163,9 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--min-size=")
         || arg.starts_with("--max-size=")
         || arg.starts_with("--max-alloc=")
+        // upstream: options.c:1620-1656 - argv filter options, which
+        // `normalize_server_argv` has joined to their value.
+        || is_joined_filter_option(arg)
         || arg.starts_with("--stop-at=")
         || arg.starts_with("--stop-after=")
         || arg.starts_with("--files-from=")
@@ -1301,46 +1276,4 @@ pub(super) fn compact_flag_string_expects_split_value(flag_string: &str) -> bool
         .as_bytes()
         .last()
         .is_some_and(|byte| VALUE_BEARING_COMPACT_SHORT_FLAGS.contains(byte))
-}
-
-/// Returns `true` when the argument is a bare server-mode long flag whose
-/// value is supplied as the next argv slot (popt `POPT_ARG_STRING` arity).
-///
-/// Upstream `options.c::server_options()` emits a handful of path-bearing
-/// long flags as two argv slots: the flag name and the value, joined later
-/// by `safe_arg("", value)`. The split form is used unconditionally for
-/// these flags, independent of `protect_args`. Without this awareness the
-/// flag name is treated as the first positional path and the value as the
-/// second, so the alt-dest interop test (`--copy-dest /path/alt3 . /path/to/`)
-/// lands the source files under `$HOME/--copy-dest/` instead of creating
-/// the dest root at `/path/to/`.
-///
-/// This is the long-option arm of the arity model documented above; the
-/// operand parser consults it BEFORE [`is_known_server_long_flag`] so the
-/// value slot is consumed rather than the flag name alone. `--partial-dir`
-/// is included here (also `POPT_ARG_STRING`), replacing its former one-off
-/// `idx += 2` special case in the operand parser. The structured
-/// `parse_server_long_flags` pass keeps its own explicit `--partial-dir` arm
-/// (it stores the value), which matches before this predicate is consulted.
-///
-/// # Upstream Reference
-///
-/// - `options.c:837` - `-e`/`--rsh` is `POPT_ARG_STRING` (the short arm).
-/// - `options.c:2981-2985` - `--backup-dir`
-/// - `options.c:3062-3066` - `--partial-dir`
-/// - `options.c:3106-3109` - `--temp-dir`
-/// - `options.c:3119-3122` - `--copy-dest` / `--link-dest` / `--compare-dest`
-///   (via `alt_dest_opt(0)`)
-/// - `options.c:3143-3146` - `--files-from`
-pub(super) fn is_two_arg_server_long_flag(arg: &str) -> bool {
-    matches!(
-        arg,
-        "--compare-dest"
-            | "--copy-dest"
-            | "--link-dest"
-            | "--backup-dir"
-            | "--temp-dir"
-            | "--files-from"
-            | "--partial-dir"
-    )
 }

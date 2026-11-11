@@ -39,13 +39,13 @@ fn apply_include_directive(
     // upstream: params.c:include_config - when the target is a directory, every
     // matching entry is pulled in: "*.conf" for `&include`, "*.inc" for
     // `&merge`, processed in sorted (strcmp) order.
-    let files = if fs::metadata(&include_path)
-        .map(|meta| meta.is_dir())
-        .unwrap_or(false)
-    {
+    let include_dir = crate::posix_path::resolve_daemon_path(&include_path)
+        .ok()
+        .filter(|resolved| fs::metadata(resolved).is_ok_and(|meta| meta.is_dir()));
+    let files = if let Some(include_dir) = include_dir {
         let suffix = if manage_globals { ".conf" } else { ".inc" };
         let mut entries = Vec::new();
-        let dir = fs::read_dir(&include_path)
+        let dir = fs::read_dir(&include_dir)
             .map_err(|error| config_io_error("read", &include_path, error))?;
         for entry in dir {
             let entry = entry.map_err(|error| config_io_error("read", &include_path, error))?;

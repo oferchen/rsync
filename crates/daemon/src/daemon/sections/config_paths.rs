@@ -57,7 +57,9 @@ where
 {
     for candidate in paths {
         let candidate = candidate.as_ref();
-        if candidate.is_file() {
+        if crate::posix_path::resolve_daemon_path(candidate)
+            .is_ok_and(|resolved| resolved.is_file())
+        {
             return Some(candidate.as_os_str().to_os_string());
         }
     }

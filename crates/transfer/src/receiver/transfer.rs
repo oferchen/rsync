@@ -14,6 +14,7 @@
 //! - `mode` - the single drive-mode decision both pipelined drivers share, plus
 //!   the one implementation of every mode that moves no file data.
 
+pub(in crate::receiver) mod candidate_feed;
 mod candidates;
 pub(in crate::receiver) mod mode;
 mod phases;
@@ -23,9 +24,7 @@ mod pipelined_incremental;
 mod replay;
 mod setup;
 
-pub(in crate::receiver) use setup::{
-    dir_merge_config_from_wire, dir_merge_self_exclude, parse_wire_filters_for_receiver,
-};
+pub(in crate::receiver) use setup::{dir_merge_config_from_wire, parse_wire_filters_for_receiver};
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};

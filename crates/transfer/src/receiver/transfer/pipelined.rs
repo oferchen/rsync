@@ -16,6 +16,7 @@ use crate::pipeline::receiver::DelayedUpdate;
 use crate::receiver::stats::TransferStats;
 use crate::receiver::{REDO_CHECKSUM_LENGTH, ReceiverContext};
 
+use super::candidate_feed::{CandidateFeed, ChunkedFeed};
 use super::mode::ReceiverMode;
 
 impl ReceiverContext {
@@ -201,19 +202,6 @@ impl ReceiverContext {
             )?;
         }
 
-        let files_to_transfer = self.build_files_to_transfer(
-            writer,
-            &setup.dest_dir,
-            #[cfg(unix)]
-            setup.sandbox.as_deref(),
-            &setup.metadata_opts,
-            Some(&failed_dirs),
-            &mut metadata_errors,
-            &mut stats,
-            setup.acl_cache.as_ref(),
-            setup.acl_id_map.as_deref(),
-        )?;
-
         // Both assigned by every arm of the mode match below.
         // upstream: receiver.c:976 total_transferred_size, summed with files_transferred.
         let mut files_transferred: usize;
@@ -242,6 +230,18 @@ impl ReceiverContext {
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
         match self.select_mode() {
             ReceiverMode::NonTransfer(non_transfer) => {
+                let files_to_transfer = self.build_files_to_transfer(
+                    writer,
+                    &setup.dest_dir,
+                    #[cfg(unix)]
+                    setup.sandbox.as_deref(),
+                    &setup.metadata_opts,
+                    Some(&failed_dirs),
+                    &mut metadata_errors,
+                    &mut stats,
+                    setup.acl_cache.as_ref(),
+                    setup.acl_id_map.as_deref(),
+                )?;
                 (files_transferred, transferred_file_size) = self.run_non_transfer_mode(
                     non_transfer,
                     reader,
@@ -252,10 +252,17 @@ impl ReceiverContext {
                 )?;
             }
             ReceiverMode::Transfer => {
-                let total_files = files_to_transfer.len();
-                // Stage 0: hand the pipeline the transfer set by flist index;
-                // the in-flight window clones each FileEntry as it is pushed
-                // (O(window)), so the loop no longer borrows `self.file_list`.
+                // upstream: generator.c:2803-2818 - generate_files() decides
+                // each file in flist order as the receiver consumes earlier
+                // ones. The pipeline decides the list a chunk at a time as its
+                // window drains, so the candidate state is one chunk, not the
+                // whole list.
+                let feed = CandidateFeed::Chunked(ChunkedFeed {
+                    next: 0,
+                    end: self.file_list.len(),
+                    failed_dirs: &failed_dirs,
+                    stats: &mut stats,
+                });
                 let redo_config = pipeline_config.clone();
                 let redo_indices;
                 let delayed;
@@ -279,10 +286,9 @@ impl ReceiverContext {
                     writer,
                     pipeline_config,
                     &setup,
-                    files_to_transfer,
+                    feed,
                     &mut metadata_errors,
                     false,
-                    total_files,
                     0,
                     true,
                     &mut progress,
@@ -340,11 +346,10 @@ impl ReceiverContext {
                         writer,
                         redo_config,
                         &setup,
-                        redo_files,
+                        CandidateFeed::Ready(redo_files),
                         &mut metadata_errors,
                         true,
-                        total_files,
-                        0,
+                        files_transferred,
                         true,
                         &mut progress,
                         &mut ndx_write_codec,
