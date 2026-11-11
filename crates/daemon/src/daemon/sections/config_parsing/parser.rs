@@ -170,8 +170,8 @@ fn parse_config_file(
     stack: &mut Vec<PathBuf>,
     parse: &mut ConfigParse<'_>,
 ) -> Result<(), DaemonError> {
-    let canonical = path
-        .canonicalize()
+    let canonical = crate::posix_path::resolve_daemon_path(path)
+        .and_then(|resolved| resolved.canonicalize())
         .map_err(|error| config_io_error("read", path, error))?;
 
     if stack.iter().any(|seen| seen == &canonical) {
@@ -499,7 +499,9 @@ fn daemon_parameter_path(value: &str) -> PathBuf {
 
 fn resolve_config_relative_path(config_path: &Path, value: &str) -> PathBuf {
     let candidate = Path::new(value);
-    if candidate.is_absolute() {
+    // `has_root` also keeps a POSIX `/x` value as written on Windows, where it
+    // is not `is_absolute`; it resolves when opened (`crate::posix_path`).
+    if candidate.is_absolute() || candidate.has_root() {
         return candidate.to_path_buf();
     }
 

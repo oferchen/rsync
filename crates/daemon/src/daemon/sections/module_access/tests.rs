@@ -2096,6 +2096,7 @@ mod module_access_tests {
             let outcome = PrivilegeOutcome {
                 chroot_applied: true,
                 inner_module_path: inner.clone(),
+                anchored_root: None,
                 served_root: None,
             };
             assert_ne!(
@@ -2128,6 +2129,7 @@ mod module_access_tests {
         let outcome = PrivilegeOutcome {
             chroot_applied: true,
             inner_module_path: Some(PathBuf::from("/")),
+            anchored_root: None,
             served_root: None,
         };
         assert_eq!(
@@ -2152,6 +2154,7 @@ mod module_access_tests {
         let outcome = PrivilegeOutcome {
             chroot_applied: true,
             inner_module_path: Some(PathBuf::from("/inner")),
+            anchored_root: None,
             served_root: None,
         };
         assert_eq!(

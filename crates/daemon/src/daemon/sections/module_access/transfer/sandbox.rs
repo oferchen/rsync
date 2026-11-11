@@ -153,14 +153,17 @@ fn apply_privilege_restrictions_with_upstream_errors(
     // `Ok(false)`; an explicit `use chroot = yes` that fails is fatal.
     let mut chroot_applied = false;
     let mut inner_module_path = None;
+    let mut anchored_root = None;
     if needs_chroot {
         match chroot_or_fallback(module, log_sink) {
-            Ok((applied, inner)) => {
-                chroot_applied = applied;
-                if applied {
-                    inner_module_path = Some(inner);
-                }
+            Ok(ChrootDecision::Skipped) => {}
+            Ok(ChrootDecision::Jailed { inner }) => {
+                chroot_applied = true;
+                inner_module_path = Some(inner);
             }
+            // Cygwin sets am_chrooted = 1 because its chroot re-roots every later lookup
+            // (syscalls.cc:3836-3859); this flips to chrooted once that re-rooting lands.
+            Ok(ChrootDecision::Anchored { root }) => anchored_root = Some(root),
             Err(err) => {
                 // Operator demanded chroot explicitly: a failure is fatal.
                 // upstream: clientserver.c:1052 - `@ERROR: chroot failed\n`
@@ -196,7 +199,10 @@ fn apply_privilege_restrictions_with_upstream_errors(
     // though the module itself is world-readable. Publishing the root here
     // rather than after the drop also means its canonicalisation still runs
     // privileged.
-    let module_root = inner_module_path.as_deref().unwrap_or(&module.path);
+    let module_root = inner_module_path
+        .as_deref()
+        .or(anchored_root.as_deref())
+        .unwrap_or(&module.path);
     publish_module_confinement(module, module_root, chroot_applied);
     // The pin itself is unix-only: `pin_session_root_fd` and the rest of the
     // held-dirfd family are `#[cfg(unix)]` in `fast_io::confinement`, because
@@ -280,6 +286,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
     Ok(Some(PrivilegeOutcome {
         chroot_applied,
         inner_module_path,
+        anchored_root,
         served_root,
     }))
 }
@@ -329,6 +336,13 @@ struct PrivilegeOutcome {
     ///
     /// upstream: clientserver.c:897-914 - `module_dir` after the `/./` split.
     inner_module_path: Option<PathBuf>,
+    /// Windows: the host directory the session is served from when `use
+    /// chroot` resolved true. There is no jail - Cygwin's chroot is a path
+    /// prefix - so the process stays unchrooted and the confinement layer
+    /// sees the module as not chrooted.
+    ///
+    /// Cygwin: winsup/cygwin/syscalls.cc:3836-3859 `chroot()`.
+    anchored_root: Option<PathBuf>,
     /// The root the transfer is served from once the module root is the
     /// working directory (`.`), or `None` when the transfer keeps naming the
     /// module by the path above.
@@ -344,20 +358,25 @@ impl PrivilegeOutcome {
         Self {
             chroot_applied: false,
             inner_module_path: None,
+            anchored_root: None,
             served_root: None,
         }
     }
 }
 
-/// Validates that the module path exists.
+/// Validates that the module path exists and resolves it for this session.
 ///
-/// Returns `true` if the path exists, or sends an error and returns `false`.
+/// Returns the path the session serves from - the stored value resolved as
+/// Cygwin opens it (`crate::posix_path::resolve_module_path`) - or sends an
+/// error and returns `None`.
 fn validate_module_path(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
-) -> io::Result<bool> {
-    if Path::new(&module.path).exists() {
-        return Ok(true);
+) -> io::Result<Option<PathBuf>> {
+    if let Ok(resolved) = crate::posix_path::resolve_module_path(&module.path)
+        && resolved.exists()
+    {
+        return Ok(Some(resolved));
     }
 
     let error = AtError::message(format!(
@@ -379,7 +398,7 @@ fn validate_module_path(
         log_message(log, &message);
     }
 
-    Ok(false)
+    Ok(None)
 }
 
 /// Outcome of [`validate_client_paths_in_module`].

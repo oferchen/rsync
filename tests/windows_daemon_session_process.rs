@@ -134,3 +134,75 @@ fn each_connection_is_served_by_its_own_session_process() {
         "the session must run in its own process, not the accept loop's"
     );
 }
+
+/// A module with `use chroot` left unset is served from the inner path of its
+/// `/./` split, anchored below the outer one. Under Cygwin the
+/// `chroot("/")` probe succeeds, so the chroot applies, and Cygwin's chroot is
+/// a path prefix rather than a jail (syscalls.cc:3836-3859). A file beside the
+/// inner directory must therefore not be served, and neither may anything at
+/// the drive root that the post-chroot "/" would name natively.
+///
+/// upstream: clientserver.c:883-918 `rsync_module()`.
+#[cfg(windows)]
+#[test]
+fn an_unset_use_chroot_serves_the_inner_path_below_the_outer_one() {
+    use std::ffi::OsString;
+    use std::net::TcpListener;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let outer = dir.path().join("outer");
+    let inner = outer.join("inner");
+    std::fs::create_dir_all(&inner).expect("module dirs");
+    std::fs::write(outer.join("outside.txt"), b"outer").expect("outer file");
+    std::fs::write(inner.join("inside.txt"), b"inner").expect("inner file");
+    let conf = dir.path().join("rsyncd.conf");
+    std::fs::write(
+        &conf,
+        format!("[files]\npath = {}/./inner\n", outer.display()),
+    )
+    .expect("write config");
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let config = daemon::DaemonConfig::builder()
+        .disable_default_paths()
+        .arguments([
+            OsString::from("--config"),
+            conf.into_os_string(),
+            OsString::from("--port"),
+            OsString::from(port.to_string()),
+            OsString::from("--once"),
+            OsString::from("--no-detach"),
+        ])
+        .pre_bound_listener(listener)
+        .session_executable(env!("CARGO_BIN_EXE_oc-rsync"))
+        .build();
+    let daemon = std::thread::spawn(move || daemon::run_daemon(config));
+
+    let dest = dir.path().join("dest");
+    let output = Command::new(env!("CARGO_BIN_EXE_oc-rsync"))
+        .arg("-r")
+        .arg(format!("rsync://127.0.0.1:{port}/files/"))
+        .arg(&dest)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run client");
+    assert!(
+        output.status.success(),
+        "pull failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    daemon
+        .join()
+        .expect("daemon thread")
+        .expect("daemon exits cleanly after --once");
+
+    assert_eq!(
+        std::fs::read(dest.join("inside.txt")).expect("inner file pulled"),
+        b"inner"
+    );
+    assert!(
+        !dest.join("outside.txt").exists(),
+        "the outer directory must not be served"
+    );
+}

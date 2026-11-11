@@ -491,7 +491,7 @@ fn process_approved_module(
     // ⚠ The daemon filter parameters are read ABOVE this point, not below it -
     // see the ordering table there for why each of the three steps in this
     // block would break a different working configuration.
-    if !validate_module_path(ctx, module)? {
+    let Some(module_root) = validate_module_path(ctx, module)? else {
         // upstream: clientserver.c:1059-1060 - the change_dir() into the module
         // path is post-fork, so a missing/unreachable path still hooks.
         let host_owned = ctx.host_display().to_owned();
@@ -504,7 +504,18 @@ fn process_approved_module(
             MODULE_ABORT_EXIT_CODE,
         );
         return Ok(());
-    }
+    };
+    // From here the session works in the resolved module root, as upstream's
+    // child does after change_dir(); the hook variables above keep the module
+    // path as configured (RSYNC_MODULE_PATH, clientserver.c:770).
+    let resolved_module = ModuleRuntime::new(
+        ModuleDefinition {
+            path: module_root,
+            ..module.definition.clone()
+        },
+        module.connection_limiter.clone(),
+    );
+    let module = &resolved_module;
 
     // upstream: clientserver.c:rsync_module (1070-1082) - once munge_symlinks is
     // resolved and the daemon has entered the module root, a pre-existing
@@ -827,6 +838,12 @@ fn process_approved_module(
         effective_module = ModuleRuntime::from(chroot_adjusted_definition(
             &module.definition,
             privilege_outcome.inner_module_path.as_deref(),
+        ));
+        &effective_module
+    } else if let Some(anchored_root) = privilege_outcome.anchored_root.as_deref() {
+        effective_module = ModuleRuntime::from(chroot_adjusted_definition(
+            &module.definition,
+            Some(anchored_root),
         ));
         &effective_module
     } else {

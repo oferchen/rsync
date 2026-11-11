@@ -7,14 +7,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[cfg(windows)]
-use std::collections::BTreeMap;
-#[cfg(windows)]
-use std::io::{Read, Seek, SeekFrom, Write};
-
-#[cfg(windows)]
-use fs2::FileExt;
-
 use super::max_connections::MaxConnections;
 use super::runtime::ModuleConnectionError;
 
@@ -23,9 +15,8 @@ use super::runtime::ModuleConnectionError;
 /// upstream: connection.c:40 `lock_range(fd, i*4, 4)` reserves four bytes per
 /// slot, so slot `i` owns the byte range `[i*4, i*4+4)`. Matching the stride
 /// keeps oc-rsync interoperable with an upstream `rsync --daemon` that shares
-/// the same `lock file`.
-#[cfg(unix)]
-const SLOT_LEN: i64 = 4;
+/// the same `lock file`. The Windows daemon uses the same layout.
+const SLOT_LEN: u64 = 4;
 
 /// File-based connection limiter for cross-process `max connections` enforcement.
 ///
@@ -40,8 +31,9 @@ const SLOT_LEN: i64 = 4;
 /// upstream: connection.c:26 `claim_connection()` opens the lock file and calls
 /// `lock_range(fd, i*4, 4)` for each slot, returning success on the first range
 /// it locks. util1.c:712-723 `lock_range()` issues `fcntl(fd, F_SETLK, &lock)` with
-/// `l_type = F_WRLCK`. On Windows, which has no equivalent lock-on-death
-/// primitive, the limiter falls back to a counter serialised with `flock`.
+/// `l_type = F_WRLCK`. Windows takes the same ranges with `LockFileEx`
+/// (`fast_io::range_lock`), which the system likewise releases when the
+/// handle closes or the process dies.
 pub(crate) struct ConnectionLimiter {
     path: PathBuf,
 }
@@ -86,12 +78,12 @@ fn open_lock_file(path: &Path) -> io::Result<File> {
             .truncate(false)
             .read(true)
             .write(true)
-            .open(path)
+            .open(crate::posix_path::resolve_daemon_path(path)?)
     }
 }
 
 impl ConnectionLimiter {
-    /// Records the lock file path, creating the file eagerly when it can.
+    /// Records the lock file path without touching the filesystem.
     ///
     /// Construction CANNOT fail. upstream has no build-time open at all: the
     /// lock file is opened inside `claim_connection()` (connection.c:35), and a
@@ -101,21 +93,10 @@ impl ConnectionLimiter {
     /// was unopenable - including the refused-symlink case the upstream
     /// testsuite's `daemon-config-symlink` cell plants, which upstream serves.
     ///
-    /// The eager create is kept because it is where the 0600 mode is
-    /// established, but its failure is deliberately ignored: [`Self::acquire`]
-    /// re-opens per connection and reports the real error there, which is the
-    /// site upstream decides at.
+    /// Nor does upstream create the file or its directory ahead of time: the
+    /// `O_CREAT` open with mode 0600 in [`Self::acquire`] is the only create,
+    /// and a missing parent directory is that connection's open failure.
     pub(crate) fn open(path: PathBuf) -> Self {
-        if let Some(parent) = path.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        if let Ok(file) = open_lock_file(&path) {
-            drop(file);
-        }
-
         Self { path }
     }
 
@@ -154,7 +135,7 @@ impl ConnectionLimiter {
         let file = self.open_file().map_err(ModuleConnectionError::io)?;
 
         for slot in 0..limit.slot_count() {
-            let lock = slot_lock(i64::from(slot) * SLOT_LEN);
+            let lock = slot_lock(u64::from(slot) * SLOT_LEN);
             loop {
                 match nix::fcntl::fcntl(&file, setlk_arg(&lock)) {
                     Ok(_) => return Ok(ConnectionLockGuard { _file: file }),
@@ -187,7 +168,7 @@ impl ConnectionLimiter {
 /// upstream: util1.c:716-722 sets `l_type = F_WRLCK`, `l_whence = SEEK_SET`,
 /// `l_start = offset`, `l_len = len`.
 #[cfg(unix)]
-fn slot_lock(offset: i64) -> nix::libc::flock {
+fn slot_lock(offset: u64) -> nix::libc::flock {
     nix::libc::flock {
         l_type: nix::libc::F_WRLCK as nix::libc::c_short,
         l_whence: nix::libc::SEEK_SET as nix::libc::c_short,
@@ -219,130 +200,43 @@ fn setlk_arg(lock: &nix::libc::flock) -> nix::fcntl::FcntlArg<'_> {
     nix::fcntl::FcntlArg::F_SETLK(lock)
 }
 
-/// RAII guard whose held file descriptor keeps the connection's slot locked.
+/// RAII guard whose held file keeps the connection's slot locked.
 ///
-/// Dropping the guard closes the descriptor, which releases the record lock.
-/// The same release happens automatically if the process dies, so no explicit
-/// decrement is required and a crash cannot leak the slot.
-#[cfg(unix)]
+/// Dropping the guard closes the file, which releases the range lock. The same
+/// release happens automatically if the process dies, so no explicit decrement
+/// is required and a crash cannot leak the slot.
 pub(crate) struct ConnectionLockGuard {
     _file: File,
 }
 
 #[cfg(windows)]
 impl ConnectionLimiter {
-    /// Acquires a connection slot for the named module, enforcing the limit.
+    /// Acquires a connection slot, enforcing the limit across processes.
     ///
-    /// Windows lacks a byte-range-lock-on-death primitive, so the count is kept
-    /// in the lock file and serialised with an exclusive `flock`, with a RAII
-    /// guard restoring the count on drop. The lock file is opened first for
-    /// every non-zero limit, matching connection.c:35.
-    ///
-    /// Deviation from upstream: the count is keyed by module name, so modules
-    /// sharing a `lock file` do not share slots as they do on Unix.
+    /// Mirrors the Unix scan: the lock file is opened first for every non-zero
+    /// limit (connection.c:35), then `[0, max_connections)` is scanned for the
+    /// first 4-byte range that locks (connection.c:39-42). `LockFileEx` locks
+    /// belong to the file handle, so concurrent sessions - each a separate
+    /// process on Windows - contend exactly as upstream's forked children do,
+    /// and a killed session frees its slot. The `module` name is unused for
+    /// the same reason as on Unix: slots are keyed by lock file.
     pub(crate) fn acquire(
         self: &Arc<Self>,
         module: &str,
         limit: MaxConnections,
     ) -> Result<ConnectionLockGuard, ModuleConnectionError> {
-        let mut file = self.open_file().map_err(ModuleConnectionError::io)?;
-        file.lock_exclusive().map_err(ModuleConnectionError::io)?;
+        let _ = module;
+        let file = self.open_file().map_err(ModuleConnectionError::io)?;
 
-        let result = self.increment_count(&mut file, module, limit);
-        drop(file);
-
-        result.map(|_| ConnectionLockGuard {
-            limiter: Arc::clone(self),
-            module: module.to_owned(),
-        })
-    }
-
-    /// Decrements the connection count for the named module.
-    fn decrement(&self, module: &str) -> io::Result<()> {
-        let mut file = self.open_file()?;
-        file.lock_exclusive()?;
-        let result = self.decrement_count(&mut file, module);
-        drop(file);
-        result
-    }
-
-    /// Increments the module count in the lock file, failing if the limit is reached.
-    ///
-    /// A disabling (negative) limit contributes no slots, so the very first
-    /// connection is refused - the counterpart of upstream's empty slot scan.
-    fn increment_count(
-        &self,
-        file: &mut File,
-        module: &str,
-        limit: MaxConnections,
-    ) -> Result<(), ModuleConnectionError> {
-        let mut counts = self.read_counts(file)?;
-        let current = counts.get(module).copied().unwrap_or(0);
-        if current >= limit.slot_count() {
-            return Err(ModuleConnectionError::limit(limit, current));
-        }
-
-        counts.insert(module.to_owned(), current.saturating_add(1));
-        self.write_counts(file, &counts)
-            .map_err(ModuleConnectionError::io)
-    }
-
-    /// Decrements the module count in the lock file, removing the entry when it reaches zero.
-    fn decrement_count(&self, file: &mut File, module: &str) -> io::Result<()> {
-        let mut counts = self.read_counts(file)?;
-        if let Some(entry) = counts.get_mut(module) {
-            if *entry > 1 {
-                *entry -= 1;
-            } else {
-                counts.remove(module);
-            }
-        }
-
-        self.write_counts(file, &counts)
-    }
-
-    /// Reads module connection counts from the lock file.
-    fn read_counts(&self, file: &mut File) -> io::Result<BTreeMap<String, u32>> {
-        file.seek(SeekFrom::Start(0))?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-
-        let mut counts = BTreeMap::new();
-        for line in contents.lines() {
-            let mut parts = line.split_whitespace();
-            if let (Some(name), Some(value)) = (parts.next(), parts.next())
-                && let Ok(parsed) = value.parse::<u32>()
+        for slot in 0..limit.slot_count() {
+            let offset = u64::from(slot) * SLOT_LEN;
+            if fast_io::range_lock::try_lock_exclusive_range(&file, offset, SLOT_LEN)
+                .map_err(ModuleConnectionError::io)?
             {
-                counts.insert(name.to_owned(), parsed);
+                return Ok(ConnectionLockGuard { _file: file });
             }
         }
 
-        Ok(counts)
-    }
-
-    /// Writes module connection counts to the lock file, replacing existing content.
-    fn write_counts(&self, file: &mut File, counts: &BTreeMap<String, u32>) -> io::Result<()> {
-        file.set_len(0)?;
-        file.seek(SeekFrom::Start(0))?;
-        for (module, value) in counts {
-            if *value > 0 {
-                writeln!(file, "{module} {value}")?;
-            }
-        }
-        file.flush()
-    }
-}
-
-/// RAII guard that decrements the lock file count on drop.
-#[cfg(windows)]
-pub(crate) struct ConnectionLockGuard {
-    limiter: Arc<ConnectionLimiter>,
-    module: String,
-}
-
-#[cfg(windows)]
-impl Drop for ConnectionLockGuard {
-    fn drop(&mut self) {
-        let _ = self.limiter.decrement(&self.module);
+        Err(ModuleConnectionError::limit(limit, limit.slot_count()))
     }
 }

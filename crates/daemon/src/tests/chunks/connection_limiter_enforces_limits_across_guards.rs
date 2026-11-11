@@ -2,8 +2,8 @@
 // process both resolve to the same process-owned POSIX lock and cannot contend
 // on distinct slots. There, in-process limiting is the caller's atomic counter's
 // job (see `runtime.rs`); the record lock only coordinates across processes.
-// Linux uses `F_OFD_SETLK` and Windows uses the counter fallback, so both
-// observe the drop-and-reclaim behaviour asserted here.
+// Linux uses `F_OFD_SETLK` and Windows uses per-handle `LockFileEx` ranges, so
+// both observe the drop-and-reclaim behaviour asserted here.
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn connection_limiter_enforces_limits_across_guards() {

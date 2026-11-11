@@ -14,6 +14,7 @@
 //! `clientserver.c:rsync_module()` - chroot + setgid/setuid after authentication.
 
 use std::io;
+#[cfg(unix)]
 use std::path::Path;
 #[cfg(any(not(unix), test))]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,8 +30,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// the local offset. glibc reads `/etc/localtime` lazily on the first
 /// conversion; after chroot the file is no longer reachable and timestamps
 /// silently fall back to UTC.
-///
-/// No-op on non-Unix platforms.
 ///
 /// upstream: clientserver.c:1042 `rsync_module()` calls `tzset()` before
 /// `chroot(module_chdir)` at clientserver.c:1050; `start_daemon()` does the
@@ -69,19 +68,6 @@ pub fn enter_directory(dir: std::os::fd::BorrowedFd<'_>) -> io::Result<()> {
     nix::unistd::fchdir(dir).map_err(nix_to_io)
 }
 
-/// No-op chroot on non-Unix platforms.
-///
-/// Windows does not support chroot. Logs a warning via stderr so daemon
-/// operators know the `use chroot` directive has no effect.
-///
-/// Deviation from upstream: upstream has no Windows build; this port skips
-/// the chroot with a warning.
-#[cfg(not(unix))]
-pub fn apply_chroot(_path: &Path) -> io::Result<()> {
-    eprintln!("WARNING: chroot is not supported on this platform - skipping");
-    Ok(())
-}
-
 /// Probes chroot capability with a no-op `chroot("/")`, without touching any
 /// module path.
 ///
@@ -97,13 +83,6 @@ pub fn apply_chroot(_path: &Path) -> io::Result<()> {
 pub fn probe_chroot_capability() -> io::Result<()> {
     nix::unistd::chroot("/").map_err(nix_to_io)?;
     std::env::set_current_dir("/")?;
-    Ok(())
-}
-
-/// No-op chroot probe on non-Unix platforms: chroot never applies there, so
-/// the tri-state always resolves to "enabled" (harmlessly unused).
-#[cfg(not(unix))]
-pub fn probe_chroot_capability() -> io::Result<()> {
     Ok(())
 }
 

@@ -10,9 +10,11 @@
 // solely on `lock_range()` (util1.c:712, `fcntl` `F_SETLK`/`F_WRLCK`), whose
 // locks the kernel drops on process death.
 //
-// Requires open file description locks so the two acquisitions here (one process)
-// contend; only Linux provides them.
-#[cfg(target_os = "linux")]
+// Requires locks owned by the open file rather than the process, so the two
+// acquisitions here (one process) contend: Linux open file description locks
+// and Windows `LockFileEx` ranges. On Windows this is the slot leak the old
+// count-in-file limiter had whenever a session process was killed.
+#[cfg(any(target_os = "linux", windows))]
 #[test]
 fn connection_limiter_reclaims_slot_on_close_without_decrement() {
     let temp = tempdir().expect("lock dir");

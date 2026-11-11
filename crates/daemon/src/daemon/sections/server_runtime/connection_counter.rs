@@ -9,8 +9,8 @@
 /// accept loop and the workers it tracks. The accept loop consults
 /// `ConnectionCounter::active` before spawning a worker and refuses the
 /// connection once `--max-connections` is reached, enforcing the daemon-level
-/// limit (as opposed to the per-module limits already tracked by
-/// `ModuleRuntime::active_connections`).
+/// limit (as opposed to the per-module `max connections` slots claimed in
+/// the lock file).
 ///
 /// Deviation from upstream: upstream has no daemon-wide connection limit; its
 /// `max connections` is per module (clientserver.c:791 `claim_connection()`).

@@ -45,8 +45,6 @@ pub(crate) use hostname::{
     set_test_netgroup_members,
 };
 #[cfg(test)]
-use runtime::ModuleConnectionGuard;
-#[cfg(test)]
 pub(in crate::daemon) use test_support::TEST_CONFIG_CANDIDATES;
 #[cfg(test)]
 pub(crate) use test_support::{TEST_SECRETS_CANDIDATES, TEST_SECRETS_ENV, TestSecretsEnvOverride};

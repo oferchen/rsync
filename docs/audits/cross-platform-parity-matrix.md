@@ -120,7 +120,7 @@ optimised path is unavailable.
 | Numeric IDs (`--numeric-ids`) | yes | yes | passthrough | F | `crates/metadata/src/options/setters.rs` | not applicable | No NSS round-trip needed. |
 | --copy-as USER[:GROUP] (seteuid/setegid) | yes | yes | no | L+F | `crates/metadata/src/copy_as.rs` | no-op `CopyAsGuard`, returns `Ok(())` | Windows uses `ImpersonateLoggedOnUser` for daemon impersonation; not wired into `--copy-as` semantics. |
 | --fake-super xattr storage | yes | yes | no | L+F | `crates/metadata/src/fake_super.rs` | `ErrorKind::Unsupported` (depends on xattr) | Windows ADS-based fake-super tracked by #1657 (see audit `fake-super-privilege.md`). |
-| chroot | yes | yes | no | L+F | `crates/platform/src/privilege.rs` | warn + `Ok(())` on Windows | Daemon security on Windows uses token impersonation. |
+| chroot | yes | yes | partial | L+F | `crates/platform/src/privilege.rs`; Windows: `crates/daemon/src/daemon/sections/privilege.rs` | Windows: Cygwin's path-prefix chroot (target must be an existing directory; the session is anchored below it) | No jail on Windows, as under Cygwin (syscalls.cc:3836-3859); confines nothing until the native confinement arm lands. |
 
 ### 2.6 Metadata: ACLs and xattrs
 
@@ -173,7 +173,7 @@ optimised path is unavailable.
 | Feature | Linux | macOS | Windows | Status | Code path | Fallback | Notes |
 |---|---|---|---|---|---|---|---|
 | TCP listener | yes | yes | yes | F | `crates/daemon/src/daemon/sections/server_runtime/accept_loop.rs` | not applicable | Cross-platform `TcpListener`. |
-| `oc-rsyncd.conf` parsing | yes | yes | yes | F | `crates/daemon/src/config/` | not applicable | Cross-platform; `chroot` directive prints warning on Windows. |
+| `oc-rsyncd.conf` parsing | yes | yes | yes | F | `crates/daemon/src/config/` | not applicable | Cross-platform; `use chroot` anchors the module root on Windows. |
 | `@RSYNCD:` negotiation, auth | yes | yes | yes | F | `crates/daemon/src/auth.rs` | not applicable | Cross-platform protocol code. |
 | Unix domain socket listener | yes | yes | no | L+F | `crates/daemon/src/daemon/sections/server_runtime/accept_loop.rs` | error on Windows | Windows AF_UNIX could be added but is not in scope; tracked alongside #1869. |
 | Daemonize (fork+setsid+stdio redirect) | yes | yes | no | L+F | `crates/platform/src/daemonize.rs` | `ErrorKind::Unsupported` | Windows uses Service Control Manager instead. |
