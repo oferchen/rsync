@@ -6,8 +6,9 @@ context by name alone and a context carries no workflow name, so the tests
 compose check names the way GitHub does (`<caller job name> / <reusable job
 name>`).
 
-Pull requests run the legs inside ci.yml, so each pull request is ONE run and
-the pull request queue gives that run the whole runner pool.
+The legs run inside ci.yml, once per merge-train batch (a workflow_dispatch
+on the batch's integration/ branch); the train relays their contexts to each
+pull request in the batch.
 `upstream-testsuite-3.5.1.yml` keeps the same legs for the nightly badge and
 `bootstrap` dispatches. The tests assert that ci.yml publishes every required
 testsuite context, that the two files call the legs identically, and that no
@@ -110,7 +111,7 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
     def test_ci_and_the_gate_call_the_testsuite_identically(self) -> None:
         # The nightly badge must measure what pull requests are gated on. ci.yml
         # has no `bootstrap` input, so its manifest paths are the gate's
-        # non-bootstrap branch, and pull requests only.
+        # non-bootstrap branch, and merge-train batch dispatches only.
         ci, gate = _testsuite_callers(CI_YML), _testsuite_callers(GATE)
         self.assertEqual(set(ci), set(gate))
         for job_id, job in gate.items():
@@ -119,7 +120,7 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
                         for key, value in job["with"].items()}
             self.assertEqual({k: str(v) for k, v in ci[job_id]["with"].items()},
                              expected, job_id)
-            self.assertIn("github.event_name == 'pull_request'", ci[job_id]["if"], job_id)
+            self.assertIn("github.event_name == 'workflow_dispatch'", ci[job_id]["if"], job_id)
 
     def test_only_ci_and_the_gate_run_the_testsuite(self) -> None:
         # The 3.5.0 corpus was retired rather than kept alongside: its test
