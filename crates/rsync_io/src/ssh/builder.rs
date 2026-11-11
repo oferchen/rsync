@@ -88,7 +88,6 @@ pub struct SshCommand {
     prefer_aes_gcm: Option<bool>,
     jump_hosts: Option<OsString>,
     wire_io: WireIoPolicy,
-    local_child: bool,
 }
 
 impl SshCommand {
@@ -113,19 +112,7 @@ impl SshCommand {
             prefer_aes_gcm: None,
             jump_hosts: None,
             wire_io: WireIoPolicy::default(),
-            local_child: false,
         }
-    }
-
-    /// Marks the spawn as a local copy's server child rather than a remote
-    /// shell, so the remote-shell connect traces stay silent.
-    ///
-    /// upstream: main.c:666-667 do_cmd() - a local copy calls `local_child()`
-    /// (pipe.c:109), which never reaches `piped_child()`'s "opening connection
-    /// using:" trace (pipe.c:54-55).
-    pub const fn set_local_child(&mut self, local_child: bool) -> &mut Self {
-        self.local_child = local_child;
-        self
     }
 
     /// Overrides the program used to spawn the remote shell.
@@ -457,7 +444,7 @@ impl SshCommand {
         // per-index `cmd[i]=value` enumeration once argv is finalised. Both
         // helpers gate internally on `DebugFlag::Cmd`; the surrounding
         // `debug_gte` check avoids the Vec allocation when CMD is disabled.
-        if !self.local_child && logging::debug_gte(logging::DebugFlag::Cmd, 1) {
+        if logging::debug_gte(logging::DebugFlag::Cmd, 1) {
             let full_argv: Vec<OsString> = std::iter::once(program.clone())
                 .chain(args.iter().cloned())
                 .collect();
@@ -469,7 +456,7 @@ impl SshCommand {
         // when unset; pipe.c:80-82 then sets the child stdout blocking. The
         // socketpair wire applies it; the pipe fallback is always blocking.
         let blocking_io = self.resolved_blocking_io();
-        if !self.local_child && logging::debug_gte(logging::DebugFlag::Cmd, 2) {
+        if logging::debug_gte(logging::DebugFlag::Cmd, 2) {
             debug_log!(
                 Connect,
                 2,
@@ -496,9 +483,7 @@ impl SshCommand {
         // the child's exit reaches us as EOF.
         drop(command);
 
-        if !self.local_child {
-            debug_log!(Connect, 2, "ssh process spawned successfully");
-        }
+        debug_log!(Connect, 2, "ssh process spawned successfully");
 
         let wire = wire.into_parent_ends(&mut child)?;
 

@@ -33,9 +33,7 @@ use super::super::operand_split::split_transfer_operands;
 use super::super::reporting_side::{ReportingSide, local_failure_error};
 use super::super::version_exchange::version_exchange_failure;
 use super::connection::build_ssh_connection;
-use super::exit_status::{
-    convert_server_stats_to_summary, map_child_exit_status, map_cleanup_child_exit_status,
-};
+use super::exit_status::{PeerChild, PeerConnection, convert_server_stats_to_summary};
 use super::parse::{parse_remote_operands, parse_single_remote, remote_operand_source_paths};
 use super::progress::ServerProgressAdapter;
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
@@ -229,7 +227,7 @@ fn run_pull_transfer(
 /// remote side acts as the receiver. We reuse the server generator infrastructure.
 pub(super) fn run_push_transfer(
     config: &ClientConfig,
-    connection: SshConnection,
+    connection: impl PeerConnection,
     local_paths: &[OsString],
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
@@ -289,7 +287,7 @@ pub(super) fn run_push_transfer(
 /// rsync's `wait_process_with_flush()` behavior.
 fn run_server_over_ssh_connection(
     config: ServerConfig,
-    connection: SshConnection,
+    connection: impl PeerConnection,
     progress: Option<&mut dyn crate::server::TransferProgressCallback>,
     batch_ctx: Option<BatchContext>,
     render_out_format_locally: bool,
@@ -330,10 +328,7 @@ fn run_server_over_ssh_connection(
             // refused", "command not found") already reached the user: the
             // child inherits our stderr (upstream: pipe.c:68-83 piped_child()),
             // so the error built here carries only the exit status.
-            let child_exit = match child_handle.wait() {
-                Ok(status) => map_cleanup_child_exit_status(status),
-                Err(_) => ExitCode::WaitChild,
-            };
+            let child_exit = child_handle.reap().cleanup;
             return Err(version_exchange_failure(&e, Some(child_exit), local_role));
         }
     };
@@ -416,11 +411,11 @@ fn run_server_over_ssh_connection(
     // upstream: main.c wait_process_with_flush() - wait for child and map
     // status. The child wrote its stderr straight to ours (see the
     // handshake-failure path above), so only the exit status is taken here.
-    let child_status = child_handle.wait();
+    let child_exit = child_handle.reap();
 
     match transfer_result {
         Ok(stats) => {
-            let child_exit_code = child_status.map_or(ExitCode::WaitChild, map_child_exit_status);
+            let child_exit_code = child_exit.finished;
             // upstream: take MAX of transfer and child exit codes.
             if child_exit_code.is_success() {
                 Ok((stats, negotiated_protocol, collected_events))
@@ -432,7 +427,7 @@ fn run_server_over_ssh_connection(
         }
         Err(transfer_error) => Err(transfer_failure_error(
             transfer_error,
-            child_status.map_or(ExitCode::WaitChild, map_cleanup_child_exit_status),
+            child_exit.cleanup,
             side,
             bytes_read.load(Ordering::Relaxed),
         )),

@@ -631,6 +631,9 @@ impl ClientConfig {
             self.whole_file = Some(true);
         }
         self.protect_args = None;
+        if let Some(sender) = self.local_sender.as_deref_mut() {
+            sender.apply_local_child_defaults();
+        }
     }
 
     /// Gives a local transfer's sender half its own config; `self` stays the

@@ -262,7 +262,7 @@ where
 {
     // Route through the session-level driver facade
     // (`core::session::run_server_stdio`), which runs the threaded server body.
-    use core::server::{ServerConfig, ServerRole, ServerStats};
+    use core::server::{ServerConfig, ServerRole};
     #[cfg(not(unix))]
     use core::session::run_server_stdio;
 
@@ -995,111 +995,10 @@ where
     };
     #[cfg(not(unix))]
     let outcome = run_server_stdio(config, &mut stdin, stdout, None);
-    match outcome {
-        // upstream: cleanup.c:210-218 - a clean finish still exits with the
-        // code the accumulated io_error bits select (23/24/25).
-        Ok(stats) => {
-            let (io_error, got_xfer_error) = match stats {
-                ServerStats::Receiver(s) => (s.io_error, s.got_xfer_error),
-                ServerStats::Generator(s) => (s.io_error, s.got_xfer_error),
-            };
-            core::exit_code::io_error_exit_code(io_error, got_xfer_error).unwrap_or(0)
-        }
-        Err(e) => {
-            // upstream: io.c:1930 - an exit the peer asked for with
-            // MSG_ERROR_EXIT re-enters _exit_cleanup() with a negative line, so
-            // log_exit() prints nothing (cleanup.c:221-226) and the process
-            // leaves with the peer's code.
-            if let Some(code) = core::server::remote_exit_code(&e) {
-                return code;
-            }
-            let signalled = core::signal::shutdown_reason().is_some();
-            // upstream: cleanup.c:241-256 - a forked receiver dying with one of
-            // the unannounced codes flushes none of its queued messages, so its
-            // own report never leaves it; the generator meets end-of-file on
-            // the error pipe and reports that instead (io.c:299-303). A signal
-            // exits with RERR_SIGNAL first (io.c:600-605), which is announced.
-            if !signalled
-                && role == ServerRole::Receiver
-                && let Some(generator_read) = fork_point.total_read_at_fork()
-                && core::exit_code::receiver_exit_is_unannounced(
-                    core::exit_code::cause_line_exit_code(&e)
-                        .unwrap_or_else(|| core::exit_code::ExitCode::from_io_error(&e)),
-                )
-            {
-                for line in
-                    core::exit_code::generator_eof_report_lines(generator_read, program_brand)
-                {
-                    let _ = stderr.write_all(&line);
-                }
-                return core::exit_code::ExitCode::StreamIo.as_i32();
-            }
-            let who = if role == ServerRole::Generator {
-                Role::Sender
-            } else {
-                Role::Generator
-            };
-            report_server_failure(stderr, program_brand, who, &e, signalled)
-        }
-    }
+    core::session::server_exit_status(outcome, role, &fork_point, program_brand, stderr)
 }
 
-/// Reports the failure that ended a server transfer and returns the exit code.
-///
-/// A pending signal wins over whatever error the transfer was unwinding with:
-/// upstream's handle_kill_signal() calls exit_cleanup(RERR_SIGNAL) itself, so
-/// log_exit() prints the bare trailer and no cause line, even when the code
-/// path it interrupted had one to print.
-///
-/// upstream: io.c:600-605 handle_kill_signal(), log.c:937-963 log_exit()
-fn report_server_failure<Err: Write>(
-    stderr: &mut Err,
-    brand: Brand,
-    who: Role,
-    error: &std::io::Error,
-    signalled: bool,
-) -> i32 {
-    if signalled {
-        let code = core::exit_code::ExitCode::Signal;
-        write_exit_trailer(stderr, brand, who, code);
-        return code.as_i32();
-    }
-    if let Some(code) = core::exit_code::cause_line_exit_code(error) {
-        write_fatal_cause(stderr, brand, who, error, code);
-        return code.as_i32();
-    }
-    let exit_code = core::exit_code::ExitCode::from_io_error(error);
-    // upstream: receiver.c:658-660 and the other RERR_FILEIO sites of
-    // the receive path print their own line first; log_exit() then
-    // prints only the code's description (cleanup.c:248).
-    let text = if matches!(
-        core::server::temp_guard::CommitDisposition::of(error),
-        core::server::temp_guard::CommitDisposition::Abort(_)
-    ) {
-        exit_code.description().to_owned()
-    } else {
-        format!("server error: {error}")
-    };
-    write_server_error_with_code(stderr, brand, exit_code, text);
-    exit_code.as_i32()
-}
 
-/// Prints log_exit()'s trailer for `code` alone, naming the process that hit it.
-///
-/// upstream: log.c:937-963 log_exit()
-fn write_exit_trailer<Err: Write>(
-    stderr: &mut Err,
-    brand: Brand,
-    role: Role,
-    code: core::exit_code::ExitCode,
-) {
-    let trailer = rsync_error!(code.as_i32(), "{}", code.description())
-        .with_role(role)
-        .with_brand(brand);
-    if let Ok(line) = trailer.to_line_bytes() {
-        let _ = stderr.write_all(&line);
-    }
-}
 
 /// Derives upstream's `stdout_format_has_i` from the `--log-format` the client
 /// forwarded, and records it on `info`.
@@ -1440,23 +1339,6 @@ fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt
     write_server_error_with_code(stderr, brand, core::exit_code::ExitCode::Syntax, text);
 }
 
-/// Prints a fatal failure as upstream's remote-shell server does: the cause on
-/// its own line on stderr, then log_exit()'s trailer for `code` naming the
-/// process that hit it.
-///
-/// upstream: log.c:357 rwrite() keeps an FERROR on stderr under
-/// `msgs2stderr == 2`, log.c:937-963 log_exit()
-fn write_fatal_cause<Err: Write>(
-    stderr: &mut Err,
-    brand: Brand,
-    role: Role,
-    cause: &std::io::Error,
-    code: core::exit_code::ExitCode,
-) {
-    for line in core::exit_code::fatal_report_lines(cause, code, role, brand) {
-        let _ = stderr.write_all(&line);
-    }
-}
 
 /// Renders a server-side `rsync error:` trailer carrying an explicit `RERR_*`.
 ///
@@ -1474,53 +1356,6 @@ fn write_server_error_with_code<Err: Write>(
     message = message.with_role(Role::Server);
     if super::super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
-    }
-}
-
-#[cfg(test)]
-mod failure_report_tests {
-    use super::*;
-
-    /// A signal that arrives while a failure with its own cause line is
-    /// unwinding reports the signal alone: handle_kill_signal() exits with
-    /// RERR_SIGNAL before the interrupted site prints anything.
-    ///
-    /// upstream: io.c:600-605, log.c:937-963
-    #[test]
-    fn a_signal_reports_only_its_trailer_over_a_pending_cause() {
-        let pending = protocol::malloc_failure("[receiver] exceeded --max-alloc=1048576 setting");
-
-        let mut unsignalled = Vec::new();
-        let code = report_server_failure(
-            &mut unsignalled,
-            Brand::Upstream,
-            Role::Generator,
-            &pending,
-            false,
-        );
-        let unsignalled = String::from_utf8(unsignalled).expect("utf-8");
-        assert_eq!(code, 22);
-        assert!(
-            unsignalled.starts_with("[receiver] exceeded --max-alloc"),
-            "the fixture's failure prints a cause line of its own:\n{unsignalled}"
-        );
-
-        let mut signalled = Vec::new();
-        let code = report_server_failure(
-            &mut signalled,
-            Brand::Upstream,
-            Role::Generator,
-            &pending,
-            true,
-        );
-        let signalled = String::from_utf8(signalled).expect("utf-8");
-        assert_eq!(code, 20);
-        assert_eq!(signalled.lines().count(), 1, "{signalled}");
-        assert!(
-            signalled.starts_with("rsync error: received SIGINT, SIGTERM, or SIGHUP (code 20) at "),
-            "{signalled}"
-        );
-        assert!(signalled.contains("[generator="), "{signalled}");
     }
 }
 

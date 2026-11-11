@@ -489,7 +489,7 @@ fn run_client_internal(
         return Err(ClientError::new(4, message));
     }
     // upstream: main.c:666-667 - a local copy forks a `--server` child that
-    // receives while the parent sends. oc-rsync forks only for a role trace.
+    // receives while the parent sends.
     if local_child::local_copy_uses_server_child(&config) {
         return remote::run_local_child_transfer(config, observer, batch_writer);
     }

@@ -190,6 +190,107 @@ pub(in crate::client::remote) fn map_cleanup_child_exit_status(
     }
     map_child_exit_status(status)
 }
+/// How the peer at the other end of a client transfer ended, mapped both
+/// ways the client folds a child status in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::client::remote) struct PeerExit {
+    /// The status as a clean finish reaps it ([`map_child_exit_status`]).
+    pub(in crate::client::remote) finished: ExitCode,
+    /// The status as a failing client folds it in
+    /// ([`map_cleanup_child_exit_status`]).
+    pub(in crate::client::remote) cleanup: ExitCode,
+}
+
+impl PeerExit {
+    /// A peer that could not be reaped.
+    ///
+    /// upstream: main.c:212-214 - a failed waitpid() maps to RERR_WAITCHILD.
+    pub(in crate::client::remote) const WAIT_FAILED: Self = Self {
+        finished: ExitCode::WaitChild,
+        cleanup: ExitCode::WaitChild,
+    };
+
+    /// A peer that exited normally with `code`.
+    ///
+    /// upstream: main.c:226 - WEXITSTATUS is returned raw.
+    pub(in crate::client::remote) fn exited(code: i32) -> Self {
+        let mapped = map_remote_end(RemoteEnd::Exited(code));
+        Self {
+            finished: mapped,
+            cleanup: mapped,
+        }
+    }
+
+    /// A peer that crashed instead of exiting.
+    ///
+    /// upstream: main.c:215-224 maps a core dump to RERR_CRASHED on a clean
+    /// finish, while `_exit_cleanup()` folds the raw `WEXITSTATUS` of 0 into a
+    /// failing one (cleanup.c:150-152).
+    pub(in crate::client::remote) const CRASHED: Self = Self {
+        finished: ExitCode::Crashed,
+        cleanup: ExitCode::Ok,
+    };
+
+    fn of_status(status: std::process::ExitStatus) -> Self {
+        Self {
+            finished: map_child_exit_status(status),
+            cleanup: map_cleanup_child_exit_status(status),
+        }
+    }
+}
+
+/// The process or thread a client transfer runs against, which the client
+/// reaps once the transfer ends.
+pub(in crate::client::remote) trait PeerChild {
+    /// Disarms a connect-timeout watchdog once the peer has answered.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the watchdog already fired.
+    fn cancel_connect_watchdog(&mut self) -> std::io::Result<()>;
+
+    /// Waits for the peer to end and reports how it ended.
+    fn reap(self) -> PeerExit;
+}
+
+impl PeerChild for rsync_io::ssh::SshChildHandle {
+    fn cancel_connect_watchdog(&mut self) -> std::io::Result<()> {
+        Self::cancel_connect_watchdog(self)
+    }
+
+    fn reap(self) -> PeerExit {
+        self.wait().map_or(PeerExit::WAIT_FAILED, PeerExit::of_status)
+    }
+}
+
+/// A connection to a peer that splits into its two directions and the
+/// peer it reaches.
+pub(in crate::client::remote) trait PeerConnection {
+    /// The direction the peer writes to.
+    type Reader: std::io::Read;
+    /// The direction the peer reads from.
+    type Writer: std::io::Write;
+    /// The peer itself.
+    type Child: PeerChild;
+
+    /// Splits the connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection's handles cannot be separated.
+    fn split(self) -> std::io::Result<(Self::Reader, Self::Writer, Self::Child)>;
+}
+
+impl PeerConnection for rsync_io::ssh::SshConnection {
+    type Reader = rsync_io::ssh::SshReader;
+    type Writer = rsync_io::ssh::SshWriter;
+    type Child = rsync_io::ssh::SshChildHandle;
+
+    fn split(self) -> std::io::Result<(Self::Reader, Self::Writer, Self::Child)> {
+        Self::split(self)
+    }
+}
+
 /// Maps the embedded SSH transport's remote exit report to an rsync exit code.
 ///
 /// The embedded transport has no child to `waitpid()`; the server's
