@@ -330,6 +330,7 @@ fn deferred_updates_flush_commits_pending_files() {
             destination_previously_existed: false,
         },
         final_path,
+        crate::local_copy::SourceAttrs::default(),
         #[cfg(all(unix, feature = "xattr"))]
         context.xattrs_enabled(),
         #[cfg(all(any(unix, windows), feature = "acl"))]

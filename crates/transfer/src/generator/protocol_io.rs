@@ -1153,45 +1153,25 @@ impl GeneratorContext {
         flist_writer.set_pending_acl(access_acl, default_acl);
     }
 
-    /// Reads the effective ACL for a source path, preferring a stashed
-    /// `--fake-super` xattr over the real filesystem ACL when present.
+    /// Reads the ACL this sender transmits for a source path.
     ///
-    /// A source placeholder written by an earlier `--fake-super --acls`
-    /// receive carries its logical ACL in `%aacl`/`%dacl`, not in a real
-    /// POSIX ACL on disk (an unprivileged receiver cannot apply one). Reading
-    /// the placeholder's real ACL would silently drop that stashed ACL on
-    /// re-send, so - mirroring `%stat`'s `fake_super_override` analogue for
-    /// ownership - the xattr wins when it decodes successfully.
+    /// Under `--fake-super` that is the `%aacl`/`%dacl` stash alone; a corrupt
+    /// stash sends the empty ACL.
     ///
     /// # Upstream Reference
     ///
-    /// Mirrors the `am_root < 0` branch of `get_rsync_acl()` in `acls.c`
-    /// lines 472-509, reached via `x_lstat()`'s xattr-backed stat layering.
-    #[cfg(unix)]
+    /// `get_rsync_acl()` (`acls.c:599-607`) via [`metadata::read_sender_acl`].
+    /// A corrupt stash makes upstream's `get_acl()` fail and
+    /// `send_file_name()` drop the entry (`flist.c:2050-2056`); this sender
+    /// does not drop entries on an ACL read error.
     fn read_source_acl(
         &self,
         full_path: &Path,
         mode: u32,
         is_default: bool,
     ) -> protocol::acl::RsyncAcl {
-        if self.config.fake_super
-            && let Ok(Some(acl)) = metadata::load_fake_super_acl(full_path, !is_default)
-        {
-            return acl;
-        }
-        metadata::get_rsync_acl(full_path, mode, is_default)
-    }
-
-    /// Non-Unix fallback: always reads the real filesystem ACL, since
-    /// `--fake-super`'s xattr stash is a POSIX-only mechanism.
-    #[cfg(not(unix))]
-    fn read_source_acl(
-        &self,
-        full_path: &Path,
-        mode: u32,
-        is_default: bool,
-    ) -> protocol::acl::RsyncAcl {
-        metadata::get_rsync_acl(full_path, mode, is_default)
+        metadata::read_sender_acl(full_path, mode, is_default, self.config.fake_super)
+            .unwrap_or_default()
     }
 
     /// Sends `NDX_FLIST_EOF`, marking incremental sending as complete.

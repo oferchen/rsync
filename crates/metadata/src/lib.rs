@@ -301,6 +301,9 @@ pub fn sync_acls_confined(
 
 pub use acl_idmap::AclIdMapper;
 
+#[cfg(all(feature = "acl", target_os = "linux"))]
+pub use acl_exacl::{AclReadError, LocalAcls};
+
 #[cfg(all(
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
@@ -393,13 +396,13 @@ pub use xattr_send::{XattrRole, XattrSendOptions, XattrSyncFilters, dest_xattrs_
 #[cfg(all(feature = "xattr", any(unix, windows)))]
 pub use xattr::{
     apply_xattrs_from_list, read_xattrs_for_wire, strip_source_internal_xattrs,
-    strip_source_xattrs, sync_xattrs, xattrs_match,
+    strip_source_xattrs, sync_xattrs, sync_xattrs_from_list, xattrs_match,
 };
 
 #[cfg(not(all(feature = "xattr", any(unix, windows))))]
 pub use xattr_stub::{
     apply_xattrs_from_list, read_xattrs_for_wire, strip_source_internal_xattrs,
-    strip_source_xattrs, sync_xattrs, xattrs_match,
+    strip_source_xattrs, sync_xattrs, sync_xattrs_from_list, xattrs_match,
 };
 
 pub use copy_as::{CopyAsIds, become_copy_as_user, parse_copy_as_spec};
@@ -407,9 +410,9 @@ pub use copy_as::{CopyAsIds, become_copy_as_user, parse_copy_as_spec};
 pub use fake_super::{
     CorruptFakeSuperStat, FAKE_SUPER_ACCESS_ACL_XATTR, FAKE_SUPER_DEFAULT_ACL_XATTR,
     FAKE_SUPER_XATTR, FakeSuperStat, effective_source_stat, fake_super_ids, fold_fake_super_stat,
-    is_corrupt_fake_super, load_fake_super, load_fake_super_acl, remove_fake_super,
-    remove_fake_super_default_acl, rename_corrupt_fake_super, store_fake_super,
-    store_fake_super_acl,
+    is_corrupt_fake_super, load_fake_super, load_fake_super_acl, read_sender_acl,
+    remove_fake_super, remove_fake_super_default_acl, rename_corrupt_fake_super, store_fake_super,
+    store_fake_super_acl, update_fake_super_access_acl, update_fake_super_default_acl,
 };
 #[cfg(unix)]
 pub use fake_super_link::{

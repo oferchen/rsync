@@ -212,33 +212,20 @@ pub fn store_acls_via_fake_super(
     follow_symlinks: bool,
     mode: u32,
 ) -> Result<(), MetadataError> {
-    use crate::fake_super::{remove_fake_super_default_acl, store_fake_super_acl};
+    use crate::fake_super::{update_fake_super_access_acl, update_fake_super_default_acl};
 
     if !follow_symlinks {
         return Ok(());
     }
 
     if let Some(acl) = cache.get_access(access_ndx) {
-        store_fake_super_acl(destination, true, acl, mode)
+        update_fake_super_access_acl(destination, acl, mode)
             .map_err(|e| MetadataError::new("store fake-super access ACL", destination, e))?;
     }
 
-    if let Some(def_ndx) = default_ndx {
-        match cache.get_default(def_ndx) {
-            // upstream: acls.c:1176-1177 - user_obj == NO_ENTRY means "no default
-            // ACL", so the xattr is removed rather than storing an empty ACL.
-            Some(def_acl) if !def_acl.has_user_obj() => {
-                remove_fake_super_default_acl(destination).map_err(|e| {
-                    MetadataError::new("remove fake-super default ACL", destination, e)
-                })?;
-            }
-            Some(def_acl) => {
-                store_fake_super_acl(destination, false, def_acl, mode).map_err(|e| {
-                    MetadataError::new("store fake-super default ACL", destination, e)
-                })?;
-            }
-            None => {}
-        }
+    if let Some(def_acl) = default_ndx.and_then(|ndx| cache.get_default(ndx)) {
+        update_fake_super_default_acl(destination, def_acl, mode)
+            .map_err(|e| MetadataError::new("store fake-super default ACL", destination, e))?;
     }
 
     Ok(())

@@ -473,6 +473,103 @@ pub fn store_fake_super_acl(
     )
 }
 
+/// Reads the ACL a sender transmits for `path`.
+///
+/// Under `--fake-super` only the `%aacl`/`%dacl` stash counts: a source
+/// without one sends the empty ACL, never its real filesystem ACL. `--fake-super`
+/// is never passed to the remote side, so this is the sending process's own
+/// setting.
+///
+/// # Errors
+///
+/// Returns an error when the stash exists but is corrupt.
+///
+/// # Upstream Reference
+///
+/// `get_rsync_acl()` (`acls.c:599-607`): under `am_root < 0` a missing
+/// `get_xattr_acl()` returns before the real ACL is read, leaving the
+/// `empty_rsync_acl` that `get_acl_fdat()` (`acls.c:766`) started with.
+pub fn read_sender_acl(
+    path: &Path,
+    mode: u32,
+    is_default: bool,
+    fake_super: bool,
+) -> io::Result<protocol::acl::RsyncAcl> {
+    if fake_super {
+        return Ok(load_fake_super_acl(path, !is_default)?.unwrap_or_default());
+    }
+    Ok(crate::get_rsync_acl(path, mode, is_default))
+}
+
+/// Stores an access ACL in `%aacl` unless the destination already holds an
+/// equivalent one.
+///
+/// A missing `%aacl` reads as the empty ACL, so a source whose ACL is only its
+/// permission bits stores nothing, as with upstream.
+///
+/// # Upstream Reference
+///
+/// Mirrors the access arm of `set_acl_fdat()` (`acls.c:1388-1399`): the store
+/// runs only when `rsync_acl_equal_enough()` finds the destination ACL, as
+/// `get_rsync_acl()` loads it under `am_root < 0` (`acls.c:601-631`), unequal.
+/// The `NO_ENTRY` slots of a loaded ACL are filled from `mode`, where upstream
+/// uses the destination's mode; `equal_enough` compares none of them except
+/// `group_obj` under a mask, so the outcome only differs when the mode changed,
+/// and then the stored bytes are the same either way.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn update_fake_super_access_acl(
+    path: &Path,
+    acl: &protocol::acl::RsyncAcl,
+    mode: u32,
+) -> io::Result<()> {
+    let mut wanted = acl.clone();
+    wanted.condense_for_fake_super_store(mode);
+    let current = load_fake_super_acl(path, true)?.map_or_else(
+        protocol::acl::RsyncAcl::default,
+        |mut held| {
+            let fill = |slot: &mut u8, bits: u32| {
+                if *slot == protocol::acl::NO_ENTRY {
+                    *slot = (bits & 7) as u8;
+                }
+            };
+            fill(&mut held.user_obj, mode >> 6);
+            fill(&mut held.group_obj, mode >> 3);
+            fill(&mut held.other_obj, mode);
+            held
+        },
+    );
+    if current.equal_enough(&wanted, mode) {
+        return Ok(());
+    }
+    store_fake_super_acl(path, true, acl, mode)
+}
+
+/// Brings a directory's `%dacl` in line with `acl`, writing only on a change.
+///
+/// An ACL without `user_obj` means "no default ACL" and removes the xattr.
+///
+/// # Upstream Reference
+///
+/// Mirrors the default arm of `set_acl_fdat()` (`acls.c:1405-1415`): strict
+/// `rsync_acl_equal()` against the loaded `%dacl` (empty when absent), then
+/// `set_rsync_acl()`'s delete (`acls.c:1176-1182`) or store branch.
+#[cfg(all(unix, feature = "xattr"))]
+pub fn update_fake_super_default_acl(
+    path: &Path,
+    acl: &protocol::acl::RsyncAcl,
+    mode: u32,
+) -> io::Result<()> {
+    let current = load_fake_super_acl(path, false)?.unwrap_or_default();
+    if current.equal(acl) {
+        return Ok(());
+    }
+    if acl.has_user_obj() {
+        store_fake_super_acl(path, false, acl, mode)
+    } else {
+        remove_fake_super_default_acl(path)
+    }
+}
+
 /// Retrieves a fake-super ACL from a file's xattr.
 ///
 /// Returns `None` if the xattr does not exist. Returns an error if the xattr
@@ -741,9 +838,152 @@ pub fn remove_fake_super_default_acl(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Returns `Unsupported` on platforms without xattr support, like
+/// [`store_fake_super_acl`].
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn update_fake_super_access_acl(
+    path: &Path,
+    acl: &protocol::acl::RsyncAcl,
+    mode: u32,
+) -> io::Result<()> {
+    store_fake_super_acl(path, true, acl, mode)
+}
+
+/// Returns `Unsupported` on platforms without xattr support, like
+/// [`store_fake_super_acl`].
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn update_fake_super_default_acl(
+    path: &Path,
+    acl: &protocol::acl::RsyncAcl,
+    mode: u32,
+) -> io::Result<()> {
+    store_fake_super_acl(path, false, acl, mode)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(unix, feature = "xattr"))]
+    mod acl_stash {
+        use super::super::{
+            FAKE_SUPER_ACCESS_ACL_XATTR, FAKE_SUPER_DEFAULT_ACL_XATTR, read_sender_acl,
+            update_fake_super_access_acl, update_fake_super_default_acl,
+        };
+        use protocol::acl::RsyncAcl;
+        use std::fs;
+        use std::path::{Path, PathBuf};
+
+        /// A `%aacl` granting `nobody` read: mask r, one named user entry.
+        const NAMED: [u8; 24] = [
+            0x80, 0, 0, 0, 0x80, 0, 0, 0, 0x04, 0, 0, 0, 0x80, 0, 0, 0, 0xfe, 0xff, 0, 0, 0x04, 0,
+            0, 0x80,
+        ];
+
+        fn named() -> RsyncAcl {
+            RsyncAcl::from_fake_super_bytes(&NAMED).expect("valid stash")
+        }
+
+        /// A fresh file, or `None` when the filesystem refuses user xattrs.
+        fn file(dir: &Path) -> Option<PathBuf> {
+            let path = dir.join("f");
+            fs::write(&path, b"x").expect("write");
+            xattr::set(&path, "user.probe", b"1").ok()?;
+            Some(path)
+        }
+
+        fn stash(path: &Path, name: &str) -> Option<Vec<u8>> {
+            xattr::get(path, name).expect("getxattr")
+        }
+
+        /// upstream: acls.c:1388-1399 - an ACL equal to the empty one the
+        /// destination reads without a stash is not stored.
+        #[test]
+        fn a_mode_only_access_acl_is_not_stashed() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            update_fake_super_access_acl(&path, &RsyncAcl::default(), 0o644).expect("update");
+            assert_eq!(stash(&path, FAKE_SUPER_ACCESS_ACL_XATTR), None);
+        }
+
+        #[test]
+        fn a_named_access_acl_is_stashed() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            update_fake_super_access_acl(&path, &named(), 0o644).expect("update");
+            assert_eq!(
+                stash(&path, FAKE_SUPER_ACCESS_ACL_XATTR),
+                Some(NAMED.to_vec())
+            );
+        }
+
+        /// A stash the source no longer carries is replaced, not kept.
+        #[test]
+        fn a_stale_access_stash_is_rewritten() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            xattr::set(&path, FAKE_SUPER_ACCESS_ACL_XATTR, &NAMED).expect("plant");
+            update_fake_super_access_acl(&path, &RsyncAcl::default(), 0o644).expect("update");
+            let held = stash(&path, FAKE_SUPER_ACCESS_ACL_XATTR).expect("stash kept");
+            assert_ne!(held, NAMED.to_vec());
+        }
+
+        /// upstream: acls.c:1405-1415 with the delete branch at 1176-1182.
+        #[test]
+        fn a_default_stash_follows_the_source() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            update_fake_super_default_acl(&path, &RsyncAcl::default(), 0o755).expect("update");
+            assert_eq!(stash(&path, FAKE_SUPER_DEFAULT_ACL_XATTR), None);
+
+            let mut with_owner = named();
+            with_owner.user_obj = 7;
+            update_fake_super_default_acl(&path, &with_owner, 0o755).expect("update");
+            assert!(stash(&path, FAKE_SUPER_DEFAULT_ACL_XATTR).is_some());
+
+            update_fake_super_default_acl(&path, &RsyncAcl::default(), 0o755).expect("update");
+            assert_eq!(stash(&path, FAKE_SUPER_DEFAULT_ACL_XATTR), None);
+        }
+
+        /// upstream: acls.c:1390-1415 - an equal ACL never reaches
+        /// set_rsync_acl(), so the stash is not rewritten (its ctime holds).
+        #[test]
+        fn an_equal_stash_is_left_untouched() {
+            use std::os::unix::fs::MetadataExt;
+
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            let mut default = named();
+            default.user_obj = 7;
+            update_fake_super_access_acl(&path, &named(), 0o644).expect("update");
+            update_fake_super_default_acl(&path, &default, 0o755).expect("update");
+            let ctime = |p: &Path| {
+                let meta = fs::metadata(p).expect("stat");
+                (meta.ctime(), meta.ctime_nsec())
+            };
+            let before = ctime(&path);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            update_fake_super_access_acl(&path, &named(), 0o644).expect("update");
+            update_fake_super_default_acl(&path, &default, 0o755).expect("update");
+            assert_eq!(ctime(&path), before, "an equal stash was rewritten");
+        }
+
+        /// upstream: acls.c:599-607 - no stash reads as the empty ACL.
+        #[test]
+        fn a_fake_super_sender_reads_only_the_stash() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let Some(path) = file(dir.path()) else { return };
+            let empty = read_sender_acl(&path, 0o644, false, true).expect("read");
+            assert_eq!(empty, RsyncAcl::default());
+
+            xattr::set(&path, FAKE_SUPER_ACCESS_ACL_XATTR, &NAMED).expect("plant");
+            let stashed = read_sender_acl(&path, 0o644, false, true).expect("read");
+            assert_eq!(stashed, named());
+
+            xattr::set(&path, FAKE_SUPER_ACCESS_ACL_XATTR, b"bad").expect("plant");
+            assert!(read_sender_acl(&path, 0o644, false, true).is_err());
+        }
+    }
 
     #[cfg(all(unix, feature = "xattr"))]
     mod fold {

@@ -23,7 +23,7 @@ use crate::local_copy::{
 };
 
 #[cfg(all(any(unix, windows), feature = "acl"))]
-use crate::local_copy::sync_acls_if_requested;
+use crate::local_copy::apply_source_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 
@@ -262,18 +262,19 @@ pub(super) fn process_links(
             sync_xattrs_if_requested(
                 preserve_xattrs,
                 mode,
-                source,
+                context.entry_attrs().xattrs.as_ref(),
                 destination,
                 true,
                 context.filter_program(),
                 Some(context.destination_root()),
             )?;
             #[cfg(all(any(unix, windows), feature = "acl"))]
-            sync_acls_if_requested(
+            apply_source_acls_if_requested(
                 preserve_acls,
                 context.options().fake_super_enabled(),
                 mode,
                 source,
+                context.entry_attrs(),
                 destination,
                 true,
                 Some(context.destination_root()),
@@ -306,18 +307,19 @@ pub(super) fn process_links(
             sync_xattrs_if_requested(
                 preserve_xattrs,
                 mode,
-                source,
+                context.entry_attrs().xattrs.as_ref(),
                 destination,
                 true,
                 context.filter_program(),
                 Some(context.destination_root()),
             )?;
             #[cfg(all(any(unix, windows), feature = "acl"))]
-            sync_acls_if_requested(
+            apply_source_acls_if_requested(
                 preserve_acls,
                 context.options().fake_super_enabled(),
                 mode,
                 source,
+                context.entry_attrs(),
                 destination,
                 true,
                 Some(context.destination_root()),
@@ -790,7 +792,7 @@ pub(super) fn process_links(
                     sync_xattrs_if_requested(
                         preserve_xattrs,
                         mode,
-                        source,
+                        context.entry_attrs().xattrs.as_ref(),
                         destination,
                         true,
                         context.filter_program(),
@@ -808,11 +810,12 @@ pub(super) fn process_links(
                     // follower alias.
                     #[cfg(all(any(unix, windows), feature = "acl"))]
                     if context.register_acl_cohort_leader(&path) {
-                        sync_acls_if_requested(
+                        apply_source_acls_if_requested(
                             preserve_acls,
                             context.options().fake_super_enabled(),
                             mode,
                             source,
+                            context.entry_attrs(),
                             destination,
                             true,
                             Some(context.destination_root()),

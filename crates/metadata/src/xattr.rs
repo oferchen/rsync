@@ -146,13 +146,20 @@ fn screen_names(names: Vec<std::ffi::OsString>, screen: NamespaceScreen) -> Vec<
     names
         .into_iter()
         .map(|name| backend::os_name_to_bytes(&name))
-        .filter(|bytes| match screen {
-            NamespaceScreen::Apply { user_only } => {
-                is_xattr_permitted(&String::from_utf8_lossy(bytes), user_only)
-            }
-            NamespaceScreen::Bypass => true,
-        })
+        .filter(|bytes| screen.admits(bytes))
         .collect()
+}
+
+impl NamespaceScreen {
+    /// Whether one byte-encoded name passes the screen.
+    fn admits(self, name: &[u8]) -> bool {
+        match self {
+            Self::Apply { user_only } => {
+                is_xattr_permitted(&String::from_utf8_lossy(name), user_only)
+            }
+            Self::Bypass => true,
+        }
+    }
 }
 
 /// Selects the namespace screen for one read.
@@ -472,26 +479,68 @@ pub fn sync_xattrs(
         }
     }
 
-    let destination_attrs = dest.list(screen)?;
-    for name in &destination_attrs {
+    prune_unretained(&dest, screen, &retained, destination_filter)
+}
+
+/// Applies the attribute list the sender half of a local copy read, without
+/// reading the source again.
+///
+/// `list` is the source's [`read_xattrs_for_wire`] result, already shaped by
+/// the sender's `x`-filter side. Its names return to the local form through
+/// [`protocol::xattr::local_from_own_wire`], the inverse of the mapping that
+/// built them, and the destination is then written and pruned exactly as
+/// [`sync_xattrs`] does.
+///
+/// upstream: xattrs.c:rsync_xal_get() on the sender, receive_xattr() and
+/// rsync_xal_set() on the receiver.
+pub fn sync_xattrs_from_list(
+    list: &XattrList,
+    destination: &Path,
+    follow_symlinks: bool,
+    filters: XattrSyncFilters<'_>,
+    confine_root: Option<&Path>,
+) -> Result<(), MetadataError> {
+    let screen = namespace_screen(filters.governs_selection(), receiver_user_only());
+    let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(list.len());
+    let dest = DestinationXattrs::open(destination, follow_symlinks, confine_root);
+
+    for entry in list.iter() {
+        let name = protocol::xattr::local_from_own_wire(entry.name());
+        if !screen.admits(&name) {
+            continue;
+        }
+        if !protocol::xattr::is_rsync_internal(&String::from_utf8_lossy(&name)) {
+            dest.write(&name, entry.datum())?;
+        }
+        retained.insert(name);
+    }
+
+    prune_unretained(&dest, screen, &retained, filters.destination)
+}
+
+/// Removes every screened destination name the source did not retain.
+///
+/// rsync's own metadata channel (fake-super `%stat`/`%aacl`/`%dacl`) is never
+/// removed: it is managed separately and is not part of the -X data set.
+/// upstream: xattrs.c:1074-1094 rsync_xal_set().
+fn prune_unretained(
+    dest: &DestinationXattrs<'_>,
+    screen: NamespaceScreen,
+    retained: &HashSet<Vec<u8>>,
+    destination_filter: Option<&dyn Fn(&str) -> bool>,
+) -> Result<(), MetadataError> {
+    for name in &dest.list(screen)? {
         if retained.contains(name) {
             continue;
         }
-
         let name_str = String::from_utf8_lossy(name);
-        // Never delete rsync's own metadata channel (fake-super %stat/%aacl/%dacl):
-        // it is managed separately and is not part of the -X data set.
         if protocol::xattr::is_rsync_internal(&name_str) {
             continue;
         }
-
-        let allow = destination_filter.is_none_or(|predicate| predicate(&name_str));
-
-        if allow {
+        if destination_filter.is_none_or(|predicate| predicate(&name_str)) {
             dest.remove(name)?;
         }
     }
-
     Ok(())
 }
 
