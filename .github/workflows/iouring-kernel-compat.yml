@@ -22,22 +22,14 @@ on:
       - 'crates/transfer/src/disk_commit/**'
       - 'crates/transfer/src/map_file/**'
       - '.github/workflows/iouring-kernel-compat.yml'
-  pull_request:
-    paths:
-      - 'crates/fast_io/**'
-      - 'crates/transfer/src/disk_commit/**'
-      - 'crates/transfer/src/map_file/**'
-      - '.github/workflows/iouring-kernel-compat.yml'
+  # Pull requests run it once per merge-train batch: the train dispatches it
+  # on the batch's integration/ branch instead of each pull request.
   workflow_dispatch:
 
 concurrency:
-  # Pull requests wait in two first-in-first-out lanes per workflow, chosen by
-  # pull request number parity, so two pull requests' runs share the runner
-  # pool and each lane starts its next run only when the previous one has
-  # finished; nothing is cancelled. Every other event (master push, schedule,
-  # dispatch) gets its own group per commit, so it never waits behind a lane and
-  # every merge commit keeps a completed run for bisection.
-  group: iouring-kernel-compat-${{ github.event_name == 'pull_request' && format('pr-queue-{0}', (endsWith(github.event.pull_request.number, '0') || endsWith(github.event.pull_request.number, '2') || endsWith(github.event.pull_request.number, '4') || endsWith(github.event.pull_request.number, '6') || endsWith(github.event.pull_request.number, '8')) && 'even' || 'odd') || format('{0}-{1}', github.ref, github.sha) }}
+  # One group per commit: a merge-train batch dispatch, a master push or the
+  # schedule never waits behind another run, and nothing is cancelled.
+  group: iouring-kernel-compat-${{ github.ref }}-${{ github.sha }}
   queue: max
 
 permissions:

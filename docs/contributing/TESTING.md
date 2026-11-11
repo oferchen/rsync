@@ -186,7 +186,16 @@ Branch protection requires ten contexts: `fmt + clippy`, `nextest (stable)`,
 `upstream-testsuite-tcp / upstream testsuite`, and
 `upstream-testsuite-tcp / upstream testsuite (root)`.
 
-Pull requests, the nightly schedule and `workflow_dispatch` run every job. A
+A pull request runs only the light checks: `fmt + clippy`, `rustdoc links`,
+`unsafe-safety-comment-audit`, the other static gates and a `Linux build
+check` that builds every test binary. The build-and-test jobs run once per
+merge-train batch: the train merges up to six ready pull requests onto an
+`integration/` branch, dispatches `ci.yml`, `interop-validation.yml` and
+`iouring-kernel-compat.yml` there, and when the batch passes it posts the
+batch's required contexts on each pull request's head as commit statuses
+linking the batch run, then squash-merges the pull requests in order. A
+failing batch is split in halves until the failing pull request is isolated.
+The nightly schedule runs every job except the testsuite and bake legs. A
 push to master runs only the `ci.yml` jobs behind these contexts (stable cells
 only); `upstream-testsuite-3.5.1.yml` and `interop-validation.yml` have no push
 trigger and cover master from their nightly schedules instead.
