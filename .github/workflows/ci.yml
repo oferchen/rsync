@@ -54,17 +54,18 @@ on:
     - cron: '30 3 * * *'
 
 concurrency:
-  # Pull requests wait in one first-in-first-out queue, and nothing is
-  # cancelled. This run carries EVERY check a pull request needs - the upstream
-  # testsuite legs and the Windows bake legs are called from here rather than
-  # triggered separately - so the queue hands one pull request the whole runner
-  # pool at a time instead of splitting it between pull requests across
-  # workflows. A run for a commit its pull request has since replaced is
-  # cancelled by the merge train, since queue: max cannot cancel it. Every
-  # other event (master push, schedule, dispatch) gets its own group per commit,
-  # so it never waits behind the pull request queue and every merge commit
+  # Pull requests wait in two first-in-first-out lanes chosen by pull request
+  # number parity, and nothing is cancelled. This run carries EVERY check a pull
+  # request needs - the upstream testsuite legs and the Windows bake legs are
+  # called from here rather than triggered separately. One run keeps about 5 of
+  # the 20 runners busy on average (peak 10 Linux, 4 Windows, 2 macOS, measured
+  # on #8364's 58-job run), so two lanes let two pull requests share the pool
+  # without exceeding the 5 macOS runners. A run for a commit its pull request
+  # has since replaced is cancelled by the merge train, since queue: max cannot
+  # cancel it. Every other event (master push, schedule, dispatch) gets its own
+  # group per commit, so it never waits behind a lane and every merge commit
   # keeps a completed run for bisection.
-  group: ci-${{ github.event_name == 'pull_request' && 'pr-queue' || format('{0}-{1}', github.ref, github.sha) }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-queue-{0}', (endsWith(github.event.pull_request.number, '0') || endsWith(github.event.pull_request.number, '2') || endsWith(github.event.pull_request.number, '4') || endsWith(github.event.pull_request.number, '6') || endsWith(github.event.pull_request.number, '8')) && 'even' || 'odd') || format('{0}-{1}', github.ref, github.sha) }}
   queue: max
 
 permissions:
@@ -580,19 +581,15 @@ jobs:
           - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
 
     steps:
-      - name: Free disk space
-        if: needs.changes.outputs.docs_only != 'true'
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
-          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-chrome-stable \
-            firefox powershell mono-devel libgl1-mesa-dri google-cloud-cli 2>/dev/null || true
-          sudo apt-get autoremove -y 2>/dev/null || true
-          sudo apt-get clean
-          df -h /
-
       - name: Checkout
         if: needs.changes.outputs.docs_only != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Free disk space
+        if: needs.changes.outputs.docs_only != 'true'
+        uses: ./.github/actions/free-disk-space
+        with:
+          remove-packages: 'true'
 
       - name: Install Rust (${{ matrix.toolchain }})
         if: needs.changes.outputs.docs_only != 'true'
@@ -778,11 +775,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
-          sudo docker image prune --all --force || true
-          sudo apt-get clean || true
-          df -h /
+        uses: ./.github/actions/free-disk-space
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
@@ -1344,11 +1337,7 @@ jobs:
 
       - name: Free disk space
         if: needs.changes.outputs.docs_only != 'true' && (runner.os == 'Linux')
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
-          sudo docker image prune --all --force || true
-          sudo apt-get clean || true
-          df -h /
+        uses: ./.github/actions/free-disk-space
 
       # Pre-warm the toolchain download with a short-timeout retry loop so a
       # transient rustup fetch failure (DNS hang or TCP connect timeout to the

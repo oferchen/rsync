@@ -140,13 +140,16 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
         self.assertTrue(gate["schedule"], "the gate has no nightly cron")
 
     def test_every_pull_request_check_runs_in_one_queued_run(self) -> None:
-        # One run per pull request, queued first-in-first-out, so the runner
-        # pool serves one pull request at a time. A queued run is never
-        # cancelled, so every master push keeps its own group.
+        # One run per pull request, queued first-in-first-out in one of two
+        # lanes by pull request number parity, so two pull requests share the
+        # runner pool. A queued run is never cancelled, so every master push
+        # keeps its own group.
         ci = _load(CI_YML)["concurrency"]
         self.assertEqual(ci["queue"], "max")
         self.assertNotIn("cancel-in-progress", ci)
-        self.assertIn("pr-queue", ci["group"])
+        self.assertIn("pr-queue-{0}", ci["group"])
+        self.assertIn("'even'", ci["group"])
+        self.assertIn("'odd'", ci["group"])
         self.assertIn("github.sha", ci["group"])
         called = {job["uses"].removeprefix("./.github/workflows/")
                   for job in _load(CI_YML)["jobs"].values() if "uses" in job}
