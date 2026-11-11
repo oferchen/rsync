@@ -684,6 +684,7 @@ mod tests {
         ClientProgressUpdate::from_transfer_event(
             event,
             1,
+            2,
             3,
             Some(2_048),
             1_024,
@@ -774,6 +775,7 @@ mod tests {
         ClientProgressUpdate::from_transfer_event(
             event,
             index,
+            2usize.saturating_sub(index),
             2,
             Some(2_048),
             2_048,
@@ -869,6 +871,7 @@ mod tests {
         ClientProgressUpdate::from_transfer_event(
             event,
             index,
+            total.saturating_sub(index),
             total,
             Some(0),
             0,

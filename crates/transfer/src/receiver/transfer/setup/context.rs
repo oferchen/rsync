@@ -101,9 +101,9 @@ impl ReceiverContext {
         W: io::Write + crate::writer::MsgInfoSender + ?Sized,
     >(
         &mut self,
-        mut reader: crate::reader::ServerReader<R>,
+        reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
-    ) -> io::Result<(crate::reader::ServerReader<R>, usize, PipelineSetup)> {
+    ) -> io::Result<(usize, PipelineSetup)> {
         // upstream: generator.c:2763-2766 - emitted at the top of generate_files,
         // just before the per-segment dispatch loop. The receiver-side transfer
         // setup is the closest analog (every `run*` entry point routes through
@@ -113,8 +113,8 @@ impl ReceiverContext {
         self.emit_delta_transmission_notice(writer);
 
         reader.set_local_role(self.reader_role());
-        let mut reader = if self.should_activate_input_multiplex() {
-            reader.activate_multiplex().map_err(|e| {
+        if self.should_activate_input_multiplex() {
+            reader.activate_multiplex_in_place().map_err(|e| {
                 io::Error::new(
                     e.kind(),
                     format!(
@@ -123,13 +123,11 @@ impl ReceiverContext {
                         crate::role_trailer::receiver()
                     ),
                 )
-            })?
-        } else {
-            reader
-        };
+            })?;
+        }
 
         if self.should_read_filter_list() {
-            let wire_rules = read_filter_list(&mut reader, self.protocol).map_err(|e| {
+            let wire_rules = read_filter_list(reader, self.protocol).map_err(|e| {
                 io::Error::new(
                     e.kind(),
                     format!(
@@ -182,7 +180,7 @@ impl ReceiverContext {
         // via the on-demand primitives (`ensure_flat_idx` /
         // `ensure_all_segments_loaded`), mirroring upstream's generator which
         // fetches sub-lists on demand rather than up front (generator.c:2772).
-        let file_count = self.receive_file_list(&mut reader)?;
+        let file_count = self.receive_file_list(reader)?;
         // upstream: flist.c:3266 - finish_filelist_progress() once the
         // whole list has arrived.
         with_client_stream(msgs_to_stderr, |out| {
@@ -208,7 +206,7 @@ impl ReceiverContext {
             self.mark_fork();
         }
 
-        Ok((reader, file_count, setup))
+        Ok((file_count, setup))
     }
 
     /// Checks a server receiver's `--temp-dir` and anchors a relative value at

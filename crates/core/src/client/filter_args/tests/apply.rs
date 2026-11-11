@@ -1,9 +1,10 @@
-use super::common::*;
 use super::*;
 
 /// A merge named inside a merge file resolves from the base directory, not the
 /// naming file's directory: parse_merge_name() joins it onto the still-empty
-/// `dirbuf` (exclude.c:696-745).
+/// `dirbuf` (exclude.c:696-745). A name with no slash at all is returned
+/// unchanged (exclude.c:704-715) and opens from the cwd, so the outer name
+/// carries one.
 #[test]
 fn apply_merge_directive_resolves_relative_paths() {
     let temp = test_support::create_tempdir();
@@ -19,7 +20,7 @@ fn apply_merge_directive_resolves_relative_paths() {
 
     let mut rules = Vec::new();
     let mut visited = Vec::new();
-    let directive = MergeDirective::new(OsString::from("outer.rules"), None)
+    let directive = MergeDirective::new(OsString::from("./outer.rules"), None)
         .with_options(DirMergeOptions::default().allow_list_clearing(true));
     super::apply_merge_directive(
         directive,
@@ -61,8 +62,9 @@ fn apply_merge_directive_respects_forced_include() {
     .expect("merge succeeds");
 
     assert!(visited.is_empty());
-    // upstream: exclude.c:1542-1550 - '!' inside a merge file clears only
-    // the local section, so the parent-scope "existing" rule survives.
+    // upstream: exclude.c:1542-1551 - a clear inside a merge file runs
+    // `pop_filter_list(listp); listp->head = NULL` on the list the file is
+    // parsed into, so the "existing" rule ahead of it goes too.
     let patterns: Vec<_> = rules.iter().map(|rule| rule.pattern().to_owned()).collect();
-    assert_eq!(patterns, vec!["existing", "beta"]);
+    assert_eq!(patterns, vec!["beta"]);
 }

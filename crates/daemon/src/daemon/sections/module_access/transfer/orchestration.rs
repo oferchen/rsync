@@ -318,12 +318,22 @@ fn process_approved_module(
     // behavioural difference.
     //
     // The parse precedes the post-xfer fork (:967), so a refusal here runs no
-    // hook at all.
+    // hook at all. It also precedes `@RSYNCD: OK`, and upstream's refusal is
+    // exit_cleanup() with the cause in the daemon log only, so the client sees
+    // the connection close with nothing sent. MEASURED against rsync 3.5.1:
+    // `filter = - foo clear,- keep` logs `'!' rule has trailing characters:
+    // clear,- keep` and the client reports `didn't get server startup line`.
     let daemon_filter_rules = match build_daemon_filter_rules(module) {
         Ok(rules) => rules,
-        Err(err) => {
-            let error = AtError::message(format!("failed to load module filter rules: {err}"));
-            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+        Err(refusal) => {
+            let code = refusal.exit_code();
+            *ctx.session_exit_code = Some(code);
+            if let Some(log) = ctx.log_sink {
+                log_message(
+                    log,
+                    &rsync_error!(code.as_i32(), refusal.to_string()).with_role(Role::Daemon),
+                );
+            }
             return Ok(());
         }
     };
@@ -491,7 +501,7 @@ fn process_approved_module(
     // ⚠ The daemon filter parameters are read ABOVE this point, not below it -
     // see the ordering table there for why each of the three steps in this
     // block would break a different working configuration.
-    if !validate_module_path(ctx, module)? {
+    let Some(module_root) = validate_module_path(ctx, module)? else {
         // upstream: clientserver.c:1059-1060 - the change_dir() into the module
         // path is post-fork, so a missing/unreachable path still hooks.
         let host_owned = ctx.host_display().to_owned();
@@ -504,7 +514,18 @@ fn process_approved_module(
             MODULE_ABORT_EXIT_CODE,
         );
         return Ok(());
-    }
+    };
+    // From here the session works in the resolved module root, as upstream's
+    // child does after change_dir(); the hook variables above keep the module
+    // path as configured (RSYNC_MODULE_PATH, clientserver.c:770).
+    let resolved_module = ModuleRuntime::new(
+        ModuleDefinition {
+            path: module_root,
+            ..module.definition.clone()
+        },
+        module.connection_limiter.clone(),
+    );
+    let module = &resolved_module;
 
     // upstream: clientserver.c:rsync_module (1070-1082) - once munge_symlinks is
     // resolved and the daemon has entered the module root, a pre-existing
@@ -827,6 +848,12 @@ fn process_approved_module(
         effective_module = ModuleRuntime::from(chroot_adjusted_definition(
             &module.definition,
             privilege_outcome.inner_module_path.as_deref(),
+        ));
+        &effective_module
+    } else if let Some(anchored_root) = privilege_outcome.anchored_root.as_deref() {
+        effective_module = ModuleRuntime::from(chroot_adjusted_definition(
+            &module.definition,
+            Some(anchored_root),
         ));
         &effective_module
     } else {

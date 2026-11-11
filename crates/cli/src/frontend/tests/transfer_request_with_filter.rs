@@ -282,12 +282,13 @@ fn transfer_request_with_filter_merge_allows_a_chain_within_the_cap() {
     );
 }
 
-/// upstream: exclude.c:1542-1550 resolves `FILTRULE_CLEAR_LIST` via
-/// `pop_filter_list` which truncates only the local section of the per-merge-file
-/// rule list. A `!` inside a merge file must not clear parent CLI `--filter`
-/// rules collected before the merge directive.
+/// upstream: exclude.c:1542-1551 - a `!` inside a merge file runs
+/// `pop_filter_list(listp); listp->head = NULL` on the list the file is parsed
+/// into, which is the argv's own `filter_list`, so the `--filter` rules ahead
+/// of the merge go too. MEASURED on rsync 3.5.1: `-f '- *.tmp' -f 'merge F'`
+/// with F holding `!` transfers `skip.tmp`.
 #[test]
-fn transfer_request_with_filter_merge_bang_preserves_parent_cli_rule() {
+fn transfer_request_with_filter_merge_bang_clears_parent_cli_rule() {
     let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
@@ -321,17 +322,17 @@ fn transfer_request_with_filter_merge_bang_preserves_parent_cli_rule() {
 
     let copied_root = dest_root.join("source");
     assert!(copied_root.join("keep.txt").exists());
-    // Parent `--filter "- *.tmp"` survived the merge file's `!`.
-    assert!(!copied_root.join("skip.tmp").exists());
+    // The merge file's `!` cleared the parent `--filter "- *.tmp"`.
+    assert!(copied_root.join("skip.tmp").exists());
     // Merge file's own exclude still applies.
     assert!(!copied_root.join("skip.log").exists());
 }
 
-/// upstream: exclude.c:1542-1550 - a `!` inside a nested merge file clears only
-/// the nested scope. Rules added by the outer merge file before the nested
-/// reference survive.
+/// upstream: exclude.c:1542-1551 - a nested merge file is parsed into the same
+/// list as the one naming it (exclude.c:1587), so its `!` clears the outer
+/// merge file's rules too. MEASURED on rsync 3.5.1: `skip.tmp` is transferred.
 #[test]
-fn transfer_request_with_filter_nested_merge_bang_preserves_outer_scope() {
+fn transfer_request_with_filter_nested_merge_bang_clears_outer_scope() {
     let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
@@ -365,15 +366,17 @@ fn transfer_request_with_filter_nested_merge_bang_preserves_outer_scope() {
 
     let copied_root = dest_root.join("source");
     assert!(copied_root.join("keep.txt").exists());
-    // Outer merge's exclude survives the inner merge's `!`.
-    assert!(!copied_root.join("skip.tmp").exists());
+    // The inner merge's `!` cleared the outer merge's exclude.
+    assert!(copied_root.join("skip.tmp").exists());
     assert!(!copied_root.join("skip.log").exists());
 }
 
-/// upstream: exclude.c:1542-1550 - `!` inside an `--exclude-from FILE` clears
-/// only the scope of that file. Parent `--filter`/`--exclude` CLI rules survive.
+/// upstream: exclude.c:1542-1551 - `!` inside an `--exclude-from FILE` empties
+/// the argv's whole `filter_list`, parent `--filter`/`--exclude` rules
+/// included. MEASURED on rsync 3.5.1: `--exclude=a --exclude-from=F` with F
+/// holding `!` transfers `a`.
 #[test]
-fn transfer_request_with_exclude_from_bang_preserves_parent_cli_rule() {
+fn transfer_request_with_exclude_from_bang_clears_parent_cli_rule() {
     let tmp = test_support::create_tempdir();
     let source_root = tmp.path().join("source");
     let dest_root = tmp.path().join("dest");
@@ -405,8 +408,8 @@ fn transfer_request_with_exclude_from_bang_preserves_parent_cli_rule() {
 
     let copied_root = dest_root.join("source");
     assert!(copied_root.join("keep.txt").exists());
-    // Parent `--filter "- *.tmp"` survived the exclude-from file's `!`.
-    assert!(!copied_root.join("skip.tmp").exists());
+    // The exclude-from file's `!` cleared the parent `--filter "- *.tmp"`.
+    assert!(copied_root.join("skip.tmp").exists());
     assert!(!copied_root.join("skip.log").exists());
 }
 

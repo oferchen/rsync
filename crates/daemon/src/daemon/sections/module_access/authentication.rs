@@ -486,5 +486,7 @@ fn verify_secret_response(
 ///
 /// upstream: authenticate.c - permission checks for secrets files.
 fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
-    platform::secrets::check_secrets_file_permissions(path)
+    platform::secrets::check_secrets_file_permissions(&crate::posix_path::resolve_daemon_path(
+        path,
+    )?)
 }

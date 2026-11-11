@@ -105,6 +105,22 @@
 //! 3.5.1 is a released tarball and is immutable, so the manifest cannot drift
 //! from it; `tests::manifest_matches_the_pinned_source` re-derives it wherever
 //! the source is present.
+//!
+//! # OpenSSH citations
+//!
+//! The embedded `ssh://` transport cites OpenSSH as `openssh/<file>:<line>`.
+//! Those citations get every rule against the OpenSSH release pinned in
+//! `tools/ci/openssh.sha256`: the `openssh/` component is itself the claim, so
+//! no `upstream` on the line is needed, and the cited file must exist and the
+//! line must be inside it. Their line counts live in [`OPENSSH_MANIFEST_PATH`]
+//! for the same reason the rsync counts are a manifest. Bare names keep
+//! resolving against rsync only, so `log.c:93` still means rsync's `log.c`.
+//!
+//! To bump the OpenSSH pin: change the tarball and digest in
+//! `tools/ci/openssh.sha256`, run `tools/ci/build_openssh.sh` (it extracts the
+//! source to [`OPENSSH_SOURCE_DIR`]), rename the two constants below to the new
+//! release, run `cargo xtask citations --write-openssh-manifest`, and fix every
+//! citation `cargo xtask citations` then reports.
 
 use crate::error::TaskResult;
 use crate::util::{list_sources_via_git_unfiltered, validation_error};
@@ -121,6 +137,15 @@ pub const PINNED_SOURCE_DIR: &str = "target/interop/upstream-src/rsync-3.5.1";
 
 /// The pinned release, as the `rsync-<VER>/` component of a cited path spells it.
 pub const PINNED_VERSION: &str = "3.5.1";
+
+/// Committed line counts for every citable file in the pinned OpenSSH release.
+pub const OPENSSH_MANIFEST_PATH: &str = "tools/ci/openssh-10.0p1-lines.tsv";
+
+/// Where `tools/ci/build_openssh.sh` unpacks the pinned OpenSSH source.
+pub const OPENSSH_SOURCE_DIR: &str = "target/interop/upstream-src/openssh-10.0p1";
+
+/// The directory component that names OpenSSH in a citation.
+const OPENSSH_PREFIX: &str = "openssh/";
 
 /// Where `tools/ci/run_interop.sh` unpacks the tarball. Citations written while
 /// reading the unpacked tree routinely paste this whole prefix, so the resolver
@@ -173,6 +198,15 @@ const MANIFEST_HEADER: &str = "\
 # The key set is also the gate's answer to \"does this upstream file exist\", so
 # a name missing here is a citation defect, not a manifest gap.
 # Regenerate: cargo xtask citations --write-manifest  (needs the source present)
+";
+
+/// Header written above the generated OpenSSH counts.
+const OPENSSH_MANIFEST_HEADER: &str = "\
+# Line counts for every .c/.h/.sh in openssh-10.0p1, the OpenSSH release pinned
+# in tools/ci/openssh.sha256. The citation gate resolves `openssh/<file>:<line>`
+# against these keys. The release is immutable, so this changes only with the pin.
+# Regenerate: cargo xtask citations --write-openssh-manifest  (needs the source
+# present; tools/ci/build_openssh.sh extracts it)
 ";
 
 /// One citation that cannot be followed to the pinned upstream source.
@@ -260,10 +294,16 @@ impl std::fmt::Display for Violation {
                 line,
                 upstream,
                 cited,
-            } => write!(
-                f,
-                "{source}:{line}: cites {upstream}:{cited} but rsync {PINNED_VERSION} has no {upstream}"
-            ),
+            } => match upstream.strip_prefix(OPENSSH_PREFIX) {
+                Some(file) => write!(
+                    f,
+                    "{source}:{line}: cites {upstream}:{cited} but {OPENSSH_SOURCE_DIR} has no {file}"
+                ),
+                None => write!(
+                    f,
+                    "{source}:{line}: cites {upstream}:{cited} but rsync {PINNED_VERSION} has no {upstream}"
+                ),
+            },
             Self::UnpinnedRelease {
                 source,
                 line,
@@ -296,6 +336,15 @@ impl std::fmt::Display for Violation {
 pub fn load_manifest(workspace: &Path) -> TaskResult<BTreeMap<String, usize>> {
     let raw = fs::read_to_string(workspace.join(MANIFEST_PATH))?;
     Ok(parse_manifest(&raw))
+}
+
+/// Parses the OpenSSH manifest, keyed as citations spell it: `openssh/<path>`.
+pub fn load_openssh_manifest(workspace: &Path) -> TaskResult<BTreeMap<String, usize>> {
+    let raw = fs::read_to_string(workspace.join(OPENSSH_MANIFEST_PATH))?;
+    Ok(parse_manifest(&raw)
+        .into_iter()
+        .map(|(path, count)| (format!("{OPENSSH_PREFIX}{path}"), count))
+        .collect())
 }
 
 fn parse_manifest(raw: &str) -> BTreeMap<String, usize> {
@@ -403,14 +452,24 @@ fn resolve_within_release(cited: &str, manifest: &BTreeMap<String, usize>) -> Re
     if manifest.contains_key(cited) {
         return Resolution::Pinned(cited.to_owned());
     }
+    // `openssh/` names the pinned OpenSSH release, so a file it lacks is a
+    // phantom, not a reference to some other project.
+    if cited.starts_with(OPENSSH_PREFIX) {
+        return Resolution::Missing;
+    }
     if cited.contains('/') {
         return Resolution::ForeignUpstream;
     }
-    let mut hits = manifest.keys().filter(|k| {
-        Path::new(k)
-            .file_name()
-            .is_some_and(|n| n == std::ffi::OsStr::new(cited))
-    });
+    // Bare names are rsync's: an OpenSSH `log.c` must not make rsync's
+    // ambiguous.
+    let mut hits = manifest
+        .keys()
+        .filter(|k| !k.starts_with(OPENSSH_PREFIX))
+        .filter(|k| {
+            Path::new(k)
+                .file_name()
+                .is_some_and(|n| n == std::ffi::OsStr::new(cited))
+        });
     let Some(first) = hits.next() else {
         return Resolution::Missing;
     };
@@ -599,8 +658,10 @@ pub fn scan_contents(
     let mut section = ReferenceSection::new(source);
     for (lineno, line) in contents.lines().enumerate() {
         let in_reference = section.advance(line);
-        let claims_upstream = in_reference || line.to_ascii_lowercase().contains("upstream");
+        let line_claims = in_reference || line.to_ascii_lowercase().contains("upstream");
         for (cited_path, nums) in citations_in_line(line) {
+            // An `openssh/` path names its upstream itself.
+            let claims_upstream = line_claims || cited_path.starts_with(OPENSSH_PREFIX);
             // Rule 3, first and unconditional: it depends on neither the
             // manifest nor the claim, and a backwards range is never correct in
             // any file, so there is nothing here for a jurisdiction argument to
@@ -773,13 +834,21 @@ pub struct ScanReport {
 /// which is precisely how the Python audit this replaces reported healthy for
 /// months while reading zero files.
 pub fn collect_violations(workspace: &Path) -> TaskResult<ScanReport> {
-    let manifest = load_manifest(workspace)?;
+    let mut manifest = load_manifest(workspace)?;
     if manifest.is_empty() {
         return Err(validation_error(format!(
             "{MANIFEST_PATH} parsed to zero entries; every citation would resolve \
              to nothing and the check would pass without examining anything"
         )));
     }
+    let openssh = load_openssh_manifest(workspace)?;
+    if openssh.is_empty() {
+        return Err(validation_error(format!(
+            "{OPENSSH_MANIFEST_PATH} parsed to zero entries; every OpenSSH citation \
+             would be reported missing"
+        )));
+    }
+    manifest.extend(openssh);
     let mut report = ScanReport::default();
     for relative in list_sources_via_git_unfiltered(workspace)? {
         let contents = match fs::read_to_string(workspace.join(&relative)) {
@@ -869,6 +938,24 @@ pub fn write_manifest(workspace: &Path) -> TaskResult<()> {
     Ok(())
 }
 
+/// Rewrites the OpenSSH manifest from the pinned OpenSSH source.
+pub fn write_openssh_manifest(workspace: &Path) -> TaskResult<()> {
+    let root = workspace.join(OPENSSH_SOURCE_DIR);
+    if !root.is_dir() {
+        return Err(validation_error(format!(
+            "pinned OpenSSH source missing at {OPENSSH_SOURCE_DIR}; run tools/ci/build_openssh.sh to fetch it"
+        )));
+    }
+    let rows = derive_manifest(&root)?;
+    let mut out = String::from(OPENSSH_MANIFEST_HEADER);
+    for (rel, n) in &rows {
+        out.push_str(&format!("{rel}\t{n}\n"));
+    }
+    fs::write(workspace.join(OPENSSH_MANIFEST_PATH), out)?;
+    eprintln!("wrote {OPENSSH_MANIFEST_PATH}: {} files", rows.len());
+    Ok(())
+}
+
 /// Executes the `citations` command.
 pub fn execute(workspace: &Path) -> TaskResult<()> {
     let report = collect_violations(workspace)?;
@@ -879,8 +966,8 @@ pub fn execute(workspace: &Path) -> TaskResult<()> {
              release. A further {} citation(s) carrying no upstream claim resolved \
              to a pinned file and were range-checked too, and {} resolved elsewhere \
              and were left alone; {} range(s) were checked for END >= START. Every \
-             checked citation names a file rsync {PINNED_VERSION} has, at a line that \
-             file has. This does NOT mean the cited line says what the comment \
+             checked citation names a file rsync {PINNED_VERSION} (or, under \
+             `openssh/`, {OPENSSH_SOURCE_DIR}) has, at a line that file has. This does NOT mean the cited line says what the comment \
              claims; nothing here checks that.",
             report.tally.names_checked,
             report.tally.ranges_checked,
@@ -897,8 +984,8 @@ pub fn execute(workspace: &Path) -> TaskResult<()> {
         eprintln!("{v}");
     }
     Err(validation_error(format!(
-        "{} upstream citation(s) cannot be followed to {PINNED_SOURCE_DIR}; \
-         re-locate the construct there and correct the file name or the line \
+        "{} upstream citation(s) cannot be followed to {PINNED_SOURCE_DIR} \
+         (or, under `{OPENSSH_PREFIX}`, {OPENSSH_SOURCE_DIR}); re-locate the construct there and correct the file name or the line \
          number, or - if the behaviour has no upstream analogue any more - \
          drop the citation",
         report.violations.len()
@@ -1604,6 +1691,91 @@ mod tests {
         assert!(v.is_empty());
         assert_eq!(tally.unpinned_permitted, 1);
         assert_eq!(tally.foreign_skipped, 0);
+    }
+
+    /// The rsync fixture plus two OpenSSH files, keyed as the loader keys them.
+    fn with_openssh() -> BTreeMap<String, usize> {
+        let mut m = manifest();
+        m.insert("openssh/readconf.c".to_owned(), 3847);
+        m.insert("openssh/openbsd-compat/wildmatch.c".to_owned(), 200);
+        m
+    }
+
+    /// An `openssh/` citation is checked against the OpenSSH pin even with no
+    /// `upstream` on the line: the prefix is the claim.
+    #[test]
+    fn an_openssh_citation_past_the_end_is_reported_without_a_claim() {
+        let m = with_openssh();
+        let v = scan(
+            "src/a.rs",
+            &unclaimed("openssh/readconf.c", "3876-3877"),
+            &m,
+        );
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(matches!(
+            &v[0],
+            Violation::OutOfRange { upstream, cited: 3876, actual: 3847, .. }
+                if upstream == "openssh/readconf.c"
+        ));
+        assert!(
+            scan(
+                "src/a.rs",
+                &unclaimed("openssh/readconf.c", "3766-3767"),
+                &m
+            )
+            .is_empty()
+        );
+    }
+
+    /// A file the OpenSSH pin does not ship is a phantom, named as such.
+    #[test]
+    fn an_openssh_file_the_pin_lacks_is_missing() {
+        let v = scan(
+            "src/a.rs",
+            &unclaimed("openssh/nosuch.c", "1"),
+            &with_openssh(),
+        );
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(
+            v[0].to_string()
+                .ends_with(&format!("{OPENSSH_SOURCE_DIR} has no nosuch.c"))
+        );
+    }
+
+    /// Bare names stay rsync's: an OpenSSH file sharing a basename must not
+    /// make rsync's bare name ambiguous, and a name only OpenSSH ships does not
+    /// resolve to it.
+    #[test]
+    fn bare_names_ignore_the_openssh_manifest() {
+        let m = with_openssh();
+        assert_eq!(resolve_upstream_path("readconf.c", &m), Resolution::Missing);
+        assert_eq!(
+            resolve_upstream_path("wildmatch.c", &m),
+            Resolution::Pinned("lib/wildmatch.c".to_owned())
+        );
+    }
+
+    /// Proves the committed OpenSSH manifest describes the pinned source.
+    #[test]
+    fn openssh_manifest_matches_the_pinned_source() {
+        let workspace = crate::workspace::workspace_root().expect("workspace root");
+        let root = workspace.join(OPENSSH_SOURCE_DIR);
+        if !root.is_dir() {
+            eprintln!(
+                "OpenSSH source absent at {OPENSSH_SOURCE_DIR}; manifest cross-check skipped"
+            );
+            return;
+        }
+        let manifest = load_openssh_manifest(&workspace).expect("OpenSSH manifest loads");
+        let derived: BTreeMap<String, usize> = derive_manifest(&root)
+            .expect("OpenSSH source walks")
+            .into_iter()
+            .map(|(path, count)| (format!("{OPENSSH_PREFIX}{path}"), count))
+            .collect();
+        assert_eq!(
+            manifest, derived,
+            "{OPENSSH_MANIFEST_PATH} is stale or hand-edited; regenerate it from {OPENSSH_SOURCE_DIR}"
+        );
     }
 
     /// Proves the committed manifest still describes the real pinned source.

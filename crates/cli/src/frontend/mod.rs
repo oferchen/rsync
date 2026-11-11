@@ -92,7 +92,7 @@ use std::env;
 #[cfg(test)]
 use std::net::IpAddr;
 #[cfg(test)]
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 mod defaults;
 /// Upstream rsync `--dry-run` (`-n`) output simulation.
 pub mod dry_run;
@@ -127,13 +127,6 @@ pub(crate) use core::client::{AddressMode, StrongChecksumChoice, TransferTimeout
 pub(crate) use defaults::LIST_TIMESTAMP_FORMAT;
 #[cfg(test)]
 pub(crate) use execution::*;
-#[cfg(test)]
-pub(crate) use filter_rules::MergeDirective;
-#[cfg(test)]
-pub(crate) use filter_rules::{
-    FilterDirective, append_filter_rules_from_files, apply_merge_directive,
-    merge_directive_options, parse_filter_directive,
-};
 use help::help_text;
 use lsm_status::render_lsm_status;
 pub(crate) use out_format::{
@@ -144,42 +137,8 @@ pub(crate) use progress::*;
 pub(crate) use std::num::NonZeroU64;
 
 #[cfg(test)]
-pub(crate) fn load_filter_file_patterns(path: &Path) -> Result<Vec<String>, Message> {
-    filter_rules::load_filter_file_patterns(path, false, false)
-}
-
-#[cfg(test)]
 pub(crate) fn set_filter_stdin_input(data: Vec<u8>) {
     filter_rules::set_filter_stdin_input(data);
-}
-
-#[cfg(test)]
-pub(crate) fn parse_merge_modifiers(
-    modifiers: &str,
-    directive: &str,
-) -> Result<(DirMergeOptions, bool), Message> {
-    filter_rules::parse_merge_modifiers_from_argument(modifiers, directive)
-}
-
-#[cfg(test)]
-pub(crate) fn process_merge_directive(
-    directive: &str,
-    options: &DirMergeOptions,
-    base_dir: &Path,
-    source: filters::RuleSource<'_>,
-    destination: &mut Vec<FilterRuleSpec>,
-    visited: &mut Vec<PathBuf>,
-    cvs: &filters::CvsSession,
-) -> Result<(), Message> {
-    filter_rules::process_merge_directive(
-        directive,
-        options,
-        base_dir,
-        source,
-        destination,
-        visited,
-        cvs,
-    )
 }
 
 /// Maximum exit code representable by a Unix process.

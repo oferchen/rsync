@@ -927,17 +927,13 @@ fn batch_recorder_roundtrip_try_borrow_exact_matches_write_side() {
 }
 
 #[test]
-fn multiplex_reader_exit_23_deferred_until_error_xfer_arrives() {
-    // upstream: daemon sender may emit MSG_ERROR_EXIT(23) before the
-    // FERROR_XFER that caused it, because it reads waitpid() before
-    // fully draining the msg2sndr IPC pipe. The reader must not abort
-    // immediately on exit 23 - it must continue draining to pick up
-    // the late-arriving FERROR_XFER.
+fn multiplex_reader_exit_23_aborts_and_the_late_error_xfer_is_read_after() {
+    // upstream: io.c:1892-1930 - MSG_ERROR_EXIT(23) ends the read like any
+    // other code. A daemon may send it ahead of the FERROR_XFER that caused
+    // it; that frame is read by the wait for the peer's exit
+    // (cleanup.c:242-253 noop_io_until_death), not by the transfer.
     let mut stream = Vec::new();
-
-    // Wire order: DATA, ERROR_EXIT(RERR_PARTIAL), ERROR_XFER, DATA
     protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"hello").unwrap();
-
     let exit_code: i32 = multiplex::RERR_PARTIAL;
     protocol::send_msg(
         &mut stream,
@@ -945,7 +941,6 @@ fn multiplex_reader_exit_23_deferred_until_error_xfer_arrives() {
         &exit_code.to_le_bytes(),
     )
     .unwrap();
-
     protocol::send_msg(
         &mut stream,
         protocol::MessageCode::ErrorXfer,
@@ -953,52 +948,19 @@ fn multiplex_reader_exit_23_deferred_until_error_xfer_arrives() {
     )
     .unwrap();
 
-    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"world").unwrap();
-
     let mut mux = MultiplexReader::new(Cursor::new(stream));
-
     let mut buf = [0u8; 5];
-    let n = mux.read(&mut buf).unwrap();
-    assert_eq!(n, 5);
+    assert_eq!(mux.read(&mut buf).unwrap(), 5);
     assert_eq!(&buf, b"hello");
 
-    // Second read must succeed despite ERROR_EXIT(23) being on the wire
-    // before ERROR_XFER - the reader defers exit 23 and drains through
-    // the FERROR_XFER frame.
-    let n = mux.read(&mut buf).unwrap();
-    assert_eq!(n, 5);
-    assert_eq!(&buf, b"world");
-
-    assert_eq!(mux.xfer_error_count, 1);
-    assert_eq!(mux.error_exit_code, Some(multiplex::RERR_PARTIAL));
-}
-
-#[test]
-fn multiplex_reader_exit_23_without_xfer_still_drains() {
-    // Exit RERR_PARTIAL without any FERROR_XFER: the reader defers the
-    // abort and continues reading. If a DATA frame arrives, it returns the
-    // data normally. The transfer drains and EOF surfaces naturally.
-    let mut stream = Vec::new();
-
-    let exit_code: i32 = multiplex::RERR_PARTIAL;
-    protocol::send_msg(
-        &mut stream,
-        protocol::MessageCode::ErrorExit,
-        &exit_code.to_le_bytes(),
-    )
-    .unwrap();
-
-    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"ok").unwrap();
-
-    let mut mux = MultiplexReader::new(Cursor::new(stream));
-
-    let mut buf = [0u8; 2];
-    let n = mux.read(&mut buf).unwrap();
-    assert_eq!(n, 2);
-    assert_eq!(&buf, b"ok");
-
+    let err = mux.read(&mut buf).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted);
+    assert_eq!(mux.take_error_exit(), Some(multiplex::RERR_PARTIAL));
     assert_eq!(mux.xfer_error_count, 0);
-    assert_eq!(mux.error_exit_code, Some(multiplex::RERR_PARTIAL));
+
+    let close = mux.read(&mut buf).unwrap_err();
+    assert_eq!(close.kind(), std::io::ErrorKind::UnexpectedEof, "{close}");
+    assert_eq!(mux.xfer_error_count, 1);
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 
-use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
-use core::message::Message;
+use crate::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
+use crate::message::Message;
 
 use super::super::directive::{FilterDirective, MergeDirective};
 use super::helpers::{parse_modifier_run, split_short_modifiers, unexpected_end_of_filter_rule};
