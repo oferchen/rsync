@@ -464,6 +464,90 @@ fn a_peer_error_exit_ends_the_pull_with_its_code_and_no_trailer() {
     }
 }
 
+/// A `MSG_ERROR_EXIT` frame: four code bytes, or none for the empty frame.
+fn error_exit_frame(code: Option<i32>) -> Vec<u8> {
+    let payload = code.map(i32::to_le_bytes);
+    let len = payload.map_or(0, |p| p.len() as u32);
+    let mut frame = ((MSG_ERROR_EXIT_TAG << 24) | len).to_le_bytes().to_vec();
+    frame.extend(payload.iter().flatten());
+    frame
+}
+
+/// Plays a daemon at `protocol` that sends `frames[0]` in place of the file
+/// list, then each later frame once the client has answered the one before
+/// with a 4-byte frame. Returns every byte the client wrote after the first
+/// frame, up to its close.
+fn serve_exit_frames(
+    listener: TcpListener,
+    protocol: u8,
+    frames: Vec<Vec<u8>>,
+) -> JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let greeting = format!("@RSYNCD: {protocol}.0\n");
+        let (mut sock, mut reader) = accept_arguments(listener, greeting.as_bytes());
+        sock.write_all(&SETUP).expect("setup");
+        reader
+            .read_exact(&mut [0u8; CLIENT_FILTER_LIST])
+            .expect("client filter list");
+        let mut sent = Vec::new();
+        for (i, frame) in frames.iter().enumerate() {
+            if i > 0 {
+                let mut answer = [0u8; 4];
+                reader.read_exact(&mut answer).expect("the client's answer");
+                sent.extend_from_slice(&answer);
+            }
+            sock.write_all(frame).expect("MSG_ERROR_EXIT");
+        }
+        reader.read_to_end(&mut sent).expect("the client's close");
+        sent
+    })
+}
+
+/// upstream: io.c:1892-1930 read_a_msg() - the pre-fork receiver answers an
+/// empty `MSG_ERROR_EXIT` with an empty one at any protocol, and a code with
+/// an empty one from protocol 31; then cleanup.c:242-253 makes it wait for
+/// the daemon's exit (io.c:1066-1085 noop_io_until_death), answering the
+/// daemon's own empty frame there too. RERR_PARTIAL is no exception. rsync
+/// 3.5.1 against each stream writes exactly these bytes and exits so.
+#[test]
+fn a_peer_error_exit_is_answered_as_upstreams_receiver_answers_it() {
+    let empty = error_exit_frame(None);
+    for (protocol, frames, answers, exit) in [
+        (30, vec![error_exit_frame(Some(11))], vec![], 11),
+        (30, vec![empty.clone()], vec![empty.clone()], 0),
+        (
+            31,
+            vec![error_exit_frame(Some(11)), empty.clone()],
+            vec![empty.clone(), empty.clone()],
+            11,
+        ),
+        (
+            31,
+            vec![error_exit_frame(Some(23)), empty.clone()],
+            vec![empty.clone(), empty.clone()],
+            23,
+        ),
+    ] {
+        let tmp = TempDir::new().expect("tempdir");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let label = format!("protocol {protocol}, frames {frames:02x?}");
+        let server = serve_exit_frames(listener, protocol, frames);
+        let output = Command::new(oc_rsync_bin())
+            .arg(format!("--protocol={protocol}"))
+            .arg("-r")
+            .arg(format!("rsync://127.0.0.1:{port}/mod/keep"))
+            .arg(format!("{}/", tmp.path().display()))
+            .output()
+            .expect("run oc-rsync");
+        let written = server.join().expect("replayed daemon");
+        let text = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(written, answers.concat(), "{label}: {text}");
+        assert_eq!(output.status.code(), Some(exit), "{label}: {text}");
+        assert!(text.is_empty(), "{label}: {text}");
+    }
+}
+
 /// upstream: cleanup.c:222-224 - a `--log-file` run still calls log_exit()
 /// after `MSG_ERROR_EXIT` unless `INFO_GTE(STATS, 1)`, which `-v` sets
 /// (options.c:257). rsync 3.5.1 prints `rsync error: error in file IO
@@ -554,4 +638,65 @@ fn a_reset_during_the_handshake_is_safe_reads_failure() {
             "{protocol}: {text}"
         );
     }
+}
+
+/// Plays a protocol-31 daemon that sends the file list, reads the client's
+/// `MSG_ERROR_EXIT` and then resets the connection, so the client's wait for
+/// the daemon's exit ends in a read error.
+#[cfg(target_os = "linux")]
+fn serve_list_then_reset_after_error_exit(listener: TcpListener) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let (mut sock, mut reader) = accept_arguments(listener, b"@RSYNCD: 31.0\n");
+        sock.write_all(&SETUP).expect("setup");
+        reader
+            .read_exact(&mut [0u8; CLIENT_FILTER_LIST])
+            .expect("client filter list");
+        sock.write_all(&post_setup_stream()[..FLIST.len() + 4])
+            .expect("file list");
+        reader
+            .read_exact(&mut [0u8; 8])
+            .expect("the client's MSG_ERROR_EXIT");
+        socket2::SockRef::from(&sock)
+            .set_linger(Some(Duration::ZERO))
+            .expect("zero linger");
+    })
+}
+
+/// upstream: cleanup.c:221-253 - _exit_cleanup() calls log_exit() before
+/// noop_io_until_death(), so the trailer of a client's own fatal error comes
+/// before the `read error` the wait for the daemon's exit then hits
+/// (io.c:918-925). rsync 3.5.1 against this stream prints exactly these three
+/// lines in this order and exits 11.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_failed_wait_for_the_daemon_prints_after_the_trailer() {
+    let tmp = TempDir::new().expect("tempdir");
+    let parent = tmp.path().join("ro");
+    fs::create_dir(&parent).expect("mkdir ro");
+    set_mode(&parent, 0o555);
+    if fs::write(parent.join("probe"), b"").is_ok() {
+        set_mode(&parent, 0o755);
+        eprintln!("skip: the 0555 parent stays writable here (running as root)");
+        return;
+    }
+    let target = parent.join("inner");
+    let (code, text) = pull_from(
+        serve_list_then_reset_after_error_exit,
+        &["--protocol=31"],
+        &format!("{}/", target.display()),
+    );
+    set_mode(&parent, 0o755);
+    assert_eq!(code, Some(11), "{text}");
+    assert_eq!(
+        report_lines(&text),
+        [
+            format!(
+                "[Receiver] mkdir \"{}\" failed: Permission denied (13)",
+                target.display()
+            ),
+            trailer("error in file IO", 11, "Receiver"),
+            "[Receiver] read error: Connection reset by peer (104)".to_owned(),
+        ],
+        "{text}"
+    );
 }

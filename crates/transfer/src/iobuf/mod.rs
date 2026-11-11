@@ -57,10 +57,10 @@ impl<I, W: Write> IoBuf<I, W> {
         (&mut self.input, &mut self.output)
     }
 
-    /// Gives up ownership of the output stack, for the error report the
-    /// connection sends after its role has ended.
-    pub(crate) fn into_output(self) -> ServerWriter<W> {
-        self.output
+    /// Gives up ownership of both stacks, for the exit exchange the
+    /// connection runs after its role has ended.
+    pub(crate) fn into_parts(self) -> (I, ServerWriter<W>) {
+        (self.input, self.output)
     }
 }
 
@@ -148,7 +148,7 @@ mod tests {
         io.write_all(b"ours").unwrap();
         io.flush().unwrap();
         assert_eq!(&got, b"peer");
-        match io.into_output() {
+        match io.into_parts().1 {
             ServerWriter::Plain(out) => assert_eq!(out, b"ours"),
             _ => panic!("the output stays in plain mode"),
         }

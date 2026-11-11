@@ -65,8 +65,9 @@ impl ReceiverContext {
         // `--out-format` the buffered rows are metadata events drained by the
         // dispatch after this returns.
         self.defer_itemize = true;
-        let (mut reader, file_count, setup) = self.setup_transfer(reader, writer)?;
+        let mut reader = reader;
         let reader = &mut reader;
+        let (file_count, setup) = self.setup_transfer(reader, writer)?;
 
         // upstream: main.c:1438-1446 - a client handed an empty list skips
         // do_recv() entirely; same gate as the network drivers.
