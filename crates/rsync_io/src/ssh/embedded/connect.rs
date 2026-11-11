@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 
+use super::algorithms::{AlgorithmList, fill_default_lists, negotiable, offered};
 use super::auth::authenticate;
 use super::cipher;
 use super::config::SshConfig;
@@ -498,23 +499,79 @@ const FAST_KEX_ORDER: &[russh::kex::Name] = &[
 ///   and per-packet framing overhead for bulk data transfer.
 /// - **Keepalive forwarding** - propagates the user-configured keepalive
 ///   interval and max count from `SshConfig`.
-fn build_client_config(ssh_config: &SshConfig) -> russh::client::Config {
-    let kex = Cow::Borrowed(FAST_KEX_ORDER);
-
-    // Cipher preference: honor user config or use hardware-detected defaults.
-    let cipher_names = ssh_config
-        .ciphers
-        .clone()
-        .unwrap_or_else(cipher::default_ciphers);
-    let cipher_list = resolve_cipher_names(&cipher_names);
-
+///
+/// An ssh_config `Ciphers`, `MACs`, `KexAlgorithms` or `HostKeyAlgorithms`
+/// list is composed against the defaults above and fails the connection
+/// when nothing in it can be negotiated; `RekeyLimit` replaces russh's
+/// re-key bounds. Host-key algorithms are reordered by known_hosts later,
+/// in [`ssh_setup`].
+fn build_client_config(ssh_config: &SshConfig) -> Result<russh::client::Config, SshError> {
+    let defaults = russh::Preferred::DEFAULT;
+    // An explicit cipher list replaces the ssh_config spec outright.
+    let [cipher_fill, mac_fill, kex_fill] = fill_default_lists([
+        ssh_config
+            .cipher_spec
+            .as_deref()
+            .filter(|_| ssh_config.ciphers.is_none()),
+        ssh_config.mac_spec.as_deref(),
+        ssh_config.kex_spec.as_deref(),
+    ]);
+    let (kex_base, kex_extensions) = FAST_KEX_ORDER.split_at(FAST_KEX_ORDER.len() - 2);
+    let kex = match offered(AlgorithmList::Kex, kex_fill, &joined(kex_base), |name| {
+        russh::kex::Name::try_from(name).ok()
+    })? {
+        None => Cow::Borrowed(FAST_KEX_ORDER),
+        Some(mut names) => {
+            // The client always advertises these two markers after its
+            // own list (openssh/kex.c:103-108).
+            names.extend_from_slice(kex_extensions);
+            Cow::Owned(names)
+        }
+    };
+    // Cipher preference: the explicit list wins, then an ssh_config spec,
+    // then the hardware-detected defaults.
+    let cipher_list = match &ssh_config.ciphers {
+        Some(names) => resolve_cipher_names(names),
+        None => offered(
+            AlgorithmList::Ciphers,
+            cipher_fill,
+            &cipher::default_ciphers().join(","),
+            |name| russh::cipher::Name::try_from(name).ok(),
+        )?
+        .unwrap_or_else(|| resolve_cipher_names(&cipher::default_ciphers())),
+    };
+    let mac = offered(
+        AlgorithmList::Macs,
+        mac_fill,
+        &joined(&defaults.mac),
+        |name| russh::mac::Name::try_from(name).ok(),
+    )?
+    .map_or_else(|| defaults.mac.clone(), Cow::Owned);
+    let key = match ssh_config.host_key_spec.as_deref() {
+        None => defaults.key.clone(),
+        Some(spec) => {
+            let base = defaults
+                .key
+                .iter()
+                .map(russh::keys::Algorithm::as_str)
+                .collect::<Vec<_>>()
+                .join(",");
+            Cow::Owned(negotiable(AlgorithmList::HostKey, spec, &base, |name| {
+                russh::keys::Algorithm::new(name)
+                    .ok()
+                    .filter(|alg| defaults.key.contains(alg))
+            })?)
+        }
+    };
     let preferred = russh::Preferred {
         kex,
         cipher: Cow::Owned(cipher_list),
-        ..Default::default()
+        mac,
+        key,
+        ..defaults
     };
 
-    russh::client::Config {
+    Ok(russh::client::Config {
         // Disable Nagle's algorithm for low-latency handshake roundtrips.
         // upstream: OpenSSH sets TCP_NODELAY unconditionally (sshconnect.c).
         nodelay: true,
@@ -523,8 +580,44 @@ fn build_client_config(ssh_config: &SshConfig) -> russh::client::Config {
         preferred,
         keepalive_interval: ssh_config.keepalive_interval,
         keepalive_max: ssh_config.keepalive_max_count as usize,
+        limits: rekey_limits(ssh_config.rekey_limit, ssh_config.rekey_interval),
         ..Default::default()
-    }
+    })
+}
+/// Joins russh algorithm names into an OpenSSH comma list.
+fn joined<T: AsRef<str>>(names: &[T]) -> String {
+    names
+        .iter()
+        .map(AsRef::as_ref)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+/// The time limit that stands for "no time-based re-key": tokio's own
+/// ceiling for a sleep (`tokio::time::sleep` clamps to 30 years), so neither
+/// russh's elapsed-time comparison nor its re-key timer can overflow.
+const NO_REKEY_INTERVAL: Duration = Duration::from_secs(30 * 365 * 86_400);
+
+/// Maps `RekeyLimit` onto russh's re-key bounds.
+///
+/// A byte limit of `0` (`default`) or one russh cannot hold keeps russh's
+/// 1 GiB ceiling, the largest it accepts (`russh::Limits::new`); upstream's
+/// cipher-derived limit is higher (openssh/packet.c:1033-1043), a documented
+/// deviation. Upstream re-keys on time only when an interval above `0` is set
+/// (openssh/packet.c:1075-1076), so an absent or zero interval means
+/// [`NO_REKEY_INTERVAL`] rather than russh's own hourly default.
+fn rekey_limits(limit: Option<i64>, interval: Option<u32>) -> russh::Limits {
+    let defaults = russh::Limits::default();
+    let bytes = limit
+        .and_then(|bytes| usize::try_from(bytes).ok())
+        .filter(|&bytes| bytes != 0)
+        .map_or(defaults.rekey_write_limit, |bytes| {
+            bytes.min(defaults.rekey_write_limit)
+        });
+    let time = match interval {
+        None | Some(0) => NO_REKEY_INTERVAL,
+        Some(secs) => Duration::from_secs(u64::from(secs)),
+    };
+    russh::Limits::new(bytes, bytes, time)
 }
 
 /// Maps cipher name strings to `russh::cipher::Name` constants.
@@ -619,7 +712,20 @@ async fn ssh_setup(
     ),
     SshError,
 > {
-    let client_config = Arc::new(build_client_config(ssh_config));
+    let mut client_config = build_client_config(ssh_config)?;
+    // upstream prefers the host-key types known_hosts records unless the
+    // user gave an explicit list (openssh/sshconnect2.c:233-251).
+    if ssh_config
+        .host_key_spec
+        .as_deref()
+        .is_none_or(|spec| spec.starts_with(['+', '-']))
+    {
+        client_config.preferred.key = Cow::Owned(
+            build_host_key_options(ssh_config, None)
+                .order_host_key_algorithms(&client_config.preferred.key),
+        );
+    }
+    let client_config = Arc::new(client_config);
 
     // Direct dial versus a `ProxyCommand`/`ProxyJump` stream is the single
     // point the connect path branches on; everything after the handle is
@@ -921,14 +1027,14 @@ mod tests {
     #[test]
     fn build_client_config_enables_nodelay() {
         let ssh_config = SshConfig::default();
-        let config = build_client_config(&ssh_config);
+        let config = build_client_config(&ssh_config).expect("config builds");
         assert!(config.nodelay, "TCP_NODELAY must be enabled");
     }
 
     #[test]
     fn build_client_config_uses_tuned_window_size() {
         let ssh_config = SshConfig::default();
-        let config = build_client_config(&ssh_config);
+        let config = build_client_config(&ssh_config).expect("config builds");
         assert_eq!(config.window_size, SSH_WINDOW_SIZE);
         assert!(
             config.window_size > 2_097_152,
@@ -939,14 +1045,14 @@ mod tests {
     #[test]
     fn build_client_config_uses_tuned_packet_size() {
         let ssh_config = SshConfig::default();
-        let config = build_client_config(&ssh_config);
+        let config = build_client_config(&ssh_config).expect("config builds");
         assert_eq!(config.maximum_packet_size, SSH_MAX_PACKET_SIZE);
     }
 
     #[test]
     fn build_client_config_prefers_curve25519_kex() {
         let ssh_config = SshConfig::default();
-        let config = build_client_config(&ssh_config);
+        let config = build_client_config(&ssh_config).expect("config builds");
         let kex_names: Vec<&str> = config.preferred.kex.iter().map(|k| k.as_ref()).collect();
         assert_eq!(
             kex_names[0], "curve25519-sha256",
@@ -957,7 +1063,7 @@ mod tests {
     #[test]
     fn build_client_config_excludes_post_quantum_kex() {
         let ssh_config = SshConfig::default();
-        let config = build_client_config(&ssh_config);
+        let config = build_client_config(&ssh_config).expect("config builds");
         let kex_names: Vec<&str> = config.preferred.kex.iter().map(|k| k.as_ref()).collect();
         assert!(
             !kex_names.contains(&"mlkem768x25519-sha256"),
@@ -973,7 +1079,7 @@ mod tests {
             ..SshConfig::default()
         };
 
-        let config = build_client_config(&ssh_config);
+        let config = build_client_config(&ssh_config).expect("config builds");
         assert_eq!(config.keepalive_interval, Some(Duration::from_secs(15)));
         assert_eq!(config.keepalive_max, 5);
     }
@@ -985,7 +1091,7 @@ mod tests {
             ..SshConfig::default()
         };
 
-        let config = build_client_config(&ssh_config);
+        let config = build_client_config(&ssh_config).expect("config builds");
         assert!(config.keepalive_interval.is_none());
     }
 
@@ -999,7 +1105,7 @@ mod tests {
             ..SshConfig::default()
         };
 
-        let config = build_client_config(&ssh_config);
+        let config = build_client_config(&ssh_config).expect("config builds");
         let cipher_names: Vec<&str> = config.preferred.cipher.iter().map(|c| c.as_ref()).collect();
         assert_eq!(cipher_names.len(), 2);
         assert_eq!(cipher_names[0], "aes256-gcm@openssh.com");
@@ -1009,7 +1115,7 @@ mod tests {
     #[test]
     fn build_client_config_uses_hardware_detected_ciphers_by_default() {
         let ssh_config = SshConfig::default();
-        let config = build_client_config(&ssh_config);
+        let config = build_client_config(&ssh_config).expect("config builds");
         let cipher_names: Vec<&str> = config.preferred.cipher.iter().map(|c| c.as_ref()).collect();
 
         // Should contain the three ciphers from cipher::default_ciphers().
@@ -1017,6 +1123,213 @@ mod tests {
         assert!(cipher_names.contains(&"chacha20-poly1305@openssh.com"));
         assert!(cipher_names.contains(&"aes128-gcm@openssh.com"));
         assert!(cipher_names.contains(&"aes256-gcm@openssh.com"));
+    }
+
+    fn names<T: AsRef<str>>(list: &[T]) -> Vec<&str> {
+        list.iter().map(AsRef::as_ref).collect()
+    }
+
+    /// An ssh_config list composes against the transport's own defaults:
+    /// `+` appends to them, `-` removes from them and a bare list replaces
+    /// them, and the key exchange keeps its two client markers last
+    /// (openssh/kex.c:103-108).
+    #[test]
+    fn build_client_config_composes_ssh_config_lists() {
+        let ssh_config = SshConfig {
+            cipher_spec: Some("aes256-ctr,aes128-ctr".to_owned()),
+            mac_spec: Some("-hmac-sha2-512*".to_owned()),
+            kex_spec: Some("+ecdh-sha2-nistp256".to_owned()),
+            host_key_spec: Some("ssh-ed25519".to_owned()),
+            ..SshConfig::default()
+        };
+        let config = build_client_config(&ssh_config).expect("config builds");
+        assert_eq!(
+            names(&config.preferred.cipher),
+            ["aes256-ctr", "aes128-ctr"]
+        );
+        assert_eq!(
+            names(&config.preferred.mac),
+            ["hmac-sha2-256-etm@openssh.com", "hmac-sha2-256"]
+        );
+        let kex = names(&config.preferred.kex);
+        assert_eq!(
+            kex,
+            [
+                "curve25519-sha256",
+                "curve25519-sha256@libssh.org",
+                "diffie-hellman-group14-sha256",
+                "diffie-hellman-group-exchange-sha256",
+                "ecdh-sha2-nistp256",
+                "ext-info-c",
+                "kex-strict-c-v00@openssh.com",
+            ]
+        );
+        assert_eq!(
+            config.preferred.key.as_ref(),
+            [russh::keys::Algorithm::Ed25519]
+        );
+    }
+
+    /// Names OpenSSH knows but the transport cannot negotiate are left
+    /// out; a list with nothing left fails the connection instead of
+    /// sending an empty proposal.
+    #[test]
+    fn build_client_config_drops_unsupported_names_and_refuses_an_empty_list() {
+        let ssh_config = SshConfig {
+            mac_spec: Some("umac-64@openssh.com,hmac-sha1".to_owned()),
+            host_key_spec: Some("ssh-ed25519*".to_owned()),
+            ..SshConfig::default()
+        };
+        let config = build_client_config(&ssh_config).expect("config builds");
+        assert_eq!(names(&config.preferred.mac), ["hmac-sha1"]);
+        assert_eq!(
+            config.preferred.key.as_ref(),
+            [russh::keys::Algorithm::Ed25519]
+        );
+
+        let ssh_config = SshConfig {
+            kex_spec: Some("sntrup761x25519-sha512".to_owned()),
+            ..SshConfig::default()
+        };
+        let err = build_client_config(&ssh_config).expect_err("nothing negotiable");
+        assert_eq!(
+            err.to_string(),
+            "KexAlgorithms 'sntrup761x25519-sha512': no algorithm the embedded ssh transport supports"
+        );
+        let ssh_config = SshConfig {
+            host_key_spec: Some("!ssh-rsa".to_owned()),
+            ..SshConfig::default()
+        };
+        let err = build_client_config(&ssh_config).expect_err("negated pattern");
+        assert_eq!(
+            err.to_string(),
+            "ssh_kex2: kex_assemble_namelist: invalid argument"
+        );
+    }
+
+    /// A `Ciphers` list that fails to assemble falls back to the
+    /// transport's ciphers, and a later `MACs` list is offered as written,
+    /// unassembled (openssh/readconf.c:2794, :2987-2997, openssh/kex.c:117-124);
+    /// a `+` list offered as written names no MAC, so it is refused.
+    #[test]
+    fn a_failed_cipher_assembly_falls_back_and_leaves_later_lists_as_written() {
+        let _ = drained_warnings();
+        let config = build_client_config(&SshConfig {
+            cipher_spec: Some("^aes128-ctr,,!aes256-ctr".to_owned()),
+            mac_spec: Some("hmac-sha2-256".to_owned()),
+            kex_spec: Some("curve25519-sha256".to_owned()),
+            ..SshConfig::default()
+        })
+        .expect("a failed assembly is not fatal");
+        assert_eq!(
+            config.preferred.cipher.as_ref(),
+            resolve_cipher_names(&cipher::default_ciphers())
+        );
+        assert_eq!(config.preferred.mac.as_ref(), [russh::mac::HMAC_SHA256]);
+        assert_eq!(config.preferred.kex.first(), Some(&russh::kex::CURVE25519));
+        assert_eq!(
+            drained_warnings(),
+            ["fill_default_options: ciphers: invalid argument"]
+        );
+
+        let err = build_client_config(&SshConfig {
+            cipher_spec: Some("^aes128-ctr,,!aes256-ctr".to_owned()),
+            mac_spec: Some("+hmac-sha1".to_owned()),
+            ..SshConfig::default()
+        })
+        .expect_err("the unassembled list names nothing");
+        assert_eq!(
+            err.to_string(),
+            "MACs '+hmac-sha1': no algorithm the embedded ssh transport supports"
+        );
+    }
+
+    /// The warnings this thread emitted since the last drain.
+    fn drained_warnings() -> Vec<String> {
+        logging::drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                logging::DiagnosticEvent::Info {
+                    code: logging::LogCode::Warning,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A `-` list removes from the transport's own hardware-tuned cipher
+    /// order, whichever order this CPU gets (user decision 2026-11-04).
+    #[test]
+    fn a_minus_list_removes_from_the_tuned_cipher_order() {
+        let ssh_config = SshConfig {
+            cipher_spec: Some("-aes128-gcm@openssh.com".to_owned()),
+            ..SshConfig::default()
+        };
+        let config = build_client_config(&ssh_config).expect("config builds");
+        let expected: Vec<String> = cipher::default_ciphers()
+            .into_iter()
+            .filter(|name| name != "aes128-gcm@openssh.com")
+            .collect();
+        assert_eq!(names(&config.preferred.cipher), expected);
+    }
+
+    /// A mixed list keeps the names the transport negotiates and warns once
+    /// per name it drops (user decision 2026-11-04).
+    #[test]
+    fn a_mixed_mac_list_keeps_working_and_warns_per_dropped_name() {
+        let _ = drained_warnings();
+        let ssh_config = SshConfig {
+            mac_spec: Some("umac-64@openssh.com,hmac-sha2-256,umac-128-etm@openssh.com".to_owned()),
+            ..SshConfig::default()
+        };
+        let config = build_client_config(&ssh_config).expect("config builds");
+        assert_eq!(names(&config.preferred.mac), ["hmac-sha2-256"]);
+        assert_eq!(
+            drained_warnings(),
+            [
+                "MACs: dropping umac-64@openssh.com, which the embedded ssh transport cannot negotiate",
+                "MACs: dropping umac-128-etm@openssh.com, which the embedded ssh transport cannot negotiate",
+            ]
+        );
+    }
+
+    /// The explicit cipher list outranks an ssh_config `Ciphers` line.
+    #[test]
+    fn build_client_config_explicit_ciphers_beat_the_config_spec() {
+        let ssh_config = SshConfig {
+            ciphers: Some(vec!["aes128-ctr".to_owned()]),
+            cipher_spec: Some("aes256-ctr".to_owned()),
+            ..SshConfig::default()
+        };
+        let config = build_client_config(&ssh_config).expect("config builds");
+        assert_eq!(names(&config.preferred.cipher), ["aes128-ctr"]);
+    }
+
+    /// `RekeyLimit` onto russh's bounds: a size is capped at russh's 1 GiB
+    /// ceiling and `0` keeps the ceiling; an absent or zero interval turns
+    /// time-based re-keying off, as upstream has none by default.
+    #[test]
+    fn rekey_limits_map_rekeylimit() {
+        let defaults = russh::Limits::default();
+        let limits = rekey_limits(Some(4096), Some(90));
+        assert_eq!(limits.rekey_write_limit, 4096);
+        assert_eq!(limits.rekey_read_limit, 4096);
+        assert_eq!(limits.rekey_time_limit, Duration::from_secs(90));
+        let limits = rekey_limits(Some(4 << 30), Some(0));
+        assert_eq!(limits.rekey_write_limit, defaults.rekey_write_limit);
+        assert_eq!(limits.rekey_time_limit, NO_REKEY_INTERVAL);
+        let limits = rekey_limits(Some(0), None);
+        assert_eq!(limits.rekey_write_limit, defaults.rekey_write_limit);
+        assert_eq!(limits.rekey_time_limit, NO_REKEY_INTERVAL);
+        assert_eq!(rekey_limits(None, None).rekey_time_limit, NO_REKEY_INTERVAL);
+        let config = build_client_config(&SshConfig {
+            rekey_limit: Some(1 << 20),
+            ..SshConfig::default()
+        })
+        .expect("config builds");
+        assert_eq!(config.limits.rekey_write_limit, 1 << 20);
     }
 
     #[test]
@@ -1153,13 +1466,20 @@ mod remote_exit_tests {
 
     /// Starts the scripted server on an ephemeral port with a fresh host key.
     async fn start_server(script: Script) -> u16 {
+        start_server_with_keys(script, vec![host_key(russh::keys::Algorithm::Ed25519)]).await
+    }
+
+    /// A fresh host key of type `alg`.
+    fn host_key(alg: russh::keys::Algorithm) -> russh::keys::PrivateKey {
+        russh::keys::PrivateKey::random(&mut rand::rng(), alg).expect("keygen")
+    }
+
+    /// [`start_server`] offering every key in `keys`.
+    async fn start_server_with_keys(script: Script, keys: Vec<russh::keys::PrivateKey>) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let port = listener.local_addr().expect("local_addr").port();
-        let host_key =
-            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
-                .expect("keygen");
         let config = Arc::new(russh::server::Config {
-            keys: vec![host_key],
+            keys,
             ..Default::default()
         });
         let mut server = ScriptedServer { script };
@@ -1169,7 +1489,12 @@ mod remote_exit_tests {
         port
     }
 
-    fn client_config(port: u16) -> SshConfig {
+    /// A client for the scripted server. Each server mints a fresh host key
+    /// on an ephemeral port, so the key is learned into a known_hosts file
+    /// inside `dir`: the default would be the user's `~/.ssh/known_hosts`,
+    /// where a reused port meets an older key and fails with
+    /// `HostKeyMismatch`.
+    fn client_config(port: u16, dir: &std::path::Path) -> SshConfig {
         SshConfig {
             host: "127.0.0.1".to_owned(),
             port,
@@ -1179,6 +1504,7 @@ mod remote_exit_tests {
             use_agent: false,
             connect_timeout: Duration::from_secs(5),
             strict_host_key_checking: super::super::types::StrictHostKeyChecking::No,
+            known_hosts_file: Some(dir.join("known_hosts")),
             ..SshConfig::default()
         }
     }
@@ -1187,11 +1513,21 @@ mod remote_exit_tests {
     /// still open, so the remote side drives the shutdown, and returns the exit
     /// report plus everything forwarded to stderr.
     async fn run_bridge(script: Script) -> (Option<RemoteExit>, Vec<u8>) {
+        run_bridge_with(script, |_| {}).await
+    }
+
+    /// [`run_bridge`] with the client config adjusted by `tweak` first.
+    async fn run_bridge_with(
+        script: Script,
+        tweak: impl FnOnce(&mut SshConfig),
+    ) -> (Option<RemoteExit>, Vec<u8>) {
         let port = start_server(script).await;
-        let (mut channel, handle, channel_id) =
-            ssh_setup(&client_config(port), "rsync --server", None)
-                .await
-                .expect("ssh setup");
+        let dir = test_support::create_tempdir();
+        let mut config = client_config(port, dir.path());
+        tweak(&mut config);
+        let (mut channel, handle, channel_id) = ssh_setup(&config, "rsync --server", None)
+            .await
+            .expect("ssh setup");
         let (data_tx, _data_rx) = std::sync::mpsc::sync_channel::<Bytes>(8);
         let (_write_tx, write_rx) = tokio::sync::mpsc::channel::<Bytes>(8);
         let mut stderr = Vec::new();
@@ -1222,6 +1558,94 @@ mod remote_exit_tests {
         })
         .await;
         assert_eq!(exit, Some(RemoteExit::Status(23)));
+    }
+
+    /// With no time-based re-key - `RekeyLimit` without an interval, or with
+    /// `0` - a whole session runs under [`NO_REKEY_INTERVAL`]: russh arms its
+    /// re-key timer from it once authenticated and compares elapsed time
+    /// against it, and neither may overflow or panic.
+    #[tokio::test]
+    async fn a_session_without_a_rekey_interval_runs_to_completion() {
+        for interval in [None, Some(0)] {
+            let (exit, _) = run_bridge_with(
+                Script {
+                    stderr: Vec::new(),
+                    exit: Some(RemoteExit::Status(0)),
+                },
+                |config| {
+                    config.rekey_limit = Some(1 << 20);
+                    config.rekey_interval = interval;
+                },
+            )
+            .await;
+            assert_eq!(exit, Some(RemoteExit::Status(0)), "interval {interval:?}");
+        }
+    }
+
+    /// The scripted server's key is learned into the test's own known_hosts
+    /// file, so these tests never read or write the user's
+    /// `~/.ssh/known_hosts` (task 590).
+    #[tokio::test]
+    async fn the_server_key_is_learned_into_the_test_known_hosts() {
+        let port = start_server(Script {
+            stderr: Vec::new(),
+            exit: Some(RemoteExit::Status(0)),
+        })
+        .await;
+        let dir = test_support::create_tempdir();
+        let config = client_config(port, dir.path());
+        assert_ne!(
+            config.known_hosts_file,
+            SshConfig::default().known_hosts_file
+        );
+        let (_channel, _handle, _id) = ssh_setup(&config, "rsync --server", None)
+            .await
+            .expect("ssh setup");
+        let learned = std::fs::read_to_string(dir.path().join("known_hosts"))
+            .expect("the key was learned into the test file");
+        assert!(
+            learned.contains(&format!("[127.0.0.1]:{port} ")),
+            "known_hosts holds {learned:?}"
+        );
+    }
+
+    /// The server offers ed25519 and ECDSA keys, and known_hosts records only
+    /// the ECDSA one. With no `HostKeyAlgorithms`, or a `+`/`-` list, the
+    /// client prefers the recorded type and verifies under
+    /// `StrictHostKeyChecking yes`; an explicit list is offered as written,
+    /// so ed25519 is negotiated and the host is unknown
+    /// (openssh/sshconnect2.c:233-251).
+    #[tokio::test]
+    async fn known_hosts_key_types_lead_the_host_key_offer() {
+        let ecdsa = host_key(russh::keys::Algorithm::Ecdsa {
+            curve: russh::keys::EcdsaCurve::NistP256,
+        });
+        let recorded = ecdsa.public_key().clone();
+        let keys = vec![host_key(russh::keys::Algorithm::Ed25519), ecdsa];
+        for (spec, verifies) in [
+            (None, true),
+            (Some("+ssh-rsa"), true),
+            (Some("-rsa-sha2-256"), true),
+            (Some("ssh-ed25519,ecdsa-sha2-nistp256"), false),
+        ] {
+            let port = start_server_with_keys(
+                Script {
+                    stderr: Vec::new(),
+                    exit: Some(RemoteExit::Status(0)),
+                },
+                keys.clone(),
+            )
+            .await;
+            let dir = test_support::create_tempdir();
+            let known = dir.path().join("known_hosts");
+            russh::keys::known_hosts::learn_known_hosts_path("127.0.0.1", port, &recorded, &known)
+                .expect("record the ECDSA key");
+            let mut config = client_config(port, dir.path());
+            config.strict_host_key_checking = super::super::types::StrictHostKeyChecking::Yes;
+            config.host_key_spec = spec.map(str::to_owned);
+            let outcome = ssh_setup(&config, "rsync --server", None).await;
+            assert_eq!(outcome.is_ok(), verifies, "{spec:?}");
+        }
     }
 
     /// A remote shell that cannot find `rsync` exits 127 (RERR_CMD_NOTFOUND).
@@ -1285,8 +1709,10 @@ mod remote_exit_tests {
             stderr: Vec::new(),
             exit: Some(RemoteExit::Status(23)),
         }));
+        let dir = test_support::create_tempdir();
         let (mut reader, writer) =
-            connect_and_exec(&client_config(port), "rsync --server", None).expect("connect");
+            connect_and_exec(&client_config(port, dir.path()), "rsync --server", None)
+                .expect("connect");
         drop(writer);
         let mut rest = Vec::new();
         reader.read_to_end(&mut rest).expect("read to EOF");
