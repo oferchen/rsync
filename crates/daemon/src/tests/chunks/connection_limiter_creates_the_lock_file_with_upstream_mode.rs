@@ -18,8 +18,14 @@ fn connection_limiter_creates_the_lock_file_with_upstream_mode() {
     let temp = tempdir().expect("lock dir");
     let lock_path = temp.path().join("daemon.lock");
 
-    let limiter = ConnectionLimiter::open(lock_path.clone());
-    drop(limiter);
+    let limiter = Arc::new(ConnectionLimiter::open(lock_path.clone()));
+    let guard = limiter
+        .acquire(
+            "docs",
+            MaxConnections::Limited(NonZeroU32::new(1).expect("non-zero")),
+        )
+        .expect("claim creates the lock file");
+    drop(guard);
 
     let mode = fs::metadata(&lock_path)
         .expect("stat lock file")
