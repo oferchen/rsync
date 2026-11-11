@@ -94,7 +94,7 @@ macro_rules! info_log_bytes {
 #[macro_export]
 macro_rules! warn_log {
     ($($arg:tt)*) => {
-        $crate::emit_warning(format!($($arg)*));
+        $crate::emit_warning(format!($($arg)*))
     };
 }
 

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use base64::Engine as _;
 use hmac::{Hmac, KeyInit, Mac};
 use is_terminal::IsTerminal;
-use russh::keys::{HashAlg, PublicKey, PublicKeyOrCertificate, known_hosts};
+use russh::keys::{Algorithm, HashAlg, PublicKey, PublicKeyOrCertificate, known_hosts};
 use sha1::Sha1;
 
 use super::error::SshError;
@@ -60,6 +60,56 @@ pub struct HostKeyOptions {
     pub server_ip: Option<String>,
     /// The `RevokedHostKeys` file; a listed server key is rejected.
     pub revoked_host_keys: Option<PathBuf>,
+}
+
+impl HostKeyOptions {
+    /// `order_hostkeyalgs` (openssh/sshconnect2.c:119-206): when known_hosts
+    /// already records a key of the first preferred algorithm's type the
+    /// list is kept as it stands; otherwise the algorithms whose key type is
+    /// recorded for this host move to the front, each part keeping its order.
+    ///
+    /// Every check source is read, user files before global ones, under the
+    /// lookup name (`HostKeyAlias` or the host) and port, as upstream's
+    /// `load_hostkeys` calls do (:131-140). Marker lines are skipped, so the
+    /// `@cert-authority` arm (:183-187) never applies; it only reorders
+    /// certificate algorithms, which this transport does not offer.
+    pub(super) fn order_host_key_algorithms(&self, preferred: &[Algorithm]) -> Vec<Algorithm> {
+        let known = self
+            .check_sources
+            .iter()
+            .flat_map(|source| {
+                match source {
+                    Some(path) => {
+                        known_hosts::known_host_keys_path(&self.lookup_name, self.port, path)
+                    }
+                    None => known_hosts::known_host_keys(&self.lookup_name, self.port),
+                }
+                .unwrap_or_default()
+            })
+            .map(|(_, key)| plain_key_type(&key.algorithm()))
+            .collect::<Vec<_>>();
+        prefer_known_key_types(preferred, &known)
+    }
+}
+
+/// The key type an algorithm signs with: the RSA signature hashes share one
+/// key (openssh/sshkey.c `sshkey_type_plain`).
+fn plain_key_type(alg: &Algorithm) -> Algorithm {
+    match alg {
+        Algorithm::Rsa { .. } => Algorithm::Rsa { hash: None },
+        other => other.clone(),
+    }
+}
+
+/// The ordering half of [`HostKeyOptions::order_host_key_algorithms`], over
+/// the plain key types `known` records.
+fn prefer_known_key_types(preferred: &[Algorithm], known: &[Algorithm]) -> Vec<Algorithm> {
+    let is_known = |alg: &Algorithm| known.contains(&plain_key_type(alg));
+    if preferred.first().is_none_or(is_known) {
+        return preferred.to_vec();
+    }
+    let (first, last): (Vec<_>, Vec<_>) = preferred.iter().cloned().partition(is_known);
+    first.into_iter().chain(last).collect()
 }
 
 /// SSH client handler that verifies server host keys against known_hosts files.
@@ -1068,5 +1118,60 @@ mod tests {
             "",
             "a disabled learn target must not write",
         );
+    }
+
+    /// openssh/sshconnect2.c:156-197: a recorded key of the first
+    /// preference's type keeps the list verbatim; otherwise recorded types
+    /// move to the front in their own order, and RSA signature hashes match
+    /// one recorded RSA key.
+    #[test]
+    fn known_key_types_move_to_the_front_unless_the_first_is_known() {
+        let ecdsa = |curve| Algorithm::Ecdsa { curve };
+        let rsa = |hash| Algorithm::Rsa { hash: Some(hash) };
+        let (p256, p384) = (
+            ecdsa(russh::keys::EcdsaCurve::NistP256),
+            ecdsa(russh::keys::EcdsaCurve::NistP384),
+        );
+        let preferred = [
+            Algorithm::Ed25519,
+            p256.clone(),
+            p384.clone(),
+            rsa(HashAlg::Sha512),
+            rsa(HashAlg::Sha256),
+        ];
+        let rsa_key = Algorithm::Rsa { hash: None };
+        for (known, expected) in [
+            (vec![], preferred.to_vec()),
+            (
+                vec![Algorithm::Ed25519, rsa_key.clone()],
+                preferred.to_vec(),
+            ),
+            (
+                vec![rsa_key.clone(), p384.clone()],
+                vec![
+                    p384.clone(),
+                    rsa(HashAlg::Sha512),
+                    rsa(HashAlg::Sha256),
+                    Algorithm::Ed25519,
+                    p256.clone(),
+                ],
+            ),
+            (
+                vec![p256.clone()],
+                vec![
+                    p256.clone(),
+                    Algorithm::Ed25519,
+                    p384.clone(),
+                    rsa(HashAlg::Sha512),
+                    rsa(HashAlg::Sha256),
+                ],
+            ),
+        ] {
+            assert_eq!(
+                prefer_known_key_types(&preferred, &known),
+                expected,
+                "{known:?}"
+            );
+        }
     }
 }

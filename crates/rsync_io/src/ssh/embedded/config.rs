@@ -94,6 +94,25 @@ pub struct SshConfig {
     pub identity_agent: Option<String>,
     /// Cipher preference list. `None` uses hardware-detected defaults.
     pub ciphers: Option<Vec<String>>,
+    /// `Ciphers` from ssh_config, the raw `[+-^]list`. Composed against the
+    /// transport's defaults at connect time; [`Self::ciphers`] wins over it.
+    /// upstream: openssh/readconf.c:1593.
+    pub cipher_spec: Option<String>,
+    /// `MACs` from ssh_config, the raw `[+-^]list`.
+    /// upstream: openssh/readconf.c:1610.
+    pub mac_spec: Option<String>,
+    /// `KexAlgorithms` from ssh_config, the raw `[+-^]list`.
+    /// upstream: openssh/readconf.c:1627.
+    pub kex_spec: Option<String>,
+    /// `HostKeyAlgorithms` from ssh_config, the raw `[+-^]list`.
+    /// upstream: openssh/readconf.c:1645.
+    pub host_key_spec: Option<String>,
+    /// `RekeyLimit` bytes (`0` is `default`). `None` keeps the transport's
+    /// own limit. upstream: openssh/readconf.c:1362.
+    pub rekey_limit: Option<i64>,
+    /// `RekeyLimit` interval in seconds (`0` disables time-based re-keying).
+    /// `None` keeps the transport's own interval.
+    pub rekey_interval: Option<u32>,
     /// TCP connect timeout.
     pub connect_timeout: Duration,
     /// Interval between keepalive packets. `None` disables keepalives.
@@ -221,6 +240,12 @@ impl Default for SshConfig {
             use_agent: true,
             identity_agent: None,
             ciphers: None,
+            cipher_spec: None,
+            mac_spec: None,
+            kex_spec: None,
+            host_key_spec: None,
+            rekey_limit: None,
+            rekey_interval: None,
             connect_timeout: Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS),
             keepalive_interval: Some(Duration::from_secs(DEFAULT_KEEPALIVE_INTERVAL_SECS)),
             keepalive_max_count: DEFAULT_KEEPALIVE_MAX_COUNT,
@@ -602,6 +627,26 @@ impl SshConfig {
         }
         if let Some(fdpass) = resolved.proxy_use_fdpass {
             self.proxy_use_fdpass = fdpass;
+        }
+        // The algorithm lists and `RekeyLimit`: explicit-wins like the
+        // fields above. Each spec is composed only at connect time, where
+        // the transport's defaults are known (openssh/readconf.c:2976-2997
+        // composes at the same late point, in fill_default_options).
+        for (slot, value) in [
+            (&mut self.cipher_spec, &resolved.ciphers),
+            (&mut self.mac_spec, &resolved.macs),
+            (&mut self.kex_spec, &resolved.kex_algorithms),
+            (&mut self.host_key_spec, &resolved.host_key_algorithms),
+        ] {
+            if slot.is_none() {
+                slot.clone_from(value);
+            }
+        }
+        if self.rekey_limit.is_none() {
+            self.rekey_limit = resolved.rekey_limit;
+        }
+        if self.rekey_interval.is_none() {
+            self.rekey_interval = resolved.rekey_interval;
         }
         // The host-key verification family. Explicit-wins, mirroring the
         // fields above: a resolved value fills only a slot the builder/URL
@@ -1619,6 +1664,33 @@ mod tests {
         cfg.apply_ssh_config_from(&path, "example")
             .expect("config accepted");
         assert_eq!(cfg.keepalive_interval, None);
+    }
+
+    /// The algorithm lists and `RekeyLimit` reach the fields the connect
+    /// path composes from, and a value set before the load is kept.
+    #[test]
+    fn algorithm_lists_and_rekeylimit_reach_the_transport_fields() {
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("config");
+        std::fs::write(
+            &path,
+            "Host example\n  Ciphers +aes128-cbc\n  MACs -hmac-sha1\n  \
+             KexAlgorithms ^curve25519-sha256\n  HostKeyAlgorithms ssh-ed25519*\n  \
+             RekeyLimit 1M 30\n",
+        )
+        .expect("write config");
+        let mut cfg = SshConfig {
+            mac_spec: Some("hmac-sha2-256".to_owned()),
+            ..SshConfig::default()
+        };
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.cipher_spec.as_deref(), Some("+aes128-cbc"));
+        assert_eq!(cfg.mac_spec.as_deref(), Some("hmac-sha2-256"));
+        assert_eq!(cfg.kex_spec.as_deref(), Some("^curve25519-sha256"));
+        assert_eq!(cfg.host_key_spec.as_deref(), Some("ssh-ed25519*"));
+        assert_eq!(cfg.rekey_limit, Some(1 << 20));
+        assert_eq!(cfg.rekey_interval, Some(30));
     }
 
     #[test]

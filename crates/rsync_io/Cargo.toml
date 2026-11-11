@@ -37,6 +37,7 @@ bytes = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
+dns-lookup = { version = "4.0", optional = true }
 
 [features]
 default = ["ssh-config-parse"]
@@ -53,6 +54,8 @@ embedded-ssh = [
     "dep:base64",
     # Zero-copy hand-off of russh channel chunks across the sync bridge.
     "dep:bytes",
+    # ssh_config CNAME following needs getaddrinfo's canonical name.
+    "dep:dns-lookup",
 ]
 # QUIC transport: quinn-proto (sans-IO) + rustls (ring provider) behind an
 # off-by-default gate, driven by a dedicated I/O thread - no async runtime.

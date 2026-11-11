@@ -119,16 +119,12 @@ pub enum SshError {
         path: String,
     },
 
-    /// An `ssh_config` line was refused while resolving the host alias.
+    /// One `ssh_config` line refused while resolving the host alias.
     ///
-    /// Upstream counts every refused line and then aborts the whole load
-    /// rather than continuing with a partial config
-    /// (openssh/readconf.c:2667 `fatal("%s: terminating, %d bad
-    /// configuration options")`), so the connection never starts. oc
-    /// mirrors that: `SshConfig::apply_ssh_config_from` propagates
-    /// instead of silently treating the file as empty, because a config
-    /// real `ssh` would refuse must not silently resolve to different
-    /// connection parameters here.
+    /// Upstream counts such a line and keeps scanning
+    /// (openssh/readconf.c:2604-2607); the reader collects every one into
+    /// [`SshError::SshConfigBadOptions`] once the file ends. Outside that
+    /// scan it is returned on its own.
     ///
     /// The rendered text reproduces upstream's `%s line %d: <reason>`
     /// shape so an operator comparing the two diagnostics sees the same
@@ -141,6 +137,29 @@ pub enum SshError {
         /// (openssh/readconf.c:2654 `linenum++` per `getline`).
         line: usize,
         /// Upstream's reason text for this refusal.
+        reason: String,
+    },
+    /// An `ssh_config` file held lines upstream refuses.
+    ///
+    /// Upstream reports each refused line as it parses it, finishes the
+    /// file, then aborts the whole load (openssh/readconf.c:2611-2613
+    /// `fatal("%s: terminating, %d bad configuration options")`), so the
+    /// connection never starts. oc mirrors that rather than resolving to
+    /// connection parameters `ssh` would never have used. The rendered text
+    /// is every line's diagnostic in file order, then upstream's fatal line.
+    #[error("{}{path}: terminating, {} bad configuration options", render_lines(.lines), .lines.len())]
+    SshConfigBadOptions {
+        /// The config file the refused lines came from.
+        path: String,
+        /// Each refused line's diagnostic, in file order.
+        lines: Vec<String>,
+    },
+    /// An `ssh_config` condition upstream treats as immediately fatal, such
+    /// as `Include` nesting past its depth limit
+    /// (openssh/readconf.c:2573-2574).
+    #[error("{reason}")]
+    SshConfigFatal {
+        /// Upstream's fatal wording.
         reason: String,
     },
 
@@ -210,4 +229,9 @@ pub enum SshError {
          drop it or use an external ssh binary"
     )]
     ProxyUseFdpassUnsupported,
+}
+
+/// Renders each refused line on its own line, ahead of the fatal summary.
+fn render_lines(lines: &[String]) -> String {
+    lines.iter().map(|line| format!("{line}\n")).collect()
 }
