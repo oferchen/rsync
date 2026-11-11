@@ -430,7 +430,7 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
     // `None` covers both "no directive" and `ConnectTimeout none` - the
     // same collapse upstream performs, since `none` writes the unset
     // sentinel (openssh/readconf.c:1222). Upstream dumps the unset state
-    // as the string `none` (openssh/readconf.c:3876-3877), which lands in
+    // as the string `none` (openssh/readconf.c:3766-3767), which lands in
     // `OcUnset` here rather than being modelled as a default.
     map.insert(
         "connecttimeout".to_owned(),
