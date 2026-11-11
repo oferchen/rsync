@@ -182,6 +182,7 @@ engine = { path = "crates/engine", default-features = false }
 checksums = { path = "crates/checksums", default-features = false }
 transfer = { path = "crates/transfer", default-features = false }
 fast_io = { path = "crates/fast_io", default-features = false }
+platform = { path = "crates/platform" }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

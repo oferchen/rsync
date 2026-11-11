@@ -38,6 +38,8 @@ pub mod group;
 /// Per-instant local timezone offset (mirrors upstream `timestring()`'s
 /// `localtime_r`), used to render file modtimes in local time.
 pub mod local_time;
+/// Process-wide memory policy applied at startup (transparent huge pages).
+pub mod memory;
 /// Windows account name to RID resolution.
 pub mod name_resolution;
 /// Process privilege operations - chroot and uid/gid dropping.

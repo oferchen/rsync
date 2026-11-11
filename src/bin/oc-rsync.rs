@@ -65,6 +65,11 @@ fn main() -> ExitCode {
     // upstream: main.c:1844 - the first statement of main().
     core::fd_limit::raise_fd_limit();
 
+    // Before any thread exists or any allocation-heavy work runs, so no
+    // jemalloc extent is promoted to a huge page first. Best-effort: a kernel
+    // without the flag just keeps THP. oc-only; see `platform::memory`.
+    let _ = platform::memory::disable_transparent_huge_pages();
+
     // Do NOT hold `StdoutLock`/`StderrLock` here. Both are process-wide
     // reentrant locks owned by the acquiring thread. In TCP-daemon mode `main`
     // parks in the accept loop for the process lifetime while each session runs
