@@ -22,15 +22,21 @@ on:
       - 'crates/transfer/src/disk_commit/**'
       - 'crates/transfer/src/map_file/**'
       - '.github/workflows/iouring-kernel-compat.yml'
-  # Pull requests run it once per merge-train batch: the train dispatches it
-  # on the batch's integration/ branch instead of each pull request.
+  pull_request:
+    paths:
+      - 'crates/fast_io/**'
+      - 'crates/transfer/src/disk_commit/**'
+      - 'crates/transfer/src/map_file/**'
+      - '.github/workflows/iouring-kernel-compat.yml'
   workflow_dispatch:
 
 concurrency:
-  # One group per commit: a merge-train batch dispatch, a master push or the
-  # schedule never waits behind another run, and nothing is cancelled.
-  group: iouring-kernel-compat-${{ github.ref }}-${{ github.sha }}
-  queue: max
+  # One group per pull request, so a newer push cancels the run it supersedes.
+  # Every other event (master push, schedule, dispatch) gets its own group per
+  # commit, so nothing cancels it and every merge commit keeps a completed run
+  # for bisection.
+  group: iouring-kernel-compat-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

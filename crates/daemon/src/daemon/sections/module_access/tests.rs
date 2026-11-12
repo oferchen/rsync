@@ -4324,7 +4324,10 @@ mod module_access_tests {
         // line count (exclude.c:71-86).
         assert_eq!(
             err.to_string(),
-            format!("Unknown filter rule: <rule from {path}>")
+            format!(
+                "Unknown filter rule: <rule from {}>",
+                dir.path().join("rules").display()
+            )
         );
     }
 
@@ -4412,7 +4415,10 @@ mod module_access_tests {
         // by where it came from, never echoed (exclude.c:71-136).
         assert_eq!(
             err.to_string(),
-            format!("Unknown filter rule: <rule from {path} line 1>")
+            format!(
+                "Unknown filter rule: <rule from {} line 1>",
+                dir.path().join("rules").display()
+            )
         );
         let err = filter_rules(dir.path(), "bait").expect_err("directive must refuse too");
         assert_eq!(err.to_string(), "Unknown filter rule: bait");

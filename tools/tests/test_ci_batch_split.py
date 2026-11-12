@@ -73,27 +73,15 @@ class CiBatchSplitTests(unittest.TestCase):
         return {c for job_id, job in self.jobs.items() if _runs_on(job, event)
                 for c in _contexts(job_id, job)}
 
-    def test_pull_requests_publish_only_the_light_required_contexts(self) -> None:
-        # A batch context published by a pull request's own run would let that
-        # pull request merge without the batch having tested it.
+    def test_pull_requests_publish_every_required_context(self) -> None:
         published = self._published_on("pull_request")
-        self.assertEqual(LIGHT_REQUIRED - published, set())
-        self.assertEqual(BATCH_REQUIRED & published, set())
+        self.assertEqual((LIGHT_REQUIRED | BATCH_REQUIRED) - published, set())
 
     def test_a_batch_dispatch_publishes_every_required_context(self) -> None:
         # The train relays only what the batch run published; a context missing
         # here would leave every pull request permanently pending.
         published = self._published_on("workflow_dispatch")
         self.assertEqual((LIGHT_REQUIRED | BATCH_REQUIRED) - published, set())
-
-    def test_jobs_skipped_on_pull_requests_cannot_impersonate_a_context(self) -> None:
-        for job_id, job in self.jobs.items():
-            if _runs_on(job, "pull_request") or not _contexts(job_id, job) & BATCH_REQUIRED:
-                continue
-            with self.subTest(job=job_id):
-                self.assertTrue("uses" in job or (job.get("strategy") or {}).get("matrix"),
-                                "a literal-named job skipped on pull requests reports success "
-                                "under the required name")
 
     def test_master_pushes_still_run_the_required_stable_cells(self) -> None:
         published = self._published_on("push")
@@ -102,19 +90,11 @@ class CiBatchSplitTests(unittest.TestCase):
                         "interop / interop with upstream rsync"):
             self.assertIn(context, published)
 
-    def test_the_build_check_runs_on_pull_requests_only(self) -> None:
-        # It stands in for the test jobs' build on a pull request; a batch
-        # builds through those jobs anyway.
-        job = self.jobs["linux-build-check"]
-        self.assertTrue(_runs_on(job, "pull_request"))
-        self.assertFalse(_runs_on(job, "workflow_dispatch"))
-        self.assertIn("lint", job["needs"])
-
-    def test_heavy_side_workflows_run_per_batch_not_per_pull_request(self) -> None:
+    def test_heavy_side_workflows_run_on_pull_requests_and_dispatch(self) -> None:
         for name in BATCH_ONLY_WORKFLOWS:
             with self.subTest(workflow=name):
                 triggers = _triggers(_load(WORKFLOWS_DIR / name))
-                self.assertNotIn("pull_request", triggers)
+                self.assertIn("pull_request", triggers)
                 self.assertIn("workflow_dispatch", triggers)
 
 

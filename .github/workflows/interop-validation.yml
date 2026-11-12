@@ -1,19 +1,29 @@
 name: Interop Validation
 
-# No push or pull_request trigger: the merge train dispatches this workflow
-# once per batch of pull requests on its integration/ branch, and the nightly
-# schedule covers master itself.
+# No push trigger: a commit reaching master already ran this workflow on its
+# pull request, and the nightly schedule covers master itself.
 on:
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/ci/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/interop-validation.yml'
   workflow_dispatch:
   schedule:
     # Run nightly to catch drift in upstream versions
     - cron: '0 2 * * *'
 
 concurrency:
-  # One group per commit: a merge-train batch dispatch, a master push or the
-  # schedule never waits behind another run, and nothing is cancelled.
-  group: interop-validation-${{ github.ref }}-${{ github.sha }}
-  queue: max
+  # One group per pull request, so a newer push cancels the run it supersedes.
+  # Every other event (master push, schedule, dispatch) gets its own group per
+  # commit, so nothing cancels it and every merge commit keeps a completed run
+  # for bisection.
+  group: interop-validation-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

@@ -120,6 +120,7 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
                         for key, value in job["with"].items()}
             self.assertEqual({k: str(v) for k, v in ci[job_id]["with"].items()},
                              expected, job_id)
+            self.assertIn("github.event_name == 'pull_request'", ci[job_id]["if"], job_id)
             self.assertIn("github.event_name == 'workflow_dispatch'", ci[job_id]["if"], job_id)
 
     def test_only_ci_and_the_gate_run_the_testsuite(self) -> None:
