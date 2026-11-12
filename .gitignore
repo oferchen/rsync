@@ -288,4 +288,4 @@ package-lock.json
 tools/**/__pycache__
 
 # graphify knowledge-graph output
-graphify-out/**
+**/graphify-out/**
