@@ -192,7 +192,7 @@ libc = { workspace = true }
 tempfile = { workspace = true }
 checksums = { path = "crates/checksums" }
 protocol = { path = "crates/protocol" }
-test-support = { path = "crates/test-support" }
+test-support = { path = "crates/test-support", features = ["daemon"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = { workspace = true, features = ["event", "inotify", "poll"] }
@@ -287,6 +287,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rayon = "1.10"
 # Crossbeam concurrency primitives - bounded channels with lower overhead than std
 crossbeam-channel = "0.5"
+# Filesystem event watches for tests that wait on a destination tree
+# without polling. `macos_kqueue` selects kqueue (`NOTE_WRITE`) on macOS
+# instead of FSEvents, which reports content modifications only on `close(2)`
+# and misses writes to a still-open receiver temp file. Pinned exactly:
+# test-only, upgraded deliberately.
+notify = { version = "=8.2.1", features = ["macos_kqueue"] }
 # Concurrent hash map - for shared state across daemon sessions
 dashmap = "6.1"
 # Pure-Rust SSH client - embedded SSH transport alternative to system ssh binary.

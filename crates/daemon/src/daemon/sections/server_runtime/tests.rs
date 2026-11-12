@@ -1317,6 +1317,124 @@ fn bind_listeners_per_family_falls_back_from_ipv6_to_ipv4() {
     );
 }
 
+/// Binds the listeners a daemon started with `args` would bind, in process.
+///
+/// Runs the daemon's own path - `RuntimeOptions` parsing, then
+/// `resolve_bind_addresses`, then `bind_listeners_per_family` - at port 0, so
+/// each family binds a port the kernel chooses and no daemon or readiness wait
+/// is involved. `env` stands in for `OC_RSYNC_DAEMON_ADDRESS_FAMILY`.
+///
+/// upstream: socket.c:560-658 `open_socket_in()` binds every getaddrinfo
+/// result for the requested family hint and fails only when none bound.
+fn listeners_for(
+    args: &[&str],
+    env: Option<AddressFamilyOverride>,
+) -> Vec<(std::net::TcpListener, SocketAddr)> {
+    let args: Vec<OsString> = args.iter().map(OsString::from).collect();
+    let options = RuntimeOptions::parse(&args).expect("daemon arguments parse");
+    let bind_addresses = resolve_bind_addresses(
+        options.bind_address,
+        options.bind_address_overridden,
+        options.address_family,
+        options.dual_stack,
+        env,
+    );
+    let (listeners, bound) = bind_listeners_per_family(
+        &bind_addresses,
+        0,
+        DEFAULT_LISTEN_BACKLOG,
+        TcpFastOpenMode::Off,
+        "",
+        None,
+    )
+    .expect("at least one family binds");
+    listeners.into_iter().zip(bound).collect()
+}
+
+/// Whether an IPv4 loopback client reaches one of `listeners`.
+fn serves_ipv4_client(listeners: &[(std::net::TcpListener, SocketAddr)]) -> bool {
+    listeners.iter().any(|(_, addr)| {
+        std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, addr.port())).is_ok()
+    })
+}
+
+fn ipv6_loopback_available() -> bool {
+    std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).is_ok()
+}
+
+#[test]
+fn default_daemon_listener_serves_an_ipv4_client() {
+    // No family flag and no override: both families are attempted, IPv6
+    // first, and whichever binds, an IPv4 client is served.
+    let listeners = listeners_for(&[], None);
+    assert!(
+        serves_ipv4_client(&listeners),
+        "no listener serves IPv4: {listeners:?}"
+    );
+}
+
+#[test]
+fn ipv4_override_binds_only_ipv4() {
+    let listeners = listeners_for(&[], Some(AddressFamilyOverride::Ipv4));
+    assert!(
+        listeners.iter().all(|(_, addr)| addr.is_ipv4()),
+        "the IPv4 override must bind IPv4 only: {listeners:?}"
+    );
+    assert!(serves_ipv4_client(&listeners), "{listeners:?}");
+}
+
+#[test]
+fn both_override_binds_both_families() {
+    if !ipv6_loopback_available() {
+        eprintln!("skipping: no IPv6 loopback, so only one family can bind");
+        return;
+    }
+    let listeners = listeners_for(&[], Some(AddressFamilyOverride::Both));
+    assert!(
+        listeners.iter().any(|(_, addr)| addr.is_ipv6()),
+        "{listeners:?}"
+    );
+    assert!(
+        listeners.iter().any(|(_, addr)| addr.is_ipv4()),
+        "{listeners:?}"
+    );
+    assert!(serves_ipv4_client(&listeners), "{listeners:?}");
+}
+
+#[test]
+fn both_family_flags_bind_both_families() {
+    if !ipv6_loopback_available() {
+        eprintln!("skipping: no IPv6 loopback, so only one family can bind");
+        return;
+    }
+    let listeners = listeners_for(&["--ipv4", "--ipv6"], None);
+    assert!(
+        listeners.iter().any(|(_, addr)| addr.is_ipv6()),
+        "{listeners:?}"
+    );
+    assert!(
+        listeners.iter().any(|(_, addr)| addr.is_ipv4()),
+        "{listeners:?}"
+    );
+    assert!(serves_ipv4_client(&listeners), "{listeners:?}");
+}
+
+#[test]
+fn ipv6_flag_binds_only_ipv6() {
+    if !ipv6_loopback_available() {
+        eprintln!("skipping: no IPv6 loopback");
+        return;
+    }
+    let listeners = listeners_for(&["--ipv6"], None);
+    assert!(
+        listeners.iter().all(|(_, addr)| addr.is_ipv6()),
+        "--ipv6 must bind IPv6 only: {listeners:?}"
+    );
+    let (_, addr) = &listeners[0];
+    std::net::TcpStream::connect((std::net::Ipv6Addr::LOCALHOST, addr.port()))
+        .expect("an IPv6 client reaches the --ipv6 listener");
+}
+
 #[test]
 fn bind_listeners_per_family_single_family_propagates_error() {
     // When only one address is provided (no dual-stack), the helper must

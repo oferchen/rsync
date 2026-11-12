@@ -35,16 +35,13 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::io::Read;
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::{Command, Output, Stdio};
 
-const RUN_TIMEOUT: Duration = Duration::from_secs(120);
-const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(30);
+use test_support::inetd_server::{InetdCommand, InetdServer};
+
 /// The banner a sender prints once its peer granted INC_RECURSE: a local
 /// copy's receiving half and an oc server receiver both grant it, as upstream's
 /// receiver does (compat.c:161-179), so every leg takes flist.c:2763-2764.
@@ -83,48 +80,6 @@ fn write_rsh_shim(dir: &Path) -> PathBuf {
     perms.set_mode(0o755);
     fs::set_permissions(&script, perms).unwrap();
     script
-}
-
-fn spawn_with_timeout(mut cmd: Command, timeout: Duration) -> Output {
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn oc-rsync client");
-    // Drain both pipes on their own threads. Polling try_wait() while the
-    // pipes fill would deadlock: the child blocks writing into a full OS pipe
-    // buffer and therefore never exits.
-    let mut child_stdout = child.stdout.take().expect("child stdout");
-    let mut child_stderr = child.stderr.take().expect("child stderr");
-    let stdout_reader = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = child_stdout.read_to_end(&mut buf);
-        buf
-    });
-    let stderr_reader = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = child_stderr.read_to_end(&mut buf);
-        buf
-    });
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait().expect("wait for client") {
-            Some(status) => {
-                return Output {
-                    status,
-                    stdout: stdout_reader.join().unwrap_or_default(),
-                    stderr: stderr_reader.join().unwrap_or_default(),
-                };
-            }
-            None if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("client did not finish within {timeout:?}");
-            }
-            None => thread::sleep(Duration::from_millis(50)),
-        }
-    }
 }
 
 /// Lays out a small recursive source tree: a file at the root and one in a
@@ -179,7 +134,9 @@ fn run_local(src: &Path, dest: &Path, dry_run: bool) -> Output {
         .arg("-r")
         .arg(format!("{}/", src.display()))
         .arg(format!("{}/", dest.display()));
-    spawn_with_timeout(cmd, RUN_TIMEOUT)
+    cmd.stdin(Stdio::null())
+        .output()
+        .expect("run oc-rsync client")
 }
 
 fn run_ssh_push(shim: &Path, src: &Path, dest: &Path, dry_run: bool) -> Output {
@@ -196,23 +153,15 @@ fn run_ssh_push(shim: &Path, src: &Path, dest: &Path, dry_run: bool) -> Output {
         .arg(&binary)
         .arg(format!("{}/", src.display()))
         .arg(format!("fakehost:{}/", dest.display()));
-    spawn_with_timeout(cmd, RUN_TIMEOUT)
+    cmd.stdin(Stdio::null())
+        .output()
+        .expect("run oc-rsync client")
 }
 
-/// Reserves an ephemeral port by binding it and immediately releasing it.
-fn allocate_port() -> u16 {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).expect("bind ephemeral port");
-    let port = listener.local_addr().expect("local addr").port();
-    drop(listener);
-    port
-}
-
-/// A spawned `oc-rsync --daemon` whose stdio is drained continuously; an
-/// undrained pipe wedges the daemon once the OS buffer fills.
-struct Daemon {
-    child: Child,
-    port: u16,
-}
+/// A daemon served in inetd mode on a listener bound before any session
+/// starts, so a client connect queues instead of racing the daemon's start.
+/// Dropping it kills every session.
+struct Daemon(InetdServer);
 
 impl Daemon {
     fn spawn(root: &Path, module_root: &Path) -> Self {
@@ -225,58 +174,19 @@ impl Daemon {
             ),
         )
         .expect("write daemon config");
-        let port = allocate_port();
-        let mut child = Command::new(oc_rsync_binary())
-            .arg("--daemon")
-            .arg("--no-detach")
+        let stderr = fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .expect("open /dev/null");
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind daemon listener");
+        let command = InetdCommand::new(oc_rsync_binary(), stderr)
             .arg("--config")
-            .arg(&config)
-            .arg("--port")
-            .arg(port.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn oc-rsync daemon");
-        if let Some(mut out) = child.stdout.take() {
-            thread::spawn(move || {
-                let mut sink = Vec::new();
-                let _ = out.read_to_end(&mut sink);
-            });
-        }
-        if let Some(mut err) = child.stderr.take() {
-            thread::spawn(move || {
-                let mut sink = Vec::new();
-                let _ = err.read_to_end(&mut sink);
-            });
-        }
-        let daemon = Self { child, port };
-        daemon.wait_until_listening();
-        daemon
-    }
-
-    /// Polls the listening socket until the daemon accepts connections.
-    fn wait_until_listening(&self) {
-        let target = SocketAddr::from((Ipv4Addr::LOCALHOST, self.port));
-        let deadline = Instant::now() + DAEMON_READY_TIMEOUT;
-        while Instant::now() < deadline {
-            if TcpStream::connect_timeout(&target, Duration::from_millis(250)).is_ok() {
-                return;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-        panic!("daemon did not start listening on port {}", self.port);
+            .arg(&config);
+        Self(InetdServer::start(listener, command).expect("start daemon"))
     }
 
     fn url(&self) -> String {
-        format!("rsync://127.0.0.1:{}/mod/", self.port)
-    }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        format!("rsync://127.0.0.1:{}/mod/", self.0.port())
     }
 }
 
@@ -289,7 +199,9 @@ fn run_daemon_push(daemon: &Daemon, src: &Path, dry_run: bool) -> Output {
         .arg("-r")
         .arg(format!("{}/", src.display()))
         .arg(daemon.url());
-    spawn_with_timeout(cmd, RUN_TIMEOUT)
+    cmd.stdin(Stdio::null())
+        .output()
+        .expect("run oc-rsync client")
 }
 
 #[test]

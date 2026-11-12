@@ -11,15 +11,17 @@ pub mod bin_path;
 pub mod capabilities;
 pub mod clean_fname;
 pub mod cli;
-pub mod daemon_port;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-pub mod daemon_process;
 pub mod deadline;
 pub mod dir_diff;
+pub mod forked_server;
 #[cfg(unix)]
 pub mod hang_report;
+#[cfg(unix)]
+pub mod inetd_server;
 pub mod log_lines;
 pub mod lsh;
+#[cfg(all(unix, feature = "daemon"))]
+pub mod oc_daemon;
 #[cfg(feature = "quic")]
 pub mod quic_cert;
 pub mod reap;
@@ -38,11 +40,9 @@ pub use bin_path::{oc_rsync_bin, target_profile_dir, workspace_bin, workspace_bi
 pub use capabilities::Capabilities;
 pub use clean_fname::COLLAPSE_CASES;
 pub use cli::{CliOutput, OcRsyncCliRunner, RunnerError};
-pub use daemon_port::{BIND_FAILURE_EXIT_CODE, daemon_listen_port, spawn_daemon_on_free_port};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-pub use daemon_process::{CLIENT_IO_TIMEOUT, DaemonProcess};
 pub use deadline::{Deadlined, run_deadlined, run_deadlined_with_stdin};
 pub use dir_diff::{DirDiff, DirDiffEntry, DirDiffError, DirDiffMismatch, DirDiffOptions};
+pub use forked_server::bind_test_listener;
 #[cfg(unix)]
 pub use hang_report::run_reporting_hangs;
 pub use log_lines::LogLines;

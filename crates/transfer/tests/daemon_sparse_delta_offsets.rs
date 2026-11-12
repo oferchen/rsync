@@ -23,35 +23,20 @@
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
+use test_support::oc_daemon::OcDaemon;
 
 const BLOCK: usize = 1024;
 const LEN: usize = 64 * BLOCK;
 
-struct DaemonGuard(Child);
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn spawn_daemon(oc_bin: &Path, config: &Path) -> io::Result<(DaemonGuard, u16)> {
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(oc_bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    Ok((DaemonGuard(child), port))
+/// Starts the oc-rsync daemon on `config`, returning it with the loopback
+/// port it serves. `test_support::oc_daemon` binds the listener before the
+/// daemon starts, so the port is connectable as soon as this returns.
+fn spawn_daemon(config: &Path) -> io::Result<(OcDaemon, u16)> {
+    let daemon = OcDaemon::builder(config).spawn()?;
+    let port = daemon.port();
+    Ok((daemon, port))
 }
 
 /// Non-zero pseudo-random bytes, except where the fixture plants zeros.
@@ -139,7 +124,7 @@ fn transfer(direction: Direction, flags: &[&str], source: &[u8], basis: &[u8]) -
         ),
     )
     .expect("write daemon config");
-    let (_daemon, port) = spawn_daemon(&oc_bin, &config)
+    let (_daemon, port) = spawn_daemon(&config)
         .unwrap_or_else(|e| panic!("could not start the daemon, nothing measured: {e}"));
 
     let url = format!("rsync://127.0.0.1:{port}/data/f.bin");

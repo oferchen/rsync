@@ -80,9 +80,10 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 
 use tempfile::{TempDir, tempdir};
+use test_support::oc_daemon::OcDaemon;
 
 /// Payload inside the symlinked directory. Reaching it is the proof the link
 /// was followed; a status-only assertion cannot see the difference.
@@ -120,33 +121,13 @@ fn write_daemon_config(
     fs::write(config_path, body)
 }
 
-/// Kills the daemon child on drop so a panicking cell never leaks the listener.
-struct DaemonGuard {
-    child: Child,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(oc_bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    Ok((DaemonGuard { child }, port))
+/// Starts the oc-rsync daemon on `config_path`, returning it with the loopback
+/// port it serves. `test_support::oc_daemon` binds the listener before the
+/// daemon starts, so the port is connectable as soon as this returns.
+fn spawn_oc_daemon(config_path: &Path) -> io::Result<(OcDaemon, u16)> {
+    let daemon = OcDaemon::builder(config_path).spawn()?;
+    let port = daemon.port();
+    Ok((daemon, port))
 }
 
 /// The module tree every cell serves:
@@ -204,7 +185,7 @@ fn pull(tail: &str) -> Option<Pulled> {
         eprintln!("skipping: tempdir allocation failed");
         return None;
     };
-    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &fixture.config) {
+    let (_daemon, port) = match spawn_oc_daemon(&fixture.config) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("skipping: could not start oc-rsync --daemon: {e}");

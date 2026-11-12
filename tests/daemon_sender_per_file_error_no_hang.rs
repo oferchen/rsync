@@ -18,8 +18,8 @@
 //! Neither defect is reachable from a unit test: both need a real daemon
 //! process whose sessions run on worker threads while `main` is elsewhere. So
 //! these tests drive the shipped `oc-rsync` binary as both the daemon and the
-//! client, over a real socket, and assert that each trigger finishes inside a
-//! bounded deadline with exit code 23.
+//! client, over a real socket, and assert that each trigger finishes with exit
+//! code 23. A hang fails as a nextest TIMEOUT naming the test.
 //!
 //! One test per trigger, so a regression in either defect is reported on its
 //! own rather than being masked by whichever hang happens to fire first:
@@ -43,29 +43,16 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::{Command, Stdio};
 
 use tempfile::TempDir;
+use test_support::inetd_server::{InetdCommand, InetdServer};
 
 /// Upstream `RERR_PARTIAL`: some files were not transferred (`errcode.h`).
 const RERR_PARTIAL: i32 = 23;
-
-/// Wall-clock budget for one client run. The transfers here move a handful of
-/// tiny files, so anything approaching this bound is a hang, not slowness. It
-/// is deliberately well under upstream's own 60 s `noop_io_until_death()`
-/// fallback timeout, so a wedged daemon fails the assertion instead of being
-/// rescued by the peer's timeout.
-const CLIENT_DEADLINE: Duration = Duration::from_secs(45);
-
-/// How long to wait for the spawned daemon to bind its listening socket.
-const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Path to the binary under test, resolved by Cargo for integration tests.
 fn oc_rsync_binary() -> &'static str {
@@ -108,94 +95,26 @@ fn upstream_rsync_client() -> Option<PathBuf> {
     })
 }
 
-/// Reserves an ephemeral port by binding it and immediately releasing it.
-fn allocate_port() -> u16 {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0u16)).expect("bind ephemeral port");
-    let port = listener.local_addr().expect("local addr").port();
-    drop(listener);
-    port
-}
-
-/// One end of a child's stdio, boxed so both pipes share a drain loop.
-enum Pipe {
-    Out(std::process::ChildStdout),
-    Err(std::process::ChildStderr),
-}
-
-impl Pipe {
-    fn into_reader(self) -> Box<dyn Read> {
-        match self {
-            Self::Out(out) => Box::new(out),
-            Self::Err(err) => Box::new(err),
-        }
-    }
-}
-
-/// A spawned `oc-rsync --daemon` process whose stdio is drained continuously.
-///
-/// Draining is not optional: an undrained pipe wedges the daemon once the OS
-/// buffer fills, which would masquerade as the very hang under test.
-struct Daemon {
-    child: Child,
-    port: u16,
-}
+/// A daemon served in inetd mode on a listener bound before any session
+/// starts, so a client connect queues instead of racing the daemon's start.
+/// Dropping it kills every session.
+struct Daemon(InetdServer);
 
 impl Daemon {
     fn spawn(config: &Path) -> Self {
-        let port = allocate_port();
-        let mut child = Command::new(oc_rsync_binary())
-            .arg("--daemon")
-            .arg("--no-detach")
+        let stderr = fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/null")
+            .expect("open /dev/null");
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind daemon listener");
+        let command = InetdCommand::new(oc_rsync_binary(), stderr)
             .arg("--config")
-            .arg(config)
-            .arg("--port")
-            .arg(port.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn oc-rsync daemon");
-
-        for pipe in [
-            child.stdout.take().map(Pipe::Out),
-            child.stderr.take().map(Pipe::Err),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            thread::spawn(move || {
-                let mut sink = Vec::new();
-                let _ = pipe.into_reader().read_to_end(&mut sink);
-            });
-        }
-
-        let daemon = Self { child, port };
-        daemon.wait_until_listening();
-        daemon
-    }
-
-    /// Polls the listening socket until the daemon accepts connections.
-    fn wait_until_listening(&self) {
-        let target = SocketAddr::from((Ipv4Addr::LOCALHOST, self.port));
-        let deadline = Instant::now() + DAEMON_READY_TIMEOUT;
-        while Instant::now() < deadline {
-            if TcpStream::connect_timeout(&target, Duration::from_millis(250)).is_ok() {
-                return;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-        panic!("daemon did not start listening on port {}", self.port);
+            .arg(config);
+        Self(InetdServer::start(listener, command).expect("start daemon"))
     }
 
     fn url(&self, module: &str, path: &str) -> String {
-        format!("rsync://127.0.0.1:{}/{module}/{path}", self.port)
-    }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        format!("rsync://127.0.0.1:{}/{module}/{path}", self.0.port())
     }
 }
 
@@ -253,75 +172,25 @@ impl Fixture {
     }
 }
 
-/// Runs one client pull and returns its exit code, failing the test if it does
-/// not finish inside [`CLIENT_DEADLINE`].
+/// Runs one client pull and returns its exit code.
 ///
-/// Both child pipes are drained on their own threads while we wait. Polling
-/// `try_wait()` without draining deadlocks the moment the child fills a pipe
-/// buffer, which would hang this harness for a reason unrelated to the bug
-/// under test.
-fn run_client_bounded(
-    client: &Path,
-    fixture: &Fixture,
-    module: &str,
-    path: &str,
-    label: &str,
-) -> i32 {
-    let mut child = Command::new(client)
+/// The nextest per-test timeout is the only bound: a hang under test fails
+/// as a TIMEOUT naming the test.
+fn run_client(client: &Path, fixture: &Fixture, module: &str, path: &str, label: &str) -> i32 {
+    let out = Command::new(client)
         .arg("-a")
         .arg(fixture.daemon.url(module, path))
         .arg(&fixture.dest)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn oc-rsync client");
-
-    let (tx, rx) = mpsc::channel::<(&'static str, String)>();
-    for (name, pipe) in [
-        ("stdout", child.stdout.take().map(Pipe::Out)),
-        ("stderr", child.stderr.take().map(Pipe::Err)),
-    ] {
-        let Some(pipe) = pipe else { continue };
-        let tx = tx.clone();
-        thread::spawn(move || {
-            let mut text = String::new();
-            for line in BufReader::new(pipe.into_reader())
-                .lines()
-                .map_while(Result::ok)
-            {
-                text.push_str(&line);
-                text.push('\n');
-            }
-            let _ = tx.send((name, text));
-        });
-    }
-    drop(tx);
-
-    let deadline = Instant::now() + CLIENT_DEADLINE;
-    let status = loop {
-        match child.try_wait().expect("poll client") {
-            Some(status) => break status,
-            None => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    panic!(
-                        "{label}: daemon sender hung - client did not finish within {CLIENT_DEADLINE:?}"
-                    );
-                }
-                thread::sleep(Duration::from_millis(25));
-            }
-        }
-    };
-
-    for (name, text) in rx {
+        .output()
+        .expect("run oc-rsync client");
+    for (name, text) in [("stdout", &out.stdout), ("stderr", &out.stderr)] {
         if !text.is_empty() {
-            eprintln!("{label} client {name}:\n{text}");
+            eprintln!("{label} client {name}:\n{}", String::from_utf8_lossy(text));
         }
     }
 
-    status
+    out.status
         .code()
         .unwrap_or_else(|| panic!("{label}: client terminated by signal instead of exiting"))
 }
@@ -340,7 +209,7 @@ fn assert_bounded_partial_transfer(fixture: &Fixture, module: &str, path: &str, 
         let leg = format!("{label} via {name}");
         let _ = fs::remove_dir_all(&fixture.dest);
         fs::create_dir_all(&fixture.dest).expect("create dest");
-        let code = run_client_bounded(&client, fixture, module, path, &leg);
+        let code = run_client(&client, fixture, module, path, &leg);
         assert_eq!(
             code, RERR_PARTIAL,
             "{leg}: expected upstream RERR_PARTIAL after a per-file error, got {code}"

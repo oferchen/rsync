@@ -662,7 +662,19 @@ impl GeneratorContext {
             },
         )?;
         match (slot, site) {
-            (NdxSlot::Entry(flat), _) => Ok(flat),
+            (NdxSlot::Entry(flat), _) => {
+                // upstream: options.c:2196-2201, flist.c:2696-2700, 3054-3057 -
+                // when `--iconv` is active (`need_unsorted_flist = 1`), both sides
+                // address `flist->files[]` in wire send order rather than sorted
+                // order because converted names may sort differently on the peer.
+                if self.config.connection.iconv.is_some() {
+                    let range = map.segment_range_for_flat(flat, self.file_list.len());
+                    let wire_offset = flat - range.start;
+                    Ok(self.send_order(range)[wire_offset])
+                } else {
+                    Ok(flat)
+                }
+            }
             (NdxSlot::Gap(Some(parent)), NdxSite::ReadNdxAndAttrs) => Ok(parent),
             // upstream: sender.c:553-555 and sender.c:410-411 exit without a
             // message of their own.

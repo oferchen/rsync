@@ -24,7 +24,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use test_support::DaemonProcess;
+#[cfg(feature = "daemon")]
+use test_support::oc_daemon::OcDaemon;
 use test_support::upstream_compat::{UpstreamVersion, require_upstream_rsync};
 
 /// upstream: receiver.c:659 through full_fname() and rsyserr()'s errno suffix.
@@ -159,6 +160,7 @@ fn upstream_pull_into_dev_full_is_the_oracle() {
     assert_write_failure(&output, "3.5.1 pull");
 }
 
+#[cfg(feature = "daemon")]
 #[test]
 fn daemon_pull_into_dev_full_reports_the_write_site() {
     if !dev_full_present() {
@@ -174,7 +176,10 @@ fn daemon_pull_into_dev_full_reports_the_write_site() {
         ),
     )
     .expect("write config");
-    let daemon = DaemonProcess::spawn(&config, ["--once"]).expect("spawn daemon");
+    let daemon = OcDaemon::builder(&config)
+        .arg("--once")
+        .spawn()
+        .expect("spawn daemon");
 
     let output = Command::new(test_support::oc_rsync_bin())
         .arg("--write-devices")

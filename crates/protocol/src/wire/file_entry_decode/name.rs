@@ -38,10 +38,10 @@ pub(crate) fn name_overflow_error(
 ) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
-        format!(
+        crate::max_alloc::MallocFailure(format!(
             "overflow: xflags=0x{xflags:x} l1={same_len} l2={suffix_len} lastname={}",
             String::from_utf8_lossy(lastname)
-        ),
+        )),
     )
 }
 

@@ -53,9 +53,10 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 
 use tempfile::{TempDir, tempdir};
+use test_support::oc_daemon::OcDaemon;
 
 /// Byte lengths of the three regular source files. Kept small (sum < 1000) so
 /// the rendered figure carries no thousands separator and the assertion can
@@ -102,34 +103,13 @@ fn write_daemon_config(
     fs::write(config_path, body)
 }
 
-/// Guard that kills the daemon child on drop.
-struct DaemonGuard {
-    child: Child,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Spawn `oc-rsync --daemon` on a free port and wait until it accepts.
-fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(oc_bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    Ok((DaemonGuard { child }, port))
+/// Starts the oc-rsync daemon on `config_path`, returning it with the loopback
+/// port it serves. `test_support::oc_daemon` binds the listener before the
+/// daemon starts, so the port is connectable as soon as this returns.
+fn spawn_oc_daemon(config_path: &Path) -> io::Result<(OcDaemon, u16)> {
+    let daemon = OcDaemon::builder(config_path).spawn()?;
+    let port = daemon.port();
+    Ok((daemon, port))
 }
 
 /// Seed a source tree of three regular files with the fixed `FILE_SIZES`
@@ -232,7 +212,7 @@ fn daemon_push_reports_total_transferred_file_size() {
     )
     .expect("write daemon config");
 
-    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
+    let (_daemon, port) = match spawn_oc_daemon(&scratch.config) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("skipping: could not start oc-rsync --daemon: {e}");
@@ -289,7 +269,7 @@ fn daemon_pull_reports_total_transferred_file_size() {
     )
     .expect("write daemon config");
 
-    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
+    let (_daemon, port) = match spawn_oc_daemon(&scratch.config) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("skipping: could not start oc-rsync --daemon: {e}");

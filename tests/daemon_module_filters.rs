@@ -12,12 +12,14 @@
 #![cfg(unix)]
 
 use std::fs;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use test_support::inetd_server::{InetdCommand, InetdServer};
 use test_support::{
-    DaemonProcess, Deadlined, UpstreamVersion, require_upstream_rsync, run_deadlined,
+    Deadlined, UpstreamVersion, bind_test_listener, require_upstream_rsync, run_deadlined,
 };
 
 const BUDGET: Duration = Duration::from_secs(30);
@@ -70,8 +72,13 @@ fn module_pull(daemon: &Path, params: &[&str], rules: &str) -> Served {
     }
     let config_path = root.join("rsyncd.conf");
     fs::write(&config_path, config).unwrap();
-    let process = DaemonProcess::spawn_binary(daemon, &config_path, std::iter::empty::<&str>())
-        .expect("spawn daemon");
+    let listener =
+        bind_test_listener(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).expect("bind daemon");
+    let command = InetdCommand::discarding_stderr(daemon)
+        .expect("open /dev/null")
+        .arg("--config")
+        .arg(&config_path);
+    let process = InetdServer::start(listener, command).expect("spawn daemon");
     let mut command = Command::new(upstream().unwrap());
     command
         .arg("-r")
@@ -85,7 +92,7 @@ fn module_pull(daemon: &Path, params: &[&str], rules: &str) -> Served {
             String::from_utf8_lossy(&stderr)
         ),
     };
-    drop(process);
+    process.finish().expect("finish daemon");
     Served {
         status,
         files: files_under(&root.join("dst")),

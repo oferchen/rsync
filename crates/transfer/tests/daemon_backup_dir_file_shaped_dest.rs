@@ -55,21 +55,14 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
+use test_support::oc_daemon::OcDaemon;
 
 /// The destination's pre-transfer contents - what the backup must preserve.
 const PRE_IMAGE: &str = "PRE-IMAGE-IN-MODULE";
 /// What the client pushes over the destination.
 const NEW_CONTENT: &str = "NEW-CONTENT-FROM-THE-PEER";
-
-struct DaemonGuard(Child);
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 /// The shape of the destination operand the client writes.
 #[derive(Clone, Copy)]
@@ -114,21 +107,13 @@ fn write_config(config: &Path, module_root: &Path, log_root: &Path) -> io::Resul
     )
 }
 
-fn spawn_daemon(oc_bin: &Path, config: &Path) -> io::Result<(DaemonGuard, u16)> {
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(oc_bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    Ok((DaemonGuard(child), port))
+/// Starts the oc-rsync daemon on `config`, returning it with the loopback
+/// port it serves. `test_support::oc_daemon` binds the listener before the
+/// daemon starts, so the port is connectable as soon as this returns.
+fn spawn_daemon(config: &Path) -> io::Result<(OcDaemon, u16)> {
+    let daemon = OcDaemon::builder(config).spawn()?;
+    let port = daemon.port();
+    Ok((daemon, port))
 }
 
 /// Stages a module holding one destination file, pushes a replacement over it
@@ -154,7 +139,7 @@ fn push_over_destination(operand: DestOperand, backup_dir: &str) -> Option<Outco
 
     let config = root.join("rsyncd.conf");
     write_config(&config, &module_root, root).expect("write daemon config");
-    let (_daemon, port) = spawn_daemon(&oc_bin, &config).ok()?;
+    let (_daemon, port) = spawn_daemon(&config).ok()?;
 
     let url = match operand {
         DestOperand::File => format!("rsync://127.0.0.1:{port}/data/payload"),

@@ -37,14 +37,22 @@ const CLIENT_STREAM: &str = concat!(
 
 /// The 3.5.1 server's reply to [`CLIENT_STREAM`]: `(tag, payload length)`
 /// per frame, `0` being `MSG_DATA`.
-const UPSTREAM_FRAMES: [(u32, usize); 3] = [(0, 63064), (0, 37259), (0, 16)];
+///
+/// Upstream `send_file_list()` streams `flist` entries in `readdir()` order
+/// before `flist_sort_and_clean()`, so `XMIT_SAME_MODE` / `XMIT_SAME_NAME`
+/// compression on the 4-entry `src/` fixture yields a first frame of `63056`
+/// (when `d` precedes `f1..f3`), `63064` (when `d` follows `f1..f3`, as in the
+/// original 3.5.1 capture), or `63065` (when `d` splits `f1..f3`). The
+/// subsequent frames are invariant across all `readdir()` orders.
+const VALID_FIRST_FRAME_LENS: [usize; 3] = [63056, 63064, 63065];
+const UPSTREAM_TAIL_FRAMES: [(u32, usize); 2] = [(0, 37259), (0, 16)];
 
 /// The same reply from a `-vv` server, which queues the `match_report()`
 /// line (match.c:480-488) as `MSG_INFO` (tag 2) after the last file. 3.5.1
 /// writes it ahead of the data it buffered before the line, because the
 /// message queue leaves first (io.c:628-636), and the client stream is
 /// byte-for-byte the same as without `-vv`.
-const UPSTREAM_FRAMES_VV: [(u32, usize); 4] = [(0, 63064), (2, 58), (0, 37259), (0, 16)];
+const UPSTREAM_TAIL_FRAMES_VV: [(u32, usize); 3] = [(2, 58), (0, 37259), (0, 16)];
 
 /// The recorded tree: four files whose sizes put two literal chunks of
 /// `d/big` across the first frame boundary.
@@ -139,20 +147,32 @@ fn replay_frames(flags: &str) -> Vec<(u32, usize)> {
     frames(&reply)
 }
 
-#[test]
-fn server_sender_frames_match_rsync_3_5_1() {
+fn assert_frames_match_upstream(flags: &str, expected_tail: &[(u32, usize)]) {
+    let actual = replay_frames(flags);
+    let (first, tail) = actual
+        .split_first()
+        .expect("server must emit at least one frame");
     assert_eq!(
-        replay_frames("-trce.LsfxCIvu"),
-        UPSTREAM_FRAMES,
-        "the server's frames differ from rsync 3.5.1's"
+        first.0, 0,
+        "first frame must be MSG_DATA; got frames {actual:?}"
+    );
+    assert!(
+        VALID_FIRST_FRAME_LENS.contains(&first.1),
+        "first frame length {} differs from rsync 3.5.1's valid readdir-order lengths {VALID_FIRST_FRAME_LENS:?}; frames={actual:?}",
+        first.1
+    );
+    assert_eq!(
+        tail, expected_tail,
+        "the server's tail frames differ from rsync 3.5.1's"
     );
 }
 
 #[test]
+fn server_sender_frames_match_rsync_3_5_1() {
+    assert_frames_match_upstream("-trce.LsfxCIvu", &UPSTREAM_TAIL_FRAMES);
+}
+
+#[test]
 fn a_queued_message_leaves_ahead_of_buffered_data_as_in_rsync_3_5_1() {
-    assert_eq!(
-        replay_frames("-vvtrce.LsfxCIvu"),
-        UPSTREAM_FRAMES_VV,
-        "the server's frames differ from rsync 3.5.1's"
-    );
+    assert_frames_match_upstream("-vvtrce.LsfxCIvu", &UPSTREAM_TAIL_FRAMES_VV);
 }

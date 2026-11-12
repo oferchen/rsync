@@ -27,9 +27,8 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::thread;
-use std::time::{Duration, Instant};
 
 use core::client::ClientConfig;
 use daemon::{DaemonConfig, run_daemon};
@@ -63,21 +62,11 @@ struct ProvokerOutcome {
     trailing: Vec<String>,
 }
 
-fn run_provoker(port: u16, deadline: Instant) -> Result<ProvokerOutcome, String> {
-    let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let mut stream = loop {
-        match TcpStream::connect_timeout(&target, Duration::from_millis(500)) {
-            Ok(stream) => break stream,
-            Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
-            Err(err) => return Err(format!("connect: {err}")),
-        }
-    };
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .map_err(|err| format!("set_read_timeout: {err}"))?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(10)))
-        .map_err(|err| format!("set_write_timeout: {err}"))?;
+fn run_provoker(port: u16) -> Result<ProvokerOutcome, String> {
+    // The daemon was handed a bound listener, so the connect queues in its
+    // backlog however far the daemon thread has got.
+    let mut stream =
+        TcpStream::connect((Ipv4Addr::LOCALHOST, port)).map_err(|err| format!("connect: {err}"))?;
 
     let mut reader = BufReader::new(
         stream
@@ -153,11 +142,7 @@ fn session_error_does_not_stop_the_accept_loop() {
 
     let daemon_handle = thread::spawn(move || run_daemon(daemon_config));
 
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let provoker = run_provoker(port, deadline);
-
-    // The accept loop reaps finished workers on its next idle poll (50ms).
-    thread::sleep(Duration::from_millis(500));
+    let provoker = run_provoker(port);
 
     let mut src_arg = src.clone().into_os_string();
     src_arg.push("/");

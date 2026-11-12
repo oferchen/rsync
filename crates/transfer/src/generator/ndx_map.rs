@@ -247,6 +247,25 @@ impl NdxMap {
         ))
     }
 
+    /// Returns the flat `[start..end)` range of the segment that owns `flat_idx`,
+    /// where `entries` is the total length of `file_list`.
+    pub(crate) fn segment_range_for_flat(
+        &self,
+        flat_idx: usize,
+        entries: usize,
+    ) -> std::ops::Range<usize> {
+        let idx = self
+            .segments
+            .partition_point(|seg| seg.flat_start <= flat_idx)
+            .saturating_sub(1);
+        let start = self.segments[idx].flat_start;
+        let end = self
+            .segments
+            .get(idx + 1)
+            .map_or_else(|| self.sent_end.unwrap_or(entries), |next| next.flat_start);
+        start..end
+    }
+
     /// Converts a flat index back to its wire NDX.
     ///
     /// upstream: `generator.c:2812` - `ndx = i + cur_flist->ndx_start`.

@@ -27,13 +27,9 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
-
-use test_support::ReapOnDrop;
+use std::process::Command;
 
 const PUSH_MARKER: &str = "recv_file_name(a)";
 const PULL_MARKER: &str = "send_files(";
@@ -134,10 +130,7 @@ fn ssh_quiet_server_sends_no_info() {
 }
 
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
 /// Runs one daemon push against a module with `max verbosity = max_verbosity`
@@ -171,21 +164,11 @@ fn daemon_transfer(max_verbosity: u8, flags: &[&str], push: bool) -> Option<(Str
         ),
     )
     .expect("config");
-    let _daemon = ReapOnDrop::new(
-        Command::new(oc_binary())
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg(format!("--config={}", conf.display()))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon"),
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
-        assert!(Instant::now() < deadline, "daemon did not start");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    let command = test_support::inetd_server::InetdCommand::discarding_stderr(oc_binary())
+        .expect("open /dev/null")
+        .arg(format!("--config={}", conf.display()));
+    let daemon = test_support::inetd_server::InetdServer::start_reserved(port, command)
+        .expect("start daemon");
     let mut args: Vec<String> = flags.iter().map(|f| (*f).to_owned()).collect();
     args.push("-a".to_owned());
     if push {
@@ -199,6 +182,7 @@ fn daemon_transfer(max_verbosity: u8, flags: &[&str], push: bool) -> Option<(Str
         args.push(format!("{}/", root.join("dst").display()));
     }
     let stdout = run_client(&args);
+    daemon.finish().expect("daemon sessions end");
     let log_text = fs::read_to_string(&log).unwrap_or_default();
     Some((stdout, log_text))
 }

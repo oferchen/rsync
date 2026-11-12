@@ -143,7 +143,9 @@ fn a_receiver_only_fake_super_stashes_the_real_source_acl() {
         exacl::AclEntry::allow_user("", Perm::READ | Perm::WRITE, None),
         exacl::AclEntry::allow_user("1000", Perm::READ | Perm::WRITE, None),
         exacl::AclEntry::allow_group("", Perm::READ, None),
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         exacl::AclEntry::allow_mask(Perm::READ | Perm::WRITE, None),
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         exacl::AclEntry::allow_other(Perm::empty(), None),
     ];
     if exacl::setfacl(&[&source], &entries, None).is_err() {
