@@ -12,7 +12,7 @@
 
 use std::fs;
 use std::io::{self, Read};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::process::ExitStatus;
@@ -144,7 +144,10 @@ impl TestDaemon {
                     .arg(&config_path)
                     .arg("--log-file")
                     .arg(&log_path);
-                let server = InetdServer::start(TcpListener::bind("127.0.0.1:0")?, command)?;
+                let server = InetdServer::start(
+                    test_support::bind_test_listener(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?,
+                    command,
+                )?;
                 let port = server.port();
                 (Server::Inetd(server), port)
             }
@@ -423,7 +426,8 @@ impl CappingProxy {
     /// Starts a proxy in front of `target_port` that forwards at most `cap`
     /// bytes downstream.
     pub fn start(target_port: u16, cap: u64) -> io::Result<Self> {
-        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let listener =
+            test_support::bind_test_listener(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
         let port = listener.local_addr()?.port();
 
         let forwarded = Arc::new(AtomicU64::new(0));
@@ -530,16 +534,16 @@ pub fn wait_for_progress(root: &Path) {
     watcher
         .watch(root, RecursiveMode::Recursive)
         .expect("watch destination");
-    if tree_has_data(root) {
-        return;
+    while !tree_has_data(root) {
+        received
+            .recv()
+            .expect("filesystem watch ended")
+            .expect("filesystem watch event");
+        // Re-walk `root` so `KqueueWatcher` attaches `EVFILT_VNODE` to every
+        // newly created directory and temp file before `tree_has_data` stats
+        // them (`kqueue` delivers `Create` before its own `add_watch` runs).
+        let _ = watcher.watch(root, RecursiveMode::Recursive);
     }
-    for event in received {
-        event.expect("filesystem watch event");
-        if tree_has_data(root) {
-            return;
-        }
-    }
-    panic!("filesystem watch on {} ended", root.display());
 }
 
 fn tree_has_data(root: &Path) -> bool {

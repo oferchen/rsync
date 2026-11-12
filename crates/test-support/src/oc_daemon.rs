@@ -15,10 +15,10 @@
 
 use std::ffi::OsString;
 use std::io;
-use std::net::{Ipv4Addr, TcpListener, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, UdpSocket};
 use std::path::{Path, PathBuf};
 
-use crate::forked_server::{ForkedServer, RunCrash, RunFailure, RunResult};
+use crate::forked_server::{ForkedServer, RunCrash, RunFailure, RunResult, bind_test_listener};
 
 /// A running oc-rsync daemon on a loopback port.
 ///
@@ -176,7 +176,7 @@ impl OcDaemonBuilder {
     fn bind(self) -> io::Result<(Ports, impl FnOnce() -> RunResult)> {
         let listener = match self.listener {
             Some(listener) => listener,
-            None => TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?,
+            None => bind_test_listener(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?,
         };
         let port = listener.local_addr()?.port();
         let quic_socket = if self.quic {

@@ -12,8 +12,7 @@
 #[cfg(not(unix))]
 use super::DaemonConfigBuilder;
 use super::{DaemonConfig, DaemonError, run_daemon};
-use std::io;
-use std::net::{SocketAddr, TcpListener};
+pub(super) use test_support::bind_test_listener;
 use test_support::forked_server::ForkedServer;
 pub(super) use test_support::forked_server::{
     RunCrash as DaemonCrash, RunFailure as DaemonFailure,
@@ -28,28 +27,6 @@ fn failure(error: DaemonError) -> DaemonFailure {
         exit_code: error.exit_code(),
         message: error.message().to_string(),
     }
-}
-
-/// Binds a listening socket for a test daemon at `addr`, leaving
-/// `SO_REUSEADDR` off.
-///
-/// `TcpListener::bind` sets `SO_REUSEADDR` on Unix. On macOS, as on the other
-/// BSDs, that flag limits the bind-time conflict check to an exact address
-/// match, so `127.0.0.1:0` can be given a port another test's daemon already
-/// listens on at the wildcard (`0.0.0.0` or `[::]`), which that daemon binds
-/// with `SO_REUSEADDR` as upstream does (socket.c:605-606). A connection to
-/// `127.0.0.1` then reaches the more specific socket: the other test's client
-/// lands in this test's backlog, a `--once` daemon serves it and exits, and
-/// this test's own queued connection is reset before the greeting. Without
-/// the flag the kernel counts wildcard holders as conflicts and picks another
-/// port. Linux refuses that co-bind with or without the flag.
-pub(super) fn bind_test_listener(addr: SocketAddr) -> io::Result<TcpListener> {
-    use socket2::{Domain, Protocol, Socket, Type};
-
-    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
-    socket.bind(&addr.into())?;
-    socket.listen(128)?;
-    Ok(socket.into())
 }
 
 /// A running test daemon.
@@ -115,30 +92,4 @@ impl DaemonHandle {
     pub(super) fn join(self) -> Result<DaemonResult, DaemonCrash> {
         self.server.join()
     }
-}
-/// Another daemon's wildcard listener must keep a test listener off its port,
-/// or that daemon's clients connect to the test's daemon instead.
-#[cfg(unix)]
-#[test]
-fn test_listener_refuses_a_port_another_daemon_holds_on_the_wildcard() {
-    use socket2::{Domain, Protocol, Socket, Type};
-    use std::net::Ipv4Addr;
-
-    // The other daemon's listener, set up as upstream socket.c:605-606 does.
-    let daemon = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).expect("socket");
-    daemon.set_reuse_address(true).expect("SO_REUSEADDR");
-    daemon
-        .bind(&SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)).into())
-        .expect("bind wildcard");
-    daemon.listen(5).expect("listen");
-    let port = daemon
-        .local_addr()
-        .expect("local addr")
-        .as_socket()
-        .expect("inet addr")
-        .port();
-
-    let error = bind_test_listener(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
-        .expect_err("a loopback test listener must not share a port held on the wildcard");
-    assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
 }

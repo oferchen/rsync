@@ -42,6 +42,7 @@ pub use clean_fname::COLLAPSE_CASES;
 pub use cli::{CliOutput, OcRsyncCliRunner, RunnerError};
 pub use deadline::{Deadlined, run_deadlined, run_deadlined_with_stdin};
 pub use dir_diff::{DirDiff, DirDiffEntry, DirDiffError, DirDiffMismatch, DirDiffOptions};
+pub use forked_server::bind_test_listener;
 #[cfg(unix)]
 pub use hang_report::run_reporting_hangs;
 pub use log_lines::LogLines;

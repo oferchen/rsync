@@ -4033,6 +4033,7 @@ dependencies = [
  "libc",
  "platform",
  "rcgen",
+ "socket2",
  "tempfile",
 ]
 

@@ -10,6 +10,7 @@ publish = false
 description = "Shared test utilities for the oc-rsync workspace"
 
 [dependencies]
+socket2 = { workspace = true }
 tempfile = { workspace = true }
 
 # `sigterm-flag-stub` installs the production daemon signal handlers so the

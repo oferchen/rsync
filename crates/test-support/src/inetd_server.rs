@@ -14,13 +14,15 @@
 use std::ffi::OsString;
 use std::fs::File;
 use std::io;
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
+
+use crate::forked_server::bind_test_listener;
 
 /// The command each accepted connection runs.
 #[derive(Debug)]
@@ -213,7 +215,7 @@ static RESERVED: Mutex<Vec<TcpListener>> = Mutex::new(Vec::new());
 ///
 /// When binding the listener fails.
 pub fn reserve_port() -> io::Result<u16> {
-    let listener = TcpListener::bind(("127.0.0.1", 0))?;
+    let listener = bind_test_listener(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
     let port = listener.local_addr()?.port();
     lock(&RESERVED).push(listener);
     Ok(port)

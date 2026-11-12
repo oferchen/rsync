@@ -19,13 +19,14 @@
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpStream};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 
 use crate::WireTranscript;
+use crate::forked_server::bind_test_listener;
 use crate::inetd_server::{InetdCommand, InetdServer};
 use crate::transcript::{TranscriptError, TranscriptRecorder, normalized_client};
 
@@ -262,7 +263,7 @@ fn capture_daemon_cell(
     // The cell compares builds, so the daemon is the given binary, served in
     // inetd mode on a listener bound here rather than forked from this one.
     let daemon = InetdServer::start(
-        TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?,
+        bind_test_listener(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?,
         InetdCommand::new(oc_rsync, fs::File::create(&stderr_path)?)
             .arg("--config")
             .arg(&config)
@@ -345,7 +346,7 @@ struct TeeRelay {
 
 impl TeeRelay {
     fn start(daemon: SocketAddr) -> io::Result<Self> {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let listener = bind_test_listener(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))?;
         let port = listener.local_addr()?.port();
         let worker = thread::spawn(move || {
             let (client, _) = listener.accept()?;
