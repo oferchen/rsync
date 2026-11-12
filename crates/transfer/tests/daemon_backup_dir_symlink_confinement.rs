@@ -63,7 +63,9 @@ use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::symlink;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
+use test_support::oc_daemon::OcDaemon;
 
 /// The destination's pre-transfer contents - what a successful escape deposits
 /// outside the module root.
@@ -73,15 +75,6 @@ const NEW_CONTENT: &str = "NEW-CONTENT-FROM-THE-PEER";
 /// The out-of-module file's contents. Distinct from both of the above so an
 /// overwrite is unmistakable rather than inferred from a size or an mtime.
 const OUTSIDE_MARKER: &str = "OUTSIDE-THE-MODULE-UNTOUCHED";
-
-struct DaemonGuard(Child);
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 /// What stands at the `--backup-dir` before the push.
 #[derive(Clone, Copy)]
@@ -192,24 +185,17 @@ fn write_config(config: &Path, module_root: &Path, log_root: &Path) -> io::Resul
     )
 }
 
-fn spawn_daemon(oc_bin: &Path, config: &Path, sandbox: Sandbox) -> io::Result<(DaemonGuard, u16)> {
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        let mut cmd = Command::new(oc_bin);
-        cmd.arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        for (key, value) in sandbox.daemon_env() {
-            cmd.env(key, value);
-        }
-        cmd.spawn()
-    })?;
-    Ok((DaemonGuard(child), port))
+/// Starts the oc-rsync daemon on `config`, returning it with the loopback
+/// port it serves. `test_support::oc_daemon` binds the listener before the
+/// daemon starts, so the port is connectable as soon as this returns.
+fn spawn_daemon(config: &Path, sandbox: Sandbox) -> io::Result<(OcDaemon, u16)> {
+    let mut builder = OcDaemon::builder(config);
+    for &(key, value) in sandbox.daemon_env() {
+        builder = builder.env(key, value);
+    }
+    let daemon = builder.spawn()?;
+    let port = daemon.port();
+    Ok((daemon, port))
 }
 
 /// Stages the module, puts `plant` at the `--backup-dir`, pushes one file over
@@ -266,7 +252,7 @@ fn push_over_destination(plant: Plant, extra: &[&str], sandbox: Sandbox) -> Opti
 
     let config = root.join("rsyncd.conf");
     write_config(&config, &module_root, root).expect("write daemon config");
-    let (_daemon, port) = spawn_daemon(&oc_bin, &config, sandbox).ok()?;
+    let (_daemon, port) = spawn_daemon(&config, sandbox).ok()?;
 
     let mut args: Vec<&OsStr> = vec![
         OsStr::new("--backup"),

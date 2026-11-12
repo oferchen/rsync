@@ -32,12 +32,8 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-
-use std::time::{Duration, Instant};
-use test_support::ReapOnDrop;
 
 /// `SHELL_CHARS` (options.c:2703) minus `WILD_CHARS`, which `glob_expand()`
 /// legitimately expands on the daemon side, and minus the backslash covered by
@@ -75,34 +71,16 @@ fn oc_binary() -> PathBuf {
 }
 
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
-/// Starts a daemon and waits until its port answers, so the client never races
-/// the listener.
-fn spawn_daemon(conf: &Path, port: u16) -> Option<ReapOnDrop> {
-    let child = ReapOnDrop::new(
-        Command::new(oc_binary())
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg(format!("--config={}", conf.display()))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon"),
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return Some(child);
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    // Dropping the guard here is the reap the old inline pair performed.
-    None
+/// Serves the daemon in inetd mode on the listener reserved for `port`, so
+/// a client connect queues until its session starts: no readiness wait.
+fn spawn_daemon(conf: &Path, port: u16) -> Option<test_support::inetd_server::InetdServer> {
+    let command = test_support::inetd_server::InetdCommand::discarding_stderr(oc_binary())
+        .expect("open /dev/null")
+        .arg(format!("--config={}", conf.display()));
+    test_support::inetd_server::InetdServer::start_reserved(port, command).ok()
 }
 
 /// Pulls one name out of the module into a fresh directory and reports whether
@@ -182,7 +160,7 @@ fn daemon_operands_keep_shell_metacharacters_intact() {
         })
         .collect();
 
-    drop(daemon);
+    daemon.finish().expect("daemon sessions end");
 
     assert!(
         failures.is_empty(),

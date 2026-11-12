@@ -169,7 +169,12 @@ fn pull_files_cut_after(
     let stderr = String::from_utf8_lossy(&output.stderr);
     let lines = stderr
         .lines()
-        .filter(|line| !line.contains("[server="))
+        .filter(|line| {
+            !line.contains("[server=")
+                && !line.contains("[sender=")
+                && !line.ends_with("[server]")
+                && !line.ends_with("[sender]")
+        })
         .map(str::to_owned)
         .collect();
     (output.status.code(), lines)
@@ -265,6 +270,9 @@ fn push_cut_after(cut: usize) -> (Option<i32>, Vec<String>, u64) {
             !line.contains("[server=")
                 && !line.contains("[receiver=")
                 && !line.contains("[generator=")
+                && !line.ends_with("[server]")
+                && !line.ends_with("[receiver]")
+                && !line.ends_with("[generator]")
         })
         .map(str::to_owned)
         .collect();

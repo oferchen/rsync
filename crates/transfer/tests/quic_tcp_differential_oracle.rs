@@ -60,10 +60,11 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io;
+use std::io::{self, PipeReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use tempfile::{TempDir, tempdir};
+use test_support::oc_daemon::OcDaemon;
 use test_support::{DirDiff, DirDiffOptions, LogLines};
 
 /// The delta target's size. Large enough that a single perturbed region leaves
@@ -125,10 +126,8 @@ fn seed_delta_basis(dest: &Path) -> io::Result<()> {
 }
 
 /// Writes an `rsyncd.conf` exposing one read-only module and enabling the QUIC
-/// listener via an operator-supplied cert/key pair. With no `quic port`
-/// directive the listener shares the daemon's TCP `--port` on UDP
-/// (`effective_quic_port` = the TCP port), so a single free port serves both
-/// transports and the TCP port-readiness retry also covers the UDP bind.
+/// listener via an operator-supplied cert/key pair. The listener itself serves
+/// a UDP socket the harness binds before the daemon starts.
 fn write_daemon_config(
     config_path: &Path,
     pid_path: &Path,
@@ -161,37 +160,14 @@ fn write_daemon_config(
     fs::write(config_path, body)
 }
 
-/// Kills the daemon child on drop so a panicking test never leaks the listener.
-struct DaemonGuard {
-    child: Child,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-/// Spawns `oc-rsync --daemon` on a race-free free loopback port and waits until
-/// it is confirmed listening (TCP). The QUIC/UDP socket binds on the same port
-/// before the daemon begins serving; a total QUIC bind failure is fatal, so the
-/// free-port retry also yields a port on which the UDP socket bound.
-fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        Command::new(oc_bin)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-    })?;
-    Ok((DaemonGuard { child }, port))
+/// Starts the oc-rsync daemon on `config_path` with its stderr - where the
+/// config sends its log - readable from the returned pipe. Its TCP listener and
+/// its QUIC UDP socket are both bound before it starts, so neither port can be
+/// lost to another process.
+fn spawn_oc_daemon(config_path: &Path) -> io::Result<(OcDaemon, PipeReader)> {
+    OcDaemon::builder(config_path)
+        .quic()
+        .spawn_capturing_stderr()
 }
 
 /// Whether `oc-rsync --help` advertises the QUIC transport, whose help section
@@ -343,14 +319,16 @@ fn quic_daemon_pull_matches_tcp_daemon_pull() {
     )
     .expect("write daemon config");
 
-    let (mut daemon, port) = match spawn_oc_daemon(&oc_bin, &scratch.config) {
-        Ok(daemon) => daemon,
+    let (daemon, stderr) = match spawn_oc_daemon(&scratch.config) {
+        Ok(spawned) => spawned,
         Err(e) => {
             eprintln!("skipping: could not start oc-rsync --daemon: {e}");
             return;
         }
     };
-    let mut log = LogLines::spawn(daemon.child.stderr.take().expect("daemon stderr"));
+    let port = daemon.port();
+    let quic_port = daemon.quic_port();
+    let mut log = LogLines::spawn(stderr);
 
     // TCP leg. A success here also proves the daemon is fully serving.
     let (tcp_status, tcp_out, tcp_err) =
@@ -361,15 +339,20 @@ fn quic_daemon_pull_matches_tcp_daemon_pull() {
         "TCP daemon pull failed: status={tcp_status:?}\nstderr:\n{tcp_err}"
     );
 
-    // Gate the single QUIC dial on the daemon logging that its IPv4 socket,
+    // Gate the single QUIC dial on the daemon logging that its loopback socket,
     // which serves the client's 127.0.0.1, is serving.
-    log.wait_for(&format!("QUIC listener serving on 0.0.0.0:{port}"))
+    log.wait_for(&format!("QUIC listener serving on 127.0.0.1:{quic_port}"))
         .expect("the QUIC listener did not come up");
 
     // QUIC leg - byte-identical transfer, only the transport differs.
-    let (quic_status, quic_out, quic_err) =
-        run_pull(&oc_bin, port, &dest_quic, Transport::Quic, &scratch.cert)
-            .expect("run QUIC daemon pull");
+    let (quic_status, quic_out, quic_err) = run_pull(
+        &oc_bin,
+        quic_port,
+        &dest_quic,
+        Transport::Quic,
+        &scratch.cert,
+    )
+    .expect("run QUIC daemon pull");
     assert!(
         quic_status.success(),
         "QUIC daemon pull failed: status={quic_status:?}\nstderr:\n{quic_err}\n\

@@ -40,23 +40,16 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::TcpListener;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
-
-use test_support::ReapOnDrop;
+use std::process::Command;
 
 fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
 }
 
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
 fn id_of(args: &[&str]) -> Option<String> {
@@ -68,30 +61,13 @@ fn id_of(args: &[&str]) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
-/// Starts a daemon and waits until its port answers.
-///
-/// `stdin` is `/dev/null` so the daemon listens instead of taking its inetd
-/// path on an inherited terminal or pipe.
-fn spawn_daemon(conf: &Path, port: u16) -> ReapOnDrop {
-    let child = ReapOnDrop::new(
-        Command::new(oc_binary())
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg(format!("--config={}", conf.display()))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon"),
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return child;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    child
+/// Serves the daemon in inetd mode on the listener reserved for `port`, so
+/// a client connect queues until its session starts: no readiness wait.
+fn spawn_daemon(conf: &Path, port: u16) -> test_support::inetd_server::InetdServer {
+    let command = test_support::inetd_server::InetdCommand::discarding_stderr(oc_binary())
+        .expect("open /dev/null")
+        .arg(format!("--config={}", conf.display()));
+    test_support::inetd_server::InetdServer::start_reserved(port, command).expect("start daemon")
 }
 
 struct Outcome {
@@ -178,7 +154,7 @@ fn push_through_converter(answer: &str) -> Option<Outcome> {
     let received = fs::metadata(module.join("f"))
         .ok()
         .map(|meta| (meta.uid(), meta.gid()));
-    drop(daemon);
+    daemon.finish().expect("daemon sessions end");
     assert!(status.success(), "the push itself must succeed: {status}");
 
     let sent = fs::metadata(&source_file).expect("source metadata");

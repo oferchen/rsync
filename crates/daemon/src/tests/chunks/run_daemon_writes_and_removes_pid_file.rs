@@ -20,17 +20,10 @@ fn run_daemon_writes_and_removes_pid_file() {
         ])
         .build();
 
-    let pid_clone = pid_path.clone();
     let handle = spawn_daemon(config, held_listener);
 
-    let start = Instant::now();
-    while !pid_clone.exists() {
-        if start.elapsed() > Duration::from_secs(5) {
-            panic!("pid file not created");
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-
+    // The daemon creates the PID file before entering accept(), so receiving
+    // the greeting proves the file is already on disk without polling or sleeps.
     let mut stream = connect_client(port);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
@@ -38,6 +31,7 @@ fn run_daemon_writes_and_removes_pid_file() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
     assert_eq!(line, expected_greeting);
+    assert!(pid_path.exists(), "pid file must exist while daemon serves");
 
     send_client_greeting(&mut stream);
     stream.write_all(b"#list\n").expect("send list request");

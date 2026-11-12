@@ -33,21 +33,16 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
 
 use tempfile::TempDir;
-use test_support::ReapOnDrop;
+use test_support::oc_daemon::{OcDaemon, OcDaemonBuilder};
 
 /// upstream: log.c:170 - the literal mode argument at the single log-file open.
 const UPSTREAM_LOG_FILE_MODE: u32 = 0o644;
-
-/// How long a spawned daemon is given to reach its log-file open.
-const DAEMON_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
@@ -82,23 +77,8 @@ fn mode_of(path: &Path) -> u32 {
         & 0o777
 }
 
-/// Waits until `path` exists, so the assertion never races the child's open.
-fn wait_for(path: &Path) -> bool {
-    let deadline = Instant::now() + DAEMON_STARTUP_TIMEOUT;
-    while Instant::now() < deadline {
-        if path.exists() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    false
-}
-
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
 /// Validates the instrument the two assertions below depend on.
@@ -179,18 +159,29 @@ fn daemon_log_file_is_created_with_upstream_mode() {
     )
     .expect("write config");
 
-    let daemon = ReapOnDrop::new(
-        command_with_open_umask(oc_binary())
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg(format!("--log-file={}", log.display()))
-            .arg(format!("--config={}", conf.display()))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon"),
+    // The forked daemon takes this process's umask at the fork, so it is
+    // pinned to 0 around the spawn alone; nextest runs each test in a process
+    // of its own.
+    // SAFETY: umask(2) only swaps the process file-mode mask and cannot fail.
+    let previous = unsafe { libc::umask(0) };
+    let daemon = OcDaemon::builder(&conf)
+        .arg(format!("--log-file={}", log.display()))
+        .reserved_port(port)
+        .and_then(OcDaemonBuilder::spawn);
+    // SAFETY: as above, restoring the mask this process had.
+    unsafe { libc::umask(previous) };
+    let daemon = daemon.expect("spawn daemon");
+    // The daemon opens `--log-file` at startup, before it serves anything, so
+    // once a module listing has been served the file exists.
+    let listing = Command::new(oc_binary())
+        .arg(format!("rsync://127.0.0.1:{port}/"))
+        .output()
+        .expect("list modules");
+    assert!(
+        listing.status.success(),
+        "the daemon must serve its listing"
     );
-    let appeared = wait_for(&log);
+    let appeared = log.exists();
     let mode = appeared.then(|| mode_of(&log));
     drop(daemon);
 

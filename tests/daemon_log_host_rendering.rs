@@ -33,12 +33,8 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-
-use std::time::{Duration, Instant};
-use test_support::ReapOnDrop;
+use std::process::Command;
 
 /// A log format naming every field this test reasons about, so one line
 /// carries the whole comparison.
@@ -63,10 +59,7 @@ fn upstream_binary() -> Option<PathBuf> {
 /// a failure to serve, which the assertions below report - it cannot turn into
 /// a false pass, because every assertion needs a log line the daemon writes.
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|addr| addr.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
 struct Fixture {
@@ -118,62 +111,26 @@ impl Fixture {
             ])
             .status()
             .expect("run client");
-        // The client exiting does NOT mean the daemon has written its
-        // per-transfer `log format` line: that line is emitted by the daemon
-        // after the client disconnects, so killing it the instant `.status()`
-        // returns races the write. Wait for the line the callers actually
-        // assert on, the same way `spawn_daemon` waits for the listener rather
-        // than sleeping.
-        wait_for_probe_line(&self.log());
-        drop(daemon);
+        // The per-transfer `log format` line is written after the client
+        // disconnects; the session's own exit is the event that it is on disk.
+        daemon.finish().expect("daemon sessions end");
         assert!(status.success(), "pull failed against {daemon_bin:?}");
         fs::read_to_string(self.log()).expect("read daemon log")
     }
 }
 
-/// Starts a daemon and waits until its port answers, so the client never races
-/// the listener.
-fn spawn_daemon(binary: &Path, conf: &Path) -> ReapOnDrop {
-    let child = ReapOnDrop::new(
-        Command::new(binary)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg(format!("--config={}", conf.display()))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn daemon"),
-    );
+/// Serves the daemon in inetd mode on the listener reserved for `port`, so
+/// a client connect queues until its session starts: no readiness wait.
+fn spawn_daemon(binary: &Path, conf: &Path) -> test_support::inetd_server::InetdServer {
     let port: u16 = fs::read_to_string(conf)
         .expect("read config")
         .lines()
         .find_map(|line| line.strip_prefix("port = ")?.trim().parse().ok())
         .expect("port directive");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return child;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    child
-}
-
-/// Blocks until the daemon has written its per-transfer `log format` line.
-///
-/// Every caller of `run()` asserts on that line, and the module config always
-/// sets `log format = PROBE_FORMAT`, so its absence is always a race rather
-/// than a legitimate outcome. Polling the condition keeps the common case fast
-/// and cannot wedge: on timeout we return and let `probe_line` report the empty
-/// log, which is a real failure worth seeing rather than a hang.
-fn wait_for_probe_line(log: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if fs::read_to_string(log).is_ok_and(|log| log.contains("PROBE ")) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    let command = test_support::inetd_server::InetdCommand::discarding_stderr(binary)
+        .expect("open /dev/null")
+        .arg(format!("--config={}", conf.display()));
+    test_support::inetd_server::InetdServer::start_reserved(port, command).expect("start daemon")
 }
 
 /// Extracts the single `PROBE ...` line the module's `log format` produced.

@@ -1,14 +1,13 @@
 /// Regression: a client that is slow to complete the `@RSYNCD:` handshake must
-/// still be served, not torn down. The daemon previously armed a hardcoded
-/// 10-second accept-time timeout on the socket, so a peer that paused longer
-/// than that between the greeting and its request had the connection aborted;
-/// dropping the socket with the client's pending bytes unread sent an RST that
-/// the client saw as "Connection reset by peer" (soak run: 14/3000 pulls under
-/// a CPU-starved 64-way burst). Upstream keeps `io_timeout` at 0 (options.c:107)
-/// throughout the greeting exchange, only arming `lp_timeout(module_id)`
-/// (clientserver.c:1288-1289) after a module is selected, so the handshake is
-/// untimed. This test pauses longer than the former 10-second guard and asserts
-/// the module listing is still delivered.
+/// still be served, not torn down. The daemon once armed a hardcoded 10-second
+/// accept-time timeout, so a peer that paused longer than that between the
+/// greeting and its request had the connection reset (soak run: 14/3000 pulls
+/// under a CPU-starved 64-way burst). The only bound upstream puts on this
+/// phase is the 60-second handshake deadline (clientserver.c:90, io.c:151-179).
+///
+/// The pause is modelled on the deadline's test clock rather than slept
+/// through: the daemon observes 11 seconds as already spent, past the former
+/// guard, and must still deliver the module listing.
 ///
 /// `--no-detach` keeps the daemon in-thread so the assertions run in this
 /// process; without it the daemon forks via `become_daemon()` and the parent
@@ -44,6 +43,13 @@ fn run_daemon_serves_slow_handshake() {
         ])
         .build();
 
+    // Pause past the former 10-second accept-time timeout before completing the
+    // handshake. The daemon must wait rather than abort the connection. The
+    // daemon is forked, so the offset is set before it starts for its copy of
+    // the clock to carry it.
+    let _paused = crate::daemon::handshake_deadline::test_clock::Advanced::by(
+        std::time::Duration::from_secs(11),
+    );
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
@@ -51,10 +57,6 @@ fn run_daemon_serves_slow_handshake() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
     assert_eq!(line, expected_greeting);
-
-    // Pause past the former 10-second accept-time timeout before completing the
-    // handshake. The daemon must wait rather than abort the connection.
-    std::thread::sleep(std::time::Duration::from_secs(11));
 
     // Complete the handshake before requesting, so this exercises the timeout
     // (what the test is for) rather than the startup-error path.

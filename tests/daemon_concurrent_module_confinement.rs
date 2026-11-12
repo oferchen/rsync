@@ -40,10 +40,8 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::{Command, Stdio};
 
 /// The file that lives OUTSIDE both module roots. Its arrival under a
 /// destination is the escape.
@@ -60,10 +58,7 @@ fn oc_binary() -> PathBuf {
 }
 
 fn free_port() -> Option<u16> {
-    TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|l| l.local_addr().ok())
-        .map(|a| a.port())
+    test_support::inetd_server::reserve_port().ok()
 }
 
 /// Builds the fixture: two modules, each holding a symlink that escapes its own
@@ -111,25 +106,13 @@ fn write_config(conf: &Path, port: u16, strict: &Path, loose: &Path) -> std::io:
     )
 }
 
-fn spawn_daemon(conf: &Path, port: u16) -> Option<Child> {
-    let mut child = Command::new(oc_binary())
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--config={}", conf.display()))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn daemon");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return Some(child);
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    None
+/// Serves the daemon in inetd mode on the listener reserved for `port`, so
+/// a client connect queues until its session starts: no readiness wait.
+fn spawn_daemon(conf: &Path, port: u16) -> Option<test_support::inetd_server::InetdServer> {
+    let command = test_support::inetd_server::InetdCommand::discarding_stderr(oc_binary())
+        .expect("open /dev/null")
+        .arg(format!("--config={}", conf.display()));
+    test_support::inetd_server::InetdServer::start_reserved(port, command).ok()
 }
 
 /// Pulls a whole module with `-L`, so a symlink is resolved by the SENDER and
@@ -151,20 +134,11 @@ fn escaped(dest: &Path) -> bool {
     dest.join("escape").join(SECRET).exists()
 }
 
-/// Reaps the daemon even if an assertion below panics.
-struct Reaper(Child);
-impl Drop for Reaper {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 struct Fixture {
     _root: tempfile::TempDir,
     root: PathBuf,
     port: u16,
-    _daemon: Reaper,
+    _daemon: test_support::inetd_server::InetdServer,
 }
 
 /// Returns `None` when the environment cannot host the test.
@@ -180,7 +154,7 @@ fn setup() -> Option<Fixture> {
         _root: tmp,
         root,
         port,
-        _daemon: Reaper(daemon),
+        _daemon: daemon,
     })
 }
 

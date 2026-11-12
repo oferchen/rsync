@@ -439,7 +439,7 @@ fn negotiated_stream_parts_copy_buffered_into_vec_copies_bytes() {
 
     let flattened: Vec<u8> = vectored
         .iter()
-        .flat_map(|slice| slice.as_ref().iter().copied())
+        .flat_map(|slice| slice.iter().copied())
         .collect();
     assert_eq!(flattened, expected);
 
@@ -476,7 +476,7 @@ fn negotiated_stream_parts_copy_buffered_remaining_into_vec_copies_unread_bytes(
 
     let flattened: Vec<u8> = remaining_vectored
         .iter()
-        .flat_map(|slice| slice.as_ref().iter().copied())
+        .flat_map(|slice| slice.iter().copied())
         .collect();
     assert_eq!(flattened, expected[consumed..]);
 

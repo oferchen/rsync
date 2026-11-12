@@ -4,19 +4,10 @@ name: CI
 # (fmt + clippy, and the stable cells of nextest, Windows, macOS and Linux
 # musl, plus interop) and the `changes` classifier they need. The matrix jobs
 # drop their beta/nightly cells on push; every other job carries
-# `github.event_name != 'push'` (or a narrower event test) in its `if:`.
-#
-# Pull requests run only the light jobs: the static gates and a Linux build
-# check. Every build-and-test job is skipped on a pull request at job level,
-# which publishes no required context, because each such job is a matrix job
-# (a skipped one reports its unexpanded name) or a reusable-workflow caller (a
-# skipped one reports the caller name alone). The merge train batches pull
-# requests on an integration/ branch and dispatches this workflow there, so
-# the full set runs once per batch; on success it posts the batch's required
-# contexts on each pull request's head as commit statuses. The nightly
-# schedule runs the full set except the testsuite and bake legs, which run on
-# dispatch only. The upstream testsuite gate (upstream-testsuite-3.5.1.yml)
-# has no push trigger at all.
+# `github.event_name != 'push'` (or a narrower event test) in its `if:`. Pull
+# requests, the nightly schedule and workflow_dispatch run the rest as before.
+# The upstream testsuite gate
+# (upstream-testsuite-3.5.1.yml) has no push trigger at all.
 
 on:
   push:
@@ -105,12 +96,12 @@ jobs:
   # The upstream testsuite legs (required contexts), called with the same
   # caller job ids as upstream-testsuite-3.5.1.yml so each context is still
   # `<caller job> / <reusable job>`. The reasoning behind each leg and its
-  # manifests is in that file. Merge-train batches (workflow_dispatch) only:
-  # master pushes skip the testsuite as before, and its nightly and `bootstrap`
-  # runs stay in that file.
+  # manifests is in that file. Pull requests and dispatches: master pushes skip
+  # the testsuite as before, and its nightly and `bootstrap` runs stay in that
+  # file.
   upstream-testsuite:
     needs: changes
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
       variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
@@ -121,7 +112,7 @@ jobs:
 
   upstream-testsuite-tcp:
     needs: changes
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
       variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
@@ -133,7 +124,7 @@ jobs:
 
   upstream-testsuite-macos:
     needs: changes
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/_upstream-testsuite-macos.yml
     with:
       variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
@@ -144,7 +135,7 @@ jobs:
 
   upstream-testsuite-macos-tcp:
     needs: changes
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/_upstream-testsuite-macos.yml
     with:
       variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
@@ -155,13 +146,13 @@ jobs:
       expect_result_macos_root: 'tools/ci/upstream-3.5.1-expect.macos.root.tcp.txt'
 
   # Non-blocking Windows bake legs. Called here, not triggered separately, so
-  # they run once per merge-train batch with the rest of the full set.
+  # they share this run's concurrency group.
   windows-long-path:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/windows-nightly-long-path.yml
 
   windows-case-insensitive:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/windows-nightly-case-insensitive.yml
 
   # ===========================================================================
@@ -269,51 +260,6 @@ jobs:
       # daemon test support module intact and stops the bypasses from regrowing.
       - name: Daemon no-detach guard
         run: bash tools/ci/check_daemon_no_detach.sh
-
-  # ===========================================================================
-  # Linux build check - the per-pull-request stand-in for the test jobs
-  # ---------------------------------------------------------------------------
-  # Pull requests skip every build-and-test job; the merge train runs them once
-  # per batch. Clippy in `lint` already type-checks every target, so this job
-  # adds what it cannot: codegen and linking of the binary and every test
-  # binary, with the nextest job's flags, so a pull request that would fail
-  # the batch at build time fails here first and never joins a batch.
-  # ===========================================================================
-  linux-build-check:
-    name: Linux build check
-    needs: [changes, lint]
-    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.docs_only != 'true' && needs.lint.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Free disk space
-        uses: ./.github/actions/free-disk-space
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-${{ runner.os }}-stable-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: test
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
-        with:
-          tool: cargo-nextest
-
-      # See lint job comment above re: continue-on-error on cold rust-cache.
-      - name: Regenerate Cargo.lock
-        run: cargo update --workspace --offline
-        continue-on-error: true
-
-      - name: Build every test binary
-        run: cargo nextest run --locked --workspace --all-features --no-run
 
   # ===========================================================================
   # Fuzz Workspace Check - compile-gate the excluded fuzz workspaces
@@ -616,7 +562,7 @@ jobs:
     name: nextest (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
     needs: [changes, lint]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
     timeout-minutes: 120
     # Stable gates merge; beta/nightly are informational so a churning
     # nightly compiler does not block PR throughput. Branch protection
@@ -732,7 +678,7 @@ jobs:
     name: SSH throughput (SSR-1, release)
     runs-on: ubuntu-latest
     needs: [changes, lint]
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.lint.result == 'success' && github.event_name != 'push' && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.lint.result == 'success' && github.event_name != 'push' }}
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -777,7 +723,7 @@ jobs:
   feature-flags:
     name: Feature flag combinations
     needs: lint
-    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    if: github.event_name != 'push'
     uses: ./.github/workflows/_test-features.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
@@ -814,7 +760,7 @@ jobs:
     name: Linux QUIC (--features quic)
     runs-on: ubuntu-latest
     needs: lint
-    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    if: github.event_name != 'push'
     timeout-minutes: 30
 
     env:
@@ -881,7 +827,7 @@ jobs:
     name: Linux musl QUIC (--features quic)
     runs-on: ubuntu-latest
     needs: lint
-    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    if: github.event_name != 'push'
     timeout-minutes: 30
     env:
       CARGO_TERM_COLOR: always
@@ -914,7 +860,7 @@ jobs:
     name: Windows (${{ matrix.toolchain }})
     runs-on: ${{ needs.changes.outputs.docs_only == 'true' && 'ubuntu-latest' || 'windows-latest' }}
     needs: [changes, lint]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
     timeout-minutes: 45
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     env:
@@ -1018,7 +964,7 @@ jobs:
     name: Windows IOCP (--features iocp)
     runs-on: windows-latest
     needs: lint
-    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    if: github.event_name != 'push'
     timeout-minutes: 30
 
     steps:
@@ -1084,7 +1030,7 @@ jobs:
     name: Windows ACL/xattr
     runs-on: windows-latest
     needs: lint
-    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    if: github.event_name != 'push'
     timeout-minutes: 30
 
     steps:
@@ -1161,7 +1107,7 @@ jobs:
     name: Windows GNU cross-check
     runs-on: ubuntu-latest
     needs: lint
-    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    if: github.event_name != 'push'
     timeout-minutes: 20
 
     steps:
@@ -1257,7 +1203,7 @@ jobs:
     name: macOS (${{ matrix.toolchain }})
     runs-on: ${{ needs.changes.outputs.docs_only == 'true' && 'ubuntu-latest' || 'macos-latest' }}
     needs: [changes, lint]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
     timeout-minutes: 30
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
@@ -1369,7 +1315,7 @@ jobs:
     name: Linux musl (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
     needs: [changes, lint]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
     timeout-minutes: 40
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
@@ -1472,13 +1418,13 @@ jobs:
   interop-upstream:
     name: interop
     needs: [changes, lint]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
     uses: ./.github/workflows/_interop.yml
     with:
       skip: ${{ needs.changes.outputs.docs_only == 'true' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.5.1' }}
-      timeout_minutes: 30
+      timeout_minutes: 45
 
   # ===========================================================================
   # macOS Interop - Smoke parity with Homebrew upstream rsync (audit G5)
@@ -1491,7 +1437,7 @@ jobs:
   interop-upstream-macos:
     name: interop (macOS)
     needs: lint
-    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    if: github.event_name != 'push'
     uses: ./.github/workflows/_interop-macos.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
@@ -1508,7 +1454,7 @@ jobs:
   interop-upstream-windows:
     name: interop (Windows, best-effort)
     needs: lint
-    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    if: github.event_name != 'push'
     uses: ./.github/workflows/_interop-windows.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}

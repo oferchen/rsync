@@ -42,8 +42,9 @@ use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::symlink;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 
+use test_support::oc_daemon::OcDaemon;
 use test_support::{LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, require_binaries};
 
 /// The out-of-module file's single line. It names no file in the module, so a
@@ -52,15 +53,6 @@ const SECRET: &str = "NO_ONE_SHOULD_README";
 /// A file the module does contain, named by the legitimate list.
 const WANTED: &str = "wanted.txt";
 const WANTED_CONTENT: &str = "wanted-content\n";
-
-struct DaemonGuard(Child);
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 /// What the client asks the daemon to read as its `--files-from` list.
 #[derive(Clone, Copy)]
@@ -131,30 +123,17 @@ fn write_config(config: &Path, module_root: &Path, log_root: &Path) -> io::Resul
     )
 }
 
-fn spawn_daemon(
-    oc_bin: &Path,
-    config: &Path,
-    cwd: &Path,
-    sandbox: Sandbox,
-) -> io::Result<(DaemonGuard, u16)> {
-    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
-        let mut cmd = Command::new(oc_bin);
-        cmd.current_dir(cwd)
-            .arg("--daemon")
-            .arg("--no-detach")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--config")
-            .arg(config)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        for (key, value) in sandbox.daemon_env() {
-            cmd.env(key, value);
-        }
-        cmd.spawn()
-    })?;
-    Ok((DaemonGuard(child), port))
+/// Starts the oc-rsync daemon on `config`, returning it with the loopback
+/// port it serves. `test_support::oc_daemon` binds the listener before the
+/// daemon starts, so the port is connectable as soon as this returns.
+fn spawn_daemon(config: &Path, cwd: &Path, sandbox: Sandbox) -> io::Result<(OcDaemon, u16)> {
+    let mut builder = OcDaemon::builder(config).current_dir(cwd);
+    for &(key, value) in sandbox.daemon_env() {
+        builder = builder.env(key, value);
+    }
+    let daemon = builder.spawn()?;
+    let port = daemon.port();
+    Ok((daemon, port))
 }
 
 /// Stages a module whose `list` is a trusted-owned symlink, pulls with the
@@ -203,7 +182,7 @@ fn pull_with_module_list(request: Request, sandbox: Sandbox) -> Outcome {
         Request::SymlinkOutside => module_root.as_path(),
         Request::SymlinkInside | Request::AbsoluteOutside => root,
     };
-    let (_daemon, port) = spawn_daemon(&oc_bin, &config, daemon_cwd, sandbox)
+    let (_daemon, port) = spawn_daemon(&config, daemon_cwd, sandbox)
         .expect("start the daemon, or nothing is measured");
 
     let files_from = match request {
