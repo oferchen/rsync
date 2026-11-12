@@ -470,8 +470,10 @@ fn daemon_dest_mkdir_failure_reports_file_io() {
         ),
     )
     .expect("write daemon config");
-    let daemon =
-        test_support::DaemonProcess::spawn(&config, ["--address=127.0.0.1"]).expect("spawn daemon");
+    let daemon = test_support::oc_daemon::OcDaemon::builder(&config)
+        .arg("--address=127.0.0.1")
+        .spawn()
+        .expect("spawn daemon");
 
     for client in clients() {
         let guard = ModeGuard(sealed.clone());
