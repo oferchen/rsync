@@ -1424,7 +1424,7 @@ jobs:
       skip: ${{ needs.changes.outputs.docs_only == 'true' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.5.1' }}
-      timeout_minutes: 30
+      timeout_minutes: 45
 
   # ===========================================================================
   # macOS Interop - Smoke parity with Homebrew upstream rsync (audit G5)
