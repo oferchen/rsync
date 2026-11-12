@@ -154,19 +154,24 @@ pub fn redirect_stderr(fd: impl std::os::fd::AsFd) -> io::Result<()> {
 /// the group, so it exists before the parent can act on it. A child that has
 /// already exited cannot join a group and needs none, so `ESRCH` is success.
 ///
-/// The parent's call can lose the race to the child. Once the child has
-/// exec'd, `setpgid()` answers `EACCES`; once it is exiting, has become a
-/// session leader or has left the caller's session, `EPERM` (POSIX
-/// `setpgid()`; xnu `bsd/kern/kern_prot.c` `setpgid()`). The child's own call
-/// may already have made the group, so either error is success when the child
-/// leads a group of its own id, and is returned otherwise.
+/// The parent's call can lose the race to the child (or vice versa). Once the
+/// child has exec'd, `setpgid()` answers `EACCES`; once it is exiting, has
+/// become a session leader or has left the caller's session, `EPERM` (POSIX
+/// `setpgid()`; xnu `bsd/kern/kern_prot.c` `setpgid()`). The other side's call
+/// may already have made the group, so either error is success when the target
+/// already leads a group of its own id, and is returned otherwise.
 pub fn lead_process_group(pid: i32) -> io::Result<()> {
     let target = nix::unistd::Pid::from_raw(pid);
     match nix::unistd::setpgid(target, target) {
         Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
-        Err(errno @ (nix::errno::Errno::EPERM | nix::errno::Errno::EACCES)) if pid != 0 => {
-            match nix::unistd::getpgid(Some(target)) {
-                Ok(pgid) if pgid == target => Ok(()),
+        Err(errno @ (nix::errno::Errno::EPERM | nix::errno::Errno::EACCES)) => {
+            let actual = if pid == 0 {
+                nix::unistd::Pid::this()
+            } else {
+                target
+            };
+            match nix::unistd::getpgid(Some(actual)) {
+                Ok(pgid) if pgid == actual => Ok(()),
                 // Ended between the two calls: as `ESRCH` above.
                 Err(nix::errno::Errno::ESRCH) => Ok(()),
                 Ok(_) => Err(errno.into()),
