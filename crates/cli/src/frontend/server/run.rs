@@ -1617,8 +1617,14 @@ mod failure_report_tests {
             "received request to transfer non-regular file: 1 [sender]",
         );
         let mut stderr = Vec::new();
-        let code =
-            report_server_failure(&mut stderr, Brand::Upstream, Role::Sender, &refusal, false);
+        let code = report_server_failure(
+            &mut stderr,
+            Brand::Upstream,
+            Role::Sender,
+            &refusal,
+            false,
+            false,
+        );
         let stderr = String::from_utf8(stderr).expect("utf-8");
         assert_eq!(code, 2);
         let lines: Vec<&str> = stderr.lines().collect();
