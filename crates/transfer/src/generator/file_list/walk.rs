@@ -71,8 +71,8 @@ fn filter_dir_display(dir: &Path) -> String {
         }
     }
     let mut rendered = cleaned.to_string_lossy().into_owned();
-    if rendered != "/" {
-        rendered.push('/');
+    if !rendered.ends_with(['/', '\\']) {
+        rendered.push(std::path::MAIN_SEPARATOR);
     }
     rendered
 }
@@ -1627,20 +1627,29 @@ mod filter_dir_display_tests {
 
     #[test]
     fn an_absolute_directory_gains_a_trailing_slash() {
-        assert_eq!(filter_dir_display(Path::new("/srv/src")), "/srv/src/");
+        #[cfg(windows)]
+        let (input, expected) = (r"C:\srv\src", r"C:\srv\src\");
+        #[cfg(not(windows))]
+        let (input, expected) = ("/srv/src", "/srv/src/");
+        assert_eq!(filter_dir_display(Path::new(input)), expected);
     }
 
     #[test]
     fn dot_and_dot_dot_are_folded_lexically() {
-        assert_eq!(
-            filter_dir_display(Path::new("/srv/./src/a/../b/.")),
-            "/srv/src/b/"
-        );
+        #[cfg(windows)]
+        let (input, expected) = (r"C:\srv\.\src\a\..\b\.", r"C:\srv\src\b\");
+        #[cfg(not(windows))]
+        let (input, expected) = ("/srv/./src/a/../b/.", "/srv/src/b/");
+        assert_eq!(filter_dir_display(Path::new(input)), expected);
     }
 
     #[test]
     fn the_root_is_not_doubled() {
-        assert_eq!(filter_dir_display(Path::new("/")), "/");
+        #[cfg(windows)]
+        let (input, expected) = (r"C:\", r"C:\");
+        #[cfg(not(windows))]
+        let (input, expected) = ("/", "/");
+        assert_eq!(filter_dir_display(Path::new(input)), expected);
     }
 
     #[test]
@@ -1648,7 +1657,11 @@ mod filter_dir_display_tests {
         let cwd = std::env::current_dir().expect("cwd");
         assert_eq!(
             filter_dir_display(Path::new("src/a")),
-            format!("{}/", cwd.join("src/a").display())
+            format!(
+                "{}{}",
+                cwd.join("src").join("a").display(),
+                std::path::MAIN_SEPARATOR
+            )
         );
     }
 }

@@ -8552,7 +8552,7 @@ fn lazy_filter2_scope_trace(root: &Path, merge_file: Option<&str>) -> Vec<String
         .is_some()
     {}
 
-    let root = format!("{}/", root.display());
+    let root = format!("{}{}", root.display(), std::path::MAIN_SEPARATOR);
     logging::drain_events()
         .into_iter()
         .filter_map(|event| match event {
@@ -8560,7 +8560,7 @@ fn lazy_filter2_scope_trace(root: &Path, merge_file: Option<&str>) -> Vec<String
                 flag: logging::DebugFlag::Filter,
                 message,
                 ..
-            } => Some(message.replace(&root, "T/")),
+            } => Some(message.replace(&root, "T/").replace('\\', "/")),
             _ => None,
         })
         .filter(|m| m.contains("local filters"))
