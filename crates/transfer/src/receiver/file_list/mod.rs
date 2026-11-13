@@ -1,14 +1,12 @@
 //! File list reception and incremental processing.
 //!
-//! Handles receiving the file list from the sender, incremental sub-list
-//! reception for INC_RECURSE mode, and the streaming
-//! [`IncrementalFileListReceiver`] interface.
+//! Handles receiving the file list from the sender and incremental sub-list
+//! reception for INC_RECURSE mode.
 //!
 //! Split into focused submodules:
 //!
-//! - `receive` - `receive_file_list`, `receive_extra_file_lists`,
-//!   `receive_one_extra_segment`, and
-//!   `incremental_file_list_receiver`.
+//! - `receive` - `receive_file_list`, `receive_extra_file_lists` and
+//!   `receive_one_extra_segment`.
 //! - `on_demand` - lazy INC_RECURSE segment fetch (`read_next_frame`,
 //!   `ensure_flat_idx`, `ensure_all_segments_loaded`).
 //! - `id_lists` - UID/GID name-to-ID mapping reception.
@@ -22,7 +20,6 @@
 //! - `hardlinks` - post-sort hardlink leader/follower assignment for
 
 //!   protocol 30+ and pre-30 normalization from (dev, ino) pairs.
-//! - `incremental` - the streaming [`IncrementalFileListReceiver`] type.
 //! - `window` - [`FileListWindow`], the absolute-indexed list that can
 //!   release finished segments.
 
@@ -30,7 +27,6 @@ mod dir_flist;
 mod filter_recheck;
 mod hardlinks;
 mod id_lists;
-mod incremental;
 mod on_demand;
 mod prune;
 mod receive;
@@ -39,6 +35,5 @@ mod window;
 
 pub(in crate::receiver) use dir_flist::DirFlist;
 pub(in crate::receiver) use dir_flist::DirSlot;
-pub use incremental::IncrementalFileListReceiver;
 pub(in crate::receiver) use receive::strip_leading_slashes;
 pub(in crate::receiver) use window::FileListWindow;

@@ -8,11 +8,10 @@
 //!
 //! - [`wire_attrs`] - `SumHead` and `SenderAttrs` wire-format coverage.
 //! - [`id_lists`] - `receive_id_lists` gating by owner/group/numeric-ids.
-//! - [`incremental_receiver`] - `IncrementalFileListReceiver::try_read_one`
-//!   and its pending/ready buffering semantics.
+//! - [`segment_reclaim`] - `reclaim_oldest_segment` freeing finished
+//!   INC_RECURSE segments.
 //! - [`incremental_directories`] - higher-level incremental flow:
-//!   `next_ready`, `collect_sorted`, `create_directory_incremental`, and
-//!   pipelined-incremental compile checks.
+//!   `create_directory_incremental` and pipelined-incremental compile checks.
 //! - [`filter_chain`] - receiver-side filter chain that protects entries
 //!   from deletion.
 //! - [`proto_io_error`] - protocol 28/29 trailing `io_error` int after
@@ -55,13 +54,13 @@ mod iconv_wire_order;
 mod id_lists;
 mod implied_recheck;
 mod incremental_directories;
-mod incremental_receiver;
 mod missing_args_sentinel;
 mod ndx_convert;
 mod proto_io_error;
 mod receive_counters;
 mod segment_delete;
 mod segment_parent;
+mod segment_reclaim;
 mod wire_attrs;
 mod xfer_error;
 

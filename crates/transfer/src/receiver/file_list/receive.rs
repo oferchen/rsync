@@ -10,14 +10,11 @@ use std::path::Path;
 
 use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_OFFSET, create_ndx_codec};
-use protocol::flist::{
-    FileEntry, IncrementalFileListBuilder, compare_file_entries, sort_and_clean_file_list,
-};
+use protocol::flist::{FileEntry, compare_file_entries, sort_and_clean_file_list};
 
 use super::super::ReceiverContext;
 use super::dir_flist::{DirFlist, DirSlot};
 use super::hardlinks::{match_hard_links, normalize_pre30_hardlinks};
-use super::incremental::IncrementalFileListReceiver;
 use super::prune::prune_empty_dirs_pass;
 
 impl ReceiverContext {
@@ -614,48 +611,6 @@ impl ReceiverContext {
             }
         }
         Ok(())
-    }
-
-    /// Creates an incremental file list receiver for streaming processing.
-    ///
-    /// Instead of waiting for the complete file list before processing, this
-    /// method returns an [`IncrementalFileListReceiver`] that yields entries
-    /// as they arrive from the sender, with proper dependency tracking.
-    ///
-    /// # Benefits
-    ///
-    /// - Reduced startup latency: Transfers begin as soon as first entries arrive
-    /// - Better memory efficiency: Don't need entire list in memory before starting
-    /// - Improved progress feedback: Users see activity immediately
-    ///
-    /// # Dependency Tracking
-    ///
-    /// The incremental receiver tracks parent directory dependencies. Entries are
-    /// only yielded when their parent directory has been processed, ensuring:
-    ///
-    /// 1. Directories are created before their contents
-    /// 2. Nested directories are created in order
-    /// 3. Files can be transferred immediately once their parent exists
-    pub fn incremental_file_list_receiver<R: Read>(
-        &self,
-        reader: R,
-    ) -> IncrementalFileListReceiver<R> {
-        let flist_reader = self.build_flist_reader();
-
-        // Build incremental processor with pre-existing destination directories
-        let incremental = IncrementalFileListBuilder::new()
-            .incremental_recursion(self.config.flags.incremental_recursion)
-            .build();
-
-        IncrementalFileListReceiver {
-            flist_reader,
-            source: reader,
-            incremental,
-            finished_reading: false,
-            entries_read: 0,
-            use_qsort: self.config.qsort,
-            iconv_reorder_suppressed: self.iconv_reorder_suppressed(),
-        }
     }
 }
 
