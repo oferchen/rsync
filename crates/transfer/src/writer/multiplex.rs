@@ -309,6 +309,13 @@ impl<W: Write> MultiplexWriter<W> {
     /// Queues the diagnostic lines other threads produced, ahead of whatever
     /// this writer handles next. Runs before every write, so the empty check
     /// stays inline.
+    /// Queues any pending outbox diagnostic lines into the message queue
+    /// without flushing buffered data.
+    #[inline]
+    pub(crate) fn drain_outbox(&mut self) -> io::Result<()> {
+        self.send_outbox()
+    }
+
     #[inline]
     fn send_outbox(&mut self) -> io::Result<()> {
         match &self.outbox {

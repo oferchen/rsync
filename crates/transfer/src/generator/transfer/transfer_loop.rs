@@ -663,7 +663,7 @@ impl GeneratorContext {
                         ndx_write_codec.inner_mut(),
                     )?;
                 }
-                io.output().flush()?;
+                io.output().drain_outbox()?;
             }
 
             // upstream: generator.c:2610-2616 - during the send loop, emit a
