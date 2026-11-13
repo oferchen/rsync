@@ -1611,16 +1611,17 @@ fn announce_error_exit<W: Write>(
     }
 }
 
-/// Queues a fatal failure's cause and log_exit() trailer for the peer when this
-/// server frames its error lines, as `rprintf(FERROR)` does once `msgs2stderr`
-/// is clear. Queued lines leave only with [`announce_error_exit`]'s flush, so
-/// for a transport-class code, or below protocol 31, they never reach the
-/// wire - and nothing reaches this process's stderr either.
+/// Emits a fatal failure's cause and log_exit() trailer through `rwrite()`
+/// routing before `MSG_ERROR_EXIT` is sent. When `msgs2stderr` is set,
+/// `send_diagnostic` writes straight to stderr now so a client that signals
+/// the remote shell on `MSG_ERROR_EXIT` does not cut the report off; when
+/// `msgs2stderr` is clear, lines queue in `iobuf.msg` and flush only with
+/// [`announce_error_exit`] (so transport-class codes and protocol < 31 never
+/// reach the wire or stderr).
 ///
-/// upstream: log.c:357-367 rwrite() -> io.c:1088 send_msg() appends to
-/// `iobuf.msg`; compat.c:653-654 and clientserver.c:1178 clear `msgs2stderr`;
-/// cleanup.c:221-226 prints nothing for an exit the peer asked for;
-/// log.c:937-963 log_exit()
+/// upstream: log.c:357-367 rwrite(); compat.c:653-654 and clientserver.c:1178
+/// clear `msgs2stderr`; cleanup.c:221-226 prints nothing for an exit the peer
+/// asked for; log.c:937-963 before cleanup.c:250 send_msg_int(MSG_ERROR_EXIT).
 fn queue_fatal_report<W: Write>(
     writer: &mut writer::ServerWriter<W>,
     error: &io::Error,
@@ -1629,7 +1630,7 @@ fn queue_fatal_report<W: Write>(
     let Some(report) = report else {
         return;
     };
-    if remote_exit_code(error).is_some() || !writer.frames_errors() {
+    if remote_exit_code(error).is_some() || !writer.is_multiplexed() {
         return;
     }
     for line in report(error, crate::error::rerr_for_io_error(error)) {

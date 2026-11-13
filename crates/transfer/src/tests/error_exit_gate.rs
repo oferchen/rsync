@@ -109,14 +109,18 @@ fn report_and_announce(
     (rendered.into_inner(), wire)
 }
 
-/// upstream: log.c:357 - with `msgs2stderr = 2` (protocol 29 and later over a
-/// remote shell) an FERROR line stays on the server's stderr, so the report is
-/// not rendered for the peer and the caller prints it.
+/// upstream: log.c:357, cleanup.c:221-224 before :250 - with `msgs2stderr = 2`
+/// (protocol 29 and later over a remote shell) the fatal report is rendered
+/// and written to stderr before `MSG_ERROR_EXIT` goes on the wire, so a client
+/// that signals the server on the exit frame cannot truncate it.
 #[test]
-fn a_report_bound_for_stderr_is_left_to_the_caller() {
+fn a_report_bound_for_stderr_writes_before_the_exit_frame() {
     let error = io::Error::from(io::ErrorKind::PermissionDenied);
     let (rendered, wire) = report_and_announce(&error, MessageRoute::ErrorsToStderr, 32, true);
-    assert!(!rendered, "the caller prints a stderr-bound report");
+    assert!(
+        rendered,
+        "the report writes to stderr before MSG_ERROR_EXIT"
+    );
     assert_eq!(wire, expected_frame(3), "only the exit frame is written");
 }
 
