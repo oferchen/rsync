@@ -61,6 +61,10 @@ enum LeadLine {
     Program(Vec<String>),
     /// An unprefixed `rprintf(FERROR, ...)` cause.
     Cause(String),
+    /// Bytes another process wrote to stderr verbatim, line endings
+    /// included, then a program-prefixed line.
+    #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+    ShellStderrThenProgram(String, String),
 }
 impl ClientError {
     /// Creates a new [`ClientError`] from the supplied exit code and message.
@@ -209,6 +213,7 @@ impl ClientError {
     pub fn program_lines(&self) -> &[String] {
         match self.lead_line.as_deref() {
             Some(LeadLine::Program(lines)) => lines,
+            Some(LeadLine::ShellStderrThenProgram(_, line)) => std::slice::from_ref(line),
             _ => &[],
         }
     }
@@ -218,6 +223,15 @@ impl ClientError {
     pub fn cause_line(&self) -> Option<&str> {
         match self.lead_line.as_deref() {
             Some(LeadLine::Cause(line)) => Some(line),
+            _ => None,
+        }
+    }
+
+    /// Returns the bytes a remote shell wrote to stderr before this failure,
+    /// to be written verbatim, line endings included.
+    pub fn shell_stderr(&self) -> Option<&str> {
+        match self.lead_line.as_deref() {
+            Some(LeadLine::ShellStderrThenProgram(text, _)) => Some(text),
             _ => None,
         }
     }
@@ -733,14 +747,38 @@ pub fn connection_unexpectedly_closed_error(
     exit_code: ExitCode,
     role: Role,
 ) -> ClientError {
-    program_line_error(
-        format!(
-            "connection unexpectedly closed ({bytes_received} bytes received so far) [{}]",
-            role.as_str()
-        ),
-        exit_code,
-        role,
+    program_line_error(eof_whine(bytes_received, role), exit_code, role)
+}
+
+/// upstream: io.c:299-303 whine_about_eof()'s line.
+fn eof_whine(bytes_received: u64, role: Role) -> String {
+    format!(
+        "connection unexpectedly closed ({bytes_received} bytes received so far) [{}]",
+        role.as_str()
     )
+}
+
+/// Reports a remote shell that exited before the protocol started.
+///
+/// The shell prints its own diagnostic (`shell_stderr`, exactly as the shell
+/// wrote it - ssh ends each message in `"\r\n"`), the client then
+/// finds the stream closed and whines about it, and `exit_cleanup()` takes
+/// the shell's status over `RERR_STREAMIO` for the trailer
+/// (io.c:299-303, cleanup.c:146-153). An ssh that cannot connect exits 255,
+/// which log_exit() names "unexplained error".
+#[cold]
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(crate) fn remote_shell_failed_error(
+    shell_stderr: String,
+    exit_code: ExitCode,
+    role: Role,
+) -> ClientError {
+    let mut error = remote_exit_error(exit_code, role);
+    error.lead_line = Some(Box::new(LeadLine::ShellStderrThenProgram(
+        shell_stderr,
+        eof_whine(0, role),
+    )));
+    error
 }
 
 /// Reports a fatal failure upstream announces with one `RSYNC_NAME ": ..."`
@@ -1375,6 +1413,34 @@ mod tests {
             assert!(trailer.contains("[sender="), "{trailer}");
             assert!(!trailer.contains("unexpectedly closed"), "{trailer}");
         }
+        /// A remote shell that failed to connect: its own line, the whine,
+        /// then the trailer for its status 255 (io.c:299-303,
+        /// cleanup.c:146-153), as rsync 3.5.1 prints them over a failing ssh.
+        #[test]
+        fn a_failed_remote_shell_prints_its_line_the_whine_and_its_status() {
+            let error = remote_shell_failed_error(
+                "ssh: Could not resolve hostname nope: Name or service not known\r\n".to_owned(),
+                ExitCode::from_raw(255),
+                Role::Sender,
+            );
+            assert_eq!(error.exit_code(), 255);
+            assert_eq!(
+                error.shell_stderr(),
+                Some("ssh: Could not resolve hostname nope: Name or service not known\r\n")
+            );
+            assert_eq!(error.cause_line(), None);
+            assert_eq!(
+                error.program_line(),
+                Some("connection unexpectedly closed (0 bytes received so far) [sender]")
+            );
+            let trailer = error.to_string();
+            assert!(
+                trailer.contains("unexplained error (code 255)"),
+                "{trailer}"
+            );
+            assert!(trailer.contains("[sender="), "{trailer}");
+        }
+
         /// A worse remote-shell status names the trailer; the whine is
         /// printed regardless (cleanup.c:150-152 picks the code after it).
         #[test]
