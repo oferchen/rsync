@@ -1021,6 +1021,7 @@ fn apply_altdest_metadata(
         acl_id_map,
         !entry.is_symlink(),
         None,
+        metadata_opts.fake_super_enabled(),
     ) {
         metadata_errors.push((dest_path.to_path_buf(), e.to_string()));
     }

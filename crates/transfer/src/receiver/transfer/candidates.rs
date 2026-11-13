@@ -1642,6 +1642,7 @@ impl ReceiverContext {
                 acl_id_map,
                 !entry.is_symlink(),
                 Some(dest_dir),
+                self.config.fake_super,
             )
         {
             metadata_errors.push((file_path.to_path_buf(), e.to_string()));

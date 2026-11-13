@@ -2261,6 +2261,29 @@ mod fake_super_store_oracle_tests {
         }
     }
 
+    // The network receiver condenses the wire form, whose mask the sender
+    // already stripped. With `group::r-x` under `mask::rwx` (mode 0775) the
+    // group slot must survive, as in the `%aacl` 3.5.1 stores.
+    #[test]
+    fn condensing_the_wire_form_keeps_a_group_obj_below_the_mask() {
+        let mut fs_acl = RsyncAcl::new();
+        fs_acl.user_obj = 0o7;
+        fs_acl.group_obj = 0o5;
+        fs_acl.mask_obj = 0o7;
+        fs_acl.other_obj = 0o5;
+        fs_acl.names.push(IdAccess::user(NOBODY, 0o7));
+        let mut wire = fs_acl.clone();
+        wire.strip_perms_for_send(0o775);
+        assert_eq!(
+            wire.mask_obj, NO_ENTRY,
+            "fixture: the sender strips the mask"
+        );
+        wire.condense_for_fake_super_store(0o775);
+        fs_acl.condense_for_fake_super_store(0o775);
+        assert_eq!(wire, fs_acl);
+        assert_eq!(le_u32s(&wire.to_fake_super_bytes())[..4], [128, 5, 7, 128]);
+    }
+
     // An access ACL with no named entries has no mask to restore, so the whole
     // group slot is derivable and only the mask stays NO_ENTRY.
     #[test]

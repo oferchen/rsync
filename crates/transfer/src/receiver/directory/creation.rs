@@ -713,6 +713,7 @@ impl ReceiverContext {
                     acl_id_map_clone.as_ref(),
                     true, // directories always follow symlinks
                     Some(dest_root.as_path()),
+                    fake_super,
                 ) {
                     return Some(DirApplyFailure::Other(dir_path, e.to_string()));
                 }
@@ -1289,6 +1290,7 @@ impl ReceiverContext {
             acl_id_map,
             true,
             Some(dest_dir),
+            self.config.fake_super,
         ) && self.config.flags.verbose
             && self.config.connection.client_mode
         {
