@@ -8525,6 +8525,134 @@ fn drained_inc_recurse_names(root: &Path, lazy: bool, merge_file: &str) -> Vec<S
         .collect()
 }
 
+/// The `--debug=FILTER2` push/pop trace of a lazy INC_RECURSE scan of `root`,
+/// with `root` itself written as `T`.
+fn lazy_filter2_scope_trace(root: &Path, merge_file: Option<&str>) -> Vec<String> {
+    use protocol::CompatibilityFlags;
+    logging::init(logging::VerbosityConfig::default());
+    logging::apply_debug_flag("filter2").expect("filter2 parses");
+    let _ = logging::drain_events();
+
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    let mut config = test_config();
+    config.flags.recursive = true;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    if let Some(name) = merge_file {
+        ctx.filter_chain
+            .add_merge_config(::filters::DirMergeConfig::new(name));
+    }
+    ctx.lazy_flist_override = Some(true);
+    build_file_list_for_contents(&mut ctx, root);
+    ctx.partition_file_list_for_inc_recurse();
+    assert!(ctx.lazy_producer_active, "producer must engage");
+    while ctx
+        .produce_next_lazy_segment()
+        .expect("lazy segment production")
+        .is_some()
+    {}
+
+    let root = format!("{}{}", root.display(), std::path::MAIN_SEPARATOR);
+    logging::drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            logging::DiagnosticEvent::Debug {
+                flag: logging::DebugFlag::Filter,
+                message,
+                ..
+            } => Some(message.replace(&root, "T/").replace('\\', "/")),
+            _ => None,
+        })
+        .filter(|m| m.contains("local filters"))
+        .collect()
+}
+
+/// The `src/{a/b, c, d/e}` tree the FILTER2 cells walk, with a root and a
+/// nested per-dir merge file.
+fn filter2_fixture() -> TempDir {
+    let temp = TempDir::new().unwrap();
+    let base = temp.path();
+    for dir in ["a/b", "c", "d/e"] {
+        fs::create_dir_all(base.join(dir)).unwrap();
+    }
+    fs::write(base.join(".rsync-filter"), "- *.bak\n").unwrap();
+    fs::write(base.join("a/.rsync-filter"), "- x\n").unwrap();
+    for file in [
+        "a/x", "a/b/x", "a/keep", "c/y.bak", "c/keep", "top", "d/e/f",
+    ] {
+        fs::write(base.join(file), b"d").unwrap();
+    }
+    temp
+}
+
+/// The lazy producer enters each directory's filter scope exactly once, and
+/// holds the dot-dir root's scope across every sub-list instead of popping
+/// and re-pushing it.
+///
+/// Expected lines are 3.5.1's for the same tree, pushed with
+/// `rsync -r -F --debug=FILTER2 src/ host:dst/`: the root is pushed at depth
+/// 0 (flist.c:2999-3002), each sub-list directory through
+/// change_local_filter_dir() (flist.c:2571, exclude.c:974-999), and the walk
+/// popping past the root resets every scope (flist.c:2723).
+#[test]
+fn lazy_producer_pushes_each_filter_scope_once() {
+    let temp = filter2_fixture();
+    let push = |dir: &str| format!("[sender] pushing local filters for T/{dir}");
+    let pop = || "[sender] popping local filters".to_owned();
+    assert_eq!(
+        lazy_filter2_scope_trace(temp.path(), Some(".rsync-filter")),
+        vec![
+            push(""),
+            push("a/"),
+            push("a/b/"),
+            pop(),
+            pop(),
+            push("c/"),
+            pop(),
+            push("d/"),
+            push("d/e/"),
+            pop(),
+            pop(),
+            pop(),
+        ]
+    );
+}
+
+/// Without a per-dir merge rule every directory is still announced, but no
+/// scope is popped: push_local_filters() saves no state to pop while no
+/// merge list is registered (exclude.c:869-872, exclude.c:986-995). 3.5.1
+/// prints these six lines for the same push without `-F`.
+#[test]
+fn lazy_producer_announces_scopes_without_merge_rules_and_pops_none() {
+    let temp = filter2_fixture();
+    let push = |dir: &str| format!("[sender] pushing local filters for T/{dir}");
+    assert_eq!(
+        lazy_filter2_scope_trace(temp.path(), None),
+        vec![
+            push(""),
+            push("a/"),
+            push("a/b/"),
+            push("c/"),
+            push("d/"),
+            push("d/e/")
+        ]
+    );
+}
+
+/// A dot-dir root with no subdirectory writes the flist EOF straight from
+/// send_file_list() and never pops the root's scope (flist.c:3090-3094);
+/// 3.5.1 prints the single push.
+#[test]
+fn lazy_root_without_subdirectories_keeps_its_scope_pushed() {
+    let temp = TempDir::new().unwrap();
+    fs::write(temp.path().join(".rsync-filter"), "- *.bak\n").unwrap();
+    fs::write(temp.path().join("f"), b"d").unwrap();
+    assert_eq!(
+        lazy_filter2_scope_trace(temp.path(), Some(".rsync-filter")),
+        vec!["[sender] pushing local filters for T/".to_owned()]
+    );
+}
+
 /// A lazily scanned directory is filtered by every ancestor's dir-merge file,
 /// not only its own.
 ///
