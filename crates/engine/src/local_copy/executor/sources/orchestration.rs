@@ -25,6 +25,7 @@ use super::super::{
     emit_cannot_convert_filename, name_is_convertible, transcode_filename_component,
 };
 use super::destination::{ensure_destination_directory, query_destination_state};
+use super::file_total::file_total_exceeds_one;
 use super::handlers::{
     handle_directory_contents_copy, handle_directory_copy, handle_non_directory_source,
 };
@@ -602,47 +603,45 @@ pub(crate) fn copy_sources(
             }
 
             // upstream: main.c:808 get_local_name() - `if (file_total > 1 ||
-            // trailing_slash) { do_mkdir(dest_path); ... }`. The transfer-level
-            // decision is made ONCE, from the flist entry count. For a single
-            // no-trailing-slash directory source `file_total > 1` requires the
-            // directory's children to be enumerated into the flist, which only
-            // happens under recursion (`-r`/`-a`): then pre-create the
-            // destination root here (counting it and emitting `created directory
-            // <dest>`) and let `destination_behaves_like_directory` keep the
-            // source name. Without `-r`/`-d` the directory operand is skipped
-            // entirely (`flist.c:2963` `!xfer_dirs`) and no destination is
-            // created; with `-d` alone a no-trailing-slash directory contributes
-            // only its own entry (`file_total == 1`), so the name is dropped and
-            // the destination is materialised AS the directory. Gating on
-            // recursion keeps all three cases byte-for-byte with upstream.
+            // trailing_slash) { do_mkdir(dest_path); ... }`, decided ONCE from
+            // the first file list before anything is transferred; a failure
+            // ends the run with mkdir_error (main.c:817-821). The trailing-slash
+            // and multi-operand halves are handled above; the count of a single
+            // operand comes from `file_total_exceeds_one`. A no-trailing-slash
+            // directory under `-d` alone contributes only its own entry, so the
+            // name is dropped and the destination is materialised AS the
+            // directory; one whose children are all filtered out does the same.
             if !multiple_sources
-                && context.recursive_enabled()
                 && !plan.destination_spec().force_directory()
                 && !destination_state.is_dir
-                && let Some(source) = plan.sources().first()
-                && !source.copy_contents()
-                && fs::symlink_metadata(source.path()).is_ok_and(|meta| meta.is_dir())
-                && fs::read_dir(source.path()).is_ok_and(|mut entries| entries.next().is_some())
+                && file_total_exceeds_one(context, plan)?
             {
-                // A pre-existing non-directory destination blocks the mkdir, so
-                // clear it first and let the source name land as
-                // `dest/<source>/`. upstream: generator.c:1840-1843
+                // A pre-existing non-directory destination blocks the mkdir of a
+                // named directory operand, so clear it first and let the source
+                // name land as `dest/<source>/`. upstream: generator.c:1840-1843
                 // recv_generator() removes it with `delete_item(fname, ..,
                 // del_opts | DEL_FOR_DIR)` regardless of `--force`, which
                 // contributes only DEL_RECURSE (generator.c:1629) and so
                 // governs recursing into a non-empty *directory*, not this.
-                if destination_state.exists && !destination_state.is_dir {
-                    if !context.mode().is_dry_run() {
-                        remove_existing_destination(destination_path)?;
-                    }
+                let replaces_obstacle = destination_state.exists
+                    && plan.sources().first().is_some_and(|source| {
+                        !source.copy_contents()
+                            && fs::symlink_metadata(source.path()).is_ok_and(|meta| meta.is_dir())
+                    });
+                if replaces_obstacle && !context.mode().is_dry_run() {
+                    remove_existing_destination(destination_path)?;
+                }
+                if replaces_obstacle {
                     destination_state.exists = false;
                 }
-                destination_root_created |= ensure_destination_directory(
-                    destination_path,
-                    &mut destination_state,
-                    context.mode(),
-                    mkpath,
-                )?;
+                if !destination_state.exists {
+                    destination_root_created |= ensure_destination_directory(
+                        destination_path,
+                        &mut destination_state,
+                        context.mode(),
+                        mkpath,
+                    )?;
+                }
             }
 
             // upstream: main.c:817-828 - the pre-flight mkdir always prints

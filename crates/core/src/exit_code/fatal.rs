@@ -3,6 +3,9 @@
 
 use std::io;
 
+use engine::local_copy::upstream_io_error;
+use transfer::DestRootMkdirError;
+
 use crate::branding::Brand;
 
 use super::ExitCode;
@@ -12,11 +15,11 @@ use crate::message::Role;
 /// followed by `exit_cleanup(code)`, or `None` for any other failure.
 ///
 /// upstream: xattrs.c:1253-1258 get_stat_xattr() (RERR_FILEIO),
-/// util2.c:73-80 my_alloc() (RERR_MALLOC), and every RERR_PROTOCOL refusal,
-/// e.g. exclude.c:1924-1926
+/// main.c:817-821 get_local_name() (RERR_FILEIO), util2.c:73-80 my_alloc()
+/// (RERR_MALLOC), and every RERR_PROTOCOL refusal, e.g. exclude.c:1924-1926
 #[must_use]
 pub fn cause_line_exit_code(error: &io::Error) -> Option<ExitCode> {
-    if metadata::is_corrupt_fake_super(error) {
+    if metadata::is_corrupt_fake_super(error) || DestRootMkdirError::of(error).is_some() {
         Some(ExitCode::FileIo)
     } else if error
         .get_ref()
@@ -46,11 +49,26 @@ pub fn fatal_report_lines(
     brand: Brand,
 ) -> Vec<Vec<u8>> {
     let mut lines = Vec::with_capacity(2);
+    let mut role = role;
     let bare = error
         .get_ref()
         .and_then(|inner| inner.downcast_ref::<protocol::ProtocolViolation>())
         .is_some_and(|violation| violation.cause_line().is_none());
-    if cause_line_exit_code(error).is_some() && !bare {
+    if let Some(failed) = DestRootMkdirError::of(error) {
+        // upstream: main.c:1248 - do_server_recv() runs get_local_name() before
+        // do_recv() forks, so who_am_i() names neither half (rsync.c:987-995)
+        // and rsyserr() prefixes the program name (log.c:450-468).
+        role = Role::PreForkReceiver;
+        lines.push(
+            format!(
+                "{}: [{role}] mkdir {} failed: {}\n",
+                brand.client_program_name(),
+                failed.fname(),
+                upstream_io_error(failed.source_error())
+            )
+            .into_bytes(),
+        );
+    } else if cause_line_exit_code(error).is_some() && !bare {
         lines.push(format!("{error}\n").into_bytes());
     }
     let trailer = crate::rsync_error!(code.as_i32(), "{}", code.description())
@@ -148,5 +166,38 @@ mod tests {
         );
         assert_eq!(lines.len(), 1);
         assert!(lines[0].starts_with(b"rsync error: "));
+    }
+
+    /// A server receiver that cannot create the destination root prints
+    /// rsyserr()'s line and a trailer naming the unforked receiver, and exits
+    /// RERR_FILEIO even for the EACCES its ErrorKind would grade 3.
+    ///
+    /// upstream: main.c:817-821, main.c:1248, rsync.c:987-995
+    #[test]
+    fn a_dest_root_mkdir_failure_reports_as_the_unforked_receiver() {
+        // The errno a failed mkdir reports for a read-only parent.
+        #[cfg(unix)]
+        let (raw, cause) = (13, "Permission denied (13)");
+        // Windows reports ERROR_ACCESS_DENIED. 3.5.1 under Cygwin prints
+        // "Permission denied (13)"; task 630 changes this expectation.
+        #[cfg(not(unix))]
+        let (raw, cause) = (5, "Access is denied. (5)");
+        let failed = DestRootMkdirError::into_io(
+            "\"/srv/ro/new\"".to_owned(),
+            io::Error::from_raw_os_error(raw),
+        );
+        assert_eq!(cause_line_exit_code(&failed), Some(ExitCode::FileIo));
+        let lines = fatal_report_lines(&failed, ExitCode::FileIo, Role::Generator, Brand::Upstream);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            String::from_utf8(lines[0].clone()).expect("utf-8"),
+            format!("rsync: [Receiver] mkdir \"/srv/ro/new\" failed: {cause}\n")
+        );
+        let trailer = String::from_utf8(lines[1].clone()).expect("utf-8");
+        assert!(
+            trailer.starts_with("rsync error: error in file IO (code 11) at "),
+            "{trailer}"
+        );
+        assert!(trailer.contains("[Receiver="), "{trailer}");
     }
 }

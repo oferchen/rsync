@@ -38,8 +38,9 @@ impl DestRootMkdirError {
         error.get_ref()?.downcast_ref()
     }
 
-    /// Wraps the failure as an `io::Error` of the cause's kind.
-    pub(in crate::receiver) fn into_io(fname: String, source: io::Error) -> io::Error {
+    /// Wraps the failure of `mkdir` on `fname` (already rendered by
+    /// `full_fname()`) as an `io::Error` of the cause's kind.
+    pub fn into_io(fname: String, source: io::Error) -> io::Error {
         io::Error::new(source.kind(), Self { fname, source })
     }
 }

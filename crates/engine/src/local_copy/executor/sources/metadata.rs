@@ -80,7 +80,7 @@ pub(super) fn operand_stat_path<'a>(
 /// marked operand cannot, because a `--copy-links` stat that FAILS is an
 /// operand-level `link_stat` failure (exit 23) upstream, not a file that
 /// vanished mid-transfer (exit 24).
-fn operand_link_stat(
+pub(super) fn operand_link_stat(
     context: &CopyContext,
     source: &SourceSpec,
     source_path: &Path,

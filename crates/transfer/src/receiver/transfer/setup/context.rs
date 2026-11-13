@@ -796,17 +796,16 @@ impl ReceiverContext {
             )
             .map_err(|e| match crate::receiver::mkdir_cause(e) {
                 // upstream: main.c:810-811 - the trailing slash is lopped
-                // before do_mkdir(), so full_fname() never shows it. Only the
-                // client gets here: do_server_recv() fails its change_dir#4
-                // into the destination first (main.c:1209-1217), which the
-                // server receiver reports through the arm below.
-                Ok(cause) if self.config.connection.client_mode => {
-                    crate::receiver::DestRootMkdirError::into_io(
-                        self.full_fname(dest_dir.components().as_path(), None),
-                        cause,
-                    )
-                }
-                Ok(e) | Err(e) => io::Error::new(
+                // before do_mkdir(), so full_fname() never shows it. A server
+                // receiver gets here too: its change_dir#4 is into the `.`
+                // operand the client sends ahead of the destination
+                // (main.c:1209-1217, options.c server_options()), and
+                // do_server_recv() then calls get_local_name() (main.c:1248).
+                Ok(cause) => crate::receiver::DestRootMkdirError::into_io(
+                    self.full_fname(dest_dir.components().as_path(), None),
+                    cause,
+                ),
+                Err(e) => io::Error::new(
                     e.kind(),
                     format!(
                         "failed to create destination root {}: {e} {}{}",

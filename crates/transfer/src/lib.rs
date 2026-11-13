@@ -642,15 +642,29 @@ fn sender_bandwidth_limiter(config: &ServerConfig) -> Option<bandwidth::Bandwidt
 /// - The protocol handshake fails (incompatible version or I/O error)
 /// - Reading from or writing to the streams fails
 /// - The receiver or generator role encounters a transfer error
-#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, progress), fields(role = ?config.role)))]
-pub fn run_server_stdio(
+///
+/// `fatal_report` renders the cause and trailer of a fatal failure, which go
+/// out ahead of the `MSG_ERROR_EXIT` frame (see [`ServerTransferHooks`]).
+#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, progress, fatal_report), fields(role = ?config.role)))]
+pub fn run_server_stdio<'p>(
     config: ServerConfig,
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
-    progress: Option<&mut dyn TransferProgressCallback>,
+    progress: Option<&'p mut dyn TransferProgressCallback>,
+    fatal_report: Option<&'p FatalReport>,
 ) -> ServerResult {
     let handshake = server_stdio_handshake(&config, stdin, stdout)?;
-    run_server_with_handshake(config, handshake, stdin, stdout, progress, None, None)
+    run_server_with_handshake_adopting(
+        config,
+        handshake,
+        stdin,
+        stdout,
+        ServerTransferHooks {
+            progress,
+            fatal_report,
+            ..ServerTransferHooks::default()
+        },
+    )
 }
 
 /// [`run_server_stdio`] over the process's own standard input and output
@@ -667,12 +681,13 @@ pub fn run_server_stdio(
 /// As [`run_server_stdio`], plus the error switching the descriptors to
 /// non-blocking mode.
 #[cfg(unix)]
-pub fn run_server_fds(
+pub fn run_server_fds<'p>(
     config: ServerConfig,
     stdin: std::fs::File,
     stdout: std::fs::File,
-    progress: Option<&mut dyn TransferProgressCallback>,
+    progress: Option<&'p mut dyn TransferProgressCallback>,
     fork_point: Option<Arc<ForkPoint>>,
+    fatal_report: Option<&'p FatalReport>,
 ) -> ServerResult {
     let transport = fast_io::transport::FdTransport::pair(stdin, stdout)?;
     let timeout = iobuf::IoTimeout::new(
@@ -692,6 +707,7 @@ pub fn run_server_fds(
         ServerTransferHooks {
             progress,
             fork_point,
+            fatal_report,
             ..ServerTransferHooks::default()
         },
     )
@@ -829,10 +845,11 @@ pub struct ServerTransferHooks<'p, 'i> {
     /// fork, so the caller can name the role that reports a failure.
     /// upstream: main.c:1077 `do_recv()`.
     pub fork_point: Option<Arc<ForkPoint>>,
-    /// Renders the lines a daemon sender reports for a fatal failure with the
-    /// given `RERR_*`. `Some` only on the daemon path, whose messages go to
-    /// the client as `MSG_ERROR` frames ahead of its `MSG_ERROR_EXIT`.
-    /// upstream: clientserver.c:1178 `msgs2stderr = 0`, log.c:937-963 log_exit()
+    /// Renders the lines a server reports for a fatal failure with the given
+    /// `RERR_*`. They take the server's message route ahead of its
+    /// `MSG_ERROR_EXIT`: frames on a daemon socket, stderr over a remote shell.
+    /// upstream: clientserver.c:1178 `msgs2stderr = 0`, log.c:357,
+    /// log.c:937-963 log_exit()
     pub fatal_report: Option<&'p FatalReport>,
 }
 
@@ -1584,11 +1601,14 @@ fn announce_error_exit<W: Write>(
         return;
     }
 
+    // upstream: rsyserr() and log_exit() go through rwrite() before
+    // _exit_cleanup() sends the frame, and the client's kill_all(SIGUSR1) on
+    // receiving it (cleanup.c:202-203) would cut off any line still to come.
     for line in report
         .map(|report| report(error, exit_code))
         .unwrap_or_default()
     {
-        let _ = writer.send_message(protocol::MessageCode::Error, &line);
+        let _ = writer.send_diagnostic(protocol::MessageCode::Error, &line);
     }
     if writer.send_error_exit(exit_code).is_ok() {
         let _ = writer.flush_all_pending();

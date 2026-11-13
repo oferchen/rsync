@@ -81,6 +81,59 @@ fn a_report_precedes_the_exit_frame_as_error_messages() {
     assert_eq!(wire, expected);
 }
 
+/// A writer whose bytes a report hook can read while the producer runs.
+#[derive(Clone, Default)]
+struct SharedWire(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl io::Write for SharedWire {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().expect("wire lock").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// upstream: log.c:357 - over a remote shell (`msgs2stderr = 2`) the fatal
+/// cause and trailer go to stderr, not the wire, and they are written before
+/// the `MSG_ERROR_EXIT` frame: the 3.5.1 client answers the frame with
+/// kill_all(SIGUSR1) (cleanup.c:202-203), which would cut off a later line.
+#[test]
+fn a_remote_shell_report_goes_to_stderr_before_the_exit_frame() {
+    use crate::writer::MessageRoute;
+
+    let wire = SharedWire::default();
+    let wire_len_at_report = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let report = {
+        let wire = wire.clone();
+        let seen = std::sync::Arc::clone(&wire_len_at_report);
+        move |_: &io::Error, _: i32| {
+            *seen.lock().expect("seen lock") = Some(wire.0.lock().expect("wire lock").len());
+            vec![b"cause\n".to_vec()]
+        }
+    };
+    let error = io::Error::from(io::ErrorKind::PermissionDenied);
+    {
+        let mut writer = ServerWriter::new_plain(wire.clone())
+            .activate_multiplex()
+            .expect("activate multiplex");
+        writer.set_message_routing(MessageRoute::ErrorsToStderr, protocol::ProtocolVersion::V32);
+        announce_error_exit(&mut writer, &error, 32, true, Some(&report));
+    }
+    assert_eq!(
+        *wire_len_at_report.lock().expect("seen lock"),
+        Some(0),
+        "the report is rendered before any byte of the frame"
+    );
+    assert_eq!(
+        *wire.0.lock().expect("wire lock"),
+        expected_frame(3),
+        "the cause went to stderr, so the frame is all the wire carries"
+    );
+}
+
 /// The frame upstream's `send_msg_int(MSG_ERROR_EXIT, code)` produces: the
 /// tag/length header followed by the 4-byte little-endian code.
 fn expected_frame(code: i32) -> Vec<u8> {

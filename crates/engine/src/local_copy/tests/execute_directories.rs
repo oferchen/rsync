@@ -2083,12 +2083,13 @@ fn execute_directory_source_deep_missing_dest_errors_without_mkpath() {
         .expect_err("deep missing dest parent must error without --mkpath");
 
     match error.kind() {
-        LocalCopyErrorKind::Io { action, source, .. } => {
-            assert_eq!(*action, "create destination directory");
+        LocalCopyErrorKind::DestinationMkdirFailed { path, source } => {
+            assert_eq!(path, &dest_root);
             assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
         }
         other => panic!("unexpected error kind: {other:?}"),
     }
+    assert_eq!(error.exit_code(), 11, "mkdir_error exits RERR_FILEIO");
     assert!(
         !missing_prefix.exists(),
         "no ancestor chain must be created"

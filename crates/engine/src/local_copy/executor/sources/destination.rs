@@ -82,13 +82,7 @@ pub(crate) fn ensure_destination_directory(
     } else {
         fs::create_dir(destination_path)
     };
-    outcome.map_err(|error| {
-        LocalCopyError::io(
-            "create destination directory",
-            destination_path.to_path_buf(),
-            error,
-        )
-    })?;
+    outcome.map_err(|error| LocalCopyError::destination_mkdir_failed(destination_path, error))?;
     state.exists = true;
     state.is_dir = true;
     Ok(true)

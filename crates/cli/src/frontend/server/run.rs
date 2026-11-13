@@ -1021,6 +1021,28 @@ where
     // upstream: main.c:1077 do_recv() - a server receiver forks into
     // receiver and generator once the file list is in.
     let fork_point = std::sync::Arc::new(core::server::ForkPoint::default());
+    let who = if role == ServerRole::Generator {
+        Role::Sender
+    } else {
+        Role::Generator
+    };
+    // upstream: rsyserr() prints a failure's cause where it happens, before
+    // _exit_cleanup() sends MSG_ERROR_EXIT; the transfer body renders it at
+    // that point so a client that kills its child on the frame still shows it.
+    let reported = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let report_flag = std::sync::Arc::clone(&reported);
+    let fatal_report = move |error: &std::io::Error, code: i32| {
+        if core::exit_code::cause_line_exit_code(error).is_none() {
+            return Vec::new();
+        }
+        report_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        core::exit_code::fatal_report_lines(
+            error,
+            core::exit_code::ExitCode::from_raw(code),
+            who,
+            program_brand,
+        )
+    };
     #[cfg(unix)]
     let outcome = {
         // The protocol stream is descriptor 1 itself, not the caller's handle.
@@ -1031,10 +1053,11 @@ where
             stdio.stdout,
             None,
             Some(std::sync::Arc::clone(&fork_point)),
+            Some(&fatal_report),
         )
     };
     #[cfg(not(unix))]
-    let outcome = run_server_stdio(config, &mut stdin, stdout, None);
+    let outcome = run_server_stdio(config, &mut stdin, stdout, None, Some(&fatal_report));
     match outcome {
         // upstream: cleanup.c:210-218 - a clean finish still exits with the
         // code the accumulated io_error bits select (23/24/25).
@@ -1074,12 +1097,8 @@ where
                 }
                 return core::exit_code::ExitCode::StreamIo.as_i32();
             }
-            let who = if role == ServerRole::Generator {
-                Role::Sender
-            } else {
-                Role::Generator
-            };
-            report_server_failure(stderr, program_brand, who, &e, signalled)
+            let cause_reported = reported.load(std::sync::atomic::Ordering::Relaxed);
+            report_server_failure(stderr, program_brand, who, &e, signalled, cause_reported)
         }
     }
 }
@@ -1098,6 +1117,7 @@ fn report_server_failure<Err: Write>(
     who: Role,
     error: &std::io::Error,
     signalled: bool,
+    cause_reported: bool,
 ) -> i32 {
     if signalled {
         let code = core::exit_code::ExitCode::Signal;
@@ -1105,7 +1125,9 @@ fn report_server_failure<Err: Write>(
         return code.as_i32();
     }
     if let Some(code) = core::exit_code::cause_line_exit_code(error) {
-        write_fatal_cause(stderr, brand, who, error, code);
+        if !cause_reported {
+            write_fatal_cause(stderr, brand, who, error, code);
+        }
         return code.as_i32();
     }
     let exit_code = core::exit_code::ExitCode::from_io_error(error);
@@ -1557,6 +1579,7 @@ mod failure_report_tests {
             Role::Generator,
             &pending,
             false,
+            false,
         );
         let unsignalled = String::from_utf8(unsignalled).expect("utf-8");
         assert_eq!(code, 22);
@@ -1572,6 +1595,7 @@ mod failure_report_tests {
             Role::Generator,
             &pending,
             true,
+            false,
         );
         let signalled = String::from_utf8(signalled).expect("utf-8");
         assert_eq!(code, 20);
@@ -1593,8 +1617,14 @@ mod failure_report_tests {
             "received request to transfer non-regular file: 1 [sender]",
         );
         let mut stderr = Vec::new();
-        let code =
-            report_server_failure(&mut stderr, Brand::Upstream, Role::Sender, &refusal, false);
+        let code = report_server_failure(
+            &mut stderr,
+            Brand::Upstream,
+            Role::Sender,
+            &refusal,
+            false,
+            false,
+        );
         let stderr = String::from_utf8(stderr).expect("utf-8");
         assert_eq!(code, 2);
         let lines: Vec<&str> = stderr.lines().collect();

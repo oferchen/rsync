@@ -280,10 +280,10 @@ fn handle_max_connections_exceeded(
 ///
 /// Sends an error message and logs the lock failure.
 fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> io::Result<()> {
-    send_error(ctx.reader.get_mut(), ctx.limiter, &AtError::ModuleLockError)?;
     if let Some(log) = ctx.log_sink {
         log_module_lock_error(log, ctx.host_display(), ctx.peer_ip, ctx.request, error);
     }
+    send_error(ctx.reader.get_mut(), ctx.limiter, &AtError::ModuleLockError)?;
     Ok(())
 }
 

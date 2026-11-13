@@ -98,9 +98,12 @@ fn execute_with_copy_links_materialises_symlink_to_directory() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let metadata = fs::symlink_metadata(&dest_dir).expect("dest metadata");
+    // upstream: main.c:808 - the followed directory and its child make
+    // file_total 2, so the destination is created and the operand keeps its
+    // name under it (rsync 3.5.1 builds `dest-dir/link-dir/inner.txt`).
+    let metadata = fs::symlink_metadata(dest_dir.join("link-dir")).expect("dest metadata");
     assert!(metadata.file_type().is_dir());
-    let inner = dest_dir.join("inner.txt");
+    let inner = dest_dir.join("link-dir").join("inner.txt");
     assert_eq!(fs::read(&inner).expect("read inner"), b"dir data");
 }
 
@@ -125,9 +128,12 @@ fn execute_with_copy_dirlinks_follows_directory_symlink() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let metadata = fs::symlink_metadata(&dest_dir).expect("dest metadata");
+    // upstream: main.c:808 - the followed directory and its child make
+    // file_total 2, so the destination is created and the operand keeps its
+    // name under it (rsync 3.5.1 builds `dest-dir/dir-link/inner.txt`).
+    let metadata = fs::symlink_metadata(dest_dir.join("dir-link")).expect("dest metadata");
     assert!(metadata.file_type().is_dir());
-    let inner = dest_dir.join("inner.txt");
+    let inner = dest_dir.join("dir-link").join("inner.txt");
     assert_eq!(fs::read(&inner).expect("read inner"), b"dir data");
 }
 
