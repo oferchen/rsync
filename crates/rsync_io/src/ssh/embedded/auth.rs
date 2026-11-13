@@ -1,8 +1,9 @@
 //! SSH authentication methods for the embedded transport.
 //!
-//! Tries authentication in OpenSSH order: agent, identity files, password.
-//! The orchestrator function `authenticate()` drives the sequence and returns
-//! `SshError::AuthenticationFailed` when all methods are exhausted.
+//! Tries authentication in OpenSSH order: `none`, agent, identity files,
+//! password. The orchestrator function `authenticate()` drives the sequence
+//! and returns `SshError::AuthenticationFailed` when all methods are
+//! exhausted.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -28,9 +29,30 @@ fn effective_username(config: &SshConfig) -> Result<String, SshError> {
     let var = "USERNAME";
     #[cfg(not(any(unix, windows)))]
     let var = "USER";
-    std::env::var(var).map_err(|_| SshError::AuthenticationFailed {
-        tried: "no username available".to_owned(),
+    std::env::var(var).map_err(|_| SshError::InvalidUrl {
+        reason: format!("no user name: give one in the URL or set {var}"),
     })
+}
+
+/// Records the method list a rejected request's reply advertises and reports
+/// whether the request succeeded.
+///
+/// upstream: openssh/sshconnect2.c:541-543 prints the list from the last
+/// `SSH2_MSG_USERAUTH_FAILURE` when no method is left.
+fn note_reply(result: &russh::client::AuthResult, methods: &mut String) -> bool {
+    match result {
+        russh::client::AuthResult::Success => true,
+        russh::client::AuthResult::Failure {
+            remaining_methods, ..
+        } => {
+            *methods = remaining_methods
+                .iter()
+                .map(<&str>::from)
+                .collect::<Vec<_>>()
+                .join(",");
+            false
+        }
+    }
 }
 
 /// Which SSH agent a resolved `IdentityAgent` value selects.
@@ -140,6 +162,7 @@ async fn try_agent_auth(
     session: &mut russh::client::Handle<SshClientHandler>,
     username: &str,
     config: &SshConfig,
+    methods: &mut String,
 ) -> Result<bool, SshError> {
     use russh::keys::agent::client::AgentClient;
 
@@ -195,7 +218,7 @@ async fn try_agent_auth(
             .authenticate_publickey_with(username, pubkey, None, &mut agent)
             .await
         {
-            Ok(result) if result.success() => return Ok(true),
+            Ok(result) if note_reply(&result, methods) => return Ok(true),
             Ok(_) => continue,
             Err(e) => {
                 logging::debug_log!(Io, 1, "SSH agent auth attempt failed: {}", e);
@@ -212,6 +235,7 @@ async fn try_agent_auth(
     _session: &mut russh::client::Handle<SshClientHandler>,
     _username: &str,
     _config: &SshConfig,
+    _methods: &mut str,
 ) -> Result<bool, SshError> {
     logging::debug_log!(Io, 1, "SSH agent auth is not supported on this platform");
     Ok(false)
@@ -227,6 +251,7 @@ async fn try_identity_file_auth(
     username: &str,
     identity_files: &[std::path::PathBuf],
     prompts_allowed: bool,
+    methods: &mut String,
 ) -> Result<bool, SshError> {
     for path in identity_files {
         let key = match load_identity_key_with(path, prompts_allowed) {
@@ -238,7 +263,7 @@ async fn try_identity_file_auth(
             .authenticate_publickey(username, key_with_hash)
             .await
         {
-            Ok(result) if result.success() => return Ok(true),
+            Ok(result) if note_reply(&result, methods) => return Ok(true),
             Ok(_) => continue,
             Err(e) => {
                 logging::debug_log!(
@@ -378,13 +403,14 @@ async fn try_password_auth(
     session: &mut russh::client::Handle<SshClientHandler>,
     username: &str,
     config: &SshConfig,
+    methods: &mut String,
 ) -> Result<bool, SshError> {
     if let Some(ref pw) = config.password {
         eprintln!(
             "Warning: password provided via URL - this is insecure and may be visible in process listings."
         );
         return match session.authenticate_password(username, pw).await {
-            Ok(result) => Ok(result.success()),
+            Ok(result) => Ok(note_reply(&result, methods)),
             Err(e) => Err(SshError::Connect(e)),
         };
     }
@@ -402,7 +428,7 @@ async fn try_password_auth(
                 }
             };
         match session.authenticate_password(username, &password).await {
-            Ok(result) if result.success() => return Ok(true),
+            Ok(result) if note_reply(&result, methods) => return Ok(true),
             Ok(_) => continue,
             Err(e) => return Err(SshError::Connect(e)),
         }
@@ -482,42 +508,51 @@ pub async fn authenticate(
     // A single terminal probe, gated by `BatchMode`, governs both the
     // passphrase prompt inside identity-file auth and the password prompt.
     let prompts_allowed = !config.batch_mode && has_controlling_terminal();
-    let mut tried = Vec::new();
+
+    // upstream opens with the `none` method, whose rejection names the
+    // methods the server accepts (openssh/sshconnect2.c:510, :1019-1031).
+    let mut methods = String::new();
+    let none = session
+        .authenticate_none(username.as_str())
+        .await
+        .map_err(SshError::Connect)?;
+    if note_reply(&none, &mut methods) {
+        return Ok(());
+    }
 
     for method in plan_auth_methods(config) {
         match method {
             AuthMethod::Publickey => {
-                if config.use_agent {
-                    if try_agent_auth(session, &username, config).await? {
-                        return Ok(());
-                    }
-                    tried.push("agent");
+                if config.use_agent
+                    && try_agent_auth(session, &username, config, &mut methods).await?
+                {
+                    return Ok(());
                 }
-                if !config.identity_files.is_empty() {
-                    if try_identity_file_auth(
+                if !config.identity_files.is_empty()
+                    && try_identity_file_auth(
                         session,
                         &username,
                         &config.identity_files,
                         prompts_allowed,
+                        &mut methods,
                     )
                     .await?
-                    {
-                        return Ok(());
-                    }
-                    tried.push("publickey");
+                {
+                    return Ok(());
                 }
             }
             AuthMethod::Password => {
-                if try_password_auth(session, &username, config).await? {
+                if try_password_auth(session, &username, config, &mut methods).await? {
                     return Ok(());
                 }
-                tried.push("password");
             }
         }
     }
 
     Err(SshError::AuthenticationFailed {
-        tried: tried.join(", "),
+        user: username,
+        host: config.host.clone(),
+        methods,
     })
 }
 
@@ -831,15 +866,19 @@ mod tests {
         assert!(config.password.is_some());
     }
 
+    /// The refusal names the user, the host and the server's last method
+    /// list, in upstream's wording (openssh/sshconnect2.c:541-543).
     #[test]
     fn authentication_failed_error_display() {
         let err = SshError::AuthenticationFailed {
-            tried: "agent, publickey, password".to_owned(),
+            user: "nobody".to_owned(),
+            host: "127.0.0.1".to_owned(),
+            methods: "publickey,password".to_owned(),
         };
-        let msg = err.to_string();
-        assert!(msg.contains("agent"));
-        assert!(msg.contains("publickey"));
-        assert!(msg.contains("password"));
+        assert_eq!(
+            err.to_string(),
+            "nobody@127.0.0.1: Permission denied (publickey,password)."
+        );
     }
 
     #[cfg(unix)]
@@ -879,14 +918,19 @@ mod tests {
     struct MockSshServer {
         policy: MockAuthPolicy,
         offered: OfferLog,
+        passwords: PasswordLog,
     }
 
     /// Every public key the client offered, in offer order.
     type OfferLog = Arc<std::sync::Mutex<Vec<russh::keys::PublicKey>>>;
 
+    /// Every password the client sent, in order.
+    type PasswordLog = Arc<std::sync::Mutex<Vec<String>>>;
+
     struct MockServerHandler {
         policy: MockAuthPolicy,
         offered: OfferLog,
+        passwords: PasswordLog,
     }
 
     impl russh::server::Handler for MockServerHandler {
@@ -940,6 +984,10 @@ mod tests {
             _user: &str,
             password: &str,
         ) -> Result<russh::server::Auth, Self::Error> {
+            self.passwords
+                .lock()
+                .expect("password log lock")
+                .push(password.to_owned());
             if let Some(ref expected) = self.policy.accepted_password
                 && password == expected
             {
@@ -956,9 +1004,14 @@ mod tests {
             MockServerHandler {
                 policy: self.policy.clone(),
                 offered: Arc::clone(&self.offered),
+                passwords: Arc::clone(&self.passwords),
             }
         }
     }
+
+    /// The methods the mock server advertises, in the order it lists them.
+    const MOCK_SERVER_METHODS: &[russh::MethodKind] =
+        &[russh::MethodKind::PublicKey, russh::MethodKind::Password];
 
     /// Generate a russh server config with a fresh host key.
     fn mock_server_config() -> Arc<russh::server::Config> {
@@ -966,6 +1019,7 @@ mod tests {
             PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         Arc::new(russh::server::Config {
             keys: vec![host_key],
+            methods: MOCK_SERVER_METHODS.into(),
             ..Default::default()
         })
     }
@@ -973,16 +1027,22 @@ mod tests {
     /// Start a mock SSH server on an ephemeral port and return the port number.
     /// The server runs in the background until the runtime is dropped.
     async fn start_mock_server(policy: MockAuthPolicy) -> (u16, russh::keys::PublicKey) {
-        let (port, host_pubkey, _offered) = start_recording_mock_server(policy).await;
+        let (port, host_pubkey, _logs) = start_recording_mock_server(policy).await;
         (port, host_pubkey)
     }
 
-    /// Variant of [`start_mock_server`] that also hands back the log of every
-    /// public key the client offers, so a test can assert on which keys were
+    /// What the mock server saw the client send.
+    struct MockLogs {
+        offered: OfferLog,
+        passwords: PasswordLog,
+    }
+
+    /// Variant of [`start_mock_server`] that also hands back the server's logs
+    /// of offered keys and sent passwords, so a test can assert on what was
     /// put on the wire rather than only on the auth outcome.
     async fn start_recording_mock_server(
         policy: MockAuthPolicy,
-    ) -> (u16, russh::keys::PublicKey, OfferLog) {
+    ) -> (u16, russh::keys::PublicKey, MockLogs) {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let port = listener.local_addr().expect("local_addr").port();
 
@@ -990,16 +1050,18 @@ mod tests {
         let host_pubkey = server_config.keys[0].public_key().clone();
 
         let offered: OfferLog = Arc::default();
+        let passwords: PasswordLog = Arc::default();
         let mut server = MockSshServer {
             policy,
             offered: Arc::clone(&offered),
+            passwords: Arc::clone(&passwords),
         };
 
         tokio::spawn(async move {
             let _ = server.run_on_socket(server_config, &listener).await;
         });
 
-        (port, host_pubkey, offered)
+        (port, host_pubkey, MockLogs { offered, passwords })
     }
 
     /// Create an `SshConfig` pointing to 127.0.0.1 at the given port with
@@ -1112,7 +1174,8 @@ mod tests {
     async fn pubkey_authentication_no_offers_no_key() {
         let dir = test_support::create_tempdir();
         let (key_path, policy) = accepted_identity(dir.path());
-        let (port, host_pubkey, offered) = start_recording_mock_server(policy).await;
+        let (port, host_pubkey, MockLogs { offered, .. }) =
+            start_recording_mock_server(policy).await;
         let mut handle = connect_to_mock(port, &host_pubkey).await;
 
         let mut config = test_ssh_config(port);
@@ -1134,7 +1197,8 @@ mod tests {
     async fn pubkey_authentication_yes_offers_the_key() {
         let dir = test_support::create_tempdir();
         let (key_path, policy) = accepted_identity(dir.path());
-        let (port, host_pubkey, offered) = start_recording_mock_server(policy).await;
+        let (port, host_pubkey, MockLogs { offered, .. }) =
+            start_recording_mock_server(policy).await;
         let mut handle = connect_to_mock(port, &host_pubkey).await;
 
         let mut config = test_ssh_config(port);
@@ -1155,7 +1219,8 @@ mod tests {
     async fn preferred_authentications_omitting_publickey_offers_no_key() {
         let dir = test_support::create_tempdir();
         let (key_path, policy) = accepted_identity(dir.path());
-        let (port, host_pubkey, offered) = start_recording_mock_server(policy).await;
+        let (port, host_pubkey, MockLogs { offered, .. }) =
+            start_recording_mock_server(policy).await;
         let mut handle = connect_to_mock(port, &host_pubkey).await;
 
         let mut config = test_ssh_config(port);
@@ -1188,30 +1253,30 @@ mod tests {
     }
 
     /// `PasswordAuthentication no` drops the only viable method, so auth fails
-    /// and `password` never appears in the tried list even though the server
-    /// would have accepted it.
+    /// and no password reaches the server even though it would have accepted
+    /// the one configured.
     #[tokio::test]
     async fn password_authentication_no_is_not_attempted() {
         let policy = MockAuthPolicy {
             accepted_keys: Vec::new(),
             accepted_password: Some("correct-password".to_owned()),
         };
-        let (port, host_pubkey) = start_mock_server(policy).await;
+        let (port, host_pubkey, logs) = start_recording_mock_server(policy).await;
         let mut handle = connect_to_mock(port, &host_pubkey).await;
 
         let mut config = test_ssh_config(port);
         config.password = Some("correct-password".to_owned());
         config.password_authentication = false;
 
-        match authenticate(&mut handle, &config).await {
-            Err(SshError::AuthenticationFailed { tried }) => {
-                assert!(
-                    !tried.contains("password"),
-                    "password must not be attempted when disabled: {tried:?}"
-                );
-            }
-            other => panic!("expected AuthenticationFailed, got {other:?}"),
-        }
+        let result = authenticate(&mut handle, &config).await;
+        assert!(
+            matches!(result, Err(SshError::AuthenticationFailed { .. })),
+            "expected AuthenticationFailed, got {result:?}"
+        );
+        assert!(
+            logs.passwords.lock().expect("password log").is_empty(),
+            "no password may reach the server when PasswordAuthentication is no"
+        );
     }
 
     #[tokio::test]
@@ -1236,8 +1301,10 @@ mod tests {
         );
     }
 
+    /// With nothing to offer, the refusal still names the server's method
+    /// list: the opening `none` request learns it, as upstream's does.
     #[tokio::test]
-    async fn authenticate_all_methods_exhausted_reports_tried() {
+    async fn authenticate_with_nothing_to_offer_reports_server_methods() {
         let policy = MockAuthPolicy {
             accepted_keys: Vec::new(),
             accepted_password: None,
@@ -1249,27 +1316,13 @@ mod tests {
         // No agent, no identity files, no password, stdin is not a TTY.
         let config = test_ssh_config(port);
 
-        let result = authenticate(&mut handle, &config).await;
-        assert!(result.is_err());
-
-        match result.unwrap_err() {
-            SshError::AuthenticationFailed { tried } => {
-                // Agent and pubkey were skipped (disabled), only password was tried.
-                assert!(
-                    tried.contains("password"),
-                    "tried should include password: {tried}",
-                );
-                assert!(
-                    !tried.contains("agent"),
-                    "agent was disabled, should not appear in tried: {tried}",
-                );
-                assert!(
-                    !tried.contains("publickey"),
-                    "no identity files, should not appear in tried: {tried}",
-                );
-            }
-            other => panic!("expected AuthenticationFailed, got: {other:?}"),
-        }
+        let err = authenticate(&mut handle, &config)
+            .await
+            .expect_err("nothing to offer must fail");
+        assert_eq!(
+            err.to_string(),
+            "testuser@127.0.0.1: Permission denied (publickey,password)."
+        );
     }
 
     #[tokio::test]
@@ -1429,19 +1482,23 @@ mod tests {
         config.identity_files = Vec::new();
         config.password = None;
 
-        let result = authenticate(&mut handle, &config).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            SshError::AuthenticationFailed { tried } => {
-                // Only password should appear (it was attempted but no-TTY/no-password).
-                assert!(tried.contains("password"), "got: {tried}");
-            }
-            other => panic!("expected AuthenticationFailed, got: {other:?}"),
-        }
+        let err = authenticate(&mut handle, &config)
+            .await
+            .expect_err("every method disabled must fail");
+        assert!(
+            matches!(
+                &err,
+                SshError::AuthenticationFailed { user, host, methods }
+                    if user == "testuser" && host == "127.0.0.1" && methods == "publickey,password"
+            ),
+            "got: {err:?}"
+        );
     }
 
+    /// Every method is rejected: the key reaches the server and the refusal
+    /// carries the list from the server's last reply.
     #[tokio::test]
-    async fn authenticate_tried_list_includes_all_attempted_methods() {
+    async fn authenticate_rejected_everywhere_reports_last_server_list() {
         let dir = test_support::create_tempdir();
         let key_path = dir.path().join("id_ed25519");
 
@@ -1457,7 +1514,7 @@ mod tests {
             accepted_password: None,
         };
 
-        let (port, host_pubkey) = start_mock_server(policy).await;
+        let (port, host_pubkey, logs) = start_recording_mock_server(policy).await;
         let mut handle = connect_to_mock(port, &host_pubkey).await;
 
         let mut config = test_ssh_config(port);
@@ -1465,22 +1522,18 @@ mod tests {
         config.identity_files = vec![key_path];
         config.password = None;
 
-        let result = authenticate(&mut handle, &config).await;
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            SshError::AuthenticationFailed { tried } => {
-                assert!(tried.contains("agent"), "should have tried agent: {tried}");
-                assert!(
-                    tried.contains("publickey"),
-                    "should have tried publickey: {tried}"
-                );
-                assert!(
-                    tried.contains("password"),
-                    "should have tried password: {tried}"
-                );
-            }
-            other => panic!("expected AuthenticationFailed, got: {other:?}"),
-        }
+        let err = authenticate(&mut handle, &config)
+            .await
+            .expect_err("a server that rejects everything must refuse");
+        assert_eq!(
+            logs.offered.lock().expect("offer log").as_slice(),
+            &[private.public_key().clone()],
+            "the identity key must have been offered"
+        );
+        assert_eq!(
+            err.to_string(),
+            "testuser@127.0.0.1: Permission denied (publickey,password)."
+        );
     }
 
     /// Appends an SSH `string`: a `uint32` length followed by the bytes.
@@ -1624,7 +1677,8 @@ mod tests {
             accepted_keys: Vec::new(),
             accepted_password: None,
         };
-        let (port, host_pubkey, offered) = start_recording_mock_server(policy).await;
+        let (port, host_pubkey, MockLogs { offered, .. }) =
+            start_recording_mock_server(policy).await;
         let handle = connect_to_mock(port, &host_pubkey).await;
 
         let mut config = test_ssh_config(port);

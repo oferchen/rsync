@@ -14,23 +14,31 @@ use is_terminal::IsTerminal;
 use russh::keys::{Algorithm, HashAlg, PublicKey, PublicKeyOrCertificate, known_hosts};
 use sha1::Sha1;
 
-use super::error::SshError;
+use super::error::{ChangedHostKey, SshError};
 use super::types::StrictHostKeyChecking;
+use crate::ssh::config_files::home_dir;
 
 /// HMAC-SHA1, the MAC OpenSSH uses for hashed `known_hosts` entries
 /// (openssh/hostfile.c `host_hash`, `HASH_MAGIC "|1|"`).
 type HmacSha1 = Hmac<Sha1>;
 
 /// How one name (hostname or IP) verified against the configured sources.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum NameVerdict {
     /// A known_hosts entry recorded this exact key for the name.
     Known,
-    /// The name is recorded with a DIFFERENT key at the given line - a
-    /// potential MITM, refused under every policy.
-    Changed(usize),
+    /// The name is recorded with a DIFFERENT key - a potential MITM,
+    /// refused under every policy.
+    Changed(Offending),
     /// No entry recorded the name.
     Unknown,
+}
+
+/// Where the `known_hosts` entry that disagrees with the server key lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Offending {
+    file: PathBuf,
+    line: usize,
 }
 
 /// The host-key verification inputs resolved from an `SshConfig`, mirroring
@@ -188,7 +196,9 @@ impl SshClientHandler {
             && key_is_revoked(path, server_public_key)
         {
             return Err(SshError::HostKeyRevoked {
-                host: self.host.clone(),
+                key_type: sshkey_type(server_public_key),
+                fingerprint: server_public_key.fingerprint(HashAlg::Sha256).to_string(),
+                file: path.display().to_string(),
             });
         }
 
@@ -203,13 +213,31 @@ impl SshClientHandler {
 
         match verdict {
             NameVerdict::Known => Ok(true),
-            NameVerdict::Changed(line) => {
-                emit_key_changed_warning(&self.host, self.port, server_public_key, line);
-                Err(SshError::HostKeyMismatch {
-                    host: self.host.clone(),
-                })
-            }
+            NameVerdict::Changed(offending) => Err(SshError::HostKeyMismatch {
+                host: self.hostfile_hostname(),
+                changed: Box::new(ChangedHostKey {
+                    key_type: sshkey_type(server_public_key),
+                    fingerprint: server_public_key.fingerprint(HashAlg::Sha256).to_string(),
+                    add_to: self
+                        .check_sources
+                        .first()
+                        .map(|source| source_path(source.as_deref()).display().to_string()),
+                    offending_file: offending.file.display().to_string(),
+                    offending_line: offending.line,
+                }),
+            }),
             NameVerdict::Unknown => self.handle_unknown_host(server_public_key),
+        }
+    }
+
+    /// The name upstream's host-key messages print: `HostKeyAlias` when set,
+    /// else the host with its port in `put_host_port()` form
+    /// (openssh/sshconnect.c:665-671).
+    fn hostfile_hostname(&self) -> String {
+        if self.lookup_name == self.host {
+            format_host_port(&self.host, self.port)
+        } else {
+            self.lookup_name.clone()
         }
     }
 
@@ -219,7 +247,7 @@ impl SshClientHandler {
         for source in &self.check_sources {
             match self.check_one(name, key, source.as_deref()) {
                 NameVerdict::Known => return NameVerdict::Known,
-                NameVerdict::Changed(line) => changed = changed.or(Some(line)),
+                NameVerdict::Changed(offending) => changed = changed.or(Some(offending)),
                 NameVerdict::Unknown => {}
             }
         }
@@ -235,7 +263,10 @@ impl SshClientHandler {
         match result {
             Ok(true) => NameVerdict::Known,
             Ok(false) => NameVerdict::Unknown,
-            Err(russh::keys::Error::KeyChanged { line }) => NameVerdict::Changed(line),
+            Err(russh::keys::Error::KeyChanged { line }) => NameVerdict::Changed(Offending {
+                file: source_path(file),
+                line,
+            }),
             Err(e) => {
                 // File-not-found or parse errors - treat as unknown host.
                 logging::debug_log!(
@@ -255,7 +286,8 @@ impl SshClientHandler {
     fn handle_unknown_host(&self, server_public_key: &PublicKey) -> Result<bool, SshError> {
         match self.strict_host_key_checking {
             StrictHostKeyChecking::Yes => Err(SshError::UnknownHost {
-                host: self.host.clone(),
+                host: self.hostfile_hostname(),
+                key_type: sshkey_type(server_public_key),
             }),
             // `no` and `accept-new` share the unknown-host arm: both learn
             // the key without prompting. Upstream reaches this arm the same
@@ -278,15 +310,13 @@ impl SshClientHandler {
     }
 
     /// Prompt on stderr/stdin for host key acceptance (requires a TTY).
+    ///
+    /// A refusal, or no terminal to ask on, fails verification with only the
+    /// final line, as upstream's `confirm()` failure does
+    /// (openssh/sshconnect.c:1180-1197, openssh/sshconnect2.c:102-103).
     fn prompt_user(&self, server_public_key: &PublicKey) -> Result<bool, SshError> {
         if !std::io::stdin().is_terminal() {
-            eprintln!(
-                "Host key verification failed: no terminal available to prompt for {}.",
-                self.host,
-            );
-            return Err(SshError::UnknownHost {
-                host: self.host.clone(),
-            });
+            return Err(SshError::HostKeyVerificationFailed);
         }
 
         let fingerprint = server_public_key.fingerprint(HashAlg::Sha256);
@@ -316,7 +346,7 @@ impl SshClientHandler {
             self.learn_host_key(server_public_key)?;
             Ok(true)
         } else {
-            Ok(false)
+            Err(SshError::HostKeyVerificationFailed)
         }
     }
 
@@ -359,10 +389,38 @@ impl SshClientHandler {
 fn merge_verdicts(host: NameVerdict, ip: NameVerdict) -> NameVerdict {
     match (host, ip) {
         (NameVerdict::Known, _) | (_, NameVerdict::Known) => NameVerdict::Known,
-        (NameVerdict::Changed(line), _) | (_, NameVerdict::Changed(line)) => {
-            NameVerdict::Changed(line)
+        (NameVerdict::Changed(offending), _) | (_, NameVerdict::Changed(offending)) => {
+            NameVerdict::Changed(offending)
         }
         _ => NameVerdict::Unknown,
+    }
+}
+
+/// The file a check source names; `None` is russh's default
+/// `~/.ssh/known_hosts`.
+fn source_path(file: Option<&Path>) -> PathBuf {
+    match file {
+        Some(path) => path.to_path_buf(),
+        None => home_dir()
+            .unwrap_or_default()
+            .join(".ssh")
+            .join("known_hosts"),
+    }
+}
+
+/// The short key-type name upstream's messages print.
+///
+/// upstream: openssh/sshkey.c:207-214 `sshkey_type()` returns the
+/// implementation's `shortname` (e.g. openssh/ssh-ed25519.c:293).
+fn sshkey_type(key: &PublicKey) -> &'static str {
+    match key.algorithm() {
+        Algorithm::Ed25519 => "ED25519",
+        Algorithm::SkEd25519 => "ED25519-SK",
+        Algorithm::Rsa { .. } => "RSA",
+        Algorithm::Ecdsa { .. } => "ECDSA",
+        Algorithm::SkEcdsaSha2NistP256 => "ECDSA-SK",
+        Algorithm::Dsa => "DSA",
+        _ => "unknown",
     }
 }
 
@@ -483,29 +541,6 @@ fn format_host_port(host: &str, port: u16) -> String {
     } else {
         format!("[{host}]:{port}")
     }
-}
-
-/// Print the MITM warning to stderr, matching OpenSSH's format.
-fn emit_key_changed_warning(host: &str, port: u16, key: &PublicKey, line: usize) {
-    eprintln!(
-        "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\
-         @    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n\
-         @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\
-         IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!\n\
-         Someone could be eavesdropping on you right now (man-in-the-middle attack)!\n\
-         It is also possible that a host key has just been changed.\n\
-         The fingerprint for the {} key sent by the remote host is\n\
-         {}.\n\
-         Please contact your system administrator.\n\
-         Add correct host key in known_hosts to get rid of this message.\n\
-         Offending key in known_hosts:{}\n\
-         Host key for {} has changed and you have requested strict checking.\n\
-         Host key verification failed.",
-        key.algorithm(),
-        key.fingerprint(HashAlg::Sha256),
-        line,
-        format_host_port(host, port),
-    );
 }
 
 #[cfg(test)]
@@ -664,7 +699,10 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err, SshError::UnknownHost { ref host } if host == "unknown.example"),
+            matches!(
+                err,
+                SshError::UnknownHost { ref host, key_type: "ED25519" } if host == "unknown.example"
+            ),
             "expected UnknownHost, got: {err:?}",
         );
     }
@@ -736,7 +774,7 @@ mod tests {
         assert!(
             matches!(
                 asking.verify_host_key(&pubkey),
-                Err(SshError::UnknownHost { .. })
+                Err(SshError::HostKeyVerificationFailed)
             ),
             "ask must not silently accept an unknown host unattended",
         );
@@ -766,7 +804,7 @@ mod tests {
         );
         assert!(matches!(
             handler.verify_host_key(&different_key),
-            Err(SshError::HostKeyMismatch { ref host }) if host == "changed.example"
+            Err(SshError::HostKeyMismatch { ref host, .. }) if host == "changed.example"
         ));
     }
 
@@ -779,23 +817,44 @@ mod tests {
         let dir = test_support::create_tempdir();
         let kh_path = dir.path().join("known_hosts");
 
-        // Learn the original key.
-        known_hosts::learn_known_hosts_path("mismatch.example", 22, &original_key, &kh_path)
-            .expect("learn");
+        // Record the original key on line 1.
+        std::fs::write(
+            &kh_path,
+            format!(
+                "mismatch.example {}\n",
+                original_key.to_openssh().expect("openssh")
+            ),
+        )
+        .expect("write known_hosts");
 
         // Verify with a different key - should fail even with No mode.
         let handler = SshClientHandler::new(
             "mismatch.example".into(),
             22,
             StrictHostKeyChecking::No,
-            Some(kh_path),
+            Some(kh_path.clone()),
         );
 
-        let result = handler.verify_host_key(&different_key);
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), SshError::HostKeyMismatch { ref host } if host == "mismatch.example"),
-        );
+        // The refusal carries what upstream's warning names: the key sent,
+        // the file to fix, and the offending entry's file and line
+        // (openssh/sshconnect.c:1316-1323).
+        let kh = kh_path.display().to_string();
+        match handler.verify_host_key(&different_key) {
+            Err(SshError::HostKeyMismatch { host, changed }) => {
+                assert_eq!(host, "mismatch.example");
+                assert_eq!(
+                    *changed,
+                    ChangedHostKey {
+                        key_type: "ED25519",
+                        fingerprint: different_key.fingerprint(HashAlg::Sha256).to_string(),
+                        add_to: Some(kh.clone()),
+                        offending_file: kh,
+                        offending_line: 1,
+                    }
+                );
+            }
+            other => panic!("expected HostKeyMismatch, got {other:?}"),
+        }
     }
 
     /// Non-standard port known hosts entries are distinct from port 22.
@@ -1032,7 +1091,7 @@ mod tests {
         std::fs::write(&revoked, pubkey.to_openssh().expect("openssh")).expect("write revoked");
 
         let handler = SshClientHandler::with_options(HostKeyOptions {
-            revoked_host_keys: Some(revoked),
+            revoked_host_keys: Some(revoked.clone()),
             ..opts(
                 "revoke.example",
                 StrictHostKeyChecking::No,
@@ -1043,7 +1102,8 @@ mod tests {
         assert!(
             matches!(
                 handler.verify_host_key(&pubkey),
-                Err(SshError::HostKeyRevoked { ref host }) if host == "revoke.example"
+                Err(SshError::HostKeyRevoked { key_type: "ED25519", ref file, .. })
+                    if *file == revoked.display().to_string()
             ),
             "a revoked key must be refused even under No",
         );

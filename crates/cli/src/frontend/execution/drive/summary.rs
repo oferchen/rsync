@@ -433,6 +433,11 @@ fn emit_error_report<Err>(
     if let Some(earlier) = error.preceding() {
         emit_error_report(earlier, true, stderr);
     }
+    // upstream: a remote shell's own stderr reaches the terminal untouched,
+    // ahead of the client's report (cleanup.c:146-153).
+    if let Some(text) = error.shell_stderr() {
+        let _ = stderr.writer_mut().write_all(text.as_bytes());
+    }
     // upstream: an unprefixed rprintf(FERROR, ...) cause that precedes the
     // log_exit() trailer, e.g. xattrs.c:1253-1258 get_stat_xattr().
     if let Some(line) = error.cause_line() {

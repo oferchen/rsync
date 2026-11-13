@@ -14,6 +14,9 @@ mod auth;
 mod config;
 #[cfg(feature = "embedded-ssh")]
 mod connect;
+/// Oracle cells: each connect failure's stderr against real `ssh`'s.
+#[cfg(all(test, unix, feature = "embedded-ssh"))]
+mod connect_failure_oracle;
 #[cfg(feature = "embedded-ssh")]
 mod error;
 #[cfg(feature = "embedded-ssh")]
