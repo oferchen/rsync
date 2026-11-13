@@ -29,6 +29,7 @@ fn begin(file_path: &Path, target_size: u64, is_inplace: bool, append_offset: u6
         xattr_basis: None,
         dest_mode_basis: None,
         file_entry: None,
+        log_name: None,
     }
 }
 

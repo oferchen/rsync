@@ -170,6 +170,15 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// upstream: log.c:357-366; the local write escapes like log.c:425
     /// `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0, ..)`.
+    /// Queues any pending outbox diagnostic lines into the multiplex message
+    /// queue without flushing buffered data.
+    pub(crate) fn drain_outbox(&mut self) -> io::Result<()> {
+        match self {
+            Self::Plain(_) | Self::Taken => Ok(()),
+            Self::Multiplex(mux) => mux.drain_outbox(),
+        }
+    }
+
     pub(crate) fn send_diagnostic(&mut self, code: MessageCode, line: &[u8]) -> io::Result<()> {
         if !self.is_multiplexed() {
             return Ok(());

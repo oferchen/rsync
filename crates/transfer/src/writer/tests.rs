@@ -1067,3 +1067,71 @@ fn frames_route_downgrades_codes_for_a_pre_30_peer() {
         ]
     );
 }
+
+/// Queues one line of each diagnostic code through the session's peer sink,
+/// as a server's producers do, then flushes a writer routed by `route` for a
+/// peer speaking `protocol`. Returns the frames that hit the wire.
+fn queued_frames(
+    route: super::MessageRoute,
+    protocol: protocol::ProtocolVersion,
+) -> Vec<(u8, Vec<u8>)> {
+    let _log_context = logging::enter(logging::LogContext::new());
+    let _peer = super::peer_sink::PeerDiagnostics::install(None);
+    let mut buf = Vec::new();
+    {
+        let mut writer = ServerWriter::new_plain(&mut buf)
+            .activate_multiplex()
+            .unwrap();
+        writer.set_message_routing(route, protocol);
+        logging::emit_line(logging::LogCode::ErrorXfer, b"xfer\n");
+        logging::emit_line(logging::LogCode::Error, b"error\n");
+        logging::emit_line(logging::LogCode::Warning, b"warning\n");
+        logging::emit_line(logging::LogCode::Info, b"info\n");
+        writer.flush().unwrap();
+    }
+    message_frames(&buf)
+}
+/// upstream: log.c:357 - a line queued by the live sink follows the same
+/// msgs2stderr rule as a direct one: by default errors and warnings stay on
+/// the server's stderr and only FINFO is framed.
+#[test]
+fn queued_lines_follow_the_errors_to_stderr_route() {
+    let frames = queued_frames(
+        super::MessageRoute::ErrorsToStderr,
+        protocol::ProtocolVersion::V31,
+    );
+    assert_eq!(frames, vec![(2, b"info\n".to_vec())]);
+}
+/// upstream: log.c:357 - `msgs2stderr != 1` is false at 1, so every queued line stays local.
+#[test]
+fn queued_lines_follow_the_all_to_stderr_route() {
+    let frames = queued_frames(
+        super::MessageRoute::AllToStderr,
+        protocol::ProtocolVersion::V31,
+    );
+    assert!(frames.is_empty(), "{frames:?}");
+}
+/// upstream: log.c:357-366 - framed queued lines keep their own codes at
+/// protocol 30 and later, and are remapped once, by the writer, for a pre-30
+/// peer.
+#[test]
+fn queued_lines_are_framed_and_remapped_by_the_writer() {
+    assert_eq!(
+        queued_frames(super::MessageRoute::Frames, protocol::ProtocolVersion::V31),
+        vec![
+            (1, b"xfer\n".to_vec()),
+            (3, b"error\n".to_vec()),
+            (4, b"warning\n".to_vec()),
+            (2, b"info\n".to_vec()),
+        ]
+    );
+    assert_eq!(
+        queued_frames(super::MessageRoute::Frames, protocol::ProtocolVersion::V29),
+        vec![
+            (1, b"xfer\n".to_vec()),
+            (1, b"error\n".to_vec()),
+            (2, b"warning\n".to_vec()),
+            (2, b"info\n".to_vec()),
+        ]
+    );
+}
