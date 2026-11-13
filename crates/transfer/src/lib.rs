@@ -680,6 +680,10 @@ pub fn run_server_stdio<'p>(
 ///
 /// As [`run_server_stdio`], plus the error switching the descriptors to
 /// non-blocking mode.
+///
+/// `fatal_report` renders a fatal failure's lines; it is called only when the
+/// server frames its error lines for the client, which then replace the
+/// caller's own stderr report.
 #[cfg(unix)]
 pub fn run_server_fds<'p>(
     config: ServerConfig,
@@ -687,7 +691,7 @@ pub fn run_server_fds<'p>(
     stdout: std::fs::File,
     progress: Option<&'p mut dyn TransferProgressCallback>,
     fork_point: Option<Arc<ForkPoint>>,
-    fatal_report: Option<&'p FatalReport>,
+    fatal_report: Option<&'p FatalReport<'p>>,
 ) -> ServerResult {
     let transport = fast_io::transport::FdTransport::pair(stdin, stdout)?;
     let timeout = iobuf::IoTimeout::new(
@@ -845,16 +849,15 @@ pub struct ServerTransferHooks<'p, 'i> {
     /// fork, so the caller can name the role that reports a failure.
     /// upstream: main.c:1077 `do_recv()`.
     pub fork_point: Option<Arc<ForkPoint>>,
-    /// Renders the lines a server reports for a fatal failure with the given
-    /// `RERR_*`. They take the server's message route ahead of its
-    /// `MSG_ERROR_EXIT`: frames on a daemon socket, stderr over a remote shell.
-    /// upstream: clientserver.c:1178 `msgs2stderr = 0`, log.c:357,
-    /// log.c:937-963 log_exit()
-    pub fatal_report: Option<&'p FatalReport>,
+    /// Renders the lines a daemon sender reports for a fatal failure with the
+    /// given `RERR_*`. `Some` only on the daemon path, whose messages go to
+    /// the client as `MSG_ERROR` frames ahead of its `MSG_ERROR_EXIT`.
+    /// upstream: clientserver.c:1178 `msgs2stderr = 0`, log.c:937-963 log_exit()
+    pub fatal_report: Option<&'p FatalReport<'p>>,
 }
 
 /// Renders a fatal failure and its `RERR_*` as newline-terminated lines.
-pub type FatalReport = dyn Fn(&io::Error, i32) -> Vec<Vec<u8>> + Sync;
+pub type FatalReport<'a> = dyn Fn(&io::Error, i32) -> Vec<Vec<u8>> + Sync + 'a;
 
 /// Runs a server transfer that may adopt a daemon-advertised `MSG_IO_TIMEOUT`.
 ///
@@ -1477,12 +1480,12 @@ fn run_server_on_core(
                     received.unwrap_or(0)
                 }
                 None => {
+                    queue_fatal_report(&mut writer, &error, fatal_report);
                     announce_error_exit(
                         &mut writer,
                         &error,
                         negotiated_protocol,
                         error_exit_reaches_peer,
-                        fatal_report,
                     );
                     error_exit::local_exit_code(&error)
                 }
@@ -1563,18 +1566,13 @@ const DEATH_WAIT_SECS: u64 = 60;
 /// - `errcode.h` - `RERR_SOCKETIO`/`RERR_STREAMIO`/`RERR_SIGNAL1`/`RERR_TIMEOUT`.
 ///
 /// `reaches_peer` is [`error_exit_reaches_peer`]: a frame upstream would queue
-/// but never flush is not written at all. `report`, when supplied, renders the
-/// cause and log_exit() trailer that precede the frame as `MSG_ERROR`s, as a
-/// daemon's `rprintf(FERROR)` does once `msgs2stderr` is clear.
-///
-/// upstream: log.c:357-367 rwrite() frames FERROR for the peer,
-/// log.c:937-963 log_exit(), clientserver.c:1178
+/// but never flush is not written at all. The flush also carries the fatal
+/// report [`queue_fatal_report`] queued ahead of the frame.
 fn announce_error_exit<W: Write>(
     writer: &mut writer::ServerWriter<W>,
     error: &io::Error,
     protocol_version: u8,
     reaches_peer: bool,
-    report: Option<&FatalReport>,
 ) {
     if !reaches_peer {
         return;
@@ -1608,17 +1606,34 @@ fn announce_error_exit<W: Write>(
         return;
     }
 
-    // upstream: rsyserr() and log_exit() go through rwrite() before
-    // _exit_cleanup() sends the frame, and the client's kill_all(SIGUSR1) on
-    // receiving it (cleanup.c:202-203) would cut off any line still to come.
-    for line in report
-        .map(|report| report(error, exit_code))
-        .unwrap_or_default()
-    {
-        let _ = writer.send_diagnostic(protocol::MessageCode::Error, &line);
-    }
     if writer.send_error_exit(exit_code).is_ok() {
         let _ = writer.flush_all_pending();
+    }
+}
+
+/// Queues a fatal failure's cause and log_exit() trailer for the peer when this
+/// server frames its error lines, as `rprintf(FERROR)` does once `msgs2stderr`
+/// is clear. Queued lines leave only with [`announce_error_exit`]'s flush, so
+/// for a transport-class code, or below protocol 31, they never reach the
+/// wire - and nothing reaches this process's stderr either.
+///
+/// upstream: log.c:357-367 rwrite() -> io.c:1088 send_msg() appends to
+/// `iobuf.msg`; compat.c:653-654 and clientserver.c:1178 clear `msgs2stderr`;
+/// cleanup.c:221-226 prints nothing for an exit the peer asked for;
+/// log.c:937-963 log_exit()
+fn queue_fatal_report<W: Write>(
+    writer: &mut writer::ServerWriter<W>,
+    error: &io::Error,
+    report: Option<&FatalReport<'_>>,
+) {
+    let Some(report) = report else {
+        return;
+    };
+    if remote_exit_code(error).is_some() || !writer.frames_errors() {
+        return;
+    }
+    for line in report(error, crate::error::rerr_for_io_error(error)) {
+        let _ = writer.send_diagnostic(protocol::MessageCode::Error, &line);
     }
 }
 

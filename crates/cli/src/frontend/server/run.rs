@@ -1021,27 +1021,26 @@ where
     // upstream: main.c:1077 do_recv() - a server receiver forks into
     // receiver and generator once the file list is in.
     let fork_point = std::sync::Arc::new(core::server::ForkPoint::default());
-    let who = if role == ServerRole::Generator {
-        Role::Sender
-    } else {
-        Role::Generator
-    };
-    // upstream: rsyserr() prints a failure's cause where it happens, before
-    // _exit_cleanup() sends MSG_ERROR_EXIT; the transfer body renders it at
-    // that point so a client that kills its child on the frame still shows it.
-    let reported = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let report_flag = std::sync::Arc::clone(&reported);
-    let fatal_report = move |error: &std::io::Error, code: i32| {
-        if core::exit_code::cause_line_exit_code(error).is_none() {
-            return Vec::new();
-        }
-        report_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-        core::exit_code::fatal_report_lines(
-            error,
-            core::exit_code::ExitCode::from_raw(code),
-            who,
+    // upstream: log.c:357-367 - with `msgs2stderr` clear (protocol 28 and
+    // older, compat.c:653-654) the fatal report is queued for the client, not
+    // written here; the transfer calls this hook only in that case.
+    let report_framed = std::sync::atomic::AtomicBool::new(false);
+    let fatal_report = |error: &std::io::Error, _code: i32| {
+        report_framed.store(true, std::sync::atomic::Ordering::Relaxed);
+        let mut report = Vec::new();
+        let signalled = core::signal::shutdown_reason().is_some();
+        report_server_failure(
+            &mut report,
             program_brand,
-        )
+            server_who(role),
+            error,
+            signalled,
+            false,
+        );
+        report
+            .split_inclusive(|&byte| byte == b'\n')
+            .map(<[u8]>::to_vec)
+            .collect()
     };
     #[cfg(unix)]
     let outcome = {
@@ -1077,10 +1076,12 @@ where
                 return code;
             }
             let signalled = core::signal::shutdown_reason().is_some();
+            let report_framed = report_framed.load(std::sync::atomic::Ordering::Relaxed);
             // upstream: cleanup.c:241-256 - a forked receiver dying with one of
             // the unannounced codes flushes none of its queued messages, so its
             // own report never leaves it; the generator meets end-of-file on
-            // the error pipe and reports that instead (io.c:299-303). A signal
+            // the error pipe and reports that instead (io.c:299-303), on stderr
+            // only when its messages are not framed (log.c:357). A signal
             // exits with RERR_SIGNAL first (io.c:600-605), which is announced.
             if !signalled
                 && role == ServerRole::Receiver
@@ -1090,16 +1091,43 @@ where
                         .unwrap_or_else(|| core::exit_code::ExitCode::from_io_error(&e)),
                 )
             {
-                for line in
-                    core::exit_code::generator_eof_report_lines(generator_read, program_brand)
-                {
-                    let _ = stderr.write_all(&line);
+                if !report_framed {
+                    for line in
+                        core::exit_code::generator_eof_report_lines(generator_read, program_brand)
+                    {
+                        let _ = stderr.write_all(&line);
+                    }
                 }
                 return core::exit_code::ExitCode::StreamIo.as_i32();
             }
-            let cause_reported = reported.load(std::sync::atomic::Ordering::Relaxed);
-            report_server_failure(stderr, program_brand, who, &e, signalled, cause_reported)
+            if report_framed {
+                return report_server_failure(
+                    &mut std::io::sink(),
+                    program_brand,
+                    server_who(role),
+                    &e,
+                    signalled,
+                    false,
+                );
+            }
+            report_server_failure(
+                stderr,
+                program_brand,
+                server_who(role),
+                &e,
+                signalled,
+                false,
+            )
         }
+    }
+}
+
+/// The role a server's fatal report names: the sender, or the receiver
+/// side's generator, which is the process left to report.
+const fn server_who(role: core::server::ServerRole) -> Role {
+    match role {
+        core::server::ServerRole::Generator => Role::Sender,
+        core::server::ServerRole::Receiver => Role::Generator,
     }
 }
 

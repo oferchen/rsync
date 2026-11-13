@@ -10,8 +10,8 @@ use std::io;
 use protocol::{MPLEX_BASE, MessageCode};
 
 use crate::RemoteExitError;
-use crate::announce_error_exit;
-use crate::writer::ServerWriter;
+use crate::writer::{MessageRoute, ServerWriter};
+use crate::{announce_error_exit, queue_fatal_report};
 
 /// Runs the producer over a multiplexed writer and returns the bytes it emitted.
 fn emitted(error: &io::Error, protocol_version: u8) -> Vec<u8> {
@@ -20,7 +20,7 @@ fn emitted(error: &io::Error, protocol_version: u8) -> Vec<u8> {
         let mut writer = ServerWriter::new_plain(&mut wire)
             .activate_multiplex()
             .expect("activate multiplex");
-        announce_error_exit(&mut writer, error, protocol_version, true, None);
+        announce_error_exit(&mut writer, error, protocol_version, true);
     }
     wire
 }
@@ -41,7 +41,7 @@ fn a_sender_announces_only_over_a_daemon_socket() {
         let mut writer = ServerWriter::new_plain(&mut wire)
             .activate_multiplex()
             .expect("activate multiplex");
-        announce_error_exit(&mut writer, &error, 32, false, None);
+        announce_error_exit(&mut writer, &error, 32, false);
     }
     assert!(wire.is_empty(), "an unreachable frame is not written");
 }
@@ -63,7 +63,8 @@ fn a_report_precedes_the_exit_frame_as_error_messages() {
         let mut writer = ServerWriter::new_plain(&mut wire)
             .activate_multiplex()
             .expect("activate multiplex");
-        announce_error_exit(&mut writer, &error, 32, true, Some(&report));
+        queue_fatal_report(&mut writer, &error, Some(&report));
+        announce_error_exit(&mut writer, &error, 32, true);
     }
     let frame = |payload: &[u8]| {
         let mut out = vec![
@@ -81,57 +82,68 @@ fn a_report_precedes_the_exit_frame_as_error_messages() {
     assert_eq!(wire, expected);
 }
 
-/// A writer whose bytes a report hook can read while the producer runs.
-#[derive(Clone, Default)]
-struct SharedWire(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl io::Write for SharedWire {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().expect("wire lock").extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-/// upstream: log.c:357 - over a remote shell (`msgs2stderr = 2`) the fatal
-/// cause and trailer go to stderr, not the wire, and they are written before
-/// the `MSG_ERROR_EXIT` frame: the 3.5.1 client answers the frame with
-/// kill_all(SIGUSR1) (cleanup.c:202-203), which would cut off a later line.
-#[test]
-fn a_remote_shell_report_goes_to_stderr_before_the_exit_frame() {
-    use crate::writer::MessageRoute;
-
-    let wire = SharedWire::default();
-    let wire_len_at_report = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let report = {
-        let wire = wire.clone();
-        let seen = std::sync::Arc::clone(&wire_len_at_report);
-        move |_: &io::Error, _: i32| {
-            *seen.lock().expect("seen lock") = Some(wire.0.lock().expect("wire lock").len());
-            vec![b"cause\n".to_vec()]
-        }
+/// Runs the fatal report and the exit announcement over a writer routed as
+/// `route` at `protocol`, returning whether the report was rendered and the
+/// bytes on the wire.
+fn report_and_announce(
+    error: &io::Error,
+    route: MessageRoute,
+    protocol: u8,
+    reaches_peer: bool,
+) -> (bool, Vec<u8>) {
+    let rendered = std::sync::atomic::AtomicBool::new(false);
+    let report = |_: &io::Error, _: i32| {
+        rendered.store(true, std::sync::atomic::Ordering::Relaxed);
+        vec![b"cause\n".to_vec()]
     };
-    let error = io::Error::from(io::ErrorKind::PermissionDenied);
+    let mut wire = Vec::new();
     {
-        let mut writer = ServerWriter::new_plain(wire.clone())
+        let mut writer = ServerWriter::new_plain(&mut wire)
             .activate_multiplex()
             .expect("activate multiplex");
-        writer.set_message_routing(MessageRoute::ErrorsToStderr, protocol::ProtocolVersion::V32);
-        announce_error_exit(&mut writer, &error, 32, true, Some(&report));
+        let version = protocol::ProtocolVersion::try_from(protocol).expect("supported protocol");
+        writer.set_message_routing(route, version);
+        queue_fatal_report(&mut writer, error, Some(&report));
+        announce_error_exit(&mut writer, error, protocol, reaches_peer);
     }
-    assert_eq!(
-        *wire_len_at_report.lock().expect("seen lock"),
-        Some(0),
-        "the report is rendered before any byte of the frame"
+    (rendered.into_inner(), wire)
+}
+
+/// upstream: log.c:357 - with `msgs2stderr = 2` (protocol 29 and later over a
+/// remote shell) an FERROR line stays on the server's stderr, so the report is
+/// not rendered for the peer and the caller prints it.
+#[test]
+fn a_report_bound_for_stderr_is_left_to_the_caller() {
+    let error = io::Error::from(io::ErrorKind::PermissionDenied);
+    let (rendered, wire) = report_and_announce(&error, MessageRoute::ErrorsToStderr, 32, true);
+    assert!(!rendered, "the caller prints a stderr-bound report");
+    assert_eq!(wire, expected_frame(3), "only the exit frame is written");
+}
+
+/// upstream: compat.c:653-654 clears `msgs2stderr` below protocol 29, so the
+/// report is queued for the client (log.c:357-367 -> io.c:1088 send_msg());
+/// cleanup.c:241-243 neither announces nor flushes RERR_STREAMIO, so nothing
+/// reaches the wire and nothing is left for stderr either.
+#[test]
+fn a_framed_report_for_a_transport_failure_goes_nowhere() {
+    let error = io::Error::from(io::ErrorKind::UnexpectedEof);
+    let (rendered, wire) = report_and_announce(&error, MessageRoute::Frames, 28, false);
+    assert!(
+        rendered,
+        "the report is queued, so the caller must not print it"
     );
-    assert_eq!(
-        *wire.0.lock().expect("wire lock"),
-        expected_frame(3),
-        "the cause went to stderr, so the frame is all the wire carries"
+    assert!(
+        wire.is_empty(),
+        "a queued report is never flushed: {wire:?}"
     );
+}
+
+/// upstream: cleanup.c:221-226 - an exit the peer asked for prints nothing.
+#[test]
+fn an_exit_the_peer_asked_for_renders_no_report() {
+    let error = io::Error::other(RemoteExitError { code: 23 });
+    let (rendered, _) = report_and_announce(&error, MessageRoute::Frames, 32, true);
+    assert!(!rendered);
 }
 
 /// The frame upstream's `send_msg_int(MSG_ERROR_EXIT, code)` produces: the
