@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -17,6 +18,10 @@ use super::{LocalCopyExecution, LocalCopyRecordHandler, LocalCopyReport, LocalCo
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalCopyPlan {
     pub(super) sources: Vec<SourceSpec>,
+    /// How often each entry of `sources` was given. Upstream counts every
+    /// operand toward `file_total` (flist.c:3060) although only one copy of a
+    /// repeated name is transferred.
+    pub(super) occurrences: Vec<usize>,
     pub(super) destination: DestinationSpec,
 }
 
@@ -81,11 +86,19 @@ impl LocalCopyPlan {
             .iter()
             .map(|operand| SourceSpec::from_operand(operand, relative_paths))
             .collect::<Result<_, _>>()?;
-        let mut seen = HashSet::with_capacity(all_sources.len());
-        let sources: Vec<SourceSpec> = all_sources
-            .into_iter()
-            .filter(|s| seen.insert(s.path().to_path_buf()))
-            .collect();
+        let mut index_of = HashMap::with_capacity(all_sources.len());
+        let mut sources = Vec::with_capacity(all_sources.len());
+        let mut occurrences: Vec<usize> = Vec::with_capacity(all_sources.len());
+        for source in all_sources {
+            match index_of.entry(source.path().to_path_buf()) {
+                Entry::Occupied(slot) => occurrences[*slot.get()] += 1,
+                Entry::Vacant(slot) => {
+                    slot.insert(sources.len());
+                    sources.push(source);
+                    occurrences.push(1);
+                }
+            }
+        }
 
         if sources.is_empty() {
             return Err(LocalCopyError::invalid_argument(
@@ -110,6 +123,7 @@ impl LocalCopyPlan {
 
         Ok(Self {
             sources,
+            occurrences,
             destination,
         })
     }
@@ -118,6 +132,12 @@ impl LocalCopyPlan {
     #[must_use]
     pub(crate) fn sources(&self) -> &[SourceSpec] {
         &self.sources
+    }
+
+    /// Returns how often each entry of [`Self::sources`] was given.
+    #[must_use]
+    pub(crate) fn source_occurrences(&self) -> &[usize] {
+        &self.occurrences
     }
 
     /// Returns the planned destination path.
@@ -326,6 +346,7 @@ mod tests {
         ];
         let plan = LocalCopyPlan::from_operands(&operands).unwrap();
         assert_eq!(plan.sources().len(), 1);
+        assert_eq!(plan.source_occurrences(), [3]);
     }
 
     #[test]

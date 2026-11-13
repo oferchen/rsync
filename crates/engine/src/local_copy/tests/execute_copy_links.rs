@@ -58,20 +58,24 @@ fn copy_links_follows_directory_symlink_recursively() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let metadata = fs::symlink_metadata(&dest).expect("dest metadata");
+    // upstream: main.c:808 - the followed directory and its children make
+    // file_total > 1, so the destination is created and the operand keeps its
+    // name under it (rsync 3.5.1 -rL builds `dest/dir_link/...`).
+    let root = dest.join("dir_link");
+    let metadata = fs::symlink_metadata(&root).expect("dest metadata");
     assert!(metadata.file_type().is_dir());
     assert!(!metadata.file_type().is_symlink());
 
     assert_eq!(
-        fs::read(dest.join("file1.txt")).expect("read file1"),
+        fs::read(root.join("file1.txt")).expect("read file1"),
         b"content1"
     );
     assert_eq!(
-        fs::read(dest.join("file2.txt")).expect("read file2"),
+        fs::read(root.join("file2.txt")).expect("read file2"),
         b"content2"
     );
     assert_eq!(
-        fs::read(dest.join("subdir/file3.txt")).expect("read file3"),
+        fs::read(root.join("subdir/file3.txt")).expect("read file3"),
         b"content3"
     );
 }

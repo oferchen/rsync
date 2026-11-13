@@ -719,3 +719,38 @@ fn permission_group_write_required() {
     result.expect("should succeed with user write permission");
     assert!(dest_root.join("file.txt").exists());
 }
+
+/// upstream: main.c:817-821 get_local_name() - the destination directory is
+/// made with one do_mkdir(); EACCES under a 0555 parent ends the run with
+/// `mkdir "..." failed` and RERR_FILEIO (11) before anything is copied.
+#[test]
+fn permission_destination_mkdir_denied_exits_file_io() {
+    if is_root() {
+        return; // Skip: root bypasses permission checks
+    }
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::write(source_root.join("file.txt"), b"content").expect("write file");
+    let parent = create_readonly_dir(temp.path(), "ro");
+    let dest_root = parent.join("new");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let result = plan.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default());
+    restore_permissions(&parent, 0o755);
+
+    let error = result.expect_err("mkdir under a 0555 parent must fail");
+    match error.kind() {
+        LocalCopyErrorKind::DestinationMkdirFailed { path, source } => {
+            assert_eq!(path, &dest_root);
+            assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+        }
+        other => panic!("unexpected error kind: {other:?}"),
+    }
+    assert_eq!(error.exit_code(), 11);
+    assert!(!dest_root.exists());
+}

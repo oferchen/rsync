@@ -219,6 +219,20 @@ impl LocalCopyError {
         })
     }
 
+    /// Constructs an error for a destination directory that could not be
+    /// created, with or without `--mkpath`.
+    ///
+    /// upstream: `main.c:817-821` `get_local_name()` - `mkdir %s failed`,
+    /// then `exit_cleanup(RERR_FILEIO)`; a failed `--mkpath` `make_path()`
+    /// jumps to the same label (main.c:759-761).
+    #[must_use]
+    pub fn destination_mkdir_failed(path: impl Into<PathBuf>, source: io::Error) -> Self {
+        Self::new(LocalCopyErrorKind::DestinationMkdirFailed {
+            path: path.into(),
+            source,
+        })
+    }
+
     /// Constructs an error representing an interrupt-signal abort (exit code
     /// 20, `RERR_SIGNAL`).
     ///
@@ -322,7 +336,8 @@ impl LocalCopyError {
             }
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => MAX_DELETE_EXIT_CODE,
             LocalCopyErrorKind::FilterSyntax { .. } => MISSING_OPERANDS_EXIT_CODE,
-            LocalCopyErrorKind::FileIo { .. } => FILE_IO_EXIT_CODE,
+            LocalCopyErrorKind::FileIo { .. }
+            | LocalCopyErrorKind::DestinationMkdirFailed { .. } => FILE_IO_EXIT_CODE,
             LocalCopyErrorKind::PartialTransfer => INVALID_OPERAND_EXIT_CODE,
             LocalCopyErrorKind::Vanished => VANISHED_EXIT_CODE,
             LocalCopyErrorKind::Interrupted => SIGNAL_EXIT_CODE,
@@ -351,7 +366,8 @@ impl LocalCopyError {
             }
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => "RERR_DEL_LIMIT",
             LocalCopyErrorKind::FilterSyntax { .. } => "RERR_SYNTAX",
-            LocalCopyErrorKind::FileIo { .. } => "RERR_FILEIO",
+            LocalCopyErrorKind::FileIo { .. }
+            | LocalCopyErrorKind::DestinationMkdirFailed { .. } => "RERR_FILEIO",
             LocalCopyErrorKind::PartialTransfer => "RERR_PARTIAL",
             LocalCopyErrorKind::Vanished => "RERR_VANISHED",
             LocalCopyErrorKind::Interrupted => "RERR_SIGNAL",
@@ -526,6 +542,16 @@ pub enum LocalCopyErrorKind {
     #[error("change_dir \"{}\" failed: {}", path.display(), upstream_io_error(source))]
     ChangeDirFailed {
         /// The directory, as upstream's `full_fname()` renders it.
+        path: PathBuf,
+        /// Underlying error.
+        #[source]
+        source: io::Error,
+    },
+    /// The destination directory could not be created. Exits 11
+    /// (`RERR_FILEIO`) before anything is transferred.
+    #[error("mkdir \"{}\" failed: {}", path.display(), upstream_io_error(source))]
+    DestinationMkdirFailed {
+        /// The directory the transfer would have created.
         path: PathBuf,
         /// Underlying error.
         #[source]
