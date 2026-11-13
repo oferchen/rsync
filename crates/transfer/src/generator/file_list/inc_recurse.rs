@@ -293,20 +293,17 @@ impl GeneratorContext {
             },
         );
 
-        let pending_root_scope =
-            self.file_list
-                .get(0)
-                .is_some_and(|e| e.name() == ".")
-                .then(|| {
-                    super::super::context::join_source_path(&self.source_bases[0], Path::new("."))
-                });
         self.lazy_producer = Some(LazyFlistProducer {
             tree,
             base_by_node,
             flat_by_node,
             next_wire_dir_ndx: wire_dir_ndx,
-            pending_root_scope,
-            filter_scopes: Vec::new(),
+            filter_scopes: self
+                .lazy_root_scope
+                .take()
+                .map(|guard| (0, guard))
+                .into_iter()
+                .collect(),
         });
     }
 
@@ -335,8 +332,11 @@ impl GeneratorContext {
             let Some(lp) = self.lazy_producer.as_ref() else {
                 return Ok(None);
             };
+            // upstream: flist.c:3090-3094 - a root with no directory to
+            // expand writes NDX_FLIST_EOF straight from send_file_list() and
+            // leaves the root's filter scope pushed; only the walk popping
+            // past the root after a sub-list resets it (flist.c:2723).
             let Some((handle, dir_ndx, path)) = lp.tree.peek() else {
-                self.leave_lazy_filter_scopes(0);
                 return Ok(None);
             };
             (
@@ -405,14 +405,6 @@ impl GeneratorContext {
     /// - `flist.c:2571` `send1extra()` - `change_local_filter_dir(fbuf, dlen, send_dir_depth)`
     /// - `exclude.c:974` `change_local_filter_dir()` - pop `>= dir_depth`, push one
     fn enter_lazy_filter_scope(&mut self, depth: usize, dir_path: &Path) -> std::io::Result<()> {
-        if let Some(root) = self
-            .lazy_producer
-            .as_mut()
-            .and_then(|lp| lp.pending_root_scope.take())
-        {
-            let guard = self.enter_filter_scope(&root)?;
-            self.push_lazy_filter_scope(0, guard);
-        }
         self.leave_lazy_filter_scopes(depth);
         let guard = self.enter_filter_scope(dir_path)?;
         self.push_lazy_filter_scope(depth, guard);
@@ -429,12 +421,12 @@ impl GeneratorContext {
 
     /// Pops every pushed scope at `depth` or deeper, innermost first.
     fn leave_lazy_filter_scopes(&mut self, depth: usize) {
-        let Some(lp) = self.lazy_producer.as_mut() else {
-            return;
-        };
-        while lp.filter_scopes.last().is_some_and(|(d, _)| *d >= depth) {
-            let (_, guard) = lp.filter_scopes.pop().expect("checked non-empty");
-            self.filter_chain.leave_directory(guard);
+        while let Some(guard) = self.lazy_producer.as_mut().and_then(|lp| {
+            lp.filter_scopes
+                .pop_if(|(d, _)| *d >= depth)
+                .map(|(_, guard)| guard)
+        }) {
+            self.leave_filter_scope(guard);
         }
     }
 

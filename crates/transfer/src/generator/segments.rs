@@ -325,12 +325,6 @@ pub(crate) struct LazyFlistProducer {
     /// each segment's sorted order - reproducing the eager reorder's phase-2
     /// depth-first assignment.
     pub(crate) next_wire_dir_ndx: i32,
-    /// Transfer-root directory whose per-directory merge files are pushed at
-    /// depth 0 before the first lazy scan; `Some` only for a `src/` (DOTDIR)
-    /// source, as upstream pushes the root scope only for that name type.
-    ///
-    /// upstream: flist.c:3001-3004 send_file_list()
-    pub(crate) pending_root_scope: Option<std::path::PathBuf>,
     /// Pushed per-directory merge scopes for the current tree path, innermost
     /// last, each tagged with its tree depth.
     ///
