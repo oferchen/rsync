@@ -96,10 +96,12 @@ pub(crate) fn prefetch_entry_metadata(
     // Ordering: prefetched data is matched to entries by index for sequential processing.
     // Preserved by par_iter().enumerate().map().collect() (rayon preserves index order).
     // Violation assigns wrong symlink/device metadata to entries, corrupting copies.
+    let session = logging::Session::capture();
     entries
         .par_iter()
         .enumerate()
         .map(|(index, entry)| {
+            let _log = session.enter();
             let entry_type = entry.metadata.file_type();
             let is_symlink = entry_type.is_symlink();
             #[cfg(unix)]

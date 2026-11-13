@@ -2,32 +2,32 @@
 
 #![cfg(all(test, feature = "tracing"))]
 
-use crate::{DebugFlag, DiagnosticEvent, InfoFlag, VerbosityConfig, thread_local};
+use crate::{DebugFlag, DiagnosticEvent, InfoFlag, VerbosityConfig, context};
 
 #[test]
 fn test_tracing_with_verbosity_level_1() {
     let config = VerbosityConfig::from_verbose_level(1);
-    thread_local::init(config);
+    context::init(config);
 
-    assert!(thread_local::info_gte(InfoFlag::Copy, 1));
+    assert!(context::info_gte(InfoFlag::Copy, 1));
 
-    thread_local::emit_info(InfoFlag::Copy, 1, "test copy".to_owned());
+    context::emit_info(InfoFlag::Copy, 1, "test copy".to_owned());
 
-    let events = thread_local::drain_events();
+    let events = context::drain_events();
     assert_eq!(events.len(), 1);
 }
 
 #[test]
 fn test_tracing_with_verbosity_level_2() {
     let config = VerbosityConfig::from_verbose_level(2);
-    thread_local::init(config);
+    context::init(config);
 
-    assert!(thread_local::debug_gte(DebugFlag::Bind, 1));
-    assert!(thread_local::debug_gte(DebugFlag::Deltasum, 1));
+    assert!(context::debug_gte(DebugFlag::Bind, 1));
+    assert!(context::debug_gte(DebugFlag::Deltasum, 1));
 
-    thread_local::emit_debug(DebugFlag::Deltasum, 1, "delta test".to_owned());
+    context::emit_debug(DebugFlag::Deltasum, 1, "delta test".to_owned());
 
-    let events = thread_local::drain_events();
+    let events = context::drain_events();
     assert_eq!(events.len(), 1);
 
     match &events[0] {
@@ -48,13 +48,13 @@ fn test_tracing_with_verbosity_level_2() {
 #[test]
 fn test_tracing_respects_verbosity_filters() {
     let config = VerbosityConfig::from_verbose_level(1);
-    thread_local::init(config);
+    context::init(config);
 
-    assert!(!thread_local::debug_gte(DebugFlag::Deltasum, 1));
+    assert!(!context::debug_gte(DebugFlag::Deltasum, 1));
 
     // Filtering happens at the debug_gte check in debug_log!; emit_debug itself
     // is unconditional, so a direct call here still buffers the event.
-    thread_local::emit_debug(DebugFlag::Deltasum, 1, "should be filtered".to_owned());
+    context::emit_debug(DebugFlag::Deltasum, 1, "should be filtered".to_owned());
 }
 
 #[test]
@@ -63,11 +63,11 @@ fn test_manual_info_flag_application() {
 
     config.apply_info_flag("copy2").unwrap();
 
-    thread_local::init(config);
+    context::init(config);
 
-    assert!(thread_local::info_gte(InfoFlag::Copy, 1));
-    assert!(thread_local::info_gte(InfoFlag::Copy, 2));
-    assert!(!thread_local::info_gte(InfoFlag::Copy, 3));
+    assert!(context::info_gte(InfoFlag::Copy, 1));
+    assert!(context::info_gte(InfoFlag::Copy, 2));
+    assert!(!context::info_gte(InfoFlag::Copy, 3));
 }
 
 #[test]
@@ -77,23 +77,23 @@ fn test_manual_debug_flag_application() {
     config.apply_debug_flag("io3").unwrap();
     config.apply_debug_flag("proto").unwrap();
 
-    thread_local::init(config);
+    context::init(config);
 
-    assert!(thread_local::debug_gte(DebugFlag::Io, 3));
-    assert!(thread_local::debug_gte(DebugFlag::Proto, 1));
+    assert!(context::debug_gte(DebugFlag::Io, 3));
+    assert!(context::debug_gte(DebugFlag::Proto, 1));
 }
 
 #[test]
 fn test_event_ordering() {
     let config = VerbosityConfig::from_verbose_level(2);
-    thread_local::init(config);
-    thread_local::drain_events();
+    context::init(config);
+    context::drain_events();
 
-    thread_local::emit_info(InfoFlag::Copy, 1, "first".to_owned());
-    thread_local::emit_info(InfoFlag::Del, 1, "second".to_owned());
-    thread_local::emit_debug(DebugFlag::Deltasum, 1, "third".to_owned());
+    context::emit_info(InfoFlag::Copy, 1, "first".to_owned());
+    context::emit_info(InfoFlag::Del, 1, "second".to_owned());
+    context::emit_debug(DebugFlag::Deltasum, 1, "third".to_owned());
 
-    let events = thread_local::drain_events();
+    let events = context::drain_events();
     assert_eq!(events.len(), 3);
 
     match &events[0] {

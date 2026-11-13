@@ -663,7 +663,7 @@ impl GeneratorContext {
                         ndx_write_codec.inner_mut(),
                     )?;
                 }
-                self.flush_thread_local_diagnostics(io.output())?;
+                io.output().drain_outbox()?;
             }
 
             // upstream: generator.c:2610-2616 - during the send loop, emit a
@@ -1552,9 +1552,6 @@ impl GeneratorContext {
         // Cache flist_writer back for potential reuse (e.g., phase 2).
         self.incremental.flist_writer_cache = Some(flist_writer);
 
-        // Diagnostics the loop raised go out first: upstream wrote each the
-        // moment it was raised, before the closing sequence below.
-        self.flush_thread_local_diagnostics(io.output())?;
         // upstream: sender.c:811-812 - if (io_error != save_io_error &&
         // protocol_version >= 30) send_msg_int(MSG_IO_ERROR, io_error); - the
         // first frame of the closing sequence, so a remote receiver learns of
@@ -1571,7 +1568,6 @@ impl GeneratorContext {
         // upstream: sender.c:814-815
         // rprintf(FINFO, "send files finished\n")
         debug_log!(Send, 1, "send files finished");
-        self.flush_thread_local_diagnostics(io.output())?;
         // upstream: sender.c:818 match_report() - the once-per-run delta totals,
         // printed after the send loop has finished every file. `data` is
         // `stats.literal_data` (match.c:486), the cumulative literal-byte count.
@@ -3190,6 +3186,8 @@ mod end_of_send_order_tests {
         logging::init(cfg);
         let _ = logging::drain_events();
 
+        // The server session's live sink, as lib.rs installs it.
+        let _peer = crate::writer::peer_sink::PeerDiagnostics::install(None);
         let (dir, mut ctx) = generator_at(32);
         std::fs::remove_file(dir.path().join("only.txt")).expect("vanish the source");
         let mut ndx = MonotonicNdxWriter::new(32);
