@@ -21,7 +21,7 @@ pub fn run_server_stdio<'p>(
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
     progress: Option<&'p mut dyn TransferProgressCallback>,
-    fatal_report: Option<&'p FatalReport>,
+    fatal_report: Option<&'p FatalReport<'p>>,
 ) -> ServerResult {
     transfer::run_server_stdio(config, stdin, stdout, progress, fatal_report)
 }
@@ -29,7 +29,9 @@ pub fn run_server_stdio<'p>(
 /// Executes the native server over the process's own standard input and
 /// output descriptors, which the transfer polls together.
 ///
-/// `stdin` and `stdout` are handles on descriptors 0 and 1.
+/// `stdin` and `stdout` are handles on descriptors 0 and 1. `fatal_report`
+/// renders a fatal failure's lines when the server frames them for the client
+/// (upstream: compat.c:653-654 clears `msgs2stderr` below protocol 29).
 ///
 /// # Errors
 ///
@@ -41,7 +43,7 @@ pub fn run_server_fds<'p>(
     stdout: std::fs::File,
     progress: Option<&'p mut dyn TransferProgressCallback>,
     fork_point: Option<std::sync::Arc<crate::server::ForkPoint>>,
-    fatal_report: Option<&'p FatalReport>,
+    fatal_report: Option<&'p FatalReport<'p>>,
 ) -> ServerResult {
     transfer::run_server_fds(config, stdin, stdout, progress, fork_point, fatal_report)
 }
