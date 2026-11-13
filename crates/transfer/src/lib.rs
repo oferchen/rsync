@@ -1480,7 +1480,13 @@ fn run_server_on_core(
                     received.unwrap_or(0)
                 }
                 None => {
-                    queue_fatal_report(&mut writer, &error, fatal_report);
+                    queue_fatal_report(
+                        &mut writer,
+                        &error,
+                        negotiated_protocol,
+                        error_exit_reaches_peer,
+                        fatal_report,
+                    );
                     announce_error_exit(
                         &mut writer,
                         &error,
@@ -1568,22 +1574,13 @@ const DEATH_WAIT_SECS: u64 = 60;
 /// `reaches_peer` is [`error_exit_reaches_peer`]: a frame upstream would queue
 /// but never flush is not written at all. The flush also carries the fatal
 /// report [`queue_fatal_report`] queued ahead of the frame.
-fn announce_error_exit<W: Write>(
-    writer: &mut writer::ServerWriter<W>,
-    error: &io::Error,
-    protocol_version: u8,
-    reaches_peer: bool,
-) {
-    if !reaches_peer {
-        return;
+/// Returns the `RERR_*` code when [`announce_error_exit`] will send
+/// `MSG_ERROR_EXIT`, or `None` when nothing reaches the peer.
+fn announced_exit_code(error: &io::Error, protocol_version: u8, reaches_peer: bool) -> Option<i32> {
+    if !reaches_peer || remote_exit_code(error).is_some() || protocol_version < 31 {
+        return None;
     }
-    // upstream: cleanup.c:245 `line > 0` - never echo an exit the peer asked for.
-    if remote_exit_code(error).is_some() {
-        return;
-    }
-
     let exit_code = crate::error::rerr_for_io_error(error);
-
     // upstream: cleanup.c:242-243 - a transport-class failure is not announced over
     // that same transport.
     const RERR_SOCKETIO: i32 = 10;
@@ -1596,28 +1593,35 @@ fn announce_error_exit<W: Write>(
             RERR_SOCKETIO | RERR_STREAMIO | RERR_SIGNAL1 | RERR_TIMEOUT
         )
     {
-        return;
+        return None;
     }
+    Some(exit_code)
+}
 
-    // upstream: cleanup.c:244 `protocol_version >= 31 || am_receiver` - see the
-    // doc comment for why the `am_receiver` half is a sibling-channel condition
-    // and not a wire one.
-    if protocol_version < 31 {
-        return;
-    }
-
-    if writer.send_error_exit(exit_code).is_ok() {
+fn announce_error_exit<W: Write>(
+    writer: &mut writer::ServerWriter<W>,
+    error: &io::Error,
+    protocol_version: u8,
+    reaches_peer: bool,
+) {
+    if let Some(exit_code) = announced_exit_code(error, protocol_version, reaches_peer)
+        && writer.send_error_exit(exit_code).is_ok()
+    {
         let _ = writer.flush_all_pending();
     }
 }
 
 /// Emits a fatal failure's cause and log_exit() trailer through `rwrite()`
-/// routing before `MSG_ERROR_EXIT` is sent. When `msgs2stderr` is set,
-/// `send_diagnostic` writes straight to stderr now so a client that signals
-/// the remote shell on `MSG_ERROR_EXIT` does not cut the report off; when
-/// `msgs2stderr` is clear, lines queue in `iobuf.msg` and flush only with
+/// routing before `MSG_ERROR_EXIT` is sent when this server frames its error
+/// lines or is about to announce the exit to the peer.
+///
+/// When `msgs2stderr` is clear, lines queue in `iobuf.msg` and flush only with
 /// [`announce_error_exit`] (so transport-class codes and protocol < 31 never
-/// reach the wire or stderr).
+/// reach the wire or stderr). When `msgs2stderr` is set and `MSG_ERROR_EXIT`
+/// will be sent, `send_diagnostic` writes straight to stderr now so a client
+/// that signals the remote shell on the frame cannot truncate it; unannounced
+/// stderr exits (such as a forked receiver's `RERR_STREAMIO`) stay with the
+/// caller so the generator's EOF line stands alone.
 ///
 /// upstream: log.c:357-367 rwrite(); compat.c:653-654 and clientserver.c:1178
 /// clear `msgs2stderr`; cleanup.c:221-226 prints nothing for an exit the peer
@@ -1625,12 +1629,17 @@ fn announce_error_exit<W: Write>(
 fn queue_fatal_report<W: Write>(
     writer: &mut writer::ServerWriter<W>,
     error: &io::Error,
+    protocol_version: u8,
+    reaches_peer: bool,
     report: Option<&FatalReport<'_>>,
 ) {
     let Some(report) = report else {
         return;
     };
-    if remote_exit_code(error).is_some() || !writer.is_multiplexed() {
+    if remote_exit_code(error).is_some()
+        || (!writer.frames_errors()
+            && announced_exit_code(error, protocol_version, reaches_peer).is_none())
+    {
         return;
     }
     for line in report(error, crate::error::rerr_for_io_error(error)) {

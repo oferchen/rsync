@@ -63,7 +63,7 @@ fn a_report_precedes_the_exit_frame_as_error_messages() {
         let mut writer = ServerWriter::new_plain(&mut wire)
             .activate_multiplex()
             .expect("activate multiplex");
-        queue_fatal_report(&mut writer, &error, Some(&report));
+        queue_fatal_report(&mut writer, &error, 32, true, Some(&report));
         announce_error_exit(&mut writer, &error, 32, true);
     }
     let frame = |payload: &[u8]| {
@@ -103,7 +103,7 @@ fn report_and_announce(
             .expect("activate multiplex");
         let version = protocol::ProtocolVersion::try_from(protocol).expect("supported protocol");
         writer.set_message_routing(route, version);
-        queue_fatal_report(&mut writer, error, Some(&report));
+        queue_fatal_report(&mut writer, error, protocol, reaches_peer, Some(&report));
         announce_error_exit(&mut writer, error, protocol, reaches_peer);
     }
     (rendered.into_inner(), wire)

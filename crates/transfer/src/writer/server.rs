@@ -163,6 +163,18 @@ impl<W: Write> ServerWriter<W> {
         }
     }
 
+    /// Whether this server frames its error lines for the peer instead of
+    /// writing them to its own stderr.
+    ///
+    /// upstream: log.c:357 - `msgs2stderr` clear (compat.c:653-654,
+    /// clientserver.c:1178) and multiplexed output active (io.c:1094).
+    pub(crate) fn frames_errors(&self) -> bool {
+        self.is_multiplexed()
+            && self
+                .message_routing()
+                .is_none_or(|(route, _)| !route.writes_locally(MessageCode::Error))
+    }
+
     /// Delivers one diagnostic line the way upstream's `rwrite()` does on a
     /// server: to this process's stderr when the route keeps it local, else as
     /// a frame whose code is downgraded for a pre-30 peer. Nothing is sent in
