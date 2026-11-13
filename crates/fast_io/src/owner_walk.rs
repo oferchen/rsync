@@ -667,7 +667,24 @@ pub(crate) fn owner_walk_open_tracked(
                 tracker.step(&name);
                 tracker.refuse_if_outside(crate::confinement::Arrival::Final)?;
                 *resolved = tracker.resolved().map(Path::to_path_buf);
-                return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
+                match open_final(dirfd.as_fd(), name.as_os_str(), flags, mode) {
+                    Ok(fd) => return Ok(fd),
+                    // On macOS XNU/APFS, two processes racing `openat(O_CREAT | O_NOFOLLOW)`
+                    // on a non-existent leaf can fail the loser with `ENOENT` even though the
+                    // winner just created the file. Re-check `fstatat_nofollow`: if the leaf
+                    // now exists, retry `open_final` (which keeps `O_NOFOLLOW` so a raced
+                    // symlink is still refused); if `fstatat_nofollow` still fails, return
+                    // the original `ENOENT`.
+                    #[cfg(target_os = "macos")]
+                    Err(open_err)
+                        if open_err.raw_os_error() == Some(libc::ENOENT)
+                            && at_syscalls::fstatat_nofollow(dirfd.as_fd(), name.as_os_str())
+                                .is_ok() =>
+                    {
+                        return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
+                    }
+                    Err(open_err) => return Err(open_err),
+                }
             }
             Err(error) => return Err(error),
         };

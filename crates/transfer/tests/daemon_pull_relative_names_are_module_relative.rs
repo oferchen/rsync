@@ -481,7 +481,8 @@ fn concurrent_connections_do_not_share_the_relative_pivot() {
         let (tail, expected, status, stderr, tree) = handle.join().expect("client thread");
         assert!(
             status.success(),
-            "concurrent `-R` pull of `{MODULE}/{tail}` exited {status:?}\nstderr:\n{stderr}",
+            "concurrent `-R` pull of `{MODULE}/{tail}` exited {status:?}\nstderr:\n{stderr}\ndaemon log:\n{}",
+            fixture.daemon_log(),
         );
         assert_eq!(
             tree, expected,
