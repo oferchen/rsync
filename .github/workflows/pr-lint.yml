@@ -51,8 +51,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: pr-lint-${{ github.ref }}
-  cancel-in-progress: true
+  group: pr-lint-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
