@@ -114,7 +114,12 @@ fn assert_streamio_without_timeout(out: &CliOutput) {
 /// prefix in upstream's spelling, since oc names itself `oc-rsync`.
 fn report(out: &CliOutput, role: &str) -> (String, String) {
     let stderr = out.stderr_str();
-    let lines: Vec<&str> = stderr.lines().collect();
+    // Filter out interleaved error trailers from the peer process (e.g.
+    // `[server=...]`) so `lines[at - 1]` is always this role's cause line.
+    let lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| role == "server" || !line.contains("[server="))
+        .collect();
     let at = lines
         .iter()
         .position(|line| line.contains(&format!("[{role}=")))

@@ -1099,6 +1099,17 @@ impl GeneratorContext {
                     divert_xfer,
                 )?;
 
+                if self.logs_before_transfer() {
+                    self.emit_client_item(
+                        io.output(),
+                        &iflags,
+                        ndx,
+                        xname.as_deref(),
+                        itemize,
+                        true,
+                    )?;
+                }
+
                 let checksum_algorithm = self.get_checksum_algorithm();
                 let flength = sum_head.flength().min(file_size);
                 let append_verify = self.config.flags.append_verify;
