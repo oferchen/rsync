@@ -230,10 +230,8 @@ jobs:
   test:
     name: nextest (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
-    needs:
-    - changes
-    - lint
-    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    needs: changes
+    if: ${{ !cancelled() }}
     timeout-minutes: 120
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
@@ -312,10 +310,8 @@ jobs:
   ssh-throughput:
     name: SSH throughput (SSR-1, release)
     runs-on: ubuntu-latest
-    needs:
-    - changes
-    - lint
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.lint.result == 'success' && github.event_name != 'push' }}
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     timeout-minutes: 60
     steps:
     - name: Setup CI environment
@@ -416,10 +412,8 @@ jobs:
   windows-test:
     name: Windows (${{ matrix.toolchain }})
     runs-on: ${{ needs.changes.outputs.docs_only == 'true' && 'ubuntu-latest' || 'windows-latest' }}
-    needs:
-    - changes
-    - lint
-    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    needs: changes
+    if: ${{ !cancelled() }}
     timeout-minutes: 45
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     env:
@@ -597,10 +591,8 @@ jobs:
   macos-test:
     name: macOS (${{ matrix.toolchain }})
     runs-on: ${{ needs.changes.outputs.docs_only == 'true' && 'ubuntu-latest' || 'macos-latest' }}
-    needs:
-    - changes
-    - lint
-    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    needs: changes
+    if: ${{ !cancelled() }}
     timeout-minutes: 30
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
@@ -674,10 +666,8 @@ jobs:
   linux-musl:
     name: Linux musl (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
-    needs:
-    - changes
-    - lint
-    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    needs: changes
+    if: ${{ !cancelled() }}
     timeout-minutes: 40
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
@@ -758,10 +748,8 @@ jobs:
         fi
   interop-upstream:
     name: interop
-    needs:
-    - changes
-    - lint
-    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/_interop.yml
     with:
       skip: ${{ needs.changes.outputs.docs_only == 'true' }}
