@@ -178,10 +178,10 @@ mod tests {
         // The errno a failed mkdir reports for a read-only parent.
         #[cfg(unix)]
         let (raw, cause) = (13, "Permission denied (13)");
-        // Windows reports ERROR_ACCESS_DENIED. 3.5.1 under Cygwin prints
-        // "Permission denied (13)"; task 630 changes this expectation.
+        // Windows reports ERROR_ACCESS_DENIED (5), which maps to Cygwin
+        // EACCES (13) so the message matches 3.5.1 under Cygwin.
         #[cfg(not(unix))]
-        let (raw, cause) = (5, "Access is denied. (5)");
+        let (raw, cause) = (5, "Permission denied (13)");
         let failed = DestRootMkdirError::into_io(
             "\"/srv/ro/new\"".to_owned(),
             io::Error::from_raw_os_error(raw),

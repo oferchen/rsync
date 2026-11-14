@@ -45,7 +45,7 @@ pub fn trace_bind_failure(address_family: i32, error: &io::Error) {
         Bind,
         1,
         "bind() failed: {} (address-family {})",
-        error,
+        logging::upstream_strerror(error),
         address_family
     );
 }

@@ -1100,33 +1100,17 @@ fn copy_reference_file(
             // INFO_GTE(COPY, 1). The flag is part of info_verbosity[1]
             // (options.c:257) so this fires at `-v` or `--info=COPY`. Wording
             // mirrors upstream's rsyserr format: `copy_file SRC => DST: ERRSTR (ERRNO)`.
-            let errno = error.raw_os_error().unwrap_or(0);
             info_log!(
                 Copy,
                 1,
-                "copy_file {} => {}: {} ({})",
+                "copy_file {} => {}: {}",
                 ref_path.display(),
                 dest_path.display(),
-                io_error_message(&error),
-                errno
+                logging::upstream_errno_text(&error)
             );
             false
         }
     }
-}
-
-/// Strips the trailing `" (os error N)"` suffix that `std::io::Error::Display`
-/// appends to OS errors so the rendered message matches upstream `rsyserr`'s
-/// `strerror(errno)` form. Non-OS errors are returned as-is.
-fn io_error_message(error: &std::io::Error) -> String {
-    let display = error.to_string();
-    if let Some(errno) = error.raw_os_error() {
-        let suffix = format!(" (os error {errno})");
-        if let Some(trimmed) = display.strip_suffix(&suffix) {
-            return trimmed.to_string();
-        }
-    }
-    display
 }
 
 /// Computes a file's checksum and compares it against an expected value.

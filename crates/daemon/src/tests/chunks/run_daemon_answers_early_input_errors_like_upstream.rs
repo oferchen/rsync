@@ -51,7 +51,7 @@ fn first_reply_after(lines: &[u8]) -> String {
 #[test]
 #[cfg_attr(
     windows,
-    ignore = "Windows CI: the in-process daemon resets the connection before its greeting (os error 10054); the length check is platform-independent and covered on Linux/macOS"
+    ignore = "Windows CI: the in-process daemon resets the connection before its greeting (WSAECONNRESET, 10054); the length check is platform-independent and covered on Linux/macOS"
 )]
 fn run_daemon_refuses_an_invalid_early_input_length() {
     let _lock = ENV_LOCK.lock().expect("env lock");

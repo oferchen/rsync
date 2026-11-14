@@ -45,7 +45,11 @@ impl std::error::Error for NamedXattrError {
 
 /// Error produced when metadata preservation fails.
 #[derive(Debug, Error)]
-#[error("failed to {context} '{}': {source}", path.display())]
+#[error(
+    "failed to {context} '{}': {}",
+    path.display(),
+    logging::upstream_errno_text(source)
+)]
 pub struct MetadataError {
     context: &'static str,
     path: PathBuf,

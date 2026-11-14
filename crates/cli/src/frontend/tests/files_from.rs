@@ -40,7 +40,11 @@ fn files_from_reports_read_failures() {
     assert_eq!(code, 1);
     assert!(stdout.is_empty());
     let rendered = String::from_utf8(stderr).expect("utf8");
-    assert!(rendered.contains("failed to read file list"));
+    // upstream: options.c:2667-2669.
+    assert!(rendered.contains(&format!(
+        "failed to open files-from file {}: No such file or directory",
+        missing.display()
+    )));
 }
 
 #[cfg(unix)]

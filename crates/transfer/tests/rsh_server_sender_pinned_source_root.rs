@@ -152,10 +152,7 @@ fn rsh_sender_refuses_a_parent_dir_operand_through_a_symlinked_component() {
         .expect("pull run");
     // The libc's own ELOOP text: glibc and musl word it differently.
     let eloop = rustix::io::Errno::LOOP.raw_os_error();
-    let os_text = std::io::Error::from_raw_os_error(eloop).to_string();
-    let strerror = os_text
-        .strip_suffix(&format!(" (os error {eloop})"))
-        .unwrap_or(&os_text);
+    let strerror = logging::upstream_strerror(&std::io::Error::from_raw_os_error(eloop));
     assert!(
         out.stderr_str()
             .contains(&format!("failed: {strerror} ({eloop})")),

@@ -47,7 +47,12 @@ impl DestRootMkdirError {
 
 impl fmt::Display for DestRootMkdirError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "mkdir {} failed: {}", self.fname, self.source)
+        write!(
+            f,
+            "mkdir {} failed: {}",
+            self.fname,
+            logging::upstream_errno_text(&self.source)
+        )
     }
 }
 
