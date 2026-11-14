@@ -635,6 +635,20 @@ impl ClientConfig {
     pub fn local_sender(&self) -> Option<&ClientConfig> {
         self.local_sender.as_deref()
     }
+
+    /// Applies the settings a local copy's parent and `--server` child run
+    /// with: whole-file forced on when left unset, and no secluded args,
+    /// since no remote shell sits between them.
+    ///
+    /// upstream: main.c:666-667 do_cmd() - `if (whole_file < 0 && !write_batch)
+    /// whole_file = 1;` before `local_child()`; options.c:2920 cuts the
+    /// protected args only `if (protect_args && !local_server)`.
+    pub(crate) fn apply_local_child_defaults(&mut self) {
+        if self.whole_file.is_none() && self.batch_config.is_none() {
+            self.whole_file = Some(true);
+        }
+        self.protect_args = None;
+    }
 }
 
 mod arguments;

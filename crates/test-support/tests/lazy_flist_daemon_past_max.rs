@@ -3,7 +3,7 @@
 //! (rsync.h:152): a daemon sender (pull) and a client sender (push).
 //!
 //! A deadlock at the ceiling hangs the transfer; the test runner's
-//! slow-timeout fails it. The pushing client's FLIST3 trace proves the lazy
+//! slow-timeout fails it. The pushing client's PIPELINE2 trace proves the lazy
 //! producer ran; the daemon takes no `--debug`, so its pull sender is lazy
 //! through the same environment flag the rsh matrix proves engages.
 
@@ -17,7 +17,7 @@ use test_support::oc_daemon::OcDaemon;
 
 const LAZY_ENV: [(&str, &str); 1] = [("OC_RSYNC_LAZY_FLIST", "1")];
 
-/// The lazy producer's FLIST3 trace line (`inc_recurse.rs`).
+/// The lazy producer's PIPELINE2 trace line (`inc_recurse.rs`).
 const LAZY_TRACE: &str = "inc_recurse producer: lazy";
 
 /// 120 sub-directories of 100 files: 12,000+ entries.
@@ -99,7 +99,7 @@ fn lazy_daemon_pull_and_push_past_the_max_lookahead_complete() {
 
     transfer(&[], &url("src"), &format!("{}/", pulled.display()));
     let push_trace = transfer(
-        &["--debug=flist3"],
+        &["--debug=pipeline2"],
         &format!("{}/", src.display()),
         &url("dst"),
     );

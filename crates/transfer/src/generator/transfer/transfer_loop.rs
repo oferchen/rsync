@@ -883,16 +883,13 @@ impl GeneratorContext {
             let mut pending_xattr_response =
                 self.read_generator_xattr_request_if_any(io.input(), ndx, &iflags)?;
 
-            // upstream: sender.c:578-579
-            // rprintf(FINFO, "send_files(%d, %s%s%s)\n", ndx, path,slash,fname)
-            // F_PATHNAME is unset for the in-band file list we build, so the
-            // path/slash prefix is empty and we emit just the relative name.
+            // upstream: sender.c:575-576
             debug_log!(
                 Send,
                 1,
                 "send_files({}, {})",
                 wire_ndx,
-                self.file_list[ndx].path().display()
+                self.send_trace_name(ndx)
             );
 
             if !iflags.needs_transfer() {
@@ -1102,6 +1099,17 @@ impl GeneratorContext {
                     divert_xfer,
                 )?;
 
+                if self.logs_before_transfer() {
+                    self.emit_client_item(
+                        io.output(),
+                        &iflags,
+                        ndx,
+                        xname.as_deref(),
+                        itemize,
+                        true,
+                    )?;
+                }
+
                 let checksum_algorithm = self.get_checksum_algorithm();
                 let flength = sum_head.flength().min(file_size);
                 let append_verify = self.config.flags.append_verify;
@@ -1129,8 +1137,13 @@ impl GeneratorContext {
                     if read_error.is_some() {
                         poison_file_checksum(&mut checksum_buf, result.checksum_len);
                     }
+                    // upstream: match.c:465-471 - a whole-file send still runs
+                    // match_sums() over zero blocks, so the trailer is announced
+                    // and the (all-zero) counters follow it.
+                    matching::trace_deltasum::trace_sending_file_sum();
                     cw.write_all(&checksum_buf[..result.checksum_len])?;
                     self.note_sender_file_sum(&checksum_buf[..result.checksum_len]);
+                    matching::trace_deltasum::trace_match_counters(0, 0, 0);
                     sent_bytes(cw.bytes_written(), divert_xfer)
                 };
                 bytes_sent += wire_bytes;
@@ -1217,8 +1230,17 @@ impl GeneratorContext {
                 // upstream: sender.c:762-765 then :768-769 - the source map and
                 // the match_sums() entry are announced per file, before the
                 // scan runs.
-                matching::trace_deltasum::trace_send_files_mapped(&source_path_display, file_size);
-                matching::trace_deltasum::trace_calling_match_sums(&source_path_display);
+                self.trace_send_files_mapped(ndx, file_size);
+                if self.logs_before_transfer() {
+                    self.emit_client_item(
+                        io.output(),
+                        &iflags,
+                        ndx,
+                        xname.as_deref(),
+                        itemize,
+                        true,
+                    )?;
+                }
                 let (delta_script, scan_counters) = match source_mmap {
                     // The map is dropped at the end of this arm: literals are
                     // detached first so the write phase re-reads matched blocks
@@ -1375,6 +1397,17 @@ impl GeneratorContext {
                     divert_xfer,
                 )?;
 
+                self.trace_send_files_mapped(ndx, file_size);
+                if self.logs_before_transfer() {
+                    self.emit_client_item(
+                        io.output(),
+                        &iflags,
+                        ndx,
+                        xname.as_deref(),
+                        itemize,
+                        true,
+                    )?;
+                }
                 let checksum_algorithm = self.get_checksum_algorithm();
                 // upstream: io.c:977 - stats.total_written counts actual wire
                 // bytes after each write() syscall, not the source file size.
@@ -1424,8 +1457,13 @@ impl GeneratorContext {
                     if read_error.is_some() {
                         poison_file_checksum(&mut checksum_buf, result.checksum_len);
                     }
+                    // upstream: match.c:465-471 - a whole-file send still runs
+                    // match_sums() over zero blocks, so the trailer is announced
+                    // and the (all-zero) counters follow it.
+                    matching::trace_deltasum::trace_sending_file_sum();
                     cw.write_all(&checksum_buf[..result.checksum_len])?;
                     self.note_sender_file_sum(&checksum_buf[..result.checksum_len]);
+                    matching::trace_deltasum::trace_match_counters(0, 0, 0);
                     sent_bytes(cw.bytes_written(), divert_xfer)
                 };
                 bytes_sent += wire_bytes;
@@ -1459,14 +1497,16 @@ impl GeneratorContext {
 
             // upstream: sender.c:801-802
             // rprintf(FINFO, "sender finished %s%s%s\n", path,slash,fname)
-            debug_log!(Send, 1, "sender finished {}", file_entry.path().display());
+            debug_log!(Send, 1, "sender finished {}", self.send_trace_name(ndx));
 
             // upstream: sender.c:787 - log_item(log_code, file, iflags, xname)
             self.daemon_log_byte_counts.set((
                 io.output().data_written() - initial_written,
                 self.timing.total_bytes_read - initial_read,
             ));
-            self.emit_client_item(io.output(), &iflags, ndx, xname.as_deref(), itemize, true)?;
+            if !self.logs_before_transfer() {
+                self.emit_client_item(io.output(), &iflags, ndx, xname.as_deref(), itemize, true)?;
+            }
 
             if let Some(cb) = progress.as_mut() {
                 // upstream: progress.c:80 - "to" once the final sub-list has been

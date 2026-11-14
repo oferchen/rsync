@@ -27,6 +27,7 @@ const SIZE: usize = 8 << 20;
 #[derive(Clone, Copy, Debug)]
 enum Direction {
     Pull,
+    Push,
 }
 
 /// The destination temp file once it holds some, but not all, of the data.
@@ -62,6 +63,7 @@ fn stdout_when_killed_mid_file(binary: &Path, direction: Direction) -> String {
     );
     let (from, to) = match direction {
         Direction::Pull => (format!("lh:{src}"), dst),
+        Direction::Push => (src, format!("lh:{dst}")),
     };
     let mut child = Command::new(binary)
         .args(["-rv", "--bwlimit=2000", "-e"])
@@ -111,6 +113,10 @@ fn assert_named_before_data(binary: &Path, direction: Direction) {
 fn a_pull_names_each_file_before_its_data() {
     assert_named_before_data(&oc_rsync_bin(), Direction::Pull);
 }
+#[test]
+fn a_push_names_each_file_before_its_data() {
+    assert_named_before_data(&oc_rsync_bin(), Direction::Push);
+}
 
 /// The same cell against upstream proves it can pass: 3.5.1 names first.
 #[test]
@@ -122,4 +128,5 @@ fn upstream_names_each_file_before_its_data() {
         return;
     };
     assert_named_before_data(upstream.binary(), Direction::Pull);
+    assert_named_before_data(upstream.binary(), Direction::Push);
 }
