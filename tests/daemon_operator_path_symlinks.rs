@@ -33,7 +33,6 @@ use std::net::TcpStream;
 use std::os::unix::fs::{lchown, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant};
 
 use test_support::forked_server::RunResult;
 use test_support::oc_daemon::OcDaemon;
@@ -183,8 +182,10 @@ fn config_through_untrusted_symlink_is_refused() {
 /// upstream: log.c:169 refuses the symlink through
 /// `open_no_attacker_symlinks()`; log.c:175-182 then switches to syslog, logs
 /// the failure and `Ignoring "log file" setting.`, and the daemon carries on.
-/// The upstream 3.5.1 control on this fixture serves the transfer, leaves the
-/// victim untouched, and writes both lines to syslog.
+/// The upstream 3.5.1 control on this fixture serves the transfer and leaves
+/// the victim untouched. Like upstream's own log-file-symlink_test.py, this
+/// checks the victim, not syslog; `log_file_open_failure_falls_back_to_syslog`
+/// pins the two fallback lines.
 #[test]
 fn log_file_through_untrusted_symlink_falls_back_to_syslog() {
     let Some(owner) = attacker_uid() else { return };
@@ -194,17 +195,8 @@ fn log_file_through_untrusted_symlink_falls_back_to_syslog() {
     fs::write(&victim, VICTIM).expect("victim");
     let link = root.path().join("plant.log");
     plant(&link, &victim, owner);
-    let tag = format!("oclogfallback{port}");
-    let conf = write_config(
-        root.path(),
-        port,
-        &format!("log file = {}\nsyslog tag = {tag}", link.display()),
-    );
+    let conf = write_config(root.path(), port, &format!("log file = {}", link.display()));
     fs::write(root.path().join("mod").join("served"), b"payload\n").expect("module file");
-    let since = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_secs();
 
     let Daemon::Listening(daemon) = start_daemon(port, &[format!("--config={}", conf.display())])
     else {
@@ -236,47 +228,6 @@ fn log_file_through_untrusted_symlink_falls_back_to_syslog() {
             .is_symlink(),
         "the planted symlink is left alone"
     );
-    assert_refusal_in_syslog(&tag, since, &link);
-}
-
-/// Checks that the refusal reached syslog, where the daemon now logs.
-///
-/// journald is the only reader of syslog a test can query; without it the
-/// check is reported and skipped, and the unit test
-/// `log_file_open_failure_falls_back_to_syslog` still pins the exact lines.
-fn assert_refusal_in_syslog(tag: &str, since: u64, link: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let Ok(out) = Command::new("journalctl")
-            .args(["-o", "cat", "-t", tag])
-            .arg(format!("--since=@{since}"))
-            .output()
-        else {
-            println!("SKIP syslog check: journalctl is not available");
-            return;
-        };
-        if !out.status.success() {
-            println!("SKIP syslog check: journal is not readable");
-            return;
-        }
-        let journal = String::from_utf8_lossy(&out.stdout);
-        let refused = format!("failed to open log-file {}", link.display());
-        if let (Some(failure), Some(ignoring)) = (
-            journal.find(&refused),
-            journal.find("Ignoring \"log file\" setting."),
-        ) {
-            assert!(
-                failure < ignoring,
-                "upstream logs the failure first: {journal:?}"
-            );
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "syslog never received the refusal under tag {tag}: {journal:?}"
-        );
-        std::thread::sleep(Duration::from_millis(100));
-    }
 }
 
 /// Non-vacuity for the fallback: a plain `log file` path does receive the
