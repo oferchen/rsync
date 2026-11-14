@@ -262,6 +262,8 @@ impl VerbosityConfig {
             // oc-specific kernel sandbox layers.
             "seccomp" => DebugFlag::Seccomp,
             "landlock" => DebugFlag::Landlock,
+            // oc-specific transfer-pipeline internals.
+            "pipeline" => DebugFlag::Pipeline,
             _ => return Err(format!("unknown debug flag: {name}")),
         };
 

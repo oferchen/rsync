@@ -363,7 +363,7 @@ impl GeneratorContext {
         // hot the wire/flat conversion path is relative to file counts.
         let (ndx_calls, ndx_cmps) = super::super::ndx_convert_totals();
         debug_log!(
-            Genr,
+            Pipeline,
             1,
             "generator ndx_convert totals: calls={} partition_point_depth={}",
             ndx_calls,
@@ -384,7 +384,7 @@ impl GeneratorContext {
         // of segment-encoding time it consumes.
         let (acl_calls, acl_elapsed_ns) = super::super::prepare_acl_totals();
         debug_log!(
-            Genr,
+            Pipeline,
             1,
             "generator prepare_pending_acl totals: calls={} elapsed_ns={}",
             acl_calls,
@@ -405,7 +405,7 @@ impl GeneratorContext {
         // the wire and what share of transfer time their encoding consumes.
         let (segment_calls, segment_elapsed_ns) = super::super::segment_dispatch_totals();
         debug_log!(
-            Genr,
+            Pipeline,
             1,
             "generator encode_and_send_segment totals: calls={} elapsed_ns={}",
             segment_calls,

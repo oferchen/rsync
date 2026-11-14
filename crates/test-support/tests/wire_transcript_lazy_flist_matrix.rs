@@ -14,7 +14,7 @@
 //!
 //! The comparison is only meaningful if the lazy arm really ran the lazy
 //! producer, so a per-direction engagement cell proves that through the
-//! sender's `--debug=flist3` trace. The trace goes to a separate run, because
+//! sender's `--debug=pipeline2` trace. The trace goes to a separate run, because
 //! debug output would itself move the wire.
 
 #![cfg(unix)]
@@ -38,7 +38,7 @@ const WIDE_DIRS: usize = 12;
 /// 1000-entry `MIN_FILECNT_LOOKAHEAD`.
 const WIDE_FILES: usize = 100;
 
-/// The lazy producer's trace line (`inc_recurse.rs`), printed at FLIST3.
+/// The lazy producer's trace line (`inc_recurse.rs`), printed at PIPELINE2.
 const LAZY_TRACE: &str = "inc_recurse producer: lazy";
 
 const LAZY_ENV: &str = "OC_RSYNC_LAZY_FLIST";
@@ -246,14 +246,14 @@ fn lazy_pull_is_byte_identical_to_eager_across_options() {
     }
 }
 
-/// A server wrapper that adds `--debug=flist3`, which the client never
+/// A server wrapper that adds `--debug=pipeline2`, which the client never
 /// forwards (upstream `options.c:3128` sends only `--info`).
 fn debug_server(dir: &Path) -> PathBuf {
     let script = dir.join("oc-rsync-flist-debug");
     fs::write(
         &script,
         format!(
-            "#!/bin/sh\nexec '{}' --debug=flist3 \"$@\"\n",
+            "#!/bin/sh\nexec '{}' --debug=pipeline2 \"$@\"\n",
             test_support::oc_rsync_bin().display()
         ),
     )
@@ -276,7 +276,7 @@ fn the_lazy_flag_engages_the_lazy_producer_in_both_directions() {
         // A push sender is the client, so the flag goes on the client side;
         // a pull sender is the server, reached through the wrapper.
         let (opts, server): (&[&str], &Path) = match direction {
-            Direction::Push => (&["-rlt", "--debug=flist3"], &plain_server),
+            Direction::Push => (&["-rlt", "--debug=pipeline2"], &plain_server),
             Direction::Pull => (&["-rlt"], &debug_server),
         };
         let lazy = run(src.path(), direction, opts, true, server);

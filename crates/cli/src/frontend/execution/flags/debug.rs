@@ -42,13 +42,15 @@ pub(crate) struct DebugFlagSettings {
     // oc-specific kernel sandbox layers.
     pub(crate) seccomp: Option<u8>,
     pub(crate) landlock: Option<u8>,
+    // oc-specific transfer-pipeline internals.
+    pub(crate) pipeline: Option<u8>,
     pub(crate) help_requested: bool,
 }
 
 impl DebugFlagSettings {
     /// Every flag slot as `(name, level)` in upstream `debug_words[]` order
-    /// (options.c:305-331), the six oc extensions last, set or not.
-    fn entries(&self) -> [(&'static str, Option<u8>); 30] {
+    /// (options.c:305-331), the seven oc extensions last, set or not.
+    fn entries(&self) -> [(&'static str, Option<u8>); 31] {
         [
             ("acl", self.acl),
             ("backup", self.backup),
@@ -80,6 +82,7 @@ impl DebugFlagSettings {
             ("iocp", self.iocp),
             ("seccomp", self.seccomp),
             ("landlock", self.landlock),
+            ("pipeline", self.pipeline),
         ]
     }
 
@@ -140,6 +143,7 @@ impl DebugFlagSettings {
         self.iocp = Some(level);
         self.seccomp = Some(level);
         self.landlock = Some(level);
+        self.pipeline = Some(level);
     }
 
     #[cfg(test)]
@@ -209,6 +213,7 @@ impl DebugFlagSettings {
             "iocp" => self.iocp = Some(level),
             "seccomp" => self.seccomp = Some(level),
             "landlock" => self.landlock = Some(level),
+            "pipeline" => self.pipeline = Some(level),
             // oc-only umbrella over both kernel sandbox layers. Tokens apply
             // left to right (upstream: options.c:443-490), so a later
             // `seccomp0` still overrides an earlier `sandbox2`.
@@ -339,11 +344,12 @@ Options added at each level of verbosity:\n\
 4) CMD2,DEL3,DELTASUM3,EXIT2,FLIST3,ICONV2,OWN2,PROTO,TIME2,SECCOMP2,LANDLOCK2\n\
 5) CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK\n\
 \n\
-oc-rsync extensions (accelerated-I/O fallback and sandbox visibility):\n\
+oc-rsync extensions (accelerated-I/O fallback, sandbox and pipeline visibility):\n\
 IOURING    Debug io_uring probe and dispatch-vs-fallback decisions\n\
 CLONE      Debug clonefile/reflink/copy_file_range CoW dispatch and fallback\n\
 SOCKOPT    Debug TCP/socket tuning apply-or-skip decisions\n\
 IOCP       Debug Windows IOCP dispatch and fallback\n\
 SECCOMP    Debug daemon seccomp worker-filter decisions (levels 1-2)\n\
 LANDLOCK   Debug Landlock ruleset decisions (levels 1-2)\n\
-SANDBOX    Set both SECCOMP and LANDLOCK (e.g. sandbox2)\n";
+SANDBOX    Set both SECCOMP and LANDLOCK (e.g. sandbox2)\n\
+PIPELINE   Debug oc's transfer pipeline: phase timings, call totals, segments (levels 1-2)\n";

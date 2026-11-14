@@ -609,22 +609,19 @@ fn level_3_at_least_as_verbose_as_level_2() {
     let destination = tmp.path().join("vvv.out");
     std::fs::write(&source, b"vvv content").expect("write source");
 
-    let (code, stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
+    let (code, rendered, stderr_str) = run_binary([
         OsString::from("-vvv"),
         source.into_os_string(),
         destination.into_os_string(),
     ]);
 
-    assert_eq!(code, 0);
+    assert_eq!(code, 0, "stderr: {stderr_str}");
     // -vvv routes debug_log! output to stderr, so only error-level lines
     // ("rsync error:" / "rsync: error") indicate a real failure here.
-    let stderr_str = String::from_utf8_lossy(&stderr);
     assert!(
         !stderr_str.contains("rsync error:") && !stderr_str.contains("rsync: error"),
         "stderr should contain no errors, got: {stderr_str:?}"
     );
-    let rendered = String::from_utf8(stdout).expect("utf8");
     assert!(
         rendered.contains("vvv.txt"),
         "level 3 should list the file name, got: {rendered:?}"

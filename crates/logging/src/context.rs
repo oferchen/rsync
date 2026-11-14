@@ -1002,6 +1002,7 @@ mod tests {
             DebugFlag::Clone,
             DebugFlag::Sockopt,
             DebugFlag::Iocp,
+            DebugFlag::Pipeline,
         ] {
             assert!(!debug_gte(flag, 1));
         }

@@ -1,17 +1,17 @@
 //! RAII timer for measuring transfer phase durations.
 //!
-//! Logs elapsed time via `debug_log!(Time, ...)` on drop, gated on the
-//! `--debug=TIME` category (upstream: options.c:329).
+//! Logs elapsed time via `debug_log!(Pipeline, ...)` on drop, gated on the
+//! oc-only `--debug=PIPELINE` category, which no `-v` count implies.
 //!
-//! Deviation from upstream: upstream's `TIME` category traces modified-time
-//! handling and has no phase-duration output; the phase timer is oc-only.
+//! Upstream has no phase-duration output, so the timer stays off upstream's
+//! `TIME` category (modified-time handling, options.c:329) and out of `-vvv`.
 
 use std::time::Instant;
 
 /// RAII timer that logs phase duration on drop.
 ///
 /// Create at the start of a phase; when the guard is dropped, it emits a
-/// `Time` debug log with the elapsed milliseconds.
+/// `Pipeline` debug log with the elapsed milliseconds.
 ///
 /// # Examples
 ///
@@ -31,10 +31,10 @@ pub struct PhaseTimer {
 impl PhaseTimer {
     /// Starts a new phase timer with the given name.
     ///
-    /// Emits a level-2 Time debug log indicating the phase has started.
+    /// Emits a level-2 Pipeline debug log indicating the phase has started.
     #[must_use]
     pub fn new(name: &'static str) -> Self {
-        crate::debug_log!(Time, 2, "{}: started", name);
+        crate::debug_log!(Pipeline, 2, "{}: started", name);
         Self {
             name,
             start: Instant::now(),
@@ -50,7 +50,7 @@ impl PhaseTimer {
 
 impl Drop for PhaseTimer {
     fn drop(&mut self) {
-        crate::debug_log!(Time, 1, "{}: {}ms", self.name, self.elapsed_ms());
+        crate::debug_log!(Pipeline, 1, "{}: {}ms", self.name, self.elapsed_ms());
     }
 }
 

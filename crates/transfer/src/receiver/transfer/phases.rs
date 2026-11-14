@@ -588,7 +588,7 @@ impl ReceiverContext {
         // side. Aggregated across all receiver transfers in this process.
         let (ndx_calls, ndx_cmps) = crate::receiver::ndx_convert_totals();
         debug_log!(
-            Genr,
+            Pipeline,
             1,
             "receiver ndx_convert totals: calls={} partition_point_depth={}",
             ndx_calls,

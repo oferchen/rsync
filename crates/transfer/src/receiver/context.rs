@@ -1478,7 +1478,7 @@ impl ReceiverContext {
         let end = self.ndx_segments[first + 1].0;
 
         logging::debug_log!(
-            Flist,
+            Pipeline,
             2,
             "reclaiming segment {} entries [{start}..{end})",
             first

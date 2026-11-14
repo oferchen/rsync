@@ -206,6 +206,27 @@ where
     (code, stdout, stderr)
 }
 
+/// Runs the built `oc-rsync` binary with `args`, returning its exit code,
+/// stdout and stderr. A role trace (`-vvv`, `ALL`, `FLIST2`) runs a local copy
+/// over a `--server` child of the current executable, which only the real
+/// binary can serve.
+pub(super) fn run_binary<I, S>(args: I) -> (i32, String, String)
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+{
+    let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
+    let output = std::process::Command::new(test_support::oc_rsync_bin())
+        .args(args)
+        .output()
+        .expect("run oc-rsync");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
 pub(super) struct EnvGuard {
     key: &'static str,
     previous: Option<OsString>,

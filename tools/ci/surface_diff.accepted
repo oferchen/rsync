@@ -4,15 +4,17 @@
 # Anything not listed here fails --check, so new drift is loud.
 
 # debug-words: oc-only debug categories - accelerated-I/O fallback visibility
-# (clone, iocp, iouring, sockopt) and the daemon's kernel sandbox layers
-# (landlock, seccomp). None of them is ever sent on the wire: a client never
-# forwards --debug (upstream options.c:3126-3130), so a server gets them only
-# from its own -v rows or from an explicit -M--debug, and a server ignores
-# unknown words (options.c:484). They are therefore safe against upstream peers.
+# (clone, iocp, iouring, sockopt), pipelined local/role-trace visibility
+# (pipeline), and the daemon's kernel sandbox layers (landlock, seccomp).
+# None of them is ever sent on the wire: a client never forwards --debug
+# (upstream options.c:3126-3130), so a server gets them only from its own -v
+# rows or from an explicit -M--debug, and a server ignores unknown words
+# (options.c:484). They are therefore safe against upstream peers.
 debug-words:oc_only:clone
 debug-words:oc_only:iocp
 debug-words:oc_only:iouring
 debug-words:oc_only:landlock
+debug-words:oc_only:pipeline
 debug-words:oc_only:seccomp
 debug-words:oc_only:sockopt
 

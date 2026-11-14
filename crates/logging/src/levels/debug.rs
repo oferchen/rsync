@@ -78,10 +78,14 @@ pub enum DebugFlag {
     /// Landlock ruleset decisions: enforcement status, and at level 2 the
     /// confined roots and allowlisted paths (oc-specific).
     Landlock,
+    /// Transfer-pipeline internals: phase timings, per-role call totals,
+    /// INC_RECURSE segment partition and reclaim, and the remote-shell wire
+    /// choice (oc-specific).
+    Pipeline,
 }
 impl DebugFlag {
     /// Every flag, in declaration order.
-    pub const ALL: [DebugFlag; 30] = [
+    pub const ALL: [DebugFlag; 31] = [
         DebugFlag::Acl,
         DebugFlag::Backup,
         DebugFlag::Bind,
@@ -112,6 +116,7 @@ impl DebugFlag {
         DebugFlag::Iocp,
         DebugFlag::Seccomp,
         DebugFlag::Landlock,
+        DebugFlag::Pipeline,
     ];
 }
 
@@ -185,6 +190,8 @@ pub struct DebugLevels {
     pub seccomp: u8,
     /// Landlock ruleset decision level (oc-specific).
     pub landlock: u8,
+    /// Transfer-pipeline internals level (oc-specific).
+    pub pipeline: u8,
 }
 
 impl DebugLevels {
@@ -222,6 +229,7 @@ impl DebugLevels {
             DebugFlag::Iocp => self.iocp,
             DebugFlag::Seccomp => self.seccomp,
             DebugFlag::Landlock => self.landlock,
+            DebugFlag::Pipeline => self.pipeline,
         }
     }
 
@@ -258,6 +266,7 @@ impl DebugLevels {
             DebugFlag::Iocp => self.iocp = level,
             DebugFlag::Seccomp => self.seccomp = level,
             DebugFlag::Landlock => self.landlock = level,
+            DebugFlag::Pipeline => self.pipeline = level,
         }
     }
 
@@ -293,6 +302,7 @@ impl DebugLevels {
         self.iocp = level;
         self.seccomp = level;
         self.landlock = level;
+        self.pipeline = level;
     }
 }
 
@@ -356,6 +366,7 @@ mod tests {
                 DebugFlag::Iocp,
                 DebugFlag::Seccomp,
                 DebugFlag::Landlock,
+                DebugFlag::Pipeline,
             ] {
                 assert_eq!(levels.get(flag), 0);
                 levels.set(flag, 3);
@@ -368,6 +379,7 @@ mod tests {
             assert_eq!(levels.get(DebugFlag::Iocp), 5);
             assert_eq!(levels.get(DebugFlag::Seccomp), 5);
             assert_eq!(levels.get(DebugFlag::Landlock), 5);
+            assert_eq!(levels.get(DebugFlag::Pipeline), 5);
         }
     }
 
@@ -436,6 +448,7 @@ mod tests {
                 iocp: 28,
                 seccomp: 29,
                 landlock: 30,
+                pipeline: 31,
             };
 
             assert_eq!(levels.get(DebugFlag::Acl), 1);
@@ -468,6 +481,7 @@ mod tests {
             assert_eq!(levels.get(DebugFlag::Iocp), 28);
             assert_eq!(levels.get(DebugFlag::Seccomp), 29);
             assert_eq!(levels.get(DebugFlag::Landlock), 30);
+            assert_eq!(levels.get(DebugFlag::Pipeline), 31);
         }
 
         #[test]
