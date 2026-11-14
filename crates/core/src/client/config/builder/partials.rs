@@ -129,9 +129,9 @@ impl ClientConfigBuilder {
     /// and is never forwarded to a remote peer. It only engages for large,
     /// duplicate-free basis files; token boundaries and matched/literal stats
     /// may differ for basis files with duplicate-content blocks. Delta
-    /// reconstruction on the receiver is unaffected. Default off.
+    /// reconstruction on the receiver is unaffected. Default on.
     #[must_use]
-    #[doc(alias = "--parallel-delta-scan")]
+    #[doc(alias = "--parallel-delta")]
     pub const fn parallel_delta_scan(mut self, enabled: bool) -> Self {
         self.parallel_delta_scan = enabled;
         self

@@ -491,7 +491,7 @@ impl Default for ClientConfig {
             io_uring_depth: None,
             cow_policy: fast_io::CowPolicy::Auto,
             zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
-            parallel_delta_scan: false,
+            parallel_delta_scan: true,
             itemize_changes: false,
             itemize_unchanged: false,
             force_event_collection: false,

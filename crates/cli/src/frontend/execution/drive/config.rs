@@ -170,7 +170,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) io_uring_policy: fast_io::IoUringPolicy,
     pub(crate) io_uring_depth: Option<u32>,
     pub(crate) zero_copy_policy: fast_io::ZeroCopyPolicy,
-    /// `--parallel-delta-scan` - opt-in, default-off local sender-side delta
+    /// `--parallel-delta` / `--no-parallel-delta` - default-on local sender-side delta
     /// scan across multiple cores. Local-only; never forwarded to a peer.
     pub(crate) parallel_delta_scan: bool,
     pub(crate) cow_policy: fast_io::CowPolicy,
