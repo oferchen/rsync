@@ -1,63 +1,24 @@
 name: CI
-
-# Trigger policy. A push to master runs ONLY the jobs behind required contexts
-# (fmt + clippy, and the stable cells of nextest, Windows, macOS and Linux
-# musl, plus interop) and the `changes` classifier they need. The matrix jobs
-# drop their beta/nightly cells on push; every other job carries
-# `github.event_name != 'push'` (or a narrower event test) in its `if:`. Pull
-# requests, the nightly schedule and workflow_dispatch run the rest as before.
-# The upstream testsuite gate
-# (upstream-testsuite-3.5.1.yml) has no push trigger at all.
-
-on:
+'on':
   pull_request:
   workflow_dispatch:
 concurrency:
-  # One group per pull request. A pull request run carries only the light jobs
-  # (see the trigger policy above), so pull requests run in parallel rather
-  # than queueing behind each other, and a newer push cancels the run it
-  # supersedes. The full set, including the upstream testsuite legs and the
-  # Windows bake legs called from here, runs once per merge-train batch. Every
-  # other event (master push, schedule, batch dispatch) gets its own group per
-  # commit, so nothing cancels it and every merge commit keeps a completed run
-  # for bisection.
   group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 permissions:
   contents: read
-
 env:
   CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: "0"
-  RUSTFLAGS: "-D warnings"
-  RUST_BACKTRACE: "full"
-  # Full debuginfo made the workspace test binaries outgrow the runner disk
-  # ("No space left on device" while linking, master 2026-11-04). Line
-  # tables keep file:line in panics and backtraces at a fraction of the size.
+  CARGO_INCREMENTAL: '0'
+  RUSTFLAGS: -D warnings
+  RUST_BACKTRACE: full
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
   CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
-
 jobs:
-  # Docs-only pull requests skip every build and test. Each required context
-  # still reports under its exact name: a literal-named job is skipped at job
-  # level, a matrix job keeps running with its steps gated (a matrix job
-  # skipped at job level reports its UNEXPANDED name, e.g.
-  # `nextest (${{ matrix.toolchain }})`, which never matches the ruleset), and
-  # the interop caller passes `skip` so the called job is the one skipped.
-  # Gates test `docs_only` against 'true' and use `!cancelled()`, so a failed
-  # classifier runs everything rather than skipping it.
   changes:
     name: changes (CI)
     uses: ./.github/workflows/_changes.yml
-
-  # The upstream testsuite legs (required contexts), called with the same
-  # caller job ids as upstream-testsuite-3.5.1.yml so each context is still
-  # `<caller job> / <reusable job>`. The reasoning behind each leg and its
-  # manifests is in that file. Pull requests and dispatches: master pushes skip
-  # the testsuite as before, and its nightly and `bootstrap` runs stay in that
-  # file.
   upstream-testsuite:
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
@@ -66,9 +27,8 @@ jobs:
       variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
-      expect_result_nonroot: 'tools/ci/upstream-3.5.1-expect.nonroot.txt'
-      expect_result_root: 'tools/ci/upstream-3.5.1-expect.root.txt'
-
+      expect_result_nonroot: tools/ci/upstream-3.5.1-expect.nonroot.txt
+      expect_result_root: tools/ci/upstream-3.5.1-expect.root.txt
   upstream-testsuite-tcp:
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
@@ -77,10 +37,9 @@ jobs:
       variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
-      transport: 'tcp'
-      expect_result_nonroot: 'tools/ci/upstream-3.5.1-expect.nonroot.tcp.txt'
-      expect_result_root: 'tools/ci/upstream-3.5.1-expect.root.tcp.txt'
-
+      transport: tcp
+      expect_result_nonroot: tools/ci/upstream-3.5.1-expect.nonroot.tcp.txt
+      expect_result_root: tools/ci/upstream-3.5.1-expect.root.tcp.txt
   upstream-testsuite-macos:
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
@@ -89,9 +48,8 @@ jobs:
       variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
-      expect_result_macos: 'tools/ci/upstream-3.5.1-expect.macos.nonroot.txt'
-      expect_result_macos_root: 'tools/ci/upstream-3.5.1-expect.macos.root.txt'
-
+      expect_result_macos: tools/ci/upstream-3.5.1-expect.macos.nonroot.txt
+      expect_result_macos_root: tools/ci/upstream-3.5.1-expect.macos.root.txt
   upstream-testsuite-macos-tcp:
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
@@ -100,585 +58,298 @@ jobs:
       variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
-      transport: 'tcp'
-      expect_result_macos: 'tools/ci/upstream-3.5.1-expect.macos.nonroot.tcp.txt'
-      expect_result_macos_root: 'tools/ci/upstream-3.5.1-expect.macos.root.tcp.txt'
-
-  # Non-blocking Windows bake legs. Called here, not triggered separately, so
-  # they share this run's concurrency group.
+      transport: tcp
+      expect_result_macos: tools/ci/upstream-3.5.1-expect.macos.nonroot.tcp.txt
+      expect_result_macos_root: tools/ci/upstream-3.5.1-expect.macos.root.tcp.txt
   windows-long-path:
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/windows-nightly-long-path.yml
-
   windows-case-insensitive:
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
     uses: ./.github/workflows/windows-nightly-case-insensitive.yml
-
-  # ===========================================================================
-  # Lint Job - Fast feedback on formatting and clippy issues
-  # ===========================================================================
   lint:
     name: fmt + clippy
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # Branch protection matches a required status check by NAME alone, so a
-      # name declared by two pull_request workflows lets the ruleset be
-      # satisfied by whichever run it resolves - including one that did no
-      # work. Placed before the toolchain install so it fails in seconds.
-      # python3-yaml is installed explicitly rather than assumed present on the
-      # runner image, so the gate cannot silently stop running.
-      - name: Install PyYAML (required by the check-name uniqueness gate)
-        run: sudo apt-get install -y python3-yaml
-
-      - name: Check-run name uniqueness
-        run: python3 tools/ci/check_pr_check_name_uniqueness.py
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-
-      # Regenerate Cargo.lock against Cargo.toml at job start so workspace
-      # metadata bumps that didn't refresh the lockfile don't block CI.
-      # Runs in --offline mode so no network fetch is required.
-      # continue-on-error: cold rust-cache leaves the registry index
-      # unavailable, which causes --offline regen to fail with "no matching
-      # package" even when the lockfile is already in sync; the subsequent
-      # --locked cargo commands surface any real lockfile mismatch loudly.
-      - name: Regenerate Cargo.lock
-        run: cargo update --workspace --offline
-        continue-on-error: true
-
-      - name: Format check
-        run: cargo fmt --all -- --check
-
-      # rustfmt reaches a file only through the `mod` tree, so a file pulled in
-      # with `include!("...")` - or referenced by no module at all - is
-      # invisible to the step above, which exits 0 no matter how such a file is
-      # formatted. This step hands rustfmt every tracked .rs file instead, so
-      # coverage does not depend on reproducing rustfmt's own walk.
-      - name: Format check (every tracked .rs file)
-        run: python3 tools/ci/check_rustfmt_all.py
-
-      # The step above formats files the compiler never sees; this one reports
-      # them. A `.rs` file that no `mod` item and no `include!()` reaches is
-      # never parsed, so its `#[test]` functions never run and clippy never
-      # inspects it - and nothing in the toolchain says so, because cargo is
-      # silent about files outside the module tree. Blocking: the failure mode
-      # is silent, so an informational gate would not change anything.
-      - name: Module reachability gate
-        run: python3 tools/ci/check_module_reachability.py
-      # Every key and certificate a test uses is generated at run time into its
-      # tempdir. A checked-in key is reusable by anyone and a checked-in cert
-      # turns validity-window tests into calendar tests.
-      - name: No checked-in key material
-        run: python3 tools/ci/check_no_key_material.py
-
-      - name: Clippy
-        run: cargo clippy --locked --workspace --all-targets --all-features --no-deps
-
-      # Placeholder gate: no todo!/unimplemented! macros and no
-      # TODO:/FIXME:/XXX-style annotations in tracked Rust sources. Blocking
-      # here because this job is a required context; the same scan runs
-      # locally through the xtask `preflight` and `release` task trees.
-      - name: Placeholder gate
-        run: cargo run --locked -p xtask -- no-placeholders
-
-      # BPF-5: Detects BufferPool cap-touching tests that mutate
-      # `OC_RSYNC_BUFFER_POOL_*` env vars without `platform::env::EnvGuard`.
-      # Runs in warn-only mode until BPF-3 (#2821) closes the existing
-      # gap; flip the workflow to strict via `OC_RSYNC_ENVGUARD_LINT_STRICT=1`
-      # in a follow-up. EOL plan in `docs/design/bpf-4-envguard-ci-lint-spec.md`.
-      - name: Install ripgrep (required by EnvGuard lint)
-        run: sudo apt-get install -y ripgrep
-
-      - name: EnvGuard lint (BPF-5)
-        run: bash tools/ci/check_envguard.sh
-
-      # IUR-6.c: Prevent reintroduction of Arc<Mutex<IoUring>> serialization
-      # in hot-path io_uring factory modules. The per-thread ring migration
-      # (IUR-3) eliminated this bottleneck; this lint keeps it gone.
-      - name: Shared-ring removal guard (IUR-6.c)
-        run: bash tools/ci/check_shared_ring_removal.sh
-
-      # A daemon started from a test with detach enabled forks, and the parent -
-      # the test process - exits 0 before any assertion runs, so the test passes
-      # without proving anything. This lint keeps the foreground guard in the
-      # daemon test support module intact and stops the bypasses from regrowing.
-      - name: Daemon no-detach guard
-        run: bash tools/ci/check_daemon_no_detach.sh
-
-  # ===========================================================================
-  # Fuzz Workspace Check - compile-gate the excluded fuzz workspaces
-  # ---------------------------------------------------------------------------
-  # The fuzz workspaces (fuzz/, crates/protocol/fuzz/, crates/filters/fuzz/)
-  # are excluded from the root workspace so libfuzzer-sys never enters
-  # ordinary builds. That exclusion also hides breakage from every PR gate:
-  # API drift in a main workspace crate can break a fuzz target and stay
-  # invisible until a scheduled fuzz workflow runs. This job runs a plain
-  # `cargo check` + `cargo fmt --check` per fuzz workspace on stable - no
-  # fuzzing, no nightly, no libFuzzer link - so the PR that introduces the
-  # drift fails, not the next overnight fuzz run. Runs in its own job rather
-  # than inside `lint` because it compiles workspace crates into three
-  # separate fuzz target dirs; expected wall time is ~5 minutes cold and
-  # ~2 minutes with a warm cache.
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+    - name: Install PyYAML (required by the check-name uniqueness gate)
+      run: sudo apt-get install -y python3-yaml
+    - name: Check-run name uniqueness
+      run: python3 tools/ci/check_pr_check_name_uniqueness.py
+    - name: Install Rust (stable)
+      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+      with:
+        components: rustfmt, clippy
+    - name: Rust cache
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+      with:
+        shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+    - name: Regenerate Cargo.lock
+      run: cargo update --workspace --offline
+      continue-on-error: true
+    - name: Format check
+      run: cargo fmt --all -- --check
+    - name: Format check (every tracked .rs file)
+      run: python3 tools/ci/check_rustfmt_all.py
+    - name: Module reachability gate
+      run: python3 tools/ci/check_module_reachability.py
+    - name: No checked-in key material
+      run: python3 tools/ci/check_no_key_material.py
+    - name: Clippy
+      run: cargo clippy --locked --workspace --all-targets --all-features --no-deps
+    - name: Placeholder gate
+      run: cargo run --locked -p xtask -- no-placeholders
+    - name: Install ripgrep (required by EnvGuard lint)
+      run: sudo apt-get install -y ripgrep
+    - name: EnvGuard lint (BPF-5)
+      run: bash tools/ci/check_envguard.sh
+    - name: Shared-ring removal guard (IUR-6.c)
+      run: bash tools/ci/check_shared_ring_removal.sh
+    - name: Daemon no-detach guard
+      run: bash tools/ci/check_daemon_no_detach.sh
   fuzz-workspace-check:
     name: fuzz workspaces check
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          components: rustfmt
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: fuzz-check-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          workspaces: |
-            fuzz
-            crates/protocol/fuzz
-            crates/filters/fuzz
-
-      - name: Check fuzz workspaces
-        run: bash tools/ci/check_fuzz_workspaces.sh
-
-  # ===========================================================================
-  # Unsafe SAFETY Comment Audit - blocking ratchet
-  # ---------------------------------------------------------------------------
-  # `tools/audit/unsafe_safety_comment_audit.py` enumerates every `unsafe { ... }`
-  # block under crates/ and flags each one that lacks a SAFETY justification or
-  # whose justification is a placeholder (TODO/FIXME/empty). The `report` step is
-  # the human-readable inventory (always exits 0). The `ratchet` step is the
-  # gate: it compares per-scope violation counts against the frozen baseline
-  # (`tools/audit/unsafe_safety_comment_baseline.tsv`) and exits non-zero when
-  # any scope EXCEEDS its baseline - i.e. a new unsafe block without a SAFETY
-  # comment. This enforces the "no NEW unsafe-without-SAFETY" half of the
-  # unsafe-code policy; it is a ratchet, not a cleanup, so the outstanding
-  # violations are tolerated at their baseline level and a decrease only nudges.
-  # Blocking within the job (no continue-on-error). Registering it as a required
-  # GitHub context is a separate admin-side change.
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+      with:
+        components: rustfmt
+    - name: Check fuzz workspaces
+      run: bash tools/ci/check_fuzz_workspaces.sh
   unsafe-safety-comment-audit:
     name: unsafe-safety-comment-audit
     runs-on: ubuntu-latest
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     timeout-minutes: 5
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Unsafe SAFETY comment inventory
-        run: python3 tools/audit/unsafe_safety_comment_audit.py report
-
-      - name: Unsafe SAFETY comment ratchet
-        run: python3 tools/audit/unsafe_safety_comment_audit.py ratchet
-
-  # ===========================================================================
-  # Rustdoc Intra-Doc Links
-  # ---------------------------------------------------------------------------
-  # `cargo doc` ran in exactly one place - pages.yml, on `push: branches:
-  # [master]` - so a broken intra-doc link was discoverable only after it
-  # landed and reddened master. Four PRs (#7264, #7489, #7555, #7618) repaired
-  # the same class post-merge before this job existed.
-  #
-  # The invocation mirrors pages.yml exactly, including RUSTDOCFLAGS: matching
-  # it is the whole point, since a divergent flag set would gate a different
-  # question than the one Pages asks. `crates/fast_io/src/io_uring` is
-  # cfg(all(target_os = "linux", feature = "io_uring")), so ubuntu +
-  # --all-features is the only combination that compiles those files at all.
-  #
-  # Blocking: a failure here fails the workflow, so the link is repaired on
-  # the PR instead of post-merge. The context is intended to be registered as
-  # required in the branch ruleset.
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+    - name: Unsafe SAFETY comment inventory
+      run: python3 tools/audit/unsafe_safety_comment_audit.py report
+    - name: Unsafe SAFETY comment ratchet
+      run: python3 tools/audit/unsafe_safety_comment_audit.py ratchet
   rustdoc-links:
     name: rustdoc links
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
-
-    # A public item's docs linking a private item is `private_intra_doc_links`,
-    # a lint separate from `broken_intra_doc_links`, so it is denied here too.
     env:
-      RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links"
-
+      RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build rustdoc (workspace, all features, no deps)
-        run: cargo doc --workspace --all-features --no-deps --locked
-
-      # A SECOND question, not a duplicate of the step above. A link to an item
-      # behind `#[cfg(feature = "...")]` RESOLVES under --all-features and is
-      # unresolvable in a default build, where the item is not compiled at all -
-      # so the all-features step is structurally unable to see that class. Five
-      # such links (`fast_io::adaptive_dispatch` x4, `rsync_io::channel_adapter`)
-      # were live on master while the step above was green.
-      #
-      # `crates/fast_io/src/io_uring` is cfg(all(target_os = "linux", feature =
-      # "io_uring")), so this run deliberately does NOT cover those files; that
-      # is what the all-features step is for. Neither subsumes the other.
-      - name: Build rustdoc (workspace, default features, no deps)
-        run: cargo doc --workspace --no-deps --locked
-
-      # A THIRD question. A workspace build unifies features across members,
-      # so a crate's link to an item behind one of its own optional features
-      # resolves there whenever any other member enables that feature - and is
-      # unresolvable when the crate is documented alone, as docs.rs and
-      # `cargo doc -p` do. `engine`'s crate docs linked `async`-only items this
-      # way while both steps above were green. Every member is documented on
-      # its own, so no list of "feature-gated crates" can go stale.
-      - name: Build rustdoc (each crate alone, default features, no deps)
-        run: |
-          set -euo pipefail
-          failed=()
-          for crate in $(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[].name' | sort); do
-            echo "::group::cargo doc -p ${crate}"
-            if ! cargo doc --locked -p "${crate}" --no-deps; then
-              failed+=("${crate}")
-            fi
-            echo "::endgroup::"
-          done
-          if [ "${#failed[@]}" -ne 0 ]; then
-            echo "::error::rustdoc failed for: ${failed[*]}"
-            exit 1
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+    - name: Build rustdoc (workspace, all features, no deps)
+      run: cargo doc --workspace --all-features --no-deps --locked
+    - name: Build rustdoc (workspace, default features, no deps)
+      run: cargo doc --workspace --no-deps --locked
+    - name: Build rustdoc (each crate alone, default features, no deps)
+      run: |
+        set -euo pipefail
+        failed=()
+        for crate in $(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[].name' | sort); do
+          echo "::group::cargo doc -p ${crate}"
+          if ! cargo doc --locked -p "${crate}" --no-deps; then
+            failed+=("${crate}")
           fi
-
-  # ===========================================================================
-  # Clippy without default features, per crate
-  # ---------------------------------------------------------------------------
-  # `fmt + clippy` lints the workspace with --all-features, and the feature
-  # rows in _test-features.yml run nextest, where a warning does not fail the
-  # build. Code compiled only when a default feature is OFF - cfg(not(feature
-  # = "...")) fallbacks and the tests that cover them - was therefore never
-  # linted. Each member runs alone: a workspace-wide --no-default-features run
-  # unifies features across members and re-enables the very features this job
-  # exists to turn off. RUSTFLAGS="-D warnings" comes from the workflow env.
-  # ===========================================================================
+          echo "::endgroup::"
+        done
+        if [ "${#failed[@]}" -ne 0 ]; then
+          echo "::error::rustdoc failed for: ${failed[*]}"
+          exit 1
+        fi
   clippy-no-default-features:
     name: clippy (no default features)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          components: clippy
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-no-default-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Clippy (each crate alone, no default features)
-        run: |
-          set -euo pipefail
-          failed=()
-          for crate in $(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[].name' | sort); do
-            echo "::group::cargo clippy -p ${crate} --no-default-features"
-            if ! cargo clippy --locked -p "${crate}" --no-default-features --all-targets --no-deps; then
-              failed+=("${crate}")
-            fi
-            echo "::endgroup::"
-          done
-          if [ "${#failed[@]}" -ne 0 ]; then
-            echo "::error::clippy --no-default-features failed for: ${failed[*]}"
-            exit 1
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+      with:
+        components: clippy
+    - name: Clippy (each crate alone, no default features)
+      run: |
+        set -euo pipefail
+        failed=()
+        for crate in $(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[].name' | sort); do
+          echo "::group::cargo clippy -p ${crate} --no-default-features"
+          if ! cargo clippy --locked -p "${crate}" --no-default-features --all-targets --no-deps; then
+            failed+=("${crate}")
           fi
-
-  # ===========================================================================
-  # tools/ Unit Tests
-  # ---------------------------------------------------------------------------
-  # `tools/tests/` held unittest modules that no workflow ran, so a regression
-  # in the helpers they cover was invisible - including the coverage gate and
-  # the path-site sweep whose output scopes the confinement work. The runner
-  # discovers by pattern rather than an enumerated list, because an enumerated
-  # list is how those modules became orphans in the first place, and it asserts
-  # a non-zero test count, because `unittest discover` exits 0 when it matches
-  # nothing. Blocking, not informational: an inert gate is the defect it is
-  # meant to catch.
-  # ===========================================================================
+          echo "::endgroup::"
+        done
+        if [ "${#failed[@]}" -ne 0 ]; then
+          echo "::error::clippy --no-default-features failed for: ${failed[*]}"
+          exit 1
+        fi
   tools-tests:
     name: tools unit tests
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Run tools/tests
-        run: bash tools/ci/run_tools_tests.sh
-
-      # Blocking gate over the strictest dead-code tier: a pub fn with zero
-      # production callers AND zero test references must carry an allowlist
-      # row with a reason and an unexpired expiry date. Only that tier is
-      # gated - the wider zero-caller tier is hundreds of rows, and a frozen
-      # baseline that large would hide the one new dead function that
-      # matters inside it.
-      - name: Dead-code census gate
-        run: python3 tools/ci/dead_code_census.py gate
-
-      # Blocking gate over the two-owner unsafe-code rule in its checkable
-      # form: only platform and fast_io may declare a direct FFI dependency
-      # (libc, windows-sys, windows, nix, rustix). Every current violator is
-      # carried in tools/ci/unsafe_owner_deps_allowlist.tsv with a reason and
-      # an expiry; the gate fails on a new, unallowlisted, expired, or stale
-      # direct FFI dep. Routing the allowlisted sites onto the two owners is
-      # the deferred unsafe-migration series - the rows are pruned as it lands.
-      - name: Two-owner FFI dependency gate
-        run: python3 tools/ci/unsafe_owner_deps.py gate
-
-  # ===========================================================================
-  # Surface Diff - oc vs upstream user-facing surfaces
-  # ---------------------------------------------------------------------------
-  # `tools/ci/surface_diff.sh` mechanically diffs the enumerable surfaces oc
-  # shares with upstream rsync - daemon directives, CLI long/short options,
-  # syslog facilities, --debug/--info words, exit codes, multiplex message
-  # codes, compat-flag bits, socket options, checksum and compression names -
-  # so a missing table row or an undeclared divergence fails loudly instead of
-  # slipping in unreviewed. Every deliberate oc extension is declared with a
-  # reason in tools/ci/surface_diff.accepted; anything else fails --check.
-  #
-  # Pinned to upstream 3.5.1, the reference release: the oracle version is
-  # the whole answer to "gap or absorbed?", so a moving pin would silently
-  # re-open rows a release already closed. No Rust toolchain: the script reads
-  # the two source trees with awk/grep and never compiles anything. --self-test
-  # runs first so an extractor that quietly returns nothing fails as a broken
-  # gate rather than a clean pass. Blocking: an informational surface gate is
-  # the drift it is meant to catch.
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+    - name: Run tools/tests
+      run: bash tools/ci/run_tools_tests.sh
+    - name: Dead-code census gate
+      run: python3 tools/ci/dead_code_census.py gate
+    - name: Two-owner FFI dependency gate
+      run: python3 tools/ci/unsafe_owner_deps.py gate
   surface-diff:
     name: surface diff (upstream 3.5.1)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     env:
-      UPSTREAM_VERSION: "3.5.1"
-
+      UPSTREAM_VERSION: 3.5.1
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Fetch upstream rsync source
-        uses: ./.github/actions/fetch-upstream-rsync
-        with:
-          version: ${{ env.UPSTREAM_VERSION }}
-          extract-dir: target/interop/upstream-src
-
-      - name: Surface extractor self-test
-        run: bash tools/ci/surface_diff.sh --self-test
-
-      - name: Surface diff gate (oc vs upstream 3.5.1)
-        run: bash tools/ci/surface_diff.sh --check
-
-  # ===========================================================================
-  # Test Job - Full test suite on Linux with toolchain matrix
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+    - name: Fetch upstream rsync source
+      uses: ./.github/actions/fetch-upstream-rsync
+      with:
+        version: ${{ env.UPSTREAM_VERSION }}
+        extract-dir: target/interop/upstream-src
+    - name: Surface extractor self-test
+      run: bash tools/ci/surface_diff.sh --self-test
+    - name: Surface diff gate (oc vs upstream 3.5.1)
+      run: bash tools/ci/surface_diff.sh --check
   test:
     name: nextest (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
-    needs: [changes, lint]
-    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    needs: changes
+    if: ${{ !cancelled() }}
     timeout-minutes: 120
-    # Stable gates merge; beta/nightly are informational so a churning
-    # nightly compiler does not block PR throughput. Branch protection
-    # should pin the required check to `nextest (stable)`.
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, beta, nightly]
-        # Master pushes run the required stable cell only. An exclude value of
-        # '' matches no cell, so other events keep all three.
+        toolchain:
+        - stable
+        - beta
+        - nightly
         exclude:
-          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
-          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
-
+        - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
+        - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
-      - name: Checkout
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Free disk space
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: ./.github/actions/free-disk-space
-        with:
-          remove-packages: 'true'
-
-      - name: Install Rust (${{ matrix.toolchain }})
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          toolchain: ${{ matrix.toolchain }}
-
-      - name: Rust cache
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: test
-
-      - name: Install cargo-nextest
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
-        with:
-          tool: cargo-nextest
-
-      # See lint job comment above re: continue-on-error on cold rust-cache.
-      - name: Regenerate Cargo.lock
-        if: needs.changes.outputs.docs_only != 'true'
-        run: cargo update --workspace --offline
-        continue-on-error: true
-
-      # The ssh_config differential oracle: the pinned OpenSSH, not the
-      # image's ssh (ubuntu-24.04 ships 9.6p1, which accepts lines 10.0 refuses).
-      - name: Build pinned OpenSSH (ssh_config oracle)
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: ./.github/actions/build-openssh
-
-      - name: Run tests
-        if: needs.changes.outputs.docs_only != 'true'
-        env:
-          # The ssh_config differential harness skips its cells when `ssh -G`
-          # is unreachable, and a skip is indistinguishable from a pass to the
-          # runner - the gate would silently no-op while the job stayed green.
-          # Requiring the oracle turns that skip into a failure. It asserts
-          # only that the oracle EXISTS; the cells encode today's measured
-          # behaviour, divergences included, so this cannot redden on parity.
-          # The "Set up SSH loopback" step below relies on the same client.
-          OC_RSYNC_REQUIRE_SSH_G: "1"
-        # `shell: bash` turns on pipefail, so the tee never hides a failure.
-        shell: bash
-        run: |
-          cargo nextest run --locked --profile ci --workspace --all-features 2>&1 | tee nextest-run.log
-          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
-
-      - name: Set up SSH loopback
-        if: needs.changes.outputs.docs_only != 'true' && (matrix.toolchain == 'stable')
-        run: |
-          sudo systemctl start ssh
-          mkdir -p ~/.ssh
-          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
-          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
-          chmod 600 ~/.ssh/authorized_keys
-          ssh -o StrictHostKeyChecking=no localhost true
-
-      - name: Run SSH integration tests
-        if: needs.changes.outputs.docs_only != 'true' && (matrix.toolchain == 'stable')
-        continue-on-error: true
-        run: cargo nextest run --locked --workspace --all-features --run-ignored ignored-only -E 'test(ssh) and not test(=ssh_push_throughput_regression_ssr1)'
-
-
-      - name: Upload build artifacts
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: build-linux-${{ matrix.toolchain }}
-          path: |
-            target/debug/oc-rsync
-            target/debug/xtask
-          if-no-files-found: warn
-          retention-days: 7
-
-  # ===========================================================================
-  # SSH throughput (SSR-1) - release-build timing, reported but not required
-  # ---------------------------------------------------------------------------
-  # SSR-1 times an oc-rsync SSH push against upstream's optimised binary, so it
-  # times an optimised oc-rsync too: a debug build alone sits near the 2x
-  # ceiling. A wall-clock ratio on a shared runner is noisy, so it runs in its
-  # own job beside `nextest (stable)` instead of inside that required check.
-  # It runs on every pull request and shows its real result, but it is not a
-  # required context, so a slow runner cannot block a merge.
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    - name: Free disk space
+      if: needs.changes.outputs.docs_only != 'true'
+      uses: ./.github/actions/free-disk-space
+      with:
+        remove-packages: 'true'
+    - name: Install Rust (${{ matrix.toolchain }})
+      if: needs.changes.outputs.docs_only != 'true'
+      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+      with:
+        toolchain: ${{ matrix.toolchain }}
+    - name: Rust cache
+      if: needs.changes.outputs.docs_only != 'true'
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+      with:
+        shared-key: ci-${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+        key: test
+    - name: Install cargo-nextest
+      if: needs.changes.outputs.docs_only != 'true'
+      uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2
+      with:
+        tool: cargo-nextest
+    - name: Regenerate Cargo.lock
+      if: needs.changes.outputs.docs_only != 'true'
+      run: cargo update --workspace --offline
+      continue-on-error: true
+    - name: Build pinned OpenSSH (ssh_config oracle)
+      if: needs.changes.outputs.docs_only != 'true'
+      uses: ./.github/actions/build-openssh
+    - name: Run tests
+      if: needs.changes.outputs.docs_only != 'true'
+      env:
+        OC_RSYNC_REQUIRE_SSH_G: '1'
+      shell: bash
+      run: |
+        cargo nextest run --locked --profile ci --workspace --all-features 2>&1 | tee nextest-run.log
+        bash tools/ci/nextest_flaky_summary.sh nextest-run.log
+    - name: Set up SSH loopback
+      if: needs.changes.outputs.docs_only != 'true' && (matrix.toolchain == 'stable')
+      run: |
+        sudo systemctl start ssh
+        mkdir -p ~/.ssh
+        ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+        cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+        chmod 600 ~/.ssh/authorized_keys
+        ssh -o StrictHostKeyChecking=no localhost true
+    - name: Run SSH integration tests
+      if: needs.changes.outputs.docs_only != 'true' && (matrix.toolchain == 'stable')
+      continue-on-error: true
+      run: cargo nextest run --locked --workspace --all-features --run-ignored ignored-only -E 'test(ssh) and not test(=ssh_push_throughput_regression_ssr1)'
+    - name: Upload build artifacts
+      if: needs.changes.outputs.docs_only != 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: build-linux-${{ matrix.toolchain }}
+        path: |
+          target/debug/oc-rsync
+          target/debug/xtask
+        if-no-files-found: warn
+        retention-days: 7
   ssh-throughput:
     name: SSH throughput (SSR-1, release)
     runs-on: ubuntu-latest
-    needs: [changes, lint]
-    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && needs.lint.result == 'success' && github.event_name != 'push' }}
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          toolchain: stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-${{ runner.os }}-stable-release-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: ssh-throughput
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
-        with:
-          tool: cargo-nextest
-
-      # See lint job comment above re: continue-on-error on cold rust-cache.
-      - name: Regenerate Cargo.lock
-        run: cargo update --workspace --offline
-        continue-on-error: true
-
-      - name: Set up SSH loopback
-        run: |
-          sudo systemctl start ssh
-          mkdir -p ~/.ssh
-          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
-          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
-          chmod 600 ~/.ssh/authorized_keys
-          ssh -o StrictHostKeyChecking=no localhost true
-
-      - name: Run SSH throughput regression (release build)
-        run: cargo nextest run --locked --release -p bin --run-ignored ignored-only -E 'test(=ssh_push_throughput_regression_ssr1)'
-
-  # ===========================================================================
-  # Feature Flags - Test various feature combinations (reusable workflow)
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+      with:
+        install_nextest: 'true'
+    - name: Regenerate Cargo.lock
+      run: cargo update --workspace --offline
+      continue-on-error: true
+    - name: Set up SSH loopback
+      run: |
+        sudo systemctl start ssh
+        mkdir -p ~/.ssh
+        ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+        cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+        chmod 600 ~/.ssh/authorized_keys
+        ssh -o StrictHostKeyChecking=no localhost true
+    - name: Run SSH throughput regression (release build)
+      run: cargo nextest run --locked --release -p bin --run-ignored ignored-only -E 'test(=ssh_push_throughput_regression_ssr1)'
   feature-flags:
     name: Feature flag combinations
     needs: lint
@@ -686,102 +357,52 @@ jobs:
     uses: ./.github/workflows/_test-features.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-
-  # ===========================================================================
-  # Linux QUIC - Explicit `--features quic` coverage
-  # ---------------------------------------------------------------------------
-  # `quic` is an off-by-default oc extension. The only cell that compiles it
-  # today is the `--workspace --all-features` Test job, and all-features masks
-  # two questions this job asks in isolation:
-  #
-  #   1. Does `quic` build on its own, without another opt-in feature happening
-  #      to pull in a shared dependency? The isolated build proves the
-  #      quinn-proto / rustls-ring / rcgen dependency surface compiles behind
-  #      the gate and nothing else.
-  #   2. Does the feature FORWARD end-to-end? Root `quic` -> `cli/quic` ->
-  #      `core/quic` -> `rsync_io/quic`, and `daemon/quic` -> `rsync_io/quic`.
-  #      Selecting `-p rsync_io -p cli -p daemon --features quic` exercises
-  #      every forwarding edge; a broken edge fails here rather than silently
-  #      under all-features, where an unrelated path can keep the build green.
-  #
-  # The tests are self-contained: `quic_loopback` dials an in-process
-  # self-signed certificate over loopback UDP, so no system libssl, no apt
-  # packages, and no network egress are required (rustls uses the ring
-  # provider). Blocking, mirroring the Windows IOCP job: the feature builds and
-  # its 30 quic tests pass today, so a regression should fail the PR.
-  #
-  # This job covers Linux, where the datagram layer uses UDP GSO/GRO and
-  # batched receives. The required `windows-test` and `macos-test` jobs run the
-  # same build and rsync_io tests, covering Windows USO and the one-datagram
-  # path that macOS takes and a Linux build never compiles.
-  # ===========================================================================
   linux-quic:
     name: Linux QUIC (--features quic)
     runs-on: ubuntu-latest
     needs: lint
     if: github.event_name != 'push'
     timeout-minutes: 30
-
     env:
       CARGO_TERM_COLOR: always
-      RUSTFLAGS: "-D warnings"
-      RUST_BACKTRACE: "full"
-
+      RUSTFLAGS: -D warnings
+      RUST_BACKTRACE: full
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Free disk space
-        uses: ./.github/actions/free-disk-space
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          toolchain: stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: linux-quic
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
-        with:
-          tool: cargo-nextest
-
-      # Build the feature across every crate it forwards through so a broken
-      # forwarding edge fails the build, not just the rsync_io leaf.
-      - name: Build quic forwarding (rsync_io + cli + daemon, --features quic)
-        run: cargo build --locked -p rsync_io -p cli -p daemon --features quic
-
-      # rsync_io owns the QUIC transport and its loopback tests; the strong
-      # signal lives here.
-      - name: Test rsync_io (--features quic)
-        # `shell: bash` turns on pipefail, so the tee never hides a failure.
-        shell: bash
-        run: |
-          cargo nextest run --locked --profile ci -p rsync_io --features quic 2>&1 | tee nextest-run.log
-          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
-      # The certificate validation matrix starts the real daemon and client, so
-      # it needs the quic oc-rsync binary. Naming the two test targets keeps
-      # nextest from building every other transfer test binary.
-      - name: Build oc-rsync (--features quic)
-        run: cargo build --locked --bin oc-rsync --features quic
-      - name: Test QUIC certificate validation matrix (--features quic)
-        shell: bash
-        run: |
-          cargo nextest run --locked --profile ci -p transfer --features quic \
-            --test quic_certificate_validation_matrix \
-            --test quic_daemon_identity_mismatch_fails_startup 2>&1 | tee nextest-cert.log
-          bash tools/ci/nextest_flaky_summary.sh nextest-cert.log
-
-  # ===========================================================================
-  # Linux musl QUIC - the static musl binary with `--features quic`
-  # ===========================================================================
-  # Release musl tarballs ship with QUIC, so the ring/quinn stack must keep
-  # building against musl. Build only (the QUIC tests run in `linux-quic`).
-  # Not a required check.
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+    - name: Free disk space
+      uses: ./.github/actions/free-disk-space
+    - name: Install Rust (stable)
+      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+      with:
+        toolchain: stable
+    - name: Rust cache
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+      with:
+        shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+        key: linux-quic
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2
+      with:
+        tool: cargo-nextest
+    - name: Build quic forwarding (rsync_io + cli + daemon, --features quic)
+      run: cargo build --locked -p rsync_io -p cli -p daemon --features quic
+    - name: Test rsync_io (--features quic)
+      shell: bash
+      run: |
+        cargo nextest run --locked --profile ci -p rsync_io --features quic 2>&1 | tee nextest-run.log
+        bash tools/ci/nextest_flaky_summary.sh nextest-run.log
+    - name: Build oc-rsync (--features quic)
+      run: cargo build --locked --bin oc-rsync --features quic
+    - name: Test QUIC certificate validation matrix (--features quic)
+      shell: bash
+      run: |
+        cargo nextest run --locked --profile ci -p transfer --features quic \
+          --test quic_certificate_validation_matrix \
+          --test quic_daemon_identity_mismatch_fails_startup 2>&1 | tee nextest-cert.log
+        bash tools/ci/nextest_flaky_summary.sh nextest-cert.log
   linux-musl-quic:
     name: Linux musl QUIC (--features quic)
     runs-on: ubuntu-latest
@@ -790,609 +411,389 @@ jobs:
     timeout-minutes: 30
     env:
       CARGO_TERM_COLOR: always
-      RUSTFLAGS: "-D warnings"
+      RUSTFLAGS: -D warnings
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          toolchain: stable
-          targets: x86_64-unknown-linux-musl
-      - name: Ensure musl target on active toolchain
-        run: rustup target add x86_64-unknown-linux-musl
-      - name: Install musl toolchain
-        run: bash tools/ci/apt_update.sh && sudo apt-get install -y musl-tools
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-musl-x86_64-stable-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: linux-musl-quic
-      - name: Build oc-rsync (musl, --features quic)
-        run: cargo build --locked --bin oc-rsync --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range,quic"
-      - name: Check the binary reports quic:// support
-        run: target/x86_64-unknown-linux-musl/debug/oc-rsync --help | grep -q 'quic://'
-  # ===========================================================================
-  # Windows Test - Platform-specific testing with toolchain matrix
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+      with:
+        targets: x86_64-unknown-linux-musl
+    - name: Ensure musl target on active toolchain
+      run: rustup target add x86_64-unknown-linux-musl
+    - name: Install musl toolchain
+      run: bash tools/ci/apt_update.sh && sudo apt-get install -y musl-tools
+    - name: Rust cache
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+      with:
+        shared-key: ci-musl-x86_64-stable-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+        key: linux-musl-quic
+    - name: Build oc-rsync (musl, --features quic)
+      run: cargo build --locked --bin oc-rsync --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range,quic"
+    - name: Check the binary reports quic:// support
+      run: target/x86_64-unknown-linux-musl/debug/oc-rsync --help | grep -q 'quic://'
   windows-test:
     name: Windows (${{ matrix.toolchain }})
     runs-on: ${{ needs.changes.outputs.docs_only == 'true' && 'ubuntu-latest' || 'windows-latest' }}
-    needs: [changes, lint]
-    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    needs: changes
+    if: ${{ !cancelled() }}
     timeout-minutes: 45
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     env:
-      # --all-features turns on openssl-vendored, whose openssl-src build runs
-      # OpenSSL's Configure with the first perl on PATH. In bash steps that is
-      # Git's msys perl, which lacks IPC::Cmd; the runner's Strawberry Perl
-      # is complete. Release builds use default features and never vendor it.
       OPENSSL_SRC_PERL: C:\Strawberry\perl\bin\perl.exe
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, beta, nightly]
-        # Master pushes run the required stable cell only. An exclude value of
-        # '' matches no cell, so other events keep all three.
+        toolchain:
+        - stable
+        - beta
+        - nightly
         exclude:
-          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
-          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
-
+        - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
+        - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
-      - name: Checkout
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust (${{ matrix.toolchain }})
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          toolchain: ${{ matrix.toolchain }}
-
-      - name: Rust cache
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-windows-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install cargo-nextest
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: ./.github/actions/install-cargo-nextest-windows
-
-      # The whole workspace with every feature, as the Linux `test` job runs
-      # it, so each crate's `#[cfg(windows)]` arms (daemon, protocol, rsync_io's
-      # QUIC USO path, metadata, fast_io, transfer) gate the merge. A
-      # `--workspace` run also builds the `oc-rsync` binary that the
-      # subprocess integration tests spawn.
-      # Every test process runs under `tmp-runner`, which gives it a private
-      # %TEMP%: tempfile names drawn by different processes then cannot hit
-      # another process's delete-pending file, which Windows refuses with
-      # ACCESS_DENIED (see crates/test-support/src/tmp_runner.rs). The binary
-      # is copied out of target/ so the workspace build cannot replace it
-      # while nextest runs it.
-      - name: Build per-process temp-dir runner
-        if: needs.changes.outputs.docs_only != 'true'
-        shell: bash
-        run: |
-          cargo build --locked -p test-support --bin tmp-runner
-          cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
-
-      - name: Test
-        if: needs.changes.outputs.docs_only != 'true'
-        env:
-          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
-          # The isolation probes fail instead of skipping if the runner is
-          # not wrapping them.
-          OC_REQUIRE_TMP_RUNNER: "1"
-        # `shell: bash` turns on pipefail, so the tee never hides a failure.
-        # --no-fail-fast reports every Windows failure in one run instead of
-        # stopping at the first.
-        shell: bash
-        run: |
-          cargo nextest run --locked --profile ci --workspace --all-features --no-fail-fast 2>&1 | tee nextest-run.log
-          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
-
-      - name: Report UDP offload capabilities
-        if: needs.changes.outputs.docs_only != 'true'
-        timeout-minutes: 10
-        shell: bash
-        run: cargo nextest run --locked --profile ci -p rsync_io --all-features --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
-
-      - name: Upload build artifacts
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: build-windows-${{ matrix.toolchain }}
-          path: |
-            target/debug/oc-rsync.exe
-            target/debug/xtask.exe
-          if-no-files-found: warn
-          retention-days: 7
-
-  # ===========================================================================
-  # Windows IOCP - Explicit `--features iocp` coverage (issue #1900)
-  # ---------------------------------------------------------------------------
-  # Default features already include `iocp` so the main `windows-test` job
-  # exercises it implicitly. This job pins the feature explicitly to guarantee
-  # beta-grade Windows confidence: the IOCP code path (PRs #1717-#1721) must
-  # build and pass tests on its own without relying on other default features
-  # masking regressions. Tests target `fast_io` (the crate that owns IOCP) and
-  # `transfer` (the primary consumer of fast_io's async file I/O).
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+      with:
+        toolchain: ${{ matrix.toolchain }}
+        install_nextest: 'true'
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    - name: Build per-process temp-dir runner
+      if: needs.changes.outputs.docs_only != 'true'
+      shell: bash
+      run: |
+        cargo build --locked -p test-support --bin tmp-runner
+        cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
+    - name: Test
+      if: needs.changes.outputs.docs_only != 'true'
+      env:
+        CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+        OC_REQUIRE_TMP_RUNNER: '1'
+      shell: bash
+      run: |
+        cargo nextest run --locked --profile ci --workspace --all-features --no-fail-fast 2>&1 | tee nextest-run.log
+        bash tools/ci/nextest_flaky_summary.sh nextest-run.log
+    - name: Report UDP offload capabilities
+      if: needs.changes.outputs.docs_only != 'true'
+      timeout-minutes: 10
+      shell: bash
+      run: cargo nextest run --locked --profile ci -p rsync_io --all-features --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
+    - name: Upload build artifacts
+      if: needs.changes.outputs.docs_only != 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: build-windows-${{ matrix.toolchain }}
+        path: |
+          target/debug/oc-rsync.exe
+          target/debug/xtask.exe
+        if-no-files-found: warn
+        retention-days: 7
   windows-iocp:
     name: Windows IOCP (--features iocp)
     runs-on: windows-latest
     needs: lint
     if: github.event_name != 'push'
     timeout-minutes: 30
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          toolchain: stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-windows-iocp-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: windows-iocp
-
-      - name: Install cargo-nextest
-        uses: ./.github/actions/install-cargo-nextest-windows
-
-      # Build the workspace with iocp explicitly enabled. The feature is in
-      # defaults but pinning it here protects against future default changes
-      # silently dropping iocp coverage from CI.
-      - name: Build workspace (--features iocp)
-        run: cargo build --locked --workspace --features iocp
-
-      # Build fast_io with only iocp enabled (no other default features) so
-      # the IOCP code path is verified in isolation.
-      - name: Build fast_io (--no-default-features --features iocp)
-        run: cargo build --locked -p fast_io --no-default-features --features iocp
-
-      # Build fast_io with iocp plus the opt-in `transmitfile` feature. The
-      # Windows `TransmitFile()` zero-copy file-to-socket primitive
-      # (fast_io::iocp::transmit_file) depends on `iocp`
-      # but is not in the default feature set, so no other CI cell compiles
-      # it. Pinning it here keeps the TransmitFile path building on
-      # `windows-latest` instead of only ever compiling on a nightly run.
-      - name: Build fast_io (--features iocp,transmitfile)
-        run: cargo build --locked -p fast_io --features iocp,transmitfile
-
-      # Run the iocp test suite. fast_io owns the IOCP modules; transfer
-      # exercises the consumer side via fast_io's path dependency. The
-      # `transmitfile` feature is enabled so the TransmitFile module's own
-      # tests run alongside the core IOCP suite.
-      - name: Test fast_io (--features iocp,transmitfile)
-        run: cargo nextest run --locked -p fast_io --no-default-features --features iocp,transmitfile
-
-      # transfer has no own iocp feature; it picks up iocp transitively
-      # through fast_io's default features (which include iocp). Running with
-      # `--all-features` here ensures the full transfer surface compiles and
-      # passes against the iocp-enabled fast_io.
-      - name: Test transfer (iocp via fast_io defaults)
-        run: cargo nextest run --locked -p transfer --all-features
-
-  # ===========================================================================
-  # Windows ACL/xattr - Explicit ACL and xattr coverage (issue #1869)
-  # ---------------------------------------------------------------------------
-  # Pins the `acl,xattr` feature pair on its own, without the rest of the
-  # workspace's features, so the Win32 GetSecurityInfo / NTFS Alternate Data
-  # Stream paths in `metadata` build and pass in isolation.
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-windows
+      with:
+        install_nextest: 'true'
+    - name: Build workspace (--features iocp)
+      run: cargo build --locked --workspace --features iocp
+    - name: Build fast_io (--no-default-features --features iocp)
+      run: cargo build --locked -p fast_io --no-default-features --features iocp
+    - name: Build fast_io (--features iocp,transmitfile)
+      run: cargo build --locked -p fast_io --features iocp,transmitfile
+    - name: Test fast_io (--features iocp,transmitfile)
+      run: cargo nextest run --locked -p fast_io --no-default-features --features iocp,transmitfile
+    - name: Test transfer (iocp via fast_io defaults)
+      run: cargo nextest run --locked -p transfer --all-features
   windows-acl-xattr:
     name: Windows ACL/xattr
     runs-on: windows-latest
     needs: lint
     if: github.event_name != 'push'
     timeout-minutes: 30
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          toolchain: stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-windows-acl-xattr-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: windows-acl-xattr
-
-      - name: Install cargo-nextest
-        uses: ./.github/actions/install-cargo-nextest-windows
-
-      # Build metadata with ACL + xattr explicitly enabled so the Win32
-      # GetSecurityInfo / SetSecurityInfo and ADS code paths are exercised.
-      - name: Build metadata (--features acl,xattr)
-        run: cargo build --locked -p metadata --features acl,xattr
-
-      # Build oc-rsync.exe so the metadata integration tests that spawn the
-      # binary as a subprocess (windows_ads_xattrs_roundtrip,
-      # windows_symlink_junction_transfer) exercise the real transfer path
-      # rather than skipping. Builds at the default debug profile to keep
-      # the CI run fast; the integration tests probe target/debug first.
-      # Tests that require admin privileges (e.g. `mklink /d` for directory
-      # symlinks) still skip cleanly on the unelevated stock runner.
-      - name: Build oc-rsync (for subprocess integration tests)
-        run: cargo build --locked -p bin --bin oc-rsync
-
-      # Run the full metadata test suite with both features enabled. This
-      # covers acl_windows::tests (DACL round-trip), xattr_windows::tests
-      # (NTFS Alternate Data Streams), and the end-to-end reparse-point
-      # transfer tests in windows_symlink_junction_transfer.rs. Symlink
-      # cases skip cleanly without `SeCreateSymbolicLinkPrivilege`; the
-      # junction case runs unconditionally (`mklink /j` does not require
-      # elevation on Windows 10+).
-      # The step normally takes under a minute. Its own timeout fails it well
-      # before the job's, so a hang leaves the step below running to keep
-      # nextest's SLOW lines, which name the stuck test every 120 s.
-      - name: Test metadata (--features acl,xattr)
-        timeout-minutes: 5
-        # `shell: bash` turns on pipefail, so the tee never hides a failure.
-        shell: bash
-        run: cargo nextest run --locked --profile ci -p metadata --features acl,xattr 2>&1 | tee nextest-metadata.log
-
-      - name: Upload metadata test log
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: nextest-windows-acl-xattr-metadata
-          path: nextest-metadata.log
-          if-no-files-found: ignore
-          retention-days: 30
-
-      # Filtered workspace run that pins the ACL/ADS test sets in case future
-      # tests land outside the metadata crate. Uses nextest expression syntax
-      # to match `acl`, `xattr`, `ads`, and `stream` (NTFS ADS test names).
-      # `shell: bash` is required so the single-quoted -E expression survives
-      # without PowerShell-specific escaping.
-      - name: Test ACL/xattr/ADS filter (workspace)
-        shell: bash
-        run: cargo nextest run --locked --workspace --features acl,xattr -E 'test(acl) | test(xattr) | test(ads) | test(stream)'
-
-  # ===========================================================================
-  # Windows GNU Cross-Check - Validate x86_64-pc-windows-gnu compilation
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-windows
+      with:
+        install_nextest: 'true'
+    - name: Build metadata (--features acl,xattr)
+      run: cargo build --locked -p metadata --features acl,xattr
+    - name: Build oc-rsync (for subprocess integration tests)
+      run: cargo build --locked -p bin --bin oc-rsync
+    - name: Test metadata (--features acl,xattr)
+      timeout-minutes: 5
+      shell: bash
+      run: cargo nextest run --locked --profile ci -p metadata --features acl,xattr 2>&1 | tee nextest-metadata.log
+    - name: Upload metadata test log
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: nextest-windows-acl-xattr-metadata
+        path: nextest-metadata.log
+        if-no-files-found: ignore
+        retention-days: 30
+    - name: Test ACL/xattr/ADS filter (workspace)
+      shell: bash
+      run: cargo nextest run --locked --workspace --features acl,xattr -E 'test(acl) | test(xattr) | test(ads) | test(stream)'
   windows-gnu-cross-check:
     name: Windows GNU cross-check
     runs-on: ubuntu-latest
     needs: lint
     if: github.event_name != 'push'
     timeout-minutes: 20
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+      with:
+        targets: x86_64-pc-windows-gnu
+    - name: Restore mingw-w64 packages
+      id: mingw-cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/mingw-w64-debs
+        key: mingw-w64-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-v1
+    - name: Install mingw-w64
+      run: |
+        set -euo pipefail
+        export DEBIAN_FRONTEND=noninteractive
+        debs="$HOME/mingw-w64-debs"
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          targets: x86_64-pc-windows-gnu
+        if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+          echo "mingw-w64 already in the image: $(x86_64-w64-mingw32-gcc --version | head -1)"
+          exit 0
+        fi
 
-      # Provide the x86_64-w64-mingw32-gcc C cross-compiler that the windows-gnu
-      # build scripts of zstd-sys / libz-ng-sys invoke. The ubuntu-latest image
-      # does not reliably ship it, so it has to be installed.
-      #
-      # The .deb set is cached rather than re-fetched, so the common path does
-      # no network I/O at all and a transient apt-mirror failure cannot reach
-      # it. This replaces a 5-attempt backoff loop: re-attempting a download
-      # does not make a mirror healthy, it just spends up to 150s of runner
-      # time before failing anyway. Same shape as the cargo-nextest install.
-      - name: Restore mingw-w64 packages
-        id: mingw-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/mingw-w64-debs
-          # The package set is pinned by the runner image, so the image label is
-          # part of the key: a new image re-resolves the set instead of
-          # installing stale .debs against a moved libc.
-          key: mingw-w64-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-v1
-
-      - name: Install mingw-w64
-        run: |
-          set -euo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-          debs="$HOME/mingw-w64-debs"
-
-          if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-            echo "mingw-w64 already in the image: $(x86_64-w64-mingw32-gcc --version | head -1)"
-            exit 0
-          fi
-
-          # Cold miss only: resolve and download the package set once. There is
-          # no retry - a failure here fails the job immediately and loudly, with
-          # the apt diagnostics needed to tell a mirror outage from a package
-          # that has been renamed out from under us. The index refresh goes
-          # through apt_update.sh, which forwards every failure except the one
-          # apt itself declares ignorable (a third-party repo's index that was
-          # skipped in favour of the cached copy); the download below is what
-          # decides whether the compiler is actually resolvable.
-          if ! compgen -G "$debs/*.deb" >/dev/null; then
-            # Empty apt's archive dir first so the copy below picks up only what
-            # this install resolves, never leftovers from the image build - an
-            # unrelated .deb swept into the cache would be dpkg -i'd on every
-            # later hit.
-            sudo apt-get clean
-            if ! bash tools/ci/apt_update.sh; then
-              echo "apt-get update failed; mingw-w64 cannot be resolved" >&2
-              apt-cache policy gcc-mingw-w64-x86-64 2>&1 | head -30 >&2 || true
-              exit 1
-            fi
-            # gcc-mingw-w64-x86-64 is the small compiler package, not the large
-            # mingw-w64 metapackage. --download-only pulls it AND its
-            # dependencies, so the cached set is self-sufficient on a later hit.
-            sudo apt-get install -y --no-install-recommends --download-only \
-              gcc-mingw-w64-x86-64
-            mkdir -p "$debs"
-            sudo cp /var/cache/apt/archives/*.deb "$debs"/
-            sudo chown -R "$(id -u):$(id -g)" "$debs"
-          fi
-
-          sudo dpkg -i "$debs"/*.deb
-
-          # Verify the binary actually landed rather than trusting an exit code:
-          # apt has reported success while leaving the compiler absent.
-          if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-            echo "install reported success but x86_64-w64-mingw32-gcc is missing" >&2
+        # Cold miss only: resolve and download the package set once. There is
+        # no retry - a failure here fails the job immediately and loudly, with
+        # the apt diagnostics needed to tell a mirror outage from a package
+        # that has been renamed out from under us. The index refresh goes
+        # through apt_update.sh, which forwards every failure except the one
+        # apt itself declares ignorable (a third-party repo's index that was
+        # skipped in favour of the cached copy); the download below is what
+        # decides whether the compiler is actually resolvable.
+        if ! compgen -G "$debs/*.deb" >/dev/null; then
+          # Empty apt's archive dir first so the copy below picks up only what
+          # this install resolves, never leftovers from the image build - an
+          # unrelated .deb swept into the cache would be dpkg -i'd on every
+          # later hit.
+          sudo apt-get clean
+          if ! bash tools/ci/apt_update.sh; then
+            echo "apt-get update failed; mingw-w64 cannot be resolved" >&2
+            apt-cache policy gcc-mingw-w64-x86-64 2>&1 | head -30 >&2 || true
             exit 1
           fi
-          x86_64-w64-mingw32-gcc --version | head -1
+          # gcc-mingw-w64-x86-64 is the small compiler package, not the large
+          # mingw-w64 metapackage. --download-only pulls it AND its
+          # dependencies, so the cached set is self-sufficient on a later hit.
+          sudo apt-get install -y --no-install-recommends --download-only \
+            gcc-mingw-w64-x86-64
+          mkdir -p "$debs"
+          sudo cp /var/cache/apt/archives/*.deb "$debs"/
+          sudo chown -R "$(id -u):$(id -g)" "$debs"
+        fi
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-windows-gnu-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+        sudo dpkg -i "$debs"/*.deb
 
-      - name: Check compilation
-        run: cargo check --locked --workspace --target x86_64-pc-windows-gnu
-
-  # ===========================================================================
-  # macOS Test - Platform-specific testing with toolchain matrix
-  # ===========================================================================
+        # Verify the binary actually landed rather than trusting an exit code:
+        # apt has reported success while leaving the compiler absent.
+        if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+          echo "install reported success but x86_64-w64-mingw32-gcc is missing" >&2
+          exit 1
+        fi
+        x86_64-w64-mingw32-gcc --version | head -1
+    - name: Rust cache
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+      with:
+        shared-key: ci-windows-gnu-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+    - name: Check compilation
+      run: cargo check --locked --workspace --target x86_64-pc-windows-gnu
   macos-test:
     name: macOS (${{ matrix.toolchain }})
     runs-on: ${{ needs.changes.outputs.docs_only == 'true' && 'ubuntu-latest' || 'macos-latest' }}
-    needs: [changes, lint]
-    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    needs: changes
+    if: ${{ !cancelled() }}
     timeout-minutes: 30
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, beta, nightly]
-        # Master pushes run the required stable cell only. An exclude value of
-        # '' matches no cell, so other events keep all three.
+        toolchain:
+        - stable
+        - beta
+        - nightly
         exclude:
-          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
-          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
-
+        - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
+        - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
-      - name: Checkout
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust (${{ matrix.toolchain }})
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          toolchain: ${{ matrix.toolchain }}
-
-      - name: Rust cache
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-macos-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install cargo-nextest
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
-        with:
-          tool: cargo-nextest
-
-      # `core`, `engine`, `cli` and `metadata` all own tests that spawn the
-      # `oc-rsync` binary, and a package-scoped run never builds it. See the
-      # note on the Windows job above.
-      - name: Build oc-rsync (for subprocess integration tests)
-        if: needs.changes.outputs.docs_only != 'true'
-        run: rustup run ${{ matrix.toolchain }} cargo build --locked -p bin --bin oc-rsync
-
-      # Invoke through `rustup run` to bypass the cargo proxy shim, which on
-      # macOS GitHub runners can resolve to rustup-init directly and fail with
-      # `error: unexpected argument 'build' found` when rust-toolchain.toml
-      # pins a toolchain that was not pre-installed.
-      - name: Test
-        if: needs.changes.outputs.docs_only != 'true'
-        # `shell: bash` turns on pipefail, so the tee never hides a failure.
-        shell: bash
-        run: |
-          # Run macOS-specific crates only (core, engine, cli have platform code).
-          # Full test suite runs on Linux; macOS validates platform-specific paths.
-          # metadata covers the Darwin acl_exacl branch and the macOS timestamp
-          # path in crates/metadata/src/apply/timestamps.rs. apple-fs covers the
-          # AppleDouble round-trip plus the macOS-only resource fork pipeline.
-          # Tests that need root self-skip via geteuid() (see acl_handling.rs)
-          # and the resource-fork test probes xattr support and skips on
-          # filesystems that do not support it (e.g. FAT-mounted /tmp).
-          #
-          # fast_io was missing from this list, which is the worst possible
-          # omission: it is the crate whose entire purpose is platform-specific
-          # I/O, so its Linux-vs-fallback branches are exactly what a macOS cell
-          # exists to exercise. Three dir_sandbox tests asserted the
-          # openat2/RESOLVE_BENEATH branch unconditionally and were red on
-          # macOS while every required check stayed green, because no cell ran
-          # the crate off Linux. Measured on master before adding it: 665 tests,
-          # 662 passed, 3 failed - the whole cost of closing the hole.
-          rustup run ${{ matrix.toolchain }} cargo nextest run --locked -p core -p engine -p cli -p metadata -p apple-fs -p fast_io --all-features 2>&1 | tee nextest-run.log
-          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
-
-      # QUIC (`--features quic`, oc-only): macOS sends and receives one datagram
-      # per call, a path a Linux build never takes. Same scope as `linux-quic`.
-      # The last step prints the runner's UDP offload capabilities into the
-      # job log.
-      - name: Build quic forwarding (rsync_io + cli + daemon, --features quic)
-        if: needs.changes.outputs.docs_only != 'true'
-        timeout-minutes: 15
-        run: rustup run ${{ matrix.toolchain }} cargo build --locked -p rsync_io -p cli -p daemon --features quic
-
-      - name: Test rsync_io (--features quic)
-        if: needs.changes.outputs.docs_only != 'true'
-        timeout-minutes: 15
-        shell: bash
-        run: |
-          rustup run ${{ matrix.toolchain }} cargo nextest run --locked --profile ci -p rsync_io --features quic 2>&1 | tee nextest-quic.log
-          bash tools/ci/nextest_flaky_summary.sh nextest-quic.log
-
-      - name: Report UDP offload capabilities
-        if: needs.changes.outputs.docs_only != 'true'
-        timeout-minutes: 10
-        run: rustup run ${{ matrix.toolchain }} cargo nextest run --locked --profile ci -p rsync_io --features quic --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
-
-      - name: Upload build artifacts
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: build-macos-${{ matrix.toolchain }}
-          path: |
-            target/debug/oc-rsync
-            target/debug/xtask
-          if-no-files-found: warn
-          retention-days: 7
-
-  # ===========================================================================
-  # Linux musl Test - Static musl binary build and test with toolchain matrix
-  # ===========================================================================
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+      with:
+        toolchain: ${{ matrix.toolchain }}
+        install_nextest: 'true'
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    - name: Build oc-rsync (for subprocess integration tests)
+      if: needs.changes.outputs.docs_only != 'true'
+      run: rustup run ${{ matrix.toolchain }} cargo build --locked -p bin --bin oc-rsync
+    - name: Test
+      if: needs.changes.outputs.docs_only != 'true'
+      shell: bash
+      run: |
+        # Run macOS-specific crates only (core, engine, cli have platform code).
+        # Full test suite runs on Linux; macOS validates platform-specific paths.
+        # metadata covers the Darwin acl_exacl branch and the macOS timestamp
+        # path in crates/metadata/src/apply/timestamps.rs. apple-fs covers the
+        # AppleDouble round-trip plus the macOS-only resource fork pipeline.
+        # Tests that need root self-skip via geteuid() (see acl_handling.rs)
+        # and the resource-fork test probes xattr support and skips on
+        # filesystems that do not support it (e.g. FAT-mounted /tmp).
+        #
+        # fast_io was missing from this list, which is the worst possible
+        # omission: it is the crate whose entire purpose is platform-specific
+        # I/O, so its Linux-vs-fallback branches are exactly what a macOS cell
+        # exists to exercise. Three dir_sandbox tests asserted the
+        # openat2/RESOLVE_BENEATH branch unconditionally and were red on
+        # macOS while every required check stayed green, because no cell ran
+        # the crate off Linux. Measured on master before adding it: 665 tests,
+        # 662 passed, 3 failed - the whole cost of closing the hole.
+        rustup run ${{ matrix.toolchain }} cargo nextest run --locked -p core -p engine -p cli -p metadata -p apple-fs -p fast_io --all-features 2>&1 | tee nextest-run.log
+        bash tools/ci/nextest_flaky_summary.sh nextest-run.log
+    - name: Build quic forwarding (rsync_io + cli + daemon, --features quic)
+      if: needs.changes.outputs.docs_only != 'true'
+      timeout-minutes: 15
+      run: rustup run ${{ matrix.toolchain }} cargo build --locked -p rsync_io -p cli -p daemon --features quic
+    - name: Test rsync_io (--features quic)
+      if: needs.changes.outputs.docs_only != 'true'
+      timeout-minutes: 15
+      shell: bash
+      run: |
+        rustup run ${{ matrix.toolchain }} cargo nextest run --locked --profile ci -p rsync_io --features quic 2>&1 | tee nextest-quic.log
+        bash tools/ci/nextest_flaky_summary.sh nextest-quic.log
+    - name: Report UDP offload capabilities
+      if: needs.changes.outputs.docs_only != 'true'
+      timeout-minutes: 10
+      run: rustup run ${{ matrix.toolchain }} cargo nextest run --locked --profile ci -p rsync_io --features quic --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
+    - name: Upload build artifacts
+      if: needs.changes.outputs.docs_only != 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: build-macos-${{ matrix.toolchain }}
+        path: |
+          target/debug/oc-rsync
+          target/debug/xtask
+        if-no-files-found: warn
+        retention-days: 7
   linux-musl:
     name: Linux musl (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
-    needs: [changes, lint]
-    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    needs: changes
+    if: ${{ !cancelled() }}
     timeout-minutes: 40
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, beta, nightly]
-        # Master pushes run the required stable cell only. An exclude value of
-        # '' matches no cell, so other events keep all three.
+        toolchain:
+        - stable
+        - beta
+        - nightly
         exclude:
-          - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
-          - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
-
+        - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
+        - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
-      - name: Checkout
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Free disk space
-        if: needs.changes.outputs.docs_only != 'true' && (runner.os == 'Linux')
-        uses: ./.github/actions/free-disk-space
-
-      # Pre-warm the toolchain download with a short-timeout retry loop so a
-      # transient rustup fetch failure (DNS hang or TCP connect timeout to the
-      # static.rust-lang.org CDN edge) self-heals fast instead of failing the
-      # job. Each attempt is wall-clock capped so a hung connect is killed and
-      # retried rather than eating the job budget. dtolnay/rust-toolchain below
-      # then hits the local cache. 2 retries is plenty; more is wasted time.
-      - name: Pre-install toolchain (short-timeout retry on transient fetch)
-        if: needs.changes.outputs.docs_only != 'true'
-        run: |
-          for attempt in 1 2 3; do
-            if timeout 90 rustup toolchain install "${{ matrix.toolchain }}" \
-                --profile minimal --no-self-update \
-                --target x86_64-unknown-linux-musl; then
-              exit 0
-            fi
-            echo "::warning::rustup toolchain install attempt ${attempt}/3 failed or timed out; retrying"
-            sleep 5
-          done
-          echo "::error::rustup toolchain install failed after 2 retries"
-          exit 1
-
-      - name: Install Rust (${{ matrix.toolchain }})
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          toolchain: ${{ matrix.toolchain }}
-          targets: x86_64-unknown-linux-musl
-
-      - name: Ensure musl target on active toolchain
-        if: needs.changes.outputs.docs_only != 'true'
-        run: rustup target add x86_64-unknown-linux-musl
-
-      - name: Install musl toolchain
-        if: needs.changes.outputs.docs_only != 'true'
-        run: bash tools/ci/apt_update.sh && sudo apt-get install -y musl-tools
-
-      - name: Rust cache
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
-        with:
-          shared-key: ci-musl-x86_64-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install cargo-nextest
-        if: needs.changes.outputs.docs_only != 'true'
-        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
-        with:
-          tool: cargo-nextest
-
-      - name: Build
-        if: needs.changes.outputs.docs_only != 'true'
-        run: cargo build --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
-
-      - name: Test
-        if: needs.changes.outputs.docs_only != 'true'
-        # `shell: bash` turns on pipefail, so the tee never hides a failure.
-        shell: bash
-        run: |
-          cargo nextest run --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range" 2>&1 | tee nextest-run.log
-          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
-
-      - name: Verify static linking
-        if: needs.changes.outputs.docs_only != 'true'
-        run: |
-          set -euo pipefail
-          BINARY="target/x86_64-unknown-linux-musl/debug/oc-rsync"
-          if [ -f "${BINARY}" ]; then
-            file "${BINARY}"
-            if ldd "${BINARY}" 2>&1 | grep -q "not a dynamic executable"; then
-              printf 'Binary is statically linked\n'
-            else
-              printf 'Warning: binary may not be fully statically linked\n'
-              ldd "${BINARY}" || true
-            fi
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    - name: Free disk space
+      if: needs.changes.outputs.docs_only != 'true' && (runner.os == 'Linux')
+      uses: ./.github/actions/free-disk-space
+    - name: Pre-install toolchain (short-timeout retry on transient fetch)
+      if: needs.changes.outputs.docs_only != 'true'
+      run: |
+        for attempt in 1 2 3; do
+          if timeout 90 rustup toolchain install "${{ matrix.toolchain }}" \
+              --profile minimal --no-self-update \
+              --target x86_64-unknown-linux-musl; then
+            exit 0
           fi
-
-  # ===========================================================================
-  # Interop Tests - Compatibility with upstream rsync (reusable workflow)
-  # ===========================================================================
+          echo "::warning::rustup toolchain install attempt ${attempt}/3 failed or timed out; retrying"
+          sleep 5
+        done
+        echo "::error::rustup toolchain install failed after 2 retries"
+        exit 1
+    - name: Install Rust (${{ matrix.toolchain }})
+      if: needs.changes.outputs.docs_only != 'true'
+      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+      with:
+        toolchain: ${{ matrix.toolchain }}
+        targets: x86_64-unknown-linux-musl
+    - name: Ensure musl target on active toolchain
+      if: needs.changes.outputs.docs_only != 'true'
+      run: rustup target add x86_64-unknown-linux-musl
+    - name: Install musl toolchain
+      if: needs.changes.outputs.docs_only != 'true'
+      run: bash tools/ci/apt_update.sh && sudo apt-get install -y musl-tools
+    - name: Rust cache
+      if: needs.changes.outputs.docs_only != 'true'
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+      with:
+        shared-key: ci-musl-x86_64-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+    - name: Install cargo-nextest
+      if: needs.changes.outputs.docs_only != 'true'
+      uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2
+      with:
+        tool: cargo-nextest
+    - name: Build
+      if: needs.changes.outputs.docs_only != 'true'
+      run: cargo build --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
+    - name: Test
+      if: needs.changes.outputs.docs_only != 'true'
+      shell: bash
+      run: |
+        cargo nextest run --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range" 2>&1 | tee nextest-run.log
+        bash tools/ci/nextest_flaky_summary.sh nextest-run.log
+    - name: Verify static linking
+      if: needs.changes.outputs.docs_only != 'true'
+      run: |
+        set -euo pipefail
+        BINARY="target/x86_64-unknown-linux-musl/debug/oc-rsync"
+        if [ -f "${BINARY}" ]; then
+          file "${BINARY}"
+          if ldd "${BINARY}" 2>&1 | grep -q "not a dynamic executable"; then
+            printf 'Binary is statically linked\n'
+          else
+            printf 'Warning: binary may not be fully statically linked\n'
+            ldd "${BINARY}" || true
+          fi
+        fi
   interop-upstream:
     name: interop
-    needs: [changes, lint]
-    if: ${{ !cancelled() && (needs.lint.result == 'success' || needs.changes.outputs.docs_only == 'true') }}
+    needs: changes
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/_interop.yml
     with:
       skip: ${{ needs.changes.outputs.docs_only == 'true' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.5.1' }}
       timeout_minutes: 45
-
-  # ===========================================================================
-  # macOS Interop - Smoke parity with Homebrew upstream rsync (audit G5)
-  # ---------------------------------------------------------------------------
-  # Required check. Runs the portable harness in
-  # `tools/ci/run_interop_smoke.sh` against `brew install rsync`. Skips
-  # Linux-only scenarios (xattr/ACL/daemon/SSH loopback); those stay in
-  # `interop-upstream`.
-  # ===========================================================================
   interop-upstream-macos:
     name: interop (macOS)
     needs: lint
@@ -1401,15 +802,6 @@ jobs:
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       timeout_minutes: 25
-
-  # ===========================================================================
-  # Windows Interop - Best-effort smoke parity with MSYS2 rsync (audit G5)
-  # ---------------------------------------------------------------------------
-  # Non-required check (the reusable workflow sets `continue-on-error:
-  # true`). Validates the Windows oc-rsync.exe binary against the
-  # MSYS2/Cygwin upstream rsync for the basic push/pull/delta scenarios.
-  # Promote to required once baseline parity is green on master.
-  # ===========================================================================
   interop-upstream-windows:
     name: interop (Windows, best-effort)
     needs: lint
@@ -1418,4 +810,3 @@ jobs:
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       timeout_minutes: 30
-
