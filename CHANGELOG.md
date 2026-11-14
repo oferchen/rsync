@@ -153,7 +153,6 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 ### Added
 - Local `-vvv` role traces and the oc-only `PIPELINE` debug word (#8364)
-
 - On Windows, wildcard source operands (`*`, `?`, `[...]`) are expanded as a POSIX shell would, since `cmd.exe` and PowerShell do not glob (#8206)
 - Protocol 33 from rsync 3.5.1: `MSG_BLOCK_STATS` and the `--stats` line `Number of 4 KiB logical blocks touched`; newer peers clamp to 33, 3.5.0 and older negotiate down (#8003)
 - `--confine-root`, `--insecure-links` / `--no-insecure-links` and `--drop-D` / `--no-drop-D` from rsync 3.5.0 (#7396, #7299)
@@ -190,6 +189,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Pulls can use the parallel delta scan, which their clients never forward: the daemon module parameter `parallel delta scan = yes` turns it on for a module, and `OC_RSYNC_PARALLEL_DELTA_SCAN=1` for a remote-shell server (#8289)
 
 ### Changed
+- Split CI into dedicated PR (`ci.yml`), master-push (`ci-master.yml`), and nightly (`ci-nightly.yml`) workflows with shared composite setup actions, and aligned `README.md` badges (#8376, #8377, #8378, #8379)
+- Converted remaining `//` doc comments on `pub` items to `///` rustdoc across workspace crates and removed ASCII divider banners (#8380)
 - Embedded `ssh://` ssh_config parity is now gated on a corpus (bastions with `ProxyJump` and `Match`, `Include` directories, token expansion, algorithm lists, `Tag`, canonicalization) diffed against OpenSSH 10.0p1 `ssh -G`, and the user-visible behaviour changes are listed in `docs/ssh-config-embedded.md` (#8329)
 - A recursive local `--write-batch` records incremental recursion, as 3.5.1 does (header `81 ff`), and writes its file list in the incremental layout: the top level, then one sub-list per directory, placed among the file data by 3.5.1's 1000-entry lookahead. rsync 3.5.1 replays these batches, and `--delete-before`, `--delete-after`, `--delay-updates`, `-m`, `--qsort` and `--no-inc-recursive` still record a flat list (#8261)
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
@@ -237,7 +238,6 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A `--checksum` sender hashes the regular files of each file list and INC_RECURSE sub-list in one parallel batch through the same service; each sum is the exact negotiated whole-file digest, and the file-list bytes are unchanged against rsync 3.5.1 (#8312)
 - A sender keeps owner names in its id list instead of on every file entry, looking a name up only when it goes on the wire, as rsync 3.5.1 does (uidlist.c add_uid/add_gid): sender peak RSS on a 1M-file pull drops from 350 MB to 145 MB (3.5.1: 71 MB) with the file-list bytes unchanged (#8359)
 - A non-incremental receiver decides its file list 8192 entries at a time as the request window drains, as upstream's generator decides each entry while the receiver works, instead of building every candidate before the first request: receiver peak RSS on a 1M-file pull drops from 461 MB to 127 MB (3.5.1: 71 MB) with the wire bytes unchanged (#8355)
-
 - Probe OpenSSL MD4 once per process, as upstream does, instead of on every hasher; on OpenSSL 3 builds without the legacy provider this drops a failing `EVP_DigestInit_ex` per block (#8231)
 - The receiver no longer stats each destination before committing it under `--perms` (so every `-a` transfer): only `dest_mode()` reads that stat, and upstream runs `dest_mode()` only without `--perms`. This drops one lookup per file, a failing one for every new file (#8299)
 - Batch network sender writes to match upstream's cadence (#7009)
@@ -661,7 +661,6 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 ### Removed
 - The unreachable `transfer::receiver::IncrementalFileListReceiver` streaming file-list reader and its `ReceiverContext::incremental_file_list_receiver` constructor, which only tests used; every live receive path reads the list through `receive_file_list` (#8358)
 - The unreachable `engine::AsyncBatchCopier` and its `RSYNC_MAX_CONCURRENT` environment read (#8236)
-
 - The planned `--windows-acls`, `--audit-acls` and `--fail-on-windows-acl-loss` options from the man page and Windows ACL docs; the CLI never had them (#8236)
 - rsyncd.conf parameters upstream rsync does not have, which a config now gets upstream's unknown-parameter handling for (logged and ignored): `bwlimit` (use the daemon's `--bwlimit`), `motd` (use `motd file`), `acceptor threads`, `rsync port` (use `port`), and `incoming-chmod` / `outgoing-chmod` (use `incoming chmod` / `outgoing chmod`) (#8087)
 - The unused `OC_RSYNC_FALLBACK` hint (#7030) and the non-upstream per-directory filter alias (#6846)
@@ -672,8 +671,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The macOS kqueue bandwidth-limit sleeper and its `OC_RSYNC_BWLIMIT_BACKEND` selector; `--bwlimit` sleeps with `nanosleep` on every platform, matching upstream's `select()` sleep for its 100 ms minimum delay (#8229)
 - The oc-only `exclude-if-present` filter rule, in `--filter` and in merge files. Upstream has no such rule, so it is now refused as `Unknown filter rule` with exit 1, exactly as rsync 3.5.1 refuses it (`exclude.c:1297-1299, 1362-1363`); it also no longer goes to a remote peer as an `-e` rule (#8239)
 - The `parallel-receive-delta` Cargo feature and the parallel receive-delta pipeline it named (`engine::concurrent_delta` applier, consumer, reorder and strategy modules, and `transfer::delta_pipeline`). The feature gated no code and the pipeline was never wired into the receiver; it measured 1.7-3.3x slower than the sequential path in isolation. Builds that pass `--features parallel-receive-delta` must drop it. A false `--debug=recv` notice claiming the path was active is gone with it (#8220)
-
 - The unused `checksums::strong::strategy` runtime selector and the uncalled generic parallel hashing helpers; `checksums::parallel` is now the one parallel `--checksum` service (`hash_files`, `hash_files_blocked`) (#8238)
+
 ## [0.6.4] - 2026-07-18
 
 This release rolls up every change merged since v0.6.3 (roughly 1,200 pull
