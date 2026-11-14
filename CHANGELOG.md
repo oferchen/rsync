@@ -152,7 +152,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Bump `crypto-bigint`, `ctutils` and the `zstd` crates for RUSTSEC-2026-0385, 0387, 0391, 0398, 0403 and 0410; the bundled libzstd stays 1.5.7, so compressed bytes on the wire are unchanged (#8245)
 
 ### Added
-
+- Local `-vvv` role traces and the oc-only `PIPELINE` debug word (#8364)
 - On Windows, wildcard source operands (`*`, `?`, `[...]`) are expanded as a POSIX shell would, since `cmd.exe` and PowerShell do not glob (#8206)
 - Protocol 33 from rsync 3.5.1: `MSG_BLOCK_STATS` and the `--stats` line `Number of 4 KiB logical blocks touched`; newer peers clamp to 33, 3.5.0 and older negotiate down (#8003)
 - `--confine-root`, `--insecure-links` / `--no-insecure-links` and `--drop-D` / `--no-drop-D` from rsync 3.5.0 (#7396, #7299)
@@ -189,9 +189,10 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Pulls can use the parallel delta scan, which their clients never forward: the daemon module parameter `parallel delta scan = yes` turns it on for a module, and `OC_RSYNC_PARALLEL_DELTA_SCAN=1` for a remote-shell server (#8289)
 
 ### Changed
+- Split CI into dedicated PR (`ci.yml`), master-push (`ci-master.yml`), and nightly (`ci-nightly.yml`) workflows with shared composite setup actions, and aligned `README.md` badges (#8376, #8377, #8378, #8379)
+- Converted remaining `//` doc comments on `pub` items to `///` rustdoc across workspace crates and removed ASCII divider banners (#8380)
 - Embedded `ssh://` ssh_config parity is now gated on a corpus (bastions with `ProxyJump` and `Match`, `Include` directories, token expansion, algorithm lists, `Tag`, canonicalization) diffed against OpenSSH 10.0p1 `ssh -G`, and the user-visible behaviour changes are listed in `docs/ssh-config-embedded.md` (#8329)
 - A recursive local `--write-batch` records incremental recursion, as 3.5.1 does (header `81 ff`), and writes its file list in the incremental layout: the top level, then one sub-list per directory, placed among the file data by 3.5.1's 1000-entry lookahead. rsync 3.5.1 replays these batches, and `--delete-before`, `--delete-after`, `--delay-updates`, `-m`, `--qsort` and `--no-inc-recursive` still record a flat list (#8261)
-
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
 - The cross-implementation oracle tests (block-size grammar, empty size values, daemon auth username, hosts-allow sentinels, daemon log host rendering, daemon filter-file whitespace, filter-file open failures, local progress order, and the three upstream read-batch cells) run against an rsync 3.5.1 binary instead of 3.5.0 (#8314)
 - The path-confinement, rrsync and filter-provenance design notes and the legacy-oracle build script cite rsync 3.5.1, including its `--files-from` ownership walk, `/dev/fd` pins and rrsync root-relative paths (#8311)
@@ -227,7 +228,6 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A server sends all `--info` and `--debug` output to the client as `MSG_INFO`; the client forwards only `--info=`, and a daemon caps each flag at the module's `max verbosity` (#8198)
 - Follow upstream for `--fsync` (regular files only), delete order (a directory is emptied before removal), `SIGPIPE` (ignored, so a broken pipe is a write error) and remote-to-remote transfers (refused) (#8197)
 - Daemon logging follows upstream: timestrings, per-file `%b`, `%c` and `%C`, deletions, module-relative file names, server diagnostics, the contents of a directory cleared to make room, a peer `MSG_INFO`, a syslog fallback when the log file cannot be opened, and the reverse-DNS name in its original case, and width, alignment and human-readable modifiers in `log format` (#7892, #8135, #8136, #8138, #8147, #8160, #8159, #8165, #8123, #8155)
-
 - Embedded `ssh://` transfers read ssh_config keywords as OpenSSH 10.0p1 does: a keyword OpenSSH does not know is refused once the whole file has been read, with every bad line reported; `IgnoreUnknown` is honoured; a keyword with no value is refused; and every keyword OpenSSH accepts still loads, including the ones the embedded transport does not act on (#8329)
 - Embedded `ssh://` transfers honour ssh_config `Ciphers`, `MACs`, `KexAlgorithms`, `HostKeyAlgorithms` and `RekeyLimit` as OpenSSH 10.0p1 reads them: lists are validated when read, `+`, `-` and `^` compose against the transport defaults, names the transport cannot negotiate are left out, and a list with nothing negotiable fails the connection (#8329)
 - Embedded `ssh://` transfers read ssh_config `Tag` and evaluate `Match tagged` as OpenSSH 10.0p1 does, and `Match !final` now requests the final pass like `Match final`; `CanonicalizeHostname`, `CanonicalDomains`, `CanonicalizeMaxDots`, `CanonicalizeFallbackLocal` and `CanonicalizePermittedCNAMEs` are validated, the host is canonicalized by suffix and the configuration re-read for `Match canonical` blocks, and a final-pass `HostName` no longer replaces the host (#8329)
@@ -238,7 +238,6 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A `--checksum` sender hashes the regular files of each file list and INC_RECURSE sub-list in one parallel batch through the same service; each sum is the exact negotiated whole-file digest, and the file-list bytes are unchanged against rsync 3.5.1 (#8312)
 - A sender keeps owner names in its id list instead of on every file entry, looking a name up only when it goes on the wire, as rsync 3.5.1 does (uidlist.c add_uid/add_gid): sender peak RSS on a 1M-file pull drops from 350 MB to 145 MB (3.5.1: 71 MB) with the file-list bytes unchanged (#8359)
 - A non-incremental receiver decides its file list 8192 entries at a time as the request window drains, as upstream's generator decides each entry while the receiver works, instead of building every candidate before the first request: receiver peak RSS on a 1M-file pull drops from 461 MB to 127 MB (3.5.1: 71 MB) with the wire bytes unchanged (#8355)
-
 - Probe OpenSSL MD4 once per process, as upstream does, instead of on every hasher; on OpenSSL 3 builds without the legacy provider this drops a failing `EVP_DigestInit_ex` per block (#8231)
 - The receiver no longer stats each destination before committing it under `--perms` (so every `-a` transfer): only `dest_mode()` reads that stat, and upstream runs `dest_mode()` only without `--perms`. This drops one lookup per file, a failing one for every new file (#8299)
 - Batch network sender writes to match upstream's cadence (#7009)
@@ -263,6 +262,9 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - On Linux, oc-rsync opts out of transparent huge pages at startup. On a host with THP set to `always`, the kernel backed jemalloc extents with 2 MiB pages, adding about 40 MiB to peak memory and making it swing from run to run: a 100k-file pull now peaks at about 24 MiB instead of 61-66 MiB, and a 1 GiB delta pull at 30 MiB (client) and 93 MiB (server) instead of 67-71 MiB and 133-141 MiB, with CPU unchanged (#8342)
 
 ### Fixed
+- Report OS errors as `strerror (errno)` like 3.5.1's `rsyserr` (#8354)
+- Poll the remote shell with `WNOHANG` on a failed exit and signal it (#8372)
+- Match upstream `**+/***` `wild2` prefix in filter compilation (#8375)
 - A remote-shell `--server` at protocol 28 or older queues its fatal report for the client instead of printing it on its own stderr, as rsync 3.5.1 does with `msgs2stderr` clear; after a client refuses `-FF` at protocol 28 the terminal shows only the client's lines (#8367)
 - A compressed stream that fails to decompress, or to compress, ends the run with exit 12 like rsync 3.5.1, instead of 11, and a remote-shell pull whose receiver fails no longer waits forever on a server still reading its input (#8352)
 - A compressed stream that fails to decode or encode is reported as rsync 3.5.1 reports it: a pull prints the codec line, such as `ZSTD decomp returned -10 (0 bytes)` or `inflate returned -3 (0 bytes)`, instead of the compression library's own message, and a push prints the server generator's `connection unexpectedly closed` line instead of the server receiver's report (#8352)
@@ -659,7 +661,6 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 ### Removed
 - The unreachable `transfer::receiver::IncrementalFileListReceiver` streaming file-list reader and its `ReceiverContext::incremental_file_list_receiver` constructor, which only tests used; every live receive path reads the list through `receive_file_list` (#8358)
 - The unreachable `engine::AsyncBatchCopier` and its `RSYNC_MAX_CONCURRENT` environment read (#8236)
-
 - The planned `--windows-acls`, `--audit-acls` and `--fail-on-windows-acl-loss` options from the man page and Windows ACL docs; the CLI never had them (#8236)
 - rsyncd.conf parameters upstream rsync does not have, which a config now gets upstream's unknown-parameter handling for (logged and ignored): `bwlimit` (use the daemon's `--bwlimit`), `motd` (use `motd file`), `acceptor threads`, `rsync port` (use `port`), and `incoming-chmod` / `outgoing-chmod` (use `incoming chmod` / `outgoing chmod`) (#8087)
 - The unused `OC_RSYNC_FALLBACK` hint (#7030) and the non-upstream per-directory filter alias (#6846)
@@ -670,8 +671,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The macOS kqueue bandwidth-limit sleeper and its `OC_RSYNC_BWLIMIT_BACKEND` selector; `--bwlimit` sleeps with `nanosleep` on every platform, matching upstream's `select()` sleep for its 100 ms minimum delay (#8229)
 - The oc-only `exclude-if-present` filter rule, in `--filter` and in merge files. Upstream has no such rule, so it is now refused as `Unknown filter rule` with exit 1, exactly as rsync 3.5.1 refuses it (`exclude.c:1297-1299, 1362-1363`); it also no longer goes to a remote peer as an `-e` rule (#8239)
 - The `parallel-receive-delta` Cargo feature and the parallel receive-delta pipeline it named (`engine::concurrent_delta` applier, consumer, reorder and strategy modules, and `transfer::delta_pipeline`). The feature gated no code and the pipeline was never wired into the receiver; it measured 1.7-3.3x slower than the sequential path in isolation. Builds that pass `--features parallel-receive-delta` must drop it. A false `--debug=recv` notice claiming the path was active is gone with it (#8220)
-
 - The unused `checksums::strong::strategy` runtime selector and the uncalled generic parallel hashing helpers; `checksums::parallel` is now the one parallel `--checksum` service (`hash_files`, `hash_files_blocked`) (#8238)
+
 ## [0.6.4] - 2026-07-18
 
 This release rolls up every change merged since v0.6.3 (roughly 1,200 pull
