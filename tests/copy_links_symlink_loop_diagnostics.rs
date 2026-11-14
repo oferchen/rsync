@@ -42,12 +42,7 @@ const BUDGET: Duration = Duration::from_secs(120);
 
 /// Upstream's `strerror (errno)` rendering of `errno` on this platform.
 fn errno_text(errno: i32) -> String {
-    let error = io::Error::from_raw_os_error(errno);
-    let full = error.to_string();
-    let strerror = full
-        .strip_suffix(&format!(" (os error {errno})"))
-        .unwrap_or(&full);
-    format!("{strerror} ({errno})")
+    logging::upstream_errno_text(&io::Error::from_raw_os_error(errno))
 }
 fn eloop_text() -> String {
     errno_text(libc::ELOOP)

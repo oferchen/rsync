@@ -90,16 +90,15 @@ pub fn eilseq_strerror() -> String {
     const EILSEQ: i32 = 84;
     #[cfg(target_os = "macos")]
     const EILSEQ: i32 = 92;
-    #[cfg(windows)]
-    const EILSEQ: i32 = 42;
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     const EILSEQ: i32 = 84;
 
-    let err = std::io::Error::from_raw_os_error(EILSEQ);
-    let full = err.to_string();
-    full.strip_suffix(&format!(" (os error {EILSEQ})"))
-        .map(str::to_owned)
-        .unwrap_or(full)
+    // Under Cygwin iconv reports its own EILSEQ (138), which no Win32 code
+    // maps to; the text is Cygwin's _sys_errlist[138] (winsup/cygwin/errno.cc).
+    #[cfg(windows)]
+    return String::from("Invalid or incomplete multibyte or wide character");
+    #[cfg(not(windows))]
+    logging::upstream_strerror(&std::io::Error::from_raw_os_error(EILSEQ))
 }
 
 #[cfg(test)]

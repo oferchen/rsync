@@ -448,8 +448,8 @@ fn process_approved_module(
                 // in the daemon log.
                 if let Some(log) = ctx.log_sink {
                     let text = format!(
-                        "failed to run early exec command for module '{}': {err}",
-                        ctx.request
+                        "early exec preparation failed: {}",
+                        logging::upstream_errno_text(&err)
                     );
                     let message = rsync_error!(1, text).with_role(Role::Daemon);
                     log_message(log, &message);
@@ -616,7 +616,10 @@ fn process_approved_module(
             // is logged with its errno and reported by this fixed text.
             Err(io_err) => {
                 if let Some(log) = ctx.log_sink {
-                    let text = format!("pre-xfer exec preparation failed: {io_err}");
+                    let text = format!(
+                        "pre-xfer exec preparation failed: {}",
+                        logging::upstream_errno_text(&io_err)
+                    );
                     let message = rsync_error!(1, text).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
@@ -803,7 +806,14 @@ fn process_approved_module(
         match NameConverter::spawn(&expanded) {
             Ok(nc) => Some(install_name_converter(nc)),
             Err(err) => {
-                let error = AtError::message(format!("name-converter exec failed: {err}"));
+                if let Some(log) = ctx.log_sink {
+                    let text = format!(
+                        "name-converter exec preparation failed: {}",
+                        logging::upstream_errno_text(&err)
+                    );
+                    log_message(log, &rsync_error!(1, text).with_role(Role::Daemon));
+                }
+                let error = AtError::message("name-converter exec preparation failed");
                 send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                 // upstream: clientserver.c:964-992 - the name-converter spawn
                 // runs after the post-xfer-exec fork point, so its failure

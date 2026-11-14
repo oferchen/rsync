@@ -118,8 +118,9 @@ pub fn apply_socket_options_reporting(
             // `rsyserr(FERROR, errno, "failed to set socket option %s")` and
             // keeps applying the remaining options.
             report(format!(
-                "failed to set socket option {}: {error}",
-                option.name()
+                "failed to set socket option {}: {}",
+                option.name(),
+                logging::upstream_errno_text(&error)
             ));
         }
     }

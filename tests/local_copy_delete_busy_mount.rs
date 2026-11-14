@@ -115,11 +115,7 @@ const EBUSY: i32 = 16;
 /// upstream: log.c `rsyserr()` formats `strerror(errno)`, so the wording follows
 /// the C library: glibc says "Device or resource busy", musl "Resource busy".
 fn libc_strerror(code: i32) -> String {
-    let message = std::io::Error::from_raw_os_error(code).to_string();
-    let suffix = format!(" (os error {code})");
-    message
-        .strip_suffix(&suffix)
-        .map_or_else(|| message.clone(), str::to_owned)
+    logging::upstream_strerror(&std::io::Error::from_raw_os_error(code))
 }
 
 fn assert_matches_upstream(fixture: &Fixture, output: &Output) {

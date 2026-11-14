@@ -53,10 +53,16 @@ pub(crate) fn load_file_list_operands(
         // would redirect the read to a file the operator never named.
         let path_buf = PathBuf::from(path);
         let display = path_buf.display().to_string();
+        // upstream: options.c:2667-2669 - "failed to open files-from file %s: %s"
+        // with strerror(errno) and no errno number.
         let file = crate::frontend::operator_file::open_read(&path_buf).map_err(|error| {
             rsync_error!(
                 1,
-                format!("failed to read file list '{}': {}", display, error)
+                format!(
+                    "failed to open files-from file {}: {}",
+                    display,
+                    logging::upstream_strerror(&error)
+                )
             )
             .with_role(Role::Client)
         })?;
@@ -65,7 +71,11 @@ pub(crate) fn load_file_list_operands(
             |error| {
                 rsync_error!(
                     1,
-                    format!("failed to read file list '{}': {}", display, error)
+                    format!(
+                        "failed to read file list '{}': {}",
+                        display,
+                        logging::upstream_errno_text(&error)
+                    )
                 )
                 .with_role(Role::Client)
             },

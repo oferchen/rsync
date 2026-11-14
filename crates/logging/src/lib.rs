@@ -77,6 +77,8 @@
 
 mod config;
 mod context;
+#[cfg(any(windows, test))]
+mod cygwin_errno;
 mod errno_text;
 /// Upstream-compatible error and warning formatting.
 pub mod error_format;
@@ -107,7 +109,9 @@ pub use context::{
     emit_info_coded, emit_line, emit_warning, enter, finfo_suppressed, info_gte, init,
     limit_output_verbosity, set_quiet, xfer_error_reported,
 };
-pub use errno_text::upstream_errno_text;
+pub use errno_text::{
+    rsyserr, rsyserr_io, strerror, upstream_errno, upstream_errno_text, upstream_strerror,
+};
 pub use error_format::{
     file_basename, format_rsync_error, format_rsync_warning, strip_repo_prefix,
 };

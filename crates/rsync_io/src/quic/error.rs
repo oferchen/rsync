@@ -227,14 +227,14 @@ mod tests {
     #[test]
     fn appended_note_keeps_the_timeout_kind() {
         let mut fault = connection_fault(&ConnectionError::TimedOut);
-        fault.append("2 UDP send error(s), last: Permission denied (os error 13)");
+        fault.append("2 UDP send error(s), last: Permission denied (13)");
         let err = fault.to_io_error();
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
         assert!(!is_protocol(&err));
         let text = err.to_string();
         assert!(text.starts_with("timed out"), "{text}");
         assert!(
-            text.ends_with("(2 UDP send error(s), last: Permission denied (os error 13))"),
+            text.ends_with("(2 UDP send error(s), last: Permission denied (13))"),
             "{text}"
         );
     }

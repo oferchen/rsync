@@ -608,7 +608,11 @@ pub(crate) fn read_early_input_file(path: &Path) -> Result<Vec<u8>, ClientError>
 
     let mut file = crate::client::remote::operator_file::open_read(path).map_err(|e| {
         daemon_error(
-            format!("failed to open {}: {e}", path.display()),
+            format!(
+                "failed to open {}: {}",
+                path.display(),
+                logging::upstream_errno_text(&e)
+            ),
             CLIENT_SERVER_PROTOCOL_EXIT_CODE,
         )
     })?;
@@ -619,7 +623,11 @@ pub(crate) fn read_early_input_file(path: &Path) -> Result<Vec<u8>, ClientError>
     while total < EARLY_INPUT_MAX_SIZE {
         let n = file.read(&mut buf[total..]).map_err(|e| {
             daemon_error(
-                format!("failed to read {}: {e}", path.display()),
+                format!(
+                    "failed to read {}: {}",
+                    path.display(),
+                    logging::upstream_errno_text(&e)
+                ),
                 CLIENT_SERVER_PROTOCOL_EXIT_CODE,
             )
         })?;
