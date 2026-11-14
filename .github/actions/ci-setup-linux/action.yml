@@ -40,11 +40,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
     - name: Free runner disk space if short
-      if: inputs.free_disk == 'true'
+      if: ${{ inputs.free_disk == 'true' }}
       uses: ./.github/actions/free-disk-space
 
     - name: Install Rust
@@ -60,16 +57,16 @@ runs:
         prefix-key: ${{ inputs.cache_prefix }}-${{ inputs.toolchain }}-${{ inputs.cache_version }}
 
     - name: Install apt packages
-      if: inputs.apt_packages != ''
+      if: ${{ inputs.apt_packages != '' }}
       shell: bash
       run: bash tools/ci/ensure_apt_packages.sh ${{ inputs.apt_packages }}
 
     - name: Install cargo-nextest
-      if: inputs.install_nextest == 'true'
+      if: ${{ inputs.install_nextest == 'true' }}
       uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
       with:
         tool: cargo-nextest
 
     - name: Build pinned OpenSSH (ssh_config oracle)
-      if: inputs.build_openssh == 'true'
+      if: ${{ inputs.build_openssh == 'true' }}
       uses: ./.github/actions/build-openssh

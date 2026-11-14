@@ -20,9 +20,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
     - name: Install Rust
       uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
       with:
@@ -34,7 +31,7 @@ runs:
         prefix-key: ${{ inputs.cache_prefix }}-${{ inputs.toolchain }}-${{ inputs.cache_version }}
 
     - name: Install cargo-nextest
-      if: inputs.install_nextest == 'true'
+      if: ${{ inputs.install_nextest == 'true' }}
       uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
       with:
         tool: cargo-nextest

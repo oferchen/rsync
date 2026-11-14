@@ -1,5 +1,5 @@
 name: CI
-on:
+'on':
   pull_request:
   workflow_dispatch:
 concurrency:
@@ -74,6 +74,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Install PyYAML (required by the check-name uniqueness gate)
@@ -118,6 +120,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -131,6 +135,8 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
     timeout-minutes: 5
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Unsafe SAFETY comment inventory
@@ -146,6 +152,8 @@ jobs:
     env:
       RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Build rustdoc (workspace, all features, no deps)
@@ -174,6 +182,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -199,6 +209,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Run tools/tests
@@ -216,6 +228,8 @@ jobs:
     env:
       UPSTREAM_VERSION: 3.5.1
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Fetch upstream rsync source
@@ -245,6 +259,9 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
@@ -314,6 +331,8 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     timeout-minutes: 60
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -349,6 +368,8 @@ jobs:
       RUSTFLAGS: -D warnings
       RUST_BACKTRACE: full
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Free disk space
@@ -392,6 +413,8 @@ jobs:
       CARGO_TERM_COLOR: always
       RUSTFLAGS: -D warnings
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -429,6 +452,9 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -472,6 +498,8 @@ jobs:
     if: github.event_name != 'push'
     timeout-minutes: 30
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-windows
       with:
@@ -493,6 +521,8 @@ jobs:
     if: github.event_name != 'push'
     timeout-minutes: 30
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-windows
       with:
@@ -523,6 +553,8 @@ jobs:
     if: github.event_name != 'push'
     timeout-minutes: 20
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -606,6 +638,9 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -681,6 +716,9 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
+    - name: Checkout
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}

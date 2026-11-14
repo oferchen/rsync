@@ -28,11 +28,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
     - name: Free runner disk space if short
-      if: inputs.free_disk == 'true'
+      if: ${{ inputs.free_disk == 'true' }}
       uses: ./.github/actions/free-disk-space
 
     - name: Install Rust
@@ -47,5 +44,5 @@ runs:
         prefix-key: ${{ inputs.cache_prefix }}-${{ inputs.toolchain }}-${{ inputs.cache_version }}
 
     - name: Install cargo-nextest
-      if: inputs.install_nextest == 'true'
+      if: ${{ inputs.install_nextest == 'true' }}
       uses: ./.github/actions/install-cargo-nextest-windows
