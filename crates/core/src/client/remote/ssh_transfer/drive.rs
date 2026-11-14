@@ -34,7 +34,7 @@ use super::super::reporting_side::{ReportingSide, local_failure_error};
 use super::super::version_exchange::version_exchange_failure;
 use super::connection::build_ssh_connection;
 use super::exit_status::{
-    convert_server_stats_to_summary, map_child_exit_status, map_cleanup_child_exit_status,
+    convert_server_stats_to_summary, map_child_exit_status, poll_cleanup_child,
 };
 use super::parse::{parse_remote_operands, parse_single_remote, remote_operand_source_paths};
 use super::progress::ServerProgressAdapter;
@@ -320,21 +320,16 @@ fn run_server_over_ssh_connection(
     ) {
         Ok(h) => h,
         Err(e) => {
-            // Close our writer so the remote can finish exiting, then reap the
-            // child to learn its real exit status. The child's raw exit code
-            // (e.g. a remote rsync/command exiting 42, or an SSH connection
-            // failure exiting 255) must survive rather than be masked by the
-            // handshake error.
-            drop(writer);
+            // upstream: client_run() sets cleanup_child_pid before
+            // setup_protocol() (main.c:1347-1355), so this exit polls the child
+            // like any other: a status already available (a remote command
+            // exiting 42, ssh failing with 255) outranks the handshake error.
             // Genuine ssh-transport diagnostics (auth failures, "connection
             // refused", "command not found") already reached the user: the
             // child inherits our stderr (upstream: pipe.c:68-83 piped_child()),
             // so the error built here carries only the exit status.
-            let child_exit = match child_handle.wait() {
-                Ok(status) => map_cleanup_child_exit_status(status),
-                Err(_) => ExitCode::WaitChild,
-            };
-            return Err(version_exchange_failure(&e, Some(child_exit), local_role));
+            let child_exit = poll_cleanup_child(child_handle);
+            return Err(version_exchange_failure(&e, child_exit, local_role));
         }
     };
 
@@ -399,43 +394,39 @@ fn run_server_over_ssh_connection(
     );
     let side = ReportingSide::of(local_role, &fork_point);
 
+    let stats = match transfer_result {
+        Ok(stats) => stats,
+        // upstream: cleanup.c:146-153 - a failed transfer ends in
+        // _exit_cleanup(), which polls the child with WNOHANG and never waits.
+        Err(transfer_error) => {
+            return Err(transfer_failure_error(
+                transfer_error,
+                poll_cleanup_child(child_handle),
+                side,
+                bytes_read.load(Ordering::Relaxed),
+            ));
+        }
+    };
+
     // Close the writer to signal EOF so the remote process can exit.
     drop(writer);
-    // A failed transfer also closes the read half before reaping. On a
-    // socketpair wire both halves share one socket, so the peer sees EOF
-    // only once both are closed; a peer still waiting for input would
-    // otherwise keep the child alive and this wait would never return.
-    // upstream: cleanup.c:146-153 _exit_cleanup() reaps with WNOHANG and
-    // exits, closing every descriptor.
-    if transfer_result.is_err() {
-        drop(reader);
-    }
 
     let collected_events = itemize_sink.take_events();
 
-    // upstream: main.c wait_process_with_flush() - wait for child and map
-    // status. The child wrote its stderr straight to ours (see the
-    // handshake-failure path above), so only the exit status is taken here.
-    let child_status = child_handle.wait();
-
-    match transfer_result {
-        Ok(stats) => {
-            let child_exit_code = child_status.map_or(ExitCode::WaitChild, map_child_exit_status);
-            // upstream: take MAX of transfer and child exit codes.
-            if child_exit_code.is_success() {
-                Ok((stats, negotiated_protocol, collected_events))
-            } else {
-                // upstream: log.c:937 log_exit() renders the winning child code
-                // by its rerr_name tagged with the exiting process's role.
-                Err(remote_exit_error(child_exit_code, side.exit_role()))
-            }
-        }
-        Err(transfer_error) => Err(transfer_failure_error(
-            transfer_error,
-            child_status.map_or(ExitCode::WaitChild, map_cleanup_child_exit_status),
-            side,
-            bytes_read.load(Ordering::Relaxed),
-        )),
+    // upstream: main.c:1179/:1454 client_run() - a finished transfer waits for
+    // the child (wait_process_with_flush()) and maps its status. The child
+    // wrote its stderr straight to ours (see the handshake-failure path above),
+    // so only the exit status is taken here.
+    let child_exit_code = child_handle
+        .wait()
+        .map_or(ExitCode::WaitChild, map_child_exit_status);
+    // upstream: take MAX of transfer and child exit codes.
+    if child_exit_code.is_success() {
+        Ok((stats, negotiated_protocol, collected_events))
+    } else {
+        // upstream: log.c:937 log_exit() renders the winning child code
+        // by its rerr_name tagged with the exiting process's role.
+        Err(remote_exit_error(child_exit_code, side.exit_role()))
     }
 }
 
@@ -443,7 +434,7 @@ fn run_server_over_ssh_connection(
 /// remote-shell child's exit status.
 pub(in crate::client::remote) fn transfer_failure_error(
     transfer_error: std::io::Error,
-    child_exit_code: ExitCode,
+    child_exit_code: Option<ExitCode>,
     side: ReportingSide,
     bytes_received: u64,
 ) -> ClientError {
@@ -460,13 +451,7 @@ pub(in crate::client::remote) fn transfer_failure_error(
     {
         return error;
     }
-    local_failure_error(
-        &transfer_error,
-        Some(child_exit_code),
-        side,
-        bytes_received,
-        None,
-    )
+    local_failure_error(&transfer_error, child_exit_code, side, bytes_received, None)
 }
 
 #[cfg(test)]
@@ -482,7 +467,7 @@ mod transfer_failure_error_tests {
     fn local_protocol_abort_is_not_masked_by_the_child_eof() {
         let err = transfer_failure_error(
             protocol::protocol_violation("filter rules are too modern for remote rsync."),
-            ExitCode::StreamIo,
+            Some(ExitCode::StreamIo),
             ReportingSide::Sender,
             0,
         );
@@ -506,7 +491,7 @@ mod transfer_failure_error_tests {
     fn local_syntax_abort_keeps_its_code_and_bare_text() {
         let err = transfer_failure_error(
             protocol::syntax_violation("unexpected end of filter rule: <rule from /a/.f>"),
-            ExitCode::StreamIo,
+            Some(ExitCode::StreamIo),
             ReportingSide::Sender,
             0,
         );
@@ -530,7 +515,7 @@ mod transfer_failure_error_tests {
                 std::io::ErrorKind::Unsupported,
                 "Invalid checksum-choice for --checksum: none (0)",
             ),
-            ExitCode::StreamIo,
+            Some(ExitCode::StreamIo),
             ReportingSide::Sender,
             0,
         );
@@ -549,7 +534,7 @@ mod transfer_failure_error_tests {
     fn other_local_failures_still_take_the_worse_child_code() {
         let err = transfer_failure_error(
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe"),
-            ExitCode::StreamIo,
+            Some(ExitCode::StreamIo),
             ReportingSide::Sender,
             0,
         );

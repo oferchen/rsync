@@ -580,6 +580,36 @@ mod exit_code_12_stream_io {
         }
     }
 
+    /// A failing client neither waits for a remote shell that ignores
+    /// end-of-file nor leaves it running: upstream polls the child with WNOHANG
+    /// (cleanup.c:146-153), then signals it with kill_all(SIGUSR1)
+    /// (cleanup.c:202-203) and exits.
+    ///
+    /// The stub traps SIGUSR1, closes its stdout so the handshake read sees
+    /// EOF, and otherwise sleeps for its 30 s cap without holding stderr. The
+    /// captured stderr therefore ends exactly when the stub does, and carries
+    /// the trap's line only if the client signalled it; a client that waits
+    /// ends after the cap without it. 3.5.1 (tarball build) prints the line and
+    /// exits 12 in both directions.
+    #[cfg(unix)]
+    #[test]
+    fn remote_shell_ignoring_eof_is_signalled_not_waited_for() {
+        let rsh = "sh -c 'trap \"echo stub got SIGUSR1 >&2; exit 0\" USR1; \
+                   exec 1>&-; sleep 30 2>&- & wait'";
+        for (output, context) in run_directions(rsh, &["push", "pull"]) {
+            assert_exit_code(&output, ExitCode::StreamIo, context);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.lines().any(|line| line == "stub got SIGUSR1"),
+                "{context}: {stderr}"
+            );
+            assert!(
+                stderr.contains("connection unexpectedly closed (0 bytes received so far)"),
+                "{context}: {stderr}"
+            );
+        }
+    }
+
     #[test]
     #[ignore = "Data stream errors require protocol corruption simulation"]
     fn corrupted_stream_returns_stream_io_error() {

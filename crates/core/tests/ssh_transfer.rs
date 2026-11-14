@@ -375,13 +375,19 @@ fn ssh_connection_failure_exit_code() {
 
         let err = result.expect_err("transfer to unreachable host should fail");
         let code = err.code().as_i32();
-        // upstream: ssh exits 255 on any connection failure; that raw code wins
-        // the worst-wins comparison against the RERR_STREAMIO (12) EOF base and
-        // propagates verbatim. RERR_SOCKETIO (10) is accepted for the direct
-        // rsync:// TCP path when no ssh child is involved.
+        // upstream: ssh exits 255 on any connection failure. The client's
+        // WNOHANG poll (cleanup.c:146-153) folds that raw code over the
+        // RERR_STREAMIO (12) EOF base only when ssh is already reapable, which
+        // races its EOF: 3.5.1 exits either. RERR_SOCKETIO (10) is accepted for
+        // the direct rsync:// TCP path when no ssh child is involved.
         assert!(
-            code == ExitCode::Other(255).as_i32() || code == ExitCode::SocketIo.as_i32(),
-            "expected raw ssh connection-failure exit code (255 or 10); got {code}: {err}"
+            [
+                255,
+                ExitCode::StreamIo.as_i32(),
+                ExitCode::SocketIo.as_i32()
+            ]
+            .contains(&code),
+            "expected ssh connection-failure exit code (255, 12 or 10); got {code}: {err}"
         );
     });
 }
@@ -425,15 +431,14 @@ fn ssh_rsync_path_not_found() {
 
         let err = result.expect_err("transfer with missing rsync-path should fail");
         let code = err.code().as_i32();
-        // The remote shell finds the command missing - could be CommandNotFound (127),
-        // CommandRun (126), CommandFailed (124), Ipc (14), or StartClient (5).
+        // The remote shell finds the command missing and ssh exits 127, but
+        // only after the client has read EOF. The client's WNOHANG poll
+        // (cleanup.c:146-153) takes that status only if ssh is already
+        // reapable, so RERR_STREAMIO (12) usually stands: 3.5.1 exited 12 in
+        // 12 of 12 runs against this host's sshd.
         assert!(
-            code == ExitCode::CommandNotFound.as_i32()
-                || code == ExitCode::CommandRun.as_i32()
-                || code == ExitCode::CommandFailed.as_i32()
-                || code == ExitCode::Ipc.as_i32()
-                || code == ExitCode::StartClient.as_i32(),
-            "expected command-not-found exit code (127, 126, 124, 14, or 5); got {code}: {err}"
+            code == ExitCode::StreamIo.as_i32() || code == ExitCode::CommandNotFound.as_i32(),
+            "expected stream EOF or command-not-found exit code (12 or 127); got {code}: {err}"
         );
     });
 }
@@ -496,12 +501,14 @@ fn ssh_stderr_not_reappended_to_error_message() {
         let err = result.expect_err("connection with fake SSH should fail");
         let err_msg = err.to_string();
 
-        // ssh exits 255; the returned diagnostic reports that raw code, tagged
-        // with the local role - never the invented "SSH stderr:" echo.
-        assert_eq!(
-            err.code().as_i32(),
-            255,
-            "ssh 255 must propagate, got: {err_msg}"
+        // ssh exits 255. The client's WNOHANG poll (cleanup.c:146-153) takes
+        // that raw code only when ssh is already reapable after its EOF, so
+        // 3.5.1 exits 255 or 12 for this stub. Either way the diagnostic is
+        // tagged with the local role - never the invented "SSH stderr:" echo.
+        let code = err.code().as_i32();
+        assert!(
+            code == 255 || code == ExitCode::StreamIo.as_i32(),
+            "ssh failure must exit 255 or 12, got: {err_msg}"
         );
         assert!(
             !err_msg.contains("SSH stderr:"),

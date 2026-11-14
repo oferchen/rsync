@@ -189,6 +189,25 @@ where
     Ok(())
 }
 
+/// Sends `SIGUSR1` to the process `pid`.
+///
+/// upstream: cleanup.c:202-203 - an exiting process with a nonzero code calls
+/// kill_all(SIGUSR1) (util1.c:692-709), which signals every child it forked,
+/// the remote shell included, and never waits for them.
+///
+/// # Errors
+///
+/// Returns the `kill(2)` error, or `InvalidInput` for a `pid` that does not fit
+/// a `pid_t`.
+#[cfg(unix)]
+pub fn send_sigusr1(pid: u32) -> io::Result<()> {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+
+    let pid = i32::try_from(pid).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    kill(Pid::from_raw(pid), Signal::SIGUSR1).map_err(io::Error::from)
+}
+
 /// No-op signal registration for platforms that are neither Unix nor Windows.
 #[cfg(all(not(unix), not(windows)))]
 pub fn register_signal_handlers() -> io::Result<SignalFlags> {
@@ -198,6 +217,22 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The signal reaches the child and ends it the way an unhandled SIGUSR1
+    /// does, so a remote shell that ignores end-of-file still goes away.
+    #[cfg(unix)]
+    #[test]
+    fn send_sigusr1_terminates_a_default_disposition_child() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        send_sigusr1(child.id()).expect("send SIGUSR1");
+        let status = child.wait().expect("wait");
+        assert_eq!(status.signal(), Some(libc::SIGUSR1));
+    }
     use std::sync::atomic::Ordering;
 
     #[test]
