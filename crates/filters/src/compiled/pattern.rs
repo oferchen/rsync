@@ -256,6 +256,7 @@ pub(super) fn normalise_pattern(pattern: &[u8]) -> (bool, bool, Cow<'_, [u8]>) {
     // before the slash-peel misses it and leaves `*/***`, which cannot match a
     // slashless directory name (differential fuzzer divergence on `*/***/`).
     let mut directory_only = false;
+    let mut stripped_wild3 = false;
     let mut stem: &[u8] = pattern;
     if stem.len() > 1 && stem.last() == Some(&b'/') {
         stem = &stem[..stem.len() - 1];
@@ -264,12 +265,24 @@ pub(super) fn normalise_pattern(pattern: &[u8]) -> (bool, bool, Cow<'_, [u8]>) {
         directory_only = true;
     }
     if let Some(len) = slash_wild3_stem_len(stem) {
+        stripped_wild3 = true;
         // `/***` (SLASH_WILD3_SUFFIX) means "match both the directory and
         // everything inside it". Strip it and treat the stem as directory-only;
         // the descendant-matcher expansion then produces the `dir/**` content
         // matchers.
+        //
+        // Exception: when an unanchored pattern has a stem consisting solely of
+        // two or more `*` (e.g. `**/***`, `***/***`) and no trailing `/`,
+        // upstream sets `FILTRULE_WILD2_PREFIX` (exclude.c:335-339) which
+        // prepends `/` to the candidate name (exclude.c:1028-1031). The leading
+        // `**+` matches `""`, `/` matches the prepended `/`, and `***` matches
+        // non-directory files too. Only a written trailing `/` restricts it to
+        // directories.
+        let has_trailing_slash = directory_only;
         stem = &stem[..len];
-        directory_only = true;
+        let wild2_star_only_stem =
+            !starts_with_slash && stem.len() >= 2 && stem.iter().all(|&b| b == b'*');
+        directory_only = has_trailing_slash || !wild2_star_only_stem;
     }
     let stripped = stem;
 
@@ -288,7 +301,7 @@ pub(super) fn normalise_pattern(pattern: &[u8]) -> (bool, bool, Cow<'_, [u8]>) {
     // adds for unanchored patterns.
     let anchored = starts_with_slash;
 
-    if !starts_with_slash && !directory_only {
+    if !starts_with_slash && !directory_only && !stripped_wild3 {
         // Nothing was stripped - borrow the original.
         (anchored, false, Cow::Borrowed(pattern))
     } else {
@@ -485,6 +498,36 @@ mod tests {
 
     /// Bare `/***` (no directory stem) should be treated as directory-only
     /// on the empty path, matching upstream behavior.
+    #[test]
+    fn normalise_pattern_wild2_star_only_stem_with_wild3_suffix() {
+        // Unanchored `**+/***` without trailing `/` matches files too because
+        // upstream FILTRULE_WILD2_PREFIX prepends `/` (exclude.c:1028-1031).
+        for pat in [b"**/***" as &[u8], b"***/***", b"****/***"] {
+            let (anchored, dir_only, core) = normalise_pattern(pat);
+            assert!(!anchored, "pat={:?}", String::from_utf8_lossy(pat));
+            assert!(!dir_only, "pat={:?}", String::from_utf8_lossy(pat));
+            assert!(core.iter().all(|&b| b == b'*'));
+        }
+
+        // Trailing `/` sets FILTRULE_DIRECTORY, so non-dirs are excluded.
+        let (anchored, dir_only, core) = normalise_pattern(b"***/***/");
+        assert!(!anchored);
+        assert!(dir_only);
+        assert_eq!(core.as_ref(), b"***");
+
+        // Anchored `/***/***` has no FILTRULE_WILD2_PREFIX, so it requires a `/`.
+        let (anchored, dir_only, core) = normalise_pattern(b"/***/***");
+        assert!(anchored);
+        assert!(dir_only);
+        assert_eq!(core.as_ref(), b"***");
+
+        // Single `*` stem `*/***` has no FILTRULE_WILD2_PREFIX.
+        let (anchored, dir_only, core) = normalise_pattern(b"*/***");
+        assert!(!anchored);
+        assert!(dir_only);
+        assert_eq!(core.as_ref(), b"*");
+    }
+
     #[test]
     fn normalise_pattern_bare_wild3_suffix() {
         // Pattern "/***" has len 4, not > 4, so the `/***` branch does NOT
