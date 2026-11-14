@@ -4,7 +4,7 @@
 //! that the rendered output matches the structure and content expected by upstream
 //! rsync's --stats, --verbose, and --itemize-changes modes.
 
-use super::common::{RSYNC, run_with_args};
+use super::common::{RSYNC, run_binary, run_with_args};
 use super::*;
 use super::{
     NameOutputLevel, OutFormatContext, ProgressSetting, emit_transfer_summary, parse_out_format,
@@ -2570,21 +2570,6 @@ fn parity_debug_flag_filter_accepted_without_error() {
     assert_eq!(code, 0, "--debug=filter should not fail: {err}");
 }
 
-/// Runs the built `oc-rsync` binary with `args`, returning its exit code,
-/// stdout and stderr. A role trace (`-vvv`, `ALL`, `FLIST2`) runs a local copy
-/// over a `--server` child of the current executable, which only the real
-/// binary can serve.
-fn run_binary<I: IntoIterator<Item = OsString>>(args: I) -> (i32, String, String) {
-    let output = std::process::Command::new(test_support::oc_rsync_bin())
-        .args(args)
-        .output()
-        .expect("run oc-rsync");
-    (
-        output.status.code().unwrap_or(-1),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    )
-}
 #[test]
 fn parity_debug_flag_all_accepted_without_error() {
     use std::fs;
