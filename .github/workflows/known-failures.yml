@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: known-failures-${{ github.ref }}
-  cancel-in-progress: true
+  group: known-failures-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
