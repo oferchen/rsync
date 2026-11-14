@@ -611,15 +611,32 @@ fn no_zero_copy_flag_sets_disabled() {
 }
 
 #[test]
-fn parallel_delta_scan_default_is_false() {
+fn parallel_delta_default_is_true() {
     let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(parsed.parallel_delta_scan);
+}
+
+#[test]
+fn parallel_delta_flag_sets_true() {
+    let parsed = parse_test_args(["--parallel-delta", "src/", "dst/"]).expect("parse");
+    assert!(parsed.parallel_delta_scan);
+}
+
+#[test]
+fn no_parallel_delta_flag_sets_false() {
+    let parsed = parse_test_args(["--no-parallel-delta", "src/", "dst/"]).expect("parse");
     assert!(!parsed.parallel_delta_scan);
 }
 
 #[test]
-fn parallel_delta_scan_flag_sets_true() {
-    let parsed = parse_test_args(["--parallel-delta-scan", "src/", "dst/"]).expect("parse");
-    assert!(parsed.parallel_delta_scan);
+fn parallel_delta_last_flag_wins() {
+    let enabled = parse_test_args(["--no-parallel-delta", "--parallel-delta", "src/", "dst/"])
+        .expect("parse");
+    assert!(enabled.parallel_delta_scan);
+
+    let disabled = parse_test_args(["--parallel-delta", "--no-parallel-delta", "src/", "dst/"])
+        .expect("parse");
+    assert!(!disabled.parallel_delta_scan);
 }
 
 #[test]
