@@ -298,7 +298,7 @@ fn bench_simd_vs_scalar_md5(c: &mut Criterion) {
     let mut group = c.benchmark_group("simd_vs_scalar_md5");
     group.throughput(Throughput::Bytes(total_bytes));
 
-    // --- Scalar path: force SimdLevel::None, create a fresh dispatcher ---
+    // Scalar path: force SimdLevel::None, create a fresh dispatcher
     group.bench_function(
         BenchmarkId::new("scalar", format!("batch{MD5_BATCH_WIDTH}")),
         |b| {
@@ -316,7 +316,7 @@ fn bench_simd_vs_scalar_md5(c: &mut Criterion) {
         },
     );
 
-    // --- SIMD path: restore native level, create a fresh dispatcher ---
+    // SIMD path: restore native level, create a fresh dispatcher
     group.bench_function(
         BenchmarkId::new(
             format!(
@@ -334,7 +334,7 @@ fn bench_simd_vs_scalar_md5(c: &mut Criterion) {
         },
     );
 
-    // --- Single-hash scalar vs SIMD for reference ---
+    // Single-hash scalar vs SIMD for reference
     group.bench_function("single_scalar", |b| {
         reset_simd_override_for_tests(SimdLevel::None);
         let scalar_dispatcher = Dispatcher::detect();

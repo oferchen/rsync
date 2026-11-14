@@ -400,7 +400,7 @@ mod tests {
         Rope::new(dq.semaphore, cfg(min, max))
     }
 
-    // --- config validation ---------------------------------------------------
+    // config validation
 
     #[test]
     fn config_rejects_inconsistent_ranges() {
@@ -433,7 +433,7 @@ mod tests {
         );
     }
 
-    // --- permit weight -------------------------------------------------------
+    // permit weight
 
     #[test]
     fn permit_weight_follows_file_size_tiers() {
@@ -445,7 +445,7 @@ mod tests {
         assert_eq!(permit_weight_bytes(u64::MAX), HUGE_WEIGHT);
     }
 
-    // --- ceiling sizing ------------------------------------------------------
+    // ceiling sizing
 
     #[test]
     fn no_rate_estimate_sizes_to_min() {
@@ -508,7 +508,7 @@ mod tests {
         assert!((1..=64).contains(&c), "zero-size unit gave {c}");
     }
 
-    // --- actuation -----------------------------------------------------------
+    // actuation
 
     #[test]
     fn actuate_moves_the_semaphore_ceiling() {

@@ -254,7 +254,7 @@ fn iconv_utf8_latin1_round_trip_preserves_filenames() {
         fs::write(&path, payload).expect("write source file");
     }
 
-    // ---- Forward leg: UTF-8 -> ISO-8859-1 ----
+    // Forward leg: UTF-8 -> ISO-8859-1
     let fwd_converter = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("forward converter");
     let fwd_operands = vec![
         source.into_os_string(),
@@ -304,7 +304,7 @@ fn iconv_utf8_latin1_round_trip_preserves_filenames() {
         "nested Latin-1 name wrong; got {nested_names:?}"
     );
 
-    // ---- Reverse leg: ISO-8859-1 -> UTF-8 ----
+    // Reverse leg: ISO-8859-1 -> UTF-8
     let rev_converter = FilenameConverter::new("ISO-8859-1", "UTF-8").expect("reverse converter");
     let rev_operands = vec![
         inter_root.into_os_string(),

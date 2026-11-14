@@ -15,10 +15,8 @@ use protocol::{
     write_varlong30,
 };
 
-// ---------------------------------------------------------------------------
 // Server greeting wire format
 // upstream: clientserver.c - start_daemon(), sends "@RSYNCD: <ver>.0\n"
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_server_greeting_protocol_32() {
@@ -55,10 +53,8 @@ fn golden_server_greeting_protocol_28() {
     assert_eq!(greeting.as_bytes(), b"@RSYNCD: 28.0\n");
 }
 
-// ---------------------------------------------------------------------------
 // Greeting parsing
 // upstream: clientserver.c - start_inband_exchange() parses the greeting
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_parse_server_greeting_32() {
@@ -92,10 +88,8 @@ fn golden_greeting_byte_exact_format() {
     assert_eq!(generated.as_bytes(), expected_bytes);
 }
 
-// ---------------------------------------------------------------------------
 // Multiplex frame header encoding
 // upstream: io.c - mplex_write(), MPLEX_BASE=7, tag=(code+MPLEX_BASE)<<24 | len
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_mplex_data_header() {
@@ -235,10 +229,8 @@ fn golden_mplex_decode_roundtrip_all_codes() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Varint encoding (protocol 30+)
 // upstream: io.c - write_varint() / read_varint()
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_varint_zero() {
@@ -363,10 +355,8 @@ fn golden_varint_negative_128() {
     assert_eq!(val, -128);
 }
 
-// ---------------------------------------------------------------------------
 // Fixed 4-byte integer encoding (write_int / read_int, all protocol versions)
 // upstream: io.c - write_int() / read_int()
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_write_int_zero() {
@@ -420,10 +410,8 @@ fn golden_write_int_256() {
     assert_eq!(read_int(&mut cursor).unwrap(), 256);
 }
 
-// ---------------------------------------------------------------------------
 // Longint encoding (protocol < 30)
 // upstream: io.c - write_longint() / read_longint()
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_longint_small_value() {
@@ -488,10 +476,8 @@ fn golden_longint_very_large() {
     assert_eq!(read_longint(&mut cursor).unwrap(), value);
 }
 
-// ---------------------------------------------------------------------------
 // Varlong30 encoding (protocol 30+)
 // upstream: io.c - write_varlong() / read_varlong() with min_bytes parameter
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_varlong30_zero_min3() {
@@ -556,10 +542,8 @@ fn golden_varlong30_unix_timestamp_min3() {
     assert_eq!(read_varlong30(&mut cursor, 3).unwrap(), 1_700_000_000);
 }
 
-// ---------------------------------------------------------------------------
 // Compatibility flags wire format
 // upstream: compat.c - send/recv compatibility flags as varint
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_compat_flags_empty() {
@@ -655,10 +639,8 @@ fn golden_compat_flags_all_known() {
     assert_eq!(decoded, flags);
 }
 
-// ---------------------------------------------------------------------------
 // Transfer stats wire format
 // upstream: main.c - output_summary(), stats exchanged via varlong30(min_bytes=3)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_stats_zero_proto30() {
@@ -759,10 +741,8 @@ fn golden_stats_swap_perspective() {
     assert_eq!(swapped.total_size, 1000);
 }
 
-// ---------------------------------------------------------------------------
 // File list XMIT flags encoding
 // upstream: rsync.h - XMIT_* constants, also mirrored in wire::file_entry
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_xmit_flag_values() {
@@ -842,10 +822,8 @@ fn golden_xmit_file_entry_first_in_list() {
     assert_eq!(flags.to_u32(), 0);
 }
 
-// ---------------------------------------------------------------------------
 // Varint encoding for file list flags (VARINT_FLIST_FLAGS mode)
 // upstream: flist.c - send_file_entry() / recv_file_entry()
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_varint_flist_flags_simple() {
@@ -881,10 +859,8 @@ fn golden_varint_flist_flags_with_extended() {
     assert!(flags.hlinked());
 }
 
-// ---------------------------------------------------------------------------
 // File list end-of-list marker
 // upstream: flist.c - a zero byte marks end of file list (non-incremental)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_flist_end_marker() {
@@ -895,11 +871,9 @@ fn golden_flist_end_marker() {
     assert_eq!(buf, [0x00]);
 }
 
-// ---------------------------------------------------------------------------
 // Checksum header (SumHead) wire format
 // upstream: match.c / sender.c - sum_head: count, blength, s2length, remainder
 // Each field is write_int() = 4-byte LE i32, total 16 bytes
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_sum_head_empty() {
@@ -955,10 +929,8 @@ fn golden_sum_head_typical() {
     assert_eq!(read_int(&mut cursor).unwrap(), remainder);
 }
 
-// ---------------------------------------------------------------------------
 // Multiplex header decode from raw bytes
 // upstream: io.c - read_a_msg() reads 4-byte LE header
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_mplex_decode_from_bytes() {
@@ -1015,10 +987,8 @@ fn golden_mplex_decode_no_send() {
     assert_eq!(header.payload_len(), 4);
 }
 
-// ---------------------------------------------------------------------------
 // Multiplex header rejects invalid tags
 // upstream: tags < MPLEX_BASE (7) are not valid multiplexed headers
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_mplex_reject_tag_below_base() {
@@ -1036,10 +1006,8 @@ fn golden_mplex_reject_tag_zero() {
     assert!(MessageHeader::decode(&wire).is_err());
 }
 
-// ---------------------------------------------------------------------------
 // Delete stats wire format
 // upstream: generator.c - send_delete_stats() uses varint for each count
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_delete_stats_empty() {
@@ -1096,10 +1064,8 @@ fn golden_delete_stats_large_counts() {
     assert_eq!(decoded.total(), 1256);
 }
 
-// ---------------------------------------------------------------------------
 // Varint sequence encoding (multiple values in a stream)
 // upstream: io.c - sequential varint reads/writes in protocol 30+
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_varint_sequence() {
@@ -1132,10 +1098,8 @@ fn golden_varint_sequence() {
     assert!(remaining.is_empty());
 }
 
-// ---------------------------------------------------------------------------
 // Protocol version feature queries
 // upstream: compat.c - feature gates based on protocol version
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_protocol_version_features() {
@@ -1170,10 +1134,8 @@ fn golden_protocol_version_features() {
     assert!(v32.supports_flist_times());
 }
 
-// ---------------------------------------------------------------------------
 // Message code numeric values match upstream enum msgcode
 // upstream: rsync.h - enum msgcode
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_message_code_values() {
@@ -1217,10 +1179,8 @@ fn golden_message_header_len_is_4() {
     assert_eq!(protocol::MESSAGE_HEADER_LEN, 4);
 }
 
-// ---------------------------------------------------------------------------
 // Encoding consistency: varint30_int dispatches correctly by protocol version
 // upstream: io.h - write_varint30() / read_varint30() inline wrappers
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_varint30_int_proto29_uses_fixed_int() {
@@ -1267,10 +1227,8 @@ fn golden_varint30_int_proto32_uses_varint() {
     assert_eq!(buf, expected);
 }
 
-// ---------------------------------------------------------------------------
 // Legacy daemon protocol prefix constant
 // upstream: clientserver.c - RSYNCD_PREFIX "@RSYNCD: "
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_legacy_daemon_prefix() {

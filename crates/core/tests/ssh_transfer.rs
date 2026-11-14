@@ -31,9 +31,7 @@ const MAX_SSH_RETRIES: u32 = 3;
 /// Delay between SSH retry attempts, giving transient failures time to clear.
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Returns `true` when SSH to localhost is available.
 ///
@@ -125,9 +123,7 @@ fn run_client_with_retry(config_fn: impl Fn() -> ClientConfig) -> Result<(), Cli
     Err(last_err.expect("at least one attempt must have run"))
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 /// Verify that transferring a single file over SSH to localhost succeeds.
 #[test]

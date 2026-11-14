@@ -744,7 +744,7 @@ fn parse_target_empty_fails() {
     assert!(error.to_string().contains("No name found after colon"));
 }
 
-// --- Sender-name-keyed resolution (upstream recv_add_id, uidlist.c:255-270) ---
+// Sender-name-keyed resolution (upstream recv_add_id, uidlist.c:255-270)
 
 #[test]
 fn map_uid_named_matches_sender_name_not_receiver_lookup() {
@@ -876,7 +876,7 @@ fn map_uid_named_first_match_wins() {
     );
 }
 
-// --- wildmatch parity (upstream lib/wildmatch.c) for the cases --usermap uses ---
+// wildmatch parity (upstream lib/wildmatch.c) for the cases --usermap uses
 
 #[test]
 fn wildmatch_parity_common_cases() {

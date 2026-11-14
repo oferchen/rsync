@@ -302,7 +302,7 @@ mod tests {
     use crate::throughput::{Governor, GovernorConfig};
     use std::path::PathBuf;
 
-    // --- ceiling bounds derivation ------------------------------------------
+    // ceiling bounds derivation
 
     #[test]
     fn weighted_bounds_track_the_static_baseline() {
@@ -328,7 +328,7 @@ mod tests {
         assert!(b.initial <= b.max);
     }
 
-    // --- selection by mode ---------------------------------------------------
+    // selection by mode
 
     #[test]
     fn weighted_off_mode_is_a_fixed_bound() {
@@ -359,7 +359,7 @@ mod tests {
         let _ = governed_work_queue(0, GovernorMode::Off);
     }
 
-    // --- retune / actuation --------------------------------------------------
+    // retune / actuation
 
     #[test]
     fn weighted_retune_is_a_noop_on_the_fixed_path() {
@@ -427,7 +427,7 @@ mod tests {
         );
     }
 
-    // --- admission accounting: acquired == released at quiescence ------------
+    // admission accounting: acquired == released at quiescence
 
     #[test]
     fn weighted_permits_are_conserved_across_a_full_drain() {

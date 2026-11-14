@@ -30,10 +30,8 @@ fn proto30() -> ProtocolVersion {
     ProtocolVersion::from_supported(30).unwrap()
 }
 
-// ---------------------------------------------------------------------------
 // Sort order: protocol 28 uses plain lexicographic, no file-before-directory
 // upstream: flist.c:3803 - protocol_version >= 29 ? t_PATH : t_ITEM
-// ---------------------------------------------------------------------------
 
 /// Protocol 28 sorts directories and files by plain byte order, without
 /// the file-before-directory rule used in protocol 29+.
@@ -167,9 +165,7 @@ fn golden_v28_sort_nested_paths_plain_byte_order() {
     assert_eq!(entries[1].name(), "ab");
 }
 
-// ---------------------------------------------------------------------------
 // compare_file_entries (protocol 29+ comparison used by default)
-// ---------------------------------------------------------------------------
 
 /// Verify that compare_file_entries uses file-before-directory semantics
 /// (protocol 29+ default), contrasting with sort_file_list's pre29 mode.
@@ -187,10 +183,8 @@ fn golden_v28_compare_fn_uses_v29_semantics() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // XMIT_SAME_TIME flag: mtime suppression across entries
 // upstream: flist.c - XMIT_SAME_TIME (0x80) omits mtime when equal to previous
-// ---------------------------------------------------------------------------
 
 /// When consecutive entries share the same mtime, the second entry sets
 /// XMIT_SAME_TIME and omits the 4-byte mtime field.
@@ -255,10 +249,8 @@ fn golden_v28_different_time_emits_mtime() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // XMIT_SAME_MODE flag: mode suppression across entries
 // upstream: flist.c - XMIT_SAME_MODE (0x02) omits mode when equal to previous
-// ---------------------------------------------------------------------------
 
 /// When consecutive entries share the same mode, the second entry sets
 /// XMIT_SAME_MODE and omits the 4-byte mode field.
@@ -322,10 +314,8 @@ fn golden_v28_different_mode_emits_mode() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // XMIT_LONG_NAME: filenames exceeding 255 bytes
 // upstream: flist.c - XMIT_LONG_NAME (1<<6) triggers varint/int name length
-// ---------------------------------------------------------------------------
 
 /// Filenames with suffix > 255 bytes use XMIT_LONG_NAME flag, which
 /// encodes the name length as a 4-byte LE int instead of a single byte.
@@ -389,10 +379,8 @@ fn golden_v28_long_name_roundtrip() {
     assert_eq!(read_entry.size(), 42);
 }
 
-// ---------------------------------------------------------------------------
 // Wire format divergence: protocol 28 (fixed) vs protocol 30 (varint)
 // upstream: protocol 30 introduced varint encoding for flist fields
-// ---------------------------------------------------------------------------
 
 /// Protocol 28 and 30 produce different wire bytes for the same entry.
 /// Protocol 28 uses fixed 4-byte LE for size, mtime, mode.
@@ -456,10 +444,8 @@ fn golden_v28_uid_gid_encoding_differs_from_v30() {
     assert_ne!(buf_28, buf_30, "v28 and v30 uid/gid encoding must differ");
 }
 
-// ---------------------------------------------------------------------------
 // No INC_RECURSE NDX markers in protocol 28 flist
 // upstream: protocol 28 uses legacy ASCII negotiation, no binary compat flags
-// ---------------------------------------------------------------------------
 
 /// Protocol 28 file lists use a simple zero-byte terminator without
 /// any INC_RECURSE segment markers or NDX framing.
@@ -500,10 +486,8 @@ fn golden_v28_no_inc_recurse_in_flist() {
     assert!(reader.read_entry(&mut cursor).unwrap().is_none());
 }
 
-// ---------------------------------------------------------------------------
 // Cumulative flag compression across many entries
 // upstream: flist.c - state carries prev_uid, prev_gid, prev_mode, prev_mtime
-// ---------------------------------------------------------------------------
 
 /// Demonstrates maximum flag compression when all metadata fields match
 /// between consecutive entries. Only name suffix and size vary.
@@ -604,10 +588,8 @@ fn golden_v28_no_flag_compression() {
     assert_ne!(second_flags & 0x10, 0, "XMIT_SAME_GID always set");
 }
 
-// ---------------------------------------------------------------------------
 // Symlink target length uses 4-byte fixed int at protocol 28
 // upstream: flist.c - write_varint30_int(proto=28) = write_int (4-byte LE)
-// ---------------------------------------------------------------------------
 
 /// Symlink target length encoding uses 4-byte LE at protocol 28,
 /// not the varint encoding introduced in protocol 30.
@@ -641,10 +623,8 @@ fn golden_v28_symlink_target_length_fixed_int() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Full flist with sorted entries round-trip
 // upstream: flist.c - sender sorts then sends, receiver receives then sorts
-// ---------------------------------------------------------------------------
 
 /// Builds a realistic file list, sorts it with protocol 28 rules,
 /// encodes it, decodes it, and verifies the sort order is preserved.

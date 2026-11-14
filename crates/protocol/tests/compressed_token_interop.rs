@@ -37,9 +37,7 @@ use protocol::wire::{
     MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG, TOKENRUN_REL,
 };
 
-// ---------------------------------------------------------------------------
 // Helper: collect all tokens from a decoder until End
-// ---------------------------------------------------------------------------
 
 /// Decodes all tokens from a byte buffer, returning (literals, block_matches).
 fn decode_all(data: &[u8]) -> (Vec<u8>, Vec<u32>) {
@@ -82,9 +80,7 @@ enum TestToken {
     BlockMatch(u32),
 }
 
-// ===========================================================================
 // Section 1: Golden byte tests - verify decoder handles upstream wire format
-// ===========================================================================
 
 /// Upstream rsync signals end-of-file with a single END_FLAG (0x00) byte.
 /// Reference: token.c line 462 `write_byte(f, END_FLAG)`.
@@ -378,9 +374,7 @@ fn golden_mixed_literal_and_block_match() {
     assert_eq!(blocks, vec![0]);
 }
 
-// ===========================================================================
 // Section 2: Encoder format tests - verify our encoder produces upstream format
-// ===========================================================================
 
 /// Verify the encoder writes END_FLAG (0x00) as the final byte.
 /// Reference: token.c line 462 `write_byte(f, END_FLAG)`.
@@ -535,9 +529,7 @@ fn encoder_run_length_boundary_65535() {
     }
 }
 
-// ===========================================================================
 // Section 3: Round-trip tests - encode then decode with various data patterns
-// ===========================================================================
 
 /// Round-trip: empty file (no literals, no blocks, just END_FLAG).
 #[test]
@@ -709,9 +701,7 @@ fn roundtrip_mixed_relative_and_absolute_blocks() {
     assert_eq!(blocks, block_indices);
 }
 
-// ===========================================================================
 // Section 4: Edge case and boundary tests
-// ===========================================================================
 
 /// Verify that encoder reuse across files produces valid streams.
 /// Upstream rsync reuses the same compressor across files in a transfer,

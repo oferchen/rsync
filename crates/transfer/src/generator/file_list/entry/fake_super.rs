@@ -63,8 +63,8 @@ pub(super) fn build_entry_from_fake_super(
 ///
 /// Returns the open or read error. A real symlink at `path` fails with
 /// `ELOOP`.
-// upstream: syscall.c:999-1018 do_readlink() - `am_root < 0` reads the link
-// from the file through do_open_nofollow().
+/// upstream: syscall.c:999-1018 do_readlink() - `am_root < 0` reads the link
+/// from the file through do_open_nofollow().
 #[cfg(unix)]
 pub(super) fn read_placeholder_target(path: &Path) -> io::Result<PathBuf> {
     use std::io::Read;

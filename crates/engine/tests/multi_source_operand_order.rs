@@ -249,11 +249,9 @@ fn reordering_does_not_change_destination_contents() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Known divergences NOT addressed by the operand sort, pinned as ignored specs
 // so they stay tracked rather than silently masked. Each encodes upstream's
 // exact behaviour and is ready to un-ignore when its dedicated follow-up lands.
-// ---------------------------------------------------------------------------
 
 /// Copy-contents (trailing-slash) sources merging into one destination.
 /// Upstream flattens every operand's CONTENTS into one flist and sorts globally

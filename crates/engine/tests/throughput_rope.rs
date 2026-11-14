@@ -47,7 +47,7 @@ fn fingerprint(results: &[DeltaResult]) -> Vec<ResultFingerprint> {
         .collect()
 }
 
-// --- property 1: ceiling always in [min, max] -------------------------------
+// property 1: ceiling always in [min, max]
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
@@ -72,7 +72,7 @@ proptest! {
     }
 }
 
-// --- property 2: permits acquired == released at quiescence ------------------
+// property 2: permits acquired == released at quiescence
 
 /// Drains `receiver` on the rayon pool, mapping each admitted item to a
 /// result that echoes its sequence, then restores submission order.
@@ -154,7 +154,7 @@ fn permits_balance_under_concurrent_resizes() {
     }
 }
 
-// --- property 3: the rope gates admission, not ordering ----------------------
+// property 3: the rope gates admission, not ordering
 
 /// Baseline transfer through the static fixed-capacity queue - "today's"
 /// behaviour.

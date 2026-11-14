@@ -16,9 +16,7 @@ use fast_io::o_tmpfile::{
 };
 use tempfile::tempdir;
 
-// ---------------------------------------------------------------------------
 // Cross-platform probe tests
-// ---------------------------------------------------------------------------
 
 #[test]
 fn probe_returns_valid_result_for_tempdir() {
@@ -52,9 +50,7 @@ fn open_temp_file_returns_result_for_tempdir() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Named temp file fallback (always works on all platforms)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn named_temp_file_fallback_write_and_commit() {
@@ -97,9 +93,7 @@ fn named_temp_file_cleanup_on_drop() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Linux-specific O_TMPFILE tests
-// ---------------------------------------------------------------------------
 
 #[cfg(target_os = "linux")]
 mod linux {
@@ -312,9 +306,7 @@ mod linux {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Non-Linux fallback tests
-// ---------------------------------------------------------------------------
 
 #[cfg(not(target_os = "linux"))]
 mod non_linux {
