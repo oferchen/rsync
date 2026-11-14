@@ -189,6 +189,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Pulls can use the parallel delta scan, which their clients never forward: the daemon module parameter `parallel delta scan = yes` turns it on for a module, and `OC_RSYNC_PARALLEL_DELTA_SCAN=1` for a remote-shell server (#8289)
 
 ### Changed
+- Renamed `--parallel-delta-scan` to `--parallel-delta` (with `--no-parallel-delta` to opt out) and enabled it by default
 - Split CI into dedicated PR (`ci.yml`), master-push (`ci-master.yml`), and nightly (`ci-nightly.yml`) workflows with shared composite setup actions, and aligned `README.md` badges (#8376, #8377, #8378, #8379)
 - Converted remaining `//` doc comments on `pub` items to `///` rustdoc across workspace crates and removed ASCII divider banners (#8380)
 - Embedded `ssh://` ssh_config parity is now gated on a corpus (bastions with `ProxyJump` and `Match`, `Include` directories, token expansion, algorithm lists, `Tag`, canonicalization) diffed against OpenSSH 10.0p1 `ssh -G`, and the user-visible behaviour changes are listed in `docs/ssh-config-embedded.md` (#8329)

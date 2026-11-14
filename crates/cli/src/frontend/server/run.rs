@@ -439,7 +439,7 @@ where
         config.flags.keep_dirlinks = false;
     }
 
-    // `--parallel-delta-scan` never crosses the wire (an upstream server would
+    // `--parallel-delta` never crosses the wire (an upstream server would
     // reject it), so a remote-shell server's sender takes the switch from its
     // own environment instead; a receiver has no scan to switch.
     if role == ServerRole::Generator {

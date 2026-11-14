@@ -1,7 +1,7 @@
 //! `OC_RSYNC_PARALLEL_DELTA_SCAN` - the remote-shell server's switch for the
 //! parallel delta scan.
 //!
-//! The client never forwards `--parallel-delta-scan`, because an upstream
+//! The client never forwards `--parallel-delta`, because an upstream
 //! server rejects unknown options, so on a pull the sending server decides for
 //! itself. A remote-shell server reads this variable; a daemon reads its
 //! `parallel delta scan` module parameter instead. Nothing goes on the wire.

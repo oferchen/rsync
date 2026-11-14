@@ -309,12 +309,12 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .overrides_with("zero-copy"),
             )
             .arg(
-                Arg::new("parallel-delta-scan")
-                    .long("parallel-delta-scan")
+                Arg::new("parallel-delta")
+                    .long("parallel-delta")
                     .help_heading("oc-rsync extensions")
                     .help(
-                        "Opt-in: scan a large file's delta across multiple \
-                         cores (sender side). Only engages for large, \
+                        "Scan a large file's delta across multiple cores \
+                         (sender side, default on). Only engages for large, \
                          duplicate-free basis files (duplicate-content basis \
                          files fall back to the sequential scan, as does \
                          --inplace, whose in-place basis updates require \
@@ -322,10 +322,18 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                          Reconstruction and matched/literal stats are \
                          unaffected; the literal-token wire framing may differ \
                          by a few bytes at a range boundary. Local-only \
-                         optimization, never forwarded to a remote peer. \
-                         Default off.",
+                         optimization, never forwarded to a remote peer.",
                     )
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-parallel-delta"),
+            )
+            .arg(
+                Arg::new("no-parallel-delta")
+                    .long("no-parallel-delta")
+                    .help_heading("oc-rsync extensions")
+                    .help("Disable the parallel sender-side delta scan (force sequential scan).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("parallel-delta"),
             )
             .arg(
                 Arg::new("inplace")

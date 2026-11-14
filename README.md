@@ -256,7 +256,7 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 
 **`--zero-copy` and `SEND_ZC`.** Zero-copy socket writes (io_uring `SEND_ZC`, Linux 6.0+) are off by default. On a loopback benchmark they made a 2 GiB daemon pull slower, so they stay opt-in. The choice is local to each node and is never forwarded to the peer (#8183). A client opts in with `--zero-copy`. A server opts in with `oc-rsync --daemon --zero-copy`, with `--rsync-path='oc-rsync --zero-copy'`, or with `OC_RSYNC_ZERO_COPY=on|off|auto`. The flag wins over the variable, and the variable over the default. See [`docs/design/iouring-send-zc.md`](./docs/design/iouring-send-zc.md).
 
-**Parallel delta work.** The sender scans each file's delta on one thread unless `--parallel-delta-scan` is given; it applies to local transfers of large, duplicate-free basis files. `--checksum-threads=N` sets the threads that hash basis signatures; the default uses the available cores above a size threshold, and `1` forces sequential hashing.
+**Parallel delta work.** By default (`--parallel-delta`), the sender scans large, duplicate-free basis files across multiple cores (`--no-parallel-delta` forces a sequential scan). `--checksum-threads=N` sets the threads that hash basis signatures; the default uses the available cores above a size threshold, and `1` forces sequential hashing.
 
 **SSH stderr.** The remote shell inherits oc-rsync's own stderr, as upstream `piped_child()` arranges (`pipe.c:48-97`): its messages reach the terminal byte for byte, as soon as they are written, and exactly once. Only stdin and stdout are socketpairs. See [`docs/ssh-transport.md`](./docs/ssh-transport.md).
 
