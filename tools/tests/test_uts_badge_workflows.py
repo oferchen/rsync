@@ -129,7 +129,7 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
         # behaviour that 3.5.1 changed.
         callers = {path.name for path in WORKFLOWS_DIR.glob("*.yml")
                    if not path.name.startswith("_") and _testsuite_callers(path)}
-        self.assertEqual(callers, {CI_YML.name, GATE.name})
+        self.assertEqual(callers, {CI_YML.name, "ci-master.yml", GATE.name})
 
     def test_triggers(self) -> None:
         # ci.yml runs on every pull request, unfiltered, or a required check
