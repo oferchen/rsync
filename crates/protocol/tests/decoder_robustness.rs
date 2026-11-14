@@ -30,7 +30,7 @@ fn protocol(version: u8) -> ProtocolVersion {
     ProtocolVersion::try_from(version).expect("supported protocol version")
 }
 
-// --- File-list entry decode (CVE-2026-43620 class: crafted flist) ------------
+// File-list entry decode (CVE-2026-43620 class: crafted flist)
 //
 // Upstream CVE-2026-43620 was an out-of-bounds read reachable from a maliciously
 // crafted incremental file list (a first entry that is not the implied dot-dir,
@@ -209,7 +209,7 @@ mod flist_entry_decode {
     }
 }
 
-// --- Compressed-token decode (CVE-2026-43618 class: integer overflow) --------
+// Compressed-token decode (CVE-2026-43618 class: integer overflow)
 //
 // Upstream CVE-2026-43618 was an integer overflow in the compressed-token
 // counter: a run of relative tokens could wrap the running index past INT_MAX

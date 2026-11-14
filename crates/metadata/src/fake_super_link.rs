@@ -33,9 +33,9 @@ pub const fn symlinks_are_placeholders(fake_super: bool) -> bool {
 ///
 /// Fails when nothing at `link_path` is a placeholder link; the caller then
 /// treats the path as an obstacle. Returns the stat, open or read error.
-// upstream: generator.c:1965 quick_check_ok(FT_SYMLINK) on the x_lstat()
-// type, and syscall.c:do_readlink_atfd() - a real symlink reads as length 0
-// on a fake-super receiver.
+/// upstream: generator.c:1965 quick_check_ok(FT_SYMLINK) on the x_lstat()
+/// type, and syscall.c:do_readlink_atfd() - a real symlink reads as length 0
+/// on a fake-super receiver.
 pub fn read_fake_super_link(
     sandbox: Option<&fast_io::DirSandbox>,
     dest_dir: &Path,
@@ -85,9 +85,9 @@ pub fn read_fake_super_link(
 /// # Errors
 ///
 /// Returns the open or write error.
-// upstream: syscall.c:do_symlink_atfd() - `am_root < 0` creates the
-// placeholder with openat(O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW, 0600) and
-// writes the target into it.
+/// upstream: syscall.c:do_symlink_atfd() - `am_root < 0` creates the
+/// placeholder with openat(O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW, 0600) and
+/// writes the target into it.
 pub fn create_fake_super_link(
     sandbox: Option<&fast_io::DirSandbox>,
     dest_dir: &Path,

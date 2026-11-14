@@ -91,7 +91,7 @@ const fn value(
 /// `--sender`, `--daemon`, `--config`, `--dparam`, `--detach`) are covered
 /// separately in [`internal_and_daemon_options_are_recognized`].
 const UPSTREAM_OPTS: &[Opt] = &[
-    // --- general / output ---
+    // general / output
     flag(&["help"], None, false),
     flag(&["version"], Some('V'), false),
     flag(&["verbose"], Some('v'), true),
@@ -110,7 +110,7 @@ const UPSTREAM_OPTS: &[Opt] = &[
     value(&["log-file-format"], None, false, "%f"),
     value(&["outbuf"], None, false, "none"),
     flag(&["8-bit-output"], Some('8'), true),
-    // --- selection / recursion ---
+    // selection / recursion
     flag(&["archive"], Some('a'), false),
     flag(&["recursive"], Some('r'), true),
     flag(&["inc-recursive", "i-r"], None, true),
@@ -129,7 +129,7 @@ const UPSTREAM_OPTS: &[Opt] = &[
     value(&["max-size"], None, false, "10M"),
     value(&["min-size"], None, false, "1K"),
     value(&["max-alloc"], None, false, "1G"),
-    // --- filters ---
+    // filters
     value(&["filter"], Some('f'), false, "- foo"),
     value(&["exclude"], None, false, "*.tmp"),
     value(&["include"], None, false, "*.c"),
@@ -138,7 +138,7 @@ const UPSTREAM_OPTS: &[Opt] = &[
     flag(&["cvs-exclude"], Some('C'), false),
     value(&["files-from"], None, false, "/dev/null"),
     flag(&["from0"], Some('0'), true),
-    // --- metadata preservation ---
+    // metadata preservation
     flag(&["perms"], Some('p'), true),
     flag(&["executability"], Some('E'), false),
     flag(&["acls"], Some('A'), true),
@@ -160,7 +160,7 @@ const UPSTREAM_OPTS: &[Opt] = &[
     value(&["chmod"], None, false, "u+rwx"),
     value(&["copy-as"], None, false, "root"),
     value(&["modify-window"], Some('@'), false, "2"),
-    // --- links / devices / specials ---
+    // links / devices / specials
     flag(&["links"], Some('l'), true),
     flag(&["copy-links"], Some('L'), false),
     flag(&["copy-unsafe-links"], None, false),
@@ -173,7 +173,7 @@ const UPSTREAM_OPTS: &[Opt] = &[
     flag(&["copy-devices"], None, false),
     flag(&["write-devices"], None, true),
     flag(&["specials"], None, true),
-    // --- delta / transfer ---
+    // delta / transfer
     flag(&["checksum"], Some('c'), true),
     value(&["checksum-choice", "cc"], None, false, "md5"),
     value(&["checksum-seed"], None, false, "1"),
@@ -188,7 +188,7 @@ const UPSTREAM_OPTS: &[Opt] = &[
     value(&["compare-dest"], None, false, "/tmp"),
     value(&["copy-dest"], None, false, "/tmp"),
     value(&["link-dest"], None, false, "/tmp"),
-    // --- compression ---
+    // compression
     flag(&["compress"], Some('z'), true),
     flag(&["old-compress"], None, false),
     flag(&["new-compress"], None, false),
@@ -196,7 +196,7 @@ const UPSTREAM_OPTS: &[Opt] = &[
     value(&["compress-level", "zl"], None, false, "6"),
     value(&["compress-threads", "zt"], None, false, "2"),
     value(&["skip-compress"], None, false, "gz"),
-    // --- deletion ---
+    // deletion
     flag(&["del"], None, false),
     flag(&["delete"], None, false),
     flag(&["delete-before"], None, false),
@@ -211,11 +211,11 @@ const UPSTREAM_OPTS: &[Opt] = &[
     flag(&["force"], None, true),
     flag(&["ignore-errors"], None, true),
     value(&["max-delete"], None, false, "100"),
-    // --- backup ---
+    // backup
     flag(&["backup"], Some('b'), true),
     value(&["backup-dir"], None, false, "/tmp/bk"),
     value(&["suffix"], None, false, ".bak"),
-    // --- partial / progress / batch ---
+    // partial / progress / batch
     flag(&["progress"], None, true),
     flag(&["partial"], None, true),
     value(&["partial-dir"], None, false, ".rsync-partial"),
@@ -225,13 +225,13 @@ const UPSTREAM_OPTS: &[Opt] = &[
     value(&["write-batch"], None, false, "/tmp/batch"),
     value(&["only-write-batch"], None, false, "/tmp/batch"),
     value(&["temp-dir"], Some('T'), false, "/tmp"),
-    // --- bandwidth / timing ---
+    // bandwidth / timing
     value(&["bwlimit"], None, true, "1000"),
     value(&["timeout"], None, true, "60"),
     value(&["contimeout"], None, true, "60"),
     value(&["stop-after", "time-limit"], None, false, "10"),
     value(&["stop-at"], None, false, "2030-01-01T00:00"),
-    // --- connection ---
+    // connection
     value(&["rsh"], Some('e'), false, "ssh"),
     value(&["rsync-path"], None, false, "rsync"),
     value(&["remote-option"], Some('M'), false, "--fake-super"),
@@ -244,14 +244,14 @@ const UPSTREAM_OPTS: &[Opt] = &[
     flag(&["blocking-io"], None, true),
     flag(&["ipv4"], Some('4'), false),
     flag(&["ipv6"], Some('6'), false),
-    // --- misc ---
+    // misc
     value(&["iconv"], None, true, "utf8"),
     flag(&["secluded-args", "protect-args"], Some('s'), true),
     flag(&["old-args"], None, true),
     flag(&["trust-sender"], None, false),
     flag(&["fsync"], None, false),
     flag(&["qsort"], None, false),
-    // --- short-only combos ---
+    // short-only combos
     flag(&[], Some('P'), false),
     flag(&[], Some('D'), false),
     flag(&[], Some('F'), false),
@@ -327,7 +327,7 @@ fn is_known_short_value_form_rejected(opt: &Opt) -> bool {
         .is_some_and(|primary| KNOWN_SHORT_VALUE_FORM_REJECTED.contains(primary))
 }
 
-// --- 1. Every long form is accepted -----------------------------------------
+// 1. Every long form is accepted
 
 #[test]
 fn every_long_form_is_recognized() {
@@ -352,7 +352,7 @@ fn every_long_form_is_recognized() {
     );
 }
 
-// --- 2. Every short form is accepted (except tracked divergences) -----------
+// 2. Every short form is accepted (except tracked divergences)
 
 #[test]
 fn every_short_form_is_recognized() {
@@ -393,7 +393,7 @@ fn every_short_form_is_recognized() {
     );
 }
 
-// --- 3. Value options accept both `--long=VALUE` and `--long VALUE` ----------
+// 3. Value options accept both `--long=VALUE` and `--long VALUE`
 
 #[test]
 fn value_options_accept_equals_and_space_forms() {
@@ -475,7 +475,7 @@ fn short_value_options_accept_attached_and_equals_forms() {
     );
 }
 
-// --- 4. Every `--no-<long>` negation is accepted ----------------------------
+// 4. Every `--no-<long>` negation is accepted
 
 #[test]
 fn every_negation_is_recognized() {
@@ -497,7 +497,7 @@ fn every_negation_is_recognized() {
     );
 }
 
-// --- 5. Short and long forms parse to the same settings ---------------------
+// 5. Short and long forms parse to the same settings
 
 #[test]
 fn short_and_long_forms_agree() {
@@ -541,7 +541,7 @@ fn short_and_long_forms_agree() {
     );
 }
 
-// --- 6. Short-flag bundling ------------------------------------------------
+// 6. Short-flag bundling
 
 #[test]
 fn short_flag_bundling_expands() {
@@ -570,7 +570,7 @@ fn short_flag_bundling_expands() {
     assert_eq!(bundle_value.remote_shell, Some(OsString::from("ssh")));
 }
 
-// --- 7. Defaults match upstream --------------------------------------------
+// 7. Defaults match upstream
 
 #[test]
 fn defaults_match_upstream() {
@@ -607,7 +607,7 @@ fn defaults_match_upstream() {
     );
 }
 
-// --- Internal / daemon-transition options -----------------------------------
+// Internal / daemon-transition options
 
 #[test]
 fn internal_and_daemon_options_are_recognized() {
@@ -742,7 +742,7 @@ fn client_daemon_option_reparses_argv_in_daemon_mode() {
     }
 }
 
-// --- Short-option value forms (upstream-correct contract) -------------------
+// Short-option value forms (upstream-correct contract)
 //
 // Each test below asserts the UPSTREAM behaviour for a short option that takes
 // a value. Do NOT weaken these assertions to make them green.
@@ -778,7 +778,7 @@ fn temp_dir_short_equals_value_is_accepted() {
     recognize(&["-T=/tmp"]).expect("-T=/tmp must bind temp-dir");
 }
 
-// --- Value-semantics divergences (validated below parse_args) ----------------
+// Value-semantics divergences (validated below parse_args)
 //
 // These forms parse identically to upstream but are rejected/accepted at the
 // value-validation layer, which `parse_args` does not exercise (it stores the

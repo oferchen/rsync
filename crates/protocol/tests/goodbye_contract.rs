@@ -75,9 +75,7 @@ fn emit_daemon_sender_goodbye(scenario: GoodbyeScenario) -> Vec<u8> {
     buf
 }
 
-// ---------------------------------------------------------------------------
 // EDG-GOODBYE.1: wire-byte golden tests
-// ---------------------------------------------------------------------------
 
 /// Plain push (no --delete) on protocol 32 ends with a single NDX_DONE byte.
 #[test]
@@ -202,9 +200,7 @@ fn golden_proto30_delete_does_not_emit_del_stats() {
     assert_eq!(bytes, &[NDX_DONE_MODERN_BYTE]);
 }
 
-// ---------------------------------------------------------------------------
 // EDG-GOODBYE.2: stress test - 100 sequential transfers never drop NDX_DONE
-// ---------------------------------------------------------------------------
 
 /// 100 sequential emit/parse cycles all complete with NDX_DONE intact.
 ///
@@ -311,9 +307,7 @@ fn sequential_daemon_transfers_dont_drop_goodbye() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // EDG-GOODBYE.3: property test - NDX_DONE is always the last frame
-// ---------------------------------------------------------------------------
 
 /// Strategy: any DeleteStats with reasonable counts (no overflow risk).
 fn arb_delete_stats() -> impl Strategy<Value = DeleteStats> {
@@ -441,11 +435,9 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Sanity: the local emit helper agrees with the standalone write_varint path
 // used by `DeleteStats::write_to` so the golden bytes above are not
 // accidentally validating the helper against itself.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn del_stats_wire_layout_is_five_varints_in_order() {

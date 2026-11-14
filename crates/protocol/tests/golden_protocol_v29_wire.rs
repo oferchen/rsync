@@ -29,10 +29,8 @@ fn v29() -> ProtocolVersion {
     ProtocolVersion::from_supported(29).expect("v29 must be supported")
 }
 
-// ---------------------------------------------------------------------------
 // Transfer stats with flist build/transfer times
 // upstream: main.c:handle_stats() - protocol >= 29 adds flist times
-// ---------------------------------------------------------------------------
 
 /// Verifies that protocol 29 transfer stats include flist timing fields.
 ///
@@ -196,10 +194,8 @@ fn golden_v29_stats_swap_preserves_flist_times() {
     assert_eq!(decoded, swapped);
 }
 
-// ---------------------------------------------------------------------------
 // Protocol version 29 feature flags
 // upstream: various protocol version guards throughout the codebase
-// ---------------------------------------------------------------------------
 
 /// Verifies protocol 29 supports flist times but not varint encoding.
 #[test]
@@ -257,10 +253,8 @@ fn golden_v29_flist_times_boundary() {
     assert!(v30.supports_flist_times(), "v30 must support flist times");
 }
 
-// ---------------------------------------------------------------------------
 // Checksum header (SumHead) for protocol 29 - same as v28, uses MD4
 // upstream: match.c/sender.c - s2length=16 for MD4 in sum_head
-// ---------------------------------------------------------------------------
 
 /// Verifies the SumHead wire format for protocol 29 uses MD4 (16-byte strong checksum).
 ///
@@ -300,10 +294,8 @@ fn golden_v29_sum_head_md4() {
     assert_eq!(read_int(&mut cursor).unwrap(), 150, "remainder");
 }
 
-// ---------------------------------------------------------------------------
 // File entry checksum encoding for protocol 29 (MD4, 16 bytes)
 // upstream: flist.c - always_checksum sends flist_csum_len bytes per regular file
-// ---------------------------------------------------------------------------
 
 /// Verifies that protocol 29 writes 16-byte MD4 checksums for regular files
 /// when always_checksum is enabled.
@@ -376,10 +368,8 @@ fn golden_v29_checksum_roundtrip() {
     assert_eq!(read_entry.checksum(), Some(digest.as_slice()));
 }
 
-// ---------------------------------------------------------------------------
 // Longint encoding (used by protocol 29 for file sizes)
 // upstream: io.c - write_longint() / read_longint()
-// ---------------------------------------------------------------------------
 
 /// Verifies small longint values use 4-byte encoding at protocol 29.
 #[test]
@@ -417,10 +407,8 @@ fn golden_v29_longint_large_value() {
     assert_eq!(read_longint(&mut cursor).unwrap(), value);
 }
 
-// ---------------------------------------------------------------------------
 // Device entry encoding for protocol 29
 // upstream: flist.c:send_file_entry() - device numbers for S_ISBLK/S_ISCHR
-// ---------------------------------------------------------------------------
 
 /// Verifies block device entry encoding and round-trip at protocol 29.
 ///
@@ -471,10 +459,8 @@ fn golden_v29_char_device_roundtrip() {
     assert!(read_entry.is_char_device(), "entry should be a char device");
 }
 
-// ---------------------------------------------------------------------------
 // Hardlink encoding for protocol 29
 // upstream: flist.c:send_file_entry() - XMIT_HLINKED flag, hardlink index
-// ---------------------------------------------------------------------------
 
 /// Verifies that hardlink entries round-trip at protocol 29.
 ///
@@ -503,10 +489,8 @@ fn golden_v29_hardlink_roundtrip() {
     assert_eq!(read_entry.size(), 1024);
 }
 
-// ---------------------------------------------------------------------------
 // Mixed hardlink and non-hardlink entries (protocol 29 interop fix)
 // upstream: flist.c:recv_file_entry() - dev/ino read gated on XMIT_HLINKED
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v29_mixed_hardlink_and_plain_roundtrip() {
@@ -552,10 +536,8 @@ fn golden_v29_mixed_hardlink_and_plain_roundtrip() {
     assert!(reader.read_entry(&mut cursor).unwrap().is_none());
 }
 
-// ---------------------------------------------------------------------------
 // Wire format identity: v29 file list encoding matches v28
 // upstream: flist.c - protocol 29 takes same code path as 28 for flist
-// ---------------------------------------------------------------------------
 
 /// Verifies that protocol 29 and 28 produce identical wire bytes for
 /// all file entry types (regular file, directory, symlink).
@@ -646,10 +628,8 @@ fn golden_v29_flist_wire_differs_from_v30() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // End-of-list marker
 // upstream: flist.c - zero byte terminates, no safe file list for proto < 30
-// ---------------------------------------------------------------------------
 
 /// Verifies end-of-list marker is a single zero byte for protocol 29.
 #[test]
@@ -676,10 +656,8 @@ fn golden_v29_end_marker_ignores_io_error() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Full mixed file list with stats - end-to-end protocol 29 scenario
 // upstream: complete transfer session with flist + stats
-// ---------------------------------------------------------------------------
 
 /// Verifies a complete protocol 29 scenario: write a mixed file list,
 /// terminate it, write transfer stats with flist times, then decode everything.

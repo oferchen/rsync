@@ -95,9 +95,7 @@ where
     assert!(result.is_ok(), "case {name}: parser panicked on input");
 }
 
-// ---------------------------------------------------------------------------
 // Multiplex header corpus
-// ---------------------------------------------------------------------------
 
 /// Adversarial inputs targeting `recv_msg` / `MessageHeader::decode`.
 ///
@@ -248,9 +246,7 @@ fn message_header_oversized_payload_is_rejected_at_construction() {
     assert!(matches!(result, Err(EnvelopeError::OversizedPayload(_))));
 }
 
-// ---------------------------------------------------------------------------
 // Legacy `@RSYNCD:` handshake corpus
-// ---------------------------------------------------------------------------
 
 /// Documented outcome for legacy greeting parser entries. `parse_legacy_daemon_greeting`
 /// returns its own `NegotiationError`, not an `io::Error`, so the corpus uses a
@@ -358,9 +354,7 @@ fn negotiation_detector_handles_every_prefix_truncation() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Delta token corpus
-// ---------------------------------------------------------------------------
 
 /// Adversarial inputs targeting the upstream-format token decoder.
 const DELTA_TOKEN_CASES: &[Case] = &[
@@ -434,9 +428,7 @@ fn delta_internal_negative_literal_length_rejected() {
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
-// ---------------------------------------------------------------------------
 // Varint / fixed-int corpus
-// ---------------------------------------------------------------------------
 
 /// Adversarial inputs targeting the legacy fixed-int and varint readers.
 const VARINT_CASES: &[Case] = &[
@@ -497,9 +489,7 @@ fn read_longint_extended_truncated_returns_eof() {
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
-// ---------------------------------------------------------------------------
 // File-list name decoder corpus
-// ---------------------------------------------------------------------------
 
 #[test]
 fn decode_name_preserves_embedded_nul_bytes() {
@@ -525,9 +515,7 @@ fn decode_name_long_name_truncated_returns_eof() {
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
-// ---------------------------------------------------------------------------
 // Filter list corpus
-// ---------------------------------------------------------------------------
 
 #[test]
 fn filter_list_negative_length_rejected() {
@@ -635,9 +623,7 @@ fn filter_list_pattern_with_embedded_nul_is_lossy_but_safe() {
     });
 }
 
-// ---------------------------------------------------------------------------
 // Header constants sanity
-// ---------------------------------------------------------------------------
 
 #[test]
 fn message_header_len_constant_matches_expected_layout() {

@@ -44,10 +44,8 @@ fn proto28() -> ProtocolVersion {
     ProtocolVersion::try_from(28u8).unwrap()
 }
 
-// ---------------------------------------------------------------------------
 // Multiplex frame header encoding
 // upstream: io.c:1173 send_msg() - header = (MPLEX_BASE + code) << 24 | len
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_mplex_data_header_exact_bytes() {
@@ -140,10 +138,8 @@ fn golden_v28_mplex_success_header_exact_bytes() {
     assert_eq!(decoded.payload_len(), 4);
 }
 
-// ---------------------------------------------------------------------------
 // Delta token encoding (simple token format, all protocol versions)
 // upstream: token.c:simple_send_token() - write_int based
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_delta_token_literal_exact_bytes() {
@@ -340,10 +336,8 @@ fn golden_v28_delta_empty_file() {
     assert_eq!(token, None, "empty file produces immediate end marker");
 }
 
-// ---------------------------------------------------------------------------
 // NDX legacy codec (protocol < 30 uses 4-byte LE i32)
 // upstream: io.c:write_ndx()/read_ndx() - protocol < 30 branch
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_ndx_write_positive_index_exact_bytes() {
@@ -456,10 +450,8 @@ fn golden_v28_ndx_sequence_roundtrip() {
     assert_eq!(read_codec.read_ndx(&mut cursor).unwrap(), -1);
 }
 
-// ---------------------------------------------------------------------------
 // Transfer stats exact wire bytes (protocol 28 - legacy longint encoding)
 // upstream: main.c:handle_stats() + io.h:46 write_varlong30() -> io.c:2445 write_longint()
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_stats_exact_wire_bytes_known_values() {
@@ -540,10 +532,8 @@ fn golden_v28_stats_perspective_swap() {
     assert_eq!(decoded.total_written, 1000);
 }
 
-// ---------------------------------------------------------------------------
 // Checksum seed exchange (4-byte LE, all protocol versions)
 // upstream: main.c - checksum_seed exchanged as write_int()
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_checksum_seed_exact_bytes() {
@@ -581,13 +571,11 @@ fn golden_v28_checksum_seed_negative() {
     assert_eq!(read_int(&mut cursor).unwrap(), -1);
 }
 
-// ---------------------------------------------------------------------------
 // Signature header encoding for protocol 28 (MD4 strong checksums)
 // upstream: match.c/sender.c - sum_head written with write_int for
 // protocol < 30, varint for protocol >= 30. The signature module uses
 // varint unconditionally (protocol-independent), but the SUM_HEAD on the
 // wire uses write_int for protocol 28.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_sum_head_write_int_encoding() {
@@ -639,10 +627,8 @@ fn golden_v28_sum_head_zero_blocks() {
     assert_eq!(buf, [0u8; 16], "zero SUM_HEAD must be 16 zero bytes");
 }
 
-// ---------------------------------------------------------------------------
 // Signature block wire format (rolling + strong checksum per block)
 // upstream: match.c - rolling sum as 4-byte LE, strong sum as raw bytes
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_signature_block_md4_exact_bytes() {
@@ -701,10 +687,8 @@ fn golden_v28_signature_multiple_blocks_roundtrip() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Longint encoding boundary values
 // upstream: io.c:write_longint()/read_longint() - threshold at 0x7FFFFFFF
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_longint_boundary_value() {
@@ -762,10 +746,8 @@ fn golden_v28_longint_one() {
     assert_eq!(read_longint(&mut cursor).unwrap(), 1);
 }
 
-// ---------------------------------------------------------------------------
 // Multiplex frame with payload (complete message on wire)
 // upstream: io.c:1173 send_msg() - 4-byte header + payload bytes
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_mplex_complete_info_message() {
@@ -820,10 +802,8 @@ fn golden_v28_mplex_complete_error_message() {
     assert_eq!(&frame[4..], msg);
 }
 
-// ---------------------------------------------------------------------------
 // All MessageCode tag values (exhaustive encoding pin)
 // upstream: io.c - MPLEX_BASE + msg_code value in high byte of header
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_all_message_code_tags() {

@@ -50,9 +50,7 @@ fn list_raw_names(dir: &std::path::Path) -> Vec<Vec<u8>> {
     names
 }
 
-// =========================================================================
 // 1. Exclude pattern with non-ASCII characters under --iconv
-// =========================================================================
 
 /// An `--exclude='café*'` pattern should match source files named
 /// `café.txt` (UTF-8). The excluded file must not appear at the
@@ -100,9 +98,7 @@ fn exclude_non_ascii_pattern_prevents_iconv_copy() {
     );
 }
 
-// =========================================================================
 // 2. Include pattern with non-ASCII characters under --iconv
-// =========================================================================
 
 /// An `--include='résumé*' --include='*/' --exclude='*'` filter chain
 /// should allow only files matching the include through while permitting
@@ -157,9 +153,7 @@ fn include_non_ascii_pattern_allows_file_under_iconv() {
     assert_eq!(copied, b"resume data");
 }
 
-// =========================================================================
 // 3. Filter rules in the reverse iconv direction
-// =========================================================================
 
 /// Filter evaluation still works correctly when iconv is configured in
 /// the Latin-1 -> UTF-8 direction. Source files are in Latin-1, the
@@ -210,9 +204,7 @@ fn filter_works_with_reverse_iconv_direction() {
     );
 }
 
-// =========================================================================
 // 4. Non-excluded files transcoded correctly when filter is active
-// =========================================================================
 
 /// When a filter excludes some files but not others, the surviving files
 /// must still have their destination names transcoded by iconv. This
@@ -261,9 +253,7 @@ fn surviving_files_transcoded_when_filter_active() {
     );
 }
 
-// =========================================================================
 // 5. Filter with non-ASCII pattern - no iconv (control test)
-// =========================================================================
 
 /// Without iconv, a non-ASCII exclude pattern still matches source files
 /// correctly. This is the baseline that confirms filter matching works
@@ -304,9 +294,7 @@ fn non_ascii_filter_without_iconv_still_matches() {
     );
 }
 
-// =========================================================================
 // 6. Nested directory with non-ASCII exclude under iconv
-// =========================================================================
 
 /// Filters apply recursively to nested directories. An exclude pattern
 /// should prevent matching files from being copied even inside
@@ -368,9 +356,7 @@ fn exclude_non_ascii_in_nested_directories_under_iconv() {
     );
 }
 
-// =========================================================================
 // 7. Edge case: encoding mismatch between filter pattern and source names
-// =========================================================================
 
 /// When the source filesystem uses Latin-1 names and the filter pattern
 /// is expressed as a UTF-8 string, the UTF-8 pattern bytes will not
@@ -421,9 +407,7 @@ fn encoding_mismatch_filter_pattern_does_not_match() {
     );
 }
 
-// =========================================================================
 // 8. Multiple non-ASCII include/exclude rules combined with iconv
-// =========================================================================
 
 /// A complex filter chain with multiple non-ASCII rules and iconv active.
 /// Tests that the first-match-wins semantics work correctly when both

@@ -13,7 +13,7 @@ use engine::local_copy::pipelined_state::{
     PipelineController, PipelinePriority, PipelineState, PipelineStats,
 };
 
-// ==================== Helper Functions ====================
+// Helper Functions
 
 /// Simulates a complete file entry lifecycle through the pipeline.
 fn process_entry(controller: &mut PipelineController, entry_id: usize) {
@@ -79,7 +79,7 @@ fn process_streaming(controller: &mut PipelineController, total_count: usize) {
     }
 }
 
-// ==================== Full Lifecycle Tests ====================
+// Full Lifecycle Tests
 
 #[test]
 fn full_lifecycle_single_entry() {
@@ -211,7 +211,7 @@ fn full_lifecycle_with_priority_ordering() {
     assert!(controller.is_complete());
 }
 
-// ==================== Streaming Behavior Tests ====================
+// Streaming Behavior Tests
 
 #[test]
 fn streaming_arrival_simulation() {
@@ -323,7 +323,7 @@ fn streaming_vs_batch_produces_same_results() {
     assert!(streaming_controller.is_complete());
 }
 
-// ==================== Pipeline Capacity Tests ====================
+// Pipeline Capacity Tests
 
 #[test]
 fn pipeline_capacity_management() {
@@ -415,7 +415,7 @@ fn wire_exhaustion_prevents_filling() {
     assert!(!controller.can_fill());
 }
 
-// ==================== Priority Tests ====================
+// Priority Tests
 
 #[test]
 fn priority_ready_entries_trumps_all() {
@@ -481,7 +481,7 @@ fn priority_process_response_lowest() {
     );
 }
 
-// ==================== Stats Tests ====================
+// Stats Tests
 
 #[test]
 fn stats_tracking_accuracy() {
@@ -554,7 +554,7 @@ fn stats_responses_dont_affect_pipeline_depth() {
     assert!(controller.has_pending_responses());
 }
 
-// ==================== Error State Tests ====================
+// Error State Tests
 
 #[test]
 fn error_state_blocks_all_operations() {
@@ -608,7 +608,7 @@ fn error_state_equality() {
     assert_ne!(err1, err3);
 }
 
-// ==================== Large File Count Tests ====================
+// Large File Count Tests
 
 #[test]
 fn small_file_set_5_files() {
@@ -687,7 +687,7 @@ fn large_file_set_1000_files() {
     assert!(controller.stats().max_pipeline_depth <= 32);
 }
 
-// ==================== Concurrent Enqueue and Process Tests ====================
+// Concurrent Enqueue and Process Tests
 
 #[test]
 fn concurrent_enqueue_and_process() {
@@ -715,7 +715,7 @@ fn concurrent_enqueue_and_process() {
     assert!(controller.is_complete());
 }
 
-// ==================== Wire Exhaustion Tests ====================
+// Wire Exhaustion Tests
 
 #[test]
 fn wire_exhaustion_with_pending_entries() {
@@ -769,7 +769,7 @@ fn wire_exhaustion_immediate_completion() {
     assert_eq!(controller.next_priority(), None);
 }
 
-// ==================== Multiple Complete Cycles Tests ====================
+// Multiple Complete Cycles Tests
 
 #[test]
 fn multiple_complete_cycles_not_supported() {
@@ -787,7 +787,7 @@ fn multiple_complete_cycles_not_supported() {
     assert_eq!(controller.next_priority(), None);
 }
 
-// ==================== Empty File List Tests ====================
+// Empty File List Tests
 
 #[test]
 fn empty_file_list_handling() {
@@ -817,7 +817,7 @@ fn empty_queue_states() {
     );
 }
 
-// ==================== State Transition Tests ====================
+// State Transition Tests
 
 #[test]
 fn state_transitions_through_lifecycle() {
@@ -841,7 +841,7 @@ fn state_transitions_through_lifecycle() {
     assert_eq!(*controller.state(), PipelineState::Completed);
 }
 
-// ==================== Edge Cases ====================
+// Edge Cases
 
 #[test]
 fn mark_ready_nonexistent_entry_no_panic() {

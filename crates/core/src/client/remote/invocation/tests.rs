@@ -3892,7 +3892,7 @@ fn iconv_explicit_single_forwards_whole_spec() {
     );
 }
 
-// --- Shell-escaping of filename arguments (safe_arg) ---
+// Shell-escaping of filename arguments (safe_arg)
 // upstream: options.c:safe_arg(NULL, path) backslash-escapes SHELL_CHARS in
 // filename args when protect_args is off. These tests verify that oc-rsync
 // produces the same escaping, matching the lsh.sh `eval "$@"` contract.

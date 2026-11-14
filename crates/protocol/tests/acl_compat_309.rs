@@ -43,9 +43,7 @@ fn regular_file_entry() -> FileEntry {
     entry
 }
 
-// ---------------------------------------------------------------------------
 // 1. Wire format: no ACL data when preserve_acls is false
-// ---------------------------------------------------------------------------
 
 /// When `preserve_acls` is disabled (remote lacks `SUPPORT_ACLS`), the flist
 /// writer must not emit ACL data. The ACL-enabled write produces extra bytes
@@ -168,9 +166,7 @@ fn reader_with_acls_fails_on_stream_without_acl_data() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 2. Symlinks never carry ACL data
-// ---------------------------------------------------------------------------
 
 /// upstream: flist.c:send_file_entry() line 654 - `send_acl()` is called for
 /// all non-symlink entries. POSIX ACLs do not apply to symlinks.
@@ -239,9 +235,7 @@ fn symlink_roundtrip_no_acl_indices() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // 3. ACL wire encoding: send_acl / cache behavior
-// ---------------------------------------------------------------------------
 
 /// Verify that `send_acl` produces output and populates the cache for the
 /// first ACL, then uses a cache hit for duplicate ACLs.
@@ -330,9 +324,7 @@ fn different_acl_modes_are_distinct_cache_entries() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // 4. Multiple entries: ACL state is per-entry, not global
-// ---------------------------------------------------------------------------
 
 /// Writing multiple file entries with ACLs disabled must produce a stream
 /// that reads back correctly without ACL data on any entry.
@@ -404,9 +396,7 @@ fn multiple_entries_with_acl_data() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 5. Protocol 32: ACL behavior unchanged from protocol 30
-// ---------------------------------------------------------------------------
 
 /// ACL wire format is the same at protocol 32 as at 30. Verify the roundtrip
 /// works identically at the highest supported protocol.

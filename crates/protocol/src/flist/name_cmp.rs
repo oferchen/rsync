@@ -285,7 +285,7 @@ mod tests {
         assert_eq!(f_name_cmp(&file("same"), &dir("same")), Ordering::Equal);
     }
 
-    // ----- proptest: total-order properties -----
+    // proptest: total-order properties
 
     fn arb_name() -> impl Strategy<Value = String> {
         // ASCII printable plus '/' separator, length 0..16.

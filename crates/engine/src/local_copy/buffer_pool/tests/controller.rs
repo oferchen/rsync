@@ -221,7 +221,7 @@ fn controller_concurrent_record_and_recommend() {
     }
 }
 
-// --- Controlled acquire integration tests ---
+// Controlled acquire integration tests
 
 #[test]
 fn acquire_controlled_from_uses_controller_size() {

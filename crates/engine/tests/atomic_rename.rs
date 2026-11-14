@@ -20,7 +20,7 @@ use engine::local_copy::{
     DestinationWriteGuard, remove_existing_destination, remove_incomplete_destination,
 };
 
-// ==================== Basic Temp File Creation Tests ====================
+// Basic Temp File Creation Tests
 
 #[test]
 fn temp_file_is_created_during_transfer() {
@@ -125,7 +125,7 @@ fn temp_file_created_in_custom_temp_dir() {
     guard.discard();
 }
 
-// ==================== Atomic Rename Tests ====================
+// Atomic Rename Tests
 
 #[test]
 fn atomic_rename_on_successful_commit() {
@@ -271,7 +271,7 @@ fn commit_returns_error_on_failure_but_preserves_temp() {
     }
 }
 
-// ==================== Cleanup on Failure Tests ====================
+// Cleanup on Failure Tests
 
 #[test]
 fn temp_file_cleaned_up_on_explicit_discard() {
@@ -448,7 +448,7 @@ fn remove_existing_destination_succeeds_if_missing() {
     );
 }
 
-// ==================== Race Condition Tests ====================
+// Race Condition Tests
 
 #[test]
 fn concurrent_guards_get_unique_temp_files() {
@@ -668,7 +668,7 @@ fn guard_from_different_threads_get_unique_temps() {
     }
 }
 
-// ==================== Edge Cases ====================
+// Edge Cases
 
 #[test]
 fn empty_file_transfer_works() {

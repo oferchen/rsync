@@ -269,7 +269,7 @@ mod tests {
         }
     }
 
-    // --- classify: constraint-signature truth table --------------------------
+    // classify: constraint-signature truth table
 
     #[test]
     fn classify_full_input_empty_output_is_the_drum() {
@@ -360,7 +360,7 @@ mod tests {
         assert_eq!(classify(&s), Constraint::Unknown);
     }
 
-    // --- hysteresis: debounced transitions -----------------------------------
+    // hysteresis: debounced transitions
 
     #[test]
     fn drum_holds_until_n_windows_agree() {

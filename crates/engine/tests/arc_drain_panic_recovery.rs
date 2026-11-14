@@ -34,9 +34,7 @@ fn extract_strong_count(message: &str) -> Option<usize> {
         .and_then(|digits| digits.parse().ok())
 }
 
-// ---------------------------------------------------------------------------
 // Test 1: DeleteContext drain surfaces typed PlanMapStillShared on panic.
-// ---------------------------------------------------------------------------
 
 /// A panicking receiver-side worker holds a clone of the
 /// [`DeletePlanMap`] [`Arc`]. The main thread tries to drain the

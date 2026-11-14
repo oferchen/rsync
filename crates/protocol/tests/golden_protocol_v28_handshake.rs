@@ -27,10 +27,8 @@ use protocol::{
     parse_legacy_daemon_greeting, read_int, write_int,
 };
 
-// ---------------------------------------------------------------------------
 // SSH/remote mode: protocol version exchange as 4-byte LE i32
 // upstream: io.c - write_int(f, protocol_version) on both sides
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_ssh_client_version_advertisement() {
@@ -141,10 +139,8 @@ fn golden_v28_ssh_version_downgrade_from_v32_server() {
     assert!(!protocol.uses_binary_negotiation());
 }
 
-// ---------------------------------------------------------------------------
 // Protocol 28 has NO compat_flags exchange
 // upstream: compat.c - compat_flags only exchanged when protocol >= 30
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_no_compat_flags_on_wire() {
@@ -181,10 +177,8 @@ fn golden_v28_no_compat_flags_on_wire() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Daemon mode: ASCII greeting exchange
 // upstream: clientserver.c - "@RSYNCD: 28.0\n"
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_daemon_server_greeting_bytes() {
@@ -269,10 +263,8 @@ fn golden_v28_daemon_downgrade_from_v32_server() {
     assert_eq!(negotiated, 28, "must negotiate down to protocol 28");
 }
 
-// ---------------------------------------------------------------------------
 // Contrast with protocol 30+ handshake (compat_flags present)
 // upstream: compat.c - protocol 30+ adds compat_flags after version exchange
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_vs_v30_handshake_difference() {

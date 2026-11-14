@@ -111,9 +111,7 @@ fn plant_ancestor_symlink_trap(root: &Path) -> (PathBuf, PathBuf) {
     (attack_dest, outside_target)
 }
 
-// -------------------------------------------------------------------------
 // Timestamps (utimensat) - `--times`, `--no-perms`
-// -------------------------------------------------------------------------
 
 /// Legitimate path: `-t` through non-symlink components must set the
 /// destination's mtime to the source value.
@@ -176,9 +174,7 @@ fn receiver_utimes_refuses_symlinked_parent_component() {
     );
 }
 
-// -------------------------------------------------------------------------
 // Ownership (fchownat) - `--chown`, `--no-perms`, `--no-times`
-// -------------------------------------------------------------------------
 
 /// Legitimate path: an explicit `--chown` to the caller's own uid/gid through
 /// a clean path must succeed (no privilege required) and leave the
