@@ -730,16 +730,6 @@ fn connect_timed_out() -> std::io::Error {
     )
 }
 
-/// `strerror(errno)` for an OS error: its text without the
-/// `" (os error N)"` suffix `io::Error` appends.
-fn strerror(error: &std::io::Error) -> String {
-    let text = error.to_string();
-    error
-        .raw_os_error()
-        .and_then(|code| text.strip_suffix(&format!(" (os error {code})")))
-        .map_or_else(|| text.clone(), str::to_owned)
-}
-
 /// Opens the TCP connection, reporting a failure the way upstream's
 /// `ssh_connect_direct()` does (openssh/sshconnect.c:525-526).
 async fn dial(
@@ -754,7 +744,7 @@ async fn dial(
         .map_err(|error| SshError::ConnectFailed {
             host: host.to_owned(),
             port: addr.port(),
-            reason: strerror(&error),
+            reason: logging::upstream_strerror(&error),
         })?;
     // russh's own `connect` applies the same option before the handshake.
     if nodelay && let Err(error) = stream.set_nodelay(true) {

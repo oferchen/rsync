@@ -690,18 +690,27 @@ mod tests {
                 std::fmt::Display::fmt(&self.0, f)
             }
         }
-        impl std::error::Error for Wrapper {}
+        impl std::error::Error for Wrapper {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
 
         // The strerror text is the platform's, so pin the shape (a trailing
-        // ` (13)` and no ` (os error 13)`) rather than the wording.
-        let raw = io::Error::from_raw_os_error(13);
+        // ` (13)` and no ` (os error ...)`) rather than the wording.
+        // On Windows, ERROR_ACCESS_DENIED (5) maps to Cygwin EACCES (13).
+        #[cfg(unix)]
+        let raw_errno = 13;
+        #[cfg(not(unix))]
+        let raw_errno = 5;
+        let raw = io::Error::from_raw_os_error(raw_errno);
         let expected = upstream_io_error(&raw);
         assert!(
             expected.ends_with(" (13)") && !expected.contains("os error"),
             "rsyserr shape is `<strerror> (<errno>)`: {expected}"
         );
 
-        let wrapped = io::Error::new(raw.kind(), Wrapper(io::Error::from_raw_os_error(13)));
+        let wrapped = io::Error::new(raw.kind(), Wrapper(io::Error::from_raw_os_error(raw_errno)));
         assert_eq!(wrapped.raw_os_error(), None);
         assert_eq!(upstream_io_error(&wrapped), expected);
     }

@@ -81,12 +81,18 @@ fn raw_code(error: &io::Error) -> Option<i32> {
     if let Some(code) = error.raw_os_error() {
         return Some(code);
     }
-    let payload = error.get_ref()?;
-    let inner = match payload.downcast_ref::<io::Error>() {
-        Some(inner) => inner,
-        None => payload.source()?.downcast_ref::<io::Error>()?,
-    };
-    inner.raw_os_error()
+    let mut current: Option<&(dyn std::error::Error + 'static)> = error
+        .get_ref()
+        .map(|e| e as &(dyn std::error::Error + 'static));
+    while let Some(err) = current {
+        if let Some(io_err) = err.downcast_ref::<io::Error>()
+            && let Some(code) = io_err.raw_os_error()
+        {
+            return Some(code);
+        }
+        current = err.source();
+    }
+    None
 }
 
 #[cfg(not(windows))]
