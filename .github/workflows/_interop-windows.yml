@@ -60,10 +60,6 @@ jobs:
     name: interop with upstream rsync (Windows, best-effort)
     runs-on: windows-latest
     timeout-minutes: ${{ inputs.timeout_minutes }}
-    # Best-effort: do not block merges on Windows interop quirks while
-    # baseline parity is being established. Promote to required once
-    # we have a clean green run on master.
-    continue-on-error: true
 
     env:
       CARGO_TERM_COLOR: always

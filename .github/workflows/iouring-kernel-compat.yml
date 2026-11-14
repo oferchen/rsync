@@ -52,8 +52,6 @@ jobs:
     name: io_uring ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
-    # Non-required: informational only. Do not gate PRs on this workflow.
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
