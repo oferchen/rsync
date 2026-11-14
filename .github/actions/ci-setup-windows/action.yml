@@ -1,0 +1,51 @@
+name: CI Setup (Windows)
+description: Checkout, optional disk cleanup, Rust toolchain, rust-cache, and optional nextest.
+inputs:
+  toolchain:
+    description: Rust toolchain name
+    required: false
+    default: stable
+  targets:
+    description: Comma-separated rustup targets
+    required: false
+    default: ''
+  cache_prefix:
+    description: Swatinem/rust-cache prefix-key
+    required: false
+    default: windows
+  cache_version:
+    description: Cache version suffix
+    required: false
+    default: v1
+  free_disk:
+    description: Run free-disk-space
+    required: false
+    default: 'false'
+  install_nextest:
+    description: Install cargo-nextest for Windows
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Free runner disk space if short
+      if: inputs.free_disk == 'true'
+      uses: ./.github/actions/free-disk-space
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        targets: ${{ inputs.targets }}
+
+    - name: Rust cache
+      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+      with:
+        prefix-key: ${{ inputs.cache_prefix }}-${{ inputs.toolchain }}-${{ inputs.cache_version }}
+
+    - name: Install cargo-nextest
+      if: inputs.install_nextest == 'true'
+      uses: ./.github/actions/install-cargo-nextest-windows

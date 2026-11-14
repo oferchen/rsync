@@ -35,8 +35,8 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
     - name: Free disk space
       uses: ./.github/actions/free-disk-space
       with:
@@ -103,18 +103,11 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (${{ matrix.toolchain }})
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
       with:
         toolchain: ${{ matrix.toolchain }}
-    - name: Rust cache
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-      with:
-        shared-key: ci-windows-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: Install cargo-nextest
-      uses: ./.github/actions/install-cargo-nextest-windows
+        install_nextest: 'true'
     - name: Build per-process temp-dir runner
       shell: bash
       run: |
@@ -156,20 +149,11 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (${{ matrix.toolchain }})
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
       with:
         toolchain: ${{ matrix.toolchain }}
-    - name: Rust cache
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-      with:
-        shared-key: ci-macos-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: Install cargo-nextest
-      uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2
-      with:
-        tool: cargo-nextest
+        install_nextest: 'true'
     - name: Build oc-rsync (for subprocess integration tests)
       run: rustup run ${{ matrix.toolchain }} cargo build --locked -p bin --bin oc-rsync
     - name: Test
@@ -230,8 +214,8 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'beta' || '' }}
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
     - name: Free disk space
       uses: ./.github/actions/free-disk-space
     - name: Pre-install toolchain (short-timeout retry on transient fetch)

@@ -80,8 +80,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
     - name: Install PyYAML (required by the check-name uniqueness gate)
       run: sudo apt-get install -y python3-yaml
     - name: Check-run name uniqueness
@@ -122,20 +122,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
       with:
         components: rustfmt
-    - name: Rust cache
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-      with:
-        shared-key: fuzz-check-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-        workspaces: |
-          fuzz
-          crates/protocol/fuzz
-          crates/filters/fuzz
     - name: Check fuzz workspaces
       run: bash tools/ci/check_fuzz_workspaces.sh
   unsafe-safety-comment-audit:
@@ -143,8 +133,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
     - name: Unsafe SAFETY comment inventory
       run: python3 tools/audit/unsafe_safety_comment_audit.py report
     - name: Unsafe SAFETY comment ratchet
@@ -156,14 +146,8 @@ jobs:
     env:
       RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
-    - name: Rust cache
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-      with:
-        shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
     - name: Build rustdoc (workspace, all features, no deps)
       run: cargo doc --workspace --all-features --no-deps --locked
     - name: Build rustdoc (workspace, default features, no deps)
@@ -188,16 +172,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
       with:
         components: clippy
-    - name: Rust cache
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-      with:
-        shared-key: ci-no-default-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
     - name: Clippy (each crate alone, no default features)
       run: |
         set -euo pipefail
@@ -218,8 +196,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
     - name: Run tools/tests
       run: bash tools/ci/run_tools_tests.sh
     - name: Dead-code census gate
@@ -233,8 +211,8 @@ jobs:
     env:
       UPSTREAM_VERSION: 3.5.1
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
     - name: Fetch upstream rsync source
       uses: ./.github/actions/fetch-upstream-rsync
       with:
@@ -255,8 +233,8 @@ jobs:
         toolchain:
         - stable
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
     - name: Free disk space
       uses: ./.github/actions/free-disk-space
       with:
@@ -311,21 +289,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
       with:
-        toolchain: stable
-    - name: Rust cache
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-      with:
-        shared-key: ci-${{ runner.os }}-stable-release-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-        key: ssh-throughput
-    - name: Install cargo-nextest
-      uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2
-      with:
-        tool: cargo-nextest
+        install_nextest: 'true'
     - name: Regenerate Cargo.lock
       run: cargo update --workspace --offline
       continue-on-error: true
@@ -353,8 +320,8 @@ jobs:
       RUSTFLAGS: -D warnings
       RUST_BACKTRACE: full
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
     - name: Free disk space
       uses: ./.github/actions/free-disk-space
     - name: Install Rust (stable)
@@ -394,12 +361,9 @@ jobs:
       CARGO_TERM_COLOR: always
       RUSTFLAGS: -D warnings
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
       with:
-        toolchain: stable
         targets: x86_64-unknown-linux-musl
     - name: Ensure musl target on active toolchain
       run: rustup target add x86_64-unknown-linux-musl
@@ -427,18 +391,11 @@ jobs:
         toolchain:
         - stable
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (${{ matrix.toolchain }})
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
       with:
         toolchain: ${{ matrix.toolchain }}
-    - name: Rust cache
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-      with:
-        shared-key: ci-windows-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: Install cargo-nextest
-      uses: ./.github/actions/install-cargo-nextest-windows
+        install_nextest: 'true'
     - name: Build per-process temp-dir runner
       shell: bash
       run: |
@@ -470,19 +427,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-windows
       with:
-        toolchain: stable
-    - name: Rust cache
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-      with:
-        shared-key: ci-windows-iocp-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-        key: windows-iocp
-    - name: Install cargo-nextest
-      uses: ./.github/actions/install-cargo-nextest-windows
+        install_nextest: 'true'
     - name: Build workspace (--features iocp)
       run: cargo build --locked --workspace --features iocp
     - name: Build fast_io (--no-default-features --features iocp)
@@ -498,19 +446,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-windows
       with:
-        toolchain: stable
-    - name: Rust cache
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-      with:
-        shared-key: ci-windows-acl-xattr-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-        key: windows-acl-xattr
-    - name: Install cargo-nextest
-      uses: ./.github/actions/install-cargo-nextest-windows
+        install_nextest: 'true'
     - name: Build metadata (--features acl,xattr)
       run: cargo build --locked -p metadata --features acl,xattr
     - name: Build oc-rsync (for subprocess integration tests)
@@ -535,10 +474,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
       with:
         targets: x86_64-pc-windows-gnu
     - name: Restore mingw-w64 packages
@@ -613,20 +550,11 @@ jobs:
         toolchain:
         - stable
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-    - name: Install Rust (${{ matrix.toolchain }})
-      uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
       with:
         toolchain: ${{ matrix.toolchain }}
-    - name: Rust cache
-      uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-      with:
-        shared-key: ci-macos-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-    - name: Install cargo-nextest
-      uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2
-      with:
-        tool: cargo-nextest
+        install_nextest: 'true'
     - name: Build oc-rsync (for subprocess integration tests)
       run: rustup run ${{ matrix.toolchain }} cargo build --locked -p bin --bin oc-rsync
     - name: Test
@@ -683,8 +611,8 @@ jobs:
         toolchain:
         - stable
     steps:
-    - name: Checkout
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Setup CI environment
+      uses: ./.github/actions/ci-setup-linux
     - name: Free disk space
       uses: ./.github/actions/free-disk-space
     - name: Pre-install toolchain (short-timeout retry on transient fetch)
