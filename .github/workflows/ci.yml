@@ -10,49 +10,8 @@ name: CI
 # (upstream-testsuite-3.5.1.yml) has no push trigger at all.
 
 on:
-  push:
-    branches: [ master, main ]
-    paths:
-      - 'crates/**'
-      - 'src/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'xtask/**'
-      - 'fuzz/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/ci.yml'
-      - '.github/actions/**'
-      - '.github/workflows/**'
-      - 'docker/**'
-      - 'Cross.toml'
-  # Deliberately UNFILTERED. This workflow declares every required context
-  # except the upstream-testsuite ones (upstream-testsuite-3.5.1.yml), so it
-  # must run on every pull request or a required check never arrives and the
-  # pull request is unmergeable.
-  #
-  # A `paths` filter here previously left docs-only pull requests uncovered, and
-  # the gap was filled by ci-skip.yml, a second workflow declaring the same job
-  # names with `echo` bodies under the complementary path list. That does not
-  # work: `paths` is an ANY-match over the changed files, so a pull request
-  # touching one code file and one docs file matched BOTH filters and published
-  # two check runs per required context - one real, one stand-in. Measured on
-  # PR #7433: `upstream-testsuite / upstream testsuite (root)` resolved to
-  # `failure` from this workflow and `success` from the shim, on one commit.
-  #
-  # Disjoint path LISTS cannot fix that, because the lists are not what is
-  # matched - the changed-file SET is, and one pull request can draw from both.
-  # The only property that makes a publisher unique is a unique job name, which
-  # tools/ci/check_pr_check_name_uniqueness.py now asserts in the lint job.
   pull_request:
   workflow_dispatch:
-  schedule:
-    # Nightly run of the whole matrix on master. The beta and nightly toolchain
-    # cells of nextest, Windows, macOS and Linux musl run here AND on every pull
-    # request; they are non-blocking there (continue-on-error), so a churning
-    # compiler shows up without holding up a merge.
-    - cron: '30 3 * * *'
-
 concurrency:
   # One group per pull request. A pull request run carries only the light jobs
   # (see the trigger policy above), so pull requests run in parallel rather
