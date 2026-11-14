@@ -75,7 +75,7 @@ jobs:
     timeout-minutes: 10
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Install PyYAML (required by the check-name uniqueness gate)
@@ -121,7 +121,7 @@ jobs:
     timeout-minutes: 20
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -136,7 +136,7 @@ jobs:
     timeout-minutes: 5
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Unsafe SAFETY comment inventory
@@ -153,7 +153,7 @@ jobs:
       RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Build rustdoc (workspace, all features, no deps)
@@ -183,7 +183,7 @@ jobs:
     timeout-minutes: 60
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -210,7 +210,7 @@ jobs:
     timeout-minutes: 5
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Run tools/tests
@@ -229,7 +229,7 @@ jobs:
       UPSTREAM_VERSION: 3.5.1
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Fetch upstream rsync source
@@ -260,7 +260,7 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
@@ -332,7 +332,7 @@ jobs:
     timeout-minutes: 60
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -369,7 +369,7 @@ jobs:
       RUST_BACKTRACE: full
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
     - name: Free disk space
@@ -414,7 +414,7 @@ jobs:
       RUSTFLAGS: -D warnings
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -453,7 +453,7 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
@@ -499,7 +499,7 @@ jobs:
     timeout-minutes: 30
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-windows
       with:
@@ -522,7 +522,7 @@ jobs:
     timeout-minutes: 30
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-windows
       with:
@@ -554,7 +554,7 @@ jobs:
     timeout-minutes: 20
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
       with:
@@ -639,7 +639,7 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
@@ -717,7 +717,7 @@ jobs:
         - toolchain: ${{ github.event_name == 'push' && 'nightly' || '' }}
     steps:
     - name: Checkout
-      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     - name: Setup CI environment
       uses: ./.github/actions/ci-setup-linux
