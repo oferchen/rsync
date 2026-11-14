@@ -63,7 +63,7 @@ fn a_report_precedes_the_exit_frame_as_error_messages() {
         let mut writer = ServerWriter::new_plain(&mut wire)
             .activate_multiplex()
             .expect("activate multiplex");
-        queue_fatal_report(&mut writer, &error, Some(&report));
+        queue_fatal_report(&mut writer, &error, 32, true, Some(&report));
         announce_error_exit(&mut writer, &error, 32, true);
     }
     let frame = |payload: &[u8]| {
@@ -103,20 +103,24 @@ fn report_and_announce(
             .expect("activate multiplex");
         let version = protocol::ProtocolVersion::try_from(protocol).expect("supported protocol");
         writer.set_message_routing(route, version);
-        queue_fatal_report(&mut writer, error, Some(&report));
+        queue_fatal_report(&mut writer, error, protocol, reaches_peer, Some(&report));
         announce_error_exit(&mut writer, error, protocol, reaches_peer);
     }
     (rendered.into_inner(), wire)
 }
 
-/// upstream: log.c:357 - with `msgs2stderr = 2` (protocol 29 and later over a
-/// remote shell) an FERROR line stays on the server's stderr, so the report is
-/// not rendered for the peer and the caller prints it.
+/// upstream: log.c:357, cleanup.c:221-224 before :250 - with `msgs2stderr = 2`
+/// (protocol 29 and later over a remote shell) the fatal report is rendered
+/// and written to stderr before `MSG_ERROR_EXIT` goes on the wire, so a client
+/// that signals the server on the exit frame cannot truncate it.
 #[test]
-fn a_report_bound_for_stderr_is_left_to_the_caller() {
+fn a_report_bound_for_stderr_writes_before_the_exit_frame() {
     let error = io::Error::from(io::ErrorKind::PermissionDenied);
     let (rendered, wire) = report_and_announce(&error, MessageRoute::ErrorsToStderr, 32, true);
-    assert!(!rendered, "the caller prints a stderr-bound report");
+    assert!(
+        rendered,
+        "the report writes to stderr before MSG_ERROR_EXIT"
+    );
     assert_eq!(wire, expected_frame(3), "only the exit frame is written");
 }
 

@@ -90,21 +90,29 @@ fn pull_from_a_peer_that_exits_prints_the_whine_then_the_trailer() {
     );
 }
 
-/// A remote shell status worse than RERR_STREAMIO wins the exit code, but the
-/// whine is still printed first: upstream whines before exit_cleanup() picks
-/// the code.
+/// A remote shell status worse than RERR_STREAMIO wins the exit code when the
+/// shell is already reapable, but the whine is printed first either way:
+/// upstream whines before exit_cleanup() picks the code.
+///
+/// The shell's exit closes the stream before it becomes reapable, and the
+/// client polls it with WNOHANG (cleanup.c:146-153) right after the EOF, so a
+/// loaded host can see RERR_STREAMIO stand. 3.5.1 (tarball build) exited 127
+/// in 20 of 20 unloaded runs; either code must name itself in the trailer.
 #[test]
 fn a_worse_remote_shell_status_keeps_the_whine_and_names_its_own_code() {
     let (code, lines) = run_against_silent_peer("oc-rsync-no-such-command", true);
-    assert_eq!(code, Some(127), "{lines:#?}");
     assert_eq!(lines.len(), 2, "{lines:#?}");
     assert_eq!(
         lines[0], "oc-rsync: connection unexpectedly closed (0 bytes received so far) [sender]",
         "{lines:#?}"
     );
+    let trailer = match code {
+        Some(127) => "oc-rsync error: remote command not found (code 127) at ",
+        Some(12) => "oc-rsync error: error in rsync protocol data stream (code 12) at ",
+        other => panic!("exit {other:?}: {lines:#?}"),
+    };
     assert!(
-        lines[1].starts_with("oc-rsync error: remote command not found (code 127) at ")
-            && lines[1].contains(" [sender="),
+        lines[1].starts_with(trailer) && lines[1].contains(" [sender="),
         "{lines:#?}"
     );
 }
@@ -229,6 +237,11 @@ fn pull_cut_mid_transfer_whines_with_the_bytes_read_since_setup() {
 
 /// Pushes a small tree to a server whose output is cut after `cut` bytes.
 /// Returns (exit code, client stderr lines, server bytes actually forwarded).
+///
+/// A failing client signals its remote shell and does not wait for it
+/// (cleanup.c:146-153, :202-203), so `dd` ignores SIGUSR1 and keeps a copy of
+/// the client's stderr: the captured output then ends only once `dd` has
+/// exited and written its tally.
 fn push_cut_after(cut: usize) -> (Option<i32>, Vec<String>, u64) {
     let temp = tempfile::tempdir().expect("tempdir");
     let src = temp.path().join("src");
@@ -240,7 +253,7 @@ fn push_cut_after(cut: usize) -> (Option<i32>, Vec<String>, u64) {
     let fifo = temp.path().join("out.fifo");
     let tally = temp.path().join("dd.tally");
     let body = format!(
-        "#!/bin/sh\nshift\nmkfifo '{fifo}'\nexec 3<&0\nsh -c \"$*\" <&3 > '{fifo}' &\nexec dd bs=1 count={cut} 3<&- < '{fifo}' 2>'{tally}'\n",
+        "#!/bin/sh\nshift\nmkfifo '{fifo}'\nexec 3<&0\nsh -c \"$*\" <&3 > '{fifo}' &\ntrap '' USR1\nexec dd bs=1 count={cut} 3<&- 4>&2 < '{fifo}' 2>'{tally}'\n",
         fifo = fifo.display(),
         tally = tally.display(),
     );
@@ -266,13 +279,18 @@ fn push_cut_after(cut: usize) -> (Option<i32>, Vec<String>, u64) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let lines = stderr
         .lines()
+        // The server's own report reaches the same stderr when the client
+        // exits first (cleanup.c:146-153): an end-of-input or write-error line
+        // and its trailer, all tagged with a server role. 3.5.1 at both ends
+        // prints them too, in 22 of 72 runs under load. The client's lines
+        // carry `[sender]` and stay under test.
         .filter(|line| {
             !line.contains("[server=")
                 && !line.contains("[receiver=")
                 && !line.contains("[generator=")
                 && !line.ends_with("[server]")
-                && !line.ends_with("[receiver]")
-                && !line.ends_with("[generator]")
+                && !line.contains("[receiver]")
+                && !line.contains("[generator]")
         })
         .map(str::to_owned)
         .collect();
