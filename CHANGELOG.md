@@ -152,6 +152,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Bump `crypto-bigint`, `ctutils` and the `zstd` crates for RUSTSEC-2026-0385, 0387, 0391, 0398, 0403 and 0410; the bundled libzstd stays 1.5.7, so compressed bytes on the wire are unchanged (#8245)
 
 ### Added
+- Local `-vvv` role traces and the oc-only `PIPELINE` debug word (#8364)
 
 - On Windows, wildcard source operands (`*`, `?`, `[...]`) are expanded as a POSIX shell would, since `cmd.exe` and PowerShell do not glob (#8206)
 - Protocol 33 from rsync 3.5.1: `MSG_BLOCK_STATS` and the `--stats` line `Number of 4 KiB logical blocks touched`; newer peers clamp to 33, 3.5.0 and older negotiate down (#8003)
@@ -191,7 +192,6 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 ### Changed
 - Embedded `ssh://` ssh_config parity is now gated on a corpus (bastions with `ProxyJump` and `Match`, `Include` directories, token expansion, algorithm lists, `Tag`, canonicalization) diffed against OpenSSH 10.0p1 `ssh -G`, and the user-visible behaviour changes are listed in `docs/ssh-config-embedded.md` (#8329)
 - A recursive local `--write-batch` records incremental recursion, as 3.5.1 does (header `81 ff`), and writes its file list in the incremental layout: the top level, then one sub-list per directory, placed among the file data by 3.5.1's 1000-entry lookahead. rsync 3.5.1 replays these batches, and `--delete-before`, `--delete-after`, `--delay-updates`, `-m`, `--qsort` and `--no-inc-recursive` still record a flat list (#8261)
-
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
 - The cross-implementation oracle tests (block-size grammar, empty size values, daemon auth username, hosts-allow sentinels, daemon log host rendering, daemon filter-file whitespace, filter-file open failures, local progress order, and the three upstream read-batch cells) run against an rsync 3.5.1 binary instead of 3.5.0 (#8314)
 - The path-confinement, rrsync and filter-provenance design notes and the legacy-oracle build script cite rsync 3.5.1, including its `--files-from` ownership walk, `/dev/fd` pins and rrsync root-relative paths (#8311)
@@ -227,7 +227,6 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A server sends all `--info` and `--debug` output to the client as `MSG_INFO`; the client forwards only `--info=`, and a daemon caps each flag at the module's `max verbosity` (#8198)
 - Follow upstream for `--fsync` (regular files only), delete order (a directory is emptied before removal), `SIGPIPE` (ignored, so a broken pipe is a write error) and remote-to-remote transfers (refused) (#8197)
 - Daemon logging follows upstream: timestrings, per-file `%b`, `%c` and `%C`, deletions, module-relative file names, server diagnostics, the contents of a directory cleared to make room, a peer `MSG_INFO`, a syslog fallback when the log file cannot be opened, and the reverse-DNS name in its original case, and width, alignment and human-readable modifiers in `log format` (#7892, #8135, #8136, #8138, #8147, #8160, #8159, #8165, #8123, #8155)
-
 - Embedded `ssh://` transfers read ssh_config keywords as OpenSSH 10.0p1 does: a keyword OpenSSH does not know is refused once the whole file has been read, with every bad line reported; `IgnoreUnknown` is honoured; a keyword with no value is refused; and every keyword OpenSSH accepts still loads, including the ones the embedded transport does not act on (#8329)
 - Embedded `ssh://` transfers honour ssh_config `Ciphers`, `MACs`, `KexAlgorithms`, `HostKeyAlgorithms` and `RekeyLimit` as OpenSSH 10.0p1 reads them: lists are validated when read, `+`, `-` and `^` compose against the transport defaults, names the transport cannot negotiate are left out, and a list with nothing negotiable fails the connection (#8329)
 - Embedded `ssh://` transfers read ssh_config `Tag` and evaluate `Match tagged` as OpenSSH 10.0p1 does, and `Match !final` now requests the final pass like `Match final`; `CanonicalizeHostname`, `CanonicalDomains`, `CanonicalizeMaxDots`, `CanonicalizeFallbackLocal` and `CanonicalizePermittedCNAMEs` are validated, the host is canonicalized by suffix and the configuration re-read for `Match canonical` blocks, and a final-pass `HostName` no longer replaces the host (#8329)
@@ -263,6 +262,9 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - On Linux, oc-rsync opts out of transparent huge pages at startup. On a host with THP set to `always`, the kernel backed jemalloc extents with 2 MiB pages, adding about 40 MiB to peak memory and making it swing from run to run: a 100k-file pull now peaks at about 24 MiB instead of 61-66 MiB, and a 1 GiB delta pull at 30 MiB (client) and 93 MiB (server) instead of 67-71 MiB and 133-141 MiB, with CPU unchanged (#8342)
 
 ### Fixed
+- Report OS errors as `strerror (errno)` like 3.5.1's `rsyserr` (#8354)
+- Poll the remote shell with `WNOHANG` on a failed exit and signal it (#8372)
+- Match upstream `**+/***` `wild2` prefix in filter compilation (#8375)
 - A remote-shell `--server` at protocol 28 or older queues its fatal report for the client instead of printing it on its own stderr, as rsync 3.5.1 does with `msgs2stderr` clear; after a client refuses `-FF` at protocol 28 the terminal shows only the client's lines (#8367)
 - A compressed stream that fails to decompress, or to compress, ends the run with exit 12 like rsync 3.5.1, instead of 11, and a remote-shell pull whose receiver fails no longer waits forever on a server still reading its input (#8352)
 - A compressed stream that fails to decode or encode is reported as rsync 3.5.1 reports it: a pull prints the codec line, such as `ZSTD decomp returned -10 (0 bytes)` or `inflate returned -3 (0 bytes)`, instead of the compression library's own message, and a push prints the server generator's `connection unexpectedly closed` line instead of the server receiver's report (#8352)
