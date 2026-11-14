@@ -572,7 +572,7 @@ mod tests {
 
     const RECV_TIMEOUT: Duration = Duration::from_secs(5);
 
-    // --- weight accounting ---------------------------------------------------
+    // weight accounting
 
     #[test]
     fn entry_weight_is_base_plus_path_and_never_zero() {
@@ -602,7 +602,7 @@ mod tests {
         assert_eq!(w.in_flight(), 0, "over-release floors at zero");
     }
 
-    // --- bound enforcement ---------------------------------------------------
+    // bound enforcement
 
     #[test]
     fn admit_stays_within_budget_for_fitting_entries() {
@@ -628,7 +628,7 @@ mod tests {
         assert_eq!(w.in_flight(), 0);
     }
 
-    // --- parking (not spinning) ----------------------------------------------
+    // parking (not spinning)
 
     #[test]
     fn producer_parks_when_full_and_resumes_on_drain() {
@@ -688,7 +688,7 @@ mod tests {
         assert_eq!(w.in_flight(), 150, "shrink never revokes in-flight bytes");
     }
 
-    // --- sizing law ----------------------------------------------------------
+    // sizing law
 
     #[test]
     fn no_rate_estimate_sizes_to_min_budget() {
@@ -727,7 +727,7 @@ mod tests {
         }
     }
 
-    // --- config validation ---------------------------------------------------
+    // config validation
 
     #[test]
     fn config_rejects_inconsistent_ranges_and_factors() {
@@ -759,7 +759,7 @@ mod tests {
         );
     }
 
-    // --- rope actuation ------------------------------------------------------
+    // rope actuation
 
     #[test]
     fn disabled_rope_is_a_pure_passthrough() {
@@ -804,7 +804,7 @@ mod tests {
         on.shutdown();
     }
 
-    // --- differential: OFF enumerates identically to a no-rope baseline -------
+    // differential: OFF enumerates identically to a no-rope baseline
 
     /// Drives a single-producer / single-consumer enumeration through `rope` and
     /// returns the exact sequence the consumer observed. With a disabled rope
@@ -848,7 +848,7 @@ mod tests {
         );
     }
 
-    // --- RSS bound at 1M-file scale ------------------------------------------
+    // RSS bound at 1M-file scale
 
     #[test]
     fn bounded_window_caps_retention_across_a_million_entries() {

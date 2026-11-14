@@ -127,7 +127,7 @@ fn write_batch_records_metadata_only_iflags_for_kept_dirs_and_symlinks() {
     let src_link_time = FileTime::from_unix_time(1_748_736_000, 0); // 2025-06-01
     let dst_link_time = FileTime::from_unix_time(1_717_200_000, 0); // 2024-06-01
 
-    // --- source tree ---
+    // source tree
     fs::create_dir_all(source.join("adir")).expect("create source dir");
     fs::set_permissions(source.join("adir"), fs::Permissions::from_mode(0o755))
         .expect("chmod source dir");
@@ -138,7 +138,7 @@ fn write_batch_records_metadata_only_iflags_for_kept_dirs_and_symlinks() {
     set_symlink_file_times(source.join("alink"), src_link_time, src_link_time)
         .expect("mtime source symlink");
 
-    // --- stale pre-existing destination (same entries, older metadata) ---
+    // stale pre-existing destination (same entries, older metadata)
     fs::create_dir_all(dest.join("adir")).expect("create dest dir");
     fs::set_permissions(dest.join("adir"), fs::Permissions::from_mode(0o700))
         .expect("chmod dest dir");

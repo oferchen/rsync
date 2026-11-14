@@ -5757,7 +5757,7 @@ fn batched_flush_wire_byte_parity() {
         })
         .collect();
 
-    // --- Batched flush: write all entries, flush once at end ---
+    // Batched flush: write all entries, flush once at end
     let batched_wire = {
         let mut inner = Vec::<u8>::new();
         let mut mux = MultiplexWriter::new(&mut inner);
@@ -5777,7 +5777,7 @@ fn batched_flush_wire_byte_parity() {
         inner
     };
 
-    // --- Sequential flush: flush after each entry write ---
+    // Sequential flush: flush after each entry write
     let sequential_wire = {
         let mut inner = Vec::<u8>::new();
         let mut mux = MultiplexWriter::new(&mut inner);

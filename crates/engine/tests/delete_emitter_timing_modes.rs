@@ -29,9 +29,7 @@ use engine::delete::{
 use protocol::flist::FileEntry;
 use tempfile::TempDir;
 
-// ---------------------------------------------------------------------------
 // Fixture helpers
-// ---------------------------------------------------------------------------
 
 fn touch(dir: &Path, name: &str) {
     fs::File::create(dir.join(name)).expect("create file");
@@ -80,9 +78,7 @@ fn deleted_leaves(events: &[engine::delete::DeleteEvent]) -> Vec<OsString> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
 // Per-mode wiring tests
-// ---------------------------------------------------------------------------
 
 /// DDP-E1: --delete-during. emit_one runs BEFORE the per-dir
 /// copy step for each work unit. The test simulates the copy walk by
@@ -271,10 +267,8 @@ fn delete_excluded_layering_widens_extras_when_enabled() {
     assert_eq!(layered_extras[0].kind, DeleteEntryKind::File);
 }
 
-// ---------------------------------------------------------------------------
 // Phase-ordering tests: the emitter MUST be invoked at the right time
 // relative to the simulated transfer for each mode.
-// ---------------------------------------------------------------------------
 
 /// Records the order in which "transfer" and "emit" phases run, then
 /// asserts the mode-specific contract.
@@ -386,7 +380,6 @@ fn delay_mode_emits_after_all_renames_commit() {
     assert_eq!(log.events(), &["transfer", "rename_commit", "emit_all"]);
 }
 
-// ---------------------------------------------------------------------------
 // Cross-mode invariant: per-directory unlink ordering is f_name_cmp
 // ascending reversed.
 //
@@ -396,7 +389,6 @@ fn delay_mode_emits_after_all_renames_commit() {
 // + locally under all-features). Wire-byte parity vs the sequential
 // path is the parallel consumer's own responsibility, tracked by the
 // DEL-3 series (regression test: parallel consumer wire-byte parity).
-// ---------------------------------------------------------------------------
 
 #[cfg(not(feature = "parallel-delete-consumer"))]
 #[test]
@@ -448,10 +440,8 @@ fn all_modes_emit_in_upstream_per_directory_order() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Empty-plan path: the emitter is still constructible even when nothing
 // needs deletion. Ensures the live path stays no-op-safe.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn empty_plan_map_drain_is_a_noop_for_every_mode() {
@@ -471,10 +461,8 @@ fn empty_plan_map_drain_is_a_noop_for_every_mode() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Sanity: DeletePlanMap and DirTraversalCursor are exposed through the
 // engine::delete public surface for the cutover code paths below.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn public_emitter_surface_round_trips_through_engine_delete() {

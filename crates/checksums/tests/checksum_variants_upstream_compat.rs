@@ -487,7 +487,7 @@ fn md5_seeded_empty_data_produces_valid_digest() {
     }
 }
 
-// --- CF_CHKSUM_SEED_FIX golden-value tests ---
+// CF_CHKSUM_SEED_FIX golden-value tests
 //
 // These tests pin the exact digest bytes produced by proper (seed-before-data,
 // CF_CHKSUM_SEED_FIX active) vs legacy (seed-after-data) ordering, ensuring

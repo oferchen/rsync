@@ -3784,7 +3784,6 @@ mod module_access_tests {
         );
     }
 
-    // ---------------------------------------------------------------------
     // Separator-less rule prefixes. Upstream's `parse_rule_tok` reads the
     // rule character, then scans MODIFIER characters up to the first space
     // and refuses any byte that is not a known modifier
@@ -3793,7 +3792,6 @@ mod module_access_tests {
     // MEASURED against the real rsync 3.5.0 binary, oc's daemon serving the
     // same module against the same client: upstream exits 5 and serves
     // nothing; oc exited 0, served the module, and silently applied the rule.
-    // ---------------------------------------------------------------------
 
     #[test]
     fn a_minus_prefix_without_a_separator_is_refused() {

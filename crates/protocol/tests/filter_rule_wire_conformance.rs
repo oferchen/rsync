@@ -42,9 +42,7 @@ fn err_at(payload: &[u8], position: usize, byte: char) {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Unknown byte. upstream: exclude.c:1371-1379 `default: goto invalid`.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn an_unknown_modifier_byte_is_refused() {
@@ -58,9 +56,7 @@ fn a_known_modifier_in_the_same_slot_is_accepted() {
     assert_eq!(rule.pattern, "foo");
 }
 
-// ---------------------------------------------------------------------------
 // Comma form. upstream: exclude.c:1325-1329 `if (s[1] == ',') s++;`
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_comma_may_separate_the_prefix_from_its_modifiers() {
@@ -81,10 +77,8 @@ fn the_comma_form_and_the_plain_form_decode_identically() {
     assert_eq!(one(b":,C f", 32), one(b":C f", 32));
 }
 
-// ---------------------------------------------------------------------------
 // Underscore separator. upstream: exclude.c:1365 terminator + :1444 consume.
 // Documented in rsync.1.md: "You can use an underscore instead of a space".
-// ---------------------------------------------------------------------------
 
 #[test]
 fn an_underscore_terminates_the_modifier_run_and_is_consumed() {
@@ -105,9 +99,7 @@ fn an_underscore_and_a_space_are_the_same_separator() {
     assert_eq!(one(b"-p_foo", 32), one(b"-p foo", 32));
 }
 
-// ---------------------------------------------------------------------------
 // `/` has no position gate. upstream: exclude.c:1392-1394.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn the_anchor_modifier_is_accepted_after_another_modifier() {
@@ -121,9 +113,7 @@ fn modifier_order_does_not_change_the_decoded_rule() {
     assert_eq!(one(b":n/ .f", 32), one(b":/n .f", 32));
 }
 
-// ---------------------------------------------------------------------------
 // Merge-file guards. upstream: exclude.c:1395-1400 / :1410-1419 / :1433-1437.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn negation_is_refused_on_a_merge_rule() {
@@ -153,10 +143,8 @@ fn merge_only_modifiers_are_accepted_on_a_dir_merge() {
     assert!(one(b":w .f", 32).word_split);
 }
 
-// ---------------------------------------------------------------------------
 // `-`/`+` need MERGE_FILE set AND NO_PREFIXES unset.
 // upstream: exclude.c:1381-1390 BITS_SETnUNSET.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn the_no_prefixes_modifier_is_refused_on_a_plain_exclude() {
@@ -176,9 +164,7 @@ fn the_no_prefixes_modifier_is_accepted_once_on_a_dir_merge() {
     assert!(plus.no_prefixes && plus.no_prefixes_include);
 }
 
-// ---------------------------------------------------------------------------
 // `C` guards. upstream: exclude.c:1402-1409.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn the_cvs_modifier_is_refused_after_no_prefixes() {
@@ -197,12 +183,10 @@ fn the_cvs_modifier_is_accepted_on_a_dir_merge_and_implies_four_flags() {
     assert!(rule.cvs_exclude && rule.no_inherit && rule.word_split && rule.no_prefixes);
 }
 
-// ---------------------------------------------------------------------------
 // Side modifiers vs a side-specifying prefix. upstream: exclude.c:1423-1432.
 //
 // Only `P`/`R` can reach this guard: oc's RuleType has no Hide/Show, and
 // from_prefix_char refuses `H`/`S` outright, so `Hs`/`Ss` are unspellable.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn side_modifiers_are_refused_after_a_side_specifying_prefix() {
@@ -217,9 +201,7 @@ fn side_modifiers_are_accepted_on_a_plain_exclude() {
     assert!(rule.sender_side && rule.receiver_side);
 }
 
-// ---------------------------------------------------------------------------
 // Empty pattern. upstream: exclude.c:1474-1475, with the CVS_IGNORE carve-out.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn an_empty_pattern_is_refused() {
@@ -268,9 +250,7 @@ fn a_two_byte_pattern_ending_in_slash_still_strips() {
     assert!(rule.directory_only);
 }
 
-// ---------------------------------------------------------------------------
 // Clear rule. upstream: exclude.c:1365 (loop skipped) + :1467-1471.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_clear_rule_refuses_trailing_text() {
@@ -305,13 +285,11 @@ fn the_same_byte_is_a_valid_modifier_on_a_non_clear_rule() {
     assert!(one(b"-x user.*", 32).xattr_only);
 }
 
-// ---------------------------------------------------------------------------
 // Protocol gates removed from the DECODER.
 //
 // Upstream has no protocol test in the modifier switch; the `p`-requires-30
 // and `s`/`r`-require-29 rules live in the SENDER (get_rule_prefix,
 // exclude.c:1865-1877).
-// ---------------------------------------------------------------------------
 
 #[test]
 fn perishable_is_accepted_at_protocol_29() {

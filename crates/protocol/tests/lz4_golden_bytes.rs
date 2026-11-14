@@ -33,9 +33,7 @@ use protocol::wire::{
     MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG, TOKENRUN_REL,
 };
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Decodes all tokens from an LZ4-encoded byte buffer.
 fn lz4_decode_all(data: &[u8]) -> (Vec<u8>, Vec<u32>) {
@@ -130,9 +128,7 @@ fn parse_wire_structure(data: &[u8]) -> (Vec<&'static str>, Vec<usize>) {
     (sequence, block_sizes)
 }
 
-// ===========================================================================
 // Section 1: Literal-only streams
-// ===========================================================================
 
 /// A literal-only LZ4 stream must produce: DEFLATED_DATA block(s) + END_FLAG.
 /// The DEFLATED_DATA header uses the same 14-bit length encoding as zlib/zstd.
@@ -245,9 +241,7 @@ fn golden_lz4_payload_is_valid_lz4_data() {
     assert_eq!(literals, input);
 }
 
-// ===========================================================================
 // Section 2: Block-match-only streams
-// ===========================================================================
 
 /// A single block match at index 0 produces TOKEN_REL | 0 + END_FLAG.
 /// Token encoding is shared across all compression algorithms.
@@ -300,9 +294,7 @@ fn golden_lz4_non_consecutive_blocks_separate_tokens() {
     assert_eq!(encoded[2], END_FLAG);
 }
 
-// ===========================================================================
 // Section 3: Token run encoding (consecutive block matches)
-// ===========================================================================
 
 /// Consecutive blocks 0,1,2 use TOKENRUN_REL encoding.
 /// run_start=0, last_token=2, n=2, r=0. All fit in relative encoding.
@@ -382,9 +374,7 @@ fn golden_lz4_run_then_separate_block() {
     assert_eq!(encoded[4], END_FLAG);
 }
 
-// ===========================================================================
 // Section 4: Mixed literal + block match streams
-// ===========================================================================
 
 /// Literal data followed by a block match: DEFLATED_DATA + TOKEN_REL + END_FLAG.
 /// Literals are compressed and emitted at the token boundary (block match).
@@ -514,9 +504,7 @@ fn golden_lz4_mixed_with_run_encoding() {
     assert_eq!(blocks, vec![0, 1, 2]);
 }
 
-// ===========================================================================
 // Section 5: DEFLATED_DATA framing and flush boundaries
-// ===========================================================================
 
 /// Small literals should produce exactly one DEFLATED_DATA block per flush.
 /// LZ4 compresses the entire buffered literal data in a single
@@ -611,9 +599,7 @@ fn golden_lz4_end_flag_not_confused_with_other_flags() {
     assert_ne!(END_FLAG & 0xC0, TOKENRUN_REL);
 }
 
-// ===========================================================================
 // Section 6: LZ4-specific compressed payload verification
-// ===========================================================================
 
 /// LZ4 block compression produces raw LZ4 block data (no framing).
 /// Unlike zstd (which has a magic number) or zlib (which has a header byte),
@@ -762,9 +748,7 @@ fn golden_lz4_output_differs_from_zstd() {
     assert_eq!(zstd_literals, input.as_slice());
 }
 
-// ===========================================================================
 // Section 7: Decoder golden byte tests - hand-crafted wire bytes
-// ===========================================================================
 
 /// Verify the LZ4 decoder handles a hand-crafted wire stream with
 /// only token bytes (no DEFLATED_DATA). Block-match-only streams have
@@ -879,9 +863,7 @@ fn golden_lz4_decoder_hand_crafted_mixed() {
     assert_eq!(blocks, vec![7]);
 }
 
-// ===========================================================================
 // Section 8: Encoder/decoder roundtrip with exact byte verification
-// ===========================================================================
 
 /// Verify that encoding then decoding a complex mixed stream preserves
 /// all data and block indices exactly.

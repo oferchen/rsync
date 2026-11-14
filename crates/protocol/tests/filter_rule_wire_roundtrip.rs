@@ -97,9 +97,7 @@ fn assert_roundtrips_to_self(
     );
 }
 
-// ---------------------------------------------------------------------------
 // Include / exclude - the `+`/`-` rule types.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn exclude_bare_pattern_roundtrips() {
@@ -135,10 +133,8 @@ fn exclude_with_spaces_and_glob_metachars_roundtrips() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Anchor (`/`) and directory-only (trailing `/`) - carried in the pattern body
 // for non-merge rules, per upstream (FILTRULE_ABS_PATH stays unset).
-// ---------------------------------------------------------------------------
 
 #[test]
 fn anchored_exclude_roundtrips() {
@@ -207,13 +203,11 @@ fn xattr_only_exclude_roundtrips() {
     assert_roundtrips_to_self(rule, proto(32), b"-x user.*");
 }
 
-// ---------------------------------------------------------------------------
 // Sender-/receiver-side modifiers (`s`/`r`, protocol >= 29) and perishable
 // (`p`, protocol >= 30). Sender-side exclude == `hide`, sender-side include ==
 // `show` at the wire layer (there is no distinct `H`/`S` wire char - upstream
 // parse_rule_tok maps `H`->exclude|SENDER_SIDE and `S`->include|SENDER_SIDE,
 // exclude.c:1345-1351, then serializes them via the `s` modifier).
-// ---------------------------------------------------------------------------
 
 #[test]
 fn sender_side_exclude_is_hide_and_roundtrips() {
@@ -279,9 +273,7 @@ fn all_scalar_modifiers_on_exclude_roundtrip() {
     assert_roundtrips_to_self(rule, proto(32), b"-!xsrp blob");
 }
 
-// ---------------------------------------------------------------------------
 // Merge (`.`) and dir-merge (`:`) rules and their merge-only modifiers.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn merge_rule_roundtrips() {
@@ -428,9 +420,7 @@ fn dir_merge_all_merge_modifiers_roundtrip() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Clear (`!`) - resets the accumulated list.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn clear_rule_roundtrips() {
@@ -449,10 +439,8 @@ fn clear_rule_roundtrips() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // A whole heterogeneous list round-trips in order through one write/read pair,
 // proving the framing (per-rule length prefix + terminator) composes.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn heterogeneous_rule_list_roundtrips_in_order() {
@@ -483,7 +471,6 @@ fn heterogeneous_rule_list_roundtrips_in_order() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Documented NON-identity normalizations. These are NOT round-trip bugs: they
 // mirror upstream, which has no `P`/`R`/`H`/`S` character on the wire. The
 // receiver-/sender-side semantics ride on the `r`/`s` modifier of a plain
@@ -491,7 +478,6 @@ fn heterogeneous_rule_list_roundtrips_in_order() {
 // exclude/include, not the original enum tag. Pinning the exact recovered form
 // documents the intended asymmetry so a future change cannot quietly turn it
 // into data loss.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn protect_normalizes_to_receiver_side_exclude() {
@@ -549,16 +535,13 @@ fn risk_normalizes_to_receiver_side_include() {
     assert_eq!(decoded2, decoded);
 }
 
-// ---------------------------------------------------------------------------
 // Boundary: the wire pattern is UTF-8 only. `FilterRuleWireFormat::pattern` is
 // a `String`, and the reader validates each record with `str::from_utf8`
 // before decoding, so a non-UTF-8 pattern is not representable and a non-UTF-8
 // record is rejected rather than silently truncated. Pinning this documents
 // the limitation relative to upstream, which carries filter patterns as raw
 // bytes.
-// ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
 // CVS `C` modifier. The serializer emits ONLY `C` and suppresses the flags it
 // implies (no-inherit/word-split/no-prefixes), matching upstream
 // get_rule_prefix() (exclude.c:1847-1860). The PARSER re-derives those implied
@@ -566,7 +549,6 @@ fn risk_normalizes_to_receiver_side_include() {
 // (exclude.c:1402-1409 sets NO_PREFIXES|WORD_SPLIT|NO_INHERIT|CVS_IGNORE). The
 // two halves compose into a stable WIRE fixpoint: `:C` decodes to the full
 // implied flag set and re-encodes back to `:C`.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn cvs_dir_merge_c_modifier_re_derives_implied_flags_matching_upstream() {

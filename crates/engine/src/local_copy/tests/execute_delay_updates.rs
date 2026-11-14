@@ -2342,7 +2342,7 @@ fn delay_updates_restores_nested_directory_mtime_after_rename() {
     );
 }
 
-// --- staging THROUGH the --partial-dir -------------------------------------
+// staging THROUGH the --partial-dir
 //
 // upstream: receiver.c:1318-1331 - under --delay-updates a completed file is
 // published INTO the --partial-dir under its real name

@@ -24,10 +24,8 @@ fn proto28() -> ProtocolVersion {
     ProtocolVersion::try_from(28u8).unwrap()
 }
 
-// ---------------------------------------------------------------------------
 // Regular file entry encoding
 // upstream: flist.c:send_file_entry() - protocol 28, S_ISREG
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_regular_file_first_entry() {
@@ -143,10 +141,8 @@ fn golden_v28_regular_file_large_size() {
     assert_eq!(read_entry.size(), large_size);
 }
 
-// ---------------------------------------------------------------------------
 // Directory entry encoding
 // upstream: flist.c:send_file_entry() - protocol 28, S_ISDIR
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_directory_first_entry() {
@@ -217,10 +213,8 @@ fn golden_v28_directory_roundtrip() {
     assert_eq!(read_entry.mode(), 0o40755);
 }
 
-// ---------------------------------------------------------------------------
 // Symlink entry encoding
 // upstream: flist.c:send_file_entry() - protocol 28, S_ISLNK
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_symlink_entry() {
@@ -286,10 +280,8 @@ fn golden_v28_symlink_roundtrip() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // File list terminator
 // upstream: flist.c - end of file list is a single zero byte
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_end_marker() {
@@ -320,10 +312,8 @@ fn golden_v28_end_marker_ignores_io_error() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Checksum format (MD4, 16 bytes for protocol 28)
 // upstream: flist.c - always_checksum sends flist_csum_len bytes per regular file
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_checksum_md4_regular_file() {
@@ -407,10 +397,8 @@ fn golden_v28_checksum_with_known_digest() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // UID/GID encoding (fixed 4-byte LE for protocol 28)
 // upstream: flist.c - uid/gid use write_int (4-byte LE) for protocol < 30
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_uid_gid_fixed_encoding() {
@@ -469,10 +457,8 @@ fn golden_v28_uid_gid_roundtrip() {
     assert_eq!(read_entry.gid(), Some(100));
 }
 
-// ---------------------------------------------------------------------------
 // Name compression across entries
 // upstream: flist.c - XMIT_SAME_NAME prefix sharing between consecutive entries
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_name_compression() {
@@ -512,10 +498,8 @@ fn golden_v28_name_compression() {
     assert_eq!(&second_bytes[3..8], b"2.txt");
 }
 
-// ---------------------------------------------------------------------------
 // Flags encoding: two-byte extended flags for protocol 28
 // upstream: flist.c - protocol 28 uses XMIT_EXTENDED_FLAGS for second byte
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_flags_single_byte_non_dir() {
@@ -557,10 +541,8 @@ fn golden_v28_flags_two_byte_directory_zero() {
     assert_eq!(buf[0], 0x18, "flags must be XMIT_SAME_UID | XMIT_SAME_GID");
 }
 
-// ---------------------------------------------------------------------------
 // Mtime encoding (4-byte unsigned LE for protocol 28)
 // upstream: flist.c - mtime uses write_uint for protocol < 30
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_mtime_encoding() {
@@ -583,10 +565,8 @@ fn golden_v28_mtime_encoding() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // No varint flags (protocol 28 uses fixed encoding)
 // upstream: protocol 28 does NOT support VARINT_FLIST_FLAGS
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_no_varint_flags() {
@@ -606,10 +586,8 @@ fn golden_v28_no_varint_flags() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // No incremental recursion (protocol 28)
 // upstream: protocol 28 uses legacy ASCII negotiation with no inc_recurse
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_no_inc_recurse() {
@@ -626,10 +604,8 @@ fn golden_v28_no_inc_recurse() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Multi-entry file list round-trip
 // upstream: flist.c - full file list with mixed entry types
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_multi_entry_roundtrip() {
@@ -685,10 +661,8 @@ fn golden_v28_multi_entry_roundtrip() {
     assert!(end.is_none(), "should reach end of file list");
 }
 
-// ---------------------------------------------------------------------------
 // Checksum header for protocol 28 uses MD4 (16-byte strong checksum)
 // upstream: match.c/sender.c - s2length=16 for MD4 in sum_head
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_sum_head_md4() {
@@ -721,10 +695,8 @@ fn golden_v28_sum_head_md4() {
     assert_eq!(read_int(&mut cursor).unwrap(), 300);
 }
 
-// ---------------------------------------------------------------------------
 // Transfer stats for protocol 28 (no flist times)
 // upstream: main.c - protocol < 29 omits flist_buildtime/flist_xfertime
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_stats_no_flist_times() {
@@ -744,10 +716,8 @@ fn golden_v28_stats_no_flist_times() {
     assert_eq!(decoded.flist_xfertime, 0, "protocol 28 has no flist times");
 }
 
-// ---------------------------------------------------------------------------
 // Longint encoding (used by protocol 28 for file sizes)
 // upstream: io.c - write_longint() / read_longint()
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_longint_small_value() {
@@ -783,10 +753,8 @@ fn golden_v28_longint_large_value() {
     assert_eq!(read_longint(&mut cursor).unwrap(), value);
 }
 
-// ---------------------------------------------------------------------------
 // Block device encoding (protocol 28 rdev with XMIT_RDEV_MINOR_8_PRE30)
 // upstream: flist.c:send_file_entry() - protocol 28 device encoding
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_block_device_small_minor() {
@@ -887,10 +855,8 @@ fn golden_v28_block_device_roundtrip() {
     assert_eq!(read_entry.mode(), 0o60660);
 }
 
-// ---------------------------------------------------------------------------
 // Character device encoding (protocol 28)
 // upstream: flist.c - char devices use S_IFCHR mode
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_char_device_roundtrip() {
@@ -915,10 +881,8 @@ fn golden_v28_char_device_roundtrip() {
     assert_eq!(read_entry.mode(), 0o20666);
 }
 
-// ---------------------------------------------------------------------------
 // FIFO (special file) encoding with dummy rdev (protocol 28)
 // upstream: flist.c - specials get dummy rdev(0,0) for protocol < 31
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_fifo_with_dummy_rdev() {
@@ -943,10 +907,8 @@ fn golden_v28_fifo_with_dummy_rdev() {
     assert_eq!(read_entry.mode(), 0o10644);
 }
 
-// ---------------------------------------------------------------------------
 // Hardlink dev/ino encoding (protocol 28-29 uses longint pairs)
 // upstream: flist.c - protocol < 30 writes dev+1 and ino as longints
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_hardlink_dev_ino_encoding() {
@@ -1016,10 +978,8 @@ fn golden_v28_hardlink_dev_ino_roundtrip() {
     assert_eq!(r2.hardlink_ino(), Some(99999));
 }
 
-// ---------------------------------------------------------------------------
 // Mixed hardlink and non-hardlink entries (protocol 28-29 interop fix)
 // upstream: flist.c:recv_file_entry() - dev/ino read gated on XMIT_HLINKED
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_mixed_hardlink_and_plain_roundtrip() {
@@ -1099,12 +1059,10 @@ fn golden_v28_mixed_hardlink_and_plain_roundtrip() {
     assert!(reader.read_entry(&mut cursor).unwrap().is_none());
 }
 
-// ---------------------------------------------------------------------------
 // Transfer stats exact wire bytes (protocol 28 - legacy longint, no flist times)
 // upstream: main.c:handle_stats() -> io.h:46 write_varlong30() routes protocol
 // < 30 through io.c write_longint() (4-byte LE for values <= 0x7FFFFFFF).
 // Protocol < 29 additionally omits flist_buildtime/flist_xfertime.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_stats_wire_bytes_small_values() {
@@ -1186,10 +1144,8 @@ fn golden_v28_stats_wire_bytes_large() {
     assert_eq!(decoded.total_size, 10_000_000_000);
 }
 
-// ---------------------------------------------------------------------------
 // Protocol 28 does not support checksum negotiation (always MD4)
 // upstream: compat.c - checksum negotiation requires protocol >= 30
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_no_checksum_negotiation() {
@@ -1204,10 +1160,8 @@ fn golden_v28_no_checksum_negotiation() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Multiple devices with XMIT_SAME_RDEV_MAJOR optimization
 // upstream: flist.c - consecutive devices with same major skip rdev_major
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_consecutive_devices_same_major() {
@@ -1260,10 +1214,8 @@ fn golden_v28_consecutive_devices_same_major() {
     assert_eq!(r2.rdev_minor(), Some(16));
 }
 
-// ---------------------------------------------------------------------------
 // Mixed entry types with all preserves enabled (protocol 28)
 // upstream: flist.c - comprehensive file list with devices, specials, links
-// ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_mixed_all_preserves_roundtrip() {

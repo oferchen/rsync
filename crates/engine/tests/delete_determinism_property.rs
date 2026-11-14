@@ -66,9 +66,7 @@ struct UnlinkEvent {
     is_dir: bool,
 }
 
-// ---------------------------------------------------------------------------
 // Properties
-// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig {
@@ -169,9 +167,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Strategies
-// ---------------------------------------------------------------------------
 
 /// The two delete modes that exercise the parallel-deterministic pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,9 +189,7 @@ fn delete_mode_strategy() -> impl Strategy<Value = DeleteMode> {
     prop_oneof![Just(DeleteMode::During), Just(DeleteMode::After)]
 }
 
-// ---------------------------------------------------------------------------
 // Test context: locates binaries and decides whether to skip.
-// ---------------------------------------------------------------------------
 
 struct TestContext {
     oc_rsync: PathBuf,
@@ -254,9 +248,7 @@ impl TestContext {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Tree builder
-// ---------------------------------------------------------------------------
 
 /// Deterministic source/destination tree builder.
 ///
@@ -309,9 +301,7 @@ fn build_tree(seed: u64, file_count: usize, dir_count: usize) -> (TempDir, TempD
     (src, dst)
 }
 
-// ---------------------------------------------------------------------------
 // strace parsing + grouping
-// ---------------------------------------------------------------------------
 
 /// Parse `unlink`/`unlinkat`/`rmdir` lines emitted by `strace -f -qq`.
 ///
@@ -400,9 +390,7 @@ fn run_directory_keys(map: &BTreeMap<PathBuf, Vec<UnlinkEvent>>) -> Vec<&Path> {
     map.keys().map(PathBuf::as_path).collect()
 }
 
-// ---------------------------------------------------------------------------
 // Binary discovery
-// ---------------------------------------------------------------------------
 
 fn locate_strace() -> Option<PathBuf> {
     if let Some(env_path) = env::var_os("OC_RSYNC_STRACE") {
@@ -457,9 +445,7 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Deterministic PRNG
-// ---------------------------------------------------------------------------
 
 /// SplitMix64 - tiny deterministic RNG so seeded inputs reproduce exactly
 /// across runs. Kept inline to avoid pulling in a `rand` dev-dep.
@@ -481,9 +467,7 @@ impl SplitMix64 {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Unit tests for the helpers (always-on, do not require strace).
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod parser_tests {

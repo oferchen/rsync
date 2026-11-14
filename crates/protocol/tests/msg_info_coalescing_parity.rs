@@ -13,10 +13,8 @@ use std::sync::{Arc, Mutex};
 
 use protocol::{MessageCode, MplexReader, MplexWriter, recv_msg, send_msg};
 
-// ---------------------------------------------------------------------------
 // Helper: drain all frames from a wire buffer via recv_msg, returning
 // (code, payload) pairs. Stops at EOF.
-// ---------------------------------------------------------------------------
 fn drain_frames(wire: &[u8]) -> Vec<(MessageCode, Vec<u8>)> {
     let mut cursor = Cursor::new(wire);
     let mut frames = Vec::new();
@@ -30,9 +28,7 @@ fn drain_frames(wire: &[u8]) -> Vec<(MessageCode, Vec<u8>)> {
     frames
 }
 
-// ---------------------------------------------------------------------------
 // Helper: drain MplexReader, collecting DATA bytes and out-of-band messages.
-// ---------------------------------------------------------------------------
 fn drain_mplex(wire: &[u8]) -> (Vec<u8>, Vec<(MessageCode, Vec<u8>)>) {
     let messages = Arc::new(Mutex::new(Vec::new()));
     let messages_clone = messages.clone();
@@ -61,10 +57,8 @@ fn drain_mplex(wire: &[u8]) -> (Vec<u8>, Vec<(MessageCode, Vec<u8>)>) {
     (data, oob)
 }
 
-// ---------------------------------------------------------------------------
 // Core parity: consecutive MSG_INFO frames via MplexWriter produce wire bytes
 // identical to individual send_msg calls (the pre-coalescing behavior).
-// ---------------------------------------------------------------------------
 #[test]
 fn consecutive_msg_info_wire_bytes_identical_to_individual_sends() {
     let payloads: &[&[u8]] = &[
@@ -97,9 +91,7 @@ fn consecutive_msg_info_wire_bytes_identical_to_individual_sends() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Logical parity via recv_msg: decoded frames are identical.
-// ---------------------------------------------------------------------------
 #[test]
 fn coalesced_frames_decode_identically_via_recv_msg() {
     let payloads: &[&[u8]] = &[b"alpha\n", b"bravo\n", b"charlie\n"];
@@ -121,10 +113,8 @@ fn coalesced_frames_decode_identically_via_recv_msg() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Logical parity via MplexReader: out-of-band handler receives identical
 // messages regardless of coalescing.
-// ---------------------------------------------------------------------------
 #[test]
 fn coalesced_info_visible_through_mplex_reader_handler() {
     let payloads: &[&[u8]] = &[b"progress 1/3\n", b"progress 2/3\n", b"progress 3/3\n"];
@@ -149,9 +139,7 @@ fn coalesced_info_visible_through_mplex_reader_handler() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Single frame: no coalescing opportunity. Must still work.
-// ---------------------------------------------------------------------------
 #[test]
 fn single_msg_info_no_coalescing_opportunity() {
     let mut coalesced = Vec::new();
@@ -174,10 +162,8 @@ fn single_msg_info_no_coalescing_opportunity() {
     assert_eq!(frames[0].1, b"only one\n");
 }
 
-// ---------------------------------------------------------------------------
 // Mixed MSG_INFO + MSG_DATA: coalescing must not cross message types.
 // Frame ordering must be preserved.
-// ---------------------------------------------------------------------------
 #[test]
 fn mixed_info_and_data_preserves_ordering() {
     let mut wire = Vec::new();
@@ -213,9 +199,7 @@ fn mixed_info_and_data_preserves_ordering() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Mixed MSG_INFO + MSG_WARNING: both are batchable, both must survive.
-// ---------------------------------------------------------------------------
 #[test]
 fn mixed_info_and_warning_both_batchable() {
     let mut wire = Vec::new();
@@ -240,9 +224,7 @@ fn mixed_info_and_warning_both_batchable() {
     assert_eq!(frames[2], (MessageCode::Info, b"info again\n".to_vec()));
 }
 
-// ---------------------------------------------------------------------------
 // Empty payloads: coalescing must handle zero-length MSG_INFO correctly.
-// ---------------------------------------------------------------------------
 #[test]
 fn empty_payload_msg_info_coalesces_correctly() {
     let mut wire = Vec::new();
@@ -271,10 +253,8 @@ fn empty_payload_msg_info_coalesces_correctly() {
     assert_eq!(wire, reference);
 }
 
-// ---------------------------------------------------------------------------
 // Latency-sensitive code interrupting a batch: MSG_ERROR must flush, so
 // preceding MSG_INFO frames appear before the error in the wire stream.
-// ---------------------------------------------------------------------------
 #[test]
 fn latency_sensitive_code_flushes_preceding_info() {
     let mut wire = Vec::new();
@@ -302,10 +282,8 @@ fn latency_sensitive_code_flushes_preceding_info() {
     assert_eq!(frames[2].1, b"after error\n");
 }
 
-// ---------------------------------------------------------------------------
 // Typical multi-file transfer pattern: many MSG_INFO lines interleaved with
 // DATA frames, verified end-to-end through MplexReader.
-// ---------------------------------------------------------------------------
 #[test]
 fn realistic_multi_file_transfer_pattern() {
     let file_count = 20;
@@ -347,9 +325,7 @@ fn realistic_multi_file_transfer_pattern() {
     assert_eq!(data, expected_data);
 }
 
-// ---------------------------------------------------------------------------
 // MSG_WARNING coalescing has the same wire-byte parity as MSG_INFO.
-// ---------------------------------------------------------------------------
 #[test]
 fn msg_warning_coalescing_wire_byte_parity() {
     let payloads: &[&[u8]] = &[b"slow network\n", b"partial transfer\n", b"retrying\n"];
@@ -374,10 +350,8 @@ fn msg_warning_coalescing_wire_byte_parity() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Data-then-info ordering: buffered DATA must be flushed before the control
 // message regardless of coalescing behavior.
-// ---------------------------------------------------------------------------
 #[test]
 fn buffered_data_flushed_before_info_message() {
     let mut wire = Vec::new();
@@ -398,10 +372,8 @@ fn buffered_data_flushed_before_info_message() {
     assert_eq!(frames[1].1, b"status\n");
 }
 
-// ---------------------------------------------------------------------------
 // Many small MSG_INFO frames: stress test that coalescing handles a large
 // batch without losing any frames.
-// ---------------------------------------------------------------------------
 #[test]
 fn many_small_info_frames_none_lost() {
     let count = 200;
@@ -440,10 +412,8 @@ fn many_small_info_frames_none_lost() {
     assert_eq!(wire, reference);
 }
 
-// ---------------------------------------------------------------------------
 // Coalescing with write_info convenience method produces same output as
 // write_message with MessageCode::Info.
-// ---------------------------------------------------------------------------
 #[test]
 fn write_info_convenience_matches_write_message() {
     let mut via_convenience = Vec::new();

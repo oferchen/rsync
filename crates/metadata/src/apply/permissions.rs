@@ -725,8 +725,8 @@ fn open_held_stat_target(destination: &Path, options: &MetadataOptions) -> io::R
 /// # Errors
 ///
 /// Returns an error when [`apply_fake_super_stat`] fails.
-// upstream: rsync.c:713-714 set_file_attrs() - `am_root < 0` always calls
-// set_stat_xattr() with the dest_mode()'d `new_mode` and F_OWNER/F_GROUP.
+/// upstream: rsync.c:713-714 set_file_attrs() - `am_root < 0` always calls
+/// set_stat_xattr() with the dest_mode()'d `new_mode` and F_OWNER/F_GROUP.
 #[cfg(all(unix, feature = "xattr"))]
 pub(super) fn apply_fake_super_from_entry(
     destination: &Path,

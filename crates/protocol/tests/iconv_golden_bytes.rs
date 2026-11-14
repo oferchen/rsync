@@ -52,9 +52,7 @@ use protocol::flist::FileListReader;
 use protocol::flist::{FileEntry, FileListWriter};
 use protocol::iconv::FilenameConverter;
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Protocol used by all tests in this file. Protocol 32 matches upstream
 /// rsync 3.4.1's negotiated default and uses single-byte xflags + 1-byte
@@ -133,9 +131,7 @@ fn sender_name_on_wire(writer: &mut FileListWriter, entry: &FileEntry) -> Vec<u8
     buf[off..off + len].to_vec()
 }
 
-// ===========================================================================
 // Section 1: Sender - UTF-8 source name -> remote charset wire bytes
-// ===========================================================================
 
 /// `café` (UTF-8: 63 61 66 c3 a9, 5 bytes) emitted by a sender configured
 /// for `--iconv=.,ISO-8859-1` must hit the wire as ISO-8859-1: 63 61 66 e9
@@ -271,9 +267,7 @@ fn golden_sender_unmappable_char_verbatim() {
     );
 }
 
-// ===========================================================================
 // Section 2: Receiver - remote charset wire bytes -> UTF-8 local name
-// ===========================================================================
 
 /// Builds a synthetic single-entry wire stream whose name field already
 /// contains the given remote-charset bytes, then drives it through the
@@ -424,9 +418,7 @@ fn golden_receiver_invalid_remote_bytes_empties_name() {
     );
 }
 
-// ===========================================================================
 // Section 3: Round-trip - sender + receiver yields identical local names
-// ===========================================================================
 
 /// Drives an entry through sender (UTF-8 -> remote) and then receiver
 /// (remote -> UTF-8) and asserts the recovered name equals the original.
@@ -507,9 +499,7 @@ fn golden_round_trip_dir_then_file_compressed_after_iconv() {
     assert_eq!(&*r2.name_bytes(), "café/two.txt".as_bytes());
 }
 
-// ===========================================================================
 // Section 4: Sender and receiver wire bytes must match exactly
-// ===========================================================================
 
 /// What the iconv-configured sender writes for "café" must equal what an
 /// ISO-8859-1 raw-bytes wire stream would carry. This locks the sender's
@@ -565,9 +555,7 @@ fn golden_receiver_post_iconv_equals_utf8_native_decode() {
     assert_eq!(from_iconv.name_bytes(), from_plain.name_bytes());
 }
 
-// ===========================================================================
 // Section 5: suffix_len header reflects post-iconv length
-// ===========================================================================
 
 /// `café` is 5 bytes in UTF-8 but 4 bytes in ISO-8859-1. The wire's
 /// suffix_len byte must be 4, not 5 - i.e. the writer measures the name

@@ -242,8 +242,8 @@ impl FakeSuperStat {
 ///
 /// An `--chown` override wins. Otherwise an id is recorded only when
 /// `--owner` or `--group` preserves it, and is 0 when it does not.
-// upstream: rsync.c:713-714 - set_stat_xattr() records F_OWNER(file) and
-// F_GROUP(file), which hold 0 for an id the transfer does not preserve.
+/// upstream: rsync.c:713-714 - set_stat_xattr() records F_OWNER(file) and
+/// F_GROUP(file), which hold 0 for an id the transfer does not preserve.
 pub fn fake_super_ids(
     options: &crate::MetadataOptions,
     uid: Option<u32>,
@@ -261,7 +261,7 @@ pub fn fake_super_ids(
 ///
 /// Upstream prints this message and exits `RERR_FILEIO` (11). It travels as
 /// an [`io::ErrorKind::Other`] error, which every caller grades as 11.
-// upstream: xattrs.c:1253-1258 get_stat_xattr()
+/// upstream: xattrs.c:1253-1258 get_stat_xattr()
 #[derive(Debug)]
 pub struct CorruptFakeSuperStat {
     /// The file as upstream's `full_fname()` renders it, quotes included.

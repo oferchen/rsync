@@ -1594,7 +1594,7 @@ mod integration {
             let remainder: i32 = 600;
             let s2length: i32 = 16;
 
-            // --- File 1: copy block0 + literal + copy block1 + copy block2 ---
+            // File 1: copy block0 + literal + copy block1 + copy block2
             let mut ndx_buf = Vec::new();
             ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
             writer.write_data(&ndx_buf).unwrap();
@@ -1627,7 +1627,7 @@ mod integration {
                 ))
                 .unwrap();
 
-            // --- File 2: copy block0 + copy block1 + literal + copy block2 ---
+            // File 2: copy block0 + copy block1 + literal + copy block2
             ndx_buf.clear();
             ndx_codec.write_ndx(&mut ndx_buf, 2).unwrap();
             writer.write_data(&ndx_buf).unwrap();
@@ -1772,7 +1772,7 @@ mod integration {
             let block_count: i32 = 3;
             let remainder: i32 = 600;
 
-            // --- delta.dat: CPRES_ZLIB with block matches ---
+            // delta.dat: CPRES_ZLIB with block matches
             let mut ndx_buf = Vec::new();
             ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
             writer.write_data(&ndx_buf).unwrap();
@@ -1810,7 +1810,7 @@ mod integration {
                 ))
                 .unwrap();
 
-            // --- new.txt: whole-file literal (no basis, uses eager path) ---
+            // new.txt: whole-file literal (no basis, uses eager path)
             ndx_buf.clear();
             ndx_codec.write_ndx(&mut ndx_buf, 2).unwrap();
             writer.write_data(&ndx_buf).unwrap();

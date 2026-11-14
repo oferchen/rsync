@@ -205,7 +205,7 @@ pub fn socket_creation_unsupported(_relative: &Path) -> bool {
 ///
 /// `destination` is the full name, matching upstream's `full_fname()`, which
 /// wraps the path in double quotes.
-// upstream: generator.c:2516-2519 - rprintf(FWARNING, "skipping socket ...")
+/// upstream: generator.c:2516-2519 - rprintf(FWARNING, "skipping socket ...")
 #[must_use]
 pub fn format_skipped_socket_message(destination: &Path) -> String {
     format!(
@@ -484,7 +484,7 @@ pub fn device_word(rdev_major: u32, rdev_minor: u32) -> u64 {
 /// [`device_word`] so the one crate that owns `libc`'s `S_IF*` constants owns
 /// the type-bit composition too, leaving `#![deny(unsafe_code)]` callers free
 /// of it.
-// upstream: syscall.c:do_mknod_at() forwards `file->mode` (type | perms).
+/// upstream: syscall.c:do_mknod_at() forwards `file->mode` (type | perms).
 #[cfg(unix)]
 #[must_use]
 pub fn fifo_mknod_mode(mode_bits: u32) -> u32 {
@@ -500,7 +500,7 @@ pub fn fifo_mknod_mode(mode_bits: u32) -> u32 {
 ///
 /// `is_block` selects `S_IFBLK` over `S_IFCHR`; the low permission bits are
 /// carried through unchanged. See [`fifo_mknod_mode`] for why this lives here.
-// upstream: syscall.c:do_mknod_at() forwards `file->mode` (type | perms).
+/// upstream: syscall.c:do_mknod_at() forwards `file->mode` (type | perms).
 #[cfg(unix)]
 #[must_use]
 pub fn device_mknod_mode(mode_bits: u32, is_block: bool) -> u32 {

@@ -12,7 +12,7 @@ fn main() -> io::Result<()> {
     // Create a buffer to act as our "network connection"
     let mut stream = Vec::new();
 
-    // === Writing Side ===
+    // Writing Side
     println!("Writing multiplexed data...");
     {
         let mut writer = MplexWriter::new(&mut stream);
@@ -37,7 +37,7 @@ fn main() -> io::Result<()> {
 
     println!("Wrote {} bytes to stream\n", stream.len());
 
-    // === Reading Side ===
+    // Reading Side
     println!("Reading multiplexed data...");
     {
         let messages = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -74,7 +74,7 @@ fn main() -> io::Result<()> {
         }
     }
 
-    // === Advanced Usage: Large Data ===
+    // Advanced Usage: Large Data
     println!("\n=== Large Data Transfer ===");
     {
         let mut stream = Vec::new();

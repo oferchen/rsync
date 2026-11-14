@@ -45,9 +45,7 @@ fn run_copy(plan: &LocalCopyPlan) -> LocalCopySummary {
     plan.execute().expect("copy succeeds")
 }
 
-// ---------------------------------------------------------------------------
 // Single-file benchmarks
-// ---------------------------------------------------------------------------
 
 /// Benchmarks copying a single file at various sizes.
 fn bench_single_file_copy(c: &mut Criterion) {
@@ -85,9 +83,7 @@ fn bench_single_file_copy(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // Many small files benchmark
-// ---------------------------------------------------------------------------
 
 /// Benchmarks copying 100 x 1 KB files from a single directory.
 fn bench_many_small_files(c: &mut Criterion) {
@@ -133,9 +129,7 @@ fn bench_many_small_files(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // Directory tree benchmark
-// ---------------------------------------------------------------------------
 
 /// Builds a nested directory tree with files at every level.
 ///
@@ -206,9 +200,7 @@ fn bench_directory_tree(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // Criterion harness
-// ---------------------------------------------------------------------------
 
 criterion_group!(
     name = local_copy_benches;

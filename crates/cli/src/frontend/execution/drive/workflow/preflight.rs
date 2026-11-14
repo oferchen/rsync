@@ -315,7 +315,7 @@ mod tests {
         );
     }
 
-    // --- Positive cases: feature compiled in, gate must accept ---
+    // Positive cases: feature compiled in, gate must accept
 
     /// Linux + `xattr` feature: `--xattrs` accepted, no rejection emitted.
     #[cfg(all(target_os = "linux", feature = "xattr"))]
@@ -361,7 +361,7 @@ mod tests {
         assert_accepted(true, None, "Windows + acl feature");
     }
 
-    // --- Flag-off cases: gate never fires regardless of feature/platform ---
+    // Flag-off cases: gate never fires regardless of feature/platform
 
     /// `preserve_acls=false` and `xattrs=None` must always pass, even on
     /// builds without either feature. Asserts the gate only triggers on
@@ -372,7 +372,7 @@ mod tests {
         assert_accepted(false, Some(0), "xattrs=Some(0)");
     }
 
-    // --- Negative cases: feature absent, gate must reject ---
+    // Negative cases: feature absent, gate must reject
 
     /// Build without `acl` feature: `--acls` rejected with the
     /// `POSIX ACLs are not supported on this client` message.

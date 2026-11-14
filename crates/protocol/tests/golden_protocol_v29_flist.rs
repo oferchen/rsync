@@ -30,10 +30,8 @@ fn v29() -> ProtocolVersion {
     ProtocolVersion::from_supported(29).expect("v29 must be supported")
 }
 
-// ---------------------------------------------------------------------------
 // Regular file entry encoding
 // upstream: flist.c:send_file_entry() with S_ISREG mode
-// ---------------------------------------------------------------------------
 
 /// Verifies byte-level encoding of a regular file entry at protocol 29.
 ///
@@ -92,10 +90,8 @@ fn golden_v29_regular_file_entry() {
     assert_eq!(buf.len(), 23, "total entry length for basic regular file");
 }
 
-// ---------------------------------------------------------------------------
 // Directory entry encoding
 // upstream: flist.c:send_file_entry() with S_ISDIR mode
-// ---------------------------------------------------------------------------
 
 /// Verifies byte-level encoding of a directory entry at protocol 29.
 ///
@@ -139,10 +135,8 @@ fn golden_v29_directory_entry() {
     assert_eq!(buf.len(), 19, "total directory entry length");
 }
 
-// ---------------------------------------------------------------------------
 // Symlink entry encoding
 // upstream: flist.c:send_file_entry() with S_ISLNK mode
-// ---------------------------------------------------------------------------
 
 /// Verifies byte-level encoding of a symlink entry at protocol 29.
 ///
@@ -197,10 +191,8 @@ fn golden_v29_symlink_entry() {
     assert_eq!(buf.len(), 34, "total symlink entry length");
 }
 
-// ---------------------------------------------------------------------------
 // File list end-of-list terminator
 // upstream: flist.c:recv_file_list() - zero byte terminates
-// ---------------------------------------------------------------------------
 
 /// Verifies that the end-of-list marker is a single zero byte for v29.
 ///
@@ -231,10 +223,8 @@ fn golden_v29_end_of_list_ignores_io_error() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // UID/GID encoding
 // upstream: flist.c:send_file_entry() - write_int for proto < 30
-// ---------------------------------------------------------------------------
 
 /// Verifies that UID is encoded as a 4-byte fixed LE integer for v29.
 ///
@@ -321,10 +311,8 @@ fn golden_v29_uid_and_gid_encoding() {
     assert_eq!(buf.len(), 27, "total length with uid+gid");
 }
 
-// ---------------------------------------------------------------------------
 // Mtime encoding
 // upstream: flist.c:send_file_entry() uses write_uint for proto < 30
-// ---------------------------------------------------------------------------
 
 /// Verifies mtime is encoded as unsigned 4-byte LE for v29.
 ///
@@ -380,10 +368,8 @@ fn golden_v29_mtime_same_time_flag() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Multi-entry round-trip with name compression
 // upstream: flist.c name prefix compression via l1/l2 fields
-// ---------------------------------------------------------------------------
 
 /// Verifies that multiple entries with shared name prefixes compress correctly
 /// and round-trip through write then read.
@@ -508,9 +494,7 @@ fn golden_v29_name_compression_byte_layout() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Round-trip: directory entries
-// ---------------------------------------------------------------------------
 
 /// Verifies directory entry round-trip through write and read for v29.
 #[test]
@@ -535,9 +519,7 @@ fn golden_v29_directory_round_trip() {
     assert_eq!(read_entry.mode() & 0o7777, 0o755, "dir permissions");
 }
 
-// ---------------------------------------------------------------------------
 // Round-trip: symlink entries
-// ---------------------------------------------------------------------------
 
 /// Verifies symlink entry round-trip for v29 with preserve_links enabled.
 #[test]
@@ -565,9 +547,7 @@ fn golden_v29_symlink_round_trip() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Round-trip: UID and GID
-// ---------------------------------------------------------------------------
 
 /// Verifies UID/GID round-trip through write and read for v29.
 #[test]
@@ -597,9 +577,7 @@ fn golden_v29_uid_gid_round_trip() {
     assert_eq!(read_entry.gid(), Some(500), "GID must round-trip");
 }
 
-// ---------------------------------------------------------------------------
 // v29 vs v28: identical wire format
-// ---------------------------------------------------------------------------
 
 /// Verifies that protocol 28 and 29 produce identical wire bytes for
 /// the same file entry, confirming they share the same encoding.
@@ -625,9 +603,7 @@ fn golden_v29_wire_format_matches_v28() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // v29 vs v30: different wire format
-// ---------------------------------------------------------------------------
 
 /// Verifies that protocol 29 and 30 produce different wire bytes,
 /// confirming the varint encoding change at the v30 boundary.
@@ -661,10 +637,8 @@ fn golden_v29_wire_format_differs_from_v30() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Large file size encoding
 // upstream: io.c:write_longint() - marker 0xFFFFFFFF + 8-byte value
-// ---------------------------------------------------------------------------
 
 /// Verifies that file sizes exceeding 31 bits use the longint marker
 /// encoding in protocol 29.
@@ -698,9 +672,7 @@ fn golden_v29_large_file_size() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Mixed file types in a single file list
-// ---------------------------------------------------------------------------
 
 /// Verifies round-trip of a mixed file list containing files, directories,
 /// and symlinks at protocol 29.

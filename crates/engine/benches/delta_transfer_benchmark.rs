@@ -88,9 +88,7 @@ fn build_index(
     DeltaSignatureIndex::from_signature(&signature, algorithm).expect("index")
 }
 
-// ---------------------------------------------------------------------------
 // 1. Signature generation
-// ---------------------------------------------------------------------------
 
 /// Benchmarks block signature generation for 1KB, 64KB, 1MB, and 16MB files.
 fn bench_signature_generation(c: &mut Criterion) {
@@ -147,9 +145,7 @@ fn bench_signature_generation(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // 2. Delta computation
-// ---------------------------------------------------------------------------
 
 /// Benchmarks delta computation between files at 90%, 50%, and 0% similarity
 /// across all four file sizes.
@@ -179,9 +175,7 @@ fn bench_delta_computation(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // 3. Delta application
-// ---------------------------------------------------------------------------
 
 /// Benchmarks applying pre-computed deltas to reconstruct target files.
 ///
@@ -215,9 +209,7 @@ fn bench_delta_application(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
 // 4. End-to-end delta transfer
-// ---------------------------------------------------------------------------
 
 /// Benchmarks the complete delta transfer pipeline:
 /// signature generation -> index construction -> delta generation -> delta application.

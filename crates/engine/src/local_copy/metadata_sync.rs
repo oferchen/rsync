@@ -338,8 +338,8 @@ pub(crate) fn store_effective_fake_super_if_requested(
 /// Upstream reads the `%stat` of every entry while it builds the file list and
 /// exits `RERR_FILEIO` on a value it cannot parse. Any other read failure
 /// reads as no record.
-// upstream: flist.c make_file() -> x_lstat() -> xattrs.c:1253-1258
-// get_stat_xattr() exit_cleanup(RERR_FILEIO).
+/// upstream: flist.c make_file() -> x_lstat() -> xattrs.c:1253-1258
+/// get_stat_xattr() exit_cleanup(RERR_FILEIO).
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) fn ensure_fake_super_source_stat(
     fake_super: bool,
@@ -364,8 +364,8 @@ pub(crate) fn ensure_fake_super_source_stat(
 ///
 /// A record that does not parse ends the copy with `RERR_FILEIO`, raised by
 /// the sender.
-// upstream: flist.c make_file() -> x_lstat() -> xattrs.c:1216-1265
-// get_stat_xattr().
+/// upstream: flist.c make_file() -> x_lstat() -> xattrs.c:1216-1265
+/// get_stat_xattr().
 pub(crate) fn fake_super_source_stat(
     source: &std::path::Path,
     metadata: &std::fs::Metadata,
@@ -389,8 +389,8 @@ pub(crate) fn fake_super_source_stat(
 ///
 /// A record that does not parse ends the copy with `RERR_FILEIO`, raised by
 /// the generator as upstream's is.
-// upstream: generator.c:1745 gen_entry_stat() -> link_stat() ->
-// xattrs.c:1372 x_lstat() -> xattrs.c:1253-1258 get_stat_xattr().
+/// upstream: generator.c:1745 gen_entry_stat() -> link_stat() ->
+/// xattrs.c:1372 x_lstat() -> xattrs.c:1253-1258 get_stat_xattr().
 pub(crate) fn fake_super_destination_stat(
     destination: &std::path::Path,
     stat: fast_io::EntryMetadata,
