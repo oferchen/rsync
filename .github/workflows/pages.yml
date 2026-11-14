@@ -43,18 +43,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7.0.1
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+      - name: Setup CI environment
+        uses: ./.github/actions/ci-setup-linux
         with:
-          toolchain: stable
-
-      - name: Cache cargo registry and target
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: pages
+          cache_prefix: pages
 
       - name: Build rustdoc (workspace, all features, no deps)
         run: cargo doc --workspace --all-features --no-deps --locked
