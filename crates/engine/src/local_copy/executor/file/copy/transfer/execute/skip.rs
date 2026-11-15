@@ -164,7 +164,7 @@ pub(super) fn record_metadata_only_skip(
         Some(context.destination_root()),
     )?;
 
-    context.record_hard_link(metadata, destination);
+    context.record_hard_link_for_path(source, metadata, destination);
     context.summary_mut().record_regular_file_matched();
     let metadata_snapshot =
         LocalCopyMetadata::from_metadata(metadata, None).virtualize_fake_super_stat(source_stat);

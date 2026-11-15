@@ -127,7 +127,7 @@ pub(super) fn try_copy(
         CreatedEntryKind::File,
         destination_previously_existed,
     );
-    context.record_hard_link(metadata, destination);
+    context.record_hard_link_for_path(source, metadata, destination);
     context
         .summary_mut()
         // A whole-file clone/copy is all literal: no signature was
