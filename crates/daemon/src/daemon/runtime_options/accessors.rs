@@ -99,7 +99,8 @@ impl RuntimeOptions {
 
     /// Applies any configured `--nice` CPU / I/O priority settings.
     pub(crate) fn apply_niceness(&mut self) {
-        self.niceness.apply_local(core::niceness::ProcessRole::Daemon);
+        self.niceness
+            .apply_local(core::niceness::ProcessRole::Daemon);
     }
 }
 
@@ -196,5 +197,4 @@ impl RuntimeOptions {
     pub(super) fn daemon_gid(&self) -> Option<u32> {
         self.daemon_gid
     }
-
 }

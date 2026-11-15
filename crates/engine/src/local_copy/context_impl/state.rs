@@ -291,7 +291,10 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Queues a symlink to be created after regular files and delayed updates.
-    pub(super) fn push_deferred_symlink(&mut self, symlink: crate::local_copy::context::DeferredSymlink) {
+    pub(super) fn push_deferred_symlink(
+        &mut self,
+        symlink: crate::local_copy::context::DeferredSymlink,
+    ) {
         self.deferred_ops.symlinks.push(symlink);
     }
 

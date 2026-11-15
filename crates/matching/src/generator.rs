@@ -705,7 +705,7 @@ impl DeltaGenerator {
                     }
                     window.clear();
                     window.push_back(last_byte);
-                    let need = block_len - 2;
+                    let need = block_len - 1;
                     let mut filled = 0usize;
                     while filled < need {
                         if buffer_pos == buffer_len {
@@ -728,7 +728,6 @@ impl DeltaGenerator {
                     }
                     offset += (block_len - 1) as u64;
                     consecutive_false_offsets = 3;
-                    continue;
                 }
             }
             if let Some(mut match_idx) = matched {
@@ -876,17 +875,17 @@ impl DeltaGenerator {
                             || (index.block(idx).index() * block_len as u64) >= offset
                             || same_offset.get(idx).copied().unwrap_or(false)
                     };
-                    let adj_match = index
-                        .try_next_match_slices(last_matched, adj_digest, f, s)
-                        .filter(|&idx| adj_inplace_ok(idx))
-                        .or_else(|| {
-                            index
-                                .find_match_slices_with(adj_digest, f, s, adj_inplace_ok)
-                                .0
-                        });
+                    let (adj_match, adj_had_weak) =
+                        match index.try_next_match_slices(last_matched, adj_digest, f, s) {
+                            Some(idx) if adj_inplace_ok(idx) => (Some(idx), true),
+                            _ => index.find_match_slices_with(adj_digest, f, s, adj_inplace_ok),
+                        };
                     if let Some(next_idx) = adj_match {
                         match_idx = next_idx;
                     } else {
+                        if adj_had_weak {
+                            consecutive_false_offsets = 1;
+                        }
                         break;
                     }
                 }
@@ -1182,7 +1181,7 @@ impl DeltaGenerator {
                         }
                         window.clear();
                         window.push_back(last_byte);
-                        let need = block_len - 2;
+                        let need = block_len - 1;
                         let mut filled = 0usize;
                         while filled < need {
                             if buffer_pos == buffer_len {
@@ -1469,7 +1468,7 @@ impl DeltaGenerator {
     /// locking. Only a stripe that runs to `source.len()` sees the file's real
     /// EOF, so only it may claim the basis's short final block; a stripe that
     /// stops at a boundary would otherwise place that block mid-file, where
-    /// upstream's `MIN((OFF_T)s->blength, len-offset)` test (`match.c:270-270`) never
+    /// upstream's `MIN((OFF_T)s->blength, len-offset)` test (`match.c:248`) never
     /// admits it.
     fn scan_ranges_and_merge<'a>(
         &self,

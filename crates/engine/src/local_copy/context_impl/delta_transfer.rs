@@ -392,11 +392,10 @@ impl<'a> CopyContext<'a> {
             };
             let (matched_block, had_weak_candidate) = match want_i {
                 Some(hint)
-                    if inplace_ok(hint)
-                        && {
-                            let (front, back) = window.as_slices();
-                            index.check_block_match_slices(hint, digest, front, back)
-                        } =>
+                    if inplace_ok(hint) && {
+                        let (front, back) = window.as_slices();
+                        index.check_block_match_slices(hint, digest, front, back)
+                    } =>
                 {
                     (Some(hint), true)
                 }
@@ -588,7 +587,7 @@ impl<'a> CopyContext<'a> {
                             pending_literals.push(front);
                         }
                     }
-                    let need = block_len - 2;
+                    let need = block_len - 1;
                     let mut filled = 0usize;
                     while filled < need {
                         if buffer_pos == buffer_len {
@@ -621,9 +620,7 @@ impl<'a> CopyContext<'a> {
                     if !s2.is_empty() {
                         rolling.update(s2);
                     }
-                    outgoing = None;
                     consecutive_false_offsets = 3;
-                    continue;
                 }
             }
 
