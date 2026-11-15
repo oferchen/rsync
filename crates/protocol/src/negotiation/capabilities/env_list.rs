@@ -40,7 +40,7 @@ const COMPRESS_LIST_ENV: &str = "RSYNC_COMPRESS_LIST";
 
 /// Sentinel emitted when a value held names but none were recognised.
 ///
-/// upstream: compat.c:327-328 `parse_nni_str()`.
+/// upstream: compat.c:328-329 `parse_nni_str()`.
 const INVALID: &str = "INVALID";
 
 /// An environment override applied to a negotiation candidate list.
@@ -60,7 +60,7 @@ pub(super) struct EnvOverride {
 /// `write_batch` replaces the variable outright with the single old-style
 /// choice, so a `--write-batch` recording is decodable by a `--read-batch`
 /// replay - which negotiates nothing and has only the batch header to go on.
-/// upstream: `compat.c:413-415 getenv_nstr()`.
+/// upstream: `compat.c:414-416 getenv_nstr()`.
 pub(super) fn checksum_candidates(
     is_server: bool,
     write_batch: bool,
@@ -78,7 +78,7 @@ pub(super) fn checksum_candidates(
 ///
 /// `write_batch` pins the list to `zlib` for the same reason
 /// [`checksum_candidates`] pins the checksum.
-/// upstream: `compat.c:413-415 getenv_nstr()`.
+/// upstream: `compat.c:414-416 getenv_nstr()`.
 pub(super) fn compression_candidates(is_server: bool, write_batch: bool) -> Option<EnvOverride> {
     if write_batch {
         return parse_list("zlib", resolve_compression_name);
@@ -136,12 +136,12 @@ pub(super) fn validate_compress_choice(choice: &str) -> io::Result<()> {
 /// Refuses the forced fallback default checksum on the non-negotiated path when
 /// `RSYNC_CHECKSUM_LIST` excludes it.
 ///
-/// upstream: `compat.c:544-558 negotiate_the_strings` - when the peer is too old
+/// upstream: `compat.c:545-559 negotiate_the_strings` - when the peer is too old
 /// to negotiate (`do_negotiated_strings == 0`) and no `--checksum-choice` is
 /// forced, `send_negotiate_str` still parses the env list into `nno->saw`, then
 /// `recv_negotiate_str` runs `parse_negotiate_str` with the prefilled default
 /// (`"md5"` for protocol >= 30, else `"md4"`). When `saw` lacks the default the
-/// parse fails and upstream aborts with `RERR_UNSUPPORTED` (`compat.c:406`).
+/// parse fails and upstream aborts with `RERR_UNSUPPORTED` (`compat.c:407`).
 /// Unlike [`validate_checksum_choice`] this runs on both sides, so pass the
 /// caller's `is_server`; the `&` split then selects the caller's half.
 pub(super) fn validate_default_checksum(default: &str, is_server: bool) -> io::Result<()> {
@@ -219,10 +219,10 @@ fn validate_choice(
     choice: &str,
     resolve: impl Fn(&str) -> Option<&'static str>,
 ) -> io::Result<()> {
-    // upstream: compat.c:432-445 - unset/blank accepts; saw[num] must be set.
+    // upstream: compat.c:433-446 - unset/blank accepts; saw[num] must be set.
     match env_membership(key, true, choice, resolve) {
         EnvMembership::Unset | EnvMembership::Present => Ok(()),
-        // upstream: compat.c:447-449 rprintf(FERROR, "Your --%s-choice value
+        // upstream: compat.c:448-450 rprintf(FERROR, "Your --%s-choice value
         // (%s) was refused by the server.\n", ...). The trailing newline is
         // added by the diagnostic layer, not embedded in the message.
         EnvMembership::Absent => Err(io::Error::new(
@@ -249,7 +249,7 @@ fn validate_default(
     is_server: bool,
     resolve: impl Fn(&str) -> Option<&'static str>,
 ) -> io::Result<()> {
-    // upstream: compat.c:369-406 recv_negotiate_str - the non-negotiated path
+    // upstream: compat.c:370-407 recv_negotiate_str - the non-negotiated path
     // prefills `tmpbuf` with the old-style default (compat.c:553-566) and, when
     // the env-parsed saw list rejects it, prints the offered lists on BOTH
     // sides (do_negotiated_strings == 0 makes `!am_server || ...` always true).
@@ -286,7 +286,7 @@ fn parse_env(
 ) -> Option<EnvOverride> {
     let raw = std::env::var(key).ok()?;
 
-    // upstream: compat.c:417-421 getenv_nstr - the server uses only the portion
+    // upstream: compat.c:418-422 getenv_nstr - the server uses only the portion
     // after the first '&', while the client stops at it because parse_nni_str
     // treats '&' as a token terminator (compat.c:291-292). A value without '&'
     // is used whole by both sides.
@@ -310,20 +310,20 @@ fn parse_env(
 /// through the same `parse_nni_str()` semantics upstream applies to the
 /// environment value.
 fn parse_list(scoped: &str, resolve: impl Fn(&str) -> Option<&'static str>) -> Option<EnvOverride> {
-    // upstream: compat.c:435-438 / 512,519 - an empty or all-whitespace value is
+    // upstream: compat.c:436-439 / 512,519 - an empty or all-whitespace value is
     // treated as unset, leaving the built-in default order in place.
     scoped.split_whitespace().next()?;
 
     let mut candidates: Vec<&'static str> = Vec::new();
     let mut advertised: Vec<String> = Vec::new();
     for token in scoped.split_whitespace() {
-        // upstream: compat.c:295-306 - unrecognised names are dropped and the
+        // upstream: compat.c:296-307 - unrecognised names are dropped and the
         // first occurrence of each algorithm wins (duplicates removed).
         if let Some(canonical) = resolve(token)
             && !candidates.contains(&canonical)
         {
             candidates.push(canonical);
-            // upstream: compat.c:298-304 - only a recognised alias (an entry
+            // upstream: compat.c:299-305 - only a recognised alias (an entry
             // whose main_nni points elsewhere) is rewritten to its canonical
             // spelling; every other name keeps the operator's original bytes
             // verbatim on the wire, including casing. A token that differs
@@ -336,7 +336,7 @@ fn parse_list(scoped: &str, resolve: impl Fn(&str) -> Option<&'static str>) -> O
         }
     }
 
-    // upstream: compat.c:327-328 - names were seen but none were valid, so the
+    // upstream: compat.c:328-329 - names were seen but none were valid, so the
     // parsed list collapses to "INVALID", which is advertised verbatim and
     // subsequently fails to negotiate a mutual algorithm.
     if candidates.is_empty() {

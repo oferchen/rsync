@@ -1,7 +1,7 @@
 //! A local copy reads each entry's ACL and xattrs once, as it lists the entry,
 //! and every later step applies those values.
 //!
-//! upstream: a local copy forks a sender and a receiver; flist.c:2050-2087
+//! upstream: a local copy forks a sender and a receiver; flist.c:2054-2091
 //! send_file_name() reads the ACL and xattrs into the file list and the
 //! receiver applies what the list carried. Each cell compares the destination
 //! oc writes with the one 3.5.1 writes, along one path the values travel: a
@@ -235,7 +235,7 @@ fn local_xattrs_land_like_upstream() {
     );
 }
 
-/// upstream: generator.c:571-582 itemize() lights the `x` column when
+/// upstream: generator.c:608-619 itemize() lights the `x` column when
 /// xattr_diff() finds the sender's list and the destination's differ, on an
 /// up-to-date file too.
 #[test]

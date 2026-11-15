@@ -1,7 +1,7 @@
 //! `--delete-missing-args` must not empty a populated directory unless
 //! `--delete` or `--force` is in effect.
 //!
-//! upstream `generator.c:1749-1753` handles the mode-0 entry a missing operand
+//! upstream `generator.c:1786-1790` handles the mode-0 entry a missing operand
 //! becomes:
 //!
 //! ```text

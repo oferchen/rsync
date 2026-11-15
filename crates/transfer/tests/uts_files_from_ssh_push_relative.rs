@@ -161,7 +161,7 @@ fn ssh_push_files_from_emits_relative_wire_names() {
         // separator on Windows (the implied-parent loop builds names via
         // `PathBuf::push`). The wire bytes are always `/`-separated
         // (`FileEntry::name_bytes()` -> `wire_path::path_bytes_to_wire`,
-        // upstream flist.c:890 emits `/` verbatim), so the assertions must
+        // upstream flist.c:894 emits `/` verbatim), so the assertions must
         // use that platform-independent representation.
         let name_bytes = entry.name_bytes();
         let name = String::from_utf8_lossy(&name_bytes);

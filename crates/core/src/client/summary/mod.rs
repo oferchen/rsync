@@ -258,7 +258,7 @@ impl ClientSummary {
     /// `reg:` sub-count. Distinct from [`Self::files_copied`], which also
     /// counts in-place updates.
     ///
-    /// upstream: receiver.c:925-938 / sender.c:587-600 - the reg portion of
+    /// upstream: receiver.c:925-938 / sender.c:595-608 - the reg portion of
     /// `stats.created_files`.
     #[must_use]
     pub const fn created_regular_files(&self) -> u64 {
@@ -348,7 +348,7 @@ impl ClientSummary {
     /// protocol is 33 or newer; 0 when a protocol-33 peer sent no
     /// `MSG_BLOCK_STATS`.
     ///
-    /// upstream: `main.c:446-448` `output_summary()`, `rsync.h:1084`
+    /// upstream: `main.c:446-448` `output_summary()`, `rsync.h:1100`
     /// `stats.touched_blocks_4k`.
     #[must_use]
     pub const fn touched_blocks_4k(&self) -> u64 {
@@ -358,7 +358,7 @@ impl ClientSummary {
     /// Returns the number of basis blocks the delta matcher reused, reported as
     /// `matches=` on the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:476` `total_matches`, printed by `match_report()`
+    /// upstream: `match.c:512` `total_matches`, printed by `match_report()`
     /// (`match.c:480-489`).
     #[must_use]
     pub const fn delta_matches(&self) -> u64 {
@@ -368,7 +368,7 @@ impl ClientSummary {
     /// Returns the delta matcher's cumulative hash hits, reported as
     /// `hash_hits=` on the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:474` `total_hash_hits`.
+    /// upstream: `match.c:510` `total_hash_hits`.
     #[must_use]
     pub const fn delta_hash_hits(&self) -> u64 {
         self.stats.delta_hash_hits()
@@ -377,7 +377,7 @@ impl ClientSummary {
     /// Returns the delta matcher's cumulative false alarms, reported as
     /// `false_alarms=` on the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:475` `total_false_alarms`.
+    /// upstream: `match.c:511` `total_false_alarms`.
     #[must_use]
     pub const fn delta_false_alarms(&self) -> u64 {
         self.stats.delta_false_alarms()

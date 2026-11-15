@@ -33,7 +33,7 @@ pub fn device_readable_size(path: &Path) -> io::Result<u64> {
     use std::io::{Seek, SeekFrom};
 
     let mut file = std::fs::File::open(path)?;
-    // upstream: flist.c:1938 - lseek(fd, 0, SEEK_END). Authoritative on Linux.
+    // upstream: flist.c:1942 - lseek(fd, 0, SEEK_END). Authoritative on Linux.
     let via_seek = file.seek(SeekFrom::End(0)).unwrap_or(0);
     if via_seek > 0 {
         return Ok(via_seek);

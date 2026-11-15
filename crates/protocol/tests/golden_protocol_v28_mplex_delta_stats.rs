@@ -45,7 +45,7 @@ fn proto28() -> ProtocolVersion {
 }
 
 // Multiplex frame header encoding
-// upstream: io.c:1173 send_msg() - header = (MPLEX_BASE + code) << 24 | len
+// upstream: io.c:1180 send_msg() - header = (MPLEX_BASE + code) << 24 | len
 
 #[test]
 fn golden_v28_mplex_data_header_exact_bytes() {
@@ -451,7 +451,7 @@ fn golden_v28_ndx_sequence_roundtrip() {
 }
 
 // Transfer stats exact wire bytes (protocol 28 - legacy longint encoding)
-// upstream: main.c:handle_stats() + io.h:46 write_varlong30() -> io.c:2445 write_longint()
+// upstream: main.c:handle_stats() + io.h:46 write_varlong30() -> io.c:2452 write_longint()
 
 #[test]
 fn golden_v28_stats_exact_wire_bytes_known_values() {
@@ -747,7 +747,7 @@ fn golden_v28_longint_one() {
 }
 
 // Multiplex frame with payload (complete message on wire)
-// upstream: io.c:1173 send_msg() - 4-byte header + payload bytes
+// upstream: io.c:1180 send_msg() - 4-byte header + payload bytes
 
 #[test]
 fn golden_v28_mplex_complete_info_message() {

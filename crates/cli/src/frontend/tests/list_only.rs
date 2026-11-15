@@ -111,7 +111,7 @@ fn list_only_lists_bare_directory_without_recursion_or_slash() {
 }
 
 /// A bare source operand with no destination and no `--list-only` flag implies
-/// list-only mode regardless of transport. upstream: options.c:2320-2321 -
+/// list-only mode regardless of transport. upstream: options.c:2375-2376 -
 /// `if (argc < 2 && !read_batch && !am_server) list_only |= 1;`. The rule is not
 /// gated on the transport, so a local `oc-rsync src/` lists the directory and
 /// exits 0 (RERR_OK) rather than erroring "need source and destination" (which
@@ -1067,7 +1067,7 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
 
 /// Verifies that `--list-only` lists entries without transferring any files.
 ///
-/// upstream: options.c:2320-2321 - list_only does NOT set dry_run, but the
+/// upstream: options.c:2375-2376 - list_only does NOT set dry_run, but the
 /// receiver skips destination writes under list_only independently
 /// (`run_client` mode selection + `TransferFlags::skip_dest_writes`).
 #[test]
@@ -1417,7 +1417,7 @@ fn list_only_mixed_file_types_in_single_listing() {
 /// entry types. Both fields are right-justified in a width of `1 +
 /// strlen(timestamp)` (20 for the 19-char "YYYY/MM/DD HH:MM:SS" form), so a
 /// value carries one leading space and a blank fills the whole column.
-/// upstream: generator.c:1346 list_file_entry() - the ` -> <target>` arrow is
+/// upstream: generator.c:1383 list_file_entry() - the ` -> <target>` arrow is
 /// gated on `preserve_links`. Without `-l` the symlink is still listed (perms
 /// start with `l`, size is the target length) but no target string is shown.
 /// FIFOs, sockets, and devices render their own permstring type char.
@@ -1582,7 +1582,7 @@ fn list_only_renders_atime_and_crtime_columns() {
         "directory crtime column must be shown: {dir_line:?}"
     );
 }
-/// upstream: log.c:344-345 - every listing row and stats line is an FINFO
+/// upstream: log.c:424-425 - every listing row and stats line is an FINFO
 /// write, and rwrite() drops FINFO under `--quiet`, so `-q --list-only` is
 /// silent on stdout even when `--stats` asks for the summary.
 #[test]
@@ -1608,7 +1608,7 @@ fn quiet_list_only_prints_nothing() {
     );
 }
 /// `--quiet` silences only FINFO: a missing source is still reported on
-/// stderr with the partial-transfer exit code (upstream: log.c:338-342).
+/// stderr with the partial-transfer exit code (upstream: log.c:418-422).
 #[test]
 fn quiet_list_only_still_reports_errors() {
     let tmp = test_support::create_tempdir();

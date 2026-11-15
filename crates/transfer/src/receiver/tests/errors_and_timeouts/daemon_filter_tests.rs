@@ -271,7 +271,7 @@ fn daemon_excluded_destination_honours_dir_only_rules() {
 /// the given `--temp-dir` / `--backup-dir` values.
 ///
 /// Both are given as the module-rooted paths oc stores, because that is what
-/// upstream matches: `options.c:2418-2425` sanitises both options IN PLACE
+/// upstream matches: `options.c:2473-2480` sanitises both options IN PLACE
 /// (rootdir `NULL` = `module_dir`) BEFORE the filter block at `:2409-2436`
 /// re-cleans them for the check. Unlike a basis directory there is no
 /// "requested" form to preserve.
@@ -296,7 +296,7 @@ fn assert_options_rejected(err: std::io::Error) {
     assert_eq!(
         err.to_string(),
         "Your options have been rejected by the server.",
-        "upstream's exact refusal text (clientserver.c:1267)"
+        "upstream's exact refusal text (clientserver.c:1276)"
     );
     assert!(
         err.get_ref()
@@ -306,7 +306,7 @@ fn assert_options_rejected(err: std::io::Error) {
     );
 }
 
-/// upstream: `options.c:2436-2444` - a peer-supplied `--backup-dir` naming a
+/// upstream: `options.c:2491-2499` - a peer-supplied `--backup-dir` naming a
 /// directory the module excludes refuses the whole session.
 ///
 /// Measured against a real 3.5.0 daemon before the fix: oc wrote the
@@ -321,7 +321,7 @@ fn daemon_excluded_backup_dir_is_refused() {
     );
 }
 
-/// upstream: `options.c:2428-2434` - the SAME block applies the identical rule
+/// upstream: `options.c:2483-2489` - the SAME block applies the identical rule
 /// to `tmpdir`. Pinned separately because a fix that covered only `backup_dir`
 /// would leave this operand live, and both tests share one implementation.
 #[test]
@@ -333,7 +333,7 @@ fn daemon_excluded_temp_dir_is_refused() {
     );
 }
 
-/// upstream: `options.c:2430` / `:2429` - `if (!*tmpdir)` / `if (!*backup_dir)`
+/// upstream: `options.c:2485` / `:2429` - `if (!*tmpdir)` / `if (!*backup_dir)`
 /// jumps straight to `options_rejected`. An empty value is refused OUTRIGHT,
 /// before any filter match, so it cannot slip through on a module whose rules
 /// happen not to match the empty name.

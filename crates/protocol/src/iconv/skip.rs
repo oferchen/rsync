@@ -58,7 +58,7 @@ pub fn cannot_convert_symlink_message(role: &str, name_bytes: &[u8]) -> String {
 }
 
 /// Escapes non-printable bytes in a filename for terminal output, matching
-/// upstream rsync's `filtered_fwrite()` octal escape (`log.c:256` `"\#%03o"`).
+/// upstream rsync's `filtered_fwrite()` octal escape (`log.c:322` `"\#%03o"`).
 ///
 /// Printable ASCII (`0x20..=0x7e`) and horizontal tab pass through verbatim;
 /// every other byte is rendered as a three-digit octal escape. Deviation from

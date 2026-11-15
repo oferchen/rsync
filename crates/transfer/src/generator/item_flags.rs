@@ -32,7 +32,7 @@ pub struct ItemFlags {
 }
 
 impl ItemFlags {
-    // Wire flags (bits 0-15) - upstream rsync.h:244-259
+    // Wire flags (bits 0-15) - upstream rsync.h:245-260
     /// Item reports access time change.
     pub const ITEM_REPORT_ATIME: u32 = 1 << 0; // 0x0001
     /// Item reports generic change (itemized output).
@@ -226,7 +226,7 @@ impl ItemFlags {
         };
 
         let xname = if self.has_xname() {
-            // upstream: io.c:2042 read_vstring() - a 1- or 2-byte length prefix,
+            // upstream: io.c:2049 read_vstring() - a 1- or 2-byte length prefix,
             // not a varint. Using read_varint here desyncs the wire stream for
             // any xname whose length prefix differs between the two encodings.
             let mut first = [0u8; 1];
@@ -241,7 +241,7 @@ impl ItemFlags {
                 first[0] as usize
             };
 
-            // upstream: io.c:2219-2223 - `len >= bufsize` (MAXPATHLEN) aborts
+            // upstream: io.c:2226-2230 - `len >= bufsize` (MAXPATHLEN) aborts
             // with RERR_PROTOCOL. Truncating instead would leave the unread
             // tail on the wire and desync every subsequent read.
             if xlen >= MAX_XNAME_VSTRING_LEN {

@@ -71,7 +71,7 @@ impl UpstreamHashTable {
     /// Records that block `block` matched at its own offset, which keeps it
     /// on its chain under `--inplace`.
     ///
-    /// upstream: match.c:316 `s->sums[i].flags |= SUMFLG_SAME_OFFSET`.
+    /// upstream: match.c:331 `s->sums[i].flags |= SUMFLG_SAME_OFFSET`.
     pub fn mark_same_offset(&mut self, block: usize, offset: u64) {
         if self.updating_basis_file && block as u64 * self.block_length == offset {
             self.same_offset[block] = true;
@@ -86,7 +86,7 @@ impl UpstreamHashTable {
     /// weak sum is `digest`. `strong` computes the window's strong sum; it is
     /// called at most once, and only when a candidate needs it.
     ///
-    /// upstream: match.c:214-271 `hash_search()` - `hash_hits++` for a
+    /// upstream: match.c:218-284 `hash_search()` - `hash_hits++` for a
     /// non-empty bucket, then the chain walk that counts `false_alarms` and
     /// stops at the first strong match or past `MAX_CHAIN_LEN`.
     pub fn probe(
@@ -108,11 +108,31 @@ impl UpstreamHashTable {
         let mut window_strong: Option<DigestBuf> = None;
         let mut prev: Option<usize> = None;
         let mut chain_len = 0u32;
+        let mut last_false_sum2: Option<&[u8]> = None;
+        let mut last_false_same_offset = false;
         while i != CHAIN_END {
             let block_index = i as usize;
             let next = self.chains[block_index];
             if self.is_bypassed(block_index, offset) {
-                // upstream: match.c:233-237 - `*prev = s->sums[i].chain`.
+                // upstream: match.c:241-245 - `*prev = s->sums[i].chain`.
+                match prev {
+                    Some(p) => self.chains[p] = next,
+                    None => self.heads[bucket] = next,
+                }
+                i = next;
+                continue;
+            }
+            let block = index.block(block_index);
+            if block.rolling().value() != sum || block.len() != window_len {
+                prev = Some(block_index);
+                i = next;
+                continue;
+            }
+            if last_false_sum2.is_some_and(|prev_s2| {
+                prev_s2 == block.strong()
+                    && (!self.same_offset[block_index] || last_false_same_offset)
+            }) {
+                // upstream 3.5.2: unlink duplicate false candidate from chain.
                 match prev {
                     Some(p) => self.chains[p] = next,
                     None => self.heads[bucket] = next,
@@ -121,22 +141,15 @@ impl UpstreamHashTable {
                 continue;
             }
             prev = Some(block_index);
-            let block = index.block(block_index);
-            if block.rolling().value() != sum {
-                i = next;
-                continue;
-            }
             chain_len += 1;
             if chain_len > MAX_CHAIN_LEN {
                 return;
             }
-            if block.len() != window_len {
-                i = next;
-                continue;
-            }
             let window_strong = window_strong.get_or_insert_with(&mut strong);
             if window_strong.as_slice() != block.strong() {
                 self.counters.false_alarms = self.counters.false_alarms.saturating_add(1);
+                last_false_sum2 = Some(block.strong());
+                last_false_same_offset = self.same_offset[block_index];
                 i = next;
                 continue;
             }
@@ -160,7 +173,7 @@ impl UpstreamHashTable {
         });
     }
 
-    /// upstream: match.c:233 - under `--inplace` a block behind the write
+    /// upstream: match.c:241 - under `--inplace` a block behind the write
     /// cursor is dropped unless it already matched at its own offset.
     fn is_bypassed(&self, block: usize, offset: u64) -> bool {
         self.updating_basis_file
@@ -175,7 +188,7 @@ impl UpstreamHashTable {
     /// `tail` holds the source bytes from `first_offset` to the end of the
     /// file, and `first_offset` is the first offset oc's scan did not probe.
     ///
-    /// upstream: match.c:197 `end = len + 1 - s->sums[s->count-1].len` and
+    /// upstream: match.c:199 `end = len + 1 - s->sums[s->count-1].len` and
     /// match.c:362-364, where the window loses a byte (`--k`) once nothing
     /// is left to roll in.
     pub fn probe_shrinking_tail(

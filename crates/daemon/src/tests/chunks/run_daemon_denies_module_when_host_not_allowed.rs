@@ -49,7 +49,7 @@ fn run_daemon_denies_module_when_host_not_allowed() {
     stream.write_all(b"docs\n").expect("send module request");
     stream.flush().expect("flush module request");
 
-    // upstream: clientserver.c:779-781 - access denied sends
+    // upstream: clientserver.c:783-785 - access denied sends
     // "@ERROR: access denied to %s from %s (%s)\n" with (name, host, addr)
     // The host may be resolved to "localhost" or remain as "127.0.0.1"
     // depending on the system's DNS configuration.
@@ -62,7 +62,7 @@ fn run_daemon_denies_module_when_host_not_allowed() {
         "Expected upstream-format access denied message, got: {trimmed}"
     );
 
-    // upstream: clientserver.c:424-428 - the client treats @ERROR as fatal and
+    // upstream: clientserver.c:428-432 - the client treats @ERROR as fatal and
     // returns before reading further, so the daemon sends no @RSYNCD: EXIT after
     // the refusal; the socket just closes (next read is EOF).
     line.clear();

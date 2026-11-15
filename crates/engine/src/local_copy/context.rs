@@ -123,7 +123,7 @@ pub(crate) type BatchSourceAcl = (protocol::acl::RsyncAcl, Option<protocol::acl:
 
 /// One entry's ACL and xattrs, read once by the sender half of a local copy.
 ///
-/// upstream: flist.c:2050-2087 send_file_name() reads both as it lists the
+/// upstream: flist.c:2054-2091 send_file_name() reads both as it lists the
 /// entry; the receiver half applies what the list carried and never reads
 /// the source again.
 #[derive(Default)]
@@ -166,7 +166,7 @@ pub(crate) struct CopyContext<'a> {
     /// list: the receiver's delete pass loads per-dir merge files from the
     /// DESTINATION tree and never perturbs the sender `filter_list`.
     ///
-    /// upstream: generator.c:314 `delete_in_dir()` calls `change_local_filter_dir()`
+    /// upstream: generator.c:349 `delete_in_dir()` calls `change_local_filter_dir()`
     /// (exclude.c:974), which pops filters at depth > current, and
     /// `push_local_filters()` (exclude.c:858) loads this destination directory's
     /// rules, keeping inherited rules in `lp->head` an arbitrary number of indices
@@ -202,14 +202,14 @@ pub(crate) struct CopyContext<'a> {
     /// `None` before the first operand and for any operand whose anchor cannot
     /// be determined, in which case the open degrades to the `O_NOFOLLOW` leaf
     /// rule alone. Set per operand because each source argument has its own
-    /// transfer root. upstream: `rsync-3.5.1/sender.c:692-706` opens file content
+    /// transfer root. upstream: `rsync-3.5.2/sender.c:700-714` opens file content
     /// through the confined held-ancestor-dirfd stack anchored at the transfer
     /// root, so a parent component flipped to a symlink is refused.
     source_anchor: Option<PathBuf>,
     /// Every anchor walked so far, held by the directory identity it had
     /// when its operand was reached.
     ///
-    /// upstream: `rsync-3.5.1/flist.c:2967-2969` remembers each source root
+    /// upstream: `rsync-3.5.2/flist.c:2978-2980` remembers each source root
     /// by dev/ino, and `flist.c:328-329` refuses a root that changed since
     /// (reached from the sender's open at `sender.c:695`).
     source_roots: fast_io::SourceRoots,
@@ -245,25 +245,25 @@ pub(crate) struct CopyContext<'a> {
     /// Set by a general I/O error found while walking the source (the
     /// file-list phase). It gates every delete pass, because upstream's
     /// generator sees file-list errors as each list arrives.
-    // upstream: flist.c:2736, flist.c:3070 - MSG_IO_ERROR after each file list
+    // upstream: flist.c:2747, flist.c:3081 - MSG_IO_ERROR after each file list
     walk_io_error: bool,
     /// Set by a general I/O error raised while sending an entry the walk had
     /// already listed (a source that cannot be opened or read). It gates only
     /// the `--delete-after` pass: upstream's sender reports it once the whole
     /// send loop has finished, after every walk-time deletion was decided.
-    // upstream: sender.c:811-812 - send_msg_int(MSG_IO_ERROR, io_error)
+    // upstream: sender.c:819-820 - send_msg_int(MSG_IO_ERROR, io_error)
     transfer_io_error: bool,
     /// Guards the one-shot "IO error encountered -- skipping file deletion"
     /// notice. Upstream prints it exactly once (guarded by a static
     /// `already_warned`) the first time the delete pass is skipped because a
     /// general I/O error occurred without `--ignore-errors`.
-    // upstream: generator.c:287 static int already_warned
+    // upstream: generator.c:322 static int already_warned
     io_error_delete_warning_emitted: bool,
     /// Set when a source file ended before the length this transfer was sized
     /// from - it shrank after the file list recorded it. Drives the final
     /// `RERR_PARTIAL` (exit 23) exit code without aborting the remaining
     /// file-list entries.
-    // upstream: sender.c:789-797 - `unmap_file()` returns the status
+    // upstream: sender.c:797-805 - `unmap_file()` returns the status
     // `map_ptr()` recorded, and the sender sets `io_error |= IOERR_GENERAL`
     // plus one `read errors mapping %s` line before continuing.
     source_read_error: bool,
@@ -283,7 +283,7 @@ pub(crate) struct CopyContext<'a> {
     /// or a `--copy-links` referent that could not be stat'ed. Drives the final
     /// `RERR_PARTIAL` (exit 23) exit code, mirroring upstream's
     /// `io_error |= IOERR_GENERAL` at both sites.
-    // upstream: flist.c:2017-2019 send_file_name(), flist.c:1692-1695 make_file()
+    // upstream: flist.c:2021-2023 send_file_name(), flist.c:1696-1699 make_file()
     flist_io_error: bool,
     /// Set when a file entry could not be materialised because the operation is
     /// unsupported on this platform without privilege (currently a Windows file
@@ -298,24 +298,24 @@ pub(crate) struct CopyContext<'a> {
     /// but this flag drives the final `RERR_PARTIAL` (exit 23) exit code,
     /// mirroring upstream `successful_send()` where every such `FERROR_XFER`
     /// sets `got_xfer_error` without aborting the transfer.
-    // upstream: sender.c:396 successful_send(); log.c:338 got_xfer_error
+    // upstream: sender.c:404 successful_send(); log.c:418 got_xfer_error
     sender_remove_error: bool,
     /// Set when a directory obstacle could not be removed to make way for an
     /// incoming regular file, symlink, or special. That one entry is skipped
     /// and the run continues, but this flag drives the final `RERR_PARTIAL`
     /// (exit 23) exit code, mirroring upstream's `could not make way for %s
     /// %s` at `FERROR_XFER`.
-    // upstream: delete.c:283-285; log.c:337-338 got_xfer_error
+    // upstream: delete.c:283-285; log.c:417-418 got_xfer_error
     make_way_error: bool,
     /// Children of directory obstacles that `--max-delete` refused to delete,
     /// reported in the run's `Deletions stopped due to --max-delete limit`
     /// warning.
-    // upstream: delete.c:35 skipped_deletes; generator.c:2904-2907
+    // upstream: delete.c:35 skipped_deletes; generator.c:2996-2999
     skipped_deletes: u64,
     /// Set when `atomic_create()` could not make a FIFO, socket, device node,
     /// symlink, or hard link. The entry is skipped and the run continues, but
     /// this flag drives the final `RERR_PARTIAL` (exit 23) exit code.
-    // upstream: generator.c:2490-2522, hlink.c:486; log.c:337-338 got_xfer_error
+    // upstream: generator.c:2533-2565, hlink.c:500; log.c:417-418 got_xfer_error
     create_error: bool,
     /// Set when the delete emitter reported a genuine swallowed unlink/rmdir
     /// error during the recursive peel (an `EACCES` and friends the walker
@@ -355,7 +355,7 @@ pub(crate) struct CopyContext<'a> {
     /// under `--dry-run` a re-sweep would even report the same deletion twice.
     swept_directories: HashSet<PathBuf>,
     /// Absolute destination paths already produced by an earlier source
-    /// operand in this multi-source run. upstream: flist.c:3607-3625
+    /// operand in this multi-source run. upstream: flist.c:3618-3636
     /// flist_sort_and_clean() drops a later duplicate name from the merged
     /// list ("Otherwise keep the first one"), so the FIRST operand's copy
     /// wins and the duplicate is neither transferred nor itemized. A later
@@ -438,7 +438,7 @@ pub(crate) struct CopyContext<'a> {
     /// `ITEM_TRANSFER` bit; `record_batch_is_new()` patches in `ITEM_IS_NEW`
     /// once `copy_file()` knows whether the destination pre-existed.
     ///
-    /// upstream: `sender.c:469 write_ndx_and_attrs()` re-emits the exact
+    /// upstream: `sender.c:477 write_ndx_and_attrs()` re-emits the exact
     /// iflags word the generator computed in `generator.c:517 itemize()`,
     /// and `sender.c:587,625` count `stats.created_files` only when
     /// `ITEM_IS_NEW` is set in that word.
@@ -447,14 +447,14 @@ pub(crate) struct CopyContext<'a> {
     /// `finalize_batch_file_delta()` completed last, until the file's record
     /// ORs its `ITEM_REPORT_*` bits into it.
     ///
-    /// upstream: `generator.c:517-548 itemize()` computes the report bits from
+    /// upstream: `generator.c:554-585 itemize()` computes the report bits from
     /// the destination stat; oc knows them only once the record is built,
     /// which every executor does after finalizing the delta entry.
     batch_report_slot: Option<(usize, usize)>,
     /// Owner uids, then group gids, in first-seen send order, for the id lists
     /// that follow a non-INC_RECURSE batch file list.
     ///
-    /// upstream: `flist.c:787-797 send_file_entry()` calls `add_uid()`/
+    /// upstream: `flist.c:791-801 send_file_entry()` calls `add_uid()`/
     /// `add_gid()` per entry; `uidlist.c:388-406 send_one_list()` replays that
     /// order with each id's name.
     batch_owner_ids: [Vec<u32>; 2],
@@ -464,7 +464,7 @@ pub(crate) struct CopyContext<'a> {
     /// Directories (file-list names) whose listing raised a sender-side
     /// `io_error`, in the order they failed.
     ///
-    /// upstream: `flist.c:2636-2690 send_extra_file_list()` - the error rides
+    /// upstream: `flist.c:2647-2701 send_extra_file_list()` - the error rides
     /// the end marker of the list being built when it happened, so under
     /// INC_RECURSE the replaying generator skips deletions from that list on
     /// (generator.c delete_in_dir) rather than from the first one.
@@ -476,7 +476,7 @@ pub(crate) struct CopyContext<'a> {
     /// `(st_dev, st_ino)` to the traversal index of the entry that first
     /// carried that inode, for `--write-batch -H`.
     ///
-    /// upstream: `flist.c:824-850 send_file_entry()` consults `idev_find()`
+    /// upstream: `flist.c:828-854 send_file_entry()` consults `idev_find()`
     /// for every non-directory with `st_nlink > 1`; a miss makes the entry the
     /// group leader (`XMIT_HLINK_FIRST`) and records its index, a hit makes it
     /// a follower carrying the leader's index.
@@ -484,7 +484,7 @@ pub(crate) struct CopyContext<'a> {
     /// Hardlink group number per flist entry in traversal order, `None` for
     /// entries outside any cluster.
     ///
-    /// upstream: `flist.c:1560-1566 recv_file_entry()` stores the same value in
+    /// upstream: `flist.c:1564-1570 recv_file_entry()` stores the same value in
     /// `F_HL_GNUM`; `hlink.c:match_gnums()` then transfers only the
     /// sorted-first member of each group, so the batch must carry delta data
     /// for that member alone.
@@ -744,18 +744,31 @@ impl<'a> MatchedBlock<'a> {
     }
 }
 
-/// Groups deferred filesystem operations that execute after file content transfers.
-///
-/// Three tiers of deferred work:
-/// 1. Deletions - directory cleanup with exclusion lists
-/// 2. Updates - metadata/permission application to finalized files
-/// 3. Created entries - tracking for RAII rollback on timeout errors
+// Groups deferred filesystem operations that execute after file content transfers.
+//
+// Three tiers of deferred work:
+// 1. Deletions - directory cleanup with exclusion lists
+// 2. Updates - metadata/permission application to finalized files
+// 3. Created entries - tracking for RAII rollback on timeout errors
+
+/// A symlink deferred by `--delay-symlinks` until after regular files and
+/// `--delay-updates` renames are in place.
+pub(crate) struct DeferredSymlink {
+    pub(crate) source: PathBuf,
+    pub(crate) destination: PathBuf,
+    pub(crate) metadata: fs::Metadata,
+    pub(crate) metadata_options: MetadataOptions,
+    pub(crate) relative: Option<PathBuf>,
+}
+
 #[derive(Default)]
 pub(crate) struct DeferredOperationQueue {
     /// Pending directory deletions with keep-lists.
     pub(crate) deletions: Vec<DeferredDeletion>,
     /// Pending metadata/permission updates for transferred files.
     pub(crate) updates: Vec<DeferredUpdate>,
+    /// Pending symlinks deferred by `--delay-symlinks`.
+    pub(crate) symlinks: Vec<DeferredSymlink>,
     /// Staging directories (`.~tmp~`) created by `--delay-updates` for cleanup.
     pub(crate) delay_staging_dirs: HashSet<PathBuf>,
     /// Newly created paths tracked for rollback on timeout errors.
@@ -770,14 +783,14 @@ pub(crate) struct DeferredOperationQueue {
     /// directory is kept temporarily writable during the transfer so the
     /// deferred deletions/updates can still write into it.
     ///
-    /// upstream: generator.c:2565 `touch_up_dirs()`; generator.c:2744
+    /// upstream: generator.c:2609 `touch_up_dirs()`; generator.c:2828
     /// `need_retouch_dir_times`; generator.c:2594 `fix_dir_perms`.
     pub(crate) finalized_dirs: Vec<FinalizedDir>,
 }
 
 /// A directory recorded during traversal for the final `touch_up_dirs` pass.
 ///
-/// upstream: generator.c:2565-2611 `touch_up_dirs()` restores the real mode
+/// upstream: generator.c:2609-2655 `touch_up_dirs()` restores the real mode
 /// (`fix_dir_perms`) and re-sets tweaked mtimes after the delayed-update and
 /// deletion phases complete.
 pub(crate) struct FinalizedDir {
@@ -800,7 +813,7 @@ pub(crate) struct FinalizedDir {
 ///   filter chain THEN (the destination merge files are present by then).
 /// - `--delete-delay` sets `decided` to the plan computed during the walk, when
 ///   the destination merge files were still absent; the flush executes that plan
-///   verbatim without re-scanning or re-filtering. upstream: generator.c:164
+///   verbatim without re-scanning or re-filtering. upstream: generator.c:199
 ///   `remember_delete` vs the `do_delete_pass` rescan (generator.c:364).
 pub(crate) struct DeferredDeletion {
     pub(crate) destination: PathBuf,

@@ -154,7 +154,7 @@ impl LocalCopyOptionsBuilder {
     /// Refuses to CREATE device and special nodes (`--drop-D`).
     ///
     /// Orthogonal to [`Self::devices`] / [`Self::specials`], which decide what
-    /// the traversal preserves at all. upstream: generator.c:2026-2033.
+    /// the traversal preserves at all. upstream: generator.c:2067-2074.
     #[must_use]
     #[doc(alias = "--drop-D")]
     pub fn drop_devices(mut self, enabled: bool) -> Self {

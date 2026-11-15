@@ -15,7 +15,7 @@ use super::known::KnownCompatibilityFlag;
 /// integer codec implemented in the `varint` module, making the bitfield compact
 /// while retaining forward compatibility when new bits are defined.
 ///
-/// Bit definitions mirror upstream `compat.c:118-126` (`CF_*` macros).
+/// Bit definitions mirror upstream `compat.c:119-127` (`CF_*` macros).
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
@@ -55,7 +55,7 @@ impl CompatibilityFlags {
     /// This is NOT an upstream rsync flag. It occupies a high private bit
     /// (`0x0200_0000`) deliberately kept out of `Self::KNOWN_MASK`, the
     /// default-advertised set, and [`Self::ALL_KNOWN`]. compat_flags is a
-    /// varint on the wire (upstream `compat.c:751` `read_varint`), and upstream
+    /// varint on the wire (upstream `compat.c:760` `read_varint`), and upstream
     /// tolerates unknown bits by ignoring them, so this private bit transmits
     /// harmlessly to a stock peer and is masked away by the negotiation AND
     /// unless BOTH peers are oc AND both opted in.

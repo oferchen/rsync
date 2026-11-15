@@ -1,7 +1,7 @@
 //! Regression test for `--only-write-batch` dry-run semantics.
 //!
 //! Upstream `testsuite/batch-mode.test` asserts that `--only-write-batch`
-//! must NOT create the destination directory (upstream `main.c:1842-1843`
+//! must NOT create the destination directory (upstream `main.c:1846-1847`
 //! forces `dry_run = 1` when `write_batch < 0`).
 //!
 //! Mirrors the test fragment:
@@ -13,7 +13,7 @@
 //!     && test_fail "--only-write-batch should not have created destination dir"
 //! ```
 //!
-//! upstream: `main.c:1842-1843`
+//! upstream: `main.c:1846-1847`
 //! ```c
 //! if (write_batch < 0)
 //!     dry_run = 1;

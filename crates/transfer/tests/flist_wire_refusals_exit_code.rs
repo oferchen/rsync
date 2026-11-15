@@ -24,7 +24,7 @@ const RERR_STREAMIO: i32 = 12;
 #[test]
 fn tagged_wire_refusals_exit_rerr_protocol() {
     for msg in [
-        // upstream: flist.c:1102-1106 - negative hard-link reference.
+        // upstream: flist.c:1106-1110 - negative hard-link reference.
         "hard-link reference out of range: -5 (0)",
         // upstream: xattrs.c:826 - count outside [0, MAX_WIRE_XATTR_COUNT].
         "wire value xattr count out of range: 65537 not in [0,65536]",

@@ -243,7 +243,7 @@ fn verification_failure_report(
             inplace: is_inplace,
         },
     )?;
-    // upstream: log.c:359-364 - the receiver's rprintf(msgtype, ..) travels to
+    // upstream: log.c:439-444 - the receiver's rprintf(msgtype, ..) travels to
     // the client as the multiplexed message for that log code.
     let code = MessageCode::from_log_code(code)
         .expect("FERROR_XFER and FWARNING both have multiplexed equivalents");
@@ -330,7 +330,7 @@ impl PipelinedReceiver {
         let name = full_fname_path(named, self.full_fname_paths());
         let reason = logging::upstream_errno_text(error);
         let op = op.unwrap_or(crate::temp_guard::CommitOp::Mkstemp);
-        // upstream: rsync-3.5.1/rsync.c:919-921 names the rename/copy target
+        // upstream: rsync-3.5.2/rsync.c:919-921 names the rename/copy target
         // relative to the receiver's destination root; backup.c:402-403 names
         // the backup as chosen.
         let target = match op {
@@ -450,14 +450,14 @@ impl PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/rsync.c:897-900` - `finish_transfer()`:
+    /// - `rsync-3.5.2/rsync.c:897-900` - `finish_transfer()`:
     ///   `if (!ok) exit_cleanup(RERR_FILEIO);`
-    /// - `rsync-3.5.1/cleanup.c:103` - `_exit_cleanup()` is `NORETURN`.
-    /// - `rsync-3.5.1/cleanup.c:113-117` - the first code in wins, and
+    /// - `rsync-3.5.2/cleanup.c:103` - `_exit_cleanup()` is `NORETURN`.
+    /// - `rsync-3.5.2/cleanup.c:113-117` - the first code in wins, and
     ///   `cleanup.c:210-218` only reaches for `RERR_PARTIAL` when no code has
     ///   been claimed, so `RERR_FILEIO` (11) outranks the 23 the accumulated
     ///   `got_xfer_error` would otherwise produce.
-    /// - `rsync-3.5.1/receiver.c:465-468` - the contrasting per-file `mkstemp`
+    /// - `rsync-3.5.2/receiver.c:465-468` - the contrasting per-file `mkstemp`
     ///   failure that does continue.
     fn absorb_commit_error(
         &mut self,
@@ -811,7 +811,7 @@ impl PipelinedReceiver {
 /// second; a failure raised before a destination was chosen has only the one
 /// operand to name, so it renders without the arrow.
 ///
-/// upstream: `rsync-3.5.1/backup.c:402-403` - `rsyserr(FERROR, errno,
+/// upstream: `rsync-3.5.2/backup.c:402-403` - `rsyserr(FERROR, errno,
 /// "keep_backup failed: %s -> \"%s\"", full_fname(fname), buf)`.
 pub(crate) fn keep_backup_failed_line(name: &str, error: &io::Error, reason: &str) -> String {
     crate::temp_guard::CommitOp::Backup.failure_line(
@@ -1660,7 +1660,7 @@ mod tests {
     /// The data still lands - only the metadata apply fails - which is exactly
     /// the case that used to be invisible.
     ///
-    /// upstream: rsync.c:814-816 `set_file_attrs()`; log.c:338 - `FERROR_XFER`
+    /// upstream: rsync.c:814-816 `set_file_attrs()`; log.c:418 - `FERROR_XFER`
     /// receipt sets `got_xfer_error = 1`, the exit-23 half this pairs with.
     #[cfg(unix)]
     #[test]
@@ -1753,9 +1753,9 @@ mod tests {
     /// The commit path runs mkstemp, backup, rename and metadata behind one
     /// `Result`, so a `PermissionDenied` from any of them reaches the same
     /// reporting arm. Upstream gives each site its own text - `mkstemp %s
-    /// failed` (`rsync-3.5.1/receiver.c:465-466`), `rename %s -> "%s"`
-    /// (`rsync-3.5.1/rsync.c:919-921`), `keep_backup failed`
-    /// (`rsync-3.5.1/backup.c:402-403`) -
+    /// failed` (`rsync-3.5.2/receiver.c:465-466`), `rename %s -> "%s"`
+    /// (`rsync-3.5.2/rsync.c:919-921`), `keep_backup failed`
+    /// (`rsync-3.5.2/backup.c:402-403`) -
     /// and oc must not label all three `mkstemp`.
     ///
     /// The untagged arm is the one that matters for regressions: an error
@@ -1822,7 +1822,7 @@ mod tests {
 
     /// upstream prints BOTH operands of the failing copy: `keep_backup failed:
     /// %s -> "%s"` over `full_fname(fname)` and the backup destination `buf`
-    /// (`rsync-3.5.1/backup.c:402-403`). Naming only the pre-image loses the
+    /// (`rsync-3.5.2/backup.c:402-403`). Naming only the pre-image loses the
     /// path the backup was going TO, which is the half that identifies WHERE
     /// the failure happened - under a restricted shell that path is the pinned
     /// `/proc/self/fd/N/...` handle, and without it the message cannot be told
@@ -2024,7 +2024,7 @@ mod tests {
     }
 
     /// only sets `got_xfer_error` (yielding exit 23, `RERR_PARTIAL`) on
-    /// `FERROR_XFER` receipt (upstream log.c:338). Routing this as `MSG_INFO`
+    /// `FERROR_XFER` receipt (upstream log.c:418). Routing this as `MSG_INFO`
     /// would let a client-sender push against a read-only destination exit 0,
     /// silently masking that no file was transferred.
     #[cfg(unix)]

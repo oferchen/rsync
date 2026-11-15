@@ -29,7 +29,7 @@ do {
 write_byte(fd, 0);
 ```
 
-The split is set up in `options.c:2744-2745`:
+The split is set up in `options.c:2799-2800`:
 
 ```c
 if (protect_args && !local_server) /* unprotected args stop here */
@@ -46,7 +46,7 @@ emits to the remote shell:
   ```
   The `s` flag character in the compact flag string is the
   protect-args / secluded-args indicator
-  (`options.c:2604` builds the compact `-...` string with `s` when
+  (`options.c:2659` builds the compact `-...` string with `s` when
   `protect_args`).
 - stdin payload
   ```
@@ -150,7 +150,7 @@ subsequent reader (the @RSYNCD greeting / multiplex header).
 
 ## Wire-byte parity verdict
 
-| Direction | Wire path | Cmdline | Stdin tail | Drain matches `io.c:1308-1367` | Verdict |
+| Direction | Wire path | Cmdline | Stdin tail | Drain matches `io.c:1315-1374` | Verdict |
 |---|---|---|---|---|---|
 | oc-rsync push -> oc-rsync server | symmetric | `--server -s .` | full argv (flags + paths) | Yes via #5610 drain test | PARITY (symmetric) |
 | oc-rsync pull -> oc-rsync server | symmetric | `--server --sender -s .` | full argv (flags + paths) | Yes via #5610 drain test | PARITY (symmetric) |
@@ -209,7 +209,7 @@ up, in `crates/cli/src/frontend/server/run.rs`.
   the canonical fix and needs to be reapplied; PR #5610's drain test
   remains valid and is independent of the cmdline merge.
 - UTS-1.f wire-byte verification is complete: the drain layer matches
-  upstream `io.c:1308-1367` byte-for-byte; the regression is at the
+  upstream `io.c:1315-1374` byte-for-byte; the regression is at the
   cmdline merge layer.
 
 ## Cross-references

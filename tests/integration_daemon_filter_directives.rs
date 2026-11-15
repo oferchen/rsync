@@ -8,7 +8,7 @@
 //! directive never land on disk - regardless of whether the client supplied
 //! any filter on its own.
 //!
-//! upstream: clientserver.c:934-951 - `rsync_module()` builds
+//! upstream: clientserver.c:938-955 - `rsync_module()` builds
 //! `daemon_filter_list` from `filter` / `include_from` / `include` /
 //! `exclude_from` / `exclude` in that order, then `check_filter()` at
 //! `receiver.c:905` and `generator.c:1663` consults it before any
@@ -113,7 +113,7 @@ fn assert_kept(files: &BTreeMap<String, Vec<u8>>, name: &str, expected: &[u8]) {
 /// files and exit 0, and one that never served the module at all would fail
 /// with a different status.
 ///
-/// upstream: generator.c:1669-1671 reports the refusal as `FERROR_XFER`,
+/// upstream: generator.c:1706-1708 reports the refusal as `FERROR_XFER`,
 /// log.c:337-338 sets `got_xfer_error` on receipt, and cleanup.c:217-218 lifts
 /// the exit status to `RERR_PARTIAL`.
 fn assert_refused_exit_code(exit_code: Option<i32>) {

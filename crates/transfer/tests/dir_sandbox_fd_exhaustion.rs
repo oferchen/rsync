@@ -7,7 +7,7 @@
 //! path-based `open()` would not. Without the hint the bare "Too many open
 //! files" says nothing about which limit to raise.
 //!
-//! upstream: `rsync-3.5.1/syscall.c:3065-3077` - `ds_descend()` emits it as
+//! upstream: `rsync-3.5.2/syscall.c:3136-3148` - `ds_descend()` emits it as
 //! a bare `rprintf(FWARNING, ...)`, which `rwrite()` routes to stderr
 //! verbatim (`log.c:341`). The `rsync warning: ... (code N) at FILE(LINE)`
 //! envelope is spelled out at its own call site (`log.c:956`) and is *not*
@@ -52,7 +52,7 @@ use rustix::stdio::{dup2_stderr, stderr};
 
 /// The hint text, byte for byte as upstream prints it.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:3073-3074`. Held as a literal rather
+/// upstream: `rsync-3.5.2/syscall.c:3144-3145`. Held as a literal rather
 /// than read from `fast_io` (the constant is private) so this cell fails on
 /// a reworded or enveloped emit, not just a deleted one.
 const FD_EXHAUSTION_HINT: &str =
@@ -206,7 +206,7 @@ fn daemon_anchored_walk_warns_once_when_descriptors_run_out() {
     );
     assert!(
         !emitted.contains("rsync warning:"),
-        "upstream's FWARNING at this site carries no envelope (log.c:341); \
+        "upstream's FWARNING at this site carries no envelope (log.c:421); \
          got: {emitted:?}"
     );
 }

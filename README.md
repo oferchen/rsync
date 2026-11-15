@@ -3,14 +3,14 @@
 
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci-master.yml/badge.svg?branch=master&event=push)](https://github.com/oferchen/rsync/actions/workflows/ci-master.yml?query=branch%3Amaster+event%3Apush)
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg?branch=master)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml?query=branch%3Amaster)
-[![Upstream Rsync Testsuite 3.5.1](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1.yml?branch=master&event=schedule&label=Upstream%20Rsync%20Testsuite%203.5.1)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml?query=branch%3Amaster+event%3Aschedule)
+[![Upstream Rsync Testsuite 3.5.2](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.2.yml?branch=master&event=schedule&label=Upstream%20Rsync%20Testsuite%203.5.2)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.2.yml?query=branch%3Amaster+event%3Aschedule)
 
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. The reference version is upstream rsync 3.5.1. oc-rsync speaks protocols 28 through 33 and aims to be a drop-in replacement. Known divergences are listed per test in the [upstream testsuite](#upstream-testsuite) manifests.
+`rsync` re-implemented in Rust. The reference version is upstream rsync 3.5.2. oc-rsync speaks protocols 28 through 33 and aims to be a drop-in replacement. Known divergences are listed per test in the [upstream testsuite](#upstream-testsuite) manifests.
 
 The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` without conflict.
 
@@ -20,7 +20,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 
 **Release:** 0.6.4 (2026-07-18). Changes merged since then are listed under *Unreleased* in the [CHANGELOG](./CHANGELOG.md). All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservation and compression are implemented; the table below lists the gaps.
 
-**Upstream reference.** Behaviour, source citations and the testsuite gate all track rsync 3.5.1 (`upstream_version` in `Cargo.toml`). 3.5.1 raised the protocol to 33. oc-rsync speaks 33, including `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003). It negotiates down to 28 for older peers and caps a newer peer at 33 instead of refusing it (#7916, #8209). The options and daemon directives added in 3.5.0 are implemented (see *Path confinement* below). The per-CVE audit is in [`SECURITY.md`](./SECURITY.md).
+**Upstream reference.** Behaviour, source citations and the testsuite gate all track rsync 3.5.2 (`upstream_version` in `Cargo.toml`). 3.5.1 raised the protocol to 33, and 3.5.2 adds `--nice`, `--delay-symlinks`, dynamic human-readable/progress formatting, and CVE-2026-119741. oc-rsync speaks 33, including `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003). It negotiates down to 28 for older peers and caps a newer peer at 33 instead of refusing it (#7916, #8209). The options and daemon directives added in 3.5.0 are implemented (see *Path confinement* below). The per-CVE audit is in [`SECURITY.md`](./SECURITY.md).
 
 | Component | Status |
 |-----------|--------|
@@ -34,7 +34,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 | **Incremental recursion** | Negotiated whenever oc-rsync sends, when an oc-rsync server or daemon receives a push (#8169), and on client pulls by default (#8062, #8091, #8217). `OC_RSYNC_PULL_INC_RECURSE=0` opts a pull out. `--delete-before` and `--delete-after` need the whole list and withhold it as in upstream. |
 | **Batch** | `--write-batch` / `--read-batch` round trip |
 | **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec; IPv4 and IPv6 listeners by default; one forked process per connection on Unix |
-| **Host names** | Internationalized host names converted to IDNA A-labels, as upstream 3.5.1 does (#8104) |
+| **Host names** | Internationalized host names converted to IDNA A-labels, as upstream 3.5.2 does (#8104) |
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
 | **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
@@ -43,7 +43,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 
 ### Upstream testsuite
 
-Upstream's own 3.5.1 test suite runs against `oc-rsync` as `$RSYNC` on every pull request, master push, and nightly on master, in **eight legs**: platform {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege {non-root, root}. The pipe legs run the whole 360-test corpus. The TCP legs add `--daemon-tests-only` and run the 161 tests that start a daemon. The legs run from [`upstream-testsuite-3.5.1.yml`](./.github/workflows/upstream-testsuite-3.5.1.yml), behind the 3.5.1 badge at the top.
+Upstream's own 3.5.2 test suite runs against `oc-rsync` as `$RSYNC` on every pull request, master push, and nightly on master, in **eight legs**: platform {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege {non-root, root}. The pipe legs run the whole 376-test corpus. The TCP legs add `--daemon-tests-only` and run the 168 tests that start a daemon. The legs run from [`upstream-testsuite-3.5.2.yml`](./.github/workflows/upstream-testsuite-3.5.2.yml), behind the 3.5.2 badge at the top.
 
 All eight legs are required status checks.
 
@@ -51,24 +51,24 @@ Outcomes, counted from each leg's committed manifest:
 
 | leg | pass | fail | skip |
 |---|---:|---:|---:|
-| Linux, non-root, pipe | 274 | 0 | 86 |
-| Linux, root, pipe | 305 | 0 | 55 |
-| Linux, non-root, tcp | 129 | 0 | 32 |
-| Linux, root, tcp | 149 | 0 | 12 |
-| macOS, non-root, pipe | 248 | 0 | 112 |
-| macOS, root, pipe | 278 | 0 | 82 |
-| macOS, non-root, tcp | 126 | 0 | 35 |
-| macOS, root, tcp | 144 | 0 | 17 |
+| Linux, non-root, pipe | 290 | 0 | 86 |
+| Linux, root, pipe | 319 | 0 | 57 |
+| Linux, non-root, tcp | 137 | 0 | 31 |
+| Linux, root, tcp | 156 | 0 | 12 |
+| macOS, non-root, pipe | 262 | 0 | 114 |
+| macOS, root, pipe | 292 | 0 | 84 |
+| macOS, non-root, tcp | 133 | 0 | 35 |
+| macOS, root, tcp | 151 | 0 | 17 |
 
 Re-derive any cell, and list any failing tests (the outcome is the second field; a `fail` row carries its cause and owner in a trailing comment):
 
 ```sh
 awk '!/^#/ && NF {c[$2]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' \
-  tools/ci/upstream-3.5.1-expect.nonroot.txt
-awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.1-expect.*.txt | sort -u
+  tools/ci/upstream-3.5.2-expect.nonroot.txt
+awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.2-expect.*.txt | sort -u
 ```
 
-**No 3.5.1 test fails on any leg.** The last one, `proto-subflist-freed`, passes since the server receiver refuses a sub-list that arrives after the final file list was freed, as upstream `flist.c` does (#8193). Every remaining non-pass row is a `skip` with a reason. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
+**No 3.5.2 test fails on any leg.** The last one, `proto-subflist-freed`, passes since the server receiver refuses a sub-list that arrives after the final file list was freed, as upstream `flist.c` does (#8193). Every remaining non-pass row is a `skip` with a reason. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
 
 ---
 
@@ -275,7 +275,7 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 
 | Protocol | Upstream versions | oc-rsync status | Coverage |
 |----------|-------------------|-----------------|----------|
-| 33 | 3.5.1 | Full support (default) | Unit tests, interop matrix against 3.5.1, and the 3.5.1 testsuite legs |
+| 33 | 3.5.1 - 3.5.2 | Full support (default) | Unit tests, interop matrix against 3.5.2, and the 3.5.2 testsuite legs |
 | 32 | 3.4.x, 3.5.0 | Full support | Interop matrix against 3.4.4 and 3.5.0 |
 | 31 | 3.1.x - 3.3.x | Full support | Interop matrix against 3.1.3 |
 | 30 | 3.0.x | Full support | Interop matrix against 3.0.9 |
@@ -283,7 +283,7 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 | 28 | 2.6.1 - 2.6.3 | Full support | Interop matrix against 2.6.3, plus golden-byte tests in `crates/protocol/tests/` |
 | <= 27 | <= 2.5.x | Not supported | |
 
-oc-rsync advertises protocol 33 and uses the lower of its own and the peer's version, so a 3.5.0 or 3.4.x peer runs at 32. A 3.5.1 peer runs at 33. Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).
+oc-rsync advertises protocol 33 and uses the lower of its own and the peer's version, so a 3.5.0 or 3.4.x peer runs at 32. A 3.5.1 or 3.5.2 peer runs at 33. Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).
 
 Interop scenarios run in CI against the upstream releases listed in [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh): `versions=` for the scenario matrix, `extra_build_versions=` for build-only peers, and `extended_matrix_versions=` for the extended matrix. Push and pull are both covered, across transfer modes, deletion, compression, metadata, reference dirs, file selection, batch round trip, path handling, device nodes and daemon auth. See the [interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for detail.
 
@@ -318,7 +318,7 @@ Legend: ✓ supported, ⚠ partial, ✗ not implemented.
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
-Each tagged release runs [`.github/workflows/benchmark.yml`](./.github/workflows/benchmark.yml) against upstream rsync 3.5.1, 3.5.0 and 3.4.4 across local, SSH and daemon modes (#8106). It reports elapsed time (median, with run-to-run spread), peak RSS and corpus rate. Results are attached to the [GitHub release](https://github.com/oferchen/rsync/releases/latest) as `benchmark.png`, `benchmark_report.md` and `benchmark_results.json`.
+Each tagged release runs [`.github/workflows/benchmark.yml`](./.github/workflows/benchmark.yml) against upstream rsync 3.5.2, 3.5.1, 3.5.0 and 3.4.4 across local, SSH and daemon modes (#8106). It reports elapsed time (median, with run-to-run spread), peak RSS and corpus rate. Results are attached to the [GitHub release](https://github.com/oferchen/rsync/releases/latest) as `benchmark.png`, `benchmark_report.md` and `benchmark_results.json`.
 
 Releases up to and including v0.6.4 predate this harness: their report compares against 3.4.4 only, without peak RSS, corpus rate or spread. The chart above comes from the latest release, so read that release's `benchmark_report.md` for what it measured.
 
@@ -336,7 +336,7 @@ The SSH throughput check (SSR-1) compares a release build of oc-rsync against up
 
 ## Security
 
-Of the 33 CVEs fixed upstream in rsync 3.5.0, 27 are fixed in oc-rsync, 1 is partially fixed and 5 do not apply. The partial one is CVE-2026-53796: every non-daemon receiver pins its destination for data, but metadata calls after a destination swap are still path-based. The 2024 and rsync 3.4.3 CVEs are fixed, mitigated or do not affect oc-rsync. rsync 3.5.1 names no CVE; of its nine security-relevant fixes, seven are mirrored and two do not apply. Unsafe code is confined to a few crates that wrap platform FFI and SIMD.
+Of the 33 CVEs fixed upstream in rsync 3.5.0, 27 are fixed in oc-rsync, 1 is partially fixed and 5 do not apply. The partial one is CVE-2026-53796: every non-daemon receiver pins its destination for data, but metadata calls after a destination swap are still path-based. The 2024 and rsync 3.4.3 CVEs are fixed, mitigated or do not affect oc-rsync. rsync 3.5.1 names no CVE; of its nine security-relevant fixes, seven are mirrored and two do not apply. rsync 3.5.2 fixes CVE-2026-119741 (weak-checksum collision bound) along with `--files-from` subdirectory confinement, `--max-alloc` delete-queue overflow, terminal control-character escaping, and IPv6 `hosts allow`/`hosts deny` forward-DNS matching. Unsafe code is confined to a few crates that wrap platform FFI and SIMD.
 
 [`SECURITY.md`](./SECURITY.md) has the per-CVE evidence, the unsafe-code policy, fuzzing and how to report a vulnerability. [`docs/audits/cve-uts351-matrix.md`](./docs/audits/cve-uts351-matrix.md) maps each CVE to its upstream fix, its upstream test cells and the Rust tests that pin it.
 

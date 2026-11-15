@@ -1501,7 +1501,7 @@ fn execute_symlink_tree_stats_match_upstream() {
         .execute_with_options(LocalCopyExecution::Apply, options.clone())
         .expect("copy succeeds");
 
-    // upstream flist.c:998-999/1613-1614 - `stats.total_size` sums the F_LENGTH of
+    // upstream flist.c:1002-1003/1613-1614 - `stats.total_size` sums the F_LENGTH of
     // regular files AND symlinks; a symlink's F_LENGTH is its lstat st_size,
     // i.e. the target byte length (5). Without it the total is 50, not the
     // upstream 55, and both `--stats` "Total file size" and "total size is N"
@@ -1543,7 +1543,7 @@ fn execute_symlink_tree_stats_match_upstream() {
 /// A NEW symlink copied WITHOUT `-p` must land on upstream's `dest_mode()`
 /// result, not on the umask default that `symlink(2)` leaves behind.
 ///
-/// upstream: generator.c:1937-1940 rewrites `file->mode = dest_mode(file->mode,
+/// upstream: generator.c:1974-1977 rewrites `file->mode = dest_mode(file->mode,
 /// sx.st.st_mode, dflt_perms, exists)` for EVERY type - the rewrite sits above
 /// the `preserve_links && ftype == FT_SYMLINK` branch at generator.c:1948 - and
 /// `set_file_attrs()` then chmods the link to it (rsync.c:510 + 806-822). This
@@ -1705,7 +1705,7 @@ fn landed_symlink_mode_over_obstacle(
         .mode()
         & 0o7777;
 
-    // upstream's `dflt_perms` = `ACCESSPERMS & ~orig_umask` (generator.c:2770),
+    // upstream's `dflt_perms` = `ACCESSPERMS & ~orig_umask` (generator.c:2856),
     // recovered from the OS via mkdir(2) exactly as the fresh-dest test above.
     let probe = temp.path().join("umask-probe");
     fs::create_dir(&probe).expect("mkdir probe");
@@ -1720,7 +1720,7 @@ fn landed_symlink_mode_over_obstacle(
 /// The formerly-diverging cell of the obstacle matrix: dest holds a REGULAR
 /// FILE (0o600), source is a symlink (0o711), `-rl` and no `-p`.
 ///
-/// upstream: generator.c:1938 - `exists = statret == 0 && stype != FT_DIR` on
+/// upstream: generator.c:1975 - `exists = statret == 0 && stype != FT_DIR` on
 /// the lstat taken BEFORE `atomic_create` (generator.c:2002) removes the
 /// obstacle, so `dest_mode()`'s exists arm (rsync.c:470-471) keeps the
 /// OBSTACLE's 0o600. Reading the fresh link's own stat instead lands the

@@ -237,7 +237,7 @@ fn delimited_variable(rest: &str) -> Option<(&str, &str)> {
 /// A connection variable that has been set comes from `vars`; anything else is
 /// a plain `getenv`, as upstream. `RSYNC_PID`, `RSYNC_REQUEST` and `RSYNC_ARG#`
 /// are therefore left verbatim in the hook directives on both implementations:
-/// upstream sets them only after the directives were read (clientserver.c:962,
+/// upstream sets them only after the directives were read (clientserver.c:966,
 /// :568).
 fn resolve_hook_variable(name: &str, vars: &HookVariables<'_>) -> Option<String> {
     let set = match name {
@@ -512,7 +512,7 @@ mod variable_expansion_tests {
         );
     }
 
-    /// upstream sets RSYNC_PID (clientserver.c:962) and RSYNC_REQUEST
+    /// upstream sets RSYNC_PID (clientserver.c:966) and RSYNC_REQUEST
     /// (clientserver.c:568) only after the directives were expanded, so the
     /// references stay literal. Measured on 3.5.1.
     #[test]

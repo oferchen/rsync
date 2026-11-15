@@ -2,8 +2,8 @@
 //! sub-list's symlink and special-file itemize rows with that sub-list.
 //!
 //! A server receiver forwards an itemize row (`NDX + iflags`) for an entry it
-//! creates without a transfer, such as a new FIFO (upstream generator.c:588-593,
-//! sender.c:584-586). Upstream emits it inline while recv_generator() walks the
+//! creates without a transfer, such as a new FIFO (upstream generator.c:625-630,
+//! sender.c:592-594). Upstream emits it inline while recv_generator() walks the
 //! sub-list, so the row reaches the sender before the sub-list's `NDX_DONE`
 //! frees it (generator.c:2690-2712). A row held back past that point names an
 //! entry whose list is gone, and the push dies.

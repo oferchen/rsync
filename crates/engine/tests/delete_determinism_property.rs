@@ -26,10 +26,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.1/generator.c:285-400`
+//! - `target/interop/upstream-src/rsync-3.5.2/generator.c:320-437`
 //!   (`delete_in_dir`, `do_delete_pass`) - emits unlinks per directory in
 //!   reverse `f_name_cmp` order.
-//! - `target/interop/upstream-src/rsync-3.5.1/delete.c:191-288`
+//! - `target/interop/upstream-src/rsync-3.5.2/delete.c:191-288`
 //!   (`delete_item`) - dispatches the actual `unlink`/`rmdir` syscall.
 
 #![cfg(unix)]

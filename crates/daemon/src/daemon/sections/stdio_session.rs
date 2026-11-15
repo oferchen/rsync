@@ -1,6 +1,6 @@
 // Stdio daemon session - runs a single daemon session over stdin/stdout.
 //
-// upstream: main.c:1971-1975 - when both `am_server` and `am_daemon` are set,
+// upstream: main.c:1975-1979 - when both `am_server` and `am_daemon` are set,
 // upstream rsync calls `start_daemon(STDIN_FILENO, STDOUT_FILENO)`. This runs
 // the daemon protocol over the process's stdin and stdout, used by remote-shell
 // daemon mode (`rsync -e ssh host::module`) and by `RSYNC_CONNECT_PROG`.
@@ -52,7 +52,7 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
     }
 
     // When no --config was given, search for a config file.
-    // upstream: clientserver.c:1400-1409 - load_config() uses RSYNCD_USERCONF
+    // upstream: clientserver.c:1409-1418 - load_config() uses RSYNCD_USERCONF
     // ("rsyncd.conf" relative to CWD) for rsh-daemon non-root invocations,
     // and RSYNCD_SYSCONF ("/etc/rsyncd.conf") otherwise.
     //

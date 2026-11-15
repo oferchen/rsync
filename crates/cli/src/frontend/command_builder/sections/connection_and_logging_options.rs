@@ -102,7 +102,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
         )
-        // upstream: options.c:783 `compress-threads` (added in 3.4.2, NEWS.md).
+        // upstream: options.c:784 `compress-threads` (added in 3.4.2, NEWS.md).
         .arg(
             Arg::new("compress-threads")
                 .long("compress-threads")

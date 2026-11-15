@@ -89,7 +89,7 @@ impl LocalCopyOptions {
     /// feature for rsyncd and can also be forced via `--munge-links` on the
     /// client side.
     ///
-    /// upstream: `clientserver.c:1070-1072` sets `munge_symlinks` per module.
+    /// upstream: `clientserver.c:1074-1076` sets `munge_symlinks` per module.
     #[must_use]
     #[doc(alias = "--munge-links")]
     pub const fn munge_links(mut self, enabled: bool) -> Self {
@@ -110,7 +110,7 @@ impl LocalCopyOptions {
     /// The source base is operator-selected, but each list entry may not be,
     /// so the sender resolves entries through the ownership walk (and, under
     /// `--confine-root`, keeps them beneath the root). upstream:
-    /// `rsync-3.5.1/syscall.c:149` `filesfrom_owner_walk_active()`.
+    /// `rsync-3.5.2/syscall.c:149` `filesfrom_owner_walk_active()`.
     #[must_use]
     #[doc(alias = "--files-from")]
     pub const fn files_from(mut self, files_from: bool) -> Self {
@@ -218,7 +218,7 @@ impl LocalCopyOptions {
     ///
     /// Deliberately does NOT clear `devices` / `specials`: upstream keeps
     /// `preserve_devices` / `preserve_specials` intact because they also frame
-    /// the file list's rdev fields. upstream: generator.c:2026-2033.
+    /// the file list's rdev fields. upstream: generator.c:2067-2074.
     #[must_use]
     #[doc(alias = "--drop-D")]
     pub const fn drop_devices(mut self, drop_devices: bool) -> Self {
@@ -434,7 +434,7 @@ impl LocalCopyOptions {
     /// Kept separate from [`Self::devices_enabled`] and
     /// [`Self::specials_enabled`] on purpose: upstream leaves
     /// `preserve_devices` / `preserve_specials` untouched because they also
-    /// frame the file list's rdev fields. upstream: generator.c:2026-2033.
+    /// frame the file list's rdev fields. upstream: generator.c:2067-2074.
     #[must_use]
     #[doc(alias = "--drop-D")]
     pub const fn drop_devices_enabled(&self) -> bool {
@@ -453,7 +453,7 @@ impl LocalCopyOptions {
     /// false under `--fake-super`, where upstream still writes the `0600`
     /// placeholder (`syscall.c:do_mknod()`, the `am_root < 0` branch).
     ///
-    /// upstream: generator.c:2031-2033 `!drop_devices && ((am_root &&
+    /// upstream: generator.c:2072-2074 `!drop_devices && ((am_root &&
     /// preserve_devices && ftype == FT_DEVICE) || ...)`.
     #[must_use]
     pub fn may_create_devices(&self) -> bool {
@@ -471,7 +471,7 @@ impl LocalCopyOptions {
 
     /// Reports whether a FIFO or socket may actually be created.
     ///
-    /// upstream: generator.c:2031 `!drop_devices && ... preserve_specials`.
+    /// upstream: generator.c:2072 `!drop_devices && ... preserve_specials`.
     #[must_use]
     pub const fn may_create_specials(&self) -> bool {
         self.specials && !self.drop_devices

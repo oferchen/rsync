@@ -10,8 +10,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/util1.c:599` `robust_rename()`.
-//! - `rsync-3.5.1/rsync.c:882` `finish_transfer()`.
+//! - `rsync-3.5.2/util1.c:599` `robust_rename()`.
+//! - `rsync-3.5.2/rsync.c:882` `finish_transfer()`.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -65,9 +65,9 @@ impl<'a> CommitAnchor<'a> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/util1.c:609-635` - the retry loop and its `ETXTBSY` arm,
+/// - `rsync-3.5.2/util1.c:609-635` - the retry loop and its `ETXTBSY` arm,
 ///   which unlinks the busy target and tries again.
-/// - `rsync-3.5.1/util1.c:634-660` - the `EXDEV` arm: `handle_partial_dir(
+/// - `rsync-3.5.2/util1.c:634-660` - the `EXDEV` arm: `handle_partial_dir(
 ///   partialptr, PDIR_CREATE)` and `to = partialptr`, then `copy_file()` and
 ///   `do_unlink_at(from)`.
 ///
@@ -137,11 +137,11 @@ pub(crate) fn robust_rename(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/rsync.c:889` - `temp_copy_name` is `partialptr` only for a
+/// - `rsync-3.5.2/rsync.c:889` - `temp_copy_name` is `partialptr` only for a
 ///   relative `--partial-dir`.
-/// - `rsync-3.5.1/rsync.c:918` - `robust_rename(fnametmp, fname,
+/// - `rsync-3.5.2/rsync.c:918` - `robust_rename(fnametmp, fname,
 ///   temp_copy_name, ...)`.
-/// - `rsync-3.5.1/rsync.c:940-946` - the staged copy is renamed onto `fname`
+/// - `rsync-3.5.2/rsync.c:940-946` - the staged copy is renamed onto `fname`
 ///   and `handle_partial_dir(temp_copy_name, PDIR_DELETE)` removes its dir.
 ///
 /// # Errors

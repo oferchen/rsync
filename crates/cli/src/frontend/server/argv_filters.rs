@@ -1,6 +1,6 @@
 //! Filter options on a remote-shell server's own argv.
 //!
-//! upstream: options.c:1620-1656 and :1718-1727 - the server parses them in
+//! upstream: options.c:1647-1683 and :1718-1727 - the server parses them in
 //! the same `parse_arguments()` as the client, relative to its cwd and
 //! unsanitized (only a daemon module sets `sanitize_paths`,
 //! clientserver.c:1068). They land in `filter_list` ahead of the rules

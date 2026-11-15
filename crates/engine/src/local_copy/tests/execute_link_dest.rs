@@ -278,7 +278,7 @@ fn link_dest_uses_first_matching_directory() {
     assert!(summary.hard_links_created() >= 1);
 }
 
-// upstream: generator.c:1082-1102 try_dests_reg() scans every basis dir and picks
+// upstream: generator.c:1119-1139 try_dests_reg() scans every basis dir and picks
 // the BEST match_level, so an earlier match_level-2 basis (data matches but perms
 // differ) must NOT shadow a later match_level-3 basis (data + attrs match). The
 // exact basis is hard-linked with no attr reapply; a first-match scan would
@@ -360,7 +360,7 @@ fn link_dest_best_match_prefers_exact_over_content_only() {
     );
 }
 
-// upstream: generator.c:1114-1172 - a LINK_DEST basis whose data matches but whose
+// upstream: generator.c:1151-1209 - a LINK_DEST basis whose data matches but whose
 // attributes differ (match_level 2) is NOT hard-linked; upstream falls through to
 // try_a_copy/copy_altdest_file, copying into a fresh inode and reapplying the
 // source attrs. Hard-linking + reapplying would corrupt the shared basis inode.
@@ -1357,7 +1357,7 @@ fn link_dest_permission_mismatch_with_perms_enabled() {
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn link_dest_copies_when_only_xattrs_differ() {
-    // upstream: generator.c:1073-1203 try_dests_reg() - a --link-dest basis that
+    // upstream: generator.c:1110-1240 try_dests_reg() - a --link-dest basis that
     // matches the source's DATA (quick_check_ok) but whose preserved attributes
     // differ is match_level 2, NOT match_level 3. Upstream does not hard-link a
     // match_level-2 basis: it falls through to copy_altdest_file() + set_file_attrs,
@@ -1441,7 +1441,7 @@ fn link_dest_copies_when_only_xattrs_differ() {
 // A `--link-dest` basis whose node the destination refuses to hard-link must
 // fall back to creating the entry, not fail the transfer.
 //
-// upstream: generator.c:1269-1292 try_dests_non() - rsync 3.5.0 sets
+// upstream: generator.c:1306-1329 try_dests_non() - rsync 3.5.0 sets
 // `cannot_hardlink = 1; match_level = 2;` on ANY `do_link_at()` failure and
 // returns `-3`, so the caller creates the node. 3.4.4 instead reported
 // `FERROR_XFER` and exited 23. Upstream deliberately does not select "cannot
@@ -1808,7 +1808,7 @@ fn link_dest_arg_that_is_a_plain_file_does_not_fail_a_recursive_transfer() {
     assert_eq!(summary.hard_links_created(), 0);
 }
 
-/// upstream: generator.c:1227 try_dests_non() - a directory entry consults the
+/// upstream: generator.c:1264 try_dests_non() - a directory entry consults the
 /// basis through the same `basis_link_stat(..) < 0 || .. continue` arm, so a
 /// non-directory basis must be skipped rather than abort the run.
 ///
@@ -1866,7 +1866,7 @@ fn link_dest_arg_that_is_a_plain_file_does_not_fail_a_directory_entry() {
 /// about the bad arg once. The regular-file lookup was corrected earlier; this
 /// pins the symlink lookup to the same rule.
 ///
-/// upstream: generator.c:1227 `if (basis_link_stat(cmpbuf, &sxp->st) < 0)
+/// upstream: generator.c:1264 `if (basis_link_stat(cmpbuf, &sxp->st) < 0)
 /// continue;`
 #[cfg(unix)]
 #[test]
@@ -1917,7 +1917,7 @@ fn alt_dest_arg_that_is_not_a_directory_does_not_fail_a_symlink_transfer() {
 /// the full `SystemTime` demoted such a basis from match_level 3 to 2, copying
 /// the file into a fresh inode instead of linking it - silently, with exit 0.
 ///
-/// upstream: `rsync-3.5.1/util1.c:1744` `same_time()`;
+/// upstream: `rsync-3.5.2/util1.c:1744` `same_time()`;
 /// `generator.c:402` `mtime_differs()` -> `generator.c:1090` `try_dests_reg()`.
 #[cfg(unix)]
 #[test]

@@ -1,6 +1,6 @@
 //! Regression: a client handed an empty file list must not enter its receive loop.
 //!
-//! upstream `main.c:1397-1409` `client_run()`:
+//! upstream `main.c:1401-1413` `client_run()`:
 //!
 //! ```c
 //! flist = recv_file_list(f_in, -1);
@@ -186,7 +186,7 @@ fn assert_empty_list_run(run: &ClientRun, dest: &Path, expected_code: i32, label
     assert!(
         !run.output.contains("failed to fill whole buffer"),
         "{label}: client kept reading after an empty file list instead of \
-         skipping do_recv() (upstream main.c:1401-1410)"
+         skipping do_recv() (upstream main.c:1405-1414)"
     );
     assert!(
         run.has_summary(),
@@ -224,7 +224,7 @@ fn module_with_locked_dir(locked: bool) -> (TempDir, PathBuf) {
 
 /// A source path the sender cannot stat for a reason other than `ENOENT` yields
 /// an empty file list whose end marker carries `IOERR_GENERAL`
-/// (`flist.c:2667-2674` -> `flist.c:2748-2757`). Upstream prints the summary and
+/// (`flist.c:2678-2685` -> `flist.c:2759-2768`). Upstream prints the summary and
 /// exits 23 (`cleanup.c:217-218`) without ever creating the destination root.
 ///
 /// The fault is POSIX DAC (`chmod 000`), which root bypasses.

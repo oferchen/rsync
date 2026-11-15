@@ -14,10 +14,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/syscall.c:149` `filesfrom_owner_walk_active()` - the gate.
-//! - `rsync-3.5.1/flist.c:400-433` `filesfrom_link_stat()` - the entry stat.
-//! - `rsync-3.5.1/flist.c:2262-2265` `secure_opendir()` - the directory scan.
-//! - `rsync-3.5.1/syscall.c:3617-3640` `do_open_checklinks()` - the content open.
+//! - `rsync-3.5.2/syscall.c:149` `filesfrom_owner_walk_active()` - the gate.
+//! - `rsync-3.5.2/flist.c:403-436` `filesfrom_link_stat()` - the entry stat.
+//! - `rsync-3.5.2/flist.c:2273-2276` `secure_opendir()` - the directory scan.
+//! - `rsync-3.5.2/syscall.c:3685-3708` `do_open_checklinks()` - the content open.
 
 use std::ffi::OsString;
 use std::fs::{File, Metadata};
@@ -96,7 +96,7 @@ impl FilesFromBase {
     /// Open the parent of `entry` through the walk and judge the leaf's
     /// would-be absolute path against the confinement root.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:704-737` `owner_walk_parent()`.
+    /// upstream: `rsync-3.5.2/syscall.c:773-806` `owner_walk_parent()`.
     fn parent(&self, entry: &Path) -> io::Result<(OwnedFd, OsString)> {
         // The base itself (an entry such as `dir/./`) is the leaf `.` of an
         // empty parent, as upstream's `strrchr()` split makes it.
@@ -134,7 +134,7 @@ impl FilesFromBase {
     /// The returned [`Metadata`] comes from a path-based stat that must name
     /// the same inode the walk reached; a mismatch reads as `NotFound`.
     ///
-    /// upstream: `rsync-3.5.1/flist.c:400-433` `filesfrom_link_stat()`.
+    /// upstream: `rsync-3.5.2/flist.c:403-436` `filesfrom_link_stat()`.
     ///
     /// # Errors
     ///
@@ -164,7 +164,7 @@ impl FilesFromBase {
     /// Open a list entry's content: the parent through the walk, the leaf
     /// `O_NOFOLLOW`.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:3623-3640` - the `files_from` arm of
+    /// upstream: `rsync-3.5.2/syscall.c:3691-3708` - the `files_from` arm of
     /// `do_open_checklinks()`.
     ///
     /// # Errors
@@ -177,7 +177,7 @@ impl FilesFromBase {
 
     /// List a directory reached through a list entry.
     ///
-    /// upstream: `rsync-3.5.1/flist.c:2262-2265` - `secure_opendir()` opens a
+    /// upstream: `rsync-3.5.2/flist.c:2273-2276` - `secure_opendir()` opens a
     /// `--files-from` directory with `open_no_attacker_symlinks(fbuf,
     /// O_RDONLY | O_DIRECTORY, 0)`.
     ///

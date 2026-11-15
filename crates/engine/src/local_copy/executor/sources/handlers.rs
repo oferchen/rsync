@@ -61,7 +61,7 @@ fn record_skipped_symlink(
 /// Reads an operand's ACL and xattrs into the entry slot as the sender half
 /// lists it; `false` when the read failed and the operand is dropped.
 ///
-/// upstream: flist.c:2050-2087 send_file_name().
+/// upstream: flist.c:2054-2091 send_file_name().
 fn read_operand_attrs(
     context: &mut CopyContext,
     source_path: &Path,
@@ -104,10 +104,10 @@ pub(super) fn handle_directory_contents_copy(
     }
 
     if !recursion_enabled && !dirs_enabled {
-        // upstream: flist.c:2965 - `rprintf(FINFO, "skipping directory %s\n",
+        // upstream: flist.c:2976 - `rprintf(FINFO, "skipping directory %s\n",
         // fbuf)`, where `fbuf` is the operand AFTER the `dir`/`fn` split. A
         // trailing-slash operand is split into `dir = <path>` and `fn = "."`
-        // (flist.c:2826-2834), so the name upstream prints is a bare `.` - not
+        // (flist.c:2837-2845), so the name upstream prints is a bare `.` - not
         // nothing. Without the fallback the whole line disappeared for every
         // DOTDIR spelling (`dir/`, `dir/.`), which is the one shape this
         // handler exists to serve.
@@ -144,7 +144,7 @@ pub(super) fn handle_directory_contents_copy(
         0,
     )?;
 
-    // upstream: flist.c:2992 - trailing-slash sources (DOTDIR_NAME /
+    // upstream: flist.c:3003 - trailing-slash sources (DOTDIR_NAME /
     // SLASH_ENDING_NAME) walk their immediate children even when global
     // recursion is off, so `--files-from` entries like `from/./` and
     // `subsubdir2/` populate the destination with one level of contents.
@@ -223,7 +223,7 @@ pub(super) fn handle_directory_copy(
     // (file_total == 1) keeps the flag false and is materialised AS the
     // destination (its own name dropped), matching `rsync -r empty n` -> `n/`.
     let target = if destination_behaves_like_directory || multiple_sources {
-        // upstream: flist.c:2000-2023 + flist.c:1058-1072 - filename is
+        // upstream: flist.c:2004-2027 + flist.c:1062-1076 - filename is
         // transcoded LOCAL -> wire -> REMOTE; for local-copy this
         // collapses to LOCAL -> REMOTE applied here before joining.
         let converted = transcode_filename_component(name, context.options().iconv());
@@ -270,7 +270,7 @@ pub(super) fn handle_symlink_copy(
     destination_behaves_like_directory: bool,
     prefer_root_destination: bool,
 ) -> Result<(), LocalCopyError> {
-    // upstream: generator.c:1642 list_file_entry() lists every flist entry,
+    // upstream: generator.c:1679 list_file_entry() lists every flist entry,
     // so `--list-only` must record the symlink (dry-run only reports it) even
     // when `--links` is off; a real transfer without `--links` still skips it.
     if context.links_enabled()
@@ -303,7 +303,7 @@ pub(super) fn handle_symlink_copy(
 /// Reports whether `--copy-unsafe-links` turns this operand symlink into a
 /// copy of its referent.
 ///
-/// upstream: flist.c:482-506 readlink_stat() dereferences an unsafe link
+/// upstream: flist.c:485-509 readlink_stat() dereferences an unsafe link
 /// before `-l` is consulted, so the operand reaches [`copy_symlink`] (which
 /// performs the copy) even when links are not preserved.
 fn dereferences_unsafe_operand(
@@ -335,7 +335,7 @@ pub(super) fn handle_fifo_copy(
     destination_behaves_like_directory: bool,
     prefer_root_destination: bool,
 ) -> Result<bool, LocalCopyError> {
-    // upstream: generator.c:1642 list_file_entry() lists FIFOs/sockets in
+    // upstream: generator.c:1679 list_file_entry() lists FIFOs/sockets in
     // `--list-only` output regardless of `--specials`; a real transfer without
     // `--specials` still skips them.
     if !context.specials_enabled() && !context.list_only_enabled() {
@@ -392,7 +392,7 @@ pub(super) fn handle_device_copy(
     if context.copy_devices_as_files_enabled() {
         let _ = copy_file(context, source_path, &target, metadata, record_path)?;
     } else if !context.may_create_devices() && !context.list_only_enabled() {
-        // upstream: generator.c:1642 list_file_entry() lists devices in
+        // upstream: generator.c:1679 list_file_entry() lists devices in
         // `--list-only` output regardless of `--devices`; a real transfer
         // without `--devices` still skips them.
         //
@@ -476,7 +476,7 @@ pub(super) fn handle_non_directory_source(
             false,
             context.options().iconv(),
         );
-        // upstream: flist.c:3607-3625 flist_sort_and_clean() - a later
+        // upstream: flist.c:3618-3636 flist_sort_and_clean() - a later
         // duplicate name in the merged multi-source list is dropped ("keep
         // the first one"): the first operand's copy wins and the duplicate is
         // neither transferred, itemized, nor batch-captured.

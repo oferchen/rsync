@@ -146,12 +146,12 @@ pub struct LocalCopySummary {
     bytes_copied: u64,
     matched_bytes: u64,
     // Distinct 4 KiB logical blocks the receiver wrote, for the protocol-33
-    // `Number of 4 KiB logical blocks touched` line. upstream: rsync.h:1084
+    // `Number of 4 KiB logical blocks touched` line. upstream: rsync.h:1100
     // `stats.touched_blocks_4k`, accumulated by fileio.c:218
     // track_block_touches().
     touched_blocks_4k: u64,
     // Cumulative delta-matcher diagnostics for the `-vv` `total:` line.
-    // upstream: match.c:474-476 folds each file's per-file `matches`,
+    // upstream: match.c:510-512 folds each file's per-file `matches`,
     // `hash_hits`, and `false_alarms` into `total_*` after `match_sums()`
     // returns, and `match_report()` (match.c:480) prints the totals once. The
     // local-copy executor has no forked sender running `match_sums()`, so it
@@ -267,7 +267,7 @@ impl LocalCopySummary {
     /// before the transfer). Distinct from [`Self::files_copied`], which also
     /// counts in-place updates of pre-existing files.
     ///
-    /// upstream: receiver.c:924-938 / sender.c:587-600 - the reg portion of
+    /// upstream: receiver.c:924-938 / sender.c:595-608 - the reg portion of
     /// `stats.created_files`, reported by `--stats` as
     /// `Number of created files: N (reg: X, ...)`.
     #[must_use]
@@ -392,7 +392,7 @@ impl LocalCopySummary {
     /// Returns the number of basis blocks the delta matcher reused across the
     /// whole run - the `matches=` field of the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:476` `total_matches`.
+    /// upstream: `match.c:512` `total_matches`.
     #[must_use]
     pub const fn delta_matches(&self) -> u64 {
         self.delta_matches
@@ -401,7 +401,7 @@ impl LocalCopySummary {
     /// Returns the run's cumulative delta-probe hash hits - the `hash_hits=`
     /// field of the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:474` `total_hash_hits`. oc counts bithash-prefilter
+    /// upstream: `match.c:510` `total_hash_hits`. oc counts bithash-prefilter
     /// positives rather than upstream's `SUM2HASH` bucket hits; see
     /// [`crate::delta::ProbeCounters`] for why the two are not comparable.
     #[must_use]
@@ -412,7 +412,7 @@ impl LocalCopySummary {
     /// Returns the run's cumulative delta-probe false alarms - the
     /// `false_alarms=` field of the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:475` `total_false_alarms`. See
+    /// upstream: `match.c:511` `total_false_alarms`. See
     /// [`crate::delta::ProbeCounters`] for oc's counting semantics.
     #[must_use]
     pub const fn delta_false_alarms(&self) -> u64 {
@@ -695,7 +695,7 @@ impl LocalCopySummary {
             bytes_sent,
             bytes_copied: literal_data,
             matched_bytes: matched_data,
-            // upstream: flist.c:3334 - the pulling client's receiver accumulates
+            // upstream: flist.c:3345 - the pulling client's receiver accumulates
             // stats.flist_size from its own raw read counter across every
             // recv_file_list() span; it is never sent over the wire (main.c:452
             // prints each role's local figure).
@@ -752,7 +752,7 @@ impl LocalCopySummary {
             devices_total: file_type_totals.devices,
             fifos_total: file_type_totals.specials,
             files_copied: files_transferred as u64,
-            // upstream: sender.c:635 stats.total_transferred_size, computed
+            // upstream: sender.c:643 stats.total_transferred_size, computed
             // locally by the pushing client's sender (never sent on the wire).
             transferred_file_size,
             // See `from_receiver_stats`: on a push the local sender reconstructs
@@ -823,7 +823,7 @@ impl LocalCopySummary {
     /// Folds one delta-scanned file's match diagnostics into the run totals
     /// rendered on the `-vv` `total:` line.
     ///
-    /// upstream: `match.c:474-476` - `total_hash_hits += hash_hits` etc. once
+    /// upstream: `match.c:510-512` - `total_hash_hits += hash_hits` etc. once
     /// per file, immediately after that file's `match_sums()` returns.
     pub(in crate::local_copy) fn record_delta_probe(
         &mut self,
@@ -838,7 +838,7 @@ impl LocalCopySummary {
     /// Records a would-be transfer for a `--dry-run`, mirroring upstream's
     /// sender under `dry_run`.
     ///
-    /// upstream: `sender.c:634-635` increments `stats.xferred_files` and
+    /// upstream: `sender.c:642-643` increments `stats.xferred_files` and
     /// `stats.total_transferred_size += F_LENGTH(file)` before the
     /// `if (!do_xfers)` guard, so both count the file even in a dry run. The
     /// guard then `continue`s before `match_sums()`, which is the sole place
@@ -944,12 +944,12 @@ impl LocalCopySummary {
     /// dry-run modes, so `--stats` counts match upstream even when no file data
     /// moved (a new empty file, symlink, device, FIFO, or empty directory).
     ///
-    /// upstream: receiver.c:924-938 / sender.c:587-600 - `stats.created_*++`
+    /// upstream: receiver.c:924-938 / sender.c:595-608 - `stats.created_*++`
     /// under the `iflags & ITEM_IS_NEW` guard, keyed by the entry's mode.
     /// Counts a regular file whose send was attempted but whose source could
     /// not be opened.
     ///
-    /// upstream: sender.c:625-635 - `stats.created_files` (for a new entry),
+    /// upstream: sender.c:633-643 - `stats.created_files` (for a new entry),
     /// `stats.xferred_files` and `stats.total_transferred_size` grow before
     /// the open, so a failed open still counts. Nothing was read, so literal
     /// and matched data are left alone.
@@ -1088,7 +1088,7 @@ mod tests {
     /// entry was reported as `reg` and the dir/link/dev/special totals were zero
     /// (`Number of files: 6 (reg: 6)` instead of `(reg: 2, dir: 3, link: 1)`).
     ///
-    /// upstream: flist.c:3236-3248 per-type tally; main.c:391-415 derives `reg`.
+    /// upstream: flist.c:3247-3259 per-type tally; main.c:391-415 derives `reg`.
     #[test]
     fn from_receiver_stats_derives_file_type_breakdown() {
         let summary = LocalCopySummary::from_receiver_stats(
@@ -1220,7 +1220,7 @@ mod tests {
     /// instead of reporting the old over-count (`files_transferred`) with the
     /// dir/link/dev/special sub-counts stuck at zero.
     ///
-    /// upstream: receiver.c:924-938 / sender.c:587-600 - `stats.created_*`.
+    /// upstream: receiver.c:924-938 / sender.c:595-608 - `stats.created_*`.
     #[test]
     fn from_receiver_stats_maps_created_breakdown() {
         let created_stats = protocol::CreatedStats {
@@ -1297,7 +1297,7 @@ mod tests {
     /// data, so every entry was reported as `reg` (`Number of files: 6 (reg:
     /// 6)` instead of `(reg: 3, dir: 2, link: 1)`).
     ///
-    /// upstream: flist.c:726-746 per-type tally; main.c:391-415 derives `reg`.
+    /// upstream: flist.c:730-750 per-type tally; main.c:391-415 derives `reg`.
     #[test]
     fn from_generator_stats_derives_file_type_breakdown() {
         let summary = LocalCopySummary::from_generator_stats(
@@ -1359,7 +1359,7 @@ mod tests {
     }
 
     /// The `-vv` `total:` line reports RUN totals, not the last file's figures.
-    /// upstream: match.c:474-476 folds each file's counters into `total_*` and
+    /// upstream: match.c:510-512 folds each file's counters into `total_*` and
     /// match_report() prints the accumulation once, so a per-file overwrite
     /// would under-report every multi-file transfer.
     #[test]

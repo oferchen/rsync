@@ -25,7 +25,7 @@ use crate::version::ProtocolVersion;
 /// The peer prints "File list generation time" only for a non-zero value, so
 /// without the clamp a fast build would suppress that `--stats` line.
 ///
-/// upstream: flist.c:3016-3020 send_file_list(), gate at main.c:453
+/// upstream: flist.c:3027-3031 send_file_list(), gate at main.c:453
 /// output_summary().
 #[must_use]
 pub fn flist_buildtime_ms(elapsed: Duration) -> u64 {
@@ -106,10 +106,10 @@ pub struct TransferStats {
     /// Total size of all files in the transfer.
     pub total_size: u64,
     /// Time spent building the file list, in milliseconds
-    /// (upstream `flist.c:3016-3020`).
+    /// (upstream `flist.c:3027-3031`).
     pub flist_buildtime: u64,
     /// Time spent transferring the file list, in milliseconds
-    /// (upstream `flist.c:3043`).
+    /// (upstream `flist.c:3054`).
     pub flist_xfertime: u64,
     /// Total entries received from wire (incremental mode).
     pub entries_received: u64,

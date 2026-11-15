@@ -20,7 +20,7 @@ fn determine_server_role(client_args: &[String]) -> ServerRole {
 /// so the `-e.<caps>` capability payload it carries reaches the capability
 /// decoder byte-for-byte.
 ///
-/// upstream: clientserver.c:1223 `limit_output_verbosity(lp_max_verbosity(module_id))`
+/// upstream: clientserver.c:1232 `limit_output_verbosity(lp_max_verbosity(module_id))`
 /// runs after `parse_arguments()` and only lowers the entries of the
 /// `info_levels[]` / `debug_levels[]` output arrays (options.c:546-572); it
 /// leaves `verbose` and the parsed argv untouched. A `level` above
@@ -41,7 +41,7 @@ fn limit_output_verbosity(requested: u8, max_verbosity: i32) -> u8 {
 /// `maybe_add_e_option()` (options.c:3232) always appends inside `-e.<caps>` is
 /// never mistaken for a `-v`. That letter is the client's
 /// `CF_VARINT_FLIST_FLAGS` / negotiated-strings advertisement
-/// (compat.c:741-744); upstream's popt hands everything after `-e` to
+/// (compat.c:750-753); upstream's popt hands everything after `-e` to
 /// `shell_cmd` (options.c:837 `{"rsh", 'e', POPT_ARG_STRING, &shell_cmd, ...}`)
 /// and only ever `strchr`es it, so nothing here may read it as option letters
 /// and nothing may rewrite it - `cfg.flag_string` stays byte-identical to what
@@ -62,13 +62,13 @@ fn apply_output_verbosity_limit(cfg: &mut ServerConfig, max_verbosity: i32) -> u
 /// forwards `--info=`; `--debug=` arrives only via `-M`) to this
 /// worker's output levels, then clamps them to the module's `max verbosity`.
 ///
-/// upstream: clientserver.c:1160 parses the client argv with
+/// upstream: clientserver.c:1164 parses the client argv with
 /// `parse_arguments()`, whose `OPT_INFO` / `OPT_DEBUG` arms feed
 /// `parse_output_words()` (options.c:1883-1891); as a server it tolerates
 /// words it does not know (options.c:484 `!am_server`). clientserver.c:1223
 /// then runs `limit_output_verbosity()`, which caps every level - explicit
 /// words included - at what the module's `max verbosity` allows.
-fn apply_forwarded_output_words(client_args: &[String], max_verbosity: i32) {
+fn apply_forwarded_output_words(client_args: &[String], max_verbosity: i32) -> bool {
     for arg in client_args {
         if let Some(words) = arg.strip_prefix("--debug=") {
             for word in words.split(',').filter(|w| !w.is_empty()) {
@@ -80,16 +80,21 @@ fn apply_forwarded_output_words(client_args: &[String], max_verbosity: i32) {
             }
         }
     }
+    // upstream: clientserver.c:1226-1230 - remember an explicit deletion
+    // output request (from `-v` or `--info=del`) before `max verbosity`
+    // clamps `INFO_DEL`.
+    let del_requested = logging::info_gte(logging::InfoFlag::Del, 1);
     if let Ok(level) = u8::try_from(max_verbosity) {
         logging::limit_output_verbosity(level);
     }
+    del_requested
 }
 /// Applies module directives that force transfer-time behavior onto the
 /// per-session [`ServerConfig`], mirroring the daemon-only overrides upstream
 /// applies in `rsync_module()` after the client argv is parsed.
 ///
 /// - `ignore errors = yes` forces error-tolerant deletion regardless of the
-///   client's flags. upstream: clientserver.c:1193-1194 -
+///   client's flags. upstream: clientserver.c:1197-1198 -
 ///   `if (lp_ignore_errors(module_id)) ignore_errors = 1;`.
 /// - `numeric ids` forces `numeric_ids = -1` for the session. upstream:
 ///   clientserver.c:1283-1286 -
@@ -105,14 +110,14 @@ fn apply_forwarded_output_words(client_args: &[String], max_verbosity: i32) {
 ///   `NumericIds::DaemonForced`, distinct from the client's explicit
 ///   `NumericIds::Explicit` which also drops the wire list.
 fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerConfig) {
-    // upstream: clientserver.c:821 `module_id = i` - selecting a module makes
+    // upstream: clientserver.c:825 `module_id = i` - selecting a module makes
     // `module_id >= 0` for the rest of the server process, and that is the sole
     // condition under which `full_fname()` (util1.c:1548-1550) appends
     // ` (in MODULE)` after the closing quote of every path it renders into an
     // error or warning. Record the name so the transfer layer reproduces it.
     cfg.connection.daemon_module = Some(module.name.clone());
 
-    // upstream: clientserver.c:900-918,1059 - `module_chdir` is the normalized
+    // upstream: clientserver.c:904-922,1059 - `module_chdir` is the normalized
     // module path and the server `chdir()`s into it before serving, which is
     // why `full_fname()` (util1.c:1543) only ever prints the part of a path
     // below `module_dirlen`. oc-rsync keeps absolute paths, so record the root
@@ -132,12 +137,12 @@ fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerC
     // forwards --parallel-delta-scan, so the daemon decides for its sender.
     cfg.flags.parallel_delta_scan = module.parallel_delta_scan;
 
-    // upstream: clientserver.c:1193-1194
+    // upstream: clientserver.c:1197-1198
     if module.ignore_errors {
         cfg.deletion.ignore_errors = true;
     }
 
-    // upstream: clientserver.c:1283-1286
+    // upstream: clientserver.c:1292-1295
     //   if (!numeric_ids
     //    && (use_chroot ? lp_numeric_ids(module_id) != False
     //                       && !*lp_name_converter(module_id)
@@ -162,7 +167,7 @@ fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerC
         cfg.flags.numeric_ids = core::server::NumericIds::DaemonForced;
     }
 
-    // upstream: clientserver.c:1172-1173 - `open noatime` (a BOOL3,
+    // upstream: clientserver.c:1176-1177 - `open noatime` (a BOOL3,
     // daemon-parm.txt:70) makes the daemon (as sender) open source files with
     // O_NOATIME. Here the directive can only enable the flag, never clear a
     // value the client already requested; upstream's explicit `no` also clears it.
@@ -183,7 +188,7 @@ fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerC
 /// Returns the configuration on success, or sends an error and returns `None`.
 /// The diagnostic route a daemon's transfer runs with.
 ///
-/// upstream: clientserver.c:1177-1178 - a daemon not run over a remote shell
+/// upstream: clientserver.c:1181-1182 - a daemon not run over a remote shell
 /// (`am_daemon > 0`) has no stderr the client can see, so it frames every
 /// line; a remote-shell daemon keeps the client's forwarded `--msgs2stderr` /
 /// `--no-msgs2stderr` (options.c:619-620), the last one winning, and otherwise
@@ -218,7 +223,7 @@ fn build_server_config(
         .cloned()
         .unwrap_or_default();
 
-    // upstream: io.c:1523 + util1.c:884 (glob_expand_module) - receivers
+    // upstream: io.c:1530 + util1.c:884 (glob_expand_module) - receivers
     // resolve their destination by joining the module path with the client's
     // module-relative tail (e.g. `upload/realdir/` -> module + `realdir/`).
     // Senders (pull requests) split each positional the same way so the
@@ -237,7 +242,7 @@ fn build_server_config(
     // the syscalls are issued - the confined source open and the file-list
     // scan anchored on the transfer's confinement root - not by these
     // resolvers.
-    // upstream: options.c:2411-2414 - the daemon sanitizes EVERY positional with
+    // upstream: options.c:2466-2469 - the daemon sanitizes EVERY positional with
     // `SP_KEEP_DOT_DIRS`, and `util1.c:1238` then reduces that flag to
     // `drop_dot_dirs = !relative_paths`. The axis is the transfer's `--relative`
     // (`options.c:2890` packs it into the compact argstr as `R`), not the role
@@ -271,7 +276,7 @@ fn build_server_config(
 
     match ServerConfig::from_flag_string_and_args(role, flag_string, positional_args) {
         Ok(mut cfg) => {
-            // upstream: clientserver.c:1223 `limit_output_verbosity(lp_max_verbosity(module_id))`
+            // upstream: clientserver.c:1232 `limit_output_verbosity(lp_max_verbosity(module_id))`
             // caps the per-connection log verbosity once the module is selected.
             // Each oc-rsync connection runs on its own worker thread whose
             // thread-local `logging::VerbosityConfig` starts at level 0, so seed
@@ -282,8 +287,8 @@ fn build_server_config(
                 &mut cfg,
                 module.max_verbosity,
             ));
-            apply_forwarded_output_words(client_args, module.max_verbosity);
-            // upstream: log.c:344-346 - a quiet server drops FINFO before
+            let del_requested = apply_forwarded_output_words(client_args, module.max_verbosity);
+            // upstream: log.c:424-426 - a quiet server drops FINFO before
             // framing it.
             logging::set_quiet(cfg.flags.quiet);
 
@@ -311,7 +316,7 @@ fn build_server_config(
                         ),
                         format!("{offender}: unrecognized option (in daemon mode)"),
                     ),
-                    // upstream: options.c:907-918 `option_error()` reports the
+                    // upstream: options.c:925-936 `option_error()` reports the
                     // parser's own `err_buf` text, so the value's own message
                     // is what reaches the client - not the unknown-option one.
                     ClientArgRejection::InvalidValue(message) => (
@@ -325,7 +330,7 @@ fn build_server_config(
                 }
                 // `@RSYNCD: OK` is already on the wire, so the client is
                 // reading multiplexed frames; the rejection has to travel as
-                // one. upstream: clientserver.c:1226-1268.
+                // one. upstream: clientserver.c:1235-1277.
                 let error = AtError::message(error_text);
                 handle_client_arg_rejection_post_handshake(
                     ctx,
@@ -335,6 +340,9 @@ fn build_server_config(
                 )?;
                 return Ok(None);
             }
+
+            cfg.deletion.suppress_msg_deleted = !del_requested && !cfg.flags.info_flags.itemize;
+            apply_daemon_niceness(client_args);
 
             // upstream: token.c:55-66 `init_compression_level()` - when -z is in
             // the compact flag string but no explicit --compress-level=N was sent,
@@ -441,7 +449,7 @@ fn build_server_config(
                 true
             });
 
-            // upstream: options.c:2411-2418 - the same `if (sanitize_paths)`
+            // upstream: options.c:2466-2473 - the same `if (sanitize_paths)`
             // block that sanitises the alt-dest dirs also runs `backup_dir`
             // through `sanitize_path(NULL, backup_dir, NULL, 0, SP_DEFAULT)`.
             // An ABSOLUTE --backup-dir therefore re-roots at `module_dir`
@@ -489,7 +497,7 @@ fn build_server_config(
                 ));
             }
 
-            // upstream: clientserver.c:1137-1145 sets `tmpdir` from the
+            // upstream: clientserver.c:1141-1149 sets `tmpdir` from the
             // module's `temp dir` before parse_arguments() reads the client's
             // argv, so a client --temp-dir replaces it. Either value then goes
             // through the same `sanitize_path(NULL, tmpdir, NULL, 0,
@@ -504,7 +512,7 @@ fn build_server_config(
             if let Some(dir) = cfg.temp_dir.take() {
                 cfg.temp_dir = Some(sanitize_backup_dir(&dir, &module_root_canonical));
             }
-            // upstream: options.c:2641-2642 - a server-local `--files-from`
+            // upstream: options.c:2696-2697 - a server-local `--files-from`
             // goes through the same `sanitize_path(NULL, files_from, NULL, 0,
             // SP_DEFAULT)` and is then opened relative to the module root the
             // daemon `chdir()`ed into (clientserver.c:1059). `-` is the socket.
@@ -530,7 +538,7 @@ fn build_server_config(
                 cfg.connection.dont_compress_match_all = true;
             }
 
-            // upstream: clientserver.c:759-764 - `iconv_opt = lp_charset(i);
+            // upstream: clientserver.c:763-768 - `iconv_opt = lp_charset(i);
             // if (*iconv_opt) setup_iconv();` resolves the module's `charset =`
             // directive into the iconv handles used for filename transcoding.
             // Without this wiring the daemon would parse `charset = LATIN1` but
@@ -548,7 +556,7 @@ fn build_server_config(
             cfg.connection.msgs2stderr =
                 daemon_message_route(ctx.reader.get_ref().is_remote_shell(), client_args);
 
-            // upstream: options.c:2543-2549 - the daemon sender paces its own
+            // upstream: options.c:2598-2604 - the daemon sender paces its own
             // outbound socket writes (io.c:952-953,979-980) at the client's forwarded
             // `--bwlimit` capped by the daemon-wide bwlimit. `ctx.limiter`
             // already holds that daemon-side cap, and it is the SAME limiter that
@@ -564,7 +572,7 @@ fn build_server_config(
                         .and_then(|components| components.rate())
                 });
                 let daemon_cap = ctx.limiter.as_ref().map(BandwidthLimiter::limit_bytes);
-                // upstream: options.c:2543 `if (daemon_bwlimit && (!bwlimit ||
+                // upstream: options.c:2598 `if (daemon_bwlimit && (!bwlimit ||
                 // bwlimit > daemon_bwlimit)) bwlimit = daemon_bwlimit;`
                 let effective = match (client_rate, daemon_cap) {
                     (Some(client), Some(cap)) => Some(client.min(cap)),
@@ -576,7 +584,7 @@ fn build_server_config(
                     effective.map(|rate| BandwidthLimitComponents::new(Some(rate)));
             }
 
-            // upstream: clientserver.c:1197-1202 - `fake super = yes` on the
+            // upstream: clientserver.c:1201-1206 - `fake super = yes` on the
             // daemon module forces fake-super semantics and caps -XX at -X, so
             // the receiver drops a client's own rsync.%FOO xattrs
             // (xattrs.c:902-906) and only set_stat_xattr() writes %stat. A
@@ -588,7 +596,7 @@ fn build_server_config(
                 cfg.flags.xattrs_level = cfg.flags.xattrs_level.min(1);
             }
 
-            // upstream: clientserver.c:1294-1302 - `daemon_chmod_modes` is armed
+            // upstream: clientserver.c:1303-1311 - `daemon_chmod_modes` is armed
             // from the one directive for this session's direction, applied at
             // flist build time (sender) or file finalize time (receiver). A
             // spec that does not parse is logged and the session continues
@@ -604,14 +612,14 @@ fn build_server_config(
                 }
             }
 
-            // upstream: clientserver.c:1070-1071 - `munge_symlinks = lp_munge_symlinks(module_id)`
+            // upstream: clientserver.c:1074-1075 - `munge_symlinks = lp_munge_symlinks(module_id)`
             // with `!use_chroot || module_dirlen` as the auto default. The bit is
             // purely daemon-config-driven (no client-side override) and travels
             // through the transfer layer so the sender strips `/rsyncd-munged/`
             // on `readlink()` and the receiver prepends it on `symlink()` writes.
             cfg.munge_symlinks = module.effective_munge_symlinks();
 
-            // upstream: clientserver.c:1193-1194 (`ignore errors`) and
+            // upstream: clientserver.c:1197-1198 (`ignore errors`) and
             // clientserver.c:1283-1286 (`numeric ids`) - module directives that
             // force transfer behavior for the session once client args are known.
             apply_module_transfer_directives(module, &mut cfg);

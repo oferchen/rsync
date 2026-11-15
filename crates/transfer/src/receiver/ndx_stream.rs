@@ -485,7 +485,7 @@ where
         return Ok(NdxStep::DelStats);
     }
 
-    // upstream: flist.c:3138 recv_file_list() - `inc_recurse && dir_ndx >= 0`
+    // upstream: flist.c:3149 recv_file_list() - `inc_recurse && dir_ndx >= 0`
     // with `first_flist` already NULL. Checked ahead of the rsync.c:344 gate
     // because a phase-boundary sink reports no lazy file list of its own.
     if ndx <= NDX_FLIST_OFFSET && sink.all_flists_freed() {

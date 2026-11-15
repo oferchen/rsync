@@ -64,6 +64,15 @@ impl HardlinkApplyTracker {
         self.deferred.remove(&gnum).unwrap_or_default()
     }
 
+    /// Re-roots a hardlink group to a new live destination path after a link
+    /// failure (e.g.,  or ) forced a member to be materialized
+    /// as a regular file.
+    ///
+    /// # upstream: hlink.c:finish_hard_link() (3.5.2, RsyncProject/rsync#741)
+    pub fn reroot_leader(&mut self, gnum: u32, dest: PathBuf) {
+        self.leaders.insert(gnum, dest);
+    }
+
     /// Attempts to create a hard link for a follower entry.
     ///
     /// If the leader's destination is already known, creates the hard link and

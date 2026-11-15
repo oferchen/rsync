@@ -55,12 +55,12 @@ head-inserts too.
 
 The one retirement upstream does perform stays: under `--inplace` a
 candidate whose basis offset precedes the write cursor is skipped
-(`match.c:232-240`). oc implements the offset rule through
+(`match.c:240-261`). oc implements the offset rule through
 `DeltaGenerator::with_updating_basis_file`, but not yet the rest of
 upstream's `updating_basis_file` handling: the `SUMFLG_SAME_OFFSET`
 exemption, the preference for the block at the identical offset
-(`match.c:278-289`), the zero-run re-alignment (`match.c:293-315`) and the
-guarded `want_i` check (`match.c:321-333`). Those are tracked separately;
+(`match.c:293-304`), the zero-run re-alignment (`match.c:308-330`) and the
+guarded `want_i` check (`match.c:336-348`). Those are tracked separately;
 until they land, `--inplace` token streams can still differ from
 upstream.
 

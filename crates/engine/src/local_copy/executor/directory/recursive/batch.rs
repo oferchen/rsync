@@ -3,7 +3,7 @@
 //! When `--write-batch` is active, each transferred entry is serialized into
 //! the protocol's file-list wire format for later replay.
 //!
-//! upstream: no dedicated writer - `io.c:2747` `start_write_batch()` tees the
+//! upstream: no dedicated writer - `io.c:2754` `start_write_batch()` tees the
 //! flist wire bytes into the batch file.
 
 use std::fs;
@@ -60,7 +60,7 @@ fn build_protocol_file_entry(
         // upstream: flist.c:send_file_entry() - symlink target is read and
         // included in the flist entry so batch replay can recreate symlinks.
         let link_target = fs::read_link(source_path).unwrap_or_default();
-        // upstream: flist.c:1887 - symlinks carry stat.st_size (the target byte
+        // upstream: flist.c:1891 - symlinks carry stat.st_size (the target byte
         // length), matching the directory case above; only devices/specials are
         // zeroed.
         let mut symlink_entry =
@@ -165,7 +165,7 @@ fn build_protocol_file_entry(
 /// Protocols 28 and 29 have no index; the cluster is named by the trailing
 /// `(dev, ino)` pair instead.
 ///
-/// upstream: `flist.c:824-850` computes `first_hlink_ndx` and the two xflags,
+/// upstream: `flist.c:828-854` computes `first_hlink_ndx` and the two xflags,
 /// `flist.c:893-897` writes the follower's index and abbreviates the entry, and
 /// `flist.c:966-978` writes the pre-30 `(dev, ino)` pair.
 fn apply_hardlink_fields(
@@ -179,7 +179,7 @@ fn apply_hardlink_fields(
     };
 
     if protocol_version >= 30 {
-        // upstream: flist.c:827-830 - a new group records its own index and is
+        // upstream: flist.c:831-834 - a new group records its own index and is
         // flagged XMIT_HLINK_FIRST; the sentinel is how the writer spells that.
         entry.set_hardlink_idx(if is_leader {
             u32::MAX
@@ -317,7 +317,7 @@ pub(crate) fn capture_batch_file_entry(
 /// lacks is marked to be sent in full after the iflags, so the replaying
 /// receiver can apply it.
 ///
-/// upstream: `flist.c:2058-2068 send_file_name()` - `get_xattr()` reads the
+/// upstream: `flist.c:2062-2072 send_file_name()` - `get_xattr()` reads the
 /// list; `generator.c:571-582 itemize()` sets ITEM_REPORT_XATTR
 /// when `xattr_diff()` finds a difference, marking each long value the
 /// destination lacks XSTATE_TODO; `sender.c:482-484` then writes those values
@@ -365,7 +365,7 @@ fn capture_batch_xattrs(
         filter: receiver_filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
         checksum_seed: 0,
     };
-    // upstream: generator.c:581 - an absent destination compares against an
+    // upstream: generator.c:618 - an absent destination compares against an
     // empty list (xattr_diff(file, NULL, 1)).
     let dest = ::metadata::read_xattrs_for_wire(destination, &dest_opts).unwrap_or_default();
     let report = protocol::xattr::xattr_diff(&list, &dest, 0).then(|| {
@@ -383,7 +383,7 @@ fn capture_batch_xattrs(
                 todo.push(index);
             }
         }
-        // upstream: generator.c:598-605 - the generator names the values it
+        // upstream: generator.c:635-642 - the generator names the values it
         // wants; sender.c:482-484 - the sender answers with them.
         let mut generator = Vec::new();
         protocol::xattr::send_xattr_request(&mut generator, &todo)
@@ -428,7 +428,7 @@ impl XattrReport {
 /// The access ACL and, for a directory, the default ACL the sender half read
 /// when it listed the entry.
 ///
-/// upstream: `flist.c:2077-2081 send_file_name()` sends the ACL `get_acl()`
+/// upstream: `flist.c:2081-2085 send_file_name()` sends the ACL `get_acl()`
 /// read right after the entry.
 #[cfg(all(target_os = "linux", feature = "acl"))]
 fn batch_source_acl(
@@ -463,7 +463,7 @@ fn batch_source_acl(
 /// Returns `None` for a symlink, which carries no ACL. Under `--fake-super`
 /// only the source's `%aacl`/`%dacl` stash is read, as on the network path.
 ///
-/// upstream: `flist.c:2048-2055 send_file_name()` calls `get_acl()` for every
+/// upstream: `flist.c:2052-2059 send_file_name()` calls `get_acl()` for every
 /// non-symlink under `preserve_acls`, and `flist.c:2077-2081` sends it right
 /// after the entry.
 #[cfg(not(all(target_os = "linux", feature = "acl")))]
@@ -551,7 +551,7 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    /// upstream: flist.c:1887 - a symlink's `F_LENGTH` is its `st_size`, which
+    /// upstream: flist.c:1891 - a symlink's `F_LENGTH` is its `st_size`, which
     /// lstat reports as the target byte length. Batch capture must record the
     /// same value the network flist would, otherwise `--list-only`/`%l` and the
     /// `--stats` total computed from a replayed batch diverge from upstream.
@@ -579,7 +579,7 @@ mod tests {
         );
     }
 
-    /// upstream: flist.c:1894 - `file->mode = st.st_mode` is one assignment for
+    /// upstream: flist.c:1898 - `file->mode = st.st_mode` is one assignment for
     /// every type. A batch capture is the same flist the network path would
     /// send, so a symlink's recorded mode must be its lstat mode. On Linux that
     /// is 0o777 by kernel fiat; on the `CAN_CHMOD_SYMLINK` platforms

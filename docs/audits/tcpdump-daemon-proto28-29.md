@@ -127,7 +127,7 @@ the bytes appear as raw TCP payload).
 
 ### 2.1 Daemon greeting (server -> client)
 
-Upstream emits the greeting from `compat.c:841`:
+Upstream emits the greeting from `compat.c:850`:
 
 ```c
 io_printf(f_out, "@RSYNCD: %d.%d %s\n", protocol_version, our_sub, tmpbuf);
@@ -145,12 +145,12 @@ default at protocol 32, the bytes are:
 ```
 
 The trailing `\n` is the end-of-greeting marker that upstream's
-`read_line_old()` (`clientserver.c:172`) strips before parsing.
+`read_line_old()` (`clientserver.c:176`) strips before parsing.
 
 ### 2.2 Client greeting (client -> server)
 
 The client forced to protocol 28 omits the digest list because pre-30
-clients did not advertise digests. From upstream `compat.c:832-845`,
+clients did not advertise digests. From upstream `compat.c:841-854`,
 `output_daemon_greeting()` runs the same on both sides, but the
 sub-protocol is 0 and the digest list is suppressed when
 `protocol_version < 30`. oc-rsync mirrors this in
@@ -177,7 +177,7 @@ For protocol 29 the only change is `32 38` -> `32 39`.
 
 The negotiated version is `min(client, server)`. With the daemon at 32
 and the client at 28 it is 28. Upstream defines this clamp implicitly by
-storing `remote_protocol` from the parse at `clientserver.c:178` and
+storing `remote_protocol` from the parse at `clientserver.c:182` and
 later writing the lower of the two into `protocol_version`. oc-rsync's
 selection is in `crates/protocol/src/version/select.rs`. The end-to-end
 test
@@ -188,7 +188,7 @@ verifies the daemon honors a protocol-28 downgrade.
 ### 2.4 MOTD and module list
 
 If `motd file` is configured, the daemon writes its contents verbatim
-(upstream `clientserver.c:158-167`), terminated by `\n`. There is no
+(upstream `clientserver.c:162-171`), terminated by `\n`. There is no
 length prefix - the client reads lines until it sees `@RSYNCD: OK` or
 `@RSYNCD: EXIT`.
 
@@ -204,7 +204,7 @@ This is identical at all protocol versions.
 ### 2.5 Module selection (client -> server)
 
 After the greeting and any MOTD lines, the client writes the module name
-followed by `\n` (upstream `clientserver.c:351`):
+followed by `\n` (upstream `clientserver.c:355`):
 
 ```c
 io_printf(f_out, "%.*s\n", modlen, modname);
@@ -217,7 +217,7 @@ For module `mod`:
 ```
 
 The daemon replies with `@RSYNCD: OK\n` (upstream
-`clientserver.c:1057`) or, if auth is required, `@RSYNCD: AUTHREQD <chal>\n`.
+`clientserver.c:1061`) or, if auth is required, `@RSYNCD: AUTHREQD <chal>\n`.
 
 ### 2.6 Capability / option exchange
 
@@ -230,7 +230,7 @@ oc-rsync builds the capability string in `build_capability_string()` at
 character is conditionally appended only when the receiver direction is
 in play (`is_sender == false` -> `allow_inc_recurse == true`). For
 protocol 28/29 negotiations the client still sends the modern capability
-string (`-e.LsfxCIvu...`), but upstream's `compat.c:710` gates the
+string (`-e.LsfxCIvu...`), but upstream's `compat.c:711` gates the
 parsing of those flag bits on `protocol_version >= 30`, so they are
 silently ignored:
 
@@ -297,7 +297,7 @@ protocol-28 daemon will trigger an error from the upstream
 ### 2.8 File list (no varint, fixed-width fields)
 
 This is the most visible byte-level difference. Upstream's
-`send_file_entry()` at `flist.c:597-619` branches on
+`send_file_entry()` at `flist.c:601-623` branches on
 `protocol_version < 30`:
 
 ```c
@@ -335,24 +335,24 @@ mode 0644, size 19) at protocol 28:
 
 ```
 01                   # xflags byte: XMIT_TOP_DIR for first entry. Upstream
-                     # flist.c:559-563 uses single-byte xflags at < 28; at
+                     # flist.c:562-566 uses single-byte xflags at < 28; at
                      # 28 it may use 2-byte XMIT_EXTENDED_FLAGS.
 07                   # name length: 7 ("file.txt" minus shared prefix 1)
 69 6c 65 2e 74 78 74 # "ile.txt"
 13 00 00 00          # size: 19 (longint, 4-byte LE because < 32-bit and
-                     # < 30 -> upstream flist.c:580 write_varlong30 with
+                     # < 30 -> upstream flist.c:583 write_varlong30 with
                      # min_bytes=3 falls through to write_int at < 30)
 80 87 5d 66          # mtime: 1717000000 as 4-byte LE i32
                      # (upstream: protocol_version < 30 ? write_int :
-                     # write_varlong - flist.c:582-585)
+                     # write_varlong - flist.c:585-588)
 a4 81 00 00          # mode: 0100644 in lowest 16 bits (write_int per
-                     # flist.c:594)
+                     # flist.c:598)
 e8 03 00 00          # uid: 1000 as 4-byte LE i32
 e8 03 00 00          # gid: 1000 as 4-byte LE i32
 ```
 
 After the last file entry, the file list terminates with a single zero
-byte (the end-of-list marker per upstream `flist.c:545-548`):
+byte (the end-of-list marker per upstream `flist.c:548-551`):
 
 ```
 00                   # end-of-list marker
@@ -360,13 +360,13 @@ byte (the end-of-list marker per upstream `flist.c:545-548`):
 
 At protocol 30+ the same fields are varint-encoded and a different
 xflags representation (`xfer_flags_as_varint`) is used per upstream
-`flist.c:549-558`. The end-of-list marker at protocol 30+ is a 0 varint
+`flist.c:552-561`. The end-of-list marker at protocol 30+ is a 0 varint
 (also a single zero byte, but the surrounding framing differs because
 xflags is varint).
 
 ### 2.9 Absence of INC_RECURSE markers
 
-INC_RECURSE is gated to protocol >= 30 in upstream `compat.c:710-745`
+INC_RECURSE is gated to protocol >= 30 in upstream `compat.c:711-754`
 (setting `inc_recurse` only when `compat_flags & CF_INC_RECURSE`). At
 protocol 28/29 there is no `compat_flags` byte, so the daemon cannot
 opt into incremental file lists and must build the full list before the
@@ -414,7 +414,7 @@ the wire at protocol 28/29.
 
 The connection terminates with a TCP FIN. The daemon may emit
 `@RSYNCD: EXIT\n` ahead of the FIN if the session was a `#list`
-(upstream `clientserver.c:1258`). For an actual transfer the daemon
+(upstream `clientserver.c:1267`). For an actual transfer the daemon
 closes the socket cleanly.
 
 ---
@@ -426,15 +426,15 @@ of each gating decision in both implementations.
 
 | Wire feature | oc-rsync source | Upstream source |
 |--------------|-----------------|-----------------|
-| ASCII greeting at proto < 30 | `daemon/sections/greeting.rs:13-35` | `compat.c:832-845`, `clientserver.c:172-195` |
-| No digest list at proto < 30 | `greeting.rs:22-24` | `compat.c:739-743` (digests added only when `protocol_version >= 30`) |
+| ASCII greeting at proto < 30 | `daemon/sections/greeting.rs:13-35` | `compat.c:841-854`, `clientserver.c:176-199` |
+| No digest list at proto < 30 | `greeting.rs:22-24` | `compat.c:748-752` (digests added only when `protocol_version >= 30`) |
 | `XFLG_OLD_PREFIXES` at proto < 29 | `filters/wire.rs:253-258`, `capabilities.rs:75` | `exclude.c:1675`, parsing at `exclude.c:1119-1133` |
-| No `compat_flags` exchange at proto < 30 | `capabilities.rs:31-41` (varint only at >= 30), no encoder writes the byte at < 30 | `compat.c:710` - the entire `else if (protocol_version >= 30)` block |
-| No INC_RECURSE at proto < 30 | `capabilities.rs:286-288`, `setup/capability.rs:114-117` | `compat.c:744-745`, `compat.c:710-712` |
-| Fixed 4-byte uid/gid/mtime/mode at proto < 30 | `flist/write/metadata.rs:130-138`, `flist/read/metadata.rs:143-162` | `flist.c:597-619` |
-| Fixed-width size at proto < 30 | `wire/file_entry_decode/size.rs:32-38` | `flist.c:580` (`write_varlong30(.., 3)` falls through to `write_int` at < 30) |
-| MD4 assumed at proto < 30 | `capabilities.rs:257-259` (negotiation only at >= 30) | `compat.c:414`, `compat.c:552` (`md5` at >= 30, otherwise `md4`) |
-| zlib only at proto < 30 | `capabilities.rs:241-244` (`preferred_compression`) | `compat.c:100-112` `valid_compressions_items[]` (zstd/zlibx need vstring negotiation) |
+| No `compat_flags` exchange at proto < 30 | `capabilities.rs:31-41` (varint only at >= 30), no encoder writes the byte at < 30 | `compat.c:711` - the entire `else if (protocol_version >= 30)` block |
+| No INC_RECURSE at proto < 30 | `capabilities.rs:286-288`, `setup/capability.rs:114-117` | `compat.c:753-754`, `compat.c:711-713` |
+| Fixed 4-byte uid/gid/mtime/mode at proto < 30 | `flist/write/metadata.rs:130-138`, `flist/read/metadata.rs:143-162` | `flist.c:601-623` |
+| Fixed-width size at proto < 30 | `wire/file_entry_decode/size.rs:32-38` | `flist.c:583` (`write_varlong30(.., 3)` falls through to `write_int` at < 30) |
+| MD4 assumed at proto < 30 | `capabilities.rs:257-259` (negotiation only at >= 30) | `compat.c:415`, `compat.c:553` (`md5` at >= 30, otherwise `md4`) |
+| zlib only at proto < 30 | `capabilities.rs:241-244` (`preferred_compression`) | `compat.c:101-113` `valid_compressions_items[]` (zstd/zlibx need vstring negotiation) |
 | Two-way goodbye at proto < 31 | `capabilities.rs:202-204` | `main.c:880-905` |
 
 ### Divergence sentinels

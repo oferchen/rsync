@@ -10,7 +10,7 @@
 //!
 //! Upstream reference:
 //! - `target/interop/upstream-src/rsync-3.5.1/clientserver.c` - daemon protocol
-//! - `target/interop/upstream-src/rsync-3.5.1/main.c:1341-1458` - client_run()
+//! - `target/interop/upstream-src/rsync-3.5.2/main.c:1344-1462` - client_run()
 
 mod common;
 
@@ -808,7 +808,7 @@ fn test_compat_flags_exchange_setup() {
 /// Server sends: supported checksums, supported compressions
 /// Client sends: chosen checksum, chosen compression
 ///
-/// Mirrors upstream compat.c:534-585 (negotiate_the_strings)
+/// Mirrors upstream compat.c:535-586 (negotiate_the_strings)
 #[test]
 #[ignore = "requires upstream rsync binary and full protocol implementation"]
 fn test_capability_negotiation_checksums() {

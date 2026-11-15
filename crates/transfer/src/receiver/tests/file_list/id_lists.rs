@@ -327,7 +327,7 @@ fn an_inline_entry_name_is_resolved_without_a_trailing_id_list() {
         .with_preserve_uid(true)
         .with_name_follows(true);
     writer.write_entry(&mut wire, &entry).expect("write entry");
-    // upstream: flist.c:2624 write_end_of_flist() - a single 0 flag byte ends
+    // upstream: flist.c:2635 write_end_of_flist() - a single 0 flag byte ends
     // the list in byte-flags mode.
     wire.push(0);
     // An EMPTY trailing id list: the terminator and nothing else. This is what
@@ -444,7 +444,7 @@ fn an_unknown_name_keeps_the_senders_id() {
 /// ownership decision the operator configured a converter to take away from
 /// the sender.
 ///
-/// upstream: clientserver.c:1329-1334 - a converter that cannot be spoken to
+/// upstream: clientserver.c:1338-1343 - a converter that cannot be spoken to
 /// is `exit_cleanup(RERR_SOCKETIO)`; the session never proceeds to map names
 /// without it.
 #[cfg(unix)]

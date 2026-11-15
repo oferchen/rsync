@@ -262,7 +262,7 @@ fn shipped_linux_report_says_acl_at() {
     assert!(!rendered.contains("no ACL-at"), "{rendered}");
 }
 
-/// upstream: compat.c:477-478 - the version lists keep the num-0 `none` entry.
+/// upstream: compat.c:478-479 - the version lists keep the num-0 `none` entry.
 #[test]
 fn checksum_list_matches_upstream() {
     let rendered = VersionInfoReport::new(golden_config()).human_readable();

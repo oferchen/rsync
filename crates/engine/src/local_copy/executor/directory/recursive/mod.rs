@@ -91,7 +91,7 @@ pub(crate) fn copy_directory_recursive(
 
 /// Walks a directory's immediate children even when global recursion is off.
 ///
-/// Mirrors upstream `flist.c:2992` which honours `(xfer_dirs && name_type != NORMAL_NAME)`
+/// Mirrors upstream `flist.c:3003` which honours `(xfer_dirs && name_type != NORMAL_NAME)`
 /// to walk one level beneath SLASH_ENDING_NAME / DOTDIR_NAME source arguments
 /// (and `--files-from` entries with the corresponding markers). Subdirectories
 /// encountered during this one-level walk are NOT recursed into further,
@@ -178,7 +178,7 @@ fn copy_directory_recursive_inner(
         DestinationState::Ready(None)
     } else {
         match check_destination_state(context, destination, relative) {
-            // upstream: generator.c:1745-1746 + 1873-1887 - a stat that fails
+            // upstream: generator.c:1782-1783 + 1873-1887 - a stat that fails
             // for any reason but ENOENT leaves the directory to the mkdir,
             // whose failure is reported and the directory's contents skipped.
             Err(error) if error.is_io_error() => {
@@ -208,7 +208,7 @@ fn copy_directory_recursive_inner(
     let existing_destination_metadata: Option<Box<fast_io::EntryMetadata>> =
         destination_state.existing_metadata().cloned().map(Box::new);
 
-    // upstream: generator.c:1858-1871 - when a directory is freshly created in
+    // upstream: generator.c:1895-1908 - when a directory is freshly created in
     // the destination but present in a `--copy-dest` basis, the generator
     // itemizes it as a local change (`cd` + blank) against the basis instead of
     // a new entry (`cd+++++++++`). The transfer root is materialised by the
@@ -232,7 +232,7 @@ fn copy_directory_recursive_inner(
     // The `dest_mode()` exists input for this directory: its stat from before
     // the transfer materialised it. A root the orchestrator just created
     // (`root_just_created`) and a replaced non-directory obstacle both count
-    // as fresh - upstream generator.c:1841-1856 resets `statret` to -1 for a
+    // as fresh - upstream generator.c:1878-1893 resets `statret` to -1 for a
     // deleted obstacle and judges `exists` before its own mkdir.
     let dir_pre_transfer: Option<&fast_io::EntryMetadata> = if root_just_created {
         None
@@ -243,7 +243,7 @@ fn copy_directory_recursive_inner(
     };
 
     let list_start = Instant::now();
-    // upstream: flist.c:2265-2266 - the operand's directory is opened through
+    // upstream: flist.c:2276-2277 - the operand's directory is opened through
     // `open_sender_source_path()`, whose held root is re-checked against the
     // identity recorded at flist.c:302-305. A root whose identity changed -
     // e.g. `dir/symlink/..`, which flist.c:2869 `clean_fname()` collapses to a
@@ -258,7 +258,7 @@ fn copy_directory_recursive_inner(
     // carry its error to the same end-of-frame re-raise the per-entry failures
     // use.
     let mut first_entry_io_error: Option<LocalCopyError> = None;
-    // upstream: flist.c:2365-2376 - `send_directory()` emits this directory's
+    // upstream: flist.c:2376-2387 - `send_directory()` emits this directory's
     // own entry and ACL (flist.c:2072-2083) BEFORE it opens the directory, so a
     // failed `opendir()` is an enumeration-only failure: upstream `return`s
     // without descending and the entry it already sent still reaches the
@@ -278,7 +278,7 @@ fn copy_directory_recursive_inner(
     // entry unrevoked. Continue with no children; the tail re-raises.
     let mut enumeration_failed = false;
     let mut unstatable = Vec::new();
-    // upstream: flist.c:2992 - a directory this frame will not walk (no
+    // upstream: flist.c:3003 - a directory this frame will not walk (no
     // recursion, not a trailing-slash or dot-dir source) is never opened, so an
     // unreadable one is not an error.
     let scan = if !walks_children {
@@ -350,7 +350,7 @@ fn copy_directory_recursive_inner(
     let mut created_directory_on_disk = false;
     let creation_record_pending = destination_missing && relative.is_some();
     let mut record_emitted = false;
-    // upstream: main.c:817-826 + generator.c:1853-1854 - when the receiver
+    // upstream: main.c:817-826 + generator.c:1890-1891 - when the receiver
     // mkdirs the destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`
     // and `itemize()` emits `cd+++++++++ ./` for the synthesized "." entry.
     // Synthesize a "." relative path for the root when the destination root
@@ -359,7 +359,7 @@ fn copy_directory_recursive_inner(
     // Subsequent runs against an existing destination still see relative=None
     // here, so no record is synthesized and the `-i` output omits the `./`
     // entry as upstream does (test line 74-79).
-    // upstream: main.c:817-826 + generator.c:1853-1854 - when the receiver
+    // upstream: main.c:817-826 + generator.c:1890-1891 - when the receiver
     // mkdirs the destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`
     // and `itemize()` emits `cd+++++++++ ./` for the synthesized "." entry.
     // The root flist entry has relative=None here because `non_empty_path("")`
@@ -395,7 +395,7 @@ fn copy_directory_recursive_inner(
         ))
     };
 
-    // upstream: main.c:808-810 + generator.c:1853-1854 - the root directory
+    // upstream: main.c:808-810 + generator.c:1890-1891 - the root directory
     // entry (".") is itemized as `cd+++++++++ ./` when the pre-flight mkdir
     // materialised the destination root. When `ensure_destination_directory`
     // already created the root above this call frame, the per-frame
@@ -411,7 +411,7 @@ fn copy_directory_recursive_inner(
             Duration::default(),
             Some(snapshot.clone()),
         );
-        // upstream: generator.c:1869-1871 - a copy-dest match itemizes the
+        // upstream: generator.c:1906-1908 - a copy-dest match itemizes the
         // directory against the basis (ITEM_LOCAL_CHANGE, no ITEM_IS_NEW).
         let record = if let Some(basis_meta) = copy_dest_basis.as_deref() {
             record.with_change_set(LocalCopyChangeSet::for_existing_directory(
@@ -430,7 +430,7 @@ fn copy_directory_recursive_inner(
         record_emitted = true;
     }
 
-    // upstream: generator.c:1869-1871 - when the destination directory already
+    // upstream: generator.c:1906-1908 - when the destination directory already
     // exists (`statret == 0`), the generator still calls `itemize()` with
     // `iflags=0`; `itemize()` then ORs in `ITEM_REPORT_TIME|PERMS|...` based
     // on the existing-vs-source metadata drift. The emit gate at
@@ -444,7 +444,7 @@ fn copy_directory_recursive_inner(
     // the context flags `emit_unchanged` (mirroring `INFO_GTE(NAME, 2)`), so
     // non-verbose runs continue to omit unchanged dirs while `-vv` surfaces
     // them as `.d` rows.
-    // upstream: generator.c:1869-1927 - for an existing directory the itemize
+    // upstream: generator.c:1906-1964 - for an existing directory the itemize
     // row precedes the child transfer rows, but a `--delete-before`/`during`
     // sweep of that directory's extraneous entries is emitted BEFORE the
     // directory's own row (do_delete_pass runs first for `before`;
@@ -465,7 +465,7 @@ fn copy_directory_recursive_inner(
         && let Some((ref rel_path, ref snapshot)) = metadata_record
         && let Some(existing_meta) = existing_destination_metadata.as_deref()
     {
-        // upstream: generator.c:563-576 - ACL/xattr drift is computed by
+        // upstream: generator.c:600-613 - ACL/xattr drift is computed by
         // `set_acl(NULL, ...)` and `xattr_diff(...)`, both of which compare
         // the actual on-disk attribute payloads. Deviation from upstream: this
         // existing-directory row always leaves the ACL and xattr flags clear,
@@ -540,7 +540,7 @@ fn copy_directory_recursive_inner(
                 _ => fs::create_dir(destination),
             };
             if let Err(error) = created {
-                // upstream: generator.c:1873-1887 - the failed mkdir is the
+                // upstream: generator.c:1910-1924 - the failed mkdir is the
                 // directory's own error, reported once; every entry below it
                 // is skipped (`skip_dir`) and the run ends RERR_PARTIAL.
                 if !directory_failed.replace(true) {
@@ -572,7 +572,7 @@ fn copy_directory_recursive_inner(
                 Duration::default(),
                 Some(snapshot.clone()),
             );
-            // upstream: generator.c:1869-1871 - a copy-dest match itemizes the
+            // upstream: generator.c:1906-1908 - a copy-dest match itemizes the
             // directory against the basis (ITEM_LOCAL_CHANGE, no ITEM_IS_NEW).
             let record = if let Some(basis_meta) = copy_dest_basis.as_deref() {
                 record.with_change_set(LocalCopyChangeSet::for_existing_directory(
@@ -594,7 +594,7 @@ fn copy_directory_recursive_inner(
         Ok(())
     };
 
-    // upstream: flist.c:2992 - global recursion off AND not a trailing-slash
+    // upstream: flist.c:3003 - global recursion off AND not a trailing-slash
     // / DOTDIR source: emit the directory entry only and stop. Trailing-slash
     // sources (`force_walk_one_level`) fall through to walk one level so
     // upstream's `(xfer_dirs && name_type != NORMAL_NAME)` semantics hold.
@@ -642,7 +642,7 @@ fn copy_directory_recursive_inner(
         ensure_directory(context)?;
     }
 
-    // upstream: generator.c:1895-1912 - the generator applies a directory's
+    // upstream: generator.c:1932-1949 - the generator applies a directory's
     // tweaked mode and re-adds owner-rwx BEFORE writing its contents. For the
     // transfer root ("dst/.") a --chmod that strips owner-execute makes that
     // re-add chmod fail (EACCES) and the root can no longer be entered, so none
@@ -657,7 +657,7 @@ fn copy_directory_recursive_inner(
         return Err(error);
     }
 
-    // upstream: generator.c:1895-1912 - the strict dest_mode() chmod
+    // upstream: generator.c:1932-1949 - the strict dest_mode() chmod
     // (set_file_attrs) and the owner-rwx raise land at the directory's FIRST
     // visit, before any of its contents transfer. A pre-existing destination
     // directory whose on-disk bits deny owner rwx (e.g. 0555) must be raised
@@ -670,7 +670,7 @@ fn copy_directory_recursive_inner(
 
     let mut plan = plan_directory_entries(context, &entries, relative, root_device)?;
     context.set_batch_listing_dir(None);
-    // upstream: hlink.c:match_gnums / generator.c:2214-2215 - the last name-sorted
+    // upstream: hlink.c:match_gnums / generator.c:2255-2257 - the last name-sorted
     // member of a hard-link cohort is the transferred data-holder; earlier members
     // follow it as `hf ... => <holder>` aliases. Reorder the plan so the executor's
     // per-inode tracker records the holder first and every alias points at it.
@@ -682,7 +682,7 @@ fn copy_directory_recursive_inner(
         &mut plan.planned_entries,
     );
     apply_pre_transfer_deletions(context, destination, relative, &plan)?;
-    // upstream: generator.c:1924-1927 - a non-INC_RECURSE `--delete-during`
+    // upstream: generator.c:1961-1964 - a non-INC_RECURSE `--delete-during`
     // sweep runs while the generator itemizes the directory entry, before it
     // recurses into that directory's children. Emit those `*deleting` rows
     // ahead of the child transfer rows to match upstream's per-directory
@@ -733,7 +733,7 @@ fn copy_directory_recursive_inner(
                 }
             }
             Err(error) if error.is_vanished_error() => {
-                // upstream: flist.c:1688 / sender.c:715 - vanished files produce
+                // upstream: flist.c:1692 / sender.c:723 - vanished files produce
                 // a warning and set IOERR_VANISHED (exit code 24). The bit gates
                 // no deletion (generator.c:304 tests only IOERR_GENERAL), and
                 // the warning names the vanished file once: a subdirectory
@@ -824,7 +824,7 @@ fn copy_directory_recursive_inner(
 /// Names a contents-copy operand's root the way upstream's `opendir` failure
 /// does: the lexically cleaned directory with `/.` appended.
 ///
-/// upstream: flist.c:2828-2833 appends `/.` to the operand, flist.c:2882
+/// upstream: flist.c:2839-2844 appends `/.` to the operand, flist.c:2893
 /// `clean_fname()` collapses `..` lexically, and flist.c:2374 reports the
 /// buffer through `full_fname()`.
 fn operand_root_fname(path: &Path) -> String {

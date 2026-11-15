@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn mplex_reader_absorbs_empty_data_keepalive() {
-        // An empty DATA frame is upstream's lull keepalive (io.c:1659
+        // An empty DATA frame is upstream's lull keepalive (io.c:1666
         // `send_msg(MSG_DATA, "", 0, 0)`). It must be absorbed silently: the
         // reader skips it and returns the following real frame's bytes, never a
         // premature `Ok(0)` that a caller would read as end-of-stream.

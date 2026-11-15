@@ -75,7 +75,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
     let mut cleared: Vec<bool> = vec![false; n];
 
     let mut prev_depth: i64 = 0;
-    // upstream: flist.c:3669 - "It's OK that this isn't really true."
+    // upstream: flist.c:3680 - "It's OK that this isn't really true."
     let mut prev_i: usize = 0;
 
     for i in 0..n {
@@ -84,7 +84,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
         let depth = entry_depth(entry) as i64;
 
         if is_dir && depth > 0 {
-            // upstream: flist.c:3678-3685 - "Dump empty dirs when coming back
+            // upstream: flist.c:3689-3696 - "Dump empty dirs when coming back
             // down." Walk back through the candidate chain via prev_i,
             // clearing any candidates whose depth is at or below the current
             // dir's depth that were never reprieved.
@@ -107,7 +107,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
 
             prev_depth = depth;
 
-            // upstream: flist.c:3687 - is_excluded(name, 1, ALL_FILTERS).
+            // upstream: flist.c:3698 - is_excluded(name, 1, ALL_FILTERS).
             // Returns 1 when the dir is excluded by the receiver's filter
             // chain. In that branch, upstream reprieves the chain. ALL_FILTERS
             // is the receiver-side view, so use allows_deletion (which honours
@@ -117,7 +117,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
             let dir_is_excluded = !filter_chain.allows_deletion(entry.path().as_path(), true);
 
             if dir_is_excluded {
-                // upstream: flist.c:3688-3695 - "Keep dirs through this dir."
+                // upstream: flist.c:3699-3706 - "Keep dirs through this dir."
                 // Walk the chain restoring F_DEPTH to descending depths.
                 let mut j = prev_depth - 1;
                 loop {
@@ -131,14 +131,14 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
                     j -= 1;
                 }
             } else {
-                // upstream: flist.c:3696-3697 - mark this dir as a candidate
+                // upstream: flist.c:3707-3708 - mark this dir as a candidate
                 // whose F_DEPTH points back to the prior chain head.
                 marker[i] = -(prev_i as i64) - 1;
             }
 
             prev_i = i;
         } else {
-            // upstream: flist.c:3700-3707 - "Keep dirs through this non-dir."
+            // upstream: flist.c:3711-3718 - "Keep dirs through this non-dir."
             // Any non-dir (or depth-0 dir) entry proves its ancestor candidate
             // chain is non-empty; reprieve them all.
             let mut j = prev_depth;
@@ -155,7 +155,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
         }
     }
 
-    // upstream: flist.c:3710-3717 - "Dump all remaining empty dirs."
+    // upstream: flist.c:3721-3728 - "Dump all remaining empty dirs."
     loop {
         let m = marker[prev_i];
         if m >= 0 {
@@ -167,7 +167,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
         prev_i = next_prev;
     }
 
-    // upstream: flist.c:3719-3728 retightens flist->low/high after clearing
+    // upstream: flist.c:3730-3739 retightens flist->low/high after clearing
     // entries. We do not maintain a low/high range; instead, mirror upstream's
     // `clear_file()` in place so flat indices keep mapping to wire NDX. The
     // downstream receiver iteration filters by `is_dir()` / `is_file()`, both
@@ -182,7 +182,7 @@ pub(in crate::receiver) fn prune_empty_dirs_pass(
 
 /// Returns the upstream `F_DEPTH(file)` value for an entry.
 ///
-/// upstream: flist.c:1446-1450 - depth is 1 + number of intermediate directory
+/// upstream: flist.c:1450-1454 - depth is 1 + number of intermediate directory
 /// separators in the relative path, decremented by 1 for dir entries whose
 /// basename is `.`.
 fn entry_depth(entry: &FileEntry) -> usize {
@@ -317,7 +317,7 @@ mod tests {
     }
 
     /// A receiver-only rule must reprieve an otherwise-empty directory,
-    /// mirroring upstream `flist.c:3687` `is_excluded(name, 1, ALL_FILTERS)`.
+    /// mirroring upstream `flist.c:3698` `is_excluded(name, 1, ALL_FILTERS)`.
     ///
     /// A `protect`/`P` rule is receiver-side only: the sender never applies it
     /// and ships the empty directory, so the prune pass is the only place the

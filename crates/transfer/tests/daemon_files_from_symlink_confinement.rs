@@ -33,9 +33,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/options.c:2652-2671` - `operator_path_resolve = am_daemon ?
+//! - `rsync-3.5.2/options.c:2707-2726` - `operator_path_resolve = am_daemon ?
 //!   1 : 0;` around `open_no_attacker_symlinks(files_from, ...)`.
-//! - `rsync-3.5.1/syscall.c:232-291` `abspath_outside_confinement()`.
+//! - `rsync-3.5.2/syscall.c:232-291` `abspath_outside_confinement()`.
 #![cfg(unix)]
 use std::fs;
 use std::io;
@@ -174,7 +174,7 @@ fn pull_with_module_list(request: Request, sandbox: Sandbox) -> Outcome {
     let config = root.join("rsyncd.conf");
     write_config(&config, &module_root, root).expect("write daemon config");
     // The escape cell starts the daemon from INSIDE the module, which is the
-    // cwd upstream serves from (clientserver.c:1059). There a relative list
+    // cwd upstream serves from (clientserver.c:1063). There a relative list
     // reaches the plant even without anchoring, so only the confinement can
     // stop the read. The other cells start it from outside, so a relative list
     // that is not anchored at the module misses its file.
@@ -262,7 +262,7 @@ fn a_daemon_files_from_symlink_leaving_the_module_is_refused() {
 }
 
 /// The same disclosure without any symlink: an absolute value must re-root at
-/// the module (upstream `options.c:2641-2642` `sanitize_path()`), never name a
+/// the module (upstream `options.c:2696-2697` `sanitize_path()`), never name a
 /// path on the daemon's filesystem.
 #[test]
 fn an_absolute_daemon_files_from_cannot_name_a_file_outside_the_module() {

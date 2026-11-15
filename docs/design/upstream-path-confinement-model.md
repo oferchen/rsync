@@ -25,7 +25,7 @@ by a mode flag rather than by two separate entry points.
 | Trust signal | **location** | **authority (ownership)** |
 | Applies to | peer-supplied transfer paths | operator-supplied paths: `--backup-dir`, `--temp-dir`, `--*-dest`, merge files; since 3.5.1 also non-daemon `--files-from` entries on the sender |
 
-`syscall.c:690-697` states the reasoning directly: *"An operator path may
+`syscall.c:759-766` states the reasoning directly: *"An operator path may
 legitimately point outside the tree, so the trust signal is authority
 (ownership), not location."*
 
@@ -82,7 +82,7 @@ distinguishing daemon from non-daemon provenance, hands a client the ability to
 turn off the daemon's confinement.
 
 **The enforcement mechanism is the refuse-options list, not an ad-hoc check.**
-`options.c:1087` adds it unconditionally when serving a module:
+`options.c:1105` adds it unconditionally when serving a module:
 
 ```c
 /* A client must never disable the daemon's symlink confinement:
@@ -92,7 +92,7 @@ turn off the daemon's confinement.
 parse_one_refuse_match(0, "insecure-links", list_end);
 ```
 
-**And the flag is never forwarded to a remote peer** (`options.c:3078-3081`).
+**And the flag is never forwarded to a remote peer** (`options.c:3146-3149`).
 It is a local-only opt-out: a remote-shell peer that wants it must be given it
 on its own side, e.g. via `--rsync-path`. So there are three separate rules to
 mirror — the daemon refuses it inbound, the client does not send it outbound,
@@ -138,7 +138,7 @@ in behaviour:
   exactly as in stock rsync. The defence for a writable module is
   `munge symlinks`, not this walk.
 - **`owner_walk_parent()` leaf-checks too.** The walk resolves the *parent*, so
-  the resolved leaf is checked separately (`syscall.c:727-736`) - otherwise a
+  the resolved leaf is checked separately (`syscall.c:796-805`) - otherwise a
   symlinked operator path could act on a leaf resolving outside the module in an
   otherwise-served directory. The check is `check_abspath_leaf()`
   (`syscall.c:294-318`): a `snprintf` overflow returns `ENAMETOOLONG`
@@ -169,9 +169,9 @@ Two details that are the difference between a defence and a hole:
 symlink could otherwise redirect a backup symlink-create or a directory removal
 outside the backup tree:
 
-- `do_symlink_at()` (`syscall.c:904`) — backing a symlink into an operator `--backup-dir`
-- `do_rmdir_at()` (`syscall.c:1541`) — removing a pre-existing backup directory
-- `do_rename_at()` (`syscall.c:2005`), `do_link_at()` (`syscall.c:1076`) — each confines its side **independently**
+- `do_symlink_at()` (`syscall.c:973`) — backing a symlink into an operator `--backup-dir`
+- `do_rmdir_at()` (`syscall.c:1610`) — removing a pre-existing backup directory
+- `do_rename_at()` (`syscall.c:2076`), `do_link_at()` (`syscall.c:1145`) — each confines its side **independently**
 - `robust_rename()`'s cross-filesystem (EXDEV) copy fallback — 3.5.0 confines both the fallback copy **and its source unlink**
 
 Other `do_*_at` wrappers on the same walk: `do_unlink_at`, `do_lchown_at`,
@@ -191,7 +191,7 @@ Other `do_*_at` wrappers on the same walk: `do_unlink_at`, `do_lchown_at`,
   absent there.
 - The refusal-errno predicate is **entirely new in 3.5.0** — `NOFOLLOW_HIT_SYMLINK`
   does not exist in 3.4.4, and neither does any `EFTYPE` handling. It is defined
-  in `rsync.h:438-442`, gated on whether the platform defines `EFTYPE` at all:
+  in `rsync.h:454-458`, gated on whether the platform defines `EFTYPE` at all:
 
   ```c
   #ifdef EFTYPE
@@ -223,7 +223,7 @@ Refusal surfaces as `errno = ELOOP` from `owner_walk_parent()` on a confinement
 escape. Since 3.5.1 a symlink refused for an untrusted owner also prints
 `refusing to follow a symlink owned by an untrusted user; use --insecure-links
 locally or "insecure links = yes" in a daemon module ONLY if every path
-component is trusted` as `FERROR` before the `ELOOP` (`syscall.c:499-506`).
+component is trusted` as `FERROR` before the `ELOOP` (`syscall.c:560-567`).
 The upstream tests assert on the resulting message and exit code, not merely on
 the transfer failing, so an implementation that refuses with a different
 observable still fails them.
@@ -263,24 +263,24 @@ model:
     non-daemon sender with `--files-from` and none of `--copy-unsafe-links`,
     `--copy-dirlinks` or `--insecure-links`. `--copy-links` disables it unless
     `filesfrom_owner_walk_override` is set.
-  - `do_open_checklinks()` (`syscall.c:3617-3642`) then opens each entry
+  - `do_open_checklinks()` (`syscall.c:3685-3710`) then opens each entry
     through `owner_walk_parent()` with `O_NOFOLLOW` on the leaf, and the
     `--confine-root` check applies to those entries.
   - The list file itself is opened with `operator_path_resolve` set only on a
-    daemon (`options.c:2663`). 3.5.0 set it unconditionally.
+    daemon (`options.c:2718`). 3.5.0 set it unconditionally.
 - **User-namespace pins.** `/proc/self`, `/dev/fd` and `/dev/std*` symlinks may
   report the overflow uid inside a user namespace. The walk lets those exact
-  components through while it is anchored at `/` (`syscall.c:489-498`)
+  components through while it is anchored at `/` (`syscall.c:550-559`)
   (`NEWS.md:23-25`).
 - **Kernel pseudo-paths.** A `/dev/fd/N` entry that resolves to `pipe:[...]`,
   `socket:[...]` or `anon_inode:...` is opened directly when it is the last
   component, so FIFO and process-substitution input works again
-  (`syscall.c:519-552`). Under `--confine-root` such an entry is refused with
+  (`syscall.c:580-613`). Under `--confine-root` such an entry is refused with
   `ENOENT`, because it cannot be proven to sit beneath the root
-  (`syscall.c:530-535`).
+  (`syscall.c:591-596`).
 - **Directory targets re-checked.** An `O_DIRECTORY` open that resolves
   entirely to a directory is checked with `final = 1` and reopened with the
-  caller's flags instead of handing back the traversal fd (`syscall.c:645-655`).
+  caller's flags instead of handing back the traversal fd (`syscall.c:714-724`).
 - **rrsync restricted-root paths** (`NEWS.md:28-30`) are covered in
   [upstream-rrsync-model.md](upstream-rrsync-model.md).
 

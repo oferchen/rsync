@@ -290,7 +290,7 @@ impl SumHead {
     /// the generator wrote only `4 + xfer_sum_len`, desyncing the stream.
     /// Gating on the negotiated width closes that gap.
     ///
-    /// upstream: io.c:2235 `max_blength = protocol_version < 30 ?
+    /// upstream: io.c:2242 `max_blength = protocol_version < 30 ?
     /// OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE` and io.c:2279-2282 `read_sum_head()` - `if
     /// (sum->s2length > xfer_sum_len) exit_cleanup(RERR_PROTOCOL)`.
     ///
@@ -313,7 +313,7 @@ impl SumHead {
 
     /// Builds a `RERR_PROTOCOL`-mapped error for a malformed sum_head field.
     ///
-    /// upstream: io.c:2233-2290 `read_sum_head()` validates every field and
+    /// upstream: io.c:2240-2297 `read_sum_head()` validates every field and
     /// calls `exit_cleanup(RERR_PROTOCOL)` (exit 2) on any out-of-range value.
     /// The error is tagged so the core exit-code mapper yields RERR_PROTOCOL(2)
     /// rather than RERR_STREAMIO(12), and carries the role trailer upstream
@@ -338,7 +338,7 @@ impl SumHead {
     /// the generator actually wrote would desync the stream. This is the read
     /// used before [`read_signature_blocks`](crate::generator::read_signature_blocks).
     ///
-    /// upstream: io.c:2233 `read_sum_head()`, called from sender.c:345 `receive_sums()`.
+    /// upstream: io.c:2240 `read_sum_head()`, called from sender.c:353 `receive_sums()`.
     pub fn read_negotiated<R: Read>(
         reader: &mut R,
         protocol_version: u8,
@@ -504,7 +504,7 @@ impl SenderAttrs {
         };
 
         let xname = if iflags & Self::ITEM_XNAME_FOLLOWS != 0 {
-            // Read vstring: upstream io.c:2212-2229 read_vstring()
+            // Read vstring: upstream io.c:2219-2236 read_vstring()
             // Format: first byte is length; if bit 7 set, length = (byte & 0x7F) * 256 + next_byte
             let mut len_byte = [0u8; 1];
             reader.read_exact(&mut len_byte)?;
@@ -648,7 +648,7 @@ pub fn write_signature_blocks<W: Write + ?Sized>(
     signature: &FileSignature,
     s2length: u32,
 ) -> io::Result<()> {
-    // upstream: io.c:2279 - a sum_head never advertises more than the widest
+    // upstream: io.c:2286 - a sum_head never advertises more than the widest
     // transfer digest, so a larger width is a caller bug, not something to clamp.
     if s2length > MAX_STRONG_SUM_LEN {
         return Err(io::Error::new(
@@ -906,7 +906,7 @@ mod xattr_abbrev_guard_tests {
 
     #[test]
     fn malformed_sum_head_is_tagged_protocol_violation() {
-        // WHY: upstream io.c:2237-2240 read_sum_head() aborts a negative checksum
+        // WHY: upstream io.c:2244-2247 read_sum_head() aborts a negative checksum
         // count with exit_cleanup(RERR_PROTOCOL) (exit 2), not RERR_STREAMIO.
         // The InvalidData error must carry the ProtocolViolation marker so the
         // core exit-code mapper yields 2; otherwise a hostile sum_head collapses

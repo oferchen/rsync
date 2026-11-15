@@ -12,7 +12,7 @@ impl ClientConfig {
     /// Returns the `--port=PORT` default for daemon targets that name no port.
     ///
     /// `None` means the operator supplied no `--port`, so the connection falls
-    /// back to 873 (upstream `RSYNC_PORT`, `main.c:1610`).
+    /// back to 873 (upstream `RSYNC_PORT`, `main.c:1614`).
     #[must_use]
     #[doc(alias = "--port")]
     pub const fn daemon_port(&self) -> Option<u16> {
@@ -152,7 +152,7 @@ impl ClientConfig {
     /// that many seconds. Upstream applies the same `io_timeout` uniformly to
     /// every transport (the SSH pipe included) via `set_io_timeout(io_timeout)`.
     ///
-    /// upstream: options.c:2520 `set_io_timeout(io_timeout)`, io.c:1284 `set_io_timeout()`.
+    /// upstream: options.c:2575 `set_io_timeout(io_timeout)`, io.c:1291 `set_io_timeout()`.
     #[must_use]
     pub fn ssh_io_timeout(&self) -> Option<std::time::Duration> {
         self.timeout
@@ -246,7 +246,7 @@ impl ClientConfig {
     /// old-args, and `None` uses the default (disabled unless `RSYNC_OLD_ARGS`
     /// is set in the environment).
     ///
-    /// upstream: options.c:1755 OPT_OLD_ARGS, `RSYNC_OLD_ARGS` env var.
+    /// upstream: options.c:1791 OPT_OLD_ARGS, `RSYNC_OLD_ARGS` env var.
     #[doc(alias = "--old-args")]
     #[doc(alias = "--no-old-args")]
     pub const fn old_args(&self) -> Option<u8> {
@@ -352,7 +352,7 @@ mod tests {
     fn ssh_io_timeout_maps_positive_timeout_to_seconds() {
         // WHY: --timeout N must reach the SSH stall watchdog so a hung remote
         // aborts after N seconds instead of hanging the client forever.
-        // upstream: options.c:829 --timeout sets io_timeout; options.c:2520
+        // upstream: options.c:832 --timeout sets io_timeout; options.c:2575
         // set_io_timeout applies it to every transport, the SSH pipe included.
         let mut config = default_config();
         config.timeout = TransferTimeout::Seconds(std::num::NonZeroU64::new(45).unwrap());

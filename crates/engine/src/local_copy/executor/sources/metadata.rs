@@ -16,7 +16,7 @@ use super::types::SourceMetadataResult;
 ///
 /// Under `--relative` the marker rides on the name upstream stats directly
 /// (`flist.c:2892-2897` strips it and records it in `name_type`). Without
-/// `--relative` upstream splits the operand at its last `/` (`flist.c:2847-2858`),
+/// `--relative` upstream splits the operand at its last `/` (`flist.c:2858-2869`),
 /// so a trailing marker makes the WHOLE operand the directory
 /// `change_pathname()` chdir()s into before `.` is stat'd - and that chdir
 /// follows symlinks and demands a real directory, which is exactly what the
@@ -73,7 +73,7 @@ pub(super) fn operand_stat_path<'a>(
 /// a plain non-directory operand therefore keeps its lstat result and is
 /// transferred as itself - which is what distinguishes this from `--copy-links`.
 ///
-/// Upstream's `copy_links` short-circuit (`flist.c:514`) is applied only to a
+/// Upstream's `copy_links` short-circuit (`flist.c:517`) is applied only to a
 /// marked operand. Every other operand keeps reaching
 /// [`resolve_effective_metadata`], which already reproduces both it and the
 /// dir-only `--copy-dirlinks` rule from the lstat result returned here; the
@@ -85,7 +85,7 @@ pub(super) fn operand_link_stat(
     source: &SourceSpec,
     source_path: &Path,
 ) -> io::Result<Metadata> {
-    // upstream: rsync-3.5.1/flist.c:465-466 `scan_link_stat()` - a
+    // upstream: rsync-3.5.2/flist.c:468-469 `scan_link_stat()` - a
     // `--files-from` entry is stat'd through the ownership walk, following a
     // leaf symlink only for a marked (directory) entry since the walk is
     // inactive under `--copy-dirlinks`.
@@ -126,7 +126,7 @@ pub(super) fn fetch_source_metadata(
     relative_root: Option<&Path>,
     metadata_start: Instant,
 ) -> Result<SourceMetadataResult, LocalCopyError> {
-    // upstream: flist.c:2914-2921 - the operand's `dir` half is entered before
+    // upstream: flist.c:2925-2932 - the operand's `dir` half is entered before
     // its `.` half is stat'd, so this precedes `link_stat` and `--missing-args`.
     if !context.sender_options().relative_paths_enabled()
         && let Some((dir, error)) = crate::local_copy::operand_change_dir_failure(source.path())

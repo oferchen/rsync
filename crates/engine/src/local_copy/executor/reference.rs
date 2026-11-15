@@ -70,9 +70,9 @@ pub(crate) fn resolve_reference_candidate(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/generator.c:962` `basis_link_stat()` - the non-daemon arm:
+/// - `rsync-3.5.2/generator.c:999` `basis_link_stat()` - the non-daemon arm:
 ///   `owner_walk_parent()` then `link_stat_at()` on the leaf.
-/// - `rsync-3.5.1/generator.c:1084` / `:1110` / `:1227` / `:1254` - its call
+/// - `rsync-3.5.2/generator.c:1121` / `:1110` / `:1227` / `:1254` - its call
 ///   sites in `try_dests_reg()` and `try_dests_non()`.
 #[cfg(unix)]
 fn basis_stat(path: &Path) -> io::Result<fast_io::EntryMetadata> {
@@ -132,7 +132,7 @@ fn unix_time_parts(time: SystemTime) -> (i64, u32) {
 /// Whether a reference basis carries the source's modification time under
 /// `--modify-window`.
 ///
-/// upstream: `rsync-3.5.1/util1.c:1744` `same_time()` - a zero window (the
+/// upstream: `rsync-3.5.2/util1.c:1744` `same_time()` - a zero window (the
 /// default) compares whole seconds, a negative window compares seconds and
 /// nanoseconds, and a positive window is a whole-second tolerance.
 fn reference_mtime_matches(
@@ -149,7 +149,7 @@ fn reference_mtime_matches(
 }
 
 /// Reports whether a reference basis already carries the source's preserved
-/// attributes, mirroring upstream `generator.c:475 unchanged_attrs()`.
+/// attributes, mirroring upstream `generator.c:512 unchanged_attrs()`.
 ///
 /// A `true` result is upstream match_level 3 (data and attributes both match):
 /// the basis is hard-linked (`--link-dest`) or treated as up-to-date
@@ -163,7 +163,7 @@ fn reference_mtime_matches(
 /// permission bits (`perms_differ`), owner/group (`ownership_differs`), mtime
 /// (`any_time_differs`), and, when `-X` is active, the transferable extended
 /// attributes (`xattrs_differ`), each gated on the corresponding preserve option.
-/// upstream: generator.c:475-509 unchanged_attrs - perms/ownership/time/xattr.
+/// upstream: generator.c:512-546 unchanged_attrs - perms/ownership/time/xattr.
 pub(crate) fn reference_attrs_unchanged(
     basis: &Path,
     source: &Path,
@@ -183,7 +183,7 @@ pub(crate) fn reference_attrs_unchanged(
         return false;
     }
 
-    // upstream: generator.c:400 mtime_differs -> util1.c:1744 same_time - the
+    // upstream: generator.c:437 mtime_differs -> util1.c:1744 same_time - the
     // mtime must match for a level-3 basis, and `same_time` compares WHOLE
     // SECONDS for the default `modify_window` of 0. Nanoseconds only enter the
     // comparison for a negative window (`--modify-window` < 0, nsec-exact), and
@@ -196,7 +196,7 @@ pub(crate) fn reference_attrs_unchanged(
         return false;
     }
 
-    // upstream: generator.c:482 perms_differ - Unix compares the full permission
+    // upstream: generator.c:519 perms_differ - Unix compares the full permission
     // bits; on platforms without POSIX modes (Windows) the only preserved
     // permission is the read-only attribute, matching how oc applies and
     // quick-checks permissions there.
@@ -214,7 +214,7 @@ pub(crate) fn reference_attrs_unchanged(
         if options.group() && source_meta.gid() != basis_meta.gid() {
             return false;
         }
-        // upstream: generator.c:509 - xattrs_differ() demotes to match_level 2,
+        // upstream: generator.c:546 - xattrs_differ() demotes to match_level 2,
         // forcing the copy + set_file_attrs that reapplies the source xattrs.
         // Owner, group, and xattrs have no meaningful equivalent on non-Unix
         // platforms, where oc preserves none of them.
@@ -254,7 +254,7 @@ fn reference_permissions_match(
 /// Searches configured reference directories for a file matching the source and
 /// returns the action for the BEST candidate.
 ///
-/// upstream: generator.c:1073-1198 `try_dests_reg()` scans every `basis_dir[]`,
+/// upstream: generator.c:1110-1235 `try_dests_reg()` scans every `basis_dir[]`,
 /// tracking the highest match_level (2 = data matches `quick_check_ok`, 3 = data
 /// and attributes both match `unchanged_attrs`), breaking early only on an exact
 /// (level-3) match, then acts on the best candidate. A first-match scan wrongly
@@ -290,7 +290,7 @@ pub(crate) fn find_reference_action(
     let mut best: Option<(ReferenceDirectoryKind, PathBuf, u8)> = None;
     for reference in context.reference_directories() {
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
-        // upstream: generator.c:1084 `if (basis_link_stat(cmpbuf, &sxp->st) < 0
+        // upstream: generator.c:1121 `if (basis_link_stat(cmpbuf, &sxp->st) < 0
         // || !S_ISREG(sxp->st.st_mode)) continue;` - and likewise at :1110,
         // :1227 and :1254. EVERY caller treats ANY stat failure as "no candidate
         // in this basis dir", not just ENOENT. An alt-dest arg that is missing
@@ -341,7 +341,7 @@ pub(crate) fn find_reference_action(
         {
             best = Some((reference.kind(), candidate, level));
         }
-        // upstream: generator.c:1099 - an exact match ends the scan immediately.
+        // upstream: generator.c:1136 - an exact match ends the scan immediately.
         if level == 3 {
             break;
         }
@@ -378,7 +378,7 @@ pub(crate) fn find_reference_action(
 /// pointing at `target`. A copy-dest match reconstructs the link from the basis
 /// and itemizes it as a local change (`cL`) instead of a new entry.
 ///
-/// upstream: generator.c:1235 quick_check_ok(FT_SYMLINK) compares link targets.
+/// upstream: generator.c:1272 quick_check_ok(FT_SYMLINK) compares link targets.
 pub(crate) fn find_copy_dest_symlink(
     context: &CopyContext<'_>,
     destination: &Path,
@@ -396,7 +396,7 @@ pub(crate) fn find_copy_dest_symlink(
 /// receiver neither recreates it nor reports a transfer; it itemizes `.L`
 /// against the basis.
 ///
-/// upstream: generator.c:1299 - COMPARE_DEST forces `chg = 0` for non-directory
+/// upstream: generator.c:1336 - COMPARE_DEST forces `chg = 0` for non-directory
 /// matches, so the update char stays `.`.
 pub(crate) fn find_compare_dest_symlink(
     context: &CopyContext<'_>,
@@ -425,7 +425,7 @@ fn find_reference_symlink(
             continue;
         }
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
-        // upstream: generator.c:1227 `if (basis_link_stat(cmpbuf, &sxp->st) < 0)
+        // upstream: generator.c:1264 `if (basis_link_stat(cmpbuf, &sxp->st) < 0)
         // continue;` in try_dests_non() - ANY stat failure means "no candidate in
         // this basis dir", not just ENOENT, exactly as the regular-file lookup
         // above already treats it. An alt-dest arg that is not a directory yields
@@ -436,7 +436,7 @@ fn find_reference_symlink(
         if !candidate_metadata.file_type().is_symlink() {
             continue;
         }
-        // upstream: generator.c:642-646 quick_check_ok() FT_SYMLINK - a readlink
+        // upstream: generator.c:679-683 quick_check_ok() FT_SYMLINK - a readlink
         // that fails (`len <= 0`) returns 0, which try_dests_non() turns into a
         // `continue`. The unreadable basis link is skipped, never fatal.
         match fs::read_link(&candidate) {
@@ -458,7 +458,7 @@ fn find_reference_symlink(
 /// directories are never hard-linked, so all three kinds behave identically
 /// here.
 ///
-/// upstream: generator.c:1258-1303 try_dests_non() - a match itemizes with
+/// upstream: generator.c:1295-1340 try_dests_non() - a match itemizes with
 /// ITEM_LOCAL_CHANGE and never sets ITEM_IS_NEW (the LINK_DEST hard-link branch
 /// is skipped for directories at line 1268, and COMPARE_DEST forces
 /// ITEM_LOCAL_CHANGE for directories at lines 1299-1300).
@@ -473,7 +473,7 @@ pub(crate) fn find_copy_dest_basis(
     // row itemizes against the basis root.
     for reference in context.reference_directories() {
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
-        // upstream: generator.c:1227 - `if (basis_link_stat(cmpbuf, &sxp->st) < 0
+        // upstream: generator.c:1264 - `if (basis_link_stat(cmpbuf, &sxp->st) < 0
         // || ...) continue;`. ANY stat failure means "no candidate in this basis
         // dir", not just ENOENT. This is the transfer-root (`./`) lookup, so an
         // alt-dest arg naming a plain file yields ENOTDIR here on the very first

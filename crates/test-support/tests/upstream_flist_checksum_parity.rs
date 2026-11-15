@@ -1,7 +1,7 @@
 //! oc's `--checksum` file list must be byte-identical to upstream rsync's.
 //!
 //! Under `-c` the sender stores each regular file's whole-file digest in its
-//! flist entry (upstream: flist.c:1815 make_file() calling checksum.c:419
+//! flist entry (upstream: flist.c:1819 make_file() calling checksum.c:419
 //! file_checksum(), written by flist.c:1228 send_file_entry()), and the
 //! receiver skips a file only when its own digest of the basis equals that
 //! sum (generator.c:639 quick_check_ok()). oc hashes the files of each list
@@ -37,7 +37,7 @@ use test_support::{UpstreamVersion, require_upstream_rsync, upstream_compat_enab
 
 const FIXED_MTIME_SECS: i64 = 1_700_000_000;
 
-/// `MSG_DATA` multiplex tag (upstream: rsync.h:210 `MPLEX_BASE`).
+/// `MSG_DATA` multiplex tag (upstream: rsync.h:211 `MPLEX_BASE`).
 const MPLEX_DATA: u8 = 7;
 
 /// Source content, basis content, and whether the basis is backdated.

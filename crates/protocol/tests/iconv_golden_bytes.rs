@@ -137,7 +137,7 @@ fn sender_name_on_wire(writer: &mut FileListWriter, entry: &FileEntry) -> Vec<u8
 /// for `--iconv=.,ISO-8859-1` must hit the wire as ISO-8859-1: 63 61 66 e9
 /// (4 bytes). This is the canonical iconv test case from upstream's docs.
 ///
-/// upstream: flist.c:2004-2025 - iconvbufs(ic_send, ...) on file->basename
+/// upstream: flist.c:2008-2029 - iconvbufs(ic_send, ...) on file->basename
 /// before it is appended to the lastname-shared prefix and emitted by the
 /// XMIT_SAME_NAME / suffix_len machinery.
 #[test]
@@ -301,7 +301,7 @@ fn build_wire_with_name(name_bytes: &[u8]) -> Vec<u8> {
 /// ISO-8859-1 bytes `63 61 66 e9` ("café") arriving over the wire must be
 /// converted by an iconv-enabled receiver into UTF-8 `63 61 66 c3 a9`.
 ///
-/// upstream: flist.c:1058-1073 - ic_recv invoked on thisname after the raw
+/// upstream: flist.c:1062-1077 - ic_recv invoked on thisname after the raw
 /// bytes have been read into the buffer, before clean_fname runs.
 #[cfg(unix)]
 #[test]
@@ -410,7 +410,7 @@ fn golden_receiver_invalid_remote_bytes_empties_name() {
     );
     let entry = result.unwrap().expect("entry must be present");
 
-    // upstream flist.c:1070 `outbuf.len = 0` empties the name on EILSEQ.
+    // upstream flist.c:1074 `outbuf.len = 0` empties the name on EILSEQ.
     assert!(
         entry.name_bytes().is_empty(),
         "unconvertible remote name must be emptied (flist.c:986), got {:?}",

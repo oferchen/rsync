@@ -31,7 +31,7 @@ pub(super) fn add_privilege_args(command: ClapCommand) -> ClapCommand {
                 // (local_remote_option_argv), so passing --fake-super together
                 // with -M--fake-super legitimately presents it twice; upstream parses
                 // the same pair with POPT_ARG_VAL, which just re-sets the value.
-                // upstream: options.c:672 {"fake-super", 0, POPT_ARG_VAL, ...}
+                // upstream: options.c:673 {"fake-super", 0, POPT_ARG_VAL, ...}
                 .overrides_with("fake-super"),
         )
         .arg(

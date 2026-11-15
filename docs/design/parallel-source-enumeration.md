@@ -25,7 +25,7 @@ The generator builds the file list serially in
   mappings.
 
 `build_file_list_with_base` (line 124) follows the same pattern for
-`--files-from`. Both paths mirror upstream `flist.c:2192 send_file_list()`,
+`--files-from`. Both paths mirror upstream `flist.c:2196 send_file_list()`,
 which is also single-threaded.
 
 ## 2. Multi-root scenarios where parallel enum could help

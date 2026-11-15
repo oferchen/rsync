@@ -2,7 +2,7 @@
 //! sub-lists included, so incremental recursion reports the same total as a
 //! whole-list pull.
 //!
-//! upstream: flist.c:3335 - `stats.num_files += flist->used` at the end of
+//! upstream: flist.c:3346 - `stats.num_files += flist->used` at the end of
 //! every `recv_file_list()` call, and the receiver calls it once per INC_RECURSE
 //! sub-list. A receiver that counts only the initial list under-reports a
 //! multi-directory pull while the whole-list run stays correct.

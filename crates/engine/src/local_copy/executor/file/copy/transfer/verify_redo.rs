@@ -165,7 +165,7 @@ pub(in crate::local_copy) fn execute_transfer(
 
 /// The flag set for the shrink redo pass.
 ///
-/// upstream: generator.c:2647-2689 - the redo dispatch in
+/// upstream: generator.c:2691-2733 - the redo dispatch in
 /// `check_for_finished_files` negates `append_mode` and bumps `ignore_times`
 /// around `recv_generator()`, so the resend can never resume-append and can
 /// never be quick-check skipped (the discarded pass may have left a
@@ -214,7 +214,7 @@ fn report_verification_failure(
 
 /// The flag set upstream's generator installs around the phase-2 redo.
 ///
-/// upstream: generator.c:2655-2660 negates `append_mode` and bumps
+/// upstream: generator.c:2699-2704 negates `append_mode` and bumps
 /// `ignore_times`; generator.c:2761-2762 already forced `whole_file = 0` for the
 /// session because append mode is active, which is what overrides the
 /// `whole_file = 1` default a local transfer would otherwise carry

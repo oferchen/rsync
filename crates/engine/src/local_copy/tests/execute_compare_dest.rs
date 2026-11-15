@@ -48,7 +48,7 @@ fn compare_dest_skips_identical_file() {
 /// A destination that an exact `--compare-dest` basis makes redundant is
 /// REMOVED, not left sitting there stale.
 ///
-/// upstream: generator.c:1115-1119 - the `find_exact_for_existing` unlink sits
+/// upstream: generator.c:1152-1156 - the `find_exact_for_existing` unlink sits
 /// ABOVE the `alt_dest_type == LINK_DEST` branch, so a match_level-3 basis clears
 /// a pre-existing destination for `--compare-dest` as well. That is the option's
 /// whole point: the file lives in the reference tree, so the destination keeps
@@ -921,7 +921,7 @@ fn compare_dest_skips_identical_empty_file() {
     assert_eq!(summary.regular_files_matched(), 1);
 }
 
-// upstream: generator.c:1114-1178 - a COMPARE_DEST basis whose data matches but
+// upstream: generator.c:1151-1215 - a COMPARE_DEST basis whose data matches but
 // whose attributes differ (match_level 2) is NOT treated as up-to-date; upstream
 // copies the basis into the destination via copy_altdest_file and reapplies the
 // source attributes. Only an exact (match_level 3) basis skips the write.

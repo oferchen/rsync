@@ -9,7 +9,7 @@
 /// deny rules as requiring a hostname, matching upstream's `if (!host || !*host)
 /// return 0` bail-out before the membership test (access.c:40-41).
 ///
-/// upstream: access.c:40-41 - `match_hostname` returns no-match when the host
+/// upstream: access.c:44-45 - `match_hostname` returns no-match when the host
 /// is absent, before reaching the `innetgr` netgroup branch.
 #[test]
 fn module_hostname_netgroup_deny_fails_closed_without_hostname() {

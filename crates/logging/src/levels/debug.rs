@@ -2,7 +2,7 @@
 //!
 //! This module defines [`DebugFlag`] and [`DebugLevels`], mirroring upstream
 //! rsync's `DEBUG_*` constants and `debug_levels[]` array
-//! (upstream: rsync.h:1496-1521, options.c:263).
+//! (upstream: rsync.h:1512-1537, options.c:264).
 
 /// Debug flags for developer-oriented diagnostic categories.
 ///
@@ -12,7 +12,7 @@
 /// defines these in `rsync.h` as `DEBUG_*` constants and indexes into
 /// the `debug_levels[]` array.
 ///
-/// upstream: rsync.h:1496-1519 DEBUG_ACL..DEBUG_TIME, options.c:244 debug_verbosity[]
+/// upstream: rsync.h:1512-1535 DEBUG_ACL..DEBUG_TIME, options.c:245 debug_verbosity[]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DebugFlag {
@@ -126,7 +126,7 @@ impl DebugFlag {
 /// [`DebugFlag`]. A value of 0 means the flag is disabled. Upstream rsync
 /// stores these in the global `debug_levels[]` array.
 ///
-/// upstream: options.c:263 debug_levels[]
+/// upstream: options.c:264 debug_levels[]
 #[derive(Clone, Default, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DebugLevels {

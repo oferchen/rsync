@@ -36,7 +36,7 @@ pub(crate) fn legacy_daemon_greeting() -> String {
 /// and `push_str` chain identified by the DIS-4.a audit while keeping the wire
 /// bytes byte-identical to the previous per-accept builder.
 ///
-/// upstream: clientserver.c:455 `output_daemon_greeting` writes the same
+/// upstream: clientserver.c:459 `output_daemon_greeting` writes the same
 /// `@RSYNCD: <ver>.<sub> <digests>\n` line from a stack buffer that is
 /// initialized once on the server.
 pub(crate) fn cached_legacy_daemon_greeting() -> &'static [u8] {
@@ -61,7 +61,7 @@ pub(crate) fn cached_legacy_daemon_greeting() -> &'static [u8] {
 /// The caller writes the payload, closes the connection, and stops. `None` means
 /// the greeting is well-formed and parsing proceeds.
 ///
-/// upstream: clientserver.c:180-213 `exchange_protocols()` with `am_client == 0`.
+/// upstream: clientserver.c:184-217 `exchange_protocols()` with `am_client == 0`.
 /// The daemon reads the protocol number with `sscanf(buf, "@RSYNCD: %d.%d", ...)`;
 /// a missing `.subprotocol` leaves `remote_sub < 0` and, for `remote_protocol >= 30`,
 /// yields `@ERROR: your client omitted the subprotocol value: %s`. A missing digest
@@ -73,7 +73,7 @@ pub(crate) fn cached_legacy_daemon_greeting() -> &'static [u8] {
 /// daemon (`am_client == 0`) and the client (`am_client == 1`) enforce the exact
 /// same upstream thresholds; only the diagnostic wording differs by role.
 pub(crate) fn reject_malformed_client_greeting(line: &str) -> Option<AtError> {
-    // upstream: clientserver.c:209-213 - `if (sscanf(buf, "@RSYNCD: %d.%d", ...)
+    // upstream: clientserver.c:213-217 - `if (sscanf(buf, "@RSYNCD: %d.%d", ...)
     // < 1)` the daemon answers `@ERROR: protocol startup error`. The client's
     // first line must be a version banner, so a bare module name, an empty
     // request, or an HTTP probe is refused here rather than being taken for a
@@ -90,14 +90,14 @@ pub(crate) fn reject_malformed_client_greeting(line: &str) -> Option<AtError> {
     )))
 }
 
-/// upstream: `clientserver.c:1416` - `start_daemon()` reads the greeting and
+/// upstream: `clientserver.c:1425` - `start_daemon()` reads the greeting and
 /// every request line before module selection into `char line[1024]`.
 pub(crate) const HANDSHAKE_LINE_BUFSIZ: usize = 1024;
 
 /// Reads one handshake line the way upstream `read_line_old(.., eof_ok = 0)`
 /// does, keeping at most `bufsiz - 1` bytes.
 ///
-/// upstream: `io.c:2635-2656` - every `\r` is dropped and not counted
+/// upstream: `io.c:2642-2663` - every `\r` is dropped and not counted
 /// (`io.c:2649`), a NUL fails the read (`io.c:2645`), EOF before the newline
 /// fails it (`io.c:2641`), and so does running out of room before one
 /// (`io.c:2655`). Every daemon caller treats a failure as the end of the
@@ -224,7 +224,7 @@ mod greeting_validation_tests {
         );
     }
 
-    // upstream: clientserver.c:190-199 - a protocol >= 30 greeting without a
+    // upstream: clientserver.c:194-203 - a protocol >= 30 greeting without a
     // ".subprotocol" suffix leaves remote_sub < 0 and is fatal. The @ERROR line
     // must echo the raw greeting so the client can report what it sent.
     #[test]
@@ -243,7 +243,7 @@ mod greeting_validation_tests {
         );
     }
 
-    // upstream: clientserver.c:201-213 - protocol > 31 must carry a digest name
+    // upstream: clientserver.c:205-217 - protocol > 31 must carry a digest name
     // list; its absence is fatal even when the subprotocol value is present.
     #[test]
     fn rejects_greeting_missing_digest_list() {
@@ -255,7 +255,7 @@ mod greeting_validation_tests {
         );
     }
 
-    // upstream: clientserver.c:234 - the digest gate is `remote_protocol > 31`, so
+    // upstream: clientserver.c:238 - the digest gate is `remote_protocol > 31`, so
     // protocol 31 needs the subprotocol but not a digest list.
     #[test]
     fn protocol_31_requires_subprotocol_not_digest() {
@@ -268,7 +268,7 @@ mod greeting_validation_tests {
         assert_eq!(reject_malformed_client_greeting("@RSYNCD: 31.0"), None);
     }
 
-    // upstream: clientserver.c:198 - protocol < 30 defaults remote_sub to 0 and
+    // upstream: clientserver.c:202 - protocol < 30 defaults remote_sub to 0 and
     // needs no digest list, so a bare legacy version is accepted.
     #[test]
     fn accepts_legacy_greeting_without_subprotocol_or_digest() {

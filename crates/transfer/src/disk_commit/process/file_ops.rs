@@ -224,7 +224,7 @@ pub(in crate::disk_commit) fn process_file(
     // permission failure to a per-file partial (IOERR_GENERAL -> RERR_PARTIAL,
     // exit 23) with the upstream sender warning, exactly like the synchronous
     // receiver (receiver/transfer/sync.rs via delta_apply::discard_delta_stream).
-    // upstream: generator.c:2281-2301 make_backup() inplace copy path - under
+    // upstream: generator.c:2323-2343 make_backup() inplace copy path - under
     // --inplace --backup the destination inode is rewritten in place, so the
     // backup must be a COPY of the pre-transfer contents taken BEFORE the first
     // write (a rename would move the very inode we are about to update). The
@@ -608,7 +608,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     // there are no queued channel messages to drain (unlike process_file); the
     // open error surfaces directly and drain_all_results maps a permission
     // failure to RERR_PARTIAL (exit 23).
-    // upstream: generator.c:2281-2301 - copy the pre-transfer contents aside
+    // upstream: generator.c:2323-2343 - copy the pre-transfer contents aside
     // before rewriting the destination in place (see process_file).
     let inplace_backup_notice = make_inplace_backup(&begin, config)?;
 
@@ -838,7 +838,7 @@ fn discard_file_messages(
 /// the generator, on its whole-file/read-batch branch
 /// (`generator.c:2280-2301` `copy_file(fname, backupptr, ...)`, keeping
 /// `fnamecmp_type == FNAMECMP_FNAME`); this function is oc's mirror of that
-/// branch. Upstream's DELTA branch (`generator.c:2328-2356`) instead makes the
+/// branch. Upstream's DELTA branch (`generator.c:2371-2399`) instead makes the
 /// copy at basis-selection time and retags the basis `FNAMECMP_BACKUP`; oc
 /// mirrors that in `find_basis_file_with_config`, which selects the fresh
 /// backup as the delta basis - carried here as `begin.xattr_basis` - so this
@@ -862,7 +862,7 @@ fn make_inplace_backup(
     let Some(ref backup_config) = config.backup else {
         return Ok(None);
     };
-    // upstream: generator.c:2328-2356 - a delta basis that IS the backup file
+    // upstream: generator.c:2371-2399 - a delta basis that IS the backup file
     // means the generator already wrote the pre-image copy (FNAMECMP_BACKUP)
     // and the "backed up X to Y" notice was already emitted by the request
     // loop. Skip so the backup the delta is being resolved against is never
@@ -1082,7 +1082,7 @@ fn maybe_preallocate(
 /// target, so `preallocated_len > 0` uniquely identifies upstream's `else if
 /// (inplace_sizing)` branch that the `do_ftruncate(fd, 0)` is nested in. Skipped
 /// in append mode (`append_offset > 0`), which must keep the existing prefix and
-/// which upstream forbids together with `--whole-file` (`options.c:2552-2555`). The
+/// which upstream forbids together with `--whole-file` (`options.c:2607-2610`). The
 /// truncate is best-effort: on failure the caller keeps the basis length and
 /// falls back to punching, which is equally correct.
 /// upstream: receiver.c:receive_data - `if (sparse_files > 0 && whole_file &&

@@ -76,7 +76,7 @@ interop_log_dir="${workspace_root}/target/interop/logs"
 # PROTOCOL_VERSION; 28 first shipped in 2.6.1, 29 in 2.6.4). Forcing
 # --protocol=28 on a modern release is not a substitute: the peer still runs
 # its modern code paths and only shapes the wire to match.
-versions=(2.6.3 2.6.9 3.0.9 3.1.3 3.4.4 3.5.0 3.5.1)
+versions=(2.6.3 2.6.9 3.0.9 3.1.3 3.4.4 3.5.0 3.5.1 3.5.2)
 # Versions we only build and cache (no scenarios wired up yet).
 extra_build_versions=()
 
@@ -85,7 +85,7 @@ extra_build_versions=()
 # pool coverage; 3.4.4 and 3.5.0 are too recent for a distro to have packaged.
 # Both the primary URL builder and the generic fallback consult this list, so
 # the "source-only" fact is stated once.
-source_only_versions=(2.6.3 2.6.9 3.4.4 3.5.0 3.5.1)
+source_only_versions=(2.6.3 2.6.9 3.4.4 3.5.0 3.5.1 3.5.2)
 
 version_is_source_only() {
   local version=$1 candidate
@@ -105,7 +105,7 @@ version_is_source_only() {
 # --protocol=28..31 runs and move the known-failure baseline. The one leg that
 # genuinely needs a protocol floor (xattrs) carries its own `eff_proto >= 30`
 # plus capability check at the point of use.
-extended_matrix_versions=(3.4.4 3.5.0 3.5.1)
+extended_matrix_versions=(3.4.4 3.5.0 3.5.1 3.5.2)
 
 # PROTOCOL_VERSION in each release's rsync.h, which is what a session with
 # that peer negotiates: oc speaks 28 through 33, so the peer is always the
@@ -13087,7 +13087,7 @@ echo "=== Standalone Interop Tests ==="
 # `interop (3.5.0)` that ran its standalone tests against a 3.5.1 binary left on
 # disk from an earlier cached build would be mislabelled, and the per-version
 # matrix exists precisely so a failure names the right version.
-standalone_preferred_version="3.5.1"
+standalone_preferred_version="3.5.2"
 if [[ "$only_version_given" == "true" ]]; then
   standalone_preferred_version="$only_version"
 fi

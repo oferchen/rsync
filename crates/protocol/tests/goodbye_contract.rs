@@ -64,7 +64,7 @@ fn emit_daemon_sender_goodbye(scenario: GoodbyeScenario) -> Vec<u8> {
     let mut codec = create_ndx_codec(scenario.protocol);
 
     // Extended goodbye (protocol 31+) gates the NDX_DEL_STATS emission.
-    // upstream: generator.c:2866-2914
+    // upstream: generator.c:2952-3006
     let extended = scenario.protocol >= 31;
     if extended && scenario.send_del_stats {
         codec.write_ndx(&mut buf, NDX_DEL_STATS).unwrap();
@@ -116,7 +116,7 @@ fn golden_plain_push_proto29_ends_with_legacy_ndx_done() {
 ///
 /// - Modern NDX encoding for `NDX_DEL_STATS` (-3). Negative NDX values
 ///   start with the `0xFF` prefix and a delta against `prev_negative`
-///   (initialised to 1). upstream: io.c:2541-2585 - `write_ndx()`.
+///   (initialised to 1). upstream: io.c:2548-2592 - `write_ndx()`.
 /// - 5 varints: `files`, `dirs`, `symlinks`, `devices`, `specials`.
 /// - `0x00`: modern NDX encoding for `NDX_DONE` (-1).
 #[test]

@@ -245,7 +245,7 @@ options without an API change: (a) document that callers MUST wrap
 in a buffered writer with at least 32 KiB, or (b) collect each
 entry's bytes into a small `Vec<u8>` (typed-arena allocator
 preferred) and flush once at the end of `write_entry`. Option (b)
-matches upstream's behaviour at `flist.c:2240` (`io_start_buffering_out`)
+matches upstream's behaviour at `flist.c:2244` (`io_start_buffering_out`)
 and protects callers who forget the wrapper. Expected payoff: 2-3x
 on the encode phase when the writer is unbuffered. Risk: the
 typed-arena needs a reset between entries, but the byte budget is
@@ -267,8 +267,8 @@ folded into the next perf report.
 ## 6. References
 
 - Task #1044.
-- Upstream send path: `flist.c:380-750` (entry encode), `flist.c:1820-1890`
-  (directory drive), `flist.c:2192-2532` (top-level).
+- Upstream send path: `flist.c:381-754` (entry encode), `flist.c:1824-1894`
+  (directory drive), `flist.c:2196-2543` (top-level).
 - oc-rsync send path: `crates/flist/src/file_list_walker.rs`,
   `crates/flist/src/parallel.rs`, `crates/protocol/src/flist/write/mod.rs`,
   `crates/protocol/src/flist/intern.rs`, `crates/protocol/src/flist/hardlink/table.rs`.

@@ -106,7 +106,7 @@ fields first (152 bytes), then 4-byte-aligned fields (28 bytes), then the 2-byte
 ## Upstream rsync file_struct (24 bytes fixed)
 
 ```c
-struct file_struct {              // upstream: rsync.h:801
+struct file_struct {              // upstream: rsync.h:817
     const char *dirname;          //  8B - shared pointer
     time_t modtime;               //  8B - mtime
     uint32 len32;                 //  4B - low 32 bits of size

@@ -137,7 +137,7 @@ fn make_inplace_backup_skips_when_the_delta_basis_is_the_backup() {
 
 /// Sibling control: with no delta basis carried (whole-file transfer, or a
 /// basis that IS the destination), the disk thread still owns the pre-image
-/// copy - upstream's whole-file/read-batch branch (generator.c:2280-2301).
+/// copy - upstream's whole-file/read-batch branch (generator.c:2322-2343).
 #[test]
 fn make_inplace_backup_still_copies_when_no_backup_basis_is_carried() {
     use std::ffi::OsString;

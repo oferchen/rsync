@@ -169,7 +169,7 @@ mod integration {
         // A batch written by a future rsync (protocol 34) must be refused by a
         // client that supports at most protocol 33, rather than silently
         // adopting an unsupported protocol and replaying it wrong.
-        // upstream: compat.c:611-615 "protocol version in the batch file is too new".
+        // upstream: compat.c:612-616 "protocol version in the batch file is too new".
         let temp_dir = test_support::create_tempdir();
         let batch_path = temp_dir.path().join("too_new.batch");
 
@@ -710,7 +710,7 @@ mod integration {
     /// fix, checksum bytes after each regular file entry are not consumed, causing
     /// subsequent entries to be deserialized incorrectly.
     ///
-    /// upstream: flist.c:990 `write_buf(f, sum, flist_csum_len)` writes the
+    /// upstream: flist.c:994 `write_buf(f, sum, flist_csum_len)` writes the
     /// checksum, and flist.c:1601 `read_buf(f, bp, flist_csum_len)` reads it.
     #[test]
     fn test_protocol_flist_roundtrip_with_always_checksum() {
@@ -1269,7 +1269,7 @@ mod integration {
     /// A batch body whose DEFLATED_DATA payload is a real zstd frame (magic
     /// 0xFD2FB528) must NOT be auto-detected and decoded as zstd on replay.
     ///
-    /// Upstream forces `write_batch` compression to "zlib" (compat.c:414-415),
+    /// Upstream forces `write_batch` compression to "zlib" (compat.c:415-416),
     /// so a batch token stream is ALWAYS zlib; the codec is pinned, never
     /// sniffed from the payload. A zstd frame is therefore fed to the zlib
     /// inflater, which rejects it - replay fails rather than silently switching

@@ -1,6 +1,6 @@
 #[test]
 fn run_daemon_rejects_unknown_hash_command() {
-    // upstream: clientserver.c:1561-1564 - a `#`-prefixed request that is not
+    // upstream: clientserver.c:1571-1574 - a `#`-prefixed request that is not
     // `#list` is a command the daemon does not understand, rejected with
     // "@ERROR: Unknown command '%s'\n" (the raw line, leading `#` included).
     // This is distinct from the unknown-module response reserved for a bad
@@ -43,7 +43,7 @@ fn run_daemon_rejects_unknown_hash_command() {
     stream.write_all(b"#bogus\n").expect("send unknown command");
     stream.flush().expect("flush unknown command");
 
-    // upstream: clientserver.c:1563 - "@ERROR: Unknown command '%s'\n" keeps
+    // upstream: clientserver.c:1573 - "@ERROR: Unknown command '%s'\n" keeps
     // the leading `#`; it is NOT the "Unknown module" response.
     line.clear();
     reader.read_line(&mut line).expect("error message");

@@ -17,7 +17,7 @@ struct AcceptLoopState<'a> {
     /// Concurrent connection cap consulted by the accept loop before
     /// dispatching a worker. `None` disables the check.
     ///
-    /// upstream: clientserver.c:791-801 enforces the per-module `max
+    /// upstream: clientserver.c:795-805 enforces the per-module `max
     /// connections` directive via `claim_connection()`. Deviation from
     /// upstream: this daemon-wide cap has no upstream counterpart; it applies
     /// the same refusal across every module.
@@ -39,7 +39,7 @@ struct AcceptLoopState<'a> {
     proxy_policy: ProxyProtocolPolicy,
     /// Daemon-wide `timeout`, bounding each connection's pre-module handshake.
     ///
-    /// upstream: clientserver.c:1441 arms the handshake deadline from
+    /// upstream: clientserver.c:1451 arms the handshake deadline from
     /// `daemon_handshake_timeout(-1)`, the GLOBAL value.
     daemon_timeout: Option<NonZeroU64>,
     /// Listener descriptors a forked session child must close before it serves.
@@ -74,7 +74,7 @@ fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
     }
 
     // Deviation from upstream: SIGUSR1 stops accepting new connections and
-    // lets active transfers drain; upstream's main.c:1684 sigusr1_handler()
+    // lets active transfers drain; upstream's main.c:1688 sigusr1_handler()
     // exits immediately with RERR_SIGNAL1.
     if state.signal_flags.graceful_exit.load(Ordering::Relaxed) {
         if let Some(log) = state.log_sink.as_ref() {
@@ -113,7 +113,7 @@ fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
     }
 
     // Deviation from upstream: SIGUSR2 logs a daemon progress summary;
-    // upstream's main.c:1695 sigusr2_handler() only makes a receiver child
+    // upstream's main.c:1699 sigusr2_handler() only makes a receiver child
     // wrap up.
     if state
         .signal_flags
@@ -150,7 +150,7 @@ fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
 /// stream (matching upstream's wording byte for byte). The accept loop
 /// keeps running.
 ///
-/// upstream: clientserver.c:791-801 - `claim_connection()` enforces the
+/// upstream: clientserver.c:795-805 - `claim_connection()` enforces the
 /// per-module `lp_max_connections()` cap and emits
 /// `@ERROR: max connections (%d) reached -- try again later\n` to the
 /// client via `io_printf(f_out, ...)`.
@@ -352,7 +352,7 @@ fn serve_forked_session(
     peer_addr: SocketAddr,
 ) -> i32 {
     match context.serve_session(stream, raw_peer_addr) {
-        // upstream: cleanup.c:264 - the child exits with its session's code.
+        // upstream: cleanup.c:265 - the child exits with its session's code.
         Ok(code) => code.map_or(0, ExitCode::as_i32),
         Err(error) => {
             report_session_failure(Some(peer_addr), &error, context.log_sink.as_ref());
@@ -439,7 +439,7 @@ fn handle_accepted_connection(
     state: &mut AcceptLoopState<'_>,
 ) -> bool {
     apply_accepted_stream_tcp_notsent_lowat(&tcp_stream);
-    // upstream: clientserver.c:1529 - the daemon enables SO_KEEPALIVE on the
+    // upstream: clientserver.c:1539 - the daemon enables SO_KEEPALIVE on the
     // accepted client socket; the configured socket options went to the
     // listener before bind(2).
     enable_accepted_stream_keepalive(&tcp_stream, state.log_sink.as_ref());

@@ -12,7 +12,7 @@
 //! caller's retry loop depends on, and the FOLLOW direction - without that last
 //! one a future "refuse every symlink" simplification would look correct.
 //!
-//! upstream: `rsync-3.5.1/syscall.c:3540` `secure_mkstemp()`.
+//! upstream: `rsync-3.5.2/syscall.c:3608` `secure_mkstemp()`.
 #![cfg(unix)]
 
 use std::fs;

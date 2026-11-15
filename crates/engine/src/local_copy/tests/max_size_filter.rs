@@ -517,7 +517,7 @@ fn execute_max_size_with_filter_rules() {
     );
 }
 
-/// upstream: generator.c:2109-2125 recv_generator() - `--max-size` is tested
+/// upstream: generator.c:2150-2166 recv_generator() - `--max-size` is tested
 /// only after the `ftype != FT_REG` branch has returned, so it gates regular
 /// files alone. A symlink whose target is longer than the limit is still
 /// created, while a regular file over the limit is skipped.

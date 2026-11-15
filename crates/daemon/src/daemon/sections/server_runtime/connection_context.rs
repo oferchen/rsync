@@ -27,7 +27,7 @@ struct ConnectionContext {
     proxy_policy: ProxyProtocolPolicy,
     /// Daemon-wide `timeout`, bounding the pre-module handshake phase.
     ///
-    /// upstream: clientserver.c:1441 arms the handshake deadline from
+    /// upstream: clientserver.c:1451 arms the handshake deadline from
     /// `daemon_handshake_timeout(-1)` - the GLOBAL value, read before any
     /// module is selected.
     daemon_timeout: Option<NonZeroU64>,
@@ -130,7 +130,7 @@ impl ConnectionContext {
         raw_peer_addr: SocketAddr,
     ) -> io::Result<()> {
         apply_accepted_stream_tcp_notsent_lowat(&tcp_stream);
-        // upstream: clientserver.c:1529 - the daemon enables SO_KEEPALIVE on
+        // upstream: clientserver.c:1539 - the daemon enables SO_KEEPALIVE on
         // the accepted client socket.
         enable_accepted_stream_keepalive(&tcp_stream, self.log_sink.as_ref());
         let stream = DaemonStream::plain(tcp_stream);

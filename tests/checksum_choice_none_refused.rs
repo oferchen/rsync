@@ -199,7 +199,7 @@ fn pull_leaves_the_refusal_to_the_remote_sender() {
     }
 }
 
-/// Upstream refuses only once it sums a file (flist.c:1815-1816), so a source
+/// Upstream refuses only once it sums a file (flist.c:1819-1820), so a source
 /// with no regular file is copied.
 #[test]
 fn a_source_without_regular_files_is_copied() {

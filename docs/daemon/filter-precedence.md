@@ -55,7 +55,7 @@ parses these into a `Vec<FilterRuleWireFormat>` in the upstream-mandated order:
 4. `exclude from`  - one pattern per line from file (treated as `exclude`)
 5. `exclude`       - bare patterns, word-split
 
-This mirrors `clientserver.c:874-893` (`rsync_module()`) in upstream rsync 3.4.1.
+This mirrors `clientserver.c:878-897` (`rsync_module()`) in upstream rsync 3.4.1.
 `filter` lines support `FILTRULE_WORD_SPLIT`, so a single line can carry
 multiple rules (`+ *.txt + *.rs - *` is three rules).
 

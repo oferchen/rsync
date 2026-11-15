@@ -30,8 +30,8 @@ no supervisor.
 
 | Role | Entry point | Upstream cite |
 |------|-------------|---------------|
-| Generator | `Generator::run` at `crates/transfer/src/generator/transfer.rs:731`; per-loop body at `:48` (`run_transfer_loop`) | `generator.c:2226 generate_files()` |
-| Sender (server-side, paired with Generator) | shares the Generator entry; `crates/transfer/src/generator/mod.rs:32-78` documents the role split | `sender.c:199 send_files()` |
+| Generator | `Generator::run` at `crates/transfer/src/generator/transfer.rs:731`; per-loop body at `:48` (`run_transfer_loop`) | `generator.c:2268 generate_files()` |
+| Sender (server-side, paired with Generator) | shares the Generator entry; `crates/transfer/src/generator/mod.rs:32-78` documents the role split | `sender.c:207 send_files()` |
 | Receiver | `ReceiverContext::run` at `crates/transfer/src/receiver/transfer.rs:55`; pipelined variants at `:519`, `:680` | `receiver.c:720 recv_files()` |
 
 The repository does not have a dedicated `sender` module: the local

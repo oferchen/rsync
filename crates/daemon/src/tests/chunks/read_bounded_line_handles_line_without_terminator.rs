@@ -1,4 +1,4 @@
-/// upstream: `io.c:2640-2643` - with `eof_ok` zero, as at every daemon call
+/// upstream: `io.c:2647-2650` - with `eof_ok` zero, as at every daemon call
 /// site, EOF before the newline fails the read instead of returning the
 /// partial line.
 #[test]

@@ -33,13 +33,13 @@ use test_support::transcript::{FIXED_CHECKSUM_LIST, TranscriptRecorder};
 /// The peer text the scripted sender injects.
 const PEER_TEXT: &[u8] = b"PEER-INFO-0195\n";
 
-/// upstream: rsync.h:210 `MPLEX_BASE`; rsync.h:288 `MSG_INFO = FINFO = 2`.
+/// upstream: rsync.h:211 `MPLEX_BASE`; rsync.h:289 `MSG_INFO = FINFO = 2`.
 const MPLEX_BASE: u8 = 7;
 const MSG_INFO: u8 = 2;
 const MSG_DATA: u8 = 0;
 
 /// A multiplex frame: the 4-byte little-endian `(MPLEX_BASE + tag) << 24 |
-/// len` header, then the payload (upstream: io.c:1173 send_msg()).
+/// len` header, then the payload (upstream: io.c:1180 send_msg()).
 fn frame(tag: u8, payload: &[u8]) -> Vec<u8> {
     let len = u32::try_from(payload.len()).expect("payload fits a frame");
     let header = (u32::from(MPLEX_BASE + tag) << 24) | len;

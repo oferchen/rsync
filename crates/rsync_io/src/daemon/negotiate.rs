@@ -101,7 +101,7 @@ where
         server_greeting.subprotocol()
     );
 
-    // upstream: clientserver.c:179 `our_sub = get_subprotocol_version()` is read
+    // upstream: clientserver.c:183 `our_sub = get_subprotocol_version()` is read
     // from this side's configured protocol version, so a release build always
     // advertises subprotocol 0.
     let our_sub = get_subprotocol_version(desired_protocol.as_u8());
@@ -115,7 +115,7 @@ where
         desired_protocol.as_u8()
     );
 
-    // upstream: clientserver.c:181 writes this side's own greeting BEFORE
+    // upstream: clientserver.c:185 writes this side's own greeting BEFORE
     // clientserver.c:203 reads the server's, so the banner advertises our own
     // configured version and subprotocol, never the server's.
     let banner = build_client_greeting(desired_protocol, our_sub);
@@ -131,7 +131,7 @@ where
 
 /// Reconciles this side's configured protocol against the server's greeting.
 ///
-/// upstream: clientserver.c:213-226. After reading the server's `@RSYNCD:` line,
+/// upstream: clientserver.c:217-230. After reading the server's `@RSYNCD:` line,
 /// the client clamps its own `protocol_version` down to the server's and then,
 /// mirroring `check_sub_protocol()`, drops one further step whenever the peer's
 /// subprotocol is incompatible with ours. `min(desired, server)` followed by
@@ -146,7 +146,7 @@ fn negotiate_protocol(
     our_sub: u8,
 ) -> ProtocolVersion {
     let clamped = cmp::min(desired_protocol, server_greeting.protocol());
-    // upstream: clientserver.c:209 stores the server's raw `remote_protocol` from
+    // upstream: clientserver.c:213 stores the server's raw `remote_protocol` from
     // `sscanf`; the `protocol_version < remote_protocol` branch (clientserver.c:251)
     // needs that un-clamped value so a server advertising a newer protocol is not
     // mistaken for an equal one whose nonzero subprotocol would force a downgrade.
@@ -165,7 +165,7 @@ fn negotiate_protocol(
 
 /// Renders the client's `@RSYNCD:` greeting line.
 ///
-/// upstream: clientserver.c:181 calls `output_daemon_greeting()` (compat.c:844)
+/// upstream: clientserver.c:185 calls `output_daemon_greeting()` (compat.c:853)
 /// BEFORE clientserver.c:203 reads the server's line, so every field is this
 /// side's own advertisement, never derived from the server. The banner therefore
 /// carries our configured `protocol_version` and `get_subprotocol_version()`
@@ -261,7 +261,7 @@ mod tests {
         );
     }
 
-    // upstream: compat.c:844-853 `output_daemon_greeting()` emits
+    // upstream: compat.c:853-862 `output_daemon_greeting()` emits
     // `get_default_nno_list()` verbatim with no version filtering. Verified
     // against rsync 3.4.4: `--protocol=28` through `--protocol=32` all send the
     // identical five names, differing only in the version field.
@@ -276,7 +276,7 @@ mod tests {
         }
     }
 
-    // upstream: clientserver.c:213-226. A stock release server (subprotocol 0)
+    // upstream: clientserver.c:217-230. A stock release server (subprotocol 0)
     // clamps but never triggers the extra decrement.
     #[test]
     fn negotiate_protocol_release_server_only_clamps() {
@@ -297,7 +297,7 @@ mod tests {
         );
     }
 
-    // upstream: clientserver.c:215-219 - a nonzero server subprotocol forces the
+    // upstream: clientserver.c:219-223 - a nonzero server subprotocol forces the
     // one-step decrement, both when the server is older and when it is equal.
     // Verified against rsync 3.4.4: greeting bytes stay `32.0` while the session
     // protocol drops. This case is invisible to an echo, which would report the

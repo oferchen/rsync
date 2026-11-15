@@ -144,7 +144,7 @@ pub(crate) fn resolve_file_list_entries(
         }
 
         if files_from_active {
-            // upstream: flist.c:2811 - `sanitize_path(fbuf, fbuf, "", 0,
+            // upstream: flist.c:2822 - `sanitize_path(fbuf, fbuf, "", 0,
             // SP_KEEP_DOT_DIRS)` is applied UNCONDITIONALLY to every line read
             // from the files-from fd, before the name is joined onto argv[0].
             // The neighbouring argv arm at :2816-2817 makes the same call but gates
@@ -166,7 +166,7 @@ pub(crate) fn resolve_file_list_entries(
             let clamped = clamp_files_from_entry(entry);
             let entry_path = Path::new(&clamped);
 
-            // upstream: flist.c:2863-2870 - when relative_paths is set and a
+            // upstream: flist.c:2874-2881 - when relative_paths is set and a
             // file list entry contains "/./", upstream splits the entry at that
             // marker: the portion before becomes a chdir prefix (relative to
             // argv[0]), and the portion after becomes the transferred filename.

@@ -91,7 +91,7 @@ arena reset. Mitigations:
 
 - Replace each owned field with `&'bump [u8]` / `&'bump Path` slices
   copied into the same arena. This is the upstream pattern
-  (`flist.c:1018-1027` packs basename, dirname, and linkname into one
+  (`flist.c:1022-1031` packs basename, dirname, and linkname into one
   `pool_alloc` chunk). It is also the only way to land the full win.
 - Keep the owned fields outside the arena (`Vec<u8>`, `String` on the
   global heap). This defeats most of the arena win because
@@ -239,5 +239,5 @@ Specifically:
 - `docs/benchmarks/flist-memory-baseline-2026-05-01.md` -
   empirical 84 MiB vs 7.5 MiB baseline at 100 K entries.
 - Upstream: `target/interop/upstream-src/rsync-3.4.1/lib/pool_alloc.c`,
-  `flist.c:1018-1025`, `flist.c:2907-2935`,
-  `rsync.h:786-937`.
+  `flist.c:1022-1029`, `flist.c:2918-2946`,
+  `rsync.h:802-953`.

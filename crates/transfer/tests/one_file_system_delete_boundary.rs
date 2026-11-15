@@ -1,7 +1,7 @@
 //! `--delete -x` leaves a destination directory on a foreign filesystem
 //! unscanned, on a local copy and on a pull.
 //!
-//! upstream: generator.c:316-326 delete_in_dir() records each top directory's
+//! upstream: generator.c:351-361 delete_in_dir() records each top directory's
 //! device and returns before get_dirlist() for any other directory whose
 //! device is not one of them. A destination subdirectory that is a mount point
 //! therefore keeps its extraneous files, even though its source counterpart is

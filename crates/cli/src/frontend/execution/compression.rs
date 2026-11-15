@@ -23,7 +23,7 @@ pub(crate) enum CompressLevelArg {
 
 /// Outcome of parsing `--compress-choice=NAME`.
 ///
-/// upstream: options.c:2133-2136 `if (compress_choice && strcasecmp(...,
+/// upstream: options.c:2169-2172 `if (compress_choice && strcasecmp(...,
 /// "auto") != 0) parse_compress_choice(0); else compress_choice = NULL;` -
 /// the literal `auto` is nulled out so normal codec negotiation runs, distinct
 /// from `none` (which disables compression) and an explicit codec.
@@ -137,14 +137,14 @@ pub(crate) fn parse_compress_choice(argument: &OsStr) -> Result<CompressChoice, 
     let trimmed = original.trim();
 
     if trimmed.is_empty() {
-        // upstream: compat.c:190 - an unparsable compress name returns
+        // upstream: compat.c:191 - an unparsable compress name returns
         // RERR_UNSUPPORTED (errcode.h:28), not RERR_SYNTAX.
         return Err(
             rsync_error!(4, "--compress-choice={} is invalid", original).with_role(Role::Client)
         );
     }
 
-    // upstream: options.c:2133 - only the literal `auto` (case-insensitive) is
+    // upstream: options.c:2169 - only the literal `auto` (case-insensitive) is
     // nulled; anything else, including `auto,auto`, is passed to
     // parse_compress_choice and rejected if unknown.
     if trimmed.eq_ignore_ascii_case("auto") {
@@ -179,7 +179,7 @@ fn render_compress_choice_error(err: CompressionAlgorithmParseError, trimmed: &s
     let rendered = format!(
         "invalid compression algorithm '{display}': supported values include {supported_list}"
     );
-    // upstream: compat.c:190 - an unknown compress name returns
+    // upstream: compat.c:191 - an unknown compress name returns
     // RERR_UNSUPPORTED (errcode.h:28), not RERR_SYNTAX.
     rsync_error!(4, rendered).with_role(Role::Client)
 }
@@ -190,7 +190,7 @@ fn render_compress_choice_error(err: CompressionAlgorithmParseError, trimmed: &s
 /// Returns `Ok(None)` when the value disables the limit. Invalid, too-small,
 /// and too-large values are rejected with a `--bwlimit` error.
 ///
-/// upstream: options.c:1827 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
+/// upstream: options.c:1863 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
 pub(crate) fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<BandwidthLimit>, Message> {
     // upstream: an empty value resolves to 0, and `unlimited_0` makes 0 mean
     // "no limit" for this option (options.c:1827). Measured: `--bwlimit=`
@@ -233,7 +233,7 @@ const COMPRESS_THREADS_MAX: i32 = 64;
 /// # Upstream Reference
 ///
 /// - `options.c:783-784` - `--compress-threads` / `--zt` are `POPT_ARG_INT`.
-/// - `options.c:2145-2146` - upstream clamps negative values to 0.
+/// - `options.c:2181-2182` - upstream clamps negative values to 0.
 pub(crate) fn parse_compress_threads(argument: &OsStr) -> Result<Option<NonZeroU8>, Message> {
     let original = argument.to_string_lossy().into_owned();
     let trimmed = original.trim();
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn parse_compress_choice_auto_is_nulled() {
-        // upstream: options.c:2133-2136 - the literal `auto` (case-insensitive)
+        // upstream: options.c:2169-2172 - the literal `auto` (case-insensitive)
         // is nulled so normal codec negotiation runs; it is neither a disable
         // nor an explicit codec.
         assert!(matches!(
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn parse_compress_choice_auto_auto_is_rejected() {
-        // upstream: options.c:2133 only special-cases the exact token `auto`;
+        // upstream: options.c:2169 only special-cases the exact token `auto`;
         // `auto,auto` falls through to parse_compress_choice and is rejected
         // as an unknown compress name (RERR_UNSUPPORTED, exit 4).
         let error = parse_compress_choice(OsStr::new("auto,auto")).expect_err("auto,auto rejected");

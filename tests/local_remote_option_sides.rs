@@ -1,6 +1,6 @@
 //! A local copy's `-M` values reach its receiver half only.
 //!
-//! upstream: pipe.c:109-148 local_child() forks the receiver, which re-runs
+//! upstream: pipe.c:109-149 local_child() forks the receiver, which re-runs
 //! parse_arguments() over the `-M` values on top of the options it inherited.
 //! The sender keeps the client's own, so a sender-side option given with `-M`
 //! changes nothing the sender does, and a receiver-side one still applies.

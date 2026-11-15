@@ -226,7 +226,7 @@ mod config_helpers_tests {
         assert_eq!(parse_numeric_identifier("-1"), None);
     }
 
-    /// WHY: upstream clientserver.c:844-871 - a module `gid` is a
+    /// WHY: upstream clientserver.c:848-875 - a module `gid` is a
     /// whitespace/comma-separated list. Every entry must reach `setgroups`, so
     /// the parser must preserve order and count rather than collapse to one gid.
     #[test]
@@ -243,7 +243,7 @@ mod config_helpers_tests {
         );
     }
 
-    /// WHY: upstream clientserver.c:846-858 - a leading `*` requests all of the
+    /// WHY: upstream clientserver.c:850-862 - a leading `*` requests all of the
     /// target user's groups (`want_all_groups`), and may be followed by extra
     /// explicit gids.
     #[test]
@@ -258,7 +258,7 @@ mod config_helpers_tests {
         );
     }
 
-    /// WHY: upstream clientserver.c:846 - `The "*" gid must be the first item in
+    /// WHY: upstream clientserver.c:850 - `The "*" gid must be the first item in
     /// the list.` A `*` appearing later is a configuration error.
     #[test]
     fn parse_gid_setting_rejects_non_leading_star() {
@@ -477,7 +477,7 @@ mod config_helpers_tests {
     // WHY: operators centrally manage trusted hosts via netgroups. A `@name`
     // token must parse into the dedicated netgroup variant (upstream
     // access.c:44-45) rather than a literal hostname, and the name must be
-    // lowercased to match upstream's `strlower(list2)` (access.c:268).
+    // lowercased to match upstream's `strlower(list2)` (access.c:332).
     #[test]
     fn host_pattern_parse_netgroup_token() {
         let pattern = HostPattern::parse("@Trusted").unwrap();
@@ -493,7 +493,7 @@ mod config_helpers_tests {
         assert!(matches!(pattern, HostPattern::Hostname(_)));
     }
 
-    // WHY: upstream access.c:48-54 folds an IDN `hosts allow`/`hosts deny`
+    // WHY: upstream access.c:52-58 folds an IDN `hosts allow`/`hosts deny`
     // token to its A-label form before matching, because the peer's name
     // arrives from DNS as ASCII. Without the fold a Unicode entry can never
     // name its host; without the feature the token is kept as typed.
@@ -715,7 +715,7 @@ mod config_helpers_tests {
 
     #[test]
     fn proxy_protocol_with_no_trusted_hosts_rejects_every_peer() {
-        // upstream: access.c:313-314 `if (!list || !*list) return 0;` - the
+        // upstream: access.c:377-378 `if (!list || !*list) return 0;` - the
         // empty list is fail-closed, and clientserver.c:1771 warns about it
         // precisely because it is silent otherwise.
         let policy = ProxyProtocolPolicy::new(true, Vec::new());
@@ -758,7 +758,7 @@ mod config_helpers_tests {
 
     #[test]
     fn a_hostname_trusted_proxy_token_matches_no_real_peer() {
-        // upstream: access.c:313 sets `allow_forward_dns = 0` and
+        // upstream: access.c:377 sets `allow_forward_dns = 0` and
         // clientserver.c:1391-1393 passes the `UNDETERMINED` sentinel rather
         // than a resolved name, so `match_hostname` can only ever compare a
         // token against that sentinel. A name-based trusted-proxy token is

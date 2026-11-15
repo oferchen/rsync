@@ -8,9 +8,9 @@
 //! # Architecture
 //!
 //! Upstream rsync uses two parallel arrays of per-category verbosity levels:
-//! `info_verbosity[]` and `debug_verbosity[]` (upstream: options.c:244-259).
+//! `info_verbosity[]` and `debug_verbosity[]` (upstream: options.c:245-260).
 //! The `-v` flag increments a global verbose counter, and
-//! `set_output_verbosity()` (upstream: options.c:532) walks both tables
+//! `set_output_verbosity()` (upstream: options.c:533) walks both tables
 //! cumulatively from level 0 through the requested level, setting individual
 //! flags. Fine-grained overrides are available via `--info=FLAGS` and
 //! `--debug=FLAGS` (upstream: options.c:parse_output_words()).
@@ -106,8 +106,8 @@ pub use context::{
     apply_info_flag, current, debug_gte, discard_events_from, drain_error_events, drain_events,
     drain_events_coded, drain_events_for_daemon_log, drain_events_for_peer,
     drain_stamped_events_for_client, emit_debug, emit_debug_coded, emit_info, emit_info_bytes,
-    emit_info_coded, emit_line, emit_warning, enter, finfo_suppressed, info_gte, init,
-    limit_output_verbosity, set_quiet, xfer_error_reported,
+    emit_info_coded, emit_line, emit_warning, enter, finfo_suppressed, groups_counts, info_gte,
+    init, limit_output_verbosity, set_groups_counts, set_quiet, xfer_error_reported,
 };
 pub use errno_text::{
     rsyserr, rsyserr_io, strerror, upstream_errno, upstream_errno_text, upstream_strerror,

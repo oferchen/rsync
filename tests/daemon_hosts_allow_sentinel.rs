@@ -21,7 +21,7 @@
 //!    lowercased at parse time. That held only because every host until now
 //!    arrived pre-lowercased from DNS. Upstream's matcher is `iwildmatch`, the
 //!    case-insensitive form (access.c:57), against a list lowercased by
-//!    `strlower` (access.c:262) - so `unknown` matches `UNKNOWN` upstream.
+//!    `strlower` (access.c:326) - so `unknown` matches `UNKNOWN` upstream.
 //!
 //! Fixing only (1) left every row below still failing, which is why the table
 //! asserts the OUTCOME of a real connection rather than the shape of the call.

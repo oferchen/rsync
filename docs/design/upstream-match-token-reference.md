@@ -65,56 +65,56 @@ oc-rsync analogues:
 
 ### 1.2 hash_search() lookup walk
 
-- `match.c:140-345` `hash_search(f, s, buf, len)` is the main loop.
+- `match.c:140-362` `hash_search(f, s, buf, len)` is the main loop.
 - `match.c:155` initialises `want_i = 0`, the next-block hint that
   encourages RLE-friendly adjacent matches.
 - `match.c:162-164` reads the first window via `map_ptr(buf, 0, k)`
   where `k = MIN(len, blength)`. The block-aligned read sets up the
   initial `(s1, s2)` checksum at `match.c:166-168`.
-- `match.c:172` resets `offset`, `aligned_offset`, and `aligned_i` to
+- `match.c:174` resets `offset`, `aligned_offset`, and `aligned_i` to
   zero. The aligned tracking is for in-place mode (`updating_basis_file`).
-- `match.c:174` computes `end = len + 1 - s->sums[s->count-1].len`. The
+- `match.c:176` computes `end = len + 1 - s->sums[s->count-1].len`. The
   `-last_block_len` term is important because the last basis block may
   be short. Upstream walks `offset` past `end-1` only when the trailing
   partial block cannot match, then drops to the matched-tail flush below.
-- `match.c:181-341` is the do/while window walk. Each iteration computes
+- `match.c:183-356` is the do/while window walk. Each iteration computes
   one hash probe at `offset`. The body falls into three sections:
   hash-table lookup, post-match window jump, and rolling-checksum slide.
 
 #### 1.2.1 Hash-chain probing
 
-- `match.c:191-201` selects the bucket via `SUM2HASH2(s1, s2)` or
+- `match.c:193-203` selects the bucket via `SUM2HASH2(s1, s2)` or
   `BIG_SUM2HASH(sum)`. The traditional path computes `sum` only after
   the probe to avoid a redundant assembly when the bucket is empty.
-- `match.c:193-200` `goto null_hash` when `hash_table[hash_entry] < 0`
+- `match.c:195-202` `goto null_hash` when `hash_table[hash_entry] < 0`
   (empty bucket). This jumps past the entire chain walk to the rolling
-  update at `match.c:314`.
-- `match.c:202` aliases `prev` to the chain head pointer so the bypass
-  pruning at `match.c:211-215` can splice an entry out of the chain
+  update at `match.c:329`.
+- `match.c:204` aliases `prev` to the chain head pointer so the bypass
+  pruning at `match.c:215-219` can splice an entry out of the chain
   by writing `*prev = s->sums[i].chain`.
-- `match.c:204` increments `hash_hits` once per bucket visited.
-- `match.c:205-312` walks the chain via `i = s->sums[i].chain`.
+- `match.c:206` increments `hash_hits` once per bucket visited.
+- `match.c:207-327` walks the chain via `i = s->sums[i].chain`.
 
 #### 1.2.2 The (sum1, sum2) early reject
 
-- `match.c:218-219` rejects on `sum != s->sums[i].sum1` before any
+- `match.c:223-225` rejects on `sum != s->sums[i].sum1` before any
   strong-checksum work. This is the principal cycle saver in the inner
   chain. `sum` is the packed 32-bit value `(s1 & 0xffff) | (s2 << 16)`.
-- `match.c:221-224` then checks the block lengths match, since the
+- `match.c:227-231` then checks the block lengths match, since the
   trailing block may be short.
-- `match.c:232-241` only computes the strong checksum
+- `match.c:240-262` only computes the strong checksum
   (`get_checksum2()`) on the first survivor in the chain, caching the
   result in `done_csum2`. The comparison length is `s->s2length` which
   is the negotiated truncation (commonly 2 in phase 1, up to 16 in
   phase 2 redo).
-- `match.c:238-241` increments `false_alarms` on strong-checksum
+- `match.c:246-262` increments `false_alarms` on strong-checksum
   mismatch and continues to the next chain entry.
 
 The "why s1/s2 are mixed as they are" question: upstream packs `s1` in
 the low 16 bits and `s2` in the high 16 bits because the rolling
 algorithm naturally produces `s2` as an accumulator scaled by window
 length. The two halves are independent under the rolling update
-(`match.c:323-329`): on a one-byte slide, `s1` loses `map[0]` and gains
+(`match.c:338-344`): on a one-byte slide, `s1` loses `map[0]` and gains
 `map[k]`; `s2` loses `k * map[0]` and gains the new `s1`. Packing them
 into a single `uint32` lets the table key, the bucket calculation, and
 the chain reject all read one machine word. The
@@ -132,7 +132,7 @@ oc-rsync analogues:
 - `crates/matching/src/index/mod.rs:153-156` adds the zsync-style
   `BitHash::contains(value)` prefilter mixing both halves before any
   hash probe, equivalent in spirit to the chain prune at
-  `match.c:211-215` but probed without traversing the chain.
+  `match.c:215-219` but probed without traversing the chain.
 - `crates/matching/src/index/mod.rs:160-169` performs the strong
   verify (`SignatureAlgorithm::compute_truncated`) and the
   `strong.as_slice() == block.strong()` compare. The truncation length
@@ -140,14 +140,14 @@ oc-rsync analogues:
 
 #### 1.2.3 The want_i adjacency hint
 
-- `match.c:289-300` is the `check_want_i` branch. After a confirmed
+- `match.c:304-315` is the `check_want_i` branch. After a confirmed
   match at index `i`, upstream sets `want_i = i + 1` so the next probe
   prefers the immediately following basis block. The branch also
   swaps `i = want_i` when both rolling and strong checksums match
   there. This is the "RLL coder will be happy" optimisation - adjacent
   matches compress better in the token-run encoding (`token.c` section
   2.2 below).
-- `match.c:301` unconditionally sets `want_i = i + 1` so a non-adjacent
+- `match.c:316` unconditionally sets `want_i = i + 1` so a non-adjacent
   match still points the hint at the next basis block, preserving the
   property when the source skips ahead.
 
@@ -162,11 +162,11 @@ oc-rsync analogue:
   both the tag table and the hash probe.
 - `crates/matching/src/generator.rs:337-341` advances `want_i` to
   `match_idx + 1` after each confirmed match. The chained adjacent-match
-  loop at `:280-399` mirrors `match.c:303-310` window refill.
+  loop at `:280-399` mirrors `match.c:318-325` window refill.
 
 #### 1.2.4 Match window advance and post-match jump
 
-- `match.c:303-310` is the "matched" hot path:
+- `match.c:318-325` is the "matched" hot path:
   - `matched(f, s, buf, offset, i)` emits the literal/token pair
     (section 1.3 below).
   - `offset += s->sums[i].len - 1`. The `-1` compensates for the `++offset`
@@ -175,7 +175,7 @@ oc-rsync analogue:
     `map_ptr(buf, offset, k)` and recomputes `sum` from scratch with
     `get_checksum1((char *)map, k)`. The full recompute is necessary
     because the slide invariants break across an arbitrary block jump.
-- `match.c:312` `break` exits the chain walk; control falls through to
+- `match.c:327` `break` exits the chain walk; control falls through to
   the iterator's `++offset` at the bottom.
 
 oc-rsync analogue:
@@ -189,7 +189,7 @@ oc-rsync analogue:
 
 #### 1.2.5 The rolling slide
 
-- `match.c:314-340` is the `null_hash:` label and the byte-by-byte
+- `match.c:329-355` is the `null_hash:` label and the byte-by-byte
   slide:
   - `backup = offset - last_match`, clamped to `>= 0`. Upstream reads
     one byte before `last_match` to keep the slide rolling across the
@@ -204,7 +204,7 @@ oc-rsync analogue:
     CHAR_OFFSET` and `s2 += s1`. The new-byte contribution is exactly
     the post-update `s1`.
   - `CHAR_OFFSET` is defined as `0` for protocol >= 27 (see
-    `rsync.h:175`); oc-rsync inherits the protocol-32 default.
+    `rsync.h:176`); oc-rsync inherits the protocol-32 default.
 
 oc-rsync analogues:
 
@@ -251,18 +251,18 @@ oc-rsync analogues:
   on every match, mirroring the `n > 0` literal-prefix emission.
 - `crates/matching/src/generator.rs:412-417` drains any remaining
   ring-buffer bytes at EOF into a final literal token, mirroring
-  `match.c:343` (`matched(f, s, buf, len, -1)`).
+  `match.c:358` (`matched(f, s, buf, len, -1)`).
 - The literal+match unified emit lives at
   `crates/transfer/src/generator/delta.rs:225-274` and
   `:406-459`, which is where the wire-layer `write_token_stream` /
   `CompressedTokenEncoder` send the script.
 - The whole-file checksum runs over both literals and re-read matched
   bytes at `crates/transfer/src/generator/delta.rs:289-334`. Upstream
-  cites are at `match.c:370`, `:383-385`, and `matched():131-135`.
+  cites are at `match.c:406`, `:383-385`, and `matched():131-135`.
 
 ### 1.4 The bored-of-literals early flush
 
-- `match.c:339-340` shipped the comment "By matching early we avoid
+- `match.c:354-355` shipped the comment "By matching early we avoid
   re-reading the data 3 times". When `backup >= s->blength + CHUNK_SIZE`
   and there is still more than `CHUNK_SIZE` left to scan, upstream calls
   `matched(f, s, buf, offset - s->blength, -2)` to flush the accumulated
@@ -284,32 +284,32 @@ oc-rsync analogue:
 
 ### 1.5 match_sums() and the matches summary
 
-- `match.c:362-437` `match_sums(f, s, buf, len)` is the public entry.
-- `match.c:364-368` zeros `last_match`, `false_alarms`, `hash_hits`,
+- `match.c:398-473` `match_sums(f, s, buf, len)` is the public entry.
+- `match.c:400-404` zeros `last_match`, `false_alarms`, `hash_hits`,
   `matches`, and `data_transfer` for the file.
-- `match.c:370` `sum_init(xfer_sum_nni, checksum_seed)` initialises the
+- `match.c:406` `sum_init(xfer_sum_nni, checksum_seed)` initialises the
   whole-file checksum (xxh3 / md5 / md4 depending on negotiation).
-- `match.c:372-391` is the `append_mode` shortcut. When appending, the
+- `match.c:408-427` is the `append_mode` shortcut. When appending, the
   receiver already has a verified prefix; the sender just runs
   `sum_update()` over the basis prefix (`append_mode == 2` rechecksums,
   `append_mode == 1` trusts it). `s->count = 0` then forces the
   no-blocks branch below.
-- `match.c:393-402` is the normal path: `build_hash_table(s)` then
+- `match.c:429-438` is the normal path: `build_hash_table(s)` then
   `hash_search(f, s, buf, len)`.
-- `match.c:403-409` is the whole-file path for `s->count == 0` (no
+- `match.c:439-445` is the whole-file path for `s->count == 0` (no
   basis or appended-only): walk the file in `CHUNK_SIZE` strides,
   emitting `matched(f, s, buf, j, -2)` literal flushes, then one final
   `matched(f, s, buf, len, -1)` end marker.
-- `match.c:411` `sum_end(sender_file_sum)` finalises the whole-file
+- `match.c:447` `sum_end(sender_file_sum)` finalises the whole-file
   hash.
-- `match.c:416-422` corrupts the whole-file checksum on `buf->status
+- `match.c:452-458` corrupts the whole-file checksum on `buf->status
   != 0` (read error) so the receiver rejects the file.
-- `match.c:426` `write_buf(f, sender_file_sum, xfer_sum_len)` emits the
+- `match.c:462` `write_buf(f, sender_file_sum, xfer_sum_len)` emits the
   whole-file checksum after the end-marker token.
-- `match.c:429-431` emits the per-file `false_alarms=N hash_hits=N
+- `match.c:465-467` emits the per-file `false_alarms=N hash_hits=N
   matches=N` debug line.
-- `match.c:433-436` accumulates into the per-session totals.
-- `match.c:439-448` `match_report()` emits the aggregated totals at
+- `match.c:469-472` accumulates into the per-session totals.
+- `match.c:475-484` `match_report()` emits the aggregated totals at
   `--debug=DELTASUM,1` level.
 
 oc-rsync analogues:
@@ -319,9 +319,9 @@ oc-rsync analogues:
   via `debug_log!(Deltasum, ...)`.
 - `crates/transfer/src/generator/delta.rs:225-264` is the whole-file
   literal-only path, using `write_token_end(writer)` at `:263` to
-  terminate. Upstream cite is `match.c:404-408`.
+  terminate. Upstream cite is `match.c:440-444`.
 - `append_mode` is wired at `crates/transfer/src/setup/restrictions.rs:39`
-  and `:91` (`compat.c:653-654` adjustment); the
+  and `:91` (`compat.c:654-655` adjustment); the
   rechecksum loop has no direct analogue yet (`crates/matching/` does
   not branch on append). Receiver-side prefix handling lives in
   `crates/transfer/src/receiver/transfer.rs`. #1579 owns wiring the
@@ -382,9 +382,9 @@ oc-rsync analogues:
   - When `token != -2`, emits `write_int(f, -(token+1))` for the match
     token: `token == 0` becomes `-1`, `token == 1` becomes `-2`, etc.
   - When `token == -1` (end-of-file sentinel from `matched()` at
-    `match.c:343`), `-(token+1) == 0`; the lone `write_int(f, 0)` is
+    `match.c:358`), `-(token+1) == 0`; the lone `write_int(f, 0)` is
     the end-of-stream marker.
-  - When `token == -2` (bored-of-literals flush from `match.c:339-340`),
+  - When `token == -2` (bored-of-literals flush from `match.c:354-355`),
     no integer is emitted - only the literal chunk(s).
 - `simple_recv_token` (`token.c:282-303`) is the receiver dual: read
   one `int`; if `<= 0` return it (caller interprets `0` as EOF and
@@ -516,7 +516,7 @@ two encodings are:
   (`token.c:583-586`, `:833-836`, `:1001-1004`).
 
 In both formats, after the end sentinel the sender writes the
-whole-file checksum (`match.c:426`, `write_buf(f, sender_file_sum,
+whole-file checksum (`match.c:462`, `write_buf(f, sender_file_sum,
 xfer_sum_len)`).
 
 oc-rsync analogues:
@@ -533,14 +533,14 @@ oc-rsync analogues:
 |---|---|---|
 | `match.c:55-88` `build_hash_table()` | `crates/matching/src/index/builder.rs:17-105` `populate_index` + `from_signature_with_role` | We do not auto-resize for 80% load; #2072 tracks the packed-key compaction. |
 | `match.c:105-137` `matched()` | `crates/matching/src/generator.rs:293-399` literal-flush + match-emit path | The whole-file `sum_update()` happens in `crates/transfer/src/generator/delta.rs:289-334`. |
-| `match.c:140-345` `hash_search()` | `crates/matching/src/generator.rs:141-441` `DeltaGenerator::generate` | Includes tag-table + bithash prefilter for the (sum1, sum2) early reject. |
+| `match.c:140-362` `hash_search()` | `crates/matching/src/generator.rs:141-441` `DeltaGenerator::generate` | Includes tag-table + bithash prefilter for the (sum1, sum2) early reject. |
 | `match.c:155, 289-301` `want_i` adjacency hint | `crates/matching/src/generator.rs:163, 251-264, 337-341, 375-392` + `crates/matching/src/index/mod.rs:240-263` `check_block_match_slices` | Hint deliberately bypasses the matched-block bitmap; see `docs/design/zsync-prune.md`. |
-| `match.c:191-202` bucket lookup | `crates/matching/src/index/compact_lookup.rs` `CompactLookup::find_all` | Open-addressing Robin Hood probe over an 8-byte slot. |
-| `match.c:218-240` chain reject + strong verify | `crates/matching/src/index/mod.rs:146-169` `find_match_bytes_filtered` | Tag table -> bithash -> strong-checksum order. |
-| `match.c:303-310` post-match window jump | `crates/matching/src/generator.rs:343-373` ring clear + bulk refill + SIMD `update` | Uses two-slice `as_slices()` view to avoid rotation. |
-| `match.c:314-340` rolling slide + early flush | `crates/matching/src/generator.rs:208-228` + `:218-225` | `CHUNK_SIZE = 32 KiB` matches `rsync.h:158`. |
-| `match.c:362-437` `match_sums()` | `crates/matching/src/generator.rs:141-441` `DeltaGenerator::generate` + `crates/transfer/src/generator/delta.rs:195-274` whole-file path | `append_mode == 2` rechecksum loop has no direct sender-side port yet (#1579). |
-| `match.c:439-448` `match_report()` | `crates/matching/src/generator.rs:429-438` `debug_log!(Deltasum, 1, ...)` | Per-session totals not yet aggregated; emitted per-file. |
+| `match.c:193-204` bucket lookup | `crates/matching/src/index/compact_lookup.rs` `CompactLookup::find_all` | Open-addressing Robin Hood probe over an 8-byte slot. |
+| `match.c:223-261` chain reject + strong verify | `crates/matching/src/index/mod.rs:146-169` `find_match_bytes_filtered` | Tag table -> bithash -> strong-checksum order. |
+| `match.c:318-325` post-match window jump | `crates/matching/src/generator.rs:343-373` ring clear + bulk refill + SIMD `update` | Uses two-slice `as_slices()` view to avoid rotation. |
+| `match.c:329-355` rolling slide + early flush | `crates/matching/src/generator.rs:208-228` + `:218-225` | `CHUNK_SIZE = 32 KiB` matches `rsync.h:159`. |
+| `match.c:398-473` `match_sums()` | `crates/matching/src/generator.rs:141-441` `DeltaGenerator::generate` + `crates/transfer/src/generator/delta.rs:195-274` whole-file path | `append_mode == 2` rechecksum loop has no direct sender-side port yet (#1579). |
+| `match.c:475-484` `match_report()` | `crates/matching/src/generator.rs:429-438` `debug_log!(Deltasum, 1, ...)` | Per-session totals not yet aggregated; emitted per-file. |
 | `token.c:282-303` `simple_recv_token()` | `crates/transfer/src/token_reader.rs:130-151` `TokenReader::Plain` arm | |
 | `token.c:306-320` `simple_send_token()` | `crates/protocol/src/wire/delta/token.rs:42-216` | Includes 32 KiB literal chunking. |
 | `token.c:358-486` `send_deflated_token()` | `crates/protocol/src/wire/compressed_token/zlib_codec.rs:60-242` | Run accumulator at `:88-105`, four-variant flush at `:225-242`. |
@@ -568,17 +568,17 @@ caught.
   `crates/protocol/src/wire/delta/mod.rs:20`).
 - `value > 0`: literal of `value` bytes follows verbatim
   (`token.c:307-314`). Literals longer than `CHUNK_SIZE = 32768`
-  (`rsync.h:158`) are split into multiple positive-int + payload
+  (`rsync.h:159`) are split into multiple positive-int + payload
   pieces.
 - `value == 0`: end-of-stream sentinel (`token.c:317-319` with
-  `token == -1`; `match.c:343`).
+  `token == -1`; `match.c:358`).
 - `value < 0`: block match at basis index `-(value + 1)`
   (`token.c:319`). The block length is implicit from the signature
   header; no length is encoded per-match.
 - Whole-file transfers still terminate with `write_int(0)`
-  (`match.c:407-408`).
+  (`match.c:443-444`).
 - After the end sentinel, the sender writes `xfer_sum_len` bytes of
-  whole-file checksum (`match.c:426`).
+  whole-file checksum (`match.c:462`).
 
 ### 4.2 Compressed delta stream (`CPRES_ZLIB`, `ZLIBX`, `ZSTD`, `LZ4`)
 
@@ -604,7 +604,7 @@ caught.
   (`token.c:464-485`). The receiver runs the symmetric
   `see_deflate_token()` (`token.c:637-676`).
 - Whole-file checksum still follows the `END_FLAG` byte
-  (`match.c:426`).
+  (`match.c:462`).
 
 ### 4.3 Common invariants
 
@@ -616,7 +616,7 @@ caught.
   in phase 2 redo). See `signature/block_size.rs` for the
   `SHORT_SUM_LENGTH` constant in oc-rsync.
 - `last_block_len` (the trailing partial block) participates in
-  matching but only at the file end; `match.c:174` derives `end = len + 1
+  matching but only at the file end; `match.c:176` derives `end = len + 1
   - s->sums[s->count-1].len` so the slide does not run off the buffer.
 - Match tokens carry an implicit length: the block length is
   `s->sums[i].len`, known to both sides from the signature header.
@@ -695,14 +695,14 @@ literal flush when no bytes are pending, and the EOF drain at
 
 ### 5.5 End-of-file alignment
 
-- `match.c:174` `end = len + 1 - s->sums[s->count-1].len` derives the
+- `match.c:176` `end = len + 1 - s->sums[s->count-1].len` derives the
   loop bound so the slide cannot read past the basis-file image. The
   `+1` compensates for the loop's `++offset` at the bottom of the
-  do/while at `match.c:341`.
-- `match.c:343-344` emits the trailing `matched(f, s, buf, len, -1)`
+  do/while at `match.c:356`.
+- `match.c:358-361` emits the trailing `matched(f, s, buf, len, -1)`
   end-marker plus a `map_ptr(buf, len-1, 1)` reference to ensure the
   final byte is faulted in (relevant for the memory-map backend).
-- `match.c:222-224` rejects mismatches on `l != s->sums[i].len` when
+- `match.c:228-231` rejects mismatches on `l != s->sums[i].len` when
   the candidate is a short trailing block - the rolling sum may
   match, but the partial block has a different canonical length.
 
@@ -715,7 +715,7 @@ present a differently-sized trailer.
 
 ### 5.6 Read-error checksum poisoning
 
-- `match.c:416-422` mutates `sender_file_sum` when `buf->status != 0`:
+- `match.c:452-458` mutates `sender_file_sum` when `buf->status != 0`:
   all bits are set, and if that happens to equal a valid checksum,
   the last 0 bit is flipped to 1. This guarantees the receiver
   rejects the file as corrupt without requiring an out-of-band
@@ -729,16 +729,16 @@ receiver expects a checksum frame even on read failure.
 
 ### 5.7 In-place mode chunk re-alignment
 
-- `match.c:246-287` handles `updating_basis_file` (in-place mode).
+- `match.c:264-302` handles `updating_basis_file` (in-place mode).
   After a match, upstream walks `aligned_offset` forward in
   `blength`-sized strides and prefers a match at the boundary to
   enable the seek-back trick that prevents the sender from
   overwriting bytes it has not yet read.
-- `match.c:262-282` handles the zero-run re-alignment: when a
+- `match.c:275-297` handles the zero-run re-alignment: when a
   zero-rolling-sum match lands off-boundary, the sender backs up to
   the alignment point and verifies the match there to avoid emitting
   literal data covering already-correct zeros.
-- `match.c:284` sets the `SUMFLG_SAME_OFFSET` flag so a later probe
+- `match.c:299` sets the `SUMFLG_SAME_OFFSET` flag so a later probe
   knows this index has been used at its native position.
 
 oc-rsync currently has no in-place sender mode. The matching crate
@@ -768,7 +768,7 @@ oc-rsync companion docs:
   invariants the matching crate enforces.
 - `docs/design/zsync-prune.md` for the matched-block bitmap (the
   duplicate-block correctness contract that interacts with the
-  upstream chain prune at `match.c:211-215`).
+  upstream chain prune at `match.c:215-219`).
 - `docs/design/zsync-seq-match.md` for the seq-match coalescing the
   generator emits (a strict superset of upstream's `want_i` hint).
 - `docs/design/zsync-bithash.md` for the bithash prefilter sitting

@@ -2,7 +2,7 @@
 // daemon-global cap-exceeded payload produce byte-identical wire bytes
 // for the same limit value.
 //
-// Upstream rsync 3.5.1 emits a single literal at `clientserver.c:799`
+// Upstream rsync 3.5.1 emits a single literal at `clientserver.c:803`
 // (`@ERROR: max connections (%d) reached -- try again later\n`).
 // oc-rsync has two call sites that build this reply:
 //
@@ -19,7 +19,7 @@
 // to each other plus to the upstream literal, guarding against drift
 // in either call site.
 //
-// upstream: target/interop/upstream-src/rsync-3.5.1/clientserver.c:799
+// upstream: target/interop/upstream-src/rsync-3.5.2/clientserver.c:803
 
 #[test]
 fn daemon_per_module_cap_wire_bytes_match_global_path() {

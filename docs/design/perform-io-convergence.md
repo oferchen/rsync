@@ -75,7 +75,7 @@ going through it.
   ```
 
   (`// upstream: io.c:882-889`). `read_a_msg` pulls a framed message out of the
-  already-read input buffer (`// upstream: io.c:1495`), so the raw socket read
+  already-read input buffer (`// upstream: io.c:1502`), so the raw socket read
   ahead in 2.2 and the message decode are decoupled.
 
 ### 2.3 The input buffer is FIXED, not growable
@@ -84,12 +84,12 @@ Important correction to the premise in the DrainingReader comments and in the
 IO-1 task text (both say the drain queue "mirrors upstream's iobuf.in that grows
 as needed"): upstream's socket input buffer does not grow. It is a fixed circular
 buffer allocated once - `alloc_xbuf(&iobuf.in, ROUND_UP_1024(IO_BUFFER_SIZE))`
-(`// upstream: io.c:1401`), with `IO_BUFFER_SIZE == 32*1024`
-(`// upstream: rsync.h:160`) - and perform_io states outright "We never resize
+(`// upstream: io.c:1408`), with `IO_BUFFER_SIZE == 32*1024`
+(`// upstream: rsync.h:161`) - and perform_io states outright "We never resize
 the circular input buffer" (`// upstream: io.c:579-585`), aborting with
 `RERR_PROTOCOL` if a caller ever needs more than fits. The output buffer is a
-fixed 64 KB (`2 * IO_BUFFER_SIZE`, `// upstream: io.c:1382`) and the message
-buffer a fixed 32 KB (`// upstream: io.c:2455`; it alone can double on overflow,
+fixed 64 KB (`2 * IO_BUFFER_SIZE`, `// upstream: io.c:1389`) and the message
+buffer a fixed 32 KB (`// upstream: io.c:2462`; it alone can double on overflow,
 `// upstream: io.c:998`).
 
 The consequence for the convergence design is material: the deadlock is broken by

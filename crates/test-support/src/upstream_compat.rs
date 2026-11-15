@@ -28,8 +28,10 @@ pub enum UpstreamVersion {
     V3_4_4,
     /// rsync 3.5.0.
     V3_5_0,
-    /// rsync 3.5.1 - current upstream release.
+    /// rsync 3.5.1.
     V3_5_1,
+    /// rsync 3.5.2 - current upstream release.
+    V3_5_2,
 }
 
 impl UpstreamVersion {
@@ -41,6 +43,7 @@ impl UpstreamVersion {
             UpstreamVersion::V3_4_4 => "3.4.4",
             UpstreamVersion::V3_5_0 => "3.5.0",
             UpstreamVersion::V3_5_1 => "3.5.1",
+            UpstreamVersion::V3_5_2 => "3.5.2",
         }
     }
 
@@ -54,6 +57,7 @@ impl UpstreamVersion {
             UpstreamVersion::V3_4_4 => "OC_RSYNC_UPSTREAM_BIN_3_4_4",
             UpstreamVersion::V3_5_0 => "OC_RSYNC_UPSTREAM_BIN_3_5_0",
             UpstreamVersion::V3_5_1 => "OC_RSYNC_UPSTREAM_BIN_3_5_1",
+            UpstreamVersion::V3_5_2 => "OC_RSYNC_UPSTREAM_BIN_3_5_2",
         }
     }
 }

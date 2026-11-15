@@ -1,17 +1,17 @@
 //! Session-scoped verbosity and the live diagnostic sink.
 //!
 //! Upstream rsync keeps `info_levels[]`, `debug_levels[]` and `quiet` as
-//! process globals (upstream: options.c:263, rsync.h:1473) and writes every
+//! process globals (upstream: options.c:264, rsync.h:1489) and writes every
 //! message the moment it is produced: `rprintf()` formats it and `rwrite()`
 //! hands it to stdout, stderr, the log file or a `MSG_*` frame
-//! (upstream: log.c:272-373). oc-rsync runs its transfer roles as threads, and
+//! (upstream: log.c:352-453). oc-rsync runs its transfer roles as threads, and
 //! a QUIC daemon serves several sessions inside one process, so the
 //! equivalent state lives in a [`LogContext`] shared by every thread of one
 //! session:
 //!
 //! - verbosity and `quiet`, read by [`info_gte`], [`debug_gte`] and
 //!   [`finfo_suppressed`] - the `INFO_GTE()`/`DEBUG_GTE()` macros
-//!   (upstream: rsync.h:1475-1477);
+//!   (upstream: rsync.h:1491-1493);
 //! - the sink every `emit_*` call writes through at once, as `rwrite()` does.
 //!
 //! A thread uses the context it [`enter`]ed, or the process default. A process
@@ -99,7 +99,7 @@ impl DiagnosticEvent {
 /// Destination for diagnostics, written at the moment each is produced.
 ///
 /// The client's sink writes to stdout/stderr, a server's frames the message
-/// for its peer. upstream: log.c:272-373 rwrite().
+/// for its peer. upstream: log.c:352-453 rwrite().
 pub trait DiagnosticSink: Send + Sync {
     /// Writes one event. Called from whichever thread produced it.
     fn write(&self, event: &Stamped<DiagnosticEvent>);
@@ -109,6 +109,9 @@ pub trait DiagnosticSink: Send + Sync {
 pub struct LogContext {
     verbosity: RwLock<VerbosityConfig>,
     quiet: AtomicBool,
+    /// Whether integer counts (such as file-list counts) use comma grouping.
+    /// Mirrors `human_readable != 0` in upstream `inums.h:comma_num`.
+    groups_counts: AtomicBool,
     /// Bumped on every verbosity or `quiet` change so threads refresh their
     /// cached copy.
     generation: AtomicU64,
@@ -117,7 +120,7 @@ pub struct LogContext {
     /// Open [`discard_events_from`] scopes while a sink is installed.
     discarding: AtomicU64,
     /// Set once an `FERROR_XFER` line is produced.
-    /// upstream: log.c:338 rwrite() `got_xfer_error = 1`.
+    /// upstream: log.c:418 rwrite() `got_xfer_error = 1`.
     xfer_error: AtomicBool,
 }
 
@@ -134,6 +137,7 @@ impl Default for LogContext {
         Self {
             verbosity: RwLock::new(VerbosityConfig::default()),
             quiet: AtomicBool::new(false),
+            groups_counts: AtomicBool::new(true),
             generation: AtomicU64::new(1),
             sink: RwLock::new(None),
             buffer: Mutex::new(Vec::new()),
@@ -326,7 +330,7 @@ impl Session {
 /// Installs the verbosity configuration of the calling thread's context.
 ///
 /// Every thread of the session sees the new levels, as every upstream role
-/// reads the same `info_levels[]` (upstream: options.c:263).
+/// reads the same `info_levels[]` (upstream: options.c:264).
 pub fn init(config: VerbosityConfig) {
     current().update_verbosity(|verbosity| *verbosity = config);
 }
@@ -335,7 +339,7 @@ pub fn init(config: VerbosityConfig) {
 ///
 /// Upstream keeps `quiet` as a global of its own, separate from `verbose` and
 /// from `info_levels[]`, and consults it in exactly one place: the `FINFO` arm
-/// of `rwrite()` returns without writing (upstream: log.c:344-345). Anything
+/// of `rwrite()` returns without writing (upstream: log.c:424-425). Anything
 /// that only folds `--quiet` into `verbose = 0` cannot express a notice
 /// upstream prints at default verbosity and suppresses only under `-q` - the
 /// two states become indistinguishable.
@@ -349,15 +353,31 @@ pub fn set_quiet(quiet: bool) {
 ///
 /// The single question a producer or renderer should ask before emitting an
 /// upstream `rprintf(FINFO, ...)` that carries no `INFO_GTE` gate of its own.
-/// upstream: log.c:345 rwrite() `if (quiet)` - the FINFO arm's early return.
+/// upstream: log.c:425 rwrite() `if (quiet)` - the FINFO arm's early return.
 #[must_use]
 pub fn finfo_suppressed() -> bool {
     with_view(|view| view.quiet)
 }
 
+/// Sets whether integer count fields (such as file-list totals) insert comma
+/// thousands separators.
+///
+/// Mirrors upstream `inums.h:comma_num`, which passes `human_readable != 0`
+/// to `do_big_num` so only `--no-h` (`human_readable = 0`) disables grouping.
+pub fn set_groups_counts(groups: bool) {
+    current().groups_counts.store(groups, Ordering::Release);
+}
+
+/// Reports whether integer count fields should insert comma thousands
+/// separators (`true` by default, `false` under `--no-h`).
+#[must_use]
+pub fn groups_counts() -> bool {
+    current().groups_counts.load(Ordering::Acquire)
+}
+
 /// Check if the info flag is at or above the specified level.
 ///
-/// Equivalent to upstream's `INFO_GTE(flag, level)` macro (upstream: rsync.h:1475).
+/// Equivalent to upstream's `INFO_GTE(flag, level)` macro (upstream: rsync.h:1491).
 #[inline]
 pub fn info_gte(flag: InfoFlag, level: u8) -> bool {
     with_view(|view| view.verbosity.info.get(flag) >= level)
@@ -365,7 +385,7 @@ pub fn info_gte(flag: InfoFlag, level: u8) -> bool {
 
 /// Check if the debug flag is at or above the specified level.
 ///
-/// Equivalent to upstream's `DEBUG_GTE(flag, level)` macro (upstream: rsync.h:1477).
+/// Equivalent to upstream's `DEBUG_GTE(flag, level)` macro (upstream: rsync.h:1493).
 #[inline]
 pub fn debug_gte(flag: DebugFlag, level: u8) -> bool {
     with_view(|view| view.verbosity.debug.get(flag) >= level)
@@ -412,7 +432,7 @@ pub fn emit_info_coded(flag: InfoFlag, level: u8, code: LogCode, message: String
 /// handles this automatically.
 ///
 /// The event is tagged [`LogCode::Info`], matching [`emit_info`]. The escaping
-/// of the bytes happens once, at the sink (upstream: log.c:242
+/// of the bytes happens once, at the sink (upstream: log.c:249
 /// `filtered_fwrite`), never at this emitter.
 pub fn emit_info_bytes(flag: InfoFlag, level: u8, message: Vec<u8>) {
     emit(DiagnosticEvent::Bytes {
@@ -429,7 +449,7 @@ pub fn emit_info_bytes(flag: InfoFlag, level: u8, message: Vec<u8>) {
 /// applies. One trailing newline is dropped because the sink terminates
 /// every line itself; escaping and stream selection happen there too.
 ///
-/// upstream: log.c:272 rwrite() - every line carries its code to one writer.
+/// upstream: log.c:352 rwrite() - every line carries its code to one writer.
 pub fn emit_line(code: LogCode, line: &[u8]) {
     let line = line.strip_suffix(b"\n").unwrap_or(line);
     emit(DiagnosticEvent::Bytes {
@@ -454,7 +474,7 @@ pub fn emit_line(code: LogCode, line: &[u8]) {
 /// `rsync warning: … (code N) at file(line)` trailer upstream renders at
 /// `log.c:956` is deliberately not applied here; that formatting belongs to
 /// the single logcode-to-stream funnel, not to the emitter.
-/// upstream: log.c:341 rwrite() `case FWARNING:`
+/// upstream: log.c:421 rwrite() `case FWARNING:`
 pub fn emit_warning(message: String) {
     emit_info_coded(InfoFlag::Misc, 0, LogCode::Warning, message);
 }
@@ -489,7 +509,7 @@ pub fn emit_debug_coded(flag: DebugFlag, level: u8, code: LogCode, message: Stri
 /// Whether this session has produced an `FERROR_XFER` line, which makes a
 /// finished run exit with code 23.
 ///
-/// upstream: log.c:338 rwrite() sets `got_xfer_error` for every such line,
+/// upstream: log.c:418 rwrite() sets `got_xfer_error` for every such line,
 /// whichever stream it then goes to.
 #[must_use]
 pub fn xfer_error_reported() -> bool {
@@ -561,7 +581,7 @@ fn drain_events_where(accept: impl Fn(LogCode) -> bool) -> Vec<DiagnosticEvent> 
 /// because that renderer has something to interleave against: the buffered
 /// per-file event stream, which it emits post-hoc. `FLOG` is left behind
 /// because upstream's `rwrite()` writes a log message and returns before the
-/// client-stream dispatch (upstream: log.c:312-334) - the log-file sink takes
+/// client-stream dispatch (upstream: log.c:392-414) - the log-file sink takes
 /// those through [`drain_events_coded`], and draining them here would consume
 /// them before that sink ever runs.
 pub fn drain_stamped_events_for_client() -> Vec<Stamped<DiagnosticEvent>> {
@@ -573,7 +593,7 @@ pub fn drain_stamped_events_for_client() -> Vec<Stamped<DiagnosticEvent>> {
 /// This is how a log-file sink consumes `FLOG`-classified events without
 /// disturbing the client-stream events that a later [`drain_events`] renders:
 /// upstream's `rwrite()` writes an FLOG message to the log file and returns
-/// before the client-stream dispatch (upstream: log.c:312-334), so the two
+/// before the client-stream dispatch (upstream: log.c:392-414), so the two
 /// destinations drain independently. Returns matches in emission order.
 pub fn drain_events_coded(code: LogCode) -> Vec<DiagnosticEvent> {
     drain_events_where(|candidate| candidate == code)
@@ -582,17 +602,17 @@ pub fn drain_events_coded(code: LogCode) -> Vec<DiagnosticEvent> {
 /// Drain the events a server must frame to its peer, leaving the rest queued.
 ///
 /// A server does not print these itself: upstream's `rwrite()` hands them to
-/// `send_msg()` and returns (upstream: log.c:357-366), so the message travels
+/// `send_msg()` and returns (upstream: log.c:437-446), so the message travels
 /// as a `MSG_*` frame and the client renders it. Without this drain the events
 /// stay in the buffer and die with the thread.
 ///
 /// Takes every code upstream's stream switch lets through to that block:
 ///
-/// - `FERROR_XFER`, `FERROR`, `FWARNING` (upstream: log.c:336-342).
+/// - `FERROR_XFER`, `FERROR`, `FWARNING` (upstream: log.c:416-422).
 /// - `FERROR_SOCKET` and `FERROR_UTF8`, which normalise to `FERROR` first
-///   (upstream: log.c:303-308).
+///   (upstream: log.c:383-388).
 /// - `FINFO`, unless `--quiet` is in effect: its arm returns early under
-///   `quiet` (upstream: log.c:344-346), before the `send_msg()`. Every
+///   `quiet` (upstream: log.c:424-426), before the `send_msg()`. Every
 ///   `--info` and `--debug` line is an `FINFO` upstream (`rprintf(FINFO, ...)`),
 ///   and [`emit_debug`] tags debug traces with [`LogCode::Info`] for that
 ///   reason, so a server's debug output reaches the client the same way.
@@ -600,8 +620,8 @@ pub fn drain_events_coded(code: LogCode) -> Vec<DiagnosticEvent> {
 /// Under `--quiet` the `FINFO` events are discarded rather than left queued:
 /// upstream drops them at the same point, and a leftover would surface later
 /// through another drain. `FLOG` is excluded because upstream returns before
-/// the switch (upstream: log.c:331-334); it belongs to [`drain_events_coded`].
-/// upstream: log.c:357-366 rwrite() `if (am_server ...) send_msg(msg, ...)`
+/// the switch (upstream: log.c:411-414); it belongs to [`drain_events_coded`].
+/// upstream: log.c:437-446 rwrite() `if (am_server ...) send_msg(msg, ...)`
 pub fn drain_events_for_peer() -> Vec<DiagnosticEvent> {
     let quiet = finfo_suppressed();
     let mut events = drain_events_where(|code| is_error_class(code) || code == LogCode::Info);
@@ -614,13 +634,13 @@ pub fn drain_events_for_peer() -> Vec<DiagnosticEvent> {
 /// Drain only the error and warning events, leaving `FINFO` and the rest.
 ///
 /// The receiver uses this when it is the client (a pull): those codes go to
-/// its own stderr as they arise (upstream: log.c:336-342 picks stderr), while
+/// its own stderr as they arise (upstream: log.c:416-422 picks stderr), while
 /// its `FINFO` output stays queued for the client's summary renderer.
 pub fn drain_error_events() -> Vec<DiagnosticEvent> {
     drain_events_where(is_error_class)
 }
 
-/// The codes upstream's `rwrite()` sends to stderr (upstream: log.c:303-308,
+/// The codes upstream's `rwrite()` sends to stderr (upstream: log.c:383-388,
 /// 336-342).
 fn is_error_class(code: LogCode) -> bool {
     matches!(
@@ -648,16 +668,16 @@ fn event_code(event: &DiagnosticEvent) -> LogCode {
 /// `rwrite()`'s `else if (am_daemon || logfile_name)` block it is handed to
 /// `logit()` whatever its code, and only the priority differs - `LOG_INFO`
 /// for `FINFO`/`FLOG`, `LOG_WARNING` for everything else
-/// (upstream: log.c:312-332). `FLOG` is not special-cased *into* the log; it
+/// (upstream: log.c:392-412). `FLOG` is not special-cased *into* the log; it
 /// is special-cased *out of* the stream switch that follows
-/// (upstream: log.c:331-334).
+/// (upstream: log.c:411-414).
 ///
 /// So this takes everything except [`LogCode::None`], upstream's `FNONE`,
-/// which `rwrite()` is never handed at all (upstream: rsync.h:283 "never
+/// which `rwrite()` is never handed at all (upstream: rsync.h:284 "never
 /// sent"). Draining a narrower set would silently discard a daemon-side
 /// `FERROR`: the message would be produced, be correct, and never reach the
 /// operator.
-/// upstream: log.c:312-332 rwrite() `else if (am_daemon || logfile_name)`
+/// upstream: log.c:392-412 rwrite() `else if (am_daemon || logfile_name)`
 pub fn drain_events_for_daemon_log() -> Vec<DiagnosticEvent> {
     drain_events_where(|code| code != LogCode::None)
 }
@@ -677,7 +697,7 @@ pub fn apply_info_flag(token: &str) -> Result<(), String> {
 /// flags would set, so explicitly requested levels cannot exceed the cap.
 /// A `level` above [`MAX_VERBOSITY`](crate::MAX_VERBOSITY) applies no limit.
 ///
-/// upstream: options.c:546-572 limit_output_verbosity()
+/// upstream: options.c:547-573 limit_output_verbosity()
 pub fn limit_output_verbosity(level: u8) {
     if level > crate::MAX_VERBOSITY {
         return;
@@ -762,7 +782,7 @@ mod tests {
     /// The behaviour-preserving default: every event emitted through the
     /// legacy emitters (and therefore through `info_log!`/`debug_log!`) is
     /// tagged FINFO, the code whose upstream routing - client stdout,
-    /// subject to verbosity (upstream: log.c:344-347) - matches how the
+    /// subject to verbosity (upstream: log.c:424-427) - matches how the
     /// renderer already treats all drained events.
     #[test]
     fn default_emitters_tag_events_finfo() {
@@ -780,7 +800,7 @@ mod tests {
     }
 
     /// Coded emitters attach the producer's real upstream logcode, e.g. FLOG
-    /// for log-file-only banners (upstream: log.c:312-334).
+    /// for log-file-only banners (upstream: log.c:392-414).
     #[test]
     fn coded_emitters_carry_explicit_logcode() {
         init(VerbosityConfig::default());
@@ -814,7 +834,7 @@ mod tests {
     /// The narrow reading - "the daemon log takes `FLOG`" - is what
     /// `rwrite()`'s trailing `if (code == FLOG) return;` looks like from the
     /// stream switch. Read from the top, `logit()` has already run for every
-    /// code that reached the `am_daemon` branch (upstream: log.c:312-332), so
+    /// code that reached the `am_daemon` branch (upstream: log.c:392-412), so
     /// a drain keyed on `FLOG` alone discards a daemon-side `FERROR`: the
     /// message is produced, is correct, and never reaches the operator.
     #[test]
@@ -832,7 +852,7 @@ mod tests {
             emit_info_coded(InfoFlag::Misc, 0, code, format!("{code:?}"));
         }
         // `FNONE` is the one code `rwrite()` is never handed
-        // (upstream: rsync.h:283 "never sent").
+        // (upstream: rsync.h:284 "never sent").
         emit_info_coded(InfoFlag::Misc, 0, LogCode::None, "unsent".to_owned());
 
         let logged: Vec<LogCode> = drain_events_for_daemon_log()
@@ -1071,7 +1091,7 @@ mod tests {
         assert!(!info_gte(InfoFlag::Copy, 1));
     }
 
-    /// upstream: log.c:344-366 - a server frames FINFO (every --info/--debug
+    /// upstream: log.c:424-446 - a server frames FINFO (every --info/--debug
     /// line) to the peer, so the peer drain takes it along with the error
     /// class, in emission order.
     #[test]
@@ -1101,7 +1121,7 @@ mod tests {
         );
     }
 
-    /// upstream: log.c:344-346 - `case FINFO: if (quiet) return;` runs before
+    /// upstream: log.c:424-426 - `case FINFO: if (quiet) return;` runs before
     /// the send, so a quiet server frames no FINFO, yet still frames errors.
     #[test]
     fn quiet_peer_drain_discards_finfo_but_keeps_errors() {
@@ -1131,7 +1151,7 @@ mod tests {
         assert_eq!(drain_events().len(), 1, "the debug line is still queued");
     }
 
-    /// upstream: options.c:546-572 - explicit levels above the cap's rows are
+    /// upstream: options.c:547-573 - explicit levels above the cap's rows are
     /// lowered per flag; levels already below stay; a level above
     /// MAX_VERBOSITY applies no limit (options.c:551-552).
     #[test]
@@ -1185,7 +1205,7 @@ mod sink_tests {
         }
     }
 
-    /// upstream: log.c:272-373 - rwrite() writes each message as it is
+    /// upstream: log.c:352-453 - rwrite() writes each message as it is
     /// produced, so a sink must see buffered lines first and later ones at once.
     #[test]
     fn an_installed_sink_gets_the_backlog_then_each_line_as_produced() {
@@ -1204,7 +1224,7 @@ mod sink_tests {
     }
 
     /// The disk-commit and rayon threads must log as the main thread does:
-    /// upstream's levels are process globals (options.c:263).
+    /// upstream's levels are process globals (options.c:264).
     #[test]
     fn a_spawned_thread_sees_the_session_levels_and_sink() {
         let context = LogContext::new();

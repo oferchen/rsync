@@ -87,7 +87,7 @@ that way:
 Frequency: O(D) ranges where D is the number of directories. The
 receiver's `read_entry_with_flist` slice access dominates the
 INC_RECURSE memory shape - it needs the previous segment's tail for
-incremental name encoding (`flist.c:577-590` uses `lastname`,
+incremental name encoding (`flist.c:580-594` uses `lastname`,
 `lastdir`, `lastdir_len` static state).
 
 ### 2.3 Hardlink-sibling search (O(N) by (dev, ino), then O(1) by NDX)

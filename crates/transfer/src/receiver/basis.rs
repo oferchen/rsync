@@ -37,26 +37,26 @@ pub struct BasisFileResult {
     /// [`protocol::FnameCmpType::Fname`] for the ordinary destination basis (no wire byte),
     /// `FnameCmpType::BasisDir(j)` (`FNAMECMP_BASIS_DIR_LOW + j`) when the basis
     /// came from reference dir `j` (`--compare-dest`/`--copy-dest`/`--link-dest`)
-    /// while the destination was absent (upstream: generator.c:1054),
+    /// while the destination was absent (upstream: generator.c:1091),
     /// [`protocol::FnameCmpType::PartialDir`] (`0x81`) when the basis was recovered
-    /// from `--partial-dir` on a resume (upstream: generator.c:1759-1765,1853),
+    /// from `--partial-dir` on a resume (upstream: generator.c:1796-1802,1853),
     /// [`protocol::FnameCmpType::Backup`] (`0x82`) when `--inplace --backup`
     /// selected the freshly written pre-image copy as the basis (upstream:
     /// generator.c:2328-2356), and
     /// `FnameCmpType::Fuzzy(i)` (`FNAMECMP_FUZZY + i`) for a `--fuzzy` match, where
     /// `i` is 0 for the destination directory and `k + 1` for reference dir `k`
-    /// (upstream: generator.c:861,903,1945).
+    /// (upstream: generator.c:898,903,1945).
     pub fnamecmp_type: protocol::FnameCmpType,
     /// The alternate-basis name sent as an `ITEM_XNAME_FOLLOWS` vstring, present
     /// only for a fuzzy match. Upstream sends `fuzzy_file->basename` - the bare
     /// basename, resolved by the receiver relative to the target's directory
-    /// (upstream: generator.c:1948, receiver.c:854-857).
+    /// (upstream: generator.c:1985, receiver.c:854-857).
     pub xname: Option<Vec<u8>>,
     /// The `INFO_GTE(BACKUP, 1)` "backed up X to Y" notice for the
     /// `--inplace --backup` delta-path pre-image copy made while selecting the
     /// basis (`fnamecmp_type == FNAMECMP_BACKUP`). The caller emits it on the
     /// session thread, whose thread-local verbosity is actually seeded - a
-    /// rayon signature worker's is not (upstream: generator.c:2448-2450).
+    /// rayon signature worker's is not (upstream: generator.c:2491-2493).
     pub backup_notice: Option<crate::pipeline::messages::BackupNotice>,
 }
 
@@ -89,7 +89,7 @@ pub struct BasisFileConfig<'a> {
     /// Diagnostic only: it names the file in the generator's `generating and
     /// sending sums for %d` trace and never affects the signature or the wire.
     ///
-    /// upstream: generator.c:2363-2364.
+    /// upstream: generator.c:2406-2407.
     pub ndx: i32,
     /// Target file path in destination.
     pub file_path: &'a std::path::Path,
@@ -103,11 +103,11 @@ pub struct BasisFileConfig<'a> {
     /// Expected size of the target file.
     pub target_size: u64,
     /// Target file modification time in whole seconds since the Unix epoch,
-    /// used for the fuzzy size/modtime fast-path. upstream: generator.c:858.
+    /// used for the fuzzy size/modtime fast-path. upstream: generator.c:895.
     pub target_mtime: i64,
     /// Fuzzy matching level (0=off, 1=dest dir, 2=dest+reference dirs).
     ///
-    /// Upstream: `options.c:764` - `fuzzy_basis` controls how many directory
+    /// Upstream: `options.c:765` - `fuzzy_basis` controls how many directory
     /// sources are searched. Level 1 searches only the destination directory.
     /// Level 2 also searches reference directories (`--compare-dest`,
     /// `--copy-dest`, `--link-dest`).
@@ -118,7 +118,7 @@ pub struct BasisFileConfig<'a> {
     /// is absent, the generator falls back to a same-named regular file inside
     /// this directory as the delta basis (`FNAMECMP_PARTIAL_DIR`).
     ///
-    /// Upstream: `generator.c:2173-2179` - `partialptr = partial_dir_fname(fname)`.
+    /// Upstream: `generator.c:2214-2220` - `partialptr = partial_dir_fname(fname)`.
     pub partial_dir: Option<&'a std::path::Path>,
     /// Protocol version for signature generation.
     pub protocol: ProtocolVersion,
@@ -137,13 +137,13 @@ pub struct BasisFileConfig<'a> {
     /// Fixed delta block length from `-B` / `--block-size`, when the operator
     /// set one. `None` selects the square-root heuristic.
     ///
-    /// upstream: generator.c:720-721 - `if (block_size) blength = block_size;`
+    /// upstream: generator.c:757-758 - `if (block_size) blength = block_size;`
     /// inside `sum_sizes_sqroot()`, the one point where the option displaces
     /// the heuristic. The receiving side owns it: the generator sizes the
     /// blocks it checksums, so the sender never consults the value.
     pub block_size: Option<NonZeroU32>,
     /// `--inplace --backup` delta-path backup inputs. `Some` exactly when
-    /// upstream's `inplace && make_backups > 0` holds (generator.c:2328) - the
+    /// upstream's `inplace && make_backups > 0` holds (generator.c:2371) - the
     /// caller passes `None` on the redo pass, mirroring the
     /// `make_backups = -make_backups` negation at generator.c:2659, and on
     /// paths upstream never takes to that branch (`--only-write-batch` has
@@ -200,11 +200,11 @@ impl std::fmt::Debug for InplaceBackupSpec<'_> {
 #[derive(Debug, Clone, Copy)]
 struct SignatureGenerationConfig<'a> {
     /// Wire file index, named by the `generating and sending sums for %d`
-    /// trace. upstream: generator.c:2363-2364.
+    /// trace. upstream: generator.c:2406-2407.
     ndx: i32,
     /// Flist-relative name of the target, the spelling upstream's `gen mapped`
     /// trace prints (upstream works in `fnamecmp`, relative to the destination
-    /// root it chdir'd into). upstream: generator.c:2358-2361.
+    /// root it chdir'd into). upstream: generator.c:2401-2404.
     relative_name: &'a std::path::Path,
     /// Protocol version for signature layout calculation.
     protocol: ProtocolVersion,
@@ -241,7 +241,7 @@ impl<'a> SignatureGenerationConfig<'a> {
 /// came from, which becomes the `FNAMECMP_BASIS_DIR_LOW + j` wire tag. The basis
 /// open goes through [`fast_io::open_basis_nofollow`], which follows directory
 /// symlinks (so `--copy-dirlinks` continues to work) but refuses to follow
-/// a symlinked leaf component, mirroring upstream `syscall.c:844`
+/// a symlinked leaf component, mirroring upstream `syscall.c:913`
 /// (`do_open_at`).
 ///
 /// # Upstream Reference
@@ -304,7 +304,7 @@ fn try_open_file(path: &std::path::Path) -> Option<(fs::File, u64, PathBuf)> {
 /// sandbox when one is held so a swapped parent cannot select a file outside
 /// the tree.
 ///
-/// upstream: syscall.c:3858-3871 held_dfd_for() + do_open_atfd()
+/// upstream: syscall.c:3926-3939 held_dfd_for() + do_open_atfd()
 fn try_open_dest_basis(config: &BasisFileConfig<'_>) -> Option<(fs::File, u64, PathBuf)> {
     #[cfg(unix)]
     let file = fast_io::open_basis_via_sandbox_or_fallback(
@@ -328,10 +328,10 @@ struct FuzzyBasis {
     path: PathBuf,
     /// The `fnamecmp_type` to advertise on the wire; `Fuzzy(i)` for a fuzzy
     /// basis, where `i` names the dest dir (0) or reference dir `k` (`k + 1`).
-    /// upstream: generator.c:861,903.
+    /// upstream: generator.c:898,903.
     fnamecmp_type: protocol::FnameCmpType,
     /// The `ITEM_XNAME_FOLLOWS` basename, always present for a fuzzy basis
-    /// (upstream: generator.c:1948 `fuzzy_file->basename`).
+    /// (upstream: generator.c:1985 `fuzzy_file->basename`).
     xname: Option<Vec<u8>>,
 }
 
@@ -394,7 +394,7 @@ fn try_fuzzy_match(
     let fuzzy_matcher = FuzzyMatcher::with_level(fuzzy_level).with_fuzzy_basis_dirs(basis_dirs);
     let fuzzy_match =
         fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size, Some(target_mtime))?;
-    // upstream: generator.c:1788 - announce the selected fuzzy basis at
+    // upstream: generator.c:1825 - announce the selected fuzzy basis at
     // FUZZY,1 the moment the matcher returns a candidate, before we attempt
     // to open it.
     trace_fuzzy_basis_selected(
@@ -405,7 +405,7 @@ fn try_fuzzy_match(
 
     // Map the matched candidate back to its fuzzy-index and advertise the
     // matching FNAMECMP_FUZZY + i tag with the basis basename as the xname.
-    // upstream: generator.c:843/868 iterate dirlist_array[0] (dest dir, index 0)
+    // upstream: generator.c:880/868 iterate dirlist_array[0] (dest dir, index 0)
     // then basis_dir[i-1] (reference dir k -> index k + 1).
     let fnamecmp_type = fuzzy_index(&path, dest_dir, &ref_search_dirs)?;
     let basename = path
@@ -432,7 +432,7 @@ fn try_fuzzy_match(
 /// index). Returns `None` if the parent matches no known search directory - the
 /// caller then falls back to a whole-file transfer rather than emit a wrong tag.
 ///
-/// upstream: generator.c:843,868 (`dirlist_array[i]`), generator.c:861,903
+/// upstream: generator.c:880,868 (`dirlist_array[i]`), generator.c:898,903
 /// (`FNAMECMP_FUZZY + i`).
 fn fuzzy_index(
     path: &std::path::Path,
@@ -498,7 +498,7 @@ fn generate_basis_signature(
     // than the checksum the sender expects. This runs before the private
     // CAP_CONSECUTIVE_MATCH halving below, mirroring upstream's order (cap in
     // sum_sizes_sqroot, then any extension).
-    // upstream: generator.c:705 sum_sizes_sqroot() `max_s2length`,
+    // upstream: generator.c:742 sum_sizes_sqroot() `max_s2length`,
     // checksum.c:214 csum_len_for_type().
     let digest_len =
         NonZeroU8::new(config.checksum_algorithm.digest_len().min(u8::MAX as usize) as u8)
@@ -563,7 +563,7 @@ fn generate_basis_signature(
     // basis and falls back to a whole-file transfer.
     // upstream: fileio.c:256-259 comment + map_ptr() deliberately use read(2)
     // instead of mmap(2) on basis files for exactly this reason.
-    // upstream: generator.c:2358-2361, :2363-2364, then :765-770 - the generator
+    // upstream: generator.c:2401-2404, :2363-2364, then :765-770 - the generator
     // names the basis it mapped, announces the file it is producing sums for,
     // and then reports the geometry `sum_sizes_sqroot()` chose. All three
     // precede the per-chunk sums below, and that order is the reason this whole
@@ -589,7 +589,7 @@ fn generate_basis_signature(
 
     match signature {
         Ok(sig) => {
-            // upstream: generator.c:817-822 - one line per generated chunk,
+            // upstream: generator.c:854-859 - one line per generated chunk,
             // emitted as `generate_and_send_sums()` walks the basis. oc
             // computes the whole signature first (possibly in parallel), so the
             // trace is replayed here in block order rather than interleaved
@@ -712,7 +712,7 @@ fn compute_basis_signature<R: std::io::Read>(
 /// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
 /// - `generator.c:1400` - Reference directory checking
 pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileResult {
-    // upstream: generator.c:2280 - `whole_file` is tested only after the basis
+    // upstream: generator.c:2322 - `whole_file` is tested only after the basis
     // was chosen, so the choice (and its wire byte) survives; only the sums go.
     if config.whole_file {
         return whole_file_basis(config);
@@ -720,7 +720,7 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
 
     let sig_config = SignatureGenerationConfig::from_basis_config(config);
 
-    // upstream: generator.c:2172-2178,2270-2275 - a regular file under
+    // upstream: generator.c:2213-2219,2270-2275 - a regular file under
     // --partial-dir becomes the basis at prepare_to_open whatever was chosen
     // before it, the destination included. The destination quick check has
     // already ruled out an up-to-date file by the time a basis is sought.
@@ -739,7 +739,7 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
     // The exact destination basis is reported to the sender as FNAMECMP_FNAME
     // (no basis-type byte).
     if let Some((file, size, path)) = try_open_dest_basis(config) {
-        // upstream: generator.c:2328-2356 - on the delta path, once the
+        // upstream: generator.c:2371-2399 - on the delta path, once the
         // destination basis has opened (`inplace && make_backups > 0 &&
         // fnamecmp_type == FNAMECMP_FNAME`), the generator creates the backup
         // copy of the pre-image and retags `fnamecmp_type = FNAMECMP_BACKUP`.
@@ -765,7 +765,7 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
         );
     }
 
-    // upstream: generator.c:1054 - when the destination is absent, a basis found
+    // upstream: generator.c:1091 - when the destination is absent, a basis found
     // in reference dir j (`--compare-dest`/`--copy-dest`/`--link-dest`) whose
     // content differs is tagged FNAMECMP_BASIS_DIR_LOW + j. That sets
     // ITEM_BASIS_TYPE_FOLLOWS (generator.c:1943) so the peer reads the trailing
@@ -784,7 +784,7 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
         );
     }
 
-    // upstream: generator.c:861,903,1945-1948 - a fuzzy match is tagged
+    // upstream: generator.c:898,903,1945-1948 - a fuzzy match is tagged
     // FNAMECMP_FUZZY + i (0x83 for the dest dir, 0x83 + k + 1 for reference dir
     // k) and its basename is sent as the ITEM_XNAME_FOLLOWS vstring so the peer's
     // receiver can open the same basis.
@@ -813,7 +813,7 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
 
 /// The same-named regular file under `--partial-dir`, when there is one.
 ///
-/// upstream: generator.c:2172-2178 `partial_dir_fname()` + `S_ISREG`
+/// upstream: generator.c:2213-2219 `partial_dir_fname()` + `S_ISREG`
 fn try_partial_basis(config: &BasisFileConfig<'_>) -> Option<(fs::File, u64, PathBuf)> {
     let dir = config.partial_dir?;
     let partial = crate::temp_guard::partial_dir_fname(config.file_path, dir)?;
@@ -831,7 +831,7 @@ fn try_partial_basis(config: &BasisFileConfig<'_>) -> Option<(fs::File, u64, Pat
 /// `--inplace --backup` retag is a delta-path step (generator.c:2328) and is
 /// not applied here.
 ///
-/// upstream: generator.c:2155-2181,2270-2280 (choice), :2381-2386 (wire),
+/// upstream: generator.c:2196-2222,2270-2280 (choice), :2381-2386 (wire),
 /// :2400 (empty sum head)
 fn whole_file_basis(config: &BasisFileConfig<'_>) -> BasisFileResult {
     let named = |path, fnamecmp_type, xname| BasisFileResult {
@@ -847,7 +847,7 @@ fn whole_file_basis(config: &BasisFileConfig<'_>) -> BasisFileResult {
     if config.reference_directories.is_empty() && config.fuzzy_level == 0 {
         return BasisFileResult::EMPTY;
     }
-    // upstream: generator.c:2155,2181 - reference dirs and fuzzy are searched
+    // upstream: generator.c:2196,2181 - reference dirs and fuzzy are searched
     // only for a destination that is not already a regular file.
     let destination_exists = fast_io::destination_at::symlink_metadata(config.file_path)
         .is_ok_and(|meta| meta.is_file());
@@ -875,7 +875,7 @@ fn whole_file_basis(config: &BasisFileConfig<'_>) -> BasisFileResult {
 }
 
 /// Creates the `--inplace --backup` pre-image copy and selects it as the delta
-/// basis, tagged `FNAMECMP_BACKUP` (upstream: generator.c:2328-2356).
+/// basis, tagged `FNAMECMP_BACKUP` (upstream: generator.c:2371-2399).
 ///
 /// Returns `None` - falling back to the plain `FNAMECMP_FNAME` destination
 /// basis - when the copy or its signature fails. The destination is still
@@ -1035,7 +1035,7 @@ mod tests {
     /// Issue #715 regression (`symlink-dirlink-basis.test` test 1): when
     /// the destination directory is a symlink to a real directory, the
     /// receiver must open the basis file through the directory symlink.
-    /// Upstream sets this expectation in `syscall.c:844 do_open_at()` -
+    /// Upstream sets this expectation in `syscall.c:913 do_open_at()` -
     /// the dirname is resolved with normal symlink-following semantics.
     #[cfg(unix)]
     #[test]
@@ -1341,7 +1341,7 @@ mod tests {
     /// interrupted transfer left a same-named file under `--partial-dir`, the
     /// generator must select that partial file as the delta basis and tag it
     /// `FNAMECMP_PARTIAL_DIR` (0x81) so a delta - not a whole file - is sent.
-    /// upstream: generator.c:1759-1765 + prepare_to_open (generator.c:1850-1855).
+    /// upstream: generator.c:1796-1802 + prepare_to_open (generator.c:1887-1892).
     #[test]
     fn partial_dir_basis_selected_when_dest_absent() {
         use std::io::Write;
@@ -1556,7 +1556,7 @@ mod tests {
     /// A `--fuzzy` match found in the destination directory must be selected as
     /// a delta basis (not a whole-file send) AND advertised as FNAMECMP_FUZZY
     /// (0x83) with the basis basename as the xname, so a remote peer opens the
-    /// same basis. upstream: generator.c:1785,1945-1948.
+    /// same basis. upstream: generator.c:1822,1945-1948.
     #[test]
     fn fuzzy_match_tagged_fuzzy_with_basename_xname() {
         use std::io::Write;
@@ -1565,7 +1565,7 @@ mod tests {
         let dest_dir = tmp.path();
         // Target "data.txt" is absent; a same-suffix candidate "data2.txt" sits
         // beside it. The shared ".txt" suffix keeps the fuzzy distance under the
-        // cap (upstream weights suffix mismatches x10, generator.c:894).
+        // cap (upstream weights suffix mismatches x10, generator.c:931).
         let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
         {
             let mut f = fs::File::create(dest_dir.join("data2.txt")).expect("create candidate");
@@ -1622,7 +1622,7 @@ mod tests {
     /// selected as a delta basis and tagged FNAMECMP_BASIS_DIR_LOW + j
     /// (`BasisDir(j)`), so ITEM_BASIS_TYPE_FOLLOWS + the index byte go on the
     /// wire - matching a real upstream generator - and NO xname follows.
-    /// upstream: generator.c:1054, generator.c:1943-1945.
+    /// upstream: generator.c:1091, generator.c:1980-1982.
     #[test]
     fn reference_dir_basis_tagged_basis_dir_index() {
         use std::io::Write;
@@ -1705,7 +1705,7 @@ mod tests {
     /// #205: a `-yy` fuzzy hit sourced from reference dir `k` must be tagged
     /// FNAMECMP_FUZZY + (k + 1) (`Fuzzy(k + 1)`; the dest dir is fuzzy-index 0)
     /// with the basis basename as the xname, so a real upstream peer reads the
-    /// 0x84 tag plus the vstring. upstream: generator.c:861,903,1945-1948.
+    /// 0x84 tag plus the vstring. upstream: generator.c:898,903,1945-1948.
     #[test]
     fn reference_dir_fuzzy_tagged_fuzzy_index_with_xname() {
         use std::io::Write;
@@ -1834,7 +1834,7 @@ mod tests {
     /// around the redo `recv_generator()` call, and `sum_sizes_sqroot()` then
     /// takes the `csum_length == SUM_LENGTH` branch to emit a full-strength
     /// `s2length` instead of the phase-1 sqrt-reduced length.
-    /// upstream: generator.c:2650 (`csum_length = SUM_LENGTH`),
+    /// upstream: generator.c:2694 (`csum_length = SUM_LENGTH`),
     /// generator.c:739-740 (`s2length = max_s2length`), generator.c:2205
     /// (restore `SHORT_SUM_LENGTH`).
     ///
@@ -2111,7 +2111,7 @@ mod tests {
         }
     }
 
-    /// upstream: generator.c:720-721 - `if (block_size) blength = block_size;`.
+    /// upstream: generator.c:757-758 - `if (block_size) blength = block_size;`.
     /// The generator is the side that sizes the blocks it checksums, so the
     /// value has to reach `generate_basis_signature`, not merely be parsed.
     /// Without a fixture that CHANGES the block length this assertion would be
@@ -2199,7 +2199,7 @@ mod tests {
         }
     }
 
-    /// `--inplace --backup` delta path (upstream: generator.c:2328-2356): with
+    /// `--inplace --backup` delta path (upstream: generator.c:2371-2399): with
     /// the spec set and the destination present, the basis selection must
     /// create the pre-image copy, select IT as the basis, and tag the result
     /// `FNAMECMP_BACKUP` (0x82) so the sender clears `updating_basis_file`
@@ -2400,7 +2400,7 @@ mod tests {
         }
     }
 
-    /// upstream: syscall.c:3858-3871 held_dfd_for() - the exact basis opens
+    /// upstream: syscall.c:3926-3939 held_dfd_for() - the exact basis opens
     /// beneath the destination the receiver entered, so a parent swapped for
     /// a symlink after entry cannot feed an outside file back as delta basis.
     #[cfg(unix)]

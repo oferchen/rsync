@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 const S_IFMT: u32 = 0o170000;
 const S_IFREG: u32 = 0o100000;
 const S_IFLNK: u32 = 0o120000;
-/// upstream: generator.c:659 - quick_check_ok() reads at most MAXPATHLEN-1.
+/// upstream: generator.c:696 - quick_check_ok() reads at most MAXPATHLEN-1.
 const MAX_TARGET_LEN: u64 = 4095;
 
 /// Reports whether a `--fake-super` receiver stores symlinks as placeholders.
@@ -33,7 +33,7 @@ pub const fn symlinks_are_placeholders(fake_super: bool) -> bool {
 ///
 /// Fails when nothing at `link_path` is a placeholder link; the caller then
 /// treats the path as an obstacle. Returns the stat, open or read error.
-/// upstream: generator.c:1965 quick_check_ok(FT_SYMLINK) on the x_lstat()
+/// upstream: generator.c:2002 quick_check_ok(FT_SYMLINK) on the x_lstat()
 /// type, and syscall.c:do_readlink_atfd() - a real symlink reads as length 0
 /// on a fake-super receiver.
 pub fn read_fake_super_link(

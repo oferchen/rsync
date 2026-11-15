@@ -128,7 +128,7 @@ fn confined_clone_file_refuses_a_parent_symlinked_outside() {
 /// restoring the `&Path` signature and the `File::open(src)` inside `clone_at`
 /// makes it read `OUTSIDE-SECRET` and fail.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:3037-3102` - the confined walk refuses an
+/// upstream: `rsync-3.5.2/syscall.c:3108-3173` - the confined walk refuses an
 /// absolute symlink target, and that refusal is worthless if a later syscall
 /// resolves the same name again with the libc resolver.
 #[test]

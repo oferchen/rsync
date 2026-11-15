@@ -32,7 +32,7 @@ use super::with_output_writer;
 ///
 /// The handle is wrapped in a [`LogFileWriter`] so every line the renderers
 /// produce is stamped with upstream's `"%Y/%m/%d %H:%M:%S [pid] "` prefix
-/// (upstream: log.c:125-141 `logit()`).
+/// (upstream: log.c:132-148 `logit()`).
 pub(crate) struct LogFileConfig {
     pub(crate) file: LogFileWriter<File>,
     pub(crate) format: OutFormat,
@@ -117,7 +117,7 @@ where
 
     // Capture the sender role before `config` is consumed by the client driver.
     // Threaded into `OutFormatContext` so the itemize renderer picks the correct
-    // direction arrow (upstream: log.c:739-742 - `<` for sender, `>` otherwise).
+    // direction arrow (upstream: log.c:824-827 - `<` for sender, `>` otherwise).
     let is_sender = config.is_local_sender();
     // upstream: log.c `%o` reports `recv` on the receiving client (a pull) and
     // `send` otherwise (a push or a local copy) - a different split than the
@@ -127,7 +127,7 @@ where
     // gid_ndx); otherwise 0 / "DEFAULT".
     let preserve_owner = config.preserve_owner();
     let preserve_group = config.preserve_group();
-    // upstream: flist.c:2761-2764 picks exactly one banner in send_file_list():
+    // upstream: flist.c:2772-2775 picks exactly one banner in send_file_list():
     // `show_filelist_progress` (flist.c:172: `INFO_GTE(FLIST, 1) && xfer_dirs
     // && !am_server && !inc_recurse`) prints `building file list ... done`,
     // otherwise `inc_recurse && INFO_GTE(FLIST, 1) && !am_server` prints
@@ -173,7 +173,7 @@ where
     // the user passed --[no-]whole-file; the local-copy default is therefore
     // whole-file. This decides the `delta-transmission` wording.
     let whole_file = config.whole_file();
-    // upstream: generator.c:2762-2767 + match.c:480-483 - the delta-transmission
+    // upstream: generator.c:2848-2853 + match.c:516-519 - the delta-transmission
     // notice fires at DEBUG_GTE(FLIST, 1) and the match_report `total:` line at
     // DEBUG_GTE(DELTASUM, 1); both first activate at -vv and honour --debug
     // overrides. Only wire them for the local-copy path; network
@@ -185,7 +185,7 @@ where
     };
     let delta_notice = DeltaTransmissionSummary {
         notice: (in_process_local && debug_gte(DebugFlag::Flist, 1)).then_some(delta_state),
-        // upstream: match_report() (match.c:480-483) is gated on DEBUG_GTE(DELTASUM, 1)
+        // upstream: match_report() (match.c:516-519) is gated on DEBUG_GTE(DELTASUM, 1)
         // alone - `--whole-file` does not suppress it, it just leaves the match
         // counters at zero. MEASURED against rsync 3.4.4: both `-rvv` and
         // `-rvv --no-whole-file` print the line.
@@ -193,10 +193,10 @@ where
     };
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
-    // to symlink rows (upstream: generator.c:1346-1347 gates it on preserve_links).
+    // to symlink rows (upstream: generator.c:1383-1384 gates it on preserve_links).
     let preserve_links = config.links();
     // Capture the negotiated checksum before `config` is consumed so the `%C`
-    // renderer reports the negotiated algorithm's digest (upstream: log.c:717-729
+    // renderer reports the negotiated algorithm's digest (upstream: log.c:802-814
     // selects `file_sum_nni` under `--checksum`, else `xfer_sum_nni`).
     let always_checksum = config.checksum();
     let full_checksum_algorithm = if always_checksum {
@@ -204,7 +204,7 @@ where
     } else {
         config.checksum_choice().transfer()
     };
-    // upstream: generator.c:588-589 - `INFO_GTE(NAME, 2)` (i.e. `-vv`
+    // upstream: generator.c:625-626 - `INFO_GTE(NAME, 2)` (i.e. `-vv`
     // or `--info=name2`) keeps emitting itemize lines for unchanged
     // entries. Thread the resolved name-level into the renderer so it
     // bypasses the empty-change-set suppression and surfaces all-dot
@@ -219,16 +219,21 @@ where
         .with_preserve_links(preserve_links)
         .with_full_checksum(full_checksum_algorithm, always_checksum);
 
-    let mut live_progress = requested_progress_mode.map(|mode| {
-        with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-            LiveProgress::with_output_config(
-                writer,
-                mode,
-                human_readable_mode,
-                progress_output_config,
-            )
+    // upstream: log.c:425 / rput_progress() - --quiet suppresses all FINFO/progress output.
+    let mut live_progress = if logging::finfo_suppressed() {
+        None
+    } else {
+        requested_progress_mode.map(|mode| {
+            with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                LiveProgress::with_output_config(
+                    writer,
+                    mode,
+                    human_readable_mode,
+                    progress_output_config,
+                )
+            })
         })
-    });
+    };
     if is_sender {
         live_progress = live_progress.map(LiveProgress::with_sender_named_files);
     }
@@ -261,7 +266,7 @@ where
     }
 
     let result = {
-        // upstream: log.c:272-373 rwrite() writes each line as it is produced.
+        // upstream: log.c:352-453 rwrite() writes each line as it is produced.
         // A remote transfer does that here; the in-process local copy keeps its
         // diagnostics buffered so they merge into its post-hoc listing below.
         let _live = (is_pull || is_sender).then(|| {
@@ -276,7 +281,7 @@ where
         run_client_with_observer(config, observer)
     };
 
-    // upstream: cleanup.c:210-218 - a run that finished every entry still
+    // upstream: cleanup.c:211-219 - a run that finished every entry still
     // writes its itemize lines and statistics before log_exit()'s trailer, even
     // when io_error makes the exit code non-zero; only an aborted run has none.
     let (summary, failure) = match result {
@@ -297,7 +302,7 @@ where
             });
         }
 
-        // upstream: log.c:272-373 rwrite() writes each diagnostic the moment
+        // upstream: log.c:352-453 rwrite() writes each diagnostic the moment
         // it is produced, so it lands among the per-file lines rather than
         // after them. oc buffers the event stream and renders it here, so
         // the diagnostics have to be merged back in by production order.
@@ -318,7 +323,7 @@ where
                 msgs_to_stderr,
             );
         }
-        // upstream: log.c:344-345 - rwrite() returns without writing any
+        // upstream: log.c:424-425 - rwrite() returns without writing any
         // FINFO line under --quiet (FCLIENT is rewritten to FINFO first), so
         // the listing, names, itemize rows and stats never reach the client.
         // Only the diagnostics interleaved on this stream survive.
@@ -416,7 +421,7 @@ where
         return core::exit_code::record_exit(core::exit_code::process_latch(), code);
     };
 
-    // upstream: cleanup.c:221-225 - after the peer's MSG_ERROR_EXIT only a
+    // upstream: cleanup.c:222-226 - after the peer's MSG_ERROR_EXIT only a
     // `--log-file` run without `--info=stats` still calls log_exit().
     let trailer =
         !error.ended_by_peer_error_exit() || (has_log_file && verbosity == 0 && stats_level == 0);
@@ -466,7 +471,7 @@ fn emit_error_report<Err>(
             stderr,
         );
     }
-    // upstream: cleanup.c:221-253 - a failed wait for the peer's exit prints
+    // upstream: cleanup.c:222-254 - a failed wait for the peer's exit prints
     // after log_exit()'s trailer, e.g. io.c:918-925 `read error`.
     if let Some(line) = error.trailing_program_line() {
         let program = stderr.brand().client_program_name();
@@ -516,7 +521,7 @@ struct EmitLogOutputParams<'a> {
     log: &'a mut LogFileConfig,
     /// FLOG-classified diagnostic events consumed from the thread-local queue
     /// (e.g. `building file list`, flist.c:2760). These lines belong to the
-    /// log file only (upstream: log.c:331-334).
+    /// log file only (upstream: log.c:411-414).
     flog_events: Vec<logging::DiagnosticEvent>,
     verbosity: u8,
     stats_level: u8,
@@ -525,7 +530,7 @@ struct EmitLogOutputParams<'a> {
     name_overridden: bool,
     human_readable_mode: HumanReadableMode,
     /// Whether the local client is the sender. Threaded through so the
-    /// itemize direction arrow matches upstream `log.c:739-742`.
+    /// itemize direction arrow matches upstream `log.c:824-827`.
     is_sender: bool,
     /// Whether the transfer is a pull; drives the `%o` operation word.
     is_pull: bool,
@@ -540,9 +545,9 @@ struct EmitLogOutputParams<'a> {
     /// `--crtimes`: render the CRTIME column in `--list-only` log output.
     show_crtimes: bool,
     /// `--links` / `-l`: whether symlink rows in `--list-only` log output get
-    /// the ` -> <target>` arrow (upstream: generator.c:1346-1347).
+    /// the ` -> <target>` arrow (upstream: generator.c:1383-1384).
     preserve_links: bool,
-    /// Negotiated `%C` checksum algorithm (upstream: log.c:717-729).
+    /// Negotiated `%C` checksum algorithm (upstream: log.c:802-814).
     full_checksum_algorithm: StrongChecksumAlgorithm,
     /// `--checksum` / `-c` (upstream `always_checksum`), gating `%C` for
     /// untransferred regular files.
@@ -572,7 +577,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         full_checksum_algorithm,
         always_checksum,
     } = params;
-    // upstream: generator.c:588-589 - mirror the `INFO_GTE(NAME, 2)` arm of
+    // upstream: generator.c:625-626 - mirror the `INFO_GTE(NAME, 2)` arm of
     // the itemize emit gate in the log-file renderer so `-vv` / `--info=name2`
     // surfaces unchanged entries in the log alongside stdout. The `-ii`
     // (`stdout_format_has_i > 1`) arm forces them independently of `-vv`.
@@ -585,7 +590,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         .with_escape_style(EscapeStyle::passthrough())
         .with_preserve_links(preserve_links)
         .with_full_checksum(full_checksum_algorithm, always_checksum);
-    // upstream: log.c:312-334 - FLOG messages are written to the log file
+    // upstream: log.c:392-414 - FLOG messages are written to the log file
     // before any client-stream output and never reach stdout. The queue holds
     // them in emission order, so "building file list" (flist.c:2760) or
     // "receiving file list" (flist.c:3123) precedes the per-file lines.
@@ -595,7 +600,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
             | logging::DiagnosticEvent::Debug { message, .. } => writeln!(log.file, "{message}")?,
             // A byte-faithful notice reaches the log file as raw bytes; the
             // `LogFileWriter` escapes them once with its own log-file style
-            // (upstream: log.c:136 `logit()`), so the filename operand survives
+            // (upstream: log.c:143 `logit()`), so the filename operand survives
             // and a control byte cannot forge a log line. The message boundary
             // is one `write`, so append the record's newline and write it whole.
             logging::DiagnosticEvent::Bytes { message, .. } => {
@@ -606,7 +611,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         }
     }
     // The FCLIENT "sending incremental file list" banner is stdout only;
-    // upstream's parallel "building file list" line (flist.c:2760) is an FLOG
+    // upstream's parallel "building file list" line (flist.c:2771) is an FLOG
     // log-file message consumed from the FLOG event queue above.
     emit_transfer_summary(
         summary,
@@ -636,7 +641,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         false,
         show_atimes,
         show_crtimes,
-        // upstream: log.c:132 `logit()` writes the log line through
+        // upstream: log.c:139 `logit()` writes the log line through
         // `filtered_fwrite(.., use_isprint=0, escape_c1=1, ..)` - a fixed pair
         // that `--8-bit-output` does not reach, so a name carrying `ESC`, a
         // newline or an 8-bit CSI cannot forge a log line (CWE-117) while DEL
@@ -647,7 +652,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         // client-stream diagnostics, so there is nothing to interleave here.
         &mut PendingDiagnostics::empty(),
     )?;
-    // upstream: cleanup.c:222-226 gates log_exit() on
+    // upstream: cleanup.c:223-227 gates log_exit() on
     // `logfile_name && (am_server || !INFO_GTE(STATS, 1))`, and log_exit()
     // writes the FLOG-only totals trailer
     // `sent %s bytes  received %s bytes  total size %s` via `big_num()`

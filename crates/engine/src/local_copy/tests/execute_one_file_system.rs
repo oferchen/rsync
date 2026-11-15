@@ -988,7 +988,7 @@ fn level_zero_does_not_skip_any_mount_points() {
 /// Verifies that pruning a cross-device child directory emits the upstream
 /// `--info=MOUNT` notice through the diagnostic event queue.
 ///
-/// Mirrors `flist.c:1718-1721` in upstream rsync 3.5.1:
+/// Mirrors `flist.c:1722-1725` in upstream rsync 3.5.1:
 /// ```c
 /// if (INFO_GTE(MOUNT, 1)) {
 ///     rprintf(FINFO, "[%s] skipping mount-point dir %s\n",

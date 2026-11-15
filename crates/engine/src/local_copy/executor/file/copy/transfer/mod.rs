@@ -99,7 +99,7 @@ pub(super) struct TransferFlags {
     /// Whether the destination's extended attributes differed from the
     /// source's before the copy touched them.
     ///
-    /// Drives the itemize `x` column. upstream: `generator.c:571-576` sets
+    /// Drives the itemize `x` column. upstream: `generator.c:608-613` sets
     /// `ITEM_REPORT_XATTR` from `xattr_diff()`, never from `preserve_xattrs`
     /// alone, so this is captured once in `copy_file` while the destination is
     /// still untouched and carried down to every record site.
@@ -108,7 +108,7 @@ pub(super) struct TransferFlags {
     #[cfg(all(any(unix, windows), feature = "acl"))]
     pub preserve_acls: bool,
     /// Whether this pass is the phase-2 resend, which matches with full-width
-    /// strong sums (upstream: generator.c:2650, receiver.c:955
+    /// strong sums (upstream: generator.c:2694, receiver.c:955
     /// `csum_length = SUM_LENGTH`).
     pub redoing: bool,
 }

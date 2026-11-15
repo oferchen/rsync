@@ -509,7 +509,7 @@ is enforced by:
 sender task (not from `spawn_blocking`). The sender task catches the
 `spawn_blocking` result and, on open failure, writes the `MSG_NO_SEND`
 frame and continues to the next NDX - matching upstream
-`sender.c:354-369`.
+`sender.c:362-377`.
 
 ## 11. Prototype implementation plan
 

@@ -100,7 +100,7 @@ fn loopback_pair() -> (TcpStream, TcpStream) {
 ///
 /// `request_module` must be false for a greeting the daemon refuses in
 /// `exchange_protocols()`: it writes its `@ERROR` and closes the socket without
-/// reading anything further (upstream clientserver.c:201-213). Over TCP, data
+/// reading anything further (upstream clientserver.c:205-217). Over TCP, data
 /// still unread at that close makes the kernel answer with an RST, and on Linux
 /// an RST discards the `@ERROR` already queued in our receive buffer, so the
 /// read below fails with `ECONNRESET` instead of seeing the refusal. Not sending
@@ -208,7 +208,7 @@ fn an_empty_digest_list_is_refused_with_exit_code_4() {
 /// The one-byte-different contrast: no space at all is an ABSENT list, which
 /// upstream substitutes for and authenticates.
 ///
-/// upstream: compat.c:857-862 - `daemon_auth_choices == NULL` selects
+/// upstream: compat.c:866-871 - `daemon_auth_choices == NULL` selects
 /// `protocol_version >= 30 ? "md5" : "md4"`. Protocol 31 is the newest version
 /// that can reach it; at 32 the absent list is refused earlier, by
 /// `exchange_protocols()`, with a different diagnostic.
@@ -230,7 +230,7 @@ fn an_absent_digest_list_still_reaches_the_auth_challenge() {
 /// upstream's other diagnostic. Pinning it here keeps the two refusals from
 /// being conflated when the empty-list case is fixed.
 ///
-/// upstream: clientserver.c:203-211.
+/// upstream: clientserver.c:207-215.
 #[test]
 fn an_absent_digest_list_past_protocol_31_is_refused_by_the_presence_gate() {
     let (answer, _code) = run_session("@RSYNCD: 32.0\n", false);

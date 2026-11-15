@@ -1,6 +1,6 @@
 //! Filter options on a remote-shell server's own argv, as 3.5.1 applies them.
 //!
-//! upstream: options.c:1620-1656 and :1718-1727 parse `-f`, `--exclude`,
+//! upstream: options.c:1647-1683 and :1718-1727 parse `-f`, `--exclude`,
 //! `--include`, the `-from` pair and `-F` into `filter_list` ahead of the
 //! client's wire rules (exclude.c:1971-1986), relative to the server's cwd.
 //! The pass restarts at `--server` (options.c:1517-1524) without clearing that

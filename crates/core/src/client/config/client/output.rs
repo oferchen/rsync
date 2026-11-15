@@ -47,7 +47,7 @@ impl ClientConfig {
     /// Reports whether unchanged entries should be itemized too (`-ii` /
     /// `--info=name2`).
     ///
-    /// upstream: generator.c:588-589 - `stdout_format_has_i > 1 || INFO_GTE(NAME, 2)`
+    /// upstream: generator.c:625-626 - `stdout_format_has_i > 1 || INFO_GTE(NAME, 2)`
     #[must_use]
     #[doc(alias = "-ii")]
     pub const fn itemize_unchanged(&self) -> bool {
@@ -59,7 +59,7 @@ impl ClientConfig {
     /// resolved format string rather than the `-i` flag. For remote pushes this
     /// forwards `--log-format=%i`.
     ///
-    /// upstream: options.c:2496-2508 (`stdout_format_has_i`) and
+    /// upstream: options.c:2551-2563 (`stdout_format_has_i`) and
     /// options.c:2948-2951 (`args[ac++] = "--log-format=%i"`).
     #[must_use]
     #[doc(alias = "--out-format")]
@@ -73,7 +73,7 @@ impl ClientConfig {
     /// this forwards `--log-format=%o` so the remote emits matching operation
     /// output.
     ///
-    /// upstream: options.c:2526-2527 (`stdout_format_has_o_or_i`) and
+    /// upstream: options.c:2581-2582 (`stdout_format_has_o_or_i`) and
     /// options.c:2952-2953 (`args[ac++] = "--log-format=%o"`).
     #[must_use]
     #[doc(alias = "--out-format")]
@@ -86,7 +86,7 @@ impl ClientConfig {
     /// given that contains neither `%i` nor `%o`. For a non-verbose remote push
     /// this forwards the placeholder `--log-format=X`.
     ///
-    /// upstream: options.c:2954-2955 (`else if (!verbose) args[ac++] =
+    /// upstream: options.c:3019-3020 (`else if (!verbose) args[ac++] =
     /// "--log-format=X"`).
     #[must_use]
     #[doc(alias = "--out-format")]

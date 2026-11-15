@@ -697,7 +697,7 @@ fn ignore_existing_dry_run() {
     assert!(!dest_root.join("new.txt").exists());
 }
 
-/// upstream: generator.c:1784-1785 - `--ignore-existing` skips ANY present
+/// upstream: generator.c:1821-1822 - `--ignore-existing` skips ANY present
 /// destination, not only a regular file: a symlink already at the destination
 /// keeps its old target even though the source link points elsewhere.
 #[cfg(unix)]
@@ -728,7 +728,7 @@ fn ignore_existing_leaves_existing_symlink_untouched() {
     );
 }
 
-/// upstream: generator.c:1784-1785 - a symlink arriving over an existing
+/// upstream: generator.c:1821-1822 - a symlink arriving over an existing
 /// regular file is skipped too; the regular file must not be replaced.
 #[cfg(unix)]
 #[test]
@@ -758,7 +758,7 @@ fn ignore_existing_keeps_regular_file_where_symlink_arrives() {
     );
 }
 
-/// upstream: generator.c:1784-1785 - `(!is_dir || stype != FT_DIR)`: a source
+/// upstream: generator.c:1821-1822 - `(!is_dir || stype != FT_DIR)`: a source
 /// directory arriving where the destination holds a non-directory is skipped,
 /// so the existing file survives instead of being replaced by a directory.
 #[test]
@@ -783,7 +783,7 @@ fn ignore_existing_keeps_file_where_directory_arrives() {
     assert_eq!(fs::read(dest_root.join("dir")).expect("file kept"), b"keep");
 }
 
-/// upstream: generator.c:1784-1785 - a directory arriving over a directory is
+/// upstream: generator.c:1821-1822 - a directory arriving over a directory is
 /// still merged into: its new children are created.
 #[test]
 fn ignore_existing_merges_directory_into_directory() {
@@ -810,7 +810,7 @@ fn ignore_existing_merges_directory_into_directory() {
     );
 }
 
-/// upstream: generator.c:1784-1785 - a FIFO arriving over an existing regular
+/// upstream: generator.c:1821-1822 - a FIFO arriving over an existing regular
 /// file is skipped; the file must not be unlinked to make way for the node.
 #[cfg(unix)]
 #[test]

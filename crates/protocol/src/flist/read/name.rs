@@ -44,7 +44,7 @@ impl FileListReader {
             0
         };
 
-        // upstream: flist.c:1039-1042 - XMIT_LONG_NAME uses read_varint30()
+        // upstream: flist.c:1043-1046 - XMIT_LONG_NAME uses read_varint30()
         // which dispatches to read_int (4-byte LE) for protocol < 30,
         // read_varint for protocol >= 30
         let suffix_len = if flags.long_name() {
@@ -66,7 +66,7 @@ impl FileListReader {
             ));
         }
 
-        // upstream: flist.c:1044 `l2 >= MAXPATHLEN - l1` overflow exit. Phrased
+        // upstream: flist.c:1048 `l2 >= MAXPATHLEN - l1` overflow exit. Phrased
         // as upstream phrases it rather than as a sum: `same_len` came from one
         // wire byte, so `MAXPATHLEN - same_len` cannot underflow and the sum of
         // a byte and a varint cannot wrap - the separate checked_add arm this
@@ -124,13 +124,13 @@ impl FileListReader {
         match converter.remote_to_local(&name) {
             Ok(converted) => Ok(converted.into_owned()),
             Err(_) => {
-                // upstream: flist.c:1067-1070 - the FERROR_UTF8 message, then
+                // upstream: flist.c:1071-1074 - the FERROR_UTF8 message, then
                 // `outbuf.len = 0` empties the name.
                 eprintln!(
                     "{}",
                     crate::iconv::cannot_convert_filename_message("receiver", &name)
                 );
-                // upstream: flist.c:1066 sets `io_error |= IOERR_GENERAL` with
+                // upstream: flist.c:1070 sets `io_error |= IOERR_GENERAL` with
                 // no `ignore_errors` check, so this is a LOCAL error and is
                 // never suppressed by --ignore-errors. This is the FILENAME
                 // conversion arm (the `cannot convert filename` rprintf at
@@ -171,7 +171,7 @@ impl FileListReader {
         // Fast path: most names from a well-behaved sender need no cleaning.
         if !needs_cleaning(&name) {
             if !self.relative_paths && name[0] == b'/' {
-                // upstream: flist.c:1079 exit_cleanup(RERR_UNSUPPORTED); the
+                // upstream: flist.c:1083 exit_cleanup(RERR_UNSUPPORTED); the
                 // `Unsupported` kind maps to exit 4, not StreamIo(12).
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
@@ -188,9 +188,9 @@ impl FileListReader {
         let mut out = Vec::with_capacity(name.len());
         let anchored = name[0] == b'/';
 
-        // upstream: flist.c:1077 - reject absolute paths when not --relative
+        // upstream: flist.c:1081 - reject absolute paths when not --relative
         if anchored && !self.relative_paths {
-            // upstream: flist.c:1079 exit_cleanup(RERR_UNSUPPORTED) -> exit 4.
+            // upstream: flist.c:1083 exit_cleanup(RERR_UNSUPPORTED) -> exit 4.
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 format!(
@@ -229,7 +229,7 @@ impl FileListReader {
                 if next == Some(b'.') {
                     let after = name.get(i + 2).copied();
                     if after == Some(b'/') || after.is_none() {
-                        // upstream: flist.c:1079 exit_cleanup(RERR_UNSUPPORTED) -> exit 4.
+                        // upstream: flist.c:1083 exit_cleanup(RERR_UNSUPPORTED) -> exit 4.
                         return Err(io::Error::new(
                             io::ErrorKind::Unsupported,
                             format!(

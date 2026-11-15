@@ -148,9 +148,9 @@ When `max connections` is set, add the lock-file roundtrip: rows
 Per module-select on the same configuration, upstream walks the
 same logical phases but in C with a fixed `line[BIGPATHBUFLEN]`
 stack buffer and pre-tokenised argument storage. The relevant
-upstream functions are `rsync_module()` (`clientserver.c:692-1110`),
+upstream functions are `rsync_module()` (`clientserver.c:696-1114`),
 `claim_connection()` (`connection.c:26-47`), `read_args()`
-(`io.c:1292-1346`), and `allow_access()` (`access.c:264-292`).
+(`io.c:1299-1353`), and `allow_access()` (`access.c:328-356`).
 
 | Category | oc-rsync | upstream 3.4.1 | Delta |
 |----------|----------|----------------|-------|

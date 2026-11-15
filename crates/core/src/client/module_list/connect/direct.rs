@@ -578,7 +578,7 @@ mod tests {
         assert_eq!(tried, addrs);
     }
 
-    // upstream: socket.c:471 and clientserver.c:164-165 - one line per failed
+    // upstream: socket.c:471 and clientserver.c:168-169 - one line per failed
     // address, named by the host as given and the numeric address, then the
     // RERR_SOCKETIO trailer from the process that dialled.
     #[test]

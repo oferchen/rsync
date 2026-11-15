@@ -2,7 +2,7 @@
 //!
 //! The sender reports an unreadable source file through `MSG_IO_ERROR`, which
 //! it writes only after its send loop ends, just before its final `NDX_DONE`
-//! (upstream: sender.c:811-820). Upstream's generator runs the late deletions
+//! (upstream: sender.c:819-828). Upstream's generator runs the late deletions
 //! only after the receiver has read that `NDX_DONE`: generator.c:2891-2900
 //! waits for the receiver's third `MSG_DONE`, which main.c:1111 sends after
 //! `recv_files()` returns. By then io.c:1740-1747 has folded the error into

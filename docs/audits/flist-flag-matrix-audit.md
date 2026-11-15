@@ -84,7 +84,7 @@ Bits with stable single meanings:
 - `TOP_DIR` (bit 0) - sender marks command-line argument directories so the
   receiver does not treat them as deletable hierarchies. Also abused as a
   filler to keep the first flag byte non-zero on protocols < 28 for
-  non-directory entries (`flist.c:561`, our
+  non-directory entries (`flist.c:564`, our
   `crates/protocol/src/flist/write/encoding.rs:62`).
 - `SAME_MODE` (bit 1) - mode unchanged from previous entry; suppresses the
   4-byte mode field.
@@ -163,26 +163,26 @@ uid/gid).
 
 | Flag | Upstream encode | Our encode |
 |---|---|---|
-| `TOP_DIR` | `flist.c:413,415,419,553,561` | `write/xflags.rs:94`, `write/encoding.rs:47,62` |
-| `SAME_MODE` | `flist.c:431` | `write/xflags.rs:98`, `write/metadata.rs:86` |
-| `EXTENDED_FLAGS` | `flist.c:550,555` | `write/encoding.rs:39,51,361` |
-| `SAME_UID` | `flist.c:464` | `write/xflags.rs:111`, `write/metadata.rs:126` |
-| `SAME_GID` | `flist.c:474` | `write/xflags.rs:117`, `write/metadata.rs:151` |
-| `SAME_NAME` | `flist.c:540,564` | `write/xflags.rs:121`, `write/encoding.rs:86` |
-| `LONG_NAME` | `flist.c:542,566` | `write/xflags.rs:125`, `write/encoding.rs:60,90` |
-| `SAME_TIME` | `flist.c:484,581` | `write/xflags.rs:102`, `write/metadata.rs:63` |
-| `SAME_RDEV_MAJOR` | `flist.c:444,457,627` | `write/xflags.rs:155,162`, `write/encoding.rs:168` |
-| `NO_CONTENT_DIR` | `flist.c:415,417` | `write/xflags.rs:276` |
-| `HLINKED` | `flist.c:530` | `write/xflags.rs:190,199` |
-| `SAME_DEV_pre30` | `flist.c:526,655` | `write/xflags.rs:201`, `write/encoding.rs:248` |
-| `USER_NAME_FOLLOWS` | `flist.c:470,602` | `write/xflags.rs:225`, `write/metadata.rs:134` |
-| `RDEV_MINOR_8_pre30` | `flist.c:448,459,631` | `write/xflags.rs:157,168`, `write/encoding.rs:175` |
-| `GROUP_NAME_FOLLOWS` | `flist.c:480,614` | `write/xflags.rs:232`, `write/metadata.rs:159` |
-| `HLINK_FIRST` | `flist.c:510,573` | `write/xflags.rs:192`, `write/encoding.rs:206` |
+| `TOP_DIR` | `flist.c:416,415,419,553,561` | `write/xflags.rs:94`, `write/encoding.rs:47,62` |
+| `SAME_MODE` | `flist.c:434` | `write/xflags.rs:98`, `write/metadata.rs:86` |
+| `EXTENDED_FLAGS` | `flist.c:553,555` | `write/encoding.rs:39,51,361` |
+| `SAME_UID` | `flist.c:467` | `write/xflags.rs:111`, `write/metadata.rs:126` |
+| `SAME_GID` | `flist.c:477` | `write/xflags.rs:117`, `write/metadata.rs:151` |
+| `SAME_NAME` | `flist.c:543,564` | `write/xflags.rs:121`, `write/encoding.rs:86` |
+| `LONG_NAME` | `flist.c:545,566` | `write/xflags.rs:125`, `write/encoding.rs:60,90` |
+| `SAME_TIME` | `flist.c:487,581` | `write/xflags.rs:102`, `write/metadata.rs:63` |
+| `SAME_RDEV_MAJOR` | `flist.c:447,457,627` | `write/xflags.rs:155,162`, `write/encoding.rs:168` |
+| `NO_CONTENT_DIR` | `flist.c:418,417` | `write/xflags.rs:276` |
+| `HLINKED` | `flist.c:533` | `write/xflags.rs:190,199` |
+| `SAME_DEV_pre30` | `flist.c:529,655` | `write/xflags.rs:201`, `write/encoding.rs:248` |
+| `USER_NAME_FOLLOWS` | `flist.c:473,602` | `write/xflags.rs:225`, `write/metadata.rs:134` |
+| `RDEV_MINOR_8_pre30` | `flist.c:451,459,631` | `write/xflags.rs:157,168`, `write/encoding.rs:175` |
+| `GROUP_NAME_FOLLOWS` | `flist.c:483,614` | `write/xflags.rs:232`, `write/metadata.rs:159` |
+| `HLINK_FIRST` | `flist.c:513,573` | `write/xflags.rs:192`, `write/encoding.rs:206` |
 | `IO_ERROR_ENDLIST` | `flist.c` (end-of-list) | `write/encoding.rs:362` |
-| `MOD_NSEC` | `flist.c:488,587` | `write/xflags.rs:259`, `write/metadata.rs:67` |
-| `SAME_ATIME` | `flist.c:491,595` | `write/xflags.rs:246`, `write/metadata.rs:106` |
-| `CRTIME_EQ_MTIME` | `flist.c:499,590` | `write/xflags.rs:255`, `write/metadata.rs:71` |
+| `MOD_NSEC` | `flist.c:491,587` | `write/xflags.rs:259`, `write/metadata.rs:67` |
+| `SAME_ATIME` | `flist.c:494,595` | `write/xflags.rs:246`, `write/metadata.rs:106` |
+| `CRTIME_EQ_MTIME` | `flist.c:502,590` | `write/xflags.rs:255`, `write/metadata.rs:71` |
 
 ### 3.3 Decode (receiver) sites
 
@@ -197,26 +197,26 @@ checksum).
 
 | Flag | Upstream decode | Our decode |
 |---|---|---|
-| `TOP_DIR` | `flist.c:1086,1089,1091,1098` | (FileEntry flags) `read/mod.rs` via `flags.top_dir()` |
-| `SAME_MODE` | `flist.c:864` | `read/metadata.rs:101` |
-| `EXTENDED_FLAGS` | `flist.c:766` (in caller) | `read/flags.rs:101,127,155` |
-| `SAME_UID` | `flist.c:880` | `read/metadata.rs:140`, `read_owner_id()` 230 |
-| `SAME_GID` | `flist.c:891` | `read/metadata.rs:159`, `read_owner_id()` 230 |
-| `SAME_NAME` | `flist.c:716` | (caller of `read_flags`) `read/name.rs` via `flags.same_name()` |
-| `LONG_NAME` | `flist.c:719` | `read/name.rs` via `flags.long_name()` |
-| `SAME_TIME` | `flist.c:828` | `read/metadata.rs:73` |
-| `SAME_RDEV_MAJOR` | `flist.c:911` | `read/extras.rs:114` |
-| `NO_CONTENT_DIR` | `flist.c:1085,1089` | `read/metadata.rs:173` |
-| `HLINKED` | `flist.c:780,964,1030` | `read/extras.rs:162,200` |
-| `SAME_DEV_pre30` | `flist.c:655` (mirror) | `read/extras.rs:209` |
-| `USER_NAME_FOLLOWS` | `flist.c:885` | `read/metadata.rs:136`, `read_owner_id()` 242 |
-| `RDEV_MINOR_8_pre30` | `flist.c:915` | `read/extras.rs:126` |
-| `GROUP_NAME_FOLLOWS` | `flist.c:897` | `read/metadata.rs:155`, `read_owner_id()` 242 |
-| `HLINK_FIRST` | `flist.c:780` (via `BITS_SETnUNSET`) | `read/extras.rs:167` |
+| `TOP_DIR` | `flist.c:1090,1089,1091,1098` | (FileEntry flags) `read/mod.rs` via `flags.top_dir()` |
+| `SAME_MODE` | `flist.c:868` | `read/metadata.rs:101` |
+| `EXTENDED_FLAGS` | `flist.c:770` (in caller) | `read/flags.rs:101,127,155` |
+| `SAME_UID` | `flist.c:884` | `read/metadata.rs:140`, `read_owner_id()` 230 |
+| `SAME_GID` | `flist.c:895` | `read/metadata.rs:159`, `read_owner_id()` 230 |
+| `SAME_NAME` | `flist.c:720` | (caller of `read_flags`) `read/name.rs` via `flags.same_name()` |
+| `LONG_NAME` | `flist.c:723` | `read/name.rs` via `flags.long_name()` |
+| `SAME_TIME` | `flist.c:832` | `read/metadata.rs:73` |
+| `SAME_RDEV_MAJOR` | `flist.c:915` | `read/extras.rs:114` |
+| `NO_CONTENT_DIR` | `flist.c:1089,1089` | `read/metadata.rs:173` |
+| `HLINKED` | `flist.c:784,964,1030` | `read/extras.rs:162,200` |
+| `SAME_DEV_pre30` | `flist.c:659` (mirror) | `read/extras.rs:209` |
+| `USER_NAME_FOLLOWS` | `flist.c:889` | `read/metadata.rs:136`, `read_owner_id()` 242 |
+| `RDEV_MINOR_8_pre30` | `flist.c:919` | `read/extras.rs:126` |
+| `GROUP_NAME_FOLLOWS` | `flist.c:901` | `read/metadata.rs:155`, `read_owner_id()` 242 |
+| `HLINK_FIRST` | `flist.c:784` (via `BITS_SETnUNSET`) | `read/extras.rs:167` |
 | `IO_ERROR_ENDLIST` | `flist.c` end-of-list / safe flist | `read/flags.rs:148,155-169` |
-| `MOD_NSEC` | `flist.c:841` | `read/metadata.rs:82` |
-| `SAME_ATIME` | `flist.c:866` | `read/metadata.rs:116` |
-| `CRTIME_EQ_MTIME` | `flist.c:851` | `read/metadata.rs:90` |
+| `MOD_NSEC` | `flist.c:845` | `read/metadata.rs:82` |
+| `SAME_ATIME` | `flist.c:870` | `read/metadata.rs:116` |
+| `CRTIME_EQ_MTIME` | `flist.c:855` | `read/metadata.rs:90` |
 
 ## 4. Compatibility risks
 

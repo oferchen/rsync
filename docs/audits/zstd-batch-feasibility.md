@@ -86,8 +86,8 @@ for zstd batches.
 `BatchFlags::do_compression` is a single bit, gated on protocol >= 29
 (`crates/batch/src/format/flags.rs:34-41`, `flags.rs:69-72`). It says
 "the body is compressed", not "the body is zlib". Upstream
-`compat.c:194-195` resolves the algorithm to `CPRES_ZLIB`
-unconditionally for batch reads, and `compat.c:413-414` forces
+`compat.c:195-196` resolves the algorithm to `CPRES_ZLIB`
+unconditionally for batch reads, and `compat.c:414-415` forces
 `compress_choice = "zlib"` for batch writes. Nothing in the file format
 distinguishes an oc-rsync zstd batch from an upstream zlib batch on the
 wire other than the body itself.
@@ -197,6 +197,6 @@ disk-size wins for a smaller surface.
   for zlib (the burden zstd avoids).
 - `crates/batch/src/replay.rs:968-1017` - `create_compressed_decoder`,
   `detect_compression_codec`, magic-byte probe.
-- Upstream: `batch.c:check_batch_flags()`, `compat.c:194-195`,
-  `compat.c:413-414`, `token.c:send_deflated_token()`,
+- Upstream: `batch.c:check_batch_flags()`, `compat.c:195-196`,
+  `compat.c:414-415`, `token.c:send_deflated_token()`,
   `token.c:send_zstd_token()`, `io.c:read_buf()`.

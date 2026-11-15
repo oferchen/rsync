@@ -111,7 +111,7 @@ enum WalkStep {
     /// Descend into the directories found by the scan this step closes, in the
     /// order its children were visited.
     ///
-    /// upstream: `flist.c:2434-2439` - the `send_if_directory()` loop after
+    /// upstream: `flist.c:2445-2450` - the `send_if_directory()` loop after
     /// `closedir()`.
     DescendFound,
     /// Enter `dir`'s filter scope, then scan it.
@@ -203,7 +203,7 @@ impl GeneratorContext {
     /// Reports a list entry the ownership walk refused, as the entry's own
     /// stat failure.
     ///
-    /// upstream: `flist.c:2940-2946` - `rsyserr(FERROR_XFER, errno, "link_stat
+    /// upstream: `flist.c:2951-2957` - `rsyserr(FERROR_XFER, errno, "link_stat
     /// %s failed", ...)` with `io_error |= IOERR_GENERAL`.
     pub(in crate::generator) fn report_files_from_refusal(
         &mut self,
@@ -243,24 +243,24 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/flist.c:2256-2295` `secure_opendir()` - the confined open
+    /// - `rsync-3.5.2/flist.c:2260-2306` `secure_opendir()` - the confined open
     ///   producing `scan_dirfd` for a daemon's scan.
-    /// - `rsync-3.5.1/flist.c:2374` - the `opendir` failure diagnostic both call
+    /// - `rsync-3.5.2/flist.c:2385` - the `opendir` failure diagnostic both call
     ///   sites report, unchanged by the anchoring.
     fn scan_source_dir(
         &self,
         path: &Path,
         depth: usize,
     ) -> io::Result<fast_io::pinned_root::ReadDir> {
-        // upstream: flist.c:2355-2361 - every other scan keeps the legacy
+        // upstream: flist.c:2366-2372 - every other scan keeps the legacy
         // opendir(), which lists a readable directory without searching it.
         if !self.scan_is_secure() {
             return fast_io::pinned_root::read_dir(path);
         }
-        // upstream: flist.c:2356 secure_opendir() walks the name's every
+        // upstream: flist.c:2367 secure_opendir() walks the name's every
         // component, so the confined scan stops at the resolver's depth.
         fast_io::walk_depth::check_secure_walk_depth(depth)?;
-        // upstream: flist.c:2262-2265 - a `--files-from` directory opens
+        // upstream: flist.c:2273-2276 - a `--files-from` directory opens
         // through the ownership walk before any other arm is considered.
         #[cfg(unix)]
         if let Some(base) = self.files_from_base.as_deref() {
@@ -271,13 +271,13 @@ impl GeneratorContext {
         if let Some(root) = self.confine_root() {
             return fast_io::pinned_root::read_dir_under(&root, path);
         }
-        // upstream: flist.c:2265-2266 - outside a daemon the scan opens through
+        // upstream: flist.c:2276-2277 - outside a daemon the scan opens through
         // the operand's held root, so a root whose identity changed since
         // flist.c:302-305 recorded it fails with ELOOP (flist.c:325-329).
         if let Some(Err(error)) = self.source_roots.held_root(path) {
             return Err(error);
         }
-        // upstream: syscall.c:3172/:3218 - secure_opendir() reopens "."
+        // upstream: syscall.c:3243/:3218 - secure_opendir() reopens "."
         // beneath a traversal descriptor, so a directory without search
         // permission fails here with EACCES.
         #[cfg(unix)]
@@ -291,13 +291,13 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/flist.c:2357-2361` - `!symlink_optout_allowed() &&
+    /// - `rsync-3.5.2/flist.c:2368-2372` - `!symlink_optout_allowed() &&
     ///   (secure_relpath_active() || !(copy_links || copy_unsafe_links ||
     ///   copy_dirlinks || insecure_links))`.
-    /// - `rsync-3.5.1/syscall.c:139-144` `symlink_optout_allowed()` - the
+    /// - `rsync-3.5.2/syscall.c:139-144` `symlink_optout_allowed()` - the
     ///   module's `insecure links` for a daemon, `--insecure-links` otherwise.
     ///   A non-daemon's `insecure_links` term is therefore already the opt-out.
-    /// - `rsync-3.5.1/syscall.c:117-131` `secure_relpath_active()` - for a
+    /// - `rsync-3.5.2/syscall.c:117-131` `secure_relpath_active()` - for a
     ///   sender only a daemon, and a chrooted one only while a module
     ///   directory remains inside the chroot.
     fn scan_is_secure(&self) -> bool {
@@ -343,13 +343,13 @@ impl GeneratorContext {
         path: &Path,
         is_dotdir: bool,
     ) -> io::Result<bool> {
-        // upstream: options.c:2323-2329 - `xfer_dirs` resolves to `-d`, or `-r`
+        // upstream: options.c:2378-2384 - `xfer_dirs` resolves to `-d`, or `-r`
         // (`else if (recurse) xfer_dirs = 1`), or `list_only` when neither was
         // given. `--files-from` forces it on (options.c:2316-2317), which is
         // why `build_file_list_with_base` passes `true` instead of this.
         let xfer_dirs =
             self.config.flags.recursive || self.config.flags.dirs || self.config.flags.list_only;
-        // upstream: flist.c:2967 - only a non-daemon sender reading explicit
+        // upstream: flist.c:2978 - only a non-daemon sender reading explicit
         // operands (never a --files-from list, `use_ff_fd`) pins source roots.
         let remember_root = !self.config.connection.is_daemon_connection;
         self.try_walk_source_entry_dedup(base, path, None, xfer_dirs, is_dotdir, remember_root)
@@ -449,7 +449,7 @@ impl GeneratorContext {
     ///
     /// - `flist.c:1368` - `check_filter(&implied_filter_list, ...)` rejects
     ///   second occurrences as "unrequested file-list name".
-    /// - `flist.c:2162` - `send_implied_dirs()` is upstream's equivalent
+    /// - `flist.c:2166` - `send_implied_dirs()` is upstream's equivalent
     ///   single emission point for the same logical directory.
     pub(in crate::generator) fn try_walk_source_entry_dedup(
         &mut self,
@@ -465,23 +465,23 @@ impl GeneratorContext {
         // exclude.c add_rule XFLG_ANCHORED2ABS). Idempotent across source
         // entries; `base` is the same root for the whole walk.
         self.filter_chain.set_transfer_root(base.to_path_buf());
-        // upstream: flist.c:2651 `push_dir(dir, 0)` - the sender chdir's into
+        // upstream: flist.c:2662 `push_dir(dir, 0)` - the sender chdir's into
         // the `dir` half of the positional's `dir`/`fn` split before walking
         // it, which is the `curr_dir` every `full_fname()` in the walk renders
         // against (util1.c:1382). `base` is that same directory.
         self.curr_dir = Some(base.to_path_buf());
-        // upstream: flist.c:2665 - link_stat() once, then pass &st to
+        // upstream: flist.c:2676 - link_stat() once, then pass &st to
         // send_file_name(). Reuse the metadata to avoid a redundant stat
         // inside walk_path_with_metadata.
         match self.resolve_symlink_metadata(path, base, is_dotdir) {
             Ok(metadata) => {
-                // upstream: flist.c:2963-2966 - a directory argument is dropped
+                // upstream: flist.c:2974-2977 - a directory argument is dropped
                 // before any implied parent is emitted when `xfer_dirs` is off.
                 if metadata.is_dir() && !xfer_dirs {
                     self.report_skipped_directory_arg(base, path);
                     return Ok(false);
                 }
-                // upstream: flist.c:2967-2969 - the operand's root is pinned by
+                // upstream: flist.c:2978-2980 - the operand's root is pinned by
                 // identity: a directory is its own root, and under --relative
                 // any other operand pins its parent.
                 #[cfg(unix)]
@@ -516,16 +516,16 @@ impl GeneratorContext {
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 match self.missing_args_mode() {
-                    // upstream: flist.c:2500 - missing_args == 1: silently skip
+                    // upstream: flist.c:2511 - missing_args == 1: silently skip
                     1 => Ok(false),
-                    // upstream: flist.c:2491-2497 - missing_args == 2: emit mode-0 sentinel
+                    // upstream: flist.c:2502-2508 - missing_args == 2: emit mode-0 sentinel
                     2 => {
                         self.emit_delete_sentinel(base, path)?;
                         Ok(true)
                     }
-                    // upstream: flist.c:2940-2944 - default: link_stat failed.
+                    // upstream: flist.c:2951-2955 - default: link_stat failed.
                     _ => {
-                        // upstream: flist.c:2943 - `if (errno != ENOENT)` guards
+                        // upstream: flist.c:2954 - `if (errno != ENOENT)` guards
                         // the `io_error |= IOERR_GENERAL`, so a source that
                         // never existed deliberately leaves io_error clear: that
                         // bit travels to the receiver and would inhibit its
@@ -533,7 +533,7 @@ impl GeneratorContext {
                         // be omitting an existing file". The exit code comes
                         // from got_xfer_error instead, set by the FERROR_XFER
                         // below on both this side and the peer (log.c:337-338).
-                        // upstream: flist.c:2945 - rsyserr(FERROR_XFER, ...)
+                        // upstream: flist.c:2956 - rsyserr(FERROR_XFER, ...)
                         let text = format!(
                             "rsync: [sender] link_stat {} failed: {}\n",
                             full_fname_path(path, self.full_fname_paths()),
@@ -660,7 +660,7 @@ impl GeneratorContext {
                         // LIFO: the scan runs before the scope is released.
                         stack.push(WalkStep::LeaveDir(guard));
                     } else {
-                        // upstream: flist.c:2999-3002 - under INC_RECURSE the
+                        // upstream: flist.c:3010-3013 - under INC_RECURSE the
                         // dot-dir root is pushed at depth 0 and stays pushed
                         // for every sub-list scan; only the walk popping past
                         // the root at flist EOF releases it (flist.c:2723).
@@ -695,7 +695,7 @@ impl GeneratorContext {
     ) -> io::Result<Option<PathBuf>> {
         let relative = path.strip_prefix(scope.base).unwrap_or(&path).to_path_buf();
 
-        // upstream: flist.c:2850-2861 - non-relative single-file sources split
+        // upstream: flist.c:2861-2872 - non-relative single-file sources split
         // on the last `/` so the wire-side relative name is just the basename
         // (`fn` in upstream's terminology). When base == path for a regular
         // file, our `strip_prefix` would otherwise leave `relative` empty and
@@ -712,10 +712,10 @@ impl GeneratorContext {
             relative
         };
 
-        // upstream: flist.c:2527 - always emit "." with XMIT_TOP_DIR for the
+        // upstream: flist.c:2538 - always emit "." with XMIT_TOP_DIR for the
         // root transfer directory. Enables delete_in_dir() when --delete is active.
         if relative.as_os_str().is_empty() && metadata.is_dir() {
-            // upstream: flist.c:3010 - a named source argument is stat'ed with
+            // upstream: flist.c:3021 - a named source argument is stat'ed with
             // NO_FILTERS (0).
             let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata, 0)?;
             dot_entry.set_top_dir(true);
@@ -727,7 +727,7 @@ impl GeneratorContext {
         #[cfg(unix)]
         {
             let ft = metadata.file_type();
-            // upstream: flist.c:1644 - `--copy-devices` makes make_file() emit a
+            // upstream: flist.c:1648 - `--copy-devices` makes make_file() emit a
             // block/char device as a regular file, so it is included on the wire
             // even without `--devices`. Only skip when neither flag is active.
             if (ft.is_block_device() || ft.is_char_device())
@@ -741,7 +741,7 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: flist.c:1810 - is_excluded() applied during make_file()
+        // upstream: flist.c:1814 - is_excluded() applied during make_file()
         // FilterChain evaluates per-directory scoped rules (innermost first)
         // then global rules. If no rules are configured, allows() returns true.
         if !self.filter_chain.allows(&relative, metadata.is_dir()) {
@@ -752,7 +752,7 @@ impl GeneratorContext {
         // symlink. The option is evaluated on the receiving side only
         // (generator.c:1951 `safe_symlinks && unsafe_symlink(sl, fname)`).
 
-        // upstream: flist.c:3010 sends a named source with NO_FILTERS (0);
+        // upstream: flist.c:3021 sends a named source with NO_FILTERS (0);
         // recursion goes through send_directory() with ALL_FILTERS (2)
         // (flist.c:2501-2508).
         let filter_level = if is_top_level { 0 } else { 2 };
@@ -761,7 +761,7 @@ impl GeneratorContext {
             // upstream: xattrs.c:1253-1258 - a corrupt %stat ends the run.
             Err(e) if metadata::is_corrupt_fake_super(&e) => return Err(e),
             Err(e) => {
-                // upstream: flist.c:2058-2063 - a failed get_xattr() drops the
+                // upstream: flist.c:2062-2067 - a failed get_xattr() drops the
                 // entry under IOERR_GENERAL after get_xattr_names() or
                 // get_xattr_data() named the call; any other failure is
                 // make_file()'s.
@@ -788,7 +788,7 @@ impl GeneratorContext {
             }
         };
 
-        // upstream: flist.c:2527 - top-level source directories carry
+        // upstream: flist.c:2538 - top-level source directories carry
         // FLAG_TOP_DIR so delete_in_dir() can scope deletions. Under
         // --relative the directory entry has a non-empty relative name (e.g.
         // "tmp/dbg/src/usr/bin") instead of ".", but it still needs the flag.
@@ -932,7 +932,7 @@ impl GeneratorContext {
         let entries = match self.scan_source_dir(dir_path, depth) {
             Ok(entries) => entries,
             Err(e) => {
-                // upstream: flist.c:2374 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
+                // upstream: flist.c:2385 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                 let text = format!(
                     "rsync: [sender] opendir {} failed: {}\n",
                     full_fname_path(dir_path, self.full_fname_paths()),
@@ -967,7 +967,7 @@ impl GeneratorContext {
             match entry {
                 Ok(child) => child_paths.push(child),
                 Err(e) => {
-                    // upstream: flist.c:2431 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
+                    // upstream: flist.c:2442 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
                     let text = format!(
                         "rsync: [sender] readdir({}): {}\n",
                         full_fname_path(dir_path, self.full_fname_paths()),
@@ -1021,7 +1021,7 @@ impl GeneratorContext {
 
         let follow = self.config.flags.copy_links;
 
-        // upstream: flist.c:1587-1595 link_stat() - with --copy-dirlinks
+        // upstream: flist.c:1591-1599 link_stat() - with --copy-dirlinks
         // (follow_dirlinks), a symlink whose target is a directory is
         // transmitted as a real directory. Applied before the copy-unsafe-links
         // check exactly as upstream applies it inside link_stat() before
@@ -1037,7 +1037,7 @@ impl GeneratorContext {
             meta = followed;
         }
 
-        // upstream: flist.c:494 - follow unsafe symlinks when
+        // upstream: flist.c:497 - follow unsafe symlinks when
         // --copy-unsafe-links. The batch used lstat, so we need to re-stat
         // symlinks whose target escapes the tree.
         if !follow
@@ -1048,7 +1048,7 @@ impl GeneratorContext {
             let relative = path.strip_prefix(base).unwrap_or(&path);
             if super::super::super::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative)
             {
-                // upstream: flist.c:231 - INFO_GTE(SYMSAFE, 1) fires before
+                // upstream: flist.c:232 - INFO_GTE(SYMSAFE, 1) fires before
                 // the target is dereferenced.
                 info_log!(
                     Symsafe,
@@ -1072,7 +1072,7 @@ impl GeneratorContext {
 
     /// Reports a failed stat of a walked entry and records its `io_error` bit.
     ///
-    /// upstream: flist.c:1668-1681 make_file() - when a --copy*links option
+    /// upstream: flist.c:1672-1685 make_file() - when a --copy*links option
     /// dereferenced the entry, ENOENT on a path that `lstat` still shows as a
     /// symlink is a dangling link: reported as "symlink has no referent" under
     /// FERROR_XFER with IOERR_GENERAL (exit 23), never as a vanished file (24).
@@ -1093,7 +1093,7 @@ impl GeneratorContext {
         if e.kind() == io::ErrorKind::NotFound {
             self.log_stat_error(path, e);
         } else {
-            // upstream: flist.c:1693 - make_file()'s own stat failure is
+            // upstream: flist.c:1697 - make_file()'s own stat failure is
             // `readlink_stat(%s) failed`; `link_stat` is for operands.
             let text = format!(
                 "rsync: [sender] readlink_stat({}) failed: {}\n",
@@ -1108,20 +1108,20 @@ impl GeneratorContext {
     /// Logs a stat failure with the appropriate upstream error format.
     ///
     /// Distinguishes between vanished files (ENOENT) and general stat errors,
-    /// matching upstream `flist.c:1511-1519` error reporting. The two cases
+    /// matching upstream `flist.c:1515-1523` error reporting. The two cases
     /// carry different log classes upstream, so they queue different frame
     /// types: the vanished notice is an `FWARNING`, the stat failure an
     /// `FERROR_XFER`.
     fn log_stat_error(&mut self, path: &Path, e: &io::Error) {
         let fname = full_fname_path(path, self.full_fname_paths());
         let (kind, text) = if e.kind() == io::ErrorKind::NotFound {
-            // upstream: flist.c:1688-1692 - rprintf(FWARNING, "file has vanished: %s\n", ...)
+            // upstream: flist.c:1692-1696 - rprintf(FWARNING, "file has vanished: %s\n", ...)
             (
                 SenderDiagnostic::Warning,
                 format!("file has vanished: {fname}\n"),
             )
         } else {
-            // upstream: flist.c:2236 - rsyserr(FERROR_XFER, errno, "link_stat %s failed", ...)
+            // upstream: flist.c:2240 - rsyserr(FERROR_XFER, errno, "link_stat %s failed", ...)
             (
                 SenderDiagnostic::ErrorXfer,
                 format!(
@@ -1185,7 +1185,7 @@ impl GeneratorContext {
             }
         };
 
-        // upstream: flist.c:465-466 `scan_link_stat()` - a `--files-from`
+        // upstream: flist.c:468-469 `scan_link_stat()` - a `--files-from`
         // entry is stat'd through the ownership walk, following a leaf symlink
         // only for a dot-dir entry since the walk is inactive under
         // `--copy-dirlinks`.
@@ -1201,7 +1201,7 @@ impl GeneratorContext {
 
         let meta = fast_io::pinned_root::symlink_metadata(path)?;
 
-        // upstream: flist.c:1587-1595 link_stat() - with follow_dirlinks a
+        // upstream: flist.c:1591-1599 link_stat() - with follow_dirlinks a
         // symlink whose target is a directory is transmitted as a real
         // directory. Applied before the copy-unsafe-links check, mirroring
         // upstream's link_stat() (dirlink follow) running before
@@ -1235,7 +1235,7 @@ impl GeneratorContext {
         // walk (`util1.c:1351-1360`), so a foreign-uid symlink at the module
         // root is refused before a pin exists and this gate is back in force.
         //
-        // upstream: `rsync-3.5.1/syscall.c:499` - a symlink owned by uid 0 or
+        // upstream: `rsync-3.5.2/syscall.c:560` - a symlink owned by uid 0 or
         // our euid is the operator's own layout and is followed; any other uid
         // is an attacker's plant and is refused.
         //
@@ -1269,13 +1269,13 @@ impl GeneratorContext {
             return Ok(followed);
         }
 
-        // upstream: flist.c:494 - follow unsafe symlinks when --copy-unsafe-links
+        // upstream: flist.c:497 - follow unsafe symlinks when --copy-unsafe-links
         if self.config.flags.copy_unsafe_links && meta.file_type().is_symlink() {
             let target = self.read_source_link(path)?;
             let relative = path.strip_prefix(base).unwrap_or(path);
             if super::super::super::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative)
             {
-                // upstream: flist.c:231 - INFO_GTE(SYMSAFE, 1) fires before
+                // upstream: flist.c:232 - INFO_GTE(SYMSAFE, 1) fires before
                 // the unsafe symlink is dereferenced into a regular entry.
                 info_log!(
                     Symsafe,
@@ -1307,9 +1307,9 @@ impl GeneratorContext {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:499` - `st_uid != 0 && st_uid != trusted_uid`
+/// - `rsync-3.5.2/syscall.c:560` - `st_uid != 0 && st_uid != trusted_uid`
 ///   refuses the symlink; otherwise the walk follows it.
-/// - `rsync-3.5.1/util1.c:1313` `change_dir()` - the daemon resolves the module
+/// - `rsync-3.5.2/util1.c:1313` `change_dir()` - the daemon resolves the module
 ///   root through this same rule BEFORE the file list is walked, which is why
 ///   upstream never reaches this stat with an unresolved operand.
 fn symlink_target_is_operator_owned(meta: &fast_io::EntryMetadata) -> bool {
@@ -1337,14 +1337,14 @@ fn symlink_target_is_operator_owned(meta: &fast_io::EntryMetadata) -> bool {
 ///   `ona_open()` reads ABOVE the ownership test (`syscall.c:380-382`), so a
 ///   module that opted out follows any symlink - the whole point of the
 ///   directive.
-/// - `owner_is_operator` is upstream's ownership rule (`syscall.c:499`): uid 0
+/// - `owner_is_operator` is upstream's ownership rule (`syscall.c:560`): uid 0
 ///   or our euid is the operator's own layout, any other uid is a plant.
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/flist.c:2937` - the `copy_dirlinks || name_type` disjunction.
-/// - `rsync-3.5.1/syscall.c:380-382` - the opt-out short-circuit.
-/// - `rsync-3.5.1/syscall.c:499` - the ownership rule.
+/// - `rsync-3.5.2/flist.c:2948` - the `copy_dirlinks || name_type` disjunction.
+/// - `rsync-3.5.2/syscall.c:434-436` - the opt-out short-circuit.
+/// - `rsync-3.5.2/syscall.c:560` - the ownership rule.
 fn dotdir_follow_allowed(
     copy_dirlinks: bool,
     is_dotdir: bool,
@@ -1364,7 +1364,7 @@ mod dotdir_follow_trust_tests {
     /// cell `daemon-module-chdir-symlink`, which needs root to create a
     /// non-self-owned link and therefore cannot run here.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:499`.
+    /// upstream: `rsync-3.5.2/syscall.c:560`.
     #[test]
     fn only_root_and_our_own_euid_are_trusted_symlink_owners() {
         let euid = rustix::process::geteuid().as_raw();
@@ -1394,7 +1394,7 @@ mod dotdir_follow_trust_tests {
     /// `read-plain` vector: before this term the opted-out daemon refused
     /// `<module>/link/` for all five link types.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:380-382`.
+    /// upstream: `rsync-3.5.2/syscall.c:434-436`.
     #[test]
     fn the_module_optout_follows_a_symlinked_operand_the_ownership_rule_refuses() {
         assert!(
@@ -1413,7 +1413,7 @@ mod dotdir_follow_trust_tests {
     /// NORMAL_NAME`: a plain (non-operand) symlink is transmitted as a symlink
     /// whatever the module says, and the opt-out does not widen that.
     ///
-    /// upstream: `rsync-3.5.1/flist.c:2937`.
+    /// upstream: `rsync-3.5.2/flist.c:2948`.
     #[test]
     fn the_optout_does_not_widen_the_non_dotdir_or_trusted_arms() {
         assert!(
@@ -1442,17 +1442,17 @@ mod rsyserr_wording_tests {
     /// refactor that re-inserts the source-location or role-version trailer
     /// will fail these asserts.
     const CASES: &[(&str, &str)] = &[
-        // upstream: flist.c:2236 - "link_stat %s failed"
+        // upstream: flist.c:2240 - "link_stat %s failed"
         (
             "rsync: [sender] link_stat \"{path}\" failed: No such file or directory (2)",
             "rsync: [sender] link_stat \"/p\" failed: No such file or directory (2)",
         ),
-        // upstream: flist.c:2067 - "opendir %s failed"
+        // upstream: flist.c:2071 - "opendir %s failed"
         (
             "rsync: [sender] opendir \"{path}\" failed: Permission denied (13)",
             "rsync: [sender] opendir \"/p\" failed: Permission denied (13)",
         ),
-        // upstream: flist.c:2431 - "readdir(%s)"
+        // upstream: flist.c:2442 - "readdir(%s)"
         (
             "rsync: [sender] readdir(\"{path}\"): Input/output error (5)",
             "rsync: [sender] readdir(\"/p\"): Input/output error (5)",
@@ -1462,9 +1462,9 @@ mod rsyserr_wording_tests {
             "rsync: [sender] make_file failed for \"{path}\": Permission denied (13)",
             "rsync: [sender] make_file failed for \"/p\": Permission denied (13)",
         ),
-        // upstream: flist.c:1688 / sender.c:715 - "file has vanished: %s" via full_fname()
+        // upstream: flist.c:1692 / sender.c:723 - "file has vanished: %s" via full_fname()
         ("file has vanished: \"{path}\"", "file has vanished: \"/p\""),
-        // upstream: sender.c:720 - "send_files failed to open %s"
+        // upstream: sender.c:728 - "send_files failed to open %s"
         (
             "rsync: [sender] send_files failed to open \"{path}\": Permission denied (13)",
             "rsync: [sender] send_files failed to open \"/p\": Permission denied (13)",
@@ -1533,7 +1533,7 @@ mod symsafe_emission_tests {
     //! Wording tests for `--info=SYMSAFE` producer emissions on the
     //! sender side.
     //!
-    //! Upstream rsync 3.4.1 fires `INFO_GTE(SYMSAFE, 1)` at `flist.c:493`
+    //! Upstream rsync 3.4.1 fires `INFO_GTE(SYMSAFE, 1)` at `flist.c:496`
     //! when `--copy-unsafe-links` triggers a dereference. The exact line
     //! emitted (per `rprintf(FINFO, ...)`) is matched byte-for-byte so
     //! interop harnesses that grep for the literal continue to find it.
@@ -1562,7 +1562,7 @@ mod symsafe_emission_tests {
 
     #[test]
     fn copying_unsafe_symlink_wording_matches_upstream() {
-        // upstream: flist.c:496 -
+        // upstream: flist.c:499 -
         //     rprintf(FINFO, "copying unsafe symlink \"%s\" -> \"%s\"\n",
         //             path, linkbuf);
         init_symsafe_level1();

@@ -120,7 +120,7 @@ hardlink-only batch in oc-rsync.
 
 `crates/transfer/src/receiver/quick_check.rs:177` is the
 `fs::hard_link(&ref_path, &dest_path)` call inside `try_reference_dest`.
-Upstream parity: `generator.c:991 hard_link_one()` for match_level 3 with
+Upstream parity: `generator.c:1028 hard_link_one()` for match_level 3 with
 `LINK_DEST`.
 
 Shape:

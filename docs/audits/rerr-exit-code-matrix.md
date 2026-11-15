@@ -88,7 +88,7 @@ slots.
 
 1. `LogFileAppend` (6) is non-upstream and never triggered: drop the
    variant; daemon log-open failures should map to `MessageIo` (13) or
-   `FileIo` (11) per upstream `log.c:163`.
+   `FileIo` (11) per upstream `log.c:170`.
 2. `Unsupported` (4) has no trigger: wire into capability negotiation
    under `crates/core/src/protocol/capabilities` when the peer rejects.
 3. `MessageIo` (13) has no trigger: wire into stderr/log write failures.

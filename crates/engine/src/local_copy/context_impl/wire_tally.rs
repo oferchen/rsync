@@ -28,7 +28,7 @@ impl<'a> CopyContext<'a> {
 
     /// Records the itemize-only exchange a completed action costs on the wire.
     ///
-    /// upstream: generator.c:587-592 `itemize()` sends an NDX and iflags for
+    /// upstream: generator.c:624-629 `itemize()` sends an NDX and iflags for
     /// an entry that moved no data when a significant flag is set, or for any
     /// entry under `-vv`/`-ii`; sender.c:584-586 echoes it back. A created
     /// directory, symlink, device or special always carries `ITEM_IS_NEW`.

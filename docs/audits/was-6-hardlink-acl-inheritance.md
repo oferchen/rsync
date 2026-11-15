@@ -54,25 +54,25 @@ follower path even though the inode already holds the correct DACL.
 
 ## 2. Upstream rsync behaviour on Linux
 
-Upstream sends ACL data per file entry, not per inode. `flist.c:1628`
+Upstream sends ACL data per file entry, not per inode. `flist.c:1632`
 calls `get_acl()` for every non-symlink entry during file-list build,
-and `flist.c:1653-1656` calls `send_acl(f, &sx)` after every
+and `flist.c:1657-1660` calls `send_acl(f, &sx)` after every
 `send_file_entry`. The receiver caches ACLs in `access_acl_list` and
 records `F_ACL(file)` per entry, so each follower carries its own ACL
 index on the wire. This is identical for leaders and followers and is
 not gated on `FLAG_HLINKED`.
 
 When the generator processes a follower, it invokes
-`hard_link_check()` at `upstream:generator.c:1540`. The check calls
+`hard_link_check()` at `upstream:generator.c:1577`. The check calls
 `maybe_hard_link()` at `upstream:hlink.c:210-242`, which either
 (a) returns 0 with `FLAG_HLINK_DONE` set when the destination already
 shares the leader's inode (`upstream:hlink.c:215-227`) or (b) calls
 `atomic_create()` to create the link and returns 0
 (`upstream:hlink.c:230-238`). Neither branch invokes
 `set_file_attrs()` on the follower path. Control returns to
-`generator.c:1541` which executes `goto cleanup;`, bypassing the
+`generator.c:1578` which executes `goto cleanup;`, bypassing the
 `set_file_attrs(fname, file, &sx, NULL, maybe_ATTRS_REPORT)` call at
-`upstream:generator.c:1814` that fires for non-hardlinked files. The
+`upstream:generator.c:1851` that fires for non-hardlinked files. The
 follower's per-entry ACL index is therefore never consumed for the
 follower path; the leader's `set_file_attrs` -> `set_acl` chain
 (`upstream:rsync.c:653`) updated the shared inode and that update is
@@ -102,7 +102,7 @@ practice because `hard_link_check` short-circuits the follower's
   divergence. Branches 1 and 2 at
   `crates/engine/src/local_copy/executor/file/copy/links.rs:70-214`
   create the link without re-applying ACLs. Upstream's `try_dests_reg`
-  at `upstream:generator.c:991-1002` follows the same pattern: call
+  at `upstream:generator.c:1028-1039` follows the same pattern: call
   `hard_link_one`, optionally `set_file_attrs` only when
   `atimes_ndx` is set, then `finish_hard_link`. No ACL re-application.
 
@@ -115,7 +115,7 @@ practice because `hard_link_check` short-circuits the follower's
   `SetNamedSecurityInfoW` round trips. Upstream avoids this entirely
   because `hard_link_check` returns control to the generator's
   `goto cleanup;` before the `--copy-dest` `set_file_attrs` site at
-  `upstream:generator.c:1814` ever runs for followers. Net effect:
+  `upstream:generator.c:1851` ever runs for followers. Net effect:
   oc-rsync issues O(N) inode writes per N-link cohort under
   `--copy-dest`; upstream issues O(1).
 

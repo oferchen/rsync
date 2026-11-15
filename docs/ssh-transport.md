@@ -30,7 +30,7 @@ remote shell can never fill a pipe and stall the transfer.
 
 On the server side, once protocol setup is done, oc-rsync sets its own
 stderr back to blocking, as upstream `start_server()` does
-(`main.c:1356-1364`), because ssh may have left it non-blocking.
+(`main.c:1360-1368`), because ssh may have left it non-blocking.
 
 The earlier opt-in `ssh-socketpair-stderr` capture channel is removed;
 its design note is kept for history at

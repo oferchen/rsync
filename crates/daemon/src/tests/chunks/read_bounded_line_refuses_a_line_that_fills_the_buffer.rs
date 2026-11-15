@@ -1,4 +1,4 @@
-/// upstream: `io.c:2638-2655` - `read_line_old()` reserves the NUL with
+/// upstream: `io.c:2645-2662` - `read_line_old()` reserves the NUL with
 /// `bufsiz--` and fails once the rest has gone by without a newline, so the
 /// daemon never buffers more than one
 /// line's worth of a peer that does not stop.
@@ -24,7 +24,7 @@ fn read_bounded_line_accepts_the_longest_line_that_fits() {
     assert_eq!(line.len(), HANDSHAKE_LINE_BUFSIZ - 2);
 }
 
-/// upstream: `io.c:2649-2652` - a carriage return is dropped wherever it sits
+/// upstream: `io.c:2656-2659` - a carriage return is dropped wherever it sits
 /// and does not use up the buffer, so a full-length line padded with CRs still
 /// fits.
 #[test]
@@ -39,7 +39,7 @@ fn read_bounded_line_drops_carriage_returns_without_counting_them() {
     assert_eq!(line, "#list");
 }
 
-/// upstream: `io.c:2645-2646` - a NUL byte fails the read outright.
+/// upstream: `io.c:2652-2653` - a NUL byte fails the read outright.
 #[test]
 fn read_bounded_line_refuses_a_nul_byte() {
     let input: &[u8] = b"#li\0st\n";

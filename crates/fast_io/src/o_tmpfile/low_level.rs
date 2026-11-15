@@ -114,7 +114,7 @@ mod linux {
         // Anchored on the pinned destination, so the inode is staged in the
         // directory the receiver entered even after `dir` was swapped -
         // upstream's `open_tmpfile()` names it relative to that cwd
-        // (`rsync-3.5.1/receiver.c:413`).
+        // (`rsync-3.5.2/receiver.c:413`).
         crate::destination_at::open(dir, libc::O_TMPFILE | libc::O_RDWR, mode).map(File::from)
     }
     /// Materializes an anonymous temporary file at `dest` using `linkat(2)`.

@@ -1,7 +1,7 @@
 /// An unresolvable `hosts deny` hostname token must fail CLOSED, and an
 /// unresolvable `hosts allow` token must NOT.
 ///
-/// upstream: access.c:68-74 - the forward-DNS branch of `match_hostname`
+/// upstream: access.c:72-81 - the forward-DNS branch of `match_hostname`
 /// returns the caller's `deny` flag when `gethostbyname` returns NULL:
 ///
 /// ```c

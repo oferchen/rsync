@@ -205,7 +205,7 @@ pub(super) async fn handle_async_session(
 
     // Async path only emits an `@ERROR:` placeholder for now; full module
     // handling lives in the sync `legacy_session` path.
-    // upstream: clientserver.c:424-429 start_inband_exchange() - the client
+    // upstream: clientserver.c:428-433 start_inband_exchange() - the client
     // treats `@ERROR` as fatal and returns before reading further, so no
     // `@RSYNCD: EXIT` follows.
     let error_wire =

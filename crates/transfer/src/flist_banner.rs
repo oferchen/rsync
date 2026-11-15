@@ -1,6 +1,6 @@
 //! The client-facing banner a network client prints around its file list.
 //!
-//! upstream: flist.c:2761-2764 (send_file_list) and flist.c:3119-3122
+//! upstream: flist.c:2772-2775 (send_file_list) and flist.c:3130-3133
 //! (recv_file_list) pick exactly one of two banners:
 //!
 //! ```c
@@ -16,7 +16,7 @@
 
 use std::io::{self, Write};
 
-use logging::{InfoFlag, finfo_suppressed, info_gte};
+use logging::{InfoFlag, comma_num, finfo_suppressed, groups_counts, info_gte};
 
 /// Which banner a client prints for its file list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,7 +80,7 @@ impl FlistBanner {
 
     /// Writes the part printed once the `count`-entry list is complete.
     ///
-    /// upstream: flist.c:200-210 finish_filelist_progress() - `done` at FLIST
+    /// upstream: flist.c:201-211 finish_filelist_progress() - `done` at FLIST
     /// level 1; at level 2 the `%d file%sto consider` total, preceded by the
     /// ` %d files...\r` ticks that flist.c:194-197 maybe_emit_filelist_progress()
     /// writes for every hundredth entry. The sender ticks before adding each
@@ -104,14 +104,23 @@ impl FlistBanner {
             FlistSide::Sender => tick < count,
             FlistSide::Receiver => tick > 0,
         });
+        let format_tally = |n: usize| -> String {
+            if groups_counts() {
+                comma_num(n as u64)
+            } else {
+                n.to_string()
+            }
+        };
         for (index, tick) in ticks.enumerate() {
             if index == 0 {
                 out.write_all(b"\n")?;
             }
-            write!(out, " {tick} files...\r")?;
+            let tick_str = format_tally(tick);
+            write!(out, " {tick_str} files...\r")?;
         }
         let plural = if count == 1 { " " } else { "s " };
-        writeln!(out, "{count} file{plural}to consider")?;
+        let count_str = format_tally(count);
+        writeln!(out, "{count_str} file{plural}to consider")?;
         out.flush()
     }
 }

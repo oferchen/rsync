@@ -319,7 +319,7 @@ fn build_handshake_result(
         buffered: buffered_data,
         compat_exchanged: false,
         client_args: Some(client_args),
-        // upstream: clientserver.c:1288-1289 - the reconciled minimum of the
+        // upstream: clientserver.c:1297-1298 - the reconciled minimum of the
         // client's forwarded `--timeout` and the module's `timeout` directive,
         // which is what `main.c:1313` then advertises as `MSG_IO_TIMEOUT`.
         io_timeout: io_timeout.map(NonZeroU64::get),
@@ -341,7 +341,7 @@ fn run_daemon_transfer(
     write_stream: &mut dyn Write,
     daemon_log: Option<DaemonLog>,
 ) -> ServerResult {
-    // upstream: clientserver.c:1178 - a socket daemon clears `msgs2stderr`, so
+    // upstream: clientserver.c:1182 - a socket daemon clears `msgs2stderr`, so
     // its fatal cause and log_exit() trailer travel to the client as MSG_ERROR
     // frames. A receiver's trailer names the generator, the process upstream's
     // fatal stat and %stat errors come from. The brand is the daemon binary's
@@ -379,16 +379,16 @@ fn fatal_lines(error: &io::Error, code: i32, role: ServerRole) -> Vec<Vec<u8>> {
 
 /// Renders one per-file daemon transfer-log line into the module's `log format`.
 ///
-/// This is the daemon's own `log_item(FLOG)` write (upstream `log.c:866-874`),
+/// This is the daemon's own `log_item(FLOG)` write (upstream `log.c:951-959`),
 /// invoked once per processed entry by the transfer engine, in flist-index
 /// order, before the transfer ends. The `%i` string is pre-rendered with the correct
 /// direction glyph by the sending/receiving context; here the row's per-file
 /// fields fill the module format alongside the constant connection fields.
-/// A deletion row is upstream's `log_delete()` write instead (log.c:924-928).
+/// A deletion row is upstream's `log_delete()` write instead (log.c:1012-1016).
 struct DaemonFileLogWriter {
     log: SharedLogSink,
     fmt: String,
-    /// upstream `logfile_format_has_o_or_i` (clientserver.c:827): whether a
+    /// upstream `logfile_format_has_o_or_i` (clientserver.c:831): whether a
     /// deletion renders through `fmt` or through the fixed `deleting %n`.
     fmt_has_o_or_i: bool,
     operation: TransferOperation,
@@ -402,7 +402,7 @@ struct DaemonFileLogWriter {
 
 impl DaemonFileLog for DaemonFileLogWriter {
     fn on_entry(&self, row: &DaemonLogRow) {
-        // upstream: log.c:924-928 log_delete() falls back to "deleting %n" when
+        // upstream: log.c:1012-1016 log_delete() falls back to "deleting %n" when
         // the format has neither %o nor %i; log.c:871 log_item() writes no row
         // for an empty format.
         let (fmt, operation) = if row.deleted {
@@ -417,7 +417,7 @@ impl DaemonFileLog for DaemonFileLogWriter {
         } else {
             (self.fmt.as_str(), self.operation)
         };
-        // upstream: log.c:695 `%t` renders timestring(time(NULL)) at the moment
+        // upstream: log.c:780 `%t` renders timestring(time(NULL)) at the moment
         // the line is written; per-file lines flush right after the transfer.
         let timestamp = logging_sink::logfile::format_log_timestamp(SystemTime::now());
         let filename = row.name.to_string_lossy();
@@ -470,7 +470,7 @@ impl DaemonFileLog for DaemonFileLogWriter {
     }
 
     fn on_message(&self, line: &[u8]) {
-        // upstream: log.c:136 - logit() writes the message bytes behind the log
+        // upstream: log.c:143 - logit() writes the message bytes behind the log
         // file's own timestamp and pid prefix.
         log_raw_line(&self.log, line);
     }
@@ -486,7 +486,7 @@ impl DaemonFileLog for DaemonFileLogWriter {
 /// its end (0, or the RERR_* its I/O errors map to), `Err` for one a fatal
 /// error stopped.
 ///
-/// upstream: cleanup.c:213-218 maps the run's `io_error` and `got_xfer_error`
+/// upstream: cleanup.c:214-219 maps the run's `io_error` and `got_xfer_error`
 /// into the exit code; cleanup.c:223-224 has a daemon always call log_exit().
 fn execute_transfer(
     ctx: &ModuleRequestContext<'_>,
@@ -510,7 +510,7 @@ fn execute_transfer(
         log_message(log, &rsync_info!(banner).with_role(Role::Daemon));
     }
 
-    // upstream: clientserver.c:823-826 - a module with `transfer logging = yes`
+    // upstream: clientserver.c:827-830 - a module with `transfer logging = yes`
     // makes the daemon write one `log_item(FLOG)` line per processed file. Build
     // the per-file sink so the transfer engine can render each entry into the
     // module's `log format`; `%i` renders on the daemon path whenever the format
@@ -557,7 +557,7 @@ fn execute_transfer(
 
     // Diagnostics emitted while the transfer ran go to the daemon log.
     //
-    // upstream: log.c:310-327 `else if (am_daemon || logfile_name)` calls
+    // upstream: log.c:390-407 `else if (am_daemon || logfile_name)` calls
     // `logit()` for EVERY code that reaches it, not for `FLOG` alone - `FLOG`
     // is merely the code that `return`s afterwards instead of also reaching
     // the stream switch. So a daemon that raises `FERROR` mid-session logs it
@@ -596,7 +596,7 @@ fn execute_transfer(
                 ServerStats::Receiver(stats) => (stats.io_error, stats.got_xfer_error),
             };
             let code = core::exit_code::io_error_exit_code(io_error, got_xfer_error).unwrap_or(0);
-            // upstream: log.c:941 - only the sender's totals are whole before
+            // upstream: log.c:1029 - only the sender's totals are whole before
             // the run ends, so a receiver logs them only for a clean exit. The
             // end-of-run exit_cleanup(0) sets `am_server = 2`, which keeps a
             // nonzero code's trailer out of the log (cleanup.c:121-122,
@@ -610,7 +610,7 @@ fn execute_transfer(
                 // per-file `log_item(FLOG)` (receiver.c:1290 / sender.c:787).
                 // Only the totals trailer is emitted here.
                 //
-                // upstream: cleanup.c:222-226 - `am_daemon` always runs
+                // upstream: cleanup.c:223-227 - `am_daemon` always runs
                 // log_exit(), whose FLOG totals trailer
                 // `sent %s bytes  received %s bytes  total size %s`
                 // (log.c:942, plain `big_num()` digits) closes every

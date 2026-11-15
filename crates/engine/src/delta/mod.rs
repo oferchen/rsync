@@ -4,7 +4,7 @@
 //!
 //! Re-exports the signature-layout primitives from [`signature`] and the
 //! delta-generation/application types from [`matching`]. The signature side
-//! mirrors upstream `generator.c:703 sum_sizes_sqroot()` for block
+//! mirrors upstream `generator.c:740 sum_sizes_sqroot()` for block
 //! size and strong-checksum length selection; the matching side produces and
 //! consumes the resulting token streams.
 //!

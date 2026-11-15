@@ -435,7 +435,7 @@ fn sender_inc_recurse_partial_walk_propagates_io_error() {
 
     // Contract 4: sender-side stderr must reference the failed
     // directory so operators can diagnose the partial transfer.
-    // upstream: flist.c:2067 - `opendir %s failed`.
+    // upstream: flist.c:2071 - `opendir %s failed`.
     assert!(
         outcome.server_stderr.contains("opendir")
             || outcome.server_stderr.contains("readdir")

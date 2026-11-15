@@ -41,7 +41,7 @@ use std::process::Command;
 use tempfile::TempDir;
 use test_support::oc_daemon::{OcDaemon, OcDaemonBuilder};
 
-/// upstream: log.c:170 - the literal mode argument at the single log-file open.
+/// upstream: log.c:177 - the literal mode argument at the single log-file open.
 const UPSTREAM_LOG_FILE_MODE: u32 = 0o644;
 
 fn oc_binary() -> PathBuf {
@@ -105,7 +105,7 @@ fn pinning_the_child_umask_takes_effect() {
     );
 }
 
-/// upstream: log.c:170 - the client `--log-file` is created `0644`.
+/// upstream: log.c:177 - the client `--log-file` is created `0644`.
 #[test]
 fn client_log_file_is_created_with_upstream_mode() {
     let tmp = TempDir::new().expect("tempdir");
@@ -130,7 +130,7 @@ fn client_log_file_is_created_with_upstream_mode() {
     );
 }
 
-/// upstream: log.c:170 - the daemon's log sink takes the same open, so it takes
+/// upstream: log.c:177 - the daemon's log sink takes the same open, so it takes
 /// the same mode. The two sinks are separate call sites in oc, and a correction
 /// applied to only one of them leaves the other on `0666`.
 ///

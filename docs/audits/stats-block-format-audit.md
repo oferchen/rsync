@@ -30,8 +30,8 @@ Upstream (`target/interop/upstream-src/rsync-3.4.1/`):
 - `main.c:387-465` - `output_itemized_counts`, `bytes_per_sec_human_dnum`,
   `output_summary`.
 - `lib/compat.c:25-39` - `get_number_separator`, locale probe via `"%f", 3.14`.
-- `lib/compat.c:170-246` - `do_big_num` core implementation.
-- `lib/compat.c:252-272` - `do_big_dnum` for fractional values.
+- `lib/compat.c:170-256` - `do_big_num` core implementation.
+- `lib/compat.c:262-282` - `do_big_dnum` for fractional values.
 - `inums.h:19-57` - inline wrappers `big_num`, `comma_num`, `human_num`,
   `big_dnum`, `comma_dnum`, `human_dnum`.
 - `options.c:110,607,1557` - `human_readable` option counter (post-increment,
@@ -62,7 +62,7 @@ oc-rsync:
 
 ### `do_big_num` suffix scaling
 
-`compat.c:182-205`:
+`compat.c:183-206`:
 
 - Multiplier `mult = 1000` when `human_flag == 2`, `1024` when `human_flag >= 3`.
 - Suffix sequence: `K` -> `M` -> `G` -> `T` -> `P`.
@@ -80,7 +80,7 @@ oc-rsync (`format_human_bytes`, `format/size.rs:41-63`):
 
 ### `do_big_num` integer thousands-separation
 
-`compat.c:230-240`:
+`compat.c:231-241`:
 
 - Walks digits right-to-left.
 - Inserts `number_separator` every 3 digits *only* when `human_flag` is set.

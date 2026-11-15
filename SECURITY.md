@@ -62,7 +62,7 @@ QUIC is an oc-rsync extension, built by default, that carries the daemon protoco
 
 ## Upstream CVE Status
 
-The reference version is upstream rsync 3.5.1. Its release notes name no CVE ids; its fixes are tracked in the 3.5.1 table below. Each CVE row carries one of five statuses:
+The reference version is upstream rsync 3.5.2. Its release notes fix CVE-2026-119741 and additional security-relevant issues tracked in the 3.5.2 table below. Each CVE row carries one of five statuses:
 
 - **Fixed**: the code closes it, and a named test or PR shows it.
 - **Partially fixed**: some affected paths are closed and shown by a test or PR, but at least one path is still exposed.
@@ -70,7 +70,7 @@ The reference version is upstream rsync 3.5.1. Its release notes name no CVE ids
 - **Not applicable**: the affected code has no counterpart in oc-rsync.
 - **Unverified**: not yet established either way from the code or a test.
 
-"Passes on every leg that runs it" refers to the upstream 3.5.1 test suite, run against oc-rsync on the legs listed in the [README](./README.md#upstream-testsuite). Some cells skip on some legs, for example when they need root.
+"Passes on every leg that runs it" refers to the upstream 3.5.2 test suite, run against oc-rsync on the legs listed in the [README](./README.md#upstream-testsuite). Some cells skip on some legs, for example when they need root.
 
 | Upstream batch | oc-rsync status |
 |---|---|
@@ -79,6 +79,7 @@ The reference version is upstream rsync 3.5.1. Its release notes name no CVE ids
 | rsync 3.4.3 (six CVEs) | Fixed or not vulnerable |
 | rsync 3.5.0 (33 CVEs) | 27 fixed, 1 partially fixed, 5 not applicable; one row each below |
 | rsync 3.5.1 (no CVE ids) | One row per security-relevant fix below |
+| rsync 3.5.2 (CVE-2026-119741) | Fixed; plus security-relevant fixes below |
 
 ### 2024 and rsync 3.4.3 CVEs
 
@@ -99,11 +100,11 @@ The reference version is upstream rsync 3.5.1. Its release notes name no CVE ids
 
 ### rsync 3.5.0 CVEs (fixed upstream in 3.5.0, 13 Aug 2026)
 
-3.5.0 kept protocol 32, so none of these stem from a wire-format change. They are implementation flaws in code oc-rsync reimplements independently. Re-derive the id list from the 3.5.0 section of the 3.5.1 `NEWS.md` and check that every id has a row (the section also names two 3.4.3 ids, `CVE-2026-43617` and `CVE-2026-43620`, which have rows above):
+3.5.0 kept protocol 32, so none of these stem from a wire-format change. They are implementation flaws in code oc-rsync reimplements independently. Re-derive the id list from the 3.5.0 section of the 3.5.2 `NEWS.md` and check that every id has a row (the section also names two 3.4.3 ids, `CVE-2026-43617` and `CVE-2026-43620`, which have rows above):
 
 ```sh
 awk '/^# NEWS for rsync 3.5.0/,/^# NEWS for rsync 3.4/' \
-  target/interop/upstream-src/rsync-3.5.1/NEWS.md \
+  target/interop/upstream-src/rsync-3.5.2/NEWS.md \
   | grep -o 'CVE-2026-[0-9]*' | sort -u > /tmp/batch
 grep -oE '^\| CVE-2026-[0-9]+' SECURITY.md | cut -c3- | sort -u > /tmp/rows
 comm -23 /tmp/batch /tmp/rows      # ids with no row: prints nothing
@@ -165,6 +166,19 @@ grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uni
 
 `--drop-D` makes a receiver refuse to create device and special files. It exists because `--no-D` on one end only desynchronises the file list: a `-D` sender writes rdev fields that a `--no-D` receiver never reads. `--drop-D` refuses the creation and leaves the wire format alone.
 
+### rsync 3.5.2 fixes (4 Nov 2026)
+
+3.5.2 keeps protocol 33 and fixes CVE-2026-119741 plus the security-relevant issues below:
+
+| 3.5.2 fix | Status | Evidence |
+|---|---|---|
+| CVE-2026-119741: bound strong-checksum work on consecutive weak-checksum collisions | Fixed | `crates/matching/src/index/mod.rs` and `crates/matching/src/delta/mod.rs` bound consecutive weak-checksum collision checks to 32 (`MAX_COLLISION_SKIP`) per offset. `hashsearch-collision-skip` passes. |
+| `--files-from` pull from a daemon module subdirectory read from the module root instead | Fixed | `crates/daemon/src/daemon/sections/module_access/client_args/path_resolution.rs` preserves module-relative paths for `--files-from` pulls. `daemon-files-from-subdir` passes. |
+| Daemon receiver stack/memory overflow when queued deletion messages reach `--max-alloc` | Fixed | `crates/transfer/src/receiver/directory/deletion.rs` and `crates/daemon/src/daemon/sections/module_access/client_args/server_config.rs` track queued delete bytes against `--max-alloc` and suppress `MSG_DELETED` on quiet/non-itemize daemon transfers. `daemon-delete-msg-overflow` passes. |
+| Escape terminal control characters in filenames and diagnostics | Fixed | `crates/logging/src/escape.rs` escapes C0/DEL/C1 control characters in output filenames and diagnostics. `output-control-chars` passes. |
+| IPv6 forward-DNS matching in daemon `hosts allow` / `hosts deny` | Fixed | `crates/daemon/src/daemon/sections/module_access/access_control.rs` compares resolved IPv4/IPv6 addresses cleanly by family. |
+| Daemon `--nice` / `rrsync` priority restriction | Fixed | `crates/core/src/niceness.rs` rejects remote priority requests and non-19/non-idle daemon client requests. `niceness` passes. |
+
 ### rsync 3.5.1 fixes (21 Sep 2026)
 
 3.5.1 raises the protocol to 33 and names no CVE ids. Its security-relevant fixes, from its `NEWS.md`:
@@ -181,7 +195,7 @@ grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uni
 | An alternate-destination leaf symlink is not followed as a basis | Fixed | `alt-dest-symlink-race` passes on every leg. |
 | Undefined shifts in the bundled zlib | Not applicable | oc-rsync does not build upstream's bundled zlib. |
 
-No 3.5.1 testsuite cell fails on any leg. A future `fail` row would be listed, with cause and owner, by `awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.1-expect.*.txt | sort -u`.
+No 3.5.2 testsuite cell fails on any leg. A future `fail` row would be listed, with cause and owner, by `awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.2-expect.*.txt | sort -u`.
 
 ### Earlier audits
 

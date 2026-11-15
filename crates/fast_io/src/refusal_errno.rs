@@ -9,7 +9,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/syscall.c:2920-2931` - the walk "returns ELOOP" for a climb
+//! - `rsync-3.5.2/syscall.c:2991-3002` - the walk "returns ELOOP" for a climb
 //!   above the anchor and for an absolute symlink target.
 
 use std::io;

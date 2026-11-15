@@ -43,7 +43,7 @@ impl ClientConfig {
     /// is the build-time default (zstd > lz4 > zlib).
     ///
     /// This distinction is required for correct argument forwarding to
-    /// the remote peer - upstream `options.c:2994-2999` only sends
+    /// the remote peer - upstream `options.c:3059-3064` only sends
     /// `--compress-choice` / `--new-compress` / `--old-compress` when
     /// the user explicitly selected an algorithm.
     #[must_use]
@@ -213,7 +213,7 @@ impl ClientConfig {
     /// resolves it to its own ceiling instead of refusing a number above it.
     /// A limit set without a spelling (a library caller) forwards the number.
     ///
-    /// upstream: options.c:3039-3040 - `if (max_alloc_arg && max_alloc !=
+    /// upstream: options.c:3104-3105 - `if (max_alloc_arg && max_alloc !=
     /// DEFAULT_MAX_ALLOC) args[ac++] = safe_arg("--max-alloc", max_alloc_arg);`
     #[must_use]
     pub fn max_alloc_forward_arg(&self) -> Option<String> {
@@ -294,12 +294,13 @@ impl ClientConfig {
             || !(self.delete_before()
                 || self.delete_after()
                 || self.delay_updates
+                || self.delay_symlinks
                 || self.prune_empty_dirs)
     }
     /// Whether a local copy recurses incrementally: the local receiver's
     /// [`allow_inc_recurse`](Self::allow_inc_recurse) at the copy's protocol.
     ///
-    /// upstream: compat.c:172-177 `set_allow_inc_recurse()` on the receiving
+    /// upstream: compat.c:173-178 `set_allow_inc_recurse()` on the receiving
     /// child, and compat.c:722 - INC_RECURSE needs protocol 30.
     #[must_use]
     pub fn local_inc_recurse(&self) -> bool {
@@ -411,7 +412,7 @@ mod tests {
 
     #[test]
     fn allow_inc_recurse_requires_recursion() {
-        // upstream: compat.c:172 - `if (!recurse || use_qsort)
+        // upstream: compat.c:173 - `if (!recurse || use_qsort)
         // allow_inc_recurse = 0;`. `--inc-recursive` does not survive it.
         assert!(!default_config().allow_inc_recurse(true));
         assert!(
@@ -438,7 +439,7 @@ mod tests {
 
     #[test]
     fn allow_inc_recurse_receiver_refuses_options_needing_the_whole_flist() {
-        // upstream: compat.c:174-177 - a receiver clears allow_inc_recurse for
+        // upstream: compat.c:175-178 - a receiver clears allow_inc_recurse for
         // --delete-before/--delete-after/--delay-updates/--prune-empty-dirs,
         // because each needs the complete file list before acting on it. A
         // plain --delete resolves to delete_during only later (compat.c:683),

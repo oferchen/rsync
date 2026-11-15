@@ -912,14 +912,14 @@ fn execute_recopy_socket_reuses_existing_same_identity_socket() {
 
     let metadata = fs::symlink_metadata(&dest_socket).expect("dest metadata");
     assert!(metadata.file_type().is_socket());
-    // upstream: generator.c:2047-2058 - an existing socket of the same _S_IFMT
+    // upstream: generator.c:2088-2099 - an existing socket of the same _S_IFMT
     // bucket quick-checks equal: set_file_attrs in place, itemize iflags=0
     // (`.S...`), no recreate, and not counted as created. The pre-fix recreate
     // wrongly reported it created and itemized `cS`.
     assert_eq!(
         report.summary().fifos_created(),
         0,
-        "a metadata-only socket change is not a creation (upstream generator.c:2055)"
+        "a metadata-only socket change is not a creation (upstream generator.c:2096)"
     );
     assert!(
         report
@@ -939,7 +939,7 @@ fn execute_recopy_socket_reuses_existing_same_identity_socket() {
 
 /// Opposed control for the same-identity quick-check short-circuit: a source
 /// FIFO whose destination is a SOCKET differs on the `_S_IFMT` bucket, so it is
-/// NOT reused in place. Upstream (generator.c:2049 - `ftype != stype`
+/// NOT reused in place. Upstream (generator.c:2090 - `ftype != stype`
 /// forces `statret = -1`) removes and recreates it, itemizing a local change
 /// (`cS`) and counting it created. This proves the short-circuit is strictly
 /// gated on identity and never blanket-skips a genuine recreate (which would be

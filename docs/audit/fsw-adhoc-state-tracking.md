@@ -255,7 +255,7 @@ Finalization -> Complete).
 - **Lines:** 42-46, 58, 82-90
 - **Current mechanism:** Integer counter tracking the protocol phase (1 = main
   transfer, 2 = redo, 3 = delay-updates). Mirrors upstream
-  `generator.c:2355-2394` with explicit `phase++` increments and
+  `generator.c:2398-2437` with explicit `phase++` increments and
   `generate_files phase=%d` debug emissions. The `max_phase` is derived from
   `supports_multi_phase()`.
 - **Target FSM state:** DeltaTransfer -> Finalization. Phase 1 is DeltaTransfer,

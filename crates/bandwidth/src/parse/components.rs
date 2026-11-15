@@ -133,7 +133,7 @@ impl BandwidthLimitComponents {
     /// Deviation from upstream: `daemon_bwlimit = 0` means "no daemon cap" and
     /// keeps the client rate, whereas an unlimited override here clears it.
     ///
-    /// upstream: options.c:2543-2544 - min(client, daemon) wins
+    /// upstream: options.c:2598-2599 - min(client, daemon) wins
     #[must_use]
     pub fn constrained_by(&self, override_components: &Self) -> Self {
         let mut rate = self.rate;
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn constrained_by_takes_minimum_rate() {
-        // upstream: options.c:2543 - min(client, daemon) wins.
+        // upstream: options.c:2598 - min(client, daemon) wins.
         let c1 = BandwidthLimitComponents::new(Some(nz(1000)));
         let c2 = BandwidthLimitComponents::new(Some(nz(500)));
         let constrained = c1.constrained_by(&c2);

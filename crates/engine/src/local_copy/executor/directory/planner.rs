@@ -181,14 +181,14 @@ fn decide_entry_action(
     // (i.e., --copy-links did NOT resolve it to the referent).  When
     // --copy-links is active and the target is a FIFO or device, we must
     // fall through to the FIFO / device branches below.
-    // upstream: generator.c:1642 list_file_entry() lists every flist entry, so
+    // upstream: generator.c:1679 list_file_entry() lists every flist entry, so
     // `--list-only` records symlinks, FIFOs, and devices (dry-run only reports
     // them) even without `--links`/`--specials`/`--devices`; a real transfer
     // without those flags still skips the non-regular entry.
     let list_only = context.list_only_enabled();
 
     if entry_type.is_symlink() && effective_type.is_symlink() {
-        // upstream: flist.c:482-506 readlink_stat() - `--copy-unsafe-links`
+        // upstream: flist.c:485-509 readlink_stat() - `--copy-unsafe-links`
         // dereferences an unsafe link before `-l` is consulted, so keep the
         // link in play here; a safe one is demoted after that check.
         if context.links_enabled() || list_only || context.copy_unsafe_links_enabled() {
@@ -224,7 +224,7 @@ fn decide_entry_action(
 
 /// Drops a `--copy-links` entry whose referent cannot be stat'ed.
 ///
-/// upstream: flist.c:1658-1697 make_file() - a failed `readlink_stat()` is
+/// upstream: flist.c:1662-1701 make_file() - a failed `readlink_stat()` is
 /// silent for an excluded name; otherwise ENOENT reports `symlink has no
 /// referent` and any other errno (ELOOP for a symlink cycle) reports
 /// `readlink_stat(...) failed`. Either way `io_error |= IOERR_GENERAL`, the
@@ -254,7 +254,7 @@ fn drop_unfollowable_symlink(
 /// Reports a scanned entry whose own `lstat` failed, which drops it from the
 /// listing.
 ///
-/// upstream: flist.c:1658-1697 make_file() - a name the filters exclude is
+/// upstream: flist.c:1662-1701 make_file() - a name the filters exclude is
 /// dropped silently; `ENOENT` warns `file has vanished` (IOERR_VANISHED, exit
 /// 24); any other errno reports `readlink_stat(...) failed` with
 /// `io_error |= IOERR_GENERAL`. The walk continues either way.
@@ -358,7 +358,7 @@ pub(crate) fn plan_directory_entries<'a>(
             PathBuf::from(Path::new(&file_name))
         };
 
-        // upstream: flist.c:2000-2023 send_file_name() - a name that cannot be
+        // upstream: flist.c:2004-2027 send_file_name() - a name that cannot be
         // strictly transcoded under --iconv is dropped from the flist with a
         // diagnostic and io_error |= IOERR_GENERAL. Detecting it during planning
         // sets io_error before this directory's delete pass runs, so deletions
@@ -448,7 +448,7 @@ pub(crate) fn plan_directory_entries<'a>(
                                 }
                             }
                             Err(_) => {
-                                // upstream: flist.c:1676-1681 - dangling symlink
+                                // upstream: flist.c:1680-1685 - dangling symlink
                                 // whose target was to be dereferenced by
                                 // --copy-unsafe-links; log and skip.
                                 eprintln!("symlink has no referent: {}", entry.path.display());
@@ -469,7 +469,7 @@ pub(crate) fn plan_directory_entries<'a>(
             }
         }
 
-        // upstream: generator.c:2109-2115 - a link readlink_stat() left as a
+        // upstream: generator.c:2150-2156 - a link readlink_stat() left as a
         // symlink is skipped as non-regular when `-l` is off.
         if matches!(action, EntryAction::CopySymlink)
             && !context.links_enabled()
@@ -491,7 +491,7 @@ pub(crate) fn plan_directory_entries<'a>(
             action = EntryAction::SkipMountPoint;
         }
 
-        // upstream: flist.c:2050-2087 send_file_name() reads the entry's ACL
+        // upstream: flist.c:2054-2091 send_file_name() reads the entry's ACL
         // and xattrs as it lists it. A failed read drops the entry here, before
         // this directory's delete pass, as an unconvertible name does above.
         let Some(attrs) = read_planned_attrs(
@@ -508,14 +508,14 @@ pub(crate) fn plan_directory_entries<'a>(
         };
 
         if deletion_enabled && keep_name {
-            // upstream: generator.c:346 delete_in_dir() keeps any destination
+            // upstream: generator.c:381 delete_in_dir() keeps any destination
             // entry found in the source file list via
             // flist_find_ignore_dirness(), regardless of file type or delete
             // timing. --delete-before shares that keep decision with
             // --delete-during/-after (all drive delete_in_dir), so an in-source
             // regular file must stay in the keep-set. Restricting
             // --delete-before to directories deleted then re-transferred every
-            // in-source file. upstream: flist.c:2000-2023 + flist.c:1058-1072 -
+            // in-source file. upstream: flist.c:2004-2027 + flist.c:1062-1076 -
             // the receiver hits the filesystem with the iconv-converted name;
             // align the keep-list so deletion does not wipe freshly-written
             // entries when --iconv is configured.
@@ -836,7 +836,7 @@ fn plan_directory_entries_with_prefetch<'a>(
             PathBuf::from(Path::new(&file_name))
         };
 
-        // upstream: flist.c:2000-2023 send_file_name() - a name that cannot be
+        // upstream: flist.c:2004-2027 send_file_name() - a name that cannot be
         // strictly transcoded under --iconv is dropped from the flist with a
         // diagnostic and io_error |= IOERR_GENERAL. Detecting it during planning
         // sets io_error before this directory's delete pass runs, so deletions
@@ -942,7 +942,7 @@ fn plan_directory_entries_with_prefetch<'a>(
                                 metadata_override = None;
                             }
                         } else {
-                            // upstream: flist.c:1676-1681 - dangling symlink
+                            // upstream: flist.c:1680-1685 - dangling symlink
                             // whose target was to be dereferenced by
                             // --copy-unsafe-links; log and skip.
                             eprintln!("symlink has no referent: {}", entry.path.display());
@@ -962,7 +962,7 @@ fn plan_directory_entries_with_prefetch<'a>(
             }
         }
 
-        // upstream: generator.c:2109-2115 - a link readlink_stat() left as a
+        // upstream: generator.c:2150-2156 - a link readlink_stat() left as a
         // symlink is skipped as non-regular when `-l` is off.
         if matches!(action, EntryAction::CopySymlink)
             && !context.links_enabled()
@@ -995,7 +995,7 @@ fn plan_directory_entries_with_prefetch<'a>(
             action = EntryAction::SkipMountPoint;
         }
 
-        // upstream: flist.c:2050-2087 send_file_name() reads the entry's ACL
+        // upstream: flist.c:2054-2091 send_file_name() reads the entry's ACL
         // and xattrs as it lists it. A failed read drops the entry here, before
         // this directory's delete pass, as an unconvertible name does above.
         let Some(attrs) = read_planned_attrs(
@@ -1012,14 +1012,14 @@ fn plan_directory_entries_with_prefetch<'a>(
         };
 
         if deletion_enabled && keep_name {
-            // upstream: generator.c:346 delete_in_dir() keeps any destination
+            // upstream: generator.c:381 delete_in_dir() keeps any destination
             // entry found in the source file list via
             // flist_find_ignore_dirness(), regardless of file type or delete
             // timing. --delete-before shares that keep decision with
             // --delete-during/-after (all drive delete_in_dir), so an in-source
             // regular file must stay in the keep-set. Restricting
             // --delete-before to directories deleted then re-transferred every
-            // in-source file. upstream: flist.c:2000-2023 + flist.c:1058-1072 -
+            // in-source file. upstream: flist.c:2004-2027 + flist.c:1062-1076 -
             // the receiver hits the filesystem with the iconv-converted name;
             // align the keep-list so deletion does not wipe freshly-written
             // entries when --iconv is configured.
@@ -1193,7 +1193,7 @@ mod tests {
     /// deferral (generator.c:2214). This is the unchanged control for the
     /// fake-super fix below.
     ///
-    /// upstream: hlink.c:match_gnums / generator.c:2214-2215
+    /// upstream: hlink.c:match_gnums / generator.c:2255-2257
     #[cfg(unix)]
     #[test]
     fn reorder_regular_hardlink_group_uses_last_member_holder() {

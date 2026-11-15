@@ -270,7 +270,7 @@ fn execute_with_delete_before_removes_conflicting_entries() {
     assert_eq!(fs::read(&target).expect("read copied file"), b"fresh");
     assert!(target.is_file());
     assert_eq!(summary.files_copied(), 1);
-    // upstream: generator.c:2148-2151 clears the conflicting (empty) directory with
+    // upstream: generator.c:2189-2192 clears the conflicting (empty) directory with
     // DEL_FOR_FILE, which delete.c:191 delete_item() removes silently and
     // without a stats.deleted_files bump. The directory has no contents to
     // recurse over, so no deletions are counted for the make-room replacement.
@@ -505,7 +505,7 @@ fn execute_with_mkpath_creates_missing_parents_without_implied_dirs() {
 
 #[test]
 fn execute_with_dry_run_silently_keeps_directory_on_conflict() {
-    // upstream: flist.c:3606-3625 keeps the directory and drops the regular
+    // upstream: flist.c:3617-3636 keeps the directory and drops the regular
     // file entry when both share a name. Dry-run reports the same outcome:
     // no error, destination directory preserved.
     let temp = create_tempdir();
@@ -1048,7 +1048,7 @@ fn execute_directory_fails_on_permission_denied_when_creating() {
     // Restore permissions for cleanup
     fs::set_permissions(&dest_root, PermissionsExt::from_mode(0o755)).expect("restore perms");
 
-    // upstream: generator.c:1873-1887 - the failed mkdir is reported where it
+    // upstream: generator.c:1910-1924 - the failed mkdir is reported where it
     // happens, its contents are skipped, and the run ends RERR_PARTIAL rather
     // than aborting with the mkdir's own errno.
     let error = result.expect_err("a failed mkdir must still fail the run");
@@ -1115,7 +1115,7 @@ fn execute_directory_nested_already_exists_merges_content() {
     );
 }
 
-/// upstream: `generator.c:1839-1842` `recv_generator()` clears a non-directory
+/// upstream: `generator.c:1876-1879` `recv_generator()` clears a non-directory
 /// standing where a directory belongs and carries on. `--force` contributes
 /// only `DEL_RECURSE` (`generator.c:1629`), which governs recursing into a
 /// non-empty *directory*, so this replacement needs no flag.
@@ -1541,7 +1541,7 @@ fn execute_multiple_source_directories_to_destination() {
 /// Regression: upstream `testsuite/merge.test` runs
 /// `rsync -avv from1/ from2/ from3/ to/` where `from1/dir-and-not-dir/` is a
 /// directory and `from3/dir-and-not-dir` is a regular file of the same name.
-/// Upstream `flist.c:3606-3625 flist_sort_and_clean()` deduplicates the
+/// Upstream `flist.c:3617-3636 flist_sort_and_clean()` deduplicates the
 /// colliding entries by keeping the directory and dropping the regular file,
 /// so the regular file never reaches the generator.
 ///

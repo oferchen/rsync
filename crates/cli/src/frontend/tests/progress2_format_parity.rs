@@ -1,6 +1,6 @@
 //! Tests verifying that --info=progress2 output format matches upstream rsync.
 //!
-//! Upstream rsync --info=progress2 format (progress.c:78-134):
+//! Upstream rsync --info=progress2 format (progress.c:79-130):
 //!
 //! **Final tick** (per file):
 //!   `         10,000 100%    0.50kB/s    0:00:01 (xfr#1, to-chk=2/3)`
@@ -224,7 +224,7 @@ fn split_progress2_lines(output: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Upstream: progress.c:78-82 - the final tick of the last file emits
+/// Upstream: progress.c:79-83 - the final tick of the last file emits
 /// `(xfr#N, to-chk=0/T)` with a trailing newline.
 #[test]
 fn progress2_single_file_final_tick_matches_upstream_format() {
@@ -244,7 +244,7 @@ fn progress2_single_file_final_tick_matches_upstream_format() {
 
     // Final tick should show to-chk=0/2: the trailing-slash copy enumerates the
     // source root directory plus the single file, so `num_files == 2` (reg: 1,
-    // dir: 1). upstream: flist.c:3076 counts directories into stats.num_files,
+    // dir: 1). upstream: flist.c:3087 counts directories into stats.num_files,
     // so `rsync -r source/ dest` reports `to-chk=0/2` here. Verified against
     // rsync 3.4.4: `Number of files: 2 (reg: 1, dir: 1)`.
     assert!(
@@ -253,7 +253,7 @@ fn progress2_single_file_final_tick_matches_upstream_format() {
     );
 }
 
-/// Upstream: progress.c:100 - in-flight ticks in progress2 mode use trailing
+/// Upstream: progress.c:101 - in-flight ticks in progress2 mode use trailing
 /// spaces instead of the xfr/chk trailer.
 #[test]
 fn progress2_inflight_ticks_have_no_xfr_trailer() {
@@ -292,7 +292,7 @@ fn progress2_all_lines_match_upstream_format() {
     }
 }
 
-/// Upstream: progress.c:108-116 - rate field uses base-1024 scaling with
+/// Upstream: progress.c:106-107 - rate field uses base-1024 scaling with
 /// `kB/s`, `MB/s`, `GB/s` units. Verify the rate unit is one of these.
 #[test]
 fn progress2_rate_unit_matches_upstream_tiers() {
@@ -305,13 +305,16 @@ fn progress2_rate_unit_matches_upstream_tiers() {
     for line in &lines {
         // Every progress2 line must contain a rate with an upstream unit
         assert!(
-            line.contains("kB/s") || line.contains("MB/s") || line.contains("GB/s"),
+            line.contains("B/s")
+                || line.contains("kB/s")
+                || line.contains("MB/s")
+                || line.contains("GB/s"),
             "progress2 rate must use upstream base-1024 units (kB/s, MB/s, GB/s): {line:?}"
         );
     }
 }
 
-/// Upstream: progress.c:121-122 - time field uses `H:MM:SS` format
+/// Upstream: progress.c:112-113 - time field uses `H:MM:SS` format
 /// (`%4u:%02u:%02u`). For a fast transfer, this should be `0:00:0X`.
 #[test]
 fn progress2_time_field_uses_hmmss_format() {
@@ -326,7 +329,7 @@ fn progress2_time_field_uses_hmmss_format() {
     }
 }
 
-/// Upstream: progress.c:129 - bytes field uses 15-char right-aligned field
+/// Upstream: progress.c:120 - bytes field uses 15-char right-aligned field
 /// with thousands separators.
 #[test]
 fn progress2_bytes_field_uses_thousands_separator() {
@@ -342,7 +345,7 @@ fn progress2_bytes_field_uses_thousands_separator() {
     );
 }
 
-/// Upstream: progress.c:78-82 - multiple files produce sequential xfr#
+/// Upstream: progress.c:79-83 - multiple files produce sequential xfr#
 /// indices, with the final file showing `to-chk=0/N`.
 #[test]
 fn progress2_multiple_files_sequential_xfr_indices() {
@@ -414,7 +417,7 @@ fn progress2_multiple_files_all_final_ticks_match_format() {
     }
 }
 
-/// upstream: progress.c:129 - the bytes field width is 15 chars.
+/// upstream: progress.c:120 - the bytes field width is 15 chars.
 /// Verify `format_progress_bytes` + right-align produces 15-char field.
 #[test]
 fn progress2_bytes_field_width_15_chars() {
@@ -429,14 +432,14 @@ fn progress2_bytes_field_width_15_chars() {
     }
 }
 
-/// upstream: progress.c:129 - the percentage field is 4 chars wide.
+/// upstream: progress.c:120 - the percentage field is 4 chars wide.
 #[test]
 fn progress2_percentage_field_width_4_chars() {
     let test_cases: &[(u64, Option<u64>, &str)] = &[
         (0, Some(100), "  0%"),
         (50, Some(100), " 50%"),
         (100, Some(100), "100%"),
-        // upstream progress.c:128 - unknown total resolves to 100%, never `??%`.
+        // upstream progress.c:119 - unknown total resolves to 100%, never `??%`.
         (0, None, "100%"),
     ];
 
@@ -455,7 +458,7 @@ fn progress2_percentage_field_width_4_chars() {
     }
 }
 
-/// upstream: progress.c:108-116 - the rate field is 11 chars wide
+/// upstream: progress.c:106-107 - the rate field is 11 chars wide
 /// (7-char value + 4-char unit suffix).
 #[test]
 fn progress2_rate_field_width_11_chars() {
@@ -471,7 +474,7 @@ fn progress2_rate_field_width_11_chars() {
     }
 }
 
-/// upstream: progress.c:121-122 - the time field is 10 chars wide
+/// upstream: progress.c:112-113 - the time field is 10 chars wide
 /// (`%4u:%02u:%02u`).
 #[test]
 fn progress2_time_field_width_10_chars() {
@@ -493,7 +496,7 @@ fn progress2_time_field_width_10_chars() {
     }
 }
 
-/// upstream: progress.c:118-119 - overflow sentinel `??:??:??` right-aligned
+/// upstream: progress.c:109-110 - overflow sentinel `??:??:??` right-aligned
 /// in 10-char field produces `"  ??:??:??"`.
 #[test]
 fn progress2_time_overflow_sentinel_10_chars() {
@@ -503,13 +506,13 @@ fn progress2_time_overflow_sentinel_10_chars() {
     assert_eq!(padded, "  ??:??:??");
 }
 
-/// upstream: progress.c:108-116 - rate units use `kB/s`, `MB/s`, `GB/s`
+/// upstream: progress.c:106-107 - rate units use `kB/s`, `MB/s`, `GB/s`
 /// with base-1024 divisors. Verify the tier boundaries.
 #[test]
 fn progress2_rate_unit_tier_boundaries() {
     // Below 1 MiB/s -> kB/s
     let kb = format_progress_rate_decimal(512.0);
-    assert!(kb.ends_with("kB/s"), "512 B/s -> kB/s: {kb}");
+    assert!(kb.ends_with("B/s"), "512 B/s -> B/s: {kb}");
 
     // At 1 MiB/s boundary -> MB/s
     let mb = format_progress_rate_decimal(1024.0 * 1024.0);
@@ -665,7 +668,7 @@ fn progress2_cli_multiple_files_format_parity() {
 /// from the individual formatter functions, matching upstream's format
 /// string: `"\r%15s %3d%% %7.2f%s %s%s"` (progress.c:129).
 ///
-/// upstream: progress.c:108-134 rprint_progress
+/// upstream: progress.c:106-130 rprint_progress
 #[test]
 fn progress2_composed_line_field_order_matches_upstream() {
     let bytes_field = format!(
@@ -695,7 +698,7 @@ fn progress2_composed_line_field_order_matches_upstream() {
     // Verify specific content
     assert!(line.contains("1,536"), "bytes field should contain 1,536");
     assert!(line.contains("100%"), "should show 100%");
-    assert!(line.contains("kB/s"), "rate should use kB/s");
+    assert!(line.contains("B/s"), "rate should use B/s");
     assert!(line.contains("0:00:01"), "time should be 0:00:01");
     assert!(
         line.contains("(xfr#1, to-chk=0/1)"),
@@ -706,7 +709,7 @@ fn progress2_composed_line_field_order_matches_upstream() {
 /// Verifies that an in-flight progress2 line (no xfr trailer, trailing spaces)
 /// has the correct field order when assembled from formatter functions.
 ///
-/// upstream: progress.c:100 - in-flight ticks emit trailing spaces
+/// upstream: progress.c:101 - in-flight ticks emit trailing spaces
 #[test]
 fn progress2_composed_inflight_line_field_order_matches_upstream() {
     let bytes_field = format!(

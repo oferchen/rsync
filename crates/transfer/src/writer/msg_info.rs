@@ -91,7 +91,7 @@ pub trait MsgInfoSender {
     /// A server generator emits one frame per deletion so the client renders the
     /// `deleting <path>` line itself (the client owns the verbosity and itemize
     /// gating). Directories carry a trailing NUL in `data` so the peer can tell
-    /// a directory from a regular file (upstream `log.c:913-914`).
+    /// a directory from a regular file (upstream `log.c:998-999`).
     ///
     /// The default implementation is a no-op, matching [`Self::send_msg_info`].
     ///
@@ -203,7 +203,7 @@ pub trait MsgInfoSender {
 }
 
 impl<W: Write> MsgInfoSender for ServerWriter<W> {
-    // upstream: log.c:357-366 - every diagnostic passes the one routing
+    // upstream: log.c:437-446 - every diagnostic passes the one routing
     // decision in rwrite(); plain mode sends nothing.
     fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
         self.send_diagnostic(MessageCode::Info, data)
@@ -222,7 +222,7 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
     }
 
     fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
-        // upstream: log.c:912-916 - the MSG_DELETED path only exists on a
+        // upstream: log.c:997-1001 - the MSG_DELETED path only exists on a
         // multiplexed server stream; plain mode never reaches this branch.
         if self.is_multiplexed() {
             self.send_message(MessageCode::Deleted, data)
@@ -274,7 +274,7 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
     }
 
     fn write_files_from_unframed(&mut self, data: &[u8]) -> io::Result<()> {
-        // upstream: io.c:1405 start_filesfrom_forwarding() switches the stream to
+        // upstream: io.c:1412 start_filesfrom_forwarding() switches the stream to
         // MPLX_TO_BUFFERED; write_raw flushes the pending frame and emits the
         // payload without MSG_DATA framing, leaving the stream multiplexed.
         self.write_raw(data)
@@ -386,7 +386,7 @@ mod tests {
     /// `SIVAL64(b, 0, n); send_msg(MSG_BLOCK_STATS, b, 8, 0)` - header tag
     /// `MPLEX_BASE + 11 = 18`, length 8, then the count as LE int64 - or a
     /// protocol-33 client rejects it as an invalid message.
-    /// upstream: main.c:1112-1117, rsync.h:302.
+    /// upstream: main.c:1112-1117, rsync.h:303.
     #[test]
     fn block_stats_frame_matches_upstream_bytes() {
         let count: u64 = 0x0102_0304_0506;

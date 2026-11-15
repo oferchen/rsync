@@ -44,7 +44,7 @@ for (ent = listp->head; ent; ent = ent->next) {
 }
 ```
 
-`flist.c:1265,1333` increments `non_perishable_cnt` when a file is excluded
+`flist.c:1269,1333` increments `non_perishable_cnt` when a file is excluded
 while `ignore_perishable` is set, signalling that a non-perishable exclude
 still pins the parent directory.
 

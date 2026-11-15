@@ -37,7 +37,7 @@ pub enum LegacyDaemonMessage<'a> {
     /// `@RSYNCD: AUTHREQD <challenge>`). The value is optional so a bare
     /// `AUTHREQD` line still parses; upstream always sends the challenge inline.
     ///
-    /// upstream: authenticate.c:337 - `io_printf(f_out, "%s%s\n", leader, challenge)`
+    /// upstream: authenticate.c:332 - `io_printf(f_out, "%s%s\n", leader, challenge)`
     /// with leader `"@RSYNCD: AUTHREQD "` (clientserver.c:809).
     AuthRequired {
         /// Base64 challenge supplied inline by the daemon, when present.
@@ -310,7 +310,7 @@ pub fn format_legacy_daemon_message(message: LegacyDaemonMessage<'_>) -> String 
 /// maximum). This is the emit half whose inverse is
 /// [`parse_daemon_module_listing`].
 ///
-/// upstream: clientserver.c:1381 `io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i))`.
+/// upstream: clientserver.c:1390 `io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i))`.
 ///
 /// # Examples
 ///
@@ -356,7 +356,7 @@ pub fn parse_daemon_module_listing(line: &str) -> (&str, &str) {
 /// digest response, terminated by a newline. This is the emit half whose inverse
 /// is [`parse_daemon_auth_response`].
 ///
-/// upstream: authenticate.c:473 `io_printf(f_out, "%s %s\n", user, pass2)`.
+/// upstream: authenticate.c:468 `io_printf(f_out, "%s %s\n", user, pass2)`.
 ///
 /// # Examples
 ///
@@ -376,7 +376,7 @@ pub fn format_daemon_auth_response(user: &str, response: &str) -> String {
 /// trailing CR/LF are removed. A line with no separator yields an empty
 /// response, which the daemon rejects as a failed authentication.
 ///
-/// upstream: authenticate.c:288 `auth_server()` reads the line and splits it into
+/// upstream: authenticate.c:283 `auth_server()` reads the line and splits it into
 /// the username and the response digest.
 ///
 /// # Examples

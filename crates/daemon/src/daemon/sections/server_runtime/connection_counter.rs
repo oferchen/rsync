@@ -33,7 +33,7 @@ impl ConnectionCounter {
     /// the daemon can refuse a connection with `@ERROR: max connections (N)
     /// reached -- try again later` once `--max-connections` is reached.
     ///
-    /// upstream: clientserver.c:791-801 enforces `lp_max_connections()` per
+    /// upstream: clientserver.c:795-805 enforces `lp_max_connections()` per
     /// module via `claim_connection()` and emits the same error wording.
     pub(crate) fn active(&self) -> usize {
         self.active.load(Ordering::Acquire)

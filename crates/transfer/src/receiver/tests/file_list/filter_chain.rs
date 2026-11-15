@@ -377,7 +377,7 @@ fn delete_ordinary_subdir_succeeds_with_no_io_error() {
 /// symlink-refusal must close the syscall before any unlink can
 /// land on the attacker-chosen inode.
 ///
-/// upstream: clientserver.c:1018 `use_secure_symlinks` gates the
+/// upstream: clientserver.c:1022 `use_secure_symlinks` gates the
 /// `do_*_at` wrappers in `syscall.c`; `secure_relative_open` returns
 /// `errno=ELOOP` and the caller sets `io_error |= IOERR_GENERAL`.
 #[cfg(unix)]

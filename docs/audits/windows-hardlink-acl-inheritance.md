@@ -23,7 +23,7 @@ other inode-sharing platform: `hlink.c::hard_link_check()` calls
 `maybe_hard_link()` which itself only calls `atomic_create()` ->
 `do_link()` and then itemizes. It never calls `set_file_attrs()` on
 the follower, so `set_acl()` is never invoked for the alias.
-`generator.c:1540` returns the follower out of the per-file loop
+`generator.c:1577` returns the follower out of the per-file loop
 before `set_file_attrs()` could fire. The leader's `set_acl()` write
 populates the shared inode and every follower inherits the DACL for
 free.

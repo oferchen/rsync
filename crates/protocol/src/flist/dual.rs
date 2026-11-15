@@ -226,7 +226,7 @@ impl DualFileList {
     /// # Sender skip
     ///
     /// A non-incremental sender (`am_sender && !inc_recurse`) must NOT remove
-    /// duplicates: upstream skips the clean loop entirely (`flist.c:3584-3587`)
+    /// duplicates: upstream skips the clean loop entirely (`flist.c:3595-3598`)
     /// and transmits every entry as-is, so the receiver's in-place tombstones
     /// keep both sides' NDX numbering aligned. This method returns immediately in
     /// that case, leaving the list (and `parallel`) untouched.
@@ -269,7 +269,7 @@ impl DualFileList {
         if len == 0 {
             return stats;
         }
-        // upstream: flist.c:3584-3587 - a non-incremental sender transmits
+        // upstream: flist.c:3595-3598 - a non-incremental sender transmits
         // duplicates as-is (skips the clean loop) so the receiver's tombstones
         // keep both sides' NDX numbering aligned. A sender cannot tombstone-skip
         // a slot without transmitting fewer entries than its array holds, which
@@ -296,7 +296,7 @@ impl DualFileList {
                 continue;
             }
 
-            // upstream: flist.c:3617-3635 - `clear_file()` is gated on
+            // upstream: flist.c:3628-3646 - `clear_file()` is gated on
             // `!am_sender`, so the sender NEVER removes a duplicate; a duplicate
             // top-level source arg stays alive and the receiver's own clean pass
             // tombstones it, keeping both sides' NDX aligned. Under INC_RECURSE a
@@ -316,7 +316,7 @@ impl DualFileList {
                     self.legacy.swap(w, r);
                     parallel.swap(w, r);
                 }
-                // upstream: flist.c:3617-3618 - FLAG_DUPLICATE marks the later
+                // upstream: flist.c:3628-3629 - FLAG_DUPLICATE marks the later
                 // directory (only when both entries are dirs) so
                 // `send_extra_file_list()` batches the duplicate-named dirs into a
                 // single sub-list. The later entry now sits at index `w`.
@@ -602,7 +602,7 @@ mod tests {
     fn dedup_with_parallel_sender_noninc_transmits_duplicates() {
         // WHY: a non-incremental sender must NOT remove duplicates - it transmits
         // every entry so the receiver's in-place tombstones keep the wire NDX
-        // aligned. upstream: flist.c:3584-3587.
+        // aligned. upstream: flist.c:3595-3598.
         let mut list = DualFileList::new();
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));
@@ -617,7 +617,7 @@ mod tests {
 
     #[test]
     fn dedup_with_parallel_sender_inc_keeps_top_level_dups_alive() {
-        // WHY: upstream gates clear_file() on !am_sender (flist.c:3628-3635), so
+        // WHY: upstream gates clear_file() on !am_sender (flist.c:3639-3646), so
         // a sender NEVER removes a duplicate - even under INC_RECURSE. A repeated
         // top-level source arg stays on the wire; the receiver's own clean pass
         // tombstones it, keeping both sides' NDX numbering aligned. Truncating it
@@ -716,7 +716,7 @@ mod tests {
         // WHY: the non-incremental sender transmits duplicates as-is; the
         // receiver's flist_clean then TOMBSTONES the duplicate in place, keeping
         // the array length (and every NDX slot) so both sides stay aligned (no
-        // RERR_PROTOCOL desync). upstream: flist.c:3584-3587 + 3089.
+        // RERR_PROTOCOL desync). upstream: flist.c:3595-3598 + 3089.
         let mut list = DualFileList::new();
         list.push(FileEntry::new_file("a".into(), 0, 0o644));
         list.push(FileEntry::new_file("dup".into(), 0, 0o644));

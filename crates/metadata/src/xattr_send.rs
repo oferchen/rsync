@@ -137,7 +137,7 @@ impl XattrSendOptions<'_> {
 /// Whether `destination`'s extended attributes differ from the `sender` set,
 /// for the `ITEM_REPORT_XATTR` (`x`) column of `--itemize-changes`.
 ///
-/// Mirrors upstream `generator.c:571-577`: with `preserve_xattrs` the generator
+/// Mirrors upstream `generator.c:608-614`: with `preserve_xattrs` the generator
 /// reads the destination's current attributes (`get_xattr`) and compares them
 /// against the sender's list (`xattr_diff`). `dest_opts` must therefore describe
 /// a *generator* read - [`XattrRole::Generator`] - so `user_only`

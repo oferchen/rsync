@@ -82,7 +82,7 @@ impl std::fmt::Display for ProcessRole {
 
 /// Traces one `make_file()` call (level 2).
 ///
-/// upstream: flist.c:1768 `[%s] make_file(%s,*,%d)`. The third argument is
+/// upstream: flist.c:1772 `[%s] make_file(%s,*,%d)`. The third argument is
 /// the filter level: `NO_FILTERS` (0) for named command-line sources,
 /// `SERVER_FILTERS` (1) on the daemon arg path, `ALL_FILTERS` (2) for
 /// entries found by recursion and implied directories (rsync.h:213-214).
@@ -109,7 +109,7 @@ pub fn trace_flist_eof(role: ProcessRole) {
 
 /// Traces send_file_list completion (level 2).
 ///
-/// upstream: flist.c:3082 `send_file_list done`.
+/// upstream: flist.c:3093 `send_file_list done`.
 #[inline]
 pub fn trace_send_file_list_done() {
     debug_log!(Flist, 2, "send_file_list done");
@@ -117,7 +117,7 @@ pub fn trace_send_file_list_done() {
 
 /// Traces one received file-list name (level 2).
 ///
-/// upstream: flist.c:3257 `recv_file_name(%s)` - printed for each entry as
+/// upstream: flist.c:3268 `recv_file_name(%s)` - printed for each entry as
 /// the receive loop stores it.
 #[inline]
 pub fn trace_recv_file_name(name: &str) {
@@ -126,7 +126,7 @@ pub fn trace_recv_file_name(name: &str) {
 
 /// Traces received file count (level 2).
 ///
-/// upstream: flist.c:3263 `received %d names` - printed once per
+/// upstream: flist.c:3274 `received %d names` - printed once per
 /// `recv_file_list()` call, after its entry loop.
 #[inline]
 pub fn trace_received_names(count: usize) {
@@ -135,7 +135,7 @@ pub fn trace_received_names(count: usize) {
 
 /// Traces recv_file_list completion (level 2).
 ///
-/// upstream: flist.c:3332 `recv_file_list done`.
+/// upstream: flist.c:3343 `recv_file_list done`.
 #[inline]
 pub fn trace_recv_file_list_done() {
     debug_log!(Flist, 2, "recv_file_list done");
@@ -160,7 +160,7 @@ pub fn trace_receiving_flist_for_dir(role: ProcessRole, dir_ndx: i32, level: u8)
 
 /// Traces client-side file list transmission completion (level 3).
 ///
-/// upstream: main.c:1393 `file list sent` - printed by `client_run()` only
+/// upstream: main.c:1397 `file list sent` - printed by `client_run()` only
 /// (the server sender has no such line).
 #[inline]
 pub fn trace_file_list_sent() {
@@ -169,7 +169,7 @@ pub fn trace_file_list_sent() {
 
 /// Dumps a file list (level 3).
 ///
-/// upstream: flist.c:3732 `output_flist()` - a header line followed by one
+/// upstream: flist.c:3743 `output_flist()` - a header line followed by one
 /// line per slot (tombstoned slots print empty name fields, exactly as
 /// upstream prints a `!F_IS_ACTIVE` slot):
 ///
@@ -221,7 +221,7 @@ pub fn output_flist(
 
 /// Formats one `output_flist()` line (level 3).
 ///
-/// upstream: flist.c:3769 `[%s] i=%d %s %s%s%s%s mode=0%o len=%s%s%s flags=%x`.
+/// upstream: flist.c:3780 `[%s] i=%d %s %s%s%s%s mode=0%o len=%s%s%s flags=%x`.
 fn output_flist_entry(
     role: ProcessRole,
     ndx: i32,
@@ -293,7 +293,7 @@ fn output_flist_entry(
 /// Reconstructs upstream's in-memory `file->flags` word from the bits oc
 /// tracks.
 ///
-/// upstream: rsync.h:77-100. oc's `FileEntry` has no single runtime flags
+/// upstream: rsync.h:77-101. oc's `FileEntry` has no single runtime flags
 /// word; the bits with oc state are `FLAG_TOP_DIR` (1<<0),
 /// `FLAG_CONTENT_DIR` (1<<2), `FLAG_DUPLICATE` (1<<4), `FLAG_HLINKED`
 /// (1<<5), `FLAG_HLINK_FIRST` (1<<6), `FLAG_LENGTH64` (1<<9), and
@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(format!("{}", ProcessRole::PreForkReceiver), "Receiver");
     }
 
-    /// upstream: flist.c:3769 - the entry line for a plain file at depth 1,
+    /// upstream: flist.c:3780 - the entry line for a plain file at depth 1,
     /// gid shown, uid hidden (receiver without root).
     #[test]
     fn flags_word_tracks_top_dir_content_dir_and_nsec() {

@@ -12,7 +12,7 @@ struct SessionParams<'a> {
     proxy_policy: ProxyProtocolPolicy,
     /// Daemon-wide `timeout`, bounding the pre-module handshake phase.
     ///
-    /// upstream: clientserver.c:1441 arms the handshake deadline from
+    /// upstream: clientserver.c:1451 arms the handshake deadline from
     /// `daemon_handshake_timeout(-1)`, i.e. `lp_timeout(-1)` - the GLOBAL
     /// value, read before any module is selected. `None` is upstream's
     /// `timeout <= 0`, which takes the built-in `DAEMON_HANDSHAKE_TIMEOUT`.
@@ -36,7 +36,7 @@ struct LegacySessionParams<'a> {
     reverse_lookup: bool,
     /// Daemon-wide `timeout`, bounding the pre-module handshake phase.
     ///
-    /// upstream: clientserver.c:1441 arms the handshake deadline from
+    /// upstream: clientserver.c:1451 arms the handshake deadline from
     /// `daemon_handshake_timeout(-1)`, i.e. `lp_timeout(-1)` - the GLOBAL
     /// value, read before any module is selected. `None` is upstream's
     /// `timeout <= 0`, which takes the built-in `DAEMON_HANDSHAKE_TIMEOUT`.
@@ -154,7 +154,7 @@ fn handle_session(
 /// when the direct peer is not a trusted proxy and the connection must close
 /// with nothing sent.
 ///
-/// upstream: clientserver.c:1443-1446 - `start_daemon()` runs this for every
+/// upstream: clientserver.c:1453-1456 - `start_daemon()` runs this for every
 /// daemon session, the inetd one included, before any rsync protocol data:
 ///
 ///     if (lp_proxy_protocol()) {
@@ -177,12 +177,12 @@ fn admit_proxy_protocol_peer(
     match proxy_policy.decide(peer_addr.ip()) {
         ProxyHeaderDecision::NotRequired => Ok(Some(peer_addr)),
         ProxyHeaderDecision::Untrusted => {
-            // upstream: clientserver.c:1394 - a plain FLOG line, `rprintf(FLOG,
+            // upstream: clientserver.c:1403 - a plain FLOG line, `rprintf(FLOG,
             // "proxy protocol rejected from untrusted peer %s (%s)\n", host,
             // addr)`. The 3.5.0 `proxy-protocol-trusted-peer` cell greps the
             // daemon log for it.
             if let Some(log) = log_sink {
-                // upstream: clientserver.c:1390 - `host` starts as the
+                // upstream: clientserver.c:1399 - `host` starts as the
                 // UNDETERMINED sentinel, and with forward DNS off
                 // (access.c:315) nothing ever replaces it, so the rejection
                 // line names UNDETERMINED regardless of `reverse lookup` - no
@@ -380,14 +380,14 @@ fn handle_legacy_session(
 
     // DIS-4.a R2: write the cached newest-protocol greeting bytes directly,
     // skipping the per-accept `format!`/`push_str` chain.
-    // upstream: clientserver.c:455 output_daemon_greeting
+    // upstream: clientserver.c:459 output_daemon_greeting
     write_limited(
         reader.get_mut(),
         &mut limiter,
         cached_legacy_daemon_greeting(),
     )?;
 
-    // upstream: clientserver.c:160-172 exchange_protocols() - immediately after
+    // upstream: clientserver.c:164-176 exchange_protocols() - immediately after
     // the greeting the daemon dumps the MOTD file verbatim and appends a single
     // trailing newline (write_sbuf(f_out, "\n")), before reading the client's
     // version/module request. Emitting it here (rather than only in the module
@@ -408,7 +408,7 @@ fn handle_legacy_session(
     let mut session_exit_code: Option<ExitCode> = None;
     let mut early_input_data: Option<Vec<u8>> = None;
 
-    // upstream: clientserver.c:1441 - `set_daemon_handshake_timeout(
+    // upstream: clientserver.c:1451 - `set_daemon_handshake_timeout(
     // daemon_handshake_timeout(-1))` is armed before ANY peer input is read,
     // from the DAEMON-WIDE `timeout` (module -1). No module has been selected
     // here, and a module's own value can only shorten a LATER phase, so the
@@ -425,7 +425,7 @@ fn handle_legacy_session(
 
     // TCP_QUICKACK is one-shot; re-arm before each handshake read so every
     // round's ACK stays immediate across the multi-line greeting exchange.
-    // upstream: clientserver.c:1416,1427,1538 - every pre-module line is read
+    // upstream: clientserver.c:1425,1427,1538 - every pre-module line is read
     // into `char line[1024]`.
     while let Some(line) = match read_bounded_line(
         &mut DeadlineBufRead::new(&mut reader, deadline_socket.as_ref(), &deadline),
@@ -448,7 +448,7 @@ fn handle_legacy_session(
         }
         Err(error) => return Err(error),
     } {
-        // upstream: clientserver.c:180-213 exchange_protocols() (am_client == 0) -
+        // upstream: clientserver.c:184-217 exchange_protocols() (am_client == 0) -
         // the daemon validates the client's version greeting before proceeding,
         // refusing a line that is not a banner at all, or one that omits the
         // subprotocol value (protocol >= 30) or the digest name list
@@ -465,7 +465,7 @@ fn handle_legacy_session(
             return Ok(end_session(conn_state, None));
         }
         match parse_legacy_daemon_message(&line) {
-            // upstream: clientserver.c:1534-1538 start_daemon() - the version
+            // upstream: clientserver.c:1544-1548 start_daemon() - the version
             // line is read exactly once, by exchange_protocols(); the very next
             // read_line_old() is the request line whatever it contains. A
             // second `@RSYNCD:` banner is therefore a module name, not a
@@ -475,7 +475,7 @@ fn handle_legacy_session(
             // whole listener (workers.rs join_worker), so a peer could end the
             // daemon with two greeting lines.
             Ok(LegacyDaemonMessage::Version(version)) if negotiated_protocol.is_none() => {
-                // upstream: clientserver.c:199-203 exchange_protocols() -
+                // upstream: clientserver.c:203-207 exchange_protocols() -
                 // `daemon_auth_choices = strchr(buf + 9, ' ')` keeps the client's
                 // digest name list for negotiate_daemon_auth(). The Version
                 // variant carries only the version, so re-parse the raw line for
@@ -500,7 +500,7 @@ fn handle_legacy_session(
                     .map_err(transition_error)?;
                 continue;
             }
-            // upstream: clientserver.c:209 exchange_protocols() only sscanf's the
+            // upstream: clientserver.c:213 exchange_protocols() only sscanf's the
             // client's number; a version outside [MIN_PROTOCOL_VERSION,
             // MAX_PROTOCOL_VERSION] is still the greeting, never a module name.
             // setup_protocol() refuses it after `@RSYNCD: OK` (compat.c:621-625),
@@ -547,7 +547,7 @@ fn handle_legacy_session(
             Err(_) => {}
         }
 
-        // upstream: clientserver.c:1539-1550 - only the first request line may
+        // upstream: clientserver.c:1549-1560 - only the first request line may
         // be `#early_input=<len>`: the daemon reads <len> raw bytes and then
         // exactly one more line, which is the request whatever it holds. A
         // second `#early_input=` is therefore an unknown `#` command.
@@ -593,7 +593,7 @@ fn handle_legacy_session(
         break;
     }
 
-    // upstream: clientserver.c:819, 1169 - `set_daemon_handshake_timeout(0)`
+    // upstream: clientserver.c:823, 1169 - `set_daemon_handshake_timeout(0)`
     // DISARMS the deadline once the peer-driven phase ends, so local setup,
     // operator hooks and the transfer itself are never measured against it.
     // oc's analogue is clearing the socket timeout the clamp left behind: the
@@ -603,7 +603,7 @@ fn handle_legacy_session(
         let _ = socket.set_read_timeout(None);
     }
 
-    // upstream: clientserver.c:1538-1539 - a failed `read_line_old()` (EOF, or
+    // upstream: clientserver.c:1548-1549 - a failed `read_line_old()` (EOF, or
     // a line that overflows the buffer) returns -1 before any reply, so a
     // session that never produced a request line gets no listing.
     let Some(request) = request else {
@@ -612,7 +612,7 @@ fn handle_legacy_session(
     };
 
     if request.is_empty() || request == "#list" {
-        // upstream: clientserver.c:1420 - `if (!*line || strcmp(line,
+        // upstream: clientserver.c:1429 - `if (!*line || strcmp(line,
         // "#list") == 0) { send_listing(); }` - both an empty module
         // name (the client connected with `rsync rsync://host/`) and an
         // explicit `#list` request fall through to the module listing.
@@ -628,7 +628,7 @@ fn handle_legacy_session(
         }
         respond_with_module_list(reader.get_mut(), &mut limiter, modules, messages)?;
     } else if request.starts_with('#') {
-        // upstream: clientserver.c:1427-1431 - `if (*line == '#') { io_printf(
+        // upstream: clientserver.c:1436-1440 - `if (*line == '#') { io_printf(
         // f_out, "@ERROR: Unknown command '%s'\n", line); return -1; }`. A
         // `#`-prefixed request that is neither `#list` (handled above) nor the
         // already-consumed `#early_input=` command is a command the daemon does
@@ -680,7 +680,7 @@ enum EarlyInputLength {
 /// The length is read as C `strtol(.., 10)` reads it: leading whitespace, an
 /// optional sign, then the digits, ignoring any tail; no digits reads as 0.
 ///
-/// upstream: clientserver.c:1539-1543 - `early_input_len = strtol(...)`, then
+/// upstream: clientserver.c:1549-1553 - `early_input_len = strtol(...)`, then
 /// `<= 0 || > BIGPATHBUFLEN` is refused with `@ERROR: invalid early_input
 /// length`.
 fn early_input_length(line: &str) -> EarlyInputLength {
@@ -885,7 +885,7 @@ mod session_runtime_tests {
         assert_eq!(early_input_length("#list"), EarlyInputLength::Absent);
     }
 
-    /// upstream: clientserver.c:1540-1543 - `strtol` reads a numeric prefix, so
+    /// upstream: clientserver.c:1550-1553 - `strtol` reads a numeric prefix, so
     /// a trailing tail is ignored, and anything that is not a positive length
     /// within `BIGPATHBUFLEN` is refused.
     #[test]

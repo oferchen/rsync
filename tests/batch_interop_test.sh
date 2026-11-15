@@ -20,7 +20,7 @@
 # upstream's generated "<batch>.sh" companion does (batch.c
 # write_batch_shell_file). --read-batch evaluates set_allow_inc_recurse() on
 # the replay's own options (main.c:652-654), so a bare replay of an
-# inc-recursive batch is refused (compat.c:780-785) by upstream and oc-rsync
+# inc-recursive batch is refused (compat.c:789-794) by upstream and oc-rsync
 # alike; test_inc_recurse_refusal_parity pins that.
 #
 # Environment variable overrides:
@@ -348,7 +348,7 @@ test_upstream_to_oc() {
 # Note: upstream rsync 3.4.1+ has a limitation where the batch file format
 # does not record which compression algorithm was used (only that
 # compression was active via bit 8 in stream flags). On read-batch,
-# upstream's parse_compress_choice() (compat.c:194-195) always assumes
+# upstream's parse_compress_choice() (compat.c:195-196) always assumes
 # CPRES_ZLIB. If the original write-batch auto-negotiated zstd (builds
 # with SUPPORT_ZSTD), the batch file contains zstd data but the reader
 # uses a zlib decoder, causing "WARNING: failed verification" errors.

@@ -60,8 +60,8 @@ The sender pipeline lives entirely under
   list entries by range, not by clone.
 - `mod.rs:259-298` `SegmentScheduler` is a cursor-based dispatcher that
   yields the next segment when `remaining_in_current <
-  MIN_FILECNT_LOOKAHEAD`, matching `sender.c:227,261` and
-  `flist.c:2498-2510`.
+  MIN_FILECNT_LOOKAHEAD`, matching `sender.c:235,261` and
+  `flist.c:2509-2521`.
 - `mod.rs:308-338` `IncrementalState` holds the pending-segments vector,
   the EOF flag, the cached `FileListWriter` (preserves `prev_name`,
   `prev_mode`, `prev_uid`, `prev_gid` between sub-lists like upstream's
@@ -81,7 +81,7 @@ The sender pipeline lives entirely under
   wire `dir_ndx` values that match the upstream receiver's `dir_flist`
   growth order: initial dirs first, then sub-list dirs in depth-first
   reception order. This guarantees the receiver's
-  `flist.c:2652-2659` dirname validation never aborts.
+  `flist.c:2663-2670` dirname validation never aborts.
 
 The state machine is `Build -> Partition -> SendInitial ->
 [Schedule -> EmitSegment]* -> EmitFlistEof -> EnterTransferLoop`, with
@@ -96,7 +96,7 @@ The receiver path lives in
 - Loops on `read_ndx()` until `NDX_FLIST_EOF`. Each iteration reads a
   `dir_ndx = NDX_FLIST_OFFSET - ndx`, computes the segment's
   `seg_ndx_start = prev_ndx_start + prev_used + 1` (matches
-  `flist.c:2931`), reads entries via the cached `FileListReader` (which
+  `flist.c:2942`), reads entries via the cached `FileListReader` (which
   preserves the same `prev_*` compression state as the sender's writer),
   appends them to `self.file_list`, runs sort and hardlink resolution
   on the *segment slice* only, and pushes a new
@@ -107,7 +107,7 @@ The receiver path lives in
   upstream.
 - Hardlink leader assignment runs per-segment: leader GNUMs are
   readdir-order wire NDX values assigned before the per-segment sort,
-  matching `flist.c:1646`.
+  matching `flist.c:1650`.
 
 The receiver's per-segment cost is bounded by the segment size plus the
 incremental `ndx_segments` table (16 B per segment). For a 1M-file tree

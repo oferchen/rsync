@@ -1,7 +1,7 @@
 //! A `--server` at protocol 28 frames its fatal report for the client instead
 //! of writing it to its own stderr.
 //!
-//! upstream: compat.c:653-654 clears `msgs2stderr` for a server below protocol
+//! upstream: compat.c:654-655 clears `msgs2stderr` for a server below protocol
 //! 29, so log.c:357-367 rwrite() queues every FERROR line for the client
 //! (io.c:1088 send_msg()). When the client refuses `-FF` at protocol 28
 //! (exclude.c:1924-1926) and exits, the server meets end-of-file; its

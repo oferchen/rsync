@@ -27,7 +27,7 @@
 //! `O_PATH` names a location and requires no right, which is the minimum
 //! privilege traversal actually needs.
 //!
-//! upstream: `rsync-3.5.1/syscall.c:626` opens intermediates with
+//! upstream: `rsync-3.5.2/syscall.c:695` opens intermediates with
 //! `directory_traverse_flags()` (`syscall.c:83-92`), which is
 //! `O_PATH|O_DIRECTORY` on Linux - the same flags this walk uses.
 

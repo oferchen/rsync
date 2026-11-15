@@ -18,7 +18,7 @@ use logging::debug_log;
 /// fuzzy basis selected for path/to/target: path/to/basis
 /// ```
 ///
-/// upstream: generator.c:2202-2205.
+/// upstream: generator.c:2243-2246.
 #[inline]
 pub fn trace_fuzzy_basis_selected(target: &str, basis: &str) {
     debug_log!(Fuzzy, 1, "fuzzy basis selected for {}: {}", target, basis);
@@ -31,7 +31,7 @@ pub fn trace_fuzzy_basis_selected(target: &str, basis: &str) {
 /// fuzzy size/modtime match for path/to/candidate
 /// ```
 ///
-/// upstream: generator.c:864-865.
+/// upstream: generator.c:901-902.
 #[inline]
 pub fn trace_fuzzy_size_mtime_match(candidate: &str) {
     debug_log!(Fuzzy, 2, "fuzzy size/modtime match for {}", candidate);
@@ -50,7 +50,7 @@ pub fn trace_fuzzy_size_mtime_match(candidate: &str) {
 /// fuzzy distance for path/to/candidate = 1.00042
 /// ```
 ///
-/// upstream: generator.c:901-904.
+/// upstream: generator.c:938-941.
 #[inline]
 pub fn trace_fuzzy_distance(candidate: &str, distance: u32) {
     debug_log!(
@@ -94,7 +94,7 @@ mod tests {
 
     /// Pins the level 1 emission to upstream's format byte-for-byte.
     ///
-    /// upstream: generator.c:2202-2205.
+    /// upstream: generator.c:2243-2246.
     #[test]
     fn fuzzy_basis_selected_matches_upstream() {
         setup_fuzzy(1);
@@ -118,7 +118,7 @@ mod tests {
     /// Pins the level 2 distance emission format: the u32 distance splits into
     /// `integer.fraction` on the 16-bit boundary, exactly like upstream.
     ///
-    /// upstream: generator.c:901-904.
+    /// upstream: generator.c:938-941.
     #[test]
     fn fuzzy_distance_matches_upstream_format() {
         setup_fuzzy(2);
@@ -142,7 +142,7 @@ mod tests {
 
     /// Pins the level 2 size/modtime fast-path emission format.
     ///
-    /// upstream: generator.c:864-865.
+    /// upstream: generator.c:901-902.
     #[test]
     fn fuzzy_size_mtime_match_matches_upstream() {
         setup_fuzzy(2);

@@ -231,7 +231,7 @@ fn create_new_temp(path: &Path, operator_path: bool) -> io::Result<fs::File> {
         }
         // Beside the destination the temp is named relative to the entered
         // directory, as upstream's `open_tmpfile()` names it relative to the
-        // cwd `change_dir()` entered (`rsync-3.5.1/receiver.c:413`).
+        // cwd `change_dir()` entered (`rsync-3.5.2/receiver.c:413`).
         fast_io::destination_at::create_new(path, 0o666)
     }
 }
@@ -260,7 +260,7 @@ fn create_new_temp(path: &Path, operator_path: bool) -> io::Result<fs::File> {
 /// which an absolute `--temp-dir` makes reachable because the source endpoint
 /// then lives outside the tree.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:2005` `do_rename_at()` - "Confine each side
+/// upstream: `rsync-3.5.2/syscall.c:2076` `do_rename_at()` - "Confine each side
 /// independently. [...] Doing each side independently means an absolute source
 /// never disables confinement of a relative destination."
 fn hardened_rename(
@@ -634,13 +634,13 @@ impl DestinationWriteGuard {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/receiver.c:1212-1213` - `if (inplace || one_inplace) {
+    /// - `rsync-3.5.2/receiver.c:1212-1213` - `if (inplace || one_inplace) {
     ///   fnametmp = one_inplace ? partialptr : fname; }`. The in-place target of
     ///   a `one_inplace` update is the file in the partial dir, **not** the live
     ///   destination.
-    /// - `rsync-3.5.1/receiver.c:1221-1241` - the three-arm open chain, each arm
+    /// - `rsync-3.5.2/receiver.c:1221-1241` - the three-arm open chain, each arm
     ///   handed `one_inplace`.
-    /// - `rsync-3.5.1/receiver.c:1305` - `finish_transfer(fname, fnametmp, ...)`
+    /// - `rsync-3.5.2/receiver.c:1305` - `finish_transfer(fname, fnametmp, ...)`
     ///   with `fnametmp == partialptr` renames the grown partial onto the
     ///   destination.
     ///
@@ -1128,7 +1128,7 @@ impl DestinationWriteGuard {
     /// unlinked and an existing destination is left intact. [`Drop`] applies
     /// the same rule.
     ///
-    /// upstream: `cleanup.c:159-183` gates the promotion on
+    /// upstream: `cleanup.c:159-184` gates the promotion on
     /// `cleanup_got_literal`; `cleanup.c:200-201` unlinks the temp otherwise.
     pub fn abort(mut self) {
         self.finalize_partial_on_failure(self.keep_on_abort);
@@ -1199,7 +1199,7 @@ impl Drop for DestinationWriteGuard {
         }
         // An uncommitted guard means the transfer failed or was interrupted:
         // preserve the partial (--partial/--partial-dir) or unlink the temp.
-        // upstream: cleanup.c:159-201 moves the temp onto its partial
+        // upstream: cleanup.c:159-202 moves the temp onto its partial
         // destination when keep_partial and cleanup_got_literal, otherwise
         // do_unlink_at() removes it.
         self.finalize_partial_on_failure(self.keep_on_abort);
@@ -1312,7 +1312,7 @@ mod tests {
         assert_eq!(fs::read(&dest).expect("read"), b"partial");
     }
 
-    // upstream: cleanup.c:200-201 - the abort path (a second signal, which
+    // upstream: cleanup.c:201-202 - the abort path (a second signal, which
     // cannot wait for the copy thread) unlinks the in-flight temp of a plain
     // transfer too, not only a --partial one.
     #[test]

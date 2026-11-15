@@ -136,9 +136,9 @@ this audit.
 
 ## References
 
-- Upstream `flist.c:534-570` `send_file_entry()` filename emission -
+- Upstream `flist.c:537-573` `send_file_entry()` filename emission -
   bytes are written verbatim with no separator normalization.
-- Upstream `flist.c:660-670` `send_file_entry()` symlink-target
+- Upstream `flist.c:664-674` `send_file_entry()` symlink-target
   emission - same verbatim contract as filename.
 - Upstream `util1.c:955-961` `__CYGWIN__` block - the only `\`
   handling in upstream lives at the Cygwin POSIX boundary, which

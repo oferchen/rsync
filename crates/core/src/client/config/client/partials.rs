@@ -16,6 +16,19 @@ impl ClientConfig {
         self.delay_updates
     }
 
+    /// Reports whether `--delay-symlinks` was enabled.
+    #[must_use]
+    #[doc(alias = "--delay-symlinks")]
+    pub const fn delay_symlinks(&self) -> bool {
+        self.delay_symlinks
+    }
+
+    /// Returns the configured `--nice` / `--no-nice` priority options.
+    #[must_use]
+    pub const fn niceness(&self) -> &crate::niceness::PriorityOptions {
+        &self.niceness
+    }
+
     /// Returns the optional directory used to store partial files.
     #[doc(alias = "--partial-dir")]
     pub fn partial_directory(&self) -> Option<&Path> {

@@ -46,7 +46,7 @@ fn first_reply_after(lines: &[u8]) -> String {
     line
 }
 
-/// upstream: clientserver.c:1540-1543 - a length outside `1..=BIGPATHBUFLEN`
+/// upstream: clientserver.c:1550-1553 - a length outside `1..=BIGPATHBUFLEN`
 /// is refused with an @ERROR line, not a silent close. Measured on 3.5.1.
 #[test]
 #[cfg_attr(
@@ -72,7 +72,7 @@ fn run_daemon_refuses_an_invalid_early_input_length() {
     }
 }
 
-/// upstream: clientserver.c:1548-1561 - after the early-input payload the
+/// upstream: clientserver.c:1558-1571 - after the early-input payload the
 /// daemon reads exactly one request line, so a second `#early_input=` is an
 /// unknown `#` command. Measured on 3.5.1.
 #[test]

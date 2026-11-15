@@ -113,7 +113,7 @@ impl ClientConfig {
     /// Returns the access-time preservation level (0 = off, 1 = `-U`, 2 = `-UU`).
     ///
     /// Level 2 doubles the compact `U` letter in the server flag string,
-    /// matching upstream `options.c:2857-2861`.
+    /// matching upstream `options.c:2922-2926`.
     #[must_use]
     pub const fn preserve_atimes_level(&self) -> u8 {
         self.preserve_atimes
@@ -184,7 +184,7 @@ impl ClientConfig {
     /// 2 = `-XX`).
     ///
     /// Level 2 doubles the compact `X` letter in the server flag string,
-    /// matching upstream `options.c:2874-2880`.
+    /// matching upstream `options.c:2939-2945`.
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     #[must_use]
     pub const fn preserve_xattrs_level(&self) -> u8 {
@@ -234,7 +234,7 @@ impl ClientConfig {
 
     /// Reports whether `--drop-D` withholds device/special creation.
     ///
-    /// upstream: generator.c:2031.
+    /// upstream: generator.c:2072.
     #[must_use]
     #[doc(alias = "--drop-D")]
     pub const fn drop_devices(&self) -> bool {

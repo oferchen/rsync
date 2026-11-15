@@ -142,7 +142,7 @@ fn set_auth_users_stores_users() {
 /// An empty `auth users` list is stored as an explicit empty list - not
 /// rejected and not left unset - so it overrides an inherited default.
 ///
-/// upstream: authenticate.c:302-303 - an empty list lets anyone in.
+/// upstream: authenticate.c:297-298 - an empty list lets anyone in.
 #[test]
 fn set_auth_users_stores_empty_as_explicit_no_restriction() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
@@ -656,7 +656,7 @@ fn finish_accepts_auth_users_without_secrets() {
     builder.set_path(PathBuf::from("/data"));
     builder.set_auth_users(vec![AuthUser::new("alice".to_owned())]);
     let defaults = GlobalModuleDefaults::default();
-    // upstream: authenticate.c:155-157 check_secret() - every login fails with "no secrets
+    // upstream: authenticate.c:148-150 check_secret() - every login fails with "no secrets
     // file"; the module itself still loads.
     let def = builder
         .finish(&test_config_path(), None, None, None, None, &defaults)

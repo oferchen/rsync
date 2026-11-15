@@ -21,7 +21,7 @@ pub(crate) fn convert_server_stats_to_summary(
     use crate::server::ServerStats;
     use engine::local_copy::LocalCopySummary;
 
-    // upstream: generator.c:1638-1644 - in list-only mode the receiver captures every
+    // upstream: generator.c:1675-1681 - in list-only mode the receiver captures every
     // flist entry's metadata instead of requesting file data; convert those into
     // metadata-bearing events so the client can render the listing.
     let list_only_events: Vec<ClientEvent> = match stats {
@@ -141,7 +141,7 @@ mod tests {
     /// the SSH leg's, this turns RED - the two legs can no longer disagree
     /// silently.
     ///
-    /// upstream: cleanup.c:217-218.
+    /// upstream: cleanup.c:218-219.
     #[test]
     fn got_xfer_error_lifts_a_clean_run_to_partial() {
         let stats = ServerStats::Receiver(TransferStats {

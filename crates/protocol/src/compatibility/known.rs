@@ -6,7 +6,7 @@ use super::flags::CompatibilityFlags;
 /// Enumerates the compatibility flags defined by upstream rsync 3.5.1.
 ///
 /// The variants mirror the canonical `CF_*` identifiers from the C
-/// implementation (see upstream `compat.c:118-126` for the bit definitions). They
+/// implementation (see upstream `compat.c:119-127` for the bit definitions). They
 /// serve as a strongly-typed view that avoids leaking raw bit positions into
 /// higher layers while still supporting inexpensive conversions back into
 /// [`CompatibilityFlags`]. The iterator returned by

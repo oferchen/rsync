@@ -149,7 +149,7 @@ transitively follows junctions. No code change.
 
 ## References
 
-- Upstream `flist.c:757` `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`.
+- Upstream `flist.c:761` `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`.
 - Upstream `util1.c:955-961` `__CYGWIN__` two-leading-slash preservation.
 - Rust `std::path::Component::Prefix` and the `windows-msvc`
   documentation on `Path::join` semantics for prefixed inputs.

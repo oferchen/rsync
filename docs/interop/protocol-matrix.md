@@ -63,10 +63,10 @@ present at that protocol version.
 | Capability                           | 28 | 29 | 30 | 31 | 32 | Source |
 |--------------------------------------|----|----|----|----|----|--------|
 | Legacy ASCII `@RSYNCD:` negotiation  | Y  | Y  |    |    |    | `uses_legacy_ascii_negotiation` |
-| Binary negotiation handshake         |    |    | Y  | Y  | Y  | `uses_binary_negotiation`, upstream `compat.c:710` |
+| Binary negotiation handshake         |    |    | Y  | Y  | Y  | `uses_binary_negotiation`, upstream `compat.c:711` |
 | Fixed-size flist flag encoding       | Y  | Y  |    |    |    | `uses_fixed_encoding` |
-| Varint flist flag encoding (`CF_VARINT_FLIST_FLAGS`) |    |    | Y  | Y  | Y  | `uses_varint_flist_flags`, upstream `compat.c:117-125,729-732` |
-| 2-byte iflags after NDX              |    | Y  | Y  | Y  | Y  | `supports_iflags`, upstream `sender.c:468-485` |
+| Varint flist flag encoding (`CF_VARINT_FLIST_FLAGS`) |    |    | Y  | Y  | Y  | `uses_varint_flist_flags`, upstream `compat.c:118-126,729-732` |
+| 2-byte iflags after NDX              |    | Y  | Y  | Y  | Y  | `supports_iflags`, upstream `sender.c:476-493` |
 | Extended file flags                  | Y  | Y  | Y  | Y  | Y  | `supports_extended_flags` |
 
 ### File list and recursion
@@ -75,11 +75,11 @@ present at that protocol version.
 |-----------------------------------------------|----|----|----|----|----|--------|
 | Multi-phase transfer (`max_phase = 2`)        |    | Y  | Y  | Y  | Y  | `supports_multi_phase` |
 | File list timing stats                        |    | Y  | Y  | Y  | Y  | `supports_flist_times` |
-| Incremental recursion (`CF_INC_RECURSE`)      |    |    | Y  | Y  | Y  | `supports_inc_recurse`, upstream `compat.c:712,720` |
+| Incremental recursion (`CF_INC_RECURSE`)      |    |    | Y  | Y  | Y  | `supports_inc_recurse`, upstream `compat.c:713,720` |
 | Inline hardlink dev/ino in flist              |    |    | Y  | Y  | Y  | `supports_inline_hardlinks` |
 | Safe file list (`CF_SAFE_FLIST`) negotiable   |    |    | Y  | Y  | Y  | `uses_safe_file_list` |
-| Safe file list always on                      |    |    |    | Y  | Y  | `safe_file_list_always_enabled`, upstream `compat.c:775` |
-| `CF_ID0_NAMES` (uid/gid 0 names on wire)      |    |    | Y  | Y  | Y  | upstream `compat.c:727,749` |
+| Safe file list always on                      |    |    |    | Y  | Y  | `safe_file_list_always_enabled`, upstream `compat.c:784` |
+| `CF_ID0_NAMES` (uid/gid 0 names on wire)      |    |    | Y  | Y  | Y  | upstream `compat.c:736,749` |
 
 ### Filter rules
 
@@ -104,20 +104,20 @@ present at that protocol version.
 
 | Capability                                              | 28 | 29 | 30 | 31 | 32 | Source |
 |---------------------------------------------------------|----|----|----|----|----|--------|
-| Hardcoded zlib compression                              | Y  | Y  |    |    |    | upstream `compat.c:383,556-564` |
-| Vstring negotiation for codecs (zlibx, zstd, lz4)       |    |    | Y  | Y  | Y  | upstream `compat.c:556-564,729-732` |
-| Hardcoded MD4 strong checksum                           | Y  | Y  |    |    |    | upstream `compat.c:414,552,859` |
+| Hardcoded zlib compression                              | Y  | Y  |    |    |    | upstream `compat.c:384,556-564` |
+| Vstring negotiation for codecs (zlibx, zstd, lz4)       |    |    | Y  | Y  | Y  | upstream `compat.c:557-565,729-732` |
+| Hardcoded MD4 strong checksum                           | Y  | Y  |    |    |    | upstream `compat.c:415,552,859` |
 | MD5 / negotiated checksums (XXH3, XXH128, MD4 fallback) |    |    | Y  | Y  | Y  | `supports_checksum_negotiation`; SSH path needs `-e.LsfxCIvu` |
-| `CF_INPLACE_PARTIAL_DIR`                                |    |    | Y  | Y  | Y  | upstream `compat.c:725-726,777` |
-| `CF_CHKSUM_SEED_FIX`                                    |    |    | Y  | Y  | Y  | upstream `compat.c:723-724,747` |
-| `CF_AVOID_XATTR_OPTIM` (xattr optimisation skip)        |    |    | Y  | Y  | Y  | upstream `compat.c:721-722,746` |
-| `--crtimes` (creation-time preservation)                |    |    |    |    | Y  | upstream `compat.c:750-753` (requires varint flist flags) |
+| `CF_INPLACE_PARTIAL_DIR`                                |    |    | Y  | Y  | Y  | upstream `compat.c:734-735,777` |
+| `CF_CHKSUM_SEED_FIX`                                    |    |    | Y  | Y  | Y  | upstream `compat.c:732-733,747` |
+| `CF_AVOID_XATTR_OPTIM` (xattr optimisation skip)        |    |    | Y  | Y  | Y  | upstream `compat.c:722-731,746` |
+| `--crtimes` (creation-time preservation)                |    |    |    |    | Y  | upstream `compat.c:759-762` (requires varint flist flags) |
 
 ### ACLs and xattrs
 
 ACL (`-A`) and xattr (`-X`) wire formats were added at protocol 30. At
-protocol < 30 upstream hard-exits with `RERR_PROTOCOL` (`compat.c:655-661`
-for `-A`, `compat.c:662-668` for `-X`). See
+protocol < 30 upstream hard-exits with `RERR_PROTOCOL` (`compat.c:656-662`
+for `-A`, `compat.c:663-669` for `-X`). See
 [Section 6 - Known failures](#6-known-failures-and-limitations).
 
 ---
@@ -385,7 +385,7 @@ individually and reports `FIXED` / `FAILING` / `SKIPPED`.
 | Key                                                | Method     | Description |
 |----------------------------------------------------|------------|-------------|
 | `standalone:delta-stats`                           | standalone | oc-rsync delta engine does not engage in daemon mode; sends all data as literals (matched=0). Fixable only by reworking the daemon code path through the delta engine. |
-| `standalone:upstream-compressed-batch-self-roundtrip` | standalone | Upstream rsync 3.4.1 cannot read its own compressed delta batch files (`token.c:608` inflate -3, `compat.c:194-195`). oc-rsync reads them correctly. |
+| `standalone:upstream-compressed-batch-self-roundtrip` | standalone | Upstream rsync 3.4.1 cannot read its own compressed delta batch files (`token.c:608` inflate -3, `compat.c:195-196`). oc-rsync reads them correctly. |
 
 ### Protocol <= 29 known failures (`up` direction only)
 
@@ -394,9 +394,9 @@ when the same protocol is forced. Source: `known_failures.conf:65-93`.
 
 | Key                | Reason |
 |--------------------|--------|
-| `up:acls`          | `compat.c:655-661` hard-exits with `RERR_PROTOCOL`; ACL wire format added in proto 30. |
-| `up:xattrs`        | `compat.c:662-668` hard-exits with `RERR_PROTOCOL`; xattr wire format added in proto 30. |
-| `up:compress-zstd` | `compat.c:556-564,729-742` - `v` compat flag (vstring negotiation) requires proto >= 30. Falls back to zlib at proto < 30. |
+| `up:acls`          | `compat.c:656-662` hard-exits with `RERR_PROTOCOL`; ACL wire format added in proto 30. |
+| `up:xattrs`        | `compat.c:663-669` hard-exits with `RERR_PROTOCOL`; xattr wire format added in proto 30. |
+| `up:compress-zstd` | `compat.c:557-565,729-742` - `v` compat flag (vstring negotiation) requires proto >= 30. Falls back to zlib at proto < 30. |
 | `up:compress-lz4`  | Same as `up:compress-zstd`. |
 
 ### Protocol <= 28 known failures (`up` direction only)

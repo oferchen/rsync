@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn pull_still_honours_the_upstream_option_gate() {
-        // upstream: compat.c:172 - `!recurse || use_qsort` clears it, and
+        // upstream: compat.c:173 - `!recurse || use_qsort` clears it, and
         // --no-inc-recursive clears it outright.
         let flat = ClientConfig::builder().recursive(false).build();
         assert!(!advertise_inc_recurse_with(&flat, false, true));
@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn pull_advertises_i_for_the_per_directory_delete_modes() {
-        // upstream: compat.c:172-177 - only --delete-before and --delete-after
+        // upstream: compat.c:173-178 - only --delete-before and --delete-after
         // clear allow_inc_recurse on a receiver. Plain --delete (delete_during
         // at protocol 30+), --delete-during, --delete-delay and
         // --delete-excluded delete per directory as each sub-list is walked.
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn pull_withholds_i_for_the_whole_list_delete_modes() {
-        // upstream: compat.c:174-176 - a receiver with --delete-before or
+        // upstream: compat.c:175-177 - a receiver with --delete-before or
         // --delete-after needs the complete list up front.
         let base = || ClientConfig::builder().recursive(true);
         for (name, config) in [

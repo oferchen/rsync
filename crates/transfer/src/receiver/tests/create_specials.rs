@@ -59,7 +59,7 @@ fn special_receiver_config() -> ServerConfig {
     }
 }
 
-/// upstream: generator.c:2089 - `FT_SPECIAL` entries are materialised via
+/// upstream: generator.c:2130 - `FT_SPECIAL` entries are materialised via
 /// `atomic_create -> do_mknod_at`. Without `create_specials` the receiver
 /// dropped the FIFO entirely; this test fails (dest is empty) on the pre-fix
 /// receiver and passes once the node is created.
@@ -92,7 +92,7 @@ fn receiver_creates_fifo_from_flist_entry() {
 /// the process can actually create a device node (root), degrading gracefully
 /// otherwise so CI on unprivileged runners stays green.
 ///
-/// upstream: generator.c:2091 - `FT_DEVICE` entries are created via do_mknod().
+/// upstream: generator.c:2132 - `FT_DEVICE` entries are created via do_mknod().
 #[test]
 fn receiver_creates_char_device_from_flist_entry() {
     use std::os::unix::fs::{FileTypeExt, MetadataExt};
@@ -202,7 +202,7 @@ fn receiver_skips_fifo_without_specials_flag() {
     );
 }
 
-/// upstream: generator.c:1943-1945 - a hard-link follower goes through
+/// upstream: generator.c:1980-1982 - a hard-link follower goes through
 /// `hard_link_check()` before the `FT_SPECIAL` branch is reached, so it is
 /// linked to its leader and never `mknod`ed on its own.
 ///

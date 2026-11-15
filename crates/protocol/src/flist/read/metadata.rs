@@ -74,7 +74,7 @@ impl FileListReader {
         flags: FileFlags,
     ) -> io::Result<MetadataResult> {
         // 1. Read mtime
-        // upstream: flist.c:1155-1168 - proto >= 30 uses read_varlong(f, 4),
+        // upstream: flist.c:1159-1172 - proto >= 30 uses read_varlong(f, 4),
         // proto < 30 uses read_uint(f) (fixed 4-byte unsigned)
         let mtime = if flags.same_time() {
             self.state.prev_mtime()
@@ -85,7 +85,7 @@ impl FileListReader {
         };
 
         // 2. Read nanoseconds if flag set (protocol 31+)
-        // upstream: flist.c:1171/1173 recv_file_entry() reads modtime_nsec via
+        // upstream: flist.c:1175/1173 recv_file_entry() reads modtime_nsec via
         // read_varint_bounded(f, 0, MAX_WIRE_NSEC, "modtime_nsec")
         // (io.c:2112-2121), which aborts with exit_cleanup(RERR_PROTOCOL)
         // (exit 2) on a value outside [0, MAX_WIRE_NSEC]. Mirror that bound so a
@@ -124,7 +124,7 @@ impl FileListReader {
             self.state.update_mode(mode);
             mode
         };
-        // upstream: flist.c:1192-1209 recv_file_entry() - reject any mode whose
+        // upstream: flist.c:1196-1213 recv_file_entry() - reject any mode whose
         // S_IFMT type bits are not one of the standard file types, so a garbage
         // or malicious mode cannot propagate into the downstream S_ISxxx checks.
         // Upstream validates the FINAL resolved mode, whether freshly read or
@@ -134,7 +134,7 @@ impl FileListReader {
         if !(mode == 0 && self.delete_missing_args)
             && crate::flist::FileType::from_mode(mode).is_none()
         {
-            // upstream: flist.c:1206 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
+            // upstream: flist.c:1210 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
             // error so the core exit-code mapper yields RERR_PROTOCOL, not
             // RERR_STREAMIO(12).
             return Err(crate::protocol_violation::protocol_violation(format!(
@@ -146,7 +146,7 @@ impl FileListReader {
         let is_dir = (mode & 0o170000) == 0o040000;
 
         // 5. Read atime if preserving atimes (AFTER mode, non-directories only).
-        // upstream: flist.c:1210-1211 - atime is a single `read_varlong(f, 4)`;
+        // upstream: flist.c:1214-1215 - atime is a single `read_varlong(f, 4)`;
         // there is no atime nsec field on the wire regardless of protocol
         // version (unlike mtime nsec which is gated by XMIT_MOD_NSEC).
         let (atime, atime_nsec) = if self.preserve_atimes && !is_dir {
@@ -162,7 +162,7 @@ impl FileListReader {
         };
 
         // 6. Read UID and optional user name
-        // upstream: flist.c:1224-1234 - XMIT_USER_NAME_FOLLOWS only exists in
+        // upstream: flist.c:1228-1238 - XMIT_USER_NAME_FOLLOWS only exists in
         // protocol >= 30. In protocol 28-29 that bit position is
         // XMIT_SAME_DEV_pre30, so we must not interpret it as name_follows.
         let uid_name_follows = self.protocol.as_u8() >= 30 && flags.user_name_follows();
@@ -181,7 +181,7 @@ impl FileListReader {
         };
 
         // 7. Read GID and optional group name
-        // upstream: flist.c:1235-1246 - XMIT_GROUP_NAME_FOLLOWS only exists in
+        // upstream: flist.c:1239-1250 - XMIT_GROUP_NAME_FOLLOWS only exists in
         // protocol >= 30. In protocol 28-29 that bit position is
         // XMIT_RDEV_MINOR_8_pre30.
         let gid_name_follows = self.protocol.as_u8() >= 30 && flags.group_name_follows();
@@ -321,7 +321,7 @@ mod nsec_tests {
 
     #[test]
     fn modtime_nsec_out_of_range_is_protocol_violation() {
-        // WHY: upstream flist.c:1171/1173 bounds modtime_nsec to [0, MAX_WIRE_NSEC]
+        // WHY: upstream flist.c:1175/1173 bounds modtime_nsec to [0, MAX_WIRE_NSEC]
         // via read_varint_bounded (io.c:2112-2121), which
         // exit_cleanup(RERR_PROTOCOL) (exit 2) on an out-of-range value. A
         // drop-in tool must exit 2 (protocol incompatibility) on a hostile nsec,

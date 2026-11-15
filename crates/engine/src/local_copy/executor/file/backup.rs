@@ -24,7 +24,7 @@ use crate::local_copy::create_symlink;
 /// rewritten in place rather than replaced, so the pre-image must be COPIED
 /// aside instead of renamed.
 ///
-/// upstream: generator.c:2281-2302 and generator.c:2328-2357 - the in-place
+/// upstream: generator.c:2323-2344 and generator.c:2371-2400 - the in-place
 /// backup BYPASSES `make_backup()`, so the generator raises
 /// `operator_path_resolve` around `get_backup_name()` and the `copy_file()` /
 /// `do_open_at()` that follow, clearing it again on every exit path. Without

@@ -138,7 +138,7 @@ Important caveats:
 ## Comparison to upstream
 
 Upstream rsync's `max connections` directive is per-module, defaults
-to `0` (unlimited), and is enforced via `clientserver.c:744-756`
+to `0` (unlimited), and is enforced via `clientserver.c:748-760`
 `claim_connection()`. Upstream forks per connection, so the
 per-process kernel accounting (`ulimit -v`, cgroup memory limits) is
 the natural backstop. oc-rsync's threaded model collapses all sessions

@@ -1,6 +1,6 @@
 //! A signal delivered to an rsh `--server` mid-transfer.
 //!
-//! upstream: main.c:1919-1921 installs `sig_int` for SIGINT, SIGHUP and
+//! upstream: main.c:1923-1925 installs `sig_int` for SIGINT, SIGHUP and
 //! SIGTERM in every role. A server records the signal (rsync.c:864-868) and
 //! its I/O loop acts on it at the next pass (io.c:849/997/1022 ->
 //! io.c:600-605 handle_kill_signal() -> exit_cleanup(RERR_SIGNAL)), so the
@@ -180,7 +180,7 @@ fn assert_signalled(client: &Path, cell: &Cell) {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    // upstream: cleanup.c:171-178 - only a partial on the destination itself
+    // upstream: cleanup.c:172-179 - only a partial on the destination itself
     // is stamped with mtime 0, so --update cannot skip it.
     assert_eq!(
         mtime == 0,
@@ -252,7 +252,7 @@ fn sigint_to_a_pull_server_leaves_the_client_partial() {
     let _ = each_client(&Cell::new(false, Keep::Partial));
 }
 
-/// upstream: io.c:2692 arms got_kill_signal only once multiplexed I/O
+/// upstream: io.c:2699 arms got_kill_signal only once multiplexed I/O
 /// starts; a signal during the version exchange takes rsync.c:871's
 /// immediate exit_cleanup(RERR_SIGNAL). 8 client bytes are the version
 /// plus the first post-version word, so the server is signalled before any

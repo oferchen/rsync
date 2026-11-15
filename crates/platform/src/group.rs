@@ -117,7 +117,7 @@ fn extract_group_members(gr_mem: *mut *mut libc::c_char) -> Vec<String> {
 /// Enumerates local group members at information level 3 (SID + domain\name).
 /// Returns the list of member account names (without domain prefix).
 ///
-/// upstream: authenticate.c:376-392 - `@group` matching in `auth users`.
+/// upstream: authenticate.c:371-387 - `@group` matching in `auth users`.
 #[cfg(windows)]
 #[allow(unsafe_code)]
 pub fn lookup_group_members(group_name: &str) -> Result<Option<Vec<String>>, io::Error> {

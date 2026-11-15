@@ -421,7 +421,7 @@ mod tests {
     /// `0xFF` `NDX_FLIST_OFFSET` marker as a varint entry-flags byte (which trips
     /// `overflow in read_varint`, since `int_byte_extra[0xFF >> 2] = 5 > 4`).
     ///
-    /// upstream: flist.c:2664 `write_ndx(NDX_FLIST_OFFSET - dir_ndx)`,
+    /// upstream: flist.c:2675 `write_ndx(NDX_FLIST_OFFSET - dir_ndx)`,
     /// io.c:2541 `write_ndx()`, flist.c:2624 `write_end_of_flist()`.
     #[rustfmt::skip]
     const UPSTREAM_INC_RECURSE_FRAME: &[u8] = &[
@@ -788,7 +788,7 @@ mod tests {
     /// A `dir_ndx` equal to, past, or absurdly beyond `dir_flist.used()` is
     /// untrusted wire data that references a directory the receiver never saw.
     ///
-    /// WHY: upstream `flist.c:3149-3152` aborts with `exit_cleanup(RERR_PROTOCOL)`
+    /// WHY: upstream `flist.c:3160-3163` aborts with `exit_cleanup(RERR_PROTOCOL)`
     /// on `dir_ndx >= dir_flist->used`. oc must fail closed - reject with a
     /// `ProtocolViolation` (RERR_PROTOCOL) and append nothing - rather than trust
     /// the sender's index or (for a huge value) panic on the framing arithmetic.
@@ -824,7 +824,7 @@ mod tests {
     /// A sub-list marker after the sender's `NDX_DONE` has freed the only flist
     /// is refused, whichever reader meets it.
     ///
-    /// WHY: upstream `flist.c:3137-3148` refuses a sub-flist once the
+    /// WHY: upstream `flist.c:3148-3159` refuses a sub-flist once the
     /// `NDX_DONE` chain has freed every flist, because `dir_flist` then points
     /// into a destroyed pool and accepting it was a use-after-free. oc keeps no
     /// such pool but must refuse with the same text and `RERR_PROTOCOL`; the
@@ -932,7 +932,7 @@ mod tests {
 
     /// A second sub-list for a directory already served is a malicious duplicate.
     ///
-    /// WHY: upstream `flist.c:3165-3169` sets `FLAG_GOT_DIR_FLIST` and aborts with
+    /// WHY: upstream `flist.c:3176-3180` sets `FLAG_GOT_DIR_FLIST` and aborts with
     /// `RERR_PROTOCOL` on the second sub-list; without the guard a sender could
     /// replay sub-lists to grow `file_list` without bound. The first sub-list for
     /// dir_ndx 0 is accepted, the second is refused.
@@ -1097,7 +1097,7 @@ mod tests {
     /// | 2 | `x/d`          | `x/d` |
     /// | 3 | `x/d` CLEARED  | `x/z` |
     ///
-    /// Upstream refuses `dir_ndx` 3 at `flist.c:3154-3161`. oc's bounds check
+    /// Upstream refuses `dir_ndx` 3 at `flist.c:3165-3172`. oc's bounds check
     /// (`flist.c:3149-3152`) cannot: 3 is in range. The peer's entries are
     /// grafted under `x/z` instead. The `proto-cleared-dirflist` cell happens to
     /// put the duplicate LAST, where the bounds check does catch it - so that
@@ -1137,7 +1137,7 @@ mod tests {
 
     /// A sub-list entry whose dirname escapes its declared parent must be rejected.
     ///
-    /// WHY: upstream `flist.c:3219-3234` compares every sub-list entry's dirname
+    /// WHY: upstream `flist.c:3230-3245` compares every sub-list entry's dirname
     /// against `f_name(dir_flist->files[dir_ndx])` and, on a mismatch, aborts with
     /// `exit_cleanup(RERR_UNSUPPORTED)` ("ABORTING due to invalid path from
     /// sender"). Without this check a hostile sender could frame a sub-list for a

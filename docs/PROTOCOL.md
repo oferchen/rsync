@@ -137,14 +137,14 @@ Server-to-client flags (unidirectional):
   - 0x80 = tag byte (indicates 1 extra byte follows)
   - 0xa1 = value byte
 
-**CRITICAL**: Server-to-client compat flags are **unidirectional** (compat.c:736-738):
+**CRITICAL**: Server-to-client compat flags are **unidirectional** (compat.c:745-747):
 - Server (`am_server=true`): calls `write_varint(f_out, compat_flags)`
 - Client (`am_server=false`): calls `read_varint(f_in)`
 - No bidirectional exchange
 
 When `CF_VARINT_FLIST_FLAGS` is set, checksum/compression name lists are then
 exchanged per `negotiate_the_strings()`; unknown names in a peer's list are
-skipped (compat.c:350), so future additions stay interoperable. WATCH: upstream
+skipped (compat.c:351), so future additions stay interoperable. WATCH: upstream
 PR #1007 proposes `sha256` as a negotiable transfer checksum - add it here once
 that merges.
 
@@ -187,8 +187,8 @@ that merges.
 Based on upstream rsync 3.4.4 source code:
 - `io.c`: Multiplex frame construction (SIVAL macro, little-endian)
 - `main.c:1245-1265`: `start_server()` multiplex activation sequence
-- `compat.c:710-744`: Compatibility flags exchange
-- `clientserver.c:1128-1210`: Daemon protocol flow
+- `compat.c:711-753`: Compatibility flags exchange
+- `clientserver.c:1132-1214`: Daemon protocol flow
 
 ---
 

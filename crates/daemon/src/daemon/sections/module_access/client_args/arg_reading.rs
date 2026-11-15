@@ -76,7 +76,7 @@ fn merge_secluded_args(phase1: Vec<String>, mut phase2: Vec<String>) -> Vec<Stri
 }
 
 /// Applies [`unbackslash_arg`] to every option arg that precedes the `.`
-/// CWD marker, mirroring upstream `io.c:1362-1385`'s split between option
+/// CWD marker, mirroring upstream `io.c:1369-1392`'s split between option
 /// and file args. File args after the dot are left verbatim because upstream
 /// dispatches them through `glob_expand()` rather than `unbackslash_arg()`.
 fn unescape_phase1_option_args(args: Vec<String>) -> Vec<String> {
@@ -120,7 +120,7 @@ fn read_client_arguments<R: BufRead>(
     let mut arguments = Vec::new();
 
     loop {
-        // upstream: io.c:1502 - checked per read line, before the argument is
+        // upstream: io.c:1509 - checked per read line, before the argument is
         // appended, so the peer is cut off while it is still sending rather
         // than after the whole vector is resident.
         if arguments.len() >= protocol::secluded_args::MAX_DAEMON_ARGS - 1 {
@@ -148,7 +148,7 @@ fn read_client_arguments<R: BufRead>(
 /// Reads one client argument up to `terminator`, keeping at most
 /// `BIGPATHBUFLEN - 1` bytes of it.
 ///
-/// upstream: `io.c:1430-1441` `read_line()` - every byte up to the terminator
+/// upstream: `io.c:1437-1448` `read_line()` - every byte up to the terminator
 /// is consumed, but only `bufsiz - 1` are stored (`if (s < eob) *s++ = ch`), and
 /// the daemon's buffer is `BIGPATHBUFLEN` (`clientserver.c:743`). An oversized
 /// argument is truncated rather than refused, and the reader stays aligned on
@@ -190,7 +190,7 @@ fn read_capped_arg<R: BufRead>(reader: &mut R, terminator: u8) -> io::Result<Opt
 /// capability string, e.g. `.iLsfxCIvu`). Characters after `e` must NOT be
 /// treated as flags - the `s` in `sfxCIvu` is SYMLINK_ICONV, not secluded-args.
 ///
-/// upstream: options.c:804 - `{secluded-args, 's', POPT_ARG_VAL, &protect_args, 1}`
+/// upstream: options.c:807 - `{secluded-args, 's', POPT_ARG_VAL, &protect_args, 1}`
 fn has_secluded_args_flag(args: &[String]) -> bool {
     args.iter().any(|a| {
         if a == "-s" || a == "--protect-args" || a == "--secluded-args" {
@@ -221,7 +221,7 @@ fn has_secluded_args_flag(args: &[String]) -> bool {
 
 /// Ends the session after a failed argv read, telling only the daemon log.
 ///
-/// upstream: the argv is read before `am_server` is set (clientserver.c:1154
+/// upstream: the argv is read before `am_server` is set (clientserver.c:1158
 /// vs :1197), so `read_args()`'s FERROR diagnostics are logged and never sent
 /// (log.c:331), and the child exits: `RERR_TIMEOUT` for an elapsed handshake
 /// deadline (io.c:160-163), `RERR_PROTOCOL` for `too many daemon arguments`
@@ -267,7 +267,7 @@ fn read_and_log_client_args(
     negotiated_protocol: Option<ProtocolVersion>,
     module_timeout: Option<NonZeroU64>,
 ) -> io::Result<Option<Vec<String>>> {
-    // upstream: clientserver.c:1149-1151 - the module's own `timeout` bounds the
+    // upstream: clientserver.c:1153-1155 - the module's own `timeout` bounds the
     // argv read, armed ONCE before `@RSYNCD: OK` and spanning BOTH `read_args()`
     // calls, then disarmed at :1169:
     //
@@ -294,14 +294,14 @@ fn read_and_log_client_args(
     };
 
     // Detect secluded-args flag in phase-1 args.
-    // upstream: clientserver.c:1080 - if (protect_args && ret)
-    // upstream: options.c:804 - `-s` is a short option for `--secluded-args`
+    // upstream: clientserver.c:1084 - if (protect_args && ret)
+    // upstream: options.c:807 - `-s` is a short option for `--secluded-args`
     // Protocol 28/29 clients may bundle `-s` into compact flag strings like `-logDtprs`.
     let has_secluded = has_secluded_args_flag(&phase1_args);
 
     let client_args = if has_secluded {
         // Phase 2: read the real args via secluded-args wire format.
-        // upstream: clientserver.c:1082-1085 - read_args with rl_nulls=1.
+        // upstream: clientserver.c:1086-1089 - read_args with rl_nulls=1.
         //
         // The two phases carry disjoint slices of the original argv:
         // - Phase 1 (cmdline): `--server`, `--sender`, the compact flag
@@ -335,7 +335,7 @@ fn read_and_log_client_args(
             Err(err) => return Ok(abandon_client_args(ctx, &err, &deadline)),
         }
     } else {
-        // upstream: clientserver.c:1073 - first `read_args()` call passes
+        // upstream: clientserver.c:1077 - first `read_args()` call passes
         // `unescape=1` so option args that the client escaped with
         // `safe_arg()` are restored before parsing. File args after the `.`
         // separator are NOT unescaped here because upstream funnels them
@@ -343,7 +343,7 @@ fn read_and_log_client_args(
         unescape_phase1_option_args(phase1_args)
     };
 
-    // upstream: clientserver.c:1169 - `set_daemon_handshake_timeout(0)` once the
+    // upstream: clientserver.c:1173 - `set_daemon_handshake_timeout(0)` once the
     // argv is in hand. The handshake is over at this point and the transfer
     // itself is governed by the negotiated `--timeout`, not by this bound, so
     // leaving the clamp on the fd would silently cap every later read.

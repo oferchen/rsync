@@ -95,7 +95,7 @@ pub fn run_ssh_transfer(
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
-    // upstream: main.c:1483-1485 - a remote source with a single operand sets
+    // upstream: main.c:1487-1489 - a remote source with a single operand sets
     // `argc = 0` ("no dest arg") rather than erroring, and options.c:2320-2321
     // has already inferred list-only from the operand count.
     let fallback_dest = std::ffi::OsString::from(".");
@@ -124,7 +124,7 @@ pub fn run_ssh_transfer(
             remote_sources,
             local_dest,
         } => {
-            // upstream: main.c:1581,1605 - each requested source path is
+            // upstream: main.c:1585,1605 - each requested source path is
             // recorded as an implied include to validate the received flist.
             let implied_source_args = remote_operand_source_paths(&remote_sources)?;
             let (invocation_args, ssh_host, ssh_user, ssh_port, stdin_args) =
@@ -161,7 +161,7 @@ fn run_pull_transfer(
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
-    // upstream: main.c:1426 - client_mode=true tells the server flow to send the
+    // upstream: main.c:1430 - client_mode=true tells the server flow to send the
     // filter list after handshake + compat exchange (where recv_filter_list() is
     // called inside the server).
     let mut server_config = build_server_config_for_receiver(config, local_paths)?;
@@ -173,7 +173,7 @@ fn run_pull_transfer(
         )?;
     server_config.stop_at = config.stop_at();
 
-    // upstream: main.c:1428-1431 - when pulling with --files-from pointing to a
+    // upstream: main.c:1432-1435 - when pulling with --files-from pointing to a
     // local file or stdin, the receiver reads the file list locally and
     // forwards its bytes back to the remote sender via
     // `start_filesfrom_forwarding(filesfrom_fd)`. The remote sender consumes
@@ -187,7 +187,7 @@ fn run_pull_transfer(
         server_config.connection.files_from_data = Some(data);
     }
 
-    // upstream: flist.c:1368 recv_file_entry() validates each received name
+    // upstream: flist.c:1372 recv_file_entry() validates each received name
     // against these implied includes (CVE-2022-29154). Computed after staging
     // so a local --files-from folds each forwarded entry into the set.
     server_config.connection.implied_source_args = implied_source_args_for_pull(
@@ -343,7 +343,7 @@ fn run_server_over_ssh_connection(
     }
     let negotiated_protocol = handshake.protocol.as_u8();
 
-    // upstream: sender.c:640,775 log_item(FCLIENT) - on an SSH push the local
+    // upstream: sender.c:648,775 log_item(FCLIENT) - on an SSH push the local
     // side is the sender (ServerRole::Generator) and prints each file's
     // client-visible line to its own stdout: the `-i` itemize row (built from
     // the iflags the remote receiver's generator writes over the wire,
@@ -351,7 +351,7 @@ fn run_server_over_ssh_connection(
     // remote generator never forwards either itself (log.c:869 gates FCLIENT on
     // `!am_server`). A custom `--out-format` also wants the per-file rows even
     // without `-v`/`-i` so the client can render them; otherwise honor the plain
-    // verbose/itemize gates (upstream: sender.c:500 `itemizing =
+    // verbose/itemize gates (upstream: sender.c:508 `itemizing =
     // stdout_format_has_i`).
     //
     // On a pull the local side is the receiver, which prints its own default
@@ -424,7 +424,7 @@ fn run_server_over_ssh_connection(
     if child_exit_code.is_success() {
         Ok((stats, negotiated_protocol, collected_events))
     } else {
-        // upstream: log.c:937 log_exit() renders the winning child code
+        // upstream: log.c:1025 log_exit() renders the winning child code
         // by its rerr_name tagged with the exiting process's role.
         Err(remote_exit_error(child_exit_code, side.exit_role()))
     }
@@ -438,7 +438,7 @@ pub(in crate::client::remote) fn transfer_failure_error(
     side: ReportingSide,
     bytes_received: u64,
 ) -> ClientError {
-    // upstream: io.c:1930 - a received `MSG_ERROR_EXIT` ends in the
+    // upstream: io.c:1937 - a received `MSG_ERROR_EXIT` ends in the
     // NORETURN `_exit_cleanup(val)`, so the peer's code IS the client's
     // exit code; upstream never reaches the child-status comparison
     // below on that path. Without this arm the abort surfaces as a

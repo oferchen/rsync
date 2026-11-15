@@ -187,7 +187,7 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
         // "a<0xC3><0xA9>b" vs "a<0xC2>b" - 0xC3 > 0xC2 as unsigned, so the
         // first sorts after the second. This is upstream's behaviour because
-        // it casts to uchar before subtracting (upstream: flist.c:3911).
+        // it casts to uchar before subtracting (upstream: flist.c:3922).
         let a = FileEntry::new_file(PathBuf::from(OsStr::from_bytes(b"a\xC3\xA9b")), 0, 0o644);
         let b = FileEntry::new_file(PathBuf::from(OsStr::from_bytes(b"a\xC2b")), 0, 0o644);
         assert_eq!(f_name_cmp(&a, &b), Ordering::Greater);

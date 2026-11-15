@@ -85,7 +85,7 @@ pub struct ClientConfig {
     /// it was not overridden by a later `--remove-source-files`). Selects which
     /// spelling `server_options()` forwards on the wire.
     ///
-    /// upstream: options.c:744 (option table sets `remove_source_files = 2`) and
+    /// upstream: options.c:745 (option table sets `remove_source_files = 2`) and
     /// options.c:3163-3166 (emit `--remove-sent-files` when the value is 2).
     pub(super) remove_sent_files: bool,
     /// Whether the explicit `--out-format` / `--log-format` string contains the
@@ -95,7 +95,7 @@ pub struct ClientConfig {
     /// without `%i` clears it even under `-i`, while `-i` alone installs the
     /// default `"%i %n%L"` format. Drives the `--log-format=%i` server arg.
     ///
-    /// upstream: options.c:2496-2508 (`stdout_format_has_i`) and
+    /// upstream: options.c:2551-2563 (`stdout_format_has_i`) and
     /// options.c:2948-2951 (emit `--log-format=%i`).
     pub(super) out_format_forwards_i: bool,
     /// A custom `--out-format` template was given, so remote per-file output is
@@ -105,14 +105,14 @@ pub struct ClientConfig {
     /// `%o` (operation) directive but not `%i`. Drives the `--log-format=%o`
     /// server arg so the remote emits matching operation output.
     ///
-    /// upstream: options.c:2526-2527 (`stdout_format_has_o_or_i`) and
+    /// upstream: options.c:2581-2582 (`stdout_format_has_o_or_i`) and
     /// options.c:2952-2953 (emit `--log-format=%o`).
     pub(super) out_format_has_operation: bool,
     /// Whether an explicit `--out-format` / `--log-format` string was given that
     /// contains neither `%i` nor `%o`. Drives the placeholder `--log-format=X`
     /// server arg (further gated on the client not being verbose).
     ///
-    /// upstream: options.c:2954-2955 (emit `--log-format=X` when `!verbose`).
+    /// upstream: options.c:3019-3020 (emit `--log-format=X` when `!verbose`).
     pub(super) out_format_placeholder: bool,
     pub(super) bandwidth_limit: Option<BandwidthLimit>,
     pub(super) preserve_owner: bool,
@@ -222,6 +222,8 @@ pub struct ClientConfig {
     pub(super) backup_dir: Option<PathBuf>,
     pub(super) backup_suffix: Option<OsString>,
     pub(super) delay_updates: bool,
+    pub(super) delay_symlinks: bool,
+    pub(super) niceness: crate::niceness::PriorityOptions,
     pub(super) inplace: bool,
     pub(super) append: bool,
     pub(super) append_verify: bool,
@@ -247,7 +249,7 @@ pub struct ClientConfig {
     ///
     /// Distinct from `list_only`, which is also set implicitly for a single
     /// source with no destination. Only the explicit form is forwarded to the
-    /// remote as `--list-only` (upstream `options.c:2923-2924`).
+    /// remote as `--list-only` (upstream `options.c:2988-2989`).
     pub(super) list_only_arg: bool,
     /// Whether `-q` / `--quiet` was passed (upstream `quiet`).
     pub(super) quiet: bool,
@@ -320,7 +322,7 @@ pub struct ClientConfig {
     /// The resolved `old_style_args` level. `Some(1)` passes filename arguments
     /// unescaped to the remote shell (space-separated paths split by `eval`);
     /// `Some(2)` disables every safe_arg escape; `Some(0)`/`None` are inactive.
-    /// upstream: options.c:1755 OPT_OLD_ARGS, `RSYNC_OLD_ARGS` env var.
+    /// upstream: options.c:1791 OPT_OLD_ARGS, `RSYNC_OLD_ARGS` env var.
     pub(super) old_args: Option<u8>,
     pub(super) jump_hosts: Option<OsString>,
     pub(super) batch_config: Option<engine::batch::BatchConfig>,
@@ -482,6 +484,8 @@ impl Default for ClientConfig {
             backup_dir: None,
             backup_suffix: None,
             delay_updates: false,
+            delay_symlinks: false,
+            niceness: crate::niceness::PriorityOptions::default(),
             inplace: false,
             append: false,
             append_verify: false,
@@ -622,7 +626,7 @@ impl ClientConfig {
     /// Gives a local transfer's sender half its own config; `self` stays the
     /// receiver's.
     ///
-    /// upstream: pipe.c:143-148 local_child() re-runs parse_arguments() over
+    /// upstream: pipe.c:144-149 local_child() re-runs parse_arguments() over
     /// the `-M` values in the forked receiver only.
     #[must_use]
     pub fn with_local_sender(mut self, sender: ClientConfig) -> Self {

@@ -56,7 +56,7 @@ mod tests {
     /// the server-side promotion covered only `--append`, so a server given
     /// `--write-devices` kept temp+rename where upstream writes in place.
     ///
-    /// upstream: `options.c:2564-2570`.
+    /// upstream: `options.c:2619-2625`.
     #[test]
     fn write_devices_alone_promotes() {
         assert!(implies_inplace(false, false, true));
@@ -65,7 +65,7 @@ mod tests {
     /// `--append` alone must promote, the sibling rule that was already
     /// handled - pinned here so collapsing the two did not drop it.
     ///
-    /// upstream: `options.c:2561` (the `append_mode` block).
+    /// upstream: `options.c:2616` (the `append_mode` block).
     #[test]
     fn append_alone_promotes() {
         assert!(implies_inplace(false, true, false));

@@ -99,10 +99,10 @@ fn apply_global_directive(
         }
         "motdfile" if value.is_empty() => state.motd_lines.clear(),
         "motdfile" => {
-            // upstream: clientserver.c:183-188 opens `lp_motd_file()` as given,
+            // upstream: clientserver.c:187-192 opens `lp_motd_file()` as given,
             // so a relative value resolves against the daemon's cwd.
             let motd_path = daemon_parameter_path(value.trim());
-            // upstream: clientserver.c:188 reads the motd through
+            // upstream: clientserver.c:192 reads the motd through
             // `open_no_attacker_symlinks()`. The daemon is typically root here,
             // so a symlink planted at any component of an operator-named motd
             // path would otherwise splice an arbitrary file into the greeting.
@@ -154,7 +154,7 @@ fn apply_global_directive(
             state.module_defaults.reverse_lookup = Some(parsed);
         }
         "secretsfile" if value.is_empty() => state.global_secrets_file = None,
-        // upstream: authenticate.c:138-166 check_secret() opens the value as
+        // upstream: authenticate.c:131-159 check_secret() opens the value as
         // given when a client authenticates, so a missing or unusable file
         // fails only that authentication, never the config load.
         "secretsfile" => {
@@ -393,7 +393,7 @@ fn apply_global_directive(
                 line_number,
             );
         }
-        // upstream: clientserver.c:1496 `lp_daemon_gid` - `daemon gid` sets the
+        // upstream: clientserver.c:1506 `lp_daemon_gid` - `daemon gid` sets the
         // process-wide gid; oc's listener drops to it before the accept loop.
         "daemongid" if value.is_empty() => state.daemon_gid = None,
         "daemongid" => {
@@ -440,7 +440,7 @@ fn apply_global_directive(
             store_global_directive(&mut state.proxy_protocol, parsed, canonical, line_number);
         }
         "proxyprotocolhosts" => {
-            // upstream: access.c:311-317 `allow_proxy_protocol_peer()` reads
+            // upstream: access.c:375-381 `allow_proxy_protocol_peer()` reads
             // the list with `if (!list || !*list) return 0;`, so an empty
             // value is legal config that trusts nobody - which the empty
             // pattern set expresses, since nothing matches against it.
@@ -714,7 +714,7 @@ fn apply_global_directive(
         // its own list (loadparm.c init_section/copy_section). Modules that omit
         // `auth users` must then still authenticate (authenticate.c:288
         // auth_server reads lp_auth_users), so store the list as the default.
-        // upstream: authenticate.c:302-303 - an empty list means no restriction.
+        // upstream: authenticate.c:297-298 - an empty list means no restriction.
         "authusers" if value.is_empty() => state.module_defaults.auth_users = Some(Vec::new()),
         "authusers" => {
             let users = parse_auth_user_list(value).map_err(|error| {

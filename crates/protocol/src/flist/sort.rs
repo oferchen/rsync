@@ -19,7 +19,7 @@
 //! without file-before-directory distinction, implicit trailing '/', or the
 //! "."-sorts-first rule (that special case is gated on `t_PATH`, which pre-29
 //! never produces).
-//! upstream: flist.c:3803 - `protocol_version >= 29 ? t_PATH : t_ITEM`
+//! upstream: flist.c:3814 - `protocol_version >= 29 ? t_PATH : t_ITEM`
 
 use std::cmp::Ordering;
 
@@ -106,7 +106,7 @@ pub(crate) fn compare_file_entries_pre29(a: &FileEntry, b: &FileEntry) -> Orderi
 /// At protocol < 29, upstream `f_name_cmp()` uses `t_path = t_ITEM`,
 /// meaning directories are NOT treated specially - no implicit trailing
 /// slash, no files-before-dirs. This is a simple lexicographic sort.
-/// upstream: flist.c:3803 - `protocol_version >= 29 ? t_PATH : t_ITEM`
+/// upstream: flist.c:3814 - `protocol_version >= 29 ? t_PATH : t_ITEM`
 ///
 /// There is also NO "." sorts-first rule here. Upstream's special case
 /// (`flist.c:3820` and its `c2` twin at `:3833`) is gated on
@@ -230,7 +230,7 @@ pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool, protocol_pre
 
     if protocol_pre29 {
         // Protocol < 29: plain lexicographic sort, no file-before-dir.
-        // upstream: flist.c:3803 - t_path = t_ITEM at protocol < 29.
+        // upstream: flist.c:3814 - t_path = t_ITEM at protocol < 29.
         let cmp = |a: &SortKey, b: &SortKey| {
             let bytes_a = file_list[a.index as usize].name_bytes();
             let bytes_b = file_list[b.index as usize].name_bytes();
@@ -318,7 +318,7 @@ pub(super) fn resolve_duplicate(
         // Keep the directory (write) over the plain file (read).
         (true, false) => false,
         // Both directories - keep the first, merge the survivor's vital dir
-        // flags from the dropped duplicate. upstream: flist.c:3617-3621
+        // flags from the dropped duplicate. upstream: flist.c:3628-3632
         // (!am_sender) `fp->flags |= file->flags & (FLAG_TOP_DIR|FLAG_CONTENT_DIR)`.
         // TOP_DIR scopes --delete, so a surviving duplicate that lost it could
         // wrongly become delete-eligible. (oc collapses upstream's separate
@@ -442,14 +442,14 @@ pub fn flist_clean(
         return (file_list, stats);
     }
 
-    // upstream: flist.c:3584-3587 - a non-incremental sender sets `i = used - 1`
+    // upstream: flist.c:3595-3598 - a non-incremental sender sets `i = used - 1`
     // so the clean loop never runs; it transmits duplicates as-is so the
     // receiver's tombstones keep NDX aligned with this full array.
     if am_sender && !inc_recurse {
         return (file_list, stats);
     }
 
-    // upstream: flist.c:3576-3583 - anchor `prev` on the first active entry.
+    // upstream: flist.c:3587-3594 - anchor `prev` on the first active entry.
     // A freshly sorted list has no tombstones, but scan defensively.
     let mut prev = 0usize;
     while prev < len && !file_list[prev].is_active() {
@@ -466,7 +466,7 @@ pub fn flist_clean(
             continue;
         }
 
-        // upstream: flist.c:3595-3606 - a duplicate is either the same name as
+        // upstream: flist.c:3606-3617 - a duplicate is either the same name as
         // the previous kept entry, or (for a directory) an earlier same-named
         // non-dir found via flist_find(). Names compare as raw bytes
         // (`f_name_cmp()`), so distinct non-UTF-8 names never collide.
@@ -484,7 +484,7 @@ pub fn flist_clean(
             continue;
         };
 
-        // upstream: flist.c:3607-3635 - keep the directory over a plain file
+        // upstream: flist.c:3618-3646 - keep the directory over a plain file
         // (it may have contents in the list), else keep the first; the receiver
         // tombstones the dropped slot in place. `resolve_duplicate` returns
         // `true` when the later entry `i` wins.
@@ -687,7 +687,7 @@ mod tests {
     /// array length and every NDX slot, rather than compacting and renumbering.
     /// A shorter list would desync the receiver's NDX from an upstream sender's
     /// full un-deduped array (received "non-regular file" / silent corruption).
-    /// upstream: flist.c:3634 clear_file() drops the slot without moving others.
+    /// upstream: flist.c:3645 clear_file() drops the slot without moving others.
     #[test]
     fn flist_clean_tombstones_file_duplicates_in_place() {
         // Two files with same name - keep first, tombstone the second slot.
@@ -753,7 +753,7 @@ mod tests {
         // A duplicate directory carrying TOP_DIR must pass that flag to the
         // survivor: TOP_DIR scopes --delete, so dropping it on merge would
         // wrongly make the surviving directory eligible for deletion.
-        // upstream: flist.c:3620 `fp->flags |= file->flags & FLAG_TOP_DIR`.
+        // upstream: flist.c:3631 `fp->flags |= file->flags & FLAG_TOP_DIR`.
         let mut dir1 = make_dir("subdir");
         dir1.set_top_dir(false);
         let mut dir2 = make_dir("subdir");
@@ -787,7 +787,7 @@ mod tests {
 
     /// A non-incremental SENDER must skip the clean pass entirely and transmit
     /// duplicates as-is; otherwise it would ship fewer entries than the receiver
-    /// tombstones, desyncing the wire NDX. upstream: flist.c:3584-3587.
+    /// tombstones, desyncing the wire NDX. upstream: flist.c:3595-3598.
     #[test]
     fn flist_clean_sender_noninc_skips_dedup() {
         let entries = vec![make_file("dup"), make_file("dup"), make_file("z")];
@@ -811,7 +811,7 @@ mod tests {
 
     /// A directory that duplicates a NON-ADJACENT same-named non-dir (separated
     /// by an entry that sorts before the dir's implicit trailing '/') must still
-    /// be detected and the file dropped. upstream: flist.c:3597-3604 flist_find()
+    /// be detected and the file dropped. upstream: flist.c:3608-3615 flist_find()
     /// as-regfile. This is the #145 half of the fix.
     #[test]
     fn flist_clean_dir_dups_nonadjacent_regfile() {
@@ -832,7 +832,7 @@ mod tests {
     }
 
     /// Two distinct names that are not valid UTF-8 must both survive the clean
-    /// pass. Upstream compares raw name bytes (flist.c:3595 `f_name_cmp()`), so
+    /// pass. Upstream compares raw name bytes (flist.c:3606 `f_name_cmp()`), so
     /// `f\xef` and `g\xef` are different entries; a lossy comparison that maps
     /// every non-UTF-8 name to the same string would tombstone the second one
     /// and the receiver would silently skip it with exit code 0.
@@ -1026,7 +1026,7 @@ mod tests {
 
     /// Protocol < 29: directories do NOT sort after files at the same level.
     /// Plain lexicographic byte comparison, no implicit trailing '/'.
-    /// upstream: flist.c:3803 - `t_path = t_ITEM` at protocol < 29.
+    /// upstream: flist.c:3814 - `t_path = t_ITEM` at protocol < 29.
     #[test]
     fn pre29_no_files_before_dirs() {
         let mut entries = vec![make_file("zebra.txt"), make_dir("aardvark")];
@@ -1039,7 +1039,7 @@ mod tests {
     /// Protocol < 29 has NO "."-sorts-first rule: "." is compared as the plain
     /// byte 0x2E, so any name whose first byte is below 0x2E sorts BEFORE it.
     ///
-    /// Upstream's special case (`flist.c:3820`, `:3833`) is gated on
+    /// Upstream's special case (`flist.c:3831`, `:3833`) is gated on
     /// `type1 == t_PATH`, and `t_path` is `t_ITEM` below protocol 29, so it can
     /// never fire. Because "." is entry 0 of nearly every transfer
     /// (`flist.c:send_file_list()`), hoisting it unconditionally would shift every later
@@ -1096,7 +1096,7 @@ mod tests {
             vec!["!bang", "-dash", ".", "abc.txt", "sub", "sub/x"]
         );
 
-        // Protocol 29+ keeps the "." special case (upstream flist.c:3820).
+        // Protocol 29+ keeps the "." special case (upstream flist.c:3831).
         let mut modern = build();
         sort_file_list(&mut modern, false, false);
         let names: Vec<&str> = modern.iter().map(FileEntry::name).collect();

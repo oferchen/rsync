@@ -160,7 +160,7 @@ fn access_line(log: &str) -> String {
 /// With `reverse lookup = no` no name is ever sought, so upstream reports
 /// `UNDETERMINED` - not a lowercase `unknown`, and not the address.
 ///
-/// upstream: clientserver.c:126 + :1525.
+/// upstream: clientserver.c:130 + :1525.
 #[test]
 fn reverse_lookup_off_renders_undetermined_everywhere() {
     let Some(fixture) = Fixture::new("no") else {

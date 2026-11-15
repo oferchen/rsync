@@ -42,7 +42,7 @@ impl PendingSourceRemovals {
     /// Records that entry `flat_ndx` has been transmitted and its source unlink
     /// is now pending the peer's `MSG_SUCCESS` confirmation.
     ///
-    /// upstream: sender.c:806 marks `FLAG_FILE_SENT`; the unlink itself is
+    /// upstream: sender.c:814 marks `FLAG_FILE_SENT`; the unlink itself is
     /// deferred to `successful_send()` on `MSG_SUCCESS` receipt.
     pub(crate) fn mark_pending(&mut self, flat_ndx: usize) {
         self.pending.insert(flat_ndx);
@@ -57,7 +57,7 @@ impl PendingSourceRemovals {
     /// `successful_send()` becomes a no-op guard when the file no longer
     /// matches.
     ///
-    /// upstream: io.c:1831-1846 -> sender.c:396.
+    /// upstream: io.c:1838-1853 -> sender.c:404.
     pub(crate) fn confirm(&mut self, flat_ndx: usize) -> bool {
         self.pending.remove(&flat_ndx)
     }

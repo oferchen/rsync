@@ -176,7 +176,7 @@ numbers is the only edit needed; the prose is correct.
 
 None at the source-of-truth level. The original audit's upstream
 citations (`pipe.c:48-97`, `util1.c:74-96`, `main.c:629`, `main.c:985`,
-`clientserver.c:116-148`, `socket.c:736-846`, `io.c:983-1031`,
+`clientserver.c:120-152`, `socket.c:736-846`, `io.c:983-1031`,
 `cleanup.c:46-67`) cannot be re-verified from this worktree because
 `target/interop/upstream-src/rsync-3.4.1/` is not unpacked here. They
 are sourced from the upstream tarball pinned by `tools/ci/run_interop.sh`

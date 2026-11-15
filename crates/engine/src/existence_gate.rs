@@ -1,7 +1,7 @@
 //! The `--existing` / `--ignore-existing` gate shared by the local-copy
 //! executor and the network receiver.
 //!
-//! upstream: generator.c:1757-1806 recv_generator() - both tests run on the
+//! upstream: generator.c:1794-1843 recv_generator() - both tests run on the
 //! destination `lstat` taken before any obstacle removal, for every file type:
 //!
 //! - `ignore_non_existing > 0 && statret == -1 && stat_errno == ENOENT` skips an
@@ -105,7 +105,7 @@ mod tests {
         }
     }
 
-    /// upstream: generator.c:1757 - `--existing` skips only an absent
+    /// upstream: generator.c:1794 - `--existing` skips only an absent
     /// destination, for files and directories alike.
     #[test]
     fn existing_only_skips_only_absent_destinations() {
@@ -124,7 +124,7 @@ mod tests {
         }
     }
 
-    /// upstream: generator.c:1784-1785 - `--ignore-existing` skips any present
+    /// upstream: generator.c:1821-1822 - `--ignore-existing` skips any present
     /// destination unless a directory is merged into a directory.
     #[test]
     fn ignore_existing_skips_present_destinations_except_dir_into_dir() {

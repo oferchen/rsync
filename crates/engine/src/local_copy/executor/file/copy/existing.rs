@@ -17,7 +17,7 @@ use crate::local_copy::{
 /// Records a regular file skipped by the `--existing` / `--ignore-existing`
 /// gate.
 ///
-/// upstream: generator.c:1757-1806 recv_generator() - "not creating new file"
+/// upstream: generator.c:1794-1843 recv_generator() - "not creating new file"
 /// for an absent destination, "%s exists" for a present one.
 pub(super) fn record_existence_skip(
     context: &mut CopyContext,

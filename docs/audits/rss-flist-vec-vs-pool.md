@@ -8,11 +8,11 @@ benchmark, completed), #1048 (`PathBuf`/`Arc<Path>` overhead), #1049
 ## Summary
 
 Upstream rsync stores its file list as an array of `struct file_struct *`
-pointers (`flist.c:290-318`) that index into a slab-allocated arena
+pointers (`flist.c:291-319`) that index into a slab-allocated arena
 (`lib/pool_alloc.c`). Each entry's struct, basename, symlink target, and
 all optional `extras` slots live contiguously inside one 256 KiB extent;
 the per-pointer array doubles up to 32 K entries, then grows linearly by
-16 M (`rsync.h:920-925`). oc-rsync stores the file list as `Vec<FileEntry>`
+16 M (`rsync.h:936-941`). oc-rsync stores the file list as `Vec<FileEntry>`
 plus, in incremental mode, a `Vec<FileListSegment>` of nested vectors
 (`crates/protocol/src/flist/segment.rs:21-32`). Each `FileEntry` is 88 B
 inline (`crates/protocol/src/flist/entry/tests.rs:293-304`) and reaches
@@ -92,7 +92,7 @@ of any directory still in the buffer at drain time.
 allocator. Each `alloc_pool` owns a singly-linked list of
 `pool_extent`s. Default extent size is `POOL_DEF_EXTENT = 32 KiB`
 (`pool_alloc.c:3`); flist uses `NORMAL_EXTENT = 256 KiB`
-(`rsync.h:936-937`). Allocation pseudocode
+(`rsync.h:952-953`). Allocation pseudocode
 (`pool_alloc.c:114-174`):
 
 ```
@@ -113,7 +113,7 @@ Per-entry overhead inside the pool is exactly:
   the unused tail of the live extent when the next allocation does not
   fit (statistically `len/2` per extent end = 0-2 KiB).
 
-`FILE_STRUCT_LEN` is 24 B on 64-bit (`rsync.h:801-812`: 8 B `dirname`,
+`FILE_STRUCT_LEN` is 24 B on 64-bit (`rsync.h:817-828`: 8 B `dirname`,
 8 B `time_t modtime`, 4 B `len32`, 2 B `mode`, 2 B `flags`,
 flexible-array `basename` past the end). With protocol 32 features
 enabled, `extra_len` accumulates ~12 slots:
@@ -123,7 +123,7 @@ crtime (2), pathname (2 on PTRS_ARE_64), depth (1), unsort_ndx (1)
 regular-file entry packed inline in the pool.
 
 Add the per-entry `struct file_struct *` pointer in `flist->files`
-(8 B) and the doubling growth law in `flist.c:290-318`. The pointer
+(8 B) and the doubling growth law in `flist.c:291-319`. The pointer
 array doubles up to `FLIST_LINEAR = 32 K * 512 = 16 M` entries, then
 grows linearly by 16 M; expected slack ~50 % on doubling, ~0 % on
 linear. At 100 K entries the array sits at capacity 131 072 -
@@ -213,7 +213,7 @@ its name bytes plus its dirname bytes plus extras inline in a single
 chunk per entry. This is the only design that hits upstream's
 ~96 B/entry exactly, because it lets us pack the variable-length
 basename and symlink target into the same allocation as the
-`FileEntry` header (upstream: `flist.c:1018-1027`). Drawback:
+`FileEntry` header (upstream: `flist.c:1022-1031`). Drawback:
 Rust's borrow checker rejects flexible-array idioms in safe code; we
 would either need `unsafe` (gated to `fast_io` per project policy) or
 a `(usize_offset, len)` indirection scheme that re-introduces a

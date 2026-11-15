@@ -312,7 +312,7 @@ impl<R: Read> Read for ScanSource<R> {
     }
 }
 
-/// Computes upstream's per-file `updating_basis_file` flag (`sender.c:629-630`).
+/// Computes upstream's per-file `updating_basis_file` flag (`sender.c:637-638`).
 ///
 /// This gates the delta generator's backward-`Copy` suppression
 /// ([`engine::delta::DeltaGenerator::with_updating_basis_file`], `match.c:235`): when the
@@ -343,7 +343,7 @@ impl<R: Read> Read for ScanSource<R> {
 /// clause carries the same rule for the legacy protocol < 29 path, which has
 /// no basis-type byte on the wire.
 ///
-/// upstream: sender.c:629-630 `updating_basis_file`.
+/// upstream: sender.c:637-638 `updating_basis_file`.
 pub(crate) fn updating_basis_file(
     inplace: bool,
     inplace_partial: bool,
@@ -502,7 +502,7 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
 
     const MAX_READ_SIZE: usize = 256 * 1024;
 
-    // upstream: match.c:405-431 - consume the existing prefix. append_mode == 2
+    // upstream: match.c:441-467 - consume the existing prefix. append_mode == 2
     // folds it into the whole-file checksum (verify); append_mode == 1 skips the
     // sum (trust). Either way the prefix bytes are never sent as tokens.
     let mut prefix_remaining = flength.min(file_size);
@@ -706,7 +706,7 @@ pub(super) struct InlineChecksumResult {
     /// upstream: `match.c:144` `stats.matched_data += s2length`.
     pub matched_data: u64,
     /// Bytes sent as literal data on this file.
-    /// upstream: `match.c:330` `stats.literal_data += s->sums[j].len`.
+    /// upstream: `match.c:345` `stats.literal_data += s->sums[j].len`.
     pub literal_data: u64,
     /// First source read error hit while re-reading matched blocks, if any.
     /// The failed window was zeroed and the token stream still finished.
@@ -781,7 +781,7 @@ impl<'b, R: Read + Seek> CopySource<'b, R> {
 /// session so the buffer is allocated once, not per file. They are read from
 /// `source`, the descriptor the scan read, never a fresh open of the path: a
 /// source renamed or replaced since then cannot mix a second inode into the
-/// checksum. upstream: `sender.c:759` maps the one fd that `match_sums()`
+/// checksum. upstream: `sender.c:767` maps the one fd that `match_sums()`
 /// reads for both the tokens and the file sum.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn write_delta_with_inline_checksum<'a, W: Write>(
@@ -1202,7 +1202,7 @@ mod tests {
 
     /// The append streamer must transmit only the tail past `flength` and fold
     /// the existing prefix into the whole-file checksum only under append-verify
-    /// (append_mode == 2). Mirrors upstream match.c:404-431.
+    /// (append_mode == 2). Mirrors upstream match.c:440-467.
     #[test]
     fn stream_append_transfer_tail_and_prefix_checksum() {
         let file: Vec<u8> = (0..100u32).map(|i| (i % 256) as u8).collect();
@@ -1303,7 +1303,7 @@ mod tests {
 
     // WHY: the sender must activate the in-place guard exactly when the receiver
     // rewrites the basis (the destination) in place, i.e. it is matching against
-    // FNAMECMP_FNAME under --inplace. This is the core of upstream sender.c:629-630
+    // FNAMECMP_FNAME under --inplace. This is the core of upstream sender.c:637-638
     // at protocol >= 29 (proto 32 here): a missing basis-type byte and an
     // explicit FNAMECMP_FNAME both mean "the destination itself", so the guard
     // must engage. Without it a backward Copy would tell the receiver to read a
@@ -1758,7 +1758,7 @@ mod tests {
     /// all bits off, unless the true digest already was all zero, in which case
     /// the last byte is bumped to 1 so the poisoned value still differs.
     ///
-    /// upstream: match.c:414-423.
+    /// upstream: match.c:450-459.
     #[test]
     fn poison_file_checksum_matches_upstream_byte_rule() {
         let mut buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
@@ -1816,7 +1816,7 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::Other);
     }
 
-    /// WHY: upstream maps the size it fstat'ed at send time (sender.c:729-745), so a
+    /// WHY: upstream maps the size it fstat'ed at send time (sender.c:737-753), so a
     /// source that shrank after the file list was built is simply sent short and
     /// verifies normally. Treating that clean EOF as a read error would poison
     /// - and so discard - every legitimately shrinking file.
@@ -1842,7 +1842,7 @@ mod tests {
     /// the peer stays in lockstep, then poisons the checksum so the receiver
     /// discards the file and the run continues to the next entry (exit 23).
     ///
-    /// upstream: fileio.c:403-410 (zero-fill and continue), match.c:414-423
+    /// upstream: fileio.c:403-410 (zero-fill and continue), match.c:450-459
     /// (poison), sender.c:791-798 (io_error |= IOERR_GENERAL, keep going).
     #[test]
     fn stream_whole_file_transfer_survives_a_read_error_and_poisons() {

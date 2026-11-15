@@ -938,7 +938,7 @@ fn assert_cross_impl_hardlink_parity(
 /// Regression guard for the cross-impl hardlink batch fix (task #18): oc's
 /// `--write-batch` ships the cluster's single payload under the sorted-LAST
 /// member's NDX - the `FLAG_HLINK_LAST` data-holder upstream's generator
-/// transfers (upstream `hlink.c:113-194 match_gnums()`, `hlink.c:496-565
+/// transfers (upstream `hlink.c:113-194 match_gnums()`, `hlink.c:510-599
 /// finish_hard_link()`) - and the receiver's `create_hardlinks` links every
 /// other group member (including an unmaterialized sorted-first leader) to
 /// whichever member actually materialized on disk. Before the fix oc shipped

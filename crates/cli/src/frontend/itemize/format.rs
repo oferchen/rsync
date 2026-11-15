@@ -1,7 +1,7 @@
 //! Formatting logic for the 11-character rsync itemize string.
 //!
 //! Implements the `YXcstpoguax` output format matching the `%i` escape in
-//! upstream `log.c:log_formatted()` (log.c:733-784). Handles new-file (`+`),
+//! upstream `log.c:log_formatted()` (log.c:818-869). Handles new-file (`+`),
 //! missing-data (`?`), attribute flags, and the trailing-dot-to-space collapse
 //! for unchanged entries.
 
@@ -39,7 +39,7 @@ pub fn format_itemize(change: &ItemizeChange) -> String {
     result.push(change.file_type.as_char());
 
     // Positions 2-10: Attributes
-    // upstream: log.c:768-772 - ITEM_IS_NEW fills with '+', ITEM_MISSING_DATA fills with '?'
+    // upstream: log.c:853-857 - ITEM_IS_NEW fills with '+', ITEM_MISSING_DATA fills with '?'
     if change.new_file {
         result.push_str("+++++++++");
     } else if change.missing_data {
@@ -49,7 +49,7 @@ pub fn format_itemize(change: &ItemizeChange) -> String {
         result.push(if change.checksum_changed { 'c' } else { '.' });
 
         // Position 3: Size
-        // upstream: log.c:743-745 - symlinks never report size changes
+        // upstream: log.c:828-830 - symlinks never report size changes
         let is_symlink = matches!(change.file_type, super::types::FileType::Symlink);
         result.push(if !is_symlink && change.size_changed {
             's'
@@ -89,7 +89,7 @@ pub fn format_itemize(change: &ItemizeChange) -> String {
         // Position 10: Extended attributes
         result.push(if change.xattr_changed { 'x' } else { '.' });
 
-        // upstream: log.c:773-783 - when update type is '.', 'h', or 'c' and all
+        // upstream: log.c:858-868 - when update type is '.', 'h', or 'c' and all
         // rendered attribute positions (2-10) are dots, collapse them to spaces.
         // We check the rendered chars, not the raw flags, because symlink size
         // suppression may produce all-dot attributes even when size_changed is set.

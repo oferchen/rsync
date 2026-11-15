@@ -33,7 +33,7 @@ pub fn record_exit(latch: &ExitCodeLatch, code: i32) -> i32 {
 /// Maps an accumulated `io_error` bitfield plus the `got_xfer_error` flag into
 /// its `RERR_*` exit code, or `None` when the run is clean.
 ///
-/// Single owner of upstream's `cleanup.c:210-218` rule: three sequential
+/// Single owner of upstream's `cleanup.c:211-219` rule: three sequential
 /// assignments that order the bits `GENERAL > VANISHED > DEL_LIMIT` (delegated to
 /// [`transfer::io_error_flags::to_exit_code`]). `got_xfer_error` joins the LAST
 /// one, `io_error & IOERR_GENERAL || got_xfer_error`, so a transfer error

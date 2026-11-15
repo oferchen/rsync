@@ -219,7 +219,7 @@ fn assert_bounded_partial_transfer(fixture: &Fixture, module: &str, path: &str, 
 
 #[test]
 fn unreadable_source_file_reports_partial_transfer_without_hanging() {
-    // upstream: sender.c:384-401 reports the open failure, sends MSG_NO_SEND,
+    // upstream: sender.c:392-409 reports the open failure, sends MSG_NO_SEND,
     // and continues with the next ndx.
     if running_as_root() {
         eprintln!("skip: root bypasses the chmod 000 read denial");

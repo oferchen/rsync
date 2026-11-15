@@ -201,7 +201,7 @@ mod exit_code_3_file_select {
             "/nonexistent/path/that/does/not/exist/anywhere",
             dest_dir.to_str().unwrap(),
         ]);
-        // upstream: main.c:1356-1363 - ENOENT maps to RERR_VANISHED (24),
+        // upstream: main.c:1360-1367 - ENOENT maps to RERR_VANISHED (24),
         // but may also return 3 (file select) or 23 (partial) depending on
         // where the error is caught.
         let code = output.status.code().unwrap_or(-1);
@@ -548,7 +548,7 @@ mod exit_code_12_stream_io {
     ///
     /// Expected lines are 3.5.1's (tarball build) for the same stub, with the
     /// program name and the trailer's source location left out:
-    /// upstream: io.c:299-303 whine_about_eof(), log.c:937-963 log_exit().
+    /// upstream: io.c:299-303 whine_about_eof(), log.c:1025-1051 log_exit().
     /// A pull names the client before its fork, `[Receiver]` (rsync.c:987-995
     /// who_am_i()).
     #[cfg(unix)]
@@ -762,7 +762,7 @@ mod exit_code_23_partial_transfer {
         // Genuinely missing operands means zero positional arguments. upstream
         // main.c:1818 - `rsync` with no operands prints usage and exits 1
         // (syntax/usage error), not 23. A lone existing operand is NOT a
-        // missing-operands case: upstream options.c:2203 (`argc < 2 &&
+        // missing-operands case: upstream options.c:2239 (`argc < 2 &&
         // !read_batch && !am_server => list_only`) reinterprets it as a source
         // to list and exits 0.
         let output = run_rsync(&[]);
@@ -1396,7 +1396,7 @@ mod binary_exit_codes {
             dest_dir.to_str().unwrap(),
         ]);
 
-        // upstream: main.c:1356-1363 - ENOENT maps to RERR_VANISHED (24),
+        // upstream: main.c:1360-1367 - ENOENT maps to RERR_VANISHED (24),
         // but may also return 3 (file select) or 23 (partial) depending on
         // where the error is caught.
         let code = output.status.code().unwrap_or(-1);
@@ -1417,7 +1417,7 @@ mod binary_exit_codes {
             dest_dir.to_str().unwrap(),
         ]);
 
-        // upstream: main.c:1356-1363 - ENOENT maps to RERR_VANISHED (24),
+        // upstream: main.c:1360-1367 - ENOENT maps to RERR_VANISHED (24),
         // but may also return 3 (file select) or 23 (partial).
         let code = output.status.code().unwrap_or(-1);
         assert!(

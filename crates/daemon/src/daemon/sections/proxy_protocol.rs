@@ -5,7 +5,7 @@
 // `@RSYNCD:` greeting. This allows load balancers and proxies (e.g.,
 // HAProxy) to convey the original client address.
 //
-// upstream: clientserver.c:1442-1445 `start_daemon()` - `if (lp_proxy_protocol())`
+// upstream: clientserver.c:1452-1455 `start_daemon()` - `if (lp_proxy_protocol())`
 // then `proxy_peer_allowed(f_in)` and `read_proxy_protocol_header(f_in)`
 // (clientname.c:160).
 //
@@ -213,7 +213,7 @@ fn parse_v1_header<R: Read>(prefix: &[u8; 12], reader: &mut R) -> io::Result<Opt
 /// Returns the original client address when a proxied header is present,
 /// or `None` for health-check / LOCAL connections.
 ///
-/// upstream: clientserver.c:1442-1445 - `read_proxy_protocol_header()` is called
+/// upstream: clientserver.c:1452-1455 - `read_proxy_protocol_header()` is called
 /// before any rsync protocol data when `proxy protocol = true` in the config.
 ///
 /// ⚠ The stream is passed through **unbuffered, deliberately**. The PROXY

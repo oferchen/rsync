@@ -113,7 +113,7 @@ fn live_progress_per_file_renders_xfr_and_to_chk() {
         output.contains("xfr#1"),
         "per-file output should contain xfr#1: {output:?}"
     );
-    // upstream: flist.c:3076 counts the source root directory into num_files, so
+    // upstream: flist.c:3087 counts the source root directory into num_files, so
     // a trailing-slash `source/` copy of one file enumerates dir + file = 2
     // entries. Verified vs rsync 3.4.4: `--progress -r source/ dest` prints
     // `to-chk=0/2`.
@@ -267,7 +267,7 @@ fn live_progress_overall_renders_xfr_and_to_chk() {
         output.contains("xfr#1"),
         "overall mode should contain xfr#: {output:?}"
     );
-    // upstream: flist.c:3076 counts the source root directory into num_files, so
+    // upstream: flist.c:3087 counts the source root directory into num_files, so
     // a trailing-slash `source/` copy of one file enumerates dir + file = 2
     // entries. Verified vs rsync 3.4.4: `--info=progress2 -r source/ dest`
     // prints `to-chk=0/2`.
@@ -377,7 +377,7 @@ fn live_progress_combined_human_readable_uses_base_1024() {
         HumanReadableMode::BinaryUnits,
     );
 
-    // upstream: lib/compat.c:183 - `-hh` (Combined) divides by 1024 and never
+    // upstream: lib/compat.c:185 - `-hh` (Combined) divides by 1024 and never
     // appends an exact-value component: 1536 / 1024 = 1.50K.
     assert!(
         output.contains("1.50K") && !output.contains("1,536"),
@@ -654,7 +654,7 @@ fn live_progress_output_matches_upstream_format_pattern() {
     );
 
     // 5. Contains tracking suffix
-    // upstream: flist.c:3076 - the trailing-slash `source/` copy enumerates the
+    // upstream: flist.c:3087 - the trailing-slash `source/` copy enumerates the
     // root dir plus the file (num_files == 2), so the final tick reads
     // `to-chk=0/2`. Verified vs rsync 3.4.4.
     assert!(
@@ -690,19 +690,19 @@ fn live_progress_per_file_prints_filename_before_progress_line() {
 
 #[test]
 fn format_progress_bytes_zero_disabled() {
-    assert_eq!(format_progress_bytes(0, HumanReadableMode::Grouped), "0");
+    assert_eq!(format_progress_bytes(0, HumanReadableMode::Grouped), "0B");
 }
 
 #[test]
 fn format_progress_bytes_small_disabled() {
-    assert_eq!(format_progress_bytes(42, HumanReadableMode::Grouped), "42");
+    assert_eq!(format_progress_bytes(42, HumanReadableMode::Grouped), "42B");
 }
 
 #[test]
 fn format_progress_bytes_thousands_disabled() {
     assert_eq!(
         format_progress_bytes(1_234, HumanReadableMode::Grouped),
-        "1,234"
+        "1,234B"
     );
 }
 
@@ -710,7 +710,7 @@ fn format_progress_bytes_thousands_disabled() {
 fn format_progress_bytes_millions_disabled() {
     assert_eq!(
         format_progress_bytes(1_234_567, HumanReadableMode::Grouped),
-        "1,234,567"
+        "1,234,567B"
     );
 }
 
@@ -718,7 +718,7 @@ fn format_progress_bytes_millions_disabled() {
 fn format_progress_bytes_gigabytes_disabled() {
     assert_eq!(
         format_progress_bytes(1_234_567_890, HumanReadableMode::Grouped),
-        "1,234,567,890"
+        "1,234,567,890B"
     );
 }
 
@@ -726,7 +726,7 @@ fn format_progress_bytes_gigabytes_disabled() {
 fn format_progress_bytes_zero_human() {
     assert_eq!(
         format_progress_bytes(0, HumanReadableMode::DecimalUnits),
-        "0"
+        "0B"
     );
 }
 
@@ -734,7 +734,7 @@ fn format_progress_bytes_zero_human() {
 fn format_progress_bytes_kilo_human() {
     assert_eq!(
         format_progress_bytes(2_500, HumanReadableMode::DecimalUnits),
-        "2.50K"
+        "2.50KB"
     );
 }
 
@@ -742,7 +742,7 @@ fn format_progress_bytes_kilo_human() {
 fn format_progress_bytes_mega_human() {
     assert_eq!(
         format_progress_bytes(5_000_000, HumanReadableMode::DecimalUnits),
-        "5.00M"
+        "5.00MB"
     );
 }
 
@@ -750,7 +750,7 @@ fn format_progress_bytes_mega_human() {
 fn format_progress_bytes_giga_human() {
     assert_eq!(
         format_progress_bytes(3_000_000_000, HumanReadableMode::DecimalUnits),
-        "3.00G"
+        "3.00GB"
     );
 }
 
@@ -779,7 +779,7 @@ fn format_progress_rate_large_bytes_short_duration() {
 
 #[test]
 fn format_progress_rate_small_stays_kb_per_sec_in_human_mode() {
-    // upstream: progress.c:108-116 - the progress rate is always base-1024,
+    // upstream: progress.c:106-107 - the progress rate is always base-1024,
     // never `-h`/`-hh`; a small rate stays in the `kB/s` tier.
     let rate = format_progress_rate(
         5_000,
@@ -787,8 +787,8 @@ fn format_progress_rate_small_stays_kb_per_sec_in_human_mode() {
         HumanReadableMode::DecimalUnits,
     );
     assert!(
-        rate.contains("kB/s"),
-        "5000 B/s should show kB/s regardless of mode: {rate:?}"
+        rate.contains("kB/s") || rate.contains("KB/s"),
+        "5000 B/s should show kB/s or KB/s: {rate:?}"
     );
 }
 

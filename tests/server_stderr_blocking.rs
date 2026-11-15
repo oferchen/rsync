@@ -1,6 +1,6 @@
 //! The remote-shell server sets its inherited stderr blocking after setup.
 //!
-//! upstream: main.c:1356-1364 `start_server()` calls `set_blocking(STDERR)`
+//! upstream: main.c:1360-1368 `start_server()` calls `set_blocking(STDERR)`
 //! once `setup_protocol()` is done, because ssh may have made fd 2
 //! non-blocking. `O_NONBLOCK` lives on the open file description, which the
 //! client, the remote shell and the server all share here, so the client's

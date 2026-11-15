@@ -240,7 +240,7 @@ if (am_sender) {
 into the process-local `filter_list`. Critically,
 **`daemon_filter_list` is never written to `f_out` in this path** - it
 is consulted directly by `path_is_daemon_excluded()`
-(`flist.c:252-273`) and `name_is_excluded()` (`exclude.c:1010-1015`).
+(`flist.c:253-274`) and `name_is_excluded()` (`exclude.c:1010-1015`).
 
 oc-rsync's daemon-sender wire path is in
 `crates/transfer/src/generator/transfer.rs:728-729`:
@@ -346,7 +346,7 @@ whether the daemon module has any filter directives configured.
 Upstream applies `daemon_filter_list` while building the file list, in
 two callsites:
 
-1. `flist.c:1262` (`generator.c` for the file-by-file send loop's
+1. `flist.c:1266` (`generator.c` for the file-by-file send loop's
    feedback channel):
    ```c
    if (daemon_filter_list.head && (*fname != '.' || fname[1])) {
@@ -357,13 +357,13 @@ two callsites:
        }
    }
    ```
-2. `flist.c:252-273` (`path_is_daemon_excluded()`), called from inside
+2. `flist.c:253-274` (`path_is_daemon_excluded()`), called from inside
    `make_file()` and from the file-stat path.
 
 Filtered entries simply do not appear in the wire-transmitted file
 list. The wire framing - xflags byte (proto < 30) or xflags varint
 (proto >= 30), name length, name bytes, size, mtime, mode, uid, gid -
-is unchanged. Reference: upstream `flist.c:597-619` (legacy encoding)
+is unchanged. Reference: upstream `flist.c:601-623` (legacy encoding)
 and oc-rsync `crates/protocol/src/flist/write/metadata.rs:130-138` for
 the byte format itself; both are documented in
 `docs/audits/tcpdump-daemon-proto28-29.md` section 2.8.
@@ -372,7 +372,7 @@ oc-rsync applies the equivalent filter check during the walk in
 `crates/transfer/src/generator/file_list/walk.rs:103-108`:
 
 ```rust
-// upstream: flist.c:1332 - is_excluded() applied during make_file()
+// upstream: flist.c:1336 - is_excluded() applied during make_file()
 // FilterChain evaluates per-directory scoped rules (innermost first)
 // then global rules. If no rules are configured, allows() returns true.
 if !self.filter_chain.allows(&relative, metadata.is_dir()) {
@@ -430,11 +430,11 @@ The audit traced every site where `daemon_filter_list` (upstream) or
 
 | Site                                | Upstream                          | oc-rsync                                                                            | Wire impact |
 |-------------------------------------|-----------------------------------|-------------------------------------------------------------------------------------|-------------|
-| Construction at module bind         | `clientserver.c:874-893`          | `crates/daemon/src/daemon/sections/module_access/helpers.rs:223-280`                | None - process-local. |
+| Construction at module bind         | `clientserver.c:878-897`          | `crates/daemon/src/daemon/sections/module_access/helpers.rs:223-280`                | None - process-local. |
 | Storage on session config           | `daemon_filter_list` global       | `ServerConfig::daemon_filter_rules` (set at `module_access/transfer.rs:417`)        | None. |
 | Filter-exchange merge (sender side) | `recv_filter_list()` in `exclude.c:1672` reads client list; daemon list consulted separately at use sites | `crates/transfer/src/generator/filters.rs:42-87` reads client list, prepends `daemon_filter_rules` to build the `FilterChain` | None - merge happens in process memory after the read. |
 | Filter-exchange merge (receiver side) | Same `recv_filter_list()` plus consultation in `path_is_daemon_excluded()` | `crates/transfer/src/receiver/transfer.rs:856-901` - same pattern as the sender side | None. |
-| Application during file-list build  | `flist.c:252-273` (`path_is_daemon_excluded`), `flist.c:1262` (generator), `exclude.c:1010-1015` (`name_is_excluded`) | `crates/transfer/src/generator/file_list/walk.rs:103-108` (`filter_chain.allows`), and the same `FilterChain` consulted by the receiver during deletion-candidate enumeration | Indirect: filtered entries are absent from the file list. Framing identical. |
+| Application during file-list build  | `flist.c:253-274` (`path_is_daemon_excluded`), `flist.c:1266` (generator), `exclude.c:1010-1015` (`name_is_excluded`) | `crates/transfer/src/generator/file_list/walk.rs:103-108` (`filter_chain.allows`), and the same `FilterChain` consulted by the receiver during deletion-candidate enumeration | Indirect: filtered entries are absent from the file list. Framing identical. |
 | Application during deletion         | `generator.c:delete_in_dir()` -> `is_excluded()` | `crates/transfer/src/receiver` (deletion path consults `filter_chain`)              | Indirect: filtered paths are not deleted. |
 
 Every read/evaluation site is server-local. No serialisation site
@@ -544,7 +544,7 @@ would surface as a wire-byte mismatch:
   filter rules: ...` and exits before any transfer bytes flow
   (`crates/daemon/src/daemon/sections/module_access/transfer.rs:419-424`).
   The error path is covered by upstream's `XFLG_FATAL_ERRORS` flag at
-  `clientserver.c:880` and is functionally identical, but the
+  `clientserver.c:884` and is functionally identical, but the
   per-byte text of the `@ERROR` line differs (oc-rsync prefixes with
   `@ERROR: failed to load module filter rules:` whereas upstream's
   text is `@ERROR: failed to read filter file ...`). That message
@@ -568,7 +568,7 @@ would surface as a wire-byte mismatch:
 
 All paths are absolute under `target/interop/upstream-src/rsync-3.4.1/`.
 
-- `clientserver.c:874-893` - `rsync_module()` builds
+- `clientserver.c:878-897` - `rsync_module()` builds
   `daemon_filter_list` from the module's filter directives.
 - `exclude.c:49-52` - global declarations of `filter_list`,
   `cvs_filter_list`, `daemon_filter_list`, `implied_filter_list`.
@@ -583,9 +583,9 @@ All paths are absolute under `target/interop/upstream-src/rsync-3.4.1/`.
   `daemon_filter_list`.
 - `exclude.c:1010-1015` - `name_is_excluded()` consults
   `daemon_filter_list` locally.
-- `flist.c:252-273` - `path_is_daemon_excluded()` consults
+- `flist.c:253-274` - `path_is_daemon_excluded()` consults
   `daemon_filter_list` locally during file-list construction.
-- `flist.c:1262` - generator-side daemon-filter consultation.
+- `flist.c:1266` - generator-side daemon-filter consultation.
 - `main.c:1252-1259` - daemon-sender wire path
   (`recv_filter_list(f_in)` then `do_server_sender`).
 - `main.c:1304-1308` - client-sender wire path

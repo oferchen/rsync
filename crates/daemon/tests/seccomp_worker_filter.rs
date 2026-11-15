@@ -285,7 +285,7 @@ fn a_special_file_is_creatable_under_the_worker_filter() {
 /// the worker filter.
 ///
 /// `--delay-updates` substitutes the implicit `.~tmp~` partial directory
-/// (upstream `options.c:2572-2573`), which puts the receiver on a strictly
+/// (upstream `options.c:2627-2628`), which puts the receiver on a strictly
 /// larger set of operations than a plain push: it creates a staging
 /// directory, opens the temp through the operator-path fallback rather
 /// than the destination sandbox, moves the pre-image aside for

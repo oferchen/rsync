@@ -55,7 +55,7 @@ pub fn lstat_via_sandbox_or_fallback(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:2336-2400` `do_stat_at()` / `do_lstat_at()`
+/// - `rsync-3.5.2/syscall.c:2407-2471` `do_stat_at()` / `do_lstat_at()`
 pub fn stat_via_sandbox_or_fallback(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
     dest_dir: &Path,

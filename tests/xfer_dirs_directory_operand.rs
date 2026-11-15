@@ -4,7 +4,7 @@
 //! outright when `xfer_dirs` is off:
 //!
 //! ```c
-//! /* rsync-3.5.1/flist.c:2963-2966 */
+//! /* rsync-3.5.2/flist.c:2974-2977 */
 //! if (S_ISDIR(st.st_mode) && !xfer_dirs) {
 //!         rprintf(FINFO, "skipping directory %s\n", fbuf);
 //!         continue;
@@ -148,7 +148,7 @@ fn a_dotdir_operand_without_xfer_dirs_transfers_nothing() {
         let (entries, stdout) = pull(operand, &["-lptgoD"]);
         assert!(
             entries.is_empty(),
-            "`{operand}` without -r/-d must deliver nothing (upstream flist.c:2963 \
+            "`{operand}` without -r/-d must deliver nothing (upstream flist.c:2974 \
              `continue`s the argument); got {entries:?}"
         );
         assert!(
@@ -217,7 +217,7 @@ fn recursion_still_delivers_the_whole_subtree() {
     );
 }
 
-/// `--list-only` is upstream's third `xfer_dirs` source (`options.c:2329`), so
+/// `--list-only` is upstream's third `xfer_dirs` source (`options.c:2384`), so
 /// the same operand with no `-r`/`-d` still lists.
 #[test]
 fn list_only_keeps_xfer_dirs_on() {
@@ -268,7 +268,7 @@ fn a_pushed_dotdir_operand_is_skipped_and_named_too() {
     assert!(delivered(&fx.dest).is_empty(), "a push must skip it too");
     assert!(
         output.stdout_contains("skipping directory .\n"),
-        "upstream log.c:322-330 puts FINFO on stdout, not stderr; got stdout {:?}",
+        "upstream log.c:402-410 puts FINFO on stdout, not stderr; got stdout {:?}",
         output.stdout_str()
     );
 }
@@ -297,7 +297,7 @@ fn the_local_executor_names_a_skipped_dotdir_operand() {
         assert!(entries.is_empty(), "got {entries:?}");
         assert!(
             stdout.contains("skipping directory .\n"),
-            "`{operand}` must name the skip `.` (upstream flist.c:2965 with the \
+            "`{operand}` must name the skip `.` (upstream flist.c:2976 with the \
              `fn` half of the dir/fn split); got stdout {stdout:?}"
         );
     }

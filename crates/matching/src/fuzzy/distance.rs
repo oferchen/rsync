@@ -88,7 +88,7 @@ pub(super) fn fuzzy_distance(s1: &[u8], s2: &[u8], upperlimit: u32) -> u32 {
 }
 
 /// Distance below which the suffix bonus is still applied; at or above it the
-/// candidate has already been disqualified. upstream: generator.c:898
+/// candidate has already been disqualified. upstream: generator.c:935
 /// `if (dist < 0xFFFF0000U)`.
 const SUFFIX_APPLY_LIMIT: u32 = 0xFFFF_0000;
 
@@ -101,7 +101,7 @@ const SUFFIX_APPLY_LIMIT: u32 = 0xFFFF_0000;
 /// same-type files. `target_suffix` is precomputed by the caller since it is
 /// constant across the scan.
 ///
-/// upstream: generator.c:895-900.
+/// upstream: generator.c:932-937.
 pub(super) fn fuzzy_name_distance(
     candidate: &[u8],
     target: &[u8],

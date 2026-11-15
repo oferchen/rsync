@@ -917,7 +917,7 @@ fn itemize_skipped_newer_destination_shows_dot() {
     );
 }
 
-// upstream: generator.c:2135-2138 - an `--update` skip (destination newer)
+// upstream: generator.c:2176-2179 - an `--update` skip (destination newer)
 // emits `"%s is newer"` only at INFO_GTE(SKIP, 1) and never itemizes the
 // entry. These two tests pin that orchestration behavior so the entry is not
 // rendered as an itemized `.f` row when `-ii` is also in effect.
@@ -1068,7 +1068,7 @@ fn itemize_upstream_new_symlink_pattern() {
 
 #[test]
 fn itemize_upstream_delete_pattern() {
-    // upstream: log.c:734-737 - "*deleting  " padded to 11 chars
+    // upstream: log.c:819-822 - "*deleting  " padded to 11 chars
     let event = make_event(
         ClientEventKind::EntryDeleted,
         false,
@@ -1080,7 +1080,7 @@ fn itemize_upstream_delete_pattern() {
 
 #[test]
 fn itemize_upstream_unchanged_file_pattern() {
-    // upstream: log.c:773-783 - all-dots collapse to spaces
+    // upstream: log.c:858-868 - all-dots collapse to spaces
     let event = make_event(
         ClientEventKind::MetadataReused,
         false,
@@ -1171,7 +1171,7 @@ fn itemize_position_8_no_time_change_shows_dot() {
 
 #[test]
 fn itemize_delete_has_eleven_char_length() {
-    // upstream: log.c:734-737 - "*deleting  " padded to 11 chars like YXcstpoguax
+    // upstream: log.c:819-822 - "*deleting  " padded to 11 chars like YXcstpoguax
     let event = make_event(
         ClientEventKind::EntryDeleted,
         false,
@@ -1185,7 +1185,7 @@ fn itemize_delete_has_eleven_char_length() {
 
 #[test]
 fn itemize_missing_data_shows_question_marks() {
-    // upstream: log.c:768-772 - ITEM_MISSING_DATA fills positions 2-10 with '?'
+    // upstream: log.c:853-857 - ITEM_MISSING_DATA fills positions 2-10 with '?'
     let event = make_event(
         ClientEventKind::DataCopied,
         false,
@@ -1223,7 +1223,7 @@ fn itemize_missing_data_length_is_eleven() {
 
 #[test]
 fn itemize_symlink_size_always_dot_even_when_size_changed() {
-    // upstream: log.c:745 - c[3] = '.' unconditionally for symlinks
+    // upstream: log.c:830 - c[3] = '.' unconditionally for symlinks
     // After dots-to-spaces collapse, '.' becomes ' ' when all subsequent positions are also dots
     let event = make_event(
         ClientEventKind::SymlinkCopied,
@@ -1257,7 +1257,7 @@ fn itemize_symlink_size_dot_with_multiple_changes() {
 
 #[test]
 fn itemize_symlink_time_transfer_time_shows_uppercase_t() {
-    // upstream: log.c:746-748 - 'T' when symlink times not preserved
+    // upstream: log.c:831-833 - 'T' when symlink times not preserved
     let event = make_event(
         ClientEventKind::SymlinkCopied,
         false,
@@ -1274,7 +1274,7 @@ fn itemize_symlink_time_transfer_time_shows_uppercase_t() {
 
 #[test]
 fn itemize_symlink_time_modified_shows_lowercase_t() {
-    // upstream: log.c:747-748 - 't' when preserve_mtimes and receiver_symlink_times
+    // upstream: log.c:832-833 - 't' when preserve_mtimes and receiver_symlink_times
     let event = make_event(
         ClientEventKind::SymlinkCopied,
         false,
@@ -1445,7 +1445,7 @@ fn remote_pull_hardlink_follower(relative: &str, leader: &str) -> ClientEvent {
 
 #[test]
 fn render_percent_l_hardlink_leader_on_remote_pull() {
-    // upstream: log.c:676-678 - `%L` renders ` => <hlink>` when a hard-link leader
+    // upstream: log.c:761-763 - `%L` renders ` => <hlink>` when a hard-link leader
     // (`hlink`) is present, before any symlink target. A remote pull has no engine
     // record, so the receiver's xname rides in `hardlink_leader`; without it `%L`
     // printed empty for a pulled hard link (#256). Assert the exact ` => ` bytes.
@@ -1461,7 +1461,7 @@ fn render_percent_l_hardlink_leader_on_remote_pull() {
 #[test]
 fn render_percent_l_empty_for_remote_pull_regular_file() {
     // A pulled regular file with no leader and no symlink target renders an empty
-    // `%L` (upstream log.c:682-685 sets n = "" and breaks with no width modifier).
+    // `%L` (upstream log.c:767-770 sets n = "" and breaks with no width modifier).
     let event = remote_event_with_source_prefix("plain.txt", None);
     assert_eq!(render_format("%L", &event), "\n");
 }
@@ -1553,14 +1553,14 @@ fn render_percent_b_shows_bytes_transferred() {
     )
     .with_bytes_transferred_for_test(5043);
     // Local copy => sender; %b reports the file-data bytes written.
-    // upstream: log.c:704-716, verified against rsync 3.4.4 (`%b`=5043).
+    // upstream: log.c:789-801, verified against rsync 3.4.4 (`%b`=5043).
     let ctx = OutFormatContext::with_is_sender(true);
     assert_eq!(render_format_with_context("%b", &event, &ctx), "5043\n");
 }
 
 #[test]
 fn render_percent_b_and_c_differ_by_direction_on_sender() {
-    // upstream: log.c:704-716 - on the sender `%b` = file data written,
+    // upstream: log.c:789-801 - on the sender `%b` = file data written,
     // `%c` = the 16-byte sum_head read back. Verified against rsync 3.4.4:
     // a local push of a 5000-byte file prints `%b`=5043 `%c`=16.
     let event = make_event(
@@ -1582,7 +1582,7 @@ fn render_percent_b_and_c_differ_by_direction_on_sender() {
 
 #[test]
 fn render_percent_b_and_c_swap_counters_on_receiver() {
-    // upstream: log.c:704-716 - on the receiver the (!!am_sender) ^ (*p == 'c')
+    // upstream: log.c:789-801 - on the receiver the (!!am_sender) ^ (*p == 'c')
     // selector maps the file-data bytes to the read counter and the sum_head to
     // the write counter, so `%b` still reports the file data and `%c` the
     // 16-byte header - the semantic value is role-independent.
@@ -1600,7 +1600,7 @@ fn render_percent_b_and_c_swap_counters_on_receiver() {
 
 #[test]
 fn render_percent_b_and_c_zero_for_non_transfer() {
-    // upstream log.c:706-707 - `!(iflags & ITEM_TRANSFER)` forces both to 0.
+    // upstream log.c:791-792 - `!(iflags & ITEM_TRANSFER)` forces both to 0.
     // A metadata-only reuse is not a transfer, so neither escape counts bytes.
     let event = make_event(
         ClientEventKind::MetadataReused,
@@ -1715,7 +1715,7 @@ fn render_percent_g_upper_shows_default_when_gid_unavailable() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // upstream: log.c:606-608 - `case 'G'` renders the literal "DEFAULT" when
+    // upstream: log.c:691-693 - `case 'G'` renders the literal "DEFAULT" when
     // the gid is unavailable (`!gid_ndx || FLAG_SKIP_GROUP`). test_metadata
     // seeds gid = None, so byte fidelity requires "DEFAULT", not "0".
     assert_eq!(render_format("%G", &event), "DEFAULT\n");
@@ -1741,7 +1741,7 @@ fn render_percent_l_upper_shows_nothing_for_regular_file() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // upstream: log.c:675-685 - `case 'L'` with no width modifier breaks with
+    // upstream: log.c:760-770 - `case 'L'` with no width modifier breaks with
     // n = "" for a non-link entry, so %L renders empty.
     assert_eq!(render_format("%L", &event), "\n");
 }
@@ -1754,7 +1754,7 @@ fn render_percent_l_upper_with_width_pads_spaces_for_regular_file() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // upstream: log.c:682-689 - a width modifier on a non-link entry copies 4
+    // upstream: log.c:767-774 - a width modifier on a non-link entry copies 4
     // leading spaces then formats the empty target under the width specifier,
     // emitting `4 + width` spaces so the empty target aligns under the ` -> `
     // connector column. Here width = 10, so 14 spaces.
@@ -2122,7 +2122,7 @@ fn render_binary_units_below_threshold_falls_back_to_separator() {
 
 // Regression: upstream `testsuite/itemize_test.py:130-140` expects `-ivvplrtH`
 // to emit all-dot itemize rows for unchanged dirs, files, and symlinks,
-// mirroring the upstream gate `INFO_GTE(NAME, 2)` in `generator.c:588-589`.
+// mirroring the upstream gate `INFO_GTE(NAME, 2)` in `generator.c:625-626`.
 // The renderer's empty-change-set suppression must be bypassed when the
 // context flags `emit_unchanged`.
 
@@ -2130,7 +2130,7 @@ fn render_binary_units_below_threshold_falls_back_to_separator() {
 fn emit_out_format_suppresses_unchanged_metadata_reused_by_default() {
     // Without `emit_unchanged`, a `MetadataReused` event whose change set
     // reports no change and was not created must be omitted from output
-    // (upstream `generator.c:588` default gate).
+    // (upstream `generator.c:625` default gate).
     let event = make_event(
         ClientEventKind::MetadataReused,
         false,
@@ -2149,7 +2149,7 @@ fn emit_out_format_suppresses_unchanged_metadata_reused_by_default() {
 
 #[test]
 fn emit_out_format_emits_changed_directory_without_itemize() {
-    // upstream: log.c:885-886 `maybe_log_item()` - the client-side emit gate has
+    // upstream: log.c:970-971 `maybe_log_item()` - the client-side emit gate has
     // a `(S_ISDIR(file->mode) && significant_flags)` clause, so a directory that
     // carries any significant change (here an mtime drift) is logged under
     // `--out-format` even when the format has no `%i`. The transfer root of a
@@ -2191,7 +2191,7 @@ fn emit_out_format_emits_unchanged_metadata_reused_under_info_name_2() {
 
 #[test]
 fn emit_out_format_emits_unchanged_metadata_reused_under_double_itemize() {
-    // upstream `testsuite/exclude_test.py:310-316` runs `-aiiO --update` and
+    // upstream `testsuite/exclude_test.py:317-323` runs `-aiiO --update` and
     // expects an equal-mtime quick-check match to surface as `.f          `.
     // The `-ii` arm (`stdout_format_has_i > 1`, threaded as `itemize_repeated`)
     // forces the row independently of `-vv`, mirroring `generator.c:589`.
@@ -2253,7 +2253,7 @@ fn emit_out_format_emits_unchanged_directory_under_info_name_2() {
 
 #[test]
 fn emit_out_format_suppresses_uptodate_hardlink_alias_by_default() {
-    // upstream: hlink.c:224-252 + generator.c:588-589 - an already-correct
+    // upstream: hlink.c:224-252 + generator.c:625-626 - an already-correct
     // hardlink alias is itemized with an empty xname (no `=> target`) and an
     // empty change-set. Under plain `-i` (NAME<2, has_i==1) the row must be
     // suppressed: the shared inode already carries the leader's attributes, so
@@ -2278,7 +2278,7 @@ fn emit_out_format_suppresses_uptodate_hardlink_alias_by_default() {
 
 #[test]
 fn emit_out_format_emits_uptodate_hardlink_alias_under_info_name_2() {
-    // upstream: generator.c:588 `INFO_GTE(NAME, 2)` arm - under `-ivv` (or
+    // upstream: generator.c:625 `INFO_GTE(NAME, 2)` arm - under `-ivv` (or
     // `--info=name2`) the same up-to-date alias surfaces as `hf          n`.
     let event = make_event(
         ClientEventKind::HardLink,
@@ -2354,7 +2354,7 @@ fn emit_out_format_suppresses_uptodate_hardlink_alias_at_plain_i() {
 
 #[test]
 fn emit_out_format_emits_fresh_hardlink_alias_with_relink_target() {
-    // upstream: generator.c:589 `(xname && *xname)` arm / hlink.c:232-234 - a
+    // upstream: generator.c:626 `(xname && *xname)` arm / hlink.c:232-234 - a
     // freshly atomic_create'd alias (NOT sharing the leader inode, e.g. a
     // `--copy-dest` cluster member linked to a copied leader) itemizes with the
     // relink target as the xname (`=> %s`), forcing the row even at plain `-i`.
@@ -2395,7 +2395,7 @@ fn emit_out_format_emits_unchanged_symlink_under_info_name_2() {
     assert_eq!(rendered, ".L          test.txt\n");
 }
 
-// upstream: generator.c:1178 / log.c:739-783 - a `--copy-dest` reconstruction
+// upstream: generator.c:1215 / log.c:824-868 - a `--copy-dest` reconstruction
 // itemizes the regular file with ITEM_LOCAL_CHANGE (`c`) and, when the source
 // already matched the basis, leaves the attribute columns blank. ITEM_IS_NEW is
 // never set, so the row is `cf` + 9 spaces rather than `>f+++++++++`.
@@ -2424,7 +2424,7 @@ fn itemize_reference_copied_file_reports_basis_drift() {
     assert_eq!(format_itemized_changes(&event, false), "cf..t......");
 }
 
-// upstream: generator.c:1133 hard_link_one() - a `--link-dest` exact match
+// upstream: generator.c:1170 hard_link_one() - a `--link-dest` exact match
 // hard-links from the basis and itemizes as `hf` + blank when identical.
 #[test]
 fn itemize_link_dest_hardlink_is_h_with_blank_attrs() {
@@ -2463,7 +2463,7 @@ fn itemize_reference_copied_symlink_is_cl_with_blank_attrs() {
     assert_eq!(format_itemized_changes(&event, false), "cL         ");
 }
 
-// upstream: generator.c:588-589 + rsync.h:265 - at plain `-i` (no `-vv`) the
+// upstream: generator.c:625-626 + rsync.h:266 - at plain `-i` (no `-vv`) the
 // blank copy-dest reconstruction rows carry only ITEM_LOCAL_CHANGE, which is
 // excluded from SIGNIFICANT_ITEM_FLAGS, so the emit gate drops them. Only `-vv`
 // (`emit_unchanged`) surfaces the `cf`/`cd`/`cL` rows.

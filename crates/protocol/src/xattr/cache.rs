@@ -33,7 +33,7 @@ use crate::xattr::{
 /// Converts a peer-supplied wire length to a `usize`, rejecting the values
 /// that must never reach an allocation.
 ///
-/// upstream: `read_varint_size()` (io.c:2125-2134) aborts with
+/// upstream: `read_varint_size()` (io.c:2132-2141) aborts with
 /// `exit_cleanup(RERR_PROTOCOL)` on a negative length or one past the field
 /// maximum. A bare `as usize` cast instead widens a negative varint into a
 /// ~2^64 length, which sizes a `vec![0u8; len]` and aborts the process on

@@ -96,7 +96,7 @@ pub fn create_partial_dir(dir: &Path) -> std::io::Result<()> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/util1.c:1616-1624` `handle_partial_dir()` - `do_lstat_at`
+/// - `rsync-3.5.2/util1.c:1616-1624` `handle_partial_dir()` - `do_lstat_at`
 ///   then, when the entry exists and is not a directory,
 ///   `do_unlink_at(dir) < 0` aborts, otherwise `do_mkdir_at` runs against the
 ///   cleared name. Without the unlink an obstruction is fatal, where upstream
@@ -617,7 +617,7 @@ mod tests {
     /// `/backup -> /mnt/disk` is the ordinary administrative layout, and
     /// refusing every parent symlink would break it.
     ///
-    /// upstream: `syscall.c:499` - uid 0 or our euid is trusted and followed.
+    /// upstream: `syscall.c:560` - uid 0 or our euid is trusted and followed.
     #[cfg(unix)]
     #[test]
     fn an_existing_partial_dir_behind_the_operators_own_parent_symlink_is_reused() {

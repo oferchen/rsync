@@ -107,7 +107,7 @@ impl From<BuildError> for StopAtError {
     }
 }
 
-// upstream: options.c:1281-1284 parse_time() - reference "now" comes from
+// upstream: options.c:1299-1302 parse_time() - reference "now" comes from
 // localtime(&now) and mktime() interprets the constructed tm as local time.
 // We mirror that by capturing the local OffsetDateTime once at the call site
 // and reusing its UTC offset for every candidate datetime.

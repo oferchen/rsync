@@ -99,7 +99,7 @@ impl SourceSpec {
     /// injects the entry (`implied_dot_dir`); `src/./f` re-roots the relative
     /// path at `src` without touching the destination root.
     ///
-    /// upstream: flist.c:2862-2881 and flist.c:2929-2932.
+    /// upstream: flist.c:2873-2892 and flist.c:2940-2943.
     pub(crate) fn implied_dot_dir(&self) -> Option<&Path> {
         self.implied_dot_dir.as_deref()
     }
@@ -214,7 +214,7 @@ fn detect_dot_dir_marker(operand: &OsStr) -> bool {
 /// `./` followed by more of the path. Off Unix an operand that is not valid
 /// Unicode never injects the entry.
 ///
-/// upstream: flist.c:2862-2881.
+/// upstream: flist.c:2873-2892.
 fn implied_dot_dir_anchor(operand: &OsStr) -> Option<PathBuf> {
     #[cfg(unix)]
     let bytes = {
@@ -318,7 +318,7 @@ fn detect_marker_components_unix(operand: &OsStr) -> Option<usize> {
             if start != index {
                 let component = &bytes[start..index];
                 if component == b"." {
-                    // upstream: `flist.c:2863` - the `--relative` root pivot
+                    // upstream: `flist.c:2874` - the `--relative` root pivot
                     // keys on the literal `/./` sequence, so the dot only
                     // moves the root when a separator FOLLOWS it. A trailing
                     // `/.` is a different decision: `flist.c:2843-2844` sets
@@ -615,7 +615,7 @@ pub fn operand_change_dir_failure(operand: &Path) -> Option<(PathBuf, io::Error)
         Ok(_) => io::Error::from(io::ErrorKind::NotADirectory),
         Err(error) => error,
     };
-    // upstream: flist.c:2852-2855 - a split at the leading `/` names `/`.
+    // upstream: flist.c:2863-2866 - a split at the leading `/` names `/`.
     if dir.as_os_str().is_empty() {
         return Some((PathBuf::from("/"), error));
     }
@@ -718,7 +718,7 @@ mod tests {
 
     #[test]
     fn source_spec_from_operand_dot_dir_copies_contents() {
-        // upstream flist.c:2843-2844 treats a `.` last component as contents-only,
+        // upstream flist.c:2854-2855 treats a `.` last component as contents-only,
         // identical to a trailing slash; a bare `.` must not error out trying
         // to derive a directory name from `file_name()`.
         for operand in [".", "foo/.", "/tmp/dir/."] {
@@ -727,7 +727,7 @@ mod tests {
         }
     }
 
-    /// upstream flist.c:2835-2842 - a trailing `..` component is a DOTDIR
+    /// upstream flist.c:2846-2853 - a trailing `..` component is a DOTDIR
     /// operand: upstream appends `/.` and sets `DOTDIR_NAME`, so the parent's
     /// contents are what gets transferred.
     #[test]
@@ -738,7 +738,7 @@ mod tests {
         }
     }
 
-    /// upstream flist.c:2821-2823 forces `NORMAL_NAME` before the `..` arm is
+    /// upstream flist.c:2832-2834 forces `NORMAL_NAME` before the `..` arm is
     /// reached, and flist.c:2898-2907 rejects the operand instead. `--relative`
     /// therefore never acquires the contents semantics.
     #[test]

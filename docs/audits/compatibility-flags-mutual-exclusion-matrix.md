@@ -75,8 +75,8 @@ protocol gating if any, and (c) oc-rsync's plumbing for the flag.
 
 - **Semantics.** Override checksum algorithm (`--checksum-choice`) or
   seed value (`--checksum-seed`). Upstream popt entries:
-  `options.c:740-741` (`--checksum-choice`, `--cc`) and
-  `options.c:835` (`--checksum-seed`).
+  `options.c:741-742` (`--checksum-choice`, `--cc`) and
+  `options.c:838` (`--checksum-seed`).
 - **Wire impact.** When `--checksum-choice=none` (`CSUM_NONE`) is
   selected, upstream `checksum.c:197-198` forces `whole_file = 1`
   because the delta algorithm requires a strong checksum. The choice
@@ -93,11 +93,11 @@ protocol gating if any, and (c) oc-rsync's plumbing for the flag.
 
 - **Semantics.** Write directly into the destination file rather than
   staging a temp file and renaming. Upstream popt:
-  `options.c:706-707`.
+  `options.c:707-708`.
 - **Wire impact.** Combines with `CF_INPLACE_PARTIAL_DIR` (bit 6)
   introduced at protocol 30 to allow `--partial-dir` to coexist with
   `--inplace`. Without that bit, upstream rejects the pair at
-  `options.c:2406-2414`.
+  `options.c:2461-2469`.
 - **oc-rsync.** Stored in three places: `ClientConfig` (line 229 of
   the builder), `ServerConfig`
   (`crates/transfer/src/config/builder.rs` -> `write.inplace`), and
@@ -110,15 +110,15 @@ protocol gating if any, and (c) oc-rsync's plumbing for the flag.
   Tri-state in upstream (`whole_file` defaults to `-1` at
   `options.c:46`; positive forces, zero disables, negative leaves the
   heuristic to local-copy detection). Popt entries
-  `options.c:734-736`.
+  `options.c:735-737`.
 - **Wire impact.** No `CF_*` bit. Emitted as the `W` capability char
-  in the server-arg string (`options.c:2622-2624`), suppressed when
+  in the server-arg string (`options.c:2677-2679`), suppressed when
   `--append` is active (handled by the conflict gate, see 4.).
 - **oc-rsync.** Stored as `ClientConfig::whole_file` (`Option<bool>`)
   at `crates/core/src/client/config/builder/mod.rs:177`. Server-arg
   emission at `crates/core/src/client/remote/invocation/builder.rs:540`
   and `crates/core/src/client/remote/flags.rs:96-98` (the latter
-  comment explicitly cites `options.c:2622` and notes that `W` is
+  comment explicitly cites `options.c:2677` and notes that `W` is
   suppressed when `--append` is active).
 
 ### 1.5 `--append` / `--append-verify`
@@ -126,12 +126,12 @@ protocol gating if any, and (c) oc-rsync's plumbing for the flag.
 - **Semantics.** Append to the receiver's existing data; only the
   byte range past the existing tail is transferred. `--append-verify`
   additionally re-checksums the basis range. Upstream popt:
-  `options.c:708-710`. `--append` increments `append_mode` (1 on the
-  client, `++` on the server: `options.c:1706-1711`); `--append-verify`
+  `options.c:709-711`. `--append` increments `append_mode` (1 on the
+  client, `++` on the server: `options.c:1733-1738`); `--append-verify`
   sets it directly to 2.
 - **Wire impact.** No `CF_*` bit. Forced to mode 2 at proto < 30 (see
   upstream `compat.c`). The server-args emission at
-  `options.c:2933-2936` emits `--append` once (client) or twice
+  `options.c:2998-3001` emits `--append` once (client) or twice
   (server, indicating verify).
 - **oc-rsync.** `ClientConfig::append` and `append_verify` at
   `crates/core/src/client/config/builder/mod.rs:230-231`. The
@@ -142,7 +142,7 @@ protocol gating if any, and (c) oc-rsync's plumbing for the flag.
 
 - **Semantics.** Keep partially transferred files on interruption so a
   rerun can resume. Receiver-local option; no wire footprint. Popt:
-  `options.c:761` (not shown above but follows the `--partial-dir`
+  `options.c:762` (not shown above but follows the `--partial-dir`
   block).
 - **Wire impact.** None.
 - **oc-rsync.** `ClientConfig::partial` at
@@ -153,7 +153,7 @@ protocol gating if any, and (c) oc-rsync's plumbing for the flag.
 ### 1.7 `--partial-dir=DIR`
 
 - **Semantics.** Stage partial files under `DIR` until the transfer
-  completes. Popt: `options.c:764`.
+  completes. Popt: `options.c:765`.
 - **Wire impact.** No bytes on the wire; the receiver still consults
   the filter chain for `DIR`. Coexistence with `--inplace` requires
   `CF_INPLACE_PARTIAL_DIR` (bit 6).
@@ -167,9 +167,9 @@ protocol gating if any, and (c) oc-rsync's plumbing for the flag.
 - **Semantics.** Stage every updated file in a `.~tmp~` directory and
   rename them all at the end of the run, so an interrupted run does
   not leave a half-updated tree. Popt:
-  `options.c:765-766`. Upstream silently sets
+  `options.c:766-767`. Upstream silently sets
   `partial_dir = tmp_partialdir` when `--delay-updates` is supplied
-  without an explicit `--partial-dir` (`options.c:2403-2404`).
+  without an explicit `--partial-dir` (`options.c:2458-2459`).
 - **Wire impact.** No wire bytes.
 - **oc-rsync.** `ClientConfig::delay_updates`
   (`crates/core/src/client/config/builder/mod.rs:228`),
@@ -180,12 +180,12 @@ protocol gating if any, and (c) oc-rsync's plumbing for the flag.
 
 - **Semantics.** Override the staging directory used for the
   conventional (non-`--inplace`) rename-into-place transfer. Popt:
-  `options.c:813` (client) and `:864` (server). Upstream validates
-  only the path length (`options.c:2158-2161`) - it does **not** mark
+  `options.c:816` (client) and `:864` (server). Upstream validates
+  only the path length (`options.c:2194-2197`) - it does **not** mark
   `--temp-dir` as incompatible with `--inplace`; the staging dir is
   simply unused when in-place writes are active.
 - **Wire impact.** Emitted as `--temp-dir <path>` in server args
-  (`options.c:2907-2909`).
+  (`options.c:2972-2974`).
 - **oc-rsync.** `ClientConfig::temp_directory`
   (`crates/core/src/client/config/builder/mod.rs:224`),
   `LocalCopyOptions::temp_dir`
@@ -232,19 +232,19 @@ Footnote validation sites:
   `Some(true)` whenever `checksum_choice.transfer_is_none()` returns
   true, silently overriding `--no-whole-file`. See G1 (RESOLVED).
 - [b] `--append` sets `inplace = 1` upstream
-  (`options.c:2392`). The `--inplace` and `--append`/`--append-verify`
-  pair is therefore redundant but accepted (`options.c:2406`). oc-rsync
+  (`options.c:2447`). The `--inplace` and `--append`/`--append-verify`
+  pair is therefore redundant but accepted (`options.c:2461`). oc-rsync
   treats `is_inplace = self.inplace || self.append`
   (`crates/core/src/client/config/builder/mod.rs:277`), so the pair
   produces the same effective state without error.
 - [c] `--inplace` implies `--partial` for refusal purposes (upstream
-  `options.c:2415-2421`, `keep_partial = 0`). The pair is accepted.
+  `options.c:2470-2476`, `keep_partial = 0`). The pair is accepted.
   oc-rsync accepts the pair by absence of any check
   (`crates/core/src/client/config/builder/mod.rs:276-296`).
 - [d] Upstream rejects `--inplace --partial-dir` unconditionally at
   parse time, before any capability negotiation
-  (`options.c:2424-2432`, exit 1). `CF_INPLACE_PARTIAL_DIR`
-  (`compat.c:727,778`) does not relax this option conflict; it only
+  (`options.c:2479-2487`, exit 1). `CF_INPLACE_PARTIAL_DIR`
+  (`compat.c:736,778`) does not relax this option conflict; it only
   enables the receiver's internal `one_inplace` optimization for a
   basis file located in the partial directory (`receiver.c:910`).
   oc-rsync mirrors upstream: `ClientConfigBuilder::validate()` rejects
@@ -253,33 +253,33 @@ Footnote validation sites:
   `INPLACE_PARTIAL_DIR` bit drives only the receiver optimization in
   `crates/transfer` (`config::inplace_partial`), never this validator.
 - [e] Upstream rejects `--inplace --delay-updates` at
-  `options.c:2406-2414` (the `partial_dir` message string covers both
+  `options.c:2461-2469` (the `partial_dir` message string covers both
   paths because `delay_updates` synthesises a `partial_dir` upstream).
   oc-rsync rejects the pair at
   `crates/core/src/client/config/builder/mod.rs:281-286` and at
   `crates/transfer/src/config/builder.rs:432-438` and at
   `crates/engine/src/local_copy/options/builder/validation.rs:17-22`.
 - [f] `--inplace --temp-dir` is accepted everywhere. The temp dir is
-  unused but not invalid (upstream `options.c:2158-2161` only checks
+  unused but not invalid (upstream `options.c:2194-2197` only checks
   the path length).
 - [g] `--append --whole-file` is rejected upstream at
-  `options.c:2382-2387` with the message `--append cannot be used with
+  `options.c:2437-2442` with the message `--append cannot be used with
   --whole-file`. oc-rsync now rejects the pair at config build time in
   `ClientConfigBuilder::validate`, matching upstream's message and
   exit code. See gap G3 (FIXED, PR #4049).
 - [h] `--append --partial-dir` is rejected upstream
-  (`options.c:2406-2414`, via the `--append` -> `inplace = 1`
+  (`options.c:2461-2469`, via the `--append` -> `inplace = 1`
   promotion). oc-rsync rejects the pair at
   `crates/core/src/client/config/builder/mod.rs:288-293` and at
   `crates/transfer/src/config/builder.rs:441-446`.
 - [i] `--append --delay-updates` is rejected upstream
-  (`options.c:2406-2414`, same promotion path). oc-rsync rejects the
+  (`options.c:2461-2469`, same promotion path). oc-rsync rejects the
   pair at `crates/core/src/client/config/builder/mod.rs:281-286`.
 - [j] `--partial` and either `--partial-dir` or `--delay-updates` are
   accepted. Upstream sets `keep_partial = 1` whenever `partial_dir` is
   non-NULL, and sets `partial_dir = tmp_partialdir` when
   `delay_updates` is supplied without an explicit `partial_dir`
-  (`options.c:2403-2404`). oc-rsync mirrors this:
+  (`options.c:2458-2459`). oc-rsync mirrors this:
   `partial_directory(Some(...))` flips `partial = true`
   (`crates/core/src/client/config/builder/tests.rs:910-914`), and the
   `delay_updates -> partial_dir = .~tmp~` promotion runs at config
@@ -287,7 +287,7 @@ Footnote validation sites:
   `LocalCopyOptions::apply_delay_updates_partial_dir_default`. See
   gap G4 (FIXED, PR #4050).
 - [k] `--delay-updates --partial-dir=DIR` is accepted. Upstream
-  honours `DIR` for the staging tree (`options.c:2434-2438`).
+  honours `DIR` for the staging tree (`options.c:2489-2493`).
   oc-rsync accepts the pair by absence of any check.
 
 ## 3. Where validation lives in oc-rsync
@@ -343,10 +343,10 @@ PR cited in each heading and in the **Status** bullet.
 
 ### G2 - `--inplace --partial-dir` is a user-facing conflict, not a negotiable option (RESOLVED)
 
-- **Upstream behaviour.** `options.c:2424-2432` rejects
+- **Upstream behaviour.** `options.c:2479-2487` rejects
   `--inplace`/`--append` + `--partial-dir` unconditionally at parse
   time (exit 1), before any capability exchange.
-  `CF_INPLACE_PARTIAL_DIR` (`compat.c:727,778`, bit 6, protocol 30)
+  `CF_INPLACE_PARTIAL_DIR` (`compat.c:736,778`, bit 6, protocol 30)
   does **not** bypass this rejection; it only sets `inplace_partial`,
   which drives the receiver's internal `one_inplace` optimization for
   a basis file found in the partial directory (`receiver.c:910`). The
@@ -364,7 +364,7 @@ PR cited in each heading and in the **Status** bullet.
 
 ### G3 - `--append --whole-file` accepted instead of rejected (FIXED, PR #4049)
 
-- **Upstream behaviour.** `options.c:2382-2387` rejects the pair with
+- **Upstream behaviour.** `options.c:2437-2442` rejects the pair with
   `--append cannot be used with --whole-file`, exit code 1.
 - **oc-rsync behaviour (historical).** Accepted; the `W` capability
   char was silently suppressed at
@@ -377,11 +377,11 @@ PR cited in each heading and in the **Status** bullet.
 - **Status.** FIXED in PR #4049. `ClientConfigBuilder::validate`
   now rejects the pair at config build time with the upstream message
   `--append cannot be used with --whole-file`, matching
-  `options.c:2382-2387`.
+  `options.c:2437-2442`.
 
 ### G4 - `--delay-updates` promotion to `partial_dir = ".~tmp~"` happens after the config builder (FIXED, PR #4050)
 
-- **Upstream behaviour.** `options.c:2403-2404` synthesises a partial
+- **Upstream behaviour.** `options.c:2458-2459` synthesises a partial
   directory when `--delay-updates` is supplied without
   `--partial-dir`. The synthesised value is then used everywhere
   downstream as if the user had supplied `--partial-dir=.~tmp~`.
@@ -401,7 +401,7 @@ PR cited in each heading and in the **Status** bullet.
   as a deterministic finalisation step in
   `LocalCopyOptionsBuilder::build_unchecked()`, so the post-build
   config reflects the synthesised `partial_dir` exactly as upstream
-  does at `options.c:2403`.
+  does at `options.c:2458`.
 
 ## 5. Resolution summary (historical)
 

@@ -20,7 +20,7 @@
 // an ancestor's guard is held while a descendant's is entered, so the descendant
 // inherits the ancestor's rules.
 //
-// upstream: generator.c:285-360 delete_in_dir pushes the destination per-dir filters
+// upstream: generator.c:320-395 delete_in_dir pushes the destination per-dir filters
 // onto a separate delete_filt chain (change_local_filter_dir pops filters at
 // depth > current, then push_local_filters loads this dir's rules) and never
 // perturbs the sender filter_list; exclude.c:858 push_local_filters keeps

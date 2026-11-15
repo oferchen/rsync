@@ -182,7 +182,7 @@ mod tests {
         XattrEntry::abbreviated(name.as_bytes().to_vec(), checksum, value.len())
     }
 
-    // upstream: xattrs.c:583-589 - generator.c:581 calls xattr_diff(file, NULL, 1)
+    // upstream: xattrs.c:583-589 - generator.c:618 calls xattr_diff(file, NULL, 1)
     // for a brand-new file, so rec_cnt == 0 and every abbreviated sender entry
     // is not-same and lands in XSTATE_TODO. Without this the receiver never
     // requests the value and a large xattr on a new file is silently dropped.

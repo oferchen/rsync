@@ -41,7 +41,7 @@ pub(crate) struct SourceRemovalDrains {
 
 impl GeneratorContext {
     /// The file-list banner this sender prints on its own client-visible
-    /// output: upstream's choice in `send_file_list()` (flist.c:2761-2764)
+    /// output: upstream's choice in `send_file_list()` (flist.c:2772-2775)
     /// between `building file list ... done` and `sending incremental file
     /// list`, keyed on the negotiated `CF_INC_RECURSE` bit rather than on
     /// `--recursive`.
@@ -137,12 +137,12 @@ impl GeneratorContext {
         mut progress: Option<&mut dyn super::super::super::TransferProgressCallback>,
         mut itemize: Option<&mut dyn super::super::super::ItemizeCallback>,
     ) -> io::Result<GeneratorStats> {
-        // upstream: io.c:1721-1732 - MSG_BLOCK_STATS is valid on the sender only
+        // upstream: io.c:1728-1739 - MSG_BLOCK_STATS is valid on the sender only
         // once protocol 33 is negotiated; anywhere else it is an invalid message.
         if self.protocol.supports_block_stats() {
             io.input().accept_block_stats();
         }
-        // upstream: log.c:357-366 - a server sender's rwrite() frames a peer's
+        // upstream: log.c:437-446 - a server sender's rwrite() frames a peer's
         // MSG_INFO/MSG_ERROR back to the client; its stdout may be the stream.
         io.input()
             .set_local_role(crate::reader::LocalRole::from_client_mode(
@@ -164,7 +164,7 @@ impl GeneratorContext {
         // upstream: main.c:1294 - recv_filter_list() in server mode
         self.receive_filter_list_if_server(io.input())?;
 
-        // upstream: flist.c:2761-2764 send_file_list() - a client-side sender
+        // upstream: flist.c:2772-2775 send_file_list() - a client-side sender
         // prints its file-list banner before the walk produces any per-file
         // output. Write it DIRECTLY to the client stream: the deferred
         // `info_log!` event buffer is only drained by the CLI after the live
@@ -177,7 +177,7 @@ impl GeneratorContext {
             flist_banner.start(FlistSide::Sender, out)
         })?;
 
-        // upstream: flist.c:2476-2503 - resolve --files-from paths if configured.
+        // upstream: flist.c:2487-2514 - resolve --files-from paths if configured.
         // Below protocol 31 the client forwards the names un-multiplexed, so
         // they are read past the demultiplexer (flist.c:2792-2798).
         let files_from_entries = if self.protocol.forwards_files_from_unmultiplexed() {
@@ -191,13 +191,13 @@ impl GeneratorContext {
             .advance_to(TransferPhase::FileListTransfer)
             .map_err(crate::fsm_error)?;
 
-        // upstream: flist.c:2739 - send_file_list()
+        // upstream: flist.c:2750 - send_file_list()
         let file_count = {
             let _t = PhaseTimer::new("file-list-build-send");
             let build = if files_from_entries.is_empty() {
                 self.build_file_list(paths)
             } else {
-                // upstream: flist.c:2476-2480 - argv[0] is the base for --files-from
+                // upstream: flist.c:2487-2491 - argv[0] is the base for --files-from
                 let base_dir = paths.first().cloned().unwrap_or_else(|| PathBuf::from("."));
                 self.build_file_list_with_base(&base_dir, &files_from_entries)
             };
@@ -215,7 +215,7 @@ impl GeneratorContext {
             self.flush_flist_diagnostics(io.output())?;
             self.send_file_list(io.output())?
         };
-        // upstream: flist.c:3037-3038 - finish_filelist_progress() once the
+        // upstream: flist.c:3048-3049 - finish_filelist_progress() once the
         // list (and its end marker) is on the wire.
         with_client_stream(msgs_to_stderr, |out| {
             flist_banner.finish(FlistSide::Sender, file_count, out)
@@ -228,7 +228,7 @@ impl GeneratorContext {
         self.send_id_lists(io.output())?;
         self.send_io_error_flag(io.output())?;
 
-        // upstream: main.c:1392 - client_run() prints `file list sent` at
+        // upstream: main.c:1396 - client_run() prints `file list sent` at
         // DEBUG_GTE(FLIST, 3); the server sender has no such line.
         if self.config.connection.client_mode {
             protocol::flist::trace_file_list_sent();
@@ -256,7 +256,7 @@ impl GeneratorContext {
         // Server-side only, exactly as upstream: a client-mode sender (push)
         // runs send_files() unconditionally from client_run() (main.c:1361).
         if file_count == 0 && !self.config.connection.client_mode {
-            // upstream: cleanup.c:194-195 - exit_cleanup(0) runs
+            // upstream: cleanup.c:195-196 - exit_cleanup(0) runs
             // io_flush(FULL_FLUSH). send_file_list() leaves its output
             // buffered (main.c:1398 flushes it later on the normal path), so
             // without this the peer never sees the end of the empty list.
@@ -282,7 +282,7 @@ impl GeneratorContext {
         }
 
         // INC_RECURSE sub-lists are sent lazily inside the loop via
-        // SegmentScheduler, matching upstream sender.c:516,550 cadence.
+        // SegmentScheduler, matching upstream sender.c:524,550 cadence.
         let transfer_result = {
             let _t = PhaseTimer::new("generator-transfer-loop");
             self.run_transfer_loop(io, &mut progress, &mut itemize)?
@@ -424,7 +424,7 @@ impl GeneratorContext {
             .advance_to(TransferPhase::Complete)
             .map_err(crate::fsm_error)?;
 
-        // upstream: log.c:337-338 - each MSG_ERROR_XFER the peer sends sets
+        // upstream: log.c:417-418 - each MSG_ERROR_XFER the peer sends sets
         // got_xfer_error on receipt; cleanup.c:217-218 then reports
         // RERR_PARTIAL. The receiver emits MSG_ERROR_XFER when it cannot open a
         // file's output (e.g. mkstemp() denied by a read-only destination dir)
@@ -460,7 +460,7 @@ impl GeneratorContext {
             bytes_read: total_read,
             matched_data: transfer_result.matched_data,
             literal_data: transfer_result.literal_data,
-            // upstream: io.c:1727 stores the remote receiver's count, read off
+            // upstream: io.c:1734 stores the remote receiver's count, read off
             // the wire before the final goodbye NDX_DONE; 0 when none arrived.
             touched_blocks_4k: io.input().touched_blocks_4k(),
             total_size: flist_send_stats.total_size,

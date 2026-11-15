@@ -237,7 +237,7 @@ impl FilterRuleWireFormat {
 
 /// Reads a 4-byte little-endian integer from the stream.
 ///
-/// This mirrors upstream rsync's `read_int()` function in io.c:2003,
+/// This mirrors upstream rsync's `read_int()` function in io.c:2010,
 /// which reads 4 bytes and interprets them as a little-endian int32.
 fn read_i32_le(reader: &mut dyn Read) -> io::Result<i32> {
     let mut buf = [0u8; 4];
@@ -247,7 +247,7 @@ fn read_i32_le(reader: &mut dyn Read) -> io::Result<i32> {
 
 /// Writes a 4-byte little-endian integer to the stream.
 ///
-/// This mirrors upstream rsync's `write_int()` function in io.c:2380,
+/// This mirrors upstream rsync's `write_int()` function in io.c:2387,
 /// which writes 4 bytes as a little-endian int32.
 fn write_i32_le(writer: &mut dyn Write, value: i32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
@@ -290,7 +290,7 @@ fn wire_bytes_to_pattern(bytes: &[u8]) -> OsString {
 
 /// Largest filter-rule record accepted from a peer, in bytes.
 ///
-/// upstream: rsync.h:766-770 defines
+/// upstream: rsync.h:782-786 defines
 /// `BIGPATHBUFLEN = MAXPATHLEN < 4096 ? 4096+1024 : MAXPATHLEN+1024`, and
 /// `recv_filter_list` sizes its receive buffer with it (exclude.c:1973).
 ///

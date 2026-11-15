@@ -183,7 +183,7 @@ three places, all in `crates/matching/src/generator.rs`:
 
 The bulk-recompute site at `generator.rs:370-373` is the only matcher
 caller that engages the SIMD AVX2/SSE2/NEON paths. The upstream
-reference (`match.c:303-308`) is cited in the comment at
+reference (`match.c:318-323`) is cited in the comment at
 `generator.rs:347-348`, and the call is reached every time
 `hash_search` finds a match and refills the window. Coverage:
 

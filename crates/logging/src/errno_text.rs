@@ -1,6 +1,6 @@
 //! Upstream's `rsyserr()`: an OS error rendered as `strerror(errno) (errno)`.
 //!
-//! upstream: log.c:480-500 `rsyserr(code, errcode, format, ...)` writes
+//! upstream: log.c:565-585 `rsyserr(code, errcode, format, ...)` writes
 //! `RSYNC_NAME ": [" who_am_i() "] "`, the formatted message, then
 //! `": %s (%d)\n"` with `strerror(errcode)` and `errcode`. Every site that
 //! reports a failed system call goes through it, so the errno text is built at

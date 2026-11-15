@@ -20,8 +20,8 @@
 //!
 //! # References
 //!
-//! - Upstream: `compat.c:538-574` (negotiate_the_strings)
-//! - Upstream: `compat.c:333-407` (parse_negotiate_str, recv_negotiate_str)
+//! - Upstream: `compat.c:539-575` (negotiate_the_strings)
+//! - Upstream: `compat.c:334-408` (parse_negotiate_str, recv_negotiate_str)
 
 mod algorithms;
 mod env_list;

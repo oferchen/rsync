@@ -22,12 +22,12 @@ use super::super::super::paths::partial_dir_fname;
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/generator.c:2173-2179` - `partial_dir && (partialptr =
+/// - `rsync-3.5.2/generator.c:2214-2220` - `partial_dir && (partialptr =
 ///   partial_dir_fname(fname)) != NULL && link_stat(partialptr, &partial_st, 0)
 ///   == 0 && S_ISREG(partial_st.st_mode)`, otherwise `partialptr = NULL`.
 ///   `link_stat(..., 0)` is an `lstat`, so a symlink planted at the partial leaf
 ///   is not a regular file and is refused here exactly as it is there.
-/// - `rsync-3.5.1/receiver.c:1153-1155` - `one_inplace = inplace_partial &&
+/// - `rsync-3.5.2/receiver.c:1153-1155` - `one_inplace = inplace_partial &&
 ///   fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`.
 ///
 /// The `inplace_partial` half of that conjunction is the protocol-30
@@ -107,7 +107,7 @@ pub(in crate::local_copy) enum WriteStrategy {
 /// partial-dir entry is the update target it IS the target, whichever other
 /// in-place mode is also on. `--inplace`/`--append` and `--partial-dir` are in
 /// fact rejected together during config validation
-/// (`core/src/client/config/builder`, upstream `options.c:2575-2582`), so the
+/// (`core/src/client/config/builder`, upstream `options.c:2630-2637`), so the
 /// precedence is not observable through the CLI; it is written this way so it
 /// stays upstream's if the two are ever wired together.
 ///
@@ -303,7 +303,7 @@ pub(in crate::local_copy) fn open_destination_writer(
                     ),
                 ));
             };
-            // upstream: generator.c:2270-2273 makes `partialptr` the delta basis
+            // upstream: generator.c:2312-2315 makes `partialptr` the delta basis
             // (`fnamecmp = partialptr; fnamecmp_type = FNAMECMP_PARTIAL_DIR`) as
             // well as the in-place target, so the reconstruction reads the entry
             // it is rewriting and a final `ftruncate` sizes the result. Truncate

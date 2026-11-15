@@ -26,20 +26,20 @@ struct ModuleRequestContext<'a> {
     module_peer_host: Option<&'a str>,
     /// Whether a reverse lookup was in scope for this session (global default
     /// OR the module override), which selects between upstream's two
-    /// no-name sentinels. upstream: clientserver.c:768 `lp_reverse_lookup(i)`.
+    /// no-name sentinels. upstream: clientserver.c:772 `lp_reverse_lookup(i)`.
     reverse_lookup: bool,
     request: &'a str,
     log_sink: Option<&'a SharedLogSink>,
     messages: &'a LegacyMessageCache,
     /// Early-input data sent by the client before the module name.
     ///
-    /// upstream: clientserver.c:630-631 `write_pre_exec_args()` - the daemon
+    /// upstream: clientserver.c:634-635 `write_pre_exec_args()` - the daemon
     /// writes `early_input` to the stdin of the `early exec` command
     /// (`exec_type == 1`).
     early_input_data: Option<Vec<u8>>,
     /// Digest name list the client advertised in its `@RSYNCD:` greeting.
     ///
-    /// upstream: clientserver.c:228-233 - `exchange_protocols()` stores it in the
+    /// upstream: clientserver.c:232-237 - `exchange_protocols()` stores it in the
     /// `daemon_auth_choices` global, which `negotiate_daemon_auth()` consumes at
     /// authentication time (compat.c:868-869). An advertised-but-empty list is a
     /// different state from no list at all, so the distinction is carried in the
@@ -48,7 +48,7 @@ struct ModuleRequestContext<'a> {
     /// The client's greeting protocol when it lies outside the supported window,
     /// refused at the setup_protocol point after `@RSYNCD: OK`.
     ///
-    /// upstream: clientserver.c:209 stores `remote_protocol` unchecked;
+    /// upstream: clientserver.c:213 stores `remote_protocol` unchecked;
     /// compat.c:621-625 rejects it once the module request has been accepted.
     unsupported_peer_protocol: Option<u32>,
     /// Set when the session must end the way upstream's forked child would
@@ -59,7 +59,7 @@ struct ModuleRequestContext<'a> {
     /// the process exit status.
     session_exit_code: &'a mut Option<ExitCode>,
     /// The expanded `post-xfer exec` command, set once the module reaches
-    /// upstream's post-xfer fork point (clientserver.c:967). Every later abort
+    /// upstream's post-xfer fork point (clientserver.c:971). Every later abort
     /// runs it; an abort before that point does not.
     post_xfer_command: Option<String>,
     /// Typed FSM state tracking the connection lifecycle phase.
@@ -113,9 +113,9 @@ enum RefusalPhase {
 }
 
 impl RefusalPhase {
-    /// upstream: `cleanup.c:263-264` - `if (am_server && exit_code) msleep(100)`.
+    /// upstream: `cleanup.c:264-265` - `if (am_server && exit_code) msleep(100)`.
     const SERVER_EXIT: Duration = Duration::from_millis(100);
-    /// upstream: `clientserver.c:1266` - `msleep(400)` before `exit_cleanup()`.
+    /// upstream: `clientserver.c:1275` - `msleep(400)` before `exit_cleanup()`.
     const POST_HANDSHAKE_EXTRA: Duration = Duration::from_millis(400);
 
     const fn linger(self) -> Duration {
@@ -138,7 +138,7 @@ fn linger_before_close(phase: RefusalPhase) {
 /// Writes exactly `<payload>\n` and nothing more. Upstream never follows an
 /// `@ERROR:` line with `@RSYNCD: EXIT`: the client treats `@ERROR` as fatal
 /// and returns immediately without reading further
-/// (upstream: clientserver.c:424-428 - `strncmp(line, "@ERROR", 6) == 0` ->
+/// (upstream: clientserver.c:428-432 - `strncmp(line, "@ERROR", 6) == 0` ->
 /// `return -1`), so the server just emits the line and lets the socket close.
 /// Only the successful module-listing path emits `@RSYNCD: EXIT`.
 ///
@@ -163,7 +163,7 @@ fn send_error(
 /// Sends a fatal error to the client through the multiplex stream and
 /// terminates the session.
 ///
-/// upstream: clientserver.c:1226-1265 - once `io_start_multiplex_out()`
+/// upstream: clientserver.c:1235-1274 - once `io_start_multiplex_out()`
 /// has run (which happens after the `@RSYNCD: OK` exchange) the daemon
 /// emits errors via `rwrite(FERROR, ...)`, encoded as a `MSG_ERROR_XFER`
 /// frame, followed by `MSG_ERROR_EXIT` to synchronize the error exit.
@@ -187,7 +187,7 @@ fn send_multiplexed_error_and_exit(
         frame_bytes.push(b'\n');
         MessageFrame::new(MessageCode::ErrorXfer, frame_bytes)?.encode_into_writer(&mut buffer)?;
     }
-    // upstream: io.c:1183 send_msg_int() - little-endian 4-byte exit code.
+    // upstream: io.c:1190 send_msg_int() - little-endian 4-byte exit code.
     MessageFrame::new(MessageCode::ErrorExit, exit_code.to_le_bytes().to_vec())?
         .encode_into_writer(&mut buffer)?;
     write_limited(stream, limiter, &buffer)?;
@@ -203,7 +203,7 @@ fn send_multiplexed_error_and_exit(
 /// message. This prevents unauthenticated clients from probing which hidden
 /// modules exist.
 ///
-/// upstream: clientserver.c:773-783 - when `!lp_list(i)`, sends
+/// upstream: clientserver.c:777-787 - when `!lp_list(i)`, sends
 /// `@ERROR: Unknown module '%s'`; otherwise sends
 /// `@ERROR: access denied to %s from %s (%s)`.
 fn deny_module(
@@ -215,7 +215,7 @@ fn deny_module(
 ) -> io::Result<()> {
     let module_display = sanitize_module_identifier(&module.name);
     let error = if !module.listable {
-        // upstream: clientserver.c:776-777 - hide module existence for non-listable modules.
+        // upstream: clientserver.c:780-781 - hide module existence for non-listable modules.
         AtError::UnknownModule(module_display.into_owned())
     } else {
         AtError::AccessDenied {
@@ -245,7 +245,7 @@ fn send_daemon_ok(
 /// Sends an error message indicating the connection limit was reached and logs
 /// the event. `limit` is the configured number rendered verbatim, so a module
 /// disabled with a negative `max connections` keeps its minus sign, matching
-/// upstream's `%d` in clientserver.c:797-800.
+/// upstream's `%d` in clientserver.c:801-804.
 ///
 /// `active` arrives on the refusal itself rather than being read back from the
 /// module, because the mechanism that refused is the only one that knows it:
@@ -289,7 +289,7 @@ fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> i
 
 /// Handles refused options for a module after `@RSYNCD: OK` has been emitted.
 ///
-/// upstream: clientserver.c:1152-1268 - once the daemon has acknowledged the
+/// upstream: clientserver.c:1156-1277 - once the daemon has acknowledged the
 /// module, errors detected after `read_args()` (including refused options
 /// matched against the real argv in `parse_arguments()`) must be delivered
 /// through the multiplexed stream. Upstream funnels them through the very
@@ -310,7 +310,7 @@ fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> i
 /// byte `T` from "The server ..." minus `MPLEX_BASE = 7`).
 ///
 /// The `MSG_ERROR_EXIT` payload carries `RERR_UNSUPPORTED`, not
-/// `RERR_SYNTAX`. upstream: clientserver.c:1254-1268 - the single post-OK
+/// `RERR_SYNTAX`. upstream: clientserver.c:1263-1277 - the single post-OK
 /// fatal branch (`if (!ret || err_msg)`) covers both a refused option and a
 /// failed `pre-xfer exec`, and it ends in `exit_cleanup(RERR_UNSUPPORTED)`
 /// at clientserver.c:1267. That is the code the peer observes; the sibling
@@ -323,7 +323,7 @@ fn handle_refused_option_post_handshake(
     client_args: &[String],
 ) -> io::Result<()> {
     finalize_post_ok_protocol_for_error(ctx, protocol_version, client_args)?;
-    // upstream: options.c:915 option_error() - `rprintf(FERROR, RSYNC_NAME
+    // upstream: options.c:933 option_error() - `rprintf(FERROR, RSYNC_NAME
     // ": %s", err_buf)`; over the multiplexed stream there is no `@ERROR:`.
     let text = format!("rsync: {}", refused_option_message(refused));
     send_multiplexed_error_and_exit(
@@ -369,13 +369,13 @@ fn handle_access_denied_post_handshake(
 /// Rejects a post-`@RSYNCD: OK` client-argument parse failure through the
 /// multiplexed error path.
 ///
-/// upstream: clientserver.c:1254-1267 - when `parse_arguments()` returns 0 (or
+/// upstream: clientserver.c:1263-1276 - when `parse_arguments()` returns 0 (or
 /// leaves a deferred `err_msg`), `rsync_module()` runs `option_error()`, which
 /// emits the parser's own `err_buf` text over `FERROR`
 /// (options.c:915 `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`), and then
 /// `exit_cleanup(RERR_UNSUPPORTED)`. Both writes happen *after* the
 /// `setup_protocol()` + `io_start_multiplex_out()` pair at
-/// clientserver.c:1226-1252, which upstream performs precisely so "we can get
+/// clientserver.c:1235-1261, which upstream performs precisely so "we can get
 /// the error back to the client".
 ///
 /// Delivering this rejection with [`send_error`] instead put raw `@ERROR:`
@@ -404,7 +404,7 @@ fn handle_client_arg_rejection_post_handshake(
 /// daemon writes before turning on `io_start_multiplex_out()` for an error
 /// it needs to deliver after `@RSYNCD: OK`.
 ///
-/// upstream: clientserver.c:1226-1252 - when `read_args()` succeeds but
+/// upstream: clientserver.c:1235-1261 - when `read_args()` succeeds but
 /// `parse_arguments()` rejects an option (or any other post-OK fatal path),
 /// the daemon still has to finish the protocol setup that the client also
 /// runs unconditionally. Without it the client decodes the daemon's first
@@ -434,7 +434,7 @@ fn finalize_post_ok_protocol_for_error(
     };
     let stream = ctx.reader.get_mut();
     if protocol.uses_binary_negotiation() {
-        // upstream: compat.c:745-750 - server writes compat_flags as a
+        // upstream: compat.c:754-759 - server writes compat_flags as a
         // varint (or as a single byte when the client advertised the
         // pre-release `V` capability). Parse the client's `-e` capability
         // string out of the post-OK argv so the advertised flags match the
@@ -442,7 +442,7 @@ fn finalize_post_ok_protocol_for_error(
         let client_info = parse_client_capability_info(client_args);
         let compat_flags = build_default_post_ok_compat_flags(&client_info);
         if has_pre_release_capability(&client_info, 'V') {
-            // upstream: compat.c:745-748 - pre-release 'V' clients encode
+            // upstream: compat.c:754-757 - pre-release 'V' clients encode
             // the compat-flags byte directly rather than as a varint.
             // The flags we advertise here intentionally omit
             // `VARINT_FLIST_FLAGS`, even though upstream would have OR'd
@@ -456,7 +456,7 @@ fn finalize_post_ok_protocol_for_error(
             write_limited(stream, ctx.limiter, &buf)?;
         }
     }
-    // upstream: compat.c:823-825 - server writes a 4-byte little-endian
+    // upstream: compat.c:832-834 - server writes a 4-byte little-endian
     // checksum seed regardless of protocol version. The value is unused
     // because we abort before any transfer, but the slot has to be filled
     // so the client's matching `read_int()` consumes the same bytes
@@ -468,7 +468,7 @@ fn finalize_post_ok_protocol_for_error(
 }
 
 /// Extracts the `-e<info>` capability string the client emitted in its
-/// post-OK argv, matching upstream `compat.c:163-179`'s `client_info`.
+/// post-OK argv, matching upstream `compat.c:164-180`'s `client_info`.
 ///
 /// The capability characters live after the literal `.` separator in
 /// arguments such as `-vlogDtprez.iLsfxCIvu` or `-e.LsfxCIvu`. When the
@@ -495,7 +495,7 @@ fn parse_client_capability_info(client_args: &[String]) -> String {
 /// `V` letter that upstream uses to gate the single-byte compat-flags
 /// encoding.
 ///
-/// Matches upstream `compat.c:745` - `strchr(client_info, 'V') != NULL`.
+/// Matches upstream `compat.c:754` - `strchr(client_info, 'V') != NULL`.
 fn has_pre_release_capability(client_info: &str, letter: char) -> bool {
     client_info.contains(letter)
 }
@@ -504,7 +504,7 @@ fn has_pre_release_capability(client_info: &str, letter: char) -> bool {
 /// session, restricted to the subset that does *not* trigger upstream's
 /// variable-string negotiation step.
 ///
-/// upstream: compat.c:535-565 - `negotiate_the_strings()` is gated on
+/// upstream: compat.c:536-566 - `negotiate_the_strings()` is gated on
 /// `do_negotiated_strings`, which the client only sets when the server's
 /// compat flags carry `CF_VARINT_FLIST_FLAGS`. Refused-options aborts
 /// never reach the file-list phase, so we deliberately *do not* advertise
@@ -557,7 +557,7 @@ fn handle_authentication(
         // `@RSYNCD: OK` is deferred to the caller: upstream emits it only after
         // chroot + privilege drop succeed (clientserver.c:1152), so those
         // failures stay raw pre-OK lines instead of desyncing the client.
-        // upstream: authenticate.c:301-303 - an empty/absent `auth users` list
+        // upstream: authenticate.c:296-298 - an empty/absent `auth users` list
         // lets anyone in with no access-level override, so `read only` stays.
         return Ok(Some((None, UserAccessLevel::Default)));
     }
@@ -579,14 +579,14 @@ fn handle_authentication(
         ctx.log_sink,
     )? {
         AuthenticationStatus::DigestUnsupported => {
-            // upstream: compat.c:882-886 - `exit_cleanup(RERR_UNSUPPORTED)` right
+            // upstream: compat.c:891-895 - `exit_cleanup(RERR_UNSUPPORTED)` right
             // after the refusal line, with no challenge and no auth-failure log.
             *ctx.session_exit_code = Some(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE);
             ctx.conn_state = ctx.conn_state.close();
             Ok(None)
         }
         AuthenticationStatus::Denied(denial) => {
-            // upstream: authenticate.c:433 writes the FLOG auth-failure line
+            // upstream: authenticate.c:428 writes the FLOG auth-failure line
             // from inside auth_server(); only after it returns NULL does
             // rsync_module() emit `@ERROR: auth failed on module %s`
             // (clientserver.c:812). The log must therefore be on disk BEFORE
@@ -712,7 +712,7 @@ fn respond_with_module_request(
         );
     };
 
-    // upstream: clientserver.c:956 `log_init(1)` reopens the daemon log to
+    // upstream: clientserver.c:960 `log_init(1)` reopens the daemon log to
     // `lp_log_file(module_id)` once the module is selected, so every subsequent
     // diagnostic for this connection lands in the module's `log file`. Keep the
     // reopened sink alive for the rest of the request; shadow `log_sink` so the
@@ -721,7 +721,7 @@ fn respond_with_module_request(
     let log_sink = module_log_sink.as_ref().or(log_sink);
 
     let mut hostname_cache: Option<Option<String>> = None;
-    // upstream: clientserver.c:1525 resolves the host when `lp_reverse_lookup(-1)`
+    // upstream: clientserver.c:1535 resolves the host when `lp_reverse_lookup(-1)`
     // (the global default = `reverse_lookup`) is set, then rsync_module (:768-769)
     // resolves it per-module when `lp_reverse_lookup(i)` is set. The effective
     // per-module value is therefore the global default OR the module override.
@@ -747,7 +747,7 @@ fn respond_with_module_request(
         conn_state,
     };
 
-    // upstream: clientserver.c:773 `allow_access(addr, &host, i)` is handed the
+    // upstream: clientserver.c:777 `allow_access(addr, &host, i)` is handed the
     // same never-empty host string the log lines use, sentinels included - so a
     // `hosts allow = UNKNOWN` line works as clientname.c:93-95 documents.
     let access_host = PeerHost::new(module_peer_host, module_reverse_lookup);

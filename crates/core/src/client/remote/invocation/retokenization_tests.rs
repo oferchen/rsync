@@ -241,7 +241,7 @@ const HOSTILE_PATH: &str = r#"/remote/dir with\slash and"quote/file"#;
 fn default_command_line_survives_posix_but_not_windows_retokenization() {
     // Default config: protect_args unset -> oc emits the paths on the command
     // line, backslash-escaped exactly like upstream `options.c:safe_arg()`
-    // (`options.c:2103-2113`: both oc and upstream default protect_args to 0).
+    // (`options.c:2139-2149`: both oc and upstream default protect_args to 0).
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let cmd_args = builder.build_with_paths(&[OsStr::new(HOSTILE_PATH)]);

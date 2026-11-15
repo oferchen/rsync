@@ -88,7 +88,7 @@ Priority order based on complexity and dependency:
 - Investigate: server arg parsing for `--log-format=%i` → `info_flags.itemize = true`
 - Investigate: `crates/transfer/src/receiver/mod.rs:412-424` - receiver emit_itemize
 - Investigate: `crates/transfer/src/writer/msg_info.rs:34-44` - MsgInfoSender for ServerWriter
-- Reference: upstream `log.c:330-340`, `sender.c:287,430`
+- Reference: upstream `log.c:410-420`, `sender.c:295,430`
 
 **Steps:**
 1. Read upstream `log.c:rwrite()` to understand client-side vs server-side output routing

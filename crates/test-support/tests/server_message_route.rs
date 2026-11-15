@@ -30,7 +30,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use test_support::transcript::TranscriptRecorder;
 
-/// upstream: rsync.h:263-267 - `MSG_ERROR_XFER = 1`, `MSG_ERROR = 3`,
+/// upstream: rsync.h:264-268 - `MSG_ERROR_XFER = 1`, `MSG_ERROR = 3`,
 /// `MSG_WARNING = 4`.
 const ERROR_CODES: [u8; 3] = [1, 3, 4];
 

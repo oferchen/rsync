@@ -26,10 +26,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/flist.c:2835-2842` - the `/.` append and `DOTDIR_NAME`.
-//! - `rsync-3.5.1/flist.c:2821-2823` - the `--relative` short-circuit above it.
-//! - `rsync-3.5.1/flist.c:2850-2861` - the non-relative last-`/` split.
-//! - `rsync-3.5.1/flist.c:2898-2907` - the `--relative` `..` rejection.
+//! - `rsync-3.5.2/flist.c:2846-2853` - the `/.` append and `DOTDIR_NAME`.
+//! - `rsync-3.5.2/flist.c:2832-2834` - the `--relative` short-circuit above it.
+//! - `rsync-3.5.2/flist.c:2861-2872` - the non-relative last-`/` split.
+//! - `rsync-3.5.2/flist.c:2909-2918` - the `--relative` `..` rejection.
 
 #![cfg(unix)]
 

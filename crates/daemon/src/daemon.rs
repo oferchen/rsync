@@ -115,9 +115,9 @@ pub(crate) const RERR_SYNTAX_EXIT_CODE: i32 = 1;
 /// upstream: errcode.h:28 - `#define RERR_UNSUPPORTED 4`
 ///
 /// A refused option and a failed `pre-xfer exec` script share one exit path:
-/// upstream: clientserver.c:1254 - `if (!ret || err_msg) {` opens the single
+/// upstream: clientserver.c:1263 - `if (!ret || err_msg) {` opens the single
 /// post-`@RSYNCD: OK` fatal branch, and
-/// upstream: clientserver.c:1267 - `exit_cleanup(RERR_UNSUPPORTED);` ends it.
+/// upstream: clientserver.c:1276 - `exit_cleanup(RERR_UNSUPPORTED);` ends it.
 /// That is the code the peer observes for both.
 pub(crate) const RERR_UNSUPPORTED_EXIT_CODE: i32 = 4;
 /// Exit code for a generic module-session abort (chroot/setuid/setgid syscall
@@ -163,37 +163,37 @@ pub(crate) const HANDSHAKE_ERROR_PAYLOAD: &str =
     "@ERROR: daemon functionality is unavailable in this build";
 /// Error payload sent when a host is denied access to a module.
 ///
-/// upstream: clientserver.c:780 - `@ERROR: access denied to %s from %s (%s)\n`
+/// upstream: clientserver.c:784 - `@ERROR: access denied to %s from %s (%s)\n`
 /// where args are (name, host, addr).
 pub(crate) const ACCESS_DENIED_PAYLOAD: &str =
     "@ERROR: access denied to {module} from {host} ({addr})";
 /// Error payload sent when authentication fails on a protected module.
 ///
-/// upstream: clientserver.c:812 - `@ERROR: auth failed on module %s\n`
+/// upstream: clientserver.c:816 - `@ERROR: auth failed on module %s\n`
 pub(crate) const AUTH_FAILED_PAYLOAD: &str = "@ERROR: auth failed on module {module}";
 /// Error payload sent when no digest the client offered is supported here.
 ///
 /// `{digests}` is replaced with this build's own daemon-auth list, exactly as
 /// upstream re-renders `get_default_nno_list()` into the message.
 ///
-/// upstream: compat.c:884-886 `negotiate_daemon_auth()` - `@ERROR: your client
+/// upstream: compat.c:893-895 `negotiate_daemon_auth()` - `@ERROR: your client
 /// does not support one of our daemon-auth checksums: %s\n`, followed by
 /// `exit_cleanup(RERR_UNSUPPORTED)`.
 pub(crate) const UNSUPPORTED_AUTH_DIGEST_PAYLOAD: &str =
     "@ERROR: your client does not support one of our daemon-auth checksums: {digests}";
 /// Exit code used when the client and daemon share no auth digest.
 ///
-/// upstream: compat.c:886 - `exit_cleanup(RERR_UNSUPPORTED)`. The refusal happens
+/// upstream: compat.c:895 - `exit_cleanup(RERR_UNSUPPORTED)`. The refusal happens
 /// in the per-connection child, so the listening parent is unaffected; only the
 /// single-session modes (stdio, inetd) surface it as the process exit status.
 pub(crate) const UNSUPPORTED_AUTH_DIGEST_EXIT_CODE: ExitCode = ExitCode::Unsupported;
 /// Error payload returned when a requested module does not exist.
 ///
-/// upstream: clientserver.c:777 - `@ERROR: Unknown module '%s'\n`
+/// upstream: clientserver.c:781 - `@ERROR: Unknown module '%s'\n`
 pub(crate) const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
 /// Error payload returned when the client's first line is not a version banner.
 ///
-/// upstream: clientserver.c:209-213 - `if (sscanf(buf, "@RSYNCD: %d.%d", ...) < 1)`
+/// upstream: clientserver.c:213-217 - `if (sscanf(buf, "@RSYNCD: %d.%d", ...) < 1)`
 /// the server writes `@ERROR: protocol startup error\n` and drops the connection.
 pub(crate) const PROTOCOL_STARTUP_ERROR_PAYLOAD: &str = "@ERROR: protocol startup error";
 /// Error payload returned when a `#`-prefixed request is not a recognized command.
@@ -203,50 +203,50 @@ pub(crate) const PROTOCOL_STARTUP_ERROR_PAYLOAD: &str = "@ERROR: protocol startu
 /// understand. Upstream rejects it with a message distinct from the
 /// unknown-module response, keeping the raw line (leading `#` included).
 ///
-/// upstream: clientserver.c:1563 - `@ERROR: Unknown command '%s'\n`
+/// upstream: clientserver.c:1573 - `@ERROR: Unknown command '%s'\n`
 pub(crate) const UNKNOWN_COMMAND_PAYLOAD: &str = "@ERROR: Unknown command '{command}'";
 /// Error payload returned when a module reaches its connection cap.
 ///
-/// upstream: clientserver.c:799 - `@ERROR: max connections (%d) reached -- try again later\n`
+/// upstream: clientserver.c:803 - `@ERROR: max connections (%d) reached -- try again later\n`
 pub(crate) const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
     "@ERROR: max connections ({limit}) reached -- try again later";
 /// Error payload returned when opening the module connection lock file fails.
 ///
-/// upstream: clientserver.c:795 - `@ERROR: failed to open lock file\n`
+/// upstream: clientserver.c:799 - `@ERROR: failed to open lock file\n`
 pub(crate) const MODULE_LOCK_ERROR_PAYLOAD: &str = "@ERROR: failed to open lock file";
 /// Error payload returned when chroot fails during module setup.
 ///
-/// upstream: clientserver.c:1052 - `@ERROR: chroot failed\n`
+/// upstream: clientserver.c:1056 - `@ERROR: chroot failed\n`
 pub(crate) const CHROOT_FAILED_PAYLOAD: &str = "@ERROR: chroot failed";
 /// Error payload returned when chdir fails during module setup.
 ///
-/// upstream: clientserver.c:694 - `@ERROR: chdir failed\n`
+/// upstream: clientserver.c:698 - `@ERROR: chdir failed\n`
 pub(crate) const CHDIR_FAILED_PAYLOAD: &str = "@ERROR: chdir failed";
 /// Error payload returned when setuid fails after chroot.
 ///
-/// upstream: clientserver.c:1129 - `@ERROR: setuid failed\n`
+/// upstream: clientserver.c:1133 - `@ERROR: setuid failed\n`
 pub(crate) const SETUID_FAILED_PAYLOAD: &str = "@ERROR: setuid failed";
 /// Error payload returned when setgid fails after chroot.
 ///
-/// upstream: clientserver.c:1100 - `@ERROR: setgid failed\n`
+/// upstream: clientserver.c:1104 - `@ERROR: setgid failed\n`
 pub(crate) const SETGID_FAILED_PAYLOAD: &str = "@ERROR: setgid failed";
 /// Error payload returned when setgroups fails after chroot.
 ///
-/// upstream: clientserver.c:1107 - `@ERROR: setgroups failed\n`
+/// upstream: clientserver.c:1111 - `@ERROR: setgroups failed\n`
 pub(crate) const SETGROUPS_FAILED_PAYLOAD: &str = "@ERROR: setgroups failed";
 /// Error payload template returned when a module's uid NAME cannot be resolved
 /// at connection time. `{uid}` is replaced with the offending name. This is a
 /// distinct wire string from `SETUID_FAILED_PAYLOAD`, which reports a later
 /// `setuid(2)` SYSCALL failure.
 ///
-/// upstream: clientserver.c:837 - `io_printf(f_out, "@ERROR: invalid uid %s\n", p)`
+/// upstream: clientserver.c:841 - `io_printf(f_out, "@ERROR: invalid uid %s\n", p)`
 pub(crate) const INVALID_UID_PAYLOAD: &str = "@ERROR: invalid uid {uid}";
 /// Error payload template returned when a module's gid NAME cannot be resolved
 /// at connection time. `{gid}` is replaced with the offending name. Distinct
 /// from `SETGID_FAILED_PAYLOAD`, which reports a later `setgid(2)` SYSCALL
 /// failure.
 ///
-/// upstream: clientserver.c:703 - `io_printf(f_out, "@ERROR: invalid gid %s\n", gname)`
+/// upstream: clientserver.c:707 - `io_printf(f_out, "@ERROR: invalid gid %s\n", gname)`
 pub(crate) const INVALID_GID_PAYLOAD: &str = "@ERROR: invalid gid {gid}";
 /// Error payload returned when a module is read-only and the client pushes.
 ///
@@ -277,7 +277,7 @@ pub(crate) use self::module_state::{
 use self::module_state::{build_module_runtimes, build_module_runtimes_with_lock_file};
 use self::module_state::{peer_host_display, resolve_peer_hostname};
 
-// upstream: log.c:135 logit() - every daemon log-file line is stamped
+// upstream: log.c:142 logit() - every daemon log-file line is stamped
 // with `%Y/%m/%d %H:%M:%S [pid] `, provided by the LogFileWriter wrapper.
 type SharedLogSink = Arc<Mutex<MessageSink<logging_sink::logfile::LogFileWriter<std::fs::File>>>>;
 
@@ -308,7 +308,7 @@ include!("daemon/sections/session_process.rs");
 /// (inetd/connect-program mode) or binds a TCP listener and enters the
 /// connection accept loop.
 ///
-/// upstream: clientserver.c:1746-1760 - `daemon_main()` checks
+/// upstream: clientserver.c:1810-1824 - `daemon_main()` checks
 /// `is_inetd_socket(STDIN_FILENO)` before binding TCP. When stdin is a
 /// connected stream socket with an `AF_INET`/`AF_INET6` peer (inetd, xinetd,
 /// systemd socket activation), the daemon serves one session over the
@@ -324,7 +324,7 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     let external_signal_flags = config.take_signal_flags();
     let pre_bound_listener = config.take_pre_bound_listener();
     let pre_bound_quic_sockets = config.take_pre_bound_quic_sockets();
-    // upstream: clientserver.c:1748-1757 - an inetd daemon points stdout and
+    // upstream: clientserver.c:1812-1821 - an inetd daemon points stdout and
     // stderr at /dev/null before it reads rsyncd.conf, so neither config
     // diagnostics nor anything later lands on the descriptors inetd left. Its
     // options were parsed before that (main.c:1911), so their errors still
@@ -334,15 +334,16 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         RuntimeOptions::check_arguments(config.arguments(), config.brand())?;
         let _ = platform::daemonize::redirect_output_to_devnull();
     }
-    let options = RuntimeOptions::parse_with_brand(
+    let mut options = RuntimeOptions::parse_with_brand(
         config.arguments(),
         config.brand(),
         config.load_default_paths(),
     )?;
 
     apply_verbosity(options.verbosity());
+    options.apply_niceness();
 
-    // upstream: clientserver.c:1748 - `if (is_inetd_socket(STDIN_FILENO))`
+    // upstream: clientserver.c:1812 - `if (is_inetd_socket(STDIN_FILENO))`
     // serves a single session over stdio (inetd mode) instead of binding a
     // TCP listener.
     if inetd {
@@ -364,7 +365,7 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 /// emitted from the protocol and transfer crates respect the operator's
 /// requested verbosity.
 ///
-/// upstream: options.c:2188 `set_output_verbosity(verbose, DEFAULT_PRIORITY)`
+/// upstream: options.c:2224 `set_output_verbosity(verbose, DEFAULT_PRIORITY)`
 /// runs once after option parsing. Without this seeding the daemon's
 /// `INFO_GTE`/`DEBUG_GTE` checks short-circuit at level 0 regardless of how
 /// many `-v` flags were stacked on the daemon command line.
@@ -383,7 +384,7 @@ pub(crate) fn apply_verbosity(level: u8) {
 /// the module table, and serves a single connection on the provided
 /// stdin/stdout streams. No TCP binding or signal handler registration occurs.
 ///
-/// upstream: main.c:1971-1975 - under `am_server`, `if (am_daemon) return
+/// upstream: main.c:1975-1979 - under `am_server`, `if (am_daemon) return
 /// start_daemon(STDIN_FILENO, STDOUT_FILENO);`
 ///
 /// # Errors
@@ -392,7 +393,7 @@ pub(crate) fn apply_verbosity(level: u8) {
 /// encounters an I/O error.
 pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     let brand = config.brand();
-    // upstream: clientserver.c:1400-1408 `load_config()` - when invoked as
+    // upstream: clientserver.c:1409-1417 `load_config()` - when invoked as
     // `--server --daemon` (rsh-spawned, am_daemon < 0) by a non-root user
     // without an explicit `--config`, upstream picks `RSYNCD_USERCONF`
     // (`./rsyncd.conf`, relative to CWD) instead of `/etc/rsyncd.conf`. The test harness
@@ -418,9 +419,11 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     } else {
         config.arguments().to_vec()
     };
-    let options = RuntimeOptions::parse_with_brand(&arguments, brand, config.load_default_paths())?;
+    let mut options =
+        RuntimeOptions::parse_with_brand(&arguments, brand, config.load_default_paths())?;
 
     apply_verbosity(options.verbosity());
+    options.apply_niceness();
 
     let RuntimeOptions {
         modules,
@@ -578,7 +581,7 @@ fn remote_shell_session_peer() -> Result<SocketAddr, DaemonError> {
 /// `SIGINT` and terminates, and it never reloads on a signal; each forked
 /// session re-reads `rsyncd.conf` instead.
 ///
-/// upstream: main.c:1920 `SIGACTMASK(SIGHUP, sig_int)`; clientserver.c:1434
+/// upstream: main.c:1924 `SIGACTMASK(SIGHUP, sig_int)`; clientserver.c:1443
 /// `start_daemon()` calls `load_config(0)` per connection.
 ///
 /// # Errors
@@ -820,7 +823,7 @@ pub(crate) fn async_max_inflight(max_connections: Option<usize>) -> usize {
 /// Writes the upstream-compatible max-connections refusal to an accepted
 /// async socket, then lets it drop.
 ///
-/// upstream: clientserver.c:799 - `@ERROR: max connections (%d) reached --
+/// upstream: clientserver.c:803 - `@ERROR: max connections (%d) reached --
 /// try again later\n`. Mirrors the sync accept loop's `refuse_if_at_capacity`
 /// wording so clients see an identical reply regardless of accept engine.
 #[cfg(feature = "async-daemon")]

@@ -1,6 +1,6 @@
 /// A `uid` name the host cannot resolve loads and is refused per module.
 ///
-/// upstream: clientserver.c:833-838 resolves `uid` when a client selects the
+/// upstream: clientserver.c:837-842 resolves `uid` when a client selects the
 /// module and replies `@ERROR: invalid uid <name>`. Unix only: a Windows
 /// daemon refuses any `uid` at startup
 /// (`runtime_options_privilege_drop_is_refused_on_windows`).

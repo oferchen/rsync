@@ -54,7 +54,7 @@ impl UnsupportedOption {
 
     /// Renders the refusal line naming the offending token.
     ///
-    /// upstream: options.c:2051-2054 formats `"%s%s: %s\n"` from `poptBadOption()` and
+    /// upstream: options.c:2087-2090 formats `"%s%s: %s\n"` from `poptBadOption()` and
     /// `poptStrerror()`, and option_error() (options.c:915) prints it behind
     /// the program name.
     pub(crate) fn refusal_line(&self, program: &str) -> String {
@@ -66,7 +66,7 @@ impl UnsupportedOption {
 
     /// Renders the refusal line a server prints for the offending token.
     ///
-    /// upstream: options.c:2051-2052 prefixes popt's text with `on remote machine: `
+    /// upstream: options.c:2087-2088 prefixes popt's text with `on remote machine: `
     /// when `am_server`, which covers a local transfer's forked child too.
     pub(crate) fn remote_refusal_line(&self, program: &str) -> String {
         format!(
@@ -82,7 +82,7 @@ impl UnsupportedOption {
 
     /// Renders the exit trailer that follows the refusal line.
     ///
-    /// upstream: main.c:1913 `exit_cleanup(RERR_SYNTAX)` after option_error().
+    /// upstream: main.c:1917 `exit_cleanup(RERR_SYNTAX)` after option_error().
     #[track_caller]
     pub(crate) fn to_message(&self) -> Message {
         exit_trailer(SYNTAX_ERROR, Role::Client)

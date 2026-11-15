@@ -7,7 +7,7 @@ use crate::daemon::HostPattern;
 
 /// Resolved `gid` directive for a daemon module's privilege drop.
 ///
-/// upstream: clientserver.c:844-875 `rsync_module()` parses `lp_gid()` as a
+/// upstream: clientserver.c:848-879 `rsync_module()` parses `lp_gid()` as a
 /// whitespace/comma-separated list via `conf_strtok`. A leading `*` requests
 /// all groups the target user belongs to (`want_all_groups()`, called at
 /// clientserver.c:849); any remaining tokens are explicit groups added with
@@ -78,7 +78,7 @@ pub(crate) struct ModuleDefinition {
     pub(crate) write_only: bool,
     /// Tri-state `numeric ids` directive (upstream BOOL3): `None` = unset,
     /// `Some(true)` = yes, `Some(false)` = no. The unset third state is
-    /// load-bearing: under chroot, upstream (clientserver.c:1283-1286) treats
+    /// load-bearing: under chroot, upstream (clientserver.c:1292-1295) treats
     /// an unset value as enabled because there is no `/etc/passwd` inside the
     /// chroot for name<->id resolution. Collapsing it to `false` would make a
     /// default-config chrooted module wrongly perform name-based id mapping.
@@ -98,7 +98,7 @@ pub(crate) struct ModuleDefinition {
     /// the daemon falls back to no-chroot with a notice instead of refusing the
     /// connection.
     ///
-    /// upstream: clientserver.c:883-896 `rsync_module()`.
+    /// upstream: clientserver.c:887-900 `rsync_module()`.
     pub(crate) use_chroot_explicit: bool,
     pub(crate) max_connections: MaxConnections,
     pub(crate) incoming_chmod: Option<String>,
@@ -131,7 +131,7 @@ pub(crate) struct ModuleDefinition {
     /// When `Some(true)`, munging is always enabled. When `Some(false)`, munging is
     /// always disabled regardless of chroot setting.
     ///
-    /// upstream: clientserver.c:1070-1071 `rsync_module()` - an unset value
+    /// upstream: clientserver.c:1074-1075 `rsync_module()` - an unset value
     /// becomes `!use_chroot || module_dirlen`, i.e. true when `use chroot` is off
     /// or the module path has a non-empty inner path after a `/./` split.
     pub(crate) munge_symlinks: Option<bool>,
@@ -231,7 +231,7 @@ pub(crate) struct ModuleDefinition {
     /// is accepted but has no effect (no-op). False leaves the client's own
     /// `--open-noatime` choice in place.
     ///
-    /// upstream: daemon-parm.txt:70 `BOOL3 open_noatime Unset`; clientserver.c:1172-1173
+    /// upstream: daemon-parm.txt:70 `BOOL3 open_noatime Unset`; clientserver.c:1176-1177
     /// overrides the client's choice whenever the value is set, including to no.
     pub(crate) open_noatime: bool,
     /// Daemon-wide zero-copy policy for this module's socket sends.
@@ -293,15 +293,15 @@ impl ModuleDefinition {
     /// admit them regardless of DNS state, matching upstream's "allow
     /// short-circuits deny" semantics.
     ///
-    /// upstream: access.c:293-299 `allow_access()` - "If we match an allow-list
+    /// upstream: access.c:357-363 `allow_access()` - "If we match an allow-list
     /// item, we always allow access." Allow-list match returns 1
     /// unconditionally; the deny list is consulted only when the allow
     /// list either is absent or did not match.
-    /// upstream: clientserver.c:1448-1468 `start_daemon()` - reverse DNS
+    /// upstream: clientserver.c:1458-1478 `start_daemon()` - reverse DNS
     /// before chroot ensures `client_name()` returns a real hostname when
     /// ACLs are evaluated.
     pub(crate) fn permits(&self, addr: std::net::IpAddr, host: super::PeerHost<'_>) -> bool {
-        // upstream: access.c:293-299 - allow-list short-circuit. A peer
+        // upstream: access.c:357-363 - allow-list short-circuit. A peer
         // matching any allow pattern is admitted before the deny list is
         // consulted; a peer matching nothing in a non-empty allow list is
         // refused only when there is no deny list to fall through to.
@@ -367,7 +367,7 @@ impl ModuleDefinition {
     /// reverse-DNS name-pattern match with forward-DNS resolution of the
     /// rule's hostname token.
     ///
-    /// upstream: access.c:271 `match_hostname(host_ptr, addr, tok, deny) ||
+    /// upstream: access.c:335 `match_hostname(host_ptr, addr, tok, deny) ||
     /// match_address(addr, tok)` - a peer matches a `hosts allow`/`hosts deny`
     /// token when its reverse-DNS name matches the token pattern OR the token
     /// forward-resolves to the peer's address. Forward resolution is gated on
@@ -411,7 +411,7 @@ impl ModuleDefinition {
     /// match against the user's own groups for `@group` tokens), first match
     /// wins.
     ///
-    /// upstream: authenticate.c:356-407 `auth_server()`.
+    /// upstream: authenticate.c:351-402 `auth_server()`.
     pub(crate) fn get_auth_user(&self, username: &str) -> Option<super::AuthMatch<'_>> {
         super::authorize_auth_user(&self.auth_users, username, &super::SystemGroupMembership)
     }
@@ -430,7 +430,7 @@ impl ModuleDefinition {
 
     /// Applies the daemon's `--log-file-format` to this module.
     ///
-    /// upstream: options.c:885 stores the command-line value in the
+    /// upstream: options.c:890 stores the command-line value in the
     /// `logfile_format` global, and clientserver.c:823-824 falls back to the
     /// module's `log format` only while that global is still NULL - so the
     /// command-line format replaces the module's and logs per file even when
@@ -448,7 +448,7 @@ impl ModuleDefinition {
     /// path splits at a `/./` marker (`module_dirlen > 0`), which still exposes
     /// a sanitized inner path.
     ///
-    /// upstream: clientserver.c:1070-1071 -
+    /// upstream: clientserver.c:1074-1075 -
     /// `munge_symlinks = !use_chroot || module_dirlen`.
     #[allow(dead_code)] // Wired during file list send/receive in daemon mode
     pub(crate) fn effective_munge_symlinks(&self) -> bool {
@@ -460,7 +460,7 @@ impl ModuleDefinition {
     /// (`/./`) with a non-empty inner path, mirroring upstream's
     /// `module_dirlen > 0`.
     ///
-    /// upstream: clientserver.c:896-923 - when `use_chroot` is set and the
+    /// upstream: clientserver.c:900-927 - when `use_chroot` is set and the
     /// module path contains a `/./` marker, the normalized inner path length
     /// (`module_dirlen`) is non-zero. A `/./` at the very end (empty inner
     /// path) normalizes to `/` and resets `module_dirlen` back to 0.
@@ -504,7 +504,7 @@ impl ModuleDefinition {
     /// facility name resolves to the default facility, mirroring upstream's
     /// P_ENUM keep-default behaviour.
     ///
-    /// upstream: log.c:186-205 `log_init(1)` closes syslog when the module's tag
+    /// upstream: log.c:193-212 `log_init(1)` closes syslog when the module's tag
     /// or facility differs, and `syslog_init()` (log.c:143-155) reopens it via
     /// `openlog(lp_syslog_tag(module_id), LOG_PID, lp_syslog_facility(module_id))`.
     #[cfg(unix)]

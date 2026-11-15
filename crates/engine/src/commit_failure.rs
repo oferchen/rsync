@@ -17,16 +17,16 @@ use protocol::MessageCode;
 /// names that operation instead of labelling every failure `mkstemp`.
 ///
 /// Upstream emits one message per site, each naming its own operation:
-/// `mkstemp %s failed` (`rsync-3.5.1/receiver.c:465-466`),
-/// `open %s failed` (`rsync-3.5.1/receiver.c:1242-1244`),
-/// `rename %s -> "%s"` and `copy %s -> "%s"` (`rsync-3.5.1/rsync.c:919-921`),
-/// `keep_backup failed: %s -> "%s"` (`rsync-3.5.1/backup.c:402-403`),
-/// `close failed on %s` (`rsync-3.5.1/receiver.c:1297-1298`),
-/// `write failed on %s` (`rsync-3.5.1/receiver.c:658-660`),
-/// `fsync failed on %s` (`rsync-3.5.1/receiver.c:679-681`),
-/// `lseek of %s returned %s, not %s` (`rsync-3.5.1/receiver.c:545-548`) and
+/// `mkstemp %s failed` (`rsync-3.5.2/receiver.c:465-466`),
+/// `open %s failed` (`rsync-3.5.2/receiver.c:1242-1244`),
+/// `rename %s -> "%s"` and `copy %s -> "%s"` (`rsync-3.5.2/rsync.c:919-921`),
+/// `keep_backup failed: %s -> "%s"` (`rsync-3.5.2/backup.c:402-403`),
+/// `close failed on %s` (`rsync-3.5.2/receiver.c:1297-1298`),
+/// `write failed on %s` (`rsync-3.5.2/receiver.c:658-660`),
+/// `fsync failed on %s` (`rsync-3.5.2/receiver.c:679-681`),
+/// `lseek of %s returned %s, not %s` (`rsync-3.5.2/receiver.c:545-548`) and
 /// `Unable to create partial-dir for %s -- discarding %s.`
-/// (`rsync-3.5.1/receiver.c:1319-1323`). oc runs
+/// (`rsync-3.5.2/receiver.c:1319-1323`). oc runs
 /// these stages behind one `Result`, so the operation identity has to ride on
 /// the error to survive the trip back to the reporting thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,17 +55,17 @@ pub enum CommitOp {
     /// Writing received data: a literal, a flush of the write buffer, the
     /// sparse tail, or the in-place skip of a matched block. The operand is
     /// the destination name, which upstream reports even when the bytes went
-    /// to a temp file (`rsync-3.5.1/receiver.c:658-660`). An in-place skip
+    /// to a temp file (`rsync-3.5.2/receiver.c:658-660`). An in-place skip
     /// whose seek failed also carries the offset it sought from, for the
     /// `lseek returned` line `skip_matched()` prints first
-    /// (`rsync-3.5.1/fileio.c:307-310`).
+    /// (`rsync-3.5.2/fileio.c:307-310`).
     Write,
     /// Syncing the received file under `--fsync`. The operand is the
-    /// destination name (`rsync-3.5.1/receiver.c:679-681`).
+    /// destination name (`rsync-3.5.2/receiver.c:679-681`).
     Fsync,
     /// Seeking to the `--append` offset before the received tail is written.
     /// The operand is the destination name and the offset is the one sought
-    /// (`rsync-3.5.1/receiver.c:545-548`).
+    /// (`rsync-3.5.2/receiver.c:545-548`).
     Seek,
 }
 
@@ -138,7 +138,7 @@ impl CommitOp {
 ///
 /// Upstream reports the operand of the failing call, not the final
 /// destination: `rsyserr(FERROR_XFER, errno, "mkstemp %s failed",
-/// full_fname(fnametmp))` (`rsync-3.5.1/receiver.c:465-466`). Both receivers
+/// full_fname(fnametmp))` (`rsync-3.5.2/receiver.c:465-466`). Both receivers
 /// hand failures back as a plain [`io::Error`], so the operation and its
 /// operand ride along inside it and are recovered with [`commit_op_failure`].
 ///

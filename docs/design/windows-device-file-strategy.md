@@ -26,13 +26,13 @@ by this spec.
 
 All citations are against `target/interop/upstream-src/rsync-3.4.1/`.
 
-- Wire encoding (sender): `flist.c:904-925` (receive path symmetric to
-  the `send_file_entry` write at `flist.c:621-625`) encodes rdev major and
+- Wire encoding (sender): `flist.c:908-929` (receive path symmetric to
+  the `send_file_entry` write at `flist.c:625-629`) encodes rdev major and
   minor only when `preserve_devices && IS_DEVICE(mode)` or, at protocol
   < 31, `preserve_specials && IS_SPECIAL(mode)`. Protocol >= 31 drops rdev
   for specials. `file_length` is forced to zero for device entries
-  (`flist.c:923`).
-- `--copy-devices` carve-out: `flist.c:949-954` downgrades a stray device
+  (`flist.c:927`).
+- `--copy-devices` carve-out: `flist.c:953-958` downgrades a stray device
   entry to `S_IFREG | (mode & ACCESSPERMS)` with `modtime = now`, the
   pre-release patch guard that we already mirror in oc-rsync's flist
   receiver.
@@ -42,7 +42,7 @@ All citations are against `target/interop/upstream-src/rsync-3.4.1/`.
   `bind`-into-`AF_UNIX` (socket on platforms without `MKNOD_CREATES_SOCKETS`),
   or `mknod` (general). Exit on failure is the caller's standard
   `RERR_FILEIO` / `RERR_PARTIAL` mapping.
-- Sender-side classification: `flist.c:1450-1453` decides whether the sender
+- Sender-side classification: `flist.c:1454-1457` decides whether the sender
   serialises a source-tree device at all; without `preserve_devices` /
   `preserve_specials` the entry is silently dropped from the flist before
   it ever hits the wire.

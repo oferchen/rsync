@@ -1,6 +1,6 @@
 //! Filter options on a server's own argv.
 //!
-//! upstream: options.c:1620-1656 and :1718-1727 - a server parses them in the
+//! upstream: options.c:1647-1683 and :1718-1727 - a server parses them in the
 //! same `parse_arguments()` as the client. They land in `filter_list` ahead of
 //! the rules `recv_filter_list()` then appends from the wire
 //! (exclude.c:1971-1986). A remote-shell server reads the files they name

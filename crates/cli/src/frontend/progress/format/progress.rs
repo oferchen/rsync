@@ -5,7 +5,7 @@ use std::time::Duration;
 
 /// Formats a progress percentage.
 ///
-/// upstream: progress.c:128 rprint_progress computes `pct = ofs == size ? 100 :
+/// upstream: progress.c:119 rprint_progress computes `pct = ofs == size ? 100 :
 /// (int)(100.0 * ofs / size)` and never emits a `??` placeholder for the
 /// percent field (unlike the ETA field, which does). oc emits one progress line
 /// per file at completion (`ofs == size`), so an unknown total resolves to
@@ -76,7 +76,7 @@ mod tests {
 
     #[test]
     fn format_progress_percent_no_total() {
-        // upstream progress.c:128 never emits `??` for the percent field; an
+        // upstream progress.c:119 never emits `??` for the percent field; an
         // unknown total resolves to the completion value 100%, not a sentinel.
         assert_eq!(format_progress_percent(50, None), "100%");
         assert!(!format_progress_percent(50, None).contains("??"));

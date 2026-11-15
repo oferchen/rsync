@@ -216,7 +216,7 @@ The history, from `rrsync-archive-mode_test.py` and `rrsync-specials-denied_test
    transfer at protocol 29 and corrupts it at 30; a device breaks **every**
    protocol.
 3. The shipped answer is `--drop-D`, a new rsync 3.5.0 option
-   (`options.c:688-689`, consumed at `generator.c:2031`). It refuses the
+   (`options.c:689-690`, consumed at `generator.c:2072`). It refuses the
    *creation* while leaving the wire format alone: entries fall through to the
    "skipping non-regular file" path, exactly as `--no-D` reaches it, but the
    rdev fields still exist on both sides.
@@ -505,11 +505,11 @@ block shipped in `support/rrsync` gives **three** differences. Measured on
 
 Verified causes:
 
-- **`compress-threads`** is a client-side popt entry only (`options.c:783`,
+- **`compress-threads`** is a client-side popt entry only (`options.c:784`,
   `POPT_ARG_INT` into `do_compression_threads`) with no `args[ac++]` emit site,
   so the scraper never sees it. A hand-added permissive extra.
 - **`dirs`** likewise has no emit site: `-d` goes to the server through
-  `argstr[x++] = 'd'` (`options.c:2816`), so the generator learns the *letter*
+  `argstr[x++] = 'd'` (`options.c:2881`), so the generator learns the *letter*
   but never the long name. (The only `args[ac++]` match on "dirs" is
   `--no-implied-dirs`, a different option.) Also a hand-added permissive extra.
 - **`debug: -1`** is a hand-applied **denial** that a regeneration would revert
@@ -572,7 +572,7 @@ server's own resolution of such paths - the only end that can see them - and it
 is passed in both directions because a dir-merge is read by whichever side the
 rule applies to.
 
-Server-side validation (`options.c:2391-2408`):
+Server-side validation (`options.c:2446-2463`):
 
 - `am_daemon` → `confine_root = NULL`. A daemon already has `module_dir`, and
   honouring a peer-supplied root there could only *loosen* the module.
@@ -672,8 +672,8 @@ premises.
 
 1. **`--drop-D` is a prerequisite, not an optional extra.** A restricted-shell
    subcommand cannot ship correct device/special denial without
-   `--drop-D`/`--no-drop-D` (`options.c:688-689`) and the generator gate
-   (`generator.c:2031`). oc-rsync now has the option
+   `--drop-D`/`--no-drop-D` (`options.c:689-690`) and the generator gate
+   (`generator.c:2072`). oc-rsync now has the option
    (`crates/cli/src/frontend/server/flags.rs`, `drop_devices`). Forcing
    `--no-D` instead is not a smaller version of the same thing - it corrupts
    the file list.
@@ -782,7 +782,7 @@ premises.
 - `target/interop/upstream-src/rsync-3.5.1/packaging/cull-options`
 - `target/interop/upstream-src/rsync-3.5.1/testsuite/rrsync-*_test.py` (21 files)
 - `options.c` - `--drop-D` / `--no-drop-D` (688-689), `--confine-root` (690),
-  validation (2391-2408); `generator.c:2031` (`drop_devices` gate)
+  validation (2391-2408); `generator.c:2072` (`drop_devices` gate)
 - `syscall.c` - `fd_pin_tail()`, `is_exact_fd_pin()`, `abspath_outside_confinement()`
 - `NEWS.md` - in the 3.5.0 section, the `support/rrsync` block under SECURITY
   FIXES and the rrsync entry under BEHAVIOR CHANGES. **Both say `--no-D`; the

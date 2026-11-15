@@ -3,8 +3,8 @@
 // The files-from base is operator-selected but every list entry may not be, so
 // upstream 3.5.1 resolves each entry with the ownership walk and refuses one
 // whose resolved path leaves the confinement root
-// (`rsync-3.5.1/syscall.c:149` `filesfrom_owner_walk_active()`,
-// `rsync-3.5.1/flist.c:400-433` `filesfrom_link_stat()`). The escape shape is a
+// (`rsync-3.5.2/syscall.c:149` `filesfrom_owner_walk_active()`,
+// `rsync-3.5.2/flist.c:403-436` `filesfrom_link_stat()`). The escape shape is a
 // TRUSTED-owned symlink inside the root pointing outside it: the ownership rule
 // follows it by design, so only the confinement judgement can refuse it. A
 // single-uid test owns every symlink it plants, so these cells pin that

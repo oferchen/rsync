@@ -282,7 +282,7 @@ fn for_file_wrote_data_sets_checksum_changed() {
         true, // wrote data
         false,
         false,
-        true, // checksum mode active (gates position-2 `c` glyph per upstream generator.c:2379)
+        true, // checksum mode active (gates position-2 `c` glyph per upstream generator.c:2422)
         ModifyWindow::ZERO,
     );
 
@@ -292,7 +292,7 @@ fn for_file_wrote_data_sets_checksum_changed() {
 /// The `x` glyph reports the *outcome* of the xattr comparison, so the
 /// constructor must forward the caller's verdict verbatim in both directions.
 ///
-/// upstream: generator.c:571-577 - `if (xattr_diff(file, sxp, 1)) iflags |=
+/// upstream: generator.c:608-614 - `if (xattr_diff(file, sxp, 1)) iflags |=
 /// ITEM_REPORT_XATTR`. Passing `-X` itself would light `x` on every row of an
 /// unchanged tree, which upstream never prints.
 #[test]
@@ -478,7 +478,7 @@ fn for_file_times_not_changed_existing_no_write() {
     assert!(change_set.time_change().is_none());
 }
 
-/// upstream: generator.c:533 - the ITEM_REPORT_TIME (`t`) glyph is gated by
+/// upstream: generator.c:570 - the ITEM_REPORT_TIME (`t`) glyph is gated by
 /// `!same_time(...)`, which honours `--modify-window`. A same-size file whose
 /// mtime drifts by less than the window must therefore leave the time slot
 /// blank so the itemize line is suppressed. Guards the itemize path exercised
@@ -707,7 +707,7 @@ fn for_existing_directory_flags_time_change_when_mtimes_differ() {
     assert!(change_set.has_any_change());
 }
 
-/// upstream: generator.c:533 via same_time() (util1.c:1744) - directory
+/// upstream: generator.c:570 via same_time() (util1.c:1744) - directory
 /// itemize compares whole seconds under modify_window == 0, so a sub-second
 /// mtime drift within the same whole second must NOT report a time change.
 /// This mirrors the file/symlink paths, which already ignore sub-second drift.
@@ -935,7 +935,7 @@ fn for_recreated_symlink_omit_link_times_still_reports_time() {
     );
 
     assert!(change_set.checksum_changed());
-    // upstream: generator.c:532-536 - `-J` drops keep_time, so the recreate
+    // upstream: generator.c:569-573 - `-J` drops keep_time, so the recreate
     // path sets ITEM_REPORT_TIME unconditionally; with `-t` still active
     // log.c:746-749 renders it as a lowercase `t` (`cLc.t......`), verified
     // against rsync 3.4.4.
@@ -969,7 +969,7 @@ fn for_recreated_device_sets_checksum_and_time_when_content_differs() {
         false,
     );
 
-    // upstream: generator.c:2094-2095 rdev/type diff drives ITEM_REPORT_CHANGE
+    // upstream: generator.c:2135-2136 rdev/type diff drives ITEM_REPORT_CHANGE
     // (`c`); with preserve-times and a differing mtime, ITEM_REPORT_TIME renders
     // `t` (`cDc.t.....`). Devices never report size.
     assert!(change_set.checksum_changed());
@@ -990,7 +990,7 @@ fn for_recreated_device_reports_transfer_time_when_times_not_preserved() {
     let dst_meta = fs::metadata(&dst).expect("dst meta");
 
     // No preserve-times: the ITEM_LOCAL_CHANGE recreate path sets
-    // ITEM_REPORT_TIME rendered as `T` (log.c:748-749), matching the upstream
+    // ITEM_REPORT_TIME rendered as `T` (log.c:833-834), matching the upstream
     // `-Di` replace itemize `cDc.T.....`.
     let options = MetadataOptions::new().preserve_times(false);
     let change_set = LocalCopyChangeSet::for_recreated_device(
@@ -1044,7 +1044,7 @@ fn for_recreated_device_no_change_when_content_and_time_match() {
     assert!(!change_set.has_any_change());
 }
 
-/// upstream: generator.c:537-539 - with `-U` (`atimes_ndx`), an up-to-date
+/// upstream: generator.c:574-576 - with `-U` (`atimes_ndx`), an up-to-date
 /// regular file (size+mtime match, quick-check skips the data transfer) whose
 /// access time differs from the destination lights `ITEM_REPORT_ATIME`. The
 /// change surfaces `access_time_changed`, which the itemize renderer maps to

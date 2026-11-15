@@ -313,7 +313,7 @@ fn assert_dry_run_fidelity(push: bool) {
         "5 (reg: 3, dir: 1, link: 1)",
         "{label} created-file breakdown\nfull stdout:\n{stdout}"
     );
-    // upstream: receiver.c:797-800 / sender.c:342-344 - xferred_files and
+    // upstream: receiver.c:797-800 / sender.c:350-352 - xferred_files and
     // total_transferred_size are summed before the `!do_xfers` continue.
     assert_eq!(
         stat_line(&stdout, "Number of regular files transferred:"),

@@ -58,7 +58,7 @@ impl FileListReader {
         let mut target_bytes = vec![0u8; len];
         reader.read_exact(&mut target_bytes)?;
 
-        // upstream: flist.c:1527 - the target is transcoded through ic_recv ONLY
+        // upstream: flist.c:1531 - the target is transcoded through ic_recv ONLY
         // when `sender_symlink_iconv` (iconv active AND CF_SYMLINK_ICONV
         // negotiated). Against a peer that lacks the capability the raw local
         // bytes are read verbatim (flist.c:1552 `read_sbuf` else branch), so a
@@ -68,7 +68,7 @@ impl FileListReader {
                 Some(converter) => match converter.remote_to_local(&target_bytes) {
                     Ok(converted) => converted,
                     Err(_) => {
-                        // upstream: flist.c:1540-1548 - strict `ic_recv` failure
+                        // upstream: flist.c:1544-1552 - strict `ic_recv` failure
                         // warns via FERROR_XFER, sets io_error |= IOERR_GENERAL,
                         // and empties the target (bp[0]='\0', outbuf.len=0). The
                         // entry stays a symlink with an empty target.
@@ -76,7 +76,7 @@ impl FileListReader {
                             "{}",
                             crate::iconv::cannot_convert_symlink_message("receiver", name)
                         );
-                        // upstream: flist.c:1540-1548 sets io_error with no
+                        // upstream: flist.c:1544-1552 sets io_error with no
                         // `ignore_errors` check, so this is a LOCAL error.
                         self.local_io_error |= crate::io_error::IOERR_GENERAL;
                         return Ok(Some(PathBuf::new()));
@@ -168,7 +168,7 @@ impl FileListReader {
     /// - If XMIT_HLINK_FIRST is also set: return u32::MAX (this is the first/leader)
     ///
     /// Wire consumption is gated on the flags ALONE, not on the local
-    /// `preserve_hard_links` (-H) setting. upstream: flist.c:1099-1101 reads
+    /// `preserve_hard_links` (-H) setting. upstream: flist.c:1103-1105 reads
     /// `first_hlink_ndx = read_varint(f)` under
     /// `protocol_version >= 30 && BITS_SETnUNSET(xflags, XMIT_HLINKED, XMIT_HLINK_FIRST)`
     /// with no `preserve_hard_links` check, and copies the leader's metadata at
@@ -201,7 +201,7 @@ impl FileListReader {
         }
 
         let idx = read_varint(reader)?;
-        // upstream: flist.c:1101-1107 - a negative reference is refused with
+        // upstream: flist.c:1105-1111 - a negative reference is refused with
         // "hard-link reference out of range" and exit_cleanup(RERR_PROTOCOL).
         // Cast unchecked, it would pass as an unabbreviated follower (below
         // ndx_start), and -1 would alias the u32::MAX leader sentinel. The
@@ -253,7 +253,7 @@ impl FileListReader {
             self.state.prev_hardlink_dev()
         } else {
             let raw_dev = crate::read_longint(reader)?;
-            // The sender writes dev + 1 (upstream: flist.c:971-976); the
+            // The sender writes dev + 1 (upstream: flist.c:975-980); the
             // upstream receiver keeps that value as an `idev_find()` key
             // (flist.c:1576-1579). oc subtracts 1; a malicious sender can
             // supply raw_dev == i64::MIN, so wrapping_sub avoids an
@@ -312,7 +312,7 @@ impl FileListReader {
             self.stats.num_dirs += 1;
         } else if entry.is_file() {
             self.stats.num_files += 1;
-            // upstream: flist.c:1614 `stats.total_size += file_length` uses
+            // upstream: flist.c:1618 `stats.total_size += file_length` uses
             // signed int64 and tolerates wrap; this is a cosmetic counter logged
             // by trace.rs and never gates wire format. Saturate instead of
             // wrapping so debug builds (overflow-checks=true, e.g. cargo-fuzz)
@@ -329,7 +329,7 @@ impl FileListReader {
         } else if entry.is_device() {
             self.stats.num_devices += 1;
         } else {
-            // upstream: flist.c:3248-3249 recv_file_list() - the final `else` also
+            // upstream: flist.c:3259-3260 recv_file_list() - the final `else` also
             // counts the mode-0 `--delete-missing-args` placeholder.
             self.stats.num_specials += 1;
         }
@@ -344,7 +344,7 @@ mod edg_panic_tests {
 
     /// A malicious sender must not crash the protocol 28-29 hardlink decode by
     /// sending dev == i64::MIN, which would underflow oc's `raw_dev - 1` offset
-    /// (the sender adds 1, upstream: flist.c:971-976) and panic under
+    /// (the sender adds 1, upstream: flist.c:975-980) and panic under
     /// overflow-checks (cargo-fuzz / debug). The decode must return cleanly.
     #[test]
     fn read_hardlink_dev_ino_tolerates_min_dev_without_panic() {

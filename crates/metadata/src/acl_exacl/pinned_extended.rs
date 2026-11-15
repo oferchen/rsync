@@ -11,9 +11,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/acls.c:399-409` `pack_smb_acl()` - under `HAVE_OSX_ACLS`
+//! - `rsync-3.5.2/acls.c:399-409` `pack_smb_acl()` - under `HAVE_OSX_ACLS`
 //!   only the named user/group entries are packed
-//! - `rsync-3.5.1/lib/sysacls.c:2833-2874` `sys_acl_set_info()` - the
+//! - `rsync-3.5.2/lib/sysacls.c:2833-2874` `sys_acl_set_info()` - the
 //!   per-entry encoding [`fast_io::acl_fd`] mirrors
 
 use std::fs::{File, Permissions};

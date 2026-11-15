@@ -356,9 +356,9 @@ These are not oc-rsync bugs - upstream rsync itself fails identically.
 
 | Limitation | Protocol | Upstream Source |
 |------------|----------|----------------|
-| ACLs require proto 30+ | 28-29 | `compat.c:655-661` |
-| Xattrs require proto 30+ | 28-29 | `compat.c:662-668` |
-| zstd/lz4 require proto 30+ | 28-29 | `compat.c:556-564` |
+| ACLs require proto 30+ | 28-29 | `compat.c:656-662` |
+| Xattrs require proto 30+ | 28-29 | `compat.c:663-669` |
+| zstd/lz4 require proto 30+ | 28-29 | `compat.c:557-565` |
 | Merge-filter requires proto 29+ | 28 | `exclude.c:1530` |
 | Compressed delta batch self-roundtrip | All | `token.c:608` |
 

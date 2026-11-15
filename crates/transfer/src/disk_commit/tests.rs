@@ -2642,7 +2642,7 @@ fn delay_updates_partial_dir_constant_matches_upstream() {
 }
 
 /// Verifies that a partial file retained via `--partial` has its mtime
-/// stamped to epoch 0. Upstream cleanup.c:174-178 does this so that a
+/// stamped to epoch 0. Upstream cleanup.c:175-179 does this so that a
 /// subsequent `--update` run does not skip the partial file as "up to date".
 #[test]
 fn partial_mode_partial_stamps_mtime_zero_on_shutdown() {
@@ -3437,7 +3437,7 @@ fn pipelined_backup_with_backup_dir_reports_destination_relative_paths() {
 
 /// Redo pass with `backup: None` must not create a backup even under inplace.
 ///
-/// upstream: generator.c:2659 `make_backups = -make_backups` negates the flag
+/// upstream: generator.c:2703 `make_backups = -make_backups` negates the flag
 /// during the redo pass so the inplace pre-image copy is not repeated. If the
 /// backup were re-taken, it would overwrite the good phase-1 backup with the
 /// now-corrupted destination data - a data-loss bug.

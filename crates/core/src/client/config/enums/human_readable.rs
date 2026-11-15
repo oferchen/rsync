@@ -28,7 +28,7 @@ pub enum HumanReadableMode {
     /// Level 0 (`--no-human-readable`/`--no-h`): raw decimal digits with no
     /// thousands separators, rendered in an 11-wide `--list-only` size column.
     ///
-    /// upstream: `options.c:627` sets `human_readable = 0`; `lib/compat.c:231`
+    /// upstream: `options.c:628` sets `human_readable = 0`; `lib/compat.c:241`
     /// skips separator insertion when `human_flag == 0`; `generator.c:1322`
     /// selects `size_width = 11` when `human_readable` is falsy.
     Raw,
@@ -81,7 +81,7 @@ impl HumanReadableMode {
     ///
     /// Only the default level 1 ([`Self::Grouped`]) groups digits with the
     /// locale separator; level 0 ([`Self::Raw`]) emits raw digits. Mirrors
-    /// upstream `lib/compat.c:231`, where the separator is inserted only when
+    /// upstream `lib/compat.c:241`, where the separator is inserted only when
     /// `human_flag` is non-zero and no unit suffix applies.
     #[must_use]
     pub const fn uses_separators(self) -> bool {
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn uses_separators_only_default_level() {
-        // upstream: lib/compat.c:231 - separators only when human_flag != 0 and
+        // upstream: lib/compat.c:241 - separators only when human_flag != 0 and
         // no suffix applies, i.e. exactly level 1.
         assert!(!HumanReadableMode::Raw.uses_separators());
         assert!(HumanReadableMode::Grouped.uses_separators());
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn size_width_only_raw_is_eleven() {
-        // upstream: generator.c:1322 - size_width = human_readable ? 14 : 11.
+        // upstream: generator.c:1359 - size_width = human_readable ? 14 : 11.
         assert_eq!(HumanReadableMode::Raw.size_width(), 11);
         assert_eq!(HumanReadableMode::Grouped.size_width(), 14);
         assert_eq!(HumanReadableMode::DecimalUnits.size_width(), 14);
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn unit_base_levels() {
-        // upstream: lib/compat.c:183 - mult = human_flag == 2 ? 1000 : 1024.
+        // upstream: lib/compat.c:185 - mult = human_flag == 2 ? 1000 : 1024.
         assert_eq!(HumanReadableMode::DecimalUnits.unit_base(), 1000.0);
         assert_eq!(HumanReadableMode::BinaryUnits.unit_base(), 1024.0);
     }

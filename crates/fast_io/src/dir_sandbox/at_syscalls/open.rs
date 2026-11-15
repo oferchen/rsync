@@ -97,7 +97,7 @@ pub fn openat(dirfd: BorrowedFd<'_>, name: &OsStr, flags: i32, mode: u32) -> io:
 /// open and no error. `ConfinedFallback::open_at` issues a real `openat(2)`,
 /// which honours the whole flag word on both arms, and on arm 2 adds
 /// `O_NOFOLLOW` the way upstream does
-/// (`rsync-3.5.1/syscall.c:1658`).
+/// (`rsync-3.5.2/syscall.c:1727`).
 ///
 /// Typical temp-file creation passes
 /// `flags = libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW`,
@@ -128,7 +128,7 @@ pub fn openat_via_sandbox_or_fallback(
     // that descriptor instead of walking the whole path again. The leaf gets
     // `O_NOFOLLOW` as the confined arm below gives it; any failure goes to
     // that arm, whose verdict is the one reported.
-    // upstream: rsync-3.5.1/syscall.c:3858 held_dfd_for() + do_mkstemp_atfd().
+    // upstream: rsync-3.5.2/syscall.c:3926 held_dfd_for() + do_mkstemp_atfd().
     if let Some(sandbox) = sandbox
         && let Some((dirfd, leaf)) =
             super::nested::held_leaf(sandbox, dest_dir, relative_path, link_path)
@@ -151,7 +151,7 @@ pub fn openat_via_sandbox_or_fallback(
 /// sandbox, or for a path outside `dest_dir`, it falls back to
 /// [`open_basis_nofollow`](crate::open_basis_nofollow).
 ///
-/// upstream: rsync-3.5.1/receiver.c:1086-1093 - a basis in the entry's own
+/// upstream: rsync-3.5.2/receiver.c:1086-1093 - a basis in the entry's own
 /// directory opens via `held_dfd_for()` + `do_open_atfd()`.
 ///
 /// # Errors
@@ -184,7 +184,7 @@ pub fn open_basis_via_sandbox_or_fallback(
 /// `--write-devices` target. Without a sandbox, or for a path outside
 /// `dest_dir`, it opens `full_path` for writing by path.
 ///
-/// upstream: rsync-3.5.1/syscall.c:3858-3871 held_dfd_for()
+/// upstream: rsync-3.5.2/syscall.c:3926-3939 held_dfd_for()
 ///
 /// # Errors
 ///
@@ -218,7 +218,7 @@ pub fn open_write_via_sandbox_or_fallback(
 /// redirect. Without a sandbox, or for a path outside `dest_dir`, it runs the
 /// path-based chain of [`open_inplace_output`](crate::open_inplace_output).
 ///
-/// upstream: rsync-3.5.1/receiver.c:1212-1241 - `secure_recv_open()` and its
+/// upstream: rsync-3.5.2/receiver.c:1212-1241 - `secure_recv_open()` and its
 /// `EACCES` recovery arms, all through the same resolver.
 ///
 /// # Errors

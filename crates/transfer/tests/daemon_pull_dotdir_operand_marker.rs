@@ -65,13 +65,13 @@
 //!
 //! # Upstream References
 //!
-//! - `rsync-3.5.1/options.c:2411-2414` - the daemon's per-arg `sanitize_path()`
-//! - `rsync-3.5.1/clientserver.c:1068` - `if (module_dirlen) sanitize_paths = 1`
-//! - `rsync-3.5.1/util1.c:1274-1280` - a `.` component is skipped
-//! - `rsync-3.5.1/util1.c:1298` - each component is copied *through* its slash
-//! - `rsync-3.5.1/flist.c:2824-2834` - a trailing `/` sets `DOTDIR_NAME`
-//! - `rsync-3.5.1/flist.c:2937` - `copy_dirlinks || name_type != NORMAL_NAME`
-//! - `rsync-3.5.1/flist.c:511-526` - `link_stat()`'s `follow_dirlinks` arm
+//! - `rsync-3.5.2/options.c:2466-2469` - the daemon's per-arg `sanitize_path()`
+//! - `rsync-3.5.2/clientserver.c:1072` - `if (module_dirlen) sanitize_paths = 1`
+//! - `rsync-3.5.2/util1.c:1274-1280` - a `.` component is skipped
+//! - `rsync-3.5.2/util1.c:1298` - each component is copied *through* its slash
+//! - `rsync-3.5.2/flist.c:2835-2845` - a trailing `/` sets `DOTDIR_NAME`
+//! - `rsync-3.5.2/flist.c:2948` - `copy_dirlinks || name_type != NORMAL_NAME`
+//! - `rsync-3.5.2/flist.c:514-529` - `link_stat()`'s `follow_dirlinks` arm
 
 #![cfg(unix)]
 
@@ -257,7 +257,7 @@ fn dotdir_marker_on_a_trailing_dot_follows_the_symlinked_directory() {
     assert_eq!(
         pulled.tree,
         vec!["f.txt".to_owned()],
-        "a `/.` operand carries upstream's DOTDIR marker (flist.c:2829-2834), so \
+        "a `/.` operand carries upstream's DOTDIR marker (flist.c:2840-2845), so \
          link_stat follows the symlinked directory (flist.c:2936) and the \
          CONTENTS arrive; a tree containing `sym-to-dir` means the marker was \
          dropped and the operand was lstat'ed",

@@ -65,12 +65,12 @@ were identified and shipped.
 
 | Sub-cause | Description | Landed |
 | --- | --- | --- |
-| itemize.1 created-dir notice + synthetic root row | `generator.c:566-572` emits `cd+++++++++ ./` plus a "created directory" notice when the destination root is created. The local-copy path skipped both. | PR #5815 |
-| itemize.2 per-directory `cd+++++++++` row | Receiver was suppressing dir rows for every non-root directory; upstream emits one per dir entered via `generator.c:1480-1483`. | PR #5870 + regression pin in same PR |
+| itemize.1 created-dir notice + synthetic root row | `generator.c:603-609` emits `cd+++++++++ ./` plus a "created directory" notice when the destination root is created. The local-copy path skipped both. | PR #5815 |
+| itemize.2 per-directory `cd+++++++++` row | Receiver was suppressing dir rows for every non-root directory; upstream emits one per dir entered via `generator.c:1517-1520`. | PR #5870 + regression pin in same PR |
 | itemize.3 `.d..t......` for mtime-drifted directory | Existing dest dir with stale mtime needs an itemize row with `iflags=0` per upstream `generator.c`. | PR #5815 |
 | itemize.4 bare `%n%L` rendering at every verbose tier | Local-copy `-v`/`-vv` paths bypassed the named-render branch; spurious per-file lines surfaced for uptodate files. | PR #5820, PR #5847 |
 | itemize.5 hardlink-uptodate `"is uptodate"` notice | `hlink.c:218-224` emits `\"%s is uptodate\"` under `INFO_GTE(NAME, 2) && maybe_ATTRS_REPORT`; oc-rsync fell through to the bare-name path. | PR #5901 |
-| itemize.6 FCLIENT flist banner | `flist.c:2252` emits `sending incremental file list` when `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`; local-copy path never produced it. | PR #5891 |
+| itemize.6 FCLIENT flist banner | `flist.c:2256` emits `sending incremental file list` when `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`; local-copy path never produced it. | PR #5891 |
 | itemize.7 `bytes_received` double-count | Pipelined path summed `disk_bytes + total_bytes` while upstream `stats.total_read` only counts wire-read fd bytes; `received > file_size` tripped the `reverse-daemon-delta` heuristic. | PR #5868 |
 
 ### `backup`
@@ -85,7 +85,7 @@ emission was missing across every backup site.
 | backup.3 relative-path formatting | Emission used absolute filesystem paths; upstream `backup.c:353` uses rsync-relative paths and the test greps on the relative form. | PR #5856 |
 | backup.4 backup-dir suffix on relocated name | `compute_backup_path` always appends the suffix, but the new delayed-updates test asserted `backup_root/name1`; fix corrects the expectation and seals the rule. | PR #5860 |
 | backup.5 disk-thread VerbosityConfig seed | `make_backup` runs on the disk-commit thread whose thread-local `VerbosityConfig` was never seeded with `--info=backup`; the notice was always squelched at the macro. | PR #5873 |
-| backup.6 `--backup` short flag emission | Compact server-flag string must carry `b` per `options.c:2630-2631`; emitting `--backup` as a long arg landed as a positional path on upstream receivers. | PR #5890 |
+| backup.6 `--backup` short flag emission | Compact server-flag string must carry `b` per `options.c:2685-2686`; emitting `--backup` as a long arg landed as a positional path on upstream receivers. | PR #5890 |
 | backup.7 regression-pin coverage | Four unit tests mirror `testsuite/backup.test` scenarios in `handle_delayed_updates`. | PR #5863 |
 
 ### `batch-mode`
@@ -99,7 +99,7 @@ at wire offset 2 241 725, traced by the UTS-15.d wire-evidence audit
 | batch-mode.1 daemon-bound argv leakage | `--write-batch` / `--only-write-batch` / `--read-batch` are client-only; daemon argv builder must strip them. | PR #5609 |
 | batch-mode.2 explicit goodbye flush | Generator goodbye path lacked an explicit `writer.flush()`; TCP FIN raced the multiplex frame. | PR #5609 |
 | batch-mode.3 daemon arg-rejection error frame | Pre-fix daemon silently dropped unknown batch flags; now surfaces `@ERROR: <flag>: unrecognized option (in daemon mode)` via the correct wire frame. | PR #5609 |
-| batch-mode.4 `--only-write-batch` local-copy dry-run | Upstream `main.c:1839-1840` forces `dry_run = 1` when `write_batch < 0`; oc-rsync was traversing dest. | PR #5614 |
+| batch-mode.4 `--only-write-batch` local-copy dry-run | Upstream `main.c:1843-1844` forces `dry_run = 1` when `write_batch < 0`; oc-rsync was traversing dest. | PR #5614 |
 | batch-mode.5 INC_RECURSE batch ID-list overshoot | `write_batch_id_lists` emitted two stray `varint30(0)` terminators under CF_INC_RECURSE; matching reader only consumes them when `!inc_recurse`, drifting the stream cursor. | PR #5811 |
 | batch-mode.6 batch-replay symlink mode preservation | Batch-replay symlink path followed the link via `fs::metadata` and clobbered the target file's mode; `apply_symlink_metadata_from_entry` is the upstream-equivalent skip. | PR #5881 |
 
@@ -119,7 +119,7 @@ upstream-rsync mapping.
 | exclude.5 implicit `**/` prefix collides with `**`-bearing patterns | Compiled-rule builder prepended `**/` to every unanchored pattern; when the pattern already contained `**` the prefix compounded into `**/foo/**/bar` plus a polluting descendant rule. | PR #5898 | both |
 | exclude.6 `cvs_mode` implies `no_inherit` | Upstream `C` modifier implicitly sets `FILTRULE_NO_INHERIT`; oc-rsync treated the flags independently and leaked CVS rules into descendant directories. | PR #5869 | both |
 | exclude.7 packed `-f<rule>` short-arg form | CLI rejected upstream's `-f:C` spelling with `unknown option '-f:C'`; the canonical `testsuite/exclude.test` line could never reach the parser. | PR #5897 | both |
-| exclude.8 `XFLG_OLD_PREFIXES` in `--exclude`/`--include`/`-from` | `--exclude`/`--include` need to honour the `- `, `+ `, and `!` prefixes per `exclude.c:parse_rule_tok` + `options.c:1512-1543`; previously the prefix was treated as part of the pattern. | PR #5888 | both |
+| exclude.8 `XFLG_OLD_PREFIXES` in `--exclude`/`--include`/`-from` | `--exclude`/`--include` need to honour the `- `, `+ `, and `!` prefixes per `exclude.c:parse_rule_tok` + `options.c:1530-1561`; previously the prefix was treated as part of the pattern. | PR #5888 | both |
 | exclude-lsh.1 delete-during over-deletion (pre-shared-cause) | Initial deep-dive flagged perishable rule application in sender flist; subsequent investigation showed the over-deletion is a downstream effect of exclude.1/.2/.3/.6 and resolves with those. | rolled into shared | `exclude-lsh` only |
 
 ### `files-from`
@@ -129,9 +129,9 @@ SSH-mode hangs.
 
 | Sub-cause | Description | Landed |
 | --- | --- | --- |
-| files-from.1 `/./` anchor + trailing-slash recursion | Upstream `flist.c:2316-2330` splits every `--files-from` line on its first `/./` (prefix = chdir, suffix = transmitted name) and flags trailing-slash entries `SLASH_ENDING_NAME` for one-level recursion. oc-rsync's resolver discarded both. | PR #5722 |
+| files-from.1 `/./` anchor + trailing-slash recursion | Upstream `flist.c:2327-2341` splits every `--files-from` line on its first `/./` (prefix = chdir, suffix = transmitted name) and flags trailing-slash entries `SLASH_ENDING_NAME` for one-level recursion. oc-rsync's resolver discarded both. | PR #5722 |
 | files-from.2 DOTDIR rescan walks one level | `build_file_list_with_base` gated the SLASH_ENDING/DOTDIR rescan on `path != base`, but DOTDIR entries split with `path == base`; `--files-from` clears `recurse` so the rescan is the only child-injection path. | PR #5809, PR #5852 |
-| files-from.3 `--delete-missing-args` mode-0 sentinel | Sender emits mode-0 sentinel under `flist.c:2436-2443` when `link_stat` ENOENT + `missing_args == 2`; receiver's `delete_item()` branch on `file->mode == 0 && missing_args == 2` was already wired under UTS-19 and is now pinned by a workspace nextest. | PR #5892 (regression-pin) |
+| files-from.3 `--delete-missing-args` mode-0 sentinel | Sender emits mode-0 sentinel under `flist.c:2447-2454` when `link_stat` ENOENT + `missing_args == 2`; receiver's `delete_item()` branch on `file->mode == 0 && missing_args == 2` was already wired under UTS-19 and is now pinned by a workspace nextest. | PR #5892 (regression-pin) |
 | files-from.4 SSH lsh.sh repeated invocations hang | Repeated `lsh.sh` invocations deadlocked on a stdout half-close; receiver path needed an SSH/lsh.sh shutdown fix. | PR #5768 (under UTS-21 series), pinned by PR #5883 |
 | files-from.5 dotdir local-mode regression pin | Local-mode invocation of the upstream `files-from.test` shape needs a workspace test so every top-level sibling plus the `subsubdir2/bin-lt-list` child remain. | PR #5883 |
 
@@ -142,7 +142,7 @@ pass.
 
 | Sub-cause | Description | Landed |
 | --- | --- | --- |
-| sdb.1 dirfd-sandbox chmod bypass under `--keep-dirlinks` | `generator.c:1344` follows the parent symlink at chmod time; oc-rsync's `secure_chmod_at` refused via ENOTDIR. Introduced `chmod_path_honoring_keep_dirlinks` and wired `keep_dirlinks` through `MetadataOptions`. | PR #5793 |
+| sdb.1 dirfd-sandbox chmod bypass under `--keep-dirlinks` | `generator.c:1381` follows the parent symlink at chmod time; oc-rsync's `secure_chmod_at` refused via ENOTDIR. Introduced `chmod_path_honoring_keep_dirlinks` and wired `keep_dirlinks` through `MetadataOptions`. | PR #5793 |
 | sdb.2 compact `-K` flag parser wire-up | Server-side compact parser silently dropped the `K` byte; receiver constructed `MetadataOptions` with `keep_dirlinks: false` and the PR #5793 bypass never engaged. | PR #5853 |
 | sdb.3 cross-platform safety pin | The dirfd-sandbox bypass must succeed on Linux, macOS, and Windows through a symlinked dest directory. | PR #5803 |
 | sdb.4 8-topology regression pin | Eight tests, one per upstream topology, lock the joint invariant after both halves shipped. | PR #5871 |

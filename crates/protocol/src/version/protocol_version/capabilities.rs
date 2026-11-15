@@ -261,7 +261,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// upstream: compat.c:100-112 `valid_compressions_items[]` - zstd first
+    /// upstream: compat.c:101-113 `valid_compressions_items[]` - zstd first
     /// when `SUPPORT_ZSTD` is defined; vstring negotiation gated on protocol
     /// >= 30 via `do_negotiated_strings`.
     #[must_use]
@@ -278,7 +278,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// upstream: compat.c:741-743 `setup_protocol()` - `do_negotiated_strings`
+    /// upstream: compat.c:750-752 `setup_protocol()` - `do_negotiated_strings`
     /// is set from the client's `-e` `v` letter inside the protocol >= 30 branch.
     #[must_use]
     pub const fn supports_checksum_negotiation(self) -> bool {
@@ -292,7 +292,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// upstream: generator.c:2867,2911 - `write_del_stats()` is sent only for
+    /// upstream: generator.c:2953,2911 - `write_del_stats()` is sent only for
     /// protocol >= 31; read by `read_del_stats()` (main.c:244).
     #[must_use]
     pub const fn supports_delete_stats(self) -> bool {
@@ -308,7 +308,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// upstream: compat.c:719-720 `setup_protocol()` - `CF_INC_RECURSE` is only
+    /// upstream: compat.c:720-721 `setup_protocol()` - `CF_INC_RECURSE` is only
     /// offered in the protocol >= 30 branch; `set_allow_inc_recurse()`
     /// (compat.c:162) decides whether it is allowed.
     #[must_use]

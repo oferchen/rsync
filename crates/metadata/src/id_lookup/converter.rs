@@ -14,7 +14,7 @@ use std::io;
 
 /// What one name-converter query produced.
 ///
-/// Upstream's `namecvt_call()` returns a bare `BOOL` (clientserver.c:1311) only
+/// Upstream's `namecvt_call()` returns a bare `BOOL` (clientserver.c:1320) only
 /// because two of its outcomes never return at all: an over-long request
 /// (:1324-1327) and a failed write (:1329-1334) each call `exit_cleanup()`. The
 /// two that do return - a refused token (:1317-1319) and an answer the callers
@@ -26,14 +26,14 @@ use std::io;
 pub enum ConverterOutcome<T> {
     /// The converter answered, and the answer is usable.
     ///
-    /// upstream: clientserver.c:1355-1359 - `*id_p`/`*name_p` is set and the
+    /// upstream: clientserver.c:1364-1368 - `*id_p`/`*name_p` is set and the
     /// call returns `True`.
     Resolved(T),
 
     /// The converter answered, and its answer names nothing: an empty line, or
     /// (name to id) a line that is not a plain decimal id that fits.
     ///
-    /// upstream: clientserver.c:1345-1354 - `False` with the caller's id left
+    /// upstream: clientserver.c:1354-1363 - `False` with the caller's id left
     /// untouched. CVE-2026-53798 is precisely this arm being read as `atol("")
     /// == 0` and mapping an unknown name onto root.
     Unknown,
@@ -41,7 +41,7 @@ pub enum ConverterOutcome<T> {
     /// The request was never written, because the name cannot be framed as one
     /// request line. The converter itself is untouched and still usable.
     ///
-    /// upstream: clientserver.c:1317-1319 `namecvt_safe_token()` - the token is
+    /// upstream: clientserver.c:1326-1328 `namecvt_safe_token()` - the token is
     /// reported and the call returns `False` without writing anything
     /// (CVE-2026-53788).
     Refused,
@@ -49,7 +49,7 @@ pub enum ConverterOutcome<T> {
     /// The query could not be completed. The session must not continue as
     /// though the name were merely unknown.
     ///
-    /// upstream: clientserver.c:1324-1327 (`RERR_UNSUPPORTED`) and :1329-1334
+    /// upstream: clientserver.c:1333-1336 (`RERR_UNSUPPORTED`) and :1329-1334
     /// (`RERR_SOCKETIO`) exit the process; a converter that has closed its
     /// answer pipe (:1336-1337) exits on the next request's write.
     Failed(io::Error),
@@ -59,7 +59,7 @@ impl<T> ConverterOutcome<T> {
     /// Rewrites the answered value, turning one the caller cannot use into
     /// [`ConverterOutcome::Unknown`].
     ///
-    /// upstream: clientserver.c:1347-1354 - a malformed id answer is `False`,
+    /// upstream: clientserver.c:1356-1363 - a malformed id answer is `False`,
     /// the same result an empty answer produces; it is not a transport failure.
     pub fn map_answer<U>(self, map: impl FnOnce(T) -> Option<U>) -> ConverterOutcome<U> {
         match self {

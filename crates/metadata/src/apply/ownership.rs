@@ -331,7 +331,7 @@ fn getgroups_failed_message(err: &io::Error) -> String {
 /// the *preserve* path (`-o`/`-a`) or an explicit `--chown`/`--usermap`
 /// override. Mirrors upstream `change_uid = am_root && ...` (rsync.c:655):
 /// `preserve_uid` is set identically by `-o`, `--chown`, and `--usermap`
-/// (options.c:673,1906,1946), and upstream's gate makes no distinction
+/// (options.c:674,1906,1946), and upstream's gate makes no distinction
 /// between them - a non-root process never sets a file's owner uid, so the
 /// chown is skipped rather than attempted and failed. Before this gate
 /// oc-rsync attempted it and surfaced the resulting `EPERM` as a fatal
@@ -398,7 +398,7 @@ pub fn group_is_settable(gid: u32) -> bool {
 /// `getpwuid(raw)` - which is wrong when the raw sender id is absent or bound to
 /// a different name locally. Without an inline name (local copy) the raw id is
 /// round-tripped through the receiver's database exactly as before.
-/// upstream: flist.c:1230 recv_user_name / uidlist.c:297 match_uid
+/// upstream: flist.c:1234 recv_user_name / uidlist.c:297 match_uid
 #[cfg(unix)]
 fn resolve_owner_uid(
     entry: &protocol::flist::FileEntry,
@@ -442,7 +442,7 @@ fn resolve_owner_uid(
 /// The group counterpart of [`resolve_owner_uid`]: `--groupmap` first, then the
 /// sender-transmitted group name (INC_RECURSE `XMIT_GROUP_NAME_FOLLOWS`) resolved
 /// against the receiver's group database.
-/// upstream: flist.c:1242 recv_group_name / uidlist.c:317 match_gid
+/// upstream: flist.c:1246 recv_group_name / uidlist.c:317 match_gid
 #[cfg(unix)]
 fn resolve_group_gid(
     entry: &protocol::flist::FileEntry,
@@ -1058,7 +1058,7 @@ mod own_debug_tests {
     #[test]
     #[cfg(unix)]
     fn resolves_inline_owner_name_to_local_id() {
-        // upstream: flist.c:1230 recv_user_name - the receiver resolves the
+        // upstream: flist.c:1234 recv_user_name - the receiver resolves the
         // SENDER-transmitted user name to a LOCAL id so ownership follows the
         // NAME across hosts with differing id namespaces. A raw sender id that
         // does not exist locally must not leak through as the file owner.

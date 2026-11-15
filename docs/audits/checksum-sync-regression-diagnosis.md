@@ -21,7 +21,7 @@ Its findings still hold:
   consequence at 4x the `read()` syscall count per GiB.
 - The sender flist builder
   (`crates/transfer/src/generator/file_list/entry.rs`) never calls an
-  equivalent of upstream `flist.c:1412 file_checksum`, so wire-mode
+  equivalent of upstream `flist.c:1416 file_checksum`, so wire-mode
   pulls emit zeroed digests and force the receiver into the delta
   path even when content matches. This is the largest single
   contributor to the regression on wire transfers.

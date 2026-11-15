@@ -27,7 +27,7 @@ fn files_from_reports_read_failures() {
     let dest_dir = tmp.path().join("files-from-error-dest");
     std::fs::create_dir(&dest_dir).expect("create dest");
 
-    // upstream: options.c:2619-2622 requires a source and destination operand
+    // upstream: options.c:2674-2677 requires a source and destination operand
     // with --files-from (argc == 2); the list is only read afterwards
     // (send_file_list(), flist.c:2787), so both operands are supplied to reach the read failure.
     let (code, stdout, stderr) = run_with_args([
@@ -40,7 +40,7 @@ fn files_from_reports_read_failures() {
     assert_eq!(code, 1);
     assert!(stdout.is_empty());
     let rendered = String::from_utf8(stderr).expect("utf8");
-    // upstream: options.c:2667-2669.
+    // upstream: options.c:2722-2724.
     assert!(rendered.contains(&format!(
         "failed to open files-from file {}: No such file or directory",
         missing.display()
@@ -675,7 +675,7 @@ fn files_from_integration_handles_nested_directories() {
     assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
     assert!(stdout.is_empty());
 
-    // upstream: options.c:2331-2332 - --files-from implies --relative, so
+    // upstream: options.c:2386-2387 - --files-from implies --relative, so
     // subdir/nested.txt stays at dest/subdir/nested.txt.
     assert!(dest_dir.join("top.txt").exists());
     assert!(dest_dir.join("subdir").join("nested.txt").exists());
@@ -837,7 +837,7 @@ fn files_from_reports_permission_error() {
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest");
 
-    // upstream: options.c:2619-2622 - --files-from requires src + dest operands
+    // upstream: options.c:2674-2677 - --files-from requires src + dest operands
     // (argc == 2) before the list is read, so both are supplied here.
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -1576,7 +1576,7 @@ fn files_from_integration_with_recursive_copies_nested_files() {
     assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
     assert!(stdout.is_empty());
 
-    // --files-from implies --relative (upstream options.c:2331-2332), so
+    // --files-from implies --relative (upstream options.c:2386-2387), so
     // listed paths preserve their directory structure at the destination.
     assert!(dest_dir.join("top.txt").exists());
     assert!(dest_dir.join("a/mid.txt").exists());
@@ -1698,7 +1698,7 @@ fn resolve_file_list_entries_with_dot_relative_paths() {
 fn resolve_files_from_entry_with_embedded_dot_marker_skips_extra_marker() {
     use crate::frontend::execution::resolve_file_list_entries;
 
-    // upstream: flist.c:2863 - entries like "from/./dir/subdir" already
+    // upstream: flist.c:2874 - entries like "from/./dir/subdir" already
     // contain a "./" transfer root marker. The resolver must NOT add another
     // "./" because the engine splits at the first marker, and a double marker
     // would incorrectly keep "from/" in the destination path.
@@ -1755,7 +1755,7 @@ fn resolve_files_from_entry_with_leading_dot_slash_skips_extra_marker() {
 /// ```
 ///
 /// Source operand is `$scratchdir` (the parent of `from/`); dest is `$todir/`.
-/// Upstream `flist.c:2992-3118` honours `(xfer_dirs && name_type != NORMAL_NAME)`
+/// Upstream `flist.c:3003-3129` honours `(xfer_dirs && name_type != NORMAL_NAME)`
 /// and calls `send_directory()` for every trailing-slash or dotdir entry, so
 /// `from/./` enumerates one level of `from/`'s children even though `--files-from`
 /// implicitly clears `recurse` (`options.c:2314-2315`). The same applies to
@@ -1935,7 +1935,7 @@ fn files_from_integration_keeps_every_top_level_entry() {
 
 /// The ownership walk must still FOLLOW a symlink the operator owns.
 ///
-/// upstream: syscall.c:349-351 states the contract in its own words - "a
+/// upstream: syscall.c:408-410 states the contract in its own words - "a
 /// trusted-owned symlink (e.g. root's `/var/log -> /data/log`) is still
 /// followed; an untrusted one fails `ELOOP`". Routing `--files-from` through
 /// `open_no_attacker_symlinks()` (options.c:2664) closes the attacker case, and

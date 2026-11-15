@@ -442,7 +442,7 @@ fn serve_error_exit(listener: TcpListener, code: i32) -> JoinHandle<()> {
     })
 }
 
-/// upstream: io.c:1892-1930 - the peer's `MSG_ERROR_EXIT` ends the client
+/// upstream: io.c:1899-1937 - the peer's `MSG_ERROR_EXIT` ends the client
 /// with the peer's code through `_exit_cleanup(val, __FILE__, 0 - __LINE__)`,
 /// and the negative line keeps log_exit() quiet (cleanup.c:221-225): the peer
 /// already reported the failure. rsync 3.5.1 against this stream exits 11 and
@@ -503,7 +503,7 @@ fn serve_exit_frames(
     })
 }
 
-/// upstream: io.c:1892-1930 read_a_msg() - the pre-fork receiver answers an
+/// upstream: io.c:1899-1937 read_a_msg() - the pre-fork receiver answers an
 /// empty `MSG_ERROR_EXIT` with an empty one at any protocol, and a code with
 /// an empty one from protocol 31; then cleanup.c:242-253 makes it wait for
 /// the daemon's exit (io.c:1066-1085 noop_io_until_death), answering the
@@ -548,7 +548,7 @@ fn a_peer_error_exit_is_answered_as_upstreams_receiver_answers_it() {
     }
 }
 
-/// upstream: cleanup.c:222-224 - a `--log-file` run still calls log_exit()
+/// upstream: cleanup.c:223-225 - a `--log-file` run still calls log_exit()
 /// after `MSG_ERROR_EXIT` unless `INFO_GTE(STATS, 1)`, which `-v` sets
 /// (options.c:257). rsync 3.5.1 prints `rsync error: error in file IO
 /// (code 11) at io.c(1930) [Receiver=3.5.1]` for the first and nothing for
@@ -662,7 +662,7 @@ fn serve_list_then_reset_after_error_exit(listener: TcpListener) -> JoinHandle<(
     })
 }
 
-/// upstream: cleanup.c:221-253 - _exit_cleanup() calls log_exit() before
+/// upstream: cleanup.c:222-254 - _exit_cleanup() calls log_exit() before
 /// noop_io_until_death(), so the trailer of a client's own fatal error comes
 /// before the `read error` the wait for the daemon's exit then hits
 /// (io.c:918-925). rsync 3.5.1 against this stream prints exactly these three

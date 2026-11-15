@@ -31,7 +31,7 @@ use rustix::fs::{FallocateFlags, fallocate};
 /// its failure (an unsupported filesystem, `ENOSPC`, ...) must never abort the
 /// transfer.
 ///
-/// upstream: `syscall.c:2728` `do_fallocate()`
+/// upstream: `syscall.c:2799` `do_fallocate()`
 #[cfg(target_os = "linux")]
 pub fn preallocate(file: &File, length: u64) -> io::Result<u64> {
     // fallocate's offset/length args are signed; skip when length would
@@ -39,7 +39,7 @@ pub fn preallocate(file: &File, length: u64) -> io::Result<u64> {
     if length == 0 || length >= i64::MAX as u64 {
         return Ok(0);
     }
-    // upstream: syscall.c:2740-2743 - perturb the length by one so it never
+    // upstream: syscall.c:2811-2814 - perturb the length by one so it never
     // exactly matches the file's eventual size (only observable on the
     // KEEP_SIZE-unavailable fallback, but replicated for fidelity).
     let length = if length & 1 == 1 {
@@ -47,7 +47,7 @@ pub fn preallocate(file: &File, length: u64) -> io::Result<u64> {
     } else {
         length - 1
     };
-    // upstream: syscall.c:2736 picks KEEP_SIZE only when sparse_files <= 0.
+    // upstream: syscall.c:2807 picks KEEP_SIZE only when sparse_files <= 0.
     match fallocate(file, FallocateFlags::KEEP_SIZE, 0, length) {
         Ok(()) => Ok(0),
         Err(err) => Err(io::Error::from_raw_os_error(err.raw_os_error())),

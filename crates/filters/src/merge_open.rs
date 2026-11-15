@@ -15,12 +15,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/exclude.c:1683` - `parse_filter_file()` opens the merge file.
-//! - `rsync-3.5.1/exclude.c:910-913` - `push_local_filters()` calls it per
+//! - `rsync-3.5.2/exclude.c:1683` - `parse_filter_file()` opens the merge file.
+//! - `rsync-3.5.2/exclude.c:910-913` - `push_local_filters()` calls it per
 //!   scanned directory.
-//! - `rsync-3.5.1/exclude.c:1680-1684` - the `operator_path_resolve = 1` that
+//! - `rsync-3.5.2/exclude.c:1680-1684` - the `operator_path_resolve = 1` that
 //!   wraps that open.
-//! - `rsync-3.5.1/syscall.c:675` - `open_no_attacker_symlinks()`; the trust
+//! - `rsync-3.5.2/syscall.c:744` - `open_no_attacker_symlinks()`; the trust
 //!   rule is at `syscall.c:499`.
 
 use std::io;
@@ -52,10 +52,10 @@ use std::path::Path;
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/exclude.c:1668-1684` - `parse_filter_file()` wraps its
+/// - `rsync-3.5.2/exclude.c:1668-1684` - `parse_filter_file()` wraps its
 ///   `open_no_attacker_symlinks()` in `operator_path_resolve = 1`, scoped by
 ///   `if (!daemon_config_filter_file)`.
-/// - `rsync-3.5.1/syscall.c:232-291` - `abspath_outside_confinement()`, the
+/// - `rsync-3.5.2/syscall.c:232-291` - `abspath_outside_confinement()`, the
 ///   refusal that flag arms.
 pub(crate) fn read_to_string(path: &Path) -> io::Result<String> {
     #[cfg(unix)]

@@ -105,7 +105,7 @@ Key observations:
   (`set_blocking(STDIN_FILENO)`) and on stdout when `blocking_io > 0`
   (`pipe.c:80-82`). The parent ends remain non-blocking (set by `fd_pair`
   itself, see 2.3 below).
-- `local_child` (`pipe.c:99-178`) uses the same `fd_pair`-based topology
+- `local_child` (`pipe.c:99-179`) uses the same `fd_pair`-based topology
   for forked-local rsync (no SSH involved). The block comment at
   `pipe.c:99-108` explicitly names the endpoints "socket pairs" and
   documents the four-end ownership pattern.
@@ -170,7 +170,7 @@ are non-blocking. There is no code path in upstream rsync that uses raw
 ### 2.4 Daemon connection setup (`clientserver.c`)
 
 For daemon-mode connections (`rsync://` URLs) the wire is a TCP socket,
-not a stdio pipe. `clientserver.c:116-148` `start_socket_client()`:
+not a stdio pipe. `clientserver.c:120-152` `start_socket_client()`:
 
 ```c
 fd = open_socket_out_wrapped(host, rsync_port, bind_address, default_af_hint);
@@ -183,7 +183,7 @@ return ret ? ret : client_run(fd, fd, -1, argc, argv);
 
 Both directions share the same socket FD (`f_in == f_out`). This is a
 TCP `AF_INET` / `AF_INET6` socket via `connect(2)`, not a socketpair.
-`rsync_module()` at `clientserver.c:692` is the daemon-side counterpart
+`rsync_module()` at `clientserver.c:696` is the daemon-side counterpart
 and accepts the connection on the listener socket.
 
 ### 2.5 `RSYNC_CONNECT_PROG` test escape (`socket.c::sock_exec`)
@@ -220,7 +220,7 @@ shutdown is a no-op on pipes.
 | Local-fork wire | same | `pipe.c:119`, `util1.c:84-85` |
 | Read-batch back-channel | same | `main.c:629`, `util1.c:84-85` |
 | Receiver error pipe | same | `main.c:985`, `util1.c:84-85` |
-| Daemon `rsync://` wire | TCP `AF_INET`/`AF_INET6` socket | `clientserver.c:137`, `socket.c::open_socket_out` |
+| Daemon `rsync://` wire | TCP `AF_INET`/`AF_INET6` socket | `clientserver.c:141`, `socket.c::open_socket_out` |
 | `RSYNC_CONNECT_PROG` test escape | TCP socketpair (`socket.c::socketpair_tcp`) | `socket.c:740-802`, `socket.c:811-846` |
 | Remote-rsync diagnostics | multiplex envelope on the wire | `io.c:983-1031` |
 | Local SSH-client stderr | inherited terminal stderr | (no code; default child stderr) |
@@ -756,15 +756,15 @@ modify (recorded so a maintainer does not need to redo the search):
 Upstream rsync 3.4.1 (`target/interop/upstream-src/rsync-3.4.1/`):
 
 - `pipe.c:48-97` `piped_child` - SSH child setup, two `fd_pair` calls.
-- `pipe.c:99-178` `local_child` - forked-local rsync, same topology.
+- `pipe.c:99-179` `local_child` - forked-local rsync, same topology.
 - `util1.c:74-96` `fd_pair` - `socketpair`-or-`pipe` wrapper,
   non-blocking on success.
 - `main.c:504-663` `do_cmd` - dispatch among `read_batch`,
   `local_server`, `piped_child`.
 - `main.c:629`, `main.c:985` - auxiliary `fd_pair` uses (read-batch
   back-channel, receiver error pipe).
-- `clientserver.c:116-148` `start_socket_client` - daemon TCP wire.
-- `clientserver.c:692` `rsync_module` - daemon per-connection handler.
+- `clientserver.c:120-152` `start_socket_client` - daemon TCP wire.
+- `clientserver.c:696` `rsync_module` - daemon per-connection handler.
 - `socket.c:736-846` `socketpair_tcp` + `sock_exec` -
   `RSYNC_CONNECT_PROG` test escape (not used on real SSH paths).
 - `io.c:983-1031` `send_msg` - multiplex envelope (substitute for an

@@ -56,7 +56,7 @@ flag string is the canonical 3.4.4 packed encoding emitted by
 `options.c:server_options()`
 (`target/interop/upstream-src/rsync-3.4.4/options.c:2604` and surrounding
 lines). The single `'one two'` arg arrives at the server unsplit because
-`--old-args` instructs upstream `options.c:1969-1985` to honour the
+`--old-args` instructs upstream `options.c:2005-2021` to honour the
 `RSYNC_OLD_ARGS` env var or the explicit flag and skip the
 `send_protected_args()` arg split entirely.
 
@@ -71,7 +71,7 @@ server died trying to read the next protocol frame from stdin.
 Root cause (cross-referenced):
 
 1. The oc-rsync server's `--old-args` parse path does not implement the
-   upstream re-split semantics. Upstream `options.c:1640-1648`
+   upstream re-split semantics. Upstream `options.c:1667-1675`
    (`old_style_args >= 1` branch) joins all post-`.` argv entries with a
    space and re-splits at every whitespace via `glob_expand()` so the
    single `'one two'` becomes two positional paths (`one`, `two`).
@@ -207,7 +207,7 @@ close.
 ## Follow-ups enumerated (not raised as separate tasks)
 
 - `UTS-1.e.followup` - implement `--old-args` server-side re-split.
-  Mirror upstream `options.c:1640-1648` `old_style_args` branch:
+  Mirror upstream `options.c:1667-1675` `old_style_args` branch:
   whenever the server parses positional args after the `.` separator
   and `old_style_args >= 1`, join all positional args with `' '` and
   re-split on whitespace via the existing `glob_expand` equivalent

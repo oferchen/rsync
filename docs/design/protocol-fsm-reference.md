@@ -88,7 +88,7 @@ digraph daemon_connection_fsm {
 - **Exit condition:** The first line after the version response (after an optional `#early_input`) is the module name, whatever it contains; an `@RSYNCD: OPTION ...` line is answered `@ERROR: Unknown module`.
 - **Error handling:** I/O error closes socket. Malformed version line is tolerated (line becomes module name).
 - **Wire messages:** `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n` (server to client).
-- **Upstream reference:** `clientserver.c:455` `output_daemon_greeting`.
+- **Upstream reference:** `clientserver.c:459` `output_daemon_greeting`.
 
 #### ModuleSelect
 
@@ -105,7 +105,7 @@ digraph daemon_connection_fsm {
   - Access denied: `@ERROR: access denied to <module> from <host> (<addr>)\n`.
   - Max connections reached: `@ERROR: max connections (<N>) reached -- try again later\n`.
 - **Wire messages:** Conditional `@RSYNCD: CAP modules [authlist]\n` lines, then module-specific responses.
-- **Upstream reference:** `clientserver.c:730-762` module lookup and access control.
+- **Upstream reference:** `clientserver.c:734-766` module lookup and access control.
 
 #### Listing
 
@@ -117,7 +117,7 @@ digraph daemon_connection_fsm {
 - **Exit condition:** Module list sent, transitions to Closing.
 - **Error handling:** I/O errors propagated.
 - **Wire messages:** Capability lines, MOTD text, module lines, then `@RSYNCD: EXIT\n`.
-- **Upstream reference:** `clientserver.c:1246-1254`.
+- **Upstream reference:** `clientserver.c:1255-1263`.
 
 #### Authenticating
 
@@ -133,7 +133,7 @@ digraph daemon_connection_fsm {
   - Bad credentials: same error message.
   - Missing secrets file: I/O error.
 - **Wire messages:** `@RSYNCD: AUTHREQD <challenge>\n` (server), `<user> <digest>\n` (client).
-- **Upstream reference:** `authenticate.c:auth_server()`, `compat.c:858`.
+- **Upstream reference:** `authenticate.c:auth_server()`, `compat.c:867`.
 
 #### Transferring
 
@@ -265,20 +265,20 @@ digraph transfer_pipeline_fsm {
 
 - **Entry condition:** `run_server_with_handshake()` called with `HandshakeResult` from daemon greeting or SSH version exchange.
 - **Actions (upstream `compat.c:setup_protocol()`):**
-  1. Compat flags exchange (protocol >= 30, upstream `compat.c:710-743`):
+  1. Compat flags exchange (protocol >= 30, upstream `compat.c:711-752`):
      - Server writes compat flags byte.
      - Client reads compat flags byte.
      - INC_RECURSE, VARINT_FLIST_FLAGS, and other capabilities negotiated.
-  2. Capability negotiation (protocol >= 30, upstream `compat.c:534-585`):
+  2. Capability negotiation (protocol >= 30, upstream `compat.c:535-586`):
      - Checksum algorithm selection (MD4, MD5, XXH3 via vstring).
      - Compression algorithm selection (zlib, zlibx, zstd, lz4 via vstring).
-  3. Checksum seed exchange (all protocols, upstream `compat.c:750`):
+  3. Checksum seed exchange (all protocols, upstream `compat.c:759`):
      - Server writes 4-byte seed.
      - Client reads 4-byte seed.
 - **Exit condition:** `SetupResult` produced with `compat_flags`, `negotiated_algorithms`, `checksum_seed`.
 - **Error handling:** I/O errors or unsupported protocol versions abort the connection.
 - **Wire messages:** 1-byte compat flags, vstring capability lines, 4-byte checksum seed.
-- **Upstream reference:** `compat.c:572-644 setup_protocol()`.
+- **Upstream reference:** `compat.c:573-645 setup_protocol()`.
 
 #### FilterExchange
 
@@ -316,7 +316,7 @@ digraph transfer_pipeline_fsm {
 - **Exit condition:** Full file list transferred (or initial segment for INC_RECURSE).
 - **Error handling:** Malformed file entries, path validation failures, I/O errors.
 - **Wire messages:** Varint-encoded file entries (name, size, mtime, mode, uid, gid, etc.), NDX markers.
-- **Upstream reference:** `flist.c:2192 send_file_list()`, `flist.c:2923 recv_file_list()`.
+- **Upstream reference:** `flist.c:2196 send_file_list()`, `flist.c:2934 recv_file_list()`.
 
 #### DeltaTransfer
 
@@ -387,7 +387,7 @@ roles, but each role performs different actions within each state:
 
 With INC_RECURSE enabled, the Generator interleaves sub-list segments
 into the DeltaTransfer phase via `SegmentScheduler`, matching upstream
-`sender.c:227,261` cadence.
+`sender.c:235,261` cadence.
 
 ---
 

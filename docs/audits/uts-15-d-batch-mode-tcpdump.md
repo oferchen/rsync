@@ -128,7 +128,7 @@ For the 250 000-entry seed tree the per-entry on-wire flist record is
 payload at `~2.25 MB`. Byte 2 241 725 therefore falls **inside the last
 MSG_DATA frame carrying the file list**, immediately before the
 sender writes the flist trailer (a single zero byte per upstream
-`flist.c:392 send_file_entry()` and `flist.c:1682`).
+`flist.c:395 send_file_entry()` and `flist.c:1686`).
 
 The 4-byte multiplex header for that frame precedes the cutoff by the
 intra-frame offset; the close happens mid-payload, not on the header

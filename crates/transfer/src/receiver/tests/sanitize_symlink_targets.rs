@@ -10,7 +10,7 @@
 //!
 //! Both transforms belong to the daemon server process. The client end of a
 //! daemon connection stores received targets verbatim: `sanitize_paths` is
-//! never set in an upstream client (clientserver.c:1067-1068 is the only
+//! never set in an upstream client (clientserver.c:1071-1072 is the only
 //! assignment), so a pull client keeps `abs_link -> /etc/hostname`
 //! byte-for-byte and its own `--safe-links` check reads that raw value.
 //!
@@ -142,7 +142,7 @@ fn create_one_symlink_at(
 
 #[test]
 fn daemon_receiver_sanitizes_an_escaping_symlink_target_when_munging_is_off() {
-    // upstream: flist.c:1554 - with munging off, `sanitize_paths` still
+    // upstream: flist.c:1558 - with munging off, `sanitize_paths` still
     // strips the leading `../`, so the stored link cannot resolve above the
     // module root. Without this, a client holding only write access plants
     // `escape -> ../outside` and reaches outside the module on the next
@@ -153,7 +153,7 @@ fn daemon_receiver_sanitizes_an_escaping_symlink_target_when_munging_is_off() {
         on_disk.as_deref(),
         Some(std::path::Path::new("outside")),
         "a daemon receiver with `munge symlinks = false` must sanitize the \
-         received target (upstream flist.c:1554); storing `../outside` \
+         received target (upstream flist.c:1558); storing `../outside` \
          verbatim lets the link resolve outside the module root",
     );
 }
@@ -224,7 +224,7 @@ fn a_non_daemon_receiver_leaves_the_target_alone() {
 
 #[test]
 fn munging_still_wins_when_it_is_enabled() {
-    // The two transforms are mutually exclusive upstream (`flist.c:1554` is
+    // The two transforms are mutually exclusive upstream (`flist.c:1558` is
     // guarded by `!munge_symlinks`). With munging on, the target must carry
     // the prefix and must NOT have been sanitized first - sanitizing as well
     // would strip the `../` that the munge prefix already neutralises, and
@@ -303,7 +303,7 @@ fn sanitization_precedes_the_safe_links_check() {
 
 #[test]
 fn a_target_reaching_no_further_than_the_transfer_root_survives_intact() {
-    // upstream: flist.c:1554 passes `lastdir_depth`, not 0 - the depth of the
+    // upstream: flist.c:1558 passes `lastdir_depth`, not 0 - the depth of the
     // entry's own directory (flist.c:1092). A link in `sub/dir/` may therefore
     // carry `../..`, which lands exactly on the transfer root and is in-tree.
     //

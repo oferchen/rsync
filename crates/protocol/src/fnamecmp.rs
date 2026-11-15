@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn is_fuzzy_only_for_fuzzy_range() {
-        // upstream: generator.c:2383-2384 gates ITEM_XNAME_FOLLOWS on
+        // upstream: generator.c:2426-2427 gates ITEM_XNAME_FOLLOWS on
         // fnamecmp_type >= FNAMECMP_FUZZY, so is_fuzzy must be true across the
         // whole 0x83..=0xFF range and false for every other type.
         assert!(FnameCmpType::Fuzzy(0).is_fuzzy());

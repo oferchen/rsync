@@ -6,7 +6,7 @@ impl RuntimeOptions {
     ) -> Result<(), DaemonError> {
         let path = PathBuf::from(value.clone());
         let parsed = parse_config_modules_with_dparams(&path, &self.dparams)?;
-        // upstream: clientserver.c:1762 - the listening daemon reads its own
+        // upstream: clientserver.c:1826 - the listening daemon reads its own
         // settings (pid file, port, address, listener socket options and
         // backlog, the QUIC listener) from a globals-only load that stops at
         // the first module header; each connection then re-reads the whole
@@ -38,7 +38,7 @@ impl RuntimeOptions {
             self.set_config_lock_file(lock_file, &origin)?;
         }
 
-        // upstream: clientserver.c:1789 - `daemon_main` calls `log_init(0)`
+        // upstream: clientserver.c:1854 - `daemon_main` calls `log_init(0)`
         // before accepting anything, and `log_init` resolves the name through
         // `lp_log_file(module_id)` at `module_id < 0`, i.e. the global value.
         // Without this the daemon-wide log is never opened and the startup
@@ -47,7 +47,7 @@ impl RuntimeOptions {
             self.set_config_log_file(log_file, &origin)?;
         }
 
-        // upstream: clientserver.c:1441 - the handshake bound is armed from
+        // upstream: clientserver.c:1451 - the handshake bound is armed from
         // `lp_timeout(-1)`, so the daemon-wide value must survive parsing as a
         // global and not only as the module default it also seeds. Last-wins,
         // matching `lp_load()`: a later declaration replaces an earlier one.
@@ -117,7 +117,7 @@ impl RuntimeOptions {
         }
 
         // Apply the `address` directive only when no CLI --address/--bind was given.
-        // upstream: clientserver.c:1786-1787 `daemon_main()` - CLI --address
+        // upstream: clientserver.c:1851-1852 `daemon_main()` - CLI --address
         // overrides the config file `address`.
         if let Some((addr, _origin)) = startup.bind_address
             && !self.bind_address_overridden
@@ -139,7 +139,7 @@ impl RuntimeOptions {
             self.set_listen_backlog_from_config(backlog, &origin)?;
         }
 
-        // upstream: clientserver.c:1784-1785 `daemon_main()` - config `port`
+        // upstream: clientserver.c:1849-1850 `daemon_main()` - config `port`
         // overrides the default listening port unless CLI `--port` was given.
         if let Some((port, _origin)) = startup.rsync_port {
             self.rsync_port = Some(port);
@@ -492,7 +492,7 @@ impl RuntimeOptions {
     ///
     /// upstream: daemon-parm.txt:6 `daemon uid` accepts both numeric IDs and
     /// usernames, resolved per connection by `start_daemon()`
-    /// (clientserver.c:1512). Deviation from upstream: resolution happens at
+    /// (clientserver.c:1522). Deviation from upstream: resolution happens at
     /// config load time.
     fn set_daemon_uid_from_config(
         &mut self,
@@ -517,7 +517,7 @@ impl RuntimeOptions {
     ///
     /// upstream: daemon-parm.txt:5 `daemon gid` accepts both numeric IDs and
     /// group names, resolved per connection by `start_daemon()`
-    /// (clientserver.c:1499). Deviation from upstream: resolution happens at
+    /// (clientserver.c:1509). Deviation from upstream: resolution happens at
     /// config load time.
     fn set_daemon_gid_from_config(
         &mut self,

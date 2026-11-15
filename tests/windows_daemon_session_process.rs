@@ -142,7 +142,7 @@ fn each_connection_is_served_by_its_own_session_process() {
 /// inner directory must therefore not be served, and neither may anything at
 /// the drive root that the post-chroot "/" would name natively.
 ///
-/// upstream: clientserver.c:883-918 `rsync_module()`.
+/// upstream: clientserver.c:887-922 `rsync_module()`.
 #[cfg(windows)]
 #[test]
 fn an_unset_use_chroot_serves_the_inner_path_below_the_outer_one() {

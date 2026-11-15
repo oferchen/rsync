@@ -22,7 +22,7 @@
 //!
 //! # Upstream Reference
 //!
-//! Upstream rsync 3.5.1 has no OLDEST_SUPPORTED_PROTOCOL; rsync.h:147-149
+//! Upstream rsync 3.5.1 has no OLDEST_SUPPORTED_PROTOCOL; rsync.h:148-150
 //! defines MIN_PROTOCOL_VERSION 20 and MAX_PROTOCOL_VERSION 40. The floor of 28
 //! is oc's own `ProtocolVersion::OLDEST`.
 

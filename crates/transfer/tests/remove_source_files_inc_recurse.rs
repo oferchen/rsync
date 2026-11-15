@@ -1,7 +1,7 @@
 //! `--remove-source-files` unlinks every transferred source when incremental
 //! recursion splits the file list into many sub-lists.
 //!
-//! upstream: io.c:1831-1845 runs `successful_send()` for each `MSG_SUCCESS`
+//! upstream: io.c:1838-1852 runs `successful_send()` for each `MSG_SUCCESS`
 //! the moment it is read, so the confirmations for a sub-list arrive ahead of
 //! the `NDX_DONE` after which sender.c:535-536 frees that list. A sender that
 //! frees a list's entries first and confirms later has no source paths left to

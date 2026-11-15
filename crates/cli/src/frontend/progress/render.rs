@@ -57,7 +57,7 @@ use logging::{InfoFlag, info_gte};
 
 /// Which file-list banner the sender prints before the per-file name list.
 ///
-/// upstream: flist.c:2761-2764 - `send_file_list()` picks exactly one of the
+/// upstream: flist.c:2772-2775 - `send_file_list()` picks exactly one of the
 /// two client-facing banners:
 ///
 /// ```c
@@ -78,9 +78,9 @@ pub(crate) enum FlistBanner {
     #[default]
     None,
     /// `building file list ... done` - the non-incremental banner.
-    /// upstream: flist.c:179 + flist.c:208.
+    /// upstream: flist.c:179 + flist.c:209.
     Building,
-    /// `sending incremental file list` - upstream: flist.c:2764.
+    /// `sending incremental file list` - upstream: flist.c:2775.
     Incremental,
 }
 
@@ -93,19 +93,41 @@ impl FlistBanner {
     /// `finish_filelist_progress()` emits `"done\n"` on `FINFO` (flist.c:208).
     /// Both halves land on the client's stdout, so the concatenation is
     /// byte-identical to upstream's stream.
-    pub(crate) fn emit(self, writer: &mut dyn Write) -> io::Result<()> {
+    /// Writes the banner, emitting `<count> files to consider` at `FLIST >= 2`
+    /// when `file_count` is known (mirroring upstream `finish_filelist_progress`).
+    pub(crate) fn emit_with_count(
+        self,
+        file_count: Option<usize>,
+        writer: &mut dyn Write,
+    ) -> io::Result<()> {
         match self {
             Self::None => Ok(()),
             Self::Building => {
-                // upstream: flist.c:179 - rprintf(FCLIENT, "%s ... ", kind),
-                // no newline; `output_needs_newline` is set instead.
                 write!(writer, "building file list ... ")?;
-                // upstream: flist.c:208 - rprintf(FINFO, "done\n") from
-                // finish_filelist_progress(), called at flist.c:3040 (sender)
-                // and flist.c:3266 (receiver).
+                if logging::info_gte(logging::InfoFlag::Flist, 2)
+                    && let Some(count) = file_count
+                {
+                    let format_tally = |n: usize| -> String {
+                        if logging::groups_counts() {
+                            logging::comma_num(n as u64)
+                        } else {
+                            n.to_string()
+                        }
+                    };
+                    for (index, tick) in (0..count).step_by(100).enumerate() {
+                        if index == 0 {
+                            writer.write_all(b"\n")?;
+                        }
+                        let tick_str = format_tally(tick);
+                        write!(writer, " {tick_str} files...\r")?;
+                    }
+                    let plural = if count == 1 { " " } else { "s " };
+                    let count_str = format_tally(count);
+                    return writeln!(writer, "{count_str} file{plural}to consider");
+                }
                 writeln!(writer, "done")
             }
-            // upstream: flist.c:2764.
+            // upstream: flist.c:2775.
             Self::Incremental => writeln!(writer, "sending incremental file list"),
         }
     }
@@ -113,7 +135,7 @@ impl FlistBanner {
 
 /// Which `delta-transmission %s` notice the generator would print.
 ///
-/// upstream: generator.c:2763-2768 - the generator emits this line once at
+/// upstream: generator.c:2849-2854 - the generator emits this line once at
 /// `DEBUG_GTE(FLIST, 1)` (first active at `-vv`), before the per-file generate
 /// loop. `whole_file` (the local-copy default) reports `Disabled`; an explicit
 /// `--no-whole-file` reports `Enabled`.
@@ -146,12 +168,12 @@ impl DeltaTransmissionState {
 pub(crate) struct DeltaTransmissionSummary {
     /// The `delta-transmission %s` notice printed after the `created directory`
     /// notice and before the name list. `Some` only at `DEBUG_GTE(FLIST, 1)` on
-    /// a local transfer. upstream: generator.c:2763-2768.
+    /// a local transfer. upstream: generator.c:2849-2854.
     pub notice: Option<DeltaTransmissionState>,
     /// Whether to print the `match_report()` `total:` line after the name list.
     /// `true` at `DEBUG_GTE(DELTASUM, 1)` on a local transfer, whole-file or
     /// not; the counters and `data` are read from the summary.
-    /// upstream: match.c:480-489 `match_report()`.
+    /// upstream: match.c:516-525 `match_report()`.
     pub emit_total: bool,
 }
 
@@ -196,7 +218,7 @@ pub(crate) fn emit_session_notices(
         writer.write_all(b"\n")?;
     }
 
-    // upstream: generator.c:2763-2768 - the generator prints the
+    // upstream: generator.c:2849-2854 - the generator prints the
     // delta-transmission status once at DEBUG_GTE(FLIST, 1) (first active at
     // -vv), after the receiver's `created directory` notice and before the
     // per-file generate loop.
@@ -241,13 +263,17 @@ pub(crate) fn emit_transfer_summary(
     let events = summary.events();
     let stats_on = stats_level > 0;
 
-    // upstream: flist.c:2760-2764 - both banners are written at the *start* of
+    // upstream: flist.c:2771-2775 - both banners are written at the *start* of
     // `send_file_list()`, before any entry is listed, so this has to precede the
     // `--list-only` branch below. `--list-only` resolves `xfer_dirs` to 1
     // (options.c:2329) without turning on `inc_recurse`, so it is one of the
     // cells that selects the `building file list ... done` banner.
     if !live.header {
-        flist_banner.emit(writer)?;
+        let flist_count = events
+            .iter()
+            .filter(|event| is_progress_event(event.kind()))
+            .count();
+        flist_banner.emit_with_count(Some(flist_count), writer)?;
     }
 
     if list_only {
@@ -336,7 +362,7 @@ pub(crate) fn emit_transfer_summary(
         && !events.is_empty()
     {
         // A live listing owns the progress too: when it wrote none (a dry
-        // run), upstream printed none either (sender.c:639-642).
+        // run), upstream printed none either (sender.c:647-650).
         emit_progress(events, writer, human_readable_mode, escape, pending)?
     } else {
         false
@@ -349,7 +375,7 @@ pub(crate) fn emit_transfer_summary(
     // name listing so `--progress` (info=name1, verbosity 0) does not re-print
     // the whole list - mirroring the `!progress_rendered` guard already applied
     // to the verbosity>0 branch above.
-    // upstream: log_delete() (log.c:892) prints deletions whenever
+    // upstream: log_delete() (log.c:977) prints deletions whenever
     // INFO_GTE(DEL, 1), independent of the NAME level that gates the per-file
     // listing. -v raises both, but `--info=del1` alone raises only DEL, so the
     // verbose listing must still run to surface the "deleting" lines.
@@ -393,7 +419,7 @@ pub(crate) fn emit_transfer_summary(
     // totals and the summary trailer below.
     pending.finish(writer)?;
 
-    // upstream: match.c:480-489 match_report() - the sender prints the
+    // upstream: match.c:516-525 match_report() - the sender prints the
     // cumulative match totals once at DEBUG_GTE(DELTASUM, 1) (first active at
     // -vv) after send_files() finishes (sender.c:818) and before
     // output_summary(). The gate is the debug level alone: a whole-file
@@ -522,7 +548,7 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
                 String::new()
             };
             let mut rendered = escape_path(event.relative_path(), escape);
-            // upstream: generator.c:1346 list_file_entry() - the ` -> <target>`
+            // upstream: generator.c:1383 list_file_entry() - the ` -> <target>`
             // arrow is emitted only when `preserve_links && S_ISLNK(f->mode)`.
             // Without `--links`/`-l` the symlink is still listed (with its
             // target-length size) but no target string.
@@ -634,14 +660,14 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
         // `"\r%15s %3d%% %7.2f%s %s%s"` (progress.c:129). The rate column packs the
         // `%7.2f` value (7 chars) plus a 4-char unit suffix (kB/s, MB/s, GB/s) for an
         // 11-char total. The elapsed column matches `%4u:%02u:%02u` at 10 chars.
-        let size_field = format!("{:>15}", format_progress_bytes(bytes, human_readable));
+        let size_field = format!("{:>16}", format_progress_bytes(bytes, human_readable));
         let percent_hint = match event.kind() {
             ClientEventKind::DataCopied => event.total_bytes(),
             _ => None,
         };
         let percent_field = format!("{:>4}", format_progress_percent(bytes, percent_hint));
         let rate_field = format!(
-            "{:>11}",
+            "{:>10}",
             format_progress_rate(bytes, event.elapsed(), human_readable)
         );
         let elapsed_field = format!("{:>10}", format_progress_elapsed(event.elapsed()));
@@ -777,7 +803,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         .saturating_add(symlinks_total)
         .saturating_add(special_total);
 
-    // upstream: receiver.c:926-936 / sender.c:588-600 - "Number of created
+    // upstream: receiver.c:926-936 / sender.c:596-608 - "Number of created
     // files" counts ITEM_IS_NEW entries per type (new dirs, symlinks, devices,
     // specials and empty files included), NOT the "copied/updated" tallies. An
     // in-place update of a pre-existing file/symlink is transferred but never
@@ -978,7 +1004,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
 /// reorder events so upstream's generator-first / receiver-second wire order
 /// is preserved in verbose mode.
 ///
-/// upstream: hlink.c:237-238, generator.c:1150-1154, rsync.c:824-828 - the
+/// upstream: hlink.c:237-238, generator.c:1187-1191, rsync.c:824-828 - the
 /// generator emits `"is uptodate"` synchronously while the receiver emits
 /// the bare-name notice from `set_file_attrs` only after the transfer
 /// completes. The two processes pipeline so uptodate lines appear ahead of
@@ -1021,7 +1047,7 @@ fn reports_uptodate_wording(event: &ClientEvent) -> bool {
 /// matches the receiver-side verbose path (receiver/transfer/sync.rs) so a
 /// local-copy `-v`/`--info=name` listing agrees with upstream.
 ///
-/// upstream: log.c:671-672 - the `%n` token strlcat()s a `/` for S_ISDIR
+/// upstream: log.c:756-757 - the `%n` token strlcat()s a `/` for S_ISDIR
 /// entries; the transfer root is listed as `./`.
 fn verbose_listing_name(event: &ClientEvent, escape: EscapeStyle) -> Vec<u8> {
     let path = event.relative_path();
@@ -1060,7 +1086,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
     stdout: &mut W,
     pending: &mut PendingDiagnostics,
 ) -> io::Result<()> {
-    // upstream: log.c:920 log_delete() prints "deleting %n" whenever
+    // upstream: log.c:1005 log_delete() prints "deleting %n" whenever
     // INFO_GTE(DEL, 1), independent of the NAME level that gates the per-file
     // listing. `--info=del` leaves NAME disabled at verbosity 0, so this
     // short-circuit must fall through when DEL-gated deletions are queued -
@@ -1083,7 +1109,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
         // wrote it at.
         pending.begin_event(event.sequence(), stdout)?;
         let kind = event.kind();
-        // upstream: log.c:920-924 log_delete() prints "deleting %n" gated on
+        // upstream: log.c:1005-1012 log_delete() prints "deleting %n" gated on
         // INFO_GTE(DEL, 1), which -v raises to 1 (options.c:257). The deletion
         // notice is DEL-gated and independent of the NAME level that governs the
         // per-file listing, so render it here - ahead of the transfer summary -
@@ -1169,7 +1195,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
 
         match kind {
             ClientEventKind::SkippedExisting => {
-                // upstream: generator.c:1786-1798 - `rprintf(FINFO, "%s exists\n",
+                // upstream: generator.c:1823-1835 - `rprintf(FINFO, "%s exists\n",
                 // fname)` for an --ignore-existing skip: the bare relative name
                 // followed by " exists", no descriptor and no quotes. Gated on
                 // INFO_GTE(SKIP, 1), which the info verbosity table raises only
@@ -1180,7 +1206,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedMissingDestination => {
-                // upstream: generator.c:1768-1771 - `rprintf(FINFO,
+                // upstream: generator.c:1805-1808 - `rprintf(FINFO,
                 // "not creating new %s \"%s\"\n", is_dir ? "directory" :
                 // "file", fname)` for an --existing / --ignore-non-existing
                 // skip, gated on INFO_GTE(SKIP, 1).
@@ -1203,7 +1229,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedNewerDestination => {
-                // upstream: generator.c:2137-2138 - `rprintf(FINFO, "%s is
+                // upstream: generator.c:2178-2179 - `rprintf(FINFO, "%s is
                 // newer\n", fname)` for an --update skip: the bare relative name
                 // followed by " is newer", gated on INFO_GTE(SKIP, 1).
                 if info_gte(InfoFlag::Skip, 1) {
@@ -1212,7 +1238,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedOverMaxSize => {
-                // upstream: generator.c:2118-2125 - `rprintf(FINFO,
+                // upstream: generator.c:2159-2166 - `rprintf(FINFO,
                 // "%s is over max-size\n", fname)` for a `--max-size` skip: the
                 // bare relative name followed by " is over max-size", gated on
                 // INFO_GTE(SKIP, 1).
@@ -1228,7 +1254,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedUnderMinSize => {
-                // upstream: generator.c:2126-2133 - `rprintf(FINFO,
+                // upstream: generator.c:2167-2174 - `rprintf(FINFO,
                 // "%s is under min-size\n", fname)` for a `--min-size` skip: the
                 // bare relative name followed by " is under min-size", gated on
                 // INFO_GTE(SKIP, 1).
@@ -1273,7 +1299,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 let mut rendered = b"ignoring unsafe symlink \"".to_vec();
                 rendered.extend_from_slice(&escape_path(event.relative_path(), escape));
                 rendered.push(b'"');
-                // upstream: generator.c:1958-1960 - both names are quoted:
+                // upstream: generator.c:1995-1997 - both names are quoted:
                 // `ignoring unsafe symlink "%s" -> "%s"`.
                 if let Some(metadata) = event.metadata()
                     && let Some(target) = metadata.symlink_target()
@@ -1308,7 +1334,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 // routing it through the event renderer keeps `is uptodate`
                 // lines ahead of the totals to match upstream's wire order.
                 //
-                // upstream: generator.c:1895 calls `set_file_attrs(..., 0)`
+                // upstream: generator.c:1932 calls `set_file_attrs(..., 0)`
                 // for directories (no ATTRS_REPORT flag), so dirs never trigger
                 // the rsync.c:828 "is uptodate" notice. Symlinks (generator.c:1967)
                 // and regular files (line 1827) DO pass `maybe_ATTRS_REPORT`
@@ -1318,7 +1344,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                     .map(ClientEntryMetadata::kind)
                     .is_some_and(|kind| matches!(kind, ClientEntryKind::Directory))
                 {
-                    // upstream: generator.c:1895-1897 - after mkdir/attr apply,
+                    // upstream: generator.c:1932-1934 - after mkdir/attr apply,
                     // `set_file_attrs()` returning nonzero (a changed dir) prints
                     // `"%s/\n"` at INFO_GTE(NAME, 1), i.e. from plain -v upward.
                     // An unchanged dir returns zero there and prints nothing (it
@@ -1359,7 +1385,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 }
                 continue;
             }
-            // upstream: generator.c:1304-1306 try_dests_non() - a
+            // upstream: generator.c:1341-1343 try_dests_non() - a
             // `--copy-dest` match that needs no transfer prints `"%s%s is
             // uptodate\n"` at INFO_GTE(NAME, 2), with a trailing `/` for
             // directories, and prints nothing at lower verbosity (the bare
@@ -1374,7 +1400,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 }
                 continue;
             }
-            // upstream: generator.c:1304-1306 - a `--link-dest` symlink
+            // upstream: generator.c:1341-1343 - a `--link-dest` symlink
             // hard-linked from the basis prints `"%s is uptodate"` at NAME>=2.
             ClientEventKind::HardLink if event.is_hardlinked_symlink() => {
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
@@ -1454,7 +1480,7 @@ mod tests {
     fn render_verbose_scenario(events: Vec<ClientEvent>, verbose_level: u8) -> String {
         // Mirror the CLI's per-thread verbosity setup so `info_gte(Skip, ..)`
         // reflects the requested level. `from_verbose_level(2)` raises Skip to 1
-        // (upstream options.c:258), `(1)` leaves it at 0.
+        // (upstream options.c:259), `(1)` leaves it at 0.
         logging::init(logging::VerbosityConfig::from_verbose_level(verbose_level));
         let mut out = Vec::new();
         let ordered: Vec<&ClientEvent> = core::client::listing_order(&events, false)
@@ -1505,7 +1531,7 @@ mod tests {
         // notices must surface first, in flist order, with upstream's exact
         // bare-name-plus-" exists" text - never after the transferred names or
         // after the stats block.
-        // upstream: generator.c:1786-1798
+        // upstream: generator.c:1823-1835
         let events = vec![
             transferred_event("big.txt"),
             skip_event("onlyexists.txt", ClientEventKind::SkippedExisting),
@@ -1538,7 +1564,7 @@ mod tests {
     fn not_creating_and_is_newer_use_upstream_text_at_vv() {
         // WHY: the local path previously emitted oc-invented wording ("skipping
         // non-existent destination file", "skipping newer destination file").
-        // Upstream prints `not creating new file "%s"` (generator.c:1769) and
+        // Upstream prints `not creating new file "%s"` (generator.c:1806) and
         // `%s is newer` (generator.c:2138). Drop-in parsers key on the exact
         // strings, so any deviation breaks compatibility.
         let missing = vec![skip_event(
@@ -1565,7 +1591,7 @@ mod tests {
         // order, so the two size-skip notices must surface first, in flist
         // order, with upstream's exact bare-name text - never after the
         // transferred names or after the stats block.
-        // upstream: generator.c:2118-2133
+        // upstream: generator.c:2159-2174
         let events = vec![
             transferred_event("keep.txt"),
             skip_event("big.bin", ClientEventKind::SkippedOverMaxSize),
@@ -1599,7 +1625,7 @@ mod tests {
         // them must keep every generator-phase notice ahead of the transferred
         // names, in flist order, so adding the size cases does not regress that
         // ordering.
-        // upstream: generator.c:1769,1798,2122,2130,2138
+        // upstream: generator.c:1806,1798,2122,2130,2138
         let events = vec![
             transferred_event("keep.txt"),
             skip_event("exists.txt", ClientEventKind::SkippedExisting),
@@ -1641,7 +1667,7 @@ mod tests {
 
     #[test]
     fn changed_directory_prints_bare_name_but_unchanged_one_is_silent() {
-        // WHY: upstream generator.c:1895-1897 prints a directory as `"%s/\n"` at
+        // WHY: upstream generator.c:1932-1934 prints a directory as `"%s/\n"` at
         // INFO_GTE(NAME, 1) whenever `set_file_attrs()` changed it. A
         // copy-contents pull into a pre-existing destination makes the transfer
         // root such a dir - its mtime drifts from the backdated source - so

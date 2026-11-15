@@ -35,7 +35,7 @@ pub enum LookupError {
 
     /// The daemon name converter could not answer.
     ///
-    /// upstream: clientserver.c:1324-1327 (request too large,
+    /// upstream: clientserver.c:1333-1336 (request too large,
     /// `RERR_UNSUPPORTED`) and :1329-1334 (write to the converter failed,
     /// `RERR_SOCKETIO`) both call `exit_cleanup()`, and a converter that has
     /// closed its answer pipe (:1336-1337) dies on the next request's write. The
@@ -85,7 +85,7 @@ impl From<LookupError> for io::Error {
 /// having one of it is what keeps the fail-closed rule from being re-decided
 /// (and re-lost) per call site.
 ///
-/// upstream: uidlist.c:160-163 vs clientserver.c:1326/:1333.
+/// upstream: uidlist.c:160-163 vs clientserver.c:1335/:1333.
 pub fn no_id_unless_converter_failed<T>(result: LookupResult<T>) -> io::Result<Option<T>> {
     match result {
         Ok(value) => Ok(value),

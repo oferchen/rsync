@@ -27,7 +27,7 @@ Two findings from that walk drive the API shape:
 
 ## 2. Upstream mechanism
 
-`struct dirstack` (`rsync-3.5.1/syscall.c:2942-2950`):
+`struct dirstack` (`rsync-3.5.2/syscall.c:3013-3021`):
 
 ```c
 struct dirstack {
@@ -42,14 +42,14 @@ Three properties matter for the API:
 1. **`fds[0]` is borrowed.** `secure_walk_at` does not close the anchor; the caller
    owns it. A resolver that took ownership would break every caller that reuses a
    held module-root fd.
-2. **`abspath` is seeded only when the anchor path is absolute** (`rsync-3.5.1/syscall.c:3130-3132`).
+2. **`abspath` is seeded only when the anchor path is absolute** (`rsync-3.5.2/syscall.c:3201-3203`).
    Unseeded means the exclude-aware refusal is disabled and, in upstream's words,
    "non-daemon callers pay nothing". The trust policy is *data*, not a branch.
 3. **Depth and symlink hops are bounded** - `DS_MAXDEPTH` is 1024, and `hops` is a
    single budget shared across the whole walk, passed by pointer so a symlink target
    that itself contains symlinks draws from the same allowance.
 
-`ds_descend` (`rsync-3.5.1/syscall.c:3032-3106`) is the per-component step:
+`ds_descend` (`rsync-3.5.2/syscall.c:3103-3177`) is the per-component step:
 
 - `.` is a no-op; `..` pops to the held parent fd and returns `ELOOP` at `top == 0`
   rather than rising above the anchor.
@@ -138,7 +138,7 @@ compiles the check out of an operator-trusted walk completely.
 That is the load-bearing consequence, and §4.4 gives the impossibility result behind
 it. It also converges on upstream's own semantics from the opposite direction:
 upstream seeds `ds.abspath` only for an absolute anchor and notes that unseeded means
-"non-daemon callers pay nothing" (`rsync-3.5.1/syscall.c:3130-3132`). Reaching the same property
+"non-daemon callers pay nothing" (`rsync-3.5.2/syscall.c:3201-3203`). Reaching the same property
 through Rust's type system rather than through a runtime seed check is evidence the
 shape is right rather than merely compliant.
 
@@ -223,7 +223,7 @@ one.
 visible tree. Checking that against the nominal path is exactly what a symlink
 defeats - which is the case the check exists for. Upstream can ask the question only
 because it performs the following itself and extends `ds.abspath` component by
-component (`rsync-3.5.1/syscall.c:3032-3106`).
+component (`rsync-3.5.2/syscall.c:3103-3177`).
 
 So the exclude-aware refusal is not merely awkward on top of `openat2`; it is
 **unimplementable** there. That is why the policy selects the mechanism.
@@ -253,7 +253,7 @@ Section 4.4 justifies the split from the exclude check. The **hop budget** justi
 it again, by an unrelated route - and two independent requirements arriving at the
 same seam is the strongest defence the split has.
 
-Upstream's `ds_walk_path` passes `hops` **by pointer** (`rsync-3.5.1/syscall.c:3107`), so it is a
+Upstream's `ds_walk_path` passes `hops` **by pointer** (`rsync-3.5.2/syscall.c:3178`), so it is a
 single budget spent across the whole walk rather than a per-component allowance. A
 chain of nested symlinks therefore exhausts one shared budget; resetting it per
 descend would let an attacker chain arbitrarily many hops while no single component
@@ -314,11 +314,11 @@ The live metadata applier is **not** an instance: it threads an
 upstream's `stat_x *` argument to `set_file_attrs()`.
 
 Neither cache has an upstream counterpart. Upstream keeps no pathname-keyed stat
-cache in the file-list build: `flist.c:1772-1781`'s `lastdir` interns a directory
+cache in the file-list build: `flist.c:1776-1785`'s `lastdir` interns a directory
 *name* plus a derived component count, `make_file()` destructures each stat into
 scalar `file_struct` fields and drops it, and every upstream hashtable is keyed on
 integers (`(dev, ino)` in `hlink.c:74-84`, `gnum`, `fs_dev`, an xattr-content
-checksum). The one path-shaped cache, `syscall.c:3721-3729`, holds open **dirfds**;
+checksum). The one path-shaped cache, `syscall.c:3789-3797`, holds open **dirfds**;
 upstream's own comment there argues its safety comes from an fd pinning an inode,
 which is exactly the distinction this section draws.
 

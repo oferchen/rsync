@@ -59,7 +59,7 @@ impl ClientConfigBuilder {
     /// Appends the implicit exclude rule that upstream rsync injects for a
     /// relative `--partial-dir`.
     ///
-    /// upstream: compat.c:803-808 (`setup_protocol`). When `partial_dir` is
+    /// upstream: compat.c:812-817 (`setup_protocol`). When `partial_dir` is
     /// set and relative (`*partial_dir != '/'`), rsync appends a
     /// directory-only exclude rule for the partial directory to the tail of
     /// the filter list. Being appended after every CLI rule, it carries the
@@ -77,7 +77,7 @@ impl ClientConfigBuilder {
     ///
     /// A bare `--delay-updates` (with no explicit `--partial-dir`) uses the
     /// implicit `.~tmp~` staging directory, so the same protective exclude is
-    /// injected for it. upstream: options.c:2572 `if (delay_updates &&
+    /// injected for it. upstream: options.c:2627 `if (delay_updates &&
     /// !partial_dir) partial_dir = tmp_partialdir;` (`tmp_partialdir[] =
     /// ".~tmp~"`), consumed by the compat.c:803 filter injection.
     pub(super) fn push_implicit_partial_dir_filter(&mut self) {
@@ -89,7 +89,7 @@ impl ClientConfigBuilder {
         if pattern.is_empty() {
             return;
         }
-        // upstream: compat.c:803 guard `*partial_dir != '/'` - an absolute
+        // upstream: compat.c:812 guard `*partial_dir != '/'` - an absolute
         // (leading-slash) partial dir injects no implicit rule. Test the
         // leading slash directly rather than `Path::is_relative()`, which is
         // platform-dependent: on Windows a leading-slash path has no drive
@@ -112,7 +112,7 @@ impl ClientConfigBuilder {
     /// Appends the implicit protect rule that upstream rsync injects to keep
     /// backup-suffix files out of a `--delete` sweep.
     ///
-    /// upstream: options.c:2487-2490. When `make_backups && delete_mode &&
+    /// upstream: options.c:2542-2545. When `make_backups && delete_mode &&
     /// !delete_excluded && !am_server` and no `--backup-dir` is set, rsync
     /// injects `P *<suffix>` (default suffix `~`) at the tail of the filter
     /// list via `parse_filter_str(&filter_list, "P *~", rule_template(0), 0)`.
@@ -124,7 +124,7 @@ impl ClientConfigBuilder {
     ///
     /// `am_server` is inherently false here: this builder constructs the client
     /// configuration only. A `--backup-dir` places backups in a separate tree,
-    /// so no protect rule is needed (upstream: options.c:2479-2480). It is not
+    /// so no protect rule is needed (upstream: options.c:2534-2535). It is not
     /// marked perishable, mirroring upstream's `rule_template(0)`.
     pub(super) fn push_backup_protect_filter(&mut self) {
         if !self.backup || self.backup_dir.is_some() {
@@ -133,7 +133,7 @@ impl ClientConfigBuilder {
         if !self.delete_mode.is_enabled() || self.delete_excluded {
             return;
         }
-        // upstream: options.c:2448 - the effective suffix defaults to `~`
+        // upstream: options.c:2503 - the effective suffix defaults to `~`
         // when no `--backup-dir` is set (the only branch reached here).
         let suffix = self
             .backup_suffix

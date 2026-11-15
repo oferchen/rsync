@@ -424,7 +424,7 @@ fn fake_super_with_directory_tree() {
 /// Regression: `--fake-super` with a `--chmod` that strips the transfer-root
 /// directory's owner-execute bit must NOT self-lock the root.
 ///
-/// upstream: generator.c:1904 gates the transfer-root owner-`rwx` re-add (whose
+/// upstream: generator.c:1941 gates the transfer-root owner-`rwx` re-add (whose
 /// failure is the self-lock, exit 23) on `!am_root`. Under `--fake-super`
 /// upstream sets `am_root = -1`, so that block is skipped: `set_stat_xattr()`
 /// (rsync.c:713-714, xattrs.c:1315) forces the real directory mode to `0700`

@@ -26,11 +26,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/flist.c:2882` - `len = clean_fname(fn,
+//! - `rsync-3.5.2/flist.c:2893` - `len = clean_fname(fn,
 //!   CFN_KEEP_TRAILING_SLASH | CFN_DROP_TRAILING_DOT_DIR);`
-//! - `rsync-3.5.1/flist.c:2891-2897` - `else if (fn[len-1] == '/') {
+//! - `rsync-3.5.2/flist.c:2902-2908` - `else if (fn[len-1] == '/') {
 //!   fn[--len] = '\0'; ... name_type = SLASH_ENDING_NAME; }`
-//! - `rsync-3.5.1/flist.c:2937` - `scan_link_stat(fbuf, &st, copy_dirlinks ||
+//! - `rsync-3.5.2/flist.c:2948` - `scan_link_stat(fbuf, &st, copy_dirlinks ||
 //!   name_type != NORMAL_NAME)` - the marker's surviving effect.
 
 #![cfg(unix)]
@@ -163,7 +163,7 @@ fn relative_directory_operand_sends_the_same_names_for_every_spelling() {
     assert!(
         !failed,
         "`-R <dir>`, `-R <dir>/` and `-R <dir>/.` must transmit identical \
-         names: upstream normalises the operand at flist.c:2882-2897 and keeps \
+         names: upstream normalises the operand at flist.c:2893-2908 and keeps \
          the marker in `name_type`, never in the name:\n{}",
         report.join("\n"),
     );
@@ -200,7 +200,7 @@ fn relative_operand_names_are_clean_fname_normalised() {
     assert!(
         !failed,
         "a `--relative` operand's DOTDIR marker must be normalised out of every \
-         transmitted name (upstream flist.c:2882-2897); a name that keeps it \
+         transmitted name (upstream flist.c:2893-2908); a name that keeps it \
          sorts against its own children and desynchronises the NDX \
          stream:\n{}",
         report.join("\n"),
@@ -245,7 +245,7 @@ fn relative_symlink_operand_follows_only_with_the_marker() {
     assert!(
         !failed,
         "the DOTDIR/SLASH_ENDING marker, and only it, decides whether a \
-         `--relative` symlink operand is followed (upstream flist.c:2937); the \
+         `--relative` symlink operand is followed (upstream flist.c:2948); the \
          followed contents still ride under the operand's own name:\n{}",
         report.join("\n"),
     );

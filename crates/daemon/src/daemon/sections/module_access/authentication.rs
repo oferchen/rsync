@@ -26,7 +26,7 @@ enum AuthenticationStatus {
     /// start. The refusal line has already been written and no challenge was
     /// sent.
     ///
-    /// upstream: compat.c:871-875 - `negotiate_daemon_auth()` writes
+    /// upstream: compat.c:880-884 - `negotiate_daemon_auth()` writes
     /// `@ERROR: your client does not support one of our daemon-auth checksums`
     /// and calls `exit_cleanup(RERR_UNSUPPORTED)` before `auth_server()` ever
     /// reaches `gen_challenge()`.
@@ -53,17 +53,17 @@ pub(crate) enum AuthDenial {
     Credentials,
     /// An `auth users` rule refused the offered username.
     ///
-    /// upstream: authenticate.c:433 logs these as
+    /// upstream: authenticate.c:428 logs these as
     /// `auth failed on module %s from %s (%s) for %s: %s`, and the reason is
     /// the discriminator an operator needs - see [`AuthUserRule`].
     UserRule { user: String, rule: AuthUserRule },
     /// `auth digest = NAME` names a digest this build does not support.
     ///
-    /// upstream: authenticate.c:316-322 - the `floor_rank < 0` arm.
+    /// upstream: authenticate.c:311-317 - the `floor_rank < 0` arm.
     DigestFloorUnsupported { configured: String },
     /// The negotiated digest is weaker than the module's `auth digest` floor.
     ///
-    /// upstream: authenticate.c:324-332 - the `got_rank > floor_rank` arm.
+    /// upstream: authenticate.c:319-327 - the `got_rank > floor_rank` arm.
     DigestTooWeak {
         negotiated: DaemonAuthDigest,
         floor: String,
@@ -78,16 +78,16 @@ pub(crate) enum AuthDenial {
 /// parsed to nothing produces, so an operator seeing it knows the policy never
 /// matched, while "denied by rule" means the policy matched and did its job.
 ///
-/// upstream: authenticate.c:411-414.
+/// upstream: authenticate.c:406-409.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AuthUserRule {
     /// No `auth users` entry matched the offered username.
     ///
-    /// upstream: authenticate.c:412 - `if (!tok) err = "no matching rule";`
+    /// upstream: authenticate.c:407 - `if (!tok) err = "no matching rule";`
     NoMatchingRule,
     /// A matching entry carried the `:deny` modifier.
     ///
-    /// upstream: authenticate.c:414 - `else if (opt_ch == 'd') err = "denied by
+    /// upstream: authenticate.c:409 - `else if (opt_ch == 'd') err = "denied by
     /// rule";`
     DeniedByRule,
 }
@@ -131,7 +131,7 @@ impl AuthDenial {
 /// `Ok(())` when no floor is configured or the negotiated digest meets it;
 /// `Err` when the connection must be refused.
 ///
-/// upstream: authenticate.c:307-332. Two properties of that placement are
+/// upstream: authenticate.c:302-327. Two properties of that placement are
 /// load-bearing and mirrored by the caller:
 ///
 /// - it runs *after* `negotiate_daemon_auth()`, so the floor is applied to what
@@ -175,7 +175,7 @@ pub(crate) fn enforce_auth_digest_floor(
 /// `name:deny` is handled earlier by refusing authentication outright, so it
 /// never reaches this function.
 ///
-/// upstream: authenticate.c:340-343 - `if (opt_ch=='r') read_only=1; else if
+/// upstream: authenticate.c:335-338 - `if (opt_ch=='r') read_only=1; else if
 /// (opt_ch=='w') read_only=0;`, applied to the `read_only` global that
 /// `rsync_module()` seeds from `lp_read_only(module_id)` (clientserver.c:760).
 fn access_effective_read_only(module_read_only: bool, access: UserAccessLevel) -> bool {
@@ -199,7 +199,7 @@ fn access_effective_read_only(module_read_only: bool, access: UserAccessLevel) -
 /// upstream keeps `strdup("")` non-NULL and so never reaches its no-list
 /// substitute (compat.c:857-862).
 ///
-/// upstream: authenticate.c:242 - `auth_server()` calls
+/// upstream: authenticate.c:235 - `auth_server()` calls
 /// `negotiate_daemon_auth(f_out, 0)` *before* `gen_challenge()`, so a client with
 /// no acceptable digest is refused without ever receiving a challenge.
 ///
@@ -215,7 +215,7 @@ fn perform_module_authentication(
     client_digests: AdvertisedDigests<'_>,
     log_sink: Option<&SharedLogSink>,
 ) -> io::Result<AuthenticationStatus> {
-    // upstream: authenticate.c:76 `gen_challenge` and :90 `generate_hash` both
+    // upstream: authenticate.c:69 `gen_challenge` and :90 `generate_hash` both
     // call `sum_init(valid_auth_checksums.negotiated_nni, 0)`, so one negotiated
     // digest drives both halves. Deriving it from the response instead would let
     // the client choose which algorithm it is checked against.
@@ -233,7 +233,7 @@ fn perform_module_authentication(
         }
     };
 
-    // upstream: authenticate.c:307-332 - the floor sits here, after the digest
+    // upstream: authenticate.c:302-327 - the floor sits here, after the digest
     // is negotiated and before any challenge is generated.
     if let Err(denial) = enforce_auth_digest_floor(module.auth_digest.as_deref(), digest) {
         return Ok(AuthenticationStatus::Denied(denial));
@@ -258,7 +258,7 @@ fn perform_module_authentication(
         stream.flush()?;
     }
 
-    // upstream: clientserver.c:806-808 - once the module is known, its own
+    // upstream: clientserver.c:810-812 - once the module is known, its own
     // `timeout` policy tightens the absolute deadline while the claimed slot
     // awaits authentication:
     //
@@ -281,14 +281,14 @@ fn perform_module_authentication(
         .tcp_stream()
         .and_then(|stream| stream.try_clone().ok());
     let deadline = HandshakeDeadline::armed(handshake_timeout(module.timeout));
-    // upstream: authenticate.c:293,339 - the response is read into
+    // upstream: authenticate.c:288,339 - the response is read into
     // `char line[BIGPATHBUFLEN]`.
     let response_line = read_bounded_line(
         &mut DeadlineBufRead::new(reader, deadline_socket.as_ref(), &deadline),
         protocol::secluded_args::BIGPATHBUFLEN,
     );
 
-    // upstream: clientserver.c:819 - `set_daemon_handshake_timeout(0)` disarms
+    // upstream: clientserver.c:823 - `set_daemon_handshake_timeout(0)` disarms
     // before the post-xfer parent and pre-xfer/name-converter children are
     // forked, so local setup never inherits an armed deadline. oc's analogue is
     // clearing the socket timeout the clamp left on the fd.
@@ -321,7 +321,7 @@ fn perform_module_authentication(
     let auth_match = match module.get_auth_user(username) {
         Some(matched) => matched,
         None => {
-            // upstream: authenticate.c:412 - the rule scan ended with no token,
+            // upstream: authenticate.c:407 - the rule scan ended with no token,
             // so `err = "no matching rule"`.
             return Ok(AuthenticationStatus::Denied(AuthDenial::UserRule {
                 user: username.to_owned(),
@@ -330,7 +330,7 @@ fn perform_module_authentication(
         }
     };
     let auth_user = auth_match.user;
-    // upstream: authenticate.c:411-417 - a matching `:deny` rule refuses with
+    // upstream: authenticate.c:406-412 - a matching `:deny` rule refuses with
     // "denied by rule" before check_secret() runs, so the secret is never
     // consulted for a denied user.
     if auth_user.access_level == UserAccessLevel::Deny {
@@ -340,7 +340,7 @@ fn perform_module_authentication(
         }));
     }
 
-    // upstream: authenticate.c:318 - check_secret() receives the group name only
+    // upstream: authenticate.c:313 - check_secret() receives the group name only
     // when the client was authorized via a matching `@group` token in
     // `auth users` (`group_match >= 0 ? auth_uid_groups[group_match] : NULL`).
     // A plain-username authorization passes NULL, so `@group:` secret lines
@@ -360,7 +360,7 @@ fn perform_module_authentication(
         return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials));
     }
 
-    // upstream: authenticate.c:340-343 - the `:ro` / `:rw` suffix travels back
+    // upstream: authenticate.c:335-338 - the `:ro` / `:rw` suffix travels back
     // to rsync_module() via the `read_only` global; carry the parsed access
     // level so the caller can apply it to the session's effective `read only`.
     Ok(AuthenticationStatus::Granted {
@@ -387,7 +387,7 @@ fn perform_module_authentication(
 /// permissions are validated before reading: the file must not be accessible by
 /// "other" users.
 ///
-/// upstream: authenticate.c:100-169 - `check_secret()` matches `@group`/user
+/// upstream: authenticate.c:93-162 - `check_secret()` matches `@group`/user
 /// keys, enforces `lp_strict_modes(module)` by rejecting files with
 /// `(st.st_mode & 06) != 0`, and on a password mismatch sets `*ptr = NULL`
 /// ("Don't look for name again").
@@ -410,7 +410,7 @@ fn verify_secret_response(
         None => return Ok(false),
     };
 
-    // upstream: authenticate.c:119-131 check_secret() - a strict-modes
+    // upstream: authenticate.c:112-124 check_secret() - a strict-modes
     // violation (other-accessible secrets, or non-root ownership when
     // running as root) sets `ok = 0` and returns the "ignoring secrets file"
     // error string; an unreadable secrets file returns "no secrets file".
@@ -423,7 +423,7 @@ fn verify_secret_response(
         return Ok(false);
     }
 
-    // upstream: authenticate.c:159 opens the secrets file through
+    // upstream: authenticate.c:152 opens the secrets file through
     // `open_no_attacker_symlinks()`. Without the walk, a symlink planted at any
     // component redirects the daemon's privileged read - and because the
     // strict-modes `fstat` above inspects the *target* inode, a link to a
@@ -434,7 +434,7 @@ fn verify_secret_response(
         Err(_) => return Ok(false),
     };
 
-    // upstream: authenticate.c:141 `while ((user || group) && ...)` - each key
+    // upstream: authenticate.c:134 `while ((user || group) && ...)` - each key
     // is retired once it mismatches, so scanning stops when neither a user nor
     // a group line can still match.
     let mut user_active = true;
@@ -450,7 +450,7 @@ fn verify_secret_response(
             continue;
         }
 
-        // upstream: authenticate.c:145-152 - an `@`-prefixed key selects the
+        // upstream: authenticate.c:138-145 - an `@`-prefixed key selects the
         // group pointer (skipping the `@`); every other key selects the user.
         let (active, expected, entry) = match line.strip_prefix('@') {
             Some(rest) => (&mut group_active, group, rest),
@@ -468,7 +468,7 @@ fn verify_secret_response(
             continue;
         }
 
-        // upstream: authenticate.c:158-163 - the first key-matching line decides
+        // upstream: authenticate.c:151-156 - the first key-matching line decides
         // the outcome; a digest match authenticates, a mismatch retires the key
         // (`*ptr = NULL`) so later duplicates cannot flip the denial.
         if verify_daemon_auth_response(secret.as_bytes(), challenge, response, digest) {

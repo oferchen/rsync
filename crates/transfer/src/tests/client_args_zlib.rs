@@ -1,6 +1,6 @@
 //! Daemon-mode `-z` detection over the client's verbatim argv.
 //!
-//! upstream: options.c:2898-2904 `server_options()` appends `z` to `argstr`
+//! upstream: options.c:2963-2969 `server_options()` appends `z` to `argstr`
 //! for CPRES_ZLIB and then `maybe_add_e_option()` (options.c:3202) appends
 //! `e` plus the capability letters last. Popt binds everything after `-e`
 //! (`{"rsh", 'e', POPT_ARG_STRING, ...}`, options.c:837) as its value, so a
@@ -48,7 +48,7 @@ fn z_in_the_flag_cluster_before_e_is_compression() {
 
 #[test]
 fn z_in_a_protocol_29_cluster_without_e_is_compression() {
-    // upstream: options.c:3209 - maybe_add_e_option() adds nothing below
+    // upstream: options.c:3277 - maybe_add_e_option() adds nothing below
     // protocol 30, so the whole cluster is option letters.
     assert!(client_args_request_zlib(&args(&[
         "--server",

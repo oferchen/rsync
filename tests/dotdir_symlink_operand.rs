@@ -114,7 +114,7 @@ fn trailing_dot_on_a_symlinked_dir_transfers_its_contents() {
     assert_eq!(
         pull("alias/.", &[]),
         vec!["deep".to_string(), "deep/f2".to_string()],
-        "`/.` is upstream's other DOTDIR spelling (flist.c:2844); transmitting \
+        "`/.` is upstream's other DOTDIR spelling (flist.c:2855); transmitting \
          `alias` itself publishes the link instead of the tree it names"
     );
 }

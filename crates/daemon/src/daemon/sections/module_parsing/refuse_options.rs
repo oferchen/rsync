@@ -8,7 +8,7 @@
 
 /// Options that cannot be refused via wildcard-only patterns.
 ///
-/// upstream: options.c:1031-1053 set_refuse_options() marks certain options as
+/// upstream: options.c:1049-1071 set_refuse_options() marks certain options as
 /// "vital" (`descrip = "a="`): they can only be refused by explicit name, not via `*` or other
 /// glob wildcards. This prevents administrators from accidentally breaking the
 /// protocol handshake by refusing all options with `*`.
@@ -16,7 +16,7 @@ const VITAL_OPTIONS: &[&str] = &[
     "server",
     "rsh",
     "e",
-    // upstream: options.c:1047 marks the `log-format` long_options[] entry (the
+    // upstream: options.c:1065 marks the `log-format` long_options[] entry (the
     // deprecated alias of `out-format`) exact-match only - "aka out-format (NOT
     // log-file-format)". The wildcard-able `out-format` entry is left refusable,
     // so `log-format` is the vital name a `refuse options = *` cannot touch.
@@ -38,7 +38,7 @@ const VITAL_OPTIONS: &[&str] = &[
 /// Options refused by default in daemon mode, overridable only by an explicit
 /// negated exact match (e.g. `refuse options = !copy-devices`).
 ///
-/// upstream: options.c:1056-1059 - when `am_daemon`, set_refuse_options() seeds the
+/// upstream: options.c:1074-1077 - when `am_daemon`, set_refuse_options() seeds the
 /// refuse list with `copy-devices` and `write-devices` before applying the
 /// module's `refuse options` rules, so a daemon rejects client device
 /// read/write unless the module explicitly allows it. Both are also vital
@@ -57,7 +57,7 @@ const DEFAULT_REFUSED_OPTIONS: &[&str] = &["copy-devices", "write-devices"];
 /// Vital options (e.g., `--server`, `--sender`, `--dry-run`) cannot be refused
 /// by wildcard patterns and require explicit naming.
 ///
-/// upstream: options.c:966 parse_one_refuse_match() with `wildmatch` semantics.
+/// upstream: options.c:984 parse_one_refuse_match() with `wildmatch` semantics.
 ///
 /// Test-only: the live refusal point is `refused_client_arg`, applied to the
 /// post-`@RSYNCD: OK` argv as upstream's `parse_arguments()` does. This helper
@@ -66,7 +66,7 @@ const DEFAULT_REFUSED_OPTIONS: &[&str] = &["copy-devices", "write-devices"];
 fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Option<&'a str> {
     // No early-out on an empty refuse list: a daemon still refuses the default
     // device options (`copy-devices`/`write-devices`) even with no `refuse
-    // options` line. upstream: options.c:1056-1059.
+    // options` line. upstream: options.c:1074-1077.
     options.iter().find_map(|candidate| {
         let canonical = canonical_option(candidate);
         let short = long_option_short_letter(&canonical);
@@ -83,7 +83,7 @@ fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Optio
 /// `long_options[]` is a single table that popt reads in both directions, so
 /// both lookups below derive from this one table and cannot disagree.
 ///
-/// upstream: `options.c:609-870` - the `shortName` and `longName` columns.
+/// upstream: `options.c:610-875` - the `shortName` and `longName` columns.
 struct ShortOption {
     letter: char,
     /// `None` for rows whose `longName` is NULL, matched by letter only.
@@ -98,7 +98,7 @@ struct ShortOption {
 /// own refuse scan walks only `long_options` (`options.c:980`).
 ///
 /// Deviation from upstream: THREE rows keep an oc-specific `long_name` where
-/// upstream has NULL - `D` (options.c:679), `F` (:751) and `P` (:785). Each over-refuses
+/// upstream has NULL - `D` (options.c:680), `F` (:751) and `P` (:785). Each over-refuses
 /// relative to upstream, which fails CLOSED, so they are an operator-visible
 /// policy decision rather than a bug fix; see the per-row comments below.
 const SHORT_OPTIONS: &[ShortOption] = &[
@@ -327,7 +327,7 @@ fn lookup_short(letter: char) -> Option<&'static ShortOption> {
 /// the refuse-list matcher so rules can reference either form (`refuse options
 /// = verbose` and `= v` are equivalent).
 ///
-/// upstream: `options.c:982-983` `parse_one_refuse_match()` - compares the rule
+/// upstream: `options.c:1000-1001` `parse_one_refuse_match()` - compares the rule
 /// against BOTH the `longName` and the `shortName` of every entry.
 fn long_option_short_letter(long_name: &str) -> Option<char> {
     SHORT_OPTIONS
@@ -356,15 +356,15 @@ fn refused_short_letter(long_name: &str) -> Option<char> {
 /// `--` prefix to match the upstream `--<longname>` diagnostic) so callers
 /// can include it verbatim in the error message.
 ///
-/// upstream: clientserver.c:1160 - the daemon runs `parse_arguments()` on the
+/// upstream: clientserver.c:1164 - the daemon runs `parse_arguments()` on the
 /// post-OK arg list; popt treats each bundled short letter as a separate
 /// option and rejects any that the module's refuse list disabled.
 fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Option<String> {
     // No early-out on an empty refuse list: a daemon still refuses the default
     // device options (`copy-devices`/`write-devices`) even with no `refuse
-    // options` line. upstream: options.c:1056-1059.
+    // options` line. upstream: options.c:1074-1077.
 
-    // upstream: options.c:2341-2367 - a `refuse options = delete` rule matches
+    // upstream: options.c:2396-2422 - a `refuse options = delete` rule matches
     // the single `delete` popt entry, but the enforcement at options.c:2364 is
     // semantic: `if (refused_delete && (delete_mode || missing_args == 2))`.
     // Every delete-timing variant (`--delete-before/during/after/delay`),
@@ -380,7 +380,7 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
             return Some("--delete".to_owned());
         }
 
-        // upstream: options.c:2369-2378 - `--remove-source-files` inherits the
+        // upstream: options.c:2424-2433 - `--remove-source-files` inherits the
         // refusal of `delete`, but ONLY when this process is the sender:
         // `if (refused_delete && am_sender)`. On a pull the daemon is the
         // sender and would be deleting its OWN module contents, which is what
@@ -474,26 +474,26 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
 /// must pick a timing. The option reported is the refused one, not the one the
 /// client sent, as `create_refuse_error(refused_X)` names its row.
 ///
-/// upstream: options.c:1729-1732 (`-P`), :2202-2205 (`no-iconv`), :2342-2353
+/// upstream: options.c:1765-1768 (`-P`), :2202-2205 (`no-iconv`), :2342-2353
 /// (delete timing), :2551-2567 (`append`/`write-devices`), :2586-2588 and
 /// :2608-2610 (`partial`).
 fn refused_implied_option(module: &ModuleDefinition, client_args: &[String]) -> Option<String> {
     let has = |name: &str| client_args.iter().any(|arg| is_long_option(arg, name));
     let refused = |name: &str| is_option_refused(module, name, None);
 
-    // upstream: options.c:1729-1732 - `-P` checks both rows before setting
+    // upstream: options.c:1765-1768 - `-P` checks both rows before setting
     // `do_progress` and `keep_partial`. A refused `partial` is reported by the
     // per-letter scan already, since `P` maps to that row.
     if refused("progress") && short_bundles(client_args).any(|letters| letters.contains('P')) {
         return Some("--progress".to_owned());
     }
 
-    // upstream: options.c:2202-2205 - refusing `no-iconv` demands `--iconv`.
+    // upstream: options.c:2238-2241 - refusing `no-iconv` demands `--iconv`.
     if refused("no-iconv") && !client_args.iter().any(|arg| is_long_option(arg, "iconv")) {
         return Some("--no-iconv".to_owned());
     }
 
-    // upstream: options.c:2340-2353 - with no timing named, a bare `--delete`
+    // upstream: options.c:2395-2408 - with no timing named, a bare `--delete`
     // or `--delete-excluded` picks one, and refuses only when both are refused.
     let timing_named = [
         "del",
@@ -512,14 +512,14 @@ fn refused_implied_option(module: &ModuleDefinition, client_args: &[String]) -> 
         return Some("--delete-before".to_owned());
     }
 
-    // upstream: options.c:2551-2567 - `--append` (either form) and
+    // upstream: options.c:2606-2622 - `--append` (either form) and
     // `--write-devices` switch on `inplace`, so they fall under its refusal.
     let append_or_devices = has("append") || has("append-verify") || has("write-devices");
     if append_or_devices && refused("inplace") {
         return Some("--inplace".to_owned());
     }
 
-    // upstream: options.c:2586-2588 - "--inplace implies --partial for refusal
+    // upstream: options.c:2641-2643 - "--inplace implies --partial for refusal
     // purposes"; :2601-2610 - so does a `--partial-dir` that cleans to nothing.
     if refused("partial") {
         let inplace = append_or_devices || has("inplace");
@@ -568,7 +568,7 @@ fn is_long_option(arg: &str, long_name: &str) -> bool {
 /// Reports whether the daemon is the sender for this transfer, i.e. the client
 /// is pulling from the module.
 ///
-/// upstream: options.c:863 + :1530-1535 - the client puts `--sender` in the server
+/// upstream: options.c:868 + :1530-1535 - the client puts `--sender` in the server
 /// argv and `OPT_SENDER` sets `am_sender = 1`. `sender` is one of the options a
 /// module may never refuse (options.c:1048, mirrored in [`VITAL_OPTIONS`]), so
 /// it is always present and never filtered out when the daemon is sending.
@@ -580,7 +580,7 @@ fn daemon_is_sender(client_args: &[String]) -> bool {
 /// `refuse options = delete` rule can reject it regardless of which timing
 /// variant the client sent.
 ///
-/// upstream: options.c:2341-2363 - `--delete`, `--del`, every
+/// upstream: options.c:2396-2418 - `--delete`, `--del`, every
 /// `--delete-WHEN` variant, and `--delete-excluded` all set `delete_mode`;
 /// `--delete-missing-args` sets `missing_args = 2`. options.c:2364 then
 /// refuses the transfer whenever `refused_delete` is set and any of those is
@@ -604,7 +604,7 @@ fn enables_delete_mode(arg: &str) -> bool {
 /// Long-option spellings that name the same capability, so refusing any one of
 /// them refuses all of them.
 ///
-/// upstream: options.c:996-1005 `parse_one_refuse_match()` - after an exact
+/// upstream: options.c:1014-1023 `parse_one_refuse_match()` - after an exact
 /// (non-wild) rule matches a row it walks the whole table again and marks every
 /// other row where `same_refuse_action(op, matched_op)` (options.c:948) holds.
 /// That predicate folds two rows together when both are constant assignments
@@ -707,7 +707,7 @@ fn is_option_refused(
     short_letter: Option<char>,
 ) -> bool {
     let vital = is_option_vital(long_name, short_letter);
-    // upstream: options.c:1056-1059 - a daemon seeds `copy-devices`/`write-devices`
+    // upstream: options.c:1074-1077 - a daemon seeds `copy-devices`/`write-devices`
     // as refused before applying the module's rules. Start from that default so
     // the loop below can only un-refuse them via an explicit negated exact match.
     let mut refused = DEFAULT_REFUSED_OPTIONS.contains(&long_name);
@@ -727,7 +727,7 @@ fn is_option_refused(
             continue;
         }
 
-        // upstream: options.c:975-978 - `a` / `archive` rules expand to the
+        // upstream: options.c:993-996 - `a` / `archive` rules expand to the
         // character class containing every short letter implied by `-a`.
         let mut is_glob = pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
         if pattern == "a" || pattern == "archive" {
@@ -735,7 +735,7 @@ fn is_option_refused(
             is_glob = true;
         }
 
-        // upstream: options.c:1050 - vital options (the 1037-1049 list) get `descrip = "a="`
+        // upstream: options.c:1068 - vital options (the 1037-1049 list) get `descrip = "a="`
         // and `parse_one_refuse_match` only updates them when the rule is
         // exact, never wild (options.c:984-987). Mirror that here so
         // administrators cannot wreck the handshake with `refuse options = *`.
@@ -743,7 +743,7 @@ fn is_option_refused(
             continue;
         }
 
-        // upstream: options.c:982-983 - the rule is tried against both
+        // upstream: options.c:1000-1001 - the rule is tried against both
         // `op->longName` and `op->shortName`, so `!verbose` and `!v` name the
         // same option. Both comparisons are case-SENSITIVE; that is what keeps
         // `[ardlptgoD]` matching `-D` while leaving `-d` alone.
@@ -768,7 +768,7 @@ fn is_option_refused(
         }
     }
 
-    // upstream: options.c:1077-1088 - once the module's own `refuse options`
+    // upstream: options.c:1095-1106 - once the module's own `refuse options`
     // rules have been applied, a daemon appends these refusals unconditionally,
     // so no `!log-file` / `!iconv` negation above can re-enable them:
     //   - `log-file*` (options.c:1082) refuses both `--log-file` and
@@ -963,7 +963,7 @@ mod capability_alias_tests {
     /// (:751) and `P` (:785). `long_daemon_options[]` (options.c:873) is out of
     /// scope: the refuse scan walks only `long_options[]`.
     ///
-    /// upstream: options.c:609-871 - the single `long_options[]` popt table.
+    /// upstream: options.c:610-876 - the single `long_options[]` popt table.
     #[test]
     fn short_option_letters_match_upstream_long_options_table() {
         use std::collections::BTreeSet;
@@ -1043,7 +1043,7 @@ mod capability_alias_tests {
         let extra: Vec<char> = actual.difference(&expected).copied().collect();
         assert!(
             missing.is_empty() && extra.is_empty(),
-            "oc SHORT_OPTIONS drifted from upstream long_options[] (options.c:609-871): \
+            "oc SHORT_OPTIONS drifted from upstream long_options[] (options.c:610-876): \
              letters upstream has but oc lacks = {missing:?}; \
              letters oc refuses but upstream no longer knows = {extra:?}"
         );
@@ -1055,7 +1055,7 @@ mod short_options_drift_tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    /// Every short letter in upstream's `long_options[]` (`options.c:609-870`),
+    /// Every short letter in upstream's `long_options[]` (`options.c:610-875`),
     /// paired with the `longName` on the same row. `None` marks the three rows
     /// upstream leaves NULL - `-D` (:679), `-F` (:751) and `-P` (:785) - which
     /// popt matches by letter only.
@@ -1304,7 +1304,7 @@ mod bundle_scan_tests {
     /// leading unknown byte cannot be used to smuggle a refused letter behind it.
     /// `-9z` puts the unknown `9` before the refused `z`.
     ///
-    /// upstream: options.c:1117 rewrites `op->val`, :2045-2049 refuses it - the mark
+    /// upstream: options.c:1135 rewrites `op->val`, :2045-2049 refuses it - the mark
     /// is independent of position in the bundle.
     #[test]
     fn an_unknown_byte_does_not_end_the_bundle_scan() {

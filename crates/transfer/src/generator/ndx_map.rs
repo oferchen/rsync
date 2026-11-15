@@ -268,7 +268,7 @@ impl NdxMap {
 
     /// Converts a flat index back to its wire NDX.
     ///
-    /// upstream: `generator.c:2812` - `ndx = i + cur_flist->ndx_start`.
+    /// upstream: `generator.c:2898` - `ndx = i + cur_flist->ndx_start`.
     ///
     /// Only used by tests since the NDX echo-back fix: the transfer loop
     /// preserves the original wire NDX rather than round-tripping, which is what

@@ -1,10 +1,10 @@
 // The daemon's per-request log line and the `request` value it names.
 //
-// upstream: clientserver.c:1208-1219 emits exactly one line per served
+// upstream: clientserver.c:1212-1223 emits exactly one line per served
 // request, gated on a non-empty `request`, once the argv is parsed and the
 // pre-xfer hooks have run.
 
-/// Ceiling upstream tests *before* appending each operand (`io.c:1514`).
+/// Ceiling upstream tests *before* appending each operand (`io.c:1521`).
 ///
 /// The guard is `request_len < 1024`, evaluated before the append rather than
 /// after it, so the assembled value can exceed 1024 by the length of the
@@ -53,7 +53,7 @@ fn daemon_request(client_args: &[String]) -> Option<String> {
 
 /// Renders upstream's per-request daemon log line.
 ///
-/// upstream: clientserver.c:1208-1219 - two arms keyed on whether the session
+/// upstream: clientserver.c:1212-1223 - two arms keyed on whether the session
 /// authenticated, and a verb keyed on the daemon's role:
 ///
 /// ```c
@@ -86,7 +86,7 @@ fn daemon_request_log_line(
 
 /// Emits the per-request line when the client named at least one operand.
 ///
-/// upstream: clientserver.c:1208 - `if (request)`. A client that sent no
+/// upstream: clientserver.c:1212 - `if (request)`. A client that sent no
 /// operand after the `.` marker produces no line at all.
 fn log_daemon_request(
     ctx: &ModuleRequestContext<'_>,
@@ -126,7 +126,7 @@ mod daemon_request_line_tests {
         assert_eq!(daemon_request(&argv).as_deref(), Some("mod/f"));
     }
 
-    /// upstream joins multiple operands with a single space (`io.c:1516-1517`).
+    /// upstream joins multiple operands with a single space (`io.c:1523-1524`).
     #[test]
     fn multiple_operands_join_with_single_spaces() {
         let argv = args(&["--server", ".", "mod/a", "mod/b", "mod/c"]);
@@ -166,7 +166,7 @@ mod daemon_request_line_tests {
         assert!(!request.contains('c'));
     }
 
-    /// upstream: clientserver.c:1213-1217 - the anonymous arm, `on` because a
+    /// upstream: clientserver.c:1217-1221 - the anonymous arm, `on` because a
     /// daemon serving a pull is `am_sender`.
     #[test]
     fn an_unauthenticated_pull_renders_upstreams_anonymous_arm() {
@@ -182,7 +182,7 @@ mod daemon_request_line_tests {
         );
     }
 
-    /// upstream: clientserver.c:1209-1212 - the authenticated arm, `to` because
+    /// upstream: clientserver.c:1213-1216 - the authenticated arm, `to` because
     /// a daemon serving a push is not `am_sender`.
     #[test]
     fn an_authenticated_push_renders_upstreams_user_arm() {

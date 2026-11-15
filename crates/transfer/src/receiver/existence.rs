@@ -4,7 +4,7 @@
 //! so regular files, directories, symlinks, devices and specials skip under
 //! exactly the same conditions.
 //!
-//! upstream: generator.c:1757-1805 recv_generator()
+//! upstream: generator.c:1794-1842 recv_generator()
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -35,7 +35,7 @@ impl ReceiverContext {
     /// device or special) at `dest_path` and emits the SKIP notice, returning
     /// `true` when the entry is skipped.
     ///
-    /// upstream: generator.c:1745 gen_entry_stat() - the destination is read
+    /// upstream: generator.c:1782 gen_entry_stat() - the destination is read
     /// with `link_stat()`, so a destination symlink counts as present even when
     /// it dangles; only a directory under `--keep-dirlinks` follows it.
     pub(in crate::receiver) fn skip_non_regular_by_existence_gate<
@@ -73,7 +73,7 @@ impl ReceiverContext {
 
     /// Emits upstream's SKIP notice for an entry the existence gate skipped.
     ///
-    /// upstream: generator.c:1767-1771 - `not creating new %s "%s"` names the
+    /// upstream: generator.c:1804-1808 - `not creating new %s "%s"` names the
     /// entry a "directory" or a "file"; generator.c:1784-1799 - `%s exists%s`
     /// gains a parenthesised reason at `INFO_GTE(SKIP, 2)`. Both are gated on
     /// `INFO_GTE(SKIP, 1)`. A skipped directory becomes `skip_dir`
@@ -126,7 +126,7 @@ fn parent_present(dest_dir: &Path, relative: &Path) -> bool {
 /// The `INFO_GTE(SKIP, 2)` reason for a non-regular entry left standing by
 /// `--ignore-existing`.
 ///
-/// upstream: generator.c:1788-1796 - `(type change)` when the `FT_*` class
+/// upstream: generator.c:1825-1833 - `(type change)` when the `FT_*` class
 /// differs, `(file change)` when `quick_check_ok()` fails (another symlink
 /// target, device rdev or special `S_IFMT`), `(attr change)` when
 /// `unchanged_attrs()` fails, else `(uptodate)`.
@@ -142,7 +142,7 @@ fn non_regular_exists_reason(
     if !same_content {
         return " (file change)";
     }
-    // upstream: generator.c:476-488 unchanged_attrs() - a symlink compares
+    // upstream: generator.c:513-525 unchanged_attrs() - a symlink compares
     // its mtime only when link times are kept, and never its permissions
     // (Linux lacks CAN_CHMOD_SYMLINK).
     let mut options = context.build_metadata_options();

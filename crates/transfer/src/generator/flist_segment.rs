@@ -94,7 +94,7 @@ pub enum SortedView {
 
 /// One INC_RECURSE file-list segment that OWNS its entries.
 ///
-/// The Rust shape of upstream's `struct file_list` (rsync.h:984-995) minus
+/// The Rust shape of upstream's `struct file_list` (rsync.h:1000-1011) minus
 /// the intrusive `next`/`prev` chain links (owned by the future chain type)
 /// and the allocation pool (`file_pool`/`pool_boundary`, a later step).
 ///
@@ -117,10 +117,10 @@ pub struct FlistSegment {
     /// Entries in wire order. upstream: `files`/`used`/`malloced`
     /// (rsync.h:986, :989).
     files: Vec<FileEntry>,
-    /// The sorted view. upstream: `sorted` (rsync.h:986).
+    /// The sorted view. upstream: `sorted` (rsync.h:1002).
     sorted: SortedView,
     /// Lower bound of the sorted view excluding leading empties
-    /// (rsync.h:990). Zero-initialized like upstream's `new0`
+    /// (rsync.h:1006). Zero-initialized like upstream's `new0`
     /// (flist.c:3491); meaningful only once the sort pass has run.
     low: i32,
     /// Upper bound of the sorted view (rsync.h:990); `-1` marks an empty
@@ -147,7 +147,7 @@ pub struct FlistSegment {
 impl FlistSegment {
     /// Creates the FIRST segment of a chain.
     ///
-    /// upstream: flist.c:3503 -
+    /// upstream: flist.c:3514 -
     /// `flist->ndx_start = flist->flist_num = inc_recurse ? 1 : 0;` for the
     /// list that founds the chain. Its `parent_ndx` is `-1` (flist.c:3088).
     #[must_use]
@@ -183,7 +183,7 @@ impl FlistSegment {
     }
 
     /// Shared field initialization: everything not passed in starts zeroed,
-    /// matching upstream's `new0(struct file_list)` (flist.c:3491).
+    /// matching upstream's `new0(struct file_list)` (flist.c:3502).
     fn with_indices(ndx_start: i32, flist_num: i32, parent_ndx: i32) -> Self {
         Self {
             files: Vec::new(),
@@ -203,7 +203,7 @@ impl FlistSegment {
         self.files.push(entry);
     }
 
-    /// Number of entries. upstream: `used` (rsync.h:989).
+    /// Number of entries. upstream: `used` (rsync.h:1005).
     #[must_use]
     pub fn used(&self) -> usize {
         self.files.len()
@@ -214,7 +214,7 @@ impl FlistSegment {
         self.files.len() as i32
     }
 
-    /// Wire NDX of the first entry. upstream: `ndx_start` (rsync.h:991).
+    /// Wire NDX of the first entry. upstream: `ndx_start` (rsync.h:1007).
     #[must_use]
     pub fn ndx_start(&self) -> i32 {
         self.ndx_start
@@ -228,7 +228,7 @@ impl FlistSegment {
     }
 
     /// `dir_flist` index of the parent directory, or [`PARENT_NDX_NONE`].
-    /// upstream: `parent_ndx` (rsync.h:993).
+    /// upstream: `parent_ndx` (rsync.h:1009).
     #[must_use]
     pub fn parent_ndx(&self) -> i32 {
         self.parent_ndx
@@ -276,14 +276,14 @@ impl FlistSegment {
         self.files.get((wire_ndx - self.ndx_start) as usize)
     }
 
-    /// Lower bound of the sorted view. upstream: `low` (rsync.h:990).
+    /// Lower bound of the sorted view. upstream: `low` (rsync.h:1006).
     #[must_use]
     pub fn low(&self) -> i32 {
         self.low
     }
 
     /// Upper bound of the sorted view; `-1` after cleaning an empty list
-    /// (flist.c:3568-3571). upstream: `high` (rsync.h:990).
+    /// (flist.c:3579-3582). upstream: `high` (rsync.h:1006).
     #[must_use]
     pub fn high(&self) -> i32 {
         self.high
@@ -557,7 +557,7 @@ mod tests {
     /// entry must resolve to EXACTLY ONE meaning - one segment's entry or one
     /// segment's reserved gap - or NDX decoding is ambiguous. This walks the
     /// whole range, pre-figuring the chain-level `flist_for_ndx` totality
-    /// gate (upstream: flist.c:flist_for_ndx over rsync.h:991 ranges).
+    /// gate (upstream: flist.c:flist_for_ndx over rsync.h:1007 ranges).
     #[test]
     fn flat_resolution_over_a_chain_is_total_and_unambiguous() {
         let root = seg_with(&["a", "b", "c"], true);

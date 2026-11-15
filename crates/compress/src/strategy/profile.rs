@@ -9,11 +9,11 @@
 //!
 //! # Upstream Reference
 //!
-//! upstream: compat.c:101-112 `valid_compressions_items[]` - preference order.
-//! upstream: compat.c:560-567 - vstring negotiation gated by
+//! upstream: compat.c:102-113 `valid_compressions_items[]` - preference order.
+//! upstream: compat.c:561-568 - vstring negotiation gated by
 //! `do_negotiated_strings`, which is only set for protocol >= 30 once the
 //! `v` capability flag is exchanged. Protocol < 30 unconditionally uses zlib.
-//! upstream: rsync.h:114 - `PROTOCOL_VERSION 33` (current); rsync.h:149 -
+//! upstream: rsync.h:115 - `PROTOCOL_VERSION 33` (current); rsync.h:150 -
 //! `MAX_PROTOCOL_VERSION 40` (accepted upper bound).
 
 use super::CompressionAlgorithmKind;
@@ -30,13 +30,13 @@ pub struct ProtocolCompressionProfile {
     /// Inclusive lower bound of the protocol range this profile covers.
     pub min_protocol: u8,
     /// `true` when the protocol exchanges vstrings to negotiate codecs.
-    /// upstream: compat.c:560-567 - depends on `do_negotiated_strings`.
+    /// upstream: compat.c:561-568 - depends on `do_negotiated_strings`.
     pub supports_vstring_negotiation: bool,
     /// Codec preferred when negotiation is unavailable or unsuccessful.
-    /// upstream: compat.c:566 - `recv_negotiate_str` defaults to `"zlib"`.
+    /// upstream: compat.c:567 - `recv_negotiate_str` defaults to `"zlib"`.
     pub fallback_codec: CompressionAlgorithmKind,
     /// Wire name advertised as first preference when zstd is compiled in.
-    /// upstream: compat.c:102-103 - first entry in
+    /// upstream: compat.c:103-104 - first entry in
     /// `valid_compressions_items[]` when `SUPPORT_ZSTD` is defined.
     pub preferred_codec_with_zstd: &'static str,
     /// Wire name advertised as first preference without zstd support.
@@ -47,7 +47,7 @@ impl ProtocolCompressionProfile {
     /// Profile for protocol versions below 30.
     ///
     /// Pre-30 peers do not exchange vstrings; compression is unconditionally
-    /// zlib. upstream: compat.c:560-567.
+    /// zlib. upstream: compat.c:561-568.
     pub const LEGACY: Self = Self {
         min_protocol: 0,
         supports_vstring_negotiation: false,
@@ -61,7 +61,7 @@ impl ProtocolCompressionProfile {
     /// Modern peers negotiate codecs via vstrings. Zstd is the first
     /// preference whenever it is compiled in, followed by lz4 (when compiled
     /// in), then `zlibx > zlib > none`.
-    /// upstream: compat.c:101-112 `valid_compressions_items[]`.
+    /// upstream: compat.c:102-113 `valid_compressions_items[]`.
     pub const MODERN: Self = Self {
         min_protocol: 30,
         supports_vstring_negotiation: true,
@@ -136,11 +136,11 @@ impl ProtocolCompressionProfile {
 
         let mut list = Vec::with_capacity(5);
 
-        // upstream: compat.c:102-103 - zstd first when SUPPORT_ZSTD is defined
+        // upstream: compat.c:103-104 - zstd first when SUPPORT_ZSTD is defined
         #[cfg(feature = "zstd")]
         list.push("zstd");
 
-        // upstream: compat.c:105-107 - lz4 follows zstd when SUPPORT_LZ4 is
+        // upstream: compat.c:106-108 - lz4 follows zstd when SUPPORT_LZ4 is
         // defined. Its per-token wire framing is validated byte-for-byte against
         // upstream rsync 3.4.4 (DEFLATED_DATA header + raw LZ4 block); explicit
         // --compress-choice=lz4 also works, bypassing this list.
@@ -238,7 +238,7 @@ mod tests {
     fn modern_advertises_lz4_after_zstd_before_zlibx() {
         // lz4 wire framing is validated byte-for-byte against upstream 3.4.4, so
         // it is advertised in upstream's preference slot: after zstd, before
-        // zlibx (upstream compat.c:101-108 valid_compressions_items[]).
+        // zlibx (upstream compat.c:102-109 valid_compressions_items[]).
         let advertised = ProtocolCompressionProfile::MODERN.advertised_algorithms();
         let lz4 = advertised
             .iter()

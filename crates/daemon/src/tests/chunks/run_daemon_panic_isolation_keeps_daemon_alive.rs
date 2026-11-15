@@ -29,7 +29,7 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
     let daemon_handle = spawn_daemon(config, held_listener);
 
     // The daemon refuses the garbage sent in place of the client's version
-    // banner (upstream clientserver.c:209-213 `@ERROR: protocol startup
+    // banner (upstream clientserver.c:213-217 `@ERROR: protocol startup
     // error`), closes the connection, and keeps the accept loop running because
     // catch_unwind isolates per-connection errors. Only the @ERROR-then-EOF
     // shape matters here, not which refusal it is.
@@ -100,7 +100,7 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
             "expected @ERROR: for unknown module, got: {line:?}"
         );
 
-        // upstream: clientserver.c:424-428 - the client treats @ERROR as fatal
+        // upstream: clientserver.c:428-432 - the client treats @ERROR as fatal
         // and returns before reading further, so no @RSYNCD: EXIT follows the
         // refusal; the socket just closes (next read is EOF).
         line.clear();

@@ -159,7 +159,7 @@ fn prune_empty_dirs_keeps_a_directory_whose_contents_were_unreadable() {
     // not because it is empty, so pruning it would delete a directory on the
     // strength of a failed read - and would also return before the metadata
     // apply, silently defeating the fix. The same failure must suppress the
-    // delete pass (upstream: generator.c:304-311 delete_in_dir()).
+    // delete pass (upstream: generator.c:339-346 delete_in_dir()).
     use std::os::unix::fs::PermissionsExt;
 
     if running_as_root() {

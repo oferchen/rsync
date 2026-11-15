@@ -40,7 +40,7 @@ pub fn cause_line_exit_code(error: &io::Error) -> Option<ExitCode> {
 /// transfer with `code`: the failure's own cause, when upstream prints one,
 /// then the `rsync error: ... (code N) at ... [role=version]` trailer.
 ///
-/// upstream: log.c:937-963 log_exit()
+/// upstream: log.c:1025-1051 log_exit()
 #[must_use]
 pub fn fatal_report_lines(
     error: &io::Error,
@@ -83,7 +83,7 @@ pub fn fatal_report_lines(
 /// Whether a forked receiver child exiting with `code` leaves its report
 /// unsent, so its generator meets end-of-file on the error pipe instead.
 ///
-/// upstream: cleanup.c:241-256 - only a code other than `RERR_SOCKETIO`,
+/// upstream: cleanup.c:242-257 - only a code other than `RERR_SOCKETIO`,
 /// `RERR_STREAMIO`, `RERR_SIGNAL1` and `RERR_TIMEOUT` sends `MSG_ERROR_EXIT`
 /// and flushes the queued messages (`io_flush(MSG_FLUSH)`).
 #[must_use]
@@ -98,7 +98,7 @@ pub const fn receiver_exit_is_unannounced(code: ExitCode) -> bool {
 /// receiver dies unannounced: the end-of-file whine naming the generator's
 /// own read count, then its `RERR_STREAMIO` trailer.
 ///
-/// upstream: io.c:299-303 whine_about_eof(), log.c:937-963 log_exit()
+/// upstream: io.c:299-303 whine_about_eof(), log.c:1025-1051 log_exit()
 #[must_use]
 pub fn generator_eof_report_lines(total_read: u64, brand: Brand) -> Vec<Vec<u8>> {
     let mut lines = vec![

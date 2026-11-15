@@ -25,7 +25,7 @@ accepts textual bandwidth specifications and returns either an optional byte
 limit or a [`crate::parse::BandwidthParseError`]. The
 helper rejects blank input, validates suffixes, applies the `+1` / `-1`
 adjustments accepted by upstream rsync, and rounds to the nearest 1024 bytes per
-second as the C implementation does (`options.c:1831`).
+second as the C implementation does (`options.c:1867`).
 
 [`crate::parse::parse_bandwidth_limit`] wraps that
 behaviour, rejects surrounding whitespace, and returns a [`crate::parse::BandwidthLimitComponents`]

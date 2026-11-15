@@ -114,7 +114,7 @@ fn pull(root: &Path, peer_env: Option<(&str, &str)>) -> Output {
 
     let mut cmd = Command::new(oc_binary());
     cmd.current_dir(root)
-        // upstream: flist.c:2963-2966 - a directory operand is skipped outright
+        // upstream: flist.c:2974-2977 - a directory operand is skipped outright
         // ("skipping directory .") unless `xfer_dirs` is on, and `xfer_dirs`
         // comes from `-r`, `-d`, or `--list-only` (options.c:2323-2329). This
         // fixture's admit/deny signal is "did payload.txt arrive", so without

@@ -15,12 +15,12 @@ Upstream reference: rsync 3.4.4 source at
 A daemon-mode pull such as `rsync rsync://host/mod/sub/file` flows through
 three upstream call sites:
 
-1. `clientserver.c:992 change_dir(module_chdir, CD_NORMAL)` chdirs the daemon
+1. `clientserver.c:996 change_dir(module_chdir, CD_NORMAL)` chdirs the daemon
    process to the module root (or `chroot()`s on `use_chroot=true`).
 2. `util1.c:804 glob_expand_module()` strips the leading `module_name + "/"`
    from every positional, so the sender sees arg strings that are relative to
    the module root (e.g. `sub/file` or `sub/file/`).
-3. `flist.c:2299-2349 send_file_list()` per-positional path-name handling:
+3. `flist.c:2310-2360 send_file_list()` per-positional path-name handling:
 
    `name_type` is assigned in this order:
    - `NORMAL_NAME` when `relative_paths` is set (lines 2309-2311),
@@ -81,12 +81,12 @@ The corresponding insertion points after PRs that shipped UTS-3.b.1-.4 (commit
   *and* the path is not a directory, `strip_prefix` returns an empty
   relative name; the fallback at lines 137-144 substitutes
   `path.file_name()`, reproducing upstream's `fn = p + 1` split for the
-  single-file case at `flist.c:2347`.
+  single-file case at `flist.c:2358`.
 - `crates/transfer/src/generator/file_list/walk.rs:146-169`. When the
   resolved source is a directory we emit `.` with `XMIT_TOP_DIR` and recurse
   via `scan_directory_batched`. This matches upstream's
   `recurse || (xfer_dirs && name_type != NORMAL_NAME)` branch at
-  `flist.c:2477-2482` and the `send_file_name(f, flist, fbuf, ...)` walk that
+  `flist.c:2488-2493` and the `send_file_name(f, flist, fbuf, ...)` walk that
   follows. The dotdir branch fires whenever the trailing-slash byte was
   preserved through `resolve_sender_sources`.
 
@@ -110,7 +110,7 @@ Wire-byte parity per case:
   `XMIT_TOP_DIR`. **No divergence.**
 - **Non-trailing-slash regular file (`mod/sub/file`)**: oc-rsync hits the
   `relative.is_empty() && !metadata.is_dir()` branch and substitutes
-  `path.file_name()` = `"file"`. Upstream's `dir/fn` split at `flist.c:2347`
+  `path.file_name()` = `"file"`. Upstream's `dir/fn` split at `flist.c:2358`
   produces the same `fn = "file"` emission with the same dirname context.
   **No divergence.**
 - **Non-trailing-slash directory (`mod/sub` where `sub` is a dir)**:
@@ -153,7 +153,7 @@ Rationale:
   `DOTDIR_NAME` vs `NORMAL_NAME` branch firing pattern reproduces. No
   divergence was introduced.
 - The dotdir / basename fallback at `walk_path_with_metadata` references
-  upstream `flist.c:2338-2349` in its inline comments and is structurally
+  upstream `flist.c:2349-2360` in its inline comments and is structurally
   equivalent.
 
 ## 5. Follow-up actions
@@ -166,14 +166,14 @@ rather than a conformance question.
 If a future upstream release alters the `name_type` selection (e.g. by
 introducing a new wildcard expansion or sanitisation rule), the
 `resolve_sender_sources()` + `walk_path_with_metadata` pair must be
-re-validated against this decision. Upstream `flist.c:2299-2349` and
+re-validated against this decision. Upstream `flist.c:2310-2360` and
 `util1.c:804` are the canonical sources to diff against.
 
 ## References
 
-- Upstream rsync 3.4.4 `flist.c:2299-2349` (per-positional name_type + dir/fn split)
+- Upstream rsync 3.4.4 `flist.c:2310-2360` (per-positional name_type + dir/fn split)
 - Upstream rsync 3.4.4 `util1.c:804 glob_expand_module()`
-- Upstream rsync 3.4.4 `clientserver.c:980-993` (`change_dir(module_chdir)`)
+- Upstream rsync 3.4.4 `clientserver.c:984-997` (`change_dir(module_chdir)`)
 - oc-rsync `crates/daemon/src/daemon/sections/module_access/client_args.rs:386-433`
 - oc-rsync `crates/transfer/src/generator/file_list/walk.rs:120-169`
 - oc-rsync regression tests `crates/daemon/src/tests/chunks/daemon_pull_subpath.rs`

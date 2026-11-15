@@ -1,7 +1,7 @@
 //! Byte-neutrality of the lazy INC_RECURSE sender producer across the option
 //! and transport matrix.
 //!
-//! The lazy producer (upstream `flist.c:2636 send_extra_file_list()` /
+//! The lazy producer (upstream `flist.c:2647 send_extra_file_list()` /
 //! `send1extra()`) reads each directory only when its sub-list is due; the
 //! eager producer reads the whole tree first. Both must put the same bytes on
 //! the wire in both directions, for every option the lazy producer accepts,
@@ -208,7 +208,7 @@ fn assert_lazy_matches_eager(direction: Direction, opts: &[&str]) {
 }
 
 /// The `--stats` lines that count the file list, which must not depend on
-/// when the sender read each directory (upstream: flist.c:2709 adds each
+/// when the sender read each directory (upstream: flist.c:2720 adds each
 /// sub-list's `used` to `stats.num_files`). Empty without `--stats`.
 fn count_lines(output: &str) -> Vec<&str> {
     output
@@ -247,7 +247,7 @@ fn lazy_pull_is_byte_identical_to_eager_across_options() {
 }
 
 /// A server wrapper that adds `--debug=pipeline2`, which the client never
-/// forwards (upstream `options.c:3128` sends only `--info`).
+/// forwards (upstream `options.c:3196` sends only `--info`).
 fn debug_server(dir: &Path) -> PathBuf {
     let script = dir.join("oc-rsync-flist-debug");
     fs::write(

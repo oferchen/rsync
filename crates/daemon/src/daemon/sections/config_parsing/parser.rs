@@ -75,7 +75,7 @@ pub(crate) fn parse_config_modules_with_dparams(
 
 /// Parses only the global parameters a listening daemon reads at startup.
 ///
-/// upstream: clientserver.c:1762 daemon_main() calls load_config(1), which is
+/// upstream: clientserver.c:1826 daemon_main() calls load_config(1), which is
 /// lp_load() without a section function: params.c Parse() stops at the first
 /// `[`, whether it is in this file or in one an `&include` or `&merge` pulls
 /// in, and an `&include` then has no `]push`/`]pop` around it

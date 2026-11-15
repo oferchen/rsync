@@ -19,6 +19,21 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables deferred symlink creation, mirroring `--delay-symlinks`.
+    #[must_use]
+    #[doc(alias = "--delay-symlinks")]
+    pub const fn delay_symlinks(mut self, delay: bool) -> Self {
+        self.delay_symlinks = delay;
+        self
+    }
+
+    /// Configures `--nice` / `--no-nice` process priority options.
+    #[must_use]
+    pub const fn niceness(mut self, niceness: crate::niceness::PriorityOptions) -> Self {
+        self.niceness = niceness;
+        self
+    }
+
     /// Configures the directory used to store partial files when transfers fail.
     #[must_use]
     #[doc(alias = "--partial-dir")]

@@ -90,7 +90,7 @@ static depth-indexed stack (`cur_depth`, `filt_array[]`). On each
 dir-enter it pops only frames with index >= the new depth, then pushes
 exactly one new frame. A depth-first walk does one push and at most one
 pop per dir transition -> O(1) merge-file reads per directory. It is
-driven from `delete_in_dir` with `F_DEPTH(file)` (`generator.c:308`).
+driven from `delete_in_dir` with `F_DEPTH(file)` (`generator.c:343`).
 
 ### 3.3 PEX design
 

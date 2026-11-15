@@ -201,7 +201,7 @@ fn fake_super_archive_copy(
 /// so files whose mode the owner-writable placeholder cannot carry - 0444,
 /// setuid, setgid - itemize nothing on the second run, as upstream's do.
 ///
-/// upstream: generator.c:1745 gen_entry_stat() -> link_stat() ->
+/// upstream: generator.c:1782 gen_entry_stat() -> link_stat() ->
 /// xattrs.c:1372 x_lstat(), which folds the `%stat` record into the stat
 /// that itemize() (generator.c:553) and unchanged_attrs() compare. oc
 /// compared the real mode and reported `.f...p.....` for each such file.

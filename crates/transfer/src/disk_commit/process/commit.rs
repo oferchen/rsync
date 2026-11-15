@@ -57,7 +57,7 @@ pub(super) fn finalize_sparse(
 /// Opens an existing destination entry for writing, anchored beneath the
 /// destination sandbox when `path` lies inside the destination tree.
 ///
-/// upstream: syscall.c:3858-3871 held_dfd_for()
+/// upstream: syscall.c:3926-3939 held_dfd_for()
 #[cfg(unix)]
 pub(super) fn open_dest_for_write(env: BackupEnv<'_>, path: &Path) -> io::Result<fs::File> {
     match env.anchor(path) {
@@ -376,7 +376,7 @@ fn remove_partial_basis_confined(_config: &DiskCommitConfig, partial: &Path) {
 /// `partial_dir_fname(fname)`. The directory itself is whatever
 /// `--partial-dir` names; `--delay-updates` alone is promoted to the implicit
 /// `.~tmp~` by `TransferConfigBuilder::effective_partial_dir`
-/// (upstream options.c:2572-2573), so the staging directory is read from the
+/// (upstream options.c:2627-2628), so the staging directory is read from the
 /// configured partial mode rather than hardcoded here.
 ///
 /// Returns `None` when the config carries no partial directory, which leaves
@@ -406,7 +406,7 @@ pub(super) fn delay_updates_staging_path(
 /// `zero_mtime` selects between the two upstream retention paths for plain
 /// `--partial`:
 ///
-/// - `true` (signal/abort cleanup): upstream `cleanup.c:174-180` zeros the
+/// - `true` (signal/abort cleanup): upstream `cleanup.c:175-181` zeros the
 ///   modtime (`cleanup_file->modtime = 0`, `tweak_modtime = 1`) so an
 ///   interrupted partial stands out in `ls` and is not skipped by `--update`.
 ///   Used by the interrupt paths (channel disconnect, `Abort`, `Shutdown`).
@@ -433,13 +433,13 @@ pub(super) fn retain_partial_file(
     match &config.partial_mode {
         PartialMode::None => {}
         PartialMode::Partial => {
-            // upstream: cleanup.c:181-182 - finish_transfer() puts the temp at
+            // upstream: cleanup.c:182-183 - finish_transfer() puts the temp at
             // the destination. The incomplete content replaces any existing
             // file at the destination path.
             let temp_path = cleanup_guard.path().to_path_buf();
             match rename_config_sandboxed(config, cleanup_guard.path(), dest_path) {
                 Ok(_) => {
-                    // upstream: cleanup.c:174-180 - the signal/abort cleanup
+                    // upstream: cleanup.c:175-181 - the signal/abort cleanup
                     // path stamps modtime=0 on the retained partial so it
                     // stands out as unfinished in an ls and --update does not
                     // skip it as "up to date". Only for plain --partial, not
@@ -484,7 +484,7 @@ pub(super) fn retain_partial_file(
             }
         }
         PartialMode::PartialDir(dir) => {
-            // upstream: cleanup.c:169-170 - move temp file into partial-dir
+            // upstream: cleanup.c:170-171 - move temp file into partial-dir
             let temp_path = cleanup_guard.path().to_path_buf();
             match cleanup_guard.rename_to_partial_dir(dest_path, dir, config.do_fsync) {
                 Ok(partial_path) => {
@@ -552,7 +552,7 @@ pub(super) fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) ->
 /// (`transfer_ops::response.rs`) and the primary #6808 ownership/timestamp
 /// anchoring.
 ///
-/// upstream: `syscall.c:2005` `do_rename_at()` opens each slashed path's parent
+/// upstream: `syscall.c:2076` `do_rename_at()` opens each slashed path's parent
 /// via `secure_relative_open()` (openat2 `RESOLVE_BENEATH`) and issues
 /// `renameat()` against the resulting dirfd, gated on `secure_relpath_active()`
 /// (`syscall.c:117`).
@@ -709,9 +709,9 @@ pub(super) fn rename_config_sandboxed(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/util1.c:1613-1625` `handle_partial_dir(..., PDIR_CREATE)` -
+/// - `rsync-3.5.2/util1.c:1613-1625` `handle_partial_dir(..., PDIR_CREATE)` -
 ///   the whole retention runs under `operator_path_resolve`.
-/// - `rsync-3.5.1/syscall.c:2030` `do_rename_at()` under that flag.
+/// - `rsync-3.5.2/syscall.c:2101` `do_rename_at()` under that flag.
 ///
 /// A `--temp-dir` on another filesystem fails that rename with `EXDEV`, so it
 /// goes through [`crate::robust_rename::robust_rename`] for the copy fallback,
@@ -1337,7 +1337,7 @@ pub(crate) fn make_backup_copy(
         create_backup_path_parents(parent, backup_config, env)?;
     }
 
-    // upstream: generator.c:2295 copy_file() - duplicate the pre-transfer bytes
+    // upstream: generator.c:2337 copy_file() - duplicate the pre-transfer bytes
     // into the backup, leaving the original inode in place to be updated. A
     // pre-existing backup at this path is overwritten (upstream robust_unlinks
     // it at generator.c:2340); the O_TRUNC create reaches the same end state.
@@ -1348,11 +1348,11 @@ pub(crate) fn make_backup_copy(
     // concurrent write may leave behind afterwards.
     let source_meta = fs::symlink_metadata(file_path)?;
     copy_pre_image_to_backup(file_path, &backup_path)?;
-    // upstream: generator.c:2448 set_file_attrs(backupptr, back_file, ...) - the
+    // upstream: generator.c:2491 set_file_attrs(backupptr, back_file, ...) - the
     // in-place backup is a COPY, so it carries no inode identity of its own.
     apply_copied_backup_metadata(&backup_path, &source_meta, env);
 
-    // upstream: generator.c:2448-2450 - INFO_GTE(BACKUP, 1) "backed up X to Y".
+    // upstream: generator.c:2491-2493 - INFO_GTE(BACKUP, 1) "backed up X to Y".
     // Paths are relative to the destination root to match test assertions; the
     // `info_log!` emission happens on the session thread (see
     // `crate::pipeline::receiver::PipelinedReceiver::queue_backup_notice` for the disk-thread

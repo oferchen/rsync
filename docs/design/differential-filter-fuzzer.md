@@ -356,7 +356,7 @@ Assertion: the file list reaching the client is identical between
 oc-rsyncd and upstream rsyncd, confirming that
 `build_daemon_filter_rules` at `helpers.rs:223` produces a chain
 semantically equal to upstream's `daemon_filter_list`
-(`clientserver.c:874-893`).
+(`clientserver.c:878-897`).
 
 ## 9. Resource budget
 

@@ -53,7 +53,7 @@ fn build_fixture() -> Fixture {
     fs::write(dest.join("keep.txt"), b"old").expect("write dest keep.txt");
 
     // files-from list references both the present source AND a vanished
-    // sibling. Upstream's `flist.c:2951` raises the mode-0 sentinel for
+    // sibling. Upstream's `flist.c:2962` raises the mode-0 sentinel for
     // the ENOENT entry when --delete-missing-args is in effect.
     let files_from = root.path().join("filelist");
     fs::write(&files_from, "keep.txt\nghost.txt\n").expect("write filelist");

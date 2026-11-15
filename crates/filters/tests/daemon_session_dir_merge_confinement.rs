@@ -33,14 +33,14 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/exclude.c:1668-1684` `parse_filter_file()` - wraps the
+//! - `rsync-3.5.2/exclude.c:1668-1684` `parse_filter_file()` - wraps the
 //!   merge-file open in `operator_path_resolve = 1`, scoped by
 //!   `if (!daemon_config_filter_file)`: a PER-DIRECTORY merge is confined, while
 //!   the daemon's own `filter` / `include from` / `exclude from` parameters are
 //!   deliberately EXEMPT. The two directions are opposite on purpose.
-//! - `rsync-3.5.1/syscall.c:388-394` - a daemon seeds `abspath` from
+//! - `rsync-3.5.2/syscall.c:442-448` - a daemon seeds `abspath` from
 //!   `module_dir`, which is what `ModuleState.root` carries here.
-//! - `rsync-3.5.1/exclude.c:912-913, 1703-1722` - `parse_filter_file()` runs without
+//! - `rsync-3.5.2/exclude.c:912-913, 1703-1722` - `parse_filter_file()` runs without
 //!   `XFLG_FATAL_ERRORS`, so an unopenable merge file is skipped.
 
 #![cfg(unix)]

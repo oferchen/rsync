@@ -13,7 +13,7 @@ module connection.
 
 ### 1.1 Daemon-level chroot (`start_daemon`, before accept loop)
 
-`clientserver.c:1301-1312`:
+`clientserver.c:1310-1321`:
 
 ```c
 p = lp_daemon_chroot();
@@ -30,7 +30,7 @@ daemon_chroot NULL`) defaults to NULL (no daemon-level chroot).
 
 ### 1.2 Per-module chroot (`rsync_module`, after auth)
 
-`clientserver.c:704,829-985`:
+`clientserver.c:708,829-985`:
 
 The `use chroot` directive is a `BOOL3` (`daemon-parm.txt` line 68: `BOOL3
 use_chroot Unset`). Upstream handles the three states:
@@ -74,7 +74,7 @@ After chroot, upstream enables `sanitize_paths` when `module_dirlen > 0`
 
 ### 2.1 Daemon-level drop
 
-`clientserver.c:1313-1339`, after daemon chroot:
+`clientserver.c:1322-1348`, after daemon chroot:
 
 1. `lp_daemon_gid()` - resolve group name via `group_to_gid()`, then
    `setgid(gid)` (line 1319).
@@ -86,7 +86,7 @@ simpler than the per-module drop.
 
 ### 2.2 Per-module drop
 
-`clientserver.c:776-1045`:
+`clientserver.c:780-1049`:
 
 **uid resolution** (line 779-788):
 
@@ -187,7 +187,7 @@ code never calls `apply_chroot()`. An operator who configures
 connection. Any vulnerability in the listener, protocol parser, or auth code
 retains full filesystem reach.
 
-**upstream**: `clientserver.c:1301-1312` - applied before `accept()`.
+**upstream**: `clientserver.c:1310-1321` - applied before `accept()`.
 
 ### G2: Per-module `uid`/`gid` reject username/groupname strings (MEDIUM)
 
@@ -201,7 +201,7 @@ per-module only.
 
 ### G3: Name-converter spawn happens after chroot (MEDIUM)
 
-Upstream forks the name-converter helper at `clientserver.c:962-969` before
+Upstream forks the name-converter helper at `clientserver.c:966-973` before
 `chroot()` at line 978. The helper inherits host-filesystem visibility,
 including `/etc/passwd`. Our code spawns the name converter at
 `module_access/transfer.rs:368-394` after `apply_module_privilege_restrictions`
@@ -210,7 +210,7 @@ resolve names when `/etc/passwd` is absent from the jail.
 
 ### G4: Pre-xfer / early / post-xfer exec spawn after chroot (MEDIUM)
 
-Same issue as G3. Upstream at `clientserver.c:897-970` forks all exec hooks
+Same issue as G3. Upstream at `clientserver.c:901-974` forks all exec hooks
 before the chroot. Our code runs them post-chroot. Any exec hook that depends
 on host-filesystem state needs its dependencies mounted into the jail.
 
@@ -218,14 +218,14 @@ on host-filesystem state needs its dependencies mounted into the jail.
 
 Upstream tries `chroot("/")` when `use chroot` is unset (BOOL3 = -1) to
 detect privileges, falling back to no-chroot if the call fails
-(`clientserver.c:829-842`). Our `ModuleDefinitionBuilder::finish` defaults
+(`clientserver.c:833-846`). Our `ModuleDefinitionBuilder::finish` defaults
 `use_chroot` to `true` when unset, which will fail the entire connection
 when the daemon runs unprivileged.
 
 ### G6: `setuid` not paired with `seteuid` (LOW)
 
 Upstream calls `seteuid(uid)` after `setuid(uid)` when `HAVE_SETEUID` is
-defined (`clientserver.c:1033-1037`). On Linux this is a no-op because
+defined (`clientserver.c:1037-1041`). On Linux this is a no-op because
 `setuid` already resets the effective uid, but on BSD-derived systems a
 saved-set-uid could allow `seteuid(0)` after a compromise.
 
@@ -244,7 +244,7 @@ There is no parsing or handling of the `/./` separator.
 
 ### G9: `numeric ids` implicit override on chroot not applied (LOW)
 
-Upstream (`clientserver.c:1187-1190`) silently forces `numeric_ids = -1` when
+Upstream (`clientserver.c:1191-1194`) silently forces `numeric_ids = -1` when
 chrooted with no name-converter and `numeric ids` is not explicitly `no`. Our
 code does not apply this implicit override. The on-wire result is the same
 (lookups fail and fall back to numeric), but extra NSS syscalls occur per id.
@@ -257,7 +257,7 @@ the service-account identity is retained for the entire transfer.
 
 ### G11: `munge symlinks` collision check missing (LOW)
 
-Upstream at `clientserver.c:992-1004` checks for a `rsyncd-munged` directory
+Upstream at `clientserver.c:996-1008` checks for a `rsyncd-munged` directory
 after chroot and aborts if found. Our code computes `effective_munge_symlinks`
 but does not perform the safety stat.
 

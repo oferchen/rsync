@@ -35,18 +35,18 @@ pub struct NegotiationConfig {
     /// Optional user-specified checksum algorithm override (`--checksum-choice`).
     ///
     /// When set, the checksum vstring exchange is skipped and this algorithm is
-    /// used directly (upstream `compat.c:544-545`, `if (!checksum_choice)`).
+    /// used directly (upstream `compat.c:545-546`, `if (!checksum_choice)`).
     pub checksum_override: Option<ChecksumAlgorithm>,
     /// Optional user-specified compression algorithm override (`--compress-choice`).
     ///
     /// When set, the compression vstring exchange is skipped and this algorithm
-    /// is used directly - matching upstream `compat.c:547`.
+    /// is used directly - matching upstream `compat.c:548`.
     pub compression_override: Option<CompressionAlgorithm>,
     /// User-specified compression level (`--compress-level=N`), or
     /// [`CLVL_NOT_SPECIFIED`] when the flag was not given.
     ///
     /// Rendered verbatim in the `parse_compress_choice` NSTR summary line
-    /// (`compat.c:214-219`), mirroring upstream's raw `do_compression_level`
+    /// (`compat.c:215-220`), mirroring upstream's raw `do_compression_level`
     /// value which stays `CLVL_NOT_SPECIFIED` (`INT_MIN`) unless
     /// `--compress-level` was passed (`options.c:92,781`).
     pub compression_level: i32,
@@ -58,14 +58,14 @@ pub struct NegotiationConfig {
     /// the full default order would let a modern peer pick XXH3, leaving a
     /// batch whose whole-file checksums no `--read-batch` can verify.
     ///
-    /// upstream: `compat.c:413-415 getenv_nstr()`.
+    /// upstream: `compat.c:414-416 getenv_nstr()`.
     pub write_batch: bool,
 }
 
 /// Outcome of the protocol 30+ capability negotiation.
 ///
 /// After both peers exchange their supported algorithm lists via the
-/// `negotiate_the_strings()` exchange (upstream `compat.c:538-574`), each side
+/// `negotiate_the_strings()` exchange (upstream `compat.c:539-575`), each side
 /// independently selects a mutually supported checksum and compression
 /// algorithm from the peer's list. This struct captures those selections so higher layers can
 /// configure their I/O pipelines accordingly.
@@ -91,7 +91,7 @@ pub struct NegotiationResult {
 /// # Protocol Flow
 ///
 /// The exchange is always **bidirectional** in both SSH and daemon modes
-/// (upstream compat.c:538-574 negotiate_the_strings):
+/// (upstream compat.c:539-575 negotiate_the_strings):
 /// 1. Both sides send their supported algorithm lists
 /// 2. Both sides read each other's lists
 /// 3. Each side selects a mutually supported algorithm from the peer's list
@@ -115,7 +115,7 @@ pub struct NegotiationResult {
 /// - Protocol < 30: Not an error, returns default algorithms (MD4, Zlib)
 /// - `do_negotiation=false`: Returns defaults (MD5, Zlib if `-z`) without I/O
 /// - No mutual algorithm in the peer's list: `Unsupported` error, matching
-///   upstream's `RERR_UNSUPPORTED` abort (compat.c:406); unknown names inside
+///   upstream's `RERR_UNSUPPORTED` abort (compat.c:407); unknown names inside
 ///   the list are skipped, never an error
 /// - I/O errors during send/receive
 ///
@@ -176,7 +176,7 @@ pub fn negotiate_capabilities(
 /// `RSYNC_CHECKSUM_LIST` (upstream `checksum.c:203-204`).
 ///
 /// When `config.compression_override` is `Some`, the compression vstring
-/// exchange is skipped entirely (matching upstream `compat.c:547` which only
+/// exchange is skipped entirely (matching upstream `compat.c:548` which only
 /// exchanges compression vstrings when `do_compression && !compress_choice`).
 /// The override algorithm is used directly. The caller is responsible for
 /// ensuring `send_compression` is `false` when a compression override is
@@ -241,7 +241,7 @@ pub fn negotiate_capabilities_with_override(
     // such clients - they will interpret the varint length as a multiplex tag and fail
     // with "unexpected tag N" errors.
     //
-    // upstream: compat.c:534-535 send_negotiate_str() writes the vstring only
+    // upstream: compat.c:535-536 send_negotiate_str() writes the vstring only
     // when do_negotiated_strings is set, and negotiate_the_strings() hands
     // recv_negotiate_str() a prefilled default instead of reading one
     // (compat.c:553-556, 563-566). No negotiation bytes cross the wire.
@@ -263,10 +263,10 @@ pub fn negotiate_capabilities_with_override(
             compression_override,
         )?;
         // Use protocol 30+ defaults without sending or reading anything.
-        // upstream: compat.c:195-196 - when -z is active but no vstring
+        // upstream: compat.c:196-197 - when -z is active but no vstring
         // negotiation, parse_compress_choice() defaults to CPRES_ZLIB.
         let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD5);
-        // upstream: compat.c:195-198 - without negotiation or an explicit
+        // upstream: compat.c:196-199 - without negotiation or an explicit
         // choice, -z means zlib and no -z means none.
         let compression = compression_override.unwrap_or(if send_compression {
             CompressionAlgorithm::Zlib
@@ -281,7 +281,7 @@ pub fn negotiate_capabilities_with_override(
             compression.as_str()
         );
 
-        // upstream: compat.c:830-831 - setup_protocol() still calls
+        // upstream: compat.c:839-840 - setup_protocol() still calls
         // parse_checksum_choice(1)/parse_compress_choice(1) after
         // negotiate_the_strings() even when do_negotiated_strings == 0. Both
         // emit their NSTR summary with no " negotiated" qualifier
@@ -310,7 +310,7 @@ pub fn negotiate_capabilities_with_override(
         });
     }
 
-    // Negotiation flow (upstream compat.c:538-574 negotiate_the_strings):
+    // Negotiation flow (upstream compat.c:539-575 negotiate_the_strings):
     //
     // BIDIRECTIONAL exchange in BOTH daemon and SSH modes when CF_VARINT_FLIST_FLAGS is set:
     //   - Both sides SEND their algorithm lists first
@@ -325,7 +325,7 @@ pub fn negotiate_capabilities_with_override(
     // The greeting is just informational; the actual selection uses vstrings.
     let _ = is_daemon_mode; // Exchange happens in all modes when do_negotiation=true
 
-    // upstream: compat.c:522-527 send_negotiate_str and compat.c:374-379
+    // upstream: compat.c:523-528 send_negotiate_str and compat.c:375-380
     // recv_negotiate_str. Both emit "<side> <type> list (on <local>): <list>"
     // at DEBUG_GTE(NSTR, am_server?3:2); see crates/protocol/src/nstr/trace.rs
     // for the byte-for-byte helpers.
@@ -335,7 +335,7 @@ pub fn negotiate_capabilities_with_override(
         NstrSide::Client
     };
 
-    // Send our supported algorithm lists. upstream: compat.c:544-548 - the
+    // Send our supported algorithm lists. upstream: compat.c:545-549 - the
     // checksum vstring is sent only when `!checksum_choice`. When
     // --checksum-choice forces the algorithm, the exchange is skipped
     // entirely: `send_negotiate_str` is not called, so `valid_checksums.saw`
@@ -345,7 +345,7 @@ pub fn negotiate_capabilities_with_override(
     // upstream peer that sends nothing.
     let send_checksum = checksum_override.is_none();
 
-    // upstream: compat.c:506-536 send_negotiate_str - RSYNC_CHECKSUM_LIST /
+    // upstream: compat.c:507-537 send_negotiate_str - RSYNC_CHECKSUM_LIST /
     // RSYNC_COMPRESS_LIST, when set, replace the advertised default order and the
     // local candidate list used for selection; an empty value falls through to
     // get_default_nno_list() so the default wire bytes are unchanged.
@@ -380,7 +380,7 @@ pub fn negotiate_capabilities_with_override(
 
     stdout.flush()?;
 
-    // Read the remote side's algorithm lists. upstream: compat.c:550 - the
+    // Read the remote side's algorithm lists. upstream: compat.c:551 - the
     // checksum recv is gated on `valid_checksums.saw`, which is only set by the
     // send above, so it mirrors the send gating exactly. compat.c:374-379
     // recv_negotiate_str emits "<remote> <type> list (on <local>): <list>".
@@ -408,7 +408,7 @@ pub fn negotiate_capabilities_with_override(
     // the exchange the peer expects.
     validate_forced_choices(is_server, checksum_override, compression_override)?;
 
-    // upstream: compat.c:529-533 - each side picks its own most-preferred name
+    // upstream: compat.c:530-534 - each side picks its own most-preferred name
     // that also appears in the peer's list. Deviation from upstream 3.5.1: the
     // server still stops at the first acceptable client entry (the 3.4.x rule);
     // see `select_from_peer_list`.
@@ -420,7 +420,7 @@ pub fn negotiate_capabilities_with_override(
         Some(forced) => forced,
         None => {
             let list = remote_checksum_list.as_deref().unwrap_or("");
-            // upstream: compat.c:350 - selection matches remote names against our
+            // upstream: compat.c:351 - selection matches remote names against our
             // local `saw` list, which the env override reorders/restricts. With
             // no override, the default candidates drop `none` on the client
             // (compat.c:485-486).
@@ -439,7 +439,7 @@ pub fn negotiate_capabilities_with_override(
         }
     };
 
-    // upstream: compat.c:831 parse_compress_choice(1) - when the user
+    // upstream: compat.c:840 parse_compress_choice(1) - when the user
     // specified --compress-choice, the vstring exchange was skipped and the
     // override is used directly. When no override, use the negotiated list.
     let compression = if let Some(forced) = compression_override {
@@ -468,7 +468,7 @@ pub fn negotiate_capabilities_with_override(
     let checksum_negotiated = checksum_override.is_none();
     trace_checksum_summary(side, checksum_negotiated, checksum.as_str());
 
-    // upstream: compat.c:214-220 parse_compress_choice -
+    // upstream: compat.c:215-221 parse_compress_choice -
     //   "%s%s compress: %s (level %d)\n" at DEBUG_GTE(NSTR, am_server?3:1).
     // The (level <N>) clause always renders. Upstream calls
     // init_compression_level() (token.c:55) inside parse_compress_choice(1)
@@ -496,7 +496,7 @@ pub fn negotiate_capabilities_with_override(
 /// Refuses client-forced `--checksum-choice`/`--compress-choice` values that
 /// the server's `RSYNC_CHECKSUM_LIST`/`RSYNC_COMPRESS_LIST` excludes.
 ///
-/// upstream: `checksum.c:203-204` and `compat.c:193-194` - `parse_*_choice`
+/// upstream: `checksum.c:203-204` and `compat.c:194-195` - `parse_*_choice`
 /// call `validate_choice_vs_env()` (`compat.c:426-455`) only on the server and
 /// only for an explicitly forced choice. When neither env variable is set this
 /// is a no-op, so the default path is unchanged. Called at every point where a
@@ -524,7 +524,7 @@ fn validate_forced_choices(
 /// non-negotiated path when `RSYNC_CHECKSUM_LIST`/`RSYNC_COMPRESS_LIST` excludes
 /// it.
 ///
-/// upstream: `compat.c:544-568 negotiate_the_strings` - when the peer cannot
+/// upstream: `compat.c:545-569 negotiate_the_strings` - when the peer cannot
 /// negotiate (legacy protocol or missing 'v' capability), `send_negotiate_str`
 /// still parses the env list into `nno->saw` for each category that was not
 /// forced, then `recv_negotiate_str` validates the prefilled default against it:
@@ -535,7 +535,7 @@ fn validate_forced_choices(
 /// forced override - a forced choice skips `send_negotiate_str`, leaving `saw`
 /// NULL so `recv_negotiate_str` is not called; [`validate_forced_choices`]
 /// covers that case instead. Compression is gated on `send_compression`,
-/// matching upstream's `do_compression` guard at `compat.c:547`.
+/// matching upstream's `do_compression` guard at `compat.c:548`.
 ///
 /// A strict no-op when neither variable is set: [`env_list`] returns early,
 /// leaving the common (default) path unchanged.
@@ -572,7 +572,7 @@ fn resolved_compress_level(compression: CompressionAlgorithm, raw_level: i32) ->
 
 /// Selects the mutual algorithm name from the peer's space-separated list.
 ///
-/// Mirrors upstream `parse_negotiate_str()` (compat.c:333-364) token by token:
+/// Mirrors upstream `parse_negotiate_str()` (compat.c:334-365) token by token:
 ///
 /// - Each remote token is resolved via the case-insensitive, alias-aware
 ///   lookup (`get_nni_by_name()`, compat.c:223-238); an unrecognised name -
@@ -596,7 +596,7 @@ fn select_from_peer_list<'a>(
 ) -> Option<&'a str> {
     let mut best: Option<usize> = None;
     for token in remote_list.split_whitespace() {
-        // upstream: compat.c:350 - unknown names are skipped, never an error.
+        // upstream: compat.c:351 - unknown names are skipped, never an error.
         let Some(canonical) = resolve(token) else {
             continue;
         };
@@ -605,7 +605,7 @@ fn select_from_peer_list<'a>(
         };
         if best.is_none_or(|current| pos < current) {
             best = Some(pos);
-            // upstream: compat.c:354 - nothing beats our own first choice.
+            // upstream: compat.c:355 - nothing beats our own first choice.
             if pos == 0 {
                 break;
             }
@@ -616,7 +616,7 @@ fn select_from_peer_list<'a>(
 
 /// Chooses a checksum algorithm using upstream rsync's precedence rules.
 ///
-/// upstream: compat.c:333-364 `parse_negotiate_str()`; see
+/// upstream: compat.c:334-365 `parse_negotiate_str()`; see
 /// `select_from_peer_list` for the per-side selection rule.
 ///
 /// Returns an error if no common algorithm is found - upstream rsync treats
@@ -642,7 +642,7 @@ pub(super) fn choose_checksum_algorithm(
 ///
 /// Behaves like `choose_checksum_algorithm` but takes the ordered local
 /// candidate names as a parameter so the caller can substitute the
-/// `RSYNC_CHECKSUM_LIST` env override (upstream `nno->saw`, compat.c:350).
+/// `RSYNC_CHECKSUM_LIST` env override (upstream `nno->saw`, compat.c:351).
 pub(super) fn choose_checksum_algorithm_in(
     remote_list: &str,
     is_server: bool,
@@ -651,7 +651,7 @@ pub(super) fn choose_checksum_algorithm_in(
     match select_from_peer_list(remote_list, local, resolve_checksum_name) {
         Some(name) => ChecksumAlgorithm::parse(name)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
-        // upstream: compat.c:381-406 recv_negotiate_str - "Failed to negotiate
+        // upstream: compat.c:382-407 recv_negotiate_str - "Failed to negotiate
         // a %s choice." plus the offered Server/Client lists, then
         // exit_cleanup(RERR_UNSUPPORTED). The negotiated path always runs with
         // do_negotiated_strings set, so pass `true`.
@@ -669,7 +669,7 @@ pub(super) fn choose_checksum_algorithm_in(
 ///
 /// Same selection logic as `choose_checksum_algorithm`.
 ///
-/// upstream: compat.c:333-364 `parse_negotiate_str()`
+/// upstream: compat.c:334-365 `parse_negotiate_str()`
 ///
 /// This is the default-list convenience wrapper exercised by the test suite;
 /// production callers use [`choose_compression_algorithm_in`] so the
@@ -700,7 +700,7 @@ pub(super) fn choose_compression_algorithm_in(
     match select_from_peer_list(remote_list, local, resolve_compression_name) {
         Some(name) => CompressionAlgorithm::parse(name)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
-        // upstream: compat.c:381-406 recv_negotiate_str - a compression list
+        // upstream: compat.c:382-407 recv_negotiate_str - a compression list
         // with no mutual algorithm is the same hard RERR_UNSUPPORTED failure
         // as an unmatched checksum list, with the same Server/Client detail
         // lines; "none" is never a silent fallback.
@@ -716,7 +716,7 @@ pub(super) fn choose_compression_algorithm_in(
 
 /// Builds the default local selection candidates for one side.
 ///
-/// upstream: compat.c:485-486 `get_default_nno_list()` skips the
+/// upstream: compat.c:486-487 `get_default_nno_list()` skips the
 /// zero-numbered entry (`none` for both checksums and compressions) on the
 /// client, so a client can neither advertise nor accept `none` unless the
 /// operator re-enables it through `RSYNC_*_LIST`; the server keeps it. The
@@ -735,7 +735,7 @@ fn default_selection_candidates<'a>(
 /// Builds the space-separated algorithm list a peer advertises during
 /// `negotiate_the_strings()`.
 ///
-/// Mirrors upstream `get_default_nno_list()` (compat.c:462-504): names are
+/// Mirrors upstream `get_default_nno_list()` (compat.c:463-505): names are
 /// joined with a single space with no leading or trailing space, and the
 /// client (`is_server == false`) omits the `none` entry. Upstream skips the
 /// zero-numbered item on the client with
@@ -749,7 +749,7 @@ fn default_selection_candidates<'a>(
 fn advertised_list<'a>(names: impl IntoIterator<Item = &'a str>, is_server: bool) -> String {
     let mut out = String::new();
     for name in names {
-        // upstream: compat.c:485-486 - the client drops the num == 0 ("none")
+        // upstream: compat.c:486-487 - the client drops the num == 0 ("none")
         // entry; the server keeps it.
         if !is_server && name == "none" {
             continue;
@@ -764,7 +764,7 @@ fn advertised_list<'a>(names: impl IntoIterator<Item = &'a str>, is_server: bool
 
 /// Writes a vstring (variable-length string) using upstream rsync's format.
 ///
-/// Format (upstream io.c:2520-2538 write_vstring):
+/// Format (upstream io.c:2527-2545 write_vstring):
 /// - For len <= 127: 1 byte = len
 /// - For len > 127: 2 bytes = [(len >> 8) | 0x80, len & 0xFF]
 ///
@@ -796,7 +796,7 @@ pub(super) fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
 
 /// Reads a vstring (variable-length string) using upstream rsync's format.
 ///
-/// Format (upstream io.c:2212-2229 read_vstring):
+/// Format (upstream io.c:2219-2236 read_vstring):
 /// - Read first byte
 /// - If high bit set: len = (first & 0x7F) * 256 + read_another_byte
 /// - Otherwise: len = first byte
@@ -806,7 +806,7 @@ pub(super) fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
 ///
 /// # Length limit
 ///
-/// Upstream `recv_negotiate_str` (compat.c:369-407) always calls
+/// Upstream `recv_negotiate_str` (compat.c:370-408) always calls
 /// `read_vstring(f_in, tmpbuf, MAX_NSTR_STRLEN)` with `bufsize` equal to
 /// `MAX_NSTR_STRLEN` (256, compat.c:99). `read_vstring` rejects the frame with
 /// `if (len >= bufsize)` because it appends a NUL terminator at `buf[len]`, so
@@ -816,9 +816,9 @@ pub(super) fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
 /// streams are valid; a `>` comparison here would let oc-rsync accept a
 /// 256-byte list that upstream aborts on, desyncing the negotiation.
 pub(super) fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
-    // upstream: compat.c:99 #define MAX_NSTR_STRLEN 256; the caller's bufsize.
+    // upstream: compat.c:100 #define MAX_NSTR_STRLEN 256; the caller's bufsize.
     const MAX_NSTR_STRLEN: usize = 256;
-    // upstream: io.c:2219 `if (len >= bufsize)` - one byte is reserved for the
+    // upstream: io.c:2226 `if (len >= bufsize)` - one byte is reserved for the
     // NUL terminator, so the accepted data length maxes out at bufsize - 1.
     const MAX_VSTRING_LEN: usize = MAX_NSTR_STRLEN - 1;
 
@@ -834,7 +834,7 @@ pub(super) fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
         first[0] as usize
     };
 
-    // upstream: io.c:2219-2223 - reject `len >= bufsize` (over-long vstring).
+    // upstream: io.c:2226-2230 - reject `len >= bufsize` (over-long vstring).
     if len > MAX_VSTRING_LEN {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

@@ -27,7 +27,7 @@ flushes only at phase boundaries or when the buffer is full.
 | Upstream equivalent | `enum msgcode { MSG_INFO = 2 }` in `rsync.h` |
 
 MSG_INFO carries informational log output (`FINFO` log level). In server
-mode, upstream rsync's `rwrite()` (`log.c:330-340`) routes `FINFO` payloads
+mode, upstream rsync's `rwrite()` (`log.c:410-420`) routes `FINFO` payloads
 through `send_msg(MSG_INFO, ...)` to the multiplexed output stream. In
 client mode, the same payloads go directly to stdout.
 

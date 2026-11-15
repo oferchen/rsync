@@ -13,6 +13,7 @@ pub mod bandwidth;
 pub mod exit_code;
 /// Process file-descriptor limit management.
 pub mod fd_limit;
+pub mod niceness;
 /// Signal handling for graceful shutdown and cleanup.
 pub mod signal;
 /// Timeout configuration and tracking for rsync connections and I/O operations.

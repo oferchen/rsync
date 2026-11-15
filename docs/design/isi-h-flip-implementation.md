@@ -212,7 +212,7 @@ this). So the flip affects sender AND receiver default capability
 strings symmetrically. The "sender-only" framing in the task brief is
 historical from earlier RFC drafts; the actual implementation uses one
 shared flag for both directions, matching upstream's single
-`allow_inc_recurse` global (`options.c:3003-3050`). The test inversions
+`allow_inc_recurse` global (`options.c:3068-3115`). The test inversions
 above cover both.
 
 ### 5.3 V61D-2 regression test
@@ -361,5 +361,5 @@ mechanical.
   ISI.h; retired in ISI.i.2).
 - Memory note `[[project_v061_daemon_push_increcurse_disable]]` - will
   receive a SHIPPED update in ISI.i.2 once the bake window closes.
-- Upstream reference: `options.c:3003-3050 maybe_add_e_option()` and
-  `compat.c:712-732` for the `-e` capability negotiation.
+- Upstream reference: `options.c:3068-3115 maybe_add_e_option()` and
+  `compat.c:713-741` for the `-e` capability negotiation.

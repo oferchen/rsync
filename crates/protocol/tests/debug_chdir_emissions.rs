@@ -64,7 +64,7 @@ fn change_dir_emits_under_debug_chdir_level_1() {
 
 /// The daemon's chroot-jail setup uses the upstream pre-fork-receiver role
 /// token (`"Receiver"`, capitalised) and a post-chroot `curr_dir` of `"/"`.
-/// This mirrors upstream `clientserver.c:1059` `change_dir(module_chdir,
+/// This mirrors upstream `clientserver.c:1063` `change_dir(module_chdir,
 /// CD_NORMAL)` where, after `chroot()`, the cleaned absolute path becomes
 /// the new root.
 #[test]

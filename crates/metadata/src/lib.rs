@@ -205,9 +205,9 @@ pub mod windows;
 
 /// Returns whether the process runs with an effective UID of 0 (root).
 ///
-/// Mirrors upstream rsync's `am_root` (`main.c:1873 am_root = our_uid == ROOT_UID`),
+/// Mirrors upstream rsync's `am_root` (`main.c:1877 am_root = our_uid == ROOT_UID`),
 /// which gates ownership-change attempts and the `ITEM_REPORT_OWNER` itemize
-/// flag (`generator.c:559-560`). Always `false` on Windows, matching upstream's
+/// flag (`generator.c:596-597`). Always `false` on Windows, matching upstream's
 /// `am_root = 0` on platforms without POSIX uid semantics.
 ///
 /// Delegates to [`identity::is_root`] rather than issuing a fresh `geteuid`, so
@@ -234,9 +234,9 @@ pub fn am_root() -> bool {
 
 /// Whether this platform can change a symbolic link's own permission bits.
 ///
-/// Mirrors upstream rsync's `CAN_CHMOD_SYMLINK` (`rsync.h:456-458`), defined
+/// Mirrors upstream rsync's `CAN_CHMOD_SYMLINK` (`rsync.h:472-474`), defined
 /// whenever `HAVE_LCHMOD` or `HAVE_SETATTRLIST` is probed
-/// (`configure.ac:971,979`). Upstream `syscall.c:1705 do_chmod()` chmods a
+/// (`configure.ac:971,979`). Upstream `syscall.c:1774 do_chmod()` chmods a
 /// symlink with `lchmod()` and then `setattrlist(..., FSOPT_NOFOLLOW)`; both
 /// exist on macOS and the BSDs but not on Linux, where `fchmodat(2)` rejects
 /// `AT_SYMLINK_NOFOLLOW` with `EOPNOTSUPP` and every symlink's `st_mode` is a
@@ -283,7 +283,7 @@ pub const ACL_APPLY_IS_FD_PINNED: bool = cfg!(all(target_os = "linux", feature =
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/rsync.c:555-599,800` the held-fd pin and `set_acl_fdat()`
+/// - `rsync-3.5.2/rsync.c:555-599,800` the held-fd pin and `set_acl_fdat()`
 pub fn sync_acls_confined(
     source: &std::path::Path,
     destination: &std::path::Path,

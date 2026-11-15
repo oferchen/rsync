@@ -193,7 +193,7 @@ struct PinnedRoot {
     /// The confined parent directory the last leaf pin beneath this root
     /// resolved, held so a run of entries in one directory walks it once.
     /// Scoped to the pin, so a re-pin or clear can never answer with a
-    /// directory of an earlier root. upstream: `syscall.c:3702-3720`, the
+    /// directory of an earlier root. upstream: `syscall.c:3770-3788`, the
     /// `dpc_dir_fd()` held ancestor cache.
     parents: std::sync::Arc<crate::HeldDir>,
 }
@@ -220,7 +220,7 @@ struct PinnedRoot {
 /// confinement it can skip re-checking.
 #[cfg(unix)]
 pub fn pin_session_root_fd(root: &Path) -> std::io::Result<()> {
-    // upstream: clientserver.c:1065 - `open(".", O_RDONLY | O_DIRECTORY |
+    // upstream: clientserver.c:1069 - `open(".", O_RDONLY | O_DIRECTORY |
     // O_CLOEXEC)`. A working directory descriptor, not `O_PATH`: `openat`
     // anchoring, the `dup` in [`crate::open_trusted_dir`], and the Landlock
     // rule all take it as-is, and `O_PATH` cannot serve the first two.
@@ -282,7 +282,7 @@ pub fn pinned_root_fd_for(path: &Path) -> Option<std::sync::Arc<std::os::fd::Own
 /// root, consulted by the sender's source scan and the Landlock rule, while
 /// this one is only ever the receiver's working directory.
 ///
-/// upstream: `rsync-3.5.1/util1.c:1363-1393` (absolute) and `:1450-1466`
+/// upstream: `rsync-3.5.2/util1.c:1363-1393` (absolute) and `:1450-1466`
 /// (relative) - `open_no_attacker_symlinks_dirfd()` then `fchdir()`.
 #[cfg(unix)]
 static DESTINATION_ROOT_FD: RwLock<Option<PinnedRoot>> = RwLock::new(None);
@@ -410,9 +410,9 @@ pub fn pinned_root_relative(
 /// Returns `None` - "resolve `path` the ordinary way" - when no destination is
 /// pinned or `path` does not lie beneath the pin's spelling.
 ///
-/// upstream: `rsync-3.5.1/main.c:865` `get_local_name()` enters the
+/// upstream: `rsync-3.5.2/main.c:865` `get_local_name()` enters the
 /// destination with `change_dir()`, which `fchdir()`s to the walked
-/// descriptor (`rsync-3.5.1/util1.c:1448-1466`); `rsync-3.5.1/receiver.c:413`
+/// descriptor (`rsync-3.5.2/util1.c:1448-1466`); `rsync-3.5.2/receiver.c:413`
 /// `open_tmpfile()` and every later per-entry call take names relative to it.
 #[cfg(unix)]
 #[must_use]
@@ -457,7 +457,7 @@ fn remainder_beneath(root: &Path, path: &Path) -> Option<PathBuf> {
 /// The session-scoped counterpart of [`Activation::outside_root`], for the
 /// ownership walk, which has no [`Activation`] in hand.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:245-294` `abspath_outside_confinement()`.
+/// upstream: `rsync-3.5.2/syscall.c:245-294` `abspath_outside_confinement()`.
 #[must_use]
 pub fn outside_session_root(abspath: &Path, kind: PathKind, arrival: Arrival) -> bool {
     SESSION_ROOT
@@ -475,7 +475,7 @@ pub fn outside_session_root(abspath: &Path, kind: PathKind, arrival: Arrival) ->
 /// ENDS on an ancestor has resolved to a directory above the root, which is
 /// outside it.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:245` - the `final` argument of
+/// upstream: `rsync-3.5.2/syscall.c:245` - the `final` argument of
 /// `abspath_outside_confinement()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Arrival {
@@ -505,7 +505,7 @@ pub fn session_confinement_root() -> Option<PathBuf> {
 /// daemon, `confine_root` otherwise - and a few decisions read `confine_root`
 /// alone. This is that global.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:74` `extern char *confine_root;`
+/// upstream: `rsync-3.5.2/syscall.c:74` `extern char *confine_root;`
 #[must_use]
 pub fn session_local_confine_root() -> Option<PathBuf> {
     if SESSION_DAEMON.load(Ordering::Relaxed) {
@@ -524,7 +524,7 @@ fn path_outside_root(root: &Path, abspath: &Path, kind: PathKind, arrival: Arriv
     if abspath.starts_with(root) {
         return false;
     }
-    // upstream: rsync-3.5.1/syscall.c:287-290 - an empty path, or an ancestor of the root,
+    // upstream: rsync-3.5.2/syscall.c:287-290 - an empty path, or an ancestor of the root,
     // is valid only while descending.
     if abspath.as_os_str().is_empty() || root.starts_with(abspath) {
         return kind == PathKind::Confined && arrival == Arrival::Final;
@@ -577,7 +577,7 @@ pub fn install_daemon_session(module: ModuleState) {
 
 /// Whether this session opted out of the operator-path symlink confinement.
 ///
-/// upstream: `syscall.c:381` - the `symlink_optout_allowed()` test at the top
+/// upstream: `syscall.c:435` - the `symlink_optout_allowed()` test at the top
 /// of `ona_open()`.
 #[must_use]
 pub fn session_optout_allowed() -> bool {
@@ -591,7 +591,7 @@ pub fn session_optout_allowed() -> bool {
 /// the process's root directory, so it is a property of the process and not of
 /// the connection.
 ///
-/// upstream: `clientserver.c:1055` - the sole assignment of `am_chrooted`,
+/// upstream: `clientserver.c:1059` - the sole assignment of `am_chrooted`,
 /// inside `rsync_module()`'s per-module `use chroot` handling.
 #[must_use]
 pub fn session_is_chrooted() -> bool {
@@ -877,7 +877,7 @@ mod tests {
     /// otherwise, and a stale `false` silently applies a confinement upstream
     /// stands down for a chrooted daemon.
     ///
-    /// upstream: `clientserver.c:1055` - the sole assignment of `am_chrooted`.
+    /// upstream: `clientserver.c:1059` - the sole assignment of `am_chrooted`.
     #[test]
     fn install_session_publishes_the_chroot_state() {
         let mut chrooted_module = module_at("/srv/mod");

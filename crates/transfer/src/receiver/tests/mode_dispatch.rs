@@ -54,7 +54,7 @@ fn receiver(flags: ParsedServerFlags) -> ReceiverContext {
     ReceiverContext::new_for_test(&handshake, config)
 }
 
-/// `--only-write-batch` implies `--dry-run` upstream (`main.c:1946-1947` sets
+/// `--only-write-batch` implies `--dry-run` upstream (`main.c:1950-1951` sets
 /// `dry_run = 1` while leaving `do_xfers = 1`), so the two flags are always
 /// seen together and only the check ORDER tells them apart.
 ///

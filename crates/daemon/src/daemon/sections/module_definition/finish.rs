@@ -73,7 +73,7 @@ impl ModuleDefinitionBuilder {
         // upstream: BOOL3 - a section's own `unset` wins over a copied value.
         let use_chroot_setting = self.use_chroot.or(default_use_chroot).flatten();
         let use_chroot = use_chroot_setting.unwrap_or(true);
-        // upstream: clientserver.c:883 - `use_chroot < 0` means unset. Track
+        // upstream: clientserver.c:887 - `use_chroot < 0` means unset. Track
         // explicitness so a runtime chroot() failure can fall back to
         // no-chroot only when the operator did not demand it.
         let use_chroot_explicit = use_chroot_setting.is_some();
@@ -137,7 +137,7 @@ impl ModuleDefinitionBuilder {
         // the global section is the default for every module that does not set
         // its own, exactly like `auth users` above.
         let auth_digest = self.auth_digest.or_else(|| defaults.auth_digest.clone());
-        // upstream: authenticate.c:155-157 check_secret() - a module that
+        // upstream: authenticate.c:148-150 check_secret() - a module that
         // requires authentication but has no secrets file is not a config
         // error; every login to it fails with "no secrets file".
         let secrets_file = if auth_users.is_empty() {
@@ -179,7 +179,7 @@ impl ModuleDefinitionBuilder {
             .or_else(|| defaults.hosts_deny.clone())
             .unwrap_or_default();
 
-        // upstream: clientserver.c:833-870 resolves `uid` before `gid`, so a
+        // upstream: clientserver.c:837-874 resolves `uid` before `gid`, so a
         // `uid` that does not resolve is the one reported.
         let uid = self.uid.or_else(|| defaults.uid.clone());
         let gid = self.gid.or_else(|| defaults.gid.clone());
@@ -201,12 +201,12 @@ impl ModuleDefinitionBuilder {
             refuse_options: self.refuse_options.unwrap_or_default(),
             read_only: self.read_only.or(defaults.read_only).unwrap_or(true),
             write_only: self.write_only.or(defaults.write_only).unwrap_or(false),
-            // upstream: clientserver.c:1283-1286 - `numeric ids` is a BOOL3
+            // upstream: clientserver.c:1292-1295 - `numeric ids` is a BOOL3
             // tri-state. Preserve the unset third state (`None`) so a chrooted
             // module with the directive unset can still be forced to numeric
             // ids at session setup; collapsing to `false` here loses that.
             numeric_ids: self.numeric_ids.or(defaults.numeric_ids).flatten(),
-            // upstream: clientserver.c:833,844 read the per-module `lp_uid`/
+            // upstream: clientserver.c:837,844 read the per-module `lp_uid`/
             // `lp_gid`, which inherit the global-section default when the module
             // sets no explicit value (daemon-parm.txt marks both P_LOCAL).
             uid: uid.and_then(Result::ok),

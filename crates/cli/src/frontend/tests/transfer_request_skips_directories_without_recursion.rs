@@ -142,7 +142,7 @@ fn quiet_suppresses_the_notice_and_verbose_does_not_duplicate_it() {
     assert_eq!(
         skip_notice_count(&skip_notice_stdout(&["-q"])),
         0,
-        "upstream's rwrite() returns early for FINFO under --quiet (log.c:344-345)"
+        "upstream's rwrite() returns early for FINFO under --quiet (log.c:424-425)"
     );
     assert_eq!(
         skip_notice_count(&skip_notice_stdout(&["-v"])),

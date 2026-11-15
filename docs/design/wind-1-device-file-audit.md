@@ -19,7 +19,7 @@ The upstream tarball is fetched into
 
 ### Type classification macros
 
-- `rsync.h:1310-1316` defines `S_ISBLK` and `S_ISCHR` as POSIX-style fallback
+- `rsync.h:1326-1332` defines `S_ISBLK` and `S_ISCHR` as POSIX-style fallback
   macros so the tree compiles on systems whose `sys/stat.h` lacks them
   (Cygwin gets POSIX semantics here through newlib).
 - The wire-level groupings `IS_DEVICE(mode)` and `IS_SPECIAL(mode)` (defined
@@ -33,53 +33,53 @@ The upstream tarball is fetched into
 - `options.c:52-61` declares the in-process globals
   `copy_devices`, `write_devices`, `preserve_devices`, `preserve_specials`
   that gate the rest of the device pipeline.
-- `options.c:672-678` wires the long options `--devices`, `--no-devices`,
+- `options.c:673-679` wires the long options `--devices`, `--no-devices`,
   `--copy-devices`, `--write-devices`, `--specials`, `--no-specials` to
   those globals.
-- `options.c:1560-1569` implements the `-D` / `--no-D` aggregate shortcuts
+- `options.c:1578-1587` implements the `-D` / `--no-D` aggregate shortcuts
   (which `-a` expands to and which clears both `preserve_devices` and
   `preserve_specials`).
 
 ### Wire encoding (sender)
 
-- `flist.c:447-474` computes the `XMIT_*_RDEV*` flags on a per-entry basis
+- `flist.c:450-477` computes the `XMIT_*_RDEV*` flags on a per-entry basis
   for device entries (`IS_DEVICE`) and for specials at protocol < 31
   (`IS_SPECIAL`). Protocol >= 31 stops sending rdev for specials.
-- `flist.c:633-648` performs the wire write of the rdev major/minor (varint
+- `flist.c:637-652` performs the wire write of the rdev major/minor (varint
   major, then varint or byte minor depending on protocol version).
 
 ### Wire encoding (receiver) and entry inflation
 
-- `flist.c:932-953` is the symmetric receive path: it parses rdev major and
+- `flist.c:936-957` is the symmetric receive path: it parses rdev major and
   minor, calls `MAKEDEV(major, minor)`, reserves `DEV_EXTRA_CNT * EXTRA_LEN`
   bytes of trailing storage when the kind is `IS_DEVICE`, and forces
   `file_length = 0`.
-- `flist.c:977-985` is the `--copy-devices` carve-out: a device entry that
+- `flist.c:981-989` is the `--copy-devices` carve-out: a device entry that
   the sender mistakenly serialized as a real file is downgraded to
   `S_IFREG | (mode & ACCESSPERMS)` with `modtime = now`, mirroring the
   protect-against-pre-release-patches comment in upstream.
 
 ### Generator: create-or-skip decision
 
-- `generator.c:1627-1693` is the device/special arm of the generator: it
+- `generator.c:1664-1730` is the device/special arm of the generator: it
   decides whether to create a device node based on `am_root && preserve_devices`
   (devices) or `preserve_specials` (specials), runs the quick-check parity
   branch via `quick_check_ok` against `sx.st`, falls back through `try_dests_non`
   for `--copy-dest` / `--link-dest`, emits the itemize line, and ultimately
   calls `atomic_create`.
-- `generator.c:2000-2053` is `atomic_create`: it computes a temp name,
+- `generator.c:2037-2094` is `atomic_create`: it computes a temp name,
   optionally calls `make_backup`, then dispatches to `do_symlink_at`,
   `hard_link_one`, or `do_mknod_at` depending on which of {slnk, hlnk, rdev}
   was provided.
 
 ### Receiver-side syscalls (`do_mknod` + `do_mknod_at`)
 
-- `syscall.c:472-520` is `do_mknod`. The fake-super branch (`am_root < 0`)
+- `syscall.c:533-581` is `do_mknod`. The fake-super branch (`am_root < 0`)
   creates a regular empty file at mode 0600 instead of a real device node,
   storing the device metadata only in xattrs. Otherwise it picks between
   `mkfifo` (FIFO), `bind`-into-`AF_UNIX` (socket on platforms without
   MKNOD_CREATES_SOCKETS), and `mknod` (real device / FIFO).
-- `syscall.c:536-615` is `do_mknod_at`, the symlink-race-safe variant: it
+- `syscall.c:597-684` is `do_mknod_at`, the symlink-race-safe variant: it
   opens the parent through `secure_relative_open`, then calls
   `mkfifoat`/`mknodat` against that dirfd. The fake-super arm in this
   variant uses `openat(dfd, O_NOFOLLOW | O_CREAT)` to plant a 0600

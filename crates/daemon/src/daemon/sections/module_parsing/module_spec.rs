@@ -7,7 +7,7 @@
 
 /// Extracts the client's forwarded `--timeout=N` from the transfer argv.
 ///
-/// upstream: `options.c:2969-2972` - `server_options()` emits `--timeout=%d` whenever the
+/// upstream: `options.c:3034-3037` - `server_options()` emits `--timeout=%d` whenever the
 /// client has `io_timeout` set, and the daemon's own `parse_arguments()` run
 /// over the received argv lands it in the global `io_timeout`, which
 /// `options.c:2520 set_io_timeout(io_timeout)` then arms. oc's daemon has no
@@ -28,7 +28,7 @@ fn client_io_timeout_from_args(client_args: &[String]) -> Option<NonZeroU64> {
 
 /// Reconciles the client's forwarded `--timeout` with the module's `timeout`.
 ///
-/// upstream: `clientserver.c:1288-1289` in `rsync_module()`:
+/// upstream: `clientserver.c:1297-1298` in `rsync_module()`:
 ///
 /// ```c
 /// if (lp_timeout(module_id) && (!io_timeout || lp_timeout(module_id) < io_timeout))
@@ -86,7 +86,7 @@ fn apply_module_timeout(stream: &DaemonStream, module: &ModuleDefinition) -> io:
 /// Re-arms the connection with `min(client --timeout, module timeout)` and
 /// returns the value, for the handshake's keep-alive and `MSG_IO_TIMEOUT`.
 ///
-/// upstream: `clientserver.c:1288-1289` - see [`effective_io_timeout`].
+/// upstream: `clientserver.c:1297-1298` - see [`effective_io_timeout`].
 fn apply_effective_io_timeout(
     stream: &DaemonStream,
     module: &ModuleDefinition,

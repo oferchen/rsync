@@ -358,20 +358,20 @@ fn block_match_without_basis(file: &str) -> io::Error {
 /// # Upstream Reference
 ///
 /// `inplace` already carries `--append`: `ServerConfig::apply_append_implies_inplace`
-/// materialises upstream's `options.c:2419` promotion before the transfer starts,
+/// materialises upstream's `options.c:2474` promotion before the transfer starts,
 /// so this reads the single flag exactly as `receiver.c:1212` does.
 ///
-/// - `rsync-3.5.1/receiver.c:1212` - `if (inplace || one_inplace)`.
-/// - `rsync-3.5.1/receiver.c:1153-1155` - `one_inplace = inplace_partial &&
+/// - `rsync-3.5.2/receiver.c:1212` - `if (inplace || one_inplace)`.
+/// - `rsync-3.5.2/receiver.c:1153-1155` - `one_inplace = inplace_partial &&
 ///   partial_dir && fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`.
 ///   `inplace_partial` is the negotiated capability alone, so a peer that
 ///   claims a partial-dir basis cannot turn off `--inplace` on a receiver with
 ///   no partial dir.
-/// - `rsync-3.5.1/receiver.c:1213` - `fnametmp = one_inplace ? partialptr : fname`.
-/// - `rsync-3.5.1/receiver.c:1305-1316` - `finish_transfer(fname, fnametmp, ...)`
+/// - `rsync-3.5.2/receiver.c:1213` - `fnametmp = one_inplace ? partialptr : fname`.
+/// - `rsync-3.5.2/receiver.c:1305-1316` - `finish_transfer(fname, fnametmp, ...)`
 ///   then `handle_partial_dir(partialptr, PDIR_DELETE)`, with the
 ///   `do_unlink_at(partialptr)` skipped under `one_inplace`.
-/// - `rsync-3.5.1/cleanup.c:169-170` - `_exit_cleanup()` calls
+/// - `rsync-3.5.2/cleanup.c:170-171` - `_exit_cleanup()` calls
 ///   `handle_partial_dir(cleanup_new_fname, PDIR_CREATE)` on the abort path; that
 ///   is what moves an interrupted temp into the partial dir.
 fn resolve_use_inplace(
@@ -411,7 +411,7 @@ pub(crate) fn usable_basis(path: &std::path::Path) -> Option<std::path::PathBuf>
 /// by NDX, which - against an upstream sender - may name a still-outstanding
 /// later request rather than the awaited front.
 ///
-/// upstream: io.c:1225-1274 `got_flist_entry_status(FES_NO_SEND, ndx)`.
+/// upstream: io.c:1232-1281 `got_flist_entry_status(FES_NO_SEND, ndx)`.
 pub(crate) enum HeaderOutcome {
     /// The awaited file's validated response header.
     Header(ResponseHeader),
@@ -476,7 +476,7 @@ fn read_response_header<R: Read>(
         // sender's phase boundary even with a request unanswered.
         Ok(None) => return Ok(HeaderOutcome::PhaseEnd),
         Err(err) => {
-            // upstream: io.c:1847-1856 -> got_flist_entry_status(FES_NO_SEND, ndx)
+            // upstream: io.c:1854-1863 -> got_flist_entry_status(FES_NO_SEND, ndx)
             // retires the declined entry by index. The sender emits MSG_NO_SEND
             // the moment it fails to open a file (sender.c:670,725,753), which -
             // against an upstream sender - can name a still-outstanding later
@@ -751,7 +751,7 @@ mod tests {
         buf
     }
 
-    /// upstream: generator.c:2377-2386 - the generator writes the full itemize
+    /// upstream: generator.c:2420-2429 - the generator writes the full itemize
     /// iflags to the sender, so a new-file request carries ITEM_IS_NEW (0x2000)
     /// alongside ITEM_TRANSFER (0x8000) → wire shortint 0xA000 (LE 00 A0). The
     /// sender echoes these back and prints `<f+++++++++` (#301). A bare transfer
@@ -806,7 +806,7 @@ mod tests {
         );
     }
 
-    /// upstream: generator.c:587 `iflags &= 0xffff` keeps ITEM_REPORT_XATTR
+    /// upstream: generator.c:624 `iflags &= 0xffff` keeps ITEM_REPORT_XATTR
     /// (1<<8). A push of a file whose xattrs differ carries the bit into the
     /// wire shortint (0x8100, LE 00 81) so the row prints `<f.s......x`, and the
     /// terminating xattr-request byte follows it (send_xattr_request writes
@@ -872,7 +872,7 @@ mod tests {
     /// ITEM_XNAME_FOLLOWS (0x9800), then the FNAMECMP_FUZZY byte (0x83), then the
     /// basename as a vstring. Without this the sender/receiver never learn the
     /// fuzzy basis over the wire, diverging from a real rsync generator.
-    /// upstream: generator.c:2381-2384, 593-597 (iflags + fnamecmp_type + write_vstring),
+    /// upstream: generator.c:2424-2427, 593-597 (iflags + fnamecmp_type + write_vstring),
     /// io.c:2520 (vstring length prefix).
     #[test]
     fn fuzzy_request_emits_fnamecmp_fuzzy_and_xname_vstring() {
@@ -893,7 +893,7 @@ mod tests {
     /// FNAMECMP_BASIS_DIR_LOW + j byte (0x00 for j=0), and NO xname vstring - a
     /// basis-dir tag is below FNAMECMP_FUZZY so ITEM_XNAME_FOLLOWS stays clear.
     /// Without the basis-type byte a real upstream peer sees a bare FNAME request
-    /// and the wire diverges. upstream: generator.c:1193 returns
+    /// and the wire diverges. upstream: generator.c:1230 returns
     /// FNAMECMP_BASIS_DIR_LOW + j; generator.c:2381-2382 sets ITEM_BASIS_TYPE_FOLLOWS;
     /// generator.c:2383-2384 gates ITEM_XNAME_FOLLOWS on fnamecmp_type >= FNAMECMP_FUZZY.
     #[test]
@@ -918,7 +918,7 @@ mod tests {
     /// FNAMECMP_FUZZY + (k + 1) (the dest dir is fuzzy-index 0), so reference dir
     /// 0 emits byte 0x84. iflags carry ITEM_TRANSFER|ITEM_BASIS_TYPE_FOLLOWS|
     /// ITEM_XNAME_FOLLOWS (0x9800, LE 00 98), then the 0x84 tag, then the basis
-    /// basename as a vstring. upstream: generator.c:866,908 (FNAMECMP_FUZZY + i),
+    /// basename as a vstring. upstream: generator.c:903,908 (FNAMECMP_FUZZY + i),
     /// generator.c:2381-2384, 593-597 (iflags + fnamecmp_type + write_vstring).
     #[test]
     fn ref_dir_fuzzy_request_emits_fnamecmp_fuzzy_plus_index() {

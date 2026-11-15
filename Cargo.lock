@@ -795,6 +795,7 @@ dependencies = [
  "metadata",
  "nix",
  "notify",
+ "platform",
  "protocol",
  "rsync_io",
  "rustix",

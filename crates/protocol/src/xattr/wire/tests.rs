@@ -1548,7 +1548,7 @@ fn literal_entry_with_name_len(name_len: usize) -> Vec<u8> {
 fn read_definitions_name_len_boundary_matches_upstream() {
     use crate::xattr::MAX_WIRE_XATTR_NAME_LEN;
 
-    // WHY: upstream read_varint_size (io.c:2125) refuses only `v > max`, with
+    // WHY: upstream read_varint_size (io.c:2132) refuses only `v > max`, with
     // max = MAX_WIRE_XATTR_NAMELEN = 4096 (rsync.h:177). A name of exactly 4096
     // wire bytes must be accepted or oc rejects xattrs an upstream sender ships;
     // 4097 must be refused as RERR_PROTOCOL.

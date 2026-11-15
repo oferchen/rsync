@@ -10,7 +10,7 @@ repository.workspace = true
 
 [features]
 # Enables protocol's zstd codec. Batch replay itself never decodes zstd -
-# upstream pins batch compression to zlib (compat.c:417-418) - so this only
+# upstream pins batch compression to zlib (compat.c:418-419) - so this only
 # lets the test suite construct a zstd-framed batch body to prove replay
 # refuses to auto-detect it.
 zstd = ["protocol/zstd"]

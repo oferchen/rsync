@@ -145,7 +145,7 @@ fn report(out: &CliOutput, role: &str) -> (String, String) {
 fn assert_pull_desync_report(client_choice: &str, server_option: &str, expected: &str) {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
     let tmp = create_tempdir();
-    // upstream: options.c:2994-2999 server_options() - a zlib choice is sent
+    // upstream: options.c:3059-3064 server_options() - a zlib choice is sent
     // as --old-compress, any other codec as --compress-choice=NAME.
     let sent = if client_choice == "zlib" {
         "--old-compress".to_owned()
@@ -209,7 +209,7 @@ fn pull_zlib_client_of_a_zstd_stream_reports_the_inflate_failure() {
 /// The server receiver fails to decode the client's zlib stream as zstd; the
 /// push ends with exit 12 and the generator's end-of-file report, as on 3.5.1.
 ///
-/// upstream: cleanup.c:241-256 - the forked server receiver exits
+/// upstream: cleanup.c:242-257 - the forked server receiver exits
 /// `RERR_STREAMIO` without flushing its queued messages, so its
 /// `ZSTD decomp returned` line (token.c:902) never reaches the client. Its
 /// generator meets end-of-file on the error pipe and reports

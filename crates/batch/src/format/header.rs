@@ -63,7 +63,7 @@ impl BatchHeader {
 
     /// Write the stream-flags bitmap that opens the header.
     ///
-    /// upstream: batch.c:113 write_int(fd, flags), called from main.c:1944
+    /// upstream: batch.c:113 write_int(fd, flags), called from main.c:1948
     /// as soon as the batch file is open.
     pub fn write_stream_flags<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         self.stream_flags
@@ -72,7 +72,7 @@ impl BatchHeader {
 
     /// Write the protocol fields that follow the stream flags.
     ///
-    /// upstream: io.c:2747-2757 start_write_batch() - protocol version, the
+    /// upstream: io.c:2754-2764 start_write_batch() - protocol version, the
     /// compat flags at protocol >= 30, then the checksum seed.
     pub fn write_protocol_fields<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         write_i32(writer, self.protocol_version)?;
@@ -93,14 +93,14 @@ impl BatchHeader {
         // upstream: batch.c:118 batch_stream_flags = read_int(fd)
         let raw_bitmap = BatchFlags::read_raw(reader)?;
 
-        // upstream: compat.c:607 remote_protocol = read_int(f_in)
+        // upstream: compat.c:608 remote_protocol = read_int(f_in)
         let protocol_version = read_i32(reader)?;
 
         // Reconstruct flags with the correct protocol version mask
         // upstream: batch.c:125-128 protocol-version gating of flag bits
         let stream_flags = BatchFlags::from_bitmap(raw_bitmap, protocol_version);
 
-        // upstream: compat.c:752 compat_flags = read_varint(f_in)
+        // upstream: compat.c:761 compat_flags = read_varint(f_in)
         let compat_flags = if protocol_version >= 30 {
             Some(read_varint(reader)?)
         } else {

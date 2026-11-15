@@ -63,7 +63,7 @@ end-to-end serial per file.
   (`crates/matching/src/index/mod.rs:45 TAG_TABLE_SIZE = 1 << 16`) and
   `CompactLookup` are both read-only after construction.
 - `crates/matching/src/index/mod.rs:241-263` `check_block_match_slices`
-  - the `want_i` hint verifier (upstream `match.c:144-190`).
+  - the `want_i` hint verifier (upstream `match.c:144-192`).
 - `crates/matching/src/ring_buffer.rs:34-44` `RingBuffer` - per-matcher
   sliding window. One instance per parallel worker would be needed.
 - `crates/checksums/src/rolling/checksum/mod.rs:83-89` `RollingChecksum`
@@ -92,13 +92,13 @@ end-to-end serial per file.
 **Upstream reference** (`docs/design/upstream-match-token-reference.md`,
 the document that PR #4202 captures):
 
-- Upstream `match.c:140-345 hash_search` is the line-for-line model for
+- Upstream `match.c:140-362 hash_search` is the line-for-line model for
   the loop at `crates/matching/src/generator.rs:196-263`. Upstream is
   also single-threaded per file; we inherit the bottleneck.
 - `match.c:155 want_i = 0` is the hint cursor that gives a 1-byte cost
   on contiguous matches. Our `want_i` at
   `crates/matching/src/generator.rs:163` is the same hint.
-- `match.c:174 end = len + 1 - last_block_len` is the tail-flush
+- `match.c:176 end = len + 1 - last_block_len` is the tail-flush
   trigger that any spatial-split scheme must reproduce inside the
   last worker.
 

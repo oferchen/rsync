@@ -602,7 +602,7 @@ fn delete_after_works_with_dry_run() {
 /// transfers that same directory's surviving/new children, matching upstream's
 /// per-directory ordering.
 ///
-/// upstream: generator.c:1919-1927 - for a non-INC_RECURSE `delete_during` run
+/// upstream: generator.c:1956-1964 - for a non-INC_RECURSE `delete_during` run
 /// the generator calls `delete_in_dir()` while itemizing the directory entry
 /// itself, so the `*deleting` rows for a directory precede the transfer rows
 /// for its children. Verified byte-for-byte against rsync 3.4.4:
@@ -673,7 +673,7 @@ fn delete_during_deletes_directory_before_transferring_its_children() {
 
 #[test]
 fn delete_before_keeps_in_source_file() {
-    // upstream: generator.c:285-400 delete_in_dir() / do_delete_pass() - a
+    // upstream: generator.c:320-437 delete_in_dir() / do_delete_pass() - a
     // destination entry is deleted only when flist_find_ignore_dirness() fails
     // to find it in the source file list. --delete-before shares that keep
     // decision with --delete-during/-after, so a file that exists in the

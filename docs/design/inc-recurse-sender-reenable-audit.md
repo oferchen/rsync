@@ -53,7 +53,7 @@ When `inc_recursive_send = true`:
 
 - `build_capability_string(true)` includes `'i'` in the `-e.` token of
   the remote argv (SSH) or daemon command list (daemon).
-- The peer's `compat.c:720 set_allow_inc_recurse()` sees `'i'` in
+- The peer's `compat.c:721 set_allow_inc_recurse()` sees `'i'` in
   `client_info`, leaves `allow_inc_recurse` at the default of `1`, and
   the negotiated `CompatibilityFlags::INC_RECURSE` bit becomes part of
   the compat-flags exchange.
@@ -65,7 +65,7 @@ When `inc_recursive_send = true`:
 When `false`:
 
 - The `'i'` row is suppressed; upstream's `set_allow_inc_recurse()`
-  hits `compat.c:177-178` (daemon) or the equivalent SSH branch, clears
+  hits `compat.c:178-179` (daemon) or the equivalent SSH branch, clears
   `allow_inc_recurse`, and `CF_INC_RECURSE` stays off.
 - Our sender sends a single monolithic file list and the receiver
   buffers it whole, matching pre-protocol-30 behaviour.
@@ -261,7 +261,7 @@ nightly benchmark run**:
    per-segment dispatch pathology and should be the gating signal.
 4. **Interop validation** per section 5.4: `tools/ci/run_interop.sh`
    push test passes with `--inc-recursive-send` against upstream
-   3.0.9, 3.1.3, and 3.4.1, with no `flist.c:2652-2659` "ABORTING due
+   3.0.9, 3.1.3, and 3.4.1, with no `flist.c:2663-2670` "ABORTING due
    to invalid path from sender" on any version. The
    `test(interop): INC_RECURSE sender fuzz against upstream rsync
    (#1864)` work in `94b7648a7` provides the substrate for this gate.

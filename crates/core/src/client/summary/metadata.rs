@@ -80,7 +80,7 @@ pub struct RemoteItemizeFields {
     pub symlink_target: Option<PathBuf>,
     /// Hard-link group leader's transfer-relative name, when this row is a
     /// hard-link follower. Renders the `%L` ` => <leader>` suffix on a remote
-    /// pull (upstream `hlink.c:244-248 maybe_hard_link()` + `log.c:675-678`);
+    /// pull (upstream `hlink.c:244-248 maybe_hard_link()` + `log.c:760-763`);
     /// `None` otherwise.
     pub hardlink_leader: Option<PathBuf>,
     /// Whether the entry is newly created (`ITEM_IS_NEW`).

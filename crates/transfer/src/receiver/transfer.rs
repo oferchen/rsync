@@ -128,7 +128,7 @@ impl ReceiverContext {
         batch_input: R,
         progress: Option<&mut dyn crate::TransferProgressCallback>,
     ) -> io::Result<TransferStats> {
-        // upstream: main.c:1377 `!read_batch` keeps the batch f_in unmultiplexed.
+        // upstream: main.c:1381 `!read_batch` keeps the batch f_in unmultiplexed.
         self.local_replay = true;
         // The sender-driven replay drive reports no per-file progress
         // (upstream's replay generator writes progress into a dead pipe);
@@ -201,7 +201,7 @@ impl ReceiverContext {
 
         Ok(TransferStats {
             io_error: self.flist_reader_io_error() | self.flist_io_error | reader.take_io_error(),
-            // upstream: log.c:310-311 - an empty list is exactly what a missing
+            // upstream: log.c:390-391 - an empty list is exactly what a missing
             // source argument produces, and `flist.c:2671` leaves io_error clear
             // for it, so the MSG_ERROR_XFER frames read while draining the list
             // are the only evidence the run must exit 23.
@@ -394,7 +394,7 @@ impl ReceiverContext {
     /// backup name before the first write, so the destination inode itself is
     /// rewritten.
     ///
-    /// upstream: generator.c:2281-2301 - with `--inplace` the backup is a
+    /// upstream: generator.c:2323-2343 - with `--inplace` the backup is a
     /// copy (`make_backup(fname, True)`), not the rename the temp-file path
     /// uses; backup.c:432-433 prints "backed up X to Y" under INFO(BACKUP).
     pub(in crate::receiver) fn backup_existing_dest_by_copy(
@@ -430,14 +430,14 @@ impl ReceiverContext {
     ///
     /// Covers `--delete-before` and `--delete-during` (each an immediate sweep
     /// here) and `--delete-delay` (which *decides* its victim set here, deferring
-    /// the unlink to the late site - upstream generator.c:2315-2327 calls
+    /// the unlink to the late site - upstream generator.c:2357-2370 calls
     /// `delete_in_dir()` during the walk, and `delete_during == 2` records the
     /// victim via `remember_delete()` rather than unlinking). `--delete-after`
     /// alone does nothing early. The phase dispatch in
     /// [`run_receiver_delete_pass`](Self::run_receiver_delete_pass) picks
     /// immediate-vs-collect per mode.
     ///
-    /// upstream: generator.c:2280-2281 (`delete_before` -> `do_delete_pass()` up
+    /// upstream: generator.c:2322-2323 (`delete_before` -> `do_delete_pass()` up
     /// front), generator.c:2315-2327 (`delete_during` / `delete_during == 2`
     /// decide as each directory is entered during the loop).
     pub(in crate::receiver) fn delete_pass_is_early(&self) -> bool {
@@ -458,7 +458,7 @@ impl ReceiverContext {
     /// yet the unlink and `*deleting` output happen after the whole transfer -
     /// so a mid-transfer abort leaves the stale file in place.
     ///
-    /// upstream: generator.c:2425-2428 - `do_delayed_deletions()` (delay) and
+    /// upstream: generator.c:2468-2471 - `do_delayed_deletions()` (delay) and
     /// `do_delete_pass()` (after) both run after `generate_files()` finishes.
     pub(in crate::receiver) fn delete_pass_is_late(&self) -> bool {
         self.config.flags.delete && self.config.deletion.late_delete
@@ -547,7 +547,7 @@ impl ReceiverContext {
         // freed segment still lists. That is a driver bug, not a peer or
         // filesystem condition, so it aborts the transfer rather than risking
         // the unlink. The delay execution only replays victims decided earlier
-        // (upstream generator.c:2899-2900 `do_delayed_deletions()` reads the
+        // (upstream generator.c:2991-2992 `do_delayed_deletions()` reads the
         // deldelay buffer, never the file list), so it needs no complete list.
         let scans_whole_list = phase == DeletePassPhase::Early || self.config.deletion.delete_after;
         if scans_whole_list && !self.delete_pass_flist_complete() {
@@ -577,7 +577,7 @@ impl ReceiverContext {
         match phase {
             DeletePassPhase::Early => {
                 if deferrable_delay {
-                    // upstream: generator.c:345 remember_delete() records each
+                    // upstream: generator.c:380 remember_delete() records each
                     // victim during the walk; the unlink is deferred.
                     let (victims, io_bits) = self.collect_delayed_deletions(
                         dest_dir,
@@ -598,7 +598,7 @@ impl ReceiverContext {
                 }
             }
             DeletePassPhase::Late => {
-                // upstream: generator.c:2899-2902 - the late sweep follows the
+                // upstream: generator.c:2991-2994 - the late sweep follows the
                 // generate loop, so its deletion rows print after every name
                 // and itemize row; release the deferred client rows first.
                 self.flush_names_all()?;
@@ -612,7 +612,7 @@ impl ReceiverContext {
                         stats,
                     )?;
                 } else if deferrable_delay {
-                    // upstream: generator.c:2419 do_delayed_deletions() unlinks the
+                    // upstream: generator.c:2462 do_delayed_deletions() unlinks the
                     // remembered victims after the whole transfer has completed.
                     let victims = std::mem::take(&mut self.delayed_delete_victims);
                     let (delete_stats, io_bits, removed) = self.execute_delayed_deletions(
@@ -627,7 +627,7 @@ impl ReceiverContext {
                     stats.delete_stats = delete_stats;
                     // Carry the per-type counters into the receiver context so the
                     // goodbye handshake can emit NDX_DEL_STATS to the peer sender.
-                    // upstream: generator.c:2437-2440 - late write_del_stats().
+                    // upstream: generator.c:2480-2483 - late write_del_stats().
                     self.pending_del_stats = delete_stats;
                 }
             }
@@ -684,7 +684,7 @@ impl ReceiverContext {
     /// Reports the run's `--max-delete` refusals once and folds the outcome
     /// into `stats`.
     ///
-    /// upstream: generator.c:2904-2909 - after the `--delete-after` sweep and
+    /// upstream: generator.c:2996-3001 - after the `--delete-after` sweep and
     /// before `touch_up_dirs()`, one warning carries every sweep's and every
     /// make-room's `skipped_deletes`.
     fn settle_delete_limit<W>(&self, writer: &mut W, stats: &mut TransferStats)
@@ -699,7 +699,7 @@ impl ReceiverContext {
     /// True when a general I/O error withholds deletion, printing the notice
     /// the first time.
     ///
-    /// upstream: generator.c:304-311 delete_in_dir() - if the sender hit a
+    /// upstream: generator.c:339-346 delete_in_dir() - if the sender hit a
     /// general I/O error while scanning the source, its file list may be
     /// incomplete, so deleting dest files that merely never got listed would
     /// lose data. Every later deletion is skipped and the notice printed once
@@ -731,7 +731,7 @@ impl ReceiverContext {
     /// `--delete-during` (plain `--delete` at protocol 30+) and
     /// `--delete-delay`. Upstream's `delete_during` (1 or 2).
     ///
-    /// upstream: compat.c:172-177 keeps `--delete-before` / `--delete-after`
+    /// upstream: compat.c:173-178 keeps `--delete-before` / `--delete-after`
     /// off an INC_RECURSE receiver, so these are the only modes such a walk
     /// sees.
     fn deletes_during_walk(&self) -> bool {
@@ -786,7 +786,7 @@ impl ReceiverContext {
         use crate::receiver::directory::deletion::DeleteScope;
         use crate::receiver::file_list::DirSlot;
 
-        // upstream: generator.c:2791 `delete_during && dry_run < 2 && !list_only`.
+        // upstream: generator.c:2877 `delete_during && dry_run < 2 && !list_only`.
         if !self.deletes_during_walk() || self.config.flags.list_only {
             return Ok(());
         }
@@ -800,7 +800,7 @@ impl ReceiverContext {
                 crate::role_trailer::receiver()
             )));
         }
-        // upstream: generator.c:2780-2781 - only a list with a parent.
+        // upstream: generator.c:2866-2867 - only a list with a parent.
         let Some(dir_ndx) = self.segment_parent_dir_ndx[segment_idx] else {
             return Ok(());
         };
@@ -809,17 +809,17 @@ impl ReceiverContext {
         };
         let content_dir = *content_dir;
         let dir = crate::receiver::file_list::strip_leading_slashes(name).to_path_buf();
-        // upstream: generator.c:2791 `!(fp->flags & FLAG_MISSING_DIR)` - the
+        // upstream: generator.c:2877 `!(fp->flags & FLAG_MISSING_DIR)` - the
         // parent could not be created, so there is nothing to scan.
         if failed_dirs.failed_ancestor(&dir).is_some() {
             return Ok(());
         }
-        // upstream: generator.c:2792-2800 - a non-content parent only gets
+        // upstream: generator.c:2878-2886 - a non-content parent only gets
         // change_local_filter_dir(); the scan reloads merge files per directory.
         if !content_dir {
             return Ok(());
         }
-        // upstream: generator.c:301-302 - the keepalive precedes the io_error test.
+        // upstream: generator.c:336-337 - the keepalive precedes the io_error test.
         writer.maybe_send_keepalive()?;
         if self.io_error_blocks_deletion(stats.io_error, writer) {
             return Ok(());
@@ -843,10 +843,10 @@ impl ReceiverContext {
         )?;
         stats.io_error |= io_bits;
         if collect_only {
-            // upstream: generator.c:352-353 remember_delete() for --delete-delay.
+            // upstream: generator.c:387-388 remember_delete() for --delete-delay.
             self.delayed_delete_victims.extend(victims);
         } else {
-            // upstream: delete.c:delete_item() -> log.c:924 log_delete() writes
+            // upstream: delete.c:delete_item() -> log.c:1012 log_delete() writes
             // each removal to the module log as delete_in_dir() makes it.
             self.record_daemon_log_deletions(&victims);
         }
@@ -881,7 +881,7 @@ impl ReceiverContext {
         stats.delete_stats = delete_stats;
         // Carry the per-type counters into the receiver context so the goodbye
         // handshake can emit NDX_DEL_STATS to the peer sender.
-        // upstream: generator.c:2393-2398 - write_del_stats() emission.
+        // upstream: generator.c:2436-2441 - write_del_stats() emission.
         self.pending_del_stats = delete_stats;
         Ok(())
     }
@@ -1171,7 +1171,7 @@ mod tests {
             "no delta data is applied for an empty recorded batch"
         );
         // The mechanism must have kept the batch f_in unmultiplexed the whole
-        // way through (upstream main.c:1377 `!read_batch`).
+        // way through (upstream main.c:1381 `!read_batch`).
         assert!(!ctx.should_activate_input_multiplex());
     }
 
@@ -1532,7 +1532,7 @@ mod tests {
     /// WHY: under INC_RECURSE the record-time generator itemizes a directory
     /// only as the parent of its list, on `ndx = cur_flist->ndx_start - 1`
     /// (generator.c:2780-2787); for the first list rooted at `.` that is NDX 0
-    /// (flist.c:3314-3326). Upstream's replaying receiver resolves it to
+    /// (flist.c:3325-3337). Upstream's replaying receiver resolves it to
     /// `dir_flist->files[cur_flist->parent_ndx]` (receiver.c:880-887). The gap
     /// NDX lies outside every segment, so a replay that only maps in-segment
     /// NDXs drops the row: `--read-batch` of an upstream push into an

@@ -1,7 +1,7 @@
 //! A local copy reports every source it cannot open, the way upstream's sender
 //! does, and only then summarises the run.
 //!
-//! upstream: sender.c:711-722 - each failed open prints
+//! upstream: sender.c:719-730 - each failed open prints
 //! `send_files failed to open %s` through `rsyserr(FERROR_XFER, ...)` and the
 //! loop moves on; `cleanup.c:217-218` then exits `RERR_PARTIAL` (23) and
 //! `log.c:98` names it `some files/attrs were not transferred (see previous
@@ -90,7 +90,7 @@ fn each_unreadable_source_is_reported_then_the_run_is_summarised() {
 
 /// An unreadable source still counts as a created, transferred file.
 ///
-/// upstream: sender.c:625-635 bumps `stats.created_files` (for a new entry),
+/// upstream: sender.c:633-643 bumps `stats.created_files` (for a new entry),
 /// `stats.xferred_files` and `stats.total_transferred_size` before it tries to
 /// open the file, so a failed open is counted like any other attempted send.
 /// Literal data stays at what was actually read.

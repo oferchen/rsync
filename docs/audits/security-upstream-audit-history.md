@@ -10,7 +10,7 @@ Per-CVE applicability for the six 3.4.3 CVEs is in the table in [`SECURITY.md`](
 - **Length-underflow guard in cumulative `snprintf()` callers** - oc-rsync uses `format!()`/`write!()` which do not underflow; the equivalent risk is `usize` subtraction, audited cleanly.
 - **Parent block-index bounds check on receiver** - addressed by the CVE-2026-43620 entry in [`SECURITY.md`](../../SECURITY.md#2024-and-rsync-343-cves).
 - **NULL check in `read_delay_line()`** - oc-rsync uses `Option<&str>` so the C null-dereference is impossible.
-- **Lower ceiling on `MAX_WIRE_DEL_STAT`** - the delete-stats reader lives at `crates/protocol/src/stats/delete.rs`, reads each category as a varint, and caps every one at `MAX_WIRE_DEL_STAT = 1 << 28` - the same value upstream lowered to (`rsync.h:187`, unchanged in 3.4.4 and 3.5.0), rejecting anything above it rather than clamping.
+- **Lower ceiling on `MAX_WIRE_DEL_STAT`** - the delete-stats reader lives at `crates/protocol/src/stats/delete.rs`, reads each category as a varint, and caps every one at `MAX_WIRE_DEL_STAT = 1 << 28` - the same value upstream lowered to (`rsync.h:188`, unchanged in 3.4.4 and 3.5.0), rejecting anything above it rather than clamping.
 - **Reject hyphen-prefixed remote-shell hostnames** - `crates/rsync_io/src/ssh/operand.rs` rejects a leading `-` (SEC-3: audit, validation and regression coverage completed).
 - **NULL-check on `localtime_r()` in `timestring()`** - oc-rsync uses `chrono`/`time` for timestamp formatting; out-of-range timestamps return `Err` rather than dereferencing a null pointer.
 

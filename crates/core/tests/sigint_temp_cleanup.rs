@@ -39,7 +39,7 @@ use std::fs;
 /// Default flags: SIGINT must leave neither the destination file nor the
 /// `.name.XXXXXX` temp the receiver was writing into.
 ///
-/// upstream: `cleanup.c:194-197` unlinks `cleanup_fname` when `keep_partial`
+/// upstream: `cleanup.c:195-198` unlinks `cleanup_fname` when `keep_partial`
 /// is unset.
 #[cfg(unix)]
 #[test]
@@ -98,7 +98,7 @@ fn sigint_leaves_no_temp_orphans_in_nested_tree() {
 /// `--partial` flips the same path from unlink to retain: the bytes that made
 /// it must be at the final destination and be a genuine prefix of the source.
 ///
-/// upstream: `cleanup.c:167-182` renames the temp onto `cleanup_new_fname`
+/// upstream: `cleanup.c:168-183` renames the temp onto `cleanup_new_fname`
 /// when `keep_partial` is set and literal data arrived.
 #[cfg(unix)]
 #[test]

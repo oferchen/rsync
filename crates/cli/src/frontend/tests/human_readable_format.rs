@@ -79,12 +79,12 @@ fn human_readable_formats_gigabytes() {
 #[test]
 fn human_readable_formats_various_sizes() {
     let test_cases = vec![
-        (512, "512"),           // Below 1K
-        (1_500, "1.50K"),       // 1.5K
-        (10_240, "10.24K"),     // 10K
-        (100_000, "100.00K"),   // 100K
-        (1_500_000, "1.50M"),   // 1.5M
-        (50_000_000, "50.00M"), // 50M
+        (512, "512"),          // Below 1K
+        (1_500, "1.50K"),      // 1.5K
+        (10_240, "10.2K"),     // 10K
+        (100_000, "100K"),     // 100K
+        (1_500_000, "1.50M"),  // 1.5M
+        (50_000_000, "50.0M"), // 50M
     ];
 
     for (size, expected) in test_cases {
@@ -159,7 +159,7 @@ fn combined_mode_uses_base_1024_no_exact() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
-    // upstream: lib/compat.c:183 - `-hh` divides by 1024 (2048 / 1024 = 2.00K)
+    // upstream: lib/compat.c:185 - `-hh` divides by 1024 (2048 / 1024 = 2.00K)
     // and never appends an exact-value component.
     assert!(
         rendered.contains("2.00K") && !rendered.contains("(2,048)"),
@@ -185,7 +185,7 @@ fn combined_mode_long_form_uses_base_1024() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
-    // upstream: lib/compat.c:183 - `-hh` divides by 1024 (1536 / 1024 = 1.50K)
+    // upstream: lib/compat.c:185 - `-hh` divides by 1024 (1536 / 1024 = 1.50K)
     // and never appends an exact-value component.
     assert!(
         rendered.contains("1.50K") && !rendered.contains("(1,536)"),
@@ -377,7 +377,7 @@ fn human_readable_combined_works_with_stats() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
 
-    // upstream: lib/compat.c:183 - `-hh` divides by 1024 (8192/1024 = 8.00K)
+    // upstream: lib/compat.c:185 - `-hh` divides by 1024 (8192/1024 = 8.00K)
     // and never appends an exact-value component.
     assert!(
         rendered.contains("8.00K") && !rendered.contains("(8,192)"),
@@ -458,7 +458,7 @@ fn human_readable_with_verbose_output() {
     let rendered = String::from_utf8(stdout).expect("output utf8");
 
     assert!(rendered.contains("verbose.bin"));
-    assert!(rendered.contains("10.24K"));
+    assert!(rendered.contains("10.2K"));
     assert!(rendered.contains("\n\nsent"));
 }
 
@@ -587,7 +587,7 @@ fn stats_counts_grouped_not_humanised_at_hh() {
     // Byte sizes ARE humanised at -hh: 1500 bytes / 1024 = 1.46K. Its presence
     // confirms the level is active and only counts are exempt from unit suffixes.
     assert!(
-        rendered.contains("Total file size: 1.46K bytes"),
+        rendered.contains("Total file size: 1.46Ki bytes"),
         "-hh must humanise byte sizes (proving counts are the exception), got: {rendered}"
     );
 }
@@ -611,7 +611,7 @@ fn human_readable_format_consistency_across_stats() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
 
-    let count_k = rendered.matches("20.48K").count();
+    let count_k = rendered.matches("20.5K").count();
     assert!(
         count_k >= 2,
         "expected human-readable format used consistently, got: {rendered}"

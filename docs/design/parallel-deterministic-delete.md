@@ -142,7 +142,7 @@ content directory `D`:
    `f_name_cmp` exactly. Upstream uses `qsort` (unstable); we use
    `sort_unstable_by` to match.
 4. Reverse the sorted slice. Upstream iterates `for (i = dirlist->used;
-   i--; )` (`generator.c:320`), so plan-order is the reverse of
+   i--; )` (`generator.c:355`), so plan-order is the reverse of
    ascending `f_name_cmp`.
 5. Wrap the result in a `DeletePlan` and publish it into
    `DeletePlanMap` keyed by the directory's relative path.
@@ -186,7 +186,7 @@ The implementation tasks (#2252-#2285) MUST preserve these:
    `compute_extras` worker uses the chain in effect when that
    directory's `.rsync-filter` merges have been applied, mirroring
    `change_local_filter_dir(fbuf, dlen, F_DEPTH(file))`
-   (`generator.c:301`). The drain task does not re-evaluate filters.
+   (`generator.c:336`). The drain task does not re-evaluate filters.
 5. **Workers are pure.** No syscalls beyond `read_dir`/`stat`; no
    mutation of shared state beyond inserting into `DeletePlanMap`.
 6. **Plan publication is monotonic.** A `DeletePlan` is published once
@@ -201,7 +201,7 @@ The implementation tasks (#2252-#2285) MUST preserve these:
 
 ## 3. `f_name_cmp` semantics
 
-Upstream `flist.c:3217-3343` defines a four-state automaton over
+Upstream `flist.c:3228-3354` defines a four-state automaton over
 `(dirname, basename)`:
 
 - `s_DIR` walks `dirname`; `s_SLASH` injects the separator;
@@ -226,7 +226,7 @@ checks), then sorts with `compare_file_entries`. The cited golden tests
 at `crates/protocol/src/flist/sort.rs:472-809` cover the comparator's
 edge cases (qsort vs stable, pre-29 vs >=29, dir-vs-file trailing
 slash); the implementation task adds one more golden file pinning the
-reverse iteration order matches `generator.c:320`.
+reverse iteration order matches `generator.c:355`.
 
 ## 4. Data structures
 
@@ -257,7 +257,7 @@ pub struct PlannedDelete {
 }
 ```
 
-`DeleteFlags` is a bitset mirroring upstream `rsync.h:291-301`
+`DeleteFlags` is a bitset mirroring upstream `rsync.h:292-302`
 (`DEL_NO_UID_WRITE`, `DEL_RECURSE`, `DEL_DIR_IS_EMPTY`, `DEL_FOR_FILE`,
 `DEL_FOR_DIR`, `DEL_MAKE_ROOM`). The plan stores only the flags upstream
 sets in `delete_in_dir` (`DEL_RECURSE`, optional `DEL_NO_UID_WRITE`);
@@ -310,11 +310,11 @@ Order rules (mirrors `generate_files()` and `do_delete_pass()`):
 
 - Without `INC_RECURSE`, iterate `cur_flist->sorted` in ascending
   index order, yield every entry with `FLAG_CONTENT_DIR`
-  (`generator.c:369, 381`).
+  (`generator.c:404, 381`).
 - With `INC_RECURSE`, for each segment in arrival order, yield the
-  segment's parent directory once (`generator.c:2290-2310`), then
+  segment's parent directory once (`generator.c:2332-2352`), then
   iterate the segment's entries in NDX order and yield their
-  `FLAG_CONTENT_DIR` children (`generator.c:2312-2338`). Segments
+  `FLAG_CONTENT_DIR` children (`generator.c:2354-2381`). Segments
   arrive sender-sorted by `flist_sort_and_clean`; arrival order IS
   upstream traversal order.
 - For `--delete-before`, the cursor is exhausted before the transfer
@@ -330,10 +330,10 @@ and WHAT it does with each plan.
 
 | Mode               | Phase 1 trigger        | Phase 2 trigger                        | Per-plan action                        | Upstream reference                       |
 |--------------------|------------------------|----------------------------------------|----------------------------------------|------------------------------------------|
-| `--delete-before`  | as each segment lands  | after EOF on flist, before first xfer  | unlink immediately                     | `generator.c:2263-2264` (`do_delete_pass`) |
-| `--delete-during`  | as each segment lands  | interleaved per directory with xfers   | unlink immediately, before children    | `generator.c:1523, 2307`                 |
-| `--delete-delay`   | as each segment lands  | after all xfers complete               | append to `deldelay_buf`, replay last  | `generator.c:265, 2408-2409`             |
-| `--delete-after`   | as each segment lands  | after all xfers complete               | unlink immediately                     | `generator.c:2410-2411` (`do_delete_pass`) |
+| `--delete-before`  | as each segment lands  | after EOF on flist, before first xfer  | unlink immediately                     | `generator.c:2305-2306` (`do_delete_pass`) |
+| `--delete-during`  | as each segment lands  | interleaved per directory with xfers   | unlink immediately, before children    | `generator.c:1560, 2307`                 |
+| `--delete-delay`   | as each segment lands  | after all xfers complete               | append to `deldelay_buf`, replay last  | `generator.c:300, 2408-2409`             |
+| `--delete-after`   | as each segment lands  | after all xfers complete               | unlink immediately                     | `generator.c:2453-2454` (`do_delete_pass`) |
 | `--delete-excluded`| as each segment lands  | (per-mode above)                       | extras include filter-excluded entries | `exclude.c:1330, 1571, 1648`             |
 
 `--delete-excluded` is orthogonal to timing: it widens
@@ -353,7 +353,7 @@ out of scope for `DeletePlanMap`.
 `protocol::flist::HardlinkTable` describe the **source** side - which
 entries in the flist are followers of an earlier leader. They are not
 consulted when deciding what to delete on the destination: upstream's
-`delete_in_dir` uses `flist_find_ignore_dirness` (`generator.c:333`),
+`delete_in_dir` uses `flist_find_ignore_dirness` (`generator.c:368`),
 which looks the destination entry up by name in the sender's sorted
 flist regardless of its inode story.
 
@@ -362,7 +362,7 @@ building `extras`. A destination-side file that happens to be a
 hardlink target of a kept file but whose name is absent from the
 segment is still deleted (matching `unlink` semantics: only the name
 goes; the inode persists if there are other links). The single
-exception is the `FLAG_MOUNT_DIR` check (`generator.c:324-329`), which
+exception is the `FLAG_MOUNT_DIR` check (`generator.c:359-364`), which
 suppresses mount-point deletion and is preserved verbatim in the
 emitter.
 
@@ -376,12 +376,12 @@ upstream-identical.
 Upstream's `delete_in_dir` and `delete_item` continue on most errors
 and abort only on:
 
-- `io_error & IOERR_GENERAL && !ignore_errors` (`generator.c:291-298`):
+- `io_error & IOERR_GENERAL && !ignore_errors` (`generator.c:326-333`):
   print "IO error encountered - skipping file deletion" once, then
   stop emitting deletes for the rest of this directory. The plan is
   consumed but no unlinks are issued.
-- `--max-delete` exhaustion (`main.c:1367` /
-  `generator.c:2413-2418`): print "Deletions stopped due to
+- `--max-delete` exhaustion (`main.c:1371` /
+  `generator.c:2456-2461`): print "Deletions stopped due to
   --max-delete limit (N skipped)", set `IOERR_DEL_LIMIT`, stop
   emitting.
 

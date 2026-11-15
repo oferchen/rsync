@@ -248,7 +248,7 @@ fn daemon_module_operand_still_strips_module_name() {
 
 #[test]
 fn trust_sender_skips_implied_check() {
-    // upstream: options.c:2676-2678 / exclude.c:579 - trust_sender_args makes
+    // upstream: options.c:2731-2733 / exclude.c:579 - trust_sender_args makes
     // add_implied_include() a no-op, so the implied list is empty and the
     // receiver performs no name validation.
     let mut config = test_config();
@@ -287,7 +287,7 @@ fn no_source_args_is_a_no_op() {
 /// a sender that drops the second flag would otherwise get `delete_in_dir()`
 /// run on `dest/dir`, sweeping siblings the client never named.
 ///
-/// upstream: `flist.c:1455-1477` `recv_file_entry()`.
+/// upstream: `flist.c:1459-1481` `recv_file_entry()`.
 #[test]
 fn implied_parent_dir_is_downgraded_whatever_the_sender_sent() {
     let mut config = test_config();
@@ -378,7 +378,7 @@ fn iconv_emptied_name_rejected_with_exit_code_4() {
 
 /// A locally cleared tombstone - an entry with an empty name AND no S_IFMT
 /// mode bits, e.g. a `--prune-empty-dirs` slot that `clear_file()` zeroed
-/// (prune.rs) - never existed at upstream's recv-time check (flist.c:1362-1370 runs
+/// (prune.rs) - never existed at upstream's recv-time check (flist.c:1366-1374 runs
 /// before flist_sort_and_clean's prune pass), so the receiver's post-receive
 /// recheck must treat it as a no-op. Distinguished from an iconv-emptied entry
 /// by the absence of file-type bits.

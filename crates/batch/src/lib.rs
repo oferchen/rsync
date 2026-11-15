@@ -442,7 +442,7 @@ pub struct BatchConfig {
     /// by the replay script's pass-through arguments, so it must be threaded in
     /// from the current invocation. It gates the post-flist uid/gid id-list
     /// region on both sides: the writer omits the id-lists and the reader must
-    /// not attempt to consume them, matching upstream `flist.c:3063`
+    /// not attempt to consume them, matching upstream `flist.c:3074`
     /// (`numeric_ids <= 0 && !inc_recurse`) and `uidlist.c:467,475`
     /// (`numeric_ids <= 0`).
     pub numeric_ids: bool,
@@ -715,7 +715,7 @@ impl BatchConfig {
     /// Set whether `--numeric-ids` was active for the batch invocation.
     ///
     /// Gates the post-flist uid/gid id-list region: under `--numeric-ids`
-    /// upstream sends no id-lists (`flist.c:3063` requires `numeric_ids <= 0`),
+    /// upstream sends no id-lists (`flist.c:3074` requires `numeric_ids <= 0`),
     /// so the writer omits them and the reader must not consume them
     /// (`uidlist.c:467,475`).
     ///

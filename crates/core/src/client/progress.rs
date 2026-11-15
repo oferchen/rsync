@@ -119,7 +119,7 @@ impl ClientProgressUpdate {
     /// per-file progress line ends with `to-chk=...` (complete) or
     /// `ir-chk=...` (incremental-recursive still in flight).
     ///
-    /// upstream: progress.c:79-82 rprint_progress
+    /// upstream: progress.c:80-83 rprint_progress
     #[must_use]
     pub const fn flist_eof(&self) -> bool {
         self.flist_eof
@@ -155,6 +155,10 @@ pub trait ClientProgressObserver {
     fn on_start(&mut self, created_destination_root: Option<&Path>) {
         let _ = created_destination_root;
     }
+
+    /// Called with the total file-list entry count before `on_start`, so a
+    /// live progress renderer can emit `N files to consider` at `FLIST >= 2`.
+    fn on_flist_count(&mut self, _total: usize) {}
 
     /// Handles a local-copy entry that opens no per-file progress block, at
     /// the moment the copy processes it.
@@ -263,10 +267,10 @@ pub(crate) struct ClientProgressForwarder<'a> {
     // FIFOs, hard links or up-to-date matches.
     transferred: usize,
     // Running count of file-list entries walked so far, in emission (flist)
-    // order. Mirrors upstream's `current_file_index` (progress.c:147): the
+    // order. Mirrors upstream's `current_file_index` (progress.c:143): the
     // `to-chk` numerator is `total - checked`, so it counts down over *every*
     // entry the generator checks - directories and symlinks included - not just
-    // the transfers. upstream: progress.c:79-81.
+    // the transfers. upstream: progress.c:80-82.
     //
     // The walk order is upstream's file-list order only without INC_RECURSE
     // (`--no-inc-recursive`). A local upstream copy recurses incrementally:
@@ -282,7 +286,7 @@ pub(crate) struct ClientProgressForwarder<'a> {
     destination_root: Arc<Path>,
     destination_root_created: bool,
     // A dry run checks every entry but moves no data, so no entry opens a
-    // progress block. upstream: sender.c:639-643 - under `!do_xfers` the
+    // progress block. upstream: sender.c:647-651 - under `!do_xfers` the
     // sender logs the item, counts it, and skips the transfer.
     dry_run: bool,
     // The preview's record of each file that will transfer, so a file whose
@@ -373,6 +377,7 @@ impl<'a> ClientProgressForwarder<'a> {
 
     /// Tells the observer the copy is starting, before any entry is processed.
     pub(crate) fn start(&mut self) {
+        self.observer.on_flist_count(self.total);
         let created = self
             .destination_root_created
             .then_some(&*self.destination_root);
@@ -402,7 +407,7 @@ impl<'a> ClientProgressForwarder<'a> {
             return;
         }
 
-        // upstream: progress.c:128 - the final line's percent is
+        // upstream: progress.c:119 - the final line's percent is
         // `total_transferred_size / total_size`, so an empty flist (size 0,
         // e.g. a lone fifo) renders 100% while a no-change run over sized
         // files renders 0%. Pass `Some(flist_total)` (never `None`) so the
@@ -454,7 +459,7 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             return;
         }
 
-        // upstream: progress.c:147 set_current_file_index - every checked flist
+        // upstream: progress.c:143 set_current_file_index - every checked flist
         // entry advances the file index, so `to-chk` counts down over
         // directories and symlinks too, even though they print nothing.
         self.checked = self.checked.saturating_add(1);
@@ -744,7 +749,7 @@ mod tests {
         assert_eq!(updates, vec![5]);
     }
 
-    /// upstream: progress.c:79-82 - `flist_eof ? "to" : "ir"` switches the
+    /// upstream: progress.c:80-83 - `flist_eof ? "to" : "ir"` switches the
     /// chk-prefix on the trailing per-file summary. Verify the flag is
     /// surfaced through the public accessor.
     #[test]
@@ -775,7 +780,7 @@ mod tests {
         assert!(!update.flist_eof());
     }
 
-    /// upstream: progress.c:79-82 - `to-chk` counts down by file-list
+    /// upstream: progress.c:80-83 - `to-chk` counts down by file-list
     /// position, not by transferred files: 3.5.1 prints `xfr#3, to-chk=2/7`
     /// when the third transfer sits at index 4 of a 7-entry list.
     #[test]

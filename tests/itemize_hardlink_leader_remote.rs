@@ -198,7 +198,7 @@ fn assert_follower_rows(push: bool) {
          suffix; got:\n{stdout}"
     );
 
-    // upstream: hlink.c:232-234 + log.c:643-646 - each follower renders
+    // upstream: hlink.c:232-234 + log.c:728-731 - each follower renders
     // `hf+++++++++ <name> => <leader>`.
     for follower in ["bbb", "ccc"] {
         let follower_row = format!("hf+++++++++ {follower} => aaa");

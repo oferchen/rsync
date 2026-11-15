@@ -98,7 +98,7 @@ impl ReceiverContext {
         }
 
         for entry in &self.file_list[range] {
-            // upstream: generator.c:1749 - sentinel is identified by mode == 0.
+            // upstream: generator.c:1786 - sentinel is identified by mode == 0.
             if entry.mode() != 0 {
                 continue;
             }
@@ -111,7 +111,7 @@ impl ReceiverContext {
 
             let target = dest_dir.join(relative);
 
-            // upstream: generator.c:1752 - `statret == 0`: only delete an
+            // upstream: generator.c:1789 - `statret == 0`: only delete an
             // existing destination. `symlink_metadata` here mirrors
             // `link_stat()` so a symlink is removed rather than followed.
             let metadata = match std::fs::symlink_metadata(&target) {
@@ -134,7 +134,7 @@ impl ReceiverContext {
 
             let is_dir = metadata.is_dir();
             let result = if is_dir && !self.del_recurse() {
-                // upstream: generator.c:1749-1753 hands the sentinel to
+                // upstream: generator.c:1786-1790 hands the sentinel to
                 // `delete_item(fname, mode, del_opts)`, and without
                 // `DEL_RECURSE` (generator.c:1629) `delete_dir_contents()`
                 // refuses any populated directory (delete.c:115-118). A plain
@@ -187,7 +187,7 @@ impl ReceiverContext {
             match result {
                 Ok(()) => {
                     if is_dir {
-                        // upstream: log.c:918 log_delete() uses one "deleting %n"
+                        // upstream: log.c:1003 log_delete() uses one "deleting %n"
                         // form; %n (log.c:665-673) appends a trailing slash for
                         // directories, so a dir prints "deleting sub/" - no word
                         // "directory".

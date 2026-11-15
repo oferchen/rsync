@@ -32,7 +32,7 @@
 //!   `@RSYNCD: EXIT\n` (clientserver.c:1385, protocol >= 25).
 //! - `auth_server()` authenticate.c:337 - `"%s%s\n"` with leader
 //!   `"@RSYNCD: AUTHREQD "`, i.e. `@RSYNCD: AUTHREQD <challenge>\n`.
-//! - `auth_client()` authenticate.c:473 - `"%s %s\n"` = `<user> <response>\n`.
+//! - `auth_client()` authenticate.c:468 - `"%s %s\n"` = `<user> <response>\n`.
 //! - `rsync_module()` clientserver.c:1152 - `@RSYNCD: OK\n`.
 
 use protocol::{
@@ -47,7 +47,7 @@ use protocol::{
 /// trailing newline replaced by a space, the advertised auth digest list, and a
 /// final newline.
 ///
-/// upstream: compat.c:853 `io_printf(f_out, "@RSYNCD: %d.%d %s\n", ...)`.
+/// upstream: compat.c:862 `io_printf(f_out, "@RSYNCD: %d.%d %s\n", ...)`.
 fn emit_daemon_greeting(version: ProtocolVersion) -> String {
     let mut greeting = format_legacy_daemon_message(LegacyDaemonMessage::Version(version));
     assert!(greeting.ends_with('\n'));
@@ -100,7 +100,7 @@ fn greeting_round_trips_at_every_supported_protocol() {
     ] {
         let greeting = emit_daemon_greeting(version);
 
-        // upstream: compat.c:853 - `@RSYNCD: <ver>.0 <digests>\n`, unfiltered.
+        // upstream: compat.c:862 - `@RSYNCD: <ver>.0 <digests>\n`, unfiltered.
         assert_eq!(
             greeting,
             format!(
@@ -141,7 +141,7 @@ fn greeting_classifies_as_version_message() {
 fn ok_message_round_trips_and_matches_upstream_bytes() {
     let emitted = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
 
-    // upstream: clientserver.c:1152 `io_printf(f_out, "@RSYNCD: OK\n")`.
+    // upstream: clientserver.c:1156 `io_printf(f_out, "@RSYNCD: OK\n")`.
     assert_eq!(emitted, "@RSYNCD: OK\n");
 
     let parsed = parse_legacy_daemon_message(&emitted).expect("client parses OK");
@@ -155,7 +155,7 @@ fn ok_message_round_trips_and_matches_upstream_bytes() {
 fn exit_message_round_trips_and_matches_upstream_bytes() {
     let emitted = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
 
-    // upstream: clientserver.c:1385 `io_printf(fd, "@RSYNCD: EXIT\n")`.
+    // upstream: clientserver.c:1394 `io_printf(fd, "@RSYNCD: EXIT\n")`.
     assert_eq!(emitted, "@RSYNCD: EXIT\n");
 
     let parsed = parse_legacy_daemon_message(&emitted).expect("client parses EXIT");
@@ -245,7 +245,7 @@ fn authreqd_challenge_round_trips_and_matches_upstream_bytes() {
     };
     let emitted = format_legacy_daemon_message(message);
 
-    // upstream: authenticate.c:337 - leader "@RSYNCD: AUTHREQD " + challenge.
+    // upstream: authenticate.c:332 - leader "@RSYNCD: AUTHREQD " + challenge.
     assert_eq!(emitted, "@RSYNCD: AUTHREQD dGVzdGNoYWxsZW5nZQ\n");
 
     let parsed = parse_legacy_daemon_message(&emitted).expect("client parses AUTHREQD");
@@ -279,7 +279,7 @@ fn authreqd_without_challenge_round_trips() {
 /// `parse_daemon_auth_response` (`authentication.rs`). This pins the shared wire
 /// contract between them.
 ///
-/// upstream: authenticate.c:473 `io_printf(fd, "%s %s\n", user, pass2)`.
+/// upstream: authenticate.c:468 `io_printf(fd, "%s %s\n", user, pass2)`.
 #[test]
 fn auth_response_line_round_trips_and_matches_upstream_bytes() {
     let user = "alice";

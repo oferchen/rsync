@@ -695,7 +695,7 @@ proptest! {
     }
 
     /// Atime nanoseconds are NOT transmitted on the wire at any protocol
-    /// version. upstream `flist.c:916` (sender) and `flist.c:1211`
+    /// version. upstream `flist.c:920` (sender) and `flist.c:1215`
     /// (receiver) encode atime as a single \`varlong(atime, 4)\` and never
     /// emit an nsec component; mtime is the only timestamp whose nsec is
     /// gated by a transmission flag (\`XMIT_MOD_NSEC\`). Encode-only nsec
@@ -929,7 +929,7 @@ proptest! {
     /// A follower has hardlink_idx < u32::MAX. The writer sets XMIT_HLINKED but
     /// NOT XMIT_HLINK_FIRST, and skips all metadata after the index; the
     /// receiver copies that metadata from the leader. The reference must point
-    /// at an entry received so far (upstream flist.c:1102): here the follower
+    /// at an entry received so far (upstream flist.c:1106): here the follower
     /// references the leader at NDX 0, so it is always in range.
     #[test]
     fn hardlink_follower_roundtrip(

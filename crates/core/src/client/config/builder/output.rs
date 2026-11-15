@@ -77,7 +77,7 @@ impl ClientConfigBuilder {
     /// lacks `%i` clears it even under `-i`, while `-i` alone installs the
     /// default `"%i %n%L"` format whose `%i` is forwarded.
     ///
-    /// upstream: options.c:2496-2508 (`stdout_format_has_i`), 2948-2951 (emit
+    /// upstream: options.c:2551-2563 (`stdout_format_has_i`), 2948-2951 (emit
     /// `--log-format=%i`).
     #[must_use]
     #[doc(alias = "--out-format")]
@@ -101,7 +101,7 @@ impl ClientConfigBuilder {
     /// the `%o` (operation) directive without `%i`, so the remote is told via
     /// `--log-format=%o`.
     ///
-    /// upstream: options.c:2526-2527, 2952-2953.
+    /// upstream: options.c:2581-2582, 2952-2953.
     #[must_use]
     #[doc(alias = "--out-format")]
     #[doc(alias = "--log-format")]
@@ -114,7 +114,7 @@ impl ClientConfigBuilder {
     /// that contains neither `%i` nor `%o`, so a non-verbose client forwards the
     /// placeholder `--log-format=X`.
     ///
-    /// upstream: options.c:2954-2955.
+    /// upstream: options.c:3019-3020.
     #[must_use]
     #[doc(alias = "--out-format")]
     #[doc(alias = "--log-format")]

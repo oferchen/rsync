@@ -70,7 +70,7 @@ where
 /// connection. A daemon reached through `--rsh` still has one, so it keeps
 /// the option, which then bounds that connection's establishment.
 ///
-/// upstream: main.c:1623-1627 start_client() - `if (connect_timeout &&
+/// upstream: main.c:1627-1631 start_client() - `if (connect_timeout &&
 /// !daemon_connection)` exits with `RERR_SYNTAX`.
 pub(super) fn validate_contimeout_needs_daemon<Err>(
     contimeout_set: bool,

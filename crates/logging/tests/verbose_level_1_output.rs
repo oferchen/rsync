@@ -548,7 +548,7 @@ fn verbose_1_distinct_from_level_2() {
 
 /// Verifies verbose level 1 has no debug output unlike level 2+.
 ///
-/// upstream: options.c:244-251 - `debug_verbosity[1]` is NULL, so `-v` adds
+/// upstream: options.c:245-252 - `debug_verbosity[1]` is NULL, so `-v` adds
 /// no debug category; `debug_verbosity[2]` adds FLIST but not RECV, which only
 /// joins at `debug_verbosity[3]`.
 #[test]

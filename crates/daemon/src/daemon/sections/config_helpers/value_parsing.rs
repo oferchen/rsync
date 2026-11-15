@@ -127,7 +127,7 @@ where
 /// - bob is denied access
 /// - charlie has default access (uses module settings)
 pub(crate) fn parse_auth_user_list(value: &str) -> Result<Vec<AuthUser>, String> {
-    // upstream: authenticate.c:356 iterates this value with conf_strtok(), so a
+    // upstream: authenticate.c:351 iterates this value with conf_strtok(), so a
     // leading comma opts the whole list into comma-only splitting and an entry
     // may then contain spaces (e.g. a group name like `@domain admins`).
     let raw_entries: Vec<String> = conf_split(value).into_iter().map(str::to_owned).collect();
@@ -151,7 +151,7 @@ pub(crate) fn parse_auth_user_list(value: &str) -> Result<Vec<AuthUser>, String>
             continue;
         }
 
-        // upstream: authenticate.c:372-402 `auth_server()` keeps each token
+        // upstream: authenticate.c:367-397 `auth_server()` keeps each token
         // verbatim (including `@group`) and matches it at auth time via
         // wildmatch / group membership. Do not expand `@group` to member usernames here.
         let key = name_part.to_ascii_lowercase();
@@ -379,12 +379,12 @@ pub(crate) fn parse_uid_setting(value: &str) -> Option<u32> {
 /// `*` requests every group the target user belongs to; it must appear first,
 /// and any following tokens are extra explicit gids.
 ///
-/// upstream: clientserver.c:844-875 `rsync_module()` splits `lp_gid()` with
+/// upstream: clientserver.c:848-879 `rsync_module()` splits `lp_gid()` with
 /// `conf_strtok`; `*` triggers `want_all_groups`, and each remaining token is
 /// added via `add_a_group`. The whole list is later installed with
 /// `setgroups`, clearing inherited supplementary groups.
 pub(crate) fn parse_gid_setting(value: &str) -> Result<GidSetting, String> {
-    // upstream: clientserver.c:844 and :861 walk this value with conf_strtok(),
+    // upstream: clientserver.c:848 and :861 walk this value with conf_strtok(),
     // the same splitter `auth users` uses - so `gid = ,domain users` names ONE
     // group containing a space, not two groups.
     let mut tokens = conf_split(value).into_iter();
@@ -415,7 +415,7 @@ pub(crate) fn parse_gid_setting(value: &str) -> Result<GidSetting, String> {
 
 /// Returns the `gid` token upstream's rsync_module() refuses first.
 ///
-/// upstream: clientserver.c:844-870 walks the list with conf_strtok(); a `*`
+/// upstream: clientserver.c:848-874 walks the list with conf_strtok(); a `*`
 /// is honoured only as the first entry, and every other token goes through
 /// add_a_group(), which replies `@ERROR: invalid gid <token>` for the first
 /// one group_to_gid() cannot resolve (a later `*` included). Only called for a

@@ -11,7 +11,7 @@ use protocol::MESSAGE_HEADER_LEN;
 
 /// Payload one frame can carry before the 64 KiB buffer forces a flush.
 ///
-/// upstream: io.c:1567 sizes the output buffer `IO_BUFFER_SIZE * 2`, and
+/// upstream: io.c:1574 sizes the output buffer `IO_BUFFER_SIZE * 2`, and
 /// io.c:795 reserves the next frame's header inside it.
 const FRAME_PAYLOAD: u64 = 2 * 32 * 1024 - MESSAGE_HEADER_LEN as u64;
 
@@ -36,7 +36,7 @@ pub(super) fn framed_for_test(payload: u64) -> u64 {
 impl FrameSchedule {
     /// Adds the sender's file-list rounds.
     ///
-    /// upstream: main.c:1398 `io_flush(NORMAL_FLUSH)` after `send_file_list()`
+    /// upstream: main.c:1402 `io_flush(NORMAL_FLUSH)` after `send_file_list()`
     /// closes the first round; the sub-lists `send_files()` sends before its
     /// first read (sender.c:516) go out when that read blocks.
     pub(super) fn sender_flist(&mut self, rounds: [u64; 2]) {
@@ -82,7 +82,7 @@ impl FrameSchedule {
 
     /// Adds the generator's deletion reports to its phase tail.
     ///
-    /// upstream: generator.c:2867-2871 writes the delete statistics between
+    /// upstream: generator.c:2953-2957 writes the delete statistics between
     /// the phase NDX_DONEs, inside the same frame. A late delete pass
     /// (`--delete-after`/`--delete-delay`, generator.c:2899-2916) holds the
     /// last phase NDX_DONE back until after the pass, and the client caches

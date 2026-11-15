@@ -68,7 +68,7 @@ impl GeneratorContext {
 
         let plan = protocol::flist::SubListPlan::new(self.file_list.as_slice());
         for &orphan in &plan.orphans {
-            // upstream: flist.c:3228 - the receiver's wording for the same
+            // upstream: flist.c:3239 - the receiver's wording for the same
             // condition. Reported here, on the side that can name the offending
             // source, and as FERROR_XFER so the run cannot exit 0 with a file
             // list the peer will reject.
@@ -148,7 +148,7 @@ impl GeneratorContext {
             });
         }
         self.incremental.pending_segments = pending;
-        // upstream: flist.c:824-831 - hard-link leaders and gnums follow the
+        // upstream: flist.c:828-835 - hard-link leaders and gnums follow the
         // send order this reorder just fixed, gaps included. The lazy producer
         // never reaches here: `--hard-links` makes it ineligible.
         #[cfg(unix)]
@@ -156,7 +156,7 @@ impl GeneratorContext {
             self.assign_hardlink_indices();
         }
         // The initial list itemizes the transfer root `.` via its own gap NDX
-        // (`ndx_start - 1`) when the first entry is `.`. upstream flist.c:2812
+        // (`ndx_start - 1`) when the first entry is `.`. upstream flist.c:2823
         // keeps `flist->parent_ndx` (pointing at dir_flist[0] == `.`) unless the
         // first sorted entry's basename differs from ".", in which case the root
         // has no directory row. `.` is always the first initial entry (flat 0)
@@ -195,7 +195,7 @@ impl GeneratorContext {
         parent_flat_idx: usize,
     ) -> std::io::Result<PendingSegment> {
         let flist_start = self.file_list.len();
-        // upstream: flist.c:2229 interpret_stat_error - a directory that
+        // upstream: flist.c:2233 interpret_stat_error - a directory that
         // vanished between the initial listing and its lazy scan is reported
         // as vanished (IOERR_VANISHED, exit 24), not as a general opendir
         // error, and yields an empty sub-list rather than aborting. Stat
@@ -332,7 +332,7 @@ impl GeneratorContext {
             let Some(lp) = self.lazy_producer.as_ref() else {
                 return Ok(None);
             };
-            // upstream: flist.c:3090-3094 - a root with no directory to
+            // upstream: flist.c:3101-3105 - a root with no directory to
             // expand writes NDX_FLIST_EOF straight from send_file_list() and
             // leaves the root's filter scope pushed; only the walk popping
             // past the root after a sub-list resets it (flist.c:2723).
@@ -386,7 +386,7 @@ impl GeneratorContext {
         // Children are linked; now the depth-first cursor may descend into them.
         lp.tree.advance_cursor();
         if lp.tree.traversal_finished() {
-            // upstream: flist.c:2723 - the walk popping past the root resets
+            // upstream: flist.c:2734 - the walk popping past the root resets
             // the local filter state with change_local_filter_dir(NULL, 0, 0).
             self.leave_lazy_filter_scopes(0);
         }

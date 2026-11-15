@@ -22,7 +22,7 @@ use super::itemize::format_itemized_changes;
 
 /// Returns the `%L` connector for an event carrying a target in its metadata.
 ///
-/// upstream: log.c:675-691 - `%L` renders ` -> %s` when the entry itself is a
+/// upstream: log.c:760-776 - `%L` renders ` -> %s` when the entry itself is a
 /// symlink (`S_ISLNK`) and ` => %s` for a hard-link xname (`=> leader`). A
 /// hard-linked symlink is still a symlink, so it uses ` -> `; only a hard-linked
 /// regular file uses ` => `.
@@ -89,7 +89,7 @@ pub(super) fn render_placeholder_value(
             Some(format_out_format_permissions(event.metadata()).into_bytes())
         }
         OutFormatPlaceholder::SymlinkTarget => {
-            // upstream: log.c:676-678 - `%L` renders the hard-link leader
+            // upstream: log.c:761-763 - `%L` renders the hard-link leader
             // (`hlink`) before the symlink target: `if (hlink && *hlink) { n =
             // hlink; " => " }`. A remote pull carries the leader in
             // `hardlink_leader`; a local copy routes it through the metadata
@@ -109,7 +109,7 @@ pub(super) fn render_placeholder_value(
                         rendered.extend_from_slice(&escape_path(target, escape));
                         Some(rendered)
                     }
-                    // upstream: log.c:675-687 - the `case 'L'` else-branch sets n
+                    // upstream: log.c:760-772 - the `case 'L'` else-branch sets n
                     // = "" for a non-link/non-hardlink entry. With no width
                     // modifier upstream breaks with the empty string (matched here
                     // by returning None); with a width modifier it copies four
@@ -124,7 +124,7 @@ pub(super) fn render_placeholder_value(
             }
         }
         OutFormatPlaceholder::CurrentTime => Some(format_current_timestamp().into_bytes()),
-        // upstream: log.c:600-603 - `case 'U'` renders `uid_ndx ? F_OWNER : 0`,
+        // upstream: log.c:685-688 - `case 'U'` renders `uid_ndx ? F_OWNER : 0`,
         // so the numeric uid appears only under `-o`/`--owner`; otherwise `0`.
         OutFormatPlaceholder::OwnerUid => Some(
             if context.preserve_owner {
@@ -137,7 +137,7 @@ pub(super) fn render_placeholder_value(
             }
             .into_bytes(),
         ),
-        // upstream: log.c:606-608 - `case 'G'` renders the literal "DEFAULT"
+        // upstream: log.c:691-693 - `case 'G'` renders the literal "DEFAULT"
         // when `!gid_ndx || file->flags & FLAG_SKIP_GROUP`; only an available
         // gid under `-g`/`--group` is formatted numerically. This differs from
         // `%U` (log.c:600-605), which renders 0 for an unavailable uid.
@@ -176,7 +176,7 @@ pub(super) fn render_placeholder_value(
 /// local-copy path transfers are always whole-file, so the header is empty
 /// (count=0) and its size is the constant 16 bytes the sender reads back.
 ///
-/// upstream: rsync.h:1007 `struct sum_struct`; io.c:2295 `write_sum_head()`,
+/// upstream: rsync.h:1023 `struct sum_struct`; io.c:2302 `write_sum_head()`,
 /// which emits `s2length` only for `protocol_version >= 27` (always true for
 /// the protocol range oc-rsync speaks).
 const SUM_HEAD_WIRE_BYTES: u64 = 16;
@@ -184,7 +184,7 @@ const SUM_HEAD_WIRE_BYTES: u64 = 16;
 /// Resolves the byte count for `%b` / `%c`, selecting the direction the way
 /// upstream does.
 ///
-/// upstream: log.c:704-716 - `%b` and `%c` are the two per-file wire byte
+/// upstream: log.c:789-801 - `%b` and `%c` are the two per-file wire byte
 /// deltas. When the entry was not transferred (`!(iflags & ITEM_TRANSFER)`)
 /// both render 0. Otherwise `(!!am_sender) ^ (*p == 'c')` selects between the
 /// bytes written (`total_data_written - initial_data_written`) and the bytes
@@ -278,7 +278,7 @@ fn escape_render_path(path: &Path, escape: EscapeStyle) -> Vec<u8> {
 }
 
 /// Renders `%n`: the transfer-relative name, with a trailing slash for a
-/// directory (upstream `log.c:671-672`).
+/// directory (upstream `log.c:756-757`).
 fn render_name(event: &ClientEvent, escape: EscapeStyle) -> Vec<u8> {
     let mut rendered = escape_render_path(event.relative_path(), escape);
     if rendered.last() != Some(&b'/')
@@ -305,7 +305,7 @@ fn render_full_path(event: &ClientEvent, escape: EscapeStyle) -> Vec<u8> {
         None => event.relative_path(),
     };
     let mut rendered = escape_render_path(path, escape);
-    // upstream: log.c:662-663 - `%f` strips a single leading '/' from the joined path.
+    // upstream: log.c:747-748 - `%f` strips a single leading '/' from the joined path.
     if rendered.first() == Some(&b'/') {
         rendered.remove(0);
     }
@@ -347,7 +347,7 @@ fn format_out_format_permissions(metadata: Option<&ClientEntryMetadata>) -> Stri
 
 /// Maps a transfer event to upstream's `%o` operation word.
 ///
-/// upstream: log.c:631-633 `case 'o': n = op` - `op` is `"del."` for a deletion
+/// upstream: log.c:716-718 `case 'o': n = op` - `op` is `"del."` for a deletion
 /// (`log_delete`) and otherwise the transfer direction `s_or_r` from
 /// `log_item`: `"recv"` on the receiving client (a pull) and `"send"` otherwise
 /// (a push or a local copy). This split differs from the `<`/`>` itemize arrow -

@@ -2006,7 +2006,7 @@ fn explicit_no_blocking_io_wins_over_rsh_auto_enable() {
 fn explicit_blocking_io_forces_for_ssh() {
     // WHY: `--blocking-io` forces blocking pipes even for ssh, matching
     // upstream where the explicit value is retained.
-    // upstream: options.c:856 `--blocking-io` sets blocking_io = 1.
+    // upstream: options.c:859 `--blocking-io` sets blocking_io = 1.
     let mut command = SshCommand::new("example.com");
     command.set_blocking_io(Some(true));
     assert!(command.resolved_blocking_io());

@@ -13,7 +13,7 @@
 //!
 //! oc's server-receiver grants CF_INC_RECURSE exactly as upstream's does:
 //! `set_allow_inc_recurse()` has no role term beyond the receiver
-//! delete/delay/prune clauses (`// upstream: compat.c:161-179`), so a plain
+//! delete/delay/prune clauses (`// upstream: compat.c:162-180`), so a plain
 //! recursive push that offered `i` gets the bit back. The tree must still
 //! arrive byte-identical, so the oracle also proves the incremental receive
 //! path end to end against a real upstream sender.
@@ -21,8 +21,8 @@
 //! # How the negotiation is observed
 //!
 //! The upstream SERVER is the sole author of CF_INC_RECURSE
-//! (`// upstream: compat.c:597-598,713,739`); the CLIENT reads it back and
-//! both derive `inc_recurse` (`// upstream: compat.c:746`). Here the pushing
+//! (`// upstream: compat.c:598-599,713,739`); the CLIENT reads it back and
+//! both derive `inc_recurse` (`// upstream: compat.c:755`). Here the pushing
 //! CLIENT is the upstream sender we invoke, so its own output is the readout
 //! of what oc-the-server negotiated:
 //!
@@ -30,13 +30,13 @@
 //! show_filelist_progress = INFO_GTE(FLIST,1) && xfer_dirs && !am_server && !inc_recurse
 //!                                                       // upstream: flist.c:166
 //! if (show_filelist_progress)
-//!     start_filelist_progress("building file list");   // upstream: flist.c:2485
+//!     start_filelist_progress("building file list");   // upstream: flist.c:2496
 //! else if (inc_recurse && INFO_GTE(FLIST,1) && !am_server)
-//!     rprintf(FCLIENT, "sending incremental file list\n");  // upstream: flist.c:2488
+//!     rprintf(FCLIENT, "sending incremental file list\n");  // upstream: flist.c:2499
 //! ```
 //!
 //! The two branches are mutually exclusive on `inc_recurse`. With a single
-//! `-v` (which sets `INFO_FLIST = 1`, `// upstream: options.c:250
+//! `-v` (which sets `INFO_FLIST = 1`, `// upstream: options.c:251
 //! info_verbosity[1]`) the pushing sender prints the literal
 //! `sending incremental file list` IF AND ONLY IF the receiving server
 //! negotiated CF_INC_RECURSE. The control below drives the same client
@@ -45,11 +45,11 @@
 //!
 //! On the remote-shell leg the wrapper also captures the compact `-e.` flags
 //! the upstream client hands oc's `--server`: the client always advertises
-//! the `i` capability for a `-r` push (`// upstream: compat.c:163-169`,
+//! the `i` capability for a `-r` push (`// upstream: compat.c:164-170`,
 //! condition 4 of the receiver gate).
 //!
 //! The fixture holds more than `MIN_FILECNT_LOOKAHEAD = 1000` files
-//! (`// upstream: rsync.h:151`) across three directory levels, so the tree
+//! (`// upstream: rsync.h:152`) across three directory levels, so the tree
 //! exercises real multi-segment reception, not just the marker.
 //!
 //! # Gating
@@ -73,11 +73,11 @@ use test_support::{
     DirDiff, DirDiffOptions, UpstreamVersion, require_upstream_rsync, upstream_compat_enabled,
 };
 
-/// upstream: rsync.h:151 `#define MIN_FILECNT_LOOKAHEAD 1000`.
+/// upstream: rsync.h:152 `#define MIN_FILECNT_LOOKAHEAD 1000`.
 const MIN_FILECNT_LOOKAHEAD: usize = 1000;
 
 /// The literal the pushing upstream sender prints under `-v` only when the
-/// receiving server negotiated CF_INC_RECURSE (upstream flist.c:2488).
+/// receiving server negotiated CF_INC_RECURSE (upstream flist.c:2499).
 const INC_MARKER: &str = "sending incremental file list";
 
 /// Fixture shape: 12 top-level dirs x 2 subdirs each, 30 files per dir.
@@ -268,7 +268,7 @@ fn rsh_push_into_oc_receiver_negotiates_inc_recurse() {
     );
 
     // The upstream client offered incremental recursion: a `-r` push always
-    // advertises the `i` capability (upstream compat.c:163-169, receiver gate
+    // advertises the `i` capability (upstream compat.c:164-170, receiver gate
     // condition 4).
     let caps = server_capabilities(&argv_log);
     assert!(
@@ -277,13 +277,13 @@ fn rsh_push_into_oc_receiver_negotiates_inc_recurse() {
          (capabilities: e.{caps})"
     );
 
-    // upstream: compat.c:161-179 - the server-receiver grants it, so the
+    // upstream: compat.c:162-180 - the server-receiver grants it, so the
     // pushing sender prints the incremental marker (flist.c:2488).
     let out = combined_output(&output);
     assert!(
         out.contains(INC_MARKER),
         "oc receiver must negotiate CF_INC_RECURSE like an upstream receiver, so the \
-         upstream sender must print {INC_MARKER:?} (flist.c:2488)\n{out}"
+         upstream sender must print {INC_MARKER:?} (flist.c:2499)\n{out}"
     );
 
     assert_trees_equal(&src, &dest);
@@ -390,12 +390,12 @@ fn daemon_push_into_oc_receiver_negotiates_inc_recurse() {
         .expect("spawn upstream rsync daemon push");
     assert_success(&output, "upstream 3.5.1 push into oc daemon");
 
-    // upstream: compat.c:161-179 - an oc daemon receiver grants it too.
+    // upstream: compat.c:162-180 - an oc daemon receiver grants it too.
     let out = combined_output(&output);
     assert!(
         out.contains(INC_MARKER),
         "oc daemon receiver must negotiate CF_INC_RECURSE like an upstream receiver, so \
-         the upstream sender must print {INC_MARKER:?} (flist.c:2488)\n{out}"
+         the upstream sender must print {INC_MARKER:?} (flist.c:2499)\n{out}"
     );
 
     assert_trees_equal(&src, &daemon.module_root);

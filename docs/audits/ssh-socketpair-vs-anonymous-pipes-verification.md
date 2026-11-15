@@ -331,7 +331,7 @@ file:LINE citation the audit provides and the answer from current code.
 > socket, not a stdio pipe."
 
 - Prior citation: prior audit Section 2.4
-  (`clientserver.c:116-148`). The claim's oc-rsync flavour is that
+  (`clientserver.c:120-152`). The claim's oc-rsync flavour is that
   daemon-mode bypasses the SSH builder entirely.
 - Current code: `crates/core/src/client/remote/daemon_transfer/`
   contains the daemon path; it does not import from

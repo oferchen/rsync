@@ -47,13 +47,13 @@ pub const DEFAULT_BLOCK_SIZE: u32 = 700;
 /// Maximum block size for protocol version 30 and newer.
 ///
 /// This is 128 KB (131,072 bytes), corresponding to `1 << 17`
-/// (upstream: rsync.h:161 `MAX_BLOCK_SIZE`).
+/// (upstream: rsync.h:162 `MAX_BLOCK_SIZE`).
 pub const MAX_BLOCK_SIZE_V30: u32 = 1 << 17;
 
 /// Maximum block size for legacy protocol versions (< 30).
 ///
 /// This is 512 MB (536,870,912 bytes), corresponding to `1 << 29`
-/// (upstream: rsync.h:164 `OLD_MAX_BLOCK_SIZE`).
+/// (upstream: rsync.h:165 `OLD_MAX_BLOCK_SIZE`).
 pub const MAX_BLOCK_SIZE_OLD: u32 = 1 << 29;
 
 /// Minimum practical block size.
@@ -66,15 +66,15 @@ pub const MIN_BLOCK_SIZE: u32 = 64;
 ///
 /// Upstream starts `csum_length` at this value (io.c:82) and
 /// `sum_sizes_sqroot()` uses it as the per-file floor; the phase 2 redo pass
-/// switches to [`MAX_SUM_LENGTH`], upstream's `SUM_LENGTH` (generator.c:2650).
-/// (upstream: rsync.h:758 `SHORT_SUM_LENGTH`)
+/// switches to [`MAX_SUM_LENGTH`], upstream's `SUM_LENGTH` (generator.c:2694).
+/// (upstream: rsync.h:774 `SHORT_SUM_LENGTH`)
 pub const SHORT_SUM_LENGTH: u8 = 2;
 
 /// Maximum strong checksum length supported by the protocol.
 ///
 /// This is 16 bytes (128 bits), matching MD4/MD5 digest size.
 /// Used as the full checksum length in phase 2 redo passes
-/// (upstream: rsync.h:757 `SUM_LENGTH`).
+/// (upstream: rsync.h:773 `SUM_LENGTH`).
 pub const MAX_SUM_LENGTH: u8 = 16;
 
 /// Calculates the block length for a given file size and protocol version.
@@ -197,7 +197,7 @@ pub fn calculate_checksum_count(file_size: u64, block_length: u32) -> u64 {
 /// 3. Set bits that keep `block_length² ≤ file_size`
 /// 4. Round down to multiples of 8 bytes
 ///
-/// This mirrors upstream `generator.c:sum_sizes_sqroot()` (generator.c:722-740).
+/// This mirrors upstream `generator.c:sum_sizes_sqroot()` (generator.c:759-777).
 fn derive_block_length_sqrt(file_size: u64, protocol_version: u8) -> u32 {
     if file_size <= u64::from(DEFAULT_BLOCK_SIZE) * u64::from(DEFAULT_BLOCK_SIZE) {
         return DEFAULT_BLOCK_SIZE;
@@ -423,9 +423,9 @@ mod tests {
 
     #[test]
     fn sum_length_constants_match_upstream() {
-        // upstream: rsync.h:758 `#define SHORT_SUM_LENGTH 2`
+        // upstream: rsync.h:774 `#define SHORT_SUM_LENGTH 2`
         assert_eq!(SHORT_SUM_LENGTH, 2);
-        // upstream: rsync.h:757 `#define SUM_LENGTH 16`
+        // upstream: rsync.h:773 `#define SUM_LENGTH 16`
         assert_eq!(MAX_SUM_LENGTH, 16);
         assert!(usize::from(SHORT_SUM_LENGTH) < usize::from(MAX_SUM_LENGTH));
     }

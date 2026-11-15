@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// conversion; after chroot the file is no longer reachable and timestamps
 /// silently fall back to UTC.
 ///
-/// upstream: clientserver.c:1042 `rsync_module()` calls `tzset()` before
+/// upstream: clientserver.c:1046 `rsync_module()` calls `tzset()` before
 /// `chroot(module_chdir)` at clientserver.c:1050; `start_daemon()` does the
 /// same before the daemon-level `chroot(lp_daemon_chroot())` at
 /// clientserver.c:1473-1474.
@@ -61,7 +61,7 @@ pub fn apply_chroot(path: &Path) -> io::Result<()> {
 /// drop, so every later lookup resolves relative to it and never re-walks the
 /// module's ancestors as the unprivileged identity.
 ///
-/// upstream: clientserver.c:1059 `change_dir(module_chdir, CD_NORMAL)`, which
+/// upstream: clientserver.c:1063 `change_dir(module_chdir, CD_NORMAL)`, which
 /// runs above the `setgid()`/`setuid()` at clientserver.c:1098/1123.
 #[cfg(unix)]
 pub fn enter_directory(dir: std::os::fd::BorrowedFd<'_>) -> io::Result<()> {
@@ -77,7 +77,7 @@ pub fn enter_directory(dir: std::os::fd::BorrowedFd<'_>) -> io::Result<()> {
 /// the process root unchanged (chrooting to `/` is a no-op); failure (almost
 /// always `EPERM`) means the daemon is unprivileged.
 ///
-/// upstream: clientserver.c:886 `rsync_module()` - `chroot("/") < 0` probes
+/// upstream: clientserver.c:890 `rsync_module()` - `chroot("/") < 0` probes
 /// capability before the real `chroot(module_chdir)` later in the function.
 #[cfg(unix)]
 pub fn probe_chroot_capability() -> io::Result<()> {
@@ -224,7 +224,7 @@ pub fn drop_privileges(uid: Option<u32>, gids: &[u32]) -> io::Result<()> {
 ///
 /// Non-Unix platforms have no root uid and always return `false`.
 ///
-/// upstream: clientserver.c:831 `am_root = (uid == ROOT_UID)`.
+/// upstream: clientserver.c:835 `am_root = (uid == ROOT_UID)`.
 #[cfg(unix)]
 pub fn is_effective_root() -> bool {
     nix::unistd::geteuid().is_root()
@@ -431,7 +431,7 @@ mod tests {
     /// fails (e.g., non-existent path, non-root caller) the function must
     /// still surface the original chroot error verbatim.
     ///
-    /// upstream: clientserver.c:1042 - `tzset()` before chroot.
+    /// upstream: clientserver.c:1046 - `tzset()` before chroot.
     #[cfg(unix)]
     #[test]
     fn apply_chroot_tzset_does_not_mask_chroot_failure() {
@@ -457,7 +457,7 @@ mod tests {
     ///   3. Convert a fixed UTC epoch with `localtime_r` and assert the
     ///      local hour matches EST5.
     ///
-    /// upstream: clientserver.c:1042 `rsync_module()` and clientserver.c:1473
+    /// upstream: clientserver.c:1046 `rsync_module()` and clientserver.c:1483
     /// `start_daemon()` call `tzset()` before chroot.
     #[cfg(unix)]
     #[test]

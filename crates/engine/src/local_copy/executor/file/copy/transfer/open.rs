@@ -7,17 +7,17 @@
 //!   parent components are walked confined beneath the operand's transfer root
 //!   and the leaf is opened `O_NOFOLLOW`. A directory flipped to a symlink
 //!   pointing outside the source tree between scan and read cannot redirect the
-//!   read, and a raced leaf symlink is refused. upstream: `sender.c:686-705`
+//!   read, and a raced leaf symlink is refused. upstream: `sender.c:694-713`
 //!   `sender_open_confined(NULL, fname, O_RDONLY)` - a NULL anchor means
 //!   relative-to-cwd, and upstream chdirs to the transfer root, so the two
 //!   anchors name the same directory.
 //! - **A symlink-following mode** - `-L` / `--copy-unsafe-links` / `-k`: the
-//!   legacy open, following the leaf, NOT confined. upstream: `sender.c:708`
+//!   legacy open, following the leaf, NOT confined. upstream: `sender.c:716`
 //!   falls through to `do_open_checklinks(fname)`. Confining here would break
 //!   the option outright: `--copy-unsafe-links` exists precisely to materialise
 //!   links whose targets lie OUTSIDE the tree.
 //!
-//! The confined/copy-links pairing upstream also keeps (`sender.c:683`
+//! The confined/copy-links pairing upstream also keeps (`sender.c:691`
 //! `sender_open_copylinks_confined`) belongs to the DAEMON branch only, where
 //! the anchor is the module root and leaving it is a module escape. The
 //! non-daemon sender this module implements takes the plain
@@ -61,9 +61,9 @@ impl CopyContext<'_> {
     ///
     /// A `--files-from` entry takes the ownership walk from the held base;
     /// every other operand takes [`open_source_file`]. upstream:
-    /// `rsync-3.5.1/sender.c:692-693` routes a `files_from` open to
+    /// `rsync-3.5.2/sender.c:700-701` routes a `files_from` open to
     /// `do_open_checklinks()`, whose `files_from` arm is
-    /// `rsync-3.5.1/syscall.c:3623-3640`.
+    /// `rsync-3.5.2/syscall.c:3691-3708`.
     pub(in crate::local_copy) fn open_source_content(&self, path: &Path) -> io::Result<fs::File> {
         #[cfg(unix)]
         if let Some(base) = self.files_from_base() {
@@ -94,7 +94,7 @@ impl CopyContext<'_> {
 /// other failure is reported here, so the error comes back marked as reported
 /// and the run ends with the `RERR_PARTIAL` summary instead of repeating it.
 ///
-/// upstream: sender.c:711-722 - ENOENT warns `file has vanished`; otherwise
+/// upstream: sender.c:719-730 - ENOENT warns `file has vanished`; otherwise
 /// `rsyserr(FERROR_XFER, errno, "send_files failed to open %s", full_fname(fname))`.
 pub(in crate::local_copy) fn source_open_error(
     source: &Path,
@@ -143,7 +143,7 @@ fn open_source_handle(
     follow_symlinks: bool,
 ) -> io::Result<fs::File> {
     if follow_symlinks {
-        // upstream: sender.c:708 - a symlink-following mode takes
+        // upstream: sender.c:716 - a symlink-following mode takes
         // do_open_checklinks, an unconfined open that follows the leaf.
         return open_plain(path, use_noatime);
     }
@@ -390,7 +390,7 @@ mod tests {
     ///
     /// WHY: confinement beneath a root that is re-opened by path only moves
     /// the race up one level - swap the root itself and every confined open
-    /// lands outside it. upstream: `rsync-3.5.1/flist.c:2967-2969` records each
+    /// lands outside it. upstream: `rsync-3.5.2/flist.c:2978-2980` records each
     /// source root by dev/ino and `flist.c:311-342` refuses a mismatch with `ELOOP`.
     #[cfg(unix)]
     #[test]
@@ -406,7 +406,7 @@ mod tests {
     /// Once held, the anchor keeps naming the directory it was recorded as, so
     /// a later swap cannot redirect reads outside the tree.
     ///
-    /// upstream: `rsync-3.5.1/flist.c:345-385` keeps one held root fd and
+    /// upstream: `rsync-3.5.2/flist.c:346-388` keeps one held root fd and
     /// reuses it for every open beneath that root.
     #[cfg(unix)]
     #[test]
@@ -432,7 +432,7 @@ mod tests {
     /// A symlink-following mode keeps the legacy unconfined open, so the same
     /// out-of-tree target IS read.
     ///
-    /// WHY: upstream `sender.c:686` gates the confined open on
+    /// WHY: upstream `sender.c:694` gates the confined open on
     /// `!copy_links && !copy_unsafe_links && !copy_dirlinks`, falling through to
     /// `do_open_checklinks`. `--copy-unsafe-links` exists precisely to
     /// materialise links pointing outside the tree; confining it would break the

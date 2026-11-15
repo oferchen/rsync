@@ -19,8 +19,8 @@ Upstream rsync tees the pre-decompression wire bytes into the batch file
 via `io.c:read_buf()` (cited in `crates/batch/src/reader/delta.rs:90`). The
 batch header sets bit 8 (`do_compression`) when `--compress` was active, and
 upstream `batch.c:check_batch_flags()` restores that flag on replay. The
-header never records which algorithm was used: upstream `compat.c:194-195`
-hard-codes `CPRES_ZLIB` for batch reads, and `compat.c:413-414` forces
+header never records which algorithm was used: upstream `compat.c:195-196`
+hard-codes `CPRES_ZLIB` for batch reads, and `compat.c:414-415` forces
 `compress_choice = "zlib"` for batch writes. See
 `crates/batch/src/replay.rs:45-62` for the codec enum and the comment block
 that documents this exact upstream limitation.
@@ -116,5 +116,5 @@ on the existing CLI help text that documents the protocol-28 restriction.
 - `crates/core/src/client/run/batch.rs:97-107` - oc-rsync sets bit 8 = false.
 - `crates/cli/src/frontend/command_builder/sections/transfer_behavior_options.rs:40-42`.
 - `crates/compress/src/zstd.rs:78-93` - per-token flush, cites `token.c`.
-- Upstream `batch.c:59-76`, `compat.c:194-195`, `compat.c:413-414`,
+- Upstream `batch.c:59-76`, `compat.c:195-196`, `compat.c:414-415`,
   `token.c:send_deflated_token`, `token.c:send_zstd_token`.

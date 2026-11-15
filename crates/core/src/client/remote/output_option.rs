@@ -1,6 +1,6 @@
 //! Server-side `--info=` argument construction.
 //!
-//! Mirrors upstream `make_output_option()` (options.c:360) as
+//! Mirrors upstream `make_output_option()` (options.c:361) as
 //! `server_options()` calls it: for `info_words` only (options.c:3127-3129).
 //! Upstream never sends `--debug=` to the server; a server's debug levels come
 //! from the forwarded `-v` letters or from an explicit `-M--debug=X`.
@@ -13,13 +13,13 @@
 
 use std::ffi::OsString;
 
-// upstream: options.c:270-273 - output-word role bit masks.
+// upstream: options.c:271-274 - output-word role bit masks.
 const W_CLI: u8 = 1 << 0;
 const W_SRV: u8 = 1 << 1;
 const W_SND: u8 = 1 << 2;
 const W_REC: u8 = 1 << 3;
 
-// upstream: options.c:286-301 info_words[] (rsync-3.5.1) - `(name, where)` in
+// upstream: options.c:287-302 info_words[] (rsync-3.5.1) - `(name, where)` in
 // upstream table order. `stats` is deliberately not forwarded from here: oc conflates
 // `--stats` with `--info=stats` into a single stats level and forwards it via
 // the standalone `--stats` flag (mirroring upstream `if (do_stats) --stats` at
@@ -60,14 +60,14 @@ fn split_name_level(token: &str) -> (&str, u8) {
 ///
 /// `enabled` holds the explicitly-set flags as normalized `name{level}` tokens
 /// (e.g. `io2`, `del`); `am_sender` is true on a push (the local side is the
-/// sender). Mirrors upstream `make_output_option()` (options.c:360): each word
+/// sender). Mirrors upstream `make_output_option()` (options.c:361): each word
 /// is gated by its role `where` mask against `W_SRV | (am_sender ? W_REC :
 /// W_SND)`, and a level of 1 is emitted bare because the digit is implied
-/// (options.c:432). The abbreviated `ALL`/`NONE`/`ALLn` spelling upstream may
+/// (options.c:433). The abbreviated `ALL`/`NONE`/`ALLn` spelling upstream may
 /// use is a pure length optimization that parses to the identical peer state,
 /// so the expanded comma list is emitted verbatim.
 pub(crate) fn make_output_option(enabled: &[OsString], am_sender: bool) -> Option<String> {
-    // upstream: options.c:3127 - `where = (am_server ? W_CLI : W_SRV) |
+    // upstream: options.c:3195 - `where = (am_server ? W_CLI : W_SRV) |
     // (am_sender ? W_REC : W_SND)`. We always build the peer's server args, so
     // `am_server` is false and the client-half is `W_SRV`.
     let peer_where = W_SRV | if am_sender { W_REC } else { W_SND };
@@ -110,7 +110,7 @@ mod tests {
     // fails here instead of silently forwarding or dropping a category.
     #[test]
     fn word_table_names_exactly_the_upstream_info_words() {
-        // upstream: options.c:286-301 info_words[] (rsync-3.5.1), table order.
+        // upstream: options.c:287-302 info_words[] (rsync-3.5.1), table order.
         const UPSTREAM_INFO: [&str; 13] = [
             "backup", "copy", "del", "flist", "misc", "mount", "name", "nonreg", "progress",
             "remove", "skip", "stats", "symsafe",

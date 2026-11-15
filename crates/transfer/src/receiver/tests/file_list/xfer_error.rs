@@ -71,7 +71,7 @@ fn empty_flist_run(with_error_xfer: bool) -> (bool, i32) {
     (stats.got_xfer_error, stats.io_error)
 }
 
-/// upstream: `io.c:1882` -> `log.c:337-338`. Receipt of the frame, not any
+/// upstream: `io.c:1889` -> `log.c:417-418`. Receipt of the frame, not any
 /// `io_error` bit, is what must make the run report a partial transfer.
 #[test]
 fn error_xfer_frame_on_an_empty_flist_sets_got_xfer_error() {
@@ -82,7 +82,7 @@ fn error_xfer_frame_on_an_empty_flist_sets_got_xfer_error() {
     );
     assert_eq!(
         io_error, 0,
-        "upstream flist.c:2671 withholds IOERR_GENERAL for ENOENT, so the exit \
+        "upstream flist.c:2682 withholds IOERR_GENERAL for ENOENT, so the exit \
          code must not come from an io_error bit"
     );
 }

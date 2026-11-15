@@ -52,7 +52,7 @@ Two inputs, and both are load-bearing:
 | Input | Kind | Answers |
 |---|---|---|
 | `rule_src_in_file` | dynamic, process-global | are we parsing a file's contents *right now*? |
-| `FILTRULE_FROM_FILE` (`rsync.h:1056`, bit 21) | per-rule flag | did *this rule's* text come from a file? |
+| `FILTRULE_FROM_FILE` (`rsync.h:1072`, bit 21) | per-rule flag | did *this rule's* text come from a file? |
 
 The per-rule flag exists for the **deferred** case: a per-directory merge rule
 whose name came from a file, but which is applied during traversal, long after
@@ -323,7 +323,7 @@ still in scope:
 - **Trace-time messages** (`add_rule`, the match trace). By the time a rule is
   compiled, `FilterRule`/`CompiledRule` hold `pattern: String` and nothing
   else - oc has **no field equivalent to `FILTRULE_FROM_FILE`**
-  (`rsync.h:1056`). Provenance is already lost. These sites cannot redact
+  (`rsync.h:1072`). Provenance is already lost. These sites cannot redact
   until a provenance bit is carried on the rule itself, through parsing and
   into the compiled form.
 
@@ -362,7 +362,7 @@ state because it looks correct. Either sequence the funnel first, or land both
 together. Both changes alter strings that existing filter tests assert on.
 
 Out of scope: `daemon_config_filter_file` (`exclude.c:1681`,
-`clientserver.c:931/954`) gates `operator_path_resolve` so the daemon's own
+`clientserver.c:935/954`) gates `operator_path_resolve` so the daemon's own
 `filter` / `include from` / `exclude from` parameters may live outside the
 module. That is path confinement, covered by
 [upstream-path-confinement-model.md](upstream-path-confinement-model.md).
@@ -383,4 +383,4 @@ module. That is path confinement, covered by
 - `exclude.c:1800-1801` - over-long line, length 0
 - `exclude.c:1807` - `rule_src_file` re-set inside the read loop
 - `exclude.c:1814-1816` - restore on exit
-- `rsync.h:1056` - `FILTRULE_FROM_FILE` (1<<21)
+- `rsync.h:1072` - `FILTRULE_FROM_FILE` (1<<21)

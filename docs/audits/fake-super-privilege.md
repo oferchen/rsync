@@ -12,7 +12,7 @@ Upstream code referenced (relative to `target/interop/upstream-src/rsync-3.4.1/`
 - `rsync.c` — `am_root` and `local_server` / `read_only` semantics.
 - `xattrs.c:340-720` — `set_stat_xattr` / `read_stat_xattr` round-trip via `user.rsync.%stat`.
 - `syscall.c:90-174` — `do_open_nofollow` / `do_mkstemp` / `do_mknod` placeholder substitution under `am_root < 0`.
-- `clientserver.c:1080-1107` — daemon `fake super = yes` demotes client `am_root` and rewrites `--super` to `--fake-super`.
+- `clientserver.c:1084-1111` — daemon `fake super = yes` demotes client `am_root` and rewrites `--super` to `--fake-super`.
 - `receiver.c`, `generator.c`, `main.c` — sender/receiver-side dispatch.
 
 ## Findings summary
@@ -41,7 +41,7 @@ Total: 3 HIGH, 5 MEDIUM, 2 LOW.
 | Encode privileged stat → xattr | `xattrs.c:set_stat_xattr` | `metadata::fake_super::store_fake_super` |
 | Decode xattr → stat | `xattrs.c:read_stat_xattr` | `metadata::fake_super::load_fake_super` |
 | `am_root < 0` placeholder mode | `syscall.c:90-174` | (missing — see F2) |
-| Daemon `fake super = yes` | `clientserver.c:1080-1107` | `crates/daemon/src/rsyncd_config/parser.rs:319` (parsed only) |
+| Daemon `fake super = yes` | `clientserver.c:1084-1111` | `crates/daemon/src/rsyncd_config/parser.rs:319` (parsed only) |
 | `--copy-as` privilege drop | `rsync.c:do_as_root()` | `LocalCopyOptions::with_copy_as` (parsed only) |
 | Remote invocation flag pass-through | `options.c:server_options` | `crates/core/src/client/remote/invocation/builder.rs:346-347` |
 
@@ -69,7 +69,7 @@ Total: 3 HIGH, 5 MEDIUM, 2 LOW.
 
 ### F3 (HIGH) — Daemon `fake super = yes` is parsed but no read site demotes `am_root` or rewrites `--super`
 
-**Evidence.** Parser writes the value at `crates/daemon/src/rsyncd_config/parser.rs:319-320`, and tests assert it round-trips (`crates/daemon/src/rsyncd_config/tests.rs:118,493,507`). But there is no consumer that, on connection setup, (a) demotes the receiving process's effective root view, (b) rewrites the negotiated `--super` flag from the client into `--fake-super`, or (c) refuses real ownership preservation. Upstream does all three at `clientserver.c:1080-1107`.
+**Evidence.** Parser writes the value at `crates/daemon/src/rsyncd_config/parser.rs:319-320`, and tests assert it round-trips (`crates/daemon/src/rsyncd_config/tests.rs:118,493,507`). But there is no consumer that, on connection setup, (a) demotes the receiving process's effective root view, (b) rewrites the negotiated `--super` flag from the client into `--fake-super`, or (c) refuses real ownership preservation. Upstream does all three at `clientserver.c:1084-1111`.
 
 **Impact.** A daemon module configured with `fake super = yes` (the canonical "give me fake-super semantics regardless of what the client asks for" knob) silently behaves as if the option were absent. Operators relying on this directive for unprivileged daemon backups get real-uid/gid behaviour with no warning.
 
