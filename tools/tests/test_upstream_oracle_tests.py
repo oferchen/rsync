@@ -74,5 +74,10 @@ class CheckLogTests(unittest.TestCase):
         self.assertEqual(check_log("error: build failed\n"), ["no nextest summary line found"])
 
 
+    def test_check_log_strips_ansi_escapes(self) -> None:
+        log = "\x1b[32m     Summary\x1b[0m [  33.777s] \x1b[1m205\x1b[0m tests run: 205 passed, 0 skipped\n"
+        self.assertEqual(check_log(log), [])
+
+
 if __name__ == "__main__":
     unittest.main()

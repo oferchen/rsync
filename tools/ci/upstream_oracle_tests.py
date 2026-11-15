@@ -34,6 +34,7 @@ from pathlib import Path
 RESOLVER_CALL = re.compile(r"\brequire_upstream_rsync\(")
 SKIP_LINE = "Skipping upstream-compat test:"
 TESTS_RUN = re.compile(r"^\s*Summary \[.*?\]\s+(\d+) tests? run", re.MULTILINE)
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def package_name(manifest: Path) -> str:
@@ -73,6 +74,7 @@ def nextest_args(cells: list[tuple[str, str]]) -> list[str]:
 
 def check_log(text: str) -> list[str]:
     """Return the reasons the oracle run must be rejected (empty when sound)."""
+    text = ANSI_ESCAPE.sub("", text)
     problems = []
     skipped = [line.strip() for line in text.splitlines() if SKIP_LINE in line]
     if skipped:
