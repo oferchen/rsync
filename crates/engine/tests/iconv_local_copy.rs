@@ -218,7 +218,7 @@ fn iconv_applies_to_nested_filenames_recursively() {
 ///   - Sender: `iconv_open(UTF-8, LOCAL)` then `iconv_open(REMOTE, UTF-8)`
 ///   - Receiver: `iconv_open(UTF-8, REMOTE)` then `iconv_open(LOCAL, UTF-8)`
 ///
-/// upstream: rsync.c:118-140 setup_iconv(), flist.c:2001-2025 send,
+/// upstream: rsync.c:118-140 setup_iconv(), flist.c:2005-2029 send,
 ///           flist.c:1058-1074 recv.
 #[test]
 fn iconv_utf8_latin1_round_trip_preserves_filenames() {
@@ -387,7 +387,7 @@ fn iconv_utf8_latin1_round_trip_preserves_filenames() {
 /// iconv path handles both source-as-subdirectory and source-as-contents
 /// semantics correctly.
 ///
-/// upstream: flist.c:2824-2834 - a trailing slash turns the operand into
+/// upstream: flist.c:2835-2845 - a trailing slash turns the operand into
 ///           `dir/.` (`DOTDIR_NAME`), copying contents into dest.
 #[test]
 fn iconv_round_trip_trailing_slash_copies_contents() {

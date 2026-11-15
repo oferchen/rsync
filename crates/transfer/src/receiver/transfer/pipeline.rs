@@ -128,7 +128,7 @@ impl InFlightRequests {
     /// was found. The two parallel queues are pushed and popped in lockstep, so
     /// the position `wire` reports addresses the same entry in `files`.
     ///
-    /// upstream: io.c:1225-1274 `got_flist_entry_status(FES_NO_SEND, ndx)`
+    /// upstream: io.c:1232-1281 `got_flist_entry_status(FES_NO_SEND, ndx)`
     /// retires the declined entry by index, not by the receiver's window front.
     fn retire_by_ndx(&mut self, ndx: i32) -> bool {
         match self.wire.retire_ndx(ndx) {
@@ -280,9 +280,9 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/cleanup.c:242-253` - `_exit_cleanup()` flushes queued
+    /// - `rsync-3.5.2/cleanup.c:243-254` - `_exit_cleanup()` flushes queued
     ///   messages on the fatal path.
-    /// - `rsync-3.5.1/rsync.c:897-900` - the backup failure that makes this
+    /// - `rsync-3.5.2/rsync.c:897-900` - the backup failure that makes this
     ///   path reachable.
     fn drain_or_report<W, F>(
         &self,
@@ -346,7 +346,7 @@ impl ReceiverContext {
         ndx_write_codec: &mut MonotonicNdxWriter,
         ndx_read_codec: &mut NdxCodecEnum,
         // Write the phase-ending NDX_DONE once the last request is out, as
-        // upstream's generator does without INC_RECURSE (generator.c:2831-2833),
+        // upstream's generator does without INC_RECURSE (generator.c:2917-2919),
         // instead of leaving it to `finalize_transfer`.
         end_phase_after_requests: bool,
     ) -> io::Result<PipelineResult> {
@@ -460,7 +460,7 @@ impl ReceiverContext {
         } else {
             None
         };
-        // upstream: generator.c:2328-2356 - with `--inplace --backup` the DELTA
+        // upstream: generator.c:2371-2399 - with `--inplace --backup` the DELTA
         // path's pre-image backup is made by the generator at basis-selection
         // time and selected as the basis (FNAMECMP_BACKUP), so thread the same
         // backup config into the basis search. The redo pass is excluded,
@@ -476,7 +476,7 @@ impl ReceiverContext {
         //
         // `--delay-updates` with no explicit `--partial-dir` stages through the
         // implicit `.~tmp~` beside each destination file:
-        // upstream options.c:2572-2573 `if (delay_updates && !partial_dir)
+        // upstream options.c:2627-2628 `if (delay_updates && !partial_dir)
         // partial_dir = tmp_partialdir;` (`static char tmp_partialdir[] = ".~tmp~"`).
         //
         // The substitution belongs here, on the receiver, rather than on the
@@ -503,7 +503,7 @@ impl ReceiverContext {
             sandbox: setup.sandbox.clone(),
             temp_dir: self.config.temp_dir.as_ref().map(PathBuf::from),
             metadata_opts: Some(setup.metadata_opts.clone()),
-            // upstream: generator.c:2659 `make_backups = -make_backups`
+            // upstream: generator.c:2703 `make_backups = -make_backups`
             // negates make_backups during the redo pass so the inplace
             // pre-image copy does not overwrite the good phase-1 backup
             // with the now-corrupted destination.
@@ -726,14 +726,14 @@ impl ReceiverContext {
                                 )?;
                                 continue;
                             }
-                            // upstream: generator.c:569,598 - before requesting
+                            // upstream: generator.c:606,598 - before requesting
                             // the file the generator diffs the sender's xattrs
                             // against the basis (fnamecmp) and requests every
                             // abbreviated value it cannot resolve locally. Use
                             // the same basis the delta selected so --fuzzy /
                             // --link-dest / --compare-dest / --partial-dir bases
                             // drive the resolution in upstream's priority order.
-                            // upstream: generator.c:2448-2450 - INFO_GTE(BACKUP, 1)
+                            // upstream: generator.c:2491-2493 - INFO_GTE(BACKUP, 1)
                             // "backed up X to Y" for the `--inplace --backup`
                             // delta-path pre-image copy made during basis
                             // selection. Emitted here, on the session thread,
@@ -806,7 +806,7 @@ impl ReceiverContext {
                     pipeline.pop().expect("pipeline not empty");
                 flushed_pending = flushed_pending.saturating_sub(1);
 
-                // upstream: sender.c:295-297 - a non-transfer item is logged by
+                // upstream: sender.c:303-305 - a non-transfer item is logged by
                 // the sender and echoed back via write_ndx_and_attrs(); consume
                 // the echo here so the response stream stays aligned with the
                 // transfer replies that follow it in FIFO order.
@@ -890,7 +890,7 @@ impl ReceiverContext {
                         break;
                     }
                     crate::transfer_ops::ResponseProgress::Declined { pending, ndx } => {
-                        // upstream: io.c:1847-1856 -> got_flist_entry_status(FES_NO_SEND, ndx).
+                        // upstream: io.c:1854-1863 -> got_flist_entry_status(FES_NO_SEND, ndx).
                         // The sender declined a file (sender.c:670,725,753) and moved on
                         // without answering; upstream's generator retires the entry BY INDEX,
                         // not by any window front. The sender has already set io_error
@@ -969,7 +969,7 @@ impl ReceiverContext {
                 transferred_file_size += file_entry.size();
 
                 {
-                    // upstream: generator.c:1925-1937 - the transfer itemize is
+                    // upstream: generator.c:1962-1974 - the transfer itemize is
                     // emitted right after the file request. With
                     // log_before_transfer == 0 (`am_server`) the row is logged
                     // after the transfer, so a server-mode receiver emits it
@@ -994,7 +994,7 @@ impl ReceiverContext {
                         file_bytes: result.total_bytes,
                         total_file_bytes: Some(file_entry.size()),
                         files_done: files_done_offset + files_transferred,
-                        // upstream: progress.c:79-82 - `to-chk` counts down by
+                        // upstream: progress.c:80-83 - `to-chk` counts down by
                         // file-list position (set_current_file_index(), the
                         // flat index here) over every entry received so far.
                         total_files: self.file_list.len(),
@@ -1004,7 +1004,7 @@ impl ReceiverContext {
                         // streaming INC_RECURSE driver passes `flist_eof`, which
                         // is false until the last sub-list arrives - upstream
                         // renders `ir-chk` while the list is still growing and
-                        // `to-chk` once complete. upstream: progress.c:79-82
+                        // `to-chk` once complete. upstream: progress.c:80-83
                         // rprint_progress.
                         flist_eof: flist_complete,
                     };
@@ -1022,7 +1022,7 @@ impl ReceiverContext {
             // sender unlinks their --remove-source-files sources.
             self.emit_drain_events(writer, &mut pipelined_receiver)?;
 
-            // upstream: generator.c:2169 finish_hard_link() itemizes every
+            // upstream: generator.c:2210 finish_hard_link() itemizes every
             // follower once the leader completes, before the phase-1 NDX_DONE.
             // Emit through the request-phase NDX diff-state (never the redo
             // pass, which carries no new followers) so a pushing client's
@@ -1135,7 +1135,7 @@ impl ReceiverContext {
     /// `if (!do_xfers)` continue (receiver.c:797-800), so a dry run reports the
     /// same "Number of regular files transferred" as the real run would.
     ///
-    /// upstream: generator.c:1858-1959 - `!do_xfers` path sends write_ndx() then
+    /// upstream: generator.c:1895-1996 - `!do_xfers` path sends write_ndx() then
     /// goto cleanup, skipping write_sum_head(). sender.c:469-486 - `!do_xfers`
     /// logs the item and echoes write_ndx_and_attrs() without receive_sums().
     pub(in crate::receiver) fn run_dry_run_loop<
@@ -1176,7 +1176,7 @@ impl ReceiverContext {
                 transferred_size += self.file_list[file_idx].size();
             }
 
-            // upstream: generator.c:590,607-610 - below protocol 29 itemize()
+            // upstream: generator.c:627,607-610 - below protocol 29 itemize()
             // logs a non-transfer item locally and writes nothing; only the
             // notify_others write_ndx() (generator.c:2376) crosses the wire.
             // The peer's sender implies ITEM_TRANSFER for every pre-29 NDX
@@ -1185,12 +1185,12 @@ impl ReceiverContext {
                 continue;
             }
 
-            // upstream: generator.c:1938 - write_ndx(f_out, ndx); a released
+            // upstream: generator.c:1975 - write_ndx(f_out, ndx); a released
             // sub-list head goes out on its gap NDX (generator.c:2787).
             let wire_ndx = self.itemize_wire_ndx(file_idx);
             ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;
 
-            // upstream: generator.c:1937-1947 then itemize() at 581-600 - the
+            // upstream: generator.c:1974-1984 then itemize() at 581-600 - the
             // iflags shortint carries the full itemize bits computed against the
             // pre-transfer destination (ITEM_IS_NEW for an absent one, the
             // attribute diff for an existing one). Sending a bare ITEM_TRANSFER
@@ -1206,7 +1206,7 @@ impl ReceiverContext {
             // pending - matching upstream's batched iobuf_out pattern.
             writer.flush()?;
 
-            // upstream: sender.c:469-486 - sender echoes write_ndx_and_attrs back
+            // upstream: sender.c:477-494 - sender echoes write_ndx_and_attrs back
             self.read_non_transfer_echo(reader, ndx_read_codec, preserve_xattrs, want_xattr_optim)?;
 
             // upstream: rsync.c:672-676 set_file_attrs emits the bare-name
@@ -1373,7 +1373,7 @@ impl ReceiverContext {
 
         for &(file_idx, ref file_path, base_iflags) in files_to_transfer {
             let file_entry = &self.file_list[file_idx];
-            // upstream: generator.c:1961-1969 - compute the basis signature and
+            // upstream: generator.c:1998-2006 - compute the basis signature and
             // send a real sum head so the sender can diff against the receiver's
             // basis (empty when no basis exists, driving a whole-file batch).
             let basis_config = BasisFileConfig {
@@ -1402,7 +1402,7 @@ impl ReceiverContext {
             };
             let basis = find_basis_file_with_config(&basis_config);
 
-            // upstream: generator.c:1939 write_ndx + write_sum_head(f_out, s).
+            // upstream: generator.c:1976 write_ndx + write_sum_head(f_out, s).
             let _pending = send_file_request(
                 writer,
                 &mut *ndx_write_codec,
@@ -1422,11 +1422,11 @@ impl ReceiverContext {
             // its own batch fd, and echoes only NDX+attrs back to us.
             writer.flush()?;
 
-            // upstream: sender.c:469-486 - write_ndx_and_attrs(f_out, ...) echo.
+            // upstream: sender.c:477-494 - write_ndx_and_attrs(f_out, ...) echo.
             self.read_non_transfer_echo(reader, ndx_read_codec, preserve_xattrs, want_xattr_optim)?;
 
             if let Some(token_reader) = token_reader.as_mut() {
-                // upstream: sender.c:444 write_sum_head(f_xfer, s) - on a pull
+                // upstream: sender.c:452 write_sum_head(f_xfer, s) - on a pull
                 // `f_xfer == f_out`, so the sum head and the whole delta land
                 // on the wire and must be consumed to keep the sender in
                 // lockstep (receiver.c:829-830 discard_receive_data()).

@@ -89,7 +89,7 @@ impl ClientConfig {
     /// report `true` when the destination is remote AND every source is
     /// local - the exact case upstream renders as `<`.
     ///
-    /// upstream: log.c:739-742 - `!local_server && *op == 's' ? '<' : '>'`
+    /// upstream: log.c:824-827 - `!local_server && *op == 's' ? '<' : '>'`
     #[must_use]
     pub fn is_local_sender(&self) -> bool {
         use crate::client::remote::operand_is_remote;
@@ -120,7 +120,7 @@ impl ClientConfig {
     /// A push (remote destination, local sources) and a local copy both send
     /// the file list from the local process, so neither is a pull.
     ///
-    /// upstream: `flist.c:2764` prints "sending incremental file list" only on
+    /// upstream: `flist.c:2775` prints "sending incremental file list" only on
     /// the sender (`!am_server`); the client is `am_sender` for a push and a
     /// local copy, and the receiver for a pull (which prints "receiving").
     #[must_use]
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn is_local_sender_local_copy_reports_receiver() {
-        // Pure-local copy: `oc-rsync src/ dst/`. Upstream's `log.c:742` falls
+        // Pure-local copy: `oc-rsync src/ dst/`. Upstream's `log.c:827` falls
         // into the `local_server` branch which emits `>`. The oc-rsync formatter
         // does not model `local_server`, so report `false` here to keep the
         // arrow defaulting to `>` and stay byte-identical with upstream.

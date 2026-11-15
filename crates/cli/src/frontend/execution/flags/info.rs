@@ -10,7 +10,7 @@ use super::output_words::{self, OutputWord, TokenFlow};
 
 /// Per-flag descriptor for an `--info=` token.
 ///
-/// upstream: options.c:275-282 `output_struct`. `max_level` is the per-flag
+/// upstream: options.c:276-283 `output_struct`. `max_level` is the per-flag
 /// ceiling used when `--info=all<N>` fans out across every flag (it caps each
 /// flag at its highest meaningful level). The `-v` verbosity grouping lives in
 /// the single `logging::VerbosityConfig::from_verbose_level` table.
@@ -154,7 +154,7 @@ impl InfoFlagSettings {
         apply("symsafe", self.symsafe);
     }
 
-    /// upstream: options.c:475 matches the table with `strncasecmp`, so the
+    /// upstream: options.c:476 matches the table with `strncasecmp`, so the
     /// lookup is case-insensitive.
     fn spec_for(name: &str) -> Option<&'static InfoFlagSpec> {
         INFO_FLAG_SPECS
@@ -177,7 +177,7 @@ impl InfoFlagSettings {
                 out.push((name, level));
             }
         };
-        // upstream: options.c:286-301 info_words[] order.
+        // upstream: options.c:287-302 info_words[] order.
         push("backup", self.backup);
         push("copy", self.copy);
         push("del", self.del);
@@ -222,7 +222,7 @@ impl InfoFlagSettings {
     /// word table and calls `exit_cleanup(0)` right there (options.c:465-468),
     /// so every later token in the list is never examined.
     ///
-    /// upstream: options.c:443-490 parse_output_words
+    /// upstream: options.c:444-491 parse_output_words
     pub(super) fn apply_with_mode(
         &mut self,
         token: &str,
@@ -258,7 +258,7 @@ impl InfoFlagSettings {
 
 /// Builds the unknown-item diagnostic for `--info=`.
 ///
-/// upstream: options.c:484-488 -
+/// upstream: options.c:485-489 -
 /// `rprintf(FERROR, "Unknown %s item: \"%.*s\"\n", words[j].help, len, str);`
 /// followed by `exit_cleanup(RERR_SYNTAX)`. `words[j]` is the table's NULL
 /// sentinel, whose `help` field is the literal `"--info"` (options.c:300), and
@@ -310,13 +310,13 @@ fn parse_info_flags_inner(
 
 /// Body of `--info=help`, reproduced byte-for-byte from upstream.
 ///
-/// upstream: options.c:493-529 output_item_help(). The text is
+/// upstream: options.c:494-530 output_item_help(). The text is
 /// reproduced byte-for-byte from upstream's runtime output so `--info=help`
 /// matches `rsync --info=help`. The format string is `"%-10s %s\n"`: each
 /// name is left-padded to 10 columns, followed by a single space and the
 /// help text. ALL/NONE descriptions inline the sentinel's `--info` help
 /// (options.c:508-514). The per-verbosity summary block is rendered by
-/// upstream's `make_output_option` over `info_verbosity[]` (options.c:255-259)
+/// upstream's `make_output_option` over `info_verbosity[]` (options.c:256-260)
 /// and emits one line per non-empty level in `info_words[]` order.
 pub(crate) const INFO_HELP_TEXT: &str = "\
 Use OPT or OPT1 for level 1 output, OPT2 for level 2, etc.; OPT0 silences.\n\

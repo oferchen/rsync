@@ -21,7 +21,7 @@
 //! *requested* duration rather than the *actual* duration so the
 //! invariants hold deterministically regardless of OS scheduling.
 //
-// upstream: io.c:2323 `sleep_for_bwlimit()` - the rate enforcement
+// upstream: io.c:2330 `sleep_for_bwlimit()` - the rate enforcement
 // routine our `BandwidthLimiter::register` mirrors.
 
 use bandwidth::{BandwidthLimiter, parse_bandwidth_argument, recorded_sleep_session};

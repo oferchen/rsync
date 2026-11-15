@@ -35,8 +35,8 @@ int do_open_nofollow(const char *pathname, int flags) {           // line 669
 }
 ```
 
-Both paths feed `do_open_checklinks()` (`syscall.c:809`), which the
-sender uses for every source file (`sender.c:355`).
+Both paths feed `do_open_checklinks()` (`syscall.c:878`), which the
+sender uses for every source file (`sender.c:363`).
 
 ## 2. oc-rsync source-file open audit
 

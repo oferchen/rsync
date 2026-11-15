@@ -1,6 +1,6 @@
 // End-to-end tests for daemon module sub-path pull resolution.
 //
-// Mirrors upstream `clientserver.c:1154 read_args()` + `util1.c:884
+// Mirrors upstream `clientserver.c:1158 read_args()` + `util1.c:884
 // glob_expand_module()` + `flist.c:2850-2861` sender per-positional split:
 // when a client requests `rsync://h/mod/d1/d2/f2`, the wire emits a single
 // file-list entry whose name is the basename (`f2`), so the receiver writes
@@ -87,7 +87,7 @@ fn daemon_pull_subpath_single_file_emits_basename() {
     let (probe, handle) = launch_subpath_daemon(&config_file, port, held);
     drop(probe);
 
-    // upstream: clientserver.c:1154 - the wire arg `sub/d1/d2/f2` is the
+    // upstream: clientserver.c:1158 - the wire arg `sub/d1/d2/f2` is the
     // module name plus the sub-path; glob_expand_module strips `sub` before
     // the sender walks the single positional.
     let url = format!("rsync://127.0.0.1:{port}/sub/d1/d2/f2");
@@ -100,7 +100,7 @@ fn daemon_pull_subpath_single_file_emits_basename() {
         panic!("sub-path pull failed: {e}");
     }
 
-    // upstream: flist.c:2850-2861 - dir=d1/d2, fn=f2; receiver writes <dest>/f2.
+    // upstream: flist.c:2861-2872 - dir=d1/d2, fn=f2; receiver writes <dest>/f2.
     assert_eq!(
         fs::read(dest.join("f2")).expect("read pulled f2"),
         b"sub-path leaf content\n",
@@ -141,7 +141,7 @@ fn daemon_pull_subpath_directory_trailing_slash_flattens_contents() {
     let (probe, handle) = launch_subpath_daemon(&config_file, port, held);
     drop(probe);
 
-    // upstream: flist.c:2824-2834 - trailing slash promotes the source to
+    // upstream: flist.c:2835-2845 - trailing slash promotes the source to
     // DOTDIR_NAME, walking the directory's contents as `.`/children.
     let url = format!("rsync://127.0.0.1:{port}/sub/d1/d2/");
     let client_config = core::client::ClientConfig::builder()
@@ -194,7 +194,7 @@ fn daemon_pull_subpath_directory_no_trailing_slash_walks_subtree() {
     let (probe, handle) = launch_subpath_daemon(&config_file, port, held);
     drop(probe);
 
-    // upstream: flist.c:2850-2861 - without a trailing slash the source is
+    // upstream: flist.c:2861-2872 - without a trailing slash the source is
     // still a directory: oc-rsync's non-relative walk emits dot + children
     // (matching the `non_relative_mode_uses_basename` regression test),
     // so the destination receives the children directly without a `d2/`
@@ -255,7 +255,7 @@ fn daemon_pull_subpath_deeply_nested_file_emits_basename() {
     let (probe, handle) = launch_subpath_daemon(&config_file, port, held);
     drop(probe);
 
-    // upstream: flist.c:2850-2861 - the per-positional dir/fn split walks the
+    // upstream: flist.c:2861-2872 - the per-positional dir/fn split walks the
     // last `/` regardless of nesting depth, so the wire entry is just `leaf.bin`.
     let url = format!("rsync://127.0.0.1:{port}/sub/a/b/c/d/e/leaf.bin");
     let client_config = core::client::ClientConfig::builder()

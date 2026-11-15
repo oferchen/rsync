@@ -26,7 +26,7 @@ use std::sync::atomic::AtomicBool;
 /// On Unix, signal handlers set these via `signal_hook`. On Windows,
 /// `SetConsoleCtrlHandler` sets them from a console control callback.
 ///
-/// upstream: main.c:1854-1928 - signal handler setup for SIGPIPE, SIGHUP,
+/// upstream: main.c:1858-1932 - signal handler setup for SIGPIPE, SIGHUP,
 /// SIGTERM, SIGUSR1, SIGUSR2.
 #[derive(Clone, Debug, Default)]
 pub struct SignalFlags {
@@ -41,12 +41,12 @@ pub struct SignalFlags {
     /// Finish current transfers then exit with code 19 (`RERR_SIGNAL1`).
     /// Unlike `shutdown`, allows in-progress transfers to complete.
     ///
-    /// Deviation from upstream: upstream's `sigusr1_handler()` (main.c:1684)
+    /// Deviation from upstream: upstream's `sigusr1_handler()` (main.c:1688)
     /// exits immediately via `exit_cleanup(RERR_SIGNAL1)`.
     pub graceful_exit: Arc<AtomicBool>,
     /// Log a progress summary of active connections (SIGUSR2 on Unix).
     ///
-    /// Deviation from upstream: upstream's `sigusr2_handler()` (main.c:1695)
+    /// Deviation from upstream: upstream's `sigusr2_handler()` (main.c:1699)
     /// tells the receiver child to wrap up and exit.
     /// Consumed (reset to `false`) after each dump.
     pub progress_dump: Arc<AtomicBool>,
@@ -72,7 +72,7 @@ impl SignalFlags {
 /// On Windows, registers a console control handler mapping CTRL_C/CTRL_CLOSE
 /// to shutdown and CTRL_BREAK to graceful exit.
 ///
-/// upstream: main.c:1854-1928 - `SIGACTMASK()`/`SIGACTION()` calls for SIGPIPE,
+/// upstream: main.c:1858-1932 - `SIGACTMASK()`/`SIGACTION()` calls for SIGPIPE,
 /// SIGHUP, SIGTERM, SIGUSR1, SIGUSR2.
 #[cfg(unix)]
 pub fn register_signal_handlers() -> io::Result<SignalFlags> {
@@ -80,7 +80,7 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
 
     let flags = SignalFlags::new();
 
-    // upstream: main.c:1928 SIGACTION(SIGPIPE, SIG_IGN) - prevent daemon termination
+    // upstream: main.c:1932 SIGACTION(SIGPIPE, SIG_IGN) - prevent daemon termination
     // on broken client sockets; errors surface as EPIPE io::Error instead.
     let sigpipe_sink = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGPIPE, Arc::clone(&sigpipe_sink))?;
@@ -191,7 +191,7 @@ where
 
 /// Sends `SIGUSR1` to the process `pid`.
 ///
-/// upstream: cleanup.c:202-203 - an exiting process with a nonzero code calls
+/// upstream: cleanup.c:203-204 - an exiting process with a nonzero code calls
 /// kill_all(SIGUSR1) (util1.c:692-709), which signals every child it forked,
 /// the remote shell included, and never waits for them.
 ///

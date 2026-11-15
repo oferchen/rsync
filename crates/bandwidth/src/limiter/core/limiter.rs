@@ -60,7 +60,7 @@ impl BandwidthLimiter {
     /// rate applies immediately without carryover from the previous period.
     /// This is also used when a daemon module overrides the client-supplied
     /// `--bwlimit`.
-    /// upstream: options.c:2543-2548 - `daemon_bwlimit` override then `bwlimit_writemax`
+    /// upstream: options.c:2598-2603 - `daemon_bwlimit` override then `bwlimit_writemax`
     #[doc(alias = "--bwlimit")]
     pub fn update_limit(&mut self, limit: NonZeroU64) {
         let write_max = calculate_write_max(limit);
@@ -95,7 +95,7 @@ impl BandwidthLimiter {
     /// The value scales linearly with the configured rate so that pacing
     /// sleeps remain short and responsive. Callers should split writes
     /// larger than this threshold into chunks.
-    /// upstream: options.c:2546 - `bwlimit_writemax = (size_t)bwlimit * 128`
+    /// upstream: options.c:2601 - `bwlimit_writemax = (size_t)bwlimit * 128`
     #[inline]
     #[must_use]
     pub const fn write_max_bytes(&self) -> usize {
@@ -172,7 +172,7 @@ impl BandwidthLimiter {
         // simulated elapsed time on the next register(), which cancels the
         // `leftover` debt below; this is what lets `cfg(test)` builds (where
         // `sleep_for` only records) behave as if the sleep had happened.
-        // Deviation from upstream: io.c:2356 carries the remaining debt and,
+        // Deviation from upstream: io.c:2363 carries the remaining debt and,
         // after an oversleep, a negative `total_written` credit; here
         // undersleep debt is forgiven and oversleep credit is clamped to zero.
         if sleep_us > elapsed_us {

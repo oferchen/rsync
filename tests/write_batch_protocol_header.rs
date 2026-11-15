@@ -1,7 +1,7 @@
 //! A local `--write-batch` stamps the protocol the run speaks into the batch
 //! header, so `--protocol` can record a batch an older reader accepts.
 //!
-//! upstream: io.c:2559 `write_int(batch_fd, protocol_version)`. Upstream
+//! upstream: io.c:2566 `write_int(batch_fd, protocol_version)`. Upstream
 //! 3.4.x and 3.5.0 refuse a newer header outright ("The protocol version in
 //! the batch file is too new", compat.c:612), so a protocol-33 build that
 //! ignored `--protocol` here could never write a batch for them.

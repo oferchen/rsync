@@ -17,8 +17,8 @@ Examples:
 ```rust
 // upstream: token.c:send_token() - literals are written as write_int(length)
 // upstream: flist.c:send_file_entry() lines 545-565
-// upstream: compat.c:117 (CF_* macros)
-// upstream: io.c:2243-2287 - write_ndx() function
+// upstream: compat.c:118 (CF_* macros)
+// upstream: io.c:2250-2294 - write_ndx() function
 ```
 
 Module-level `//!` docs may also reference upstream source files in prose form.
@@ -87,13 +87,13 @@ traceability.
 | `envelope/message_code.rs` | Numeric code assignments (Data=0, Info=2, etc.) | rsync.h `enum msgcode` |
 | `multiplex/codec.rs` | 24-bit payload length limit | io.c `BIGPATHBUFLEN` / rsync.h |
 | `multiplex/frame.rs` | Frame construction and payload assembly | io.c:read_a_msg() |
-| `wire/delta/int_encoding.rs` | `write_int` / `read_int` 4-byte LE primitives | io.c:2082,2091 (noted in doc but not `// upstream:`) |
+| `wire/delta/int_encoding.rs` | `write_int` / `read_int` 4-byte LE primitives | io.c:2089,2091 (noted in doc but not `// upstream:`) |
 | `wire/delta/token.rs` | Token wire format (positive=literal, negative=match, zero=end) | token.c:simple_send_token() (noted in doc but not `// upstream:`) |
 | `wire/signature.rs` | Signature header format (block_count, block_length, sum_length) | sender.c / match.c sum_struct |
-| `codec/ndx/codec.rs` | Modern NDX delta encoding (prev_positive tracking) | io.c:2243-2287 (noted in struct doc but not inline) |
-| `compatibility/flags.rs` | CF_* bit definitions (INC_RECURSE=1<<0, etc.) | compat.c:117 (noted in struct doc but not per-constant) |
+| `codec/ndx/codec.rs` | Modern NDX delta encoding (prev_positive tracking) | io.c:2250-2294 (noted in struct doc but not inline) |
+| `compatibility/flags.rs` | CF_* bit definitions (INC_RECURSE=1<<0, etc.) | compat.c:118 (noted in struct doc but not per-constant) |
 | `varint/encode.rs` | Variable-length integer encoding algorithm | io.c:write_varint() (noted in doc but not `// upstream:`) |
-| `flist/name_cmp.rs` | `f_name_cmp()` byte-wise comparison logic | flist.c:3217 (noted in module doc but not inline) |
+| `flist/name_cmp.rs` | `f_name_cmp()` byte-wise comparison logic | flist.c:3228 (noted in module doc but not inline) |
 
 ### Engine Crate
 
@@ -185,7 +185,7 @@ classification helps decide when to add one.
 pub fn encode_file_entry(...) { ... }
 
 // Constant with upstream definition
-/// Upstream: `rsync.h:285` - `#define NDX_DONE -1`
+/// Upstream: `rsync.h:286` - `#define NDX_DONE -1`
 pub const NDX_DONE: i32 = -1;
 ```
 

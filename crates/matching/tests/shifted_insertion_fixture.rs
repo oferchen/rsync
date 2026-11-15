@@ -38,7 +38,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.1/match.c:163-378` -
+//! - `target/interop/upstream-src/rsync-3.5.2/match.c:163-414` -
 //!   `hash_search()` and the `want_i` adjacent-block hint that aligned
 //!   shifted inserts must continue to satisfy.
 

@@ -1,7 +1,7 @@
 /// A handshake line longer than upstream's line buffer ends the session with
 /// no reply, instead of being read in full and answered.
 ///
-/// upstream: `io.c:2635-2656` `read_line_old()` keeps one byte for the NUL
+/// upstream: `io.c:2642-2663` `read_line_old()` keeps one byte for the NUL
 /// (`bufsiz--`) and fails when the buffer fills before a newline, and
 /// `clientserver.c:1416,1427` reads the greeting into `char line[1024]`; on that
 /// failure `exchange_protocols()` returns -1 without a word to a non-client

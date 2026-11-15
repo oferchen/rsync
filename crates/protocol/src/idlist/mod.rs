@@ -377,7 +377,7 @@ impl IdList {
         reader.read_exact(&mut name)?;
 
         // Try to resolve the name to a local ID. A resolver that cannot answer
-        // (upstream: a name converter that has died, clientserver.c:1327-1332)
+        // (upstream: a name converter that has died, clientserver.c:1336-1341)
         // propagates instead of degrading into "keep the sender's id".
         let local_id = name_to_id(&name)?.unwrap_or(remote_id);
 

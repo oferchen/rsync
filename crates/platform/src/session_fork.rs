@@ -184,7 +184,7 @@ pub fn lead_process_group(pid: i32) -> io::Result<()> {
 
 /// Sends `SIGTERM` to process `pid`, asking it to shut down.
 ///
-/// upstream: main.c:1919-1921 routes SIGTERM to `sig_int()`, the daemon's
+/// upstream: main.c:1923-1925 routes SIGTERM to `sig_int()`, the daemon's
 /// orderly-exit path; this is how a supervisor asks a forked daemon to stop
 /// rather than killing it.
 pub fn terminate_process(pid: i32) -> io::Result<()> {

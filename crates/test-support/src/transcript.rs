@@ -15,11 +15,11 @@
 //! that set, so every consumer states the same baseline:
 //!
 //! - `--checksum-seed=<fixed>`: without it the server seeds from
-//!   `time(NULL) ^ (getpid() << 6)` (upstream: compat.c:824
+//!   `time(NULL) ^ (getpid() << 6)` (upstream: compat.c:833
 //!   setup_protocol()), which perturbs the seed word on the wire and every
 //!   downstream checksum.
 //! - `RSYNC_CHECKSUM_LIST` pinned to one value: the negotiation
-//!   advertisement is read from this variable (upstream: compat.c:410-421
+//!   advertisement is read from this variable (upstream: compat.c:411-422
 //!   getenv_nstr(), including the `&`-split of client/server halves), so an
 //!   inherited value would move the advertised name list between arms.
 //! - `RSYNC_COMPRESS_LIST` removed: same reader, compression side.
@@ -61,10 +61,10 @@ pub const FIXED_CHECKSUM_SEED: u32 = 32761;
 /// Fixed `RSYNC_CHECKSUM_LIST` applied to both arms of a comparison.
 ///
 /// Any single value works; what matters is that BOTH arms advertise the same
-/// list (upstream: compat.c:410-421 getenv_nstr()).
+/// list (upstream: compat.c:411-422 getenv_nstr()).
 pub const FIXED_CHECKSUM_LIST: &str = "md5";
 
-/// Tag of an `MSG_DATA` multiplex frame (upstream: rsync.h:210 `MPLEX_BASE`).
+/// Tag of an `MSG_DATA` multiplex frame (upstream: rsync.h:211 `MPLEX_BASE`).
 const MPLEX_BASE: u8 = 7;
 
 /// Encoded width of a `varlong30(x, 3)` field for `x < 2^23`.
@@ -152,7 +152,7 @@ impl WireTranscript {
     ///
     /// The stream is demultiplexed from the end of the unmultiplexed handshake,
     /// the fixed checksum seed (upstream: compat.c setup_protocol()); a frame
-    /// header is `(MPLEX_BASE + code) << 24 | len` (upstream: io.c:1173
+    /// header is `(MPLEX_BASE + code) << 24 | len` (upstream: io.c:1180
     /// send_msg()).
     ///
     /// # Errors

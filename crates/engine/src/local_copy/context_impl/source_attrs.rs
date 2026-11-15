@@ -8,7 +8,7 @@ impl CopyContext<'_> {
     /// `metadata` is the entry as listed (followed under `-L`); `name` is the
     /// name upstream's `get_acl` message prints.
     ///
-    /// upstream: flist.c:2050-2087 send_file_name() - get_acl() then
+    /// upstream: flist.c:2054-2091 send_file_name() - get_acl() then
     /// get_xattr(), each failure `io_error |= IOERR_GENERAL; return NULL`.
     pub(crate) fn read_source_attrs(
         &mut self,

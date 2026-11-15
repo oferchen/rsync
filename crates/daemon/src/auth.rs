@@ -33,7 +33,7 @@
 //! - **Password storage**: Plain text (matching upstream rsync behavior)
 //! - **Challenge generation**: 32 bytes from the kernel CSPRNG followed by the
 //!   legacy peer address + timestamp + PID block, hashed with the negotiated
-//!   digest - upstream's `gen_challenge()` (authenticate.c:88-119). If the RNG is
+//!   digest - upstream's `gen_challenge()` (authenticate.c:81-112). If the RNG is
 //!   unavailable the legacy block alone is hashed and the daemon logs upstream's
 //!   warning, so a failure degrades to (never below) the pre-3.5 behaviour.
 //!
@@ -50,7 +50,7 @@
 //! Both sides advertise their list in the `@RSYNCD:` greeting. A client picks the
 //! entry of the server's list that ranks highest in its own; this server takes the
 //! *first* entry of the client's list that it supports, so client preference wins.
-//! Deviation from upstream: 3.5.1's `parse_negotiate_str()` (compat.c:333-364)
+//! Deviation from upstream: 3.5.1's `parse_negotiate_str()` (compat.c:334-365)
 //! keeps the mutual entry ranked highest in the server's own list on both sides.
 //! The single winner then drives both the challenge and the verification.
 //!
@@ -144,7 +144,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Daemon log line written when the kernel RNG cannot seed a challenge.
 ///
-/// upstream: authenticate.c:113-114 - `rprintf(FWARNING, ...)`, which a daemon
+/// upstream: authenticate.c:106-107 - `rprintf(FWARNING, ...)`, which a daemon
 /// routes to its log file.
 pub const KERNEL_RNG_UNAVAILABLE_WARNING: &str =
     "gen_challenge: /dev/urandom unavailable, falling back to time-based challenge";
@@ -183,13 +183,13 @@ impl ChallengeGenerator {
     /// `digest` is the algorithm fixed by [`negotiate_server_daemon_digest`]; the
     /// same one must verify the response.
     ///
-    /// upstream: authenticate.c:88-119 `gen_challenge()` - `sum_update(rnd, 32)`
+    /// upstream: authenticate.c:81-112 `gen_challenge()` - `sum_update(rnd, 32)`
     /// when `get_random_bytes()` succeeds, then `sum_update(input, 32)` over the
     /// zeroed buffer holding `strlcpy(input, addr, 17)`, `SIVAL(input, 16,
     /// tv_sec)`, `SIVAL(input, 20, tv_usec)` and `SIVAL(input, 24, getpid())`,
     /// hashed with `valid_auth_checksums.negotiated_nni`. `SIVAL` is
     /// little-endian by definition, so `to_le_bytes` reproduces upstream's bytes.
-    /// Upstream reads `/dev/urandom` directly (authenticate.c:71-85); the
+    /// Upstream reads `/dev/urandom` directly (authenticate.c:64-78); the
     /// `getrandom` crate reaches the same kernel CSPRNG on every platform,
     /// including Windows, which has no `/dev/urandom`.
     ///
@@ -360,7 +360,7 @@ impl SecretsFile {
     /// allowed), and a daemon running as root refuses a file that root does
     /// not own. On other platforms no check is performed, as upstream.
     ///
-    /// upstream: authenticate.c:172-177 check_secret(). Delegates to
+    /// upstream: authenticate.c:165-170 check_secret(). Delegates to
     /// `platform::secrets::check_secrets_file_permissions`, the same rule the
     /// daemon's authentication path applies.
     ///
@@ -412,7 +412,7 @@ mod tests {
         );
     }
 
-    /// upstream: authenticate.c:175-177 - a root daemon refuses a secrets file
+    /// upstream: authenticate.c:168-170 - a root daemon refuses a secrets file
     /// root does not own. Only observable when the test itself runs as root;
     /// the rule is unit-tested without root in `platform::secrets`.
     #[cfg(unix)]
@@ -493,7 +493,7 @@ mod tests {
     /// clock and the daemon pid still cannot predict the challenge, because
     /// kernel randomness enters the digest.
     ///
-    /// upstream: authenticate.c:110-111 - the 32 random bytes are hashed in.
+    /// upstream: authenticate.c:103-104 - the 32 random bytes are hashed in.
     #[test]
     fn challenges_from_identical_legacy_inputs_differ() {
         let first = fixed_challenge(getrandom::fill);
@@ -519,7 +519,7 @@ mod tests {
         assert_eq!(challenge.text, expected);
     }
 
-    /// upstream: authenticate.c:112-115 - when the RNG fails, upstream warns and
+    /// upstream: authenticate.c:105-108 - when the RNG fails, upstream warns and
     /// hashes the legacy block alone instead of refusing the connection.
     #[test]
     fn rng_failure_falls_back_to_the_legacy_input_alone() {
@@ -671,7 +671,7 @@ mod tests {
     /// response length: MD4 and MD5 share a base64 length, yet only the digest
     /// negotiation settled on may verify.
     ///
-    /// upstream: authenticate.c:104,128 - both halves use
+    /// upstream: authenticate.c:97,128 - both halves use
     /// `valid_auth_checksums.negotiated_nni`.
     #[test]
     fn verify_client_response_ignores_a_non_negotiated_digest() {
@@ -696,7 +696,7 @@ mod tests {
         ));
     }
 
-    // upstream: compat.c:844-853 `output_daemon_greeting()` prints
+    // upstream: compat.c:853-862 `output_daemon_greeting()` prints
     // `get_default_nno_list(&valid_auth_checksums, ...)` verbatim into
     // `@RSYNCD: %d.%d %s\n` with no protocol filtering, so there is exactly one
     // advertised list and every protocol era sees it: `--daemon --protocol=28`

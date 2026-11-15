@@ -300,7 +300,7 @@ Source tree (when present):
 the project conventions document.
 
 - `flist.c::iconv_filename` and the `iconvbufs(ic_send/ic_recv, ...)`
-  call-outs at `flist.c:738-754, 1127-1150, 1579-1603, 1605-1621` -
+  call-outs at `flist.c:742-758, 1127-1150, 1579-1603, 1605-1621` -
   upstream's per-entry transcoding for filenames and symlink targets,
   the canonical reference for the producer-side application of the
   parsed `iconv_opt`.
@@ -319,7 +319,7 @@ the project conventions document.
   `crates/transfer/src/{generator/filters.rs,receiver/transfer.rs}`
   nor `crates/filters/src/chain.rs` are aware of an
   `Option<FilenameConverter>`.
-- `compat.c:716-718` - gates `CF_SYMLINK_ICONV` on local iconv being
+- `compat.c:717-719` - gates `CF_SYMLINK_ICONV` on local iconv being
   configured. Mirrors the producer-side signal that oc-rsync currently
   derives from `ClientConfig.iconv` only at
   `core/.../remote/flags.rs:228` and would need to reuse for capability

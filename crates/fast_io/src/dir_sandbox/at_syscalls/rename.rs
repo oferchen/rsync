@@ -184,7 +184,7 @@ pub fn renameat_via_sandbox_or_fallback(
     // and final name share one): rename between the held descriptors rather
     // than re-walking each side from the root. A failure releases the held
     // parent and takes the per-side confined walk below, whose verdict stands.
-    // upstream: rsync-3.5.1/syscall.c:3858 held_dfd_for() - the receiver's
+    // upstream: rsync-3.5.2/syscall.c:3926 held_dfd_for() - the receiver's
     // commit rename runs against the held directory fd.
     if let Some(sandbox) = sandbox
         && let Some((old_dirfd, old_leaf)) =
@@ -214,7 +214,7 @@ pub fn renameat_via_sandbox_or_fallback(
     // outside the tree. That is the escape upstream's
     // `rename-fullpath-symlink-race` test demonstrates.
     //
-    // upstream: `rsync-3.5.1/syscall.c:2057-2062` `do_rename_at()` - "Confine
+    // upstream: `rsync-3.5.2/syscall.c:2128-2133` `do_rename_at()` - "Confine
     // each side independently. [...] Doing each side independently means an
     // absolute source never disables confinement of a relative destination."
     if sandbox.is_some() {
@@ -343,10 +343,10 @@ pub(super) fn anchor_confined_endpoint<'a>(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:2005` `do_rename_at()` - "Confine each side
+/// - `rsync-3.5.2/syscall.c:2076` `do_rename_at()` - "Confine each side
 ///   independently. [...] Doing each side independently means an absolute
 ///   source never disables confinement of a relative destination."
-/// - `rsync-3.5.1/syscall.c:3032` `ds_descend()` - the per-component walk.
+/// - `rsync-3.5.2/syscall.c:3103` `ds_descend()` - the per-component walk.
 ///
 /// # Errors
 ///
@@ -390,15 +390,15 @@ pub fn confined_rename(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/util1.c:636-663` `robust_rename()` - the `EXDEV` arm sets
+/// - `rsync-3.5.2/util1.c:636-663` `robust_rename()` - the `EXDEV` arm sets
 ///   `operator_path_resolve` for an absolute `to` around `copy_file()` and for
 ///   an absolute `from` around `do_unlink_at()`.
-/// - `rsync-3.5.1/util1.c:347-376` `unlink_and_reopen()` - `robust_unlink(dest)`
+/// - `rsync-3.5.2/util1.c:347-376` `unlink_and_reopen()` - `robust_unlink(dest)`
 ///   then `do_open_at(dest, O_WRONLY|O_CREAT|O_TRUNC|O_EXCL, mode &
 ///   INITACCESSPERMS)`.
-/// - `rsync-3.5.1/util1.c:502-508` `copy_file()` - `if (do_fsync &&
+/// - `rsync-3.5.2/util1.c:502-508` `copy_file()` - `if (do_fsync &&
 ///   fsync(ofd) < 0)` fails the copy.
-/// - `rsync-3.5.1/backup.c:400-416` - the `keep_backup` copy tier goes through
+/// - `rsync-3.5.2/backup.c:400-416` - the `keep_backup` copy tier goes through
 ///   the same `copy_file()`.
 ///
 /// # Errors

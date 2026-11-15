@@ -46,7 +46,7 @@ use crate::xattr_windows as backend;
 ///
 /// The privilege test goes through [`crate::am_root`], which reads the cached
 /// **libc** `geteuid` (`identity::is_root`), never a `rustix` raw syscall.
-/// Upstream's `am_root` comes from `MY_UID()` (`rsync.h:1457` = libc
+/// Upstream's `am_root` comes from `MY_UID()` (`rsync.h:1473` = libc
 /// `geteuid()`, sampled at `main.c:1871`), so `fakeroot`'s LD_PRELOAD
 /// interposition is visible to it. A raw syscall reports the real
 /// unprivileged uid under `fakeroot` and would confine the receiver to
@@ -393,7 +393,7 @@ fn strip_source_xattrs_where(
 /// cannot access are excluded (`list_attributes` already applies the namespace
 /// filter). Used by the `--link-dest` match-level check to decide whether a
 /// basis file's xattrs already equal the source's.
-/// upstream: generator.c:461 xattrs_differ() via generator.c:474 unchanged_attrs()
+/// upstream: generator.c:498 xattrs_differ() via generator.c:511 unchanged_attrs()
 pub fn xattrs_match(a: &Path, b: &Path, follow_symlinks: bool) -> Result<bool, MetadataError> {
     let mut a_map: std::collections::BTreeMap<Vec<u8>, Vec<u8>> = std::collections::BTreeMap::new();
     for name in list_attributes(a, follow_symlinks, receiver_screen())? {

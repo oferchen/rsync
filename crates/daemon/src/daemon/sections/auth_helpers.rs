@@ -7,14 +7,14 @@ fn log_connection(log: &SharedLogSink, host: &str, peer_addr: SocketAddr) {
 
 pub(crate) fn log_list_request(log: &SharedLogSink, host: &str, peer_addr: SocketAddr) {
     let ip = peer_addr.ip();
-    // upstream: clientserver.c:1555 - `module-list request from %s (%s)`
+    // upstream: clientserver.c:1565 - `module-list request from %s (%s)`
     let text = format!("module-list request from {host} ({ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
 pub(crate) fn log_module_request(log: &SharedLogSink, host: &str, peer_ip: IpAddr, module: &str) {
-    // upstream: clientserver.c:787 - `rsync allowed access on module %s from %s (%s)`
+    // upstream: clientserver.c:791 - `rsync allowed access on module %s from %s (%s)`
     let text = format!("rsync allowed access on module {module} from {host} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
@@ -63,7 +63,7 @@ fn log_module_lock_error(
 /// The refusal text upstream builds once and delivers to BOTH the peer and the
 /// daemon log.
 ///
-/// upstream: `options.c:1415-1429` `create_refuse_error()` fills `err_buf` with
+/// upstream: `options.c:1433-1447` `create_refuse_error()` fills `err_buf` with
 /// `"The server is configured to refuse --<longName>\n"`, and the post-`@RSYNCD:
 /// OK` failure branch at `clientserver.c:1254` reaches `option_error()`
 /// (`options.c:907-918`), which emits that same buffer via
@@ -76,7 +76,7 @@ fn log_module_lock_error(
 /// saw upstream's wording while the log carried an oc-invented
 /// `refusing option '...' for module '...'` line that no upstream site emits.
 ///
-/// upstream: options.c:1415-1429 `create_refuse_error()` appends ` (-X)` when
+/// upstream: options.c:1433-1447 `create_refuse_error()` appends ` (-X)` when
 /// the refused row has a short name, e.g. `--compress (-z)`.
 pub(crate) fn refused_option_message(refused: &str) -> String {
     match refused.strip_prefix("--").and_then(refused_short_letter) {
@@ -87,7 +87,7 @@ pub(crate) fn refused_option_message(refused: &str) -> String {
 
 /// Logs a refused option in upstream's words.
 ///
-/// upstream: `options.c:915` - `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`.
+/// upstream: `options.c:933` - `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`.
 /// The logged line therefore carries the `rsync: ` prefix `option_error()` adds
 /// and nothing more: upstream names no module, host or peer here, because the
 /// connection is already identified by the line's pid stamp and by the
@@ -106,14 +106,14 @@ fn log_module_refused_option(log: &SharedLogSink, refused: &str) {
 
 /// Logs a failure to read the client's argument vector.
 ///
-/// upstream: `io.c:1503-1504` - `read_args()` reports the refusal where it
+/// upstream: `io.c:1510-1511` - `read_args()` reports the refusal where it
 /// happens, e.g. `rprintf(FERROR, "too many daemon arguments\n")`, and a
 /// daemon's `FERROR` reaches the log file. oc sent that refusal to the peer and
 /// logged nothing at all, so an operator watching the log could not see why a
 /// connection was cut - the guard fired invisibly.
 ///
 /// The text is the error's own and is emitted bare: unlike `option_error()`
-/// (`options.c:915`) upstream adds no `rsync: ` prefix at this site.
+/// (`options.c:933`) upstream adds no `rsync: ` prefix at this site.
 fn log_client_args_failure(log: &SharedLogSink, error: &io::Error) {
     let message = rsync_info!(error.to_string()).with_role(Role::Daemon);
     log_message(log, &message);
@@ -142,14 +142,14 @@ pub(crate) fn log_module_auth_failure(
 }
 
 pub(crate) fn log_module_denied(log: &SharedLogSink, host: &str, peer_ip: IpAddr, module: &str) {
-    // upstream: clientserver.c:774 - `rsync denied on module %s from %s (%s)`
+    // upstream: clientserver.c:778 - `rsync denied on module %s from %s (%s)`
     let text = format!("rsync denied on module {module} from {host} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
 pub(crate) fn log_unknown_module(log: &SharedLogSink, host: &str, peer_ip: IpAddr, module: &str) {
-    // upstream: clientserver.c:1568 - `unknown module '%s' tried from %s (%s)`
+    // upstream: clientserver.c:1578 - `unknown module '%s' tried from %s (%s)`
     let text = format!("unknown module '{module}' tried from {host} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);

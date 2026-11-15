@@ -43,7 +43,7 @@ pub enum TransferPhase {
     /// Binary or legacy ASCII protocol version exchange.
     ///
     /// Both sides advertise supported versions and negotiate a common one.
-    /// (upstream: `compat.c:606-607`)
+    /// (upstream: `compat.c:607-608`)
     Handshake,
 
     /// Filter and exclude list exchange.

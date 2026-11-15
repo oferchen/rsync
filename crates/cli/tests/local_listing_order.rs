@@ -1,7 +1,7 @@
 //! Local `-vv` listing order: the generator's notices and the sender's names
 //! interleave as rsync 3.5.1 prints them, with and without `--progress`.
 //!
-//! upstream: generator.c:2803-2841 - the generator prints `is uptodate` the
+//! upstream: generator.c:2889-2927 - the generator prints `is uptodate` the
 //! moment it checks an entry, while each transferred name waits in its output
 //! buffer until it blocks on the next list; sender.c:515-547 - the sender's
 //! sub-list lookahead decides when that happens. The order itself is

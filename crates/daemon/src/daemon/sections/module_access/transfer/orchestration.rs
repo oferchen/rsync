@@ -4,7 +4,7 @@
 /// Refuses a client whose greeting protocol lies outside the supported window,
 /// at the point upstream's setup_protocol() checks it. Returns whether it did.
 ///
-/// upstream: compat.c:621-625 - `remote_protocol` outside [MIN_PROTOCOL_VERSION,
+/// upstream: compat.c:622-626 - `remote_protocol` outside [MIN_PROTOCOL_VERSION,
 /// MAX_PROTOCOL_VERSION] logs the shell-clean lines and exits RERR_PROTOCOL.
 /// The daemon has not started multiplexing yet, so the text goes only to its
 /// log and the client sees the connection close. The post-xfer hook still runs,
@@ -45,7 +45,7 @@ fn refuse_unsupported_peer_protocol(
 /// Runs the module's `post-xfer exec` hook, once it has been armed, with the
 /// given transfer `exit_status`.
 ///
-/// upstream: clientserver.c:964-991 - the daemon forks a child that runs the
+/// upstream: clientserver.c:968-995 - the daemon forks a child that runs the
 /// whole module session while the parent waits for the child's exit status and
 /// then runs `post-xfer exec` with it. Because the parent waits for *any* child
 /// outcome, the hook fires regardless of transfer success - including a refused
@@ -223,7 +223,7 @@ fn process_approved_module(
         log_module_request(log, ctx.host_display(), ctx.peer_ip, ctx.request);
     }
 
-    // upstream: clientserver.c:757/770-771 - RSYNC_MODULE_NAME, RSYNC_HOST_NAME
+    // upstream: clientserver.c:761/770-771 - RSYNC_MODULE_NAME, RSYNC_HOST_NAME
     // and RSYNC_HOST_ADDR are set before authentication reads `secrets file`.
     let peer_host_addr = ctx.peer_ip.to_string();
     let peer_host_name = ctx.host_display().to_owned();
@@ -245,7 +245,7 @@ fn process_approved_module(
     // or an inherited global-section value). The guard restores the daemon-global
     // logger on drop, so it is held for the module's whole session. In log-file
     // mode (`log_sink` is Some) syslog is inactive, so the reconfiguration is
-    // skipped. upstream: log.c:186-205 log_init(1) reopens syslog per selected module.
+    // skipped. upstream: log.c:193-212 log_init(1) reopens syslog per selected module.
     #[cfg(unix)]
     let _module_syslog_guard = if ctx.log_sink.is_none() {
         module.reconfigure_syslog()
@@ -261,7 +261,7 @@ fn process_approved_module(
             None => return Ok(()),
         };
 
-    // upstream: clientserver.c:815 - RSYNC_USER_NAME is set once auth has
+    // upstream: clientserver.c:819 - RSYNC_USER_NAME is set once auth has
     // passed, and the module's other path-type parameters are read after it.
     let authed_module = {
         let mut definition = module.definition.clone();
@@ -274,13 +274,13 @@ fn process_approved_module(
     };
     let module = &authed_module;
 
-    // upstream: clientserver.c:833-881 - uid/gid and path are checked after
+    // upstream: clientserver.c:837-885 - uid/gid and path are checked after
     // authentication and before the daemon filter parse (:930).
     if !module_settings_usable(ctx, module)? {
         return Ok(());
     }
 
-    // upstream: clientserver.c:933-952 - the five daemon filter parameters
+    // upstream: clientserver.c:937-956 - the five daemon filter parameters
     // (`filter`, `include from`, `include`, `exclude from`, `exclude`) are
     // parsed HERE, and the ordering is the substance of this placement:
     //
@@ -338,7 +338,7 @@ fn process_approved_module(
         }
     };
 
-    // upstream: clientserver.c:959-1032 - the hook directives are read, and so
+    // upstream: clientserver.c:963-1036 - the hook directives are read, and so
     // expanded, after authentication (RSYNC_USER_NAME is set at :815) and the
     // daemon filter parse (:930-954), and before the post-xfer fork, the early
     // exec and the chroot:
@@ -398,7 +398,7 @@ fn process_approved_module(
             user_name: auth_user.as_deref(),
             // Early exec runs before the client names a request, so
             // upstream passes NULL and the hook sees "(NONE)" with no
-            // RSYNC_ARG<n>. upstream: clientserver.c:1004 -
+            // RSYNC_ARG<n>. upstream: clientserver.c:1008 -
             // write_pre_exec_args(arg_fd, NULL, NULL, NULL, 1).
             request: EARLY_EXEC_REQUEST,
             client_args: &[],
@@ -416,7 +416,7 @@ fn process_approved_module(
                 }
             }
             Ok(Err(error_msg)) => {
-                // upstream: clientserver.c:1005-1008 - a hook that ran and
+                // upstream: clientserver.c:1009-1012 - a hook that ran and
                 // exited non-zero logs `rsyserr(FLOG, ..., "early exec
                 // failed")` and sends the fixed `@ERROR: early exec failed`
                 // line; the exit-code/stderr detail stays in the daemon log.
@@ -426,7 +426,7 @@ fn process_approved_module(
                 }
                 let error = AtError::message("early exec failed".to_string());
                 send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                // upstream: clientserver.c:994-1010 - early exec runs after
+                // upstream: clientserver.c:998-1014 - early exec runs after
                 // the post-xfer-exec fork point, so its failure is a
                 // child exit the waiting parent still observes.
                 let host_owned = ctx.host_display().to_owned();
@@ -441,7 +441,7 @@ fn process_approved_module(
                 return Ok(());
             }
             Err(err) => {
-                // upstream: clientserver.c:999-1002 - a hook that could not
+                // upstream: clientserver.c:1003-1006 - a hook that could not
                 // be started logs `rsyserr(FLOG, errno, "early exec
                 // preparation failed")` and sends the fixed `@ERROR: early
                 // exec preparation failed` line; the OS error detail stays
@@ -489,7 +489,7 @@ fn process_approved_module(
     let pre_xfer_command = hooks.take(Hook::PreXferExec).filter(|_| exec_enabled);
     let name_converter_command = hooks.take(Hook::NameConverter).filter(|_| exec_enabled);
 
-    // upstream: clientserver.c:1050-1123 - chroot + setgid + setuid run BEFORE
+    // upstream: clientserver.c:1054-1127 - chroot + setgid + setuid run BEFORE
     // `@RSYNCD: OK` (:1152), so their `@ERROR: chroot/setgid/setuid failed`
     // replies are raw pre-OK lines the client reads before it switches to the
     // multiplexed input stream. Run them here, then emit OK, so a failure can
@@ -502,7 +502,7 @@ fn process_approved_module(
     // see the ordering table there for why each of the three steps in this
     // block would break a different working configuration.
     let Some(module_root) = validate_module_path(ctx, module)? else {
-        // upstream: clientserver.c:1059-1060 - the change_dir() into the module
+        // upstream: clientserver.c:1063-1064 - the change_dir() into the module
         // path is post-fork, so a missing/unreachable path still hooks.
         let host_owned = ctx.host_display().to_owned();
         run_post_xfer_finalizer(
@@ -573,7 +573,7 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
-    // upstream: clientserver.c:1152 - emit `@RSYNCD: OK` now that chroot and the
+    // upstream: clientserver.c:1156 - emit `@RSYNCD: OK` now that chroot and the
     // privilege drop have succeeded; the client then switches to multiplexed
     // input and sends its argv, which we read next.
     send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
@@ -583,7 +583,7 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
-    // upstream: clientserver.c:1288-1289 - the client's forwarded `--timeout`
+    // upstream: clientserver.c:1297-1298 - the client's forwarded `--timeout`
     // has now been read, so the connection is re-armed with the minimum of it
     // and the module's `timeout` directive (0 on either side meaning "no
     // timeout"). Before this point only the module value is known.
@@ -603,7 +603,7 @@ fn process_approved_module(
         client_args: &client_args,
     };
 
-    // upstream: clientserver.c:1180-1183 - the pre-xfer hook is handed the
+    // upstream: clientserver.c:1184-1187 - the pre-xfer hook is handed the
     // request and argv as soon as read_args() has them, and its verdict is
     // taken before any other use of the argv. Its failure shares the single
     // post-OK fatal exit with a refused option (:1254-1268), and wins over it:
@@ -612,7 +612,7 @@ fn process_approved_module(
     if let Some(expanded_command) = pre_xfer_command.as_deref() {
         let failure = match run_pre_xfer_exec(expanded_command, &xfer_ctx) {
             Ok(failure) => failure,
-            // upstream: clientserver.c:1017-1020 - a hook that cannot be started
+            // upstream: clientserver.c:1021-1024 - a hook that cannot be started
             // is logged with its errno and reported by this fixed text.
             Err(io_err) => {
                 if let Some(log) = ctx.log_sink {
@@ -627,7 +627,7 @@ fn process_approved_module(
             }
         };
         if let Some(text) = failure {
-            // upstream: clientserver.c:1232 - the failure path finishes
+            // upstream: clientserver.c:1241 - the failure path finishes
             // setup_protocol() first, so an unsupported peer is refused there.
             if refuse_unsupported_peer_protocol(
                 ctx,
@@ -638,7 +638,7 @@ fn process_approved_module(
             ) {
                 return Ok(());
             }
-            // upstream: clientserver.c:1226-1268 - finish the protocol setup so
+            // upstream: clientserver.c:1235-1277 - finish the protocol setup so
             // the error can travel multiplexed, send the text as FERROR, and
             // exit RERR_UNSUPPORTED. Nothing is written raw after `@RSYNCD: OK`.
             let payload = text.strip_suffix('\n').unwrap_or(&text);
@@ -689,13 +689,13 @@ fn process_approved_module(
     // to multiplexed input. The error must travel as `MSG_ERROR_XFER` +
     // `MSG_ERROR_EXIT` frames; raw `@ERROR:` text would surface on the
     // receiver as `unexpected tag 77` (the 'T' from "The server ..." minus
-    // `MPLEX_BASE = 7`). upstream: clientserver.c:1251 io_start_multiplex_out
+    // `MPLEX_BASE = 7`). upstream: clientserver.c:1260 io_start_multiplex_out
     // immediately followed by `rwrite(FERROR, ...)`.
     if let Some(refused) = refused_client_arg(module, &client_args) {
         let host_owned = ctx.host_display().to_owned();
         let result =
             handle_refused_option_post_handshake(ctx, &refused, negotiated_protocol, &client_args);
-        // upstream: clientserver.c:1160-1166 - parse_arguments() rejecting a
+        // upstream: clientserver.c:1164-1170 - parse_arguments() rejecting a
         // refused option runs after the post-xfer-exec fork point and exits
         // via exit_cleanup(RERR_UNSUPPORTED), which the waiting parent
         // observes and still hooks.
@@ -728,7 +728,7 @@ fn process_approved_module(
     // `handle_access_denied_post_handshake` finishes the post-OK protocol
     // setup, then emits the framed error and exit code.
     //
-    // upstream: clientserver.c:805 seeds `read_only = lp_read_only(i)`;
+    // upstream: clientserver.c:809 seeds `read_only = lp_read_only(i)`;
     // auth_server() (authenticate.c:436-441) then overrides it from the
     // authenticated user's `:ro` / `:rw` suffix. Apply that override here so a
     // `name:rw` user may push to a `read only = yes` module and a `name:ro`
@@ -736,7 +736,7 @@ fn process_approved_module(
     // check is unaffected: upstream's auth override only touches `read_only`.
     let role = determine_server_role(&client_args);
     let effective_read_only = access_effective_read_only(module.read_only, auth_access_level);
-    // upstream: clientserver.c:964-991 - the post-xfer parent waits for the
+    // upstream: clientserver.c:968-995 - the post-xfer parent waits for the
     // module child and runs `post-xfer exec` regardless of outcome. A refused
     // read-only push / write-only pull exits `RERR_SYNTAX` (1) in the child, so
     // the hook still fires with `RSYNC_EXIT_STATUS=1`. Emit the framed
@@ -815,7 +815,7 @@ fn process_approved_module(
                 }
                 let error = AtError::message("name-converter exec preparation failed");
                 send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                // upstream: clientserver.c:964-992 - the name-converter spawn
+                // upstream: clientserver.c:968-996 - the name-converter spawn
                 // runs after the post-xfer-exec fork point, so its failure
                 // is a child exit the waiting parent still observes.
                 let host_owned = ctx.host_display().to_owned();
@@ -844,7 +844,7 @@ fn process_approved_module(
     // process is not chrooted, so the real absolute module path must be
     // preserved. The inner directory is "/" unless the module path carried a
     // `/./` marker, in which case it is the normalized remainder after it.
-    // upstream: clientserver.c:897-914 - `module_dir` after the `/./` split.
+    // upstream: clientserver.c:901-918 - `module_dir` after the `/./` split.
     let effective_module;
     // An unchrooted module whose root is now the working directory is served
     // as `.`; see `enter_pinned_module_root`.
@@ -870,7 +870,7 @@ fn process_approved_module(
         module
     };
 
-    // upstream's `module_dir`: the chroot rewrites it (clientserver.c:897-914),
+    // upstream's `module_dir`: the chroot rewrites it (clientserver.c:901-918),
     // entering the module as the working directory does not - the process is
     // served from `.`, but `module_dir` stays the module's real path.
     let module_dir = if privilege_outcome.served_root.is_some() {
@@ -908,7 +908,7 @@ fn process_approved_module(
     // is read here, so nothing in this statement depends on paths the chroot
     // or the uid drop has since taken away.
     config.daemon_filter_rules = daemon_filter_rules;
-    // upstream: options.c:1620-1656 - the daemon's `parse_arguments()` applies
+    // upstream: options.c:1647-1683 - the daemon's `parse_arguments()` applies
     // the filter options a client puts in the server argv (reachable with
     // `-M`). It runs after the module root is entered and privileges are
     // dropped, which is when these files are read here too, and every one is
@@ -1044,7 +1044,7 @@ fn process_approved_module(
             }
         };
 
-    // upstream: clientserver.c:1208-1219 - the per-request line, emitted once
+    // upstream: clientserver.c:1212-1223 - the per-request line, emitted once
     // the argv is parsed, the refusals have been applied and the pre-xfer hook
     // has run, and before the transfer's own output starts.
     log_daemon_request(ctx, &client_args, role, auth_user.as_deref());
@@ -1074,7 +1074,7 @@ fn process_approved_module(
         auth_user.as_deref(),
     );
     let exit_status = outcome.unwrap_or_else(|code| code);
-    // upstream: cleanup.c:264 - the session's process exits with that code.
+    // upstream: cleanup.c:265 - the session's process exits with that code.
     if exit_status != 0 {
         *ctx.session_exit_code = Some(ExitCode::from_raw(exit_status));
     }
@@ -1221,7 +1221,7 @@ fn process_approved_module(
         // on the implicit Drop-time close. The companion SO_LINGER set
         // above is the catastrophic-failure fallback.
         //
-        // upstream: cleanup.c:_exit_cleanup() -> close_all() (cleanup.c:265) emits the
+        // upstream: cleanup.c:_exit_cleanup() -> close_all() (cleanup.c:266) emits the
         // kernel FIN as the process exits; the threaded daemon collapses
         // that pattern into the explicit shutdown here.
         if let Some(tcp) = stream.tcp_stream()
@@ -1258,7 +1258,7 @@ fn process_approved_module(
     // delivery of any in-flight TX bytes.
     drop(streams);
 
-    // upstream: clientserver.c:975-988 - the post-xfer parent runs the hook
+    // upstream: clientserver.c:979-992 - the post-xfer parent runs the hook
     // once the transfer child has exited, whatever its outcome.
     if let Some(command) = ctx.post_xfer_command.as_deref() {
         run_post_xfer_exec(command, &xfer_ctx, exit_status, ctx.log_sink);
@@ -1274,7 +1274,7 @@ fn process_approved_module(
 ///
 /// The path becomes the post-chroot inner directory: `/` unless the configured
 /// path carried a `/./` marker, in which case it is the normalized remainder
-/// after it. upstream: clientserver.c:897-914 - `module_dir` after the split.
+/// after it. upstream: clientserver.c:901-918 - `module_dir` after the split.
 ///
 /// Any decision that reads the *pre-chroot* path must be resolved here, before
 /// the rewrite consumes its input. `munge symlinks` is such a decision: upstream
@@ -1317,7 +1317,7 @@ mod chroot_adjusted_definition_tests {
     /// A module served at its own root chroots to `/`, so `module_dirlen`
     /// collapses to 0 and munging defaults OFF.
     ///
-    /// upstream: clientserver.c:911-923 then :1070-1071.
+    /// upstream: clientserver.c:915-927 then :1070-1071.
     #[test]
     fn whole_module_chroot_keeps_munging_off() {
         let adjusted = chroot_adjusted_definition(&chrooted_module("/srv/mod"), None);
@@ -1333,7 +1333,7 @@ mod chroot_adjusted_definition_tests {
     /// This is the pin: reading the default off the rewritten `/sub` path finds
     /// no marker and answers OFF, which is the defect.
     ///
-    /// upstream: clientserver.c:903-907 then :1070-1071.
+    /// upstream: clientserver.c:907-911 then :1070-1071.
     #[test]
     fn inside_chroot_split_keeps_munging_on_after_the_rewrite() {
         let adjusted = chroot_adjusted_definition(

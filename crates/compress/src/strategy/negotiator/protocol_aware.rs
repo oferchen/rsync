@@ -11,7 +11,7 @@ use crate::strategy::profile::ProtocolCompressionProfile;
 ///
 /// - **Protocol < 30**: No vstring negotiation exists in upstream rsync.
 ///   Compression is always zlib - the remote list is ignored entirely.
-///   upstream: compat.c:560-567 - when `!do_negotiated_strings`, compression
+///   upstream: compat.c:561-568 - when `!do_negotiated_strings`, compression
 ///   defaults to `"zlib"` without exchanging vstrings.
 ///
 /// - **Protocol 30-31**: Full vstring negotiation. Supports zlibx, zlib, none,
@@ -20,7 +20,7 @@ use crate::strategy::profile::ProtocolCompressionProfile;
 ///
 /// - **Protocol 32+**: Same as 30-31. Zstd is first preference when the feature
 ///   is enabled, matching upstream `valid_compressions_items[]` order.
-///   upstream: compat.c:101-112 - zstd appears first in the list when
+///   upstream: compat.c:102-113 - zstd appears first in the list when
 ///   `SUPPORT_ZSTD` is defined.
 ///
 /// # Example
@@ -63,7 +63,7 @@ impl ProtocolAwareCompressionNegotiator {
 impl CompressionNegotiator for ProtocolAwareCompressionNegotiator {
     fn supported_algorithms(&self) -> Vec<&'static str> {
         // Single source of truth for per-protocol advertisement lists.
-        // upstream: compat.c:101-112 valid_compressions_items[] (modern),
+        // upstream: compat.c:102-113 valid_compressions_items[] (modern),
         // compat.c:560-567 (legacy zlib-only fallback).
         ProtocolCompressionProfile::for_protocol(self.protocol_version).advertised_algorithms()
     }
@@ -71,19 +71,19 @@ impl CompressionNegotiator for ProtocolAwareCompressionNegotiator {
     fn select_algorithm(&self, remote_list: &[&str], is_server: bool) -> &'static str {
         let profile = ProtocolCompressionProfile::for_protocol(self.protocol_version);
         if !profile.supports_vstring_negotiation {
-            // upstream: compat.c:566 - no vstring exchange; zlib is mandatory.
+            // upstream: compat.c:567 - no vstring exchange; zlib is mandatory.
             // The remote list is irrelevant for legacy protocols.
             return "zlib";
         }
 
         // Protocol >= 30: the asymmetric selection rule.
-        // upstream: compat.c:333-364 parse_negotiate_str()
+        // upstream: compat.c:334-365 parse_negotiate_str()
         let supported = self.supported_algorithms();
 
         if is_server {
             // Server: iterate the client's (remote) list, first match wins. This is
             // the 3.4.x rule (`if (best == 1 || am_server) break;`). Deviation from
-            // upstream: 3.5.1 compat.c:354 parse_negotiate_str() breaks only on
+            // upstream: 3.5.1 compat.c:355 parse_negotiate_str() breaks only on
             // `best == 1`, so the server picks its own best mutual preference.
             for remote_algo in remote_list {
                 if let Some(kind) = CompressionAlgorithmKind::from_name(remote_algo)
@@ -244,7 +244,7 @@ mod tests {
     #[cfg(feature = "zstd")]
     #[test]
     fn protocol_aware_proto_30_zstd_is_first_preference() {
-        // upstream: compat.c:102-103 valid_compressions_items[] - zstd first.
+        // upstream: compat.c:103-104 valid_compressions_items[] - zstd first.
         let neg = ProtocolAwareCompressionNegotiator::new(30);
         let supported = neg.supported_algorithms();
         assert_eq!(supported[0], "zstd");
@@ -261,7 +261,7 @@ mod tests {
     #[cfg(feature = "zstd")]
     #[test]
     fn protocol_aware_proto_32_zstd_preferred() {
-        // upstream: compat.c:102-103 valid_compressions_items[] with SUPPORT_ZSTD.
+        // upstream: compat.c:103-104 valid_compressions_items[] with SUPPORT_ZSTD.
         let neg = ProtocolAwareCompressionNegotiator::new(32);
         let supported = neg.supported_algorithms();
         assert_eq!(
@@ -369,7 +369,7 @@ mod tests {
     #[cfg(feature = "lz4")]
     #[test]
     fn protocol_aware_proto_30_lz4_auto_negotiated() {
-        // upstream: compat.c:101-112 valid_compressions_items[] is NOT gated by
+        // upstream: compat.c:102-113 valid_compressions_items[] is NOT gated by
         // protocol version - lz4 is advertised at every negotiated protocol
         // (30, 31, 32) whenever SUPPORT_LZ4 is compiled in. Wire safety against
         // genuine proto-30 peers (e.g. rsync 3.0.9) comes from the `v`

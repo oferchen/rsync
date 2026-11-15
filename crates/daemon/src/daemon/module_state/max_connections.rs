@@ -57,7 +57,7 @@ impl MaxConnections {
     /// Returns the number echoed in the refusal diagnostic, preserving the
     /// minus sign of a disabling value.
     ///
-    /// upstream: clientserver.c:797-800 formats the configured integer with
+    /// upstream: clientserver.c:801-804 formats the configured integer with
     /// `%d` into `@ERROR: max connections (%d) reached -- try again later`.
     pub(crate) const fn display_value(self) -> i32 {
         match self {

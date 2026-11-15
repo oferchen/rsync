@@ -21,7 +21,7 @@
 //! - **SIGTERM**: Graceful shutdown on first signal, abort on second
 //! - **SIGHUP**: Same as SIGTERM
 //! - **SIGPIPE**: Ignored, so a broken pipe surfaces as an `EPIPE` write error
-//!   (upstream `main.c:1926-1928`)
+//!   (upstream `main.c:1930-1932`)
 //!
 //! Deviation from upstream: upstream `sig_int()` (rsync.c:843-875) exits on the first
 //! signal unless it is a server or receiver deferring through `got_kill_signal`.

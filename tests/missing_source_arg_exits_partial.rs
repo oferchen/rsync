@@ -189,13 +189,13 @@ fn assert_partial_transfer(run: &ClientRun, label: &str) {
     assert_eq!(
         run.code, RERR_PARTIAL,
         "{label}: a missing source argument must exit {RERR_PARTIAL} \
-         (upstream cleanup.c:217-218 via got_xfer_error), got {}",
+         (upstream cleanup.c:218-219 via got_xfer_error), got {}",
         run.code
     );
     let reports = run.output.matches("link_stat").count();
     assert_eq!(
         reports, 1,
-        "{label}: upstream rsyserr()s the failure once (flist.c:2673); \
+        "{label}: upstream rsyserr()s the failure once (flist.c:2684); \
          reporting it through both a MSG_ERROR_XFER frame and an io_error bit \
          would surface it twice"
     );

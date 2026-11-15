@@ -123,7 +123,7 @@ pub(super) fn process_links(
         ignore_times_enabled,
         checksum_enabled,
     )? {
-        // upstream: generator.c:1073-1198 try_dests_reg() - a LINK_DEST candidate
+        // upstream: generator.c:1110-1235 try_dests_reg() - a LINK_DEST candidate
         // that passes the quick-check (data matches) is hard-linked only when its
         // preserved attributes also match the source (match_level 3). When the
         // attributes differ (match_level 2) upstream does NOT hard-link: it falls
@@ -199,7 +199,7 @@ pub(super) fn process_links(
         // try_dests_reg() (generator.c) then itemizes with an EMPTY xname, so
         // the itemize row is the only output upstream produces here.
 
-        // upstream: hlink.c:475-494 / generator.c:1122-1137 - a `--link-dest`
+        // upstream: hlink.c:489-508 / generator.c:1159-1174 - a `--link-dest`
         // cluster member is linked from the basis, so it ends up sharing the
         // same inode as its already-placed in-transfer leader. `maybe_hard_link`
         // then takes the same-inode branch, itemizing with an empty xname and
@@ -248,7 +248,7 @@ pub(super) fn process_links(
             Some(record_path),
             file_type,
         )?;
-        // upstream: generator.c:1114 try_dests_reg() - at match_level 3 the
+        // upstream: generator.c:1151 try_dests_reg() - at match_level 3 the
         // file is only hard-linked; set_file_attrs runs *only* under --atimes.
         // Rewriting metadata unconditionally would, under --fake-super, write a
         // `user.rsync.%stat` xattr onto the shared basis inode that upstream never
@@ -355,7 +355,7 @@ pub(super) fn process_links(
                 },
                 context.options().modify_window(),
             );
-            // upstream: hlink.c:246-249 + generator.c:533-536 - the hardlink
+            // upstream: hlink.c:246-249 + generator.c:570-573 - the hardlink
             // leader-reuse path emits `itemize(..., ITEM_LOCAL_CHANGE, ...)`,
             // and ITEM_REPORT_TIME fires whenever the leader's source mtime
             // differs from the existing destination alias's mtime, even
@@ -423,9 +423,26 @@ pub(super) fn process_links(
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(destination)?;
                     if let Err(link_error) = create_hard_link(&existing_target, destination) {
-                        // upstream: hlink.c:486-487 - rsyserr(FERROR_XFER, errno,
+                        // upstream: hlink.c:500-501 - rsyserr(FERROR_XFER, errno,
                         // "link %s => %s failed", ...) and the entry is skipped.
                         report_link_failure(context, destination, &existing_target, &link_error);
+                        #[cfg(unix)]
+                        let can_recover = matches!(
+                            link_error.raw_os_error(),
+                            Some(libc::EMLINK) | Some(libc::EXDEV)
+                        );
+                        #[cfg(not(unix))]
+                        let can_recover = false;
+                        if can_recover {
+                            // upstream 3.5.2: hlink.c:478,581-595 (RsyncProject/rsync#741) -
+                            // fall back to transferring a regular file and re-root the group.
+                            context.record_hard_link(metadata, destination);
+                            return Ok(LinkOutcome {
+                                copy_source_override: None,
+                                reference_basis: None,
+                                completed: false,
+                            });
+                        }
                         context.register_progress();
                         return Ok(LinkOutcome {
                             copy_source_override: None,
@@ -446,6 +463,21 @@ pub(super) fn process_links(
                 }
                 Err(error) => {
                     report_link_failure(context, destination, &existing_target, &error);
+                    #[cfg(unix)]
+                    let can_recover =
+                        matches!(error.raw_os_error(), Some(libc::EMLINK) | Some(libc::EXDEV));
+                    #[cfg(not(unix))]
+                    let can_recover = false;
+                    if can_recover {
+                        // upstream 3.5.2: hlink.c:478,581-595 (RsyncProject/rsync#741) -
+                        // fall back to transferring a regular file and re-root the group.
+                        context.record_hard_link(metadata, destination);
+                        return Ok(LinkOutcome {
+                            copy_source_override: None,
+                            reference_basis: None,
+                            completed: false,
+                        });
+                    }
                     context.register_progress();
                     return Ok(LinkOutcome {
                         copy_source_override: None,
@@ -472,7 +504,7 @@ pub(super) fn process_links(
         // from here as well produced a second, absolute-path copy of a line the
         // renderer had already written correctly.
 
-        // upstream: hlink.c:496-537 finish_hard_link() - every alias in a cohort
+        // upstream: hlink.c:510-560 finish_hard_link() - every alias in a cohort
         // is linked against the group's data-holder (`our_name` stays fixed for
         // the whole `F_HL_PREV` walk), so all aliases itemize `=> <holder>` (a
         // star), never chaining to the most recently created alias. The holder is
@@ -480,7 +512,7 @@ pub(super) fn process_links(
         // follower must NOT overwrite that mapping with its own path; doing so
         // would point later followers at this alias instead of the holder.
         context.summary_mut().record_hard_link();
-        // upstream: hlink.c:246-249 + log.c:675-689 - thread the leader's
+        // upstream: hlink.c:246-249 + log.c:760-774 - thread the leader's
         // relative path through the snapshot's `symlink_target` slot so the
         // `%L` placeholder emits the upstream `=> %s` suffix. Strip the
         // destination root so the path is relative.
@@ -498,7 +530,7 @@ pub(super) fn process_links(
         // slots reflect the real deltas (mtime / perms / etc.) instead of
         // collapsing to all-dots-or-spaces.
         //
-        // upstream: generator.c:1142-1146 - the itemize for a hardlinked alias
+        // upstream: generator.c:1179-1183 - the itemize for a hardlinked alias
         // is computed with `statret = 1` against the group leader's stat
         // (`sxp->st`), not a (possibly absent) prior destination. Comparing the
         // source against the leader (`existing_target`) keeps the size/time/perm
@@ -538,7 +570,7 @@ pub(super) fn process_links(
             },
             context.options().modify_window(),
         );
-        // upstream: generator.c:533-536 - ITEM_REPORT_TIME fires for the
+        // upstream: generator.c:570-573 - ITEM_REPORT_TIME fires for the
         // hardlink-create path when the source mtime differs from the
         // existing destination alias, even without `-t`. Use `TransferTime`
         // (`T`) to mirror the `testsuite/itemize.test` golden at line 78.
@@ -567,7 +599,7 @@ pub(super) fn process_links(
         // above and stays blank, so only a genuinely new follower is marked
         // created here.
         //
-        // upstream: hlink.c:300 hard_link_check() - before that itemize,
+        // upstream: hlink.c:307 hard_link_check() - before that itemize,
         // when the follower's own destination is absent (statret < 0) and an
         // alt-dest basis is configured (`basis_dir[0] != NULL`), the follower's
         // name is quick_check_ok()'d against the --copy-dest/--link-dest tree.
@@ -637,7 +669,7 @@ pub(super) fn process_links(
     {
         match decision {
             ReferenceDecision::Skip(basis) => {
-                // upstream: generator.c:1154,1143-1145 / rsync.c:828 - "is uptodate"
+                // upstream: generator.c:1191,1143-1145 / rsync.c:828 - "is uptodate"
                 // emitted at INFO_GTE(NAME, 2) when a reference-directory match
                 // means no transfer is needed. Rendered by the CLI from the
                 // MetadataReused event (cli::frontend::progress::render) so
@@ -645,14 +677,14 @@ pub(super) fn process_links(
                 // info_log! would route it through the post-summary
                 // diagnostic drain and break upstream ordering.
                 //
-                // upstream: generator.c:1299 - a `--compare-dest` match itemizes
+                // upstream: generator.c:1336 - a `--compare-dest` match itemizes
                 // `.f` against the compare basis (`sxp->st`), so the attribute
                 // columns reflect drift vs the basis, not the absent
                 // destination. Compare source against the basis with
                 // `destination_previously_existed = true` so identical files
                 // stay blank.
                 //
-                // upstream: generator.c:1115-1119 - the `find_exact_for_existing`
+                // upstream: generator.c:1152-1156 - the `find_exact_for_existing`
                 // unlink sits ABOVE the `alt_dest_type == LINK_DEST` branch, so an
                 // exact (match_level 3) basis clears a pre-existing destination for
                 // `--compare-dest` too, not only for `--link-dest`. That is the
@@ -662,7 +694,7 @@ pub(super) fn process_links(
                 // is `statret == 0` at the call site (generator.c:2156) - i.e.
                 // exactly "the destination already exists".
                 //
-                // upstream: generator.c:1119 `goto got_nothing_for_ya` - a failed
+                // upstream: generator.c:1156 `goto got_nothing_for_ya` - a failed
                 // unlink (other than ENOENT, which `remove_existing_destination`
                 // already tolerates) abandons the basis match entirely, so the file
                 // transfers normally instead of being reported up to date over a
@@ -738,7 +770,7 @@ pub(super) fn process_links(
                 }
             }
             ReferenceDecision::Copy(path) => {
-                // upstream: generator.c:1163-1172 - copy_altdest_file() copies
+                // upstream: generator.c:1200-1209 - copy_altdest_file() copies
                 // the basis into place and itemizes as ITEM_LOCAL_CHANGE (`c`).
                 // The copy still flows through the transfer pipeline via
                 // `copy_source_override`; `reference_basis` flags the record so
@@ -783,7 +815,7 @@ pub(super) fn process_links(
                 }
 
                 if degrade_to_copy {
-                    // upstream: generator.c:1163 try_a_copy - a cross-device
+                    // upstream: generator.c:1200 try_a_copy - a cross-device
                     // hard-link failure falls back to copy_altdest_file(), which
                     // still itemizes as a local change (`c`).
                     reference_basis = Some(path.clone());
@@ -880,7 +912,7 @@ mod tests {
     //! link path. Strings are matched byte-for-byte against upstream rsync.
     //!
     //! upstream: log.c log_item / send_directory NAME emissions
-    //! upstream: hlink.c:251 ("=>"), generator.c:1154/1305 ("is uptodate").
+    //! upstream: hlink.c:251 ("=>"), generator.c:1191/1305 ("is uptodate").
 
     use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
 

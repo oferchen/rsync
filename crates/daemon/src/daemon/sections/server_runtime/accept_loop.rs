@@ -18,7 +18,7 @@ fn serve_connections(
     // Use externally injected signal flags (from the Windows Service dispatcher)
     // when available, otherwise register platform signal handlers so SIGPIPE is
     // ignored and SIGHUP/SIGTERM/SIGINT flags are captured from the start.
-    // upstream: main.c:1928 ignores SIGPIPE; main.c:1919-1921 route
+    // upstream: main.c:1932 ignores SIGPIPE; main.c:1923-1925 route
     // SIGINT/SIGHUP/SIGTERM to sig_int().
     let signal_flags = match external_signal_flags {
         Some(flags) => SignalFlags::from(flags),
@@ -148,7 +148,7 @@ fn serve_connections(
     // Suppress unused-variable warnings on non-Unix.
     #[cfg(not(unix))]
     let _ = (&syslog_facility, &syslog_tag);
-    // upstream: log.c:177-180 - the refusal is reported after `syslog_init()`,
+    // upstream: log.c:184-187 - the refusal is reported after `syslog_init()`,
     // so it lands in syslog with every later line.
     if let Some(fallback) = &log_fallback {
         fallback.report();
@@ -309,7 +309,7 @@ fn serve_connections(
     // Detach from terminal if --detach is active (Unix default).
     // Must happen after binding so startup errors reach stderr, and before
     // PID file creation so the file records the child's PID.
-    // upstream: clientserver.c:1779-1782 - become_daemon() is called before
+    // upstream: clientserver.c:1844-1847 - become_daemon() is called before
     // the accept loop.
     #[cfg(unix)]
     if detach {
@@ -324,7 +324,7 @@ fn serve_connections(
 
     // Announce the daemon BEFORE any readiness signal an observer can act on.
     //
-    // upstream: clientserver.c:1791 logs "rsyncd version %s starting, listening
+    // upstream: clientserver.c:1856 logs "rsyncd version %s starting, listening
     // on port %d" and only then calls start_accept_loop() (:1797), which is
     // where socket.c binds AND listens. So upstream guarantees the banner is in
     // the log before the port can complete a handshake.
@@ -358,7 +358,7 @@ fn serve_connections(
     // PID file. Order matches upstream: chroot first (while still root), then
     // setgid, then setuid. Any failure is fatal so the daemon never continues
     // running as root after a partial privilege drop.
-    // upstream: clientserver.c:1470-1520 start_daemon() applies
+    // upstream: clientserver.c:1480-1530 start_daemon() applies
     // lp_daemon_chroot() then lp_daemon_gid()/lp_daemon_uid() in the same
     // order. Deviation from upstream: upstream does it per connection in the
     // forked child; oc does it once in the parent before the accept loop.

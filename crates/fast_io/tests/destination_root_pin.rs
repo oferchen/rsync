@@ -2,7 +2,7 @@
 //! every later open of it by its spelling is answered with the descriptor the
 //! walk produced - oc's form of upstream's `fchdir()` into the destination.
 //!
-//! upstream: `rsync-3.5.1/util1.c:1363-1393` and `:1450-1466` `change_dir()`.
+//! upstream: `rsync-3.5.2/util1.c:1363-1393` and `:1450-1466` `change_dir()`.
 #![cfg(unix)]
 
 use std::fs;

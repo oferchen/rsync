@@ -247,7 +247,7 @@ impl From<BufferedPrefixTooSmall> for io::Error {
 /// Upstream rsync has two handshake styles:
 ///
 /// * The ASCII `@RSYNCD:` greeting of the daemon (`rsync://`) transport, used at
-///   every protocol version (upstream `compat.c:844-857 output_daemon_greeting()`,
+///   every protocol version (upstream `compat.c:853-866 output_daemon_greeting()`,
 ///   `clientserver.c:209`).
 /// * The binary 4-byte protocol-version exchange of the remote-shell transport.
 ///

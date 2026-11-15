@@ -94,7 +94,7 @@ fn read_framed_post_ok_error(reader: &mut BufReader<TcpStream>) -> (Vec<String>,
 /// A failing `pre-xfer exec` reports upstream's text, framed, with exit 4, and
 /// is decided before the read-only check.
 ///
-/// upstream: clientserver.c:637-686 finish_pre_exec() builds
+/// upstream: clientserver.c:641-690 finish_pre_exec() builds
 /// `"%s returned failure (%d)%s%s%s\n%s"` (desc `pre-xfer exec`) from the raw
 /// wait status and the hook's stdout (CRLF folded to LF; stderr is never
 /// captured), and :1228-1267 sends it as FERROR after setup_protocol() and

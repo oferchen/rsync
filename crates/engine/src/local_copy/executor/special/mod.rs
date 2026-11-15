@@ -18,7 +18,7 @@ mod symlink;
 
 pub(crate) use device::copy_device;
 pub(crate) use fifo::copy_fifo;
-pub(crate) use symlink::{copy_symlink, symlink_target_is_safe};
+pub(crate) use symlink::{copy_symlink, copy_symlink_immediate, symlink_target_is_safe};
 // Outside this module `create_symlink` serves only the non-Unix backup
 // fallback: on Unix the backup ladder's SYMLINK tier takes the confined
 // operator-path spelling (`fast_io::operator_symlink_confined`) instead.
@@ -30,7 +30,7 @@ pub(crate) use symlink::create_symlink;
 /// answers with the type, mode and rdev it stands for. An absent destination
 /// is `None`.
 ///
-/// upstream: generator.c:1745 gen_entry_stat() -> xattrs.c:1372 x_lstat()
+/// upstream: generator.c:1782 gen_entry_stat() -> xattrs.c:1372 x_lstat()
 fn special_destination_stat(
     destination: &Path,
     fake_super: bool,
@@ -76,7 +76,7 @@ fn special_snapshot(
 /// socket or device node and records the skip, returning `true` when the entry
 /// is skipped.
 ///
-/// upstream: generator.c:1757-1806 recv_generator() - both gates read the
+/// upstream: generator.c:1794-1843 recv_generator() - both gates read the
 /// destination `lstat` taken before any obstacle removal, so an
 /// `--ignore-existing` skip leaves a destination of any type standing and an
 /// `--existing` skip never follows a removal.
@@ -120,7 +120,7 @@ fn skip_by_existence_gate(
 /// `EROFS`) surface again when the caller creates the node, so nothing is
 /// silently swallowed.
 ///
-/// upstream: generator.c:1269-1292 try_dests_non() - a failed `do_link_at()`
+/// upstream: generator.c:1306-1329 try_dests_non() - a failed `do_link_at()`
 /// sets `cannot_hardlink = 1; match_level = 2;` and returns `-3`, which makes
 /// the caller create the entry, landing where a build without
 /// `CAN_HARDLINK_SYMLINK` / `CAN_HARDLINK_SPECIAL` already lands.
@@ -156,7 +156,7 @@ fn try_hard_link_basis(
 /// Returns `false` when the destination refused the link, so the caller creates
 /// the node from the source instead (see [`try_hard_link_basis`]).
 ///
-/// upstream: generator.c:1258-1302 try_dests_non() match_level 3 - the basis is
+/// upstream: generator.c:1295-1339 try_dests_non() match_level 3 - the basis is
 /// hard-linked via `do_link_at()` and itemized with
 /// `ITEM_LOCAL_CHANGE|ITEM_XNAME_FOLLOWS|ITEM_MATCHED` and an empty xname, which
 /// log.c:701-744 renders as `h` in position 0 with every attribute slot

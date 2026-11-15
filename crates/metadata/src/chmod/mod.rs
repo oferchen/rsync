@@ -102,7 +102,7 @@ const S_IWUSR: u32 = 0o200;
 /// Final on-disk permission bits a directory carries after upstream rsync's
 /// during-transfer permission dance, given the `--chmod`-tweaked `mode`.
 ///
-/// upstream: generator.c:1904-1912 raises every directory to owner-`rwx` while
+/// upstream: generator.c:1941-1949 raises every directory to owner-`rwx` while
 /// its contents are written (`gen_entry_chmod(fname, file, file->mode | S_IRWXU)`),
 /// then generator.c:2565-2611 `touch_up_dirs()` restores the tweaked mode ONLY
 /// when the owner would otherwise lack write

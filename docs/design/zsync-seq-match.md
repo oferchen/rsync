@@ -173,7 +173,7 @@ loop the hint guards against bucket-chain walking; in oc-rsync the
 hint guards against the full `find_match_slices` cost, and a
 single-block sticky hint is no worse than zsync's behaviour because
 the second miss falls through to `find_match_slices` anyway. The
-sticky behaviour matches the existing `match.c:144-190` upstream
+sticky behaviour matches the existing `match.c:144-192` upstream
 convention oc-rsync already follows.
 
 ## Wire-compat invariant
@@ -445,7 +445,7 @@ above. Concretely:
   - `crates/match/src/index/mod.rs:229-251`
     (`check_block_match_slices`, the seq-match predicate).
 - Upstream rsync 3.4.1: `target/interop/upstream-src/rsync-3.4.1/`
-  - `match.c:144-190` (the `want_i` adjacent-match hint that oc-rsync
+  - `match.c:144-192` (the `want_i` adjacent-match hint that oc-rsync
     already mirrors).
 - Tracking issues: #2064 (this design), #2065 (impl), #2066 (golden
   COPY-token equality test), #2067 (benchmark), #2084-#2086

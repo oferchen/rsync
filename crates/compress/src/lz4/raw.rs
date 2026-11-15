@@ -38,7 +38,7 @@ pub const MAX_BLOCK_SIZE: usize = 16383;
 
 /// Maximum decompressed size to prevent memory exhaustion attacks.
 /// Set to 64 MiB which is larger than any reasonable rsync block.
-/// Upstream caps a block at 128 KiB (rsync.h:161 `MAX_BLOCK_SIZE`); this
+/// Upstream caps a block at 128 KiB (rsync.h:162 `MAX_BLOCK_SIZE`); this
 /// bound is deliberately looser.
 pub const MAX_DECOMPRESSED_SIZE: usize = 64 * 1024 * 1024;
 

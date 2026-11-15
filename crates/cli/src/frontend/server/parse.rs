@@ -10,7 +10,7 @@ use super::flags::{
 
 /// The lone `.` that stands for the remote working directory.
 ///
-/// upstream: main.c:630 `do_cmd()` and clientserver.c:345
+/// upstream: main.c:630 `do_cmd()` and clientserver.c:349
 /// `start_inband_exchange()` push it right after `server_options()`, ahead of
 /// the paths, and `main.c` `do_server_sender()` / `do_server_recv()` take `argv[0]`
 /// as the directory to change into, so it is consumed there and never appears
@@ -213,7 +213,7 @@ pub(super) fn parse_server_protocol(value: &str) -> Result<i32, &'static str> {
 /// Parses a `--min-size=SIZE` or `--max-size=SIZE` value from the server argument list.
 ///
 /// Delegates to the shared size parser used by the client-side CLI.
-/// upstream: options.c:3008-3011 - `--min-size` / `--max-size` in `server_options()`.
+/// upstream: options.c:3073-3076 - `--min-size` / `--max-size` in `server_options()`.
 pub(super) fn parse_server_size_limit(value: &str, flag: &str) -> Result<u64, String> {
     let os_value = OsStr::new(value);
     super::super::execution::parse_size_limit_argument(os_value, flag)

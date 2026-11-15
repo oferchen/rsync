@@ -7,7 +7,7 @@
 //!   2. PartialMode::Partial (--partial): temp file is renamed to the final
 //!      destination, and modtime is stamped to epoch (0). The mtime=0 stamp
 //!      prevents --update from skipping the partial file on subsequent runs.
-//!      upstream: cleanup.c:130-135, cleanup.c:174-178
+//!      upstream: cleanup.c:130-135, cleanup.c:175-179
 //!   3. PartialMode::PartialDir (--partial-dir=DIR): temp file is moved to
 //!      DIR/filename. No mtime=0 stamp. upstream: cleanup.c:105-115
 //!
@@ -211,7 +211,7 @@ fn parity_partial_shutdown_retains_with_mtime_zero() {
     assert_eq!(
         mtime,
         filetime::FileTime::from_unix_time(0, 0),
-        "--partial must stamp mtime=0 on retained file (upstream cleanup.c:174-178)"
+        "--partial must stamp mtime=0 on retained file (upstream cleanup.c:175-179)"
     );
 }
 
@@ -359,7 +359,7 @@ fn parity_partial_dir_shutdown_retains_without_mtime_zero() {
     );
     assert_eq!(fs::read(&partial_path).unwrap(), test_data(200));
 
-    // upstream: cleanup.c:174-178 only applies to plain --partial, not --partial-dir
+    // upstream: cleanup.c:175-179 only applies to plain --partial, not --partial-dir
     let mtime =
         filetime::FileTime::from_last_modification_time(&fs::metadata(&partial_path).unwrap());
     assert_ne!(
@@ -426,7 +426,7 @@ fn parity_partial_dir_disconnect_retains_without_mtime_zero() {
 ///
 /// That is a property of THIS implementation, not of upstream's `one_inplace`.
 /// Upstream's in-place target under `one_inplace` is `partialptr` - the file in
-/// the partial dir - not `fname` (`rsync-3.5.1/receiver.c:1212-1213`), so the
+/// the partial dir - not `fname` (`rsync-3.5.2/receiver.c:1212-1213`), so the
 /// live name never holds a truncated file there either. What this test pins is
 /// that `resolve_use_inplace` must keep a `--partial-dir` resume on the
 /// temp+rename path for as long as the disk commit has no partial-dir staging

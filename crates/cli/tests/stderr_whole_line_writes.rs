@@ -1,6 +1,6 @@
 //! Every diagnostic `cli::run` prints reaches stderr in one write call.
 //!
-//! upstream: log.c:269-427 `rwrite()` formats a whole message, newline
+//! upstream: log.c:349-501 `rwrite()` formats a whole message, newline
 //! included, and writes it in one `write(2)`. The remote shell inherits the
 //! same descriptor (pipe.c:48-97 `piped_child()`), so a message issued as
 //! several writes could be torn apart by the remote side's own output.

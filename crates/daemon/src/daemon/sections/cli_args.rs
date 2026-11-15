@@ -136,15 +136,19 @@ where
 
     let mut matches = clap_command(program_name.as_str()).try_get_matches_from(args)?;
 
-    let show_help = matches.get_flag("help");
     let show_version = matches.get_count("version");
     let windows_service = matches.get_flag("windows-service");
     let install_service = matches.get_flag("install-service");
     let uninstall_service = matches.get_flag("uninstall-service");
-    let remainder = matches
+    let remainder: Vec<OsString> = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
         .unwrap_or_default();
+    let show_help = matches.get_flag("help")
+        || remainder
+            .iter()
+            .take_while(|a| *a != "--")
+            .any(|a| a == "--help" || a == "-h");
 
     let service_action = if install_service {
         Some(ServiceAction::Install)

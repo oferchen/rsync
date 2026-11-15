@@ -3,7 +3,7 @@ use crate::chmod::ChmodModifiers;
 
 #[test]
 fn attrs_flags_constants_match_upstream() {
-    // upstream rsync.h:222-226
+    // upstream rsync.h:223-227
     assert_eq!(AttrsFlags::REPORT.bits(), 1 << 0);
     assert_eq!(AttrsFlags::SKIP_MTIME.bits(), 1 << 1);
     assert_eq!(AttrsFlags::ACCURATE_TIME.bits(), 1 << 2);
@@ -128,7 +128,7 @@ fn attrs_flags_upstream_set_file_attrs_scenario() {
 
 #[test]
 fn attrs_flags_upstream_accurate_time_with_report() {
-    // Mirrors upstream generator.c:2246 where quick-check match combines
+    // Mirrors upstream generator.c:2288 where quick-check match combines
     // maybe_ATTRS_REPORT and maybe_ATTRS_ACCURATE_TIME.
     let flags = AttrsFlags::REPORT | AttrsFlags::ACCURATE_TIME;
     assert!(flags.report());

@@ -55,7 +55,7 @@ use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments}
 /// Returns whether an operand carries a daemon URL scheme.
 ///
 /// Recognises `rsync://` in its all-lowercase or all-uppercase spelling only;
-/// upstream `check_for_hostspec()` (options.c:3315) compares the prefix with
+/// upstream `check_for_hostspec()` (options.c:3383) compares the prefix with
 /// `strncasecmp()`, so it also accepts mixed case such as `Rsync://`.
 /// `quic://` is recognised only when the `quic` feature is compiled in.
 ///
@@ -127,7 +127,7 @@ pub fn run_daemon_transfer(
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
 
-    // upstream: main.c:1484-1485 - a remote source with a single operand sets
+    // upstream: main.c:1488-1489 - a remote source with a single operand sets
     // `argc = 0` ("no dest arg") rather than erroring, and options.c:2320-2321
     // has already inferred list-only from the operand count.
     let fallback_dest = std::ffi::OsString::from(".");
@@ -194,6 +194,9 @@ pub fn run_daemon_transfer(
             TransferSpec::Pull { .. } => crate::message::Role::PreForkReceiver,
         },
     )?;
+
+    let mut niceness = *config.niceness();
+    niceness.apply_local(crate::niceness::ProcessRole::Client);
 
     // upstream: socket.c:434 - set_socket_options(s, sockopts) is applied
     // pre-connect inside open_daemon_stream, before start_daemon_client()'s
@@ -269,9 +272,9 @@ pub fn run_daemon_transfer(
     let mut reader_half = buf_reader.into_inner();
 
     // Protocol is already negotiated via @RSYNCD text exchange (not binary 4-byte).
-    // upstream: compat.c:602 setup_protocol() - the binary version exchange
+    // upstream: compat.c:603 setup_protocol() - the binary version exchange
     // runs only while remote_protocol == 0, so it is skipped here.
-    // upstream: main.c:1581 add_implied_include() - record the requested daemon
+    // upstream: main.c:1585 add_implied_include() - record the requested daemon
     // source (module/path)
     // as an implied include for the receiver-side flist validation
     // (CVE-2022-29154); is_daemon_connection strips the module on the receiver.
@@ -332,7 +335,7 @@ fn close_then_reap(
 
 /// Executes a daemon transfer tunneled over a remote shell (SSH with `::` syntax).
 ///
-/// Mirrors upstream `main.c:1663-1668`: when `-e`/`--rsh` is active with a
+/// Mirrors upstream `main.c:1667-1672`: when `-e`/`--rsh` is active with a
 /// double-colon operand, `do_cmd()` spawns the remote shell with
 /// `rsync --server --daemon .` as the remote command (main.c:620-628), then
 /// `start_inband_exchange()` speaks the `@RSYNCD:` daemon protocol over the
@@ -352,7 +355,7 @@ pub fn run_daemon_over_remote_shell(
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
 
-    // upstream: main.c:1484-1485 - a remote source with a single operand sets
+    // upstream: main.c:1488-1489 - a remote source with a single operand sets
     // `argc = 0` ("no dest arg") rather than erroring, and options.c:2320-2321
     // has already inferred list-only from the operand count.
     let fallback_dest = std::ffi::OsString::from(".");
@@ -368,7 +371,7 @@ pub fn run_daemon_over_remote_shell(
         TransferSpec::Pull { local_dest, .. } => vec![local_dest.clone()],
     };
 
-    // upstream: main.c:1650 - a daemon-over-remote-shell connection carries the
+    // upstream: main.c:1654 - a daemon-over-remote-shell connection carries the
     // port to the child as RSYNC_PORT rather than dialling it, but the value is
     // the same `rsync_port` the socket path uses.
     let request = parse_daemon_operand(config)?;
@@ -379,7 +382,7 @@ pub fn run_daemon_over_remote_shell(
         .remote_shell()
         .ok_or_else(|| invalid_argument_error("daemon-over-remote-shell requires -e/--rsh", 1))?;
 
-    // upstream: main.c:1655-1661 - `--contimeout` bounds spawning the helper,
+    // upstream: main.c:1659-1665 - `--contimeout` bounds spawning the helper,
     // its own connect and the daemon greeting as one phase, the way the socket
     // path bounds connect().
     let connect_deadline = config
@@ -446,11 +449,11 @@ pub fn run_daemon_over_remote_shell(
     let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
 
     let buffered = buf_reader.buffer().to_vec();
-    // upstream: main.c:1670 - `set_client_connect_timeout(0)` once the
+    // upstream: main.c:1674 - `set_client_connect_timeout(0)` once the
     // in-band exchange is done; the transfer itself is not bounded by it.
     let mut reader_half = buf_reader.into_inner().into_inner();
 
-    // upstream: main.c:1581 add_implied_include() - record the requested daemon
+    // upstream: main.c:1585 add_implied_include() - record the requested daemon
     // source (module/path)
     // as an implied include for the receiver-side flist validation
     // (CVE-2022-29154); is_daemon_connection strips the module on the receiver.

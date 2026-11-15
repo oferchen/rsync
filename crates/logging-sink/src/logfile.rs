@@ -2,7 +2,7 @@
 //!
 //! Upstream rsync writes every log-file line through one function:
 //! `logit()` prefixes the message with `timestring(time(NULL))` and the
-//! writer's pid - `"%s [%d] "` (upstream: log.c:125-141). `timestring()`
+//! writer's pid - `"%s [%d] "` (upstream: log.c:132-148). `timestring()`
 //! renders local time as `%4d/%02d/%02d %02d:%02d:%02d`
 //! (upstream: util1.c:1722-1739). Both the client `--log-file` sink and the
 //! daemon `log file` sink share that formatter; this module is its single
@@ -42,7 +42,7 @@ pub fn format_timestring(unix_secs: i64) -> String {
 /// Returns the prefix upstream stamps on every log-file line, for `instant`
 /// and `pid`: `"YYYY/MM/DD HH:MM:SS [pid] "`.
 ///
-/// upstream: log.c:135 `fprintf(logfile_fp, "%s [%d] ", timestring(time(NULL)),
+/// upstream: log.c:142 `fprintf(logfile_fp, "%s [%d] ", timestring(time(NULL)),
 /// (int)getpid())`.
 #[must_use]
 pub fn format_log_line_prefix(instant: SystemTime, pid: u32) -> String {
@@ -58,12 +58,12 @@ pub fn log_line_prefix_now() -> String {
 /// Writer adapter that stamps the upstream log-file prefix on every line.
 ///
 /// Wraps the log-file handle so that each written line starts with
-/// `"YYYY/MM/DD HH:MM:SS [pid] "` (upstream: log.c:125-141 `logit()`), with
+/// `"YYYY/MM/DD HH:MM:SS [pid] "` (upstream: log.c:132-148 `logit()`), with
 /// the timestamp taken when the line starts. Lines that would be empty are
 /// dropped: upstream emits cosmetic blank separators as `FCLIENT` messages
 /// (e.g. main.c:432/468 `rprintf(FCLIENT, "\n")`), and `rwrite()` converts
 /// `FCLIENT` to `FINFO` *after* skipping the log-file branch
-/// (upstream: log.c:310-311), so a blank line never reaches the log file.
+/// (upstream: log.c:390-391), so a blank line never reaches the log file.
 #[derive(Debug)]
 pub struct LogFileWriter<W: Write> {
     inner: W,
@@ -94,7 +94,7 @@ impl<W: Write> LogFileWriter<W> {
 impl<W: Write> LogFileWriter<W> {
     /// Writes one line body through the log-file escape filter.
     ///
-    /// upstream: log.c:125 `logit()` is the only function that writes to
+    /// upstream: log.c:132 `logit()` is the only function that writes to
     /// `logfile_fp`, and it hands every line to `filtered_fwrite(logfile_fp,
     /// buf, len, 0, 1, trailing)` (log.c:136). Escaping there rather than in
     /// each producer is what makes it unbypassable - a caller cannot forget it,
@@ -113,7 +113,7 @@ impl<W: Write> LogFileWriter<W> {
 }
 
 impl<W: Write> Write for LogFileWriter<W> {
-    /// upstream: log.c:134 - `logit()` strips exactly ONE trailing newline
+    /// upstream: log.c:141 - `logit()` strips exactly ONE trailing newline
     /// and hands everything before it to `filtered_fwrite`. A newline *inside*
     /// the message is therefore escaped as `\#012` and stays on one log line;
     /// only the newline that ends the message closes the record. That is the
@@ -181,7 +181,7 @@ mod tests {
                 .is_some_and(|(pid, _)| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
     }
 
-    /// upstream: log.c:135 - every log-file line starts with
+    /// upstream: log.c:142 - every log-file line starts with
     /// `YYYY/MM/DD HH:MM:SS [pid] `.
     #[test]
     fn prefix_has_upstream_shape() {
@@ -220,7 +220,7 @@ mod tests {
         assert_eq!(&rendered[11..13], format!("{expected_hour:02}").as_str());
     }
 
-    /// upstream: log.c:125-141 - each line written through the sink gains
+    /// upstream: log.c:132-148 - each line written through the sink gains
     /// exactly one prefix, and multi-line writes prefix every line.
     #[test]
     fn writer_prefixes_every_line() {
@@ -293,7 +293,7 @@ mod tests {
         raw[body_start..raw.len() - 1].to_vec()
     }
 
-    /// upstream: log.c:136 - `logit()` hands every line to `filtered_fwrite`,
+    /// upstream: log.c:143 - `logit()` hands every line to `filtered_fwrite`,
     /// so a control byte that reached the log through *any* producer is
     /// escaped. Escaping in the sink rather than in a renderer is what makes
     /// this unbypassable: the daemon's log writers never touch the CLI's
@@ -327,7 +327,7 @@ mod tests {
     /// This is the injection itself, not a cosmetic detail: every line the
     /// sink emits is stamped with a real timestamp and pid, so a filename
     /// carrying `\n` would otherwise produce a second, entirely authentic-
-    /// looking entry under the attacker's control. upstream: log.c:134
+    /// looking entry under the attacker's control. upstream: log.c:141
     /// strips only the message's own trailing newline.
     #[test]
     fn writer_escapes_a_newline_inside_the_message() {
@@ -343,7 +343,7 @@ mod tests {
         );
     }
 
-    /// upstream: log.c:136 passes `use_isprint = 0` and `escape_c1 = 1`, so a
+    /// upstream: log.c:143 passes `use_isprint = 0` and `escape_c1 = 1`, so a
     /// UTF-8 filename survives verbatim while the 8-bit CSI (0x9B) - which can
     /// drive a terminal just as an `ESC [` pair does - is escaped.
     #[test]

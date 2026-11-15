@@ -264,7 +264,7 @@ impl CompiledRule {
         // on single-path/deletion queries; a negated WILD3 rule has no subtree
         // to prune (its action fires on NON-match), so consult it unconditionally
         // to mirror upstream's full match.
-        let check_descendants = check_descendants || (self.negate && self.wild3_suffix);
+        let check_descendants = check_descendants || self.wild3_suffix;
         for matcher in &self.direct_matchers {
             if matcher.is_match(path) && (!self.directory_only || is_dir) {
                 debug_log!(Filter, 2, "direct pattern matched: {:?}", path);

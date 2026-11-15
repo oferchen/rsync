@@ -177,24 +177,26 @@ pub(crate) struct ConfigInputs {
     pub(crate) partial_dir: Option<PathBuf>,
     pub(crate) temp_dir: Option<PathBuf>,
     pub(crate) delay_updates: bool,
+    pub(crate) delay_symlinks: bool,
+    pub(crate) niceness: core::niceness::PriorityOptions,
     pub(crate) link_dests: Vec<PathBuf>,
     pub(crate) remove_source_files: bool,
     /// `--remove-sent-files` - deprecated alias; forwarded verbatim on the wire.
-    /// upstream: options.c:744 (`POPT_ARG_VAL` 2), options.c:3163-3166.
+    /// upstream: options.c:745 (`POPT_ARG_VAL` 2), options.c:3231-3234.
     pub(crate) remove_sent_files: bool,
     /// Resolved out-format string carries `%i`; forwards `--log-format=%i`.
     /// Mirrors upstream `stdout_format_has_i`, derived from the resolved format
-    /// string rather than the `-i` flag. upstream: options.c:2496-2508,2948-2951.
+    /// string rather than the `-i` flag. upstream: options.c:2551-2563,2948-2951.
     pub(crate) out_format_forwards_i: bool,
     /// A custom `--out-format` template was given, so remote per-file output is
     /// rendered client-side from collected events instead of the server line.
     pub(crate) render_out_format_locally: bool,
     /// Explicit `--out-format` / `--log-format` contains `%o` but not `%i`;
-    /// forwards `--log-format=%o`. upstream: options.c:2952-2953.
+    /// forwards `--log-format=%o`. upstream: options.c:3017-3018.
     pub(crate) out_format_has_operation: bool,
     /// Explicit `--out-format` / `--log-format` was given with neither `%i` nor
     /// `%o`; forwards the placeholder `--log-format=X` for a non-verbose client.
-    /// upstream: options.c:2954-2955.
+    /// upstream: options.c:3019-3020.
     pub(crate) out_format_placeholder: bool,
     pub(crate) inplace: bool,
     pub(crate) append: bool,
@@ -256,7 +258,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .quiet(inputs.quiet)
         .msgs2stderr(inputs.msgs2stderr)
         .recursive(inputs.recursive)
-        // upstream: options.c:2326-2329 - `else if (recurse) xfer_dirs = 1;
+        // upstream: options.c:2381-2384 - `else if (recurse) xfer_dirs = 1;
         // else if (xfer_dirs < 0) xfer_dirs = list_only ? 1 : 0;`. When neither
         // -r nor an explicit -d/--no-dirs is given, --list-only still transfers
         // (lists) a bare directory operand's own entry.
@@ -266,7 +268,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
             inputs.dirs.unwrap_or(inputs.list_only)
         })
         .dirs_explicit(inputs.dirs_explicit)
-        // upstream: options.c:2341-2354 - delete mode is enabled only by an
+        // upstream: options.c:2396-2409 - delete mode is enabled only by an
         // explicit `--delete*` or `--delete-excluded`. `--max-delete` merely caps
         // the count (options.c:2308-2311) and must never enable deletion.
         .delete(inputs.delete_mode.is_enabled() || inputs.delete_excluded)
@@ -395,6 +397,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .partial_directory(inputs.partial_dir.clone())
         .temp_directory(inputs.temp_dir.clone())
         .delay_updates(inputs.delay_updates)
+        .delay_symlinks(inputs.delay_symlinks)
+        .niceness(inputs.niceness)
         .extend_link_dests(inputs.link_dests.clone())
         .remove_source_files(inputs.remove_source_files)
         .remove_sent_files(inputs.remove_sent_files)
@@ -487,7 +491,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
     };
 
     builder = builder.itemize_changes(inputs.itemize_changes);
-    // upstream: generator.c:588-589 - emit itemize rows for unchanged entries
+    // upstream: generator.c:625-626 - emit itemize rows for unchanged entries
     // when `-ii` / `--info=name2` / `-vv` raised the level. The parser folds
     // all three into `NameOutputLevel::UpdatedAndUnchanged`.
     builder = builder.itemize_unchanged(matches!(
@@ -495,7 +499,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         NameOutputLevel::UpdatedAndUnchanged
     ));
 
-    // upstream: log.c:920 log_delete() prints "deleting %n" whenever
+    // upstream: log.c:1005 log_delete() prints "deleting %n" whenever
     // INFO_GTE(DEL, 1), independent of -v. `--info=del` (level >= 1) raises DEL
     // without raising verbosity, so `collect_events()` - which only fires on
     // verbosity/progress/list_only - would leave the engine without the

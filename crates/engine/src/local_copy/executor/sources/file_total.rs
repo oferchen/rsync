@@ -27,7 +27,7 @@ pub(super) fn file_total_exceeds_one(
     let mut expanded = None;
     for (source, &occurrences) in plan.sources().iter().zip(plan.source_occurrences()) {
         let path = operand_stat_path(context, source);
-        // upstream: flist.c:2937-2947 - an operand link_stat() cannot read lists
+        // upstream: flist.c:2948-2958 - an operand link_stat() cannot read lists
         // nothing.
         let Ok(metadata) = operand_link_stat(context, source, &path) else {
             continue;
@@ -75,7 +75,7 @@ fn lists_a_child(
     prefix: Option<&Path>,
 ) -> Result<bool, LocalCopyError> {
     let _rules = context.enter_directory(dir, prefix)?;
-    // upstream: flist.c:2372-2376 send_directory() - a directory that cannot be
+    // upstream: flist.c:2383-2387 send_directory() - a directory that cannot be
     // opened lists nothing.
     let Ok(entries) = fs::read_dir(dir) else {
         return Ok(false);

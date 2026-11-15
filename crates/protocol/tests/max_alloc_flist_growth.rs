@@ -8,7 +8,7 @@
 //! exits `RERR_MALLOC` (22). Without that bound a hostile sender can stream
 //! entries until the receiver runs out of memory.
 //!
-//! upstream: util2.c:73-81 my_alloc(), flist.c:591-639 flist_expand(),
+//! upstream: util2.c:73-81 my_alloc(), flist.c:595-643 flist_expand(),
 //! flist.c:3172-3179,3216,3239-3241 recv_file_list().
 //!
 //! Each test sets the process-global `--max-alloc`; nextest runs every test in
@@ -19,7 +19,7 @@ use std::io::{self, Cursor};
 use protocol::flist::{FileEntry, FileListReader, FileListWriter};
 use protocol::{CompatibilityFlags, MallocFailure, ProtocolVersion, set_max_alloc};
 
-/// The smallest `--max-alloc` upstream accepts (options.c:2073).
+/// The smallest `--max-alloc` upstream accepts (options.c:2109).
 const ONE_MIB: usize = 1024 * 1024;
 
 /// Largest list upstream receives under `--max-alloc=1M`.

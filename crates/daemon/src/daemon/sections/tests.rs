@@ -10,7 +10,7 @@ fn module_with_refuse(refuse_options: Vec<String>) -> ModuleDefinition {
 
 /// `canonical_option` strips the dashes and any `=value`, and PRESERVES case.
 ///
-/// upstream matches refuse rules with `wildmatch` (options.c:982-983), not the
+/// upstream matches refuse rules with `wildmatch` (options.c:1000-1001), not the
 /// case-folding `iwildmatch` (lib/wildmatch.c:307-318). This test previously
 /// asserted `"--Delete" -> "delete"` and pinned the folding.
 #[test]
@@ -218,7 +218,7 @@ fn refused_option_empty_list_allows_all() {
 
 /// Refuse matching is case-SENSITIVE, mirroring upstream.
 ///
-/// upstream: `options.c:982-983` uses `wildmatch`; the case-folding
+/// upstream: `options.c:1000-1001` uses `wildmatch`; the case-folding
 /// `iwildmatch` (lib/wildmatch.c:307-318, `force_lower_case = 1`) exists and is
 /// deliberately not used, and no `tolower`/`strcasecmp` appears in the refuse
 /// path.
@@ -316,7 +316,7 @@ fn is_option_refused_re_refuse_after_negation() {
 
 #[test]
 fn is_option_refused_short_letter_rule_matches_long_option() {
-    // upstream: options.c:966-1011 `parse_one_refuse_match` compares each rule
+    // upstream: options.c:984-1029 `parse_one_refuse_match` compares each rule
     // against BOTH `op->longName` and `op->shortName`. A `!v` rule must
     // un-refuse the same option that `!verbose` would, so allow-list
     // configurations that use short-letter shorthands behave the same as
@@ -328,7 +328,7 @@ fn is_option_refused_short_letter_rule_matches_long_option() {
 
 #[test]
 fn is_option_refused_archive_rule_expands_to_short_letter_set() {
-    // upstream: options.c:975-978 - the `archive` (and `a`) rules expand to
+    // upstream: options.c:993-996 - the `archive` (and `a`) rules expand to
     // the character class `[ardlptgoD]` and so refuse every short letter that
     // `-a` implies, not just the `--archive` long name.
     let module = module_with_refuse(vec!["archive".to_owned()]);
@@ -340,7 +340,7 @@ fn is_option_refused_archive_rule_expands_to_short_letter_set() {
 
 #[test]
 fn is_option_refused_pure_allowlist_does_not_refuse_anything() {
-    // upstream: options.c:1038-1055 - every option starts marked as accepted
+    // upstream: options.c:1056-1073 - every option starts marked as accepted
     // (`a*` or `a=`). A refuse list of only negations therefore touches
     // nothing - no option flips to refused. Sanity-check the obvious cases.
     let module = module_with_refuse(vec!["!verbose".to_owned(), "!archive".to_owned()]);
@@ -359,7 +359,7 @@ fn is_vital_option_recognises_all_vitals() {
 
 #[test]
 fn default_refuses_client_log_file_options() {
-    // upstream: options.c:1082 - a daemon always appends `log-file*` to the
+    // upstream: options.c:1100 - a daemon always appends `log-file*` to the
     // refuse list after the module's own rules, refusing both `--log-file` and
     // `--log-file-format` so a client cannot redirect the server's logging.
     let module = ModuleDefinition::default();
@@ -375,7 +375,7 @@ fn default_refuses_client_log_file_options() {
 
 #[test]
 fn default_refuses_client_insecure_links() {
-    // upstream: options.c:1087 (new in 3.5.0) - a daemon always appends
+    // upstream: options.c:1105 (new in 3.5.0) - a daemon always appends
     // `insecure-links` to the refuse list. The flag is a LOCAL-ONLY opt-out, so
     // a client must never be able to switch off the daemon's symlink
     // confinement by sending it; the daemon's own opt-out is the `insecure
@@ -389,7 +389,7 @@ fn default_refuses_client_insecure_links() {
 
 #[test]
 fn insecure_links_refusal_survives_negation() {
-    // upstream: options.c:1077-1088 - the unconditional daemon refusals are
+    // upstream: options.c:1095-1106 - the unconditional daemon refusals are
     // appended AFTER the module's own `refuse options` rules, so an operator
     // cannot re-enable the client flag with `!insecure-links` even by mistake.
     // Without this the confinement opt-out would be one config typo away from
@@ -424,7 +424,7 @@ fn insecure_links_refusal_does_not_catch_unrelated_options() {
 
 #[test]
 fn default_log_file_refusal_survives_negation() {
-    // upstream: options.c:1082 - the `log-file*` refusal is applied AFTER
+    // upstream: options.c:1100 - the `log-file*` refusal is applied AFTER
     // the module's `refuse options` rules, so a `!log-file` negation cannot
     // re-enable it.
     let module = module_with_refuse(vec!["!log-file".to_owned()]);
@@ -436,7 +436,7 @@ fn default_log_file_refusal_survives_negation() {
 
 #[test]
 fn iconv_refused_when_module_has_no_charset() {
-    // upstream: options.c:1079-1080 - `if (!*lp_charset(module_id))
+    // upstream: options.c:1097-1098 - `if (!*lp_charset(module_id))
     // parse_one_refuse_match(0, "iconv", ...)`: a daemon module with no
     // `charset` configured refuses client `--iconv`.
     let module = ModuleDefinition::default();
@@ -448,7 +448,7 @@ fn iconv_refused_when_module_has_no_charset() {
 
 #[test]
 fn iconv_allowed_when_module_configures_charset() {
-    // upstream: options.c:1079-1080 - the iconv refusal is skipped when the
+    // upstream: options.c:1097-1098 - the iconv refusal is skipped when the
     // module sets a `charset`, so the client may negotiate `--iconv`.
     let module = ModuleDefinition {
         charset: Some("LATIN1".to_owned()),
@@ -459,7 +459,7 @@ fn iconv_allowed_when_module_configures_charset() {
 
 #[test]
 fn wildcard_all_spares_vital_log_format_but_refuses_out_format() {
-    // upstream: options.c:1047-1050 - the `log-format` long_options[] entry is
+    // upstream: options.c:1065-1068 - the `log-format` long_options[] entry is
     // exact-match only (vital), so `refuse options = *` cannot refuse it, while
     // the wildcard-able `out-format` alias is refused by the same `*`.
     let module = module_with_refuse(vec!["*".to_owned()]);
@@ -472,7 +472,7 @@ fn wildcard_all_spares_vital_log_format_but_refuses_out_format() {
 
 #[test]
 fn exact_rule_refuses_vital_log_format() {
-    // upstream: options.c:982-1003 - a non-wild exact rule still marks a vital
+    // upstream: options.c:1000-1021 - a non-wild exact rule still marks a vital
     // option refused, so `refuse options = log-format` rejects `--log-format`.
     let module = module_with_refuse(vec!["log-format".to_owned()]);
     assert_eq!(
@@ -491,7 +491,7 @@ fn is_vital_option_rejects_non_vitals() {
 /// A `[a-z]` RANGE in a refuse rule must match the range, not the three
 /// literal bytes `a`, `-`, `z`.
 ///
-/// upstream: `options.c:982-983` matches refuse rules with `wildmatch()`, and
+/// upstream: `options.c:1000-1001` matches refuse rules with `wildmatch()`, and
 /// `dowild` handles ranges at `lib/wildmatch.c:156-166`.
 ///
 /// This is the fail-OPEN direction. oc's previous hand-written glob compared
@@ -720,7 +720,7 @@ fn refused_client_arg_allowlist_module_passes_bundled_av() {
     // refuse-list matcher; upstream rsync flips each option's `descrip` back
     // to "accepted" once the explicit `!verbose` / `!archive` rule lands.
     //
-    // upstream: options.c:989-1003 - rules are processed in order and the last
+    // upstream: options.c:1007-1021 - rules are processed in order and the last
     // match wins; the negated rule after the catch-all wildcard un-refuses
     // both the long-form name and its short-letter alias.
     let module = ModuleDefinition {
@@ -739,7 +739,7 @@ fn refused_client_arg_allowlist_module_passes_bundled_av() {
 
 #[test]
 fn refused_client_arg_allowlist_short_letter_negation_passes_av() {
-    // upstream: options.c:966-1011 - `parse_one_refuse_match` matches each
+    // upstream: options.c:984-1029 - `parse_one_refuse_match` matches each
     // rule against both `op->longName` and `op->shortName`. A short-letter
     // allow-list `!v !a` therefore un-refuses the same options that
     // `!verbose !archive` would. Pinning this behaviour prevents a relapse of
@@ -757,7 +757,7 @@ fn refused_client_arg_allowlist_short_letter_negation_passes_av() {
 fn refused_client_arg_pure_negation_allowlist_passes_av() {
     // A pure-negation refuse list never marks anything as refused (nothing
     // was refused to begin with), so an `-av` transfer must succeed.
-    // upstream: options.c:1038-1055 - every option starts as `a*`/`a=`
+    // upstream: options.c:1056-1073 - every option starts as `a*`/`a=`
     // (accepted); only explicit non-negated rules flip the descrip to
     // `r*`/`r=`.
     let module = ModuleDefinition {
@@ -774,7 +774,7 @@ fn refused_client_arg_copy_and_write_devices_refused_by_default() {
     // module has no `refuse options` line at all: allowing a client to read or
     // write device nodes is a security-relevant default-deny.
     //
-    // upstream: options.c:984-987 - when `am_daemon`, `parse_arguments` seeds
+    // upstream: options.c:1002-1005 - when `am_daemon`, `parse_arguments` seeds
     // the refuse list with `parse_one_refuse_match(0, "copy-devices", ...)` and
     // `parse_one_refuse_match(0, "write-devices", ...)` before applying any
     // module rules.
@@ -796,7 +796,7 @@ fn refused_client_arg_copy_and_write_devices_refused_by_default() {
 fn refused_client_arg_non_device_option_not_refused_by_default() {
     // The default device refusal is scoped strictly to `copy-devices` and
     // `write-devices`; an empty refuse list must not refuse anything else.
-    // upstream: options.c:984-987 - only those two options are seeded.
+    // upstream: options.c:1002-1005 - only those two options are seeded.
     let module = ModuleDefinition {
         refuse_options: Vec::new(),
         ..Default::default()
@@ -813,7 +813,7 @@ fn refused_option_copy_and_write_devices_vital_survive_wildcard() {
     // `refuse options = *` neither un-refuses them nor is even consulted for
     // them - they remain refused by the daemon default.
     //
-    // upstream: options.c:1050-1055 marks both as `descrip = "a="` (exact-match
+    // upstream: options.c:1068-1073 marks both as `descrip = "a="` (exact-match
     // only, wild-match disabled) and options.c:984-987 refuses them by default.
     let module = ModuleDefinition {
         refuse_options: vec!["*".to_owned()],
@@ -834,7 +834,7 @@ fn refused_client_arg_device_options_allowed_by_explicit_negation() {
     // The default device refusal is overridable, but only by an explicit
     // negated exact match - never by a wildcard.
     //
-    // upstream: options.c:984 - "Refused by default, but can be accepted via a
+    // upstream: options.c:1002 - "Refused by default, but can be accepted via a
     // negated exact match." A module that trusts its clients can set
     // `refuse options = !copy-devices !write-devices`.
     let module = ModuleDefinition {
@@ -857,7 +857,7 @@ fn refused_client_arg_delete_rule_refuses_timing_variant() {
     // `refuse options = delete` must reject a client `-a --delete` even though
     // the client encodes it on the wire as `--delete-during`.
     //
-    // upstream: options.c:2364 - `if (refused_delete && (delete_mode || ...))`
+    // upstream: options.c:2419 - `if (refused_delete && (delete_mode || ...))`
     // refuses the transfer whenever any delete-timing variant is active, and
     // reports the canonical `--delete` regardless of which variant arrived.
     let module = ModuleDefinition {
@@ -886,7 +886,7 @@ fn refused_client_arg_delete_rule_refuses_timing_variant() {
 #[test]
 fn refused_client_arg_delete_rule_allows_non_delete_transfer() {
     // A `refuse options = delete` module must still accept a plain push that
-    // carries no delete flag. upstream: options.c:2364 only fires when
+    // carries no delete flag. upstream: options.c:2419 only fires when
     // `delete_mode` (or `missing_args == 2`) is set.
     let module = ModuleDefinition {
         refuse_options: vec!["delete".to_owned()],
@@ -898,7 +898,7 @@ fn refused_client_arg_delete_rule_allows_non_delete_transfer() {
 
 #[test]
 fn refused_client_arg_delete_rule_refuses_remove_source_files_on_a_pull() {
-    // upstream: options.c:2368-2376 - `--remove-source-files` inherits the
+    // upstream: options.c:2423-2431 - `--remove-source-files` inherits the
     // refusal of `delete` when `am_sender`, because on a pull the daemon would
     // be deleting its own module contents. Reported as `--delete`, from the
     // same `create_refuse_error(refused_delete)`.
@@ -956,7 +956,7 @@ fn refused_client_arg_remove_source_files_allowed_without_a_delete_rule() {
 fn refused_client_arg_delete_negation_clears_semantic_refusal() {
     // `refuse options = !delete` un-refuses the `delete` entry, so the
     // semantic delete-mode pass must not fire. With no other refuse rule a
-    // bare `--delete` transfer is allowed. upstream: options.c:989-1003 - the
+    // bare `--delete` transfer is allowed. upstream: options.c:1007-1021 - the
     // negated rule flips the `delete` descrip back to accepted, clearing
     // `refused_delete`, so options.c:2364 never triggers.
     let module = ModuleDefinition {
@@ -969,7 +969,7 @@ fn refused_client_arg_delete_negation_clears_semantic_refusal() {
 
 #[test]
 fn refused_client_arg_archive_rule_refuses_implied_short_letters() {
-    // upstream: options.c:975-978 - the `archive` rule rewrites itself to the
+    // upstream: options.c:993-996 - the `archive` rule rewrites itself to the
     // character class `[ardlptgoD]`. A module configured with
     // `refuse options = archive` must therefore reject `-r`, `-l`, `-D`, etc.
     // (and not just `--archive` itself).
@@ -1192,7 +1192,7 @@ fn refuse_emits_at_error_raw_pre_handshake() {
     //
     // Upstream emits exactly the `@ERROR: <msg>\n` line and nothing more: the
     // client treats `@ERROR` as fatal and returns before reading further
-    // (upstream: clientserver.c:424-428 - `strncmp(line, "@ERROR", 6) == 0` ->
+    // (upstream: clientserver.c:428-432 - `strncmp(line, "@ERROR", 6) == 0` ->
     // `return -1`), so no trailing `@RSYNCD: EXIT` is sent. Matching that
     // byte-for-byte matters because two interoperating tools must agree on the
     // exact refusal wire bytes; a stray EXIT line is a divergence from upstream.
@@ -1224,7 +1224,7 @@ fn refuse_emits_msg_error_xfer_post_handshake() {
     // MSG_ERROR_XFER frame followed by a MSG_ERROR_EXIT frame. Raw text would
     // be decoded as a multiplex header (the "unexpected tag 77" bug).
     //
-    // upstream: clientserver.c:1227,1251 - io_start_multiplex_out() runs at
+    // upstream: clientserver.c:1236,1251 - io_start_multiplex_out() runs at
     // OK, then rwrite(FERROR, ...) emits a MSG_ERROR_XFER frame.
     let (mut stream, capture) = build_stdio_stream_with_capture();
     let mut limiter: Option<BandwidthLimiter> = None;
@@ -1259,7 +1259,7 @@ fn refuse_emits_msg_error_xfer_post_handshake() {
     );
 
     // The remaining bytes must be a MSG_ERROR_EXIT frame carrying the exit
-    // code in little-endian form (upstream io.c:1183 send_msg_int).
+    // code in little-endian form (upstream io.c:1190 send_msg_int).
     let mut expected_exit = Vec::new();
     MessageFrame::new(
         MessageCode::ErrorExit,
@@ -1328,7 +1328,7 @@ fn client_timeout_is_read_from_the_forwarded_argv() {
 /// A forwarded `--timeout=0` (upstream's "no timeout") and a negative or
 /// unparsable value all read as "no timeout".
 ///
-/// upstream: `io.c:1284-1289` `set_io_timeout()` clamps a negative to `0`, and
+/// upstream: `io.c:1291-1296` `set_io_timeout()` clamps a negative to `0`, and
 /// `0` short-circuits every timeout check.
 #[test]
 fn non_positive_client_timeout_reads_as_no_timeout() {
@@ -1342,7 +1342,7 @@ fn non_positive_client_timeout_reads_as_no_timeout() {
     }
 }
 
-/// Upstream's `clientserver.c:1288-1289` minimum, with `0` on either side
+/// Upstream's `clientserver.c:1297-1298` minimum, with `0` on either side
 /// meaning infinity. The table is exhaustive over the five shapes.
 #[test]
 fn effective_io_timeout_takes_the_minimum_treating_zero_as_infinite() {
@@ -1371,7 +1371,7 @@ fn effective_io_timeout_takes_the_minimum_treating_zero_as_infinite() {
 /// `module.timeout` alone, so a default `rsyncd.conf` left a wedged peer able
 /// to hold the connection indefinitely against a client `--timeout=N`.
 ///
-/// upstream: `clientserver.c:1288-1289`.
+/// upstream: `clientserver.c:1297-1298`.
 #[cfg(unix)]
 #[test]
 fn client_timeout_arms_the_socket_when_the_module_sets_none() {
@@ -1402,7 +1402,7 @@ fn client_timeout_arms_the_socket_when_the_module_sets_none() {
 /// Without this cell a "client wins" implementation would pass every other
 /// test here while letting a peer defeat a short operator-set timeout.
 ///
-/// upstream: `clientserver.c:1288-1289`.
+/// upstream: `clientserver.c:1297-1298`.
 #[cfg(unix)]
 #[test]
 fn a_longer_client_timeout_does_not_lengthen_a_short_module_timeout() {
@@ -1479,7 +1479,7 @@ fn refusal_for(rules: &[&str], args: &[&str]) -> Option<String> {
 /// `--append` and `--write-devices` turn on `inplace`, so they fall under its
 /// refusal and the error names the refused row.
 ///
-/// upstream: options.c:2557-2566 `create_refuse_error(refused_inplace)`.
+/// upstream: options.c:2612-2621 `create_refuse_error(refused_inplace)`.
 #[test]
 fn refused_inplace_covers_append_and_write_devices() {
     for implied in ["--append", "--append-verify"] {
@@ -1505,7 +1505,7 @@ fn refused_inplace_covers_append_and_write_devices() {
 /// `--inplace` counts as `--partial` for refusal purposes, and so does a
 /// `--partial-dir` that cleans to nothing.
 ///
-/// upstream: options.c:2584-2588 and :2601-2610 `create_refuse_error(refused_partial)`.
+/// upstream: options.c:2639-2643 and :2601-2610 `create_refuse_error(refused_partial)`.
 #[test]
 fn refused_partial_covers_inplace_and_an_empty_partial_dir() {
     assert_eq!(
@@ -1521,7 +1521,7 @@ fn refused_partial_covers_inplace_and_an_empty_partial_dir() {
 /// `-P` sets both `keep_partial` and `do_progress`, so refusing `progress`
 /// refuses it.
 ///
-/// upstream: options.c:1729-1732.
+/// upstream: options.c:1765-1768.
 #[test]
 fn refused_progress_covers_the_p_bundle_letter() {
     assert_eq!(
@@ -1537,7 +1537,7 @@ fn refused_progress_covers_the_p_bundle_letter() {
 /// A bare `--delete` must choose a timing; with both refused it is refused as
 /// `--delete-before`, and with one refused it is still accepted.
 ///
-/// upstream: options.c:2340-2353.
+/// upstream: options.c:2395-2408.
 #[test]
 fn bare_delete_is_refused_only_when_both_timings_are() {
     let args = ["--server", "-r", "--delete", ".", "m/"];
@@ -1559,7 +1559,7 @@ fn bare_delete_is_refused_only_when_both_timings_are() {
 
 /// Refusing `no-iconv` demands that the client send `--iconv`.
 ///
-/// upstream: options.c:2202-2205.
+/// upstream: options.c:2238-2241.
 #[test]
 fn refused_no_iconv_requires_an_iconv_argument() {
     assert_eq!(

@@ -1,7 +1,7 @@
 //! Counting a command's file opens with `strace`.
 //!
 //! For tests that pin how many times a file is opened, such as the sender's
-//! one open per source file (upstream `sender.c:656-800`). The trace follows
+//! one open per source file (upstream `sender.c:664-808`). The trace follows
 //! every thread and child of the command (`-f`), so the command under trace
 //! must be the only process that opens the files being counted - a daemon on
 //! the other end of the transfer runs untraced.

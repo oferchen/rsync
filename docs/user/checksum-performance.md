@@ -342,7 +342,7 @@ All checksum implementations produce output identical to upstream rsync
 - MD4/MD5 match rsync's seeded checksum paths with proper
   `CHECKSUM_SEED_FIX` handling
 - XXH64/XXH3/XXH128 match rsync's modern strong checksum paths
-- Negotiation follows upstream `compat.c:534-585`
+- Negotiation follows upstream `compat.c:535-586`
   (`negotiate_the_strings()`)
 
 Wire-format compatibility is verified by golden byte tests in

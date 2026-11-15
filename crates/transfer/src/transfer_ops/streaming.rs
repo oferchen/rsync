@@ -62,7 +62,7 @@ pub struct StreamingResult {
 /// outstanding request rather than the awaited front, and that front's response
 /// is still on its way.
 ///
-/// upstream: io.c:1225-1274 `got_flist_entry_status(FES_NO_SEND, ndx)`.
+/// upstream: io.c:1232-1281 `got_flist_entry_status(FES_NO_SEND, ndx)`.
 pub enum ResponseProgress {
     /// The awaited file's delta arrived and was streamed to the disk thread.
     Received(StreamingResult),

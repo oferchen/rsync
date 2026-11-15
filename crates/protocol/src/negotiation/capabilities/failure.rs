@@ -1,4 +1,4 @@
-//! The `recv_negotiate_str()` failure diagnostic (upstream `compat.c:369-406`).
+//! The `recv_negotiate_str()` failure diagnostic (upstream `compat.c:370-407`).
 //!
 //! When a checksum or compression list has no mutually acceptable entry,
 //! upstream prints a fixed block to `FERROR` and aborts with
@@ -42,10 +42,10 @@ pub(super) fn negotiation_failure(
     peer_list: &str,
     own_candidates: &[&str],
 ) -> io::Error {
-    // upstream: compat.c:387 rprintf(FERROR, "Failed to negotiate a %s choice.\n", ...)
+    // upstream: compat.c:388 rprintf(FERROR, "Failed to negotiate a %s choice.\n", ...)
     let mut msg = format!("Failed to negotiate a {kind} choice.");
 
-    // upstream: compat.c:384 - only `!am_server || !do_negotiated_strings`
+    // upstream: compat.c:385 - only `!am_server || !do_negotiated_strings`
     // prints the offered lists.
     if !is_server || !do_negotiated {
         let (peer_label, own_label) = if is_server {
@@ -54,25 +54,25 @@ pub(super) fn negotiation_failure(
             ("Server", "Client")
         };
 
-        // upstream: compat.c:388 rprintf(FERROR, "%s list: %s\n", peer, tmpbuf)
+        // upstream: compat.c:389 rprintf(FERROR, "%s list: %s\n", peer, tmpbuf)
         msg.push('\n');
         msg.push_str(peer_label);
         msg.push_str(" list: ");
         msg.push_str(peer_list);
 
-        // upstream: compat.c:391-400 - rebuild our own list from the saw
+        // upstream: compat.c:392-401 - rebuild our own list from the saw
         // ordinals, each surviving name written with a leading space.
         let mut own = String::new();
         for name in own_candidates {
             own.push(' ');
             own.push_str(name);
         }
-        // upstream: compat.c:401-402 - an empty rebuild becomes " INVALID".
+        // upstream: compat.c:402-403 - an empty rebuild becomes " INVALID".
         if own.is_empty() {
             own.push_str(" INVALID");
         }
 
-        // upstream: compat.c:403 rprintf(FERROR, "%s list:%s\n", self, tmpbuf) -
+        // upstream: compat.c:404 rprintf(FERROR, "%s list:%s\n", self, tmpbuf) -
         // no space after the colon; the rebuilt list already leads with one.
         msg.push('\n');
         msg.push_str(own_label);

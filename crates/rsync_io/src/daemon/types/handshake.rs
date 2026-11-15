@@ -32,7 +32,7 @@ impl<R> LegacyDaemonHandshake<R> {
     /// symmetry with the binary handshake. Note this is the negotiated
     /// (post-clamp) protocol, not the version placed in the greeting line - the
     /// greeting advertises the caller's own newest/`--protocol` cap ahead of
-    /// reading the server (upstream: clientserver.c:181), which may be higher.
+    /// reading the server (upstream: clientserver.c:185), which may be higher.
     #[doc(alias = "--protocol")]
     #[must_use]
     pub const fn local_advertised_protocol(&self) -> ProtocolVersion {

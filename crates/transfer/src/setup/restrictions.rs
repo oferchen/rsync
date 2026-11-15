@@ -1,6 +1,6 @@
 //! Protocol version compatibility restrictions.
 //!
-//! Implements the feature-version checks from upstream `compat.c:664-720`.
+//! Implements the feature-version checks from upstream `compat.c:665-721`.
 //! After protocol setup completes, certain features require a minimum protocol
 //! version. This module validates those constraints and returns appropriate
 //! errors when features are incompatible with the negotiated protocol.
@@ -32,6 +32,8 @@ pub struct ProtocolRestrictionFlags {
     pub inplace: bool,
     /// `--prune-empty-dirs` / `-m`.
     pub prune_empty_dirs: bool,
+    /// `--delay-symlinks`.
+    pub delay_symlinks: bool,
     /// Whether this is a local server (no remote connection).
     pub local_server: bool,
 }
@@ -77,6 +79,8 @@ pub fn refuse_unsupported_options(
         )
     } else if flags.prune_empty_dirs {
         format!("--prune-empty-dirs requires protocol 29 or higher (negotiated {version}).")
+    } else if flags.delay_symlinks {
+        format!("--delay-symlinks requires protocol 29 or higher (negotiated {version}).")
     } else {
         return Ok(());
     };

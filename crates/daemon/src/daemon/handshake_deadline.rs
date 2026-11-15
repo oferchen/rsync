@@ -1,6 +1,6 @@
 //! The bound on each peer-driven daemon handshake phase.
 //!
-//! upstream: clientserver.c:87-100 + io.c:151-179, 1316-1322.
+//! upstream: clientserver.c:91-104 + io.c:151-179, 1316-1322.
 //!
 //! Upstream arms one deadline for the whole handshake phase and consults it
 //! inside its single I/O wait. Three properties make it what it is, and all
@@ -34,12 +34,12 @@ use std::time::{Duration, Instant};
 
 /// Fallback bound on each peer-driven handshake phase, in seconds.
 ///
-/// upstream: clientserver.c:90 `#define DAEMON_HANDSHAKE_TIMEOUT 60`.
+/// upstream: clientserver.c:94 `#define DAEMON_HANDSHAKE_TIMEOUT 60`.
 pub(crate) const DAEMON_HANDSHAKE_TIMEOUT_SECS: u64 = 60;
 
 /// Resolves a configured `timeout` to the handshake bound.
 ///
-/// upstream: clientserver.c:92-100 `daemon_handshake_timeout()`. A configured
+/// upstream: clientserver.c:96-104 `daemon_handshake_timeout()`. A configured
 /// value may shorten the phase; anything outside `1..=60` falls back to the
 /// full bound. `None` is upstream's `timeout <= 0` arm - `atoi()` maps an
 /// absent, zero or negative directive onto it, and oc's `parse_timeout_seconds`
@@ -54,7 +54,7 @@ pub(crate) fn handshake_timeout(configured: Option<NonZeroU64>) -> Duration {
 
 /// The absolute deadline for one handshake phase.
 ///
-/// upstream: `daemon_handshake_deadline` (io.c:118, set at io.c:1316-1322)
+/// upstream: `daemon_handshake_deadline` (io.c:118, set at io.c:1323-1329)
 /// plus the check in `handshake_poll_timeout_ms()` (io.c:151-179). Upstream clamps its poll
 /// timeout down to the remaining time; [`state`](Self::state) is that clamp,
 /// and [`DeadlineBufRead`] applies it to oc's blocking reads.
@@ -83,7 +83,7 @@ pub(crate) enum DeadlineState {
 impl HandshakeDeadline {
     /// Arms the deadline for `timeout` from now.
     ///
-    /// upstream: io.c:1318-1319 - `secs > 0` stamps `time(NULL) + secs`.
+    /// upstream: io.c:1325-1326 - `secs > 0` stamps `time(NULL) + secs`.
     pub(crate) fn armed(timeout: Duration) -> Self {
         Self {
             deadline: Instant::now() + timeout,
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn a_configured_timeout_can_only_shorten_the_phase() {
-        // upstream: clientserver.c:97 - the `> DAEMON_HANDSHAKE_TIMEOUT`
+        // upstream: clientserver.c:101 - the `> DAEMON_HANDSHAKE_TIMEOUT`
         // arm is what makes a longer configured value inert.
         assert_eq!(handshake_timeout(secs(10)), Duration::from_secs(10));
         assert_eq!(

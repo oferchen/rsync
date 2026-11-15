@@ -221,8 +221,8 @@ bytes contain only `/` separators - is queued for the follow-up fix.
 
 - Upstream `util1.c:943-1011` (`clean_fname`) and `util1.c:1035-1108`
   (`sanitize_path`).
-- Upstream `flist.c:1245` (`thisname` copy), `flist.c:1567` and
-  `flist.c:2017` (`f_name(file, fbuf)`).
+- Upstream `flist.c:1249` (`thisname` copy), `flist.c:1571` and
+  `flist.c:2021` (`f_name(file, fbuf)`).
 - Upstream `util1.c:955-961` `__CYGWIN__` two-leading-slash preservation.
 - oc-rsync `crates/transfer/src/sanitize_path.rs` (mirror of
   `sanitize_path`).

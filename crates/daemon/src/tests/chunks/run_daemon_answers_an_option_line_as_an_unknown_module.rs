@@ -2,7 +2,7 @@
 /// configuration or refuse-options channel.
 ///
 /// upstream: `start_daemon` reads exactly one request line after the greeting
-/// (clientserver.c:1541-1575) and looks it up as a module, so an upstream 3.5.1
+/// (clientserver.c:1551-1585) and looks it up as a module, so an upstream 3.5.1
 /// daemon answers `@ERROR: Unknown module '@RSYNCD: OPTION read only=no'` and
 /// closes. Module parameters come only from the operator: the config file and
 /// the daemon's own `--dparam` (loadparm.c:667 set_dparams()).

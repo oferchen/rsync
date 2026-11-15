@@ -1,6 +1,6 @@
 //! The server argv, read the way 3.5.1's single popt pass reads it.
 //!
-//! upstream: options.c:1497 parses the whole argv in one pass, and the first
+//! upstream: options.c:1515 parses the whole argv in one pass, and the first
 //! `--server` restarts it (options.c:1517-1524). Every oc reader of a server
 //! argv - the remote-shell server and the daemon - goes through
 //! [`normalize_server_argv`] so each sees the same options.
@@ -9,7 +9,7 @@ use std::ffi::{OsStr, OsString};
 
 /// The bare `--` that ends option processing.
 ///
-/// upstream: options.c:1497 - the server runs the same popt parser as the
+/// upstream: options.c:1515 - the server runs the same popt parser as the
 /// client (`poptGetContext(RSYNC_NAME, argc, argv, long_options, 0)`), and popt
 /// consumes a bare `--` and hands back every following argv entry as a plain
 /// operand, whatever it looks like.
@@ -44,7 +44,7 @@ pub fn split_at_end_of_options(args: &[OsString]) -> (&[OsString], &[OsString]) 
 
 /// A server argv rejected the way 3.5.1's popt pass rejects it.
 ///
-/// upstream: main.c:1909-1912 - a failed parse_arguments() is option_error()
+/// upstream: main.c:1913-1916 - a failed parse_arguments() is option_error()
 /// (options.c:907-918, `"rsync: %s"`) then `exit_cleanup(RERR_SYNTAX)`. The
 /// trailer names the process `server` only once `--server` has been parsed:
 /// am_server is set by that option (options.c:889), so an option refused before
@@ -83,7 +83,7 @@ impl ArgvRefusal {
 /// one that takes a value ([`SHORT_OPTIONS_WITH_VALUE`]), whose value is the
 /// rest of the token or else the next token. The rewrite puts every option
 /// letter, in order, into one compact flag string right after `--server`, with
-/// the last `-e` value (upstream's `shell_cmd`, compat.c:165) appended, so the
+/// the last `-e` value (upstream's `shell_cmd`, compat.c:166) appended, so the
 /// flag-string parser and the capability decoder read it exactly as they read
 /// a single cluster.
 ///
@@ -123,7 +123,7 @@ pub fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, ArgvRef
             continue;
         }
         if text == "--server" {
-            // upstream: options.c:1517-1524 - the first `--server` restarts
+            // upstream: options.c:1535-1542 - the first `--server` restarts
             // the popt pass from argv[1], so every option ahead of it is
             // parsed twice and a counting letter (`-v`, `-X`, `-x`) counts
             // twice.
@@ -201,7 +201,7 @@ pub fn normalize_server_argv(args: &[OsString]) -> Result<Vec<OsString>, ArgvRef
                 'B' => kept.push(OsString::from(format!("-B{value}"))),
                 '@' => kept.push(OsString::from(format!("-@{value}"))),
                 'T' => kept.push(OsString::from(format!("--temp-dir={value}"))),
-                // upstream: options.c:752 `-f`, OPT_FILTER at :1620.
+                // upstream: options.c:753 `-f`, OPT_FILTER at :1620.
                 _ => filters.push(ArgvFilter::Option(OsString::from(format!(
                     "--filter={value}"
                 )))),
@@ -248,7 +248,7 @@ enum ArgvFilter {
 
 /// The long filter options, each taking one value.
 ///
-/// upstream: options.c:1620-1656 - OPT_FILTER, OPT_EXCLUDE, OPT_INCLUDE,
+/// upstream: options.c:1647-1683 - OPT_FILTER, OPT_EXCLUDE, OPT_INCLUDE,
 /// OPT_EXCLUDE_FROM and OPT_INCLUDE_FROM.
 pub const FILTER_OPTIONS: [&str; 5] = [
     "--filter",
@@ -268,7 +268,7 @@ pub fn is_joined_filter_option(arg: &str) -> bool {
 
 /// The rule the `count`th `-F` adds; a third and later add nothing.
 ///
-/// upstream: options.c:1718-1727.
+/// upstream: options.c:1754-1763.
 fn rsync_filter_rule(count: usize) -> Option<String> {
     match count {
         1 => Some("--filter=: /.rsync-filter".to_owned()),
@@ -343,6 +343,7 @@ pub fn is_two_arg_server_long_flag(arg: &str) -> bool {
             | "--temp-dir"
             | "--files-from"
             | "--partial-dir"
+            | "--nice"
     )
 }
 

@@ -13,7 +13,7 @@ Sources: `target/interop/upstream-src/rsync-3.4.1/progress.c`;
 
 ### 1.1 Core format string
 
-`progress.c:129` - `rprint_progress()`:
+`progress.c:120` - `rprint_progress()`:
 
 ```c
 rprintf(FCLIENT, "\r%15s %3d%% %7.2f%s %s%s",
@@ -34,7 +34,7 @@ glued together with no space):
 
 `human_num()` (`inums.h:33`) delegates to `do_big_num(num, human_readable,
 NULL)` in `lib/compat.c:170`. The `human_readable` global defaults to 1
-(`options.c:110`), incremented by each `-h` flag (`options.c:1557`).
+(`options.c:110`), incremented by each `-h` flag (`options.c:1575`).
 
 Behavior by level:
 
@@ -50,13 +50,13 @@ Behavior by level:
 
 ### 1.3 Rate computation and units
 
-Rate is computed in KiB/s from the start (`progress.c:96`):
+Rate is computed in KiB/s from the start (`progress.c:97`):
 
 ```c
 rate = (double)(ofs - ph_start.ofs) * 1000.0 / diff / 1024.0;
 ```
 
-Then scaled by powers of 1024 (`progress.c:108-116`):
+Then scaled by powers of 1024 (`progress.c:106-107`):
 
 ```c
 if (rate > 1024*1024) {       // > 1 GiB/s
@@ -72,7 +72,7 @@ if (rate > 1024*1024) {       // > 1 GiB/s
 
 Key: lowercase `k` in `kB/s` (SI convention). No `B/s` step - even
 sub-kB/s rates display as fractional `kB/s`. Division by zero avoided by
-clamping `diff = 1` when millisecond delta is zero (`progress.c:95,103`).
+clamping `diff = 1` when millisecond delta is zero (`progress.c:96,103`).
 
 ### 1.4 Time field (remaining vs elapsed)
 
@@ -88,7 +88,7 @@ Final update (`is_last`): total elapsed time in seconds.
 remain = (double)diff / 1000.0;
 ```
 
-Format (`progress.c:121-125`):
+Format (`progress.c:112-116`):
 
 ```c
 snprintf(rembuf, sizeof rembuf, "%4u:%02u:%02u",
@@ -100,13 +100,13 @@ snprintf(rembuf, sizeof rembuf, "%4u:%02u:%02u",
 Hours right-aligned in 4 columns. Minutes and seconds zero-padded to 2
 digits. Fixed width: 10 characters (`HHHH:MM:SS`).
 
-Overflow guard (`progress.c:118-119`): when `remain < 0` or
+Overflow guard (`progress.c:109-110`): when `remain < 0` or
 `remain > 9999 * 3600`, displays literal `  ??:??:??` (2 leading spaces +
 8 chars = 10 chars total).
 
 ### 1.5 End-of-line trailer
 
-Final update (`progress.c:78-82`):
+Final update (`progress.c:79-83`):
 
 ```c
 snprintf(eol, sizeof eol,
@@ -125,15 +125,15 @@ snprintf(eol, sizeof eol,
 
 Under `INFO_GTE(PROGRESS, 2)` (overall progress), the `\n` is stripped
 and the line is padded with trailing spaces to prevent shortening artifacts
-(`progress.c:83-92`).
+(`progress.c:84-93`).
 
-Mid-transfer: `eol` is `"  "` (two trailing spaces, `progress.c:100`).
+Mid-transfer: `eol` is `"  "` (two trailing spaces, `progress.c:101`).
 
 ### 1.6 Refresh cadence
 
 `show_progress()` returns early if fewer than 1000ms have elapsed since the
-last history sample (`progress.c:224`). Rate is averaged over the last 5
-seconds (`PROGRESS_HISTORY_SECS = 5`, `progress.c:37`).
+last history sample (`progress.c:220`). Rate is averaged over the last 5
+seconds (`PROGRESS_HISTORY_SECS = 5`, `progress.c:38`).
 
 ## 2. oc-rsync implementation
 
@@ -372,15 +372,15 @@ diff <(xxd /tmp/up.raw) <(xxd /tmp/oc.raw)
 
 ## 7. Upstream source references
 
-- `progress.c:69-135` - `rprint_progress()` - main format function.
-- `progress.c:37` - `PROGRESS_HISTORY_SECS = 5` - sliding window size.
-- `progress.c:96,104` - Rate computation in KiB/s.
-- `progress.c:108-116` - Unit thresholds (1024-based).
-- `progress.c:118-125` - Time formatting and overflow guard.
-- `progress.c:129-130` - Final `rprintf` format string.
-- `progress.c:167-180` - `end_progress()` - final update dispatch.
-- `progress.c:182-241` - `show_progress()` - mid-file update with history.
-- `lib/compat.c:170-246` - `do_big_num()` - locale-aware number formatting.
+- `progress.c:70-131` - `rprint_progress()` - main format function.
+- `progress.c:38` - `PROGRESS_HISTORY_SECS = 5` - sliding window size.
+- `progress.c:97,104` - Rate computation in KiB/s.
+- `progress.c:106-107` - Unit thresholds (1024-based).
+- `progress.c:109-116` - Time formatting and overflow guard.
+- `progress.c:120-121` - Final `rprintf` format string.
+- `progress.c:163-176` - `end_progress()` - final update dispatch.
+- `progress.c:178-237` - `show_progress()` - mid-file update with history.
+- `lib/compat.c:170-256` - `do_big_num()` - locale-aware number formatting.
 - `lib/compat.c:27-39` - `get_number_separator()` - locale detection.
 - `inums.h:33-37` - `human_num()` inline wrapper.
 - `main.c:416-465` - `output_summary()` - stats and totals format.

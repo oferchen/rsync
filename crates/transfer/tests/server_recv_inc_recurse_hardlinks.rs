@@ -3,7 +3,7 @@
 //!
 //! A server receiver itemizes every new hard-link follower to the client
 //! sender (`NDX + iflags + xname`), and the sender echoes each one back
-//! (upstream sender.c:584-602). Under INC_RECURSE the receiver also writes a
+//! (upstream sender.c:592-610). Under INC_RECURSE the receiver also writes a
 //! per-sub-list `NDX_DONE` mid-walk and reads its echo (generator.c:2691-2698,
 //! sender.c:525-539). Both echoes share one ordered stream, so a follower echo
 //! left unread ahead of the `NDX_DONE` echo, or ahead of the next sub-list's

@@ -41,15 +41,15 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/backup.c:443-449` `make_backup()` - `operator_path_resolve =
+//! - `rsync-3.5.2/backup.c:443-449` `make_backup()` - `operator_path_resolve =
 //!   1` around the entire backup.
-//! - `rsync-3.5.1/generator.c:2281-2301` and `:2327-2349` - the in-place backup
+//! - `rsync-3.5.2/generator.c:2323-2343` and `:2327-2349` - the in-place backup
 //!   bypasses `make_backup()`, so the generator raises the flag around
 //!   `get_backup_name()` and the `copy_file()` / `do_open_at()` that follow.
-//! - `rsync-3.5.1/syscall.c:232-291` `abspath_outside_confinement()` - refuses a
+//! - `rsync-3.5.2/syscall.c:232-291` `abspath_outside_confinement()` - refuses a
 //!   resolved path outside `confinement_root()`, but only while
 //!   `operator_path_resolve` is set.
-//! - `rsync-3.5.1/syscall.c:163-171` `confinement_root()` - a daemon's root is
+//! - `rsync-3.5.2/syscall.c:163-171` `confinement_root()` - a daemon's root is
 //!   `module_dir`.
 
 #![cfg(unix)]

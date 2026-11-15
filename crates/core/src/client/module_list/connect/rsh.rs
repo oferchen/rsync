@@ -8,7 +8,7 @@
 //! Shared by the transfer path (`remote::run_daemon_over_remote_shell`) and
 //! the module-listing path so both honour `-e PROG host::` identically.
 //!
-//! upstream: `main.c:615-630` + `main.c:1648-1670` - the daemon-over-rsh path
+//! upstream: `main.c:615-630` + `main.c:1652-1674` - the daemon-over-rsh path
 //! in `start_client()` runs `rsync_path --server --daemon .` with no
 //! `server_options()`, exports `RSYNC_PORT` into the shell environment, and
 //! then speaks the daemon protocol over the spawned process's stdin/stdout.
@@ -186,7 +186,7 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
 /// The wait needs `poll(2)`, so the deadline is enforced on Unix only; on other
 /// platforms reads block as before.
 ///
-/// upstream: main.c:1655-1670 arms `set_client_connect_timeout()` around
+/// upstream: main.c:1659-1674 arms `set_client_connect_timeout()` around
 /// `do_cmd()` + `start_inband_exchange()`; io.c:169-173
 /// `handshake_poll_timeout_ms()` exits once it passes.
 pub(crate) struct ConnectDeadlineReader {
@@ -261,7 +261,7 @@ impl Read for ConnectDeadlineReader {
 pub(crate) fn spawn_rsh_daemon_stream(
     spec: RshDaemonSpawn<'_>,
 ) -> Result<DaemonStream, ClientError> {
-    // upstream: main.c:1636-1639 - the dash-led host refusal covers a daemon
+    // upstream: main.c:1640-1643 - the dash-led host refusal covers a daemon
     // reached through the shell too, before do_cmd() spawns it.
     if spec.host.starts_with('-') {
         return Err(invalid_argument_error(
@@ -273,7 +273,7 @@ pub(crate) fn spawn_rsh_daemon_stream(
     let mut cmd = Command::new(&program);
     cmd.args(&args);
 
-    // upstream: main.c:1649-1650 - set_env_num("RSYNC_PORT", env_port)
+    // upstream: main.c:1653-1654 - set_env_num("RSYNC_PORT", env_port)
     cmd.env("RSYNC_PORT", spec.port.to_string());
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
@@ -340,7 +340,7 @@ mod tests {
         );
     }
 
-    /// upstream: main.c:1636-1639 refuses a dash-led host for a daemon reached
+    /// upstream: main.c:1640-1643 refuses a dash-led host for a daemon reached
     /// through the shell too, before anything is spawned. The probe program
     /// does not exist, so reaching the spawn would surface as an IPC error.
     #[test]

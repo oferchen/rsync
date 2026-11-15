@@ -165,7 +165,7 @@ impl MetadataOptions {
     /// default but conflicts with the explicit opt-in to follow dest-side
     /// symlinks-to-dirs that `--keep-dirlinks` represents.
     ///
-    /// upstream: generator.c:1745 - `gen_entry_stat` honors `keep_dirlinks` so
+    /// upstream: generator.c:1782 - `gen_entry_stat` honors `keep_dirlinks` so
     /// the canonical target path is what subsequent chmod/chown see.
     #[must_use]
     #[doc(alias = "--keep-dirlinks")]

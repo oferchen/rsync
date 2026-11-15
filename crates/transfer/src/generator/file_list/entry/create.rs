@@ -37,7 +37,7 @@ impl GeneratorContext {
         metadata: &fast_io::EntryMetadata,
         filter_level: u8,
     ) -> io::Result<FileEntry> {
-        // upstream: flist.c:1767 DEBUG_GTE(FLIST, 2) `[%s] make_file(%s,*,%d)`.
+        // upstream: flist.c:1771 DEBUG_GTE(FLIST, 2) `[%s] make_file(%s,*,%d)`.
         // The filter level is NO_FILTERS (0) for named sources and ALL_FILTERS
         // (2) for recursed/implied entries (rsync.h:212-214).
         protocol::flist::trace_make_file(
@@ -87,7 +87,7 @@ impl GeneratorContext {
         #[cfg(windows)]
         let reparse_kind = is_reparse_point.then(|| metadata::windows::classify_path(full_path));
 
-        // upstream: flist.c:1644-1653 - `copy_devices && am_sender &&
+        // upstream: flist.c:1648-1657 - `copy_devices && am_sender &&
         // IS_DEVICE(st.st_mode)` rewrites a block/char device into a regular
         // file: mode becomes `S_IFREG | ACCESSPERMS`, mtime is forced to "now",
         // and the size is the device's readable byte length. The device's
@@ -99,7 +99,7 @@ impl GeneratorContext {
                 && (file_type.is_block_device() || file_type.is_char_device())
             {
                 let mode = metadata.mode() & 0o7777;
-                // upstream: flist.c:1646-1649 - open the device and size it when
+                // upstream: flist.c:1650-1653 - open the device and size it when
                 // st_size is 0 (block devices report 0). `device_readable_size`
                 // mirrors get_device_size() with a macOS ioctl fallback.
                 let size = if metadata.is_empty() {
@@ -116,7 +116,7 @@ impl GeneratorContext {
         let copy_device_override: Option<(u64, u32)> = None;
 
         let mut entry = if let Some((dev_size, dev_mode)) = copy_device_override {
-            // upstream: flist.c:1650 - st.st_mode = S_IFREG | (mode & ACCESSPERMS)
+            // upstream: flist.c:1654 - st.st_mode = S_IFREG | (mode & ACCESSPERMS)
             FileEntry::new_file(relative_path, dev_size, dev_mode)
         } else if file_type.is_file() && {
             #[cfg(windows)]
@@ -142,7 +142,7 @@ impl GeneratorContext {
             // can masquerade as a device/symlink/special on the wire.
             #[cfg(unix)]
             let entry = if let Some(stat) = fake_super_override.as_ref() {
-                // upstream: flist.c:482-500 readlink_stat() - a placeholder
+                // upstream: flist.c:485-503 readlink_stat() - a placeholder
                 // whose %stat says S_IFLNK holds its link target as file
                 // content, and a munged target loses its prefix.
                 let link_target = if stat.mode & 0o170000 == 0o120000 {
@@ -166,7 +166,7 @@ impl GeneratorContext {
             #[cfg(not(unix))]
             let mode = 0o755;
 
-            // upstream: flist.c:1887 - `file->len32 = (uint32)st.st_size` runs for
+            // upstream: flist.c:1891 - `file->len32 = (uint32)st.st_size` runs for
             // every entry; only devices/specials are zeroed (flist.c:1709-1711).
             // Directories therefore carry their on-disk inode size on the wire,
             // which feeds `--list-only`, `%l`, and the `--stats` total.
@@ -200,14 +200,14 @@ impl GeneratorContext {
                 .read_source_link(full_path)
                 .unwrap_or_else(|_| PathBuf::from(""));
 
-            // upstream: flist.c:224-228 - sender strips the `/rsyncd-munged/`
+            // upstream: flist.c:225-229 - sender strips the `/rsyncd-munged/`
             // prefix from the readlink result when the daemon module has
             // `munge symlinks = yes`, restoring the original target before it
             // is sent on the wire. The matching prepend on the receive side
             // re-applies the prefix when the link is materialized on disk.
             let target = strip_symlink_munge_prefix(self.config.munge_symlinks, raw_target);
 
-            // upstream: flist.c:1894 - `file->mode = st.st_mode` runs verbatim
+            // upstream: flist.c:1898 - `file->mode = st.st_mode` runs verbatim
             // for every type, symlinks included; there is no symlink special
             // case at the flist layer. On Linux a link's permission bits are
             // pinned to 0o777 by the kernel so this reads back as 0o777 anyway,
@@ -222,7 +222,7 @@ impl GeneratorContext {
             #[cfg(not(unix))]
             let link_mode = 0o777;
 
-            // upstream: flist.c:1726 - symlinks carry `st_size`, which lstat
+            // upstream: flist.c:1730 - symlinks carry `st_size`, which lstat
             // reports as the byte length of the link target. The receiver gets
             // the target separately, so this length is purely the size shown by
             // `--list-only`/`%l` and summed into the `--stats` total.
@@ -268,7 +268,7 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: flist.c:1652 - the device mtime is not up-to-date, so a
+        // upstream: flist.c:1656 - the device mtime is not up-to-date, so a
         // `--copy-devices` entry carries `time(NULL)` instead of the on-disk
         // stat time. This is a no-op on non-device entries and on non-Unix.
         if copy_device_override.is_some() {
@@ -278,7 +278,7 @@ impl GeneratorContext {
             entry.set_mtime(now, 0);
         }
 
-        // Set access time if preserving (upstream: flist.c:714-719)
+        // Set access time if preserving (upstream: flist.c:718-723)
         #[cfg(unix)]
         if self.config.flags.atimes && !entry.is_dir() {
             entry.set_atime(metadata.atime());
@@ -292,7 +292,7 @@ impl GeneratorContext {
             entry.set_atime(duration.as_secs() as i64);
         }
 
-        // Set creation time if preserving (upstream: flist.c:720-723)
+        // Set creation time if preserving (upstream: flist.c:724-727)
         if self.config.flags.crtimes
             && let Ok(crtime) = metadata.created()
             && let Ok(duration) = crtime.duration_since(std::time::UNIX_EPOCH)
@@ -357,7 +357,7 @@ impl GeneratorContext {
                     filter: predicate.as_ref().map(|f| f as &dyn Fn(&str) -> bool),
                     checksum_seed: self.checksum_seed,
                 };
-                // upstream: flist.c:2058-2063 - a failed get_xattr() leaves the
+                // upstream: flist.c:2062-2067 - a failed get_xattr() leaves the
                 // entry out of the list; the walk reports it.
                 let list =
                     metadata::read_xattrs_for_wire(full_path, &opts).map_err(io::Error::other)?;
@@ -385,7 +385,7 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: flist.c:2030-2031 send_file_name() applies the client
+        // upstream: flist.c:2034-2035 send_file_name() applies the client
         // `--chmod` (chmod_modes) to each entry's mode as the sender builds the
         // file list, and clientserver.c:1299 appends the daemon module
         // `outgoing chmod` to that same `chmod_modes` list. On a push oc is the
@@ -664,7 +664,7 @@ mod fake_super_round_trip_tests {
         GeneratorContext::new_for_test(&handshake, config)
     }
 
-    /// upstream: flist.c:1644-1653 - with `--copy-devices` the sender must emit a
+    /// upstream: flist.c:1648-1657 - with `--copy-devices` the sender must emit a
     /// character/block device as a regular file (its contents are streamed like a
     /// plain file), not as a device node. Verified against `/dev/zero`, a char
     /// device present on every supported Unix. Without the conversion the receiver
@@ -1080,7 +1080,7 @@ mod client_chmod_tests {
 mod munge_symlinks_tests {
     //! Sender-side `munge symlinks` regression tests.
     //!
-    //! upstream: flist.c:224-228 - when the daemon enabled `munge symlinks`,
+    //! upstream: flist.c:225-229 - when the daemon enabled `munge symlinks`,
     //! the sender strips the `/rsyncd-munged/` prefix after `readlink()` so
     //! the wire format carries the original target. The matching prepend on
     //! the receive side lives in `crate::receiver::directory::links`.
@@ -1119,7 +1119,7 @@ mod munge_symlinks_tests {
 
     #[test]
     fn sender_strips_munge_prefix_before_emitting_wire_target() {
-        // upstream: flist.c:224-228 - when the daemon enabled `munge symlinks`,
+        // upstream: flist.c:225-229 - when the daemon enabled `munge symlinks`,
         // the sender restores the original target before encoding the flist
         // entry. Verify the in-memory `FileEntry` carries the stripped path so
         // the wire format never leaks `/rsyncd-munged/`.
@@ -1142,7 +1142,7 @@ mod munge_symlinks_tests {
             entry.link_target().map(PathBuf::as_path),
             Some(Path::new("/etc/passwd")),
             "sender must strip `/rsyncd-munged/` before transmission \
-             (upstream flist.c:224-228)",
+             (upstream flist.c:225-229)",
         );
     }
 
@@ -1179,7 +1179,7 @@ mod munge_symlinks_tests {
 mod symlink_mode_tests {
     //! Sender-side symlink mode fidelity.
     //!
-    //! upstream: flist.c:1894 - `file->mode = st.st_mode` is one assignment
+    //! upstream: flist.c:1898 - `file->mode = st.st_mode` is one assignment
     //! covering every file type; there is no symlink special case at the flist
     //! layer. Whether that mode carries information is a platform property:
     //! rsync.h:456-457 defines `CAN_CHMOD_SYMLINK` when
@@ -1249,7 +1249,7 @@ mod symlink_mode_tests {
         let (entry_perms, disk_perms) = entry_and_disk_perms(&link);
         assert_eq!(
             entry_perms, disk_perms,
-            "upstream flist.c:1894 assigns st_mode verbatim for symlinks too",
+            "upstream flist.c:1898 assigns st_mode verbatim for symlinks too",
         );
     }
 
@@ -1584,7 +1584,7 @@ mod windows_reparse_tests {
 mod entry_length_tests {
     //! `F_LENGTH` parity regression for directory and symlink entries.
     //!
-    //! upstream: flist.c:1887 - `file->len32 = (uint32)st.st_size` runs for
+    //! upstream: flist.c:1891 - `file->len32 = (uint32)st.st_size` runs for
     //! every entry type; only devices and specials are zeroed at flist.c:1709
     //! and flist.c:1711. Directories therefore carry their on-disk inode size
     //! and symlinks carry `st_size` (the target byte length). That field is
@@ -1650,7 +1650,7 @@ mod entry_length_tests {
         assert_eq!(
             entry.size(),
             meta.len(),
-            "directory F_LENGTH must mirror st_size (upstream flist.c:1726), \
+            "directory F_LENGTH must mirror st_size (upstream flist.c:1730), \
              not the hardcoded 0 from FileEntry::new_directory",
         );
     }
@@ -1679,7 +1679,7 @@ mod entry_length_tests {
             entry.size(),
             target.len() as u64,
             "symlink F_LENGTH must equal the target byte length \
-             (upstream flist.c:1690), not the hardcoded 0 from \
+             (upstream flist.c:1694), not the hardcoded 0 from \
              FileEntry::new_symlink",
         );
         assert_eq!(

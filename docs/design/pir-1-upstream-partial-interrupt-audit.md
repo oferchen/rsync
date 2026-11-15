@@ -10,17 +10,17 @@ partial-interrupt parity in oc-rsync.
 
 ## 1. Signal Installation
 
-Signals are registered in `main.c:1717-1790` after option parsing:
+Signals are registered in `main.c:1721-1794` after option parsing:
 
 | Signal   | Handler            | Registered at |
 |----------|--------------------|---------------|
-| SIGUSR1  | `sigusr1_handler`  | main.c:1725   |
-| SIGUSR2  | `sigusr2_handler`  | main.c:1726   |
-| SIGCHLD  | `remember_children`| main.c:1727   |
-| SIGINT   | `sig_int`          | main.c:1788   |
-| SIGHUP   | `sig_int`          | main.c:1789   |
-| SIGTERM  | `sig_int`          | main.c:1790   |
-| SIGPIPE  | SIG_IGN            | main.c:1797   |
+| SIGUSR1  | `sigusr1_handler`  | main.c:1729   |
+| SIGUSR2  | `sigusr2_handler`  | main.c:1730   |
+| SIGCHLD  | `remember_children`| main.c:1731   |
+| SIGINT   | `sig_int`          | main.c:1792   |
+| SIGHUP   | `sig_int`          | main.c:1793   |
+| SIGTERM  | `sig_int`          | main.c:1794   |
+| SIGPIPE  | SIG_IGN            | main.c:1801   |
 
 SIGINT, SIGHUP, and SIGTERM share the same handler: `sig_int()` in rsync.c:685.
 
@@ -53,7 +53,7 @@ void sig_int(int sig_num)
 
 - **Generator/client (sender side):** Calls `_exit_cleanup(RERR_SIGNAL)` immediately
   from the signal handler. `called_from_signal_handler = 1` is set, so the
-  process terminates via `_exit()` (not `exit()`) at cleanup.c:273.
+  process terminates via `_exit()` (not `exit()`) at cleanup.c:274.
 
 - **Server or receiver:** Sets `got_kill_signal = sig_num` and returns. The
   signal is handled later at the next I/O operation, when `perform_io()` checks
@@ -62,7 +62,7 @@ void sig_int(int sig_num)
   allowing the multiplexed output to be flushed so the remote side learns what
   happened.
 
-### 2b. `sigusr1_handler()` (main.c:1597-1601)
+### 2b. `sigusr1_handler()` (main.c:1601-1605)
 
 ```c
 static void sigusr1_handler(UNUSED(int val))
@@ -73,7 +73,7 @@ static void sigusr1_handler(UNUSED(int val))
 ```
 
 No deferral. Immediate cleanup. SIGUSR1 is the signal rsync uses to propagate
-shutdown to child processes (cleanup.c:203).
+shutdown to child processes (cleanup.c:204).
 
 ### 2c. `handle_kill_signal()` (io.c:515-520)
 
@@ -89,7 +89,7 @@ static void handle_kill_signal(BOOL flush_ok)
 Bridges the deferred path into `_exit_cleanup`. The `flush_ok` flag controls
 whether step 4 of cleanup can flush I/O.
 
-## 3. `_exit_cleanup()` Step-by-Step (cleanup.c:103-275)
+## 3. `_exit_cleanup()` Step-by-Step (cleanup.c:103-276)
 
 The function uses `switch_step` and `case_N.h` includes to create a
 non-repeatable, re-entrant state machine. Each `#include "case_N.h"` generates
@@ -107,7 +107,7 @@ error during flush), the switch picks up at the next step.
 - If `cleanup_child_pid != -1`, calls `wait_process(WNOHANG)`.
 - Propagates child exit code upward if it is larger than current `exit_code`.
 
-### Step 2: Partial File Handling (cleanup.c:159-183)
+### Step 2: Partial File Handling (cleanup.c:159-184)
 
 **This is the critical step for --partial.**
 
@@ -140,28 +140,28 @@ if (cleanup_got_literal && (cleanup_fname || cleanup_fd_w != -1)) {
 }
 ```
 
-### Step 3: Flush I/O (cleanup.c:189-195)
+### Step 3: Flush I/O (cleanup.c:190-196)
 - If `flush_ok_after_signal` and code is `RERR_SIGNAL`, flushes multiplexed I/O.
 - On clean exit (code 0), flushes all I/O.
 
-### Step 4: Unlink and Kill Children (cleanup.c:200-226)
+### Step 4: Unlink and Kill Children (cleanup.c:201-227)
 - If `cleanup_fname` is still set (i.e., step 2 did NOT retain the file),
   `do_unlink(cleanup_fname)` removes the temp file.
 - If exiting with error, `kill_all(SIGUSR1)` sends SIGUSR1 to all child processes.
 - Removes daemon PID file if applicable.
 - Calculates final exit code from `io_error` flags and `got_xfer_error`.
 
-### Step 5: Log (cleanup.c:223-226)
+### Step 5: Log (cleanup.c:224-227)
 - `log_exit()` for error exits or daemon/logfile contexts.
 
-### Step 6: Debug (cleanup.c:231-237)
+### Step 6: Debug (cleanup.c:232-238)
 - Debug logging if EXIT >= 1.
 
-### Step 7: MSG_ERROR_EXIT (cleanup.c:242-258)
+### Step 7: MSG_ERROR_EXIT (cleanup.c:243-259)
 - For protocol >= 31 or receiver: sends `MSG_ERROR_EXIT` with exit code.
 - Calls `noop_io_until_death()` to drain remaining I/O.
 
-### Step 8: Final (cleanup.c:263-274)
+### Step 8: Final (cleanup.c:264-275)
 - `msleep(100)` for server side errors (lets client read buffered data).
 - `close_all()` closes all file descriptors.
 - If `called_from_signal_handler`, uses `_exit()`; otherwise `exit()`.
@@ -200,7 +200,7 @@ values, referencing matched blocks from the basis file) do NOT set this flag.
 
 ### Where Reset (cleanup_disable)
 
-**cleanup.c:277-282** - `cleanup_disable()` resets `cleanup_got_literal = 0`
+**cleanup.c:278-283** - `cleanup_disable()` resets `cleanup_got_literal = 0`
 along with all other cleanup state. Called at receiver.c:557 (top of main loop)
 and receiver.c:935 (after successful file completion).
 
@@ -269,7 +269,7 @@ partial_dir set?
   |-- YES -> finish_transfer into partial-dir (retained in partial-dir)
 ```
 
-## 6. `finish_transfer()` on Interrupt (cleanup.c:181-182)
+## 6. `finish_transfer()` on Interrupt (cleanup.c:182-183)
 
 When the partial file is retained during cleanup, `finish_transfer` is called
 with these specific arguments:
@@ -301,7 +301,7 @@ Inside `finish_transfer()` (rsync.c:724-785):
    - `temp_copy_name` is NULL (partialptr was passed as NULL), so no
      cross-filesystem copy fallback is attempted.
 
-## 7. The modtime=0 Stamp (cleanup.c:174-179)
+## 7. The modtime=0 Stamp (cleanup.c:175-180)
 
 ```c
 if (!partial_dir) {
@@ -327,7 +327,7 @@ The partial-dir file will be used as a basis file on the next transfer attempt.
 
 ## 8. `cleanup_set()` / `cleanup_disable()` Bracket in `recv_files()`
 
-### `cleanup_disable()` (cleanup.c:277-282)
+### `cleanup_disable()` (cleanup.c:278-283)
 
 ```c
 void cleanup_disable(void)
@@ -344,7 +344,7 @@ Called at two points in `recv_files()`:
 2. **receiver.c:935** - After all file completion logic (finish_transfer, delay-updates
    bookkeeping, unlink). The file is done; cleanup state is disarmed.
 
-### `cleanup_set()` (cleanup.c:285-293)
+### `cleanup_set()` (cleanup.c:286-294)
 
 ```c
 void cleanup_set(const char *fnametmp, const char *fname,
@@ -409,7 +409,7 @@ file (if any) is simply unlinked.
 phase. Files are written to the partial-dir during transfer, then renamed in
 bulk at phase transition.
 
-### Option Setup (options.c:2410-2444)
+### Option Setup (options.c:2465-2499)
 
 - `--inplace` and `--delay-updates` are mutually exclusive (error at 2410).
 - `--append` and `--delay-updates` are mutually exclusive.

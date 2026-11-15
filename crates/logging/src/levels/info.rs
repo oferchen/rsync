@@ -2,7 +2,7 @@
 //!
 //! This module defines [`InfoFlag`] and [`InfoLevels`], mirroring upstream
 //! rsync's `INFO_*` constants and `info_levels[]` array
-//! (upstream: rsync.h:1480-1494, options.c:263).
+//! (upstream: rsync.h:1496-1510, options.c:264).
 
 /// Info flags for user-visible diagnostic categories.
 ///
@@ -11,7 +11,7 @@
 /// (level 2). Upstream defines these in `rsync.h` as `INFO_*` constants
 /// and indexes into the `info_levels[]` array.
 ///
-/// upstream: rsync.h:1480-1494 INFO_BACKUP..INFO_SYMSAFE, options.c:255 info_verbosity[]
+/// upstream: rsync.h:1496-1510 INFO_BACKUP..INFO_SYMSAFE, options.c:256 info_verbosity[]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum InfoFlag {
@@ -67,7 +67,7 @@ impl InfoFlag {
 /// [`InfoFlag`]. A value of 0 means the flag is disabled. Upstream rsync
 /// stores these in the global `info_levels[]` array.
 ///
-/// upstream: options.c:263 info_levels[]
+/// upstream: options.c:264 info_levels[]
 #[derive(Clone, Default, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InfoLevels {

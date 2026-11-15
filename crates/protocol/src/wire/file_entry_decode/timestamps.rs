@@ -73,7 +73,7 @@ pub fn decode_mtime_nsec<R: Read>(reader: &mut R, flags: u32) -> io::Result<Opti
         // New mtime without XMIT_MOD_NSEC: upstream defines nsec = 0,
         // NOT "carry forward the previous nsec". Returning Some(0)
         // prevents callers from accidentally inheriting a stale nsec.
-        // upstream: flist.c:1174-1175 recv_file_entry() - nsec absent => 0.
+        // upstream: flist.c:1178-1179 recv_file_entry() - nsec absent => 0.
         Ok(Some(0))
     }
 }

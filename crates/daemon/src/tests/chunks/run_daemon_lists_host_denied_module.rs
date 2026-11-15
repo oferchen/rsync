@@ -45,7 +45,7 @@ fn run_daemon_lists_host_denied_module() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
-    // upstream: clientserver.c:1374-1386 send_listing() lists every module with
+    // upstream: clientserver.c:1383-1395 send_listing() lists every module with
     // `list = yes` and applies NO hosts allow/deny filtering. The host-denied
     // `private` module therefore appears alongside `public`; the deny only
     // takes effect on the module-open path (clientserver.c:773 allow_access).

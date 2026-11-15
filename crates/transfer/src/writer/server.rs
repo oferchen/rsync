@@ -143,7 +143,7 @@ impl<W: Write> ServerWriter<W> {
     /// frame codes are chosen for. A no-op in plain mode, where nothing is
     /// framed.
     ///
-    /// upstream: options.c:103 `msgs2stderr`, compat.c:653-654.
+    /// upstream: options.c:103 `msgs2stderr`, compat.c:654-655.
     pub fn set_message_routing(
         &mut self,
         route: super::MessageRoute,
@@ -166,7 +166,7 @@ impl<W: Write> ServerWriter<W> {
     /// Whether this server frames its error lines for the peer instead of
     /// writing them to its own stderr.
     ///
-    /// upstream: log.c:357 - `msgs2stderr` clear (compat.c:653-654,
+    /// upstream: log.c:437 - `msgs2stderr` clear (compat.c:654-655,
     /// clientserver.c:1178) and multiplexed output active (io.c:1094).
     pub(crate) fn frames_errors(&self) -> bool {
         self.is_multiplexed()
@@ -180,7 +180,7 @@ impl<W: Write> ServerWriter<W> {
     /// a frame whose code is downgraded for a pre-30 peer. Nothing is sent in
     /// plain mode.
     ///
-    /// upstream: log.c:357-366; the local write escapes like log.c:425
+    /// upstream: log.c:437-446; the local write escapes like log.c:499
     /// `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0, ..)`.
     /// Queues any pending outbox diagnostic lines into the multiplex message
     /// queue without flushing buffered data.
@@ -226,7 +226,7 @@ impl<W: Write> ServerWriter<W> {
     /// (returns `false`) in plain mode, when no `--timeout` is configured, or
     /// when the lull has not yet elapsed.
     ///
-    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1639-1667), invoked from the
+    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1646-1674), invoked from the
     /// generator/sender loop during an I/O lull (e.g. generator.c:2824).
     pub fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         match self {
@@ -396,7 +396,7 @@ impl<W: Write> ServerWriter<W> {
     /// A no-op without an attached recorder (`Plain` / `Taken` can never carry
     /// one), so the default transfer path stays byte-for-byte identical.
     ///
-    /// upstream: `sender.c:502` - `f_xfer = write_batch < 0 ? batch_fd : f_out`
+    /// upstream: `sender.c:510` - `f_xfer = write_batch < 0 ? batch_fd : f_out`
     pub fn set_batch_route(&mut self, route: BatchRoute) {
         match self {
             Self::Multiplex(mux) => mux.batch_route = route,

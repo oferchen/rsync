@@ -19,7 +19,7 @@
 //! is search permission on an ancestor, and a uid is only the usual way of
 //! losing it. Root is exempt from both, so the cell skips there.
 //!
-//! upstream: `clientserver.c:1059-1065` - the pin, taken before the drop.
+//! upstream: `clientserver.c:1063-1069` - the pin, taken before the drop.
 
 #![cfg(all(target_os = "linux", feature = "landlock"))]
 

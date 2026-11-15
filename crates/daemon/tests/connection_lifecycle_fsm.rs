@@ -148,7 +148,7 @@ fn lifecycle_list_modules() {
 ///
 /// The daemon receives the version (Greeting -> ModuleSelect), then the
 /// client requests a non-existent module. The daemon sends @ERROR and
-/// closes with no @RSYNCD: EXIT (upstream clientserver.c:424-430: the client
+/// closes with no @RSYNCD: EXIT (upstream clientserver.c:428-434: the client
 /// treats @ERROR as fatal), transitioning ModuleSelect -> Closing.
 #[test]
 fn lifecycle_unknown_module() {
@@ -187,7 +187,7 @@ fn lifecycle_unknown_module() {
     assert!(saw_error, "daemon should send @ERROR for unknown module");
     assert!(
         !saw_exit,
-        "upstream sends no @RSYNCD: EXIT after @ERROR (clientserver.c:381)"
+        "upstream sends no @RSYNCD: EXIT after @ERROR (clientserver.c:385)"
     );
 
     drop(writer);
@@ -292,7 +292,7 @@ fn lifecycle_multiple_sequential_connections() {
             if line.starts_with("@ERROR") {
                 saw_error = true;
             }
-            // upstream clientserver.c:424-430: the client treats @ERROR as fatal
+            // upstream clientserver.c:428-434: the client treats @ERROR as fatal
             // and returns, so the daemon sends no @RSYNCD: EXIT after a refusal.
             assert_ne!(
                 line.trim(),
@@ -372,7 +372,7 @@ fn lifecycle_max_connections_sequential_no_leak() {
             if line.starts_with("@ERROR") {
                 saw_error = true;
             }
-            // upstream clientserver.c:424-430: the client treats @ERROR as fatal
+            // upstream clientserver.c:428-434: the client treats @ERROR as fatal
             // and returns, so the daemon sends no @RSYNCD: EXIT after a refusal.
             assert_ne!(
                 line.trim(),

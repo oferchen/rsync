@@ -136,7 +136,7 @@ pub(crate) enum Echo {
 /// What reaches the socket when `reader` receives a `MSG_ERROR_EXIT` carrying
 /// `received` (`None` for the zero-length frame), at `protocol`.
 ///
-/// upstream: io.c:1904-1926 read_a_msg(). A zero-length frame is answered only
+/// upstream: io.c:1911-1933 read_a_msg(). A zero-length frame is answered only
 /// by a process that is neither sender nor generator; after the fork that is
 /// the receiver child, whose answer goes to the generator, which does not
 /// repeat a zero-length frame. A code is answered at protocol 31 and up: a
@@ -159,7 +159,7 @@ pub(crate) const fn echo_for(
 /// Whether a side exiting with `code` waits for the peer to go before it
 /// closes the connection.
 ///
-/// upstream: cleanup.c:242-253 - a nonzero code that is not a transport failure
+/// upstream: cleanup.c:243-254 - a nonzero code that is not a transport failure
 /// (`RERR_SOCKETIO`, `RERR_STREAMIO`, `RERR_SIGNAL1`, `RERR_TIMEOUT`) calls
 /// noop_io_until_death() when `protocol_version >= 31 || am_receiver`; that
 /// returns at once unless the connection is a daemon socket
@@ -185,7 +185,7 @@ pub(crate) const fn waits_for_peer(
 
 /// Writes `echo` and flushes it.
 ///
-/// upstream: io.c:1910-1911 sends the zero-length frame with
+/// upstream: io.c:1917-1918 sends the zero-length frame with
 /// `io_flush(FULL_FLUSH)`; the code is flushed by _exit_cleanup()'s
 /// `io_flush(MSG_FLUSH)` (cleanup.c:251-252).
 pub(crate) fn send_echo<W: Write>(writer: &mut ServerWriter<W>, echo: Echo) -> io::Result<()> {

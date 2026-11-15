@@ -40,7 +40,7 @@ pub enum MessageRoute {
 impl MessageRoute {
     /// The route a server argument selects, or `None` for any other argument.
     ///
-    /// upstream: options.c:619-620 - `--msgs2stderr` sets 1, `--no-msgs2stderr`
+    /// upstream: options.c:620-621 - `--msgs2stderr` sets 1, `--no-msgs2stderr`
     /// sets 0.
     #[must_use]
     pub fn from_server_flag(flag: &str) -> Option<Self> {
@@ -55,7 +55,7 @@ impl MessageRoute {
     /// or the default - framed below protocol 29, where the client may not
     /// have set up a stderr for the server, errors to stderr otherwise.
     ///
-    /// upstream: compat.c:653-654, options.c:2059-2060.
+    /// upstream: compat.c:654-655, options.c:2095-2096.
     #[must_use]
     pub fn resolve(requested: Option<Self>, protocol: ProtocolVersion) -> Self {
         requested.unwrap_or(if protocol.as_u8() <= 28 {
@@ -67,7 +67,7 @@ impl MessageRoute {
 
     /// Whether a line of `code` is written to this process's stderr.
     ///
-    /// upstream: log.c:337-345 sends `FERROR*`/`FWARNING` to `stderr` and
+    /// upstream: log.c:417-425 sends `FERROR*`/`FWARNING` to `stderr` and
     /// `FINFO` to `stdout`; log.c:357 frames unless `msgs2stderr == 1`, or
     /// `msgs2stderr == 2` and the line is bound for `stderr`.
     #[must_use]
@@ -82,7 +82,7 @@ impl MessageRoute {
 
 /// The frame code a line of `code` travels as for a peer speaking `protocol`.
 ///
-/// upstream: log.c:359-364 - below protocol 30 `MSG_ERROR` becomes
+/// upstream: log.c:439-444 - below protocol 30 `MSG_ERROR` becomes
 /// `MSG_ERROR_XFER` and `MSG_WARNING` becomes `MSG_INFO`, the only codes the
 /// older peer knows. The remap follows the stderr decision, so it never
 /// changes where a line goes.
@@ -116,7 +116,7 @@ mod tests {
     /// protocol 28 and older frame them, because that client may have no
     /// stderr wired up for the server; an explicit request always wins.
     ///
-    /// upstream: options.c:103, compat.c:653-654, options.c:2059-2060.
+    /// upstream: options.c:103, compat.c:654-655, options.c:2095-2096.
     #[test]
     fn resolve_mirrors_the_default_the_protocol_floor_and_an_explicit_request() {
         assert_eq!(

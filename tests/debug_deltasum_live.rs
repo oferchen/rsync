@@ -164,7 +164,7 @@ fn assert_contains(haystack: &str, needle: &str, cell: &str) {
 /// The whole point of the task: the flag must produce delta-scan output from the
 /// LOCAL path, which is a fused loop that the network delta scanner never runs.
 ///
-/// upstream: match.c:180-182 `hash search`, :133-138 `match at`, :441-442
+/// upstream: match.c:182-184 `hash search`, :133-138 `match at`, :441-442
 /// `done hash search`, :468-471 the counters.
 #[test]
 fn local_delta_scan_emits_deltasum2() {
@@ -188,7 +188,7 @@ fn local_delta_scan_emits_deltasum2() {
 /// Level 3 adds the generator's per-chunk sums and the receiver's per-block
 /// application, both of which the local fused loop really performs.
 ///
-/// upstream: generator.c:817-822 `chunk[%s] offset=...`, receiver.c:625-630
+/// upstream: generator.c:854-859 `chunk[%s] offset=...`, receiver.c:625-630
 /// `chunk[%d] of size %ld at %s offset=%s`, :552-555 `data recv %d at %s`.
 #[test]
 fn local_delta_scan_emits_deltasum3_chunk_detail() {
@@ -206,7 +206,7 @@ fn local_delta_scan_emits_deltasum3_chunk_detail() {
 /// per-chunk detail must NOT: a level gate that is wired but always-true is as
 /// wrong as one that never fires.
 ///
-/// upstream: match.c:479-487 `match_report()` prints only `total:` at
+/// upstream: match.c:515-523 `match_report()` prints only `total:` at
 /// DEBUG_GTE(DELTASUM, 1).
 #[test]
 fn local_deltasum1_is_the_total_line_only() {
@@ -237,7 +237,7 @@ fn local_deltasum1_is_the_total_line_only() {
 /// The network SENDER path is a different scanner from the local one, so it
 /// needs its own live assertion.
 ///
-/// upstream: sender.c:349-351 `count=/n=/rem=`, :760-763 `send_files mapped`,
+/// upstream: sender.c:357-359 `count=/n=/rem=`, :760-763 `send_files mapped`,
 /// :768-769 `calling match_sums`, match.c:465-466 `sending file_sum`.
 #[cfg(unix)]
 #[test]
@@ -272,7 +272,7 @@ fn wire_push_sender_emits_deltasum2() {
 /// The client PULL path runs the generator and the receiver, a third distinct
 /// set of emission sites.
 ///
-/// upstream: generator.c:2358-2361 `gen mapped`, :2363-2364 `generating and
+/// upstream: generator.c:2401-2404 `gen mapped`, :2363-2364 `generating and
 /// sending sums`, :765-770 the geometry, receiver.c:514-517 `recv mapped`,
 /// :671-673 `got file_sum`.
 #[cfg(unix)]

@@ -1,7 +1,7 @@
 use super::common::*;
 use super::*;
 
-/// upstream: options.c:780 - only `--skip-compress` sets the list; rsync
+/// upstream: options.c:781 - only `--skip-compress` sets the list; rsync
 /// reads no skip-compress environment variable, so even a value that would be
 /// an invalid specification must be ignored.
 #[test]

@@ -1,5 +1,5 @@
 //! A client writes each diagnostic the moment it is produced, interleaved with
-//! its file names, as upstream's `rwrite()` does (log.c:272-373).
+//! its file names, as upstream's `rwrite()` does (log.c:352-453).
 //!
 //! The push runs over a local remote shell so the client is the sender and its
 //! own `--debug=SEND` trace shares stdout with its `-v` name lines.

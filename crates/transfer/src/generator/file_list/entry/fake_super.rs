@@ -63,7 +63,7 @@ pub(super) fn build_entry_from_fake_super(
 ///
 /// Returns the open or read error. A real symlink at `path` fails with
 /// `ELOOP`.
-/// upstream: syscall.c:999-1018 do_readlink() - `am_root < 0` reads the link
+/// upstream: syscall.c:1068-1087 do_readlink() - `am_root < 0` reads the link
 /// from the file through do_open_nofollow().
 #[cfg(unix)]
 pub(super) fn read_placeholder_target(path: &Path) -> io::Result<PathBuf> {
@@ -237,7 +237,7 @@ mod fake_super_tests {
     }
     #[test]
     fn read_placeholder_target_refuses_a_real_symlink() {
-        // upstream: syscall.c:1004 do_open_nofollow() - the sender never
+        // upstream: syscall.c:1073 do_open_nofollow() - the sender never
         // follows a real symlink into the file it points at.
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("secret"), b"secret").expect("write target");

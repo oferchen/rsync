@@ -69,7 +69,7 @@ pub const DAEMON_AUTH_DIGEST_NAMES: [&str; 5] = ["sha512", "sha256", "sha1", "md
 
 /// Writes the advertised daemon-auth digest names, space separated, with no newline.
 ///
-/// upstream: compat.c:462 `get_default_nno_list()` walks the table in order and
+/// upstream: compat.c:463 `get_default_nno_list()` walks the table in order and
 /// joins the names with a single space.
 ///
 /// # Errors
@@ -160,7 +160,7 @@ mod tests {
         assert!(greeting.contains(".0"));
     }
 
-    // upstream: checksum.c:71-84 joined by compat.c:462 `get_default_nno_list()`.
+    // upstream: checksum.c:71-84 joined by compat.c:463 `get_default_nno_list()`.
     // Measured against rsync 3.4.4 driven at a stub daemon: every greeting it
     // sends carries exactly this list, so the bytes are load-bearing.
     #[test]

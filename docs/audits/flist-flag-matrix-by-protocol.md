@@ -22,7 +22,7 @@ are documented as "not on the wire" rather than left ambiguous.
 ## 1. Source of truth
 
 Upstream definitions live at `rsync.h:45-74` (XMIT bits) and
-`compat.c:117-124` (CF capability flags that gate XMIT layout).
+`compat.c:118-125` (CF capability flags that gate XMIT layout).
 
 | Symbol | Bit | Upstream proto range (`rsync.h` comment) |
 |---|---|---|
@@ -55,7 +55,7 @@ Bit-share collisions (2, 8, 10, 11, 12) are encoded as separate Rust
 constants with distinct doc comments, and disambiguated at decode time
 by the negotiated protocol version and entry type. Compat capability
 flags live at `crates/protocol/src/compatibility/flags.rs:34-50` and
-match `compat.c:117-124` 1:1 (`CF_INC_RECURSE`, `CF_SYMLINK_TIMES`,
+match `compat.c:118-125` 1:1 (`CF_INC_RECURSE`, `CF_SYMLINK_TIMES`,
 `CF_SYMLINK_ICONV`, `CF_SAFE_FLIST`, `CF_AVOID_XATTR_OPTIM`,
 `CF_CHKSUM_SEED_FIX`, `CF_INPLACE_PARTIAL_DIR`,
 `CF_VARINT_FLIST_FLAGS`, `CF_ID0_NAMES`).
@@ -66,7 +66,7 @@ match `compat.c:117-124` 1:1 (`CF_INC_RECURSE`, `CF_SYMLINK_TIMES`,
 = reserved or unaddressable; `(varint)` = only addressable when
 `CF_VARINT_FLIST_FLAGS` is negotiated, which requires protocol >= 30
 and capability `'v'` in the client info string
-(`compat.c:729-732,741`).
+(`compat.c:738-741,741`).
 
 | Bit | Symbol | 28 | 29 | 30 | 31 | 32 |
 |---|---|---|---|---|---|---|
@@ -95,8 +95,8 @@ and capability `'v'` in the client info string
 
 \* On protocol 30, `XMIT_IO_ERROR_ENDLIST` is reachable only when the
 peer advertises capability `'f'` in the client-info string, which
-upstream sets via `CF_SAFE_FLIST` in `compat.c:719-720`. For protocol
-31+ it is implicit (`compat.c:775` flips `use_safe_inc_flist` on for
+upstream sets via `CF_SAFE_FLIST` in `compat.c:720-721`. For protocol
+31+ it is implicit (`compat.c:784` flips `use_safe_inc_flist` on for
 proto >= 31 even without `CF_SAFE_FLIST`).
 
 ## 3. Encoding differences
@@ -133,7 +133,7 @@ the extended byte is read whenever bit 2 is set.
 Protocol 30 keeps the legacy two-byte layout *unless* both peers
 advertise `'v'` in the client-info string and the server replies with
 `CF_VARINT_FLIST_FLAGS` in the compat-flags varint
-(`compat.c:729-732`). When that happens, the header collapses into a
+(`compat.c:738-741`). When that happens, the header collapses into a
 single varint that carries bits 0-23 in one read. Bits 16-17 become
 addressable, enabling `XMIT_CRTIME_EQ_MTIME` for `--crtimes`.
 
@@ -161,7 +161,7 @@ for the flag matrix are:
 - `XMIT_MOD_NSEC` (bit 13) becomes legal for the first time on
   protocol 31, allowing nanosecond mtimes.
 - `use_safe_inc_flist` is unconditional on protocol >= 31
-  (`compat.c:775`), so `XMIT_IO_ERROR_ENDLIST` (bit 12 with bit 2 set)
+  (`compat.c:784`), so `XMIT_IO_ERROR_ENDLIST` (bit 12 with bit 2 set)
   is a recognised mid-stream error sentinel even without
   `CF_SAFE_FLIST`. oc-rsync mirrors this at
   `crates/protocol/src/flist/read/flags.rs:43-47`:
@@ -173,8 +173,8 @@ self.compat_flags
 ```
 
 Protocol 32 introduces no new flag bits and no new layout. The
-upstream constant `PROTOCOL_VERSION 32` (`rsync.h:114`) is the
-current maximum; `SUBPROTOCOL_VERSION 0` (`rsync.h:128`) signals a
+upstream constant `PROTOCOL_VERSION 32` (`rsync.h:115`) is the
+current maximum; `SUBPROTOCOL_VERSION 0` (`rsync.h:129`) signals a
 final release.
 
 ### 3.4 End-of-list sentinel
@@ -193,11 +193,11 @@ sentinels in safe-flist mode are detected at
 |---|---|---|---|
 | Primary byte read | `flist.c:recv_file_entry()` | `read/flags.rs:60-65` | matches |
 | Extended byte read on proto >= 28 with bit 2 | `flist.c:recv_file_entry()` | `read/flags.rs:101-107` | matches |
-| Varint flag header when `CF_VARINT_FLIST_FLAGS` | `compat.c:741`, `flist.c` | `read/flags.rs:36-39,59-65,96-100` | matches |
+| Varint flag header when `CF_VARINT_FLIST_FLAGS` | `compat.c:750`, `flist.c` | `read/flags.rs:36-39,59-65,96-100` | matches |
 | EOL sentinel (legacy) | primary == 0 | `read/flags.rs:75-91` | matches |
 | EOL sentinel (varint) | primary == 0 then error code | `read/flags.rs:76-90` | matches |
 | Mid-stream error sentinel (safe-flist) | `flist.c:recv_file_entry()` | `read/flags.rs:148-170` | matches |
-| Safe-flist auto-on for proto >= 31 | `compat.c:775` | `read/flags.rs:43-47` | matches via `safe_file_list_always_enabled()` |
+| Safe-flist auto-on for proto >= 31 | `compat.c:784` | `read/flags.rs:43-47` | matches via `safe_file_list_always_enabled()` |
 | INC_RECURSE state machine | `flist.c:recv_file_list()`, `io.c:read_a_msg()` | `crates/protocol/src/flist/incremental/mod.rs:80-138`, `incremental/streaming.rs` | matches; receiver-side validated, sender-side wired but interop-gated |
 | `XMIT_HLINK_FIRST` on protocol 30+ | `rsync.h:64` | `flist.c:hlink.c match_hard_links()`, `flags.rs:331-337` (`set_hlink_first`) | matches |
 | `XMIT_NO_CONTENT_DIR` on protocol 30+ dirs | `rsync.h:58` | `flags.rs:357-360` | matches |
@@ -215,12 +215,12 @@ and `write/xflags.rs`; field gating on encode is at
 ## 5. INC_RECURSE interactions
 
 Incremental recursion (`CF_INC_RECURSE`, bit 0 of compat flags;
-`compat.c:117,712,745`) is orthogonal to flag *layout* but interacts
+`compat.c:118,712,745`) is orthogonal to flag *layout* but interacts
 with several flag *semantics*:
 
-- **Per-segment file lists.** With INC_RECURSE, `flist.c:2117` writes
+- **Per-segment file lists.** With INC_RECURSE, `flist.c:2121` writes
   `NDX_FLIST_OFFSET - dir_ndx` to begin a new segment, and
-  `flist.c:2541,2172` write `NDX_FLIST_EOF` between segments. These
+  `flist.c:2552,2172` write `NDX_FLIST_EOF` between segments. These
   are wire indices, not XMIT bits; oc-rsync handles them in
   `crates/protocol/src/flist/incremental/streaming.rs`. There is no
   `FLIST_EXTRA_BLOCKS` or `FLIST_NEW_BUF` upstream - those names
@@ -287,7 +287,7 @@ The audit found no missing-bit gaps. Items below are areas to watch:
    says "restricted by command-line option" but the reader does not
    currently enforce this. Document or add a guard.
 7. **`XMIT_CRTIME_EQ_MTIME` (bit 17) requires both protocol >= 30 and
-   `CF_VARINT_FLIST_FLAGS`.** Upstream errors out at `compat.c:750`
+   `CF_VARINT_FLIST_FLAGS`.** Upstream errors out at `compat.c:759`
    if `--crtimes` is requested without varint flags. oc-rsync
    enforces this at the sender (`write/xflags.rs:254`); confirm the
    client-side option parser also rejects the combination so the

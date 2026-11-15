@@ -2,7 +2,7 @@
 // The canonical implementation lives in `metadata::symlink_munge` so that
 // both the daemon and the client-side transfer path share the same logic.
 //
-// upstream: clientserver.c:1070-1071 - `munge_symlinks` defaults to
+// upstream: clientserver.c:1074-1075 - `munge_symlinks` defaults to
 // `!use_chroot || module_dirlen`.
 // When enabled, symlink targets are prefixed with `/rsyncd-munged/` on send
 // and the prefix is stripped on receive, preventing symlinks from escaping
@@ -178,7 +178,7 @@ mod symlink_munge_tests {
     /// symlinks from escaping the sanitized inner path. A bare `use chroot=yes`
     /// with a non-split path stays OFF (covered by `effective_munge_auto_chroot_on`).
     ///
-    /// upstream: clientserver.c:1071-1072 - `munge_symlinks = !use_chroot || module_dirlen`.
+    /// upstream: clientserver.c:1075-1076 - `munge_symlinks = !use_chroot || module_dirlen`.
     #[test]
     fn effective_munge_auto_chroot_partial_split_on() {
         let def = ModuleDefinition {

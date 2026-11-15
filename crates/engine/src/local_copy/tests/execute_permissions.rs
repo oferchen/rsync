@@ -692,7 +692,7 @@ fn dir_no_setgid_when_parent_lacks_it() {
 /// during-transfer raise (generator.c:1904-1912) makes 0o700 of it, and
 /// touch_up_dirs restores 0o500 last because the owner-write bit is absent
 /// (generator.c:2594 fix_dir_perms).
-// upstream: generator.c:1856 - file->mode = dest_mode(...) runs for
+// upstream: generator.c:1893 - file->mode = dest_mode(...) runs for
 // directories even when !preserve_perms; rsync.c:481-485 masks the fresh arm.
 #[cfg(unix)]
 #[test]
@@ -861,8 +861,8 @@ fn preexisting_readonly_dest_root_without_perms_transfers_and_is_restored() {
 /// the sender resolves it through a traversal-only descriptor and a directory
 /// without owner-x cannot be entered. The directory entry was already sent, so
 /// the residue still lands.
-// upstream: generator.c:1904-1912 raise + generator.c:2594 restore condition;
-// rsync-3.5.1/syscall.c:3218 the `.` reopen of the traversal fd.
+// upstream: generator.c:1941-1949 raise + generator.c:2638 restore condition;
+// rsync-3.5.2/syscall.c:3289 the `.` reopen of the traversal fd.
 #[cfg(unix)]
 #[test]
 fn owner_writable_nonexec_dir_keeps_the_raise_residue_under_perms() {

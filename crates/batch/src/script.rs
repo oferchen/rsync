@@ -366,17 +366,17 @@ fn is_plain_option_byte(b: u8) -> bool {
 /// upstream: options.c:check_for_hostspec / batch.c:336
 fn strip_hostspec(dest: &[u8]) -> &[u8] {
     const URL_PREFIX: &[u8] = b"rsync://";
-    // upstream: options.c:3315 - an rsync:// URL is matched case-insensitively.
+    // upstream: options.c:3383 - an rsync:// URL is matched case-insensitively.
     if dest.len() >= URL_PREFIX.len() && dest[..URL_PREFIX.len()].eq_ignore_ascii_case(URL_PREFIX) {
         let rest = &dest[URL_PREFIX.len()..];
         if let Some(off) = parse_hostspec_path(rest, true) {
             return &rest[off..];
         }
     }
-    // upstream: options.c:3324 - parse_hostspec(s, &path, NULL).
+    // upstream: options.c:3392 - parse_hostspec(s, &path, NULL).
     match parse_hostspec_path(dest, false) {
         Some(off) => {
-            // upstream: options.c:3328-3331 - a leading ':' (the daemon '::'
+            // upstream: options.c:3396-3399 - a leading ':' (the daemon '::'
             // separator) is stripped from the returned path.
             let path = &dest[off..];
             path.strip_prefix(b":").unwrap_or(path)

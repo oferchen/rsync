@@ -301,7 +301,7 @@ fn hard_link_under_a_file_parent_is_reported_and_exits_23() {
 /// `atomic_create()` hands it to `delete_item()`, which removes an empty one
 /// without `--delete` or `--force`, and the link is made.
 ///
-/// upstream: generator.c:2469-2483 atomic_create(), delete.c:222-226
+/// upstream: generator.c:2512-2526 atomic_create(), delete.c:222-226
 #[test]
 fn empty_directory_in_the_way_of_a_hard_link_is_replaced() {
     use std::os::unix::fs::MetadataExt;
@@ -549,7 +549,7 @@ fn failed_receiver_set_file_attrs_uses_upstream_wording() {
 /// drops it (log.c:344-345). Measured on 3.5.1 for push, pull and a local
 /// copy.
 ///
-/// upstream: generator.c:304-311 delete_in_dir()
+/// upstream: generator.c:339-346 delete_in_dir()
 #[test]
 fn io_error_delete_notice_is_a_plain_finfo() {
     if running_as_root() {
@@ -593,7 +593,7 @@ fn io_error_delete_notice_is_a_plain_finfo() {
 /// upstream's `FWARNING`, which a server receiver frames as `MSG_WARNING`, so
 /// the pushing client prints it too; the run still exits 0.
 ///
-/// upstream: generator.c:2516-2519, log.c:rwrite() `am_server` framing
+/// upstream: generator.c:2559-2562, log.c:rwrite() `am_server` framing
 #[cfg(any(
     target_os = "ios",
     target_os = "macos",

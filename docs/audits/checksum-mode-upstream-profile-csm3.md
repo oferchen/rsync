@@ -95,7 +95,7 @@ Upstream rsync's `file_checksum()` (`checksum.c:402`) uses `map_file()` /
 `map_ptr()` (`fileio.c:214`), which is a read-based sliding window - not
 POSIX `mmap` despite the name. Key properties:
 
-1. **Window size**: `MAX_MAP_SIZE = 256 KiB` (`rsync.h:159`).
+1. **Window size**: `MAX_MAP_SIZE = 256 KiB` (`rsync.h:160`).
 2. **Sized reads**: `map_ptr()` reads exactly `min(remaining, MAX_MAP_SIZE)`
    bytes. For a 373,700-byte file, it issues `read(fd, buf, 262144)` then
    `read(fd, buf, 111556)`. No speculative reads.
@@ -365,7 +365,7 @@ NOFOLLOW double-stat).
 
 - `checksum.c:402-539` - `file_checksum()`
 - `fileio.c:214-315` - `map_file()` / `map_ptr()` (read-based sliding window)
-- `rsync.h:158-159` - `CHUNK_SIZE = 32 KiB`, `MAX_MAP_SIZE = 256 KiB`
+- `rsync.h:159-160` - `CHUNK_SIZE = 32 KiB`, `MAX_MAP_SIZE = 256 KiB`
 
 ### oc-rsync
 

@@ -130,7 +130,7 @@ fn root_segment_deletes_only_in_the_root() {
 /// A name protects only the entry of the same directory: an `x` the segment
 /// lists under another directory does not shield `a/x`.
 ///
-/// upstream: generator.c:347 `flist_find_ignore_dirness()` compares full
+/// upstream: generator.c:382 `flist_find_ignore_dirness()` compares full
 /// names through `f_name_cmp()`, dirname included.
 #[test]
 fn a_same_named_entry_of_another_directory_protects_nothing() {
@@ -253,7 +253,7 @@ impl crate::writer::MsgInfoSender for WarningCapture {
 /// deletion, earlier ones stand, and the notice prints once; `--ignore-errors`
 /// keeps deleting.
 ///
-/// upstream: generator.c:304-311 - the sticky `io_error & IOERR_GENERAL &&
+/// upstream: generator.c:339-346 - the sticky `io_error & IOERR_GENERAL &&
 /// !ignore_errors` test with its static `already_warned`.
 #[test]
 fn io_error_before_a_segment_stops_later_deletes() {
@@ -297,7 +297,7 @@ fn io_error_before_a_segment_stops_later_deletes() {
 /// A parent that is not a content directory (an implied `--relative` parent)
 /// is never scanned, and neither is one whose creation failed.
 ///
-/// upstream: generator.c:2791-2800 - `FLAG_MISSING_DIR` skips the directory,
+/// upstream: generator.c:2877-2886 - `FLAG_MISSING_DIR` skips the directory,
 /// and without `FLAG_CONTENT_DIR` it only gets change_local_filter_dir().
 #[test]
 fn non_content_and_failed_parents_are_not_scanned() {
@@ -400,7 +400,7 @@ fn whole_list_sweep_after_reclaim_fails_and_deletes_nothing() {
 /// the root protects a matching entry of a later segment's directory; with the
 /// merge file absent the same entry is deleted (the opposed control).
 ///
-/// upstream: generator.c:314 delete_in_dir() -> change_local_filter_dir()
+/// upstream: generator.c:349 delete_in_dir() -> change_local_filter_dir()
 /// reloads the destination merge files as each sub-list is walked, so a merge
 /// file the walk has already transferred governs every later directory.
 #[test]
@@ -434,7 +434,7 @@ fn rsync_filter_landed_by_an_earlier_segment_protects_a_later_child() {
 /// `--delete-delay` records each segment's victims without unlinking them;
 /// the late site unlinks them all after the walk.
 ///
-/// upstream: generator.c:352-353 remember_delete() inside delete_in_dir(),
+/// upstream: generator.c:387-388 remember_delete() inside delete_in_dir(),
 /// generator.c:2899-2900 do_delayed_deletions() after generate_files()'s walk.
 #[test]
 fn delete_delay_collects_per_segment_and_unlinks_late() {
@@ -507,7 +507,7 @@ fn per_directory_delete_needs_a_during_walk_mode() {
 /// kept. Gating the delay execution on the error leaves the recorded victims
 /// behind, diverging from upstream.
 ///
-/// upstream: generator.c:304-311 gates delete_in_dir(), which is where
+/// upstream: generator.c:339-346 gates delete_in_dir(), which is where
 /// generator.c:351-353 remember_delete() records a delay victim;
 /// generator.c:265-278 do_delayed_deletions() replays every record with no
 /// io_error test.

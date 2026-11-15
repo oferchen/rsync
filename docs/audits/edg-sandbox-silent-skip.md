@@ -180,7 +180,7 @@ follow-up.
    (Site C). `create_symlinks` signature changed to
    `io::Result<()>`. Callers in `sync.rs`, `pipelined.rs`, and
    `pipelined_incremental.rs` now propagate with `?`. EACCES
-   `continue`s through the loop (matches upstream `generator.c:1591
+   `continue`s through the loop (matches upstream `generator.c:1628
    atomic_create -> do_symlink`); every other class returns `Err(e)`.
 
 4. **links.rs:382-390 linkat-failure swallow** - FIXED-IN-PR

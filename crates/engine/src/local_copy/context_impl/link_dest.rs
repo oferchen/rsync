@@ -3,7 +3,7 @@
 impl<'a> CopyContext<'a> {
     /// Searches `--link-dest` directories for the BEST file matching the source.
     ///
-    /// upstream: generator.c:1073-1102 `try_dests_reg()` scans every basis dir and
+    /// upstream: generator.c:1110-1139 `try_dests_reg()` scans every basis dir and
     /// tracks the highest match_level (2 = data matches `quick_check_ok`, 3 = data
     /// and attributes both match `unchanged_attrs`), breaking early only on an
     /// exact (level-3) match. Returning the first data-only candidate instead
@@ -46,7 +46,7 @@ impl<'a> CopyContext<'a> {
             // LSTAT, so a basis entry that is itself a symlink reports S_IFLNK and is skipped
             // rather than followed. Using a following stat here would accept a symlink-to-regular
             // candidate and then hard-link or read THROUGH it - the read oracle upstream closed.
-            // upstream: generator.c:1084 `if (basis_link_stat(cmpbuf, &sxp->st) < 0
+            // upstream: generator.c:1121 `if (basis_link_stat(cmpbuf, &sxp->st) < 0
             // || !S_ISREG(sxp->st.st_mode)) continue;` - and likewise at :1110,
             // :1227 and :1254. EVERY caller treats ANY stat failure as "no
             // candidate in this basis dir", not just ENOENT. A basis dir that is
@@ -99,7 +99,7 @@ impl<'a> CopyContext<'a> {
             {
                 best = Some((candidate, level));
             }
-            // upstream: generator.c:1098 - an exact match ends the scan.
+            // upstream: generator.c:1135 - an exact match ends the scan.
             if level == 3 {
                 break;
             }
@@ -115,7 +115,7 @@ impl<'a> CopyContext<'a> {
     /// with a matching target, so the receiver can hard-link the symlink into
     /// place (`hL`) instead of recreating it.
     ///
-    /// upstream: generator.c:1258-1293 try_dests_non() - LINK_DEST hard-links a
+    /// upstream: generator.c:1295-1330 try_dests_non() - LINK_DEST hard-links a
     /// matching symlink from the basis when CAN_HARDLINK_SYMLINK is supported.
     pub(super) fn link_dest_symlink_target(
         &self,
@@ -128,7 +128,7 @@ impl<'a> CopyContext<'a> {
 
         for entry in self.options.link_dest_entries() {
             let candidate = entry.resolve(self.destination_root(), relative);
-            // upstream: generator.c:1227 - any basis_link_stat() failure skips
+            // upstream: generator.c:1264 - any basis_link_stat() failure skips
             // this basis dir. See the note at the head of `link_dest_target`.
             let Ok(candidate_metadata) =
                 fs::symlink_metadata(&candidate).map(fast_io::EntryMetadata::from)
@@ -160,7 +160,7 @@ impl<'a> CopyContext<'a> {
     /// exactly matches the source node, returning its path so the receiver can
     /// hard-link it into place (`hD`/`hS` + blank) instead of recreating it.
     ///
-    /// Mirrors upstream `generator.c:1205-1316` try_dests_non(): a `LINK_DEST`
+    /// Mirrors upstream `generator.c:1242-1353` try_dests_non(): a `LINK_DEST`
     /// basis entry of the same file-type bucket (`FT_DEVICE`/`FT_SPECIAL`) whose
     /// device number (devices) or `_S_IFMT` (specials) matches
     /// (`generator.c:630-684` quick_check_ok) AND whose preserved attributes are
@@ -194,7 +194,7 @@ impl<'a> CopyContext<'a> {
 
         for entry in self.options.link_dest_entries() {
             let candidate = entry.resolve(self.destination_root(), relative);
-            // upstream: generator.c:1254 - any basis_link_stat() failure skips
+            // upstream: generator.c:1291 - any basis_link_stat() failure skips
             // this basis dir. See the note at the head of `link_dest_target`.
             let Ok(candidate_metadata) =
                 fs::symlink_metadata(&candidate).map(fast_io::EntryMetadata::from)
@@ -209,7 +209,7 @@ impl<'a> CopyContext<'a> {
 
             let cand_type = candidate_metadata.file_type();
 
-            // upstream: generator.c:1229 - the basis must share the source's
+            // upstream: generator.c:1266 - the basis must share the source's
             // file-type bucket, and generator.c:630-684 quick_check_ok compares
             // st_rdev (devices) or _S_IFMT (specials, i.e. fifo vs socket).
             if source_is_device {
@@ -225,7 +225,7 @@ impl<'a> CopyContext<'a> {
                 continue;
             }
 
-            // upstream: generator.c:474-515 unchanged_attrs - preserved mtime,
+            // upstream: generator.c:511-552 unchanged_attrs - preserved mtime,
             // perms and ownership must match for the match_level-3 hard-link.
             if metadata_options.times()
                 && !mtimes_within_window(metadata, &candidate_metadata, modify_window)
@@ -269,7 +269,7 @@ impl<'a> CopyContext<'a> {
 /// Delegates to the shared predicate so the special-file basis and the regular
 /// -file basis cannot disagree about what "same time" means.
 ///
-/// upstream: `rsync-3.5.1/util1.c:1744` `same_time()` - a zero window (the
+/// upstream: `rsync-3.5.2/util1.c:1744` `same_time()` - a zero window (the
 /// default) compares WHOLE SECONDS; only a negative window
 /// (`--modify-window < 0`) also compares nanoseconds; a positive window is a
 /// whole-second tolerance in which "the nanoseconds do not figure".

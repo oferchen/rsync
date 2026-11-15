@@ -612,7 +612,7 @@ fn defaults_match_upstream() {
 #[test]
 fn internal_and_daemon_options_are_recognized() {
     // `--server`/`--sender` are internal (set by remote invocation) but the
-    // client parser must still accept them (upstream options.c:862-863).
+    // client parser must still accept them (upstream options.c:867-868).
     assert!(
         recognize(&["--server"]).is_ok(),
         "--server must be recognised"
@@ -622,7 +622,7 @@ fn internal_and_daemon_options_are_recognized() {
         "--sender must be recognised"
     );
 
-    // Daemon-transition options (upstream options.c:864-869). These are defined
+    // Daemon-transition options (upstream options.c:869-874). These are defined
     // on the client command and parse into the daemon-related fields.
     let daemon = parse_args(["oc-rsync", "--daemon"]).expect("--daemon parses");
     assert!(daemon.daemon_mode, "--daemon sets daemon_mode");
@@ -642,7 +642,7 @@ fn internal_and_daemon_options_are_recognized() {
 /// `--dparam` is a daemon option: in a client invocation it is refused, never
 /// forwarded to a remote daemon as a module override.
 ///
-/// upstream: options.c:867 maps the client-table `--dparam` to `OPT_DAEMON`,
+/// upstream: options.c:872 maps the client-table `--dparam` to `OPT_DAEMON`,
 /// whose re-parse (options.c:1538-1596) checks each value for its `=` and then
 /// stops with "Daemon option(s) used without --daemon." (RERR_SYNTAX) because
 /// `--daemon` was not given. Measured on 3.5.1:
@@ -673,7 +673,7 @@ fn client_dparam_is_refused_as_a_daemon_option() {
 /// A `--dparam` name that is not a daemon parameter is reported before the
 /// missing `--daemon`.
 ///
-/// upstream: options.c:1583-1584 runs set_dparams(1) after the daemon-option
+/// upstream: options.c:1610-1611 runs set_dparams(1) after the daemon-option
 /// re-parse and before the `!daemon_opt` check at options.c:1592. Measured on
 /// 3.5.1: `rsync --dparam=x=1 a b` exits 1 with `Unknown parameter "x"` and
 /// no usage hint.
@@ -695,7 +695,7 @@ fn client_dparam_unknown_name_is_reported_before_the_missing_daemon() {
 /// A daemon option in a client command line re-parses the whole argv as daemon
 /// options, so the first client-only option is what gets reported.
 ///
-/// upstream: options.c:1538-1596 - measured on 3.5.1, each case exits 1:
+/// upstream: options.c:1556-1623 - measured on 3.5.1, each case exits 1:
 /// `-a --dparam=x=1 a b` and `--config=/dev/null -a a b` report `rsync: -a:
 /// unknown option (in daemon mode)`, `--dparam=x=1 --links a b` reports
 /// `--links`, `--dparam=x=1 --port=5 -v a b` gets as far as
@@ -747,13 +747,13 @@ fn client_daemon_option_reparses_argv_in_daemon_mode() {
 // Each test below asserts the UPSTREAM behaviour for a short option that takes
 // a value. Do NOT weaken these assertions to make them green.
 
-/// upstream options.c:669 `{"modify-window", '@', POPT_ARG_INT, ...}`.
+/// upstream options.c:670 `{"modify-window", '@', POPT_ARG_INT, ...}`.
 #[test]
 fn modify_window_short_at_is_accepted() {
     recognize(&["-@", "2"]).expect("-@ 2 must be accepted as --modify-window=2");
 }
 
-/// upstream options.c:766 `{"block-size", 'B', POPT_ARG_STRING, ...}`.
+/// upstream options.c:767 `{"block-size", 'B', POPT_ARG_STRING, ...}`.
 #[test]
 fn block_size_short_b_is_accepted() {
     recognize(&["-B", "1024"]).expect("-B 1024 must be accepted as --block-size=1024");
@@ -803,7 +803,7 @@ fn run_oc(args: &[&str]) -> std::process::ExitStatus {
         .expect("spawn oc-rsync")
 }
 
-/// upstream options.c:1230 - a trailing `+1`/`-1` adjusts a size argument
+/// upstream options.c:1248 - a trailing `+1`/`-1` adjusts a size argument
 /// (`1K-1` == 1023). oc's size parser rejects the modifier.
 #[test]
 #[ignore = "oc divergence: --max-size/--min-size trailing +1/-1 modifier rejected"]
@@ -822,7 +822,7 @@ fn size_trailing_plus_minus_one_modifier_is_accepted() {
     );
 }
 
-/// upstream options.c:2025-2039 - `--stderr` accepts only `errors`, `all`, or
+/// upstream options.c:2061-2075 - `--stderr` accepts only `errors`, `all`, or
 /// `client`; any other mode is a fatal error. oc silently accepts any string.
 #[test]
 #[ignore = "oc divergence: invalid --stderr mode not rejected"]

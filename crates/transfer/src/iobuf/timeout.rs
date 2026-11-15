@@ -54,7 +54,7 @@ impl IoTimeout {
 
     /// How long one wait may last: `ceil(timeout / 2)`, at most a minute, or
     /// unbounded with no timeout, where upstream's wake-ups do nothing
-    /// (upstream: io.c:1306-1310 set_io_timeout(), io.c:143 poll_timeout_ms()).
+    /// (upstream: io.c:1313-1317 set_io_timeout(), io.c:143 poll_timeout_ms()).
     pub(crate) fn wait_bound(&self) -> Option<Duration> {
         self.limit.map(|limit| {
             let lull = limit.as_secs().div_ceil(2);

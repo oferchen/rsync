@@ -472,7 +472,7 @@ fixtures must not assert against these limitations:
   both modes.
 
 - **No `-A` (ACLs) or `-X` (xattrs)**: rejected at protocol < 30 per
-  upstream `compat.c:652-668`. No fixture tests these flags.
+  upstream `compat.c:653-669`. No fixture tests these flags.
 
 - **Append mode clamped**: `append_mode == 1` is adjusted to `2` on
   protocol < 30. No fixture tests `--append`.

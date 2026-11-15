@@ -61,7 +61,7 @@ pub struct CloneFreshTimes {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:3032` `ds_descend()` - the per-component walk.
+/// - `rsync-3.5.2/syscall.c:3103` `ds_descend()` - the per-component walk.
 ///
 /// # Errors
 ///

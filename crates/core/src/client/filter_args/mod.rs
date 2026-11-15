@@ -1,7 +1,7 @@
 //! Filter rules from an argv or a daemon module, parsed as upstream parses
 //! them.
 //!
-//! upstream: options.c:1620-1656 (`--filter`, `--exclude`, `--include` and the
+//! upstream: options.c:1647-1683 (`--filter`, `--exclude`, `--include` and the
 //! `-from` pair) and :1718-1727 (`-F`); clientserver.c:933-952 for a module's
 //! directives. The client, a remote-shell server and a daemon all parse through
 //! one parse_filter_str() (`filter_str`); only the `xflags` and where files

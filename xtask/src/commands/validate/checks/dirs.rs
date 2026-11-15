@@ -10,7 +10,7 @@
 //! recursion: the subdirectory exists in the destination but its nested file
 //! does not.
 //!
-//! upstream: options.c:628 `{"dirs", 'd', ..., &xfer_dirs, 2, ...}`; the man page
+//! upstream: options.c:629 `{"dirs", 'd', ..., &xfer_dirs, 2, ...}`; the man page
 //! is explicit that a directory's contents are copied only when the operand ends
 //! in a trailing slash (or is `.`), while nested subdirectories are never
 //! descended without `--recursive`.

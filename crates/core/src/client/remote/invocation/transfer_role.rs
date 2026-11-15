@@ -153,7 +153,7 @@ pub fn determine_transfer_role(
     let all_sources_remote = remote_sources.len() == sources.len();
 
     match (has_remote_source, dest_is_remote) {
-        // upstream: main.c:1486-1489 refuses before any connection is made.
+        // upstream: main.c:1490-1493 refuses before any connection is made.
         (true, true) => Err(invalid_argument_error(
             "The source and destination cannot both be remote.",
             1,

@@ -268,7 +268,7 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
         // The worker's working directory is the module root (it enters it
         // before the privilege drop, as upstream does), and the confined
         // ownership walk reads it to track where a relative name resolves
-        // (`owner_walk`, upstream syscall.c:388-390 `module_dir`). Reading the
+        // (`owner_walk`, upstream syscall.c:442-444 `module_dir`). Reading the
         // cwd grants no reach: it names a directory the process is already in.
         libc::SYS_getcwd,
         libc::SYS_futex,

@@ -115,7 +115,7 @@ pub const RSYNC_PREFIX: &str = "rsync.";
 
 /// Upper bound on the number of xattr entries per file read from the wire.
 ///
-/// upstream: rsync.h:176 `MAX_WIRE_XATTR_COUNT`, enforced by
+/// upstream: rsync.h:177 `MAX_WIRE_XATTR_COUNT`, enforced by
 /// `read_varint_bounded(f, 0, MAX_WIRE_XATTR_COUNT, "xattr count")` at
 /// xattrs.c:826. A count outside `[0, 65536]` is a protocol error (exit 2);
 /// a lower cap would refuse lists upstream accepts.
@@ -124,7 +124,7 @@ pub const MAX_WIRE_XATTR_COUNT: usize = 65536;
 /// Upper bound on a single xattr name length (including its trailing NUL)
 /// read from the wire.
 ///
-/// upstream: rsync.h:177 `MAX_WIRE_XATTR_NAMELEN`, enforced by
+/// upstream: rsync.h:178 `MAX_WIRE_XATTR_NAMELEN`, enforced by
 /// `read_varint_size(f, MAX_WIRE_XATTR_NAMELEN, "xattr name_len")` at
 /// xattrs.c:835. The bound is inclusive: a length above 4096 (or negative)
 /// is a protocol error (exit 2); a lower cap would refuse names upstream
@@ -141,7 +141,7 @@ pub const MAX_WIRE_XATTR_NAME_LEN: usize = 4096;
 /// upstream: xattrs.c:836 (`receive_xattr()`) and xattrs.c:780
 /// (`recv_xattr_request()`) read the datum length via
 /// `read_varint_size(f, MAX_WIRE_XATTR_DATALEN, "xattr datum_len")`, where
-/// `MAX_WIRE_XATTR_DATALEN` is `0x7fffffff` (~2 GiB, rsync.h:178). Upstream
+/// `MAX_WIRE_XATTR_DATALEN` is `0x7fffffff` (~2 GiB, rsync.h:179). Upstream
 /// does not bound the datum by that wire ceiling directly; the real
 /// allocation guard is `--max-alloc` (default `DEFAULT_MAX_ALLOC` = 1 GiB,
 /// options.c:209) enforced inside `new_array()`/`my_alloc()`.

@@ -142,7 +142,7 @@ fn write_batch_under_inc_recurse_omits_post_flist_id_terminators() {
             .map(|e| e.name().to_string())
             .collect::<Vec<_>>()
     };
-    // upstream: flist.c:3230 - an inc-recursive reader refuses a nested name
+    // upstream: flist.c:3241 - an inc-recursive reader refuses a nested name
     // in the initial list, so it holds the top-level `src` alone.
     assert_eq!(names(&entries), ["src"], "initial list");
     let mut ndx_codec = reader.take_ndx_codec().expect("NDX codec set");

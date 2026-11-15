@@ -85,7 +85,7 @@ pub(super) fn build_ssh_connection(
     let connect_timeout = config.connect_timeout().effective(Duration::from_secs(30));
     ssh.set_connect_timeout(connect_timeout);
 
-    // upstream: options.c:2520 set_io_timeout(io_timeout) applies --timeout
+    // upstream: options.c:2575 set_io_timeout(io_timeout) applies --timeout
     // uniformly to every transport; on the SSH pipe it drives the stall
     // watchdog. 0/unset leaves it disabled.
     ssh.set_io_timeout(config.ssh_io_timeout());
@@ -105,6 +105,9 @@ pub(super) fn build_ssh_connection(
             super::super::super::IPC_EXIT_CODE,
         )
     })?;
+
+    let mut niceness = *config.niceness();
+    niceness.apply_local(crate::niceness::ProcessRole::Client);
 
     // upstream: rsync.c:284-321 send_protected_args() sends args as
     // null-separated strings over the pipe before protocol negotiation begins,

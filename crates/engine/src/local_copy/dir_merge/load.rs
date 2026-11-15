@@ -444,7 +444,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
     // component may be attacker-controlled. Refuse a symlink owned by neither
     // uid 0 nor our euid, exactly as upstream does for the same open.
     //
-    // upstream: exclude.c:1683 parse_filter_file() -> syscall.c:675
+    // upstream: exclude.c:1683 parse_filter_file() -> syscall.c:744
     // open_no_attacker_symlinks(); trust rule at syscall.c:499.
     let file = match open_merge_file(path) {
         Ok(file) => file,
@@ -765,7 +765,7 @@ fn open_merge_file(path: &std::path::Path) -> io::Result<fs::File> {
         // it - a non-chrooted daemon writes as root, so a planted backup
         // symlink is root-owned, which the walk trusts by design.
         //
-        // upstream: `rsync-3.5.1/exclude.c:1668-1684` `parse_filter_file()`.
+        // upstream: `rsync-3.5.2/exclude.c:1668-1684` `parse_filter_file()`.
         fast_io::operator_open_read_confined(path)
     }
     #[cfg(not(unix))]

@@ -54,7 +54,7 @@ use test_support::oc_rsync_bin;
 const PORTABLE_NAME: &[u8] = b"A\x1bB\nC\xc2\x9bD\x7fE\xc3\xbfF\tG";
 
 /// [`PORTABLE_NAME`] as the log file must render it. 0x9B is octal 233.
-const PORTABLE_RENDERING: &[u8] = b"A\\#033B\\#012C\xc2\\#233D\x7fE\xc3\xbfF\tG";
+const PORTABLE_RENDERING: &[u8] = b"A\\#033B\\#012C\xc2\\#233D\\#177E\xc3\xbfF\tG";
 
 /// Builds `src/<name>` and returns the temp root.
 fn named_tree(name: &[u8]) -> TempDir {
@@ -67,9 +67,15 @@ fn named_tree(name: &[u8]) -> TempDir {
 
 /// Runs a transfer that logs the transferred name and returns the log bytes.
 fn log_bytes(root: &Path, dest: &str, extra: &[&str]) -> Vec<u8> {
+    log_bytes_with_locale(root, dest, extra, "C")
+}
+
+/// Runs a transfer with an explicit `LC_ALL` locale and returns the log bytes.
+fn log_bytes_with_locale(root: &Path, dest: &str, extra: &[&str], locale: &str) -> Vec<u8> {
     let log = root.join(format!("{dest}.log"));
     let mut command = Command::new(oc_rsync_bin());
     command
+        .env("LC_ALL", locale)
         .arg("-a")
         .args(extra)
         .arg(format!("--log-file={}", log.display()))
@@ -157,16 +163,36 @@ fn assert_no_raw_escape_or_c1(name: &[u8]) {
     }
 }
 
-/// upstream: log.c:133-136 - `LF`, `ESC` and the 8-bit `CSI` are escaped as
+/// upstream: log.c:140-143 - `LF`, `ESC` and the 8-bit `CSI` are escaped as
 /// `\#ooo`, so a filename cannot forge a log line or drive the terminal of an
 /// operator who later `cat`s the log; `DEL`, the high bytes above the C1 range
 /// and tab survive verbatim because the log sink runs with `use_isprint = 0`.
+/// In a UTF-8 locale, `locale_char_len` decodes `\xc2\x9b` as U+009B (C1)
+/// and escapes both bytes of the multibyte sequence (`\#302\#233`), matching
+/// upstream 3.5.2 `log.c:281-291`.
+#[test]
+fn log_file_escapes_utf8_c1_in_utf8_locale() {
+    let tmp = named_tree(PORTABLE_NAME);
+    let line = name_line(&log_bytes_with_locale(
+        tmp.path(),
+        "dst",
+        &[],
+        "en_US.UTF-8",
+    ));
+    let expected = b"A\\#033B\\#012C\\#302\\#233D\\#177E\xc3\xbfF\tG";
+    assert!(
+        line.ends_with(expected),
+        "log line {:?} does not match the rsync 3.5.2 UTF-8 locale rendering",
+        String::from_utf8_lossy(&line)
+    );
+}
+
 #[test]
 fn log_file_escapes_controls_and_c1_but_keeps_high_bytes() {
     assert_rendering(PORTABLE_NAME, PORTABLE_RENDERING);
 }
 
-/// upstream: log.c:136 passes a fixed `use_isprint = 0, escape_c1 = 1` pair, so
+/// upstream: log.c:143 passes a fixed `use_isprint = 0, escape_c1 = 1` pair, so
 /// the log-file rendering is identical with and without `--8-bit-output`. A
 /// name-supplied control byte must not become raw just because `-8` was given.
 #[test]
@@ -206,9 +232,9 @@ mod non_utf8_names {
     const NON_UTF8_NAME: &[u8] = b"A\x1bB\nC\x9bD\x7fE\xffF\tG";
 
     /// [`NON_UTF8_NAME`] as the log file must render it.
-    const NON_UTF8_RENDERING: &[u8] = b"A\\#033B\\#012C\\#233D\x7fE\xffF\tG";
+    const NON_UTF8_RENDERING: &[u8] = b"A\\#033B\\#012C\\#233D\\#177E\xffF\tG";
 
-    /// upstream: log.c:133-136 - the 8-bit `CSI` is escaped as `\#233` because
+    /// upstream: log.c:140-143 - the 8-bit `CSI` is escaped as `\#233` because
     /// `escape_c1 = 1`, while 0xFF survives verbatim because `use_isprint = 0`,
     /// keeping a non-UTF-8 name readable in the log.
     #[test]

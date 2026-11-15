@@ -3,7 +3,7 @@
 //! # Overview
 //!
 //! The `strings` module centralises user-visible text tied to rsync's exit codes.
-//! Upstream `log.c` uses the same table (`rerr_names`, log.c:81-107) when printing
+//! Upstream `log.c` uses the same table (`rerr_names`, log.c:88-114) when printing
 //! `rsync error:` and `rsync warning:` diagnostics. Providing the mapping here
 //! lets higher layers select the canonical wording without duplicating the
 //! strings in multiple call sites.
@@ -85,7 +85,7 @@
 
 use super::{Message, Severity};
 
-/// Sorted table mirroring upstream `rerr_names` entries (log.c:81-107).
+/// Sorted table mirroring upstream `rerr_names` entries (log.c:88-114).
 const EXIT_CODE_TABLE: [ExitCodeMessage; 25] = [
     ExitCodeMessage::new(Severity::Error, 1, "syntax or usage error"),
     ExitCodeMessage::new(Severity::Error, 2, "protocol incompatibility"),

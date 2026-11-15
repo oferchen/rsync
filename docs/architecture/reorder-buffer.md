@@ -78,10 +78,10 @@ ack. Files are processed strictly in NDX order:
 - `receiver.c:554-560` - `while (1) { ... read_ndx_and_attrs(...) ... }`. Each
   iteration reads exactly one NDX from the wire and processes it to
   completion before reading the next.
-- `match.c:362` - `match_sums(int f, struct sum_struct *s, struct map_struct
+- `match.c:398` - `match_sums(int f, struct sum_struct *s, struct map_struct
   *buf, OFF_T len)` is invoked synchronously from the recv loop; no work
   queue, no concurrency.
-- `generator.c:2226` - `generate_files(int f_out, const char *local_name)` on
+- `generator.c:2268` - `generate_files(int f_out, const char *local_name)` on
   the sender side is a matching single-threaded producer.
 
 Two-phase delivery for `--delay-updates` is the only place upstream

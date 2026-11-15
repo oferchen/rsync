@@ -41,7 +41,7 @@ impl BandwidthLimit {
 
     /// Parses a textual `--bwlimit` value into an optional [`BandwidthLimit`].
     ///
-    /// upstream: options.c:1827 `parse_size_arg(bwlimit_arg, 'K', "bwlimit",
+    /// upstream: options.c:1863 `parse_size_arg(bwlimit_arg, 'K', "bwlimit",
     /// 512, -1, True)` - the client `--bwlimit` accepts a size suffix.
     ///
     /// # Errors
@@ -118,7 +118,7 @@ impl BandwidthLimit {
     /// Returns the whole-KiB value that `server_options()` forwards as
     /// `--bwlimit=N` to a remote peer.
     ///
-    /// upstream: options.c:1831 - `bwlimit = (size + 512) / 1024` converts the
+    /// upstream: options.c:1867 - `bwlimit = (size + 512) / 1024` converts the
     /// parsed byte-per-second rate into whole KiB, and options.c:2975-2979 forwards
     /// that integer as `--bwlimit=%d`. The remote side re-parses the value with
     /// a default `K` suffix (options.c:1827 `parse_size_arg(bwlimit_arg, 'K',
@@ -183,7 +183,7 @@ mod tests {
 
         #[test]
         fn parse_with_suffix_k() {
-            // upstream: options.c:1827 - client --bwlimit accepts a size suffix.
+            // upstream: options.c:1863 - client --bwlimit accepts a size suffix.
             let result = BandwidthLimit::parse("100k").unwrap();
             assert!(result.is_some());
             let limit = result.unwrap();

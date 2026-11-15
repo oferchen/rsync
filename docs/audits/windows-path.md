@@ -396,9 +396,9 @@ mixed-separator inputs.
 
 ### Upstream rsync (`target/interop/upstream-src/rsync-3.4.1/`)
 
-- `flist.c:534-570` `send_file_entry()` - filename emission. Bytes are
+- `flist.c:537-573` `send_file_entry()` - filename emission. Bytes are
   written verbatim; no separator translation in the application layer.
-- `flist.c:701-768` `recv_file_entry()` - the `thisname` buffer; treats
+- `flist.c:705-772` `recv_file_entry()` - the `thisname` buffer; treats
   every byte after prefix-decompression as either `/` or part of a
   component name.
 - `util1.c:943-1011` `clean_fname()` - canonical wire-form path

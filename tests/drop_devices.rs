@@ -1,5 +1,5 @@
 //! `--drop-D` / `--no-drop-D`: the receiver refuses to CREATE devices and
-//! special files (upstream `options.c:688-689`, `generator.c:2026-2033`).
+//! special files (upstream `options.c:689-690`, `generator.c:2067-2074`).
 //!
 //! The option exists because `--no-D` cannot do this job. `--no-D` clears
 //! `preserve_devices` / `preserve_specials`, and those also frame the file
@@ -115,7 +115,7 @@ fn local_copy(flags: &[&str]) -> (Output, Vec<&'static str>, bool) {
 }
 
 /// `--drop-D` withholds every special type while the ordinary transfer of
-/// regular files carries on. upstream: generator.c:2031.
+/// regular files carries on. upstream: generator.c:2072.
 #[test]
 fn drop_d_withholds_every_special_type_on_a_local_copy() {
     let (output, created, regular_arrived) = local_copy(&["--drop-D"]);
@@ -190,7 +190,7 @@ fn the_pair_is_last_wins_in_both_orders() {
 }
 
 /// Skipped entries reach upstream's ordinary non-regular-file path, which
-/// reports them at `-v`. upstream: generator.c:2109-2115.
+/// reports them at `-v`. upstream: generator.c:2150-2156.
 #[test]
 fn skipped_entries_are_reported_as_non_regular_at_verbose() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -482,7 +482,7 @@ fn rendered_output(output: &Output) -> String {
 
 /// A device entry must never cost an occupied destination its contents.
 ///
-/// upstream: generator.c:2031-2033 - the `FT_DEVICE` arm is
+/// upstream: generator.c:2072-2074 - the `FT_DEVICE` arm is
 /// `am_root && preserve_devices && ftype == FT_DEVICE`, so an unprivileged
 /// receiver never enters the creation branch and falls through to the
 /// non-regular skip at generator.c:2109. oc ported the `!drop_devices` and

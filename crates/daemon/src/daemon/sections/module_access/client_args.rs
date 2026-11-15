@@ -5,7 +5,7 @@
 // SSH-mode server invocation). The daemon parses these to configure the
 // transfer engine with the correct flags, paths, and options.
 //
-// upstream: io.c:1480 `read_args()` reads null/newline-terminated arguments;
+// upstream: io.c:1487 `read_args()` reads null/newline-terminated arguments;
 // options.c:2778 `server_options()` emits the long-form options;
 // clientserver.c:1154-1168 `rsync_module()` does the two-phase secluded-args read.
 //

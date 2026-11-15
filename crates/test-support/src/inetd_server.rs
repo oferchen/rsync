@@ -2,7 +2,7 @@
 //!
 //! A binary cannot take a pre-bound listener, so each accepted connection
 //! starts `<binary> --daemon <args>` with the socket as its stdin and stdout,
-//! which upstream serves as one session. upstream: clientserver.c:1748
+//! which upstream serves as one session. upstream: clientserver.c:1812
 //! `is_inetd_socket(STDIN_FILENO)`.
 //!
 //! The listener exists before any daemon runs, so a client connect queues in

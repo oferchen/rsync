@@ -133,7 +133,7 @@ impl DaemonAuthDigest {
 
     /// Returns the unpadded base64 encoding of this digest over `parts`.
     ///
-    /// upstream: authenticate.c:118,133 - both `gen_challenge()` and
+    /// upstream: authenticate.c:111,133 - both `gen_challenge()` and
     /// `generate_hash()` finish with `base64_encode(digest, len, out, 0)`, whose
     /// trailing `0` suppresses `=` padding.
     #[must_use]
@@ -185,9 +185,9 @@ pub fn parse_daemon_digest_list(list: &str) -> Vec<DaemonAuthDigest> {
 /// Negotiates the daemon-auth digest from the client's point of view.
 ///
 /// `server_digests` is the list the daemon advertised in its `@RSYNCD:`
-/// greeting (upstream's `daemon_auth_choices`, clientserver.c:228-233).
+/// greeting (upstream's `daemon_auth_choices`, clientserver.c:232-237).
 ///
-/// upstream: authenticate.c:453 `auth_client()` calls
+/// upstream: authenticate.c:448 `auth_client()` calls
 /// `negotiate_daemon_auth(-1, 1)` (compat.c:859). `parse_negotiate_str()`
 /// (compat.c:333-366) walks the *server's* list and keeps the entry with the
 /// lowest ordinal in *our* table, so our preference order decides. An absent
@@ -219,7 +219,7 @@ pub fn negotiate_client_daemon_digest(
 
 /// Returns the digest to use when the peer advertised no list at all.
 ///
-/// upstream: compat.c:871 - the substitute list is
+/// upstream: compat.c:880 - the substitute list is
 /// `protocol_version >= 30 ? "md5" : "md4"`, and because that branch also sets
 /// `md4_is_old`, the `md4` outcome is rewritten to `CSUM_MD4_OLD`
 /// (compat.c:890-893). An `md4` the peer named explicitly stays plain `CSUM_MD4`.
@@ -234,7 +234,7 @@ pub const fn default_legacy_digest(protocol_version: u8) -> DaemonAuthDigest {
 
 /// Computes the base64-encoded daemon authentication response using the provided digest.
 ///
-/// upstream: authenticate.c:123-135 `generate_hash()` hashes the secret followed by
+/// upstream: authenticate.c:116-128 `generate_hash()` hashes the secret followed by
 /// the challenge with the negotiated digest.
 #[must_use]
 pub fn compute_daemon_auth_response(
@@ -250,7 +250,7 @@ pub fn compute_daemon_auth_response(
 /// This is the *only* advertised-list producer: the `@RSYNCD:` greeting, the
 /// daemon's refusal line, and the client's abort diagnostic all render it.
 ///
-/// upstream: compat.c:462 `get_default_nno_list()` walks
+/// upstream: compat.c:463 `get_default_nno_list()` walks
 /// `valid_auth_checksums_items[]` (checksum.c:71-83) in table order and joins the
 /// names with a single space. The list is never filtered by protocol version -
 /// `output_daemon_greeting()` (compat.c:844-856) emits it verbatim, so an
@@ -279,7 +279,7 @@ pub struct NoMutualDaemonAuthDigest;
 /// Negotiates the daemon-auth digest from the server's point of view.
 ///
 /// `client_digests` is the raw digest name list captured from the client's
-/// `@RSYNCD:` greeting (upstream's `daemon_auth_choices`, clientserver.c:228-239).
+/// `@RSYNCD:` greeting (upstream's `daemon_auth_choices`, clientserver.c:232-243).
 ///
 /// Takes the first name in the client's list that this build supports, so the
 /// client's preference order decides. When the client advertised no list at all
@@ -437,7 +437,7 @@ mod tests {
         );
     }
 
-    // upstream: compat.c:333-366 with `am_server == 0` - the client scans the
+    // upstream: compat.c:334-367 with `am_server == 0` - the client scans the
     // whole server list and keeps the entry ranked highest in OUR table, so our
     // preference decides rather than the server's ordering.
     #[test]
@@ -448,7 +448,7 @@ mod tests {
         );
     }
 
-    // upstream: compat.c:867-872 - only an ABSENT list is substituted, and the
+    // upstream: compat.c:876-881 - only an ABSENT list is substituted, and the
     // substitute is protocol-keyed. `md4_is_old` is set on that path, so the
     // pre-protocol-30 outcome is the seeded CSUM_MD4_OLD (compat.c:890-893).
     #[test]
@@ -471,7 +471,7 @@ mod tests {
         );
     }
 
-    // upstream: compat.c:384-406 - a server list with no mutual name makes the
+    // upstream: compat.c:385-407 - a server list with no mutual name makes the
     // client ABORT with RERR_UNSUPPORTED. Falling back to the protocol-keyed
     // default would send a hash upstream never sends, and at protocol < 30 that
     // hash is the seeded CSUM_MD4_OLD. Verified against rsync 3.4.4, which
@@ -586,7 +586,7 @@ mod tests {
 
     #[test]
     fn server_negotiation_falls_back_when_the_client_offered_no_list() {
-        // upstream: compat.c:871 - the absent-list substitute is protocol-keyed.
+        // upstream: compat.c:880 - the absent-list substitute is protocol-keyed.
         assert_eq!(
             negotiate_server_daemon_digest(AdvertisedDigests::Absent, 31),
             Ok(DaemonAuthDigest::Md5)
@@ -706,7 +706,7 @@ mod tests {
         }
     }
 
-    // upstream: compat.c:844-856 `output_daemon_greeting()` renders
+    // upstream: compat.c:853-865 `output_daemon_greeting()` renders
     // `get_default_nno_list(&valid_auth_checksums, ...)` with no protocol
     // filtering whatsoever, so this single producer serves the greeting, the
     // daemon refusal, and the client abort alike. Confirmed against rsync

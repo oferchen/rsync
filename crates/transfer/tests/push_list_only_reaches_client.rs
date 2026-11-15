@@ -2,10 +2,10 @@
 //!
 //! On a push the generator runs on the server. Under `--list-only`
 //! `recv_generator()` hands every entry to `list_file_entry()`
-//! (upstream: generator.c:1636-1643), whose `rprintf(FINFO, ...)` line
+//! (upstream: generator.c:1673-1680), whose `rprintf(FINFO, ...)` line
 //! (generator.c:1318-1356) `rwrite()` frames as `MSG_INFO` for the client to
-//! print (upstream: log.c:355-366). The client forwards `--list-only` because
-//! it was given explicitly (upstream: options.c:2923-2924) and moves no data.
+//! print (upstream: log.c:435-446). The client forwards `--list-only` because
+//! it was given explicitly (upstream: options.c:2988-2989) and moves no data.
 //! An oc server receiver collected the entries but never sent them, so the
 //! client printed nothing.
 //!
@@ -51,7 +51,7 @@ drwxr-xr-x          4,096 2020/01/02 03:04:05 sub/deep
 ";
 
 /// rsync 3.5.1 `-r --list-only`: without `-l` the server lists the symlink
-/// with no ` -> target` (upstream: generator.c:1340-1348 `preserve_links`).
+/// with no ` -> target` (upstream: generator.c:1377-1385 `preserve_links`).
 const LISTING_R: &str = "\
 drwxr-xr-x          4,096 2020/01/02 03:04:05 .
 -rw-r--r--              6 2020/01/02 03:04:05 a.txt
@@ -276,7 +276,7 @@ fn daemon_push_lists_through_the_oc_daemon() {
     let out = run(&oc, &daemon_args(tmp.path(), &daemon));
     // A `use chroot = no` module munges symlinks by default (rsyncd.conf.5
     // `munge symlinks`), and the receiver lists the target as it stores it,
-    // prefix included (upstream: flist.c:1521-1524, generator.c:1345).
+    // prefix included (upstream: flist.c:1525-1528, generator.c:1382).
     let munged =
         for_this_host(LISTING_RL, tmp.path()).replace("-> a.txt", "-> /rsyncd-munged/a.txt");
     assert_listing(&out, &munged, "oc -> oc daemon push");

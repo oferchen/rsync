@@ -9,7 +9,7 @@
 //! mode is active, diagnostics are sent to syslog with the configured facility
 //! and tag.
 //!
-//! upstream: log.c:139 - `logit()` calls `syslog(priority, "%s", buf)`
+//! upstream: log.c:146 - `logit()` calls `syslog(priority, "%s", buf)`
 //! whenever no log file is open.
 
 use std::fmt;
@@ -321,7 +321,7 @@ impl SyslogConfig {
     /// sink, restoring the previously-active logger when the returned
     /// [`SyslogReconfigGuard`] is dropped.
     ///
-    /// upstream: log.c:186 `log_init` reopens syslog for the selected module
+    /// upstream: log.c:193 `log_init` reopens syslog for the selected module
     /// (`closelog()` then log.c:152 `openlog(lp_syslog_tag(module_id),
     /// options, lp_syslog_facility(module_id))`) when the module's tag or
     /// facility differ from the global (`-1`) values. Upstream serves each
@@ -353,7 +353,7 @@ impl SyslogConfig {
 
     /// Builds the RFC 3164 formatter carrying this configuration's ident.
     ///
-    /// upstream: log.c:152 `openlog(lp_syslog_tag(module_id), options, ...)`
+    /// upstream: log.c:159 `openlog(lp_syslog_tag(module_id), options, ...)`
     /// passes the tag as given, so an empty `syslog tag` is an empty ident.
     /// Callers substitute [`DEFAULT_SYSLOG_TAG`] only when no tag is set.
     fn formatter(&self) -> Formatter3164 {
@@ -401,7 +401,7 @@ pub enum SyslogPriority {
 /// successful [`SyslogConfig::open`] call. If syslog has not been opened, or
 /// if the previous `open` failed to connect, the call is silently dropped.
 ///
-/// upstream: log.c:139 - `syslog(priority, "%s", buf)`. The safe `syslog` crate
+/// upstream: log.c:146 - `syslog(priority, "%s", buf)`. The safe `syslog` crate
 /// formats the message according to RFC 3164 before writing to the socket, so
 /// `%` characters in `message` are not interpreted as format specifiers.
 pub fn syslog_message(priority: SyslogPriority, message: &str) {
@@ -465,7 +465,7 @@ impl Drop for SyslogGuard {
 /// Dropping the guard reinstates whichever logger was active before the
 /// reconfiguration - typically the daemon-global logger opened at startup.
 ///
-/// upstream: log.c:186 `log_init` reopens syslog per selected module; the guard
+/// upstream: log.c:193 `log_init` reopens syslog per selected module; the guard
 /// models the "restore to global" transition that upstream gets for free by
 /// serving each connection in a short-lived forked child.
 pub struct SyslogReconfigGuard {
@@ -714,7 +714,7 @@ mod tests {
         let _guard = config.open();
     }
 
-    // upstream: log.c:152 hands lp_syslog_tag() to openlog() unchanged, so a
+    // upstream: log.c:159 hands lp_syslog_tag() to openlog() unchanged, so a
     // configured `syslog tag =` logs with an empty ident, not the default.
     #[test]
     fn empty_tag_is_sent_as_an_empty_ident() {

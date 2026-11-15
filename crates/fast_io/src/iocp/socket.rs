@@ -13,7 +13,7 @@
 //!
 //! Upstream rsync uses POSIX `read(2)` / `write(2)` against the socket fd in
 //! `safe_read` / `safe_write`
-//! (`target/interop/upstream-src/rsync-3.5.1/io.c:310` and `:369`). Windows
+//! (`target/interop/upstream-src/rsync-3.5.2/io.c:310` and `:369`). Windows
 //! has no direct equivalent because `read`/`write` on a `SOCKET` are
 //! synchronous; the closest async-capable primitive is `WSARecv` / `WSASend`
 //! with `OVERLAPPED`. The buffering and EOF semantics expected by the

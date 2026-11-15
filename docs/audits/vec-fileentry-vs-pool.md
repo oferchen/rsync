@@ -11,14 +11,14 @@ Upstream allocates every file-list entry from a per-flist slab pool:
 
 - `lib/pool_alloc.c:48` `pool_create(SMALL_EXTENT|NORMAL_EXTENT, ...)`,
   `:115` `pool_alloc()`, `:259` `pool_free_old()`, `:310` `pool_boundary()`.
-- `flist.c:2914` and `:2920` create the pool inside `flist_new()`; sibling
-  flists reuse `first_flist->file_pool` (`flist.c:2929`).
-- `flist.c:1018` packs each entry as a single contiguous record:
+- `flist.c:2925` and `:2920` create the pool inside `flist_new()`; sibling
+  flists reuse `first_flist->file_pool` (`flist.c:2940`).
+- `flist.c:1022` packs each entry as a single contiguous record:
   `alloc_len = FILE_STRUCT_LEN + extra_len + basename_len + dirname_len + linkname_len`,
   filled by one `pool_alloc(pool, alloc_len, "recv_file_entry")` at `:1020`
-  (sender mirror at `flist.c:1239`+).
+  (sender mirror at `flist.c:1243`+).
 - `util2.c` provides only the OOM helper; the slab logic lives in
-  `lib/pool_alloc.c`. `flist.c:325` calls `pool_boundary(...,8*1024)` so an
+  `lib/pool_alloc.c`. `flist.c:326` calls `pool_boundary(...,8*1024)` so an
   flist can be released as one batch via `pool_free_old`.
 
 Net effect: one allocation per entry, freed in O(1) per flist, no
@@ -76,7 +76,7 @@ dirname interner outside the arena to preserve cross-segment sharing.
   release transient flist memory. An arena-only flist must be wired
   into the cancellation tree explicitly to avoid leaks on SIGINT/abort.
 - **INC_RECURSE.** Sibling segments share `first_flist->file_pool`
-  upstream (`flist.c:2929`). The Rust port must mirror that sharing or
+  upstream (`flist.c:2940`). The Rust port must mirror that sharing or
   pay re-allocation each segment.
 
 ## 5. Cross-references
@@ -86,4 +86,4 @@ dirname interner outside the arena to preserve cross-segment sharing.
 - `docs/audits/100k-stat-syscall-overhead.md` - related RSS curve at
   100 K+ entries.
 - Upstream: `target/interop/upstream-src/rsync-3.4.1/lib/pool_alloc.c`,
-  `flist.c:1018-1025`, `flist.c:2907-2935`.
+  `flist.c:1022-1029`, `flist.c:2918-2946`.

@@ -2,9 +2,9 @@
 //!
 //! When the sender reports a general I/O error, the receiving generator skips
 //! every deletion and says so once with `rprintf(FINFO, "IO error encountered
-//! -- skipping file deletion\n")` (upstream: generator.c:304-311). On a push
+//! -- skipping file deletion\n")` (upstream: generator.c:339-346). On a push
 //! that generator is the server, and `rwrite()` frames its FINFO text as
-//! `MSG_INFO` for the client to print (upstream: log.c:355-366). An oc server
+//! `MSG_INFO` for the client to print (upstream: log.c:435-446). An oc server
 //! receiver logged the notice only to its own thread-local sink, so the client
 //! never saw why its `--delete` did nothing.
 //!

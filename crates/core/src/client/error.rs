@@ -114,7 +114,7 @@ impl ClientError {
 
     /// Returns whether the run ended on the peer's `MSG_ERROR_EXIT`.
     ///
-    /// upstream: io.c:1930 exits through `_exit_cleanup(val, __FILE__, 0 -
+    /// upstream: io.c:1937 exits through `_exit_cleanup(val, __FILE__, 0 -
     /// __LINE__)`, and the negative line keeps log_exit() from printing a
     /// trailer (cleanup.c:221-225) unless `--log-file` is set without
     /// `--info=stats`; the peer already reported the failure.
@@ -160,7 +160,7 @@ impl ClientError {
     /// Attaches the summary of a transfer that finished every entry but still
     /// exits non-zero, so the caller renders it before the exit trailer.
     ///
-    /// upstream: `cleanup.c:210-218` turns `io_error` / `got_xfer_error` into
+    /// upstream: `cleanup.c:211-219` turns `io_error` / `got_xfer_error` into
     /// the exit code only after the itemize lines and statistics are written.
     #[must_use]
     pub(crate) fn with_completed_summary(mut self, summary: ClientSummary) -> Self {
@@ -310,7 +310,7 @@ impl ErrorCodification for ClientError {
             ExitCode::CommandKilled => "RERR_CMD_KILLED",
             ExitCode::CommandRun => "RERR_CMD_RUN",
             ExitCode::CommandNotFound => "RERR_CMD_NOTFOUND",
-            // upstream: log.c:113 rerr_name() returns NULL for an unrecognized
+            // upstream: log.c:120 rerr_name() returns NULL for an unrecognized
             // code, so it has no RERR_* name.
             ExitCode::Other(_) => "RERR_UNKNOWN",
         }
@@ -348,7 +348,7 @@ pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError 
 /// a `RERR_SYNTAX` refusal keeps its text unwrapped. A receiver site that
 /// already printed its own line before `exit_cleanup(RERR_FILEIO)` - the
 /// write, seek, fsync, close or backup of a received file - ends on the bare
-/// `log_exit()` trailer, as upstream's does (cleanup.c:248). Any other local
+/// `log_exit()` trailer, as upstream's does (cleanup.c:249). Any other local
 /// failure says the transfer failed.
 pub(crate) fn local_abort_text(error: &std::io::Error) -> String {
     if ExitCode::from_io_error(error) == ExitCode::Syntax {
@@ -371,7 +371,7 @@ pub(crate) fn reported_fatal_commit(error: &std::io::Error) -> bool {
 
 /// Maps a remote-operand parse failure to a syntax error prefixed by `context`.
 ///
-/// A dash-led host keeps upstream's bare refusal text (main.c:1636-1639), so
+/// A dash-led host keeps upstream's bare refusal text (main.c:1640-1643), so
 /// it reads the same whichever operand carried it.
 #[cold]
 pub(crate) fn remote_operand_error(context: &str, error: &RemoteOperandParseError) -> ClientError {
@@ -389,7 +389,7 @@ pub(crate) fn invalid_argument_error_typed(text: &str, exit_code: ExitCode) -> C
 
 /// Creates a typed-exit-code error tagged with an explicit trailer role.
 ///
-/// upstream: log.c:959-960 log_exit() tags the diagnostic with who_am_i()
+/// upstream: log.c:1047-1048 log_exit() tags the diagnostic with who_am_i()
 /// (rsync.c:987), the local process role, never a bare "client". Remote SSH
 /// paths pass the direction-derived role so a push reports `[sender]` and a
 /// pull `[receiver]`.
@@ -405,7 +405,7 @@ pub(crate) fn invalid_argument_error_typed_with_role(
 
 /// Builds the final `rsync error:` line for a remote/child process exit.
 ///
-/// upstream: log.c:937-963 log_exit() renders the winning exit code by its
+/// upstream: log.c:1025-1051 log_exit() renders the winning exit code by its
 /// rerr_name (log.c:950) - or "unexplained error" for an unknown raw code
 /// (log.c:951-952) - as `rsync error: <name> (code N) at ... [<role>=<ver>]`.
 /// The role is who_am_i() (rsync.c:987): the local process role, not "client".
@@ -423,7 +423,7 @@ pub(crate) fn remote_exit_error(exit_code: ExitCode, role: Role) -> ClientError 
 /// Builds the error for a run the peer ended with `MSG_ERROR_EXIT`, which
 /// exits with the peer's code.
 ///
-/// upstream: io.c:1892-1930 - see [`ClientError::ended_by_peer_error_exit`].
+/// upstream: io.c:1899-1937 - see [`ClientError::ended_by_peer_error_exit`].
 #[cold]
 pub(crate) fn peer_error_exit_error(exit_code: ExitCode, role: Role) -> ClientError {
     let mut error = remote_exit_error(exit_code, role);
@@ -445,7 +445,7 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             source,
         } => io_error(action, &path, source),
         LocalCopyErrorKind::LinkStatFailed { path, source } => {
-            // upstream: flist.c:2945-2946 send_file_list() - a missing source
+            // upstream: flist.c:2956-2957 send_file_list() - a missing source
             // argument is reported by the sender as `link_stat %s failed` via
             // FERROR_XFER and exits RERR_PARTIAL (23). Deliberately not routed through io_error(),
             // whose NotFound branch maps to RERR_VANISHED (24) for files that
@@ -460,7 +460,7 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             ClientError::with_code(code, message)
         }
         LocalCopyErrorKind::ChangeDirFailed { path, source } => {
-            // upstream: flist.c:686-694 change_pathname() - RERR_PARTIAL (23).
+            // upstream: flist.c:690-698 change_pathname() - RERR_PARTIAL (23).
             let code = ExitCode::PartialTransfer;
             let text = format!(
                 "change_dir \"{}\" failed: {}",
@@ -508,7 +508,7 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             ClientError::with_code(code, message)
         }
         LocalCopyErrorKind::PartialTransfer => {
-            // upstream: cleanup.c:217-218 maps a set `io_error` to RERR_PARTIAL,
+            // upstream: cleanup.c:218-219 maps a set `io_error` to RERR_PARTIAL,
             // whose log.c:98 name `some files/attrs were not transferred
             // (see previous errors)` is printed by the sending half (e.g. an unconvertible --iconv filename), so
             // who_am_i() tags the diagnostic `[sender]`. The per-entry cause
@@ -522,7 +522,7 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             ClientError::with_code(code, message)
         }
         LocalCopyErrorKind::Vanished => {
-            // upstream: cleanup.c:215-216 maps IOERR_VANISHED to RERR_VANISHED;
+            // upstream: cleanup.c:216-217 maps IOERR_VANISHED to RERR_VANISHED;
             // log.c:99 names it at warning level, from the sending half
             // (main.c:1412), each vanish having been reported at its site.
             let code = ExitCode::Vanished;
@@ -567,7 +567,7 @@ fn file_io_error(cause: String, role: Role) -> ClientError {
 /// Maps a receiving client's corrupt `--fake-super` destination record to
 /// upstream's generator failure, if `error` is one.
 ///
-/// upstream: generator.c:1393-1399 link_stat() -> xattrs.c:1372 x_lstat() ->
+/// upstream: generator.c:1430-1436 link_stat() -> xattrs.c:1372 x_lstat() ->
 /// xattrs.c:1253-1258 - the generator reads the destination, so the trailer
 /// names the generator.
 pub(crate) fn corrupt_fake_super_destination_error(error: &io::Error) -> Option<ClientError> {
@@ -603,7 +603,7 @@ pub(crate) fn compile_filter_error(pattern: &str, error: &dyn fmt::Display) -> C
 
 #[cold]
 pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientError {
-    // upstream: flist.c:1687 / sender.c:714 set IOERR_VANISHED for ENOENT and
+    // upstream: flist.c:1691 / sender.c:722 set IOERR_VANISHED for ENOENT and
     // IOERR_GENERAL otherwise; cleanup.c:215-218 turns those into
     // RERR_VANISHED (24) and RERR_PARTIAL (23).
     let code = if error.kind() == io::ErrorKind::NotFound {
@@ -612,7 +612,7 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
         ExitCode::PartialTransfer
     };
     let path_display = path.display();
-    // upstream: flist.c:1688 / sender.c:715 - rprintf(c, "file has vanished: %s\n",
+    // upstream: flist.c:1692 / sender.c:723 - rprintf(c, "file has vanished: %s\n",
     // full_fname(...)). full_fname() wraps the path in double quotes (util1.c:1555).
     // Both call sites (send_file_list building the flist and send_files opening a
     // source file) run under am_sender, so who_am_i() yields the `sender` role for
@@ -872,7 +872,7 @@ pub(crate) fn daemon_error(text: impl Into<String>, exit_code: i32) -> ClientErr
 
 /// Reports the fatal failure to agree on a daemon-auth digest with the server.
 ///
-/// upstream: compat.c:383-406 - when `parse_negotiate_str()` finds no mutual
+/// upstream: compat.c:384-407 - when `parse_negotiate_str()` finds no mutual
 /// name the client prints three lines to stderr and calls
 /// `exit_cleanup(RERR_UNSUPPORTED)`. There is no fallback digest on this path:
 /// substituting one sends a hash upstream never sends, so callers must surface
@@ -1019,7 +1019,7 @@ mod tests {
 
     #[test]
     fn upstream_io_error_uses_bare_errno_suffix() {
-        // upstream rsync renders "<strerror> (<errno>)" (log.c:500), not Rust's
+        // upstream rsync renders "<strerror> (<errno>)" (log.c:585), not Rust's
         // "<strerror> (os error <errno>)".
         let err = io::Error::from_raw_os_error(2);
         let text = upstream_io_error(&err);
@@ -1262,7 +1262,7 @@ mod tests {
             assert!(msg.contains(parse_error));
         }
 
-        /// upstream: cleanup.c:217-218 - non-NotFound I/O errors map to
+        /// upstream: cleanup.c:218-219 - non-NotFound I/O errors map to
         /// RERR_PARTIAL (exit code 23). The per-file read failure is detected
         /// by the sender (sender.c:717-719 send_files), so it carries the
         /// `[sender]` role, not `[client]`.
@@ -1278,7 +1278,7 @@ mod tests {
             assert!(msg.contains("[sender="), "{msg}");
         }
 
-        /// upstream: cleanup.c:215-216 - NotFound I/O errors map to
+        /// upstream: cleanup.c:216-217 - NotFound I/O errors map to
         /// RERR_VANISHED (exit code 24). Upstream emits `file has vanished`
         /// from the sender (flist.c:1688 / sender.c:715), so who_am_i() tags
         /// the diagnostic `[sender]`, not `[client]`.
@@ -1294,7 +1294,7 @@ mod tests {
             assert!(msg.contains("[sender="), "{msg}");
         }
 
-        /// upstream: flist.c:2945 send_file_list() - a missing source argument
+        /// upstream: flist.c:2956 send_file_list() - a missing source argument
         /// (failed link_stat) exits RERR_PARTIAL (23) with `link_stat "%s"
         /// failed`, NOT the RERR_VANISHED (24) "file has vanished" path used
         /// for files that disappear mid-transfer.
@@ -1395,7 +1395,7 @@ mod tests {
         /// bytes received and the role, the trailer only the exit code's name.
         /// Backup and monitoring tools grep for the whine verbatim.
         ///
-        /// upstream: io.c:299-303 whine_about_eof(), log.c:937-963 log_exit().
+        /// upstream: io.c:299-303 whine_about_eof(), log.c:1025-1051 log_exit().
         #[test]
         fn connection_unexpectedly_closed_splits_whine_from_trailer() {
             let error =
@@ -1471,7 +1471,7 @@ mod tests {
         /// error" plus the raw `(code N)` suffix, tagged with the local process
         /// role - never a bare `[client]`.
         ///
-        /// upstream: log.c:959 - `rsync error: %s (code %d) at %s(%d) [%s=%s]`
+        /// upstream: log.c:1047 - `rsync error: %s (code %d) at %s(%d) [%s=%s]`
         /// where the name comes from rerr_name()/"unexplained error" (log.c:950-952)
         /// and the role from who_am_i() (rsync.c:987).
         #[test]
@@ -1500,7 +1500,7 @@ mod tests {
         /// and `rerr_names` has no entry for it, so `log_exit()` renders the
         /// "unexplained error" fallback with the raw code.
         ///
-        /// upstream: errcode.h:29-31 (5 then 10), log.c:950-952
+        /// upstream: errcode.h:29-31 (5 then 10), log.c:1038-1040
         #[test]
         fn remote_exit_6_renders_unexplained_error() {
             let error = remote_exit_error(ExitCode::from_raw(6), Role::Sender);

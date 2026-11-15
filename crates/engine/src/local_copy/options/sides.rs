@@ -1,6 +1,6 @@
 //! The two option sets of a local copy.
 //!
-//! upstream: pipe.c:109-148 local_child() forks the receiver, which re-runs
+//! upstream: pipe.c:109-149 local_child() forks the receiver, which re-runs
 //! parse_arguments() over the `-M` values on top of the inherited options. The
 //! sender keeps the client's own, so every `-M` option changes the receiver
 //! half alone.

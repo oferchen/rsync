@@ -331,7 +331,7 @@ fn test_transfer_role_detection() {
         _ => panic!("Expected Push transfer"),
     }
 
-    // Remote source and remote destination: upstream main.c:1486-1489 refuses
+    // Remote source and remote destination: upstream main.c:1490-1493 refuses
     let sources = vec![OsString::from("host1:file")];
     let destination = OsString::from("host2:file");
     assert!(determine_transfer_role(&sources, &destination).is_err());
@@ -357,7 +357,7 @@ fn test_remote_invocation_builder() {
         remote::{RemoteInvocationBuilder, RemoteRole},
     };
 
-    // Test sender (push) invocation — no --sender flag (upstream options.c:2607)
+    // Test sender (push) invocation — no --sender flag (upstream options.c:2662)
     let config = ClientConfig::builder()
         .recursive(true)
         .times(true)
@@ -654,7 +654,7 @@ fn test_remote_invocation_with_multiple_paths() {
     let flags_idx = 3;
     let flags = args[flags_idx].to_string_lossy();
     assert!(flags.starts_with('-'));
-    // upstream: options.c:2904 - server_options() embeds maybe_add_e_option()
+    // upstream: options.c:2969 - server_options() embeds maybe_add_e_option()
     // in the compact flag string (e.g. `-re.iLsfxCIvu`), not a separate
     // argument; options.c:3220-3221 adds i whenever compat.c:162-180
     // set_allow_inc_recurse() leaves it enabled, which a recursive pull does.

@@ -130,13 +130,13 @@ use std::path::Path;
 
 /// Committed line counts for every citable source file in the pinned upstream
 /// release: `.c`, `.h`, `.py` and `.sh`.
-pub const MANIFEST_PATH: &str = "tools/ci/upstream-3.5.1-lines.tsv";
+pub const MANIFEST_PATH: &str = "tools/ci/upstream-3.5.2-lines.tsv";
 
 /// The pinned upstream source, present only where the interop tarball was fetched.
-pub const PINNED_SOURCE_DIR: &str = "target/interop/upstream-src/rsync-3.5.1";
+pub const PINNED_SOURCE_DIR: &str = "target/interop/upstream-src/rsync-3.5.2";
 
 /// The pinned release, as the `rsync-<VER>/` component of a cited path spells it.
-pub const PINNED_VERSION: &str = "3.5.1";
+pub const PINNED_VERSION: &str = "3.5.2";
 
 /// Committed line counts for every citable file in the pinned OpenSSH release.
 pub const OPENSSH_MANIFEST_PATH: &str = "tools/ci/openssh-10.0p1-lines.tsv";

@@ -21,10 +21,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/main.c:865` - `get_local_name()` enters the destination.
-//! - `rsync-3.5.1/util1.c:1448-1466` - `change_dir()` `fchdir()`s to the walked
+//! - `rsync-3.5.2/main.c:865` - `get_local_name()` enters the destination.
+//! - `rsync-3.5.2/util1.c:1448-1466` - `change_dir()` `fchdir()`s to the walked
 //!   descriptor.
-//! - `rsync-3.5.1/receiver.c:413` - `open_tmpfile()` creates the temp file by
+//! - `rsync-3.5.2/receiver.c:413` - `open_tmpfile()` creates the temp file by
 //!   a name relative to that cwd.
 
 use std::io;

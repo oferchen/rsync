@@ -152,7 +152,7 @@ fn files_from_embedded_dot_marker_determines_destination_structure() {
 
 /// Verifies that `--files-from` entries flagged as DOTDIR_NAME (`from/./`) and
 /// SLASH_ENDING_NAME (`dir/`) walk their immediate children even when global
-/// recursion is off, matching upstream `flist.c:2992`.
+/// recursion is off, matching upstream `flist.c:3003`.
 ///
 /// Upstream's `(xfer_dirs && name_type != NORMAL_NAME)` predicate forces
 /// `send_directory()` to emit one level of contents for the listed directory.

@@ -48,7 +48,7 @@ pub(super) fn try_skip_up_to_date(
         None
     };
 
-    // upstream: generator.c:630-653 `quick_check_ok()` FT_REG - the up-to-date
+    // upstream: generator.c:667-690 `quick_check_ok()` FT_REG - the up-to-date
     // decision reads exactly four knobs: size, `always_checksum` (-c),
     // `size_only`, `ignore_times` (-I), then mtime. `make_backups` is NOT among
     // them; its only uses in generator.c are the backup actions themselves
@@ -69,7 +69,7 @@ pub(super) fn try_skip_up_to_date(
         prefetched_match,
     });
 
-    // upstream: generator.c:668-671 `quick_check_ok()` FT_DEVICE compares
+    // upstream: generator.c:705-708 `quick_check_ok()` FT_DEVICE compares
     // st_rdev against MAKEDEV(F_RDEV_P(file)) for devices. A
     // --fake-super placeholder can have identical content and mtime while its
     // %stat encodes a different device, so force a transfer when the encoded

@@ -16,7 +16,7 @@ Sources audited:
 - Ours: `crates/cli/src/frontend/progress/format/rate.rs`
 - Ours: `crates/cli/src/frontend/progress/format/size.rs`
 
-The reference `printf` template is `progress.c:129-130`:
+The reference `printf` template is `progress.c:120-121`:
 
 ```
 rprintf(FCLIENT, "\r%15s %3d%% %7.2f%s %s%s",
@@ -29,16 +29,16 @@ rprintf(FCLIENT, "\r%15s %3d%% %7.2f%s %s%s",
 
 | Field | C format | Width | Notes |
 |-------|----------|-------|-------|
-| Bytes transferred | `%15s` | 15, right-aligned, space pad | `human_num(ofs)`; with `--human-readable >= 2` switches to `1.23K`/`M`/`G`/`T`/`P` (`compat.c:182-205`); otherwise grouped digits with locale separator (`compat.c:230-240`) |
-| Percent | `%3d%%` | 3 + literal `%` | `pct = ofs == size ? 100 : (int)(100.0 * ofs / size)` (`progress.c:128`) |
+| Bytes transferred | `%15s` | 15, right-aligned, space pad | `human_num(ofs)`; with `--human-readable >= 2` switches to `1.23K`/`M`/`G`/`T`/`P` (`compat.c:183-206`); otherwise grouped digits with locale separator (`compat.c:231-241`) |
+| Percent | `%3d%%` | 3 + literal `%` | `pct = ofs == size ? 100 : (int)(100.0 * ofs / size)` (`progress.c:119`) |
 | Rate value | `%7.2f` | 7, two fractional digits | `rate` in kB/s, MB/s, or GB/s based on threshold |
-| Rate unit | `%s` | variable | `kB/s`, `MB/s`, `GB/s` (`progress.c:108-116`) |
-| ETA / total | `%s` | fixed via `snprintf("%4u:%02u:%02u")` | `??:??:??` placeholder when `remain < 0` or `> 9999h` (`progress.c:118-125`) |
-| Tail | `%s` | variable | `eol`: trailing `"  "` for in-flight lines (`progress.c:100`) or `" (xfr#N, to-chk=I/J)\n"` / `" (xfr#N, ir-chk=I/J)\n"` for final updates (`progress.c:78-82`) |
+| Rate unit | `%s` | variable | `kB/s`, `MB/s`, `GB/s` (`progress.c:106-107`) |
+| ETA / total | `%s` | fixed via `snprintf("%4u:%02u:%02u")` | `??:??:??` placeholder when `remain < 0` or `> 9999h` (`progress.c:109-116`) |
+| Tail | `%s` | variable | `eol`: trailing `"  "` for in-flight lines (`progress.c:101`) or `" (xfr#N, to-chk=I/J)\n"` / `" (xfr#N, ir-chk=I/J)\n"` for final updates (`progress.c:79-83`) |
 
-The leading byte is always `\r` (carriage return; `progress.c:129`). The rsync
+The leading byte is always `\r` (carriage return; `progress.c:120`). The rsync
 binary writes through `rprintf(FCLIENT, ...)`, which routes to stdout for the
-client (`log.c:288` and downstream).
+client (`log.c:368` and downstream).
 
 ### Our layout (`live.rs:88-106` and `render.rs:175-194`)
 
@@ -60,23 +60,23 @@ client (`log.c:288` and downstream).
    - Upstream `5%`: `"  5%"` (3 + `%`).
    - Ours `5%`: `"  5%"` matches by accident; `50%` renders as ` 50%` with three leading spaces vs upstream's two.
 2. **Rate field width**: upstream emits `%7.2f%s` -> exactly 7 columns of value plus the unit (`kB/s` / `MB/s` / `GB/s`); ours pads the combined `value+unit` to 12 columns. For `"1.23MB/s"` upstream produces `"   1.23MB/s"` (4 leading spaces; total 11 chars) while ours produces `"    1.23MB/s"` (12 chars). Misalignment is one column wider.
-3. **Rate unit set**: upstream uses only `kB/s`, `MB/s`, `GB/s` (`progress.c:108-116`). Ours additionally produces `TB/s` and `PB/s` via `format_progress_rate_human` -> `format_verbose_rate_human` (`rate.rs:80-97`). Mixed-base units never appear upstream.
-4. **Rate divisor**: upstream uses 1024-based thresholds, switching at `> 1024` and `> 1024*1024` kB/s (`progress.c:108-111`). Our decimal path uses 1024-based KiB/MiB/GiB (`rate.rs:137-148`), but the `format_progress_rate_human` path used in human-readable mode falls back to 1000-based units (`rate.rs:81-87`), which disagrees with upstream's strictly binary scaling.
-5. **ETA vs elapsed** (RESOLVED): upstream prints **time remaining** in the in-flight line (`progress.c:105`) and switches to **total time taken** for the last line (`progress.c:97-98`). The `??:??:??` literal appears when ETA is unknown (`progress.c:118-119`). `live.rs` now drives a `RemainingTimeEstimator` (`format/remaining.rs`) for the mid-transfer ticks and only falls back to elapsed for the final tick.
+3. **Rate unit set**: upstream uses only `kB/s`, `MB/s`, `GB/s` (`progress.c:106-107`). Ours additionally produces `TB/s` and `PB/s` via `format_progress_rate_human` -> `format_verbose_rate_human` (`rate.rs:80-97`). Mixed-base units never appear upstream.
+4. **Rate divisor**: upstream uses 1024-based thresholds, switching at `> 1024` and `> 1024*1024` kB/s (`progress.c:106-106`). Our decimal path uses 1024-based KiB/MiB/GiB (`rate.rs:137-148`), but the `format_progress_rate_human` path used in human-readable mode falls back to 1000-based units (`rate.rs:81-87`), which disagrees with upstream's strictly binary scaling.
+5. **ETA vs elapsed** (RESOLVED): upstream prints **time remaining** in the in-flight line (`progress.c:106`) and switches to **total time taken** for the last line (`progress.c:98-99`). The `??:??:??` literal appears when ETA is unknown (`progress.c:109-110`). `live.rs` now drives a `RemainingTimeEstimator` (`format/remaining.rs`) for the mid-transfer ticks and only falls back to elapsed for the final tick.
 6. **ETA width** (RESOLVED): upstream uses `%4u:%02u:%02u` -> minimum 10 columns (4 + 1 + 2 + 1 + 2). `RemainingTimeEstimator::render` emits `H:MM:SS` plus the `??:??:??` placeholder, right-padded to 10 in the live renderer.
-7. **Trailing tail (in-flight)**: upstream sets `eol = "  "` (two spaces) on each live tick (`progress.c:100`) so the next `\r` overwrites cleanly. Ours emits the full `(xfr#N, to-chk=R/T)` tail on every tick (`live.rs:103-106`), not just the final update.
-8. **Trailing tail (final)**: upstream uses `to-chk` only while the file list is still streaming (`!flist_eof`) and switches to `ir-chk` once the flist is complete (`progress.c:80`). Ours hard-codes `to-chk` (`live.rs:106`, `render.rs:192`).
-9. **xfr#N and counts**: upstream's `xfr#N` is `stats.xferred_files` (regular files transferred to date) and the chk count is `stats.num_files - current_file_index - 1` (`progress.c:79-82`). Ours uses `update.index()` (count of progress events emitted, `progress.rs:215-217`) and the local remaining/total derived from event order (`live.rs:69-71`). For runs that include directories, symlinks, or skipped entries the totals will diverge from upstream's reg-only `xferred_files`.
-10. **Leading newline before per-file line**: upstream stays on a single line per file by emitting `\r` and overwriting in place (`progress.c:129`). Ours emits `writeln!` for the path on a separate line, then writes the progress fields with no leading `\r` for the first tick (`live.rs:79-101`). The path line is upstream's `instant_progress` print (`progress.c:158-165`), but only when `!stdout_format_has_i && !INFO_GTE(NAME, 1)`.
+7. **Trailing tail (in-flight)**: upstream sets `eol = "  "` (two spaces) on each live tick (`progress.c:101`) so the next `\r` overwrites cleanly. Ours emits the full `(xfr#N, to-chk=R/T)` tail on every tick (`live.rs:103-106`), not just the final update.
+8. **Trailing tail (final)**: upstream uses `to-chk` only while the file list is still streaming (`!flist_eof`) and switches to `ir-chk` once the flist is complete (`progress.c:81`). Ours hard-codes `to-chk` (`live.rs:106`, `render.rs:192`).
+9. **xfr#N and counts**: upstream's `xfr#N` is `stats.xferred_files` (regular files transferred to date) and the chk count is `stats.num_files - current_file_index - 1` (`progress.c:80-83`). Ours uses `update.index()` (count of progress events emitted, `progress.rs:215-217`) and the local remaining/total derived from event order (`live.rs:69-71`). For runs that include directories, symlinks, or skipped entries the totals will diverge from upstream's reg-only `xferred_files`.
+10. **Leading newline before per-file line**: upstream stays on a single line per file by emitting `\r` and overwriting in place (`progress.c:120`). Ours emits `writeln!` for the path on a separate line, then writes the progress fields with no leading `\r` for the first tick (`live.rs:79-101`). The path line is upstream's `instant_progress` print (`progress.c:154-161`), but only when `!stdout_format_has_i && !INFO_GTE(NAME, 1)`.
 
 ## 2. info=progress2 Line
 
-### Upstream behaviour (`progress.c:172-179`, `progress.c:200-203`)
+### Upstream behaviour (`progress.c:168-175`, `progress.c:196-199`)
 
 When `INFO_GTE(PROGRESS, 2)`:
 
 - `ofs = stats.total_transferred_size - size + ofs;` and `size = stats.total_size;` so the line displays cumulative totals across the whole transfer.
-- `eol` final block converts the trailing newline into a padded space-erase: `last_len < --len` widens `last_len` to the longest line ever printed, then back-fills with spaces and drops the `\n` (`progress.c:84-91`). The last line is then redrawn with `is_last = 0` so `\r` is preserved and the line is not terminated with LF.
+- `eol` final block converts the trailing newline into a padded space-erase: `last_len < --len` widens `last_len` to the longest line ever printed, then back-fills with spaces and drops the `\n` (`progress.c:85-92`). The last line is then redrawn with `is_last = 0` so `\r` is preserved and the line is not terminated with LF.
 - The final `\n` is therefore deferred: progress2 leaves the cursor on the same line until `output_summary` prints the trailing newline (`main.c:419`, `main.c:452`).
 
 ### Our behaviour (`live.rs:117-150`)
@@ -85,18 +85,18 @@ When `INFO_GTE(PROGRESS, 2)`:
 
 ### Discrepancies
 
-11. **No padding to longest prior line**: upstream tracks `static int last_len` and pads the last update with spaces so leftover characters from longer earlier lines are erased (`progress.c:84-91`). We never track the longest line; if the field set ever shrinks (e.g. rate unit goes from `MB/s` -> `kB/s`) stale characters from the prior tick remain on screen.
-12. **Trailing newline on final tick**: upstream explicitly drops the `\n` from `eol` for progress2 (`progress.c:88` sets `eol[last_len] = '\0'` and `is_last = 0`), so the cursor stays on the line until `output_summary` prints `"\n"`. Ours emits `writeln!(self.writer)` on the final overall tick (`live.rs:143`), forcing an immediate LF and producing an extra blank line before the summary block.
-13. **Cumulative offset rebasing**: upstream rebases `ofs` to the per-transfer total (`progress.c:201`) which is what `show_progress` consumes for ratio/percent. Ours sources `update.overall_transferred()` directly from `ClientProgressForwarder` (`progress.rs:226-230` in `core/src/client/progress.rs`). The numerator agrees only when no skipped/non-regular entries exist, because upstream excludes those from `total_transferred_size` while we include any byte counter we receive.
+11. **No padding to longest prior line**: upstream tracks `static int last_len` and pads the last update with spaces so leftover characters from longer earlier lines are erased (`progress.c:85-92`). We never track the longest line; if the field set ever shrinks (e.g. rate unit goes from `MB/s` -> `kB/s`) stale characters from the prior tick remain on screen.
+12. **Trailing newline on final tick**: upstream explicitly drops the `\n` from `eol` for progress2 (`progress.c:89` sets `eol[last_len] = '\0'` and `is_last = 0`), so the cursor stays on the line until `output_summary` prints `"\n"`. Ours emits `writeln!(self.writer)` on the final overall tick (`live.rs:143`), forcing an immediate LF and producing an extra blank line before the summary block.
+13. **Cumulative offset rebasing**: upstream rebases `ofs` to the per-transfer total (`progress.c:197`) which is what `show_progress` consumes for ratio/percent. Ours sources `update.overall_transferred()` directly from `ClientProgressForwarder` (`progress.rs:226-230` in `core/src/client/progress.rs`). The numerator agrees only when no skipped/non-regular entries exist, because upstream excludes those from `total_transferred_size` while we include any byte counter we receive.
 
 ## 3. CR vs LF (TTY foreground check)
 
-### Upstream (`progress.c:185-238`)
+### Upstream (`progress.c:181-234`)
 
-- Foreground check is gated by `HAVE_GETPGRP && HAVE_TCGETPGRP`. The TTY's foreground process group is read once via `tcgetpgrp(STDOUT_FILENO)` and compared against `pgrp = getpgrp()` (`progress.c:194-195`, `progress.c:235-237`).
-- If the comparison fails or `tcgetpgrp` returns -1, `show_progress` returns **before** calling `rprint_progress` (`progress.c:236-237`). No bytes are emitted while backgrounded.
-- The CR (`\r`) prefix is unconditional once the line is emitted (`progress.c:129`); the LF is added only when `is_last && quiet == 0 && progress2 == 0` (`progress.c:131-134` and `eol` carries `"\n"` in the `is_last` branch).
-- `output_needs_newline` is set to 1 after each tick (`progress.c:132`) so other output paths know to insert a `\n` before printing.
+- Foreground check is gated by `HAVE_GETPGRP && HAVE_TCGETPGRP`. The TTY's foreground process group is read once via `tcgetpgrp(STDOUT_FILENO)` and compared against `pgrp = getpgrp()` (`progress.c:190-191`, `progress.c:231-233`).
+- If the comparison fails or `tcgetpgrp` returns -1, `show_progress` returns **before** calling `rprint_progress` (`progress.c:232-233`). No bytes are emitted while backgrounded.
+- The CR (`\r`) prefix is unconditional once the line is emitted (`progress.c:120`); the LF is added only when `is_last && quiet == 0 && progress2 == 0` (`progress.c:127-130` and `eol` carries `"\n"` in the `is_last` branch).
+- `output_needs_newline` is set to 1 after each tick (`progress.c:128`) so other output paths know to insert a `\n` before printing.
 
 ### Ours (`live.rs:99-114`)
 
@@ -106,20 +106,20 @@ When `INFO_GTE(PROGRESS, 2)`:
 
 ### Discrepancies
 
-14. **No background check**: we do not consult `tcgetpgrp` / `IsTerminal` before emitting progress, so a backgrounded `oc-rsync` continues to spam `\r` updates into a pipe or log file. Upstream silently suppresses ticks while backgrounded (`progress.c:234-237`).
-15. **First-tick CR**: upstream always writes `\r` (`progress.c:129`); ours skips it on the first tick of each file. After a non-progress write to stdout the cursor will not be returned to column zero before the first per-file line.
-16. **No `output_needs_newline` flag**: upstream coordinates with `log.c` so any subsequent rprintf inserts a `\n` to break out of the in-place line (`progress.c:127`, `progress.c:132`). We have no equivalent: any concurrent stderr/stdout write will smear the progress line.
+14. **No background check**: we do not consult `tcgetpgrp` / `IsTerminal` before emitting progress, so a backgrounded `oc-rsync` continues to spam `\r` updates into a pipe or log file. Upstream silently suppresses ticks while backgrounded (`progress.c:230-233`).
+15. **First-tick CR**: upstream always writes `\r` (`progress.c:120`); ours skips it on the first tick of each file. After a non-progress write to stdout the cursor will not be returned to column zero before the first per-file line.
+16. **No `output_needs_newline` flag**: upstream coordinates with `log.c` so any subsequent rprintf inserts a `\n` to break out of the in-place line (`progress.c:118`, `progress.c:128`). We have no equivalent: any concurrent stderr/stdout write will smear the progress line.
 
 ## 4. 1-Second Update Throttling
 
-### Upstream (`progress.c:182-232`)
+### Upstream (`progress.c:178-228`)
 
-- `show_progress` keeps a 5-slot ring (`PROGRESS_HISTORY_SECS = 5`, `progress.c:37`).
-- On every call: if the newest history slot is younger than 1000 ms (`msdiff < 1000`), the function returns immediately (`progress.c:224-225`).
-- If older than 1000 ms, it advances the ring by one slot (one second of state) and proceeds to render (`progress.c:227-231`).
-- Initial seed: when `ph_start` is unset and the most recent receive was within 1500 ms, the start anchor copies the newest sample's timestamp (`progress.c:208-218`); otherwise it anchors to `now`.
-- `end_progress` and `instant_progress` bypass the throttle (`progress.c:163`, `progress.c:172-178`).
-- `want_progress_now` is a forced-tick flag set from outside and consumed by `instant_progress` (`progress.c:35`, `progress.c:158-165`).
+- `show_progress` keeps a 5-slot ring (`PROGRESS_HISTORY_SECS = 5`, `progress.c:38`).
+- On every call: if the newest history slot is younger than 1000 ms (`msdiff < 1000`), the function returns immediately (`progress.c:220-221`).
+- If older than 1000 ms, it advances the ring by one slot (one second of state) and proceeds to render (`progress.c:223-227`).
+- Initial seed: when `ph_start` is unset and the most recent receive was within 1500 ms, the start anchor copies the newest sample's timestamp (`progress.c:204-214`); otherwise it anchors to `now`.
+- `end_progress` and `instant_progress` bypass the throttle (`progress.c:159`, `progress.c:168-174`).
+- `want_progress_now` is a forced-tick flag set from outside and consumed by `instant_progress` (`progress.c:36`, `progress.c:154-161`).
 
 ### Ours
 
@@ -128,17 +128,17 @@ When `INFO_GTE(PROGRESS, 2)`:
 
 ### Discrepancies
 
-17. **1-second throttle** (RESOLVED for ETA): `RemainingTimeEstimator::observe` ignores samples that arrive within 1 s of the newest retained sample (`format/remaining.rs:60-72`), matching the `msdiff < 1000` guard in `progress.c:224-225`. The rate column still consumes raw cumulative bytes.
-18. **5-slot history ring** (RESOLVED for ETA): `RemainingTimeEstimator` keeps a 5-slot ring (`HISTORY_SLOTS = PROGRESS_HISTORY_SECS = 5`) and computes the rate from the oldest retained sample to the freshest, mirroring `progress.c:102-104`. The summary rate (`format_summary_rate`) intentionally remains cumulative, matching upstream's `main.c:413` summary semantics.
+17. **1-second throttle** (RESOLVED for ETA): `RemainingTimeEstimator::observe` ignores samples that arrive within 1 s of the newest retained sample (`format/remaining.rs:60-72`), matching the `msdiff < 1000` guard in `progress.c:220-221`. The rate column still consumes raw cumulative bytes.
+18. **5-slot history ring** (RESOLVED for ETA): `RemainingTimeEstimator` keeps a 5-slot ring (`HISTORY_SLOTS = PROGRESS_HISTORY_SECS = 5`) and computes the rate from the oldest retained sample to the freshest, mirroring `progress.c:103-105`. The summary rate (`format_summary_rate`) intentionally remains cumulative, matching upstream's `main.c:413` summary semantics.
 19. **No `want_progress_now` / `instant_progress` equivalent**: upstream forces a single tick when external code sets the flag (e.g. before printing a non-progress line). We have no path to flush a final tick out of band.
-20. **No 1500 ms backfill of the start anchor**: upstream's `ph_start` heuristic seeds from the previous file's last sample if recent (`progress.c:208-218`). Our `overall_start` is fixed at observer construction (`progress.rs:181`) and per-file elapsed comes from the engine, so the boundary case (long pause then resume) reports a low rate for the first second of the new file.
+20. **No 1500 ms backfill of the start anchor**: upstream's `ph_start` heuristic seeds from the previous file's last sample if recent (`progress.c:204-214`). Our `overall_start` is fixed at observer construction (`progress.rs:181`) and per-file elapsed comes from the engine, so the boundary case (long pause then resume) reports a low rate for the first second of the new file.
 
 ## 4a. Stalled-Transfer Remaining-Time Rendering
 
-### Upstream (`progress.c:102-125`)
+### Upstream (`progress.c:103-116`)
 
-- After computing `rate` from the window delta, upstream picks `remain` with the ternary `remain = rate ? (double) (size - ofs) / rate / 1000.0 : 0.0;` (`progress.c:105`). When the oldest retained sample's `ofs` equals the current `ofs` (a stalled window: network paused, sender starved, etc.), `rate` collapses to `0` and `remain` becomes `0.0`.
-- The render guard `if (remain < 0 || remain > 9999.0 * 3600.0)` (`progress.c:118`) is false for `remain == 0.0`, so the line prints `   0:00:00` rather than the `??:??:??` placeholder.
+- After computing `rate` from the window delta, upstream picks `remain` with the ternary `remain = rate ? (double) (size - ofs) / rate / 1000.0 : 0.0;` (`progress.c:106`). When the oldest retained sample's `ofs` equals the current `ofs` (a stalled window: network paused, sender starved, etc.), `rate` collapses to `0` and `remain` becomes `0.0`.
+- The render guard `if (remain < 0 || remain > 9999.0 * 3600.0)` (`progress.c:109`) is false for `remain == 0.0`, so the line prints `   0:00:00` rather than the `??:??:??` placeholder.
 - The placeholder is reserved for the negative-ETA branch and the >9999h clamp; a true stall renders as `0:00:00`.
 
 ### Ours
@@ -148,7 +148,7 @@ When `INFO_GTE(PROGRESS, 2)`:
 
 ### Discrepancies
 
-D7. **Stalled-transfer rendering** (RESOLVED): `remaining_seconds` returns `Some(0.0)` on a primed-but-stalled window so the rendered line matches upstream's `   0:00:00` output during a stall. Previously the function returned `None`, which rendered `??:??:??` and diverged from upstream. upstream: progress.c:105 rprint_progress.
+D7. **Stalled-transfer rendering** (RESOLVED): `remaining_seconds` returns `Some(0.0)` on a primed-but-stalled window so the rendered line matches upstream's `   0:00:00` output during a stall. Previously the function returned `None`, which rendered `??:??:??` and diverged from upstream. upstream: progress.c:106 rprint_progress.
 
 ## 5. Final Summary Line ("sent X bytes ...")
 
@@ -160,7 +160,7 @@ total size is %s  speedup is %s%s
 ```
 
 - All three numbers run through `human_num()` (`main.c:455-456`) -> `do_big_num(num, human_readable, NULL)` (`inums.h:33-37`).
-- `human_readable` is the option count: 0 = grouped digits, 1 = grouped digits, 2 = base-1000 SI suffix, 3 = base-1024 IEC suffix (`compat.c:177-205`). At human flag 0/1 the result is plain digits with the locale separator.
+- `human_readable` is the option count: 0 = grouped digits, 1 = grouped digits, 2 = base-1000 SI suffix, 3 = base-1024 IEC suffix (`compat.c:178-206`). At human flag 0/1 the result is plain digits with the locale separator.
 - The bytes/sec field comes from `bytes_per_sec_human_dnum()` -> `human_dnum((written + read) / (0.5 + (endtime - starttime)), 2)` (`main.c:413`), keeping two fractional digits.
 - `speedup` uses `comma_dnum((double)total_size / (total_written + total_read), 2)` (`main.c:459`).
 - Trailing tag: `" (BATCH ONLY)"` when `write_batch < 0`, `" (DRY RUN)"` when `dry_run`, otherwise empty (`main.c:460`).
@@ -182,11 +182,11 @@ total size is {total_size_display}  speedup is {speedup:.2}{dry_run_suffix}
 
 ### Discrepancies
 
-21. **Locale separator vs comma**: upstream uses `get_number_separator()` to pick the locale's grouping character (`compat.c:177-178`, used inside `do_big_num`). We hard-code `,` in `format_decimal_bytes` (`size.rs:38`). On `LC_NUMERIC` locales that use `.` or non-breaking space upstream and ours diverge.
-22. **Human-readable scale base**: upstream `human_flag == 2` is base-1000, `human_flag == 3` is base-1024 (`compat.c:182-205`). Ours has a single boolean (`HumanReadableMode::is_enabled()`) that always maps to base-1000 (`size.rs:46-63`). The `--human-readable` count of three (which upstream treats as IEC binary) is collapsed to the SI path.
-23. **Rate field on summary**: upstream prints `bytes_per_sec_human_dnum()` which yields a string like `"1.23M"` or `"123,456.78"` depending on human flag (`main.c:413`, `compat.c:252-272`). Ours prints `format_summary_rate(rate, mode)` which uses K/M/G/T/P (uppercase, no trailing space) (`rate.rs:32-48`). Upstream's `do_big_dnum` only emits up to `T` for sane runtimes; ours adds `P`. The unit letter set is upper-case in ours (`K`,`M`,`G`,`T`,`P`) and matches upstream.
+21. **Locale separator vs comma**: upstream uses `get_number_separator()` to pick the locale's grouping character (`compat.c:178-179`, used inside `do_big_num`). We hard-code `,` in `format_decimal_bytes` (`size.rs:38`). On `LC_NUMERIC` locales that use `.` or non-breaking space upstream and ours diverge.
+22. **Human-readable scale base**: upstream `human_flag == 2` is base-1000, `human_flag == 3` is base-1024 (`compat.c:183-206`). Ours has a single boolean (`HumanReadableMode::is_enabled()`) that always maps to base-1000 (`size.rs:46-63`). The `--human-readable` count of three (which upstream treats as IEC binary) is collapsed to the SI path.
+23. **Rate field on summary**: upstream prints `bytes_per_sec_human_dnum()` which yields a string like `"1.23M"` or `"123,456.78"` depending on human flag (`main.c:413`, `compat.c:253-273`). Ours prints `format_summary_rate(rate, mode)` which uses K/M/G/T/P (uppercase, no trailing space) (`rate.rs:32-48`). Upstream's `do_big_dnum` only emits up to `T` for sane runtimes; ours adds `P`. The unit letter set is upper-case in ours (`K`,`M`,`G`,`T`,`P`) and matches upstream.
 24. **`(BATCH ONLY)` suffix missing**: upstream emits `" (BATCH ONLY)"` when `write_batch < 0` (`main.c:460`). We never emit this (`render.rs:323`).
-25. **Number of bytes/rate fractional digits**: upstream uses `do_big_dnum(..., 2)` (`main.c:413` -> `compat.c:258`) so the rate gets exactly two decimals. Ours emits `format!("{rate:.2}")` (`rate.rs:14`) which agrees on plain decimal but disagrees when the human path takes over (still 2 decimals; matches).
+25. **Number of bytes/rate fractional digits**: upstream uses `do_big_dnum(..., 2)` (`main.c:413` -> `compat.c:259`) so the rate gets exactly two decimals. Ours emits `format!("{rate:.2}")` (`rate.rs:14`) which agrees on plain decimal but disagrees when the human path takes over (still 2 decimals; matches).
 26. **Leading blank line**: upstream prints `"\n"` to FCLIENT before the summary at `INFO_GTE(STATS, 1)` (`main.c:452`). We rely on the caller for spacing (`render.rs:83-89`).
 27. **Speedup formatting**: upstream calls `comma_dnum((double)total_size / (total_written+total_read), 2)` (`main.c:459`) which produces `1,234.56` style with grouping. Ours uses `{speedup:.2}` (`render.rs:326`) producing `1234.56` with no grouping.
 
@@ -194,32 +194,32 @@ total size is {total_size_display}  speedup is {speedup:.2}{dry_run_suffix}
 
 | # | Area | Upstream reference | Our reference | Severity |
 |---|------|---------------------|----------------|----------|
-| 1 | Percent column width | `progress.c:129` `%3d%%` | `live.rs:91`, `render.rs:181` | minor |
-| 2 | Rate value width | `progress.c:129` `%7.2f%s` | `live.rs:92-95`, `render.rs:182-185` | minor |
-| 3 | Rate unit set | `progress.c:108-116` | `rate.rs:80-97` | major |
-| 4 | Rate divisor base | `progress.c:108-111` | `rate.rs:81-87` | major |
-| 5 | ETA vs elapsed | `progress.c:97-105` | `live.rs:117-124,161-168` | RESOLVED |
-| 6 | ETA width | `progress.c:121-122` | `format/remaining.rs:106-114` | RESOLVED |
-| 7 | Stalled-transfer remaining-time | `progress.c:105` | `format/remaining.rs::remaining_seconds` | RESOLVED |
-| 7b | In-flight tail | `progress.c:100` | `live.rs:103-106` | major |
-| 8 | `to-chk` vs `ir-chk` | `progress.c:78-82` | `live.rs:106`, `render.rs:192` | major |
-| 9 | xfr#N counter source | `progress.c:78-82` | `progress.rs:215-217` | major |
-| 10 | First-tick path line vs CR | `progress.c:129`, `progress.c:158-165` | `live.rs:79-101` | minor |
-| 11 | progress2 padding to longest line | `progress.c:84-91` | `live.rs:117-150` | major |
-| 12 | progress2 final newline deferral | `progress.c:88-91`, `main.c:452` | `live.rs:142-145` | major |
-| 13 | progress2 cumulative offset basis | `progress.c:200-203` | `crates/core/src/client/progress.rs:226-241` | minor |
-| 14 | TTY foreground check | `progress.c:185-237` | absent | major |
-| 15 | First-tick CR | `progress.c:129` | `live.rs:99-101` | minor |
-| 16 | `output_needs_newline` flag | `progress.c:127`, `progress.c:132` | absent | minor |
-| 17 | 1-second throttle | `progress.c:224-225` | `format/remaining.rs:60-72` | RESOLVED |
-| 18 | 5-slot rolling rate window | `progress.c:102-104` | `format/remaining.rs:34-72` | RESOLVED |
-| 19 | `instant_progress` / `want_progress_now` | `progress.c:35`, `progress.c:158-165` | absent | minor |
-| 20 | 1500 ms start backfill | `progress.c:208-218` | `progress.rs:181` | minor |
-| 21 | Locale grouping separator | `compat.c:177-178`, `compat.c:230-240` | `size.rs:38` | minor |
-| 22 | Human-readable base 1000 vs 1024 | `compat.c:182-205` | `size.rs:46-63` | major |
+| 1 | Percent column width | `progress.c:120` `%3d%%` | `live.rs:91`, `render.rs:181` | minor |
+| 2 | Rate value width | `progress.c:120` `%7.2f%s` | `live.rs:92-95`, `render.rs:182-185` | minor |
+| 3 | Rate unit set | `progress.c:106-107` | `rate.rs:80-97` | major |
+| 4 | Rate divisor base | `progress.c:106-106` | `rate.rs:81-87` | major |
+| 5 | ETA vs elapsed | `progress.c:98-106` | `live.rs:117-124,161-168` | RESOLVED |
+| 6 | ETA width | `progress.c:112-113` | `format/remaining.rs:106-114` | RESOLVED |
+| 7 | Stalled-transfer remaining-time | `progress.c:106` | `format/remaining.rs::remaining_seconds` | RESOLVED |
+| 7b | In-flight tail | `progress.c:101` | `live.rs:103-106` | major |
+| 8 | `to-chk` vs `ir-chk` | `progress.c:79-83` | `live.rs:106`, `render.rs:192` | major |
+| 9 | xfr#N counter source | `progress.c:79-83` | `progress.rs:215-217` | major |
+| 10 | First-tick path line vs CR | `progress.c:120`, `progress.c:154-161` | `live.rs:79-101` | minor |
+| 11 | progress2 padding to longest line | `progress.c:85-92` | `live.rs:117-150` | major |
+| 12 | progress2 final newline deferral | `progress.c:89-92`, `main.c:452` | `live.rs:142-145` | major |
+| 13 | progress2 cumulative offset basis | `progress.c:196-199` | `crates/core/src/client/progress.rs:226-241` | minor |
+| 14 | TTY foreground check | `progress.c:181-233` | absent | major |
+| 15 | First-tick CR | `progress.c:120` | `live.rs:99-101` | minor |
+| 16 | `output_needs_newline` flag | `progress.c:118`, `progress.c:128` | absent | minor |
+| 17 | 1-second throttle | `progress.c:220-221` | `format/remaining.rs:60-72` | RESOLVED |
+| 18 | 5-slot rolling rate window | `progress.c:103-105` | `format/remaining.rs:34-72` | RESOLVED |
+| 19 | `instant_progress` / `want_progress_now` | `progress.c:36`, `progress.c:154-161` | absent | minor |
+| 20 | 1500 ms start backfill | `progress.c:204-214` | `progress.rs:181` | minor |
+| 21 | Locale grouping separator | `compat.c:178-179`, `compat.c:231-241` | `size.rs:38` | minor |
+| 22 | Human-readable base 1000 vs 1024 | `compat.c:183-206` | `size.rs:46-63` | major |
 | 23 | Summary rate unit set | `main.c:413` | `rate.rs:32-48` | minor |
 | 24 | `(BATCH ONLY)` suffix | `main.c:460` | `render.rs:323` | major |
-| 25 | Rate fractional digits | `compat.c:258` | `rate.rs:14` | match |
+| 25 | Rate fractional digits | `compat.c:259` | `rate.rs:14` | match |
 | 26 | Leading blank line | `main.c:452` | `render.rs:83-89` (caller-driven) | minor |
 | 27 | Speedup grouping | `main.c:459` | `render.rs:326` | minor |
 

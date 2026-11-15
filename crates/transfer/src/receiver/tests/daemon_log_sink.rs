@@ -1,7 +1,7 @@
 //! A daemon receiver writes each diagnostic to its module log before framing
 //! it for the client, and its per-file rows in file-list order.
 //!
-//! upstream: log.c:312-332 - `rwrite()` hands a daemon's message to `logit()`,
+//! upstream: log.c:392-412 - `rwrite()` hands a daemon's message to `logit()`,
 //! which writes and flushes it (log.c:135-137), before the `am_server` branch
 //! frames it for the peer (log.c:357-366). A client that has read the frame can
 //! therefore rely on the line already being in the daemon log.

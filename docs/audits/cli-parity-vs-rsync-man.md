@@ -253,7 +253,7 @@ upstream.
 10. **`--stop-at=y-m-dTh:m` timezone parsing.** RESOLVED (#2179). The
     parser captures `OffsetDateTime::now_local()` once at the call
     site and reuses that offset for every candidate datetime, mirroring
-    upstream `options.c:1155 parse_time()` which calls `localtime(&now)`
+    upstream `options.c:1173 parse_time()` which calls `localtime(&now)`
     and `mktime(&t)` (both local-zone). Deterministic unit tests pin
     the behaviour with an injected `now` at `+02:00` and `-05:00`,
     proving the same wall-clock input produces distinct unix

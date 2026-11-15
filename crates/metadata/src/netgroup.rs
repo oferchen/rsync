@@ -95,7 +95,7 @@ mod imp {
 
 /// Returns whether `host` is a member of the named `netgroup`.
 ///
-/// Mirrors upstream `innetgr(netgroup, host, NULL, NULL)` (access.c:45): only
+/// Mirrors upstream `innetgr(netgroup, host, NULL, NULL)` (access.c:49): only
 /// the netgroup's host field is consulted; the user and domain fields are
 /// ignored. Used by the daemon to evaluate `hosts allow`/`hosts deny`
 /// `@netgroup` tokens against a connecting client's resolved hostname.
@@ -116,7 +116,7 @@ pub fn host_in_netgroup(netgroup: &str, host: &str) -> bool {
 mod tests {
     use super::host_in_netgroup;
 
-    // WHY: upstream access.c:40-41 bails out (`return 0`) before calling
+    // WHY: upstream access.c:44-45 bails out (`return 0`) before calling
     // innetgr when the host is empty; and an empty netgroup name is never a
     // real group. Guard both so callers get a deterministic non-match instead
     // of forwarding degenerate input to the C library.

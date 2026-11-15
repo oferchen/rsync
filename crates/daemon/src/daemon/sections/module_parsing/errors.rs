@@ -7,7 +7,7 @@
 
 /// Parses the daemon `--bwlimit` value as a bare KiB integer.
 ///
-/// upstream: options.c:876 `{"bwlimit", 0, POPT_ARG_INT, &daemon_bwlimit, ...}`
+/// upstream: options.c:881 `{"bwlimit", 0, POPT_ARG_INT, &daemon_bwlimit, ...}`
 /// - the daemon `--bwlimit` is a plain integer number of KiB per second, unlike
 ///   the client `--bwlimit` (options.c:1826-1827) which accepts a size suffix. There is
 ///   no `:BURST` component. `0` disables throttling; the returned value is the
@@ -36,7 +36,7 @@ fn runtime_bwlimit_error(value: &str) -> DaemonError {
     ))
 }
 
-/// upstream: options.c:1574-1578 and the `daemon_error:` hint at
+/// upstream: options.c:1601-1605 and the `daemon_error:` hint at
 /// options.c:1594-1596 - `rsync: <option>: unknown option (in daemon mode)`.
 fn unsupported_option(option: OsString, brand: Brand) -> DaemonError {
     let option = option.to_string_lossy();
@@ -46,7 +46,7 @@ fn unsupported_option(option: OsString, brand: Brand) -> DaemonError {
     ))
 }
 
-/// upstream: options.c:1560-1564 and the shared `daemon_error:` label at
+/// upstream: options.c:1578-1582 and the shared `daemon_error:` label at
 /// options.c:1594-1596.
 fn dparam_missing_equals(value: &str, brand: Brand) -> DaemonError {
     let program = brand.daemon_program_name();
@@ -57,7 +57,7 @@ fn dparam_missing_equals(value: &str, brand: Brand) -> DaemonError {
 
 /// Refuses a daemon command line the way upstream's option parser does.
 ///
-/// upstream: options.c:1574-1597 - the cause is printed bare, then
+/// upstream: options.c:1601-1624 - the cause is printed bare, then
 /// `exit_cleanup(RERR_SYNTAX)` adds its own trailer. `am_daemon` is not yet
 /// set, so the trailer names the client role.
 fn daemon_syntax_error(cause: String) -> DaemonError {

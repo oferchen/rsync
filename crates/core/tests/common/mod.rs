@@ -86,7 +86,7 @@ fn upstream_binary(path: &str) -> io::Result<PathBuf> {
 ///   executed.
 /// - An upstream binary runs in inetd mode, once per accepted connection with
 ///   the socket as its stdin and stdout, because a binary cannot take a
-///   pre-bound listener. upstream: clientserver.c:1748
+///   pre-bound listener. upstream: clientserver.c:1812
 ///   `is_inetd_socket(STDIN_FILENO)`.
 #[allow(dead_code)]
 pub struct TestDaemon {

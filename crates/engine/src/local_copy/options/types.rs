@@ -326,6 +326,7 @@ pub struct LocalCopyOptions {
     pub(super) partial_dir: Option<PathBuf>,
     pub(super) temp_dir: Option<PathBuf>,
     pub(super) delay_updates: bool,
+    pub(super) delay_symlinks: bool,
     pub(super) inplace: bool,
     pub(super) write_devices: bool,
     pub(super) append: bool,
@@ -335,7 +336,7 @@ pub struct LocalCopyOptions {
     /// dry-run mode but lists every enumerated entry - including symlinks,
     /// devices, FIFOs, and sockets - instead of skipping non-regular files.
     ///
-    /// upstream: generator.c:1318 `list_file_entry()` lists every flist entry
+    /// upstream: generator.c:1355 `list_file_entry()` lists every flist entry
     /// regardless of `--links`/`--devices`/`--specials` because list-only mode
     /// never runs the generator's non-regular skip path (main.c:721
     /// `get_local_name()` returns NULL for `list_only`).
@@ -483,6 +484,7 @@ impl LocalCopyOptions {
             partial_dir: None,
             temp_dir: None,
             delay_updates: false,
+            delay_symlinks: false,
             inplace: false,
             write_devices: false,
             append: false,

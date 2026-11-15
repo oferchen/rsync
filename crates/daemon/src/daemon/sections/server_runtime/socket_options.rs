@@ -18,7 +18,7 @@ fn apply_daemon_socket_options(
 
 /// Unconditionally enables `SO_KEEPALIVE` on a freshly accepted client stream.
 ///
-/// upstream: clientserver.c:1529 - daemon unconditionally enables SO_KEEPALIVE
+/// upstream: clientserver.c:1539 - daemon unconditionally enables SO_KEEPALIVE
 /// on the accepted client socket via `set_socket_options(f_in, "SO_KEEPALIVE")`
 /// in `start_daemon()`, before the protocol handshake and independent of the
 /// per-module `socket options` config (which is a separate concern applied via

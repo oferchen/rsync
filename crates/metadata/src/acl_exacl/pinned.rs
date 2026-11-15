@@ -10,10 +10,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/lib/acl.c:120-153` `acl_to_xattr()` - the on-disk layout
-//! - `rsync-3.5.1/lib/acl.c:350-389` `acl_set_common()` /
+//! - `rsync-3.5.2/lib/acl.c:120-153` `acl_to_xattr()` - the on-disk layout
+//! - `rsync-3.5.2/lib/acl.c:350-389` `acl_set_common()` /
 //!   `acl_del_default_common()` - the fd-driven set and default-ACL delete
-//! - `rsync-3.5.1/acls.c:1203,1302` `set_rsync_acl()` - the held-fd arm
+//! - `rsync-3.5.2/acls.c:1203,1302` `set_rsync_acl()` - the held-fd arm
 //!   taken instead of the path-based `sys_acl_set_file()`
 
 use std::ffi::OsString;
@@ -127,7 +127,7 @@ fn proc_fd_leaf_path(dir: &File, leaf: &OsString) -> PathBuf {
 }
 
 /// Whether the `/proc/self/fd` magic links are usable, probed once.
-/// upstream: lib/acl.c:401-421 proc_self_fd_usable().
+/// upstream: lib/acl.c:401-426 proc_self_fd_usable().
 fn proc_self_fd_usable() -> bool {
     static USABLE: OnceLock<bool> = OnceLock::new();
     *USABLE.get_or_init(|| Path::new("/proc/self/fd").is_dir())

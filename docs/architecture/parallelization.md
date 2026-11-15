@@ -83,7 +83,7 @@ decoupled by a lock-free single-producer / single-consumer channel
 
 Upstream has none of these queues: the receiver decodes each literal into
 one static `CHUNK_SIZE` buffer (`token.c:289 simple_recv_token()`,
-`rsync.h:158` `CHUNK_SIZE (32*1024)`) and writes it before reading the next.
+`rsync.h:159` `CHUNK_SIZE (32*1024)`) and writes it before reading the next.
 oc's bounds follow from the largest item each queue carries:
 
 | Queue | Capacity | Largest item | Worst case |

@@ -23,11 +23,11 @@ pub struct TransferProgressEvent<'a> {
     pub files_done: usize,
     /// File-list entries received so far, the `N` of `to-chk=M/N`.
     ///
-    /// upstream: progress.c:81-82 - `stats.num_files`.
+    /// upstream: progress.c:82-83 - `stats.num_files`.
     pub total_files: usize,
     /// File-list entries after this one, the `M` of `to-chk=M/N`.
     ///
-    /// upstream: progress.c:81 - `stats.num_files - current_file_index - 1`,
+    /// upstream: progress.c:82 - `stats.num_files - current_file_index - 1`,
     /// where `current_file_index` is the entry's position in the file list
     /// (progress.c:147-156), not a count of transferred files.
     pub files_remaining: usize,
@@ -36,7 +36,7 @@ pub struct TransferProgressEvent<'a> {
     /// Mirrors upstream's global `flist_eof` flag, which controls the
     /// `to-chk` vs `ir-chk` suffix on the per-file progress line.
     ///
-    /// upstream: progress.c:79-82 rprint_progress - prints
+    /// upstream: progress.c:80-83 rprint_progress - prints
     /// `flist_eof ? "to" : "ir"` as the chk prefix.
     pub flist_eof: bool,
 }
@@ -115,7 +115,7 @@ pub trait DaemonFileLog: Send + Sync {
 
     /// Writes one diagnostic line the transfer sent to the client.
     ///
-    /// upstream: log.c:312-332 `rwrite()` - a daemon passes every `FINFO`,
+    /// upstream: log.c:392-412 `rwrite()` - a daemon passes every `FINFO`,
     /// `FWARNING`, `FERROR` and `FERROR_XFER` message to `logit()` before the
     /// server frames it for the peer; only `FCLIENT` skips the log.
     ///
@@ -127,7 +127,7 @@ pub trait DaemonFileLog: Send + Sync {
 /// Shared handle to the daemon's module log, held by the transfer for the
 /// whole run so each line is written when the transfer reaches it.
 ///
-/// upstream: log.c:312-332 `rwrite()` hands a daemon's message to `logit()`,
+/// upstream: log.c:392-412 `rwrite()` hands a daemon's message to `logit()`,
 /// which writes and flushes it (log.c:135-137), before the `am_server` branch
 /// frames it for the peer (log.c:357-366); `log_item()` and `log_delete()`
 /// reach the same `logit()` as each entry is processed. Writing through this
@@ -238,7 +238,7 @@ impl DaemonLogRow {
 
     /// Builds the row upstream's `log_delete()` logs for a removed entry.
     ///
-    /// upstream: log.c:892-929 renders a zeroed `file_struct` whose only set
+    /// upstream: log.c:977-1017 renders a zeroed `file_struct` whose only set
     /// field is `mode`, with `ITEM_DELETED`: `%l`, `%U` and `%M` read 0, `%G`
     /// reads 0 under `-g` (`gid_ndx`) and `DEFAULT` otherwise, `%C` is blank
     /// and `%i` is `*deleting  `.

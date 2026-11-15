@@ -29,7 +29,7 @@ use std::os::fd::BorrowedFd;
 /// When `--keep-dirlinks` is active the user opted into following dest-side
 /// symlinked directories, so the sandbox refusal is wrong: fall back to an
 /// open-free `utimensat(AT_FDCWD, ...)` that resolves symlinked parents
-/// through the ambient namespace like upstream `generator.c:1745`'s
+/// through the ambient namespace like upstream `generator.c:1782`'s
 /// `gen_entry_stat()`. The syscall never opens the node, so a peerless FIFO cannot
 /// block it.
 /// upstream: rsync.c:set_file_attrs()/util1.c:set_times() apply times through
@@ -684,7 +684,7 @@ fn crtime_needs_update(
 /// Skips the write when the destination already carries `secs` or is the HFS+
 /// volume root. Seconds only, as upstream stores `F_CRTIME` as a `time_t`.
 ///
-/// upstream: `rsync.c:751-765` `set_file_attrs()` and `syscall.c:2465-2488`
+/// upstream: `rsync.c:751-765` `set_file_attrs()` and `syscall.c:2536-2559`
 /// `do_setattrlist_crtime()`
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]

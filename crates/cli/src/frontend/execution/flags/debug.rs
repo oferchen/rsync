@@ -111,7 +111,7 @@ impl DebugFlagSettings {
     }
 
     /// Sets all debug flags to the given level.
-    /// upstream: options.c:459,470-471 - "all" with numeric suffix sets every flag.
+    /// upstream: options.c:460,470-471 - "all" with numeric suffix sets every flag.
     fn set_all(&mut self, level: u8) {
         self.acl = Some(level);
         self.backup = Some(level);
@@ -164,7 +164,7 @@ impl DebugFlagSettings {
     /// `RERR_SYNTAX` exit. This preserves cross-version compatibility when a
     /// newer client forwards debug tokens this server build does not know.
     ///
-    /// upstream: options.c:443-490 parse_output_words
+    /// upstream: options.c:444-491 parse_output_words
     pub(super) fn apply_with_mode(
         &mut self,
         token: &str,
@@ -215,7 +215,7 @@ impl DebugFlagSettings {
             "landlock" => self.landlock = Some(level),
             "pipeline" => self.pipeline = Some(level),
             // oc-only umbrella over both kernel sandbox layers. Tokens apply
-            // left to right (upstream: options.c:443-490), so a later
+            // left to right (upstream: options.c:444-491), so a later
             // `seccomp0` still overrides an earlier `sandbox2`.
             "sandbox" => {
                 self.seccomp = Some(level);
@@ -241,7 +241,7 @@ impl DebugFlagSettings {
 
 /// Builds the unknown-item diagnostic for `--debug=`.
 ///
-/// upstream: options.c:484-488 -
+/// upstream: options.c:485-489 -
 /// `rprintf(FERROR, "Unknown %s item: \"%.*s\"\n", words[j].help, len, str);`
 /// followed by `exit_cleanup(RERR_SYNTAX)`. `words[j]` is the table's NULL
 /// sentinel, whose `help` field is the literal `"--debug"` (options.c:330), and
@@ -295,7 +295,7 @@ fn parse_debug_flags_inner(
 
 /// Body of `--debug=help`, reproduced byte-for-byte from upstream.
 ///
-/// upstream: options.c:493-529 output_item_help(). Reproduced
+/// upstream: options.c:494-530 output_item_help(). Reproduced
 /// byte-for-byte from upstream's runtime output so `--debug=help` matches
 /// `rsync --debug=help`. Layout matches `"%-10s %s\n"` from options.c:497.
 /// ALL/NONE descriptions inline the sentinel's `--debug` help

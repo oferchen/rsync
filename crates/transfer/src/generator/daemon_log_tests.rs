@@ -1,7 +1,7 @@
 //! A daemon sender writes each diagnostic it frames for the client to its
 //! module log first.
 //!
-//! upstream: log.c:312-332 - `rwrite()` hands a daemon's message to `logit()`,
+//! upstream: log.c:392-412 - `rwrite()` hands a daemon's message to `logit()`,
 //! which writes and flushes it (log.c:135-137), before the `am_server` branch
 //! frames it for the peer (log.c:357-366).
 

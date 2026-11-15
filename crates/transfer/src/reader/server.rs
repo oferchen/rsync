@@ -18,20 +18,20 @@ pub struct ServerReader<R: Read> {
     /// Client-receiver I/O-timeout adoption state, applied to the
     /// `MultiplexReader` on multiplex activation. Held here because the reader
     /// starts in Plain mode. `(current --timeout secs, live-socket re-apply)`.
-    /// upstream: io.c:1750-1769 read_a_msg() case MSG_IO_TIMEOUT.
+    /// upstream: io.c:1757-1776 read_a_msg() case MSG_IO_TIMEOUT.
     pending_io_timeout_adoption: Option<(Option<u32>, crate::handshake::IoTimeoutReapply)>,
     /// Client-sender `MSG_DELETED` render state, applied to the
     /// `MultiplexReader` on multiplex activation. `Some` only on a push where
-    /// the remote receiver performs `--delete`. upstream: log.c:917-922.
+    /// the remote receiver performs `--delete`. upstream: log.c:1002-1010.
     pending_deleted_render: Option<super::DeletedRender>,
     /// Sender acceptance of `MSG_BLOCK_STATS`, applied to the
-    /// `MultiplexReader` on multiplex activation. upstream: io.c:1721-1732.
+    /// `MultiplexReader` on multiplex activation. upstream: io.c:1728-1739.
     pending_block_stats_accept: bool,
     /// The end of the connection this reader serves, applied to the
-    /// `MultiplexReader` on multiplex activation. upstream: log.c:292-366.
+    /// `MultiplexReader` on multiplex activation. upstream: log.c:372-446.
     pending_role: LocalRole,
     /// Payload bytes delivered to the caller, in every mode.
-    /// upstream: io.c:2166,2185 `total_data_read` in `read_buf()`.
+    /// upstream: io.c:2173,2185 `total_data_read` in `read_buf()`.
     data_read: u64,
 }
 
@@ -81,7 +81,7 @@ impl<R: Read> ServerReader<R> {
     /// the client-sender path of a push, where the remote receiver performs
     /// `--delete`; every other reader leaves it unset and drops the frames.
     ///
-    /// upstream: log.c:917-922 `log_delete()` renders on the non-server side.
+    /// upstream: log.c:1002-1010 `log_delete()` renders on the non-server side.
     pub(crate) fn enable_deleted_render(&mut self, render: super::DeletedRender) {
         self.pending_deleted_render = Some(render);
     }
@@ -91,7 +91,7 @@ impl<R: Read> ServerReader<R> {
     /// Called only by a sender after protocol 33 is negotiated; every other
     /// reader treats the frame as a fatal invalid message.
     ///
-    /// upstream: io.c:1724 - valid only for `am_generator || am_sender` at
+    /// upstream: io.c:1731 - valid only for `am_generator || am_sender` at
     /// `protocol_version >= 33`.
     pub(crate) fn accept_block_stats(&mut self) {
         match &mut self.inner {
@@ -108,7 +108,7 @@ impl<R: Read> ServerReader<R> {
     /// `MSG_ERROR_XFER`/`MSG_WARNING` frames to its own peer instead of
     /// writing them to stdout, which on an rsh server is the protocol stream.
     ///
-    /// upstream: log.c:292-301 - a server receiver passes the bytes to its
+    /// upstream: log.c:372-381 - a server receiver passes the bytes to its
     /// generator; log.c:357-366 - a server's `rwrite()` frames them to the
     /// client.
     pub(crate) fn set_local_role(&mut self, role: LocalRole) {
@@ -121,7 +121,7 @@ impl<R: Read> ServerReader<R> {
     /// Returns the remote receiver's touched-block count from its
     /// `MSG_BLOCK_STATS`, or 0 when none arrived.
     ///
-    /// upstream: io.c:1727 `stats.touched_blocks_4k = IVAL64(b, 0);`
+    /// upstream: io.c:1734 `stats.touched_blocks_4k = IVAL64(b, 0);`
     pub fn touched_blocks_4k(&mut self) -> u64 {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.touched_blocks_4k(),
@@ -136,7 +136,7 @@ impl<R: Read> ServerReader<R> {
     /// socket. Applied to the `MultiplexReader` on `activate_multiplex`. Only
     /// the client receiver of a daemon transfer calls this.
     ///
-    /// upstream: io.c:1750-1769 read_a_msg() case MSG_IO_TIMEOUT.
+    /// upstream: io.c:1757-1776 read_a_msg() case MSG_IO_TIMEOUT.
     pub fn enable_io_timeout_adoption(
         &mut self,
         current: Option<u32>,
@@ -207,7 +207,7 @@ impl<R: Read> ServerReader<R> {
     }
 
     /// [`ServerReader::activate_multiplex`] for a reader held in place, as the
-    /// one connection owner holds it (upstream: io.c:2699 io_start_multiplex_in()
+    /// one connection owner holds it (upstream: io.c:2706 io_start_multiplex_in()
     /// switches the global `iobuf` without replacing it).
     ///
     /// # Errors
@@ -284,7 +284,7 @@ impl<R: Read> ServerReader<R> {
     /// Takes the code of a `MSG_ERROR_EXIT` the peer sent (0 for the
     /// zero-length frame), so the next read no longer reports it.
     ///
-    /// upstream: io.c:1892-1930 - each frame is handled once, as read.
+    /// upstream: io.c:1899-1937 - each frame is handled once, as read.
     pub(crate) fn take_error_exit(&mut self) -> Option<i32> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.take_error_exit(),
@@ -361,7 +361,7 @@ impl<R: Read> ServerReader<R> {
     /// must read them unframed and resume demultiplexing afterwards. A plain
     /// reader is returned as-is.
     ///
-    /// upstream: 3.5.1 flist.c:2795-2797 send_file_list() switches the input
+    /// upstream: 3.5.1 flist.c:2806-2808 send_file_list() switches the input
     /// to `MPLX_TO_BUFFERED` for `protocol_version < 31` and re-enables
     /// multiplexing at flist.c:3013-3014; 3.0.9 reads the names with a raw
     /// `safe_read(fd, &ch, 1)` in io.c:1433 read_line(), past the multiplexed input

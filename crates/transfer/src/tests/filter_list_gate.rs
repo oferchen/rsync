@@ -76,7 +76,7 @@ fn plain_push_sends_no_filter_list_bytes() {
 }
 
 /// A receiving client always sends its list (the remote sender always reads
-/// one); a server never does. upstream: exclude.c:1948, main.c:1332.
+/// one); a server never does. upstream: exclude.c:1948, main.c:1335.
 #[test]
 fn client_sends_filter_list_by_role() {
     let mut pull = push_client(false);

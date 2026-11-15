@@ -615,7 +615,7 @@ fn capabilities_preferred_compression() {
     use super::ProtocolCapabilities;
 
     // Protocol < 30 has no vstring negotiation; preferred codec is always
-    // zlib regardless of any feature flag. upstream: compat.c:560-567.
+    // zlib regardless of any feature flag. upstream: compat.c:561-568.
     let caps_28 = ProtocolCapabilities::new(ProtocolVersion::V28);
     assert_eq!(caps_28.preferred_compression(), "zlib");
 
@@ -625,7 +625,7 @@ fn capabilities_preferred_compression() {
     // made by `compress::ProtocolCompressionProfile::preferred_codec_name`
     // against the compress crate's own cfg state. Asserting set membership
     // catches drift in the negotiation table without coupling the test to
-    // either crate's feature graph. upstream: compat.c:100-112
+    // either crate's feature graph. upstream: compat.c:101-113
     // `valid_compressions_items[]`.
     const MODERN_FIRST_PREFERENCES: &[&str] = &["zstd", "zlibx"];
     for version in [

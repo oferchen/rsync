@@ -1,6 +1,6 @@
 //! A server argv parsed the way 3.5.1's single popt pass parses it.
 //!
-//! upstream: options.c:1497 - one popt pass over the whole argv, so a short
+//! upstream: options.c:1515 - one popt pass over the whole argv, so a short
 //! option counts wherever it sits; options.c:1517-1524 - the first `--server`
 //! restarts that pass, so an option ahead of it is parsed twice; options.c:
 //! 2051-2054 and main.c:1909-1912 - an unknown option is `rsync: [on remote

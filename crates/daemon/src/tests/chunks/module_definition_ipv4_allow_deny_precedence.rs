@@ -1,6 +1,6 @@
 #[test]
 fn module_definition_ipv4_allow_short_circuits_deny() {
-    // upstream: access.c:292-295 - "If we match an allow-list item, we
+    // upstream: access.c:356-359 - "If we match an allow-list item, we
     // always allow access." A peer that matches any entry in the allow
     // list is admitted before the deny list is consulted, even when an
     // overlapping deny rule would otherwise match.

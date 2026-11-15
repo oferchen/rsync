@@ -559,7 +559,7 @@ fn error_all_invalid_versions() {
 
 /// Test error message content.
 ///
-/// upstream: compat.c:623-624 emits the two-line wording verbatim. We mirror
+/// upstream: compat.c:624-625 emits the two-line wording verbatim. We mirror
 /// it byte-for-byte. The rejected version is preserved on the variant and
 /// accessible via `unsupported_version()` for callers that need it.
 #[test]

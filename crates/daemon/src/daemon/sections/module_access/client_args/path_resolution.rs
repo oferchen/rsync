@@ -6,7 +6,7 @@
 /// separator and strips the leading module-name component from each so the
 /// receiver can resolve them relative to the on-disk module path.
 ///
-/// Mirrors upstream `read_args()` (io.c:1480) and `glob_expand_module()`
+/// Mirrors upstream `read_args()` (io.c:1487) and `glob_expand_module()`
 /// (util1.c:884): everything before a standalone `.` in the wire arg list is
 /// options/flags; everything after is the client's positional paths. Each
 /// positional begins with the module name (e.g. `upload/realdir/` when the
@@ -76,7 +76,7 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 /// "through next slash" (`util1.c:1298-1299`), so the slash is already in the output
 /// buffer by the time the next component is examined and discarded. That is why
 /// `sub/.` sanitizes to `sub/` and not to `sub`: the surviving trailing slash is
-/// upstream's DOTDIR marker, which `flist.c:2824-2834` turns into `DOTDIR_NAME`
+/// upstream's DOTDIR marker, which `flist.c:2835-2845` turns into `DOTDIR_NAME`
 /// and `flist.c:2937` then reads as the `name_type != NORMAL_NAME` disjunct of
 /// `link_stat()`'s follow decision. Rejoining the kept components discards that
 /// slash, so `rsync://host/mod/sym-to-dir/.` was `lstat`ed and shipped as a
@@ -278,7 +278,7 @@ fn resolve_sender_sources(
         }
         // `trimmed` already carries the trailing slash whenever upstream's
         // sanitize would leave one, so the sender can detect a dotdir-style
-        // source (upstream flist.c:2824-2834 appends `.` and sets DOTDIR_NAME
+        // source (upstream flist.c:2835-2845 appends `.` and sets DOTDIR_NAME
         // for any `fbuf[len-1] == '/'`). That covers the shapes the RAW tail
         // does not end with: `sym-to-dir/.` and `sym-to-dir/x/..` both sanitize
         // to `sym-to-dir/`, and without the marker flist.c:2937's
@@ -310,7 +310,7 @@ fn resolve_sender_sources(
 /// instead of the post-strip-prefix `.` and `one` that would otherwise
 /// trip the receiver's "rejecting unrequested file-list name" check.
 ///
-/// upstream: `flist.c:2824-2834` - `fbuf[len - 1] == '/'` enters the
+/// upstream: `flist.c:2835-2845` - `fbuf[len - 1] == '/'` enters the
 /// `DOTDIR_NAME` branch, which is how the daemon distinguishes
 /// "transfer module contents" from "transfer a named sub-path".
 fn module_root_dotdir(module_path: &std::path::Path) -> std::path::PathBuf {
@@ -628,7 +628,7 @@ fn sanitize_partial_dir(
 
 /// Sanitises a client-supplied `--backup-dir` for a daemon receiver.
 ///
-/// upstream: `options.c:2417-2418` -
+/// upstream: `options.c:2472-2473` -
 /// `backup_dir = sanitize_path(NULL, backup_dir, NULL, 0, SP_DEFAULT)`. An
 /// ABSOLUTE value becomes rooted at `module_dir`, while a RELATIVE one stays
 /// relative with every `..` collapsed or dropped at depth 0.
@@ -650,7 +650,7 @@ fn sanitize_backup_dir(
 
 /// Anchors a client-requested server-local `--files-from` list at the module.
 ///
-/// upstream: `options.c:2641-2642` sanitizes the value like `--backup-dir`, so
+/// upstream: `options.c:2696-2697` sanitizes the value like `--backup-dir`, so
 /// an ABSOLUTE value re-roots at `module_dir`. Unlike `--backup-dir`, the list
 /// is opened while parsing arguments, when the cwd is still the module root
 /// (`clientserver.c:1059`), so a RELATIVE value resolves below the module. oc

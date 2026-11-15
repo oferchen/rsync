@@ -9,7 +9,7 @@
 //!   module (TOCTOU escape). The *leaf* rule still follows the operator's
 //!   symlink mode, which is why the confined open takes a
 //!   [`fast_io::LeafPolicy`] rather than one arm answering for both.
-//!   upstream: `rsync-3.5.1/sender.c:679-683`, choosing between
+//!   upstream: `rsync-3.5.2/sender.c:687-691`, choosing between
 //!   `sender_open_confined()` and `sender_open_copylinks_confined()`.
 //! - **Everything else** (`do_open_checklinks`): the file is opened with
 //!   `O_NOFOLLOW` on the leaf so a symlinked final component is refused,
@@ -19,7 +19,7 @@
 //! Every open also honours `--open-noatime` (rsync 3.4.2): on Linux/Android
 //! the open adds `O_NOATIME`, falling back to a plain open if the kernel or
 //! filesystem rejects the flag (`EPERM`/`EACCES`/`EINVAL`/`ENOTSUP`/`EROFS`).
-//! upstream: `syscall.c:1603 do_open` / `syscall.c:2811 do_open_nofollow`.
+//! upstream: `syscall.c:1672 do_open` / `syscall.c:2882 do_open_nofollow`.
 
 use std::fs;
 use std::io;
@@ -53,12 +53,12 @@ pub(crate) struct SourceOpen {
     /// symlink-following mode is set: a file beneath one is opened beneath the
     /// held root rather than by its full path.
     ///
-    /// upstream: `sender.c:694` `open_sender_source_path()`
+    /// upstream: `sender.c:702` `open_sender_source_path()`
     pinned_roots: Option<Arc<fast_io::SourceRoots>>,
     /// The held `--files-from` base while the ownership walk is active: every
     /// list entry opens through it instead of beneath a pinned root.
     ///
-    /// upstream: `sender.c:692-693` - `if (files_from) fd =
+    /// upstream: `sender.c:700-701` - `if (files_from) fd =
     /// do_open_checklinks(fname);`
     #[cfg(unix)]
     files_from: Option<Arc<fast_io::FilesFromBase>>,
@@ -160,7 +160,7 @@ impl SourceOpen {
 
     /// Opens `path` under this policy.
     ///
-    /// upstream: `rsync-3.5.1/sender.c:679-683` - the confined pair
+    /// upstream: `rsync-3.5.2/sender.c:687-691` - the confined pair
     /// (`sender_open_confined` / `sender_open_copylinks_confined`) for a
     /// daemon, `do_open_checklinks` otherwise.
     pub(crate) fn open(&self, path: &Path) -> io::Result<fs::File> {
@@ -177,7 +177,7 @@ impl SourceOpen {
             if let Ok(relative) = path.strip_prefix(root.root()) {
                 // A symlink-following mode is an operator instruction, so it
                 // survives confinement rather than being downgraded to the
-                // O_NOFOLLOW leaf. upstream: sender.c:681-683.
+                // O_NOFOLLOW leaf. upstream: sender.c:689-691.
                 let leaf = if self.follow_symlinks {
                     fast_io::LeafPolicy::FollowConfined
                 } else {
@@ -189,13 +189,13 @@ impl SourceOpen {
             // happen for a legitimate daemon transfer; fail safe by falling
             // through to the O_NOFOLLOW open rather than following symlinks.
         }
-        // upstream: sender.c:692-693 - a list entry opens through the ownership
+        // upstream: sender.c:700-701 - a list entry opens through the ownership
         // walk from the held base, never beneath a pinned root.
         #[cfg(unix)]
         if let Some(base) = self.files_from.as_deref() {
             return base.open_read(path, self.noatime);
         }
-        // upstream: sender.c:694-704 - a path beneath a pinned source root is
+        // upstream: sender.c:702-712 - a path beneath a pinned source root is
         // opened beneath it; any other path falls through to the leaf-only
         // open, which is sender_open_confined(NULL, fname) against the cwd
         // upstream has already entered.
@@ -221,7 +221,7 @@ impl SourceOpen {
 /// covers. A root that fails its identity check is left to the synchronous
 /// open, which reports it.
 ///
-/// upstream: `sender.c:694-704` - beneath the longest matching root, else
+/// upstream: `sender.c:702-712` - beneath the longest matching root, else
 /// `sender_open_confined(NULL, fname)`.
 #[cfg(unix)]
 fn prefetch_beneath_roots(
@@ -530,7 +530,7 @@ mod tests {
     /// Confinement must not silently downgrade `--copy-links`.
     ///
     /// WHY: upstream keeps a separate confined entry point for the
-    /// symlink-following modes (`rsync-3.5.1/sender.c:681-683` selecting
+    /// symlink-following modes (`rsync-3.5.2/sender.c:689-691` selecting
     /// `sender_open_copylinks_confined`). If the daemon arm answered the leaf
     /// question by itself, a module served with `-L` would either stop
     /// following links the operator asked it to follow, or - the direction oc

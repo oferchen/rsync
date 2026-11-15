@@ -167,7 +167,7 @@ fn assert_transfer_landed(output: Option<Output>, dest: &Path, case: &str) {
 }
 
 /// `try_open_file(config.file_path)` - the exact destination, the default path,
-/// no flag required. Upstream deletes the FIFO at `generator.c:2148` and writes
+/// no flag required. Upstream deletes the FIFO at `generator.c:2189` and writes
 /// a fresh regular file; oc declines it as a basis and does the same.
 #[test]
 fn fifo_destination_does_not_park_the_receiver() {

@@ -37,7 +37,7 @@ use crate::frontend::execution::{parse_stop_after_argument, parse_stop_at_argume
 
 /// Reports a `-M` value a local transfer's server side does not know.
 ///
-/// upstream: pipe.c:143-148 - the forked child refuses it with the remote
+/// upstream: pipe.c:144-149 - the forked child refuses it with the remote
 /// prefix and exits RERR_SYNTAX as the receiver, then the parent reads EOF on
 /// the pipe and exits RERR_STREAMIO from whine_about_eof() (io.c:303).
 fn refuse_local_remote_option<Err: Write>(
@@ -162,7 +162,7 @@ impl Pass {
         Ok(list)
     }
 
-    /// upstream: pipe.c:136-140 clears the receiver's inherited log file, and
+    /// upstream: pipe.c:137-141 clears the receiver's inherited log file, and
     /// a `-M--log-file` parsed after it (:143-148) opens the receiver's own.
     fn open_log_file(&mut self, path: &Path) -> Option<io::Result<File>> {
         if self.logs {
@@ -208,7 +208,7 @@ where
     Out: Write,
     Err: Write,
 {
-    // upstream: progress.c:234-238 checks `tcgetpgrp(STDOUT_FILENO)` to
+    // upstream: progress.c:230-234 checks `tcgetpgrp(STDOUT_FILENO)` to
     // suppress progress when the process is not in the foreground terminal
     // group. We detect terminal status on the output destination (stdout
     // by default, stderr when msgs_to_stderr is active) to decide between
@@ -424,6 +424,8 @@ where
         cow_policy,
         simd_override,
         delay_updates,
+        delay_symlinks,
+        niceness,
         partial_dir,
         temp_dir,
         log_file,
@@ -457,7 +459,7 @@ where
         stop_at,
         out_format,
         // `--dparam` never reaches here: `run` routes it to the daemon-option
-        // check first, as upstream's OPT_DAEMON does (options.c:866, 1538).
+        // check first, as upstream's OPT_DAEMON does (options.c:871, 1538).
         dparam: _,
         no_iconv,
         prefer_aes_gcm,
@@ -516,7 +518,7 @@ where
     }
     // Record `--8-bit-output` alongside the stderr routing so the notice render
     // boundary escapes a filename operand's bytes with the same `use_isprint`
-    // switch upstream's `rwrite()` applies (log.c:425 `!allow_8bit_chars`).
+    // switch upstream's `rwrite()` applies (log.c:499 `!allow_8bit_chars`).
     if pass.is_process() {
         crate::frontend::progress::diagnostic::set_eight_bit_output(eight_bit_output);
     }
@@ -540,6 +542,7 @@ where
     // flag past the parser is what makes those two states distinguishable.
     if pass.is_process() {
         logging::set_quiet(quiet);
+        logging::set_groups_counts(human_readable_mode.groups_counts());
     }
 
     // Publish `--insecure-links` and `--confine-root` for the operator-path
@@ -668,7 +671,7 @@ where
     #[cfg(windows)]
     let remainder = crate::frontend::execution::expand_source_operands(remainder);
 
-    // upstream: options.c:2618-2621 - with `--files-from` the transferred file
+    // upstream: options.c:2673-2676 - with `--files-from` the transferred file
     // set comes from the list, so a client may name exactly one source root and
     // one destination. More than two operands, or a lone operand (a missing
     // destination), is a syntax error (`usage(FERROR); exit RERR_SYNTAX`, exit
@@ -689,7 +692,7 @@ where
     let has_remote_operand = remainder.iter().any(|op| operand_is_remote(op));
     let desired_protocol = resolve_desired_protocol(protocol.as_ref(), has_remote_operand, stderr)?;
 
-    // upstream: options.c:2189-2193 `if (do_stats) parse_output_words("stats2", ...)`
+    // upstream: options.c:2225-2229 `if (do_stats) parse_output_words("stats2", ...)`
     // (or "stats3" with `-vv`). The legacy `--stats` flag maps to level 2; with
     // higher verbosity it bumps to level 3. A subsequent `--info=statsN` token
     // overrides this default inside `parse_info_settings`.
@@ -790,7 +793,7 @@ where
         .as_ref()
         .and_then(|value: &ParsedChown| value.group());
 
-    // upstream: options.c:2627 - only open files_from locally when the spec
+    // upstream: options.c:2682 - only open files_from locally when the spec
     // is NOT a hostspec. Remote files-from (`:path` or `host:path`) are read
     // by the server, so the client never opens them.
     let files_from_resolved = resolve_files_from_source(&files_from);
@@ -853,7 +856,7 @@ where
 
     let implied_dirs_option = implied_dirs;
 
-    // upstream: options.c:2313-2318 - `if (files_from) { if (recurse == 1)
+    // upstream: options.c:2368-2373 - `if (files_from) { if (recurse == 1)
     // recurse = 0; ... }`. Only the value `-a` implies (recurse == 1,
     // options.c:1664-1665 `if (!recurse) recurse = 1`) is cleared; an explicit `-r`
     // sets recurse == 2 (options.c:630 `POPT_ARG_VAL, &recurse, 2`) and
@@ -871,17 +874,17 @@ where
         recursive
     };
 
-    // upstream: options.c:637 - `-d` sets `xfer_dirs = 2`. Capture that before
+    // upstream: options.c:638 - `-d` sets `xfer_dirs = 2`. Capture that before
     // the files-from default below folds the implied `xfer_dirs = 1` into the
     // same flag, because the compact `d` letter is packed only for the explicit
     // level (options.c:2814-2816).
     let dirs_explicit = dirs == Some(true);
 
-    // upstream: options.c:2316-2317 - `if (xfer_dirs < 0) xfer_dirs = 1;` when
+    // upstream: options.c:2371-2372 - `if (xfer_dirs < 0) xfer_dirs = 1;` when
     // files_from is active. This is the implied level, not an explicit `-d`.
     let dirs = if files_from_active { Some(true) } else { dirs };
 
-    // upstream: compat.c:722-750 - a local transfer negotiates compat_flags
+    // upstream: compat.c:731-759 - a local transfer negotiates compat_flags
     // between its sender and receiving child, and batch.c records them in the
     // batch header so a reader decodes the file list and delta stream the
     // same way.
@@ -891,7 +894,7 @@ where
     // promises, which an inc-recursive reader requires (flist.c:3230).
     let local_batch_compat_flags = {
         use protocol::CompatibilityFlags;
-        // upstream: compat.c:739-740 - a local transfer's child advertises 'u',
+        // upstream: compat.c:748-749 - a local transfer's child advertises 'u',
         // so CF_ID0_NAMES is set and the post-flist id lists carry the name of
         // id 0 (uidlist.c:398-405).
         let flags = CompatibilityFlags::SAFE_FILE_LIST
@@ -906,6 +909,7 @@ where
             qsort,
             &delete_mode,
             delay_updates,
+            delay_symlinks,
             prune_empty_dirs.unwrap_or(false),
         ) {
             flags | CompatibilityFlags::INC_RECURSE
@@ -914,7 +918,7 @@ where
         };
         #[cfg(unix)]
         let flags = flags | CompatibilityFlags::SYMLINK_TIMES;
-        // upstream: compat.c:728-730 - CF_SYMLINK_ICONV is gated on
+        // upstream: compat.c:737-739 - CF_SYMLINK_ICONV is gated on
         // `#ifdef ICONV_OPTION`. Mirror that with the `iconv` cargo feature
         // so batch headers from iconv-less builds do not advertise a
         // capability the writer cannot honour.
@@ -923,7 +927,7 @@ where
         flags.bits() as i32
     };
 
-    // upstream: compat.c:822-825 setup_protocol() -
+    // upstream: compat.c:831-834 setup_protocol() -
     //   if (!checksum_seed) checksum_seed = time(NULL) ^ (getpid() << 6);
     //   write_int(f_out, checksum_seed);
     // The finalised seed is what io.c:2757 start_write_batch() records in the
@@ -937,7 +941,7 @@ where
         .next()
         .unwrap_or_else(|| std::ffi::OsString::from("oc-rsync"));
 
-    // upstream: io.c:2754 write_int(batch_fd, protocol_version) - the header
+    // upstream: io.c:2761 write_int(batch_fd, protocol_version) - the header
     // records the protocol the run speaks, which `--protocol` lowers on a local
     // copy too, so a batch can be written for an older reader.
     let batch_protocol = i32::from(
@@ -970,7 +974,7 @@ where
         )
     } else {
         read_batch.as_ref().map(|path| {
-            // upstream: compat.c:611 - the reader refuses a batch newer than
+            // upstream: compat.c:612 - the reader refuses a batch newer than
             // the protocol it runs, so `--protocol` is the replay ceiling.
             BatchConfig::new(
                 BatchMode::Read,
@@ -988,13 +992,13 @@ where
             None => {}
             Some(Ok(file)) => {
                 log_file_for_local = Some(summary::LogFileConfig {
-                    // upstream: log.c:125-141 logit() - every log-file line is
+                    // upstream: log.c:132-148 logit() - every log-file line is
                     // stamped with `%Y/%m/%d %H:%M:%S [pid] `.
                     file: logging_sink::logfile::LogFileWriter::new(file),
                     format: template.clone(),
                 });
             }
-            // upstream: log.c:175-182 logfile_open() - a log file that cannot
+            // upstream: log.c:182-189 logfile_open() - a log file that cannot
             // be opened is reported and ignored; the transfer carries on.
             Some(Err(error)) => {
                 let line = logging::rsyserr_io(
@@ -1010,7 +1014,7 @@ where
     }
 
     // Build transfer operands early so we can check if this is a daemon transfer.
-    // upstream: flist.c:2788 - source dir is chdir target, not a transfer source
+    // upstream: flist.c:2799 - source dir is chdir target, not a transfer source
     // `has_remote_operand` was computed above (protocol resolution needs it).
     let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
     if files_from_active && !file_list_operands.is_empty() {
@@ -1020,7 +1024,7 @@ where
             // files_from_path and uses the source dir as base_dir for resolving
             // relative filenames. Individual file entries must NOT be operands -
             // they corrupt the generator's base_dir derivation (paths.first()).
-            // upstream: main.c:1341 client_run(), flist.c:2788 - argv[0] is the chdir
+            // upstream: main.c:1344 client_run(), flist.c:2799 - argv[0] is the chdir
             // target, filesfrom_fd is a separate channel.
             transfer_operands.extend(remainder);
         } else {
@@ -1071,7 +1075,7 @@ where
     // --numeric-ids) from raw_argv, eliding the filename operands. Capture the
     // raw argv and operands so the batch script generator can re-emit them.
     let batch_config = batch_config.map(|cfg| {
-        // upstream: flist.c:3063-3064 - the writer omits the post-flist id-lists under
+        // upstream: flist.c:3074-3075 - the writer omits the post-flist id-lists under
         // --numeric-ids (numeric_ids is not a recorded stream flag), so carry it
         // into the batch config for both write and read modes.
         let cfg = cfg.with_numeric_ids(numeric_ids);
@@ -1083,12 +1087,12 @@ where
         }
     });
 
-    // upstream: options.c:809 - `--list-only` sets `list_only = 2`, the explicit
+    // upstream: options.c:812 - `--list-only` sets `list_only = 2`, the explicit
     // form that server_options() forwards as `--list-only` (options.c:2923
     // `list_only > 1`). The implicit `list_only |= 1` below never reaches 2, so
     // it is never forwarded. Capture the explicit bit before the OR.
     let list_only_arg = list_only;
-    // upstream: options.c:2320-2321 - `if (argc < 2 && !read_batch && !am_server)
+    // upstream: options.c:2375-2376 - `if (argc < 2 && !read_batch && !am_server)
     // list_only |= 1;`. A single source with no destination implies list-only
     // mode regardless of transport: a local path (`rsync src/`), an SSH source
     // (`rsync host:path`), or a daemon module (`host::module`,
@@ -1097,14 +1101,14 @@ where
     // applies on the client path.
     let list_only = list_only || (transfer_operands.len() == 1 && read_batch.is_none());
 
-    // upstream: options.c:2331-2332 - relative_paths defaults to 1 when files_from
+    // upstream: options.c:2386-2387 - relative_paths defaults to 1 when files_from
     let effective_relative = if files_from_active && relative.is_none() {
         Some(true)
     } else {
         relative
     };
 
-    // upstream: options.c:2333-2334 - `if (!relative_paths) implied_dirs = 0;`.
+    // upstream: options.c:2388-2389 - `if (!relative_paths) implied_dirs = 0;`.
     // Implied directories only exist for relative-rooted transfer paths, so
     // when relative paths are disabled implied_dirs is forced off regardless
     // of any explicit `--implied-dirs`. Otherwise it defaults on.
@@ -1173,7 +1177,7 @@ where
     let prune_empty_dirs_flag = prune_empty_dirs.unwrap_or(false);
     let fsync_flag = fsync_option.unwrap_or(false);
     let append_enabled = append.unwrap_or(false);
-    // upstream: options.c:2551-2569 - `--append` and `--write-devices` each
+    // upstream: options.c:2606-2624 - `--append` and `--write-devices` each
     // force the global inplace flag on. Both live in
     // `engine::write_strategy::implies_inplace`, the single owner of the rule,
     // so this front end and the `ServerConfig` promotion cannot drift apart.
@@ -1187,7 +1191,7 @@ where
     let checksum_for_config = checksum.unwrap_or(false);
     let fuzzy_level_value = fuzzy.unwrap_or(0);
 
-    // upstream: options.c:2496-2508,2526,2945-2956 - the resolved
+    // upstream: options.c:2551-2563,2526,2945-2956 - the resolved
     // out-format string tells the server which placeholders it uses. Upstream
     // derives `stdout_format_has_i` from that resolved string, not from the `-i`
     // flag: an explicit `--out-format` without `%i` clears it even under `-i`
@@ -1279,7 +1283,7 @@ where
         executability: preserve_executability,
         permissions: preserve_permissions,
         fake_super: fake_super.unwrap_or(false),
-        // upstream: options.c:3028 - `am_root > 1` is set only by an explicit
+        // upstream: options.c:3093 - `am_root > 1` is set only by an explicit
         // --super (not by running as root). Forwarded on a push (options.c:3028-3029).
         super_user: super_mode == Some(true),
         times: preserve_times,
@@ -1344,6 +1348,8 @@ where
         partial_dir,
         temp_dir,
         delay_updates,
+        delay_symlinks,
+        niceness,
         link_dests,
         remove_source_files,
         remove_sent_files,
@@ -1460,7 +1466,7 @@ where
 
 /// Resolves the effective `old_style_args` level from the CLI counter and env.
 ///
-/// upstream: options.c:2088-2093 - when `old_style_args` is still unset
+/// upstream: options.c:2124-2129 - when `old_style_args` is still unset
 /// (`old_style_args < 0`, modelled here as `None`), check `RSYNC_OLD_ARGS` and
 /// set the level with `old_style_args = atoi(arg)`. The env var is only honoured
 /// when protect_args is not active (upstream: `protect_args <= 0`). An explicit
@@ -1474,12 +1480,12 @@ fn resolve_old_args(explicit: Option<u8>, protect_args: Option<bool>) -> Option<
     if let Some(level) = explicit {
         return Some(level);
     }
-    // upstream: options.c:2089 - only check env when !am_server && protect_args <= 0
+    // upstream: options.c:2125 - only check env when !am_server && protect_args <= 0
     if protect_args.unwrap_or(false) {
         return None;
     }
     match std::env::var("RSYNC_OLD_ARGS") {
-        // upstream: options.c:2091 old_style_args = atoi(arg). `atoi` reads a
+        // upstream: options.c:2127 old_style_args = atoi(arg). `atoi` reads a
         // leading integer, so "2"/"2 " -> 2 and non-numeric -> 0. The level is
         // capped at 2, the highest state safe_arg distinguishes.
         Ok(val) if !val.is_empty() => {
@@ -1492,7 +1498,7 @@ fn resolve_old_args(explicit: Option<u8>, protect_args: Option<bool>) -> Option<
 
 /// Reports whether a local recording sets `CF_INC_RECURSE`.
 ///
-/// upstream: compat.c:162-180 set_allow_inc_recurse() - recursion without
+/// upstream: compat.c:163-181 set_allow_inc_recurse() - recursion without
 /// `--qsort` allows it, unless the receiving child deletes before or after the
 /// transfer, delays updates or prunes empty directories; `--no-inc-recursive`
 /// clears it outright (options.c:634).
@@ -1502,6 +1508,7 @@ fn local_batch_inc_recurse(
     qsort: bool,
     delete_mode: &core::client::DeleteMode,
     delay_updates: bool,
+    delay_symlinks: bool,
     prune_empty_dirs: bool,
 ) -> bool {
     use core::client::DeleteMode;
@@ -1510,13 +1517,14 @@ fn local_batch_inc_recurse(
         && !qsort
         && !matches!(delete_mode, DeleteMode::Before | DeleteMode::After)
         && !delay_updates
+        && !delay_symlinks
         && !prune_empty_dirs
 }
 
 /// Returns the explicit checksum seed to record in a batch header, or `None`
 /// when the seed must be derived from time/pid.
 ///
-/// upstream: compat.c:823-824 `if (!checksum_seed) checksum_seed = ...` - the
+/// upstream: compat.c:832-833 `if (!checksum_seed) checksum_seed = ...` - the
 /// parsed `--checksum-seed=N` (options.c:861, an `int` defaulting to 0) is only
 /// treated as user-supplied when it is non-zero. An explicit `--checksum-seed=0`
 /// is indistinguishable from an unset seed and therefore derives a fresh one,
@@ -1531,7 +1539,7 @@ fn explicit_batch_seed(parsed: Option<i32>) -> Option<i32> {
 
 /// Derives a checksum seed from the current time and pid.
 ///
-/// upstream: compat.c:824 `checksum_seed = time(NULL) ^ (getpid() << 6)`.
+/// upstream: compat.c:833 `checksum_seed = time(NULL) ^ (getpid() << 6)`.
 fn derive_batch_seed() -> i32 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let timestamp = SystemTime::now()
@@ -1552,11 +1560,11 @@ fn derive_batch_seed() -> i32 {
 /// parent-component case (`--log-file=/tmp/somedir/rsync.log`, where the leaf
 /// does not exist yet) is not defended by `O_NOFOLLOW` alone.
 ///
-/// upstream: `syscall.c:675` `open_no_attacker_symlinks()` - the entry point for
+/// upstream: `syscall.c:744` `open_no_attacker_symlinks()` - the entry point for
 /// the opens that are not confined beneath a root, `--log-file` among them
 /// (`syscall.c:282-283`).
 ///
-/// upstream: log.c:170 passes `0644`, not `0666`. The difference is observable:
+/// upstream: log.c:177 passes `0644`, not `0666`. The difference is observable:
 /// upstream additionally forces `umask(022 | orig_umask)` around the open
 /// (log.c:164), so it can never create a group- or world-writable log; passing
 /// `0666` here would do exactly that under a permissive umask. `0644` reaches
@@ -1598,7 +1606,7 @@ mod tests {
         assert_eq!(resolve_old_args(Some(0), None), Some(0));
     }
 
-    /// upstream: options.c:2091 `old_style_args = atoi(arg)` - `RSYNC_OLD_ARGS=2`
+    /// upstream: options.c:2127 `old_style_args = atoi(arg)` - `RSYNC_OLD_ARGS=2`
     /// must reach level 2, the state where safe_arg disables all escaping. This
     /// is the env path that a boolean model collapsed to level 1, silently
     /// dropping the option-arg escaping upstream keeps only below level 2.
@@ -1624,7 +1632,7 @@ mod tests {
         }
     }
 
-    /// upstream: options.c:2089 - the env var is only consulted when
+    /// upstream: options.c:2125 - the env var is only consulted when
     /// `protect_args <= 0`. With protect_args active the level stays unset even
     /// if `RSYNC_OLD_ARGS` is present, since the two options are exclusive.
     #[test]
@@ -1645,7 +1653,7 @@ mod tests {
 
     /// An explicit non-zero `--checksum-seed=N` must be recorded in the batch
     /// header verbatim so `--read-batch` replays with the identical seed.
-    /// upstream: compat.c:823-825 writes the parsed seed unchanged; io.c:2757
+    /// upstream: compat.c:832-834 writes the parsed seed unchanged; io.c:2764
     /// tees that same value into the header. Regressing this (e.g. always
     /// deriving a fresh seed) makes upstream `--read-batch` compute mismatched
     /// checksums against a batch oc-rsync wrote.
@@ -1667,7 +1675,7 @@ mod tests {
         assert_eq!(explicit_batch_seed(Some(-1)), Some(-1));
     }
 
-    /// upstream: compat.c:823 `if (!checksum_seed)` treats an explicit
+    /// upstream: compat.c:832 `if (!checksum_seed)` treats an explicit
     /// `--checksum-seed=0` as unset, so it derives a fresh seed just like
     /// omitting the flag. Both must return `None` from the explicit-seed
     /// selector so the caller falls back to derivation.

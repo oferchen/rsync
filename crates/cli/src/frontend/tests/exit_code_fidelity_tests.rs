@@ -4,7 +4,7 @@
 use super::common::*;
 use super::*;
 
-/// upstream: compat.c:190 `unknown compress name` -> RERR_UNSUPPORTED
+/// upstream: compat.c:191 `unknown compress name` -> RERR_UNSUPPORTED
 /// (errcode.h:28 `RERR_UNSUPPORTED 4`), not RERR_SYNTAX.
 #[test]
 fn invalid_compress_choice_returns_unsupported() {
@@ -29,7 +29,7 @@ fn empty_compress_choice_returns_unsupported() {
     assert_eq!(code, 4);
 }
 
-/// upstream: options.c:2133-2136 - `--compress-choice=auto` is nulled out so
+/// upstream: options.c:2169-2172 - `--compress-choice=auto` is nulled out so
 /// normal codec negotiation runs; it is accepted (exit 0), not rejected.
 #[test]
 fn compress_choice_auto_is_accepted() {
@@ -47,7 +47,7 @@ fn compress_choice_auto_is_accepted() {
     assert!(destination.exists());
 }
 
-/// upstream: options.c:2133 only special-cases the exact token `auto`;
+/// upstream: options.c:2169 only special-cases the exact token `auto`;
 /// `--compress-choice=auto,auto` is an unknown compress name (exit 4).
 #[test]
 fn compress_choice_auto_auto_returns_unsupported() {
@@ -60,7 +60,7 @@ fn compress_choice_auto_auto_returns_unsupported() {
     assert_eq!(code, 4);
 }
 
-/// upstream: options.c:2619-2622 - with `--files-from`, more than two operands
+/// upstream: options.c:2674-2677 - with `--files-from`, more than two operands
 /// (or a lone operand) is a syntax error (RERR_SYNTAX = 1).
 #[test]
 fn files_from_extra_operands_return_syntax_error() {

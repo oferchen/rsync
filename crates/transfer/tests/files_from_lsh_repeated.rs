@@ -45,7 +45,7 @@ from/./dir/subdir/foobar.baz\0\
 #[test]
 fn forwarded_wire_bytes_match_upstream_sender_expectation() {
     // Bind the receiver-side forwarding contract to a byte-exact wire
-    // pattern. The upstream sender's `flist.c:2809 read_line` parser
+    // pattern. The upstream sender's `flist.c:2820 read_line` parser
     // consumes NUL-terminated entries until it hits a NUL with an empty
     // entry buffer (the double-NUL terminator). Any deviation here -
     // missing terminator, dropped CR, premature flush - reproduces the

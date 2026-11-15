@@ -1,11 +1,11 @@
 //! Bitflags controlling time-related attribute application.
 //!
-//! Mirrors upstream rsync's `ATTRS_*` constants from `rsync.h:222-226`.
+//! Mirrors upstream rsync's `ATTRS_*` constants from `rsync.h:223-227`.
 
 /// Bitflags controlling which time-related attributes to skip or force when
 /// applying metadata.
 ///
-/// These flags mirror upstream rsync's `ATTRS_*` constants from `rsync.h:222-226`
+/// These flags mirror upstream rsync's `ATTRS_*` constants from `rsync.h:223-227`
 /// and are passed to `set_file_attrs()` to govern which timestamps are applied
 /// and under what tolerance. The default value (`empty()`) means "apply all
 /// requested time attributes normally using `modify_window` tolerance."
@@ -25,35 +25,35 @@ impl AttrsFlags {
     /// Report attribute changes to the log. When set, `set_file_attrs` emits
     /// verbose messages for unchanged files.
     ///
-    /// Upstream: `rsync.h:222` - `ATTRS_REPORT (1<<0)`
+    /// Upstream: `rsync.h:223` - `ATTRS_REPORT (1<<0)`
     pub const REPORT: Self = Self(1 << 0);
 
     /// Skip modification time comparison and application entirely. When set,
     /// `set_file_attrs` will not touch the destination's mtime regardless of
     /// whether `preserve_times` is enabled.
     ///
-    /// Upstream: `rsync.h:223` - `ATTRS_SKIP_MTIME (1<<1)`
+    /// Upstream: `rsync.h:224` - `ATTRS_SKIP_MTIME (1<<1)`
     pub const SKIP_MTIME: Self = Self(1 << 1);
 
     /// Force exact time comparison instead of using `modify_window` tolerance.
     /// Used after a transfer or checksum verification where the timestamp was
     /// just set and should match precisely.
     ///
-    /// Upstream: `rsync.h:224` - `ATTRS_ACCURATE_TIME (1<<2)`
+    /// Upstream: `rsync.h:225` - `ATTRS_ACCURATE_TIME (1<<2)`
     pub const ACCURATE_TIME: Self = Self(1 << 2);
 
     /// Skip access time comparison and application entirely. When set,
     /// `set_file_attrs` will not touch the destination's atime regardless of
     /// whether `preserve_atimes` is enabled.
     ///
-    /// Upstream: `rsync.h:225` - `ATTRS_SKIP_ATIME (1<<3)`
+    /// Upstream: `rsync.h:226` - `ATTRS_SKIP_ATIME (1<<3)`
     pub const SKIP_ATIME: Self = Self(1 << 3);
 
     /// Skip creation time comparison and application entirely. When set,
     /// `set_file_attrs` will not touch the destination's crtime regardless of
     /// whether `preserve_crtimes` is enabled.
     ///
-    /// Upstream: `rsync.h:226` - `ATTRS_SKIP_CRTIME (1<<5)`
+    /// Upstream: `rsync.h:227` - `ATTRS_SKIP_CRTIME (1<<5)`
     ///
     /// Note: bit 4 is unused in upstream, matching the gap between
     /// `ATTRS_SKIP_ATIME (1<<3)` and `ATTRS_SKIP_CRTIME (1<<5)`.

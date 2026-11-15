@@ -1,6 +1,6 @@
 //! A directory the receiver cannot make is reported and its contents skipped.
 //!
-//! upstream: generator.c:1873-1887 treats every mkdir failure but EEXIST
+//! upstream: generator.c:1910-1924 treats every mkdir failure but EEXIST
 //! alike: `rsyserr(FERROR_XFER, errno, "recv_generator: mkdir %s failed")`,
 //! the `*** Skipping any contents from this failed directory ***` line, and
 //! `skip_dir` so nothing below it is attempted (generator.c:1648-1658). The
@@ -35,7 +35,7 @@ const PRUNED: [&[&str]; 2] = [&["-m"], &["-m", "--no-inc-recursive"]];
 
 /// `src/afile/sub/f` and `src/other`; the destination holds a regular file
 /// `afile`, so `afile/sub` fails ENOTDIR. `--no-implied-dirs` leaves the
-/// implied `afile` alone, as upstream's generator.c:1811 does.
+/// implied `afile` alone, as upstream's generator.c:1848 does.
 fn fixture(root: &Path) {
     let src = root.join("src");
     fs::create_dir_all(src.join("afile/sub")).expect("mkdir src");
@@ -180,7 +180,7 @@ fn a_permission_denied_mkdir_is_reported_once_for_all_its_children() {
 
             let cell = format!("{mode:?} {extra:?}");
             out.assert_exit(23);
-            // upstream: log.c:499-500 rsyserr() - the libc's strerror and errno.
+            // upstream: log.c:584-585 rsyserr() - the libc's strerror and errno.
             let error = std::io::Error::from_raw_os_error(Errno::ACCESS.raw_os_error());
             let eacces = format!(
                 "/dest/src\" failed: {}",

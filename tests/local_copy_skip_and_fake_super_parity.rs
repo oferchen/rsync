@@ -190,7 +190,7 @@ fn local_fake_super_stashes_only_what_the_source_stash_carries() {
 /// `-M--fake-super` on a local copy reaches the receiver half only, so the
 /// sender reads the source's real named-user ACL and the receiver stashes it.
 ///
-/// upstream: pipe.c:143-148 local_child() appends the `-M` values to the forked
+/// upstream: pipe.c:144-149 local_child() appends the `-M` values to the forked
 /// receiver's argv; acls.c:609-631 then reads the real ACL on the sender and
 /// acls.c:933-971 stores `%aacl` on the receiver. The 3.5.1 testsuite's
 /// fake-super-acl-xattr leg 1 is this transfer.
@@ -237,7 +237,7 @@ fn receiver_only_fake_super_stashes_the_real_source_acl() {
 /// `-M--fake-super` leaves the sender reading the source's real stat, so a
 /// `%stat` record already on the source does not stand in for it.
 ///
-/// upstream: pipe.c:143-148 local_child() gives `--fake-super` to the receiver
+/// upstream: pipe.c:144-149 local_child() gives `--fake-super` to the receiver
 /// alone; the sender's flist.c make_file() reads plain lstat() rather than
 /// xattrs.c:1372 x_lstat(). MEASURED (3.5.1): a 0644 source recorded as
 /// `100600 0,0 0:0` lands as 0644 with `%stat` `100644 0,0 0:0`; with

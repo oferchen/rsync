@@ -1,6 +1,6 @@
 //! Whole-line writes to the process diagnostic stream.
 //!
-//! upstream: log.c:269-427 `rwrite()` formats each message - prefix, text and
+//! upstream: log.c:349-501 `rwrite()` formats each message - prefix, text and
 //! trailing newline - into one buffer, hands it to `filtered_fwrite()` on the
 //! unbuffered `stderr` and calls `fflush()`, so every message reaches fd 2 in
 //! a single `write(2)`. The remote shell inherits that same fd

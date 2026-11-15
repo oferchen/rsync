@@ -9,7 +9,7 @@ name>`).
 The legs run inside ci.yml, once per merge-train batch (a workflow_dispatch
 on the batch's integration/ branch); the train relays their contexts to each
 pull request in the batch.
-`upstream-testsuite-3.5.1.yml` keeps the same legs for the nightly badge and
+`upstream-testsuite-3.5.2.yml` keeps the same legs for the nightly badge and
 `bootstrap` dispatches. The tests assert that ci.yml publishes every required
 testsuite context, that the two files call the legs identically, and that no
 other workflow publishes them on a pull request.
@@ -26,7 +26,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO / ".github" / "workflows"
-GATE = WORKFLOWS_DIR / "upstream-testsuite-3.5.1.yml"
+GATE = WORKFLOWS_DIR / "upstream-testsuite-3.5.2.yml"
 CI_YML = WORKFLOWS_DIR / "ci.yml"
 TESTING_MD = REPO / "docs" / "contributing" / "TESTING.md"
 README_MD = REPO / "README.md"
@@ -125,8 +125,8 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
 
     def test_only_ci_and_the_gate_run_the_testsuite(self) -> None:
         # The 3.5.0 corpus was retired rather than kept alongside: its test
-        # names are a subset of 3.5.1's apart from two cells asserting 3.5.0
-        # behaviour that 3.5.1 changed.
+        # names are a subset of 3.5.2's apart from two cells asserting 3.5.0
+        # behaviour that 3.5.2 changed.
         callers = {path.name for path in WORKFLOWS_DIR.glob("*.yml")
                    if not path.name.startswith("_") and _testsuite_callers(path)}
         self.assertEqual(callers, {CI_YML.name, "ci-master.yml", GATE.name})
@@ -163,8 +163,8 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
     def test_the_badge_reads_the_scheduled_runs(self) -> None:
         # A badge filtered on an event the workflow never runs on shows no
         # status at all, so the badge's event must be one of the gate's.
-        badge = re.search(r"upstream-testsuite-3\.5\.1\.yml\?[^)]*", README_MD.read_text())
-        self.assertIsNotNone(badge, "README carries no 3.5.1 testsuite badge")
+        badge = re.search(r"upstream-testsuite-3\.5\.2\.yml\?[^)]*", README_MD.read_text())
+        self.assertIsNotNone(badge, "README carries no 3.5.2 testsuite badge")
         self.assertIn("event=schedule", badge.group(0))
 
     def test_every_leg_runs_the_gate_release(self) -> None:
@@ -173,7 +173,7 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
         self.assertEqual(len({job["with"]["cache_version"] for job in gate_jobs}), 1)
         for job in gate_jobs:
             self.assertEqual(job["with"]["upstream_rsync_version"],
-                             "${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}")
+                             "${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.2' }}")
 
     def test_required_contexts_match_the_testing_guide(self) -> None:
         text = TESTING_MD.read_text()

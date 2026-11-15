@@ -17,7 +17,7 @@
 // template + `{limit}` + `\n` shape, so pinning the template plus the
 // substituted bytes locks both call sites against drift.
 //
-// upstream: target/interop/upstream-src/rsync-3.5.1/clientserver.c:799
+// upstream: target/interop/upstream-src/rsync-3.5.2/clientserver.c:803
 
 #[test]
 fn daemon_max_connections_wire_bytes_match_upstream() {
@@ -72,7 +72,7 @@ fn daemon_max_connections_wire_bytes_match_upstream() {
         assert_eq!(
             wire.as_slice(),
             *expected,
-            "wire bytes drifted from upstream rsync 3.4.1 clientserver.c:752 for limit={limit}",
+            "wire bytes drifted from upstream rsync 3.4.1 clientserver.c:756 for limit={limit}",
         );
     }
 }

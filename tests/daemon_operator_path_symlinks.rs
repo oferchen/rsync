@@ -1,7 +1,7 @@
 //! Operator-named daemon and batch paths must not be followed through a symlink
 //! planted by another user.
 //!
-//! Upstream opens these through `open_no_attacker_symlinks()` (syscall.c:675),
+//! Upstream opens these through `open_no_attacker_symlinks()` (syscall.c:744),
 //! which follows a symlink only when it is owned by uid 0 or the caller's euid:
 //!
 //! - `params.c:586` - `--config`
@@ -179,7 +179,7 @@ fn config_through_untrusted_symlink_is_refused() {
 /// A `log file` behind a foreign-owned symlink is refused, never written
 /// through, and the daemon falls back to syslog and keeps serving.
 ///
-/// upstream: log.c:169 refuses the symlink through
+/// upstream: log.c:176 refuses the symlink through
 /// `open_no_attacker_symlinks()`; log.c:175-182 then switches to syslog, logs
 /// the failure and `Ignoring "log file" setting.`, and the daemon carries on.
 /// The upstream 3.5.1 control on this fixture serves the transfer and leaves
@@ -270,7 +270,7 @@ fn pid_file_symlink_is_replaced_not_written_through() {
 
     let Daemon::Listening(daemon) = start_daemon(port, &[format!("--config={}", conf.display())])
     else {
-        panic!("upstream starts and replaces the planted leaf (clientserver.c:1637)");
+        panic!("upstream starts and replaces the planted leaf (clientserver.c:1672)");
     };
     let leaf = fs::symlink_metadata(&pid_path).expect("pid file");
     let recorded = fs::read_to_string(&pid_path).unwrap_or_default();

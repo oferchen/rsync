@@ -16,7 +16,7 @@ impl ClientConfig {
     /// Reports whether `-C` / `--cvs-exclude` was requested.
     ///
     /// Forwarded to the remote peer as the compact `C` letter so it runs
-    /// `get_cvs_excludes()` itself, mirroring upstream `options.c:2885-2886`.
+    /// `get_cvs_excludes()` itself, mirroring upstream `options.c:2950-2951`.
     #[must_use]
     #[doc(alias = "--cvs-exclude")]
     #[doc(alias = "-C")]
@@ -35,7 +35,7 @@ impl ClientConfig {
     ///
     /// Each entry is a normalized `name{level}` token (e.g. `name2`, `del1`).
     /// The remote-invocation builders forward these to the peer as `--info=`,
-    /// mirroring upstream `make_output_option()` (`options.c:360`).
+    /// mirroring upstream `make_output_option()` (`options.c:361`).
     #[must_use]
     #[doc(alias = "--info")]
     pub fn info_flags(&self) -> &[OsString] {

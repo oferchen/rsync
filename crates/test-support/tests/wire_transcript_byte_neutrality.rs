@@ -19,7 +19,7 @@
 //!    push, where the flag is inert.
 //!
 //! The captures are the raw byte streams of both directions, multiplex
-//! framing included (upstream: io.c:776 perform_io() and io.c:1173
+//! framing included (upstream: io.c:776 perform_io() and io.c:1180
 //! send_msg() write the 4-byte frame headers into the same stream), taken by
 //! the `capture-rsh` trampoline.
 

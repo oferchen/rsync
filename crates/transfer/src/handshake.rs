@@ -5,8 +5,8 @@
 //! their supported protocol versions and negotiate a common version to use.
 //!
 //! For server mode (invoked via `--server`), the sequence is:
-//! 1. Write our maximum protocol version to stdout (upstream: compat.c:606)
-//! 2. Read the remote's protocol version from stdin (upstream: compat.c:607)
+//! 1. Write our maximum protocol version to stdout (upstream: compat.c:607)
+//! 2. Read the remote's protocol version from stdin (upstream: compat.c:608)
 //! 3. Negotiate to the highest mutually supported version
 //! 4. Proceed with the negotiated protocol version
 //!
@@ -23,7 +23,7 @@ use protocol::{
 
 /// The half of the protocol-version exchange that failed.
 ///
-/// upstream: compat.c:606-607 setup_protocol() - `write_int(f_out,
+/// upstream: compat.c:607-608 setup_protocol() - `write_int(f_out,
 /// protocol_version)` then `remote_protocol = read_int(f_in)`. Buffered I/O
 /// has not started, so both go through io.c safe_write()/safe_read(), whose
 /// diagnostics name the step and the 4-byte length.
@@ -83,7 +83,7 @@ impl VersionExchangeError {
 ///
 /// Upstream `io.c:set_io_timeout` updates the global `io_timeout` so the select
 /// loop's stall detection changes immediately after the client adopts a
-/// daemon-advertised timeout (upstream: `io.c:1750-1767` `read_a_msg()` case
+/// daemon-advertised timeout (upstream: `io.c:1757-1774` `read_a_msg()` case
 /// `MSG_IO_TIMEOUT`). The oc client has no global; instead the daemon-pull path
 /// installs this hook, which re-applies the adopted value to the socket's read
 /// and write timeouts. Only the client receiver of a daemon transfer installs
@@ -105,7 +105,7 @@ impl std::fmt::Debug for IoTimeoutReapply {
 impl IoTimeoutReapply {
     /// Re-applies `secs` as the live socket's read and write I/O timeout.
     ///
-    /// upstream: `io.c:1284` `set_io_timeout()`.
+    /// upstream: `io.c:1291` `set_io_timeout()`.
     pub fn apply(&self, secs: u32) -> io::Result<()> {
         (self.0)(secs)
     }
@@ -160,7 +160,7 @@ pub fn perform_handshake(
 /// Performs the server-side version handshake, reconciling a pre-release peer's
 /// subprotocol before advertising our protocol version.
 ///
-/// upstream: compat.c:602-604 `setup_protocol()` - on the server side of a
+/// upstream: compat.c:603-605 `setup_protocol()` - on the server side of a
 /// non-local (remote-shell) transfer the server runs `check_sub_protocol()`
 /// (compat.c:133-160) against the client's advertised `VER.SUB` BEFORE it writes
 /// its own protocol version. The client's `VER.SUB` rides its `-e` capability
@@ -189,12 +189,12 @@ pub fn perform_server_handshake(
     protocol_version: i32,
 ) -> io::Result<HandshakeResult> {
     let advertised = reconcile_subprotocol(protocol_version, client_flags);
-    // upstream: compat.c:606 - write_int(f_out, protocol_version).
+    // upstream: compat.c:607 - write_int(f_out, protocol_version).
     stdout.write_all(&advertised.to_le_bytes())?;
     stdout.flush()?;
 
     let remote_version = read_client_version(stdin)?;
-    // upstream: compat.c:608-609 - protocol_version = MIN(protocol_version,
+    // upstream: compat.c:609-610 - protocol_version = MIN(protocol_version,
     // remote_protocol). compat.c:636's `> PROTOCOL_VERSION` refusal cannot fire
     // here: read_client_version already clamps the peer to NEWEST.
     let negotiated = advertised.min(i32::from(remote_version.as_u8()));
@@ -231,14 +231,14 @@ pub fn perform_server_handshake(
 
 /// Lowest protocol version upstream accepts after negotiation.
 ///
-/// upstream: rsync.h:147 `MIN_PROTOCOL_VERSION 20`.
+/// upstream: rsync.h:148 `MIN_PROTOCOL_VERSION 20`.
 const MIN_PROTOCOL_VERSION: i32 = 20;
 
-/// Applies upstream `check_sub_protocol()` (compat.c:133-160) to derive the
+/// Applies upstream `check_sub_protocol()` (compat.c:134-161) to derive the
 /// protocol version the server advertises after reconciling the peer's
 /// pre-release `VER.SUB`.
 ///
-/// upstream: compat.c:603-604 - the reconciliation runs against `protocol_version`
+/// upstream: compat.c:604-605 - the reconciliation runs against `protocol_version`
 /// and lowers it by one step when the peer is a pre-release whose subprotocol is
 /// incompatible with ours. A stock release peer parses to `(0, 0)` and leaves the
 /// version unchanged, so the write remains wire-identical to [`perform_handshake`].
@@ -249,7 +249,7 @@ fn reconcile_subprotocol(protocol_version: i32, client_flags: &str) -> i32 {
         return protocol_version;
     };
     let (their_protocol, their_sub) = crate::setup::parse_peer_subprotocol(client_flags);
-    // upstream: compat.c:137 `get_subprotocol_version()` - a release oc build
+    // upstream: compat.c:138 `get_subprotocol_version()` - a release oc build
     // (SUBPROTOCOL_VERSION == 0) always advertises subprotocol 0.
     let our_sub = get_subprotocol_version(ours);
     let reconciled = check_sub_protocol(ours, our_sub, their_protocol, their_sub);
@@ -277,7 +277,7 @@ pub fn perform_handshake_with_max(
     stdout: &mut dyn Write,
     max_version: ProtocolVersion,
 ) -> io::Result<HandshakeResult> {
-    // upstream: compat.c:606-607 - write our max version first, then read.
+    // upstream: compat.c:607-608 - write our max version first, then read.
     // Both sides do this simultaneously; reversing the order deadlocks when
     // both ends are oc-rsync (each waits for the other to write first).
     write_server_version(stdout, max_version)
@@ -286,7 +286,7 @@ pub fn perform_handshake_with_max(
 
     let remote_version = read_client_version(stdin)?;
 
-    // upstream: compat.c:621-626 setup_protocol - a remote protocol version
+    // upstream: compat.c:622-627 setup_protocol - a remote protocol version
     // outside [MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION] calls
     // exit_cleanup(RERR_PROTOCOL) (exit 2), not RERR_STREAMIO (12). Tag the
     // negotiation failure so the exit-code mapper reports RERR_PROTOCOL.
@@ -296,7 +296,7 @@ pub fn perform_handshake_with_max(
             remote_version.as_u8()
         ))
     })?;
-    // upstream: compat.c:608-609 - protocol_version = MIN(protocol_version,
+    // upstream: compat.c:609-610 - protocol_version = MIN(protocol_version,
     // remote_protocol). Clamp the mutually-supported version to our advertised
     // ceiling so `--protocol=N` caps the negotiated version.
     let negotiated = negotiated.min(max_version);
@@ -323,7 +323,7 @@ fn read_client_version(stdin: &mut dyn Read) -> io::Result<ProtocolVersion> {
     // upstream: io.c read_int() - the version advertisement is a 4-byte
     // little-endian int, not a version byte plus padding.
     let raw_version = u32::from_le_bytes(buf);
-    // upstream: compat.c:621-625 setup_protocol - an out-of-range remote
+    // upstream: compat.c:622-626 setup_protocol - an out-of-range remote
     // protocol version is a protocol incompatibility (RERR_PROTOCOL, exit 2),
     // distinct from a truncated stream (RERR_STREAMIO, exit 12). The
     // read_exact above keeps its stream-error mapping; only the version-value
@@ -334,7 +334,7 @@ fn read_client_version(stdin: &mut dyn Read) -> io::Result<ProtocolVersion> {
         ));
     }
 
-    // upstream: compat.c:608-610 setup_protocol - `if (protocol_version >
+    // upstream: compat.c:609-611 setup_protocol - `if (protocol_version >
     // remote_protocol) protocol_version = remote_protocol;`. A NEWER peer is
     // never refused: ours stands, so a remote version above NEWEST but within
     // MAX_PROTOCOL_VERSION (40, rsync.h:149) clamps to NEWEST. Only a version
@@ -401,12 +401,12 @@ pub fn perform_legacy_handshake(
             )
         })?;
 
-    // upstream: clientserver.c:242-255 exchange_protocols() - a NEWER peer is
+    // upstream: clientserver.c:246-259 exchange_protocols() - a NEWER peer is
     // not refused; `protocol_version` stays at ours (release builds have
     // SUBPROTOCOL_VERSION == 0), so an advertisement above NEWEST but within
     // MAX_PROTOCOL_VERSION (40, rsync.h:149) clamps to NEWEST. An out-of-range
     // peer protocol version is RERR_PROTOCOL (exit 2), not RERR_STREAMIO (12)
-    // (upstream: compat.c:621-625 setup_protocol).
+    // (upstream: compat.c:622-626 setup_protocol).
     let client_version = ProtocolVersion::from_peer_advertisement(version_number)
         .map_err(|e| protocol::protocol_violation(format!("unsupported protocol version: {e}")))?;
 
@@ -509,7 +509,7 @@ mod tests {
         // Remote advertises 32; we cap to 29 via --protocol=29. The negotiated
         // version must clamp to 29 and we must advertise 29 on the wire so the
         // peer's own MIN(remote, ours) converges to 29 too.
-        // upstream: compat.c:606-609
+        // upstream: compat.c:607-610
         let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
         let mut stdout = Vec::new();
 
@@ -564,7 +564,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // WHY: forward compatibility. upstream: compat.c:608-610 setup_protocol -
+    // WHY: forward compatibility. upstream: compat.c:609-611 setup_protocol -
     // `if (protocol_version > remote_protocol) protocol_version =
     // remote_protocol;` never refuses a NEWER peer; ours stands. A peer
     // advertising 33 (rsync 3.5.1) or the hypothetical 40 (MAX_PROTOCOL_VERSION,
@@ -582,7 +582,7 @@ mod tests {
         }
     }
 
-    // WHY: the clamp must not widen the sanity window. upstream: compat.c:621-625
+    // WHY: the clamp must not widen the sanity window. upstream: compat.c:622-626
     // setup_protocol refuses remote_protocol > MAX_PROTOCOL_VERSION (40) with the
     // shell-clean diagnostic and RERR_PROTOCOL (2).
     #[test]
@@ -617,7 +617,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // upstream: compat.c:603-604 + compat.c:156-159 - the non-local server runs
+    // upstream: compat.c:604-605 + compat.c:157-160 - the non-local server runs
     // check_sub_protocol() before writing its version. A pre-release peer of the
     // SAME protocol whose subprotocol differs from ours forces the one-step
     // downgrade so both sides drop to the last mutually compatible protocol.
@@ -641,7 +641,7 @@ mod tests {
         );
     }
 
-    // upstream: compat.c:150-154 - a pre-release of an OLDER protocol pins the
+    // upstream: compat.c:151-155 - a pre-release of an OLDER protocol pins the
     // negotiated version to the last release of that older protocol.
     #[test]
     fn server_handshake_downgrades_against_older_prerelease_peer() {
@@ -657,7 +657,7 @@ mod tests {
         assert_eq!(stdout[0], 29, "pins to their_protocol - 1");
     }
 
-    // upstream: compat.c:139-148 - a stock release peer advertises `-e.<caps>`
+    // upstream: compat.c:140-149 - a stock release peer advertises `-e.<caps>`
     // whose leading '.' makes `atoi` return 0, so check_sub_protocol is a no-op.
     // This is the wire-transparency guarantee: current behaviour is unchanged for
     // every real release peer.
@@ -688,7 +688,7 @@ mod tests {
         assert_eq!(stdout[0], ProtocolVersion::NEWEST.as_u8());
     }
 
-    // upstream: compat.c:603-604 - check_sub_protocol runs ONLY on the server
+    // upstream: compat.c:604-605 - check_sub_protocol runs ONLY on the server
     // (am_server && !local_server). The client-side handshake has no client_info
     // channel, so a plain `perform_handshake` never reconciles: even when the
     // peer would be a pre-release, the client leaves the version untouched.
@@ -704,7 +704,7 @@ mod tests {
     }
 
     // Pins the reconciliation mapping directly, independent of the I/O exchange.
-    // upstream: compat.c:133-160 check_sub_protocol() driven from a release side.
+    // upstream: compat.c:134-161 check_sub_protocol() driven from a release side.
     #[test]
     fn reconcile_subprotocol_matches_check_sub_protocol() {
         // Release peer / no VER.SUB -> unchanged.
@@ -716,7 +716,7 @@ mod tests {
         assert_eq!(reconcile_subprotocol(NEWEST, "-e31.2LsfxCIvu"), 30);
     }
 
-    // upstream: options.c:860 + compat.c:606-609 - `--protocol=N` on the server
+    // upstream: options.c:863 + compat.c:607-610 - `--protocol=N` on the server
     // argv lowers the version the server ADVERTISES, not just the one it
     // settles on, so an upstream client logs `remote=N` and negotiates N.
     #[test]
@@ -731,7 +731,7 @@ mod tests {
         assert_eq!(stdout, 29i32.to_le_bytes());
     }
 
-    // upstream: compat.c:608-609 - a requested version above the peer's is
+    // upstream: compat.c:609-610 - a requested version above the peer's is
     // clamped by the MIN with remote_protocol and is not an error; the raw
     // request still goes on the wire verbatim (write_int).
     #[test]
@@ -746,7 +746,7 @@ mod tests {
         assert_eq!(stdout, 40i32.to_le_bytes());
     }
 
-    // upstream: compat.c:631-634 - the floor is checked after the version was
+    // upstream: compat.c:632-635 - the floor is checked after the version was
     // written, so the peer sees the request before the refusal.
     #[test]
     fn server_handshake_refuses_request_below_minimum() {
@@ -819,7 +819,7 @@ mod tests {
         }
     }
 
-    // WHY: the sanity window survives the clamp. upstream: compat.c:621-625 -
+    // WHY: the sanity window survives the clamp. upstream: compat.c:622-626 -
     // a peer beyond MAX_PROTOCOL_VERSION (40) is a garbage exchange and keeps
     // the shell-clean refusal with RERR_PROTOCOL (2).
     #[test]
@@ -861,7 +861,7 @@ mod tests {
         );
     }
 
-    // WHY: upstream compat.c:621-626 exits RERR_PROTOCOL (2) for a peer protocol
+    // WHY: upstream compat.c:622-627 exits RERR_PROTOCOL (2) for a peer protocol
     // version outside [MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION]. A drop-in
     // tool or wrapper script keys on that exit code to distinguish a protocol
     // mismatch (2) from a corrupt/truncated data stream (12), so the binary

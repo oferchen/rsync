@@ -96,7 +96,7 @@ mod runtime_options_tests {
 
     #[test]
     fn parse_port_zero_coerces_to_well_known_rsync_port() {
-        // upstream: clientserver.c:1784-1785 -
+        // upstream: clientserver.c:1849-1850 -
         //   `if (rsync_port == 0 && (rsync_port = lp_rsync_port()) == 0)
         //        rsync_port = RSYNC_PORT;`
         // A resolved port of 0 (from `--port 0`) falls back to the well-known
@@ -482,7 +482,7 @@ mod runtime_options_tests {
 
     /// `--log-file` outranks the config global, in either argument order.
     ///
-    /// upstream: log.c:216-217 - `if (am_daemon && !logfile_name) logfile_name =
+    /// upstream: log.c:223-224 - `if (am_daemon && !logfile_name) logfile_name =
     /// lp_log_file(module_id)`. The command line fills `logfile_name` first and
     /// the config value only fills a still-empty slot, so order cannot matter.
     #[test]
@@ -1071,7 +1071,7 @@ mod runtime_options_tests {
         RuntimeOptions::parse(&args).expect("parse")
     }
 
-    /// upstream: options.c:885 accepts `--log-file-format` on the daemon
+    /// upstream: options.c:890 accepts `--log-file-format` on the daemon
     /// command line and stores it in the `logfile_format` global. Both the
     /// `=VALUE` and the separate-argument spellings must reach it.
     #[test]
@@ -1090,7 +1090,7 @@ mod runtime_options_tests {
         }
     }
 
-    /// upstream: clientserver.c:823 only falls back to the module's `log
+    /// upstream: clientserver.c:827 only falls back to the module's `log
     /// format` when `logfile_format` is still NULL, so the command-line value
     /// wins over the module's own format and logs even when the module leaves
     /// `transfer logging` off. rsyncd.conf(5): the option "also enables
@@ -1184,7 +1184,7 @@ mod runtime_options_tests {
 
     #[test]
     fn dparam_sets_daemon_values_of_a_config_without_modules() {
-        // upstream: clientserver.c:1762-1766 daemon_main() applies the
+        // upstream: clientserver.c:1826-1830 daemon_main() applies the
         // overrides after reading the global section.
         let options = parse_with_config("pid file = /run/a.pid\n", |path| {
             vec![
@@ -1199,7 +1199,7 @@ mod runtime_options_tests {
 
     #[test]
     fn dparam_without_equals_is_refused() {
-        // upstream: options.c:1560-1564 and :1594-1596.
+        // upstream: options.c:1578-1582 and :1594-1596.
         let error = RuntimeOptions::parse(&[OsString::from("--dparam=noequals")])
             .expect_err("missing '=' must fail");
         let text = error.to_string();
@@ -1216,7 +1216,7 @@ mod runtime_options_tests {
 
     #[test]
     fn dparam_with_an_unknown_name_is_refused() {
-        // upstream: options.c:1583-1584 set_dparams(1) - `Unknown parameter`.
+        // upstream: options.c:1610-1611 set_dparams(1) - `Unknown parameter`.
         let error = RuntimeOptions::parse(&[OsString::from("--dparam=no such thing=1")])
             .expect_err("unknown name must fail");
         assert!(
@@ -1256,7 +1256,7 @@ mod runtime_options_tests {
 
     #[test]
     fn listener_settings_come_from_the_globals_before_the_first_module() {
-        // upstream: clientserver.c:1762 load_config(1) stops at the first
+        // upstream: clientserver.c:1826 load_config(1) stops at the first
         // module header, so a later [global] block changes neither the port
         // nor the pid file the listening daemon uses.
         let dir = TempDir::new().expect("tempdir");

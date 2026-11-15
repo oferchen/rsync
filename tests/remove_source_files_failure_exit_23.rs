@@ -247,7 +247,7 @@ fn faults(topology: &str, attempt: &Attempt) -> Vec<String> {
     }
     if !attempt.stderr.contains("sender failed to remove") {
         faults.push(format!(
-            "{topology}: upstream's sender.c:456-460 text never reached the \
+            "{topology}: upstream's sender.c:464-468 text never reached the \
              observing process; on a pull that means it did not cross the wire \
              as MSG_ERROR_XFER while the client was still reading"
         ));

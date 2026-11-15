@@ -40,10 +40,10 @@ mod protect_args_daemon_tests {
         }
     }
 
-    // upstream: clientserver.c:439-446 - phase 1 wire emits sargs[0..NULL].
+    // upstream: clientserver.c:443-450 - phase 1 wire emits sargs[0..NULL].
     // Upstream's phase 1 NEVER contains a standalone `.` (which only enters
     // sargs after server_options() returns, AFTER the NULL marker at
-    // options.c:2920-2921). Upstream's phase 1 also never contains a bare `-s`:
+    // options.c:2985-2986). Upstream's phase 1 also never contains a bare `-s`:
     // the `s` is embedded in the compact flag string `argstr` at
     // options.c:2795-2796. We mirror that shape by emitting only the role
     // markers + `--secluded-args` (the long-form alias of `-s` per
@@ -76,7 +76,7 @@ mod protect_args_daemon_tests {
         assert!(!args.iter().any(|a| a == "-s"));
     }
 
-    // upstream: options.c:2196-2201 - `need_unsorted_flist = 1` fires only
+    // upstream: options.c:2232-2237 - `need_unsorted_flist = 1` fires only
     // while `protect_args != 2`, i.e. during phase 1's parse
     // (`clientserver.c:1160-1163` forces `protect_args = 2` only after phase
     // 1 returns). `--iconv` must therefore travel in phase 1, alongside
@@ -185,7 +185,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_capability_flags_protocol30() {
-        // upstream: options.c:2904 - capability string is embedded in the
+        // upstream: options.c:2969 - capability string is embedded in the
         // compact flag string for protocol >= 30.
         let config = ClientConfig::default();
         let request = test_daemon_request();
@@ -252,7 +252,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_push_omits_inc_recurse_without_recursion() {
-        // upstream: compat.c:172 set_allow_inc_recurse() clears
+        // upstream: compat.c:173 set_allow_inc_recurse() clears
         // allow_inc_recurse when `!recurse || use_qsort`, and options.c:3220-3221
         // only emits 'i' when it survives. Verified against rsync 3.4.4 (3.5.1
         // keeps the same rule): a non-recursive push sends `-e.LsfxCIvu` and `-r --qsort` sends
@@ -304,7 +304,7 @@ mod protect_args_daemon_tests {
         );
     }
 
-    // upstream: options.c:2817-2836 - `if (am_sender) { ... } else { if
+    // upstream: options.c:2882-2901 - `if (am_sender) { ... } else { if
     // (copy_links) 'L'; if (copy_dirlinks) 'k'; }`. On a PULL the daemon is the
     // sender (is_sender=true, we_are_sender=false), so L/k ride the wire to it -
     // copy_links/copy_dirlinks dereference symlinks on the SENDER. A builder that
@@ -333,7 +333,7 @@ mod protect_args_daemon_tests {
         );
     }
 
-    // upstream: options.c:2817-2830 - on a PUSH the local client is the sender
+    // upstream: options.c:2882-2895 - on a PUSH the local client is the sender
     // (is_sender=false, we_are_sender=true), so server_options() takes the
     // `am_sender` branch and never packs L/k. The local sender dereferences
     // symlinks itself; the remote receiver must not receive copy-links.
@@ -359,7 +359,7 @@ mod protect_args_daemon_tests {
         );
     }
 
-    // upstream: options.c:2801-2802 - `for (i = 0; i < verbose && i < 9; i++)
+    // upstream: options.c:2866-2867 - `for (i = 0; i < verbose && i < 9; i++)
     // argstr[x++] = 'v';`. The daemon wire must carry one 'v' per verbosity
     // level so the remote half emits matching verbose diagnostics. The `e.`
     // capability suffix also contains a 'v', so the count is checked against
@@ -423,7 +423,7 @@ mod protect_args_daemon_tests {
         );
     }
 
-    // upstream: options.c:3044-3045 - --delete-missing-args is always
+    // upstream: options.c:3109-3110 - --delete-missing-args is always
     // forwarded to the daemon because deleting a missing arg needs both
     // sides to cooperate: the sender emits the mode-0 sentinel and the
     // receiver must have missing_args==2 to accept it (flist.c:1197-1200) and
@@ -460,7 +460,7 @@ mod protect_args_daemon_tests {
         );
     }
 
-    // upstream: options.c:3046-3047 - --ignore-missing-args is forwarded
+    // upstream: options.c:3111-3112 - --ignore-missing-args is forwarded
     // only when the local side is the receiver (`!am_sender`); a sender can
     // honour ignore by itself and never tells the receiver. Here
     // is_sender=true means the daemon is the sender, so the local side is
@@ -488,7 +488,7 @@ mod protect_args_daemon_tests {
     }
 
     // Mutual exclusivity: with both flags set the builder emits only the
-    // delete form (upstream options.c:3044-3047's `if/else if` gives
+    // delete form (upstream options.c:3109-3112's `if/else if` gives
     // --delete-missing-args precedence, matching options.c:2362-2363 where
     // missing_args==3 is simplified to 2).
     #[test]
@@ -508,7 +508,7 @@ mod protect_args_daemon_tests {
         );
     }
 
-    // upstream: options.c:3028-3029 - `if (am_root > 1) --super`, inside the
+    // upstream: options.c:3093-3094 - `if (am_root > 1) --super`, inside the
     // am_sender block. On a daemon push the client is the sender, so --super is
     // forwarded to the remote receiver which performs the privileged operations.
     // Shared with the SSH builder via flags::sender_super_stats_args.
@@ -539,7 +539,7 @@ mod protect_args_daemon_tests {
         assert!(!args.iter().any(|a| a == "--super"));
     }
 
-    // upstream: options.c:3032-3033 - `if (do_stats) --stats`, inside the
+    // upstream: options.c:3097-3098 - `if (do_stats) --stats`, inside the
     // am_sender block. Forwarded only on a daemon push, where the remote
     // receiver/generator computes the transfer statistics.
     #[test]
@@ -643,7 +643,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_omits_reference_dirs_in_pull_mode() {
-        // upstream: options.c:3114-3123 - reference dirs are inside if(am_sender).
+        // upstream: options.c:3182-3191 - reference dirs are inside if(am_sender).
         let config = ClientConfig::builder()
             .compare_destination("/tmp/compare")
             .link_destination("/prev")
@@ -662,7 +662,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_includes_log_format_for_itemize_push() {
-        // upstream: options.c:2504-2508,2948-2951 - `-i` alone installs the
+        // upstream: options.c:2559-2563,2948-2951 - `-i` alone installs the
         // default "%i %n%L" format, so `stdout_format_has_i` is set and the
         // server arg is --log-format=%i on a push. The CLI models this by
         // setting `out_format_forwards_i`.
@@ -683,7 +683,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_omits_log_format_for_itemize_pull() {
-        // upstream: options.c:2946 - --log-format only sent when am_sender.
+        // upstream: options.c:3011 - --log-format only sent when am_sender.
         // In pull mode (daemon is sender), client handles itemize locally.
         let config = ClientConfig::builder()
             .itemize_changes(true)
@@ -702,7 +702,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_uses_ii_log_format_for_itemize_unchanged_push() {
-        // upstream: options.c:2948-2949 server_options() - `-ii`
+        // upstream: options.c:3013-3014 server_options() - `-ii`
         // (stdout_format_has_i > 1) forwards `--log-format=%i%I` so the daemon
         // receiver also itemizes unchanged entries. `-i` alone forwards `%i`.
         let config = ClientConfig::builder()
@@ -739,7 +739,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_forwards_log_format_o_for_operation_push() {
-        // upstream: options.c:2952-2953 - an out-format with `%o` (no `%i`)
+        // upstream: options.c:3017-3018 - an out-format with `%o` (no `%i`)
         // forwards `--log-format=%o` on a push so the daemon emits operation
         // output.
         let config = ClientConfig::builder()
@@ -757,7 +757,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_omits_log_format_o_on_pull() {
-        // upstream: options.c:2946 - the chain is gated on `am_sender`; a pull
+        // upstream: options.c:3011 - the chain is gated on `am_sender`; a pull
         // (daemon is sender) never forwards a --log-format arg.
         let config = ClientConfig::builder()
             .out_format_has_operation(true)
@@ -774,7 +774,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_out_format_without_i_forwards_o_not_i_with_dash_i() {
-        // upstream: options.c:2496-2508 - `stdout_format_has_i` is derived from
+        // upstream: options.c:2551-2563 - `stdout_format_has_i` is derived from
         // the resolved out-format string, not the `-i` flag. `--out-format="%o"
         // -i` keeps the explicit "%o" format (no `%i`), so has_i stays 0 and the
         // server arg must be `--log-format=%o`, NOT `%i`. The CLI models this by
@@ -800,7 +800,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_explicit_out_format_with_i_forwards_log_format_i() {
-        // upstream: options.c:2496-2500 - an explicit `--out-format="%i"` sets
+        // upstream: options.c:2551-2555 - an explicit `--out-format="%i"` sets
         // `stdout_format_has_i` even without `-i`, so the server arg is
         // --log-format=%i. The CLI models this via `out_format_forwards_i`.
         let config = ClientConfig::builder().out_format_forwards_i(true).build();
@@ -816,7 +816,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_forwards_log_format_placeholder_when_not_verbose() {
-        // upstream: options.c:2954-2955 - an out-format with neither `%i` nor
+        // upstream: options.c:3019-3020 - an out-format with neither `%i` nor
         // `%o` forwards the placeholder `--log-format=X` for a non-verbose push.
         let config = ClientConfig::builder().out_format_placeholder(true).build();
         let request = test_daemon_request();
@@ -831,7 +831,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_omits_log_format_placeholder_when_verbose() {
-        // upstream: options.c:2954 - the `X` placeholder only forwards when the
+        // upstream: options.c:3019 - the `X` placeholder only forwards when the
         // client is not verbose.
         let config = ClientConfig::builder()
             .out_format_placeholder(true)
@@ -849,7 +849,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_forwards_deprecated_remove_sent_files() {
-        // upstream: options.c:3163-3166 - the deprecated `--remove-sent-files`
+        // upstream: options.c:3231-3234 - the deprecated `--remove-sent-files`
         // spelling is forwarded verbatim; the canonical form must not appear.
         let config = ClientConfig::builder()
             .remove_source_files(true)
@@ -871,7 +871,7 @@ mod protect_args_daemon_tests {
 
     #[test]
     fn build_full_args_forwards_canonical_remove_source_files() {
-        // upstream: options.c:3163-3164 - the canonical spelling is forwarded
+        // upstream: options.c:3231-3232 - the canonical spelling is forwarded
         // when the user did not type the deprecated alias.
         let config = ClientConfig::builder().remove_source_files(true).build();
         let request = test_daemon_request();
@@ -891,7 +891,7 @@ mod protect_args_daemon_tests {
     #[cfg(unix)]
     #[test]
     fn build_full_args_forwards_groupmap_wildcard_verbatim() {
-        // upstream: options.c:3096-3097 - --groupmap value is shipped verbatim
+        // upstream: options.c:3164-3165 - --groupmap value is shipped verbatim
         // through the daemon secluded-args byte stream. Wildcards like `*`
         // must survive so the receiver's `uidlist.c:parse_name_map()` sees
         // `strpbrk(cp, "*[?")` and installs a `NFLAGS_WILD_NAME_MATCH` rule.
@@ -999,7 +999,7 @@ mod protect_args_daemon_tests {
 
     // UTS-15.b: the client-side daemon argv builder must never emit
     // `--write-batch` / `--read-batch` / `--only-write-batch`. They are
-    // client-local flags (upstream `options.c:810-812`) that drive batch-
+    // client-local flags (upstream `options.c:813-815`) that drive batch-
     // file tee or replay on the client; routing them to the daemon caused
     // a silent connection close at protocol byte ~2241725 because the
     // daemon rejects them in daemon mode.
@@ -1213,7 +1213,7 @@ mod server_config_reference_dirs {
     }
 
     /// On a daemon pull the local client IS the receiver and applies
-    /// --ignore-existing itself (upstream generator.c:1784 skips existing dest
+    /// --ignore-existing itself (upstream generator.c:1821 skips existing dest
     /// files). options.c:3099-3100 forwards the flag to the remote only when
     /// am_sender, so on a pull it never rides the wire and must be carried onto
     /// the receiver config. Regression guard for the daemon pull that overwrote
@@ -1247,7 +1247,7 @@ mod server_config_reference_dirs {
 
     /// On a daemon (rsync://) pull the local client IS the receiver and applies
     /// `--chmod` itself. `--chmod` is never forwarded to the remote daemon
-    /// (upstream options.c:1873 parses it into `chmod_modes`, absent from
+    /// (upstream options.c:1909 parses it into `chmod_modes`, absent from
     /// server_options), so the receiver applies it as it reads each flist entry
     /// (flist.c:1222). The receiver config must carry the parsed modifiers,
     /// distinct from the module `incoming chmod` the far side applies.
@@ -1283,7 +1283,7 @@ mod server_config_reference_dirs {
     }
 
     /// On a daemon pull the local client IS the receiver and applies --usermap
-    /// itself as it reads the incoming id list. Upstream options.c:3092-3094
+    /// itself as it reads the incoming id list. Upstream options.c:3160-3162
     /// forwards --usermap to the remote only when am_sender, so on a pull it
     /// never rides the wire and must be carried onto the receiver config.
     /// Regression guard for the daemon pull that ignored --usermap.
@@ -1304,7 +1304,7 @@ mod server_config_reference_dirs {
         assert_eq!(server_config.user_mapping.as_ref(), Some(&mapping));
     }
 
-    /// The gid counterpart of --usermap (upstream options.c:3096-3097).
+    /// The gid counterpart of --usermap (upstream options.c:3164-3165).
     #[cfg(unix)]
     #[test]
     fn receiver_config_propagates_groupmap() {
@@ -1355,7 +1355,7 @@ mod server_config_reference_dirs {
     }
 
     /// On a daemon pull the local client IS the receiver and follows a
-    /// symlink-to-dir at the destination under -K. Upstream options.c:2817-2819
+    /// symlink-to-dir at the destination under -K. Upstream options.c:2882-2884
     /// packs the compact 'K' only when am_sender, so on a pull it must be carried
     /// onto the receiver config.
     #[test]
@@ -1372,7 +1372,7 @@ mod server_config_reference_dirs {
     }
 
     /// On a daemon pull the local client IS the receiver and picks a fuzzy basis
-    /// under -y/--fuzzy. Upstream options.c:2826-2830 packs the compact 'y' only
+    /// under -y/--fuzzy. Upstream options.c:2891-2895 packs the compact 'y' only
     /// when am_sender, so on a pull the fuzzy level must be carried onto the
     /// receiver config.
     #[test]
@@ -1461,7 +1461,7 @@ mod server_config_reference_dirs {
     }
 
     /// On a daemon (rsync://) pull the local client IS the receiver and applies
-    /// --omit-link-times itself (upstream rsync.c:720). options.c:2824-2825
+    /// --omit-link-times itself (upstream rsync.c:720). options.c:2889-2890
     /// packs the compact 'J' only when am_sender, so on a pull it must be
     /// carried onto the receiver config.
     #[test]
@@ -1492,7 +1492,7 @@ mod server_config_reference_dirs {
     }
 
     /// On a daemon (rsync://) pull the local client IS the receiver and applies
-    /// -E itself (upstream rsync.c:472 dest_mode()). options.c:2868-2869 packs the
+    /// -E itself (upstream rsync.c:472 dest_mode()). options.c:2933-2934 packs the
     /// compact 'E' only when am_sender, so on a pull it must be carried onto the
     /// receiver config.
     #[test]
@@ -1524,7 +1524,7 @@ mod server_config_reference_dirs {
 
     /// On a daemon (rsync://) pull the local client IS the receiver and creates
     /// the dest-arg path chain itself. `--mkpath` is never forwarded to the
-    /// remote daemon (upstream options.c:3177-3178 gates it on am_sender), so the
+    /// remote daemon (upstream options.c:3245-3246 gates it on am_sender), so the
     /// receiver config must carry it (main.c:759 make_path). Regression guard for
     /// the rsync:// pull that failed with "failed to create destination root ...
     /// No such file or directory" against a missing deep destination.
@@ -1626,7 +1626,7 @@ mod server_config_reference_dirs {
 
     #[test]
     fn generator_config_sets_files_from_for_local_file_push() {
-        // upstream: options.c:3143 - when the client is the sender and
+        // upstream: options.c:3211 - when the client is the sender and
         // --files-from points to a local file, the generator reads filenames
         // directly from the file (not via the protocol stream).
         let config = ClientConfig::builder()
@@ -1671,7 +1671,7 @@ mod server_config_reference_dirs {
 
     #[test]
     fn generator_config_propagates_itemize_flag() {
-        // upstream: options.c:2946-2956 - the local ServerConfig must have
+        // upstream: options.c:3011-3021 - the local ServerConfig must have
         // info_flags.itemize set so the generator's maybe_emit_itemize()
         // produces client-side output via the callback.
         let config = ClientConfig::builder().itemize_changes(true).build();
@@ -1790,7 +1790,7 @@ mod files_from_daemon_args_tests {
 
     #[test]
     fn push_with_local_file_omits_files_from_arg() {
-        // upstream: options.c:3143 - when client is sender and files_from
+        // upstream: options.c:3211 - when client is sender and files_from
         // is local, the arg is NOT sent to the daemon.
         let config = ClientConfig::builder()
             .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))
@@ -1828,7 +1828,7 @@ mod files_from_daemon_args_tests {
 
     #[test]
     fn pull_with_local_file_sends_files_from_stdin() {
-        // upstream: options.c:3143-3152 - when client is receiver (pull), local
+        // upstream: options.c:3211-3220 - when client is receiver (pull), local
         // files are forwarded as --files-from=- with --from0.
         let config = ClientConfig::builder()
             .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))
@@ -2331,7 +2331,7 @@ mod raw_byte_local_paths {
 
 /// A pulling client whose options need the whole file list up front must
 /// refuse a server-set CF_INC_RECURSE instead of receiving an inc-recursive
-/// stream it would mis-process (upstream compat.c:174-176, 780-785). Drives the
+/// stream it would mis-process (upstream compat.c:175-177, 780-785). Drives the
 /// real client receiver-config builder so the option plumbing is under test,
 /// not just the predicate.
 mod inc_recurse_incompatible_options {

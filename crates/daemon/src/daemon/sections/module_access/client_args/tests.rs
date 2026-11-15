@@ -12,7 +12,7 @@ mod daemon_chmod_spec_tests {
 
     #[test]
     fn a_bad_spec_for_the_other_direction_is_never_parsed() {
-        // upstream: clientserver.c:1294-1297 reads only the directive for the
+        // upstream: clientserver.c:1303-1306 reads only the directive for the
         // session's direction, so a bad `incoming chmod` cannot break a pull.
         let module = chmod_module(Some("bogus"), Some("F600"));
         let parsed = daemon_chmod_for_session(&module, true).expect("outgoing parses");
@@ -21,7 +21,7 @@ mod daemon_chmod_spec_tests {
 
     #[test]
     fn a_bad_spec_for_this_direction_is_reported_with_upstreams_log_text() {
-        // upstream: clientserver.c:1298-1301 logs the spec and still calls
+        // upstream: clientserver.c:1307-1310 logs the spec and still calls
         // start_server(); the caller serves the session without a chmod.
         let module = chmod_module(Some("bogus"), None);
         let text = daemon_chmod_for_session(&module, false).expect_err("bad incoming spec");
@@ -160,7 +160,7 @@ mod output_verbosity_limit_tests {
     //
     //   1. The `v` inside the `-e.<caps>` payload is NOT a `-v`. It is the
     //      client's `CF_VARINT_FLIST_FLAGS` / negotiated-strings advertisement
-    //      (compat.c:741-744), and upstream's popt gives everything after `-e`
+    //      (compat.c:750-753), and upstream's popt gives everything after `-e`
     //      to `shell_cmd` (options.c:837) rather than treating it as option
     //      letters. Counting it inflates every connection's verbosity by one.
     //   2. Limiting must not rewrite the option string. A rewrite that dropped
@@ -280,7 +280,7 @@ mod output_verbosity_limit_tests {
 
     #[test]
     fn permissive_max_verbosity_passes_the_request_through() {
-        // upstream: options.c:551-552 - `limit_output_verbosity` returns without
+        // upstream: options.c:552-553 - `limit_output_verbosity` returns without
         // applying any limit once the module's cap exceeds MAX_VERBOSITY, so the
         // client's own level survives intact.
         let mut cfg = parse("-vlogDtpre.iLsfxCIvu");
@@ -309,7 +309,7 @@ mod daemon_module_suffix_tests {
     /// daemon-side `send_files failed to open` / `mkstemp failed` line name the
     /// module the client asked for, exactly as upstream does.
     ///
-    /// upstream: clientserver.c:821 `module_id = i`; util1.c:1548
+    /// upstream: clientserver.c:825 `module_id = i`; util1.c:1548
     /// `if (module_id >= 0)`.
     #[test]
     fn module_selection_records_name_for_full_fname() {
@@ -463,7 +463,7 @@ mod daemon_partial_dir_arg_tests {
 
     /// The spelling upstream actually puts on the wire.
     ///
-    /// upstream: `options.c:3062-3066` - `server_options()` emits
+    /// upstream: `options.c:3127-3131` - `server_options()` emits
     /// `--partial-dir` and its value as TWO argv entries via
     /// `safe_arg("", partial_dir)`, exactly as it does for `--temp-dir` and
     /// `--backup-dir`. Without this arm the value fell through to the
@@ -681,7 +681,7 @@ mod daemon_partial_dir_sanitize_tests {
 /// A peer-forwarded `--max-alloc` must be parsed, resolved and refused exactly
 /// as upstream's own `parse_arguments()` does when the daemon runs it.
 ///
-/// upstream: `options.c:2067-2086`. The daemon executes the same block as the
+/// upstream: `options.c:2103-2122`. The daemon executes the same block as the
 /// client, so a forwarded `--max-alloc=0` resolves against the SERVER's own
 /// SIZE_MAX rather than disabling its `my_alloc()` ceiling.
 #[cfg(test)]
@@ -732,7 +732,7 @@ mod daemon_max_alloc_arg_tests {
         ::protocol::set_max_alloc(restore);
     }
 
-    /// upstream: options.c:1221-1227 - the ceiling still binds a forwarded
+    /// upstream: options.c:1239-1245 - the ceiling still binds a forwarded
     /// value, so accepting 0 does not let a peer name a larger one.
     #[test]
     fn a_value_at_the_ceiling_is_refused() {
@@ -742,7 +742,7 @@ mod daemon_max_alloc_arg_tests {
         );
     }
 
-    /// upstream: options.c:2073 - the 1 MiB minimum is enforced on the daemon
+    /// upstream: options.c:2109 - the 1 MiB minimum is enforced on the daemon
     /// side too, so a too-small forwarded value cannot shrink the ceiling below
     /// what upstream permits.
     #[test]
@@ -776,7 +776,7 @@ mod daemon_max_alloc_arg_tests {
 /// A client-requested server-local `--files-from` list resolves inside the
 /// module, whatever its spelling.
 ///
-/// upstream: `options.c:2641-2642` sanitizes the value and the open runs with
+/// upstream: `options.c:2696-2697` sanitizes the value and the open runs with
 /// the module root as cwd (`clientserver.c:1059`).
 #[cfg(test)]
 mod daemon_files_from_sanitize_tests {

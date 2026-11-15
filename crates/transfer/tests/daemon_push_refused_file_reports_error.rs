@@ -55,7 +55,7 @@ use test_support::oc_daemon::OcDaemon;
 
 /// The exact upstream text, minus the trailing newline.
 ///
-/// upstream: generator.c:1670-1672.
+/// upstream: generator.c:1707-1709.
 const REFUSAL: &str = r#"ERROR: daemon refused to receive file "top.secret""#;
 
 /// Writes an `rsyncd.conf` with one writable module that excludes `*.secret`.
@@ -240,7 +240,7 @@ fn assert_push_is_refused(client: &Path, extra: &[&str]) {
 
     assert!(
         stderr.contains(REFUSAL),
-        "the client must render the daemon's refusal (upstream generator.c:1670-1672); \
+        "the client must render the daemon's refusal (upstream generator.c:1707-1709); \
          a silent skip leaves the user with no diagnostic at all.\nargs: {args:?}\nstderr:\n{stderr}",
     );
     assert_eq!(
@@ -261,7 +261,7 @@ fn assert_push_is_refused(client: &Path, extra: &[&str]) {
     assert!(
         !daemon_stderr.contains("daemon refused"),
         "the refusal must be framed to the client, not written to the daemon's own \
-         stderr (upstream log.c:357-373 returns after send_msg under am_server)\n\
+         stderr (upstream log.c:437-453 returns after send_msg under am_server)\n\
          daemon stderr:\n{daemon_stderr}",
     );
 }
@@ -337,7 +337,7 @@ fn pull_from_the_same_module_still_exits_zero() {
 
 /// Every entry type is checked, not just regular files and directories.
 ///
-/// upstream: generator.c:1662-1676 runs `check_filter(&daemon_filter_list, ...)`
+/// upstream: generator.c:1699-1713 runs `check_filter(&daemon_filter_list, ...)`
 /// before any type-specific branch of `recv_generator()`, so an excluded
 /// symlink, FIFO or hard-link follower is refused - and reported as a `file` - exactly like an
 /// excluded regular file. A receiver that consulted the module filter only

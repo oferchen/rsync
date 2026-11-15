@@ -7,7 +7,7 @@
 //!
 //! ## Why "multi-segment"
 //!
-//! Upstream `flist.c:2045 send_directory()` walks one directory per call
+//! Upstream `flist.c:2049 send_directory()` walks one directory per call
 //! and `flist.c:2340 send_extra_file_list()` writes one
 //! `NDX_FLIST_OFFSET - dir_ndx` header per sub-list, terminating the
 //! whole flist stream with `write_ndx(f, NDX_FLIST_EOF)` only after every

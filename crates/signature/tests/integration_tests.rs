@@ -1261,7 +1261,7 @@ mod upstream_compatibility {
 
     /// Protocol version 30+ caps block size at 131072.
     ///
-    /// upstream: rsync.h:161 `MAX_BLOCK_SIZE`
+    /// upstream: rsync.h:162 `MAX_BLOCK_SIZE`
     #[test]
     fn protocol_30_max_block_size() {
         let huge_file = 1u64 << 40; // 1 TB
@@ -1274,7 +1274,7 @@ mod upstream_compatibility {
 
     /// Legacy protocols (< 30) allow larger blocks.
     ///
-    /// upstream: rsync.h:164 `OLD_MAX_BLOCK_SIZE` (2^29)
+    /// upstream: rsync.h:165 `OLD_MAX_BLOCK_SIZE` (2^29)
     #[test]
     fn legacy_protocol_max_block_size() {
         let huge_file = 1u64 << 34;

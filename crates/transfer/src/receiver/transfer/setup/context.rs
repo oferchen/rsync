@@ -104,7 +104,7 @@ impl ReceiverContext {
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
     ) -> io::Result<(usize, PipelineSetup)> {
-        // upstream: generator.c:2763-2766 - emitted at the top of generate_files,
+        // upstream: generator.c:2849-2852 - emitted at the top of generate_files,
         // just before the per-segment dispatch loop. The receiver-side transfer
         // setup is the closest analog (every `run*` entry point routes through
         // setup_transfer).
@@ -159,7 +159,7 @@ impl ReceiverContext {
         // are decoupled (no select() loop fanning across them).
         self.forward_files_from_to_sender(writer)?;
 
-        // upstream: flist.c:3362-3365 recv_file_list() - the first list arrival
+        // upstream: flist.c:3373-3376 recv_file_list() - the first list arrival
         // prints the file-list banner on the client's own output. Write it
         // DIRECTLY to the client stream here instead of through the deferred
         // `info_log!` event buffer: that buffer is only drained by the CLI's
@@ -181,7 +181,7 @@ impl ReceiverContext {
         // `ensure_all_segments_loaded`), mirroring upstream's generator which
         // fetches sub-lists on demand rather than up front (generator.c:2772).
         let file_count = self.receive_file_list(reader)?;
-        // upstream: flist.c:3266 - finish_filelist_progress() once the
+        // upstream: flist.c:3277 - finish_filelist_progress() once the
         // whole list has arrived.
         with_client_stream(msgs_to_stderr, |out| {
             flist_banner.finish(FlistSide::Receiver, file_count, out)
@@ -200,7 +200,7 @@ impl ReceiverContext {
         // `run_pipelined_incremental`).
         self.announce_created_directory(writer, &setup.dest_dir)?;
 
-        // upstream: main.c:1439-1441 - client_run() reaches do_recv(), and with
+        // upstream: main.c:1443-1445 - client_run() reaches do_recv(), and with
         // it the fork, only for a non-empty list.
         if !self.is_empty_client_flist(file_count) {
             self.mark_fork();
@@ -324,7 +324,7 @@ impl ReceiverContext {
     }
 
     /// The file-list banner this receiver prints on its own client-visible
-    /// output: upstream's choice in `recv_file_list()` (flist.c:3119-3122)
+    /// output: upstream's choice in `recv_file_list()` (flist.c:3130-3133)
     /// between `receiving file list ... done` and `receiving incremental file
     /// list`, keyed on the negotiated `CF_INC_RECURSE` bit rather than on
     /// `--recursive`.
@@ -360,7 +360,7 @@ impl ReceiverContext {
     pub(in crate::receiver) fn build_metadata_options(&self) -> MetadataOptions {
         MetadataOptions::new()
             .preserve_permissions(self.config.flags.perms)
-            // upstream: options.c:2869 packs the compact 'E' into
+            // upstream: options.c:2934 packs the compact 'E' into
             // server_options only inside `else if (preserve_executability &&
             // am_sender)`, so on a pull `-E` never rides the wire to the remote
             // sender; the local client IS the receiver and applies it itself.
@@ -378,7 +378,7 @@ impl ReceiverContext {
             .preserve_owner(self.config.flags.owner)
             .preserve_group(self.config.flags.group)
             .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
-            // upstream: generator.c:1745 - `gen_entry_stat(fname, file, &sx.st,
+            // upstream: generator.c:1782 - `gen_entry_stat(fname, file, &sx.st,
             // keep_dirlinks && is_dir)` follows a destination symlink-to-dir
             // at stat time instead of rejecting it. The
             // `chmod_path_honoring_keep_dirlinks` helper in
@@ -389,7 +389,7 @@ impl ReceiverContext {
             // client sent `K` in the compact flag string, breaking the
             // `symlink-dirlink-basis` regression test.
             .with_keep_dirlinks(self.config.flags.keep_dirlinks)
-            // upstream: clientserver.c:1202-1203 - `fake super = yes` on the
+            // upstream: clientserver.c:1206-1207 - `fake super = yes` on the
             // daemon module forces fake-super metadata storage on the receiver
             // (ownership and special-file metadata go to user.rsync.%stat
             // xattrs instead of being applied to inodes).
@@ -402,7 +402,7 @@ impl ReceiverContext {
             //     which is never forwarded to the remote, so on a pull the
             //     local client IS the receiver and applies it itself
             //     (flist.c:1221-1222 recv_file_entry()).
-            // Upstream keeps both in one list (clientserver.c:1299 prepends the
+            // Upstream keeps both in one list (clientserver.c:1308 prepends the
             // daemon modes ahead of `chmod_modes`); we merge here in the same
             // order and hand the result to the single chmod-application site in
             // `apply_permissions_with_chmod`. On a pull `daemon_incoming_chmod`
@@ -512,7 +512,7 @@ impl ReceiverContext {
     /// Refuses a peer-supplied staging directory that the daemon module's own
     /// filter list excludes.
     ///
-    /// upstream: `options.c:2418-2445` - with a non-empty `daemon_filter_list`
+    /// upstream: `options.c:2473-2500` - with a non-empty `daemon_filter_list`
     /// and `!am_sender`, both `tmpdir` and `backup_dir` are re-sanitised against
     /// rootdir `"/"` and run through `check_filter(elp, FLOG, dir, 1)`. An empty
     /// value, or a match, jumps to `options_rejected`, which prints
@@ -545,7 +545,7 @@ impl ReceiverContext {
             if dir.as_os_str().is_empty()
                 || !filters.allows_name(&self.daemon_filter_name(dir), true)
             {
-                // upstream: options.c:1273 - the refusal text carries no path;
+                // upstream: options.c:1291 - the refusal text carries no path;
                 // the rejected option goes to the daemon's log, not the peer.
                 return Err(protocol::syntax_violation(
                     "Your options have been rejected by the server.",
@@ -678,20 +678,20 @@ impl ReceiverContext {
         let removed = self.sanitize_file_list();
         let file_count = file_count - removed;
 
-        // upstream: flist.c:1362-1370 recv_file_entry() re-runs each received
+        // upstream: flist.c:1366-1374 recv_file_entry() re-runs each received
         // name through the receiver's own filter list and aborts with
         // RERR_UNSUPPORTED if the sender sent a name the receiver excludes. This
         // runs after sanitize (which mirrors clean_fname) so the paths are
         // already cleaned, matching upstream's per-entry ordering.
         self.recheck_received_filter()?;
 
-        // upstream: flist.c:1366-1370 recv_file_entry() also validates each
+        // upstream: flist.c:1370-1374 recv_file_entry() also validates each
         // received name against the implied-include list built from the
         // client's requested source args, aborting with RERR_UNSUPPORTED if the
         // sender injected a name that was never requested (CVE-2022-29154).
         self.recheck_received_implied_includes()?;
 
-        // upstream: flist.c:1455-1477 recv_file_entry() re-asserts
+        // upstream: flist.c:1459-1481 recv_file_entry() re-asserts
         // XMIT_NO_CONTENT_DIR|XMIT_TOP_DIR on any directory the implied-include
         // list only allows as a parent, so a sender that omits
         // XMIT_NO_CONTENT_DIR cannot make delete_in_dir() sweep the siblings of
@@ -730,7 +730,7 @@ impl ReceiverContext {
         // excluded. Ordered after the destination check because upstream reaches
         // it later in the same function (get_local_name at :1229, this at :1243).
         self.reject_daemon_excluded_basis_dirs()?;
-        // upstream: options.c:2418-2445 - the same daemon-filter gate also vets
+        // upstream: options.c:2473-2500 - the same daemon-filter gate also vets
         // the client's staging directories (--temp-dir, --backup-dir), refusing
         // the session when either names an excluded directory. Ordered with the
         // other two module-filter refusals so a rejected session never reaches
@@ -783,7 +783,7 @@ impl ReceiverContext {
         // no `MSG_*` frame is emitted on the wire, matching upstream's
         // `get_local_name()` which calls `do_mkdir()` directly against the
         // local filesystem.
-        // upstream: main.c:1439-1440 - `get_local_name()`, and with it the
+        // upstream: main.c:1443-1444 - `get_local_name()`, and with it the
         // pre-flight mkdir at main.c:804-818, lives inside the non-empty-list
         // arm of client_run(). A client handed an empty list must not create
         // the destination directory: `rsync host:/missing /new/` leaves
@@ -936,7 +936,7 @@ impl ReceiverContext {
         // `/srv` is a link - refuse every transfer, because the policy that
         // belongs to the tail was being applied to the root as well.
         //
-        // upstream: clientserver.c:1093 - `use_secure_symlinks = am_daemon &&
+        // upstream: clientserver.c:1097 - `use_secure_symlinks = am_daemon &&
         // (!am_chrooted || module_dirlen)` gates the do_*_at wrappers in
         // syscall.c. `am_daemon` is the serving process only, so the client
         // half of an `rsync://` pull, an SSH server receiver and a local
@@ -958,7 +958,7 @@ impl ReceiverContext {
         // resolved beneath it; its own attributes go through its descriptor.
         // A daemon's operator named only the module, so the peer's remainder
         // is entered beneath the module root.
-        // upstream: util1.c change_dir(), clientserver.c:1059
+        // upstream: util1.c change_dir(), clientserver.c:1063
         let destination_root = match self.config.connection.served_module_root() {
             Some(module_root) => {
                 metadata::DestinationRoot::served(dest_dir.clone(), module_root.to_path_buf())
@@ -1028,7 +1028,7 @@ impl ReceiverContext {
         wire_rules: Vec<FilterRuleWireFormat>,
     ) -> io::Result<()> {
         let daemon_rules = &self.config.daemon_filter_rules;
-        // upstream: flist.c:1615-1620 - the received-name re-check runs
+        // upstream: flist.c:1619-1624 - the received-name re-check runs
         // `check_server_filter(&filter_list, ...)` against the CLIENT's rules
         // only; `daemon_filter_list` never joins that list and is enforced by
         // its own consumers (`generator.c:1662-1670` refuses the one file at
@@ -1045,7 +1045,7 @@ impl ReceiverContext {
             let (client_set, _merge_configs) = parse_wire_filters_for_receiver(&client_rules)?;
             Some(client_set)
         };
-        // upstream: options.c:1620-1656 - rules the client passed in the
+        // upstream: options.c:1647-1683 - rules the client passed in the
         // server argv (via `-M`) sit in `filter_list` ahead of these.
         let combined = self.config.server_filter_rules(wire_rules);
 
@@ -1321,7 +1321,7 @@ impl ReceiverContext {
             _ => return Ok(()),
         };
 
-        // upstream: options.c:2664 open_no_attacker_symlinks(files_from, O_RDONLY|O_BINARY, 0).
+        // upstream: options.c:2719 open_no_attacker_symlinks(files_from, O_RDONLY|O_BINARY, 0).
         let file = std::fs::File::open(path).map_err(|err| {
             io::Error::new(
                 err.kind(),
@@ -1349,7 +1349,7 @@ impl ReceiverContext {
         let mut staged = Vec::with_capacity(4096);
         protocol::forward_files_from(&mut reader, &mut staged, from0, None)?;
 
-        // upstream: io.c:1398-1400 start_filesfrom_forwarding - below protocol 31 the
+        // upstream: io.c:1405-1407 start_filesfrom_forwarding - below protocol 31 the
         // names are forwarded un-multiplexed (MPLX_TO_BUFFERED), so on a
         // multiplexed server stream we bypass MSG_DATA framing to match the
         // wire a real upstream sender expects; at protocol >= 31 they stay
@@ -1551,7 +1551,7 @@ mod created_directory_notice_tests {
 /// names ride the socket un-multiplexed (raw) below protocol 31 and MSG_DATA
 /// framed at protocol >= 31.
 ///
-/// upstream: io.c:1400 `if (protocol_version < 31 && OUT_MULTIPLEXED)` switches
+/// upstream: io.c:1407 `if (protocol_version < 31 && OUT_MULTIPLEXED)` switches
 /// the output stream to `MPLX_TO_BUFFERED` for the forwarding window.
 #[cfg(test)]
 mod files_from_forwarding_framing_tests {
@@ -1645,7 +1645,7 @@ mod files_from_forwarding_framing_tests {
         (path.to_string_lossy().into_owned(), expected)
     }
 
-    /// upstream: io.c:1502 - at protocol 29 (< 31) the forwarded names are sent
+    /// upstream: io.c:1509 - at protocol 29 (< 31) the forwarded names are sent
     /// raw, with no `MSG_DATA` framing, so a real upstream sender's `read_line`
     /// consumes the bytes verbatim.
     #[test]
@@ -1659,7 +1659,7 @@ mod files_from_forwarding_framing_tests {
         );
     }
 
-    /// upstream: io.c:1248 - at protocol 30 (< 31) the stream is still switched
+    /// upstream: io.c:1255 - at protocol 30 (< 31) the stream is still switched
     /// to buffered, so the names remain raw even though the server output is
     /// multiplexed.
     #[test]
@@ -1673,7 +1673,7 @@ mod files_from_forwarding_framing_tests {
         );
     }
 
-    /// upstream: io.c:1400 - at protocol 31+ the stream stays multiplexed, so
+    /// upstream: io.c:1407 - at protocol 31+ the stream stays multiplexed, so
     /// the forwarded names are wrapped in a single `MSG_DATA` frame.
     #[test]
     fn proto31_forwards_names_framed() {
@@ -1697,7 +1697,7 @@ mod files_from_forwarding_framing_tests {
 /// Delta-transmission notice routing: upstream prints the line locally on a
 /// client generator but frames it as `MSG_INFO` on a server generator, so the
 /// far-end client both renders it and counts its bytes in `received`
-/// (upstream: generator.c:2763-2767, log.c:357-373).
+/// (upstream: generator.c:2849-2853, log.c:437-453).
 #[cfg(test)]
 mod delta_transmission_notice_tests {
     use std::io;

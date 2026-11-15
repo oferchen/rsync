@@ -15,7 +15,7 @@ and the trailing `sent ... received ... bytes/sec` /
 
 Source: `main.c::output_summary()` lines 416-465 (block gated by
 `INFO_GTE(STATS, 2)`, trailer by `INFO_GTE(STATS, 1)`). `--stats` lifts
-`STATS` to level 2 (or 3 with `-vv`), per `options.c:2046-2048`. Numbers
+`STATS` to level 2 (or 3 with `-vv`), per `options.c:2082-2084`. Numbers
 go through `comma_num` / `human_num` / `comma_dnum` (`inums.h`,
 `lib/compat.c::do_big_num`); commas appear only when `human_readable >= 1`
 (default 1).

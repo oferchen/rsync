@@ -1,6 +1,6 @@
 //! The `--server --sender` output is framed exactly as rsync 3.5.1 frames it.
 //!
-//! Upstream buffers data in `iobuf.out` (io.c:1567) and messages in
+//! Upstream buffers data in `iobuf.out` (io.c:1574) and messages in
 //! `iobuf.msg` (io.c:2688), writes the messages first (io.c:628-636), and
 //! writes anything only when a write does not fit (io.c:2487-2488), when
 //! perform_io() is about to wait for input (io.c:766-768), or at an explicit
@@ -62,7 +62,7 @@ const FILES: [(&str, usize); 4] = [("f1", 5000), ("f2", 10000), ("f3", 15000), (
 const MTIME: i64 = 1_767_225_600;
 
 /// One multiplex frame header: `(MPLEX_BASE + tag) << 24 | len`, little-endian
-/// (upstream: io.c:1173 send_msg()).
+/// (upstream: io.c:1180 send_msg()).
 const MPLEX_BASE: u32 = 7;
 
 fn decode_hex(hex: &str) -> Vec<u8> {

@@ -41,11 +41,11 @@ iobuf.msg  - circular buffer for MSG_INFO/MSG_ERROR/MSG_WARNING (control)
      priority over `iobuf.out` data.
    - Both share the same `iobuf.out_fd` socket.
 
-3. **`io_flush()` (io.c:2061)** flushes BOTH buffers - `iobuf.out` first
+3. **`io_flush()` (io.c:2068)** flushes BOTH buffers - `iobuf.out` first
    (via `perform_io(PIO_NEED_OUTROOM)`), then `iobuf.msg` (via
    `perform_io(PIO_NEED_MSGROOM)`).
 
-4. **`rwrite()` (log.c:330-340)** for server-side info messages calls
+4. **`rwrite()` (log.c:410-420)** for server-side info messages calls
    `send_msg(MSG_INFO, buf, len, ...)` which merely appends to `iobuf.msg`.
    No flush. The message drains when `perform_io()` runs for any reason -
    waiting for input, needing output room, or an explicit `io_flush()`.

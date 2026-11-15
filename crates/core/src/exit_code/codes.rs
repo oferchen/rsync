@@ -176,7 +176,7 @@ impl ExitCode {
 
     /// Returns a human-readable description of this exit code.
     ///
-    /// These descriptions match upstream rsync's `log.c:81-106` `rerr_names`
+    /// These descriptions match upstream rsync's `log.c:88-113` `rerr_names`
     /// strings, except `Ok`, which upstream never names.
     #[must_use]
     pub const fn description(self) -> &'static str {
@@ -207,7 +207,7 @@ impl ExitCode {
             Self::CommandKilled => "remote shell killed",
             Self::CommandRun => "remote command could not be run",
             Self::CommandNotFound => "remote command not found",
-            // upstream: log.c:951-952 log_exit() - an unrecognized code renders as
+            // upstream: log.c:1039-1040 log_exit() - an unrecognized code renders as
             // "unexplained error" (rerr_name() returned NULL).
             Self::Other(_) => "unexplained error",
         }
@@ -337,7 +337,7 @@ impl ExitCode {
     /// The mapping itself lives in [`transfer::error::rerr_for_io_error`], one
     /// crate below this one, because the server half needs the identical answer
     /// when it writes the `MSG_ERROR_EXIT` payload that tells the peer which
-    /// `RERR_*` it is exiting with (upstream: cleanup.c:250).
+    /// `RERR_*` it is exiting with (upstream: cleanup.c:251).
     #[must_use]
     pub fn from_io_error(error: &std::io::Error) -> Self {
         Self::from_i32(transfer::error::rerr_for_io_error(error)).unwrap_or(Self::FileIo)

@@ -91,7 +91,7 @@ fn bound_listener() -> (TcpListener, u16) {
 /// protocol version, so a client offering all five leaves the choice to the
 /// daemon's own preference order.
 ///
-/// upstream: compat.c:868-871 - `negotiate_daemon_auth()` walks the client's
+/// upstream: compat.c:877-880 - `negotiate_daemon_auth()` walks the client's
 /// list; checksum.c `valid_auth_checksums_items[]` holds the names.
 const CLIENT_DIGEST_LIST: &str = "sha512 sha256 sha1 md5 md4";
 
@@ -106,7 +106,7 @@ const CLIENT_DIGEST_LIST: &str = "sha512 sha256 sha1 md5 md4";
 /// `negotiate_daemon_auth()` substitutes `protocol_version >= 30 ? "md5" :
 /// "md4"`, which is the legacy path the protocol-29/30 tests below exercise.
 ///
-/// upstream: clientserver.c:229-241 - the `remote_protocol > 31` arm of
+/// upstream: clientserver.c:233-245 - the `remote_protocol > 31` arm of
 /// `exchange_protocols()`; compat.c:868-871 - the no-list substitution.
 fn client_greeting(protocol: u32) -> String {
     if protocol > 31 {
@@ -145,7 +145,7 @@ fn send_client_greeting(stream: &mut TcpStream, protocol: u32) {
 /// after the connect, never runs - all 25 tests reported PASSED with 14 such
 /// panics in place.
 ///
-/// upstream: clientserver.c:1779-1782 - `if (no_detach) create_pid_file(); else
+/// upstream: clientserver.c:1844-1847 - `if (no_detach) create_pid_file(); else
 /// become_daemon();` runs before the listener is set up, which is why
 /// `--no-detach` is the daemon's own opt-out rather than a test-only knob.
 fn no_detach() -> OsString {
@@ -209,7 +209,7 @@ fn server_lists_modules_on_request() {
     // listing at all, so the reads that used to expect them consumed the module
     // rows this test then failed to find.
     //
-    // upstream: clientserver.c:1374-1386 - `send_listing()`.
+    // upstream: clientserver.c:1383-1395 - `send_listing()`.
     let mut modules = Vec::new();
     let mut got_exit = false;
     loop {
@@ -288,7 +288,7 @@ fn server_lists_empty_when_no_modules() {
     // parse": the previous loop skipped any line containing "OK", which
     // `@RSYNCD: OK` and a module named `ok` both satisfy.
     //
-    // upstream: clientserver.c:1374-1386 - `send_listing()`.
+    // upstream: clientserver.c:1383-1395 - `send_listing()`.
     line.clear();
     reader.read_line(&mut line).expect("listing terminator");
     assert_eq!(
@@ -617,7 +617,7 @@ fn server_returns_error_for_unknown_module() {
     // refusal that this fixture used to trip on before it sent a valid
     // greeting, so the payload is pinned rather than the prefix.
     //
-    // upstream: clientserver.c:1570 - `@ERROR: Unknown module '%s'`.
+    // upstream: clientserver.c:1580 - `@ERROR: Unknown module '%s'`.
     line.clear();
     reader.read_line(&mut line).expect("error response");
     assert_eq!(
@@ -686,7 +686,7 @@ fn server_returns_error_for_access_denied() {
     // Pin the module name too: a refusal that named a different module, or a
     // generic error, would satisfy a bare "access denied" substring.
     //
-    // upstream: clientserver.c:780 -
+    // upstream: clientserver.c:784 -
     // `@ERROR: access denied to %s from %s (%s)`.
     assert!(
         line.starts_with("@ERROR: access denied to restricted from "),
@@ -743,7 +743,7 @@ fn server_closes_connection_after_error() {
     );
 
     // Then EOF, not `@RSYNCD: EXIT`. That terminator has exactly one producer
-    // upstream - `send_listing()` at clientserver.c:1385 - and the
+    // upstream - `send_listing()` at clientserver.c:1394 - and the
     // unknown-module arm at :1567-1572 writes the error and returns -1, which
     // drops the connection. Asserting a zero-length read is the discriminating
     // check: a daemon that kept the session open for more commands after
@@ -801,7 +801,7 @@ fn server_handles_empty_module_request() {
     // The old assertion accepted `@ERROR:` *or* `@RSYNCD:`, which every line
     // the daemon can emit satisfies; it could not tell a listing from a refusal.
     //
-    // upstream: clientserver.c:1554-1558.
+    // upstream: clientserver.c:1564-1568.
     line.clear();
     reader.read_line(&mut line).expect("response");
     assert_eq!(
@@ -1008,7 +1008,7 @@ fn server_enforces_max_connections() {
     // The exact refusal, not merely "some @ERROR". `max connections = 1` is in
     // the module config, so the payload carries that limit.
     //
-    // upstream: clientserver.c:799 -
+    // upstream: clientserver.c:803 -
     // `@ERROR: max connections (%d) reached -- try again later`.
     assert_eq!(
         line.trim_end_matches(['\r', '\n']),
@@ -1128,7 +1128,7 @@ fn server_handles_invalid_greeting_response() {
     // connection skipped it, and the surviving disjunction accepted any line
     // the daemon is capable of writing.
     //
-    // upstream: clientserver.c:209-215 - the `sscanf(...) < 1` arm of
+    // upstream: clientserver.c:213-219 - the `sscanf(...) < 1` arm of
     // `exchange_protocols()` writes `@ERROR: protocol startup error`.
     line.clear();
     reader.read_line(&mut line).expect("refusal");
@@ -1358,7 +1358,7 @@ fn auth_flow_protocol_30_md5_succeeds() {
 }
 
 /// Tests that protocol 30 auth REJECTS MD4 responses.
-/// upstream: compat.c:858 -- protocol_version >= 30 uses MD5, not MD4.
+/// upstream: compat.c:867 -- protocol_version >= 30 uses MD5, not MD4.
 #[cfg(unix)]
 #[test]
 fn auth_flow_protocol_30_md4_rejected() {
@@ -1400,7 +1400,7 @@ fn auth_flow_protocol_29_md4_succeeds() {
 }
 
 /// Tests that protocol 29 auth REJECTS MD5 responses.
-/// upstream: compat.c:858 -- protocol_version < 30 uses MD4, not MD5.
+/// upstream: compat.c:867 -- protocol_version < 30 uses MD4, not MD5.
 #[cfg(unix)]
 #[test]
 fn auth_flow_protocol_29_md5_rejected() {

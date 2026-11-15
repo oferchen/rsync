@@ -21,7 +21,7 @@ configuration: this is the default module, not a hardened-off one.
 
 Measured 2026-08-14, macOS 15 (aarch64), real daemons, `use chroot = false`,
 `read only = false`, and **no other directive** - so `munge symlinks` takes its
-upstream auto default (`!use_chroot` -> on, `clientserver.c:997-998`). This is
+upstream auto default (`!use_chroot` -> on, `clientserver.c:1001-1002`). This is
 the stock non-chroot module.
 
 ```
@@ -176,7 +176,7 @@ Upstream keeps the operator half and the peer half in *different mechanisms*:
 - the module root is opened plainly, because an operator who writes
   `path = /srv/backup` has authorised every component of it, symlinked or not
   (`syscall.c:85-90` `open_anchor_dirfd()`, and the comment at `:3189-3193`);
-- the peer tail is walked by `ds_descend()` (`syscall.c:2891-2965`), which
+- the peer tail is walked by `ds_descend()` (`syscall.c:2962-3036`), which
   **resolves** each component and then decides: a relative in-tree target is
   spliced back into the walk (`:2961`), an absolute target is refused
   (`:2953`), a `..` above the anchor is refused (`:2896`).
@@ -205,7 +205,7 @@ refusing only a pop above the anchor. Routing naively **drops the front-door
 check**.
 
 Upstream parameterises exactly this, and says so
-(`syscall.c:3236-3240`):
+(`syscall.c:3307-3311`):
 
 > *"A caller may explicitly allow literal `..` components when the fd itself is
 > the confinement boundary: `secure_walk_at()` resolves each one by popping its
@@ -255,7 +255,7 @@ not "fix" it.
    availability half. Refusing everything would pass gate 2 while breaking
    ordinary module layouts. This is the failure mode task 598 already recorded
    against the resolver: 3.5.0 **follows** a relative in-tree target
-   (`ds_descend`, `syscall.c:2961`) and refuses only absolute targets
+   (`ds_descend`, `syscall.c:3032`) and refuses only absolute targets
    (`:2953`) and `..` above the anchor (`:2896`). A refuse-all reading would
    break plain `oc-rsync -a src/ dst/` where `dst/sub` is a symlink.
 4. `..` in a peer tail still yields the front-door refusal after routing.
@@ -289,8 +289,8 @@ proves it closed the gap instead of leaving a contradicting test behind. The
 Gate 7 exists because that test currently **pins task 600's known-narrow gate
 as correct**. It asserts that a non-daemon receiver stores `../outside`
 verbatim - which is right for #7333's scope, since that PR mirrors
-`flist.c:1182`'s `sanitize_paths` predicate exactly and `sanitize_paths` is a
-daemon-module property (`clientserver.c:994-995`). It is *not* right against
+`flist.c:1186`'s `sanitize_paths` predicate exactly and `sanitize_paths` is a
+daemon-module property (`clientserver.c:998-999`). It is *not* right against
 upstream as a whole. `secure_relpath_active()` (`syscall.c:100`) ends:
 
 ```c
@@ -323,14 +323,14 @@ defect, not a path-walk defect, and the fix landed in a different file
 (`crates/transfer/src/receiver/directory/links.rs`).
 
 Upstream carries a second, independent defence for the case where an operator
-turns munging off. `flist.c:1182`, inside `recv_file_entry()`:
+turns munging off. `flist.c:1186`, inside `recv_file_entry()`:
 
 ```c
 if (sanitize_paths && !munge_symlinks && *bp)
         sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT);
 ```
 
-`sanitize_paths` is set for every daemon module (`clientserver.c:994-995`, from
+`sanitize_paths` is set for every daemon module (`clientserver.c:998-999`, from
 the normalised module path length), so with munging off upstream still strips
 the leading `../` from an incoming symlink target - which is exactly the
 `../outside` -> `outside` rewrite in the table above.
@@ -350,7 +350,7 @@ shared `&[u8]` core - deliberately not via `String`, because a lossy decode
 would rewrite the very bytes being made safe.
 
 **Residual after #7333, and it is this task's problem:** the gate is
-`is_daemon_connection`, mirroring `flist.c:1182`'s `sanitize_paths` exactly.
+`is_daemon_connection`, mirroring `flist.c:1186`'s `sanitize_paths` exactly.
 Upstream is broader - see gate 7 above. #7333 inherited task 600's narrow
 predicate rather than introducing it, and pinned it in a test that gate 7
 requires this task to invert.

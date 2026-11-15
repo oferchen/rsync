@@ -17,8 +17,8 @@ pub(crate) use self::format::{
     event_matches_name_level, format_count, format_decimal_bytes, format_human_bytes,
     format_human_rate, format_list_permissions, format_list_size, format_list_timestamp,
     format_progress_bytes, format_progress_elapsed, format_progress_percent, format_progress_rate,
-    format_progress_rate_decimal, format_progress_rate_from_value, format_size,
-    format_stat_categories, format_summary_rate, is_progress_event, list_only_event,
+    format_progress_rate_from_value, format_size, format_stat_categories, format_summary_rate,
+    is_progress_event, list_only_event,
 };
 pub(crate) use self::interleave::PendingDiagnostics;
 pub(crate) use self::live::{LiveListing, LiveProgress, LocalSessionOutput, ProgressOutputConfig};
@@ -30,3 +30,6 @@ pub(crate) use self::render::{
 };
 #[cfg(test)]
 pub(crate) use self::render::{emit_list_only, emit_stats};
+
+#[cfg(test)]
+pub(crate) use self::format::format_progress_rate_decimal;

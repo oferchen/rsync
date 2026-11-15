@@ -1,6 +1,6 @@
 /// The daemon-argument ceiling is recorded in the log and never sent.
 ///
-/// upstream: `io.c:1503-1505` - `read_args()` cuts the peer off at
+/// upstream: `io.c:1510-1512` - `read_args()` cuts the peer off at
 /// `MAX_DAEMON_ARGS` with `rprintf(FERROR, "too many daemon arguments\n")`.
 /// `am_server` is not yet set while the daemon reads the argv
 /// (clientserver.c:1154 vs :1191), so that FERROR goes to the log only
@@ -62,7 +62,7 @@ fn run_daemon_logs_an_oversized_client_argv() {
     reader.read_line(&mut line).expect("module acknowledgement");
     assert_eq!(line, "@RSYNCD: OK\n");
 
-    // upstream: io.c:1502 - the ceiling is checked before an argument is
+    // upstream: io.c:1509 - the ceiling is checked before an argument is
     // appended, so the refusal fires once the vector already holds
     // `MAX_DAEMON_ARGS - 1` entries. Sending exactly that many leaves no
     // unconsumed bytes in flight.
@@ -88,7 +88,7 @@ fn run_daemon_logs_an_oversized_client_argv() {
     }
 
     let log_contents = fs::read_to_string(&log_path).expect("read log file");
-    // upstream: io.c:1503-1504 emits the refusal bare - unlike `option_error()`
+    // upstream: io.c:1510-1511 emits the refusal bare - unlike `option_error()`
     // (`options.c:915`) this site adds no `rsync: ` prefix.
     assert!(
         log_contents

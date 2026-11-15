@@ -17,7 +17,7 @@ use super::tokens::{
 /// Size of the fixed scratch buffer upstream copies each escape's modifiers
 /// into before handing them to `snprintf`.
 ///
-/// upstream: log.c:532 `LOG_FMT_SIZE`.
+/// upstream: log.c:617 `LOG_FMT_SIZE`.
 const LOG_FMT_SIZE: usize = 32;
 
 /// Ceiling on how far an escape's modifier run may advance before the escape is
@@ -28,7 +28,7 @@ const LOG_FMT_SIZE: usize = 32;
 /// `log_format_has()` via `width < LOG_FMT_SIZE - 8` (log.c:847). The two must
 /// stop at the same character or they disagree about which char is the escape
 /// letter, which for `%C` leaves the checksum unrequested while the renderer
-/// still expects one (upstream states this at log.c:840).
+/// still expects one (upstream states this at log.c:925).
 ///
 /// Both oc scanners consume this constant so the agreement is structural rather
 /// than a convention a future edit could silently break.
@@ -129,7 +129,7 @@ pub(crate) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
             continue;
         }
 
-        // upstream: log.c:791-792 log_formatted() - an escape whose letter has no case (and `%u`
+        // upstream: log.c:876-877 log_formatted() - an escape whose letter has no case (and `%u`
         // off-daemon, where `auth_user` is empty) leaves `n` NULL and is copied
         // through verbatim. `%u` is the daemon auth user (handled by the daemon
         // log formatter), never the file owner; `%g`/`%N` are not upstream
@@ -192,10 +192,10 @@ pub(crate) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
 /// [`parse_out_format`] emits a literal - and the two disagreeing is the actual
 /// defect, because `run.rs` gates itemize/operation handling on this answer.
 ///
-/// upstream: log.c:828 `log_format_has()`; the `%%` skip is log.c:856.
+/// upstream: log.c:913 `log_format_has()`; the `%%` skip is log.c:941.
 ///
 /// The digit run is bounded at [`MAX_ESCAPE_MODIFIER_RUN`], matching
-/// upstream's `width < LOG_FMT_SIZE - 8` (log.c:847). oc has no fixed scratch
+/// upstream's `width < LOG_FMT_SIZE - 8` (log.c:932). oc has no fixed scratch
 /// buffer of its own - [`parse_out_format`] builds tokens - but the bound is
 /// still load-bearing for OUTPUT parity, not just for buffer safety: past the
 /// ceiling upstream abandons the escape and lets the remaining characters fall
@@ -211,7 +211,7 @@ pub(crate) fn parse_out_format(value: &OsStr) -> Result<OutFormat, Message> {
 /// The bound must hold in [`parse_placeholder_format`] too, and both read the
 /// same constant: if the two scanners stop at different characters they
 /// disagree about which char is the escape letter, which is exactly the
-/// failure upstream describes at log.c:840.
+/// failure upstream describes at log.c:925.
 pub(crate) fn log_format_has(format: &OsStr, esc: char) -> bool {
     let text = format.to_string_lossy();
     let bytes = text.as_bytes();
@@ -245,7 +245,7 @@ pub(crate) fn log_format_has(format: &OsStr, esc: char) -> bool {
         if bytes[i] == esc as u8 {
             return true;
         }
-        // upstream: log.c:856 - `%%` is a literal '%', not the start of an
+        // upstream: log.c:941 - `%%` is a literal '%', not the start of an
         // escape, so consume the second one. Leaving it makes the next loop
         // iteration treat it as an escape start and match the char AFTER it.
         if bytes[i] == b'%' {
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn parse_out_format_unrecognized_placeholder_is_literal() {
-        // upstream: log.c:791-792 copies an unrecognized %escape through verbatim.
+        // upstream: log.c:876-877 copies an unrecognized %escape through verbatim.
         assert_single_literal("%z", "%z");
     }
 

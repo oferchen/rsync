@@ -8,7 +8,7 @@
 //
 // The format string is always 11 characters, followed by a space and the
 // filename. Deletions use "*deleting  " (padded to 11 chars) followed by
-// a space and the filename, matching upstream log.c:735.
+// a space and the filename, matching upstream log.c:820.
 
 use super::common::*;
 use super::*;
@@ -125,7 +125,7 @@ fn itemize_updated_file_shows_change_indicators() {
 
     assert_eq!(&format_str[0..1], ">");
     assert_eq!(&format_str[1..2], "f");
-    // upstream: generator.c:2379-2380 - ITEM_REPORT_CHANGE is set only under
+    // upstream: generator.c:2422-2423 - ITEM_REPORT_CHANGE is set only under
     // `always_checksum > 0` (i.e. `--checksum`); without it, position 2 is '.'.
     assert_eq!(
         &format_str[2..3],
@@ -538,13 +538,13 @@ fn itemize_initial_recursive_transfer_emits_dir_rows_for_each_subdir() {
 
 /// Focused regression for the synthetic root `cd+++++++++ ./` row.
 ///
-/// Upstream `generator.c:1869-1872` emits a single dir-row for the destination
+/// Upstream `generator.c:1906-1909` emits a single dir-row for the destination
 /// root on an initial recursive transfer under `-i`/`--itemize-changes`, even
 /// when the source tree contains only top-level files. This locks down that
 /// behaviour in isolation so a regression cannot hide behind a broader test
 /// also asserting per-file rows.
 ///
-/// upstream: generator.c:1869-1872 root row emission.
+/// upstream: generator.c:1906-1909 root row emission.
 #[test]
 fn itemize_initial_recursive_transfer_emits_root_dir_row() {
     let tmp = test_support::create_tempdir();
@@ -605,7 +605,7 @@ fn itemize_initial_recursive_transfer_emits_root_dir_row() {
 /// asserts both rows are present, in upstream order, before the per-file
 /// row inside the nested directory.
 ///
-/// upstream: generator.c:1869-1872 + flist walk recursion.
+/// upstream: generator.c:1906-1909 + flist walk recursion.
 #[test]
 fn itemize_initial_recursive_transfer_emits_intermediate_subdir_rows() {
     let tmp = test_support::create_tempdir();

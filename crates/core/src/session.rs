@@ -31,7 +31,7 @@ pub fn run_server_stdio<'p>(
 ///
 /// `stdin` and `stdout` are handles on descriptors 0 and 1. `fatal_report`
 /// renders a fatal failure's lines when the server frames them for the client
-/// (upstream: compat.c:653-654 clears `msgs2stderr` below protocol 29).
+/// (upstream: compat.c:654-655 clears `msgs2stderr` below protocol 29).
 ///
 /// # Errors
 ///

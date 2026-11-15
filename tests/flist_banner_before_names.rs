@@ -109,7 +109,7 @@ fn assert_banner_first(output: &Output, banner: &str, label: &str) {
     assert_eq!(
         lines.first().copied(),
         Some(banner),
-        "{label}: banner must be the first stdout line (upstream flist.c:2761-2764 \
+        "{label}: banner must be the first stdout line (upstream flist.c:2772-2775 \
          prints it before the walk emits any per-file row)\nstdout:\n{stdout}",
     );
     assert_eq!(

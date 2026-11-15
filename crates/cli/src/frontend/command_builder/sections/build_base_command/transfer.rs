@@ -183,7 +183,7 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
         .arg(
             Arg::new("modify-window")
                 .long("modify-window")
-                // upstream: options.c:669 - `-@` is the short alias, parsed as a
+                // upstream: options.c:670 - `-@` is the short alias, parsed as a
                 // signed int. `allow_hyphen_values` lets a negative window
                 // (e.g. `--modify-window=-1` or `-@-1`) be taken as the value
                 // rather than mistaken for another option.
@@ -277,7 +277,7 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
                 .overrides_with("mkpath"),
         )
         .arg(
-            // upstream: options.c:640-641 - `--old-dirs`/`--old-d` set
+            // upstream: options.c:641-642 - `--old-dirs`/`--old-d` set
             // xfer_dirs=4, which options.c:2323-2325 resolves to recurse=1 plus
             // an appended `- /*/*` filter rule. It is unrelated to --mkpath.
             Arg::new("old-dirs")
@@ -329,5 +329,32 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
                 .help("Write updated files immediately during the transfer.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("delay-updates"),
+        )
+        .arg(
+            Arg::new("delay-symlinks")
+                .long("delay-symlinks")
+                .help("Create new and changed symlinks at end of transfer.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-delay-symlinks"),
+        )
+        .arg(
+            Arg::new("no-delay-symlinks")
+                .long("no-delay-symlinks")
+                .help("Create symlinks immediately during the transfer.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("delay-symlinks"),
+        )
+        .arg(
+            Arg::new("nice")
+                .long("nice")
+                .value_name("SPEC")
+                .help("Set process CPU and/or I/O niceness.")
+                .action(ArgAction::Append),
+        )
+        .arg(
+            Arg::new("no-nice")
+                .long("no-nice")
+                .help("Reset any prior --nice settings.")
+                .action(ArgAction::Count),
         )
 }

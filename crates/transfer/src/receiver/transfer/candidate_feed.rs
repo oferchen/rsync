@@ -1,6 +1,6 @@
 //! Transfer candidates for the pipelined receive loop.
 //!
-//! upstream: generator.c:2803-2818 - generate_files() decides each file in
+//! upstream: generator.c:2889-2904 - generate_files() decides each file in
 //! flist order while the receiver works through earlier ones, so the
 //! generator never holds per-file decisions for the whole list. The batch
 //! driver gets the same bound by deciding the list a chunk at a time, only
@@ -50,7 +50,7 @@ pub(in crate::receiver) struct ChunkedFeed<'a> {
 
 /// Merges candidates with the recorded no-transfer itemize rows.
 ///
-/// upstream: generator.c:582-593 - itemize() writes NDX + iflags for an entry
+/// upstream: generator.c:619-630 - itemize() writes NDX + iflags for an entry
 /// with significant attribute changes but no ITEM_TRANSFER, interleaved with
 /// the transfer requests in flist order; the peer's sender prints each row and
 /// echoes the attrs back (sender.c:295-297). A row travels as a candidate with

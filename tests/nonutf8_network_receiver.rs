@@ -1,6 +1,6 @@
 //! A network receiver must keep names that are not valid UTF-8 byte-exact.
 //!
-//! Upstream never decodes a file name: `flist.c:3295` compares raw bytes in
+//! Upstream never decodes a file name: `flist.c:3306` compares raw bytes in
 //! `flist_sort_and_clean()` and `receiver.c:322 get_tmpname()` copies raw
 //! bytes into the temp path. oc lost such names two ways: the receiver's
 //! duplicate pass compared lossy names, so distinct non-UTF-8 names looked

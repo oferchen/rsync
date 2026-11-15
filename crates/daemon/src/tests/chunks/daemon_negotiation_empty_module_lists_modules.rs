@@ -40,7 +40,7 @@ fn daemon_negotiation_empty_module_lists_modules() {
     reader.read_line(&mut line).expect("greeting");
     assert_eq!(line, expected_greeting);
 
-    // Send only a bare newline. upstream: clientserver.c:1554 treats this
+    // Send only a bare newline. upstream: clientserver.c:1564 treats this
     // as equivalent to `#list`.
     send_client_greeting(&mut stream);
     stream.write_all(b"\n").expect("send empty request");

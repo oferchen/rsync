@@ -144,7 +144,7 @@ fn sibling_landed(fx: &Fixture) -> bool {
 /// upstream `rmdir`s it and writes the file at exit 0. oc exited 0 having
 /// written nothing at all.
 ///
-/// upstream: `generator.c:2148-2153` -> `delete.c:221-226`, the `rmdir` arm.
+/// upstream: `generator.c:2189-2194` -> `delete.c:221-226`, the `rmdir` arm.
 #[test]
 fn an_empty_directory_obstacle_is_removed_for_a_regular_file() {
     let fx = fixture(Source::Regular, false);
@@ -205,7 +205,7 @@ fn a_populated_directory_obstacle_is_refused_at_23_for_a_regular_file() {
 /// argument error (`cannot replace existing directory with special file`) that
 /// has no upstream analogue - upstream never aborts a run for an obstacle.
 ///
-/// upstream: `generator.c:2469-2483` `atomic_create()`.
+/// upstream: `generator.c:2512-2526` `atomic_create()`.
 #[test]
 fn an_empty_directory_obstacle_is_removed_for_a_fifo() {
     let fx = fixture(Source::Fifo, false);
@@ -242,7 +242,7 @@ fn an_empty_directory_obstacle_is_removed_for_a_symlink() {
 
 /// The noun in the refusal comes from the NEW entry's type, not the obstacle's.
 ///
-/// upstream: `generator.c:2041-2047` picks `DEL_FOR_DEVICE` or
+/// upstream: `generator.c:2082-2088` picks `DEL_FOR_DEVICE` or
 /// `DEL_FOR_SPECIAL`; `delete.c:275-282` turns it into the printed noun.
 #[test]
 fn the_refusal_names_the_new_entrys_kind() {
@@ -349,7 +349,7 @@ fn backup_leaves_the_peeled_child_in_place_and_refuses() {
 /// destination state AFTER the removal makes `--ignore-existing` clear a
 /// directory it was asked to leave alone.
 ///
-/// upstream: `generator.c:1780-1804` - the `ignore_existing` test is at
+/// upstream: `generator.c:1817-1841` - the `ignore_existing` test is at
 /// `statret == 0` and `goto cleanup`s ahead of `generator.c:2149` /
 /// `generator.c:2477-2483`.
 #[test]
@@ -376,7 +376,7 @@ fn ignore_existing_leaves_the_directory_obstacle_standing() {
 /// leaving NEITHER the directory NOR the file - a strictly worse outcome than
 /// the silent skip this whole change set replaced.
 ///
-/// upstream: `generator.c:1758-1766` - `ignore_non_existing` is tested at
+/// upstream: `generator.c:1795-1803` - `ignore_non_existing` is tested at
 /// `statret == -1 && stat_errno == ENOENT`.
 #[test]
 fn existing_only_still_replaces_a_directory_obstacle() {

@@ -115,7 +115,7 @@ struct InfoFlagsResult {
 
 /// Applies upstream's `--progress` ⇒ `--info=name` implication.
 ///
-/// upstream: options.c:2511-2515 - when the `--progress`/`-P` flag set
+/// upstream: options.c:2566-2570 - when the `--progress`/`-P` flag set
 /// `do_progress` (and the run is not a server), an unset NAME level is bumped to
 /// 1 via `parse_output_words("name", DEFAULT_PRIORITY)`. That `DEFAULT_PRIORITY`
 /// assignment cannot override a USER_PRIORITY one, so an explicit `--info=name0`
@@ -144,7 +144,7 @@ fn imply_name_from_progress(
 
 /// Raises the thread-local info levels that upstream's `--progress` implies.
 ///
-/// upstream: options.c:2511-2515 - under `do_progress` (and not a server) an
+/// upstream: options.c:2566-2570 - under `do_progress` (and not a server) an
 /// unset NAME is raised to 1 and `FLIST2,PROGRESS` are applied, all at
 /// DEFAULT_PRIORITY, so an explicit `--info` value for the same category keeps
 /// its USER_PRIORITY level. The output gates (the file-list banner, `created
@@ -238,7 +238,7 @@ where
             // upstream: options.c set_output_verbosity / parse_output_words
             settings.apply_to_thread_local();
 
-            // upstream: options.c:3126-3128 make_output_option() - forward the
+            // upstream: options.c:3194-3196 make_output_option() - forward the
             // explicitly-set info categories to the peer. Normalize to
             // `name{level}` tokens; the remote builders apply the role `where`
             // filter.
@@ -379,7 +379,7 @@ where
         None => None,
     };
 
-    // upstream: options.c:1801-1811 - `--block-size=0` yields no override and
+    // upstream: options.c:1837-1847 - `--block-size=0` yields no override and
     // falls back to the default, so a `None` here covers both "unset" and
     // "explicit 0".
     let block_size_override = match inputs.block_size.as_ref() {
@@ -472,13 +472,13 @@ where
                 compress_level_setting = Some(CompressLevelArg::Disable);
                 compress_disabled_by_choice = true;
             }
-            // upstream: options.c:2133-2136 - `--compress-choice=auto` is nulled
+            // upstream: options.c:2169-2172 - `--compress-choice=auto` is nulled
             // out, so it behaves as if `--compress-choice` had not been given:
             // no forced codec, no disable, normal negotiation.
             Ok(CompressChoice::Auto) => {}
             Ok(CompressChoice::Codec(algorithm)) => {
                 compression_algorithm = Some(algorithm);
-                // upstream: compat.c:216-219 prints the user's verbatim
+                // upstream: compat.c:217-220 prints the user's verbatim
                 // compress_choice; retain the trimmed/lowercased token so
                 // `zlibx` survives (it folds onto `Zlib` in the enum).
                 compress_choice_name = Some(choice.to_string_lossy().trim().to_ascii_lowercase());
@@ -488,7 +488,7 @@ where
         }
     }
 
-    // upstream: compat.c:831 parse_compress_choice(1) calls
+    // upstream: compat.c:840 parse_compress_choice(1) calls
     // init_compression_level() (token.c:55) AFTER negotiate_the_strings()
     // (compat.c:820). When --compress-choice fixed the codec its range is known
     // now, so clamp against it (level 0 disables zlib/zlibx). Otherwise the
@@ -515,7 +515,7 @@ where
         }
     }
 
-    // upstream: options.c:156 - the `skip_compress` global is NULL unless the
+    // upstream: options.c:157 - the `skip_compress` global is NULL unless the
     // `--skip-compress` option is given, and only that explicit value is
     // forwarded to the remote sender (options.c:3035-3036).
     let mut skip_compress_spec = None;
@@ -544,7 +544,7 @@ where
     let Some(compress_request) =
         CompressRequest::resolve(compress_count > 0, request_choice.as_deref(), raw_level)
     else {
-        // upstream: compat.c:189 - the codec lookup's own refusal text.
+        // upstream: compat.c:190 - the codec lookup's own refusal text.
         let message = rsync_error!(
             4,
             "unknown compress name: {}",

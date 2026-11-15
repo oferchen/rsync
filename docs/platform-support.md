@@ -184,7 +184,7 @@ read-only flag:
 
 Unix signal handling (`core/src/signal/unix.rs`) installs handlers for
 SIGINT, SIGTERM, and SIGHUP using libc signal APIs and leaves SIGPIPE
-ignored, as upstream does (`main.c:1926-1928`). The stub
+ignored, as upstream does (`main.c:1930-1932`). The stub
 (`core/src/signal/stub.rs`) provides the same `SignalHandler` interface
 but only responds to programmatic shutdown requests via atomic flags.
 Windows Ctrl+C handling would need `SetConsoleCtrlHandler` for proper

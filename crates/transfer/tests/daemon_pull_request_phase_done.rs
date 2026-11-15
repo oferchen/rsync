@@ -2,7 +2,7 @@
 //! `NDX_DONE` as soon as the last request is out, before the sender has sent
 //! any file data.
 //!
-//! upstream: generator.c:2831-2833 writes `NDX_DONE` right after the
+//! upstream: generator.c:2917-2919 writes `NDX_DONE` right after the
 //! generate loop, while the receiver is still waiting for the first reply.
 //! rsync 3.5.1 as the client against the replayed daemon below sends the
 //! request for `keep`, then `NDX_DONE`, with no file data sent yet. Once the
@@ -10,7 +10,7 @@
 //! hold the `NDX_DONE` until every reply had been read, so its `MSG_SUCCESS`
 //! went out first.
 //!
-//! upstream: generator.c:2853-2866 - once the sender has answered that
+//! upstream: generator.c:2939-2952 - once the sender has answered that
 //! `NDX_DONE`, the generator ends the redo phase and, without
 //! `--delay-updates`, the delay phase straight away. rsync 3.5.1 writes both
 //! `NDX_DONE`s before the sender sends anything more; oc used to wait for the
@@ -260,7 +260,7 @@ fn redo_after_failed_checksum(dest: &TempDir, request_len: usize, redo_len: usiz
     server.join().expect("replayed daemon")
 }
 
-/// upstream: generator.c:2853-2866 - the redo phase ends right after its last
+/// upstream: generator.c:2939-2952 - the redo phase ends right after its last
 /// request. rsync 3.5.1 answers a failed whole-file checksum by re-requesting
 /// `keep` - the same index (`0xFE` and a zero diff), `ITEM_TRANSFER |
 /// ITEM_IS_NEW` because the discarded temp leaves the destination absent
@@ -276,7 +276,7 @@ fn redo_phase_ends_right_after_its_request() {
     assert_eq!(redo, expected);
 }
 
-/// upstream: generator.c:2667-2705 - the redo re-enters recv_generator(),
+/// upstream: generator.c:2711-2749 - the redo re-enters recv_generator(),
 /// which re-stats the destination and itemizes the request against it
 /// (generator.c:2378-2384). An existing `keep` that differs in size and
 /// mtime is not new: rsync 3.5.1 sends `ITEM_TRANSFER | ITEM_REPORT_SIZE |

@@ -35,18 +35,18 @@ excluded.
 | Flag      | Upstream max level | Description (upstream)                                             | Our parsing                                                                                                                                                                                                                                                                                                                          | Our gating sites                                                                                                                                                                          | Parity      |
 | --------- | ------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
 | BACKUP    | 1 (W_REC)          | Mention files backed up                                            | `crates/logging/src/levels/info.rs:54-138` (`InfoLevels::backup`); `crates/cli/src/frontend/execution/flags/info.rs:112-115` accepts arbitrary level (no upper cap, see `parse_flag_and_level`); `crates/cli/src/frontend/info_output.rs:325` parses identically.                                                                       | `crates/engine/src/local_copy/context_impl/state.rs` emits `info_log!(Backup, 1, "backed up {} to {}", ...)` at the end of `backup_existing_entry`, mirroring `backup.c:352` (`INFO_GTE(BACKUP, 1)` on the success label). Covers rename, replace-then-rename, and cross-device fallback paths.                                          | Match       |
-| COPY      | 1 (W_REC)          | Mention files copied locally on the receiving side                 | Same path as BACKUP; `crates/cli/src/frontend/execution/flags/info.rs:116-119` accepts any level (no cap).                                                                                                                                                                                                                            | `crates/transfer/src/receiver/quick_check.rs::try_reference_dest` emits `copy_file <src> => <dst>: <err> (<errno>)` on `--copy-dest` `fs::copy` failure via `info_log!(Copy, 1, ...)`. `crates/engine/src/local_copy/executor/file/copy/transfer/execute.rs::execute_transfer` emits the same wording when opening the alt-base override fails. Both mirror upstream `generator.c:919` `INFO_GTE(COPY, 1)` inside `copy_altdest_file()`. | Match       |
+| COPY      | 1 (W_REC)          | Mention files copied locally on the receiving side                 | Same path as BACKUP; `crates/cli/src/frontend/execution/flags/info.rs:116-119` accepts any level (no cap).                                                                                                                                                                                                                            | `crates/transfer/src/receiver/quick_check.rs::try_reference_dest` emits `copy_file <src> => <dst>: <err> (<errno>)` on `--copy-dest` `fs::copy` failure via `info_log!(Copy, 1, ...)`. `crates/engine/src/local_copy/executor/file/copy/transfer/execute.rs::execute_transfer` emits the same wording when opening the alt-base override fails. Both mirror upstream `generator.c:956` `INFO_GTE(COPY, 1)` inside `copy_altdest_file()`. | Match       |
 | DEL       | 1 (W_REC)          | Mention deletions on the receiving side                            | `crates/cli/src/frontend/execution/flags/info.rs:120-123`, `info_output.rs:327`. No upper cap.                                                                                                                                                                                                                                       | None in production. `should_show_del` exists but no transfer/engine site gates on it.                                                                                                                                                                                                                                                       | Stub        |
 | FLIST     | 2 (W_CLI)          | Mention file-list receiving/sending (levels 1-2)                   | `crates/cli/src/frontend/execution/flags/info.rs:124-130` rejects `level > 2`; `info_output.rs:328` does not enforce the cap.                                                                                                                                                                                                         | None in production. Upstream uses `INFO_GTE(FLIST, 1/2)` in `flist.c` and `generator.c`; our flist code in `crates/transfer/src/file_list/*` and `crates/engine/src/local_copy/*` does not call `info_gte(InfoFlag::Flist, _)`.                                                                                                          | Parsed-only |
-| MISC      | 2 (W_SND\|W_REC)   | Mention miscellaneous information (levels 1-2)                     | `crates/cli/src/frontend/execution/flags/info.rs:131-137` rejects `level > 2`; `info_output.rs:329` does not enforce.                                                                                                                                                                                                                 | None in production. Upstream calls `INFO_GTE(MISC, 1/2)` in `batch.c:143` and `io.c:1536`. Equivalent paths in `crates/batch/src/*` and `crates/protocol/src/multiplex/*` lack the gate.                                                                                                                                                  | Parsed-only |
-| MOUNT     | 1 (W_SND\|W_REC)   | Mention mounts that were found or skipped                          | `crates/cli/src/frontend/execution/flags/info.rs:138-141`, `info_output.rs:330`. No upper cap.                                                                                                                                                                                                                                       | `crates/engine/src/local_copy/executor/directory/recursive/entry.rs` and `crates/engine/src/local_copy/executor/sources/orchestration.rs` emit `info_log!(Mount, 1, "skipping mount-point dir {}", ...)` at the cross-device skip sites, mirroring `flist.c:1319` (`INFO_GTE(MOUNT, 1)` inside `send_file_list`). Both sites cover the recursive child-directory case and the root-level `-xx` source case. The receiver-side `cannot delete mount point` notice (`generator.c:325`) is not yet mirrored because `FLAG_MOUNT_DIR` is not propagated through our flist.                                                                                                                                                       | Match       |
-| NAME      | 2 (W_SND\|W_REC)   | Mention 1) updated file/dir names, 2) unchanged names              | Upstream parses `name`/`name1`/`name2` into a numeric level. We map to `NameOutputLevel::{Disabled,UpdatedOnly,UpdatedAndUnchanged}` at `crates/cli/src/frontend/execution/flags/info.rs:99-110`; level >= 2 collapses to `UpdatedAndUnchanged`. Logging path keeps a numeric `name` field at `crates/logging/src/levels/info.rs:67`. | Mapped via `NameOutputLevel` and consumed by progress/itemize logic in `crates/cli/src/frontend/progress/*`. The implicit `INFO_EQ(NAME, 0)` and `INFO_GTE(NAME, 1)` upstream sites in `options.c:2342-2353` and `main.c:732,798` are mirrored by `name_overridden` and `log_before_transfer` plumbing in `drive/options.rs`.        | Partial     |
-| NONREG    | 1 (W_REC, default 1; 0 disables) | Mention skipped non-regular files (default 1, 0 disables)           | `crates/cli/src/frontend/execution/flags/info.rs:142-145`, `info_output.rs:332`. Upstream's "default 1" semantics live in `info_verbosity[0]`; we set `nonreg = 1` for all `-v` levels including 0 at `crates/logging/src/config.rs:49,53,65,..`.                                                                                          | `crates/engine/src/local_copy/context_impl/reporting.rs:11` emits `info_log!(Nonreg, 1, "skipping non-regular file \"%s\"", ...)` from `record_skipped_non_regular`, mirroring `generator.c:1687`. The single funnel covers symlink/fifo/device source skips routed through the local-copy executor.                                              | Match       |
-| PROGRESS  | 2 (W_CLI)          | Mention 1) per-file progress or 2) total transfer progress         | `crates/cli/src/frontend/execution/flags/info.rs:83-91`: level 0 -> `Disabled`, 1 -> `PerFile`, 2 -> `Overall`, 3+ -> error. `info_output.rs:333` parses identically; `info_output.rs:441` shows `progress2` setting level 2 directly.                                                                                                | `crates/cli/src/frontend/progress/diagnostic.rs:90,131,157,188` emits via `emit_info(InfoFlag::Progress, _, _)` and `crates/cli/src/frontend/progress/live.rs:117` switches between modes. Upstream's `INFO_GTE(PROGRESS, 1/2)` sites in `match.c:135/376/384`, `progress.c:83/139`, `flist.c:3411`, `main.c:1616` are covered.       | Match       |
+| MISC      | 2 (W_SND\|W_REC)   | Mention miscellaneous information (levels 1-2)                     | `crates/cli/src/frontend/execution/flags/info.rs:131-137` rejects `level > 2`; `info_output.rs:329` does not enforce.                                                                                                                                                                                                                 | None in production. Upstream calls `INFO_GTE(MISC, 1/2)` in `batch.c:143` and `io.c:1543`. Equivalent paths in `crates/batch/src/*` and `crates/protocol/src/multiplex/*` lack the gate.                                                                                                                                                  | Parsed-only |
+| MOUNT     | 1 (W_SND\|W_REC)   | Mention mounts that were found or skipped                          | `crates/cli/src/frontend/execution/flags/info.rs:138-141`, `info_output.rs:330`. No upper cap.                                                                                                                                                                                                                                       | `crates/engine/src/local_copy/executor/directory/recursive/entry.rs` and `crates/engine/src/local_copy/executor/sources/orchestration.rs` emit `info_log!(Mount, 1, "skipping mount-point dir {}", ...)` at the cross-device skip sites, mirroring `flist.c:1323` (`INFO_GTE(MOUNT, 1)` inside `send_file_list`). Both sites cover the recursive child-directory case and the root-level `-xx` source case. The receiver-side `cannot delete mount point` notice (`generator.c:360`) is not yet mirrored because `FLAG_MOUNT_DIR` is not propagated through our flist.                                                                                                                                                       | Match       |
+| NAME      | 2 (W_SND\|W_REC)   | Mention 1) updated file/dir names, 2) unchanged names              | Upstream parses `name`/`name1`/`name2` into a numeric level. We map to `NameOutputLevel::{Disabled,UpdatedOnly,UpdatedAndUnchanged}` at `crates/cli/src/frontend/execution/flags/info.rs:99-110`; level >= 2 collapses to `UpdatedAndUnchanged`. Logging path keeps a numeric `name` field at `crates/logging/src/levels/info.rs:67`. | Mapped via `NameOutputLevel` and consumed by progress/itemize logic in `crates/cli/src/frontend/progress/*`. The implicit `INFO_EQ(NAME, 0)` and `INFO_GTE(NAME, 1)` upstream sites in `options.c:2397-2408` and `main.c:732,798` are mirrored by `name_overridden` and `log_before_transfer` plumbing in `drive/options.rs`.        | Partial     |
+| NONREG    | 1 (W_REC, default 1; 0 disables) | Mention skipped non-regular files (default 1, 0 disables)           | `crates/cli/src/frontend/execution/flags/info.rs:142-145`, `info_output.rs:332`. Upstream's "default 1" semantics live in `info_verbosity[0]`; we set `nonreg = 1` for all `-v` levels including 0 at `crates/logging/src/config.rs:49,53,65,..`.                                                                                          | `crates/engine/src/local_copy/context_impl/reporting.rs:11` emits `info_log!(Nonreg, 1, "skipping non-regular file \"%s\"", ...)` from `record_skipped_non_regular`, mirroring `generator.c:1724`. The single funnel covers symlink/fifo/device source skips routed through the local-copy executor.                                              | Match       |
+| PROGRESS  | 2 (W_CLI)          | Mention 1) per-file progress or 2) total transfer progress         | `crates/cli/src/frontend/execution/flags/info.rs:83-91`: level 0 -> `Disabled`, 1 -> `PerFile`, 2 -> `Overall`, 3+ -> error. `info_output.rs:333` parses identically; `info_output.rs:441` shows `progress2` setting level 2 directly.                                                                                                | `crates/cli/src/frontend/progress/diagnostic.rs:90,131,157,188` emits via `emit_info(InfoFlag::Progress, _, _)` and `crates/cli/src/frontend/progress/live.rs:117` switches between modes. Upstream's `INFO_GTE(PROGRESS, 1/2)` sites in `match.c:135/376/384`, `progress.c:84/139`, `flist.c:3422`, `main.c:1620` are covered.       | Match       |
 | REMOVE    | 1 (W_SND)          | Mention files removed on the sending side                          | `crates/cli/src/frontend/execution/flags/info.rs:146-149`, `info_output.rs:334`. No upper cap.                                                                                                                                                                                                                                       | None in production. Upstream `--remove-source-files` notifications gate on `INFO_GTE(REMOVE, 1)`; we have `--remove-source-files` plumbing in `crates/core` but no info gate before logging.                                                                                                                                            | Stub        |
-| SKIP      | 2 (W_REC)          | Mention files skipped due to transfer overrides (levels 1-2)       | `crates/cli/src/frontend/execution/flags/info.rs:150-156` rejects `level > 2`; `info_output.rs:335` does not enforce.                                                                                                                                                                                                                | None in production. Upstream `INFO_GTE(SKIP, 1/2)` fires in `generator.c:1367/1385/1387/1693/1701/1710`. Equivalent generator paths in `crates/engine/src/generator/*` do not consult the gate.                                                                                                                                          | Parsed-only |
-| STATS     | 3 (W_CLI\|W_SRV)   | Mention statistics at end of run (levels 1-3)                      | `crates/cli/src/frontend/execution/flags/info.rs:92-98` rejects `level > 3`; `info_output.rs:336` does not enforce.                                                                                                                                                                                                                  | `crates/cli/src/frontend/progress/diagnostic.rs:167` and `crates/cli/src/frontend/execution/drive/summary.rs` consume the boolean derived from `stats > 0`. Upstream's three-level emission (`STATS, 1/2/3` in `cleanup.c:224`, `generator.c:2377/2422`, `main.c:333/418/451`) is collapsed into a single boolean in our renderer. | Partial     |
-| SYMSAFE   | 1 (W_SND\|W_REC)   | Mention symlinks that are unsafe                                   | `crates/cli/src/frontend/execution/flags/info.rs:157-160`, `info_output.rs:337`. No upper cap.                                                                                                                                                                                                                                       | `crates/transfer/src/generator/file_list/walk.rs::resolve_symlink_metadata` and the batched-stat fixup in the same file emit `copying unsafe symlink "<path>" -> "<target>"` via `info_log!(Symsafe, 1, ...)` on the sender side when `--copy-unsafe-links` triggers a dereference. `crates/engine/src/local_copy/executor/special/symlink.rs::copy_symlink` emits the same notice on the local-copy path. `crates/engine/src/local_copy/context_impl/state.rs::backup_existing_entry` emits `not backing up unsafe symlink "<dest>" -> "<target>"` on the cross-device backup fallback when `--safe-links` refuses to recreate the symlink. All three mirror upstream `flist.c:217` and `backup.c:292`. | Match       |
+| SKIP      | 2 (W_REC)          | Mention files skipped due to transfer overrides (levels 1-2)       | `crates/cli/src/frontend/execution/flags/info.rs:150-156` rejects `level > 2`; `info_output.rs:335` does not enforce.                                                                                                                                                                                                                | None in production. Upstream `INFO_GTE(SKIP, 1/2)` fires in `generator.c:1404/1385/1387/1693/1701/1710`. Equivalent generator paths in `crates/engine/src/generator/*` do not consult the gate.                                                                                                                                          | Parsed-only |
+| STATS     | 3 (W_CLI\|W_SRV)   | Mention statistics at end of run (levels 1-3)                      | `crates/cli/src/frontend/execution/flags/info.rs:92-98` rejects `level > 3`; `info_output.rs:336` does not enforce.                                                                                                                                                                                                                  | `crates/cli/src/frontend/progress/diagnostic.rs:167` and `crates/cli/src/frontend/execution/drive/summary.rs` consume the boolean derived from `stats > 0`. Upstream's three-level emission (`STATS, 1/2/3` in `cleanup.c:225`, `generator.c:2420/2422`, `main.c:333/418/451`) is collapsed into a single boolean in our renderer. | Partial     |
+| SYMSAFE   | 1 (W_SND\|W_REC)   | Mention symlinks that are unsafe                                   | `crates/cli/src/frontend/execution/flags/info.rs:157-160`, `info_output.rs:337`. No upper cap.                                                                                                                                                                                                                                       | `crates/transfer/src/generator/file_list/walk.rs::resolve_symlink_metadata` and the batched-stat fixup in the same file emit `copying unsafe symlink "<path>" -> "<target>"` via `info_log!(Symsafe, 1, ...)` on the sender side when `--copy-unsafe-links` triggers a dereference. `crates/engine/src/local_copy/executor/special/symlink.rs::copy_symlink` emits the same notice on the local-copy path. `crates/engine/src/local_copy/context_impl/state.rs::backup_existing_entry` emits `not backing up unsafe symlink "<dest>" -> "<target>"` on the cross-device backup fallback when `--safe-links` refuses to recreate the symlink. All three mirror upstream `flist.c:218` and `backup.c:292`. | Match       |
 
 Legend:
 
@@ -62,7 +62,7 @@ Legend:
 
 ## --info=help
 
-Upstream prints the table built by `output_item_help` (`options.c:474-510`),
+Upstream prints the table built by `output_item_help` (`options.c:475-511`),
 which iterates `info_words[]`, then `ALL`, `NONE`, `HELP`, then
 `Options added at each level of verbosity` for each verbosity row in
 `info_verbosity[]`.
@@ -84,9 +84,9 @@ spellings (`flag0`, `none`) appear in `--info=help`.
 
 ## --info=NONE
 
-Upstream `parse_output_words` (`options.c:450-451`) treats `NONE` as
+Upstream `parse_output_words` (`options.c:451-452`) treats `NONE` as
 `len = lev = 0`, then enters the loop with `len == 0` so it falls through to
-the `if (!len ...)` branch (`options.c:454-463`) and assigns level 0 to every
+the `if (!len ...)` branch (`options.c:455-464`) and assigns level 0 to every
 flag.
 
 Our parser handles `NONE` in two places:
@@ -110,8 +110,8 @@ re-enable a flag.
 
 Upstream parses `progress2` via `parse_output_words` matching `progress`
 against the `info_words` entry and reading the trailing `2` digit
-(`options.c:439-445`). The numeric level is stored in `info_levels[INFO_PROGRESS]`,
-and `INFO_GTE(PROGRESS, 2)` in `progress.c:83` switches the renderer to overall
+(`options.c:440-446`). The numeric level is stored in `info_levels[INFO_PROGRESS]`,
+and `INFO_GTE(PROGRESS, 2)` in `progress.c:84` switches the renderer to overall
 mode.
 
 Our parser also accepts the trailing-digit form and maps it to
@@ -125,23 +125,23 @@ the numeric value upstream uses.
 
 Upstream also auto-applies `parse_output_words(info_words, info_levels,
 "FLIST2,PROGRESS", DEFAULT_PRIORITY)` whenever `do_progress && !am_server`
-(`options.c:2345`). Our parser does not perform this implication: setting
+(`options.c:2400`). Our parser does not perform this implication: setting
 `--progress` does not raise `flist` to level 2 anywhere in
 `crates/cli/src/frontend/arguments/parser/mod.rs:546-553` or
 `drive/options.rs`. This is a parity gap.
 
 Upstream further enforces `parse_output_words(info_words, info_levels, "name",
 DEFAULT_PRIORITY)` when `do_progress && !log_before_transfer && INFO_EQ(NAME,
-0)` (`options.c:2343-2344`). Our equivalent `name` defaulting flows through
+0)` (`options.c:2398-2399`). Our equivalent `name` defaulting flows through
 `InfoFlagSettings::name` and the `name_overridden` flag in
 `drive/options.rs:140-143`, but `--progress` alone does not seed
 `name = UpdatedOnly` the way upstream does.
 
 ## -P short option
 
-Upstream `case 'P'` at `options.c:1600-1607` sets `do_progress = 1` and
+Upstream `case 'P'` at `options.c:1627-1634` sets `do_progress = 1` and
 `keep_partial = 1`; the auto-implication of `FLIST2,PROGRESS` then runs at
-`options.c:2342-2346`.
+`options.c:2397-2401`.
 
 We expose `-P` via clap's `partial-progress` argument
 (`crates/cli/src/frontend/command_builder/sections/transfer_behavior_options.rs:250-252`).
@@ -152,9 +152,9 @@ The parser at
 
 ## -v interaction with default levels
 
-Upstream `set_output_verbosity` (`options.c:513-524`) iterates
+Upstream `set_output_verbosity` (`options.c:514-525`) iterates
 `j = 0..=verbose` over `info_verbosity[]` and `debug_verbosity[]` with
-`DEFAULT_PRIORITY`. The cumulative table at `options.c:239-243` is:
+`DEFAULT_PRIORITY`. The cumulative table at `options.c:240-244` is:
 
 - 0: `NONREG`
 - 1: `COPY,DEL,FLIST,MISC,NAME,STATS,SYMSAFE`
@@ -163,7 +163,7 @@ Upstream `set_output_verbosity` (`options.c:513-524`) iterates
 
 Subsequent `--info=FLAG` arguments use `USER_PRIORITY` and override the
 defaults; `parse_output_words` only assigns when
-`priority >= words[j].priority` (`options.c:457-460`). The result is that
+`priority >= words[j].priority` (`options.c:458-461`). The result is that
 explicit `--info=NAME0` after `-v` clears the implied level.
 
 Our equivalent is `logging::VerbosityConfig::from_verbose_level`
@@ -178,20 +178,20 @@ levels 0-5. Differences:
   do not implement `make_output_option`, so server-side option forwarding does
   not deduplicate implied entries).
 - Upstream `do_stats` (`--stats`) parses `verbose > 1 ? "stats3" : "stats2"`
-  at `options.c:2046-2049`. Our `--stats` flag at
+  at `options.c:2082-2085`. Our `--stats` flag at
   `crates/cli/src/frontend/arguments/parser/mod.rs:435` is a plain boolean and
   is not promoted to level 3 under `-vv`; the renderer in
   `crates/cli/src/frontend/execution/drive/summary.rs` ignores the level
   distinction.
-- Upstream `limit_output_verbosity` at `options.c:527-553` clamps levels to
+- Upstream `limit_output_verbosity` at `options.c:528-554` clamps levels to
   the running verbose ceiling so that `--info=FLIST3` with `-v` is reduced to
   `FLIST2`. We do not implement this clamp; per-flag caps in
   `flags/info.rs:124-156` reject only the parser-level overflow.
 - Upstream `negate_output_levels` and `reset_output_levels`
-  (`options.c:555-578`) are used for daemon-side suppression. We have no
+  (`options.c:556-579`) are used for daemon-side suppression. We have no
   equivalent because our daemon does not pipe info levels through the option
   forwarding stage.
-- The `-q`/`--quiet` interaction in upstream zeros `verbose` (`options.c:1095`
+- The `-q`/`--quiet` interaction in upstream zeros `verbose` (`options.c:1113`
   via the `case 'q'` setter, not shown above) before
   `set_output_verbosity` runs. Our parser at
   `crates/cli/src/frontend/arguments/parser/mod.rs:566-568` sets `verbosity =
@@ -246,4 +246,4 @@ module, so no work is required there. Our `crates/daemon/src/*` correctly
 inherits the client-side info levels via the message pipeline; daemon-side
 suppression of info messages on `--server` is upstream's responsibility and
 runs through `parse_output_words` priority rules at
-`options.c:2929,540-552`, which we have not modelled.
+`options.c:2994,540-552`, which we have not modelled.

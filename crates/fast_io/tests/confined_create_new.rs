@@ -9,7 +9,7 @@
 //! happens to be chosen: `O_TMPFILE` is Linux-only, so a behavioural test alone
 //! would exercise this on macOS and skip it on Linux.
 //!
-//! upstream: `rsync-3.5.1/syscall.c:3032` `ds_descend()`.
+//! upstream: `rsync-3.5.2/syscall.c:3103` `ds_descend()`.
 
 #![cfg(unix)]
 

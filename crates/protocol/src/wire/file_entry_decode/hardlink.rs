@@ -29,7 +29,7 @@ pub fn decode_hardlink_idx<R: Read>(reader: &mut R, flags: u32) -> io::Result<Op
             // upstream C uses unsigned int for hlink_flist indices.
             //
             // The value is range-checked by the caller against the entries
-            // received so far (upstream: flist.c:1102-1107, `first_hlink_ndx < 0
+            // received so far (upstream: flist.c:1106-1111, `first_hlink_ndx < 0
             // || first_hlink_ndx >= flist->ndx_start + flist->used`) - see
             // `FileListReader::read_entry_with_flist`. Decoding here stays
             // context-free because `ndx_start`/`used` live in the reader state.
@@ -61,7 +61,7 @@ pub fn decode_hardlink_dev_ino<R: Read>(
     let dev = if flags & ((XMIT_SAME_DEV_PRE30 as u32) << 8) != 0 {
         prev_dev
     } else {
-        // Read dev + 1 and subtract 1 (upstream: flist.c:966-967 sends dev + 1)
+        // Read dev + 1 and subtract 1 (upstream: flist.c:970-971 sends dev + 1)
         read_longint(reader)? - 1
     };
 

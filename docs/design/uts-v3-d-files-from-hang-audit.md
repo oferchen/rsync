@@ -39,7 +39,7 @@ Row 6: `lsh.sh PULL with filehost prefix`. Cited at upstream
 the test sets `desthost=''` (line 36) -> the local oc-rsync is the
 **client-receiver**, the remote rsync (spawned by `lsh.sh` -> `$RSYNC --server --sender`)
 is the source. The filehost prefix on `--files-from` triggers upstream
-`options.c:3112-3138 check_for_hostspec`, which strips the host and
+`options.c:3180-3206 check_for_hostspec`, which strips the host and
 forwards `--files-from <path>` to the remote server. The server then opens
 the file locally and `start_filesfrom_forwarding` writes the bytes back
 to the sender's `filesfrom_fd`.
@@ -60,7 +60,7 @@ Ok(()); }`) without forwarding.
 `crates/transfer/src/lib.rs:565-575`:
 
 ```rust
-// upstream: main.c:1354-1356 - after sending filter list, forward
+// upstream: main.c:1358-1360 - after sending filter list, forward
 // pre-read --files-from data to the remote daemon's generator so it
 // can build the file list from the forwarded filenames.
 // This applies only in client-mode pull (Receiver), where the daemon's
@@ -133,7 +133,7 @@ client-receiver has a buffer to flush at `lib.rs:570`.
    path is openable on the client, eagerly read the file and emit
    `FilesFromSource::Hybrid { local_bytes, wire_arg }`. Wire-arg uses the
    stripped path form for server-side argv (matches upstream
-   `options.c:3112-3138`).
+   `options.c:3180-3206`).
 2. In the orchestration layer (`crates/core/src/client/remote/*.rs`
    `server_config.connection.files_from_data = Some(data)` sites at
    `ssh_transfer.rs:369`, `embedded_ssh_transfer.rs:176`,
@@ -175,7 +175,7 @@ CI: wire into the upstream-testsuite IFX-15.a cell so the full
 
 - upstream `target/interop/upstream-src/rsync-3.4.4/testsuite/files-from.test`
 - upstream `main.c:1173-1180` `start_filesfrom_forwarding`
-- upstream `options.c:3112-3138` `check_for_hostspec`
+- upstream `options.c:3180-3206` `check_for_hostspec`
 - upstream `io.c:370-381` `forward_filesfrom_data`
 - oc-rsync `crates/transfer/src/receiver/transfer/setup.rs:485` server-side forwarder
 - oc-rsync `crates/transfer/src/lib.rs:565-575` client-side emit

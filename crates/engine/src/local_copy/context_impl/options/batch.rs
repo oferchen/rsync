@@ -48,7 +48,7 @@ impl<'a> CopyContext<'a> {
             None => return Ok(()),
         };
 
-        // upstream: flist.c:3024-3031 - a nonzero io_error rides the end
+        // upstream: flist.c:3035-3042 - a nonzero io_error rides the end
         // marker only for a peer with a safe file list; write_end() applies
         // that gate.
         let io_error = self.batch_flist_io_error();
@@ -88,7 +88,7 @@ impl<'a> CopyContext<'a> {
     /// every owner and group the file list carried (inline names ride the
     /// entries only under INC_RECURSE, flist.c:791).
     ///
-    /// upstream: flist.c:3063 - `if (numeric_ids <= 0 && !inc_recurse)
+    /// upstream: flist.c:3074 - `if (numeric_ids <= 0 && !inc_recurse)
     /// send_id_lists(f)`. ID lists are only emitted when INC_RECURSE is
     /// inactive; under INC_RECURSE the uid/gid names are inlined into
     /// each flist entry via XMIT_USER_NAME_FOLLOWS / XMIT_GROUP_NAME_FOLLOWS
@@ -119,7 +119,7 @@ impl<'a> CopyContext<'a> {
             )
         };
 
-        // upstream: flist.c:3063 - `if (numeric_ids <= 0 && !inc_recurse)
+        // upstream: flist.c:3074 - `if (numeric_ids <= 0 && !inc_recurse)
         // send_id_lists(f)`. Under --numeric-ids no id-lists are emitted, so the
         // reader (reader/flist.rs) must find none. numeric_ids is not a stream
         // flag; it is carried in the batch config from the invocation.
@@ -127,7 +127,7 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
-        // upstream: flist.c:3063 - skip send_id_lists() under INC_RECURSE.
+        // upstream: flist.c:3074 - skip send_id_lists() under INC_RECURSE.
         if compat_flags.is_some_and(|cf| {
             protocol::CompatibilityFlags::from_bits(cf as u32)
                 .contains(protocol::CompatibilityFlags::INC_RECURSE)
@@ -270,7 +270,7 @@ impl<'a> CopyContext<'a> {
 
     /// Sets the `ITEM_REPORT_XATTR` value block for the entry just captured.
     ///
-    /// upstream: `sender.c:482-484 write_ndx_and_attrs()` - the block follows
+    /// upstream: `sender.c:490-492 write_ndx_and_attrs()` - the block follows
     /// the entry's iflags whenever they carry `ITEM_REPORT_XATTR`.
     pub(crate) fn set_batch_xattr_report(&mut self, report: Option<Vec<u8>>) {
         self.batch_xattr_report = report;
@@ -278,7 +278,7 @@ impl<'a> CopyContext<'a> {
 
     /// Records the owner and group of a flat-list entry for the id lists.
     ///
-    /// upstream: `flist.c:787-797 send_file_entry()` - `add_uid()`/`add_gid()`
+    /// upstream: `flist.c:791-801 send_file_entry()` - `add_uid()`/`add_gid()`
     /// keep the first sighting of each id (uidlist.c:340-371).
     pub(crate) fn note_batch_entry_owner(&mut self, uid: Option<u32>, gid: Option<u32>) {
         for (ids, id) in self.batch_owner_ids.iter_mut().zip([uid, gid]) {
@@ -292,7 +292,7 @@ impl<'a> CopyContext<'a> {
 
     /// Returns the `io_error` bits the file list reports to the replaying peer.
     ///
-    /// upstream: flist.c:3024 / :3066 - `ignore_errors` zeroes the value; a
+    /// upstream: flist.c:3035 / :3066 - `ignore_errors` zeroes the value; a
     /// walk error is `IOERR_GENERAL`.
     pub(in crate::local_copy) fn batch_flist_io_error(&self) -> i32 {
         if !self.batch_flist_error_dirs.is_empty() && !self.options.ignore_errors_enabled() {
@@ -322,7 +322,7 @@ impl<'a> CopyContext<'a> {
 
     /// Writes the protocol 28-29 `io_error` word that follows the id lists.
     ///
-    /// upstream: flist.c:3065-3067 - `if (protocol_version < 30)
+    /// upstream: flist.c:3076-3078 - `if (protocol_version < 30)
     /// write_int(f, ignore_errors ? 0 : io_error)`. Without it a 3.x reader
     /// takes the first file's NDX as the error word and every later read is
     /// misaligned ("File-list index ... not in -1 - N").
@@ -656,7 +656,7 @@ impl<'a> CopyContext<'a> {
         if proto < 29 {
             return;
         }
-        // upstream: rsync.h:265 SIGNIFICANT_ITEM_FLAGS + generator.c:588-589
+        // upstream: rsync.h:266 SIGNIFICANT_ITEM_FLAGS + generator.c:625-626
         // emit gate - only these bits (or ITEM_REPORT_XATTR) reach the wire;
         // ITEM_LOCAL_CHANGE, ITEM_BASIS_TYPE_FOLLOWS and ITEM_XNAME_FOLLOWS do
         // not qualify an entry on their own.
@@ -715,7 +715,7 @@ impl<'a> CopyContext<'a> {
     /// 16-byte file-level checksum of the source file contents is written:
     /// MD5 for protocol 30+, seeded MD4 below it.
     ///
-    /// upstream: match.c:403 sum_init(xfer_sum_nni, checksum_seed) then
+    /// upstream: match.c:439 sum_init(xfer_sum_nni, checksum_seed) then
     /// sum_update on file content then sum_end(sender_file_sum). For MD5
     /// (protocol >= 30), sum_init ignores the seed; protocol 28-29 use
     /// CSUM_MD4_OLD (checksum.c:142-144), whose sum_init() feeds the 4-byte LE
@@ -749,7 +749,7 @@ impl<'a> CopyContext<'a> {
                 writer.config().checksum_seed,
             )
         };
-        // upstream: match.c:403-452 - sum the source file content.
+        // upstream: match.c:439-488 - sum the source file content.
         let file_sum = {
             let mut reader = std::fs::File::open(source).map_err(|e| {
                 crate::local_copy::LocalCopyError::io(
@@ -833,7 +833,7 @@ impl<'a> CopyContext<'a> {
     /// delta entry just completed for it. A no-op when no such entry waits
     /// (batch mode inactive, protocol < 29, or no transfer for this file).
     ///
-    /// upstream: `generator.c:517-548 itemize()` sets these bits in the word
+    /// upstream: `generator.c:554-585 itemize()` sets these bits in the word
     /// `sender.c:469 write_ndx_and_attrs()` echoes into the batch.
     pub(crate) fn record_batch_transfer_report(&mut self, report: u16) {
         let Some((entry, offset)) = self.batch_report_slot.take() else {
@@ -980,7 +980,7 @@ impl<'a> CopyContext<'a> {
         // Sort entries by their post-sort NDX so the delta stream is in
         // ascending NDX order, matching what upstream's recv_files() expects.
         entries.sort_by_key(|(sorted_idx, _)| *sorted_idx);
-        // upstream: sender.c:515-547 - under INC_RECURSE the sub-lists go out
+        // upstream: sender.c:523-555 - under INC_RECURSE the sub-lists go out
         // between file-data records, as far ahead as the lookahead allows.
         let mut pending_sublists = std::mem::take(&mut self.batch_pending_sublists).into_iter();
         let schedule = self.batch_list_plan.as_ref().map(|plan| {
@@ -1051,7 +1051,7 @@ impl<'a> CopyContext<'a> {
         // NDX_DONEs to break (phase 0->1->2->3, breaks when phase > max_phase).
         // For protocol < 29, max_phase=1, needs 2 NDX_DONEs.
         //
-        // upstream: sender.c:525-545 - under INC_RECURSE every NDX_DONE before
+        // upstream: sender.c:533-553 - under INC_RECURSE every NDX_DONE before
         // the last list only frees a list, so each extra list adds one.
         let proto = batch_writer_arc
             .lock()
@@ -1140,7 +1140,7 @@ impl<'a> CopyContext<'a> {
     /// traversal index of the cluster leader together with whether this entry
     /// *is* that leader - the first sighting of the inode.
     ///
-    /// upstream: `flist.c:1853-1860 make_file()` remembers `(st_dev, st_ino)`
+    /// upstream: `flist.c:1857-1864 make_file()` remembers `(st_dev, st_ino)`
     /// for every non-directory with `st_nlink > 1`, and
     /// `flist.c:824-850 send_file_entry()` turns a first sighting into
     /// `XMIT_HLINK_FIRST` (recording `first_ndx + ndx`) and every repeat into a
@@ -1337,7 +1337,7 @@ impl<'a> CopyContext<'a> {
         for (s, ndx) in plan.wire_ndx(&sorted).into_iter().enumerate() {
             traversal_to_ndx[sorted_to_traversal[s]] = ndx;
         }
-        // upstream: flist.c:2683-2690 - a list whose scan raised an error ends
+        // upstream: flist.c:2694-2701 - a list whose scan raised an error ends
         // with it; the transfer root's listing is the initial list, and a
         // directory without a sub-list falls back to it rather than lose it.
         let io_error = self.batch_flist_io_error();
@@ -1386,7 +1386,7 @@ impl<'a> CopyContext<'a> {
                     flist_writer.set_pending_acl(access, default);
                 }
                 if let Some(idx) = entry.hardlink_idx() {
-                    // upstream: flist.c:824-850 - the group's first member in
+                    // upstream: flist.c:828-854 - the group's first member in
                     // send order is its leader (XMIT_HLINK_FIRST) and every
                     // later one names that NDX; a receiver rejects a follower
                     // whose leader it has not yet read (flist.c:1103-1107).
@@ -1413,7 +1413,7 @@ impl<'a> CopyContext<'a> {
                 .map_err(err)?;
             chunks.push(buf);
         }
-        // upstream: flist.c:2718-2719 - NDX_FLIST_EOF follows the last sub-list
+        // upstream: flist.c:2729-2730 - NDX_FLIST_EOF follows the last sub-list
         // in the same send_extra_file_list() call (flist.c:3090-3091 when the
         // initial list is the only one).
         let last = chunks
@@ -1542,7 +1542,7 @@ fn batch_entry_compare(
 /// The `(st_dev, st_ino)` key a batch flist entry contributes to hardlink
 /// grouping, or `None` when the entry cannot belong to a cluster.
 ///
-/// upstream: `flist.c:1853-1860 make_file()` - under protocol 28 and above the
+/// upstream: `flist.c:1857-1864 make_file()` - under protocol 28 and above the
 /// candidate test is `!S_ISDIR(st.st_mode) && st.st_nlink > 1`.
 #[cfg(unix)]
 fn batch_hlink_key(metadata: &fs::Metadata, preserve_hard_links: bool) -> Option<(u64, u64)> {

@@ -2,7 +2,7 @@
 //! the client-supplied destination path.
 //!
 //! The daemon's operator named only the module; every component below it
-//! comes from the peer. Upstream confines that tail (`clientserver.c:1093`
+//! comes from the peer. Upstream confines that tail (`clientserver.c:1097`
 //! `use_secure_symlinks = am_daemon && ...`), and its `chdir-symlink-race`
 //! cell plants `<module>/subdir -> <outside>` and pushes a single file to
 //! `subdir/target.txt` with `-tp --size-only`: no data moves, only the

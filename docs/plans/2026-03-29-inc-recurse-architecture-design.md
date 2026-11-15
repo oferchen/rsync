@@ -13,7 +13,7 @@ The current sender-side INC_RECURSE implementation has SOLID violations:
 ## Chosen Approach: Hybrid (Eager Scan, Lazy Sending)
 
 - **Eager filesystem scan**: Leverage parallel stat. Build the complete file list upfront.
-- **Lazy sub-list sending**: Interleave sub-list emission with the transfer loop, matching upstream `sender.c:227,261` cadence using `MIN_FILECNT_LOOKAHEAD = 1000`.
+- **Lazy sub-list sending**: Interleave sub-list emission with the transfer loop, matching upstream `sender.c:235,261` cadence using `MIN_FILECNT_LOOKAHEAD = 1000`.
 
 ## Architecture: 3-Component Decomposition
 

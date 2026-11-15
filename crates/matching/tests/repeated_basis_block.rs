@@ -1,7 +1,7 @@
 //! A basis block matches every source window that carries its content, as
 //! often as that content repeats.
 //!
-//! upstream: match.c:229-345 `hash_search()` never retires a chain entry
+//! upstream: match.c:237-362 `hash_search()` never retires a chain entry
 //! outside `--inplace`, so one basis copy of a block answers any number of
 //! source copies with a `Copy` token each. Sending the repeats as literals
 //! instead changes the token stream, the `--stats` Literal/Matched split and

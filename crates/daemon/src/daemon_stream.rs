@@ -7,7 +7,7 @@
 //!
 //! The `Stdio` variant supports the `--server --daemon` remote-shell daemon
 //! mode where stdin/stdout are used instead of a TCP socket.
-//! upstream: main.c:1971-1975 - under `am_server`, `if (am_daemon)
+//! upstream: main.c:1975-1979 - under `am_server`, `if (am_daemon)
 //! return start_daemon(STDIN_FILENO, STDOUT_FILENO);`
 
 use std::io::{self, Read, Write};
@@ -22,7 +22,7 @@ use std::time::Duration;
 /// `--server --daemon` remote-shell daemon mode where the daemon protocol
 /// runs over an existing connection's stdin/stdout rather than a TCP socket.
 ///
-/// upstream: main.c:1975 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`
+/// upstream: main.c:1979 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`
 /// (clientserver.c:1414) serves the daemon protocol over the inherited file
 /// descriptors.
 pub struct StdioPair {
@@ -74,7 +74,7 @@ pub enum DaemonStream {
     ///
     /// Used when the daemon is invoked via `--server --daemon` over an
     /// existing connection (e.g., SSH). Reads from stdin, writes to stdout.
-    /// upstream: main.c:1975 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`.
+    /// upstream: main.c:1979 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`.
     Stdio(StdioPair),
 
     /// QUIC connection relayed by the QUIC front process (oc extension,
@@ -177,7 +177,7 @@ impl DaemonStream {
     /// Returns `true` if a remote shell spawned this daemon (upstream
     /// `am_daemon < 0`), so its stderr reaches the client.
     ///
-    /// upstream: clientserver.c:1177-1178 - only `am_daemon > 0` (a listener or
+    /// upstream: clientserver.c:1181-1182 - only `am_daemon > 0` (a listener or
     /// inetd) forces `msgs2stderr = 0`.
     pub fn is_remote_shell(&self) -> bool {
         matches!(self, Self::Stdio(pair) if pair.remote_shell)

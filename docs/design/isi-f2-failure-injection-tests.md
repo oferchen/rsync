@@ -283,9 +283,9 @@ summary line. For Rust-level tests (ISI.f.3 scope), read
 
 | Flag | Value | Upstream constant | Triggered by |
 |------|-------|-------------------|-------------|
-| `IOERR_GENERAL` | `1 << 0` | `rsync.h:168` | FM1, FM4b, FM8 |
-| `IOERR_VANISHED` | `1 << 1` | `rsync.h:169` | FM2, FM9 |
-| `IOERR_DEL_LIMIT` | `1 << 2` | `rsync.h:170` | (not triggered by this suite) |
+| `IOERR_GENERAL` | `1 << 0` | `rsync.h:169` | FM1, FM4b, FM8 |
+| `IOERR_VANISHED` | `1 << 1` | `rsync.h:170` | FM2, FM9 |
+| `IOERR_DEL_LIMIT` | `1 << 2` | `rsync.h:171` | (not triggered by this suite) |
 
 ### 4.3 Exit code mapping
 

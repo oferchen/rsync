@@ -1,6 +1,6 @@
 /// A refused option must reach the daemon log, in the words upstream uses.
 ///
-/// upstream: `options.c:1415-1429` builds the refusal into `err_buf` once, and
+/// upstream: `options.c:1433-1447` builds the refusal into `err_buf` once, and
 /// `option_error()` (`options.c:907-918`) emits that same buffer via
 /// `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`. A daemon's `FERROR` lands in
 /// the log file, so the peer's `@ERROR` payload and the logged line are the
@@ -66,7 +66,7 @@ fn run_daemon_logs_a_refused_option_in_upstream_words() {
     reader.read_line(&mut line).expect("module acknowledgement");
     assert_eq!(line, "@RSYNCD: OK\n");
 
-    // upstream: clientserver.c:1159-1166 - the refusal is decided by
+    // upstream: clientserver.c:1163-1170 - the refusal is decided by
     // parse_arguments() over the post-OK argv, so `-z` arrives bundled in the
     // client's server-option string exactly as a stock client sends it.
     for arg in [
@@ -93,7 +93,7 @@ fn run_daemon_logs_a_refused_option_in_upstream_words() {
     }
 
     let log_contents = fs::read_to_string(&log_path).expect("read log file");
-    // upstream: options.c:915 - `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`.
+    // upstream: options.c:933 - `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`.
     // The `rsync: ` prefix is `option_error()`'s; nothing else is added,
     // because the connection is already identified by the pid stamp and the
     // preceding `rsync allowed access on module ...` line.

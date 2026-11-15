@@ -39,7 +39,7 @@ use super::{
 fn emit_then_decode(allow_inc_recurse: bool) -> (String, CompatibilityFlags) {
     let suffix = build_capability_string_suffix(allow_inc_recurse);
     // The server receives the caps as the tail of the compact flag string, e.g.
-    // `-logDtpre.iLsfxCIvu` (upstream options.c:2738 appends into the same argstr).
+    // `-logDtpre.iLsfxCIvu` (upstream options.c:2793 appends into the same argstr).
     let compact = format!("-logDtpr{suffix}");
     let client_info = parse_client_info(std::slice::from_ref(&compact)).into_owned();
     let flags = build_compat_flags_from_client_info(&client_info, allow_inc_recurse);

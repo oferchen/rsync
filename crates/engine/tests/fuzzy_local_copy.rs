@@ -103,7 +103,7 @@ fn fuzzy_selects_near_identical_basis_for_delta() {
     let operands = vec![src_os, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     // Local copies default to whole-file; delta (and thus fuzzy-basis reuse)
-    // only engages with --no-whole-file. upstream: generator.c:2400 -
+    // only engages with --no-whole-file. upstream: generator.c:2443 -
     // `if (statret != 0 || whole_file) write_sum_head(NULL)` sends the whole
     // file even when a fuzzy basis was selected.
     let options = LocalCopyOptions::default()
@@ -130,7 +130,7 @@ fn fuzzy_selects_near_identical_basis_for_delta() {
         "fuzzy delta must reconstruct the source exactly"
     );
 
-    // upstream: generator.c:2202-2205 - the FUZZY,1 line names the target and
+    // upstream: generator.c:2243-2246 - the FUZZY,1 line names the target and
     // basis by their relative flist names (basenames here), byte-for-byte:
     // "fuzzy basis selected for %s: %s". The fuzzy testsuite greps this exact
     // string, so the basis must be the basename `report_2023.csv`, not an

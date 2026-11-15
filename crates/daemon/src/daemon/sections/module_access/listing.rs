@@ -4,7 +4,7 @@
 // one `%-15s\t%s\n` line per listable module, terminated by `@RSYNCD: EXIT`.
 // The MOTD is emitted earlier, right after the greeting.
 //
-// upstream: clientserver.c:1554-1559 - `start_daemon()` handles the `#list`
+// upstream: clientserver.c:1564-1569 - `start_daemon()` handles the `#list`
 // request by calling `send_listing()` (1374-1386), which iterates
 // `lp_num_modules()` and prints each listable module.
 
@@ -23,7 +23,7 @@ fn respond_with_module_list(
     modules: &[ModuleRuntime],
     messages: &LegacyMessageCache,
 ) -> io::Result<()> {
-    // upstream: clientserver.c:1374-1386 send_listing() - the listing loops over
+    // upstream: clientserver.c:1383-1395 send_listing() - the listing loops over
     // every module and prints it iff `lp_list(i)`. No `allow_access()`/hosts
     // check is applied; host filtering happens only in rsync_module() on the
     // module-open path (clientserver.c:773). The listing goes straight to the
@@ -34,7 +34,7 @@ fn respond_with_module_list(
             continue;
         }
 
-        // upstream: clientserver.c:1381 - io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i));
+        // upstream: clientserver.c:1390 - io_printf(fd, "%-15s\t%s\n", lp_name(i), lp_comment(i));
         let comment = module.comment.as_deref().unwrap_or("");
         let line = format_daemon_module_listing(&module.name, comment);
         write_limited(stream, limiter, line.as_bytes())?;

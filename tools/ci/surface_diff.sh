@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mechanically diff enumerable "surfaces" between upstream rsync 3.5.1 and
+# Mechanically diff enumerable "surfaces" between upstream rsync 3.5.2 and
 # oc-rsync, so an audit can show it covered every member of a table instead of
 # asserting that it did.
 #
@@ -34,7 +34,7 @@ set -euo pipefail
 export LC_ALL=C
 
 REPO_ROOT="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
-UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.5.1}"
+UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.5.2}"
 
 # The single place that knows where a release's source lives. Every question -
 # the oc-vs-upstream diff, the release-to-release delta, the self-test - resolves

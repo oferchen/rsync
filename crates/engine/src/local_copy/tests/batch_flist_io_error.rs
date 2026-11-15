@@ -57,6 +57,6 @@ fn batch_flist_io_error_is_zero_under_ignore_errors() {
     let options = LocalCopyOptions::new().ignore_errors(true);
     let mut context = batch_recording_context(temp.path(), options);
     context.record_io_error();
-    // upstream: flist.c:3066 - `write_int(f, ignore_errors ? 0 : io_error)`.
+    // upstream: flist.c:3077 - `write_int(f, ignore_errors ? 0 : io_error)`.
     assert_eq!(context.batch_flist_io_error(), 0);
 }

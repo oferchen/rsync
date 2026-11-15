@@ -69,7 +69,7 @@ pub(crate) const fn duration_from_microseconds(us: u128) -> Duration {
 
 /// Sleeps for the given duration, chunking into `MAX_SLEEP_DURATION` segments.
 ///
-/// upstream: io.c:2349-2351 sleep_for_bwlimit() blocks in `select()`; a plain
+/// upstream: io.c:2356-2358 sleep_for_bwlimit() blocks in `select()`; a plain
 /// `nanosleep` via [`std::thread::sleep`] is equivalent for the >= 100 ms
 /// delays the limiter requests (`MINIMUM_SLEEP_MICROS`).
 pub(crate) fn sleep_for(duration: Duration) {

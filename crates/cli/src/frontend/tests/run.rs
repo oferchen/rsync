@@ -1,7 +1,7 @@
 use super::common::*;
 use super::*;
 
-// upstream: options.c:1873-1880 - a rejected --chmod arg prints
+// upstream: options.c:1909-1916 - a rejected --chmod arg prints
 // `Invalid argument passed to --chmod (%s)` (verbatim raw arg) and exits
 // RERR_SYNTAX (1). We assert the message and exit code byte-for-byte.
 #[test]
@@ -51,7 +51,7 @@ fn clap_error_uses_canonical_exit_code_text() {
     );
 }
 
-// upstream: options.c:1862-1867 - the 21st alt-dest arg overflows the shared
+// upstream: options.c:1898-1903 - the 21st alt-dest arg overflows the shared
 // `basis_dir[]` array (rsync.h:203 MAX_BASIS_DIRS) and exits RERR_SYNTAX (1)
 // with a verbatim `ERROR: at most 20 <opt> args may be specified` message. We
 // assert both the exit code and the message end-to-end.

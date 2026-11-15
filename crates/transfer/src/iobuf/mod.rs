@@ -85,7 +85,7 @@ impl<I: BufferedInputHint, W: Write> IoBuf<I, W> {
 impl<R: Read, W: Write> IoBuf<ServerReader<R>, W> {
     /// Starts demultiplexing the input.
     ///
-    /// upstream: io.c:2699 io_start_multiplex_in() switches the one `iobuf`.
+    /// upstream: io.c:2706 io_start_multiplex_in() switches the one `iobuf`.
     pub(crate) fn activate_input_multiplex(&mut self) -> io::Result<()> {
         self.input.activate_multiplex_in_place()
     }

@@ -1,7 +1,7 @@
 //! A local `--no-whole-file` delta whose phase-1 strong sum false-matches a
 //! block must fail verification and be resent with full-width sums.
 //!
-//! upstream: generator.c:745-754 `sum_sizes_sqroot()` truncates the strong
+//! upstream: generator.c:782-791 `sum_sizes_sqroot()` truncates the strong
 //! sum to 2 bytes for a small basis; receiver.c:534 fails the whole-file
 //! check, receiver.c:1350-1375 warns and queues the phase-2 resend, and
 //! generator.c:2650 resends with `SUM_LENGTH`.

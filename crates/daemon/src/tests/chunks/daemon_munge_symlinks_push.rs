@@ -99,7 +99,7 @@ fn daemon_munge_symlinks_push_prepends_prefix() {
         std::path::Path::new("/rsyncd-munged//etc/passwd"),
         "absolute targets must carry the `/rsyncd-munged/` prefix verbatim \
          so the kernel cannot follow them out of the module root \
-         (upstream flist.c:1375-1379)",
+         (upstream flist.c:1379-1383)",
     );
 
     let rel_link = fs::read_link(dest_dir.join("rel_link")).expect("read rel_link target");
@@ -116,7 +116,7 @@ fn daemon_munge_symlinks_push_prepends_prefix() {
         std::path::Path::new("/rsyncd-munged/../escape"),
         "parent-escape targets must carry the prefix unmodified so a later \
          munging sender can strip it and restore the original target \
-         (upstream flist.c:499-503); note `--safe-links` does not evaluate \
+         (upstream flist.c:502-506); note `--safe-links` does not evaluate \
          munged links individually - the prefix is absolute, so a munging \
          receiver under --safe-links skips every symlink (generator.c:1951)",
     );

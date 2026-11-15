@@ -42,35 +42,35 @@ jobs:
     with:
       variant: all
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
-      expect_result_nonroot: tools/ci/upstream-3.5.1-expect.nonroot.txt
-      expect_result_root: tools/ci/upstream-3.5.1-expect.root.txt
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.2' }}
+      expect_result_nonroot: tools/ci/upstream-3.5.2-expect.nonroot.txt
+      expect_result_root: tools/ci/upstream-3.5.2-expect.root.txt
   upstream-testsuite-tcp:
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
       variant: all
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.2' }}
       transport: tcp
-      expect_result_nonroot: tools/ci/upstream-3.5.1-expect.nonroot.tcp.txt
-      expect_result_root: tools/ci/upstream-3.5.1-expect.root.tcp.txt
+      expect_result_nonroot: tools/ci/upstream-3.5.2-expect.nonroot.tcp.txt
+      expect_result_root: tools/ci/upstream-3.5.2-expect.root.tcp.txt
   upstream-testsuite-macos:
     uses: ./.github/workflows/_upstream-testsuite-macos.yml
     with:
       variant: all
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
-      expect_result_macos: tools/ci/upstream-3.5.1-expect.macos.nonroot.txt
-      expect_result_macos_root: tools/ci/upstream-3.5.1-expect.macos.root.txt
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.2' }}
+      expect_result_macos: tools/ci/upstream-3.5.2-expect.macos.nonroot.txt
+      expect_result_macos_root: tools/ci/upstream-3.5.2-expect.macos.root.txt
   upstream-testsuite-macos-tcp:
     uses: ./.github/workflows/_upstream-testsuite-macos.yml
     with:
       variant: all
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.2' }}
       transport: tcp
-      expect_result_macos: tools/ci/upstream-3.5.1-expect.macos.nonroot.tcp.txt
-      expect_result_macos_root: tools/ci/upstream-3.5.1-expect.macos.root.tcp.txt
+      expect_result_macos: tools/ci/upstream-3.5.2-expect.macos.nonroot.tcp.txt
+      expect_result_macos_root: tools/ci/upstream-3.5.2-expect.macos.root.tcp.txt
   windows-long-path:
     uses: ./.github/workflows/windows-nightly-long-path.yml
   windows-case-insensitive:
@@ -217,11 +217,11 @@ jobs:
     - name: Two-owner FFI dependency gate
       run: python3 tools/ci/unsafe_owner_deps.py gate
   surface-diff:
-    name: surface diff (upstream 3.5.1)
+    name: surface diff (upstream 3.5.2)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      UPSTREAM_VERSION: 3.5.1
+      UPSTREAM_VERSION: 3.5.2
     steps:
     - name: Checkout
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -234,7 +234,7 @@ jobs:
         extract-dir: target/interop/upstream-src
     - name: Surface extractor self-test
       run: bash tools/ci/surface_diff.sh --self-test
-    - name: Surface diff gate (oc vs upstream 3.5.1)
+    - name: Surface diff gate (oc vs upstream 3.5.2)
       run: bash tools/ci/surface_diff.sh --check
   test:
     name: nextest (${{ matrix.toolchain }})
@@ -705,7 +705,7 @@ jobs:
     with:
       skip: false
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.5.1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.5.2' }}
       timeout_minutes: 45
   interop-upstream-macos:
     name: interop (macOS)

@@ -4,7 +4,7 @@
     ignore = "flaky on Windows CI: in-process daemon intermittently fails to respond; the trust gate is platform-independent and covered on Linux/macOS"
 )]
 fn daemon_proxy_protocol_empty_hosts_warns_and_fail_closes() {
-    // upstream: clientserver.c:1768-1777 - `proxy protocol = true` with no
+    // upstream: clientserver.c:1833-1842 - `proxy protocol = true` with no
     // `proxy protocol hosts` is fail-closed BY DESIGN (access.c:313-314
     // rejects on an empty list), and because that silently drops every
     // connection the daemon warns the operator at startup, verbatim. The
@@ -64,7 +64,7 @@ fn daemon_proxy_protocol_empty_hosts_warns_and_fail_closes() {
     }
 
     let log_contents = fs::read_to_string(&log_path).expect("read log file");
-    // upstream: clientserver.c:1773-1776 - the startup warning, verbatim
+    // upstream: clientserver.c:1838-1841 - the startup warning, verbatim
     // (note the double space before "Set").
     assert!(
         log_contents.contains(
@@ -74,7 +74,7 @@ fn daemon_proxy_protocol_empty_hosts_warns_and_fail_closes() {
         ),
         "missing upstream-verbatim startup warning: {log_contents:?}"
     );
-    // upstream: clientserver.c:1394 - and every peer is then rejected.
+    // upstream: clientserver.c:1403 - and every peer is then rejected.
     assert!(
         log_contents
             .contains("proxy protocol rejected from untrusted peer UNDETERMINED (127.0.0.1)"),

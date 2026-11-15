@@ -66,6 +66,22 @@ impl<'a> CopyContext<'a> {
 
     /// Commits all remaining deferred updates and removes empty staging
     /// directories.
+    /// Creates all symlinks deferred by `--delay-symlinks`.
+    pub(super) fn flush_deferred_symlinks(&mut self) -> Result<(), LocalCopyError> {
+        let symlinks = std::mem::take(&mut self.deferred_ops.symlinks);
+        for s in symlinks {
+            crate::local_copy::executor::copy_symlink_immediate(
+                self,
+                &s.source,
+                &s.destination,
+                &s.metadata,
+                &s.metadata_options,
+                s.relative.as_deref(),
+            )?;
+        }
+        Ok(())
+    }
+
     pub(super) fn flush_deferred_updates(&mut self) -> Result<(), LocalCopyError> {
         let updates = std::mem::take(&mut self.deferred_ops.updates);
         for update in updates {

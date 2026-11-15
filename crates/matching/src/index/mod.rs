@@ -89,7 +89,7 @@ const NEXT_MATCH_NONE: u32 = u32::MAX;
 /// The two probe counters upstream reports on the `-vv` `total:` line, as
 /// [`UpstreamHashTable`] replays them.
 ///
-/// upstream: match.c:228 `hash_hits++` once per offset whose `hash_table`
+/// upstream: match.c:236 `hash_hits++` once per offset whose `hash_table`
 /// bucket is non-empty, and match.c:271 `false_alarms++` once per chain
 /// candidate whose weak sum matches but whose strong sum does not.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -473,8 +473,7 @@ impl DeltaSignatureIndex {
             return None;
         }
 
-        let strong = self.algorithm.compute_truncated(window, self.strong_length);
-        self.walk_chain(digest, strong.as_slice())
+        self.walk_chain_with(digest, window, &[], &mut |_| true).0
     }
 
     /// Attempts to locate a matching block for a possibly non-contiguous window
@@ -490,55 +489,88 @@ impl DeltaSignatureIndex {
         first: &[u8],
         second: &[u8],
     ) -> Option<usize> {
+        self.find_match_slices_with(digest, first, second, |_| true)
+            .0
+    }
+
+    /// Like [`Self::find_match_slices`], but accepts a candidate predicate
+    /// (for `--inplace` offset filtering) and also reports whether at least
+    /// one weak-checksum candidate existed at this offset (so the caller can
+    /// bound repeated weak-collision work per CVE-2026-119741).
+    #[inline]
+    pub fn find_match_slices_with(
+        &self,
+        digest: RollingDigest,
+        first: &[u8],
+        second: &[u8],
+        mut allow: impl FnMut(usize) -> bool,
+    ) -> (Option<usize>, bool) {
         if first.len() + second.len() != self.block_length {
-            return None;
+            return (None, false);
         }
 
         if !self.tag_table[digest.sum1() as usize] {
-            return None;
+            return (None, false);
         }
 
         if !self.bithash.contains(digest.value()) {
-            return None;
+            return (None, false);
         }
 
-        let strong = self
-            .algorithm
-            .compute_truncated_slices(first, second, self.strong_length);
-        self.walk_chain(digest, strong.as_slice())
+        self.walk_chain_with(digest, first, second, &mut allow)
     }
 
-    /// Walks the equal-weak-checksum chain for `digest` and returns the first
-    /// candidate whose strong checksum equals `strong`.
-    ///
-    /// Shared by the contiguous and two-slice probes so the chain-walk rule -
-    /// upstream's chain order and the [`MAX_CHAIN_LEN`] bound - lives in one
-    /// place. Every basis block stays on its chain for the whole scan, so a
-    /// block matches as many source windows as carry its content.
-    ///
-    /// upstream: `match.c:229-256` `hash_search()` inner chain loop. The chain
-    /// yields the highest block index first (see [`CompactLookup::insert`]),
-    /// so among duplicate-content blocks the same sibling wins as upstream.
+    /// Walks the equal-weak-checksum chain for `digest`, skipping duplicate
+    /// failed strong checksums (upstream 3.5.2 `last_false_sum2` optimization)
+    /// and returns `(match_index, had_weak_candidate)`.
     #[inline]
-    fn walk_chain(&self, digest: RollingDigest, strong: &[u8]) -> Option<usize> {
+    fn walk_chain_with(
+        &self,
+        digest: RollingDigest,
+        first: &[u8],
+        second: &[u8],
+        allow: &mut impl FnMut(usize) -> bool,
+    ) -> (Option<usize>, bool) {
+        let mut strong: Option<[u8; 64]> = None;
+        let strong_len = self.strong_length;
+        let mut last_false: Option<&[u8]> = None;
         let mut chain_len = 0u32;
+        let mut had_candidate = false;
+
         for index in self.lookup.find_all(digest.sum1(), digest.sum2()) {
-            // upstream: `match.c:250` - bound the work spent on one pathological
-            // bucket, charging every same-weak-sum candidate before deciding
-            // whether it is a match. Past the cap the offset is a non-match and
-            // the caller rolls forward a byte, so the skipped data goes out as
-            // literals.
-            chain_len += 1;
-            if chain_len > MAX_CHAIN_LEN {
-                return None;
-            }
             let block = &self.blocks[index];
             debug_assert_eq!(block.len(), self.block_length);
-            if strong == block.strong() {
-                return Some(index);
+            if block.rolling() != digest {
+                continue;
             }
+            if !allow(index) {
+                continue;
+            }
+
+            if last_false.is_some_and(|prev| prev == block.strong()) {
+                continue;
+            }
+
+            had_candidate = true;
+            chain_len += 1;
+            if chain_len > MAX_CHAIN_LEN {
+                return (None, true);
+            }
+
+            let target_strong = strong.get_or_insert_with(|| {
+                let computed = self
+                    .algorithm
+                    .compute_truncated_slices(first, second, strong_len);
+                let mut buf = [0u8; 64];
+                buf[..strong_len].copy_from_slice(computed.as_slice());
+                buf
+            });
+            if &target_strong[..strong_len] == block.strong() {
+                return (Some(index), true);
+            }
+            last_false = Some(block.strong());
         }
-        None
+        (None, had_candidate)
     }
 
     /// Attempts to match a short trailing window against a basis block of the
@@ -626,7 +658,7 @@ impl DeltaSignatureIndex {
     /// checksum comparison (expensive) only on rolling match, bypassing the hash
     /// table entirely.
     ///
-    /// upstream: match.c:321-334 - `want_i` hint check before full hash search.
+    /// upstream: match.c:336-349 - `want_i` hint check before full hash search.
     #[inline]
     pub fn check_block_match_slices(
         &self,
@@ -670,6 +702,20 @@ impl DeltaSignatureIndex {
         self.find_match_bytes(digest, scratch.as_slice())
     }
 
+    /// Like [`Self::find_match_window`], but accepts a candidate predicate and
+    /// reports whether at least one weak-checksum candidate existed at this
+    /// offset (CVE-2026-119741).
+    #[inline]
+    pub fn find_match_window_with(
+        &self,
+        digest: RollingDigest,
+        window: &VecDeque<u8>,
+        allow: impl FnMut(usize) -> bool,
+    ) -> (Option<usize>, bool) {
+        let (front, back) = window.as_slices();
+        self.find_match_slices_with(digest, front, back, allow)
+    }
+
     /// Attempts to match a short trailing [`VecDeque`] window against a basis
     /// block of the same partial length.
     ///
@@ -677,7 +723,7 @@ impl DeltaSignatureIndex {
     /// the local-copy delta matcher. `window` must be shorter than
     /// `block_length`; a full-length window belongs on
     /// [`Self::find_match_window`]. See [`Self::find_tail_match`] for the
-    /// upstream reference (`match.c:254-256`).
+    /// upstream reference (`match.c:270-270`).
     pub fn find_tail_match_window(
         &self,
         digest: RollingDigest,

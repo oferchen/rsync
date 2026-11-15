@@ -71,7 +71,7 @@ pub fn build_filter_rules(
 
     for token in inputs.order {
         let result = match token {
-            // upstream: options.c:1625-1633 - `--include`/`--exclude` parse
+            // upstream: options.c:1652-1660 - `--include`/`--exclude` parse
             // with XFLG_OLD_PREFIXES, so `- pat`/`+ pat` flip the kind and `!`
             // clears the list.
             FilterOrderToken::Include(pattern) => parse_filter_str(
@@ -104,7 +104,7 @@ pub fn build_filter_rules(
                 files,
                 Xflags::default(),
             ),
-            // upstream: options.c:1620-1623 - rule_template(0), no xflags.
+            // upstream: options.c:1647-1650 - rule_template(0), no xflags.
             FilterOrderToken::Filter(rule) => parse_filter_str(
                 &mut filter_rules,
                 &rule,

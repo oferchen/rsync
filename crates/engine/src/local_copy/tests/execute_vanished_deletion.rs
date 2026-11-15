@@ -1,6 +1,6 @@
 // A source that vanishes between the walk and its send.
 //
-// upstream: sender.c:714-716 reports `file has vanished` and sets
+// upstream: sender.c:722-724 reports `file has vanished` and sets
 // IOERR_VANISHED, a bit generator.c:304 `delete_in_dir()` does not test - only
 // IOERR_GENERAL suppresses deletion - and cleanup.c:213-216 turns it into exit
 // 24. The vanish is reported once, by the frame that tried to send the file.

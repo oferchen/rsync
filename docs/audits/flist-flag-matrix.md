@@ -43,7 +43,7 @@ honour the same gating. Source of truth:
 | 17 | `XMIT_CRTIME_EQ_MTIME` | varint-only | any (gated by `--crtimes`) |
 
 Bits 16+ require `CF_VARINT_FLIST_FLAGS` (proto 32+) because the legacy
-two-byte form has no room for them (`flist.c:549-558`).
+two-byte form has no room for them (`flist.c:552-561`).
 
 ## 2. Per-protocol flag set
 
@@ -53,7 +53,7 @@ two-byte form has no room for them (`flist.c:549-558`).
 | 29 | + multiplex (`MSG_*` framing) | same as 28 |
 | 30 | + INC_RECURSE (`CF_INC_RECURSE`); no more `SAME_DEV_pre30`/`RDEV_MINOR_8_pre30` | adds `NO_CONTENT_DIR`, `USER_NAME_FOLLOWS`, `GROUP_NAME_FOLLOWS`, `HLINK_FIRST` |
 | 31 | + safe-flist (`CF_SAFE_FLIST`), `CF_AVOID_XATTR_OPTIM` | adds `MOD_NSEC`, `IO_ERROR_ENDLIST` |
-| 32 | + `CF_VARINT_FLIST_FLAGS`, `CF_CHKSUM_SEED_FIX`, `CF_INPLACE_PARTIAL_DIR`, `CF_ID0_NAMES` | unlocks bits 16-17 (`RESERVED_16`, `CRTIME_EQ_MTIME`); xflags now a single varint (`flist.c:549`) |
+| 32 | + `CF_VARINT_FLIST_FLAGS`, `CF_CHKSUM_SEED_FIX`, `CF_INPLACE_PARTIAL_DIR`, `CF_ID0_NAMES` | unlocks bits 16-17 (`RESERVED_16`, `CRTIME_EQ_MTIME`); xflags now a single varint (`flist.c:552`) |
 
 ## 3. oc-rsync handling
 
@@ -65,7 +65,7 @@ Constants: `crates/protocol/src/flist/flags.rs:21-158` declare every upstream
 
 Encoders/decoders consult `use_varint_flags()` (`flist/write/xflags.rs:31`,
 `flist/read/flags.rs:36`) which gates on `CompatibilityFlags::VARINT_FLIST_FLAGS`.
-Behaviour matches upstream's `xfer_flags_as_varint` (compat.c:748):
+Behaviour matches upstream's `xfer_flags_as_varint` (compat.c:757):
 
 | Flag | Writer site | Reader site | Proto gate |
 |------|-------------|-------------|------------|
@@ -93,7 +93,7 @@ Behaviour matches upstream's `xfer_flags_as_varint` (compat.c:748):
   because oc-rsync's minimum negotiated version is 28.
 - `XMIT_HLINK_FIRST` reuses the same bit constant as `XMIT_IO_ERROR_ENDLIST`;
   disambiguation is contextual (HLINKED-set vs zero-flag sentinel) and matches
-  upstream (`flist.c:606-614`).
+  upstream (`flist.c:610-618`).
 
 No XMIT_* upstream sets that oc-rsync silently drops.
 

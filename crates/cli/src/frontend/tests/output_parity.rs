@@ -971,7 +971,7 @@ fn parity_itemize_string_is_eleven_chars_for_non_delete() {
 
 #[test]
 fn parity_itemize_unchanged_file_shows_dots() {
-    // upstream: log.c:773-782 - all-dots collapse to spaces for '.', 'h', 'c' update types
+    // upstream: log.c:858-867 - all-dots collapse to spaces for '.', 'h', 'c' update types
     let event = ClientEvent::for_test(
         PathBuf::from("unchanged.txt"),
         ClientEventKind::MetadataReused,

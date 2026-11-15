@@ -66,7 +66,7 @@ pub struct DeltaGeneratorConfig<'a> {
     /// already clobbered. When `true` the generator demotes such a candidate to
     /// a literal; the reconstructed file stays byte-identical.
     ///
-    /// upstream: match.c:235 (`updating_basis_file && s->sums[i].offset <
+    /// upstream: match.c:243 (`updating_basis_file && s->sums[i].offset <
     /// offset`), sender.c:629 (the per-file assignment).
     pub updating_basis_file: bool,
 
@@ -111,7 +111,7 @@ impl<'a> DeltaGeneratorConfig<'a> {
 
     /// Sets the basis's short-final-block length from the wire `sum_head`.
     ///
-    /// upstream: `sender.c:374-375` (`receive_sums()` applies it to the last
+    /// upstream: `sender.c:382-383` (`receive_sums()` applies it to the last
     /// block only, and only when non-zero).
     #[must_use]
     pub fn with_remainder(mut self, remainder: u32) -> Self {
@@ -143,7 +143,7 @@ impl<'a> DeltaGeneratorConfig<'a> {
     /// Marks the transfer as an in-place basis update so the delta generator
     /// activates upstream's backward-`Copy` suppression guard.
     ///
-    /// upstream: sender.c:629 `updating_basis_file`.
+    /// upstream: sender.c:637 `updating_basis_file`.
     #[must_use]
     pub fn with_updating_basis_file(mut self, updating: bool) -> Self {
         self.updating_basis_file = updating;

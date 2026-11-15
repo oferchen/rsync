@@ -112,7 +112,7 @@ branching, no backward transitions.
 
 | Ordinal | Phase             | Upstream reference                                      |
 |---------|-------------------|---------------------------------------------------------|
-| 0       | Handshake         | `compat.c:602-604` - version exchange                   |
+| 0       | Handshake         | `compat.c:603-605` - version exchange                   |
 | 1       | FilterExchange    | `exclude.c:recv_filter_list()`, `main.c:1258`           |
 | 2       | FileListTransfer  | `flist.c:send_file_list()`, `flist.c:recv_file_list()`  |
 | 3       | DeltaTransfer     | `receiver.c:recv_files()`, `sender.c:send_files()`      |

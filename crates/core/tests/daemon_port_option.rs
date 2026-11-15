@@ -1,6 +1,6 @@
 //! `--port=PORT` must reach the daemon *transfer* path, not just the listing.
 //!
-//! Upstream stores `--port` in `rsync_port` (`options.c:852`) and keeps it
+//! Upstream stores `--port` in `rsync_port` (`options.c:855`) and keeps it
 //! through operand parsing: `check_for_hostspec()` (`options.c:3311-3337`)
 //! substitutes the `-1` "use the default" sentinel only when `rsync_port` is
 //! still 0, so an operator-supplied port survives, and only a `:port` written
@@ -81,7 +81,7 @@ fn rsync_url_without_a_port_uses_the_port_option() {
 }
 
 /// `host::module` carries no port syntax at all, so it always takes `--port`.
-/// upstream: `options.c:3328-3331` - the `path[0] == ':'` arm sets the same
+/// upstream: `options.c:3396-3399` - the `path[0] == ':'` arm sets the same
 /// sentinel the URL arm does.
 #[test]
 fn double_colon_operand_uses_the_port_option() {

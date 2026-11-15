@@ -100,7 +100,7 @@ fn build_fixture(scratch: &TempDir) -> PathBuf {
 /// The fixture's names in upstream's send order: the root's children as
 /// readdir returns them, then `sub/b.txt` once the root scan is done.
 ///
-/// upstream: flist.c:2397-2439 send_directory() - children go out in readdir
+/// upstream: flist.c:2408-2450 send_directory() - children go out in readdir
 /// order and subdirectories are recursed into only after the scan.
 fn send_order(src: &Path) -> Vec<String> {
     let mut names: Vec<String> = fs::read_dir(src)
@@ -186,7 +186,7 @@ fn flist2_sender_emissions_exact() {
     assert_eq!(flist_messages(), expected);
 }
 
-/// upstream: flist.c:3079/3105 - at level 3 the sender additionally dumps the
+/// upstream: flist.c:3090/3105 - at level 3 the sender additionally dumps the
 /// flist and prints `[sender] flist_eof=1` (non-incremental list).
 #[test]
 fn flist3_sender_adds_dump_and_eof() {
@@ -208,7 +208,7 @@ fn flist3_sender_adds_dump_and_eof() {
         4,
         "one output_flist line per entry: {messages:?}"
     );
-    // upstream: flist.c:3759 - the sender's root column is F_PATHNAME (the
+    // upstream: flist.c:3770 - the sender's root column is F_PATHNAME (the
     // source base, without the operand's trailing slash), and a directory
     // prints a trailing slash after its name.
     let base = src.display().to_string();
@@ -282,7 +282,7 @@ fn flist2_receiver_emissions_exact() {
     assert_eq!(flist_messages(), expected);
 }
 
-/// upstream: flist.c:3302/3329 - level 3 adds `[Receiver] flist_eof=1` (the
+/// upstream: flist.c:3313/3329 - level 3 adds `[Receiver] flist_eof=1` (the
 /// pre-forked receiver capitalizes, rsync.c:994) and the output_flist dump.
 #[test]
 fn flist3_receiver_adds_dump_and_eof() {
@@ -315,7 +315,7 @@ fn flist3_receiver_adds_dump_and_eof() {
         4,
         "one output_flist line per entry: {messages:?}"
     );
-    // upstream: flist.c:3759 - the receiver's root column is the entry depth;
+    // upstream: flist.c:3770 - the receiver's root column is the entry depth;
     // with neither -o nor root, no uid column appears.
     assert_eq!(
         count(&|m| m.starts_with("[Receiver] i=1 1 a.txt mode=0100644 len=6")),

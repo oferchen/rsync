@@ -227,7 +227,7 @@ fn create_hardlinks_promotes_present_member_when_leader_absent() {
 /// When a `-H` group's leader is absent and no other member materialized, the
 /// group has no data to link. Upstream leaves it unlinked (the earlier transfer
 /// error already set io_error); the receiver must record a soft error and keep
-/// going, never abort with a fatal ENOENT. upstream: hlink.c:300-320 virtual
+/// going, never abort with a fatal ENOENT. upstream: hlink.c:307-327 virtual
 /// first with no present member; `maybe_hard_link()` failure is non-fatal.
 #[test]
 fn create_hardlinks_leader_absent_no_members_is_non_fatal() {
@@ -564,7 +564,7 @@ fn create_hardlinks_multiple_followers_same_group() {
 /// `atomic_create()` sends it to `delete_item()`, whose `rmdir` clears an
 /// empty one, and the link is made.
 ///
-/// upstream: generator.c:2469-2483 atomic_create(), delete.c:222-226
+/// upstream: generator.c:2512-2526 atomic_create(), delete.c:222-226
 #[cfg(unix)]
 #[test]
 fn create_hardlinks_replaces_an_empty_directory_obstacle() {
@@ -756,7 +756,7 @@ fn pull_receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContext {
 /// receiver must forward its itemize record (`NDX + iflags + xname`)
 /// explicitly; otherwise the pushing client's sender has nothing to render and
 /// the follower's `hf...` / `=> leader` row is silently dropped.
-/// This pins the exact wire shape upstream emits (`generator.c:585-591`,
+/// This pins the exact wire shape upstream emits (`generator.c:622-628`,
 /// `hlink.c:232-248`) and proves the peer's own sender decoder round-trips it.
 #[test]
 fn server_push_emits_follower_ndx_iflags_and_leader_xname() {

@@ -1,6 +1,6 @@
 //! `--protocol=N --read-batch` must refuse a batch recorded at a newer protocol.
 //!
-//! upstream: compat.c:611-614 setup_protocol() - under `read_batch` the batch
+//! upstream: compat.c:612-615 setup_protocol() - under `read_batch` the batch
 //! header's protocol becomes `remote_protocol`, and anything above the reader's
 //! `protocol_version` (lowered by `--protocol`) aborts with RERR_PROTOCOL. The
 //! ceiling is the requested protocol, not the newest one this build speaks:
@@ -57,7 +57,7 @@ fn read_batch_refuses_batch_newer_than_requested_protocol() {
     );
     assert!(
         stderr.contains("The protocol version in the batch file is too new (32 > 31)."),
-        "expected upstream's compat.c:612 diagnostic, got: {stderr}"
+        "expected upstream's compat.c:613 diagnostic, got: {stderr}"
     );
     assert!(
         !dest.join("a.txt").exists(),

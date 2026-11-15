@@ -34,15 +34,15 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/syscall.c:395-407` - the `confine_root` arm seeds `abspath`
+//! - `rsync-3.5.2/syscall.c:449-461` - the `confine_root` arm seeds `abspath`
 //!   from `getcwd()` (`:327`), "It must be the PHYSICAL cwd: `curr_dir` is the lexical
 //!   name `change_dir()` was given, so after descending a trusted symlink the
 //!   tracker sits at a different depth than the kernel, and a `..` that really
 //!   escapes looks like it landed inside."
-//! - `rsync-3.5.1/syscall.c:324` `abspath_step()` - advances one RESOLVED
+//! - `rsync-3.5.2/syscall.c:324` `abspath_step()` - advances one RESOLVED
 //!   component at a time.
-//! - `rsync-3.5.1/syscall.c:232-291` `abspath_outside_confinement()`.
-//! - `rsync-3.5.1/exclude.c:1680-1684` `parse_filter_file()` - the merge-file
+//! - `rsync-3.5.2/syscall.c:232-291` `abspath_outside_confinement()`.
+//! - `rsync-3.5.2/exclude.c:1680-1684` `parse_filter_file()` - the merge-file
 //!   open this bounds.
 
 #![cfg(unix)]
@@ -230,7 +230,7 @@ fn without_a_root_the_same_read_succeeds() {
 /// outside the tree, so widening the merge-file rule to every operator open
 /// would be a divergence in the opposite direction.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:282-290`.
+/// upstream: `rsync-3.5.2/syscall.c:282-290`.
 #[test]
 fn an_ancillary_read_is_not_bound_by_the_root() {
     let fixture = aliased();

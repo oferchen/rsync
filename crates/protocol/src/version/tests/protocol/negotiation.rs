@@ -573,7 +573,7 @@ fn version_32_feature_profile() {
 
 /// Verifies `UnsupportedVersion` error message matches upstream wording.
 ///
-/// upstream: compat.c:621-626 `setup_protocol()`. The message is intentionally
+/// upstream: compat.c:622-627 `setup_protocol()`. The message is intentionally
 /// version-agnostic; the rejected version is reachable via the variant data
 /// through `unsupported_version()` for structured callers.
 #[test]

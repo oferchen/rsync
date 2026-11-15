@@ -54,11 +54,11 @@ here. All proposals route through follow-up issues.
   from 30 only by additive feature bits (`CF_VARINT_FLIST_FLAGS` was
   retro-introduced at 30 itself).
 - Protocol 31 layers two changes on top of 30: `safe_file_list_always_enabled`
-  (`compat.c:775`), the 3-way extended goodbye / `MSG_IO_TIMEOUT` path
-  (`io.c:1684`), and `NDX_DEL_STATS` per-type deletion counts during
+  (`compat.c:784`), the 3-way extended goodbye / `MSG_IO_TIMEOUT` path
+  (`io.c:1691`), and `NDX_DEL_STATS` per-type deletion counts during
   the goodbye phase.
 - Protocol 32 is **wire-equivalent** to 31 in every cell of this
-  matrix except `--crtimes` semantics (`compat.c:750-753`); oc-rsync
+  matrix except `--crtimes` semantics (`compat.c:759-762`); oc-rsync
   treats 32 as the primary advertised version and 31 as a documented
   downgrade target.
 - The `i` capability character (`-e.LsfxCIvu`) only flips the
@@ -87,7 +87,7 @@ here. All proposals route through follow-up issues.
 | `SUPPORTED_PROTOCOL_RANGE`            | 28..=32 | `crates/protocol/src/version/constants.rs:27` |
 
 Mirrors upstream `target/interop/upstream-src/rsync-3.4.1/rsync.h:114`
-(`PROTOCOL_VERSION 32`) and `rsync.h:147` (`MIN_PROTOCOL_VERSION 20`,
+(`PROTOCOL_VERSION 32`) and `rsync.h:148` (`MIN_PROTOCOL_VERSION 20`,
 `MAX_PROTOCOL_VERSION 40`). oc-rsync clamps the lower bound to 28
 because protocols 20-27 share the goodbye / multiplex semantics of 28
 but differ in flist encoding details that have no observed in-the-wild
@@ -98,14 +98,14 @@ future negotiation.
 
 | Boundary                                            | 28 | 29 | 30 | 31 | 32 | Rust symbol (`crates/protocol/...`) | Upstream |
 |-----------------------------------------------------|----|----|----|----|----|-------------------------------------|----------|
-| Legacy ASCII `@RSYNCD:` daemon greeting             | Y  | Y  |    |    |    | `version/protocol_version/capabilities.rs:19` `uses_legacy_ascii_negotiation` | `compat.c:710` |
-| Binary negotiation handshake                        |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:12` `uses_binary_negotiation` | `compat.c:710` |
-| 4-byte LE `write_int` for NDX                       | Y  | Y  |    |    |    | `codec/ndx/constants.rs:38` `NDX_DONE_LEGACY_BYTES` | `io.c:2249-2251` |
-| Varint NDX (`write_ndx`)                            |    |    | Y  | Y  | Y  | `codec/ndx/constants.rs:48` `NDX_DONE_MODERN_BYTE` | `io.c:2243-2287` |
-| Fixed 1-2 byte flist flags                          | Y  | Y  |    |    |    | `version/protocol_version/capabilities.rs:39` `uses_fixed_encoding` | `flist.c:411` |
-| Varint flist flags (`CF_VARINT_FLIST_FLAGS`)        |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:130` `uses_varint_flist_flags`; `compatibility/flags.rs:46` `VARINT_FLIST_FLAGS` | `compat.c:124,729-732` |
-| `CompatibilityFlags` varint exchange                |    |    | Y  | Y  | Y  | `compatibility/flags.rs:156` `write_to` / `:173` `read_from` | `compat.c:738,740` |
-| Pre-release `'V'` byte-encoded compat flags         | -  | -  | Y  | Y  | Y  | `transfer/src/setup/capability.rs:232` `client_has_pre_release_v_flag` | `compat.c:733-737` |
+| Legacy ASCII `@RSYNCD:` daemon greeting             | Y  | Y  |    |    |    | `version/protocol_version/capabilities.rs:19` `uses_legacy_ascii_negotiation` | `compat.c:711` |
+| Binary negotiation handshake                        |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:12` `uses_binary_negotiation` | `compat.c:711` |
+| 4-byte LE `write_int` for NDX                       | Y  | Y  |    |    |    | `codec/ndx/constants.rs:38` `NDX_DONE_LEGACY_BYTES` | `io.c:2256-2258` |
+| Varint NDX (`write_ndx`)                            |    |    | Y  | Y  | Y  | `codec/ndx/constants.rs:48` `NDX_DONE_MODERN_BYTE` | `io.c:2250-2294` |
+| Fixed 1-2 byte flist flags                          | Y  | Y  |    |    |    | `version/protocol_version/capabilities.rs:39` `uses_fixed_encoding` | `flist.c:414` |
+| Varint flist flags (`CF_VARINT_FLIST_FLAGS`)        |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:130` `uses_varint_flist_flags`; `compatibility/flags.rs:46` `VARINT_FLIST_FLAGS` | `compat.c:125,729-732` |
+| `CompatibilityFlags` varint exchange                |    |    | Y  | Y  | Y  | `compatibility/flags.rs:156` `write_to` / `:173` `read_from` | `compat.c:747,740` |
+| Pre-release `'V'` byte-encoded compat flags         | -  | -  | Y  | Y  | Y  | `transfer/src/setup/capability.rs:232` `client_has_pre_release_v_flag` | `compat.c:742-746` |
 
 `uses_varint_encoding` (`capabilities.rs:31`) is the canonical predicate
 for "does this version use varint over fixed integers"; it is the bit
@@ -121,21 +121,21 @@ and daemon-mode setup go through this builder.
 
 | Char | Capability                       | Compat flag                  | Available    | Notes |
 |------|----------------------------------|------------------------------|--------------|-------|
-| `i`  | INC_RECURSE                      | `CF_INC_RECURSE`             | proto >= 30  | Only emitted by **receiver** direction; gated by `requires_inc_recurse=true` at `capability.rs:38`. Upstream `compat.c:712,720`. |
-| `L`  | Set symlink times                | `CF_SYMLINK_TIMES`           | proto >= 30  | Unix only (`platform_ok=false` on Windows, `capability.rs:46`). Upstream `compat.c:714`. |
-| `s`  | Symlink iconv translation        | `CF_SYMLINK_ICONV`           | proto >= 30  | Upstream `compat.c:717`. |
-| `f`  | Safe file list                   | `CF_SAFE_FLIST`              | proto >= 30  | At proto >= 31 the bit is implicit (always-on). Upstream `compat.c:719,775`. |
-| `x`  | Avoid xattr hardlink optimisation| `CF_AVOID_XATTR_OPTIM`       | proto >= 30  | Inverts the proto-31 default (`compat.c:746`). |
-| `C`  | Checksum-seed-fix                | `CF_CHKSUM_SEED_FIX`         | proto >= 30  | Upstream `compat.c:723,747`. |
-| `I`  | Inplace partial-dir              | `CF_INPLACE_PARTIAL_DIR`     | proto >= 30  | Upstream `compat.c:725-726,777`. |
-| `v`  | Varint flist flags               | `CF_VARINT_FLIST_FLAGS`      | proto >= 30  | Drives `do_negotiated_strings = 1` (codec/checksum vstrings). Upstream `compat.c:729-732`. |
-| `u`  | id0 names (uid/gid 0 names)      | `CF_ID0_NAMES`               | proto >= 30  | Upstream `compat.c:727,749`. |
+| `i`  | INC_RECURSE                      | `CF_INC_RECURSE`             | proto >= 30  | Only emitted by **receiver** direction; gated by `requires_inc_recurse=true` at `capability.rs:38`. Upstream `compat.c:713,720`. |
+| `L`  | Set symlink times                | `CF_SYMLINK_TIMES`           | proto >= 30  | Unix only (`platform_ok=false` on Windows, `capability.rs:46`). Upstream `compat.c:715`. |
+| `s`  | Symlink iconv translation        | `CF_SYMLINK_ICONV`           | proto >= 30  | Upstream `compat.c:718`. |
+| `f`  | Safe file list                   | `CF_SAFE_FLIST`              | proto >= 30  | At proto >= 31 the bit is implicit (always-on). Upstream `compat.c:720,775`. |
+| `x`  | Avoid xattr hardlink optimisation| `CF_AVOID_XATTR_OPTIM`       | proto >= 30  | Inverts the proto-31 default (`compat.c:755`). |
+| `C`  | Checksum-seed-fix                | `CF_CHKSUM_SEED_FIX`         | proto >= 30  | Upstream `compat.c:732,747`. |
+| `I`  | Inplace partial-dir              | `CF_INPLACE_PARTIAL_DIR`     | proto >= 30  | Upstream `compat.c:734-735,777`. |
+| `v`  | Varint flist flags               | `CF_VARINT_FLIST_FLAGS`      | proto >= 30  | Drives `do_negotiated_strings = 1` (codec/checksum vstrings). Upstream `compat.c:738-741`. |
+| `u`  | id0 names (uid/gid 0 names)      | `CF_ID0_NAMES`               | proto >= 30  | Upstream `compat.c:736,749`. |
 
 The leading `.` in `-e.LsfxCIvu` is the version placeholder upstream uses
 when `protocol_version != PROTOCOL_VERSION`; it is stripped in
 `capability.rs:167-169` `parse_client_info`. The capability string is
 inert at proto 28-29 (no compat-flag exchange occurs at all - upstream
-`compat.c:710` gates the whole block on `protocol_version >= 30`).
+`compat.c:711` gates the whole block on `protocol_version >= 30`).
 
 ## 4. Filter wire format matrix
 
@@ -157,21 +157,21 @@ ignored when `protocol.uses_old_prefixes()` is true. The CI test for
 
 | Field / behaviour                                              | 28 | 29 | 30 | 31 | 32 | Rust symbol | Upstream |
 |----------------------------------------------------------------|----|----|----|----|----|-------------|----------|
-| `XMIT_HLINKED` flag and inline dev/ino in flist entry          |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:217` `supports_inline_hardlinks`; `flist/read/extras.rs:145` | `flist.c:411,505,829` |
-| `XMIT_SAME_DEV_PRE30` (legacy hardlink dev compression)        | Y  | Y  |    |    |    | `flist/flags.rs:97`; `wire/file_entry/constants.rs:48` | `flist.c:436,461,623` |
-| `XMIT_RDEV_MINOR_8_PRE30` (8-bit minor only)                   | Y  | Y  |    |    |    | `wire/file_entry/mod.rs:43` | `flist.c:447` |
-| `XMIT_TOP_DIR` and extended xflags                             | Y  | Y  | Y  | Y  | Y  | `flist/mod.rs:52` `XMIT_TOP_DIR` | `flist.c:525,551` |
+| `XMIT_HLINKED` flag and inline dev/ino in flist entry          |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:217` `supports_inline_hardlinks`; `flist/read/extras.rs:145` | `flist.c:414,505,829` |
+| `XMIT_SAME_DEV_PRE30` (legacy hardlink dev compression)        | Y  | Y  |    |    |    | `flist/flags.rs:97`; `wire/file_entry/constants.rs:48` | `flist.c:439,461,623` |
+| `XMIT_RDEV_MINOR_8_PRE30` (8-bit minor only)                   | Y  | Y  |    |    |    | `wire/file_entry/mod.rs:43` | `flist.c:450` |
+| `XMIT_TOP_DIR` and extended xflags                             | Y  | Y  | Y  | Y  | Y  | `flist/mod.rs:52` `XMIT_TOP_DIR` | `flist.c:528,551` |
 | Multi-phase transfer (`max_phase = 2`)                         |    | Y  | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:112` `supports_multi_phase` | `generator.c`, `receiver.c` |
 | File list timing stats                                         |    | Y  | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:86` `supports_flist_times` | `main.c handle_stats()` |
-| Iflags (2-byte `iflag_extra`) follow each NDX                  |    | Y  | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:99` `supports_iflags` | `sender.c:468-485` |
-| Incremental recursion (`CF_INC_RECURSE`)                       |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:286` `supports_inc_recurse` | `compat.c:712,720` |
-| Safe file list (`CF_SAFE_FLIST`) negotiable                    |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:142` `uses_safe_file_list` | `compat.c:719,775` |
-| Safe file list always on (no negotiation needed)               |    |    |    | Y  | Y  | `version/protocol_version/capabilities.rs:151` `safe_file_list_always_enabled` | `compat.c:775` |
-| `--crtimes` (creation time field on flist entry)               |    |    |    |    | Y  | (gated via varint flist flags) | `compat.c:750-753`, `flist.c:487` |
+| Iflags (2-byte `iflag_extra`) follow each NDX                  |    | Y  | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:99` `supports_iflags` | `sender.c:476-493` |
+| Incremental recursion (`CF_INC_RECURSE`)                       |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:286` `supports_inc_recurse` | `compat.c:713,720` |
+| Safe file list (`CF_SAFE_FLIST`) negotiable                    |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:142` `uses_safe_file_list` | `compat.c:720,775` |
+| Safe file list always on (no negotiation needed)               |    |    |    | Y  | Y  | `version/protocol_version/capabilities.rs:151` `safe_file_list_always_enabled` | `compat.c:784` |
+| `--crtimes` (creation time field on flist entry)               |    |    |    |    | Y  | (gated via varint flist flags) | `compat.c:759-762`, `flist.c:490` |
 
 The 28-29 hardlink encoding uses two pre-30 xflags (`XMIT_SAME_DEV_PRE30`,
 `XMIT_RDEV_MINOR_8_PRE30`) and emits dev/ino as a separate run-length
-payload; upstream `flist.c:436-461` documents the branch. Protocol 30+
+payload; upstream `flist.c:439-464` documents the branch. Protocol 30+
 embeds the dev/ino pair inline as varints inside the flist entry, which
 is what enables `CF_INC_RECURSE` (the receiver can deduplicate hardlinks
 without buffering the full list).
@@ -183,9 +183,9 @@ without buffering the full list).
 | Multiplexed I/O (`MSG_*` envelope frames)                  | Y  | Y  | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:163` `supports_multiplex_io` (>=23) | `main.c:1304-1305` |
 | `NDX_DONE` goodbye exchange                                | Y  | Y  | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:174` `supports_goodbye_exchange` (>=24) | `main.c:880-905` |
 | Generator-to-sender messages over multiplex                |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:189` `supports_generator_messages` | `io.c need_messages_from_generator` |
-| 3-way extended goodbye / `MSG_IO_TIMEOUT`                  |    |    |    | Y  | Y  | `version/protocol_version/capabilities.rs:202` `supports_extended_goodbye` | `main.c:880-905`, `io.c:1684` |
+| 3-way extended goodbye / `MSG_IO_TIMEOUT`                  |    |    |    | Y  | Y  | `version/protocol_version/capabilities.rs:202` `supports_extended_goodbye` | `main.c:880-905`, `io.c:1691` |
 | `NDX_DEL_STATS` per-type deletion counts in goodbye phase  |    |    |    | Y  | Y  | `version/protocol_version/capabilities.rs:270` `supports_delete_stats`; `codec/ndx/constants.rs:21` `NDX_DEL_STATS = -3` | `main.c read_del_stats()` |
-| Multiplex `OUT_MULTIPLEXED` for protocol < 31              | Y  | Y  | Y  |    |    | (envelope code) | `io.c:1227` |
+| Multiplex `OUT_MULTIPLEXED` for protocol < 31              | Y  | Y  | Y  |    |    | (envelope code) | `io.c:1234` |
 
 `NDX_DEL_STATS` is encoded as five varints after the index sentinel
 (files, dirs, symlinks, devices, specials). The receiver-side parser
@@ -196,14 +196,14 @@ lives in `crates/transfer/src/receiver/transfer/phases.rs` (per
 
 | Negotiation                                              | 28 | 29 | 30 | 31 | 32 | Rust symbol | Upstream |
 |----------------------------------------------------------|----|----|----|----|----|-------------|----------|
-| Hardcoded zlib compression                               | Y  | Y  |    |    |    | (no symbol; pre-30 path) | `compat.c:383,556-564` |
-| Vstring negotiation for codecs (zlibx, zstd, lz4)        |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:241` `preferred_compression` | `compat.c:100-112,556-564,729-732` |
-| Hardcoded MD4 strong checksum                            | Y  | Y  |    |    |    | (pre-30 path; checksums crate fallback) | `compat.c:414,552,859` |
-| MD5 default, negotiated MD4/XXH3/XXH128                  |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:257` `supports_checksum_negotiation` | `compat.c:414,552`, `do_negotiated_strings` |
-| `-e.LsfxCIvu` capability advertises checksum negotiation | -  | -  | Y  | Y  | Y  | `transfer/setup/capability.rs:108` (the `v` mapping enables vstrings) | `compat.c:729-732` |
+| Hardcoded zlib compression                               | Y  | Y  |    |    |    | (no symbol; pre-30 path) | `compat.c:384,556-564` |
+| Vstring negotiation for codecs (zlibx, zstd, lz4)        |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:241` `preferred_compression` | `compat.c:101-113,556-564,729-732` |
+| Hardcoded MD4 strong checksum                            | Y  | Y  |    |    |    | (pre-30 path; checksums crate fallback) | `compat.c:415,552,859` |
+| MD5 default, negotiated MD4/XXH3/XXH128                  |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:257` `supports_checksum_negotiation` | `compat.c:415,552`, `do_negotiated_strings` |
+| `-e.LsfxCIvu` capability advertises checksum negotiation | -  | -  | Y  | Y  | Y  | `transfer/setup/capability.rs:108` (the `v` mapping enables vstrings) | `compat.c:738-741` |
 
 Without the `v` capability character at proto >= 30, codec selection
-silently falls back to zlib (`compat.c:383` `strlcpy(tmpbuf, "zlib", ...)`)
+silently falls back to zlib (`compat.c:384` `strlcpy(tmpbuf, "zlib", ...)`)
 and the `compress-zstd` / `compress-lz4` interop scenarios are documented
 known failures in `tools/ci/known_failures.conf:97-110`.
 
@@ -211,10 +211,10 @@ known failures in `tools/ci/known_failures.conf:97-110`.
 
 | Field                                                       | 28 | 29 | 30 | 31 | 32 | Rust symbol | Upstream |
 |-------------------------------------------------------------|----|----|----|----|----|-------------|----------|
-| ACL wire format (flist ACL fields, `--acls` / `-A`)         |    |    | Y  | Y  | Y  | `crates/protocol/src/acl/wire/encoding.rs` (whole module) | `compat.c:655-661` (hard-rejects at proto<30) |
-| xattr wire format (flist xattr fields, `--xattrs` / `-X`)   |    |    | Y  | Y  | Y  | `crates/protocol/src/xattr/` (whole module) | `compat.c:662-668` (hard-rejects at proto<30) |
-| `CF_AVOID_XATTR_OPTIM` (skip hardlink xattr dedup)          |    |    | Y  | Y  | Y  | `compatibility/flags.rs:40` `AVOID_XATTR_OPTIMIZATION` | `compat.c:721-722,746` |
-| `want_xattr_optim` default-on (proto >= 31)                 |    |    |    | Y  | Y  | (consumed by xattr writer) | `compat.c:746` |
+| ACL wire format (flist ACL fields, `--acls` / `-A`)         |    |    | Y  | Y  | Y  | `crates/protocol/src/acl/wire/encoding.rs` (whole module) | `compat.c:656-662` (hard-rejects at proto<30) |
+| xattr wire format (flist xattr fields, `--xattrs` / `-X`)   |    |    | Y  | Y  | Y  | `crates/protocol/src/xattr/` (whole module) | `compat.c:663-669` (hard-rejects at proto<30) |
+| `CF_AVOID_XATTR_OPTIM` (skip hardlink xattr dedup)          |    |    | Y  | Y  | Y  | `compatibility/flags.rs:40` `AVOID_XATTR_OPTIMIZATION` | `compat.c:722-731,746` |
+| `want_xattr_optim` default-on (proto >= 31)                 |    |    |    | Y  | Y  | (consumed by xattr writer) | `compat.c:755` |
 
 Upstream rejects `--acls` / `--xattrs` with `RERR_PROTOCOL` (exit 2) at
 proto < 30. oc-rsync mirrors this exit-code mapping. CI tracks the
@@ -230,7 +230,7 @@ graceful-degradation path against rsync 3.0.9 in
 | `preserve_hard_links`            | 28          | 5    | `batch/format/flags.rs:28`                 | `batch.c:65` |
 | `always_checksum`                | 28          | 6    | `batch/format/flags.rs:30`                 | `batch.c:66` |
 | `xfer_dirs`                      | 29          | 7    | `batch/format/flags.rs:32`                 | `batch.c:67` |
-| `do_compression`                 | 29          | 8    | `batch/format/flags.rs:34`                 | `batch.c:68`, `compat.c:194-195`, `compat.c:413-414` |
+| `do_compression`                 | 29          | 8    | `batch/format/flags.rs:34`                 | `batch.c:68`, `compat.c:195-196`, `compat.c:414-415` |
 | `iconv`                          | 30          | 9    | `batch/format/flags.rs:42`                 | `batch.c:69` |
 | `preserve_acls`                  | 30          | 10   | `batch/format/flags.rs:44`                 | `batch.c:70` |
 | `preserve_xattrs`                | 30          | 11   | `batch/format/flags.rs:46`                 | `batch.c:71` |
@@ -238,8 +238,8 @@ graceful-degradation path against rsync 3.0.9 in
 | `append` / `append_verify`       | 30          | 13-14| `batch/format/flags.rs:50-53`              | `batch.c:73-74` |
 
 Upstream's batch format does **not** record the negotiated codec
-algorithm: `compat.c:194-195` hard-codes `CPRES_ZLIB` for batch reads
-and `compat.c:413-414` forces `compress_choice = "zlib"` for batch
+algorithm: `compat.c:195-196` hard-codes `CPRES_ZLIB` for batch reads
+and `compat.c:414-415` forces `compress_choice = "zlib"` for batch
 writes. oc-rsync side-steps this by writing `do_compression=false` and
 storing post-decompression bytes (see
 [`docs/audits/zstd-batch-compatibility.md`](zstd-batch-compatibility.md)
@@ -251,7 +251,7 @@ is unreadable by upstream regardless of algorithm.
 
 The bitfield is declared in `crates/protocol/src/compatibility/flags.rs:32-48`
 and named in `crates/protocol/src/compatibility/known.rs:14-42`.
-Upstream definitions live at `compat.c:117-125`.
+Upstream definitions live at `compat.c:118-126`.
 
 | Bit | Symbol                              | Name                       | Available    | Drives |
 |-----|-------------------------------------|----------------------------|--------------|--------|
@@ -267,7 +267,7 @@ Upstream definitions live at `compat.c:117-125`.
 
 The wire format encodes the bitfield as a varint
 (`compatibility/flags.rs:156` `write_to`), except in the pre-release
-`'V'` compatibility mode where it is a single byte (`compat.c:736`,
+`'V'` compatibility mode where it is a single byte (`compat.c:745`,
 `transfer/setup/capability.rs:232` `client_has_pre_release_v_flag`).
 `without_unknown_bits` (`compatibility/flags.rs:110`) preserves
 upstream's "tolerate but ignore future bits" behaviour for forward
@@ -321,10 +321,10 @@ Unconditional (`KNOWN_FAILURES`):
 
 Protocol-gated (push direction only, `forced_proto <= 29`):
 
-- `up:acls` - upstream `compat.c:655-661` hard-exits with `RERR_PROTOCOL`.
-- `up:xattrs` - upstream `compat.c:662-668` hard-exits with `RERR_PROTOCOL`.
+- `up:acls` - upstream `compat.c:656-662` hard-exits with `RERR_PROTOCOL`.
+- `up:xattrs` - upstream `compat.c:663-669` hard-exits with `RERR_PROTOCOL`.
 - `up:compress-zstd`, `up:compress-lz4` - no vstring negotiation at
-  proto < 30 (`compat.c:383,556-564`).
+  proto < 30 (`compat.c:384,556-564`).
 
 Protocol-gated (push direction only, `forced_proto <= 28`):
 
@@ -362,7 +362,7 @@ protocol number alone and warrants comment when reading the code.
   entirely, even at proto 32. This is keyed off
   `MEMORY.md::Capability string` and `transfer/setup/capability.rs:108`;
   the explicit `requires_inc_recurse` mapping at `capability.rs:38`
-  enforces the asymmetry. Upstream `compat.c:712,720` is symmetric -
+  enforces the asymmetry. Upstream `compat.c:713,720` is symmetric -
   oc-rsync is intentionally more conservative because INC_RECURSE
   push interop is not validated.
 - **Safe file list bit lives in two places.**
@@ -372,12 +372,12 @@ protocol number alone and warrants comment when reading the code.
   branches on the bit must also check the version; checking only the
   bit will under-report safe-flist mode at 31+.
 - **Multiplex `OUT_MULTIPLEXED` is gated at protocol < 31.**
-  `io.c:1227` reads `if (protocol_version < 31 && OUT_MULTIPLEXED)`.
+  `io.c:1234` reads `if (protocol_version < 31 && OUT_MULTIPLEXED)`.
   Above 31, the multiplex output channel is always considered open.
   This affects keep-alive frame timing.
 - **The `v` capability bit drives codec negotiation.** Without `v` in
   the client's capability string, the server falls back to hardcoded
-  `"zlib"` at `compat.c:383` even at proto 32. zstd and lz4 are
+  `"zlib"` at `compat.c:384` even at proto 32. zstd and lz4 are
   unreachable without `v`, which is why the capability string in
   `MEMORY.md::Capability string` is the single source of truth.
 - **The `'V'` capability is not the same as `'v'`.** Upstream once
@@ -387,7 +387,7 @@ protocol number alone and warrants comment when reading the code.
   not invent a similar collision.
 - **MD4 -> MD5 boundary is at protocol 30, but MD5 is not the only
   option there.** Protocol 30+ supports negotiated MD4 / MD5 / XXH3 /
-  XXH128 via `do_negotiated_strings` (`compat.c:729-732`). The default
+  XXH128 via `do_negotiated_strings` (`compat.c:738-741`). The default
   is MD5 only when the `v` capability is not set; with `v`, the
   configured preference (XXH3 in oc-rsync's default build) wins.
 
@@ -423,10 +423,10 @@ Local copy at `target/interop/upstream-src/rsync-3.4.1/`. If missing,
 fetch via `tools/ci/run_interop.sh` or `curl
 https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz`.
 
-- `rsync.h:114` `PROTOCOL_VERSION 32`, `:147` `MIN_PROTOCOL_VERSION 20`,
+- `rsync.h:115` `PROTOCOL_VERSION 32`, `:147` `MIN_PROTOCOL_VERSION 20`,
   `MAX_PROTOCOL_VERSION 40`, `:285-288` `NDX_DONE`/`NDX_FLIST_EOF`/
   `NDX_DEL_STATS`/`NDX_FLIST_OFFSET`.
-- `compat.c:100-112` `valid_compressions_items[]`,
+- `compat.c:101-113` `valid_compressions_items[]`,
   `:117-125` `CF_*` macro definitions,
   `:194-195` batch read forces `CPRES_ZLIB`,
   `:383` `strlcpy(tmpbuf, "zlib", ...)` fallback,
@@ -441,11 +441,11 @@ https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz`.
   `:746` `want_xattr_optim` proto>=31 default,
   `:750-753` `--crtimes` gating,
   `:775` `use_safe_inc_flist` proto>=31 always-on.
-- `io.c:1227` `OUT_MULTIPLEXED` proto<31 branch,
+- `io.c:1234` `OUT_MULTIPLEXED` proto<31 branch,
   `:1684` `MSG_IO_TIMEOUT` proto>=31,
   `:1795` `read_varint`, `:2089` `write_varint`,
   `:2243-2287` `write_ndx`, `:2290-2299` `read_ndx`.
-- `flist.c:411,505,829` `protocol_version >= 30` inline hardlink/dev
+- `flist.c:414,505,829` `protocol_version >= 30` inline hardlink/dev
   encoding,
   `:436,461,623` `protocol_version < 28` legacy paths,
   `:447` `XMIT_RDEV_MINOR_8_PRE30` minor encoding,
@@ -460,7 +460,7 @@ https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz`.
   flags), `:608` upstream batch inflate failure.
 - `main.c:880-905` `read_final_goodbye` with proto>=31 extra round-trip,
   `:1304-1305` multiplex activation.
-- `sender.c:468-485` `write_ndx_and_attrs` iflags proto>=29.
+- `sender.c:476-493` `write_ndx_and_attrs` iflags proto>=29.
 
 ### Sibling oc-rsync documents
 

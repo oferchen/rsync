@@ -53,10 +53,10 @@ All file references are absolute line numbers in
 ### 1.1 Where daemon filter rules are loaded
 
 When a client opens a session against a daemon module, the daemon process
-runs `rsync_module()` in `clientserver.c:692`. After authentication,
+runs `rsync_module()` in `clientserver.c:696`. After authentication,
 `rsync_module()` builds a *separate* filter list called
 `daemon_filter_list` from the module's configured directives at
-`clientserver.c:874-893`:
+`clientserver.c:878-897`:
 
 ```c
 p = lp_filter(module_id);

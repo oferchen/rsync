@@ -1,7 +1,7 @@
 // An interrupted `--partial` transfer may replace the destination only once
 // literal data reached the temp file.
 //
-// upstream: cleanup.c:159-183 promotes the temp onto its partial destination
+// upstream: cleanup.c:159-184 promotes the temp onto its partial destination
 // only under `cleanup_got_literal`, which receiver.c:575 sets in the literal
 // branch of receive_data(); without it cleanup.c:200-201 unlinks the temp and
 // the existing destination survives. Promoting an empty temp would truncate a

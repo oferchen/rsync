@@ -7,7 +7,7 @@
 //! bitfield so higher layers can reason about individual compatibility bits
 //! without manipulating integers directly.
 //!
-//! Upstream reference: `compat.c:118-126` for the `CF_*` bit definitions and
+//! Upstream reference: `compat.c:119-127` for the `CF_*` bit definitions and
 //! `compat.c:576` (`setup_protocol()`) for the negotiation handshake.
 //!
 //! # Design

@@ -168,7 +168,7 @@ F1.
 `collision`, `case_conflict`, `EEXIST` next to receiver / generator
 code, and `__CYGWIN__` / `_WIN32` blocks returns:
 
-- `syscall.c:69` / `syscall.c:457-490` - the only `__CYGWIN__` blocks
+- `syscall.c:69` / `syscall.c:518-551` - the only `__CYGWIN__` blocks
   in receiver-adjacent code handle `crtime` extraction
   (`do_SetFileTime` via `CreateFileW` + `SetFileTime`). No case logic.
 - `util1.c:955` - a `__CYGWIN__` block in path-canonicalisation
@@ -180,14 +180,14 @@ code, and `__CYGWIN__` / `_WIN32` blocks returns:
   destination filesystem reconciliation.
 - `token.c:159,199,260` - `toLower` inside the compress / decompress
   symbol-table maintenance. Unrelated.
-- `authenticate.c:263-265` - `toLower` for the daemon-auth option
+- `authenticate.c:256-258` - `toLower` for the daemon-auth option
   character. Unrelated.
 - `loadparm.c:281` - case-insensitive whitespace-ignoring `string_equal`
   for daemon-config keyword lookup. Unrelated.
 
 Receiver-side `EEXIST` handling in `backup.c:102`, `backup.c:206`,
-`backup.c:247`, `util1.c:213`, `util1.c:224`, `generator.c:1472`, and
-`generator.c:1475` covers backup-file collision and `do_mkdir`
+`backup.c:247`, `util1.c:213`, `util1.c:224`, `generator.c:1509`, and
+`generator.c:1512` covers backup-file collision and `do_mkdir`
 idempotence respectively. None of those sites compare the existing
 inode's name casing against the source file's name.
 

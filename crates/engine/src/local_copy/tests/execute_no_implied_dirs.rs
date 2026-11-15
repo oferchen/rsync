@@ -102,7 +102,7 @@ fn no_implied_dirs_works_with_relative_paths() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // With --relative and --no-implied-dirs the implied leading dirs are still
-    // materialized on demand (upstream generator.c:1718-1722 make_path), but
+    // materialized on demand (upstream generator.c:1755-1759 make_path), but
     // without the source's attributes. The deep file must transfer.
     let options = LocalCopyOptions::default()
         .relative_paths(true)
@@ -223,7 +223,7 @@ fn no_implied_dirs_with_relative_and_deep_file() {
         .relative_paths(true)
         .implied_dirs(false);
 
-    // upstream generator.c:1718-1722: relative + --no-implied-dirs still
+    // upstream generator.c:1755-1759: relative + --no-implied-dirs still
     // make_path()s the missing leading dirs (a/b/c) with default attrs and
     // transfers the deep file. This is exactly the relative-implied testsuite
     // scenario that previously errored with "file has vanished".
@@ -333,7 +333,7 @@ fn no_implied_dirs_dry_run_skips_parent_check() {
 
 // Regression: a recursive dry-run into a not-yet-existing destination directory
 // must succeed with --no-implied-dirs (the default when relative paths are off).
-// Upstream `do_mkdir` returns 0 under `dry_run` (syscall.c:2185), so the missing
+// Upstream `do_mkdir` returns 0 under `dry_run` (syscall.c:2256), so the missing
 // destination root and its subdirs never fail a dry run regardless of implied
 // dirs. This mirrors `--only-write-batch` (which forces dry_run) copying into a
 // missing dest dir; previously the missing root was misclassified as a vanished
@@ -527,7 +527,7 @@ fn no_implied_dirs_collection_reports_correct_events() {
 // the implied leading dirs with the default mode - upstream's make_path()
 // passes ACCESSPERMS (0777) to do_mkdir_at, so the umask decides - rather than
 // the source dir's distinctive 0750. Previously oc-rsync errored with
-// "file has vanished". upstream: generator.c:1718-1722 make_path().
+// "file has vanished". upstream: generator.c:1755-1759 make_path().
 #[cfg(unix)]
 #[test]
 fn relative_no_implied_dirs_creates_leading_dirs_with_default_mode() {
@@ -674,7 +674,7 @@ fn dest_with_symlinked_path_element(temp: &Path, name: &str) -> (OsString, PathB
 /// `--relative --no-implied-dirs` FOLLOWS an existing destination symlink used
 /// as a path element, so the write is redirected through it.
 ///
-/// upstream: `generator.c:1718-1719` gates the on-demand `make_path()` on
+/// upstream: `generator.c:1755-1756` gates the on-demand `make_path()` on
 /// `do_stat_at(dn, &sx.st) < 0` - a FOLLOW-stat. A parent that already resolves
 /// to a directory makes that arm dead, leaving the symlink in place, and the
 /// later open of `path/file` traverses it. rsync(1) documents the consequence
@@ -718,7 +718,7 @@ fn no_implied_dirs_follows_an_existing_dest_symlink_path_element() {
 /// real directory. Without this, a fix that simply followed every symlinked
 /// path element would also pass the test above.
 ///
-/// upstream: `generator.c:1840-1842` - the implied parent arrives as its own
+/// upstream: `generator.c:1877-1879` - the implied parent arrives as its own
 /// file-list entry, finds a non-directory in its place, and takes the
 /// unconditional `delete_item(.., DEL_FOR_DIR)`.
 #[cfg(unix)]

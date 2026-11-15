@@ -521,7 +521,7 @@ fn golden_v28_flags_single_byte_non_dir() {
     writer.write_entry(&mut buf, &e2).unwrap();
 
     // Second entry flags: XMIT_SAME_MODE (0x02) | XMIT_SAME_UID (0x08) | XMIT_SAME_GID (0x10)
-    // upstream: !preserve_uid sets SAME_UID unconditionally (flist.c:783-784)
+    // upstream: !preserve_uid sets SAME_UID unconditionally (flist.c:787-788)
     assert_eq!(buf[first_len], 0x1A);
 }
 

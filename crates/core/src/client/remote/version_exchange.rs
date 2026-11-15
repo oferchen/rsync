@@ -1,6 +1,6 @@
 //! The exit status of a failed protocol-version exchange with a server.
 //!
-//! upstream: compat.c:606-607 setup_protocol() - the client writes its version
+//! upstream: compat.c:607-608 setup_protocol() - the client writes its version
 //! and reads the peer's before buffered I/O starts, so both go through io.c
 //! safe_write()/safe_read(). Each way that exchange fails exits `RERR_STREAMIO`,
 //! or `RERR_PROTOCOL` for an out-of-range version (compat.c:621-625).
@@ -46,7 +46,7 @@ pub(crate) fn version_exchange_failure(
         return program_line_error(safe_io_line(failed, role), exit, role);
     }
     if exit != base {
-        // upstream: log.c:937 log_exit() names the winning child code.
+        // upstream: log.c:1025 log_exit() names the winning child code.
         return remote_exit_error(exit, role);
     }
     invalid_argument_error_typed_with_role(&format!("handshake failed: {error}"), base, role)

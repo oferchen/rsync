@@ -39,7 +39,7 @@
 //!    handshake.
 //!
 //! The captures are the raw byte streams of both directions, multiplex
-//! framing included (upstream: io.c:776 perform_io() and io.c:1173 send_msg()
+//! framing included (upstream: io.c:776 perform_io() and io.c:1180 send_msg()
 //! write the 4-byte frame headers into the same stream), taken by the
 //! `capture-rsh` trampoline.
 #![cfg(unix)]
@@ -397,7 +397,7 @@ fn pull_inc_recurse_flag_engages_and_transfers_the_tree() {
 ///
 /// `--no-inc-recursive` is the user's explicit opt-out, and `--delete-before`
 /// / `--delete-after` need the complete list up front, so upstream's own gate
-/// withholds `'i'` for them (upstream: compat.c:172-177
+/// withholds `'i'` for them (upstream: compat.c:173-178
 /// set_allow_inc_recurse()).
 #[test]
 fn pull_inc_recurse_flag_is_inert_under_no_inc_recursive_and_whole_list_deletes() {
@@ -432,7 +432,7 @@ fn pull_inc_recurse_flag_is_inert_under_no_inc_recursive_and_whole_list_deletes(
 /// Cell 6: the per-directory delete modes pull incrementally by default
 /// and still delete exactly the extraneous entries.
 ///
-/// upstream: generator.c:2780-2798 generate_files() deletes in each sub-list's parent as the
+/// upstream: generator.c:2866-2884 generate_files() deletes in each sub-list's parent as the
 /// sub-list is walked, so a `--delete` pull keeps INC_RECURSE.
 #[test]
 fn pull_inc_recurse_flag_engages_under_per_directory_deletes() {

@@ -3,14 +3,14 @@
 //! These macros gate message formatting behind a level check so that
 //! disabled messages incur zero allocation cost. They mirror upstream
 //! rsync's `DEBUG_GTE(flag, level)` and `INFO_GTE(flag, level)` macros
-//! (upstream: rsync.h:1475-1477).
+//! (upstream: rsync.h:1491-1493).
 
 /// Emit an info log message if the flag level is enabled.
 ///
 /// The message is only formatted when the current thread's
 /// [`VerbosityConfig`](crate::VerbosityConfig) has the given
 /// [`InfoFlag`](crate::InfoFlag) at or above `$level`. This mirrors
-/// upstream rsync's `INFO_GTE(flag, level)` guard (upstream: rsync.h:1475).
+/// upstream rsync's `INFO_GTE(flag, level)` guard (upstream: rsync.h:1491).
 ///
 /// # Arguments
 ///
@@ -44,7 +44,7 @@ macro_rules! info_log {
 /// valid UTF-8, or that carries a control byte, survives to the render
 /// boundary intact rather than being lossily replaced with U+FFFD. This
 /// mirrors upstream `rwrite()`, whose message buffer is copied to the output
-/// fd verbatim and escaped once at the sink (upstream: log.c:425 `rwrite()`
+/// fd verbatim and escaped once at the sink (upstream: log.c:499 `rwrite()`
 /// -> log.c:242 `filtered_fwrite`).
 ///
 /// # Arguments
@@ -81,8 +81,8 @@ macro_rules! info_log_bytes {
 /// Unlike [`info_log!`](crate::info_log) and
 /// [`debug_log!`](crate::debug_log) this takes no flag or level: upstream's
 /// `FWARNING` is not verbosity-gated. It is a log code `rwrite()` dispatches
-/// in its own right (upstream: `log.c:341`) and one the protocol carries to
-/// the peer for versions >= 30 (upstream: `rsync.h:285`, `rsync.h:296`).
+/// in its own right (upstream: `log.c:421`) and one the protocol carries to
+/// the peer for versions >= 30 (upstream: `rsync.h:286`, `rsync.h:297`).
 ///
 /// Reach for this when an operator needs to know something happened whether
 /// or not they passed `-v`. Anything that should stay quiet at default
@@ -103,7 +103,7 @@ macro_rules! warn_log {
 /// The message is only formatted when the current thread's
 /// [`VerbosityConfig`](crate::VerbosityConfig) has the given
 /// [`DebugFlag`](crate::DebugFlag) at or above `$level`. This mirrors
-/// upstream rsync's `DEBUG_GTE(flag, level)` guard (upstream: rsync.h:1477).
+/// upstream rsync's `DEBUG_GTE(flag, level)` guard (upstream: rsync.h:1493).
 ///
 /// Debug flags are activated starting at `-vv` (verbose level 2). Higher
 /// verbose levels increase individual flag levels, enabling progressively

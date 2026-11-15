@@ -79,7 +79,7 @@ impl InplaceResolution {
                     .custom_flags(libc::O_NOFOLLOW)
                     .open(path)
             }
-            // upstream: rsync-3.5.1/receiver.c:218-243 `open_readonly_inplace()`
+            // upstream: rsync-3.5.2/receiver.c:218-243 `open_readonly_inplace()`
             // - the walked parent and an `O_NOFOLLOW` leaf, the walked form of
             // exactly the same open.
             Self::OperatorWalk => crate::owner_walk::operator_open_basis_read(path),
@@ -126,7 +126,7 @@ impl InplaceResolution {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/receiver.c:1212-1241` - the chain in full.
+/// - `rsync-3.5.2/receiver.c:1212-1241` - the chain in full.
 ///
 /// # Errors
 ///

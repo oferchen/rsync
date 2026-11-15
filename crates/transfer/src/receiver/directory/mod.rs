@@ -159,7 +159,7 @@ impl FailedDirectories {
 
     /// Marks a directory as skipped because `--existing` found it missing.
     ///
-    /// upstream: generator.c:1757-1762 `recv_generator()` - sets `skip_dir` and
+    /// upstream: generator.c:1794-1799 `recv_generator()` - sets `skip_dir` and
     /// `FLAG_MISSING_DIR` without touching `io_error`.
     pub(in crate::receiver) fn mark_missing(&mut self, path: impl AsRef<std::path::Path>) {
         self.missing.insert(path.as_ref().to_path_buf());
@@ -168,7 +168,7 @@ impl FailedDirectories {
     /// Checks if an entry path, or any of its ancestors, is a directory
     /// skipped as missing under `--existing`.
     ///
-    /// upstream: generator.c:1648-1659 - `is_below(file, skip_dir)` returns
+    /// upstream: generator.c:1685-1696 - `is_below(file, skip_dir)` returns
     /// early, silently, for every entry below the skipped directory.
     pub(in crate::receiver) fn is_missing_or_below(
         &self,

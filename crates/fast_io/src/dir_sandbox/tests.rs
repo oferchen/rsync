@@ -96,13 +96,13 @@ fn exit_on_empty_stack_is_noop() {
 
 /// An **in-tree** symlinked subdirectory must be descended, not refused.
 ///
-/// upstream: `syscall.c:3032` `ds_descend()` splices a relative in-tree
+/// upstream: `syscall.c:3103` `ds_descend()` splices a relative in-tree
 /// symlink target back into the walk. Refusing it is stricter than upstream
 /// and turns an ordinary destination layout into a hard failure.
 ///
 /// ⚠ The symlink target must be **relative**. An absolute target is refused
 /// under `RESOLVE_BENEATH` even when it resolves inside the anchor, and
-/// upstream refuses absolute targets too (`syscall.c:3094`) - so a fixture
+/// upstream refuses absolute targets too (`syscall.c:3165`) - so a fixture
 /// built with `symlink(root.join("real"), ...)` passes for the wrong reason
 /// and proves nothing about this contract.
 ///
@@ -115,7 +115,7 @@ fn exit_on_empty_stack_is_noop() {
 /// this red on every non-Linux target while CI never ran the crate there.
 ///
 /// ⚠ As above, the refusal arm is a **tracked divergence, not the contract**:
-/// upstream follows the target (`ds_descend`, `syscall.c:3102`). Parity is
+/// upstream follows the target (`ds_descend`, `syscall.c:3173`). Parity is
 /// task 551; `enter()`'s behaviour is deliberately unchanged here, because
 /// making the fallback follow in-tree symlinks is a cross-platform decision
 /// and not a test fix.
@@ -411,7 +411,7 @@ fn operator_trusted_policy_resolution_matches_the_available_mechanism() {
 /// Builds a chain of `len` directory symlinks under `dir` named
 /// `<stem>0 -> <stem>1 -> ... -> <stem>N -> <target>`, and returns the head
 /// name. Each link is relative, because an absolute target is refused in every
-/// configuration (upstream `syscall.c:3094`) and would make the fixture pass
+/// configuration (upstream `syscall.c:3165`) and would make the fixture pass
 /// for the wrong reason.
 fn symlink_chain(dir: &std::path::Path, stem: &str, len: usize, target: &str) -> String {
     for i in 0..len {
@@ -443,7 +443,7 @@ fn the_symlink_hop_budget_is_shared_across_the_whole_walk() {
     // component alone exceeds the 40-hop budget.
     //
     // Upstream spends ONE budget for the whole walk - `ds_walk_path` takes
-    // `hops` by pointer (`rsync-3.5.1/syscall.c:3107`) and `ds_descend`
+    // `hops` by pointer (`rsync-3.5.2/syscall.c:3178`) and `ds_descend`
     // decrements through it - so this must be refused. A budget reset per
     // component, or per descend, would let it through, which is the bug this
     // test exists to catch.
@@ -520,7 +520,7 @@ fn the_oracle_refuses_a_symlink_that_redirects_into_an_excluded_subtree() {
     // and the only path a BENEATH caller could test is the nominal
     // `visible/link` - which is exactly what the symlink defeats.
     //
-    // upstream: rsync-3.5.1/syscall.c:3055-3060, where ds_descend() consults
+    // upstream: rsync-3.5.2/syscall.c:3126-3131, where ds_descend() consults
     // abspath_outside_confinement() on the path it has tracked per component.
     let (_guard, root) = test_support::create_canonical_tempdir();
     tree_with_redirect_into_hidden(&root);
@@ -566,7 +566,7 @@ fn dot_dot_is_a_movement_within_the_tree_not_a_refused_component() {
     // The BENEATH arm refuses it outright, which is correct there because the
     // kernel resolves the path; here the walk holds the stack and must move.
     //
-    // upstream: rsync-3.5.1/syscall.c:3037-3042
+    // upstream: rsync-3.5.2/syscall.c:3108-3113
     let (_guard, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("a")).expect("mkdir a");
     std::fs::create_dir(root.join("b")).expect("mkdir b");
@@ -589,7 +589,7 @@ fn dot_dot_above_the_anchor_is_refused() {
     // The other half of the same rule, and the one that makes `..`-as-movement
     // safe: the stack is empty at the anchor, so there is no parent to pop to.
     //
-    // upstream: rsync-3.5.1/syscall.c:3038-3040 reports ELOOP rather than
+    // upstream: rsync-3.5.2/syscall.c:3109-3111 reports ELOOP rather than
     // handing back the anchor's own parent.
     let (_guard, root) = test_support::create_canonical_tempdir();
     std::fs::create_dir(root.join("a")).expect("mkdir a");
@@ -611,7 +611,7 @@ fn dot_dot_above_the_anchor_is_refused() {
 #[test]
 fn an_absolute_symlink_target_is_refused_even_when_it_points_back_inside() {
     // Upstream refuses an absolute target unconditionally
-    // (rsync-3.5.1/syscall.c:3094). Pointing it back *inside* the anchor is
+    // (rsync-3.5.2/syscall.c:3165). Pointing it back *inside* the anchor is
     // what makes this test non-vacuous: a walk that only refused escapes would
     // accept it, so this pins the rule rather than its usual consequence.
     let (_guard, root) = test_support::create_canonical_tempdir();
@@ -674,8 +674,8 @@ impl super::ConfinementOracle for CountingOracle {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:3107-3117` `ds_walk_path()` tokenises on `/`
-/// - `rsync-3.5.1/syscall.c:3078-3102` the spliced target re-enters the walk
+/// - `rsync-3.5.2/syscall.c:3178-3188` `ds_walk_path()` tokenises on `/`
+/// - `rsync-3.5.2/syscall.c:3149-3173` the spliced target re-enters the walk
 #[test]
 fn a_dot_dot_inside_a_symlink_target_is_walked_not_string_collapsed() {
     let (_guard, root) = test_support::create_canonical_tempdir();
@@ -765,8 +765,8 @@ fn raise_nofile_soft_limit(wanted: libc::rlim_t) -> libc::rlim_t {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:2940` `DS_MAXDEPTH`
-/// - `rsync-3.5.1/syscall.c:3006-3009` `ds_push()` returns `ENOMEM` at the cap
+/// - `rsync-3.5.2/syscall.c:3011` `DS_MAXDEPTH`
+/// - `rsync-3.5.2/syscall.c:3077-3080` `ds_push()` returns `ENOMEM` at the cap
 #[test]
 fn the_depth_ceiling_refuses_rather_than_truncating() {
     use std::os::fd::{AsFd, OwnedFd};
@@ -854,7 +854,7 @@ fn the_depth_ceiling_refuses_rather_than_truncating() {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:3130-3132` non-daemon callers "pay nothing"
+/// - `rsync-3.5.2/syscall.c:3201-3203` non-daemon callers "pay nothing"
 #[test]
 fn an_operator_trusted_walk_never_consults_the_oracle() {
     let (_guard, root) = test_support::create_canonical_tempdir();
@@ -933,7 +933,7 @@ fn the_anchor_handle_outlives_the_sandbox_that_produced_it() {
 /// would not catch that - the mutation `exhausted = true` survives a
 /// positives-only suite.
 ///
-/// upstream: syscall.c:3065 `if (errno == EMFILE || errno == ENFILE)`.
+/// upstream: syscall.c:3136 `if (errno == EMFILE || errno == ENFILE)`.
 #[test]
 fn fd_exhaustion_predicate_matches_only_emfile_and_enfile() {
     use rustix::io::Errno;
@@ -970,7 +970,7 @@ fn fd_exhaustion_predicate_matches_only_emfile_and_enfile() {
 /// The hint is one-shot: a deep tree hits the ceiling once per component
 /// and would otherwise flood stderr with an identical line.
 ///
-/// upstream: syscall.c:3067-3069 `static int warned = 0; if (!warned)`.
+/// upstream: syscall.c:3138-3140 `static int warned = 0; if (!warned)`.
 #[test]
 fn fd_exhaustion_hint_is_emitted_at_most_once() {
     use rustix::io::Errno;
@@ -1035,7 +1035,7 @@ fn fd_exhaustion_latch_admits_exactly_one_concurrent_claimant() {
 /// spelled out at its own call site (log.c:956) and does not apply here.
 /// Pinning the text is what stops a later "improvement" from wrapping it.
 ///
-/// upstream: syscall.c:3071-3072.
+/// upstream: syscall.c:3142-3143.
 #[test]
 fn fd_exhaustion_hint_text_matches_upstream_verbatim() {
     assert_eq!(
@@ -1074,7 +1074,7 @@ fn fd_exhaustion_hint_text_matches_upstream_verbatim() {
 /// limit drops, and both globals are restored before the assertions so a
 /// failing assert can still allocate for its own output.
 ///
-/// upstream: syscall.c:3065-3077.
+/// upstream: syscall.c:3136-3148.
 #[test]
 fn real_fd_exhaustion_warns_once_and_surfaces_emfile_to_the_caller() {
     use rustix::io::dup;
@@ -1175,7 +1175,7 @@ fn next_free_fd() -> u64 {
 /// *before* the limit drops, and both globals are restored before any
 /// assertion runs so a failing assert can still allocate for its output.
 ///
-/// upstream: syscall.c:3065-3077, inside `ds_descend()` (`syscall.c:3032`).
+/// upstream: syscall.c:3136-3148, inside `ds_descend()` (`syscall.c:3103`).
 #[test]
 fn confined_walk_warns_on_fd_exhaustion_and_stays_silent_on_enoent() {
     use rustix::io::{Errno, dup};
@@ -1326,7 +1326,7 @@ fn confined_walk_warns_on_fd_exhaustion_and_stays_silent_on_enoent() {
 /// deliberately - and both globals are restored before any assertion so a
 /// failing assert can still allocate for its output.
 ///
-/// upstream: syscall.c:2936-2939 - "The walk holds one fd per component, so
+/// upstream: syscall.c:3007-3010 - "The walk holds one fd per component, so
 /// depth is bounded by RLIMIT_NOFILE anyway"; syscall.c:3065-3077 - the hint,
 /// which upstream places on the accumulating walk alone.
 #[test]
@@ -1461,7 +1461,7 @@ mod open_subdir_confined {
     /// refused, and refused for being absolute rather than for merely being a
     /// symlink (the companion below proves the latter is still followed).
     ///
-    /// upstream: `syscall.c:3094-3097` - `ds_descend()` sets `errno = ELOOP`
+    /// upstream: `syscall.c:3165-3168` - `ds_descend()` sets `errno = ELOOP`
     /// for an absolute `readlink` target without consulting any root.
     #[test]
     fn an_absolute_symlink_prefix_is_refused() {
@@ -1487,7 +1487,7 @@ mod open_subdir_confined {
 
     /// A `..` prefix cannot rise above the anchor either.
     ///
-    /// upstream: `syscall.c:3037-3040` - popping an empty stack is `ELOOP`.
+    /// upstream: `syscall.c:3108-3111` - popping an empty stack is `ELOOP`.
     #[test]
     fn a_relative_symlink_prefix_climbing_out_is_refused() {
         let (_keep, root) = test_support::create_canonical_tempdir();

@@ -1,7 +1,7 @@
 //! `-q` must silence the daemon MOTD and the module listing, like every other
 //! `FINFO` line.
 //!
-//! upstream: clientserver.c:432-435 - `start_inband_exchange()` prints each
+//! upstream: clientserver.c:436-439 - `start_inband_exchange()` prints each
 //! line between the greeting and `@RSYNCD: OK`/`EXIT` (MOTD or module row; the
 //! two are indistinguishable) with `rprintf(FINFO, ...)`, and log.c:344-345
 //! `rwrite()` drops every `FINFO` line under `quiet`. So `rsync -q rsync://host/`

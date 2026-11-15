@@ -488,7 +488,7 @@ impl<'a> CopyContext<'a> {
         // output channels are drained at different times.
         record.stamp();
 
-        // upstream: receiver.c:924-938 / sender.c:587-600 - every ITEM_IS_NEW
+        // upstream: receiver.c:924-938 / sender.c:595-608 - every ITEM_IS_NEW
         // entry bumps `stats.created_*` for its type, whether or not file data
         // moved. `was_created()` is the ITEM_IS_NEW mirror; classify by action
         // to hit the right per-type counter. Directories are counted separately
@@ -521,10 +521,10 @@ impl<'a> CopyContext<'a> {
             const ITEM_IS_NEW: u16 = 1 << 13;
             const ITEM_LOCAL_CHANGE: u16 = 1 << 14;
             let iflags = match record.action() {
-                // upstream: generator.c:1869-1871 - a created directory is
+                // upstream: generator.c:1906-1908 - a created directory is
                 // itemized ITEM_LOCAL_CHANGE, and itemize() ORs in ITEM_IS_NEW.
                 LocalCopyAction::DirectoryCreated => Some(ITEM_LOCAL_CHANGE | ITEM_IS_NEW),
-                // upstream: generator.c:2004-2009 / :2093-2096 - a created
+                // upstream: generator.c:2045-2050 / :2093-2096 - a created
                 // symlink or special is itemized
                 // ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE + ITEM_IS_NEW.
                 LocalCopyAction::SymlinkCopied
@@ -538,7 +538,7 @@ impl<'a> CopyContext<'a> {
                 self.record_batch_metadata_item(iflags);
             }
         }
-        // upstream: generator.c:517-586 itemize() ALSO writes an NDX + iflags
+        // upstream: generator.c:554-623 itemize() ALSO writes an NDX + iflags
         // word for a metadata-only change to an EXISTING non-regular entry (a
         // dir, symlink, or special the quick-check kept but whose attributes
         // changed), the transfer root (".") included, carrying only the
@@ -564,9 +564,9 @@ impl<'a> CopyContext<'a> {
                 self.record_batch_metadata_item(batch_report_iflags(&record.change_set(), false));
             }
         }
-        // upstream: generator.c:517-548 itemize() - a regular file sent over an
+        // upstream: generator.c:554-585 itemize() - a regular file sent over an
         // existing destination carries the same report bits in the iflags word
-        // ahead of its data (sender.c:469 write_ndx_and_attrs()), so an upstream
+        // ahead of its data (sender.c:477 write_ndx_and_attrs()), so an upstream
         // `--read-batch -i` prints `>f.st......` for it, not `>f.........`.
         if self.batch_report_slot.is_some()
             && !record.was_created()
@@ -746,6 +746,7 @@ impl<'a> CopyContext<'a> {
             && !compress
             && self.limiter.is_none()
             && initial_bytes == 0
+            && !self.inplace_enabled()
         {
             // The kernel mover writes as it reads, so the data counts as
             // literal before the call. upstream: receiver.c:575.
@@ -1036,7 +1037,7 @@ impl<'a> CopyContext<'a> {
 
 /// Maps an itemized change set onto upstream's `ITEM_REPORT_*` iflags bits.
 ///
-/// upstream: generator.c:517-548 itemize(), rsync.h:244-254. `ITEM_REPORT_SIZE`
+/// upstream: generator.c:554-585 itemize(), rsync.h:245-255. `ITEM_REPORT_SIZE`
 /// is set only for a regular file (generator.c:527 `S_ISREG`); the same bit is
 /// `ITEM_REPORT_TIMEFAIL` for a symlink, so it must not reach other kinds.
 fn batch_report_iflags(cs: &crate::local_copy::LocalCopyChangeSet, regular_file: bool) -> u16 {

@@ -289,7 +289,7 @@ pub fn supplementary_gids_for_uid(uid: RawUid) -> Result<Vec<u32>, io::Error> {
 /// Used by the rsync daemon to authorize an `auth users = @group` token: the
 /// token (minus the `@`) is `wildmatch`ed against each returned group name.
 ///
-/// upstream: authenticate.c:384-392 `auth_server()` - `user_to_uid()` then
+/// upstream: authenticate.c:379-387 `auth_server()` - `user_to_uid()` then
 /// `getallgroups()` then `gid_to_group()` for each gid.
 pub fn groups_for_user(username: &str) -> Result<Vec<String>, io::Error> {
     let Some(uid) = lookup_user_by_name(username.as_bytes())? else {

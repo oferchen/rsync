@@ -146,7 +146,7 @@ struct file_struct {
 #define FILE_STRUCT_LEN (sizeof(struct file_struct))   /* 24 B on 64-bit */
 ```
 
-`flist.c:1423-1435`:
+`flist.c:1427-1439`:
 
 ```c
 alloc_len = FILE_STRUCT_LEN + extra_len + basename_len + linkname_len;
@@ -159,7 +159,7 @@ memcpy(bp, basename, basename_len);
 ```
 
 Each entry is exactly one `pool_alloc()` from a 256 KiB
-`NORMAL_EXTENT` pool (`rsync.h:936`). The pool is bump-allocated
+`NORMAL_EXTENT` pool (`rsync.h:952`). The pool is bump-allocated
 inside fixed-size extents:
 
 - Header (`FILE_STRUCT_LEN` = 24 B) and basename are contiguous, no
@@ -169,7 +169,7 @@ inside fixed-size extents:
   `F_SUM`) prepend the header in the same allocation; addressed via
   negative indexing (`OPT_EXTRA(f, bump)`).
 - `dirname` is a `const char *` shared via the `lastdir` cache
-  (`flist.c:697,768`): when the parsed dir matches the previous
+  (`flist.c:701,768`): when the parsed dir matches the previous
   entry's dir, the same heap pointer is reused. Otherwise a single
   `new_array(char, len + 1)` copy is made.
 - Free is O(1) per pool-extent (`pool_destroy()`), not per entry.

@@ -9,7 +9,7 @@
 //! forces INC_RECURSE the way an upstream client would: the sender's compact
 //! flag string carries `-e.i...`, so the sender's `setup_protocol` sets
 //! `CF_INC_RECURSE` and the receiver honours the flag verbatim
-//! (upstream: compat.c:757). No production hook is involved.
+//! (upstream: compat.c:766). No production hook is involved.
 //!
 //! The tree holds 3 directories of 5,000 files plus a nested directory, well
 //! above upstream's `MIN_FILECNT_LOOKAHEAD` (1,000) and `MAX_FILECNT_LOOKAHEAD`
@@ -225,7 +225,7 @@ fn inc_recurse_receiver_loopback_pulls_multi_segment_tree() {
         "every regular file must be transferred exactly once"
     );
 
-    // upstream: flist.c:3236-3249 / flist.c:1613-1614 - the `--stats` tallies
+    // upstream: flist.c:3247-3260 / flist.c:1617-1618 - the `--stats` tallies
     // are bumped as each entry arrives, so segments released mid-walk must not
     // shrink them. Directories: `.`, `dir0..dir2`, `dir1/nested`, `.../deeper`.
     let expected_size: u64 = (0..DIRS)
@@ -412,7 +412,7 @@ fn assert_streamed(stats: &TransferStats) {
 /// `--list-only` over a forced-INC_RECURSE pull of more than
 /// `MAX_FILECNT_LOOKAHEAD` entries must finish and list every entry once.
 ///
-/// upstream: generator.c:1638-1644 - `list_only` renders each entry inside
+/// upstream: generator.c:1675-1681 - `list_only` renders each entry inside
 /// recv_generator(), and generate_files() still calls
 /// check_for_finished_files() after every entry (generator.c:2820), so each
 /// finished sub-list is released with an NDX_DONE during the walk. An eager
@@ -457,7 +457,7 @@ fn inc_recurse_list_only_streams_past_lookahead_window() {
 /// `MAX_FILECNT_LOOKAHEAD` entries must finish, request every file once, and
 /// leave the destination untouched.
 ///
-/// upstream: generator.c:2367-2396 - the `!do_xfers` request is NDX + iflags;
+/// upstream: generator.c:2410-2439 - the `!do_xfers` request is NDX + iflags;
 /// check_for_finished_files() (generator.c:2620-2714) still releases each
 /// finished sub-list mid-walk, and the sender's echo stream may carry the next
 /// sub-list ahead of a file echo (rsync.c:322-431 read_ndx_and_attrs).
@@ -486,7 +486,7 @@ fn inc_recurse_dry_run_streams_past_lookahead_window() {
 /// `MAX_FILECNT_LOOKAHEAD` entries must finish, drain every delta, and leave
 /// the destination untouched.
 ///
-/// upstream: main.c:1946-1947 forces `dry_run` with `do_xfers` still set, so the
+/// upstream: main.c:1950-1951 forces `dry_run` with `do_xfers` still set, so the
 /// generator sends real sum heads and a pull receiver drains each delta with
 /// discard_receive_data() (receiver.c:1001-1008); the per-sub-list NDX_DONE
 /// release is the same check_for_finished_files() walk.
@@ -515,7 +515,7 @@ fn inc_recurse_only_write_batch_streams_past_lookahead_window() {
 ///
 /// The directory's sub-list alone fills the sender's window, so the sender
 /// queues nothing behind it until the receiver releases the list ahead of it.
-/// upstream: generator.c:2803-2841 walks `cur_flist` on its own `used` count and
+/// upstream: generator.c:2889-2927 walks `cur_flist` on its own `used` count and
 /// only waits for the next list after finishing it; a receiver that waits for
 /// the next sub-list before walking the big one never sends that release.
 #[test]
@@ -579,9 +579,9 @@ fn pull_both_ways(
 /// `--list-only` rendered segment by segment lists the same entries, in the
 /// same order and with the same attributes, as the whole-list rendering.
 ///
-/// upstream: generator.c:1638-1644 lists each entry as recv_generator() reaches
+/// upstream: generator.c:1675-1681 lists each entry as recv_generator() reaches
 /// it, and generate_files() reaches them in file-list order one sub-list at a
-/// time (generator.c:2803-2842); the listing upstream 3.5.1 prints for an
+/// time (generator.c:2889-2928); the listing upstream 3.5.1 prints for an
 /// incremental pull is the same sorted-tree order as a non-incremental one.
 #[test]
 fn inc_recurse_list_only_matches_whole_list_listing() {
@@ -711,7 +711,7 @@ fn build_bait_tree(src: &Path, dst: &Path) -> u64 {
 /// destination file whose sub-list has not arrived when the walk starts is
 /// never touched - not deleted and re-sent, but the same inode.
 ///
-/// upstream: generator.c:2780-2798 deletes in each sub-list's parent as that
+/// upstream: generator.c:2866-2884 deletes in each sub-list's parent as that
 /// sub-list becomes `cur_flist`, and generator.c:347 probes only that list, so
 /// a name is judged only once its directory's complete list is in hand.
 #[test]
@@ -749,7 +749,7 @@ fn inc_recurse_delete_during_spares_a_wanted_file_of_a_later_segment() {
 /// `--delete-delay` decides per sub-list but unlinks after the walk; the end
 /// state and the tally match `--delete-during`.
 ///
-/// upstream: generator.c:352-353 remember_delete() inside the per-sub-list
+/// upstream: generator.c:387-388 remember_delete() inside the per-sub-list
 /// delete_in_dir(), generator.c:2899-2900 do_delayed_deletions() after it.
 #[test]
 fn inc_recurse_delete_delay_matches_delete_during() {
@@ -780,7 +780,7 @@ fn inc_recurse_delete_delay_matches_delete_during() {
 /// An empty source directory still gets its (empty) sub-list, and walking it
 /// deletes every destination entry inside.
 ///
-/// upstream: generator.c:2780 runs delete_in_dir() for every sub-list with a
+/// upstream: generator.c:2866 runs delete_in_dir() for every sub-list with a
 /// parent, whatever its length.
 #[test]
 fn inc_recurse_delete_empties_a_directory_whose_sub_list_is_empty() {
@@ -809,7 +809,7 @@ fn inc_recurse_delete_empties_a_directory_whose_sub_list_is_empty() {
 /// before its first list, so the error is known before any directory is
 /// walked and every extraneous entry survives.
 ///
-/// upstream: generator.c:304-311 tests the global `io_error` as each
+/// upstream: generator.c:339-346 tests the global `io_error` as each
 /// delete_in_dir() starts, and flist.c:3190-3211 folds each list's trailer into it
 /// as the list is read.
 #[test]
@@ -856,7 +856,7 @@ fn inc_recurse_delete_skips_every_directory_after_a_source_io_error() {
 /// walk and deadlocks against the sender's window. Every directory's
 /// extraneous entry is deleted and every source file arrives.
 ///
-/// upstream: generator.c:2780-2798 deletes per sub-list inside the same walk
+/// upstream: generator.c:2866-2884 deletes per sub-list inside the same walk
 /// that releases each finished list (generator.c:2820).
 #[test]
 fn inc_recurse_delete_streams_past_lookahead_window() {

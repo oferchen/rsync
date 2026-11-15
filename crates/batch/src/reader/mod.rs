@@ -190,7 +190,7 @@ impl BatchReader {
     /// failing `fstat` is not itself a refusal - upstream only rejects when the
     /// stat succeeds and reports another mode.
     ///
-    /// upstream: `rsync-3.5.1/batch.c:274-283`
+    /// upstream: `rsync-3.5.2/batch.c:274-283`
     fn classify(file: &File, path: &Path) -> BatchResult<BatchInput> {
         let Ok(meta) = file.metadata() else {
             return Ok(BatchInput::Regular);
@@ -252,11 +252,11 @@ impl BatchReader {
             // A batch recorded at a newer protocol than the reader runs cannot
             // be replayed correctly. The ceiling is the configured protocol,
             // which `--protocol` lowers below this build's newest.
-            // upstream: compat.c:611-615 setup_protocol() - `remote_protocol >
+            // upstream: compat.c:612-616 setup_protocol() - `remote_protocol >
             // protocol_version` under read_batch exits RERR_PROTOCOL.
             let ceiling = self.config.protocol_version;
             if header.protocol_version > ceiling {
-                // upstream: compat.c:612 rprintf(FERROR, "The protocol
+                // upstream: compat.c:613 rprintf(FERROR, "The protocol
                 // version in the batch file is too new (%d > %d).\n", ...) -
                 // match the diagnostic text, including the trailing period.
                 return Err(BatchError::Io(protocol::protocol_violation(format!(

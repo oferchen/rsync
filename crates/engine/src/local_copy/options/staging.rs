@@ -178,7 +178,7 @@ impl LocalCopyOptions {
     /// (including symlinks, devices, FIFOs, and sockets) rather than skipping
     /// non-regular files as a real transfer would.
     ///
-    /// upstream: generator.c:1318 `list_file_entry()`.
+    /// upstream: generator.c:1355 `list_file_entry()`.
     #[must_use]
     pub const fn list_only(mut self, list_only: bool) -> Self {
         self.list_only = list_only;
@@ -219,6 +219,19 @@ impl LocalCopyOptions {
         self.delay_updates
     }
 
+    /// Configures whether `--delay-symlinks` defers symlink creation.
+    #[must_use]
+    pub const fn delay_symlinks(mut self, delay: bool) -> Self {
+        self.delay_symlinks = delay;
+        self
+    }
+
+    /// Reports whether `--delay-symlinks` is enabled.
+    #[must_use]
+    pub const fn delay_symlinks_enabled(&self) -> bool {
+        self.delay_symlinks
+    }
+
     /// Reports whether destination files should be fsynced after updates.
     #[must_use]
     pub const fn fsync_enabled(&self) -> bool {
@@ -233,7 +246,7 @@ impl LocalCopyOptions {
 
     /// Reports whether an existing device destination may be written through.
     ///
-    /// upstream: `options.c:684` `--write-devices`.
+    /// upstream: `options.c:685` `--write-devices`.
     #[must_use]
     pub const fn write_devices_enabled(&self) -> bool {
         self.write_devices

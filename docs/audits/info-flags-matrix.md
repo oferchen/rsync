@@ -12,8 +12,8 @@ Source: `target/interop/upstream-src/rsync-3.4.1/options.c:228-285`.
 implies `NONREG`, level 1 adds `COPY,DEL,FLIST,MISC,NAME,STATS,SYMSAFE`, level
 2 adds `BACKUP,MISC2,MOUNT,NAME2,REMOVE,SKIP`. `info_words[]` (lines 270-285)
 is the parser table consulted by `parse_output_words` and rendered by
-`output_item_help` (`options.c:474-510`). All thirteen `INFO_*` constants live
-in `rsync.h:1416-1435`.
+`output_item_help` (`options.c:475-511`). All thirteen `INFO_*` constants live
+in `rsync.h:1432-1451`.
 
 | Family   | Where bits     | Upstream max level   | Help string (verbatim)                                       |
 | -------- | -------------- | -------------------- | ------------------------------------------------------------ |
@@ -33,7 +33,7 @@ in `rsync.h:1416-1435`.
 
 ## 2. Level suffix and `--info=help`
 
-`parse_output_words` (`options.c:380-470`) treats a trailing digit as the
+`parse_output_words` (`options.c:381-471`) treats a trailing digit as the
 level: `--info=FLIST2` is `FLIST` at level 2; bare `--info=FLIST` defaults to
 1; `--info=FLIST0` clears the flag. Bare `--info=help` triggers
 `output_item_help`, which prints every `info_words[]` row, then `ALL`,

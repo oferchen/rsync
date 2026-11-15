@@ -2,7 +2,7 @@
 
 This document provides a systematic comparison between the Rust rsync implementation and upstream rsync 3.5.1 (protocol 33), treating the upstream C source at `target/interop/upstream-src/rsync-3.5.1/` as the source of truth.
 
-> **3.5.1 retarget (2026-11-03).** Line citations were re-located in 3.5.1 by content with `tools/ci/citation_retarget.py`. 3.5.1 raises `PROTOCOL_VERSION` to 33 (`rsync.h:114`; `SUBPROTOCOL_VERSION` stays 0, `rsync.h:128`) and adds one message code, `MSG_BLOCK_STATS` = 11 (`rsync.h:302`). `errcode.h` is byte-identical to 3.5.0, and no `XMIT_*`, `NDX_*` or `CF_*` constant changed, so the wire claims below carry over apart from the rows updated for protocol 33.
+> **3.5.1 retarget (2026-11-03).** Line citations were re-located in 3.5.1 by content with `tools/ci/citation_retarget.py`. 3.5.1 raises `PROTOCOL_VERSION` to 33 (`rsync.h:115`; `SUBPROTOCOL_VERSION` stays 0, `rsync.h:129`) and adds one message code, `MSG_BLOCK_STATS` = 11 (`rsync.h:303`). `errcode.h` is byte-identical to 3.5.0, and no `XMIT_*`, `NDX_*` or `CF_*` constant changed, so the wire claims below carry over apart from the rows updated for protocol 33.
 >
 > **Retarget note (2026-08-13, narrowed 2026-09-04).** The comparisons below were verified line-by-line against rsync 3.4.4 and have been repointed at 3.5.0. That repoint is sound for everything protocol-level: 3.5.0 declares the same `PROTOCOL_VERSION` 32 and `SUBPROTOCOL_VERSION` 0, ships a byte-identical `errcode.h`, and adds no `MSG_*`, `XMIT_*` or compat-flag constants, so every wire constant and algorithm claim here carries over unchanged.
 >
@@ -155,10 +155,10 @@ const INT_BYTE_EXTRA: [u8; 64] = [
 
 | Function | Upstream | Rust | Wire Compatible |
 |----------|----------|------|-----------------|
-| `read_varint()` | io.c:1833-1863 | `read_varint()` | ✅ |
-| `write_varint()` | io.c:2127-2147 | `write_varint()` | ✅ |
-| `read_varlong()` | io.c:1865-1904 | `read_varlong()` | ✅ |
-| `write_varlong()` | io.c:2149-2178 | `write_varlong()` | ✅ |
+| `read_varint()` | io.c:1840-1870 | `read_varint()` | ✅ |
+| `write_varint()` | io.c:2134-2154 | `write_varint()` | ✅ |
+| `read_varlong()` | io.c:1872-1911 | `read_varlong()` | ✅ |
+| `write_varlong()` | io.c:2156-2185 | `write_varlong()` | ✅ |
 | `read_longint()` | io.c | `read_longint()` | ✅ Legacy |
 | `write_longint()` | io.c | `write_longint()` | ✅ Legacy |
 
@@ -187,25 +187,25 @@ const INT_BYTE_EXTRA: [u8; 64] = [
 
 | Code | Upstream | Rust | Value |
 |------|----------|------|-------|
-| MSG_DATA | rsync.h:294 | `MessageCode::Data` | 0 |
-| MSG_ERROR_XFER | rsync.h:295 | `MessageCode::ErrorXfer` | 1 |
-| MSG_INFO | rsync.h:295 | `MessageCode::Info` | 2 |
-| MSG_ERROR | rsync.h:296 | `MessageCode::Error` | 3 |
-| MSG_WARNING | rsync.h:296 | `MessageCode::Warning` | 4 |
-| MSG_ERROR_SOCKET | rsync.h:297 | `MessageCode::ErrorSocket` | 5 |
-| MSG_LOG | rsync.h:299 | `MessageCode::Log` | 6 |
-| MSG_CLIENT | rsync.h:299 | `MessageCode::Client` | 7 |
-| MSG_ERROR_UTF8 | rsync.h:298 | `MessageCode::ErrorUtf8` | 8 |
-| MSG_REDO | rsync.h:300 | `MessageCode::Redo` | 9 |
-| MSG_STATS | rsync.h:301 | `MessageCode::Stats` | 10 |
-| MSG_BLOCK_STATS | rsync.h:302 | `MessageCode::BlockStats` | 11 |
-| MSG_IO_ERROR | rsync.h:303 | `MessageCode::IoError` | 22 |
-| MSG_IO_TIMEOUT | rsync.h:304 | `MessageCode::IoTimeout` | 33 |
-| MSG_NOOP | rsync.h:305 | `MessageCode::NoOp` | 42 |
-| MSG_ERROR_EXIT | rsync.h:306 | `MessageCode::ErrorExit` | 86 |
-| MSG_SUCCESS | rsync.h:307 | `MessageCode::Success` | 100 |
-| MSG_DELETED | rsync.h:308 | `MessageCode::Deleted` | 101 |
-| MSG_NO_SEND | rsync.h:309 | `MessageCode::NoSend` | 102 |
+| MSG_DATA | rsync.h:295 | `MessageCode::Data` | 0 |
+| MSG_ERROR_XFER | rsync.h:296 | `MessageCode::ErrorXfer` | 1 |
+| MSG_INFO | rsync.h:296 | `MessageCode::Info` | 2 |
+| MSG_ERROR | rsync.h:297 | `MessageCode::Error` | 3 |
+| MSG_WARNING | rsync.h:297 | `MessageCode::Warning` | 4 |
+| MSG_ERROR_SOCKET | rsync.h:298 | `MessageCode::ErrorSocket` | 5 |
+| MSG_LOG | rsync.h:300 | `MessageCode::Log` | 6 |
+| MSG_CLIENT | rsync.h:300 | `MessageCode::Client` | 7 |
+| MSG_ERROR_UTF8 | rsync.h:299 | `MessageCode::ErrorUtf8` | 8 |
+| MSG_REDO | rsync.h:301 | `MessageCode::Redo` | 9 |
+| MSG_STATS | rsync.h:302 | `MessageCode::Stats` | 10 |
+| MSG_BLOCK_STATS | rsync.h:303 | `MessageCode::BlockStats` | 11 |
+| MSG_IO_ERROR | rsync.h:304 | `MessageCode::IoError` | 22 |
+| MSG_IO_TIMEOUT | rsync.h:305 | `MessageCode::IoTimeout` | 33 |
+| MSG_NOOP | rsync.h:306 | `MessageCode::NoOp` | 42 |
+| MSG_ERROR_EXIT | rsync.h:307 | `MessageCode::ErrorExit` | 86 |
+| MSG_SUCCESS | rsync.h:308 | `MessageCode::Success` | 100 |
+| MSG_DELETED | rsync.h:309 | `MessageCode::Deleted` | 101 |
+| MSG_NO_SEND | rsync.h:310 | `MessageCode::NoSend` | 102 |
 
 **Source:** `crates/protocol/src/envelope/message_code.rs:17-75`
 
@@ -250,16 +250,16 @@ const INT_BYTE_EXTRA: [u8; 64] = [
 
 ## 6. NDX (File Index) Encoding
 
-**Reference:** upstream `io.c:2281-2356` vs `crates/protocol/src/codec/ndx.rs`
+**Reference:** upstream `io.c:2288-2363` vs `crates/protocol/src/codec/ndx.rs`
 
 ### NDX Constants
 
 | Constant | Value | Upstream | Description |
 |----------|-------|----------|-------------|
-| NDX_DONE | -1 | rsync.h:316 | End of file requests |
-| NDX_FLIST_EOF | -2 | rsync.h:317 | End of file list(s) |
-| NDX_DEL_STATS | -3 | rsync.h:318 | Delete statistics marker |
-| NDX_FLIST_OFFSET | -101 | rsync.h:319 | Incremental flist offset |
+| NDX_DONE | -1 | rsync.h:317 | End of file requests |
+| NDX_FLIST_EOF | -2 | rsync.h:318 | End of file list(s) |
+| NDX_DEL_STATS | -3 | rsync.h:319 | Delete statistics marker |
+| NDX_FLIST_OFFSET | -101 | rsync.h:320 | Incremental flist offset |
 
 ### Protocol Version Differences
 
@@ -708,7 +708,7 @@ Server: @RSYNCD: OK (success) or @ERROR: access denied (failure)
 ### Module Chroot Handling
 
 Mirrors the `use_chroot` resolution inside upstream `rsync_module()`
-(`clientserver.c:739`), whose decision block is `clientserver.c:883-895`:
+(`clientserver.c:743`), whose decision block is `clientserver.c:887-899`:
 
 | `use chroot` | Behavior |
 |--------------|----------|
@@ -722,9 +722,9 @@ The fallback is not conditioned on a particular errno: upstream tests only
 
 Once chroot is resolved on, a real `chroot()` failure at the module directory is
 fatal - the connection is refused, not silently served unchrooted
-(`clientserver.c:1051-1055`, `return -1` after `@ERROR: chroot failed`). A module
+(`clientserver.c:1055-1059`, `return -1` after `@ERROR: chroot failed`). A module
 `path` containing `/./` splits into an outer chroot root and an inner post-chroot
-working directory (`clientserver.c:897-908`).
+working directory (`clientserver.c:901-912`).
 
 **Source:** `crates/daemon/src/daemon/sections/privilege.rs`, `crates/platform/src/privilege.rs`
 
@@ -978,17 +978,17 @@ These custom implementations are necessary for byte-level wire protocol compatib
 | Function | Upstream Lines |
 |----------|---------------|
 | `int_byte_extra[]` | io.c:127-132 |
-| `read_varint()` | io.c:1833-1863 |
-| `write_varint()` | io.c:2127-2147 |
-| `read_ndx()` | io.c:2327-2356 |
-| `write_ndx()` | io.c:2281-2325 |
+| `read_varint()` | io.c:1840-1870 |
+| `write_varint()` | io.c:2134-2154 |
+| `read_ndx()` | io.c:2334-2363 |
+| `write_ndx()` | io.c:2288-2332 |
 
 ### Message Codes (rsync.h)
 
 | Code | Upstream Lines |
 |------|---------------|
-| MSG_DATA through MSG_NO_SEND | rsync.h:264-278 |
-| MPLEX_BASE | rsync.h:180 |
+| MSG_DATA through MSG_NO_SEND | rsync.h:265-279 |
+| MPLEX_BASE | rsync.h:181 |
 
 ### XMIT Flags (rsync.h)
 

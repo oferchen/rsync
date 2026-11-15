@@ -361,7 +361,7 @@ impl<'a> CopyContext<'a> {
             )?;
         }
 
-        // upstream: generator.c:2295 copy_file() - duplicate the pre-image; the
+        // upstream: generator.c:2337 copy_file() - duplicate the pre-image; the
         // destination inode is left in place to be rewritten by the inplace
         // writer. A pre-existing backup is overwritten (upstream robust_unlinks
         // it at generator.c:2340); the O_TRUNC create reaches the same end
@@ -378,7 +378,7 @@ impl<'a> CopyContext<'a> {
             }
         }
 
-        // upstream: generator.c:2446 set_file_attrs(backupptr, back_file, ...) -
+        // upstream: generator.c:2489 set_file_attrs(backupptr, back_file, ...) -
         // the backup carries the source node's mode/owner/times. fs::copy
         // preserves only permissions, so reapply full metadata like the
         // cross-device COPY fallback in backup_existing_entry.
@@ -386,7 +386,7 @@ impl<'a> CopyContext<'a> {
             let metadata_options = self.metadata_options();
             apply_file_metadata_with_options(&backup_path, &source_meta, &metadata_options)
                 .map_err(map_metadata_error)?;
-            // upstream: generator.c:2430 copy_xattrs() under --fake-super
+            // upstream: generator.c:2473 copy_xattrs() under --fake-super
             // re-records the source stat in `user.rsync.%stat`; no-op otherwise.
             #[cfg(all(unix, feature = "xattr"))]
             store_effective_fake_super_if_requested(
@@ -398,7 +398,7 @@ impl<'a> CopyContext<'a> {
             )?;
         }
 
-        // upstream: generator.c:2448-2451 - INFO_GTE(BACKUP, 1) "backed up X to
+        // upstream: generator.c:2491-2494 - INFO_GTE(BACKUP, 1) "backed up X to
         // Y". No DEBUG_GTE(BACKUP) trace: the inplace copy bypasses make_backup().
         let dest_root = self.destination_root();
         let destination_rel = destination.strip_prefix(dest_root).unwrap_or(destination);
@@ -419,7 +419,7 @@ impl<'a> CopyContext<'a> {
     /// Forcibly removes a type-conflicting destination entry (backing it up
     /// first if needed) to make room for an incoming item of a different type.
     ///
-    /// upstream: generator.c:2149 recv_generator() clears the conflicting
+    /// upstream: generator.c:2190 recv_generator() clears the conflicting
     /// destination with `delete_item(fname, mode, del_opts | DEL_FOR_FILE)`.
     /// delete.c:241-257 `delete_item()` suppresses `log_delete()` and the
     /// `stats.deleted_files` bump whenever `flags & DEL_MAKE_ROOM` is set, so

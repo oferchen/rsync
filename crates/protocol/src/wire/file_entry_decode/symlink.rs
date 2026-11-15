@@ -10,7 +10,7 @@ use crate::varint::read_varint30_int;
 /// Maximum allowed symlink target length on receive.
 ///
 /// Matches upstream rsync's `MAXPATHLEN` (the system value, 4096 on Linux).
-/// upstream refuses `linkname_len > MAXPATHLEN` (`flist.c:1282-1287`).
+/// upstream refuses `linkname_len > MAXPATHLEN` (`flist.c:1286-1291`).
 /// Without this cap, a malicious
 /// sender could claim an arbitrarily large symlink target, causing unbounded
 /// memory allocation on the receiver.

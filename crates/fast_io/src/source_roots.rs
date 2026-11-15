@@ -7,11 +7,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/flist.c:234-306` `remember_sender_source_root()` /
+//! - `rsync-3.5.2/flist.c:235-307` `remember_sender_source_root()` /
 //!   `remember_sender_source_arg()` - which roots are recorded
-//! - `rsync-3.5.1/flist.c:308-338` `sender_source_root_fd_for()` - one held
+//! - `rsync-3.5.2/flist.c:309-339` `sender_source_root_fd_for()` - one held
 //!   root at a time, refused with `ELOOP` on a dev/ino change
-//! - `rsync-3.5.1/flist.c:345-385` `open_sender_source_path()` - the longest
+//! - `rsync-3.5.2/flist.c:346-388` `open_sender_source_path()` - the longest
 //!   matching root, then `secure_relative_open_at()` beneath it
 use std::fs::File;
 use std::io;
@@ -78,7 +78,7 @@ impl SourceRoots {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/flist.c:284-306` `remember_sender_source_arg()`
+    /// - `rsync-3.5.2/flist.c:285-307` `remember_sender_source_arg()`
     pub fn remember_operand(
         &self,
         path: &Path,
@@ -100,7 +100,7 @@ impl SourceRoots {
         Ok(())
     }
 
-    /// upstream: `flist.c:262-282` `remember_sender_source_root()` - the first
+    /// upstream: `flist.c:263-283` `remember_sender_source_root()` - the first
     /// identity recorded for a path wins.
     fn remember_root(&self, path: PathBuf, dev: u64, ino: u64) {
         let mut inner = self.lock();
@@ -126,7 +126,7 @@ impl SourceRoots {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/flist.c:345-375` `open_sender_source_path()`'s root
+    /// - `rsync-3.5.2/flist.c:346-376` `open_sender_source_path()`'s root
     ///   match and `sender_source_root_fd_for()`
     #[must_use]
     pub fn held_root(&self, path: &Path) -> Option<io::Result<HeldRoot>> {
@@ -165,7 +165,7 @@ impl SourceRoots {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/flist.c:376-379` `secure_relative_open_at(rootfd, rel, ...)`
+    /// - `rsync-3.5.2/flist.c:377-380` `secure_relative_open_at(rootfd, rel, ...)`
     #[must_use]
     pub fn open(&self, path: &Path, noatime: bool) -> Option<io::Result<File>> {
         #[cfg(unix)]
@@ -195,7 +195,7 @@ impl SourceRoots {
 /// The held descriptor for root `index`, reopened and re-checked when a
 /// different root was held.
 ///
-/// upstream: `flist.c:311-338` `sender_source_root_fd_for()`
+/// upstream: `flist.c:312-339` `sender_source_root_fd_for()`
 #[cfg(unix)]
 fn anchor(inner: &mut Inner, index: usize) -> io::Result<Arc<File>> {
     use std::os::unix::fs::MetadataExt;
@@ -226,7 +226,7 @@ fn anchor(_inner: &mut Inner, _index: usize) -> io::Result<Arc<File>> {
 
 /// The identity of `path` when it names a directory, following symlinks.
 ///
-/// upstream: `flist.c:302-305` - `do_stat(full, &parent_st) == 0 &&
+/// upstream: `flist.c:303-306` - `do_stat(full, &parent_st) == 0 &&
 /// S_ISDIR(parent_st.st_mode)`
 #[cfg(unix)]
 fn directory_identity(path: &Path) -> Option<(u64, u64)> {
@@ -244,7 +244,7 @@ fn directory_identity(_path: &Path) -> Option<(u64, u64)> {
 /// `..` collapsed lexically, so a root and the file paths beneath it compare
 /// component-wise.
 ///
-/// upstream: `flist.c:243-257` `sender_source_full_path()` - `pathjoin(curr_dir,
+/// upstream: `flist.c:244-258` `sender_source_full_path()` - `pathjoin(curr_dir,
 /// path)` then `clean_fname(CFN_COLLAPSE_DOT_DOT_DIRS | CFN_DROP_TRAILING_DOT_DIR)`
 ///
 /// # Errors

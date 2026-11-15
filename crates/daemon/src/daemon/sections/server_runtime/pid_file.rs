@@ -1,6 +1,6 @@
 /// RAII guard that writes a PID file on creation and removes it on drop.
 ///
-/// upstream: clientserver.c:1582 `create_pid_file()` writes the daemon PID.
+/// upstream: clientserver.c:1592 `create_pid_file()` writes the daemon PID.
 /// Upstream calls it before binding; `serve_connections` calls this after.
 struct PidFileGuard {
     path: PathBuf,
@@ -18,14 +18,14 @@ impl PidFileGuard {
 
         let mut file = open_pid_file(&path).map_err(|error| pid_file_error(&path, error))?;
 
-        // Deviation from upstream: clientserver.c:1628 creates the file 0664
+        // Deviation from upstream: clientserver.c:1663 creates the file 0664
         // under the daemon's umask; oc pins 0644. Applied to the open
         // descriptor, never re-resolved through the path.
         #[cfg(unix)]
         file.set_permissions(fs::Permissions::from_mode(0o644))
             .map_err(|error| pid_file_error(&path, error))?;
 
-        // upstream: clientserver.c:1654 truncates only after the opened file
+        // upstream: clientserver.c:1689 truncates only after the opened file
         // has been verified, so a refused open never clobbers anything.
         file.set_len(0)
             .map_err(|error| pid_file_error(&path, error))?;
@@ -41,7 +41,7 @@ impl PidFileGuard {
 /// Opens the PID file without ever writing through whatever sits at its leaf.
 ///
 /// The PID file usually lives in a shared run directory, so its leaf can be a
-/// symlink someone else planted there. upstream: clientserver.c:1636-1652
+/// symlink someone else planted there. upstream: clientserver.c:1671-1687
 /// unlinks a leaf that is not a regular file, opens the leaf with
 /// `O_NOFOLLOW`, and requires the opened file to be the regular file `lstat`
 /// names (same device and inode) before anything is written. The parent

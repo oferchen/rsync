@@ -1,28 +1,28 @@
 //! NDX wire protocol constants.
 //!
 //! These constants define sentinel values used in rsync's file-list index
-//! protocol. They match upstream `rsync.h:316-319` definitions exactly.
+//! protocol. They match upstream `rsync.h:317-320` definitions exactly.
 
 /// NDX_DONE value indicating end of file requests.
 ///
-/// Upstream: `rsync.h:316` - `#define NDX_DONE -1`
+/// Upstream: `rsync.h:317` - `#define NDX_DONE -1`
 pub const NDX_DONE: i32 = -1;
 
 /// NDX_FLIST_EOF value indicating end of file list(s).
 ///
 /// Sent after the last incremental file list to signal no more file lists.
 ///
-/// Upstream: `rsync.h:317` - `#define NDX_FLIST_EOF -2`
+/// Upstream: `rsync.h:318` - `#define NDX_FLIST_EOF -2`
 pub const NDX_FLIST_EOF: i32 = -2;
 
 /// NDX_DEL_STATS value for delete statistics.
 ///
-/// Upstream: `rsync.h:318` - `#define NDX_DEL_STATS -3`
+/// Upstream: `rsync.h:319` - `#define NDX_DEL_STATS -3`
 pub const NDX_DEL_STATS: i32 = -3;
 
 /// Offset for incremental file list directory indices.
 ///
-/// Upstream: `rsync.h:319` - `#define NDX_FLIST_OFFSET -101`
+/// Upstream: `rsync.h:320` - `#define NDX_FLIST_OFFSET -101`
 pub const NDX_FLIST_OFFSET: i32 = -101;
 
 /// NDX_DONE as 4-byte little-endian wire bytes for protocol < 30.

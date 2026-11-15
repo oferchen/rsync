@@ -6,7 +6,7 @@
 //! started anyway and died mid-stream with RERR_STREAMIO (12), while upstream
 //! refuses up front with RERR_PROTOCOL (2).
 //!
-//! upstream: compat.c:664-682 (protocol < 30), compat.c:690-720 (protocol < 29).
+//! upstream: compat.c:665-683 (protocol < 30), compat.c:691-721 (protocol < 29).
 use crate::handshake::HandshakeResult;
 use crate::{ServerConfig, ServerRole, run_server_with_handshake};
 use engine::{ReferenceDirectory, ReferenceDirectoryKind};

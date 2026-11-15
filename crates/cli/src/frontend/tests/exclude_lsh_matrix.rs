@@ -384,7 +384,7 @@ fn exclude_lsh_leg_6_dir_merge_excl_restricted() {
     ]);
     assert_eq!(code, 0, "leg 6 exited non-zero");
 
-    // upstream: testsuite/exclude_test.py:280-282 removes file1.bak, file3 and `+ file3`
+    // upstream: testsuite/exclude_test.py:287-289 removes file1.bak, file3 and `+ file3`
     // from the expected tree. Under `-` every line is an exclude pattern
     // (exclude.c:1273), so the inner `+ file3` names the file `+ file3` and
     // cannot re-include the file3 the outer down/.excl excludes.

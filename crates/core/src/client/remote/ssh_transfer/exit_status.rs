@@ -30,7 +30,7 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
     use crate::server::ServerStats;
     use engine::local_copy::LocalCopySummary;
 
-    // upstream: generator.c:1642 - in list-only mode the receiver captures every
+    // upstream: generator.c:1679 - in list-only mode the receiver captures every
     // flist entry's metadata instead of requesting file data; convert those into
     // metadata-bearing events so the client can render the listing. The daemon
     // transport does the same in `daemon_transfer/orchestration/stats.rs`;
@@ -349,7 +349,7 @@ mod list_only_conversion_tests {
     /// pins. The daemon transport reaches the same result through
     /// `daemon_transfer/orchestration/stats.rs`.
     ///
-    /// upstream: generator.c:1318 `list_file_entry()`.
+    /// upstream: generator.c:1355 `list_file_entry()`.
     #[test]
     fn receiver_list_only_entries_become_client_events() {
         let summary =
@@ -380,7 +380,7 @@ mod list_only_conversion_tests {
     /// converter's `|| got_xfer_error` arm is dropped or diverges from the daemon
     /// leg's, this turns RED - the two legs can no longer disagree silently.
     ///
-    /// upstream: cleanup.c:217-218.
+    /// upstream: cleanup.c:218-219.
     #[test]
     fn got_xfer_error_lifts_a_clean_run_to_partial() {
         let stats = ServerStats::Receiver(TransferStats {

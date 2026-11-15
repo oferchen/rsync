@@ -1,6 +1,6 @@
 //! A server's live diagnostic sink: each line becomes a `MSG_*` frame.
 //!
-//! upstream: log.c:357-366 rwrite() hands every server-side message to
+//! upstream: log.c:437-446 rwrite() hands every server-side message to
 //! `send_msg()` the moment it is produced, after `logit()` has written it to a
 //! daemon's log (log.c:312-332). Lines may come from any thread of the
 //! session (the receiver, the disk-commit thread, a rayon worker), so the sink
@@ -57,7 +57,7 @@ struct PeerSink {
 impl PeerSink {
     /// The frame for `code`, or `None` for a line the peer never sees.
     ///
-    /// upstream: log.c:303-308 folds FERROR_SOCKET and FERROR_UTF8 into
+    /// upstream: log.c:383-388 folds FERROR_SOCKET and FERROR_UTF8 into
     /// FERROR; log.c:344-346 drops FINFO under `--quiet`. The writer routes
     /// the frame by msgs2stderr and remaps it for a pre-30 peer
     /// (log.c:357-366, [`super::frame_code`]).
@@ -83,7 +83,7 @@ impl logging::DiagnosticSink for PeerSink {
             }
             DiagnosticEvent::Bytes { message, .. } => message.as_slice(),
         };
-        // upstream: log.c:312-332 - a daemon logs every code but FNONE, and
+        // upstream: log.c:392-412 - a daemon logs every code but FNONE, and
         // writes the log line before the frame goes out.
         if code != LogCode::None
             && let Some(log) = &self.daemon_log
@@ -175,7 +175,7 @@ mod tests {
         assert!(outbox.take().is_none());
     }
 
-    /// upstream: log.c:303-308 - the socket and UTF-8 error codes travel as
+    /// upstream: log.c:383-388 - the socket and UTF-8 error codes travel as
     /// FERROR; the queue keeps upstream's code and leaves the pre-30 remap to
     /// the writer, so it happens in one place.
     #[test]

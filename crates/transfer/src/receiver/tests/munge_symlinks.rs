@@ -1,6 +1,6 @@
 //! Receiver-side `munge symlinks` regression tests.
 //!
-//! Mirrors the on-disk transform upstream applies in `flist.c:1375-1379`:
+//! Mirrors the on-disk transform upstream applies in `flist.c:1379-1383`:
 //! when the daemon module has `munge symlinks = yes`, every symlink that the
 //! receiver materializes carries the `/rsyncd-munged/` prefix so that
 //! following the link cannot escape the module root. The complementary
@@ -77,7 +77,7 @@ fn plain_receiver_config() -> ServerConfig {
 
 #[test]
 fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
-    // upstream: flist.c:1295-1297 - the receiver-side prepend is the only
+    // upstream: flist.c:1299-1301 - the receiver-side prepend is the only
     // signal that the daemon enabled `munge symlinks`. Verify the on-disk
     // link carries the `/rsyncd-munged/` prefix so following it lands inside
     // the module root.
@@ -102,7 +102,7 @@ fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
         on_disk,
         std::path::Path::new("/rsyncd-munged//etc/passwd"),
         "receiver must prepend `/rsyncd-munged/` so following the link \
-         cannot escape the module root (upstream flist.c:1347-1351)",
+         cannot escape the module root (upstream flist.c:1351-1355)",
     );
 }
 
@@ -136,7 +136,7 @@ fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
 /// the defect. A path COMPONENT is the right vehicle: `delete_item`
 /// only ever clears the leaf, so no removal can make way for this one.
 ///
-/// upstream: generator.c:2002 atomic_create -> do_symlink - EACCES is
+/// upstream: generator.c:2043 atomic_create -> do_symlink - EACCES is
 /// non-fatal (increment io_error and continue); every other class is
 /// a security boundary the receiver must surface.
 #[cfg(unix)]
@@ -203,7 +203,7 @@ fn create_symlinks_surfaces_non_eacces_error() {
 ///    the exact second. Upstream's diff drops nanoseconds; matching seconds is
 ///    the load-bearing invariant.
 ///
-/// upstream: generator.c:2003 `set_file_attrs(fname, file, NULL, NULL, 0)`
+/// upstream: generator.c:2044 `set_file_attrs(fname, file, NULL, NULL, 0)`
 /// upstream: rsync.c:set_times() uses `lutimes`/`utimensat(AT_SYMLINK_NOFOLLOW)`
 #[cfg(unix)]
 #[test]
@@ -282,7 +282,7 @@ fn receiver_writes_unmunged_target_when_disabled() {
 /// prefix is applied at decode time and the safety check reads the munged
 /// value, which is always absolute.
 ///
-/// upstream: flist.c:1295,1521-1524 - the receiver prepends `SYMLINK_PREFIX`
+/// upstream: flist.c:1299,1521-1524 - the receiver prepends `SYMLINK_PREFIX`
 /// while decoding the file list; generator.c:1951 then evaluates
 /// `safe_symlinks && unsafe_symlink(sl, fname)` on that stored value, and
 /// util1.c:1664 rejects every absolute target. Measured against rsync 3.5.1:
@@ -345,7 +345,7 @@ fn munging_receiver_without_safe_links_still_creates_the_munged_link() {
         on_disk,
         std::path::Path::new("/rsyncd-munged/real_file.txt"),
         "without --safe-links the munged link is created \
-         (upstream flist.c:1295,1521-1524; measured against rsync 3.5.0)",
+         (upstream flist.c:1299,1521-1524; measured against rsync 3.5.0)",
     );
 }
 

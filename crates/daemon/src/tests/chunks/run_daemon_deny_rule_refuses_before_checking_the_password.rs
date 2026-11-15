@@ -1,4 +1,4 @@
-/// upstream: authenticate.c:411-417 - a `:deny` rule refuses with "denied by
+/// upstream: authenticate.c:406-412 - a `:deny` rule refuses with "denied by
 /// rule" before check_secret() is called. The wrong password here would make
 /// a password-first daemon log a credential failure instead, so the log line
 /// shows which check actually decided the refusal.

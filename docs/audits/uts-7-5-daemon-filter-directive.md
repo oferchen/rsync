@@ -13,12 +13,12 @@ applied, and *why* daemon rules take precedence over client-sent filters.
 | Parser | `crates/daemon/src/daemon/sections/config_parsing/module_directives.rs` | Stores `filter` / `exclude` / `include` lines on `ModuleDefinitionBuilder` as `Vec<String>`; `exclude from` / `include from` as resolved `PathBuf`. |
 | Defaults | `crates/daemon/src/daemon/sections/module_definition/finish.rs` | Per-module directives override global defaults wholesale; an empty per-module list falls back to the global section's value. Mirrors upstream `loadparm.c` `P_LOCAL` semantics. |
 | Compilation | `crates/daemon/src/daemon/sections/module_access/helpers.rs::build_daemon_filter_rules` | Converts the stored strings into `Vec<FilterRuleWireFormat>`. Handles word-split, keyword forms (`include`/`exclude`/`hide`/`show`/`protect`/`risk`/`clear`), and `XFLG_DIR2WILD3` (`dir/` → `dir/***`) for directory-only excludes. Reads pattern files line-by-line, skipping `#`/`;` comments and blank lines. |
-| Wire-up | `crates/daemon/src/daemon/sections/module_access/transfer.rs:720` | Right after `build_server_config` succeeds and before any worker spawn, the compiled rules are written to `ServerConfig::daemon_filter_rules`. A pattern-file read failure aborts the session with `@ERROR: failed to load module filter rules: …`, matching upstream's `XFLG_FATAL_ERRORS` behaviour at `clientserver.c:881`. |
+| Wire-up | `crates/daemon/src/daemon/sections/module_access/transfer.rs:720` | Right after `build_server_config` succeeds and before any worker spawn, the compiled rules are written to `ServerConfig::daemon_filter_rules`. A pattern-file read failure aborts the session with `@ERROR: failed to load module filter rules: …`, matching upstream's `XFLG_FATAL_ERRORS` behaviour at `clientserver.c:885`. |
 | Receiver consumption | `crates/transfer/src/receiver/transfer/setup.rs:74-86` (deletion chain) and `crates/transfer/src/receiver/mod.rs:299` (`daemon_filter_set`, consulted at `build_files_to_transfer` and `create_directories`). | Daemon rules are prepended to client-sent wire rules before the `FilterSet`/`FilterChain` is built. A separate `daemon_filter_set` is held on `ReceiverContext` so receiver-side checks at file-list build and directory creation time consult the daemon rules even when no client filters arrived. |
 | Generator consumption | `crates/transfer/src/generator/filters.rs:64-86` | Same prepend-then-build pattern in server-mode `receive_filter_list_if_server`. |
 
 The directive ordering inside the compiled rule list matches upstream
-`clientserver.c:874-893` exactly:
+`clientserver.c:878-897` exactly:
 
 ```
 1. filter        (parse_filter_str, FILTRULE_WORD_SPLIT)
@@ -58,7 +58,7 @@ sides of the transfer follow the same merge strategy:
 Why prepend rather than append? In rsync's filter semantics the first
 matching rule wins. Upstream maintains a separate `daemon_filter_list`
 distinct from the client `filter_list` and consults it before any client
-filter via `check_filter()` calls in `receiver.c:711`, `generator.c:1273`,
+filter via `check_filter()` calls in `receiver.c:711`, `generator.c:1310`,
 and the directory-listing path. Prepending into a single combined chain
 delivers the same observable behaviour: a daemon `- *.log` evaluated first
 will short-circuit a later client `+ *.log`, exactly as upstream's
@@ -90,5 +90,5 @@ transformation on `!FILTRULE_INCLUDE` (`exclude.c:212`).
   comments and blank lines.
 - `exclude.c:211-217` — `XFLG_DIR2WILD3` transformation gate
   (`BITS_SETnUNSET(FILTRULE_DIRECTORY, FILTRULE_INCLUDE)`).
-- `receiver.c:711-714` and `generator.c:1273-1275` — `check_filter()` call
+- `receiver.c:711-714` and `generator.c:1310-1312` — `check_filter()` call
   sites that consult `daemon_filter_list` before per-file actions.

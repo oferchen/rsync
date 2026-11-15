@@ -227,7 +227,7 @@ impl DaemonStreamWriter {
 /// so either updates the pair). Returns `None` for connect-program transports,
 /// which have no socket timeout to adjust.
 ///
-/// upstream: io.c:1284-1314 `set_io_timeout()` - the client-side effect of
+/// upstream: io.c:1291-1321 `set_io_timeout()` - the client-side effect of
 /// adopting a daemon `MSG_IO_TIMEOUT` (io.c:1750-1769 `read_a_msg()`).
 pub(crate) fn build_io_timeout_reapply(
     reader: &DaemonStreamReader,

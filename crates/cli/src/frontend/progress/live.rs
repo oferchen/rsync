@@ -19,14 +19,14 @@ use crate::frontend::out_format::{OutFormat, OutFormatContext, emit_out_format};
 
 /// Entry lines held back before they are written regardless.
 ///
-/// upstream: rsync.h:160 `IO_BUFFER_SIZE` - the generator's itemized entries
+/// upstream: rsync.h:161 `IO_BUFFER_SIZE` - the generator's itemized entries
 /// reach the sender through a buffered stream of this size, so they trail the
 /// notices the generator writes directly by at most one buffer.
 const DEFERRED_ENTRY_LIMIT: usize = 32 * 1024;
 
 /// Minimum interval between rendered in-flight progress ticks.
 ///
-/// upstream: progress.c:224 `show_progress` returns early when less than
+/// upstream: progress.c:220 `show_progress` returns early when less than
 /// 1000ms have elapsed since the last recorded tick, so the overall progress
 /// line refreshes at most once per second. `end_progress` (the xfr-trailer
 /// final tick) bypasses this throttle.
@@ -39,7 +39,7 @@ const TICK_INTERVAL: Duration = Duration::from_millis(1_000);
 /// The first tick (`last` is `None`) and every final tick (`is_final`, the
 /// xfr-trailer emitted by `end_progress`) always render.
 ///
-/// upstream: progress.c:224 - `if (msdiff(&ph_list[newest_hpos].time, &now) < 1000) return;`
+/// upstream: progress.c:220 - `if (msdiff(&ph_list[newest_hpos].time, &now) < 1000) return;`
 fn tick_throttled(last: Option<Instant>, now: Instant, interval: Duration, is_final: bool) -> bool {
     if is_final {
         return false;
@@ -78,9 +78,9 @@ impl Default for ProgressOutputConfig {
 /// the progress lines that are written live.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct LocalSessionOutput<'a> {
-    /// The sender's file-list banner. upstream: flist.c:2760-2764.
+    /// The sender's file-list banner. upstream: flist.c:2771-2775.
     pub(crate) banner: FlistBanner,
-    /// The `-vv` generator notice. upstream: generator.c:2763-2768.
+    /// The `-vv` generator notice. upstream: generator.c:2849-2854.
     pub(crate) delta_notice: Option<DeltaTransmissionState>,
     /// upstream `stdout_format_has_i`: forces the `created directory` notice.
     pub(crate) itemizing: bool,
@@ -101,7 +101,7 @@ pub(crate) enum LiveListing<'a> {
         name_overridden: bool,
     },
     /// An `-i` / `--out-format` line per entry, logged before its transfer.
-    /// upstream: options.c:2501-2508 `log_before_transfer`.
+    /// upstream: options.c:2556-2563 `log_before_transfer`.
     Formatted {
         format: &'a OutFormat,
         context: &'a OutFormatContext,
@@ -160,13 +160,13 @@ pub(crate) struct LiveProgress<'a> {
     /// never padded, matching upstream (their `"  "` end-of-line leaves the
     /// previous trailer's trailing characters on screen).
     ///
-    /// upstream: progress.c:84-91 `static int last_len` - tracks the longest
+    /// upstream: progress.c:85-92 `static int last_len` - tracks the longest
     /// trailer (the `is_last` eol) and pads it before emitting.
     max_trailer_len: usize,
     /// Timestamp of the last rendered in-flight tick, used to throttle the
     /// overall progress line to one refresh per [`TICK_INTERVAL`].
     ///
-    /// upstream: progress.c:224 `ph_list[newest_hpos].time`.
+    /// upstream: progress.c:220 `ph_list[newest_hpos].time`.
     last_tick: Option<Instant>,
     /// Minimum interval between rendered in-flight ticks. Defaults to
     /// [`TICK_INTERVAL`]; overridable in tests for deterministic rendering.
@@ -186,6 +186,8 @@ pub(crate) struct LiveProgress<'a> {
     session_started: bool,
     /// Whether the transfer's sender names each file itself, as on a push.
     sender_names_files: bool,
+    /// Total file-list count for `FLIST >= 2` banner rendering.
+    flist_count: Option<usize>,
 }
 
 impl<'a> LiveProgress<'a> {
@@ -229,6 +231,7 @@ impl<'a> LiveProgress<'a> {
             session_started: false,
             deferred: Vec::new(),
             sender_names_files: false,
+            flist_count: None,
         }
     }
 
@@ -345,7 +348,7 @@ impl<'a> LiveProgress<'a> {
     /// verbatim and deliberately leave the previous trailer's trailing
     /// characters on screen.
     ///
-    /// upstream: progress.c:84-91 - `last_len` tracking and space-padding.
+    /// upstream: progress.c:85-92 - `last_len` tracking and space-padding.
     fn write_padded_trailer(&mut self, line: &str) -> io::Result<()> {
         let current_len = line.len();
         // Only pad when output goes to a terminal - padding erases stale
@@ -369,20 +372,27 @@ impl<'a> LiveProgress<'a> {
 }
 
 impl<'a> ClientProgressObserver for LiveProgress<'a> {
+    fn on_flist_count(&mut self, total: usize) {
+        self.flist_count = Some(total);
+    }
+
     fn on_start(&mut self, created_destination_root: Option<&Path>) {
         let Some(session) = self.session else {
             return;
         };
         self.session_started = true;
-        let result = session.banner.emit(self.writer).and_then(|()| {
-            emit_session_notices(
-                created_destination_root,
-                session.itemizing,
-                session.delta_notice,
-                session.escape,
-                self.writer,
-            )
-        });
+        let result = session
+            .banner
+            .emit_with_count(self.flist_count, self.writer)
+            .and_then(|()| {
+                emit_session_notices(
+                    created_destination_root,
+                    session.itemizing,
+                    session.delta_notice,
+                    session.escape,
+                    self.writer,
+                )
+            });
         if let Err(error) = result.and_then(|()| self.writer.flush()) {
             self.record_error(error);
         }
@@ -475,7 +485,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                         writeln!(self.writer, "{name}")?;
                     }
                     self.active_path = Some(relative.to_path_buf());
-                    // upstream: progress.c:205-222 - show_progress seeds
+                    // upstream: progress.c:201-218 - show_progress seeds
                     // ph_start to the file's transfer start, so a new file's
                     // throttle baseline is its start rather than a "first tick
                     // always renders" special-case. A fast single-chunk file
@@ -484,7 +494,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                     self.last_tick = Some(now);
                 }
 
-                // upstream: progress.c:224 - show_progress renders an in-flight
+                // upstream: progress.c:220 - show_progress renders an in-flight
                 // tick at most once per interval since the last render, while
                 // end_progress (the final xfr-trailer tick) bypasses the
                 // throttle. Without this the forwarder's intermediate
@@ -505,14 +515,14 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 // `%7.2f` value (7 chars) plus a 4-char unit suffix (kB/s, MB/s, GB/s) for an
                 // 11-char total. The time column matches `%4u:%02u:%02u` at 10 chars.
                 let size_field =
-                    format!("{:>15}", format_progress_bytes(bytes, self.human_readable));
+                    format!("{:>16}", format_progress_bytes(bytes, self.human_readable));
                 let percent = format_progress_percent(bytes, update.total_bytes());
                 let percent_field = format!("{percent:>4}");
                 let rate_field = format!(
-                    "{:>11}",
+                    "{:>10}",
                     format_progress_rate(bytes, event.elapsed(), self.human_readable)
                 );
-                // upstream: progress.c:97-105 prints ETA via the sliding window
+                // upstream: progress.c:98-106 prints ETA via the sliding window
                 // mid-transfer and switches to total elapsed for the final tick.
                 let time_text = if is_final {
                     format_progress_elapsed(event.elapsed())
@@ -531,7 +541,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 }
 
                 if is_final {
-                    // upstream: progress.c:77-92 - the `(xfr#..)` trailer is
+                    // upstream: progress.c:78-93 - the `(xfr#..)` trailer is
                     // emitted only on the final (is_last) tick; per-file mode
                     // keeps the trailing newline. progress.c:80 - chk-prefix is
                     // "to" once the file list is complete, "ir" while
@@ -547,14 +557,14 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                     self.active_path = None;
                     self.per_file_remaining.remove(relative);
                 } else {
-                    // upstream: progress.c:99-100 - in-flight ticks use a
+                    // upstream: progress.c:100-101 - in-flight ticks use a
                     // trailing `"  "` (two spaces) instead of the xfr trailer.
                     write!(
                         self.writer,
                         "{size_field} {percent_field} {rate_field} {time_field}  "
                     )?;
                     self.line_active = true;
-                    // upstream: progress.c:224 - the throttle baseline advances
+                    // upstream: progress.c:220 - the throttle baseline advances
                     // to the last rendered in-flight tick; the final tick does
                     // not advance it.
                     self.last_tick = Some(now);
@@ -564,7 +574,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
             ProgressMode::Overall => (|| -> io::Result<()> {
                 let now = Instant::now();
                 let is_final = update.is_final();
-                // upstream: progress.c:224 - show_progress() refreshes the
+                // upstream: progress.c:220 - show_progress() refreshes the
                 // overall line at most once per second; end_progress() (the
                 // xfr-trailer final tick) bypasses the throttle so every file
                 // boundary renders. Without this, a per-chunk event stream
@@ -576,22 +586,22 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 let bytes = update.overall_transferred();
                 self.overall_remaining.observe(now, bytes);
                 let size_field =
-                    format!("{:>15}", format_progress_bytes(bytes, self.human_readable));
+                    format!("{:>16}", format_progress_bytes(bytes, self.human_readable));
                 let percent_field = format!(
                     "{:>4}",
                     format_progress_percent(bytes, update.overall_total_bytes())
                 );
-                // upstream: progress.c:102-116 - progress2 uses the sliding-window
+                // upstream: progress.c:103-107 - progress2 uses the sliding-window
                 // rate from the 5-slot ring buffer, not the cumulative rate.
                 let window_rate = self
                     .overall_remaining
                     .window_rate(now, bytes)
                     .unwrap_or(0.0);
                 let rate_field = format!(
-                    "{:>11}",
+                    "{:>10}",
                     format_progress_rate_from_value(window_rate, self.human_readable)
                 );
-                // upstream: progress.c:97-105 - sliding window ETA mid-transfer,
+                // upstream: progress.c:98-106 - sliding window ETA mid-transfer,
                 // total elapsed for the final tick.
                 let final_tick = update.remaining() == 0 && is_final;
                 let time_text = if final_tick {
@@ -603,17 +613,17 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 let time_field = format!("{time_text:>10}");
                 let xfr_index = update.index();
 
-                // upstream: progress.c:129 - `"\r%15s ..."` prefixes every line
+                // upstream: progress.c:120 - `"\r%15s ..."` prefixes every line
                 // (including the first) with a carriage return on a terminal.
                 self.write_line_restart()?;
 
-                // upstream: progress.c:80 - chk-prefix is "to" once the file
+                // upstream: progress.c:81 - chk-prefix is "to" once the file
                 // list is complete, "ir" while INC_RECURSE sub-lists are still
                 // arriving on the wire.
                 let chk_prefix = if update.flist_eof() { "to" } else { "ir" };
 
                 if is_final {
-                    // upstream: progress.c:78-82 - final tick per file emits the
+                    // upstream: progress.c:79-83 - final tick per file emits the
                     // xfr trailer. In progress2 mode the trailing newline is
                     // stripped (progress.c:88) and spaces pad the trailer to the
                     // longest prior trailer to erase stale characters.
@@ -622,7 +632,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                     );
                     self.write_padded_trailer(&line)?;
                     if final_tick {
-                        // upstream: progress.c:131-134 - the very last file's
+                        // upstream: progress.c:127-130 - the very last file's
                         // final tick emits a newline. For progress2, the newline
                         // is deferred until the summary (main.c:455). We emit
                         // it here to separate from the summary block.
@@ -634,7 +644,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                         self.line_active = true;
                     }
                 } else {
-                    // upstream: progress.c:100 - in-flight ticks use a trailing
+                    // upstream: progress.c:101 - in-flight ticks use a trailing
                     // `"  "` (two spaces) and are NOT padded, so a shorter tick
                     // leaves the previous trailer's trailing characters on
                     // screen exactly as upstream does.
@@ -643,7 +653,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                         "{size_field} {percent_field} {rate_field} {time_field}  "
                     )?;
                     self.line_active = true;
-                    // upstream: progress.c:224 - the throttle baseline is the
+                    // upstream: progress.c:220 - the throttle baseline is the
                     // last in-flight tick; final ticks do not advance it.
                     self.last_tick = Some(now);
                 }
@@ -651,7 +661,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 Ok(())
             })(),
         };
-        // upstream: progress.c:133 rflush(FCLIENT) after an in-flight tick, and
+        // upstream: progress.c:129 rflush(FCLIENT) after an in-flight tick, and
         // log.c:420-427 rwrite() fflush()es each line it ends, the final tick
         // included. Neither depends on --outbuf.
         let write_result = write_result.and_then(|()| self.writer.flush());
@@ -713,7 +723,7 @@ mod tests {
         )
     }
 
-    /// upstream: progress.c:78-82 - the per-file trailer prints `to-chk` once
+    /// upstream: progress.c:79-83 - the per-file trailer prints `to-chk` once
     /// the file list is complete, `ir-chk` while INC_RECURSE sub-lists are
     /// still arriving.
     #[test]
@@ -784,7 +794,7 @@ mod tests {
         )
     }
 
-    /// upstream: progress.c:77-92, 224 - a local copy forwards an intermediate
+    /// upstream: progress.c:78-93, 224 - a local copy forwards an intermediate
     /// `handle_progress` tick and a final `handle` tick per file. When both
     /// fall within one throttle interval (a fast single-chunk file), only the
     /// final tick renders, and the `(xfr#..)` trailer is emitted solely on
@@ -816,7 +826,7 @@ mod tests {
         );
     }
 
-    /// upstream: progress.c:100 - in-flight progress2 ticks use trailing
+    /// upstream: progress.c:101 - in-flight progress2 ticks use trailing
     /// spaces instead of the xfr/chk trailer.
     #[test]
     fn overall_mid_transfer_has_no_xfr_trailer() {
@@ -837,7 +847,7 @@ mod tests {
         );
     }
 
-    /// upstream: progress.c:78-82 - final tick in progress2 mode shows the
+    /// upstream: progress.c:79-83 - final tick in progress2 mode shows the
     /// xfr/chk trailer.
     #[test]
     fn overall_final_tick_has_xfr_trailer() {
@@ -880,7 +890,7 @@ mod tests {
         )
     }
 
-    /// upstream: progress.c:99-100 - an in-flight progress2 tick uses a `"  "`
+    /// upstream: progress.c:100-101 - an in-flight progress2 tick uses a `"  "`
     /// end-of-line and is NOT padded. A shorter in-flight tick following a
     /// longer xfr trailer must leave the trailer's trailing characters on
     /// screen exactly as upstream does, so it carries only the 2-space eol.
@@ -910,7 +920,7 @@ mod tests {
         );
     }
 
-    /// upstream: progress.c:84-91 - only the xfr trailer (the `is_last` eol) is
+    /// upstream: progress.c:85-92 - only the xfr trailer (the `is_last` eol) is
     /// padded, to the longest trailer seen, so a shorter trailer erases stale
     /// characters from a longer previous one.
     #[test]
@@ -938,7 +948,7 @@ mod tests {
         );
     }
 
-    /// upstream: progress.c:129 - the progress2 line format begins with `\r`,
+    /// upstream: progress.c:120 - the progress2 line format begins with `\r`,
     /// so the very first tick on a terminal is `\r`-prefixed (not bare).
     #[test]
     fn overall_first_terminal_line_starts_with_cr() {
@@ -959,7 +969,7 @@ mod tests {
         );
     }
 
-    /// upstream: progress.c:224 - `show_progress` refreshes the overall line at
+    /// upstream: progress.c:220 - `show_progress` refreshes the overall line at
     /// most once per second; end_progress (the final tick) bypasses it.
     #[test]
     fn tick_throttle_matches_upstream_one_per_second() {
@@ -1002,7 +1012,7 @@ mod tests {
         );
     }
 
-    /// upstream: progress.c:102-116 - progress2 uses the sliding-window rate
+    /// upstream: progress.c:103-107 - progress2 uses the sliding-window rate
     /// from the 5-slot ring buffer, not the cumulative rate. Verify rate field
     /// is present and non-empty.
     #[test]
@@ -1016,7 +1026,10 @@ mod tests {
         let output = String::from_utf8(buf).expect("utf8");
         // The rate field should contain kB/s, MB/s, or GB/s
         assert!(
-            output.contains("kB/s") || output.contains("MB/s") || output.contains("GB/s"),
+            output.contains("B/s")
+                || output.contains("kB/s")
+                || output.contains("MB/s")
+                || output.contains("GB/s"),
             "progress2 should contain a rate with base-1024 units: {output}"
         );
     }
@@ -1168,7 +1181,7 @@ mod tests {
         );
     }
 
-    /// upstream: progress.c:129 - on a terminal every line is `\r`-prefixed,
+    /// upstream: progress.c:120 - on a terminal every line is `\r`-prefixed,
     /// including the first (when `line_active` is false).
     #[test]
     fn write_line_restart_terminal_always_cr() {
@@ -1225,7 +1238,7 @@ mod tests {
         }
     }
 
-    /// upstream: progress.c:133 - `rflush(FCLIENT)` after an in-flight tick,
+    /// upstream: progress.c:129 - `rflush(FCLIENT)` after an in-flight tick,
     /// which ends in `"  "` rather than a newline. std's stdout is a
     /// `LineWriter`, so without that flush the tick would wait in its buffer
     /// for the next tick's newline, and a reader of the pipe would always be
@@ -1252,7 +1265,7 @@ mod tests {
         }
     }
 
-    /// upstream: log.c:420-427 - `rwrite()` fflush()es every line it ends,
+    /// upstream: log.c:494-501 - `rwrite()` fflush()es every line it ends,
     /// whatever `--outbuf` set, so a finished file's progress line reaches
     /// the pipe even under `--outbuf=B`.
     #[test]

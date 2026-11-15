@@ -1,7 +1,7 @@
 //! A `--server` process whose `--max-delete` limit cut the delete pass short
 //! must exit `RERR_DEL_LIMIT` (25), not 0.
 //!
-//! upstream `generator.c:2900-2905` sets `IOERR_DEL_LIMIT` when deletions were
+//! upstream `generator.c:2992-2997` sets `IOERR_DEL_LIMIT` when deletions were
 //! skipped, and `cleanup.c:210-218` turns the accumulated `io_error` bits into
 //! the process exit code for EVERY role, a server included: a clean finish with
 //! `IOERR_DEL_LIMIT` set exits 25. The remote shell hands that status to the

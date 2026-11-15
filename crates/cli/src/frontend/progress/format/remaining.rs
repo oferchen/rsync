@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 const HISTORY_SLOTS: usize = 5;
 
 /// Minimum interval between samples being rotated into the window. Matches
-/// upstream's `msdiff < 1000` early return in `show_progress` (progress.c:224).
+/// upstream's `msdiff < 1000` early return in `show_progress` (progress.c:220).
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(1_000);
 
 /// Upper bound on the rendered ETA. Matches upstream's `9999 * 3600`-second
@@ -50,7 +50,7 @@ impl RemainingTimeEstimator {
 
     /// Records a `(timestamp, bytes_transferred)` sample. The first observation
     /// primes every slot so the first tick reports a rate against itself
-    /// (matches upstream's loop at `progress.c:220-221`); subsequent samples
+    /// (matches upstream's loop at `progress.c:216-217`); subsequent samples
     /// are throttled to one rotation per [`SAMPLE_INTERVAL`].
     pub(crate) fn observe(&mut self, now: Instant, ofs: u64) {
         let sample = Sample { at: now, ofs };
@@ -76,14 +76,14 @@ impl RemainingTimeEstimator {
     /// Computes the remaining seconds required to copy `total - ofs` bytes at
     /// the rate measured between the oldest retained sample and `now`.
     ///
-    /// Mirrors upstream's `rate ? ... : 0.0` ternary in `progress.c:105`: when
+    /// Mirrors upstream's `rate ? ... : 0.0` ternary in `progress.c:106`: when
     /// the window is primed but no bytes were transferred over it (a stalled
     /// transfer), upstream sets `remain = 0.0`, which renders as `0:00:00`
     /// rather than the `??:??:??` placeholder. Returning `Some(0.0)` here keeps
     /// the rendered output byte-identical to upstream during a stall instead
     /// of extrapolating an ETA from stale samples.
     ///
-    /// upstream: progress.c:102-105 rprint_progress
+    /// upstream: progress.c:103-106 rprint_progress
     pub(crate) fn remaining_seconds(&self, now: Instant, ofs: u64, total: u64) -> Option<f64> {
         let oldest = self.samples[self.oldest]?;
         let bytes_left = total.checked_sub(ofs)?;
@@ -113,7 +113,7 @@ impl RemainingTimeEstimator {
     /// transferred over the window), matching upstream's `rate` variable in
     /// `rprint_progress` (progress.c:102-104).
     ///
-    /// upstream: progress.c:102-104 rprint_progress - rate computation from
+    /// upstream: progress.c:103-105 rprint_progress - rate computation from
     /// oldest retained sample to current position.
     pub(crate) fn window_rate(&self, now: Instant, ofs: u64) -> Option<f64> {
         let oldest = self.samples[self.oldest]?;
@@ -313,7 +313,7 @@ mod tests {
     /// ticks, but `ofs` never advances. Upstream collapses to
     /// `remain = 0.0` -> `0:00:00`; we must do the same instead of
     /// extrapolating from older samples or emitting `??:??:??`.
-    /// upstream: progress.c:102-125 rprint_progress
+    /// upstream: progress.c:103-116 rprint_progress
     #[test]
     fn stall_mid_transfer_renders_as_upstream() {
         let mut est = RemainingTimeEstimator::new();
@@ -400,7 +400,7 @@ mod tests {
     /// returns the 8-character `"??:??:??"` and relies on the caller's
     /// 10-wide right-aligned field to pad the leading spaces. Verify the
     /// final on-the-wire form is byte-equivalent.
-    /// upstream: progress.c:118-119 rprint_progress
+    /// upstream: progress.c:109-110 rprint_progress
     #[test]
     fn overflow_sentinel_matches_upstream_after_padding() {
         let mut est = RemainingTimeEstimator::new();
@@ -417,7 +417,7 @@ mod tests {
     /// Boundary case at the upstream clamp threshold (`9999 * 3600` seconds).
     /// Exactly at the limit must still render numerically; one second past
     /// must collapse to the sentinel.
-    /// upstream: progress.c:118 rprint_progress
+    /// upstream: progress.c:109 rprint_progress
     #[test]
     fn overflow_boundary_exact_vs_off_by_one() {
         // Construct synthetic samples so the computed `remain` lands precisely
@@ -439,7 +439,7 @@ mod tests {
         );
     }
 
-    /// upstream: progress.c:102-104 - window rate is computed from the oldest
+    /// upstream: progress.c:103-105 - window rate is computed from the oldest
     /// retained sample to the current position.
     #[test]
     fn window_rate_unprimed_returns_none() {

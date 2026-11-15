@@ -1,6 +1,6 @@
 //! `--existing` / `--ignore-existing` on the non-regular receiver passes.
 //!
-//! upstream: generator.c:1757-1806 recv_generator() tests both options on the
+//! upstream: generator.c:1794-1843 recv_generator() tests both options on the
 //! destination `lstat` for EVERY file type before any type-specific branch, so
 //! a symlink, FIFO or directory is skipped under exactly the conditions a
 //! regular file is. A receiver that gates only regular files replaces links and
@@ -97,7 +97,7 @@ fn create_non_regular(ctx: &ReceiverContext, dest: &Path) -> Vec<String> {
     lines
 }
 
-/// upstream: generator.c:1784-1799 - every present destination that is not a
+/// upstream: generator.c:1821-1836 - every present destination that is not a
 /// directory receiving a directory is left standing, with a `%s exists`
 /// notice: the old symlink target, the regular file where a FIFO arrives, and
 /// the regular file where a directory arrives all survive.
@@ -139,7 +139,7 @@ fn ignore_existing_leaves_every_present_destination_type_standing() {
     );
 }
 
-/// upstream: generator.c:1784-1785 - a directory arriving over a directory is
+/// upstream: generator.c:1821-1822 - a directory arriving over a directory is
 /// merged into, not skipped, and draws no notice.
 #[test]
 fn ignore_existing_still_merges_into_an_existing_directory() {
@@ -161,7 +161,7 @@ fn ignore_existing_still_merges_into_an_existing_directory() {
     assert!(lines.is_empty(), "lines = {lines:?}");
 }
 
-/// upstream: generator.c:1757-1772 - `--existing` creates no absent entry of
+/// upstream: generator.c:1794-1809 - `--existing` creates no absent entry of
 /// any type. A skipped directory becomes `skip_dir`, so its descendants are
 /// skipped silently: only the directory itself is reported.
 #[test]
@@ -197,7 +197,7 @@ fn existing_creates_no_absent_entry_of_any_type() {
     );
 }
 
-/// upstream: generator.c:1757 - `--existing` still updates a present entry:
+/// upstream: generator.c:1794 - `--existing` still updates a present entry:
 /// an existing symlink is repointed at the new target.
 #[test]
 fn existing_keeps_updating_present_entries() {
@@ -223,7 +223,7 @@ fn existing_keeps_updating_present_entries() {
     assert!(lines.is_empty(), "lines = {lines:?}");
 }
 
-/// upstream: generator.c:1745 - the gate reads `gen_entry_stat()` (a
+/// upstream: generator.c:1782 - the gate reads `gen_entry_stat()` (a
 /// `link_stat()`), so a dangling
 /// symlink where a regular file arrives exists and `--ignore-existing` leaves
 /// it standing; a following stat would call it absent and request the file.

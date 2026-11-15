@@ -29,7 +29,7 @@ would silently reintroduce the leak.
 Upstream `options.c:server_options()` deliberately omits
 `--write-batch` / `--read-batch` from server argv. The sole related token
 upstream emits is the literal `--only-write-batch=X` placeholder at
-`options.c:2832-2833`, and only when `write_batch < 0` (dry-run write).
+`options.c:2897-2898`, and only when `write_batch < 0` (dry-run write).
 
 ### 2. Goodbye flush not contract-enforced (UTS-15.c)
 
@@ -52,9 +52,9 @@ anything it didn't recognise. When a batch flag reached this layer (because
 the client-side sanitiser failed), the daemon never sent `@ERROR`. The wire
 just stalled.
 
-Upstream `options.c:1444-1449` is loud-by-default: an unknown option in
+Upstream `options.c:1462-1467` is loud-by-default: an unknown option in
 daemon mode emits `rsync: <BAD>: <err> (in daemon mode)` and jumps to
-`daemon_error:` at `options.c:1464-1466`, which exits `RERR_SYNTAX`.
+`daemon_error:` at `options.c:1482-1484`, which exits `RERR_SYNTAX`.
 
 ## Fixes
 
@@ -125,11 +125,11 @@ Test coverage:
 
 ## Upstream references
 
-- `options.c:784-786` - `read-batch` / `write-batch` / `only-write-batch`
+- `options.c:785-787` - `read-batch` / `write-batch` / `only-write-batch`
   popt entries (client-only)
-- `options.c:1444-1449` - daemon-mode unknown option error path
-- `options.c:1464-1466` - `daemon_error:` exits `RERR_SYNTAX`
-- `options.c:2832-2833` - the sole `--only-write-batch=X` placeholder
+- `options.c:1462-1467` - daemon-mode unknown option error path
+- `options.c:1482-1484` - `daemon_error:` exits `RERR_SYNTAX`
+- `options.c:2897-2898` - the sole `--only-write-batch=X` placeholder
 - `main.c:912` `client_run()` - `io_flush(FULL_FLUSH)` before return
 - `main.c:968` `do_server_sender()` - `io_flush(FULL_FLUSH)` before return
 - `main.c:875-906` `read_final_goodbye()` - goodbye exchange contract

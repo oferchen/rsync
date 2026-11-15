@@ -424,7 +424,7 @@ pub fn encode_symlink_target<W: Write>(
 ///
 /// `varint(idx)`
 pub fn encode_hardlink_idx<W: Write>(writer: &mut W, idx: u32) -> io::Result<()> {
-    // upstream: flist.c:894 - indices are bounded by flist size (< 2^31),
+    // upstream: flist.c:898 - indices are bounded by flist size (< 2^31),
     // so the as-i32 cast is safe. The decoder mirrors this with `as u32`.
     write_varint(writer, idx as i32)
 }
@@ -448,7 +448,7 @@ pub fn encode_hardlink_dev_ino<W: Write>(
     same_dev: bool,
 ) -> io::Result<()> {
     if !same_dev {
-        // upstream: flist.c:966-967 - dev is sent 1-incremented so it is never zero
+        // upstream: flist.c:970-971 - dev is sent 1-incremented so it is never zero
         crate::write_longint(writer, dev + 1)?;
     }
     crate::write_longint(writer, ino)

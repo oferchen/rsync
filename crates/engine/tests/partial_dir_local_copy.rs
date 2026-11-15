@@ -14,12 +14,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/generator.c:2172-2179` - `partialptr = partial_dir_fname(fname)`
+//! - `rsync-3.5.2/generator.c:2213-2220` - `partialptr = partial_dir_fname(fname)`
 //!   when the leaf exists as a regular file.
-//! - `rsync-3.5.1/generator.c:2270-2274` `prepare_to_open` - `fnamecmp =
+//! - `rsync-3.5.2/generator.c:2312-2316` `prepare_to_open` - `fnamecmp =
 //!   partialptr; fnamecmp_type = FNAMECMP_PARTIAL_DIR`, overriding the
 //!   destination and fuzzy basis.
-//! - `rsync-3.5.1/receiver.c:1153-1155` - `one_inplace = inplace_partial && partial_dir &&
+//! - `rsync-3.5.2/receiver.c:1153-1155` - `one_inplace = inplace_partial && partial_dir &&
 //!   fnamecmp_type == FNAMECMP_PARTIAL_DIR`, the reconstruction rewrites the leaf.
 
 use std::fs;

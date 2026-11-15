@@ -1,7 +1,7 @@
 //! When a source scan hits an I/O error, whether `--delete` still runs depends
 //! on *when* the delete decision is made relative to that error.
 //!
-//! Upstream has exactly one gate: `generator.c:304`
+//! Upstream has exactly one gate: `generator.c:339`
 //!
 //! ```c
 //! if (io_error & IOERR_GENERAL && !ignore_errors) {

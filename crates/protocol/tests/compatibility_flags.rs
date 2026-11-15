@@ -97,7 +97,7 @@ fn test_inplace_partial_dir_wire_byte_matches_upstream() {
     CompatibilityFlags::INPLACE_PARTIAL_DIR
         .encode_to_vec(&mut buf)
         .expect("encoding must succeed");
-    // upstream: compat.c:745-750 - write_byte(f_out, compat_flags) for the
+    // upstream: compat.c:754-759 - write_byte(f_out, compat_flags) for the
     // pre-release path and write_varint(f_out, compat_flags) otherwise.
     // CF_INPLACE_PARTIAL_DIR alone is 0x40, which encodes identically
     // under both writers.

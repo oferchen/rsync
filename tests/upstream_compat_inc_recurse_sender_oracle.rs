@@ -20,7 +20,7 @@
 //! are stronger because they count actual wire segments:
 //!
 //! - the capability string oc sends carries `i`
-//!   (`-re.iLsfxCIvu`; upstream compat.c:162-180 `set_allow_inc_recurse()`,
+//!   (`-re.iLsfxCIvu`; upstream compat.c:163-181 `set_allow_inc_recurse()`,
 //!   options.c:3046 `maybe_add_e_option()`) - captured from the wrapper's
 //!   argv log on the remote-shell leg;
 //! - with `-M--debug=flist2` delivering the debug level to the receiver
@@ -64,7 +64,7 @@ use test_support::{
     DirDiff, DirDiffOptions, UpstreamVersion, require_upstream_rsync, upstream_compat_enabled,
 };
 
-/// upstream: rsync.h:151 `#define MIN_FILECNT_LOOKAHEAD 1000`.
+/// upstream: rsync.h:152 `#define MIN_FILECNT_LOOKAHEAD 1000`.
 const MIN_FILECNT_LOOKAHEAD: usize = 1000;
 
 /// Fixture shape: 12 top-level dirs x 2 subdirs each, 30 files per dir.
@@ -252,7 +252,7 @@ fn rsh_push_negotiates_inc_recurse_and_segments_flist() {
     assert_success(&output, "oc-rsync push via rsh wrapper to upstream 3.5.1");
 
     // Negotiation evidence, sender side: oc must advertise INC_RECURSE.
-    // upstream: compat.c:162-180, options.c:3046 maybe_add_e_option().
+    // upstream: compat.c:163-181, options.c:3111 maybe_add_e_option().
     let caps = server_capabilities(&argv_log);
     assert!(
         caps.contains('i'),
@@ -445,7 +445,7 @@ fn daemon_push_negotiates_inc_recurse_and_segments_flist() {
 
 /// Regression pin for the #84 shape: a `--files-from` entry whose implied
 /// parent is a symlink. `send_implied_dirs()` runs with `copy_links` and
-/// `xfer_dirs` forced on (flist.c:2208-2210), so upstream stats the parent
+/// `xfer_dirs` forced on (flist.c:2212-2214), so upstream stats the parent
 /// through the symlink and sends it as a directory. Before the fix, oc
 /// used `symlink_metadata`, dropped the parent, and shipped `link/file`
 /// with no `link` entry - upstream's receiver rejects that list with

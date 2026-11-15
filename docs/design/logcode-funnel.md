@@ -40,13 +40,13 @@ writes immediately, so ordering is not a concern it has to solve.
 
 | step | upstream | anchor |
 |---|---|---|
-| default sink | `f = msgs2stderr == 1 ? stderr : stdout` | `log.c:272` |
-| daemon redirection | `am_daemon > 0 && code != FCLIENT` becomes `FLOG` | `log.c:290-291` |
-| sibling forwarding | `send_msgs_to_gen` forwards and returns | `log.c:292-301` |
-| code normalisation | `FERROR_SOCKET`/`FERROR_UTF8` become `FERROR`; `FCLIENT` becomes `FINFO` | `log.c:303-311` |
-| log destination | `am_daemon \|\| logfile_name` writes the log copy, returns for `FLOG` | `log.c:312-334` |
-| stream switch | `FERROR_XFER`/`FERROR`/`FWARNING` to stderr; `FINFO` to stdout, suppressed under `quiet` | `log.c:336-355` |
-| server forwarding | `am_server` sends the message to the client, with a proto<30 downgrade | `log.c:357-373` |
+| default sink | `f = msgs2stderr == 1 ? stderr : stdout` | `log.c:352` |
+| daemon redirection | `am_daemon > 0 && code != FCLIENT` becomes `FLOG` | `log.c:370-371` |
+| sibling forwarding | `send_msgs_to_gen` forwards and returns | `log.c:372-381` |
+| code normalisation | `FERROR_SOCKET`/`FERROR_UTF8` become `FERROR`; `FCLIENT` becomes `FINFO` | `log.c:383-391` |
+| log destination | `am_daemon \|\| logfile_name` writes the log copy, returns for `FLOG` | `log.c:392-414` |
+| stream switch | `FERROR_XFER`/`FERROR`/`FWARNING` to stderr; `FINFO` to stdout, suppressed under `quiet` | `log.c:416-435` |
+| server forwarding | `am_server` sends the message to the client, with a proto<30 downgrade | `log.c:437-453` |
 
 The normalisation happening **before** the switch is load-bearing: those three
 codes never reach the switch under their own name.

@@ -15,7 +15,14 @@ use super::super::config::ClientConfig;
 /// output.
 #[must_use]
 pub fn local_copy_uses_server_child(config: &ClientConfig) -> bool {
-    role_trace_requested() && !config.list_only() && config.batch_config().is_none()
+    let remote_nice = config.niceness().has_remote()
+        || config
+            .remote_options()
+            .iter()
+            .any(|opt| opt.to_string_lossy().starts_with("--nice"));
+    (role_trace_requested() || remote_nice)
+        && !config.list_only()
+        && config.batch_config().is_none()
 }
 
 /// The per-role debug traces that `-vvv` enables (options.c:248) and that

@@ -323,7 +323,7 @@ PARTIAL gap closures and parity polish identified during this audit:
 
 4. **`--debug=nstr` negotiation message wording.** RESOLVED. Wording
    in `crates/protocol/src/negotiation/capabilities/negotiate.rs`
-   now matches upstream `compat.c:215,373-378,521-525,866`
+   now matches upstream `compat.c:216,373-378,521-525,866`
    verbatim (`Client/Server <type> list (on <side>): <list>` and
    `Client/Server negotiated <type>: <name>`) on the `Nstr` debug
    target. Unit tests in

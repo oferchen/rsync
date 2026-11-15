@@ -52,12 +52,12 @@ fn run_daemon_sends_motd_before_unknown_module_error() {
     reader.read_line(&mut line).expect("motd line");
     assert_eq!(line, "Welcome to rsyncd\n");
 
-    // upstream: clientserver.c:198 - single trailing blank line after the MOTD.
+    // upstream: clientserver.c:202 - single trailing blank line after the MOTD.
     line.clear();
     reader.read_line(&mut line).expect("motd trailing blank");
     assert_eq!(line, "\n");
 
-    // upstream: clientserver.c:777 - "@ERROR: Unknown module '%s'\n"
+    // upstream: clientserver.c:781 - "@ERROR: Unknown module '%s'\n"
     line.clear();
     reader.read_line(&mut line).expect("error message");
     assert_eq!(line, "@ERROR: Unknown module 'nosuchmod'\n");

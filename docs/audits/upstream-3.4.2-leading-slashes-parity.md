@@ -50,7 +50,7 @@ plausibly carry an equivalent bug.
 
 ### 2.1 `crates/protocol/src/flist/read/name.rs::clean_and_validate_name`
 
-Mirrors upstream `flist.c:756-760` (`clean_fname(CFN_REFUSE_DOT_DOT_DIRS)`
+Mirrors upstream `flist.c:760-764` (`clean_fname(CFN_REFUSE_DOT_DOT_DIRS)`
 plus the `!relative_paths && *thisname == '/'` reject). The leading-slash
 strip is implemented as a single bulk skip (`name.rs:185-189`):
 
@@ -81,11 +81,11 @@ Trace table (with `relative_paths = true`):
 
 With `relative_paths = false`, the leading-`/` byte is rejected with
 `ABORTING due to unsafe pathname from sender`, matching upstream's
-`exit_cleanup(RERR_UNSUPPORTED)` at `flist.c:758`.
+`exit_cleanup(RERR_UNSUPPORTED)` at `flist.c:762`.
 
 **Note on byte-for-byte parity:** upstream `clean_fname` keeps one
 leading slash on relative-paths input (`*t++ = *f++` at `util1.c:954`);
-the leading slash is stripped later in `flist.c:3079-3080` via
+the leading slash is stripped later in `flist.c:3090-3091` via
 `while (*file->dirname == '/') file->dirname++` during the post-sort
 `strip_root` pass. oc-rsync collapses the run in a single step at the
 flist-read site, producing the same final dirname/basename pair without

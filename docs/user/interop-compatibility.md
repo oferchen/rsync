@@ -194,9 +194,9 @@ These are not oc-rsync bugs - upstream rsync itself fails identically.
 
 | Limitation | Affected Protocols | Upstream Source |
 |------------|--------------------|----------------|
-| ACLs require protocol 30+ | 28-29 | `compat.c:655-661` |
-| Xattrs require protocol 30+ | 28-29 | `compat.c:662-668` |
-| zstd/lz4 require protocol 30+ | 28-29 | `compat.c:556-564` (no vstring negotiation) |
+| ACLs require protocol 30+ | 28-29 | `compat.c:656-662` |
+| Xattrs require protocol 30+ | 28-29 | `compat.c:663-669` |
+| zstd/lz4 require protocol 30+ | 28-29 | `compat.c:557-565` (no vstring negotiation) |
 | Merge-filter requires protocol 29+ | 28 | `exclude.c:1530` (`legal_len=1`) |
 | Compressed delta batch self-roundtrip | All | `token.c:608` (upstream bug - oc-rsync reads these correctly) |
 

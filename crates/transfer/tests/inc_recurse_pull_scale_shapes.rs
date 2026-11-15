@@ -2,7 +2,7 @@
 //! window: one directory wider than the sender's lookahead ceiling, and a
 //! chain of nested directories each holding one sub-list.
 //!
-//! upstream: rsync.h:151-152 bounds the sender's lookahead at
+//! upstream: rsync.h:152-153 bounds the sender's lookahead at
 //! MIN_FILECNT_LOOKAHEAD (1000) and MAX_FILECNT_LOOKAHEAD (10000) entries. A
 //! directory of 12,000 files arrives as one sub-list above that ceiling, and a
 //! 1,000-deep chain makes the receiver free its oldest lists

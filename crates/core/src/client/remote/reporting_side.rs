@@ -70,7 +70,7 @@ impl ReportingSide {
 
     /// Completes the report of a fatal failure in the client's own receive.
     ///
-    /// upstream: cleanup.c:240-256 - a receiver child exiting with any code but
+    /// upstream: cleanup.c:241-257 - a receiver child exiting with any code but
     /// `RERR_SOCKETIO`, `RERR_STREAMIO`, `RERR_SIGNAL1` or `RERR_TIMEOUT` sends
     /// `MSG_ERROR_EXIT`, and the generator exits silently with that code. For
     /// those four it sends nothing, so the generator meets end-of-file on the

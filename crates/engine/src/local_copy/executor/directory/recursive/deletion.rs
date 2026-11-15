@@ -56,7 +56,7 @@ fn delay_decides_during(context: &CopyContext) -> bool {
 /// Deletes extraneous destination entries for `--delete-during` before the
 /// directory's own children are transferred.
 ///
-/// upstream: generator.c:1924-1927 - for a non-INC_RECURSE `delete_during`
+/// upstream: generator.c:1961-1964 - for a non-INC_RECURSE `delete_during`
 /// run, the generator calls `delete_in_dir()` while itemizing the directory
 /// entry itself, i.e. immediately before it recurses into and processes that
 /// directory's children. The extraneous-entry `*deleting` rows therefore
@@ -77,7 +77,7 @@ pub(super) fn apply_during_transfer_deletions(
     if !deletion_enabled {
         return Ok(());
     }
-    // upstream: generator.c:304-311 - delete_in_dir() suppresses its sweep
+    // upstream: generator.c:339-346 - delete_in_dir() suppresses its sweep
     // after an I/O error unless --ignore-errors, printing the one-shot skip
     // notice; a timing that sweeps nothing here never reaches that check.
     let timing = effective_delete_timing(context, delete_timing);
@@ -99,7 +99,7 @@ pub(super) fn apply_during_transfer_deletions(
                 delete_extraneous_entries(context, destination, relative, keep_names)?;
             }
         }
-        // upstream: generator.c:351 `delete_during == 2` decides the delete set
+        // upstream: generator.c:386 `delete_during == 2` decides the delete set
         // during the walk (via `delete_in_dir`/`change_local_filter_dir`, while
         // the destination merge files are still absent) and only postpones the
         // unlink. Decide here and defer the concrete plan; the flush executes it
@@ -132,7 +132,7 @@ pub(super) fn handle_post_transfer_deletions(
     if !deletion_enabled {
         return Ok(());
     }
-    // upstream: generator.c:304-311 - delete_in_dir() suppresses its sweep
+    // upstream: generator.c:339-346 - delete_in_dir() suppresses its sweep
     // after an I/O error unless --ignore-errors, printing the one-shot skip
     // notice; only a timing that still sweeps here reaches that check.
     let timing = effective_delete_timing(context, delete_timing);

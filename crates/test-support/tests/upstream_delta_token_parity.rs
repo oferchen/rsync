@@ -94,7 +94,7 @@ fn sparse_image_fixture() -> (Vec<u8>, Vec<u8>, u64) {
     (basis, source, matched)
 }
 
-/// `MSG_DATA` multiplex tag (upstream: rsync.h:210 `MPLEX_BASE`).
+/// `MSG_DATA` multiplex tag (upstream: rsync.h:211 `MPLEX_BASE`).
 const MPLEX_DATA: u8 = 7;
 
 /// Length of the MD5 whole-file checksum that ends the delta section; both

@@ -1,6 +1,6 @@
-"""The rsync 3.5.1 testsuite legs: manifests, owners and the gate.
+"""The rsync 3.5.2 testsuite legs: manifests, owners and the gate.
 
-`.github/workflows/upstream-testsuite-3.5.1.yml` runs upstream's 3.5.1 corpus
+`.github/workflows/upstream-testsuite-3.5.2.yml` runs upstream's 3.5.2 corpus
 on eight contexts ({pipe,tcp} x {nonroot,root} x {Linux,macOS}) as the required
 testsuite gate, each leg against its own --expect-result manifest. These tests
 hold that ledger to three rules:
@@ -12,8 +12,8 @@ hold that ledger to three rules:
    here instead of quietly discarding them.
 2. The workflows and the files agree. A manifest nothing reads is dead, and a
    path a workflow names without a file fails the leg only at run time.
-3. The gate runs 3.5.1 and nothing else. Every gate caller defaults to 3.5.1
-   and reads only 3.5.1 ledgers; the 3.5.0 corpus is retired, so no ledger
+3. The gate runs 3.5.2 and nothing else. Every gate caller defaults to 3.5.2
+   and reads only 3.5.2 ledgers; the 3.5.0 corpus is retired, so no ledger
    for another release may remain. A bootstrap dispatch drops every ledger, since a manifest limits
    the run to the tests it lists and a re-baseline must measure all of them.
 """
@@ -28,13 +28,13 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 CI_DIR = REPO / "tools" / "ci"
-WORKFLOW = REPO / ".github" / "workflows" / "upstream-testsuite-3.5.1.yml"
+WORKFLOW = REPO / ".github" / "workflows" / "upstream-testsuite-3.5.2.yml"
 TESTSUITE_REUSABLES = ("_upstream-testsuite.yml", "_upstream-testsuite-macos.yml")
-GATE_VERSION = "${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}"
-SUITE = REPO / "target" / "interop" / "upstream-src" / "rsync-3.5.1" / "testsuite"
+GATE_VERSION = "${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.2' }}"
+SUITE = REPO / "target" / "interop" / "upstream-src" / "rsync-3.5.2" / "testsuite"
 
 CONTEXTS = [
-    f"upstream-3.5.1-expect.{plat}{priv}{tcp}.txt"
+    f"upstream-3.5.2-expect.{plat}{priv}{tcp}.txt"
     for plat in ("", "macos.")
     for priv in ("nonroot", "root")
     for tcp in ("", ".tcp")
@@ -73,7 +73,7 @@ def _workflow_call_inputs(path: Path) -> dict:
 class Uts351ManifestTests(unittest.TestCase):
     def test_all_eight_contexts_have_a_manifest(self) -> None:
         missing = [n for n in CONTEXTS if not (CI_DIR / n).is_file()]
-        self.assertEqual(missing, [], "3.5.1 contexts without a manifest")
+        self.assertEqual(missing, [], "3.5.2 contexts without a manifest")
 
     def test_every_expected_failure_names_its_owner(self) -> None:
         unowned = [
@@ -109,14 +109,14 @@ class Uts351ManifestTests(unittest.TestCase):
 
     def test_every_row_names_a_real_3_5_1_test(self) -> None:
         if not SUITE.is_dir():
-            self.skipTest(f"upstream 3.5.1 tree not extracted at {SUITE}")
+            self.skipTest(f"upstream 3.5.2 tree not extracted at {SUITE}")
         corpus = {p.name[: -len("_test.py")] for p in SUITE.glob("*_test.py")}
         for name in CONTEXTS:
             unknown = {r[0] for r in _rows(CI_DIR / name)} - corpus
-            self.assertFalse(unknown, f"{name}: not in the 3.5.1 corpus: {unknown}")
+            self.assertFalse(unknown, f"{name}: not in the 3.5.2 corpus: {unknown}")
 
     def test_the_gate_reads_exactly_the_eight_manifests(self) -> None:
-        named = re.findall(r"tools/ci/(upstream-3\.5\.1-expect\.[\w.]+\.txt)",
+        named = re.findall(r"tools/ci/(upstream-3\.5\.2-expect\.[\w.]+\.txt)",
                            WORKFLOW.read_text())
         self.assertEqual(sorted(named), sorted(CONTEXTS))
 
@@ -137,7 +137,7 @@ class Uts351ManifestTests(unittest.TestCase):
             self.assertEqual(inputs.get("upstream_rsync_version"), GATE_VERSION, job_id)
             for key, value in inputs.items():
                 for path in MANIFEST_PATH.findall(str(value)):
-                    self.assertIn("upstream-3.5.1-", path, f"{job_id}.{key}")
+                    self.assertIn("upstream-3.5.2-", path, f"{job_id}.{key}")
         self.assertNotIn("upstream-3.5.0-", WORKFLOW.read_text())
 
     def test_reusable_defaults_match_the_gate(self) -> None:
@@ -145,11 +145,11 @@ class Uts351ManifestTests(unittest.TestCase):
         # stale default would silently run a different release.
         for name in TESTSUITE_REUSABLES:
             inputs = _workflow_call_inputs(REPO / ".github" / "workflows" / name)
-            self.assertEqual(inputs["upstream_rsync_version"]["default"], "3.5.1", name)
+            self.assertEqual(inputs["upstream_rsync_version"]["default"], "3.5.2", name)
             for key, spec in inputs.items():
                 default = str(spec.get("default", ""))
                 if default.startswith("tools/ci/upstream-"):
-                    self.assertIn("upstream-3.5.1-", default, f"{name}.{key}")
+                    self.assertIn("upstream-3.5.2-", default, f"{name}.{key}")
 
     def test_a_bootstrap_run_drops_every_manifest(self) -> None:
         # --expect-result runs ONLY the tests its manifest lists, so a

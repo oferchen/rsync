@@ -2,7 +2,7 @@
 //!
 //! Every upstream diagnostic carries a logcode that `rwrite()` uses to pick
 //! its destination: the client's stdout/stderr, the daemon log or `--log-file`,
-//! or the multiplexed message stream (upstream: rsync.h:282-289, log.c:rwrite()).
+//! or the multiplexed message stream (upstream: rsync.h:283-290, log.c:rwrite()).
 //! This module is the single canonical definition of that vocabulary; the
 //! `protocol` crate re-exports it for wire-side `MSG_*` conversions and the
 //! diagnostics event model tags every [`DiagnosticEvent`](crate::DiagnosticEvent)
@@ -25,28 +25,28 @@ use std::str::FromStr;
 pub enum LogCode {
     #[doc(alias = "FNONE")]
     /// Placeholder that is never passed to `rwrite()` and never transmitted
-    /// on the wire (`FNONE`, upstream: rsync.h:283 "never sent").
+    /// on the wire (`FNONE`, upstream: rsync.h:284 "never sent").
     None = 0,
     #[doc(alias = "FERROR_XFER")]
     /// Transfer error (`FERROR_XFER`). Routed to stderr and records that a
-    /// transfer error occurred (upstream: log.c:337-343 sets `got_xfer_error`);
+    /// transfer error occurred (upstream: log.c:417-423 sets `got_xfer_error`);
     /// sent over the socket as `MSG_ERROR_XFER` at every protocol
-    /// (upstream: rsync.h:284).
+    /// (upstream: rsync.h:285).
     ErrorXfer = 1,
     #[doc(alias = "FINFO")]
     /// Informational message (`FINFO`). Routed to the client's stdout unless
-    /// `--quiet` (upstream: log.c:344-346) and additionally to the daemon
-    /// log/`--log-file` when one is active (upstream: log.c:312-332).
+    /// `--quiet` (upstream: log.c:424-426) and additionally to the daemon
+    /// log/`--log-file` when one is active (upstream: log.c:392-412).
     Info = 2,
     #[doc(alias = "FERROR")]
     /// Non-transfer error (`FERROR`). Routed to stderr (upstream:
     /// log.c:340-343); sent over the socket as `MSG_ERROR` at protocols >= 30
-    /// and downgraded to `MSG_ERROR_XFER` below (upstream: log.c:359-361).
+    /// and downgraded to `MSG_ERROR_XFER` below (upstream: log.c:439-441).
     Error = 3,
     #[doc(alias = "FWARNING")]
-    /// Warning (`FWARNING`). Routed to stderr (upstream: log.c:341-343); sent
+    /// Warning (`FWARNING`). Routed to stderr (upstream: log.c:421-423); sent
     /// over the socket as `MSG_WARNING` at protocols >= 30 and downgraded to
-    /// `MSG_INFO` below (upstream: log.c:359-364).
+    /// `MSG_INFO` below (upstream: log.c:439-444).
     Warning = 4,
     #[doc(alias = "FERROR_SOCKET")]
     /// Error travelling over the receiver -> generator pipe (`FERROR_SOCKET`);
@@ -56,17 +56,17 @@ pub enum LogCode {
     #[doc(alias = "FLOG")]
     /// Log-file-only message (`FLOG`). Written to the daemon log/`--log-file`
     /// and never to the client's stdout; discarded outright when no log
-    /// destination is active (upstream: log.c:312-334).
+    /// destination is active (upstream: log.c:392-414).
     Log = 6,
     #[doc(alias = "FCLIENT")]
     /// Client-only message (`FCLIENT`). Never transmitted on the wire and
     /// converted to `FINFO` before dispatch, skipping the daemon-log branch
-    /// (upstream: log.c:310-311, rsync.h:288).
+    /// (upstream: log.c:390-391, rsync.h:289).
     Client = 7,
     #[doc(alias = "FERROR_UTF8")]
     /// UTF-8-encoded error travelling over the receiver -> generator pipe
     /// (`FERROR_UTF8`); flags the text as UTF-8 and becomes `FERROR`
-    /// (upstream: log.c:305-308, rsync.h:287).
+    /// (upstream: log.c:385-388, rsync.h:288).
     ErrorUtf8 = 8,
 }
 
@@ -215,7 +215,7 @@ mod tests {
     use super::*;
 
     /// Pins the variant set 1:1 against upstream's `enum logcode` table
-    /// (upstream: rsync.h:282-289). A new upstream code, a renamed code, or a
+    /// (upstream: rsync.h:283-290). A new upstream code, a renamed code, or a
     /// changed discriminant must fail here.
     #[test]
     fn variant_set_matches_upstream_enum_logcode() {

@@ -46,7 +46,7 @@ use super::{ClientEvent, ClientEventKind};
 pub fn listing_order(events: &[ClientEvent], inc_recurse: bool) -> Vec<usize> {
     let lists = FileLists::new(events, inc_recurse);
     let mut lookahead = SubListLookahead::new(lists.sizes);
-    // upstream: sender.c:515 - the sender fills its lookahead before it reads
+    // upstream: sender.c:523 - the sender fills its lookahead before it reads
     // the first request.
     lookahead.serve(0);
     let mut order = Vec::with_capacity(events.len());

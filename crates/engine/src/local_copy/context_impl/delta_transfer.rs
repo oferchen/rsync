@@ -7,7 +7,7 @@ pub(super) struct SparseCopy<'state> {
 
 /// The two whole-file sums that decide whether a delta pass verified.
 ///
-/// upstream: the sender sums every byte of the file it sends (match.c:395-463
+/// upstream: the sender sums every byte of the file it sends (match.c:431-499
 /// `sum_update()`), the receiver every byte it puts in the output
 /// (receiver.c:300-371 `receive_data()`), and receiver.c:534 fails the file
 /// when they differ. On a local copy literals are the source's own bytes, so
@@ -269,7 +269,7 @@ impl<'a> CopyContext<'a> {
         let mut compressed_progress = 0u64;
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
-        // upstream: match.c:395 match_sums() zeroes the per-file counters
+        // upstream: match.c:431 match_sums() zeroes the per-file counters
         // before scanning; the loop tallies confirmed matches inline, and
         // hash_hits/false_alarms come from replaying upstream's own hash table
         // while the `-vv` `total:` line (match.c:480 match_report()) reports
@@ -282,7 +282,7 @@ impl<'a> CopyContext<'a> {
         // only place `stats.matched_data` grows, so a byte counts as matched
         // exactly when a block match emitted it - bytes that are neither
         // literal nor matched (the prefix an append skips over) count as
-        // neither. upstream: match.c:430-431 sets `last_match = s->flength;
+        // neither. upstream: match.c:466-467 sets `last_match = s->flength;
         // s->count = 0;` so append mode never reaches `matched()` at all.
         let mut matched_bytes = 0u64;
         let mut sparse_state = SparseWriteState::default();
@@ -313,6 +313,14 @@ impl<'a> CopyContext<'a> {
         let mut source_bytes_read = 0u64;
         // Inplace mode seeks to this position before each literal write.
         let mut output_position = 0u64;
+        let block_len = index.block_length();
+        let mut consecutive_false_offsets = 0u32;
+        let mut want_i: Option<usize> = (index.block_count() > 0).then_some(0);
+        let mut same_offset = if inplace_mode {
+            vec![false; index.block_count()]
+        } else {
+            Vec::new()
+        };
         // 256KB interval - smaller than regular copy since delta is more
         // CPU-intensive, but still amortizes clock_gettime syscalls.
         const TIMEOUT_CHECK_INTERVAL: usize = 256 * 1024;
@@ -370,19 +378,42 @@ impl<'a> CopyContext<'a> {
             }
 
             let digest = rolling.digest();
-            // upstream: match.c:210-213 - the per-offset rolling sum.
+            // upstream: match.c:214-217 - the per-offset rolling sum.
             let scan_offset = total_bytes.saturating_add(pending_literals.len() as u64);
             matching::trace_deltasum::trace_scan_offset(scan_offset, digest.sum2(), digest.sum1());
             if let Some(replay) = replay.as_mut() {
                 let (front, back) = window.as_slices();
                 replay.probe_window(index, digest, scan_offset, front, back);
             }
-            if let Some(block_index) = index.find_match_window(digest, &window, &mut scratch) {
+            let inplace_ok = |idx: usize| -> bool {
+                !inplace_mode
+                    || (index.block(idx).index() * block_len as u64) >= scan_offset
+                    || same_offset.get(idx).copied().unwrap_or(false)
+            };
+            let (matched_block, had_weak_candidate) = match want_i {
+                Some(hint)
+                    if inplace_ok(hint) && {
+                        let (front, back) = window.as_slices();
+                        index.check_block_match_slices(hint, digest, front, back)
+                    } =>
+                {
+                    (Some(hint), true)
+                }
+                _ => index.find_match_window_with(digest, &window, inplace_ok),
+            };
+            if let Some(block_index) = matched_block {
+                consecutive_false_offsets = 0;
+                want_i = (block_index + 1 < index.block_count()).then_some(block_index + 1);
                 file_matches = file_matches.saturating_add(1);
+                if !same_offset.is_empty()
+                    && index.block(block_index).index() * block_len as u64 == scan_offset
+                {
+                    same_offset[block_index] = true;
+                }
                 if let Some(replay) = replay.as_mut() {
                     replay.mark_same_offset(block_index, scan_offset);
                 }
-                // upstream: match.c:258-262 then :133-138
+                // upstream: match.c:271-275 then :133-138
                 matching::trace_deltasum::trace_potential_match(
                     scan_offset,
                     block_index as u64,
@@ -429,6 +460,12 @@ impl<'a> CopyContext<'a> {
                     pending_literals.clear();
                 }
 
+                if inplace_mode {
+                    scratch.clear();
+                    let (front, back) = window.as_slices();
+                    scratch.extend_from_slice(front);
+                    scratch.extend_from_slice(back);
+                }
                 let block = index.block(block_index);
                 let block_len = block.len();
                 let matched = MatchedBlock::new(block, index.block_length());
@@ -537,6 +574,56 @@ impl<'a> CopyContext<'a> {
                 continue;
             }
 
+            if !had_weak_candidate {
+                consecutive_false_offsets = 0;
+            } else {
+                consecutive_false_offsets += 1;
+                if consecutive_false_offsets >= 4 && block_len > 1 {
+                    // upstream 3.5.2 CVE-2026-119741: bound strong-checksum
+                    // work on consecutive weak collisions by skipping
+                    //  bytes as literals.
+                    for _ in 0..(block_len - 1) {
+                        if let Some(front) = window.pop_front() {
+                            pending_literals.push(front);
+                        }
+                    }
+                    let need = block_len - 1;
+                    let mut filled = 0usize;
+                    while filled < need {
+                        if buffer_pos == buffer_len {
+                            let remaining = expected_remaining.saturating_sub(source_bytes_read);
+                            if remaining == 0 {
+                                break;
+                            }
+                            let chunk_len = read_buffer
+                                .len()
+                                .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+                            buffer_len = reader
+                                .read(&mut read_buffer[..chunk_len])
+                                .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+                            buffer_pos = 0;
+                            if buffer_len == 0 {
+                                break;
+                            }
+                            source_bytes_read = source_bytes_read.saturating_add(buffer_len as u64);
+                            sums.sent(&read_buffer[..buffer_len]);
+                        }
+                        let take = (buffer_len - buffer_pos).min(need - filled);
+                        window.extend(&read_buffer[buffer_pos..buffer_pos + take]);
+                        filled += take;
+                        buffer_pos += take;
+                        bytes_since_timeout_check += take;
+                    }
+                    rolling.reset();
+                    let (s1, s2) = window.as_slices();
+                    rolling.update(s1);
+                    if !s2.is_empty() {
+                        rolling.update(s2);
+                    }
+                    consecutive_false_offsets = 3;
+                }
+            }
+
             if let Some(front) = window.pop_front() {
                 pending_literals.push(front);
                 outgoing = Some(front);
@@ -627,7 +714,7 @@ impl<'a> CopyContext<'a> {
         if let Some(block_index) = tail_matched_block {
             // A matched trailing partial block is one confirmed match.
             file_matches = file_matches.saturating_add(1);
-            // upstream: match.c:258-262 then :133-138 - the short final block is
+            // upstream: match.c:271-275 then :133-138 - the short final block is
             // reported like any other match, with its own shorter length. Its
             // source offset is the scan cursor: everything before it has either
             // been emitted or is sitting in `pending_literals`.
@@ -853,10 +940,10 @@ impl<'a> CopyContext<'a> {
             total_size.saturating_sub(initial_bytes),
         );
 
-        // upstream: match.c:441-442, :468-471 - the scan-complete marker and the
+        // upstream: match.c:477-478, :468-471 - the scan-complete marker and the
         // per-file counters. The local loop writes the reconstructed file
         // directly, so it never computes or transfers a whole-file checksum:
-        // upstream's `sending file_sum` (match.c:465) and `got file_sum`
+        // upstream's `sending file_sum` (match.c:501) and `got file_sum`
         // (receiver.c:688) have no analogue here and are deliberately absent
         // rather than faked.
         matching::trace_deltasum::trace_done_hash_search();
@@ -870,7 +957,7 @@ impl<'a> CopyContext<'a> {
             file_matches,
         );
 
-        // upstream: match.c:474-476 folds the per-file counters into the run
+        // upstream: match.c:510-512 folds the per-file counters into the run
         // totals after match_sums() returns; do the same so the end-of-run
         // `-vv` `total:` line reports cumulative figures.
         self.summary.record_delta_probe(file_matches, probe);

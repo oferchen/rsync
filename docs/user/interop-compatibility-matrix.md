@@ -392,9 +392,9 @@ specific edge cases and advanced features:
 
 | Limitation | Protocol | Upstream Source |
 |------------|----------|----------------|
-| ACLs require proto 30+ | 28-29 | `compat.c:655-661` |
-| Xattrs require proto 30+ | 28-29 | `compat.c:662-668` |
-| zstd/lz4 require proto 30+ | 28-29 | `compat.c:556-564` (no vstring negotiation) |
+| ACLs require proto 30+ | 28-29 | `compat.c:656-662` |
+| Xattrs require proto 30+ | 28-29 | `compat.c:663-669` |
+| zstd/lz4 require proto 30+ | 28-29 | `compat.c:557-565` (no vstring negotiation) |
 | Merge-filter requires proto 29+ | 28 | `exclude.c:1530` (`legal_len=1`) |
 | Upstream compressed delta batch self-roundtrip | All | `token.c:608` (inflate without dict sync) |
 

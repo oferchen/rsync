@@ -521,14 +521,14 @@ pub(crate) fn default_checksum_algorithms() -> Vec<Cow<'static, str>> {
         Cow::Borrowed("xxh128"),
         Cow::Borrowed("xxh3"),
         Cow::Borrowed("xxh64"),
-        // upstream: usage.c:248 / compat.c:462 - the `(xxhash)` alias marks the
+        // upstream: usage.c:248 / compat.c:463 - the `(xxhash)` alias marks the
         // xxh* group's backing library in the human-readable list. It is
         // filtered out of the JSON `checksum_list` (see `write_json_list`).
         Cow::Borrowed("(xxhash)"),
         Cow::Borrowed("md5"),
         Cow::Borrowed("md4"),
         Cow::Borrowed("sha1"),
-        // upstream: compat.c:477-478 - get_default_nno_list() with a dup
+        // upstream: compat.c:478-479 - get_default_nno_list() with a dup
         // markup keeps the num-0 "none" entry, so both lists end with it.
         Cow::Borrowed("none"),
     ]

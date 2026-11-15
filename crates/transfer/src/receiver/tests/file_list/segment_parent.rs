@@ -174,7 +174,7 @@ fn walk_order(ctx: &ReceiverContext) -> Vec<String> {
 /// A directory is reached at the head of its own sub-list, not where it sits
 /// in its parent's list, and sub-lists are walked in arrival order.
 ///
-/// upstream: generator.c:2780-2788 runs recv_generator() for a sub-list's
+/// upstream: generator.c:2866-2874 runs recv_generator() for a sub-list's
 /// parent (`ndx_start - 1`) before the sub-list's entries; the directory's own
 /// slot in its parent's list is `is_dir < 0` (generator.c:1631-1633) and is
 /// neither listed nor itemized (generator.c:1638-1644).
@@ -212,7 +212,7 @@ fn generator_walk_order_is_flat_order_for_a_single_list() {
 /// A server receiver's directory row goes out at the head of the directory's
 /// own sub-list, on that sub-list's gap NDX, never inside its parent's list.
 ///
-/// upstream: generator.c:1631-1633 makes a directory met in its parent's list
+/// upstream: generator.c:1668-1670 makes a directory met in its parent's list
 /// `is_dir < 0`, so it is only created there (generator.c:1819-1834);
 /// generate_files() itemizes it with `ndx = cur_flist->ndx_start - 1` right
 /// before the sub-list's entries (generator.c:2780-2787). The pushing client's

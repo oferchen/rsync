@@ -1,7 +1,7 @@
 use super::*;
 
 /// Strips the upstream `%Y/%m/%d %H:%M:%S [pid] ` log-file prefix
-/// (upstream: log.c:125 logit()) so body assertions see the rendered text.
+/// (upstream: log.c:132 logit()) so body assertions see the rendered text.
 fn log_body(contents: &str) -> &str {
     contents.split_once("] ").map_or(contents, |(_, body)| body)
 }
@@ -675,7 +675,7 @@ fn reload_config_sighup_flag_triggers_reload() {
     assert!(!flags.reload_config.swap(false, Ordering::Relaxed));
 }
 
-/// upstream: clientserver.c:1529 - `start_daemon()` unconditionally enables
+/// upstream: clientserver.c:1539 - `start_daemon()` unconditionally enables
 /// SO_KEEPALIVE on the freshly accepted client socket, independent of any
 /// `socket options` config. This matters because idle daemon connections that
 /// traverse NAT or stateful firewalls are silently dropped without keepalive
@@ -897,7 +897,7 @@ fn accept_loop_refuses_when_at_capacity() {
     let line = read_error_line(&mut client_stream);
     assert_eq!(
         line, "@ERROR: max connections (2) reached -- try again later",
-        "refusal payload must mirror upstream clientserver.c:754"
+        "refusal payload must mirror upstream clientserver.c:758"
     );
 
     // The accept loop is expected to keep running: dropping the server
@@ -2579,7 +2579,7 @@ fn quic_session_reaches_rsyncd_greeting_parity_with_tcp() {
 /// A SIGHUP re-reads only the config file, but `--log-file-format` came from
 /// the command line and must survive the reload.
 ///
-/// upstream: the forked daemon keeps `logfile_format` (options.c:885) across
+/// upstream: the forked daemon keeps `logfile_format` (options.c:890) across
 /// config re-reads, and clientserver.c:823 consults it before the module's
 /// `log format` for every new session.
 #[cfg(unix)]

@@ -53,7 +53,7 @@ impl DirDestination {
 }
 
 /// A directory's pre-transfer `stat`, which `dest_mode()` reads as its
-/// `exists` and current bits (upstream: generator.c:1856).
+/// `exists` and current bits (upstream: generator.c:1893).
 ///
 /// On Unix it is taken through the destination sandbox, upstream's
 /// `do_stat_at()`.
@@ -77,7 +77,7 @@ fn pre_transfer_stat(
 /// must be granted a temporary `u+rwx` while the receiver writes files into
 /// it, with the real mode restored afterward by `touch_up_dirs`.
 ///
-/// Mirrors upstream `generator.c:1904-1912`: when the receiver is not root,
+/// Mirrors upstream `generator.c:1941-1949`: when the receiver is not root,
 /// is not running `--fake-super`, is preserving permissions, and the target
 /// directory mode lacks full user `rwx` (`(mode & S_IRWXU) != S_IRWXU`), the
 /// generator chmods the directory to `mode | S_IRWXU` so `mkstemp()` can
@@ -101,7 +101,7 @@ fn dir_needs_writable_transfer_mode(
     preserve_perms
         && !fake_super
         && !metadata::am_root()
-        // upstream: generator.c:1904 - (file->mode & S_IRWXU) != S_IRWXU
+        // upstream: generator.c:1941 - (file->mode & S_IRWXU) != S_IRWXU
         && (real_mode & 0o700) != 0o700
 }
 
@@ -174,7 +174,7 @@ impl ReceiverContext {
         // exists on Unix.
         #[cfg(not(unix))]
         let _ = (dest_dir, relative_path);
-        // upstream: generator.c:1745 gen_entry_stat() - do_lstat_at() against
+        // upstream: generator.c:1782 gen_entry_stat() - do_lstat_at() against
         // the pinned destination, so a parent swapped after entry is not walked.
         #[cfg(unix)]
         let probe = super::dest_lstat(sandbox, dest_dir, dir_path, false).map(|m| m.is_symlink());
@@ -190,11 +190,11 @@ impl ReceiverContext {
                     .map(|meta| meta.file_type().is_dir())
                     .unwrap_or(false);
                 if self.config.flags.keep_dirlinks && resolves_to_dir {
-                    // upstream: generator.c:1745 - keep_dirlinks follows the
+                    // upstream: generator.c:1782 - keep_dirlinks follows the
                     // destination symlink-to-directory instead of replacing it.
                     Ok(DirDestination::Existing)
                 } else {
-                    // upstream: generator.c:1841 - delete_item(fname, ...,
+                    // upstream: generator.c:1878 - delete_item(fname, ...,
                     // del_opts | DEL_FOR_DIR) removes the conflicting symlink
                     // before mkdir. That reaches delete.c:71-78 del_unlink(),
                     // which takes do_unlink_atfd() against a held dirfd or else
@@ -222,7 +222,7 @@ impl ReceiverContext {
             // A stat failure of ANY errno class classifies as `Missing`; it is
             // never raised from here.
             //
-            // upstream: generator.c:1745-1746 - `statret = gen_entry_stat(...);
+            // upstream: generator.c:1782-1783 - `statret = gen_entry_stat(...);
             // stat_errno = errno;`. Every later branch tests `statret`, not the
             // errno class, and `generator.c:1840` gates the obstruction removal
             // on `statret == 0`. A stat that failed therefore never reaches
@@ -277,7 +277,7 @@ impl ReceiverContext {
             return Ok(Vec::new());
         }
 
-        // upstream: generator.c:1662-1675 - check_filter(&daemon_filter_list, ...)
+        // upstream: generator.c:1699-1712 - check_filter(&daemon_filter_list, ...)
         // skips daemon-excluded directories before creation, reporting
         // `ERROR: daemon refused to receive directory "%s"` as FERROR_XFER
         // (generator.c:1669-1674) before the `skipping_dir_contents` jump. A
@@ -290,11 +290,11 @@ impl ReceiverContext {
             .filter(|(_, e)| e.is_dir())
             .filter(|(_, e)| {
                 if let Some(filters) = daemon_filters.as_mut() {
-                    // upstream: generator.c:1662 check_filter() sees the raw
+                    // upstream: generator.c:1699 check_filter() sees the raw
                     // name bytes, so the gate is probed with the path itself.
                     let name = e.path();
                     if name.as_os_str() != "." && !name.as_os_str().is_empty() {
-                        // upstream: generator.c:1648-1658 - a directory below an
+                        // upstream: generator.c:1685-1695 - a directory below an
                         // already-refused one is dropped in silence; only the
                         // outermost refusal is reported.
                         if filters.refuses_ancestor(name) {
@@ -305,7 +305,7 @@ impl ReceiverContext {
                                 writer,
                                 Self::daemon_refusal_line("directory", &e.name_bytes()),
                             );
-                            // upstream: generator.c:1673-1674 jumps to
+                            // upstream: generator.c:1710-1711 jumps to
                             // `skipping_dir_contents`, whose FERROR notice
                             // (generator.c:1883) announces that the directory's
                             // contents are being dropped.
@@ -319,7 +319,7 @@ impl ReceiverContext {
                 }
                 true
             })
-            // upstream: generator.c:1811 - an implied parent is skipped after the
+            // upstream: generator.c:1848 - an implied parent is skipped after the
             // daemon filter has had its say.
             .filter(|(_, e)| !self.skips_implied_dir(e))
             .map(|(idx, entry)| {
@@ -336,7 +336,7 @@ impl ReceiverContext {
         // Failed directories with the error text they failed on.
         let mut failed_dir_paths: std::collections::HashMap<PathBuf, String> =
             std::collections::HashMap::new();
-        // upstream: generator.c:1757-1762 - directories skipped under
+        // upstream: generator.c:1794-1799 - directories skipped under
         // --existing (ignore_non_existing) are NOT errors: upstream sets
         // skip_dir / FLAG_MISSING_DIR and never touches io_error. Track them
         // apart from `failed_dir_paths` (real mkdir EACCES failures) so the
@@ -347,11 +347,11 @@ impl ReceiverContext {
             std::collections::HashSet::new();
         // Track whether each directory was freshly created (true) or already
         // existed (false). Drives the iflags passed to `emit_itemize` so the
-        // receiver matches upstream `generator.c:1869-1872`: a new dir emits
+        // receiver matches upstream `generator.c:1906-1909`: a new dir emits
         // `cd+++++++++ <name>/`, an existing one emits a metadata-only row
         // gated by the standard significance check.
         let mut dir_was_new: Vec<bool> = Vec::with_capacity(dir_entries.len());
-        // upstream: generator.c:1738-1741 - probe each new parent directory's
+        // upstream: generator.c:1775-1778 - probe each new parent directory's
         // default POSIX ACL when !preserve_perms so dest_mode() folds the bits
         // in. The probe also drives the `DEBUG_GTE(ACL, 1)` emission in
         // `acls.c:1453`. Mirror the gating exactly: only probe when
@@ -367,7 +367,7 @@ impl ReceiverContext {
         ))]
         let mut probed_parents: std::collections::HashSet<PathBuf> =
             std::collections::HashSet::new();
-        // upstream: generator.c:1869-1872 - itemize() compares a directory
+        // upstream: generator.c:1906-1909 - itemize() compares a directory
         // against the stat taken when the generator first reaches its flist
         // entry, before any child (which sorts after its parent) is created.
         // The mkdir loop below materialises child subdirectories first, and
@@ -391,7 +391,7 @@ impl ReceiverContext {
             // `relative_path` is only read on Unix (mkdirat fast path).
             #[cfg(not(unix))]
             let _ = relative_path;
-            // upstream: generator.c:1648-1658 - everything below a directory
+            // upstream: generator.c:1685-1695 - everything below a directory
             // that could not be made (`skip_dir`) is dropped in silence; the
             // failure was reported once, for the directory itself.
             if failed_dirs.failed_ancestor(relative_path).is_some() {
@@ -399,7 +399,7 @@ impl ReceiverContext {
                 skipped_existing_dirs.insert(dir_path.clone());
                 continue;
             }
-            // upstream: generator.c:1757-1806 - the existence gate reads the
+            // upstream: generator.c:1794-1843 - the existence gate reads the
             // lstat taken before the symlink obstacle is removed below. A
             // skipped directory goes into the skip set (not `failed_dir_paths`)
             // so the itemize and metadata passes skip it without treating the
@@ -414,12 +414,12 @@ impl ReceiverContext {
                 skipped_existing_dirs.insert(dir_path.clone());
                 continue;
             }
-            // upstream: generator.c:1745 / 1840-1843 - classify the destination
+            // upstream: generator.c:1782 / 1840-1843 - classify the destination
             // via lstat (not exists()) so a symlink-to-directory is replaced by
             // a real directory unless --keep-dirlinks is set, in which case it is
             // followed.
             //
-            // upstream: generator.c:1840-1843 - a failed
+            // upstream: generator.c:1877-1880 - a failed
             // `delete_item(..., DEL_FOR_DIR)` does `goto skipping_dir_contents`;
             // it does NOT re-probe and carry on. The previous
             // `.unwrap_or_else(|_| if dir_path.exists() { .. })` recovery was
@@ -428,7 +428,7 @@ impl ReceiverContext {
             // the transfer then proceeded through a symlink the peer controls.
             // It also swallowed the errno, which is how a denied unlink
             // surfaced three layers later as an opaque EXDEV from the confined
-            // walk. upstream generator.c:1443-1467 states the rule for the
+            // walk. upstream generator.c:1480-1504 states the rule for the
             // whole family: a runtime denial is a real failure and is
             // deliberately NOT retried unconfined.
             let dir_dest = match self.classify_dir_destination(
@@ -471,7 +471,7 @@ impl ReceiverContext {
                     && let Some(parent) = dir_path.parent()
                     && probed_parents.insert(parent.to_path_buf())
                 {
-                    // upstream: generator.c:1740 dflt_perms = default_perms_for_dir(dn)
+                    // upstream: generator.c:1777 dflt_perms = default_perms_for_dir(dn)
                     // Pass umask = 0; upstream prints the ACL-derived bits, not
                     // the umask-derived fallback, so the trace value is umask-independent.
                     let _ = ::metadata::default_perms_for_dir(parent, 0);
@@ -506,7 +506,7 @@ impl ReceiverContext {
                 #[cfg(not(unix))]
                 let create_result = fs::create_dir_all(dir_path);
                 if let Err(e) = create_result {
-                    // upstream: generator.c:1873-1887 - every mkdir failure
+                    // upstream: generator.c:1910-1924 - every mkdir failure
                     // but EEXIST is the directory's own error: reported, its
                     // contents skipped, the run carried on to RERR_PARTIAL.
                     if e.kind() == io::ErrorKind::PermissionDenied {
@@ -534,7 +534,7 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: generator.c:1869-1872 - emit per-directory itemize rows
+        // upstream: generator.c:1906-1909 - emit per-directory itemize rows
         // after the mkdir pass and before metadata application, so the row
         // ordering matches upstream's recv_generator() pass over the flist.
         // Skipped dirs (PermissionDenied during mkdir) do not emit a row.
@@ -559,19 +559,19 @@ impl ReceiverContext {
                     continue;
                 }
                 let entry = &self.file_list[*idx];
-                // upstream: generator.c:1853-1854 - the destination root the
+                // upstream: generator.c:1890-1891 - the destination root the
                 // receiver pre-flight-mkdir'd carries FLAG_DIR_CREATED, which
                 // forces `statret = -1`: it itemizes as new, like any dir made here.
                 let created_root = self.dest_root_created && entry.path().as_os_str() == ".";
                 let iflags = if *is_new || created_root {
-                    // upstream: generator.c:1870 - new dir is itemize()'d with
+                    // upstream: generator.c:1907 - new dir is itemize()'d with
                     // statret < 0, which ORs ITEM_LOCAL_CHANGE | ITEM_IS_NEW.
                     crate::generator::ItemFlags::from_raw(
                         crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
                             | crate::generator::ItemFlags::ITEM_IS_NEW,
                     )
                 } else {
-                    // upstream: generator.c:1870-1871 - existing dir is itemize()'d
+                    // upstream: generator.c:1907-1908 - existing dir is itemize()'d
                     // with statret == 0. itemize() (generator.c:511-572) still
                     // compares the pre-apply dest stat against the sender entry
                     // and sets ITEM_REPORT_{TIME,PERMS,OWNER,GROUP} for any
@@ -615,7 +615,7 @@ impl ReceiverContext {
         } else {
             metadata_opts.clone()
         };
-        // upstream: generator.c:1904-1912 - grant a transient u+rwx to any
+        // upstream: generator.c:1941-1949 - grant a transient u+rwx to any
         // directory whose final mode is not writable by us so the receiver can
         // create temp files inside it; the real mode is restored in
         // touch_up_dirs. Captured here so the closure below stays Send.
@@ -647,7 +647,7 @@ impl ReceiverContext {
                 {
                     entry.set_mode(entry.mode() | 0o700);
                 }
-                // upstream: generator.c:1856 dest_mode(..., statret == 0) -
+                // upstream: generator.c:1893 dest_mode(..., statret == 0) -
                 // an existing dir keeps its own perms (exists=true), a new
                 // dir gets the source mode masked by dflt_perms
                 // (exists=false). Supply the pre-transfer stat only for a
@@ -666,7 +666,7 @@ impl ReceiverContext {
                 (dir_path, entry, xattr_list, pre_transfer)
             })
             .collect();
-        // upstream: generator.c:1904-1912 + generator.c:2594 - the
+        // upstream: generator.c:1941-1949 + generator.c:2638 - the
         // !preserve_perms metadata apply raises a directory lacking owner-rwx;
         // record which strict modes touch_up_dirs must reinstate BEFORE the
         // raise erases the pre-transfer bits. Serial on purpose: the parallel
@@ -693,7 +693,7 @@ impl ReceiverContext {
             self.parallel_thresholds
                 .for_op(crate::parallel_io::ParallelOp::Metadata),
             move |(dir_path, entry, xattr_list, pre_transfer)| {
-                // upstream: generator.c:1895 - set_file_attrs() gets the
+                // upstream: generator.c:1932 - set_file_attrs() gets the
                 // existing dir's stat, so same_mtime() skips a time it already
                 // carries instead of a utimes a non-owner cannot perform.
                 if let Err(e) = apply_metadata_with_pre_transfer_stat(
@@ -744,7 +744,7 @@ impl ReceiverContext {
         let mut all_errors: Vec<(PathBuf, String)> = Vec::new();
         for failure in results.into_iter().flatten() {
             match failure {
-                // upstream: generator.c:1895 set_file_attrs() on the directory;
+                // upstream: generator.c:1932 set_file_attrs() on the directory;
                 // its chown/utimes/chmod arms are rsyserr(FERROR_XFER).
                 DirApplyFailure::Attrs(error) => {
                     let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
@@ -834,7 +834,7 @@ impl ReceiverContext {
             if relative_path.as_os_str() == "." {
                 continue;
             }
-            // upstream: generator.c:1648-1658 - an entry below a directory that
+            // upstream: generator.c:1685-1695 - an entry below a directory that
             // could not be made returns before its parent is made.
             if failed_dirs.failed_ancestor(relative_path).is_some() {
                 continue;
@@ -897,7 +897,7 @@ impl ReceiverContext {
                 if let Err(e) = create_result
                     && e.kind() != io::ErrorKind::AlreadyExists
                 {
-                    // upstream: generator.c:1721-1724 - a failed make_path()
+                    // upstream: generator.c:1758-1761 - a failed make_path()
                     // names the entry's directory, not the component it stopped at.
                     let what = format!(
                         "recv_generator: mkdir {} failed",
@@ -947,7 +947,7 @@ impl ReceiverContext {
     /// the final component, so a parent reached through a symlinked ancestor
     /// that leaves the destination counts as absent.
     ///
-    /// upstream: generator.c:1718-1719 - `do_stat_at(dn, &sx.st) < 0`
+    /// upstream: generator.c:1755-1756 - `do_stat_at(dn, &sx.st) < 0`
     fn relative_parent_present(
         &self,
         dest_dir: &Path,
@@ -974,7 +974,7 @@ impl ReceiverContext {
     /// caller should emit: for a new dir, `ITEM_LOCAL_CHANGE | ITEM_IS_NEW`;
     /// for an existing dir, the attribute-diff flags computed against the
     /// pre-apply destination stat (`ITEM_REPORT_{TIME,PERMS,OWNER,GROUP}`),
-    /// mirroring upstream's `itemize()` at `generator.c:1870` which runs before
+    /// mirroring upstream's `itemize()` at `generator.c:1907` which runs before
     /// `set_file_attrs` (`generator.c:1895`). Only returns `Err` for
     /// unrecoverable errors.
     ///
@@ -1012,12 +1012,12 @@ impl ReceiverContext {
             dest_dir.join(relative_path)
         };
 
-        // upstream: generator.c:1648-1658 - an entry below a directory
+        // upstream: generator.c:1685-1695 - an entry below a directory
         // --existing skipped returns early and silently.
         if failed_dirs.is_missing_or_below(entry.path()) {
             return Ok(None);
         }
-        // upstream: generator.c:1811 - an implied parent under
+        // upstream: generator.c:1848 - an implied parent under
         // --no-implied-dirs is left as the destination has it.
         if self.skips_implied_dir(entry) {
             return Ok(None);
@@ -1037,7 +1037,7 @@ impl ReceiverContext {
             return Ok(None);
         }
 
-        // upstream: generator.c:1757-1806 - the existence gate reads the lstat
+        // upstream: generator.c:1794-1843 - the existence gate reads the lstat
         // taken before the symlink obstacle is removed below. Marking the
         // directory missing drives the descendant skip through the
         // failed-ancestor check above, as upstream's `skip_dir` does. The skip
@@ -1056,11 +1056,11 @@ impl ReceiverContext {
         // parent. Multi-component paths fall back to
         // `fs::create_dir_all`, which preserves the parent-walk for
         // `--relative` shapes.
-        // upstream: generator.c:1745 / 1840-1843 - lstat-classify the
+        // upstream: generator.c:1782 / 1840-1843 - lstat-classify the
         // destination so a symlink-to-directory is replaced by a real directory
         // unless --keep-dirlinks follows it.
         //
-        // upstream: generator.c:1840-1843 - a failed
+        // upstream: generator.c:1877-1880 - a failed
         // `delete_item(..., DEL_FOR_DIR)` goes to `skipping_dir_contents`, so
         // the directory and its contents are skipped and the error is reported.
         // This is the incremental-recursion twin of the `create_directories`
@@ -1091,14 +1091,14 @@ impl ReceiverContext {
             }
         };
         let is_new = dir_dest.needs_mkdir();
-        // upstream: generator.c:1869-1872 - itemize() runs before set_file_attrs
+        // upstream: generator.c:1906-1909 - itemize() runs before set_file_attrs
         // (generator.c:1895), so compute the itemize flags from the pre-apply
         // destination stat here. A new dir reports ITEM_LOCAL_CHANGE|ITEM_IS_NEW
         // (`cd+++++++++`); an existing dir reports the attribute-diff flags
         // (ITEM_REPORT_{TIME,PERMS,OWNER,GROUP}) so a differing root `.` mtime
         // emits `.d..t......`. For an existing dir the stat must be read now,
         // before apply_metadata_with_pre_transfer_stat below overwrites the mtime.
-        // upstream: generator.c:1853-1854 - the destination root the receiver
+        // upstream: generator.c:1890-1891 - the destination root the receiver
         // pre-flight-mkdir'd carries FLAG_DIR_CREATED, so it itemizes as new.
         let created_root = self.dest_root_created && relative_path.as_os_str() == ".";
         let iflags: u32 = if is_new || created_root {
@@ -1107,7 +1107,7 @@ impl ReceiverContext {
         } else {
             self.existing_dir_iflags(entry, &dir_path)
         };
-        // upstream: syscall.c:2183-2185 - `do_mkdir()` (reached from
+        // upstream: syscall.c:2254-2256 - `do_mkdir()` (reached from
         // `do_mkdir_at()`) returns 0 without touching the filesystem when
         // `dry_run` is set, and `rsync.c:524-525 set_file_attrs()` returns early
         // the same way, while `generator.c:1869-1872 itemize()` still runs above.
@@ -1135,7 +1135,7 @@ impl ReceiverContext {
             #[cfg(not(unix))]
             let create_result = fs::create_dir_all(&dir_path);
             if let Err(e) = create_result {
-                // upstream: generator.c:1873-1887 - every mkdir failure but
+                // upstream: generator.c:1910-1924 - every mkdir failure but
                 // EEXIST is reported and the directory's contents skipped, as
                 // in `create_directories` above. A refusal stays loud: it
                 // prints and finishes the run with RERR_PARTIAL.
@@ -1199,7 +1199,7 @@ impl ReceiverContext {
         acl_cache: Option<&LiveAclCache>,
         acl_id_map: Option<&AclIdMapper>,
     ) {
-        // upstream: generator.c:1904-1912 - grant a transient u+rwx to a
+        // upstream: generator.c:1941-1949 - grant a transient u+rwx to a
         // read-only directory so files can be written into it; the real mode
         // is restored in touch_up_dirs.
         #[cfg(unix)]
@@ -1217,7 +1217,7 @@ impl ReceiverContext {
         let apply_entry = tweaked_entry.as_ref().unwrap_or(entry);
         #[cfg(not(unix))]
         let apply_entry = entry;
-        // upstream: generator.c:1856 dest_mode(..., statret == 0) - supply the
+        // upstream: generator.c:1893 dest_mode(..., statret == 0) - supply the
         // pre-transfer stat only for a dir that already existed so the !perms
         // dest_mode() apply keeps its own permission bits (exists=true) instead
         // of rewriting them; a freshly created dir (is_new) uses exists=false.
@@ -1231,12 +1231,12 @@ impl ReceiverContext {
                 dir_path,
             )
         };
-        // upstream: generator.c:1904-1912 + generator.c:2594 - record the
+        // upstream: generator.c:1941-1949 + generator.c:2638 - record the
         // strict mode touch_up_dirs must reinstate before the !preserve_perms
         // apply below raises the directory to owner-rwx.
         #[cfg(unix)]
         self.record_dir_perm_restore(dir_path, entry, metadata_opts, pre_transfer.as_ref());
-        // upstream: generator.c:1895 - set_file_attrs() gets the existing
+        // upstream: generator.c:1932 - set_file_attrs() gets the existing
         // dir's stat, so same_mtime() skips a time it already carries.
         if let Err(e) = apply_metadata_with_pre_transfer_stat(
             dir_path,
@@ -1347,14 +1347,14 @@ impl ReceiverContext {
             return;
         }
 
-        // upstream: generator.c:2744 - need_retouch_dir_times =
+        // upstream: generator.c:2828 - need_retouch_dir_times =
         // preserve_mtimes && !omit_dir_times. `effective_omit_dir_times` folds
         // in the implicit `--backup`-without-`--backup-dir` rule
         // (options.c:2494-2495, generator.c:1820), so the same predicate governs
         // both this retouch pass and the creation-time apply above.
         let retouch_times = self.config.flags.times && !self.config.effective_omit_dir_times();
 
-        // upstream: generator.c:2594-2599 - restore the strict dest_mode()
+        // upstream: generator.c:2638-2643 - restore the strict dest_mode()
         // result on the !preserve_perms directories the metadata apply raised
         // to owner-rwx at first visit (recorded then, because the raise erases
         // a pre-existing directory's own bits). Deepest-first so a parent's
@@ -1383,7 +1383,7 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: generator.c:2594 - fix_dir_perms = !am_root && !(mode &
+        // upstream: generator.c:2638 - fix_dir_perms = !am_root && !(mode &
         // S_IWUSR). This walk reads the flist mode directly, which is only the
         // applied mode under --perms; the !preserve_perms restores were drained
         // from the recorded list above.
@@ -1398,16 +1398,16 @@ impl ReceiverContext {
         }
 
         // Iterate in reverse so deepest directories are touched first.
-        // upstream: generator.c:2581 walks `for (i = start; i <= end; i++)` in
+        // upstream: generator.c:2625 walks `for (i = start; i <= end; i++)` in
         // list order. Deviation from upstream: oc walks in reverse.
         let released = self.released_dirs.iter().map(|(_, e)| e);
         for entry in released.chain(self.file_list.iter()).rev() {
-            // upstream: generator.c:2612 - poke a keepalive once the I/O
+            // upstream: generator.c:2656 - poke a keepalive once the I/O
             // lull has elapsed so a remote sender does not time out while this
             // final metadata pass walks a large directory tree. A strict no-op
             // unless --timeout is set (allowed_lull None).
             let _ = writer.maybe_send_keepalive();
-            // upstream: generator.c:2586 - implied parents are not re-timed.
+            // upstream: generator.c:2630 - implied parents are not re-timed.
             if !entry.is_dir() || self.skips_implied_dir(entry) {
                 continue;
             }
@@ -1419,7 +1419,7 @@ impl ReceiverContext {
                 dest_dir.join(relative_path)
             };
 
-            // upstream: generator.c:2598-2599 - restore the real mode before
+            // upstream: generator.c:2642-2643 - restore the real mode before
             // the mtime repair. Only directories that lack the user write bit
             // were tweaked, so only those are chmod'd back.
             #[cfg(unix)]
@@ -1442,7 +1442,7 @@ impl ReceiverContext {
 
             let mtime = filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
-            // upstream: generator.c:2602-2607 - gen_entry_stat() then
+            // upstream: generator.c:2646-2651 - gen_entry_stat() then
             // gen_entry_set_times() only when mtime_differs(); a directory that
             // can no longer be stat'd is left alone.
             #[cfg(unix)]
@@ -1605,7 +1605,7 @@ mod touch_up_dirs_tests {
     /// A refused obstruction removal must be REPORTED, not laundered into
     /// "the destination already exists".
     ///
-    /// upstream: generator.c:1840-1843 - when
+    /// upstream: generator.c:1877-1880 - when
     /// `delete_item(..., del_opts | DEL_FOR_DIR)` fails, upstream does
     /// `goto skipping_dir_contents`; it never re-probes the destination and
     /// carries on. oc previously recovered with
@@ -1681,7 +1681,7 @@ mod touch_up_dirs_tests {
     /// mkdir that follows fails, is reported, and the directory joins the
     /// failed set so its contents are skipped.
     ///
-    /// upstream: generator.c:1745-1746 leaves the entry to `gen_entry_mkdir()`
+    /// upstream: generator.c:1782-1783 leaves the entry to `gen_entry_mkdir()`
     /// and generator.c:1873-1887 reports `recv_generator: mkdir %s failed`,
     /// sets `skip_dir` and continues; only the end-of-run exit is 23. The
     /// fixture puts a regular file where a parent belongs, so the stat and the
@@ -1829,7 +1829,7 @@ mod touch_up_dirs_tests {
     /// mtime with the current time. `touch_up_dirs` must re-apply the
     /// original mtime from the file list entry.
     ///
-    /// upstream: generator.c:2565-2611 - touch_up_dirs()
+    /// upstream: generator.c:2609-2655 - touch_up_dirs()
     #[test]
     fn restores_directory_mtime_after_file_writes() {
         let dir = test_support::create_tempdir();
@@ -1868,7 +1868,7 @@ mod touch_up_dirs_tests {
     /// Under `--omit-dir-times` the retouch pass must NOT re-apply the source
     /// directory mtime, leaving the directory at its (current) on-disk mtime.
     ///
-    /// upstream: generator.c:2744 - `need_retouch_dir_times = preserve_mtimes
+    /// upstream: generator.c:2828 - `need_retouch_dir_times = preserve_mtimes
     /// && !omit_dir_times`. On a remote pull the local client IS the receiver
     /// and `-O` never rides the wire (options.c:2822-2823 gates the compact
     /// 'O' on am_sender), so the receiver config must carry `omit_dir_times`
@@ -1934,7 +1934,7 @@ mod touch_up_dirs_tests {
     /// writable while the receiver creates files inside it, then be restored
     /// to its restrictive mode afterward.
     ///
-    /// upstream: generator.c:1904-1912 (grant `u+rwx`) + generator.c:2594
+    /// upstream: generator.c:1941-1949 (grant `u+rwx`) + generator.c:2638
     /// (`fix_dir_perms` restore in touch_up_dirs).
     #[cfg(unix)]
     #[test]
@@ -2292,7 +2292,7 @@ mod touch_up_dirs_tests {
         (dir, sub, entry)
     }
 
-    /// upstream: generator.c:1895 hands an existing dir's stat to
+    /// upstream: generator.c:1932 hands an existing dir's stat to
     /// set_file_attrs(), whose same_mtime() (rsync.c:489 -> util1.c:1744
     /// same_time()) treats a same-second mtime as equal under the default
     /// --modify-window, so no utimes is issued. A root daemon dropped to

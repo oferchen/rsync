@@ -177,7 +177,7 @@ extern "C" fn handle_sighup(_signum: libc::c_int) {
 /// runtime sets before `main`. A write to a closed pipe or socket then fails
 /// with `EPIPE` and travels the ordinary write-error path instead of
 /// requesting a signal shutdown.
-/// upstream: main.c:1926-1928 `SIGACTION(SIGPIPE, SIG_IGN)` - "we consistently
+/// upstream: main.c:1930-1932 `SIGACTION(SIGPIPE, SIG_IGN)` - "we consistently
 /// check error codes and will see the EPIPE".
 ///
 /// # Errors
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn broken_pipe_surfaces_epipe_without_requesting_shutdown() {
-        // upstream: main.c:1926-1928 ignores SIGPIPE so a write to a closed
+        // upstream: main.c:1930-1932 ignores SIGPIPE so a write to a closed
         // pipe fails with EPIPE and the ordinary write-error path reports
         // it. A SIGPIPE handler that requested a shutdown would let the
         // signal watcher relabel that failure as a signal exit (code 20).

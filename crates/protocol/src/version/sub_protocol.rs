@@ -7,27 +7,27 @@
 //! compatible pre-release; otherwise the protocol is downgraded by one. This
 //! module mirrors that logic byte-for-byte.
 //!
-//! Upstream reference: `rsync.h:128` (`SUBPROTOCOL_VERSION`), `compat.c:896`
+//! Upstream reference: `rsync.h:129` (`SUBPROTOCOL_VERSION`), `compat.c:905`
 //! (`get_subprotocol_version`), and `compat.c:133` (`check_sub_protocol`).
 
 use super::constants::NEWEST_SUPPORTED_PROTOCOL;
 
 /// Newest protocol version this implementation speaks.
 ///
-/// Mirrors `PROTOCOL_VERSION` from upstream `rsync.h:114`, which equals the
+/// Mirrors `PROTOCOL_VERSION` from upstream `rsync.h:115`, which equals the
 /// newest supported protocol.
 pub const PROTOCOL_VERSION: u8 = NEWEST_SUPPORTED_PROTOCOL;
 
 /// Subprotocol tag for this build.
 ///
-/// upstream: rsync.h:128 `SUBPROTOCOL_VERSION`. It MUST be `0` for a final,
+/// upstream: rsync.h:129 `SUBPROTOCOL_VERSION`. It MUST be `0` for a final,
 /// official release and non-zero only for a pre-release protocol tweak. This
 /// crate ships as a release, so it mirrors upstream 3.5.1's value of `0`.
 pub const SUBPROTOCOL_VERSION: u8 = 0;
 
 /// Returns the subprotocol version this side advertises for `protocol_version`.
 ///
-/// upstream: compat.c:896 `get_subprotocol_version()`. A release build
+/// upstream: compat.c:905 `get_subprotocol_version()`. A release build
 /// (`SUBPROTOCOL_VERSION == 0`) always advertises `0`; a pre-release build
 /// advertises its subprotocol only while negotiating the newest protocol and
 /// falls back to `0` (final version of the older protocol) otherwise.
@@ -43,7 +43,7 @@ pub const fn get_subprotocol_version(protocol_version: u8) -> u8 {
 /// Reconciles a pre-release peer's subprotocol against ours, returning the
 /// protocol version to advertise.
 ///
-/// upstream: compat.c:133 `check_sub_protocol()`. The server runs this before
+/// upstream: compat.c:134 `check_sub_protocol()`. The server runs this before
 /// the numeric version exchange so that the newest protocol is only advertised
 /// when both sides speak a compatible (sub)protocol. `their_protocol` and
 /// `their_sub` are the `VER.SUB` values the peer declared (via its `client_info`
@@ -69,7 +69,7 @@ pub fn check_sub_protocol(
     their_protocol: u8,
     their_sub: u8,
 ) -> u8 {
-    // upstream: compat.c:139-148 - a peer that declares no VER.SUB (zero version,
+    // upstream: compat.c:140-149 - a peer that declares no VER.SUB (zero version,
     // no dot, or zero subprotocol) is a final release; only our own pre-release
     // status can force a downgrade here.
     if their_protocol == 0 || their_sub == 0 {
@@ -79,7 +79,7 @@ pub fn check_sub_protocol(
         return protocol_version;
     }
 
-    // upstream: compat.c:150-154 - a pre-release of an older protocol pins us to
+    // upstream: compat.c:151-155 - a pre-release of an older protocol pins us to
     // the last release of that older protocol.
     if their_protocol < protocol_version {
         if their_sub != 0 {
@@ -88,7 +88,7 @@ pub fn check_sub_protocol(
         return protocol_version;
     }
 
-    // upstream: compat.c:156-159 - a newer protocol's subprotocol reads as 0
+    // upstream: compat.c:157-160 - a newer protocol's subprotocol reads as 0
     // (its final release) from our side; then any subprotocol mismatch drops us
     // by one so both sides fall back to the last compatible protocol.
     let their_sub = if their_protocol > protocol_version {
@@ -108,19 +108,19 @@ mod tests {
         PROTOCOL_VERSION, SUBPROTOCOL_VERSION, check_sub_protocol, get_subprotocol_version,
     };
 
-    // upstream: rsync.h:128 - a shipping release MUST carry SUBPROTOCOL_VERSION 0.
+    // upstream: rsync.h:129 - a shipping release MUST carry SUBPROTOCOL_VERSION 0.
     #[test]
     fn subprotocol_version_matches_upstream_release() {
         assert_eq!(SUBPROTOCOL_VERSION, 0);
     }
 
-    // upstream: rsync.h:114 - PROTOCOL_VERSION is the newest supported protocol.
+    // upstream: rsync.h:115 - PROTOCOL_VERSION is the newest supported protocol.
     #[test]
     fn protocol_version_is_newest_supported() {
         assert_eq!(PROTOCOL_VERSION, 33);
     }
 
-    // upstream: compat.c:896 - a release build advertises 0 at every version.
+    // upstream: compat.c:905 - a release build advertises 0 at every version.
     #[test]
     fn get_subprotocol_version_is_zero_for_release() {
         assert_eq!(get_subprotocol_version(PROTOCOL_VERSION), 0);
@@ -175,7 +175,7 @@ mod tests {
         }
     }
 
-    // upstream: compat.c:133 wired to get_subprotocol_version() - as an actual
+    // upstream: compat.c:134 wired to get_subprotocol_version() - as an actual
     // release build, oc never downgrades against a plain release peer.
     #[test]
     fn release_build_never_downgrades_against_release_peer() {
@@ -186,7 +186,7 @@ mod tests {
         );
     }
 
-    // upstream: compat.c:158-159 - as a release, an equal-protocol pre-release
+    // upstream: compat.c:159-160 - as a release, an equal-protocol pre-release
     // peer still forces the one-step downgrade below the newest protocol.
     #[test]
     fn release_build_downgrades_against_equal_prerelease_peer() {

@@ -8,7 +8,7 @@
 //! rsync warning: <text> (code N) at <basename>(<line>) [<role>=<version>]
 //! ```
 //!
-//! upstream: log.c:956-960 `log_exit()`, errcode.h.
+//! upstream: log.c:1044-1048 `log_exit()`, errcode.h.
 //!
 //! The `rsync_error_fmt!` and `rsync_warning_fmt!` macros produce strings
 //! in this format. They capture `file!()` and `line!()` at the call site,

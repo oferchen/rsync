@@ -228,7 +228,7 @@ pub(super) fn held_leaf<'a>(
 /// the caller takes its path-based fallback. A refusal from the confined
 /// walk is returned as an error, never folded into that fallback.
 ///
-/// upstream: rsync-3.5.1/syscall.c:3858-3871 held_dfd_for()
+/// upstream: rsync-3.5.2/syscall.c:3926-3939 held_dfd_for()
 pub(super) fn at_dest_leaf<T>(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
     dest_dir: &Path,
@@ -246,7 +246,7 @@ pub(super) fn at_dest_leaf<T>(
     if let Some(leaf) = super::lstat::single_component_leaf(dest_dir, relative_path, full_path) {
         return op(held.current_dirfd(), leaf).map(Some);
     }
-    // upstream: syscall.c:3858-3871 held_dfd_for() gets its descriptor from
+    // upstream: syscall.c:3926-3939 held_dfd_for() gets its descriptor from
     // the same secure walk, so a held parent never lifts the depth ceiling.
     check_secure_walk_parents(relative_path)?;
     if let Some((dirfd, leaf)) = held_leaf(held, dest_dir, relative_path, full_path) {
@@ -279,7 +279,7 @@ fn check_secure_walk_parents(relative_path: &Path) -> io::Result<()> {
 ///
 /// - **Off Linux** anchoring is always available: the parent resolves through
 ///   [`DirSandbox::open_subdir_confined`](crate::dir_sandbox::DirSandbox::open_subdir_confined),
-///   oc's port of upstream's portable `ds_descend()` (`syscall.c:3032-3106`),
+///   oc's port of upstream's portable `ds_descend()` (`syscall.c:3103-3177`),
 ///   which needs no kernel support.
 /// - **On Linux** anchoring uses `openat2(RESOLVE_BENEATH)`, so it tracks
 ///   `openat2_supported()`. A kernel below 5.6 is the one state that degrades.

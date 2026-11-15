@@ -20,7 +20,7 @@ use logging::warn_log;
 
 /// Names the alt-dest option a basis directory came from.
 ///
-/// upstream: `options.c:1450` `alt_dest_opt()`. Upstream reads the single
+/// upstream: `options.c:1468` `alt_dest_opt()`. Upstream reads the single
 /// `alt_dest_type` in effect rather than a per-entry kind, which it can do
 /// because combining two alt-dest options is rejected outright
 /// (`options.c:1854-1858`, exit 1) - so at most one kind is ever present and the
@@ -60,7 +60,7 @@ fn absolute_destination(destination: &Path) -> PathBuf {
 
 /// Whether the CLIENT should run the basis-dir check for a remote transfer.
 ///
-/// upstream: `main.c:1442` runs `check_alt_basis_dirs()` on the client only
+/// upstream: `main.c:1446` runs `check_alt_basis_dirs()` on the client only
 /// when the client is the receiver, i.e. on a pull. On a push the remote server
 /// is the receiver and checks its own forwarded argv (`main.c:1259`), because
 /// `options.c:3114-3123` emits the basis-dir args only in that direction - so
@@ -281,7 +281,7 @@ mod tests {
         );
     }
 
-    /// Each alt-dest option names itself. upstream: `options.c:1450`.
+    /// Each alt-dest option names itself. upstream: `options.c:1468`.
     #[test]
     fn each_alt_dest_kind_names_its_own_option() {
         let temp = test_support::create_tempdir();

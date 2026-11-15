@@ -123,7 +123,7 @@ The only place that already encapsulates block sizing is
 `checksum_seed` flows through the entire transfer:
 
 - `crates/batch/src/format/header.rs:31,38,72,103` - serialised as `i32`
-  on the wire (upstream `io.c:2449 write_int(batch_fd, checksum_seed)`).
+  on the wire (upstream `io.c:2456 write_int(batch_fd, checksum_seed)`).
 - `crates/batch/src/lib.rs:380,429,468,472` - public field `pub checksum_seed: i32`, builder method `with_checksum_seed(seed: i32)`.
 - `crates/batch/src/reader/mod.rs:114` - `self.config.checksum_seed = header.checksum_seed`.
 - `crates/checksums/src/strong/md4.rs:138-265` - `digest_with_seed(seed: i32, ...)`.
@@ -178,7 +178,7 @@ work splits cleanly into three follow-up PRs by tier.
   types; not part of the wire path.
 - `BatchHeader::protocol_version: i32` (vs. `ProtocolVersion`). Upstream
   serialises this as a signed 32-bit "magic + version" combo
-  (`io.c:2438-2455`); converting requires a bespoke
+  (`io.c:2445-2462`); converting requires a bespoke
   `BatchProtocolField` rather than reusing `ProtocolVersion`.
 - `RollingDigest`'s `len: usize` - the only consumer is the digest
   itself; wrapping is not warranted.

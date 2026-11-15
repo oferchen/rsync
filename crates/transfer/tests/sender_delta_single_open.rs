@@ -1,6 +1,6 @@
 //! One source open per file on the sender's delta path.
 //!
-//! upstream: `sender.c:656-800` - `send_files()` opens each source once and
+//! upstream: `sender.c:664-808` - `send_files()` opens each source once and
 //! reads the token scan and the whole-file checksum through `map_file()` over
 //! that fd. oc used to open the source a second time to re-read matched
 //! blocks. A daemon push makes the client the sender while the daemon runs as

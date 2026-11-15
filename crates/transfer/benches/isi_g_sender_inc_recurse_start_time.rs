@@ -8,7 +8,7 @@
 //!
 //! # The original motivation
 //!
-//! Upstream rsync's INC_RECURSE design (`rsync.h:151 MIN_FILECNT_LOOKAHEAD`,
+//! Upstream rsync's INC_RECURSE design (`rsync.h:152 MIN_FILECNT_LOOKAHEAD`,
 //! `compat.c:162 set_allow_inc_recurse()`) lets the sender begin
 //! transferring file data **before** the full file list has been built.
 //! Without it the sender must walk the entire source tree, build every
@@ -123,9 +123,9 @@
 //! - ISI.c - single-segment push interop.
 //! - ISI.d - multi-segment push interop.
 //! - ISI.e - wire-byte parity against upstream sender.
-//! - Upstream `rsync.h:151` `MIN_FILECNT_LOOKAHEAD = 1000` - segment
+//! - Upstream `rsync.h:152` `MIN_FILECNT_LOOKAHEAD = 1000` - segment
 //!   scheduling throttle.
-//! - Upstream `compat.c:162 set_allow_inc_recurse()` - the negotiation
+//! - Upstream `compat.c:163 set_allow_inc_recurse()` - the negotiation
 //!   that the `'i'` capability bit triggers.
 
 #![deny(unsafe_code)]

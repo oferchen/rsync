@@ -1,6 +1,6 @@
 //! Oracle: the `-vv` `total:` line of a delta transfer equals rsync 3.5.1's.
 //!
-//! upstream: match.c:480-489 `match_report()`. `matches` and `data` follow
+//! upstream: match.c:516-525 `match_report()`. `matches` and `data` follow
 //! from the delta itself, but `hash_hits` and `false_alarms` are defined by
 //! upstream's own `hash_table` (match.c:84-110, 214-271), which oc's matcher
 //! does not use; oc replays that table to report them. Each fixture runs as a
@@ -10,7 +10,7 @@
 //! # Gating
 //!
 //! Self-skips unless `OC_RSYNC_UPSTREAM_COMPAT=1` and an upstream 3.5.1
-//! binary resolves (override with `OC_RSYNC_UPSTREAM_BIN_3_5_1`).
+//! binary resolves (override with `OC_RSYNC_UPSTREAM_BIN_3_5_2`).
 #![cfg(unix)]
 
 use std::fs;
@@ -159,7 +159,7 @@ fn delta_total_line_matches_upstream() {
     if !upstream_compat_enabled() {
         return;
     }
-    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) else {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
     };
     let oc = oc_rsync_bin();

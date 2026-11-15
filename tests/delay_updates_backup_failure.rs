@@ -170,7 +170,7 @@ fn a_failed_backup_leaves_the_destination_untouched() {
          Swallowing the create_dir_all reported the rename's derived `No such \
          file or directory` instead. stderr was: {stderr}"
     );
-    // upstream: log.c:336-341 - make_backup()'s FERROR reaches stderr without
+    // upstream: log.c:416-421 - make_backup()'s FERROR reaches stderr without
     // setting got_xfer_error, so 3.5.0 exits 0 for this cell (measured, push
     // and pull alike). Pinned so a future io_error bit here is a deliberate,
     // visible divergence rather than a drift.

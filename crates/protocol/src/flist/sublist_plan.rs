@@ -25,7 +25,7 @@ use super::{DirectoryTree, FileEntry};
 /// The lookahead a sender keeps: it sends further sub-lists while fewer than
 /// this many entries are queued beyond the list it is working on.
 ///
-/// upstream: rsync.h:151 `#define MIN_FILECNT_LOOKAHEAD 1000`, used by
+/// upstream: rsync.h:152 `#define MIN_FILECNT_LOOKAHEAD 1000`, used by
 /// sender.c:516,550 `send_extra_file_list(f_out, MIN_FILECNT_LOOKAHEAD)`
 pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
 
@@ -73,7 +73,7 @@ impl SubListPlan {
             let name = entry.path().as_path();
             let parent = entry.dirname().as_ref();
             if parent.as_os_str().is_empty() || parent == Path::new(".") {
-                // upstream: flist.c:2638-2644 - a FLAG_DUPLICATE sibling keeps its
+                // upstream: flist.c:2649-2655 - a FLAG_DUPLICATE sibling keeps its
                 // dir_flist slot but owns no sub-list; its children stay with the
                 // surviving directory.
                 if entry.is_dir() && name != Path::new(".") && !entry.duplicate() {
@@ -133,7 +133,7 @@ impl SubListPlan {
 
     /// The wire `ndx_start` of each list, initial list first.
     ///
-    /// upstream: flist.c:3503 - the first list starts at 1 under
+    /// upstream: flist.c:3514 - the first list starts at 1 under
     /// `inc_recurse`; flist.c:3511 - each later one at
     /// `prev->ndx_start + prev->used + 1`.
     #[must_use]
@@ -158,7 +158,7 @@ impl SubListPlan {
     /// request belongs to; a request for a list not yet sent waits until it is.
     /// Sub-lists left over after the last record go out after it.
     ///
-    /// upstream: sender.c:515-547 (`send_extra_file_list()` around each
+    /// upstream: sender.c:523-555 (`send_extra_file_list()` around each
     /// `read_ndx_and_attrs()`), flist.c:2651 (`file_total - file_old_total`),
     /// rsync.c:396-401 (`file_old_total` recounted through the request's list)
     #[must_use]
@@ -187,7 +187,7 @@ impl SubListPlan {
     /// below that list (`ndx_start - 1`), and `.` under the initial list's:
     /// at its own NDX the generator only pre-creates it.
     ///
-    /// upstream: generator.c:1632 (`ndx != cur_flist->ndx_start - 1 ? -1`: `is_dir` is -1 off the gap),
+    /// upstream: generator.c:1669 (`ndx != cur_flist->ndx_start - 1 ? -1`: `is_dir` is -1 off the gap),
     /// generator.c:2780-2788 (the gap itemize), rsync.c:flist_for_ndx() (the
     /// receiver maps a gap NDX back to the owning directory).
     #[must_use]
@@ -216,7 +216,7 @@ impl SubListPlan {
 /// [`MIN_FILECNT_LOOKAHEAD`] entries are queued beyond the list the request
 /// belongs to; a request for a list not yet sent waits until it is.
 ///
-/// upstream: sender.c:515-547 (`send_extra_file_list()` around each
+/// upstream: sender.c:523-555 (`send_extra_file_list()` around each
 /// `read_ndx_and_attrs()`), flist.c:2651 (`file_total - file_old_total`),
 /// rsync.c:396-401 (`file_old_total` recounted through the request's list)
 #[derive(Clone, Debug)]

@@ -4,7 +4,7 @@
     ignore = "flaky on Windows CI: in-process daemon intermittently fails to respond; the trust gate is platform-independent and covered on Linux/macOS"
 )]
 fn daemon_proxy_protocol_trusted_peer_header_is_honoured() {
-    // upstream: clientserver.c:1443-1446 - a peer listed in `proxy protocol
+    // upstream: clientserver.c:1453-1456 - a peer listed in `proxy protocol
     // hosts` clears `proxy_peer_allowed()`, its PROXY header is read, and the
     // CLAIMED address replaces the socket address for everything downstream:
     // `hosts allow`/`hosts deny`, `%a`, and the `connect from %s (%s)` log
@@ -20,7 +20,7 @@ fn daemon_proxy_protocol_trusted_peer_header_is_honoured() {
 
     // `reverse lookup = false` keeps the test off DNS (10.9.8.7 has no PTR
     // record worth waiting for) and pins the UNDETERMINED sentinel in the
-    // connect line, exactly as upstream renders it (clientserver.c:1525).
+    // connect line, exactly as upstream renders it (clientserver.c:1535).
     let config_path = dir.path().join("rsyncd.conf");
     fs::write(
         &config_path,

@@ -22,7 +22,7 @@ The verification covers three distinct wire-level propagation channels:
    negotiated.
 3. **MSG_IO_ERROR multiplex frames** - 4-byte LE payload OR'd into the
    receiver's multiplex reader accumulator, forwarded to the generator
-   per upstream `io.c:1521-1528`.
+   per upstream `io.c:1528-1535`.
 
 Out of scope: receiver-side I/O errors (EACCES on destination open,
 disk full) that produce `IOERR_GENERAL` locally. Those are covered by
@@ -45,7 +45,7 @@ Receiver path: `receiver/file_list/receive.rs` lines 62-72 - reads
 4 bytes LE, OR's non-zero value into `self.flist_io_error` (unless
 `ignore_errors`).
 
-upstream: `flist.c:2517-2518` (sender), `flist.c:2738-2742` (receiver).
+upstream: `flist.c:2528-2529` (sender), `flist.c:2749-2753` (receiver).
 
 ### 2.2 Protocol 30+ with SAFE_FILE_LIST (non-varint)
 
@@ -100,7 +100,7 @@ Receiver path: `transfer/reader/multiplex.rs::handle_io_error_msg()` -
 OR's 4-byte LE payload into `self.io_error`. Callers retrieve via
 `take_io_error()` which resets the accumulator after reading.
 
-upstream: `io.c:1521-1528` - `io_error |= val; if (am_receiver)
+upstream: `io.c:1528-1535` - `io_error |= val; if (am_receiver)
 send_msg_int(MSG_IO_ERROR, val);`.
 
 ### 2.5 INC_RECURSE sub-list segments
@@ -188,7 +188,7 @@ the accumulator, so the value must be taken exactly once and forwarded.
 
 ISI.f.3 must verify:
 1. Whether upstream rsync expects the receiver to forward MSG_IO_ERROR
-   to the generator (yes, per `io.c:1528`: `if (am_receiver)
+   to the generator (yes, per `io.c:1535`: `if (am_receiver)
    send_msg_int(MSG_IO_ERROR, val)`).
 2. Whether oc-rsync currently performs this forwarding (search for
    `take_io_error()` callsites outside of tests).
@@ -211,7 +211,7 @@ Priority: `DEL_LIMIT` > `GENERAL` > `VANISHED`. When multiple bits are
 set, the highest-priority exit code wins. This matches upstream
 `log.c:log_exit()`.
 
-upstream: `rsync.h:168-170` defines the constants; `log.c` maps them.
+upstream: `rsync.h:169-171` defines the constants; `log.c` maps them.
 
 ## 5. Test cases
 
@@ -325,7 +325,7 @@ Assertions:
 - `ReceiverContext.flist_io_error` == 0 (suppressed)
 - Exit code == 0
 
-upstream: `flist.c:2517` - `write_int(f, ignore_errors ? 0 : io_error)`.
+upstream: `flist.c:2528` - `write_int(f, ignore_errors ? 0 : io_error)`.
 
 ### TC-10: Bitwise OR accumulation across multiple read_entry calls
 
@@ -429,7 +429,7 @@ transfer loop and whether its value is merged into
 expects the receiver to:
 
 1. Forward `MSG_IO_ERROR` to the generator via
-   `send_msg_int(MSG_IO_ERROR, val)` (yes, per `io.c:1528`).
+   `send_msg_int(MSG_IO_ERROR, val)` (yes, per `io.c:1535`).
 2. Accumulate it locally for its own exit code (yes, the receiver
    process's own `io_error` global includes the OR'd value).
 

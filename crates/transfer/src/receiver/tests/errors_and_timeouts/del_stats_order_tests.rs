@@ -1,7 +1,7 @@
 //! When the receiver's phase-ending `NDX_DONE`s and its `NDX_DEL_STATS` frame
 //! go out, relative to the sender's `NDX_DONE`s it reads.
 //!
-//! upstream: generator.c:2853-2872 - once the receiver has finished phase 0,
+//! upstream: generator.c:2939-2958 - once the receiver has finished phase 0,
 //! the generator writes the redo phase's `NDX_DONE`, the delay phase's unless
 //! `--delay-updates` holds it back, and at protocol 31 an early delete's
 //! counters and the `NDX_DONE` after them, without waiting for the sender.
@@ -145,7 +145,7 @@ fn session(ctx: &mut ReceiverContext) -> Vec<u8> {
 
 use Wire::{DelStats as S, Done as D, Read as R};
 
-/// upstream: generator.c:2862-2871 - plain `--delete` (delete-during) without
+/// upstream: generator.c:2948-2957 - plain `--delete` (delete-during) without
 /// `--delay-updates`: the redo and delay phases' `NDX_DONE`s, the counters and
 /// the `NDX_DONE` after them all follow the sender's first `NDX_DONE`.
 #[test]
@@ -154,7 +154,7 @@ fn early_delete_writes_every_phase_end_after_the_first_sender_done() {
     assert_eq!(session(&mut ctx), encode(&[D, R, D, D, S, D, R, R, R, D]));
 }
 
-/// upstream: generator.c:2862-2871 + 2886-2889 - under `--delay-updates` the
+/// upstream: generator.c:2948-2957 + 2886-2889 - under `--delay-updates` the
 /// counters follow the redo phase's `NDX_DONE`; the delay phase's and the one
 /// after it wait for the sender's next `NDX_DONE`.
 #[test]
@@ -163,7 +163,7 @@ fn early_delete_under_delay_updates_holds_the_delay_phase_end() {
     assert_eq!(session(&mut ctx), encode(&[D, R, D, S, R, D, D, R, R, D]));
 }
 
-/// upstream: generator.c:2910-2915 - `--delete-delay` / `--delete-after` send
+/// upstream: generator.c:3002-3007 - `--delete-delay` / `--delete-after` send
 /// the counters and their `NDX_DONE` once the sender's phase loop is over.
 #[test]
 fn late_delete_stats_wait_for_the_sender_phase_loop() {
@@ -171,7 +171,7 @@ fn late_delete_stats_wait_for_the_sender_phase_loop() {
     assert_eq!(session(&mut ctx), encode(&[D, R, D, D, R, R, S, D, R, D]));
 }
 
-/// upstream: generator.c:2883-2890 + 2910-2915 - a late delete under
+/// upstream: generator.c:2975-2982 + 2910-2915 - a late delete under
 /// `--delay-updates` holds the delay phase's `NDX_DONE` for one sender
 /// `NDX_DONE` and the counters until the phase loop is over.
 #[test]

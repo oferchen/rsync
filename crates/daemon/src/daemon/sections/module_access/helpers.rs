@@ -9,14 +9,14 @@
 /// Opens the daemon's `log file`, or returns the refusal to report once the
 /// daemon has fallen back to syslog.
 ///
-/// upstream: log.c:169 opens the logfile through `open_no_attacker_symlinks()`
+/// upstream: log.c:176 opens the logfile through `open_no_attacker_symlinks()`
 /// with `O_WRONLY|O_APPEND|O_CREAT, 0644`, for the reason stated at log.c:165 -
 /// `--log-file` and `log file =` are operator-supplied paths that may transit
 /// attacker-writable directories, and a planted symlink would redirect the root
 /// daemon's log into a file of the attacker's choosing. The ownership walk
 /// refuses symlink components not owned by uid 0 or our euid.
 ///
-/// upstream: log.c:175-182 `logfile_open()` - when the open fails, upstream
+/// upstream: log.c:182-189 `logfile_open()` - when the open fails, upstream
 /// calls `syslog_init()`, reports the failure, clears `logfile_name` so every
 /// later line goes to syslog, and keeps serving. It never aborts the daemon
 /// over its own log file, including when the open is refused because the path
@@ -27,7 +27,7 @@ pub(crate) fn open_daemon_log_sink(
 ) -> Result<SharedLogSink, LogFileFallback> {
     open_log_file(path)
         .map(|file| {
-            // upstream: log.c:125-141 logit() stamps `%Y/%m/%d %H:%M:%S [pid] `
+            // upstream: log.c:132-148 logit() stamps `%Y/%m/%d %H:%M:%S [pid] `
             // on every log-file line; the wrapper applies the same shared
             // formatter used by the client `--log-file` sink.
             Arc::new(Mutex::new(MessageSink::with_brand(
@@ -45,7 +45,7 @@ pub(crate) struct LogFileFallback {
 }
 
 impl LogFileFallback {
-    /// upstream: log.c:178-180 - `rsyserr(FERROR, errno, "failed to open
+    /// upstream: log.c:185-187 - `rsyserr(FERROR, errno, "failed to open
     /// log-file %s")` followed by `rprintf(FINFO, "Ignoring \"log file\"
     /// setting.\n")`. The `[Receiver]` tag is what `who_am_i()` yields for the
     /// daemon process, as the upstream 3.5.1 daemon logs it.
@@ -86,7 +86,7 @@ impl LogFileFallback {
 
 /// Mode applied when the log file is created.
 ///
-/// upstream: log.c:170 passes `0644`. The surrounding `umask(022 | orig_umask)`
+/// upstream: log.c:177 passes `0644`. The surrounding `umask(022 | orig_umask)`
 /// (log.c:164) is what forbids a group- or world-writable log file under a
 /// permissive umask; passing `0644` here reaches the same fixed point without
 /// the dance, because `0644` has no group or other write bit for a umask to
@@ -114,7 +114,7 @@ fn open_log_file(path: &Path) -> io::Result<std::fs::File> {
 
 /// Reopens the connection's log sink to the selected module's `log file`.
 ///
-/// upstream: log.c:186-205 `log_init(1)` reopens the daemon logfile to
+/// upstream: log.c:193-212 `log_init(1)` reopens the daemon logfile to
 /// `lp_log_file(module_id)` at module selection (clientserver.c:956). A module's
 /// resolved `log file` already inherits the global-section default (finish.rs),
 /// so [`ModuleDefinition::module_log_file`] is exactly upstream's
@@ -167,7 +167,7 @@ fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
 
 /// Writes a message to the shared log sink with proper locking.
 ///
-/// upstream: log.c:125-141 logit() writes the raw `rwrite()` buffer after the
+/// upstream: log.c:132-148 logit() writes the raw `rwrite()` buffer after the
 /// timestamp prefix. FINFO/FLOG bodies carry no severity tag (e.g.
 /// `connect from host (addr)`, clientserver.c:1526), so info messages are
 /// written as bare text; error and warning bodies already embed their
@@ -188,7 +188,7 @@ fn log_message(log: &SharedLogSink, message: &Message) {
 
 /// Writes one raw message line to the shared log sink with proper locking.
 ///
-/// upstream: log.c:125-141 logit() hands the bytes to `filtered_fwrite()`
+/// upstream: log.c:132-148 logit() hands the bytes to `filtered_fwrite()`
 /// unchanged, so a file name that is not valid UTF-8 is logged as-is; the
 /// sink's writer applies the same control-character escaping.
 fn log_raw_line(log: &SharedLogSink, line: &[u8]) {
@@ -246,7 +246,7 @@ fn dont_compress_is_match_all(value: &str) -> bool {
 
 /// Builds daemon-side filter rules from the module's filter configuration.
 ///
-/// upstream: clientserver.c:929-954 - `rsync_module()` builds
+/// upstream: clientserver.c:933-958 - `rsync_module()` builds
 /// `daemon_filter_list` from `filter`, `include from`, `include`, `exclude from`
 /// and `exclude`, in that order, through the same parse_filter_str() every
 /// other rule takes. The parser is core's; this module supplies only where the
@@ -293,7 +293,7 @@ impl std::fmt::Display for ModuleFilterRefusal {
 
 /// The files a module's own filter directives name.
 ///
-/// upstream: clientserver.c:922-926 sets `dirbuf` to the module root before
+/// upstream: clientserver.c:926-930 sets `dirbuf` to the module root before
 /// the parse, so that is the base a slash-bearing merge name joins. The rules
 /// built so far ARE `daemon_filter_list`, so they gate every open
 /// (exclude.c:1639-1664), and the read takes the operator arm of the ownership

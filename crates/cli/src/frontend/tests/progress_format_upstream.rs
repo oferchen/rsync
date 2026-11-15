@@ -1,6 +1,6 @@
 //! Tests verifying that --progress output format matches upstream rsync.
 //!
-//! Upstream rsync --progress per-file format (progress.c:129):
+//! Upstream rsync --progress per-file format (progress.c:120):
 //!   `     32,768 100%    1.23MB/s    0:00:00 (xfr#1, to-chk=5/7)`
 //!
 //! The format string `"\r%15s %3d%% %7.2f%s %s%s"` produces:
@@ -118,7 +118,7 @@ fn format_progress_percent_zero_total_returns_100() {
 
 #[test]
 fn format_progress_percent_unknown_total_resolves_to_complete() {
-    // upstream: progress.c:128 - the percent field never uses a `??` sentinel
+    // upstream: progress.c:119 - the percent field never uses a `??` sentinel
     // (only the ETA field does). An unknown total resolves to the completion
     // value 100%.
     assert_eq!(format_progress_percent(42, None), "100%");
@@ -149,8 +149,8 @@ fn format_progress_rate_decimal_small_rate() {
     // Under 1MB/s -> shows kB/s
     let rate_str = format_progress_rate_decimal(512.0);
     assert!(
-        rate_str.contains("kB/s"),
-        "small rate should use kB/s: {rate_str:?}"
+        rate_str.contains("B/s"),
+        "small rate should use B/s: {rate_str:?}"
     );
 }
 
@@ -177,21 +177,21 @@ fn format_progress_rate_decimal_gigabyte_rate() {
 #[test]
 fn format_progress_rate_zero_elapsed_returns_zero() {
     let rate_str = format_progress_rate(0, Duration::ZERO, HumanReadableMode::Grouped);
-    assert_eq!(rate_str, "0.00kB/s");
+    assert_eq!(rate_str, "0B/s");
 }
 
 #[test]
 fn format_progress_rate_zero_bytes_returns_zero() {
     let rate_str = format_progress_rate(0, Duration::from_secs(1), HumanReadableMode::Grouped);
-    assert_eq!(rate_str, "0.00kB/s");
+    assert_eq!(rate_str, "0B/s");
 }
 
 #[test]
 fn format_progress_rate_zero_bytes_human_stays_kb_per_sec() {
-    // upstream: progress.c:108-116 - the progress rate is always base-1024 and
+    // upstream: progress.c:106-107 - the progress rate is always base-1024 and
     // a zero rate falls into the `kB/s` tier, regardless of `-h`/`-hh`.
     let rate_str = format_progress_rate(0, Duration::from_secs(1), HumanReadableMode::DecimalUnits);
-    assert_eq!(rate_str, "0.00kB/s");
+    assert_eq!(rate_str, "0B/s");
 }
 
 #[test]
@@ -446,7 +446,7 @@ fn format_decimal_bytes_u64_max() {
     assert!(!result.is_empty());
 }
 
-// upstream: lib/compat.c:183 - `-h` (the default human level) divides by 1000.
+// upstream: lib/compat.c:185 - `-h` (the default human level) divides by 1000.
 const BASE_1000: f64 = 1000.0;
 
 #[test]
@@ -459,7 +459,7 @@ fn format_human_bytes_under_threshold() {
 fn format_human_bytes_kilo_range() {
     assert_eq!(format_human_bytes(1_000, BASE_1000), "1.00K");
     assert_eq!(format_human_bytes(1_500, BASE_1000), "1.50K");
-    assert_eq!(format_human_bytes(999_999, BASE_1000), "1000.00K");
+    assert_eq!(format_human_bytes(999_999, BASE_1000), "1000K");
 }
 
 #[test]
@@ -522,7 +522,7 @@ fn progress_percent_field_100_is_4_chars() {
 
 #[test]
 fn progress_percent_field_unknown_total_is_100_percent() {
-    // upstream: progress.c:128 - the percent field never uses `??`; an unknown
+    // upstream: progress.c:119 - the percent field never uses `??`; an unknown
     // total resolves to the completion value 100% (4 chars, no padding needed).
     let pct = format!("{:>4}", format_progress_percent(0, None));
     assert_eq!(pct.len(), 4);

@@ -1,6 +1,6 @@
 //! Protocol 28/29 trailing `io_error` int after the file-list end marker.
 //!
-//! upstream: flist.c:3066-3069 - the sender writes `write_int(f, io_error)`
+//! upstream: flist.c:3077-3080 - the sender writes `write_int(f, io_error)`
 //! after the id lists. Without this read, subsequent wire data is misaligned,
 //! causing "received request to transfer non-regular file" errors.
 
@@ -111,7 +111,7 @@ fn receive_file_list_skips_io_error_for_proto30() {
 /// of purely undefined bits must accumulate to nothing, and defined bits must
 /// still survive.
 ///
-/// upstream: flist.c:3311-3315 - `io_error |= err & IOERR_VALID_MASK`.
+/// upstream: flist.c:3322-3326 - `io_error |= err & IOERR_VALID_MASK`.
 #[test]
 fn receive_file_list_masks_hostile_io_error_for_proto28() {
     for (wire_value, expected) in [
@@ -184,7 +184,7 @@ fn receive_file_list_ignore_errors_suppresses_io_error() {
 /// `--ignore-errors` must suppress a PEER-supplied file-list trailer, and must
 /// NOT suppress an error this receiver generated itself.
 ///
-/// upstream keeps the two apart: `flist.c:3192`, `:2967` and `:3070` accumulate
+/// upstream keeps the two apart: `flist.c:3203`, `:2967` and `:3070` accumulate
 /// the peer's trailer only `if (!ignore_errors)`, while `flist.c:1066`'s
 /// filename-transcode failure is accumulated with no such check.
 ///
@@ -303,7 +303,7 @@ fn both_protocol_eras_mask_the_peer_trailer_identically() {
 
 /// A locally-generated file-list error survives `--ignore-errors`.
 ///
-/// upstream: `flist.c:1066` has no `ignore_errors` check, so a filename this
+/// upstream: `flist.c:1070` has no `ignore_errors` check, so a filename this
 /// receiver could not transcode still exits 23. Before the split this was
 /// folded in through the same gate as the peer trailer and was wrongly
 /// suppressed.

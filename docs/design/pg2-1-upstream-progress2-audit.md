@@ -7,7 +7,7 @@ infrastructure and identifies gaps.
 
 ## 1. Upstream progress levels
 
-Upstream uses a single `INFO_PROGRESS` integer level (options.c:279):
+Upstream uses a single `INFO_PROGRESS` integer level (options.c:280):
 
 | Level | Mode | Triggered by |
 |-------|------|-------------|
@@ -15,18 +15,18 @@ Upstream uses a single `INFO_PROGRESS` integer level (options.c:279):
 | 1 | Per-file progress | `--progress`, `-P`, or `--info=progress` |
 | 2 | Overall transfer progress | `--info=progress2` |
 
-`--progress` sets `do_progress = 1`. At options.c:2342-2345, if `do_progress &&
+`--progress` sets `do_progress = 1`. At options.c:2397-2400, if `do_progress &&
 !am_server`, upstream calls `parse_output_words` with `"FLIST2,PROGRESS"` -
 setting `info_levels[INFO_PROGRESS] = 1` (per-file) and `info_levels[INFO_FLIST]
 = 2`. The key distinction: `--info=progress2` sets the level to 2, switching to
 overall transfer progress (progress2 mode). There is no separate flag; it is the
 same `INFO_PROGRESS` variable at a higher level.
 
-`-P` is shorthand for `--progress --partial` (options.c:1600-1606).
+`-P` is shorthand for `--progress --partial` (options.c:1627-1633).
 
 ## 2. Exact output format string
 
-The format string at progress.c:129:
+The format string at progress.c:120:
 
 ```c
 rprintf(FCLIENT, "\r%15s %3d%% %7.2f%s %s%s",
@@ -51,9 +51,9 @@ rprintf(FCLIENT, "\r%15s %3d%% %7.2f%s %s%s",
 ### The `eol` field
 
 For mid-transfer ticks (`is_last == 0`), `eol` is `"  "` (two spaces) -
-progress.c:100.
+progress.c:101.
 
-For final ticks (`is_last == 1`), `eol` is computed at progress.c:78-82:
+For final ticks (`is_last == 1`), `eol` is computed at progress.c:79-83:
 
 ```c
 snprintf(eol, sizeof eol,
@@ -74,7 +74,7 @@ Format: ` (xfr#N, to-chk=R/T)\n` or ` (xfr#N, ir-chk=R/T)\n`
 ### progress2 final-tick padding
 
 When `INFO_GTE(PROGRESS, 2)` (progress2 mode), the final-tick logic at
-progress.c:84-91 strips the trailing `\n` from `eol` and pads with spaces so the
+progress.c:85-92 strips the trailing `\n` from `eol` and pads with spaces so the
 line never shrinks. This means progress2 never emits a newline mid-transfer - it
 continuously overwrites the same line with `\r`. The line only grows or stays the
 same width (never shortens), preventing visual artifacts.
@@ -83,7 +83,7 @@ same width (never shortens), preventing visual artifacts.
 
 ### Mid-transfer rate: sliding window
 
-Upstream uses a 5-slot circular buffer (`ph_list[5]`, progress.c:37-52) to
+Upstream uses a 5-slot circular buffer (`ph_list[5]`, progress.c:38-53) to
 compute the transfer rate from *recent* history, not the cumulative average:
 
 ```c
@@ -98,7 +98,7 @@ static struct progress_history ph_list[PROGRESS_HISTORY_SECS];
 static int newest_hpos, oldest_hpos;
 ```
 
-Mid-transfer rate (progress.c:102-104):
+Mid-transfer rate (progress.c:103-105):
 
 ```c
 diff = msdiff(&ph_list[oldest_hpos].time, now);
@@ -112,7 +112,7 @@ window.
 
 ### Final-tick rate: cumulative from start
 
-For the final tick of a file (progress.c:94-96):
+For the final tick of a file (progress.c:95-97):
 
 ```c
 diff = msdiff(&ph_start.time, now);
@@ -124,7 +124,7 @@ rate for the entire file (or entire transfer in progress2 mode).
 
 ### Rate unit scaling
 
-Rate is in kB/s (base-1024). Scaling at progress.c:108-116:
+Rate is in kB/s (base-1024). Scaling at progress.c:106-107:
 
 ```c
 if (rate > 1024*1024) {      // > 1 TB/s in kB/s units
@@ -147,7 +147,7 @@ extreme rates stay in GB/s with a large numeric value.
 
 ### Mid-transfer ETA
 
-The ETA is computed from the sliding-window rate at progress.c:105:
+The ETA is computed from the sliding-window rate at progress.c:106:
 
 ```c
 remain = rate ? (double)(size - ofs) / rate / 1000.0 : 0.0;
@@ -160,7 +160,7 @@ as `0:00:00` rather than an infinite/undefined ETA.
 ### Final-tick ETA
 
 On the final tick, `remain` is replaced with the actual elapsed time
-(progress.c:98):
+(progress.c:99):
 
 ```c
 remain = (double)diff / 1000.0;
@@ -171,7 +171,7 @@ progress line.
 
 ### ETA rendering
 
-Rendered at progress.c:118-125:
+Rendered at progress.c:109-116:
 
 ```c
 if (remain < 0 || remain > 9999.0 * 3600.0)
@@ -208,7 +208,7 @@ else {
 
 ### Throttling: 1-second minimum between updates
 
-`show_progress()` (progress.c:224) enforces a 1-second minimum between ring
+`show_progress()` (progress.c:220) enforces a 1-second minimum between ring
 rotations:
 
 ```c
@@ -222,16 +222,16 @@ output and keeps the sliding window's time resolution at 1 second.
 
 ### First call initialization
 
-On the first call (progress.c:205-222), all 5 ring slots are initialized to the
+On the first call (progress.c:201-218), all 5 ring slots are initialized to the
 same `(time, ofs)` sample. If recent data from a previous file was received
-within 1500ms, the start time inherits from that sample (progress.c:211) -
+within 1500ms, the start time inherits from that sample (progress.c:207) -
 this avoids a rate spike when a new file begins immediately after the previous
 one.
 
 ### progress2 mode: overall byte counters
 
 In progress2 mode (`INFO_GTE(PROGRESS, 2)`), `show_progress()` at
-progress.c:200-203 transforms the per-file offset into overall transfer counters:
+progress.c:196-199 transforms the per-file offset into overall transfer counters:
 
 ```c
 ofs = stats.total_transferred_size - size + ofs;
@@ -239,7 +239,7 @@ size = stats.total_size;
 ```
 
 The sliding window then tracks overall bytes/rate rather than per-file progress.
-Similarly, `end_progress()` at progress.c:172-174 uses `stats.total_transferred_size`
+Similarly, `end_progress()` at progress.c:168-170 uses `stats.total_transferred_size`
 and `stats.total_size` as the final values.
 
 ### progress2 mode: per-file completion behavior
@@ -248,13 +248,13 @@ In progress2 mode, `end_progress(0)` is called at phase boundaries
 (receiver.c:565-566) when `NDX_DONE` is received - not after each file. Per-file
 completions at receiver.c:395-396 still call `end_progress(total_size)`, but with
 `INFO_GTE(PROGRESS, 2)` the function uses overall stats, and the trailing `eol`
-is padded without a newline (progress.c:84-91). The visual effect: the single
+is padded without a newline (progress.c:85-92). The visual effect: the single
 progress line continuously updates in place until the transfer completes.
 
 ### SIGINFO instant progress
 
 On platforms with SIGINFO (macOS) or SIGVTALRM, a signal handler sets
-`want_progress_now = True` (main.c:1616-1617) when progress is not already
+`want_progress_now = True` (main.c:1620-1621) when progress is not already
 enabled. The receiver checks this at receiver.c:895 after each file and calls
 `instant_progress()` for a one-shot status update.
 
@@ -274,7 +274,7 @@ enabled. The receiver checks this at receiver.c:895 after each file and calls
 
 ### `current_file_index` tracking
 
-`set_current_file_index()` (progress.c:147-156) is called from the receiver to
+`set_current_file_index()` (progress.c:143-152) is called from the receiver to
 track which file is currently being processed. It handles both sorted and
 unsorted file lists, adjusting for sub-list numbering in INC_RECURSE mode.
 
@@ -360,7 +360,7 @@ unsorted file lists, adjusting for sub-list numbering in INC_RECURSE mode.
 
 ### Gaps requiring implementation
 
-1. **progress2 final-tick padding** (progress.c:84-91): oc-rsync's `LiveProgress`
+1. **progress2 final-tick padding** (progress.c:85-92): oc-rsync's `LiveProgress`
    emits `writeln!` on final tick in both modes. Upstream progress2 strips the
    newline and pads with spaces on the final per-file tick. Only the overall
    transfer completion should emit a newline. The current implementation does
@@ -384,7 +384,7 @@ unsorted file lists, adjusting for sub-list numbering in INC_RECURSE mode.
    `overall_total_bytes: None` - intermediate progress ticks from remote
    transfers are not yet wired.
 
-4. **ph_start time inheritance** (progress.c:209-213): When a new file begins
+4. **ph_start time inheritance** (progress.c:205-209): When a new file begins
    within 1500ms of the previous file's last data, upstream reuses the previous
    timestamp to avoid rate spikes. oc-rsync's `RemainingTimeEstimator` creates a
    fresh estimator per file (in per-file mode) or reuses a single estimator (in
@@ -399,7 +399,7 @@ unsorted file lists, adjusting for sub-list numbering in INC_RECURSE mode.
    switches to elapsed time on `is_final()` (live.rs:119-120). In overall mode,
    it only switches on `final_tick = remaining == 0 && is_final()` (live.rs:167).
    Upstream switches to elapsed when `is_last` is true regardless of mode
-   (progress.c:94-98). This means the per-file end-of-file ticks in progress2
+   (progress.c:95-99). This means the per-file end-of-file ticks in progress2
    mode should show the cumulative elapsed time, not the ETA - but upstream uses
    `ph_start` (overall start) for this, so the elapsed time is the overall
    transfer duration so far.

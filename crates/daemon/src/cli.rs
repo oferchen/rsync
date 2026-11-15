@@ -62,6 +62,24 @@ where
     Err: Write,
 {
     if parsed.show_help {
+        if !parsed.remainder.is_empty() {
+            let filtered: Vec<OsString> = parsed
+                .remainder
+                .iter()
+                .filter(|a| *a != "--help" && *a != "-h")
+                .cloned()
+                .collect();
+            if let Err(error) = crate::daemon::RuntimeOptions::check_arguments(
+                &filtered,
+                parsed.program_name.brand(),
+            ) {
+                let message = rsync_error!(1, "{}", error).with_role(Role::Daemon);
+                if write_message(&message, stderr).is_err() {
+                    let _ = writeln!(stderr.writer_mut(), "{error}");
+                }
+                return 1;
+            }
+        }
         let help = render_help(parsed.program_name);
         if stdout.write_all(help.as_bytes()).is_err() {
             let _ = writeln!(stdout, "{help}");
@@ -259,7 +277,7 @@ mod tests {
         assert_eq!(parsed.service_action, None);
     }
 
-    /// upstream: options.c:1576-1596 - a daemon-mode parse error prints its
+    /// upstream: options.c:1603-1623 - a daemon-mode parse error prints its
     /// cause bare, then exit_cleanup(RERR_SYNTAX) prints the client-role
     /// trailer on a line of its own. Nothing goes to stdout.
     #[test]

@@ -1,6 +1,6 @@
 //! A server whose own argv carries `-M`/`--remote-option` or a stray `-s`.
 //!
-//! upstream: a server only records a `-M` value (options.c:1762-1777); a value
+//! upstream: a server only records a `-M` value (options.c:1798-1813); a value
 //! without a leading dash is a syntax error (options.c:1764-1767). A server
 //! told `-s` reads its argument list from the stream and, finding no
 //! operands there, prints its usage and exits RERR_SYNTAX (main.c:1956-1969).

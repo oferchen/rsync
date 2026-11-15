@@ -127,7 +127,7 @@ impl NstrCategory {
 /// Upstream sentinel for `do_compression_level` when the user did not
 /// pass `--compress-level=N`.
 ///
-/// upstream: `rsync.h:1210` `#define CLVL_NOT_SPECIFIED INT_MIN`.
+/// upstream: `rsync.h:1226` `#define CLVL_NOT_SPECIFIED INT_MIN`.
 /// This is the raw wire value before resolution; it is NOT what upstream
 /// prints. `parse_compress_choice(1)` calls `init_compression_level()`
 /// (`token.c:55`) first, which substitutes the codec `def_level` for this
@@ -139,7 +139,7 @@ pub const CLVL_NOT_SPECIFIED: i32 = i32::MIN;
 
 /// Traces a `send_negotiate_str` list emission.
 ///
-/// upstream: `compat.c:522-527` -
+/// upstream: `compat.c:523-528` -
 /// `"Server <type> list (on server): <list>\n"` when `am_server`,
 /// `"Client <type> list (on client): <list>\n"` otherwise.
 ///
@@ -159,7 +159,7 @@ pub fn trace_send_list(side: NstrSide, category: NstrCategory, list: &str) {
 
 /// Traces a `recv_negotiate_str` list emission.
 ///
-/// upstream: `compat.c:374-379` -
+/// upstream: `compat.c:375-380` -
 /// `"Client <type> list (on server): <list>\n"` when `am_server`,
 /// `"Server <type> list (on client): <list>\n"` otherwise.
 ///
@@ -201,7 +201,7 @@ pub fn trace_checksum_summary(side: NstrSide, negotiated: bool, name: &str) {
 
 /// Traces the `parse_compress_choice` summary emission.
 ///
-/// upstream: `compat.c:214-220` - `"%s%s compress: %s (level %d)\n"`.
+/// upstream: `compat.c:215-221` - `"%s%s compress: %s (level %d)\n"`.
 /// The `(level %d)` clause always renders. Upstream calls
 /// `init_compression_level()` (`token.c:55`) inside `parse_compress_choice(1)`
 /// before this print, resolving `do_compression_level` from
@@ -231,7 +231,7 @@ pub fn trace_compress_summary(side: NstrSide, negotiated: bool, name: &str, comp
 
 /// Traces the `output_daemon_greeting` echo on the client side.
 ///
-/// upstream: `compat.c:855-856` -
+/// upstream: `compat.c:864-865` -
 /// `"Client <type> list (on client): <list>\n"` printed by the client
 /// after it builds its `@RSYNCD: %d.%d %s\n` banner. Gated by
 /// `am_client && DEBUG_GTE(NSTR, 2)` - the server never emits this
@@ -255,7 +255,7 @@ pub fn trace_daemon_greeting_auth_list(list: &str) {
 
 /// Traces the `negotiate_daemon_auth` selected-algorithm emission.
 ///
-/// upstream: `compat.c:877-880` - `"Client negotiated <type>: <name>\n"`
+/// upstream: `compat.c:886-889` - `"Client negotiated <type>: <name>\n"`
 /// after the client picks an algorithm from the server-advertised auth
 /// list. Always emitted as level 1 because upstream's branch is
 /// `DEBUG_GTE(NSTR, 1)` without the `am_server ? 3 : ...` ternary.
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn side_renders_upstream_labels() {
-        // upstream: compat.c:217 - `am_server ? "Server" : "Client"`.
+        // upstream: compat.c:218 - `am_server ? "Server" : "Client"`.
         assert_eq!(NstrSide::Client.label(), "Client");
         assert_eq!(NstrSide::Server.label(), "Server");
         assert_eq!(NstrSide::Client.local_token(), "client");
@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn category_renders_upstream_type_strings() {
-        // upstream: checksum.c:68/87, compat.c:115 - the `type` field of
+        // upstream: checksum.c:68/87, compat.c:116 - the `type` field of
         // each `name_num_obj` (used as `%s` in the list/summary
         // emissions).
         assert_eq!(NstrCategory::Checksum.as_str(), "checksum");
@@ -326,23 +326,23 @@ mod tests {
 
     #[test]
     fn upstream_level_table() {
-        // upstream: compat.c:374/522 - `am_server ? 3 : 2`.
+        // upstream: compat.c:375/522 - `am_server ? 3 : 2`.
         assert_eq!(NstrSide::Client.list_level(), 2);
         assert_eq!(NstrSide::Server.list_level(), 3);
-        // upstream: checksum.c:224, compat.c:214 - `am_server ? 3 : 1`.
+        // upstream: checksum.c:224, compat.c:215 - `am_server ? 3 : 1`.
         assert_eq!(NstrSide::Client.summary_level(), 1);
         assert_eq!(NstrSide::Server.summary_level(), 3);
     }
 
     #[test]
     fn clvl_not_specified_matches_upstream_int_min() {
-        // upstream: rsync.h:1210 - `#define CLVL_NOT_SPECIFIED INT_MIN`.
+        // upstream: rsync.h:1226 - `#define CLVL_NOT_SPECIFIED INT_MIN`.
         assert_eq!(CLVL_NOT_SPECIFIED, i32::MIN);
     }
 
     #[test]
     fn send_list_client_emits_upstream_format() {
-        // upstream: compat.c:526 - "Client <type> list (on client): <list>".
+        // upstream: compat.c:527 - "Client <type> list (on client): <list>".
         init_at(2);
         trace_send_list(NstrSide::Client, NstrCategory::Checksum, "xxh3 md5 md4");
         let m = nstr_messages();
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn send_list_server_emits_upstream_format() {
-        // upstream: compat.c:524 - "Server <type> list (on server): <list>".
+        // upstream: compat.c:525 - "Server <type> list (on server): <list>".
         init_at(3);
         trace_send_list(NstrSide::Server, NstrCategory::Compress, "zstd zlibx zlib");
         let m = nstr_messages();
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn recv_list_client_emits_upstream_format() {
-        // upstream: compat.c:378 - "Server <type> list (on client): <list>".
+        // upstream: compat.c:379 - "Server <type> list (on client): <list>".
         init_at(2);
         trace_recv_list(NstrSide::Client, NstrCategory::Checksum, "md5 md4");
         let m = nstr_messages();
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn recv_list_server_emits_upstream_format() {
-        // upstream: compat.c:376 - "Client <type> list (on server): <list>".
+        // upstream: compat.c:377 - "Client <type> list (on server): <list>".
         init_at(3);
         trace_recv_list(NstrSide::Server, NstrCategory::Compress, "zlib");
         let m = nstr_messages();
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn compress_summary_renders_level_clause() {
-        // upstream: compat.c:216-219 - "(level %d)" always renders.
+        // upstream: compat.c:217-220 - "(level %d)" always renders.
         init_at(1);
         trace_compress_summary(NstrSide::Client, true, "zstd", 3);
         let m = nstr_messages();
@@ -441,7 +441,7 @@ mod tests {
         // This renderer is level-transparent: it prints whatever `compress_level`
         // it is handed. Callers resolve CLVL_NOT_SPECIFIED to the codec def_level
         // via init_compression_level (token.c:55) before calling, so a resolved
-        // zlib level of 6 renders as-is. upstream: compat.c:216-219.
+        // zlib level of 6 renders as-is. upstream: compat.c:217-220.
         init_at(1);
         trace_compress_summary(NstrSide::Client, true, "zlib", 6);
         let m = nstr_messages();
@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn compress_summary_forced_omits_qualifier() {
-        // upstream: compat.c:218 - second %s blank when negotiated_nni
+        // upstream: compat.c:219 - second %s blank when negotiated_nni
         // is NULL.
         init_at(1);
         trace_compress_summary(NstrSide::Server, false, "zlib", 6);
@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn daemon_greeting_auth_list_emits_upstream_format() {
-        // upstream: compat.c:855-856 - "Client %s list (on client): %s"; upstream
+        // upstream: compat.c:864-865 - "Client %s list (on client): %s"; upstream
         // renders %s as "daemon auth checksum", oc as "auth".
         init_at(2);
         trace_daemon_greeting_auth_list("sha512 sha256 sha1 md5 md4");
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn daemon_auth_negotiated_emits_upstream_format() {
-        // upstream: compat.c:878-879 - "Client negotiated %s: %s"; upstream
+        // upstream: compat.c:887-888 - "Client negotiated %s: %s"; upstream
         // renders the first %s as "daemon auth checksum", oc as "auth".
         init_at(1);
         trace_daemon_auth_negotiated("md5");
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn list_emissions_gate_at_level_two_client() {
-        // upstream: compat.c:855/522 - `DEBUG_GTE(NSTR, 2)` for client.
+        // upstream: compat.c:864/522 - `DEBUG_GTE(NSTR, 2)` for client.
         init_at(1);
         trace_send_list(NstrSide::Client, NstrCategory::Checksum, "md5");
         trace_recv_list(NstrSide::Client, NstrCategory::Checksum, "md5");
@@ -522,7 +522,7 @@ mod tests {
 
     #[test]
     fn list_emissions_gate_at_level_three_server() {
-        // upstream: compat.c:374/522 - `DEBUG_GTE(NSTR, 3)` for server.
+        // upstream: compat.c:375/522 - `DEBUG_GTE(NSTR, 3)` for server.
         init_at(2);
         trace_send_list(NstrSide::Server, NstrCategory::Checksum, "md5");
         trace_recv_list(NstrSide::Server, NstrCategory::Checksum, "md5");
@@ -542,7 +542,7 @@ mod tests {
 
     #[test]
     fn summary_emissions_gate_at_level_one_client() {
-        // upstream: checksum.c:224, compat.c:877 - `DEBUG_GTE(NSTR, 1)`
+        // upstream: checksum.c:224, compat.c:886 - `DEBUG_GTE(NSTR, 1)`
         // for client.
         init_at(0);
         trace_checksum_summary(NstrSide::Client, true, "md5");
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn daemon_emissions_gate_correctly() {
-        // upstream: compat.c:855 gates the auth list at level 2;
+        // upstream: compat.c:864 gates the auth list at level 2;
         // compat.c:877 gates the negotiated auth at level 1.
         init_at(0);
         trace_daemon_greeting_auth_list("md5 md4");

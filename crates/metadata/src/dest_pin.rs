@@ -10,9 +10,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/rsync.c:582-597` - the secure re-pin of the leaf, and
+//! - `rsync-3.5.2/rsync.c:582-597` - the secure re-pin of the leaf, and
 //!   `xattr_refuse` when the re-pin fails on a slashed path
-//! - `rsync-3.5.1/rsync.c:713-716,800` - xattr and ACL writes skipped on refusal
+//! - `rsync-3.5.2/rsync.c:713-716,800` - xattr and ACL writes skipped on refusal
 
 use std::path::Path;
 

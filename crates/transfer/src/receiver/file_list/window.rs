@@ -141,7 +141,7 @@ impl FileListWindow {
 
     /// Releases every live entry below absolute index `end`.
     ///
-    /// upstream: flist.c `flist_free()` via generator.c:2712 - a finished
+    /// upstream: flist.c `flist_free()` via generator.c:2756 - a finished
     /// sub-list is freed once the generator has moved past it.
     pub(in crate::receiver) fn release_before(&mut self, end: usize) {
         let end = end.min(self.len());

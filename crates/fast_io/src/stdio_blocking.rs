@@ -44,7 +44,7 @@ pub fn force_blocking_stdio() -> io::Result<()> {
 
 /// Clear `O_NONBLOCK` on the inherited stderr file descriptor.
 ///
-/// upstream: main.c:1356-1364 `start_server()` sets fd 2 blocking once
+/// upstream: main.c:1360-1368 `start_server()` sets fd 2 blocking once
 /// `setup_protocol()` is done, because ssh may have made it non-blocking (and
 /// when stderr is a clone of stdout that would lose print output). Idempotent
 /// like [`force_blocking_stdio`]; on non-Unix platforms it returns `Ok(())`.

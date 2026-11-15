@@ -172,7 +172,7 @@ fn dump_crtimes(oc: &Path, up: &Path) {
 /// support. A build without it refuses the option at parse time (printing
 /// `This rsync does not support --crtimes (-N)` and exiting non-zero) before
 /// `--version` short-circuits, so a clean `--crtimes --version` run succeeds
-/// only when the option is accepted. upstream: options.c:1028
+/// only when the option is accepted. upstream: options.c:1046
 /// `parse_one_refuse_match(0, "crtimes", ...)` under `#ifndef SUPPORT_CRTIMES`.
 fn upstream_supports_crtimes(upstream: &Path) -> bool {
     std::process::Command::new(upstream)

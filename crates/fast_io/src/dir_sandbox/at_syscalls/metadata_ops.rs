@@ -312,7 +312,7 @@ pub fn secure_chmod_at(path: &Path, mode: u32, follow_symlinks: bool) -> io::Res
 /// does not own the target is refused for the setgid-free mode too, and that
 /// error propagates.
 ///
-/// upstream: rsync-3.5.1 syscall.c:1705 `do_chmod()` -> `chmod(2)`; rsync.c:806-818
+/// upstream: rsync-3.5.1 syscall.c:1774 `do_chmod()` -> `chmod(2)`; rsync.c:806-818
 /// `set_file_attrs()` treats the chmod result as fatal for a non-symlink, which
 /// is why the refusal must not reach it.
 fn chmodat_with_chmod_setgid_semantics(

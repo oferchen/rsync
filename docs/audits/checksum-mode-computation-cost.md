@@ -44,7 +44,7 @@ re-reads the same byte count via the matching `FileListReader` configuration.
 Upstream signals "I know each file's content hash" before any delta logic
 fires. oc-rsync's wire layer reserves space for the digest in
 `write_checksum`, but the populating call site that mirrors upstream
-`flist.c:1412 file_checksum(thisname, &st, tmp_sum)` is currently absent in
+`flist.c:1416 file_checksum(thisname, &st, tmp_sum)` is currently absent in
 the sender flist builder (`crates/transfer/src/generator/file_list/entry.rs`):
 no caller invokes `FileEntry::set_checksum`. The wire writer therefore emits
 zeroed digests when `always_checksum` is enabled but the entry has no payload
@@ -122,7 +122,7 @@ allocation pressure across files is eliminated. Two notable shortfalls:
   (`AES-NI`, `SHA-NI`). oc-rsync routes through pure-Rust `Md5`, with
   `openssl_support` available in `crates/checksums/src/strong/openssl_support.rs`
   but not engaged from the `--checksum` path.
-- **Sender-time hashing**. `flist.c:1412` performs `file_checksum` while
+- **Sender-time hashing**. `flist.c:1416` performs `file_checksum` while
   building each entry inside `make_file`. oc-rsync's sender flist builder does
   not currently call any equivalent, so wire-mode pulls fall back to zeroed
   digests on the wire and force the receiver into the delta path even when

@@ -205,7 +205,7 @@ pub fn read_dir_via_sandbox_or_fallback(
         let entries = read_dir_entry_views(dir_handle, parent, None)?;
         return Ok(ReadDirOutcome::At(entries.into_iter()));
     }
-    // upstream: rsync-3.5.1/syscall.c:3858-3871 held_dfd_for()
+    // upstream: rsync-3.5.2/syscall.c:3926-3939 held_dfd_for()
     let listed = super::nested::at_dest_leaf(
         sandbox,
         dest_dir,

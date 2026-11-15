@@ -293,9 +293,9 @@ pub(crate) fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf 
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/util1.c:1528-1559` - `full_fname()`; `:1540` is the
+/// - `rsync-3.5.2/util1.c:1528-1559` - `full_fname()`; `:1540` is the
 ///   leading-slash test this arm mirrors.
-/// - `rsync-3.5.1/flist.c:2918-2937` - the `dir`/`fn` split and the
+/// - `rsync-3.5.2/flist.c:2929-2948` - the `dir`/`fn` split and the
 ///   `change_pathname()` that makes `curr_dir` the operand's parent before
 ///   `scan_link_stat()` runs.
 pub(crate) fn operand_diagnostic_name(path: &std::path::Path) -> std::path::PathBuf {

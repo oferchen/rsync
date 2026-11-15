@@ -99,7 +99,7 @@ pub fn write_token_block_match<W: Write>(writer: &mut W, block_index: u32) -> io
 ///
 /// Returns an error if writing to the underlying stream fails.
 ///
-/// upstream: `match.c:449` `matched(f, s, buf, len, -1)`,
+/// upstream: `match.c:485` `matched(f, s, buf, len, -1)`,
 /// `token.c:simple_send_token()` lines 329-330
 #[inline]
 pub fn write_token_end<W: Write>(writer: &mut W) -> io::Result<()> {

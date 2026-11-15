@@ -43,7 +43,7 @@ impl ClientConfig {
     /// Reports whether the deprecated `--remove-sent-files` spelling was the
     /// effective one, so `server_options()` forwards that alias.
     ///
-    /// upstream: options.c:744, 3163-3166 - the option table sets
+    /// upstream: options.c:745, 3163-3166 - the option table sets
     /// `remove_source_files = 2` for the deprecated alias, and the emitter picks
     /// `--remove-sent-files` when the value is 2.
     #[must_use]
