@@ -23,6 +23,10 @@ name: CI (master)
     - .github/workflows/**
     - docker/**
     - Cross.toml
+    - .config/**
+    - rust-toolchain.toml
+    - build.rs
+    - deny.toml
 concurrency:
   group: ci-master-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
@@ -75,6 +79,14 @@ jobs:
     uses: ./.github/workflows/windows-nightly-long-path.yml
   windows-case-insensitive:
     uses: ./.github/workflows/windows-nightly-case-insensitive.yml
+  windows-iocp-stress:
+    uses: ./.github/workflows/windows-nightly-iocp.yml
+  windows-ntfs-acl:
+    uses: ./.github/workflows/windows-nightly-ntfs-acl.yml
+  windows-openssh:
+    uses: ./.github/workflows/windows-nightly-openssh.yml
+  windows-reparse-symlinks:
+    uses: ./.github/workflows/windows-nightly-reparse-symlinks.yml
   lint:
     name: fmt + clippy
     runs-on: ubuntu-latest

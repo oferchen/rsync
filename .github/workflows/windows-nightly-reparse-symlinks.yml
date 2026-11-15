@@ -62,9 +62,11 @@ on:
     # runner schedule.
     - cron: '0 11 * * *'
   workflow_dispatch:
+  # Master push CI calls this leg via ci-master.yml.
+  workflow_call:
 
 concurrency:
-  group: windows-nightly-reparse-symlinks-${{ github.ref }}
+  group: windows-nightly-reparse-symlinks-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:
