@@ -2,6 +2,7 @@ use std::fmt;
 use std::io;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -11,7 +12,7 @@ use crate::exit_code::{ErrorCodification, ExitCode, HasExitCode};
 use crate::message::{Message, Role};
 use crate::rsync_error;
 use engine::local_copy::{LocalCopyError, LocalCopyErrorKind, LocalCopySide, upstream_io_error};
-use rsync_io::ssh::RemoteOperandParseError;
+use rsync_io::ssh::{CleanupChild, RemoteOperandParseError};
 
 // upstream: errcode.h - Exit code definitions
 
@@ -50,10 +51,16 @@ pub struct ClientError {
     completed: Option<Box<ClientSummary>>,
     preceding: Option<Box<ClientError>>,
     peer_error_exit: bool,
-    after_trailer: Option<Box<LeadLine>>,
+    after_trailer: Option<Box<AfterTrailer>>,
 }
 
 /// The line upstream prints before log_exit()'s trailer, if a failure has one.
+#[derive(Clone, Debug, Default)]
+struct AfterTrailer {
+    line: Option<LeadLine>,
+    cleanup_child: Option<Arc<CleanupChild>>,
+}
+
 #[derive(Clone, Debug)]
 enum LeadLine {
     /// `rprintf(FERROR, RSYNC_NAME ": ...")` lines, each prefixed with the
@@ -80,6 +87,19 @@ impl ClientError {
         }
     }
 
+    /// Attaches a remote-shell child cleanup guard so `SIGUSR1` is sent only
+    /// after this error has been rendered and dropped.
+    #[must_use]
+    pub(crate) fn with_cleanup_child(mut self, child: Option<CleanupChild>) -> Self {
+        if let Some(child) = child {
+            let entry = self
+                .after_trailer
+                .get_or_insert_with(|| Box::new(AfterTrailer::default()));
+            entry.cleanup_child = Some(Arc::new(child));
+        }
+        self
+    }
+
     /// Attaches the line the wait for the peer's exit printed when it failed,
     /// which upstream writes after this failure's trailer: _exit_cleanup()
     /// calls log_exit() before noop_io_until_death() (cleanup.c:221-253).
@@ -89,7 +109,9 @@ impl ClientError {
             crate::server::ExitWaitFailure::ReadError(text) => LeadLine::Program(vec![text]),
             crate::server::ExitWaitFailure::Timeout(text) => LeadLine::Cause(text),
         };
-        self.after_trailer = Some(Box::new(line));
+        self.after_trailer
+            .get_or_insert_with(|| Box::new(AfterTrailer::default()))
+            .line = Some(line);
         self
     }
 
@@ -97,7 +119,7 @@ impl ClientError {
     /// trailer, if the wait for the peer's exit failed with one. The caller
     /// prefixes the program name, as for [`Self::program_line`].
     pub fn trailing_program_line(&self) -> Option<&str> {
-        match self.after_trailer.as_deref() {
+        match self.after_trailer.as_deref().and_then(|a| a.line.as_ref()) {
             Some(LeadLine::Program(lines)) => lines.first().map(String::as_str),
             _ => None,
         }
@@ -106,7 +128,7 @@ impl ClientError {
     /// Returns the unprefixed line printed after the exit trailer, if the wait
     /// for the peer's exit failed with one.
     pub fn trailing_cause_line(&self) -> Option<&str> {
-        match self.after_trailer.as_deref() {
+        match self.after_trailer.as_deref().and_then(|a| a.line.as_ref()) {
             Some(LeadLine::Cause(line)) => Some(line),
             _ => None,
         }

@@ -529,20 +529,19 @@ impl SshChildHandle {
         self.take_and_wait_child()
     }
 
-    /// Polls the subprocess once without blocking, signals it if it is still
-    /// running, and releases it.
+    /// Polls the subprocess once without blocking and returns a drop guard that
+    /// sends `SIGUSR1` when dropped if the child is still running.
     ///
-    /// Mirrors an aborting client's exit: `wait_process(cleanup_child_pid,
-    /// &status, WNOHANG)` (upstream: cleanup.c:146-153), then
-    /// `kill_all(SIGUSR1)` (cleanup.c:202-203). An exited child yields its
-    /// status; one still running gets `SIGUSR1` on Unix and is never waited
-    /// for, so a remote shell that ignores end-of-file cannot hold up the exit.
+    /// Splitting the `WNOHANG` poll (`cleanup.c:146-153`) from `kill_all(SIGUSR1)`
+    /// (`cleanup.c:202-203`) lets the client print its own error before the
+    /// remote-shell child receives `SIGUSR1` and writes its own trailer to the
+    /// inherited stderr.
     ///
     /// # Errors
     ///
     /// Returns the `try_wait` error, or `io::ErrorKind::InvalidInput` when the
     /// child was already taken by a prior wait.
-    pub fn poll_exit(mut self) -> io::Result<Option<ExitStatus>> {
+    pub fn poll_exit_deferred(mut self) -> io::Result<(Option<ExitStatus>, Option<CleanupChild>)> {
         drop(self.connect_watchdog.take());
         drop(self.io_stall_watchdog.take());
         let child = self.child.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -553,12 +552,54 @@ impl SshChildHandle {
             ));
         };
         let status = child.try_wait()?;
+        let guard = if status.is_none() {
+            Some(CleanupChild {
+                #[cfg(unix)]
+                pid: Some(child.id()),
+                writer: Mutex::new(None),
+            })
+        } else {
+            None
+        };
+        Ok((status, guard))
+    }
+}
+
+/// Drop guard that signals a still-running remote-shell child with `SIGUSR1`.
+///
+/// Mirrors `kill_all(SIGUSR1)` at the end of upstream `_exit_cleanup()`
+/// (`cleanup.c:202-203`) so the child receives `SIGUSR1` after the parent has
+/// rendered its error message.
+pub struct CleanupChild {
+    #[cfg(unix)]
+    pid: Option<u32>,
+    writer: Mutex<Option<SshWriter>>,
+}
+
+impl CleanupChild {
+    /// Retains the child stdin writer until this guard is dropped, so closing
+    /// the pipe cannot race ahead of the parent's error message.
+    #[must_use]
+    pub fn with_writer(mut self, writer: SshWriter) -> Self {
+        self.writer = Mutex::new(Some(writer));
+        self
+    }
+}
+
+impl std::fmt::Debug for CleanupChild {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CleanupChild").finish_non_exhaustive()
+    }
+}
+
+impl Drop for CleanupChild {
+    fn drop(&mut self) {
         #[cfg(unix)]
-        if status.is_none() {
+        if let Some(pid) = self.pid.take() {
             // upstream: util1.c:707 kill_all() ignores kill()'s result.
-            let _ = platform::signal::send_sigusr1(child.id());
+            let _ = platform::signal::send_sigusr1(pid);
         }
-        Ok(status)
+        drop(self.writer.lock().unwrap_or_else(|e| e.into_inner()).take());
     }
 }
 

@@ -31,7 +31,8 @@
 //!   there (main.c:1913), measured. Folding both onto one helper because the
 //!   messages look alike would change an exit code nobody asked to change.
 //!
-//! Skip conditions (test passes with a printed reason):
+//! Skip conditions (test passes with a printed reason, except under
+//! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
 //! - The cross-implementation cell needs a built upstream 3.5.1 binary.
 
 use std::fs;
@@ -43,9 +44,8 @@ fn oc_binary() -> PathBuf {
 }
 
 fn upstream_binary() -> Option<PathBuf> {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
-    path.is_file().then_some(path)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+        .map(|upstream| upstream.binary().to_path_buf())
 }
 
 /// One option spelling, and what upstream does when its file is missing.
@@ -220,10 +220,6 @@ fn oc_reports_an_unopenable_filter_file_like_upstream() {
 #[test]
 fn upstream_reports_an_unopenable_filter_file_as_expected() {
     let Some(upstream) = upstream_binary() else {
-        println!(
-            "SKIP: upstream 3.5.1 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.1/rsync)"
-        );
         return;
     };
     assert_table(&upstream, "upstream 3.5.1");
