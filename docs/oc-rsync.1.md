@@ -27,7 +27,7 @@ oc-rsync - fast, wire-compatible rsync implementation in Rust
 # DESCRIPTION
 
 **oc-rsync** is a Rust reimplementation of rsync that is wire-compatible with
-upstream rsync 3.5.1 (protocol version 33). It works as a drop-in replacement
+upstream rsync 3.5.2 (protocol version 33). It works as a drop-in replacement
 for the traditional C rsync binary, supporting local copies, remote transfers
 over SSH, and daemon-mode connections over the rsync protocol.
 
@@ -46,8 +46,8 @@ rsync without conflict.
 ## Protocol Compatibility
 
 **oc-rsync** supports rsync protocol versions 28 through 33 and has been
-validated against upstream rsync versions 3.0.9, 3.1.3, 3.4.4, 3.5.0, and
-3.5.1.
+validated against upstream rsync versions 3.0.9, 3.1.3, 3.4.4, 3.5.0,
+3.5.1, and 3.5.2.
 Incremental recursion, checksum negotiation (including XXH3 and XXH128),
 and all standard wire-format features are supported.
 
@@ -63,6 +63,7 @@ and transfer-mode combinations:
 | 3.4.4          | 32       | push, pull, daemon, SSH  | gating |
 | 3.5.0          | 32       | push, pull, daemon, SSH  | gating |
 | 3.5.1          | 33       | push, pull, daemon, SSH  | gating |
+| 3.5.2          | 33       | push, pull, daemon, SSH  | gating |
 
 Wire format is verified byte-identical to upstream rsync via CI golden-byte
 tests for the listed versions. Other versions may work but are not
@@ -1358,6 +1359,7 @@ partial file does not occupy the final destination path.
 - Upstream rsync 3.4.4 (protocol 32)
 - Upstream rsync 3.5.0 (protocol 32)
 - Upstream rsync 3.5.1 (protocol 33)
+- Upstream rsync 3.5.2 (protocol 33)
 
 Both as a client connecting to upstream rsync servers and as a server
 accepting connections from upstream rsync clients.
@@ -1370,7 +1372,7 @@ protocol determines the version used; the lower of the two is selected.
 
 | Protocol | Upstream version | Status in oc-rsync | Notes |
 |----------|------------------|---------------------|-------|
-| 33       | 3.5.1            | Full support        | Primary target; all features negotiated |
+| 33       | 3.5.1 - 3.5.2    | Full support        | Primary target; all features negotiated |
 | 32       | 3.4.x - 3.5.0    | Full support        | Verified via interop matrix |
 | 31       | 3.2.x - 3.3.x    | Full support        | Verified via interop matrix |
 | 30       | 3.1.x            | Full support        | Verified via interop matrix |
