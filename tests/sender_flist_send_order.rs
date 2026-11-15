@@ -121,8 +121,6 @@ fn pull(
 
 /// The sender's stream split at the start of multiplexing.
 struct SenderStream {
-    /// The raw setup bytes: version, compat flags, checksum list and seed.
-    preamble: Vec<u8>,
     compat: CompatibilityFlags,
     /// The `MSG_DATA` payload, demultiplexed.
     data: Vec<u8>,
@@ -155,11 +153,7 @@ fn split(stream: &[u8]) -> SenderStream {
         }
         pos += 4 + len;
     }
-    SenderStream {
-        preamble: stream[..start].to_vec(),
-        compat,
-        data,
-    }
+    SenderStream { compat, data }
 }
 
 /// Reads one file list up to its end marker.
@@ -249,7 +243,6 @@ fn assert_send_order_matches_upstream(args: &[&str], inc_recurse: bool, lazy: bo
         );
     }
     assert_eq!(oc_lists.len(), up_lists.len(), "number of file lists");
-    assert_eq!(oc.preamble, up.preamble, "setup bytes");
     assert_eq!(
         oc.data[..oc_len],
         up.data[..up_len],

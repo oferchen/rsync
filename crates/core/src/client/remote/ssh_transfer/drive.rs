@@ -33,6 +33,7 @@ use super::super::operand_split::split_transfer_operands;
 use super::super::reporting_side::{ReportingSide, local_failure_error};
 use super::super::version_exchange::version_exchange_failure;
 use super::connection::build_ssh_connection;
+use super::exit_status::poll_cleanup_child_deferred;
 use super::exit_status::{
     convert_server_stats_to_summary, map_child_exit_status, poll_cleanup_child,
 };
@@ -399,12 +400,15 @@ fn run_server_over_ssh_connection(
         // upstream: cleanup.c:146-153 - a failed transfer ends in
         // _exit_cleanup(), which polls the child with WNOHANG and never waits.
         Err(transfer_error) => {
+            let (child_exit, cleanup_guard) = poll_cleanup_child_deferred(child_handle);
+            let cleanup_guard = cleanup_guard.map(|g| g.with_writer(writer));
             return Err(transfer_failure_error(
                 transfer_error,
-                poll_cleanup_child(child_handle),
+                child_exit,
                 side,
                 bytes_read.load(Ordering::Relaxed),
-            ));
+            )
+            .with_cleanup_child(cleanup_guard));
         }
     };
 

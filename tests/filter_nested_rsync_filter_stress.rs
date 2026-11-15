@@ -3,7 +3,7 @@
 //! Builds a deep source tree (four directory levels) and seeds each level with
 //! a `.rsync-filter` that mixes include/exclude rules, `merge` and `dir-merge`
 //! directives, and the leading `+`/`-` modifiers. The test then runs both
-//! upstream rsync 3.4.2 and oc-rsync in dry-run mode with `-av -F` and asserts
+//! upstream rsync 3.4.4 and oc-rsync in dry-run mode with `-av -F` and asserts
 //! that the produced file lists agree.
 //!
 //! The dry-run output is parsed into the set of file/directory paths emitted by
@@ -24,13 +24,11 @@
 //! - Anchored (`/`-prefixed) and unanchored patterns appear together to
 //!   exercise the anchor semantics inherited across directory levels.
 //!
-//! The test gates on the presence of the upstream rsync binary. The expected
-//! path is `target/interop/upstream-install/3.4.2/bin/rsync`, with a fallback
-//! to the source tree at `target/interop/upstream-src/rsync-3.4.2/rsync` so
-//! that local interop builds (which leave the binary in the source dir) are
-//! also picked up. When neither location holds a runnable binary, the test
-//! prints a skip message and returns successfully so that CI environments
-//! without the upstream interop fixture stay green.
+//! The oracle is 3.4.4: 3.4.2 was never in the interop build matrix
+//! (3.0.9, 3.1.3, 3.4.1, 3.4.4, 3.5.0, 3.5.1), so this cell could not run, and
+//! 3.4.4 is the nearest supported release. It resolves through
+//! `test_support::require_upstream_rsync`: without the binary the test skips
+//! locally and fails under `OC_RSYNC_UPSTREAM_COMPAT=1`.
 
 mod integration;
 
@@ -38,29 +36,12 @@ use integration::helpers::{RsyncCommand, TestDir};
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-/// Candidate locations for the upstream rsync 3.4.2 binary, relative to
-/// the workspace root.
-const UPSTREAM_CANDIDATES: &[&str] = &[
-    "target/interop/upstream-install/3.4.2/bin/rsync",
-    "target/interop/upstream-src/rsync-3.4.2/rsync",
-];
-
 /// Default timeout for spawned rsync processes.
 const SPAWN_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Locate the upstream rsync 3.4.2 binary, anchored at the workspace root
-/// so the lookup works regardless of the CWD Cargo runs the test from.
-fn locate_upstream() -> Option<PathBuf> {
-    let root = test_support::workspace_root()?;
-    UPSTREAM_CANDIDATES
-        .iter()
-        .map(|candidate| root.join(candidate))
-        .find(|path| path.is_file())
-}
 
 /// Build a nested source tree with `.rsync-filter` files at four depth levels.
 ///
@@ -221,16 +202,12 @@ fn parse_file_list(raw: &[u8]) -> BTreeSet<String> {
 
 #[test]
 fn nested_rsync_filter_inheritance_matches_upstream() {
-    let upstream = match locate_upstream() {
-        Some(path) => path,
-        None => {
-            eprintln!(
-                "Skipping nested_rsync_filter_inheritance_matches_upstream: \
-                 upstream rsync 3.4.2 binary not found at any of {UPSTREAM_CANDIDATES:?}"
-            );
-            return;
-        }
+    let Some(upstream) =
+        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_4_4)
+    else {
+        return;
     };
+    let upstream = upstream.binary().to_path_buf();
 
     let test_dir = TestDir::new().expect("create test dir");
     let src = test_dir.mkdir("src").expect("create src dir");

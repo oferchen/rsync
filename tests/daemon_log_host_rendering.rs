@@ -25,7 +25,8 @@
 //! above `h=[unknown]`. This is the class test for that: one rule, rendered
 //! identically wherever the peer is named.
 //!
-//! Skip conditions (test passes with a printed reason):
+//! Skip conditions (test passes with a printed reason, except under
+//! `OC_RSYNC_UPSTREAM_COMPAT=1`, where a missing oracle fails it):
 //! - Loopback TCP is unavailable.
 //! - The cross-implementation cell additionally needs a built upstream 3.5.1
 //!   binary; without it that cell reports why it did not run.
@@ -48,9 +49,8 @@ fn oc_binary() -> PathBuf {
 /// not been fetched and built. The cross-implementation cell degrades to a
 /// printed skip rather than a silent pass.
 fn upstream_binary() -> Option<PathBuf> {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/interop/upstream-src/rsync-3.5.1/rsync");
-    path.is_file().then_some(path)
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_1)
+        .map(|upstream| upstream.binary().to_path_buf())
 }
 
 /// Claims a loopback port by binding and immediately dropping the listener.
@@ -232,10 +232,6 @@ fn reverse_lookup_on_renders_a_resolved_name() {
 #[test]
 fn host_rendering_matches_the_real_upstream_daemon() {
     let Some(upstream) = upstream_binary() else {
-        println!(
-            "SKIP: upstream 3.5.1 oracle not built \
-             (target/interop/upstream-src/rsync-3.5.1/rsync)"
-        );
         return;
     };
     let oc = oc_binary();

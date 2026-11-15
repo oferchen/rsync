@@ -154,29 +154,11 @@ fn run_client(bin: &Path, args: &[&str]) -> io::Result<(i32, String)> {
     ))
 }
 
-/// Locates an upstream rsync speaking protocol 32, or `None`.
-///
-/// The `--version` banner is checked because a `rsync` on `PATH` is not
-/// necessarily upstream rsync - macOS ships openrsync, which speaks protocol
-/// 29 and knows nothing about this contract.
+/// Locates the upstream rsync 3.4.4 oracle (protocol 32) through
+/// `test_support::require_upstream_rsync`, which checks its `--version` banner.
 fn upstream_rsync() -> Option<PathBuf> {
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let candidates = [
-        workspace.join("target/interop/upstream-install/3.4.4/bin/rsync"),
-        workspace.join("target/interop/upstream-src/rsync-3.4.4/rsync"),
-    ];
-    candidates
-        .into_iter()
-        .chain(test_support::locate_command_on_path("rsync"))
-        .find(|path| {
-            path.is_file()
-                && Command::new(path)
-                    .arg("--version")
-                    .output()
-                    .is_ok_and(|out| {
-                        String::from_utf8_lossy(&out.stdout).contains("protocol version 32")
-                    })
-        })
+    test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_4_4)
+        .map(|upstream| upstream.binary().to_path_buf())
 }
 
 /// Tempdir plus the paths every scenario needs.
@@ -286,7 +268,6 @@ fn oc_client_push_of_excluded_file_is_refused_without_inc_recurse() {
 #[test]
 fn upstream_client_push_of_excluded_file_is_refused() {
     let Some(upstream) = upstream_rsync() else {
-        eprintln!("skipping: no upstream rsync speaking protocol 32 found");
         return;
     };
     assert_push_is_refused(&upstream, &[]);

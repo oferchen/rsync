@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use rsync_io::ssh::SshChildHandle;
+use rsync_io::ssh::{CleanupChild, SshChildHandle};
 
 use super::super::super::summary::{
     ClientEntryMetadata, ClientEvent, ClientSummary, ListOnlyEntryFields,
@@ -200,11 +200,18 @@ pub(in crate::client::remote) fn map_cleanup_child_exit_status(
 /// running, or one `waitpid()` cannot report, leaves the local code standing
 /// and is not waited for.
 pub(in crate::client::remote) fn poll_cleanup_child(child: SshChildHandle) -> Option<ExitCode> {
-    child
-        .poll_exit()
-        .ok()
-        .flatten()
-        .map(map_cleanup_child_exit_status)
+    poll_cleanup_child_deferred(child).0
+}
+
+/// Non-blocking `WNOHANG` poll that defers `SIGUSR1` until the returned
+/// [`CleanupChild`] guard is dropped.
+pub(in crate::client::remote) fn poll_cleanup_child_deferred(
+    child: SshChildHandle,
+) -> (Option<ExitCode>, Option<CleanupChild>) {
+    match child.poll_exit_deferred() {
+        Ok((status, guard)) => (status.map(map_cleanup_child_exit_status), guard),
+        Err(_) => (None, None),
+    }
 }
 
 /// Maps the embedded SSH transport's remote exit report to an rsync exit code.
