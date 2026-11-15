@@ -188,7 +188,7 @@ Branch protection requires ten contexts: `fmt + clippy`, `nextest (stable)`,
 
 Pull requests, the nightly schedule and `workflow_dispatch` run every job. A
 push to master runs only the `ci.yml` jobs behind these contexts (stable cells
-only); `upstream-testsuite-3.5.1.yml` and `interop-validation.yml` have no push
+only); `upstream-testsuite-3.5.2.yml` and `interop-validation.yml` have no push
 trigger and cover master from their nightly schedules instead.
 
 The ruleset is the authority, and this list is a copy of it, so re-derive it

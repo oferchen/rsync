@@ -260,7 +260,7 @@ jobs:
       # here. `upstream-testsuite-3.5.2.yml` drives it through
       # `_upstream-testsuite.yml`, which calls the same
       # `tools/ci/run_upstream_testsuite.sh` with the same `OC_RSYNC_BIN`,
-      # pinned to the 3.5.1 reference release - but blocking, as the required
+      # pinned to the 3.5.2 reference release - but blocking, as the required
       # upstream-testsuite contexts (and their `(root)` variants). A second, `continue-on-error` copy inside this
       # job re-ran an already-required gate and could only ever report a green
       # `interop` context while the suite failed. Add suite coverage there, not
@@ -270,7 +270,7 @@ jobs:
       # real ssh loopback. run_interop.sh already sweeps every version by
       # explicit path, but the push/pull/remote-sender legs below drive the
       # `rsync` on PATH, so they reinstall and re-verify per version. 3.4.4
-      # stays (the conservative regression-fix peer), and 3.5.0 and 3.5.1 are
+      # stays (the conservative regression-fix peer), and 3.5.0, 3.5.1 and 3.5.2 are
       # added (the releases this project targets); all are built and cached by
       # `run_interop.sh build-only`. Keeping this one job preserves the
       # `interop / interop with upstream rsync` required check as a single gate
@@ -284,7 +284,7 @@ jobs:
           # so the oc-rsync path handed to upstream has to be absolute.
           OC_RSYNC_ABS="$(pwd)/${OC_RSYNC}"
 
-          # The version ci.yml passes stays the first arm; 3.5.1, 3.5.0 and
+          # The version ci.yml passes stays the first arm; 3.5.2, 3.5.1, 3.5.0 and
           # 3.4.4 are always added. Dedupe so an operator override runs each
           # leg once.
           SSH_INTEROP_VERSIONS="$(printf '%s\n' "${{ inputs.upstream_rsync_version }}" 3.5.2 3.5.1 3.5.0 3.4.4 | awk 'NF && !seen[$0]++' | tr '\n' ' ')"

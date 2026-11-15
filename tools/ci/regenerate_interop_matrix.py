@@ -40,7 +40,7 @@ OUTPUT_PATH = WORKSPACE_ROOT / "docs" / "user" / "interop-compatibility-matrix.m
 # on the same wire protocol (proto 32); only the latest 3.4.x point release is
 # tracked in the matrix. 3.5.0 still speaks protocol 32; 3.5.1, the reference
 # release, introduced protocol 33.
-UPSTREAM_VERSIONS = ["2.6.9", "3.0.9", "3.1.3", "3.4.4", "3.5.0", "3.5.1"]
+UPSTREAM_VERSIONS = ["2.6.9", "3.0.9", "3.1.3", "3.4.4", "3.5.0", "3.5.1", "3.5.2"]
 
 # Protocol metadata (version -> (introduced_in, default_checksum, compat_flags,
 # inc_recurse)).
@@ -61,6 +61,7 @@ VERSION_PROTO: dict[str, str] = {
     "3.4.4": "32",
     "3.5.0": "32",
     "3.5.1": "33",
+    "3.5.2": "33",
 }
 
 # Version CI status (blocking vs non-blocking).
@@ -71,6 +72,7 @@ VERSION_CI_STATUS: dict[str, str] = {
     "3.4.4": "Required CI",
     "3.5.0": "Required CI",
     "3.5.1": "Required CI",
+    "3.5.2": "Required CI",
 }
 
 # Scenario name -> (display label, flags) for the feature matrices.
@@ -491,6 +493,7 @@ def generate_matrix(results: InteropResults) -> str:
         ("3.1.3", ["3.1.3"]),
         ("3.4.x", ["3.4.4"]),
         ("3.5.0", ["3.5.0"]),
+        ("3.5.2", ["3.5.2"]),
         ("3.5.1", ["3.5.1"]),
     ]
 
@@ -533,7 +536,7 @@ def generate_matrix(results: InteropResults) -> str:
 
         # SSH status: the SSH interop job covers 3.4.4, 3.5.0 and 3.5.1.
         ssh = "-"
-        if v in ("3.4.4", "3.5.0", "3.5.1"):
+        if v in ("3.4.4", "3.5.0", "3.5.1", "3.5.2"):
             ssh_status = _get_version_status(results, v, ["ssh-transfer"])
             if ssh_status:
                 ssh = ssh_status

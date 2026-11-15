@@ -103,7 +103,7 @@ Full per-opcode kernel-floor matrix: see `docs/audit/iouring-opcode-kernel-floor
 
 ### Supported rsync protocol versions
 
-oc-rsync supports protocol versions 28-33 inclusive, matching upstream rsync 2.6.x through 3.5.1. A peer that advertises a newer protocol is negotiated down to 33. Native rsync 2.6.3 (protocol 28) and 2.6.9 (protocol 29) peers gate the interop matrix on every pull request, alongside 3.0.9, 3.1.3, 3.4.1, 3.4.4, 3.5.0, 3.5.1 and 3.5.2. Protocols `<= 27` (rsync 2.5.x and earlier) remain unsupported. See `docs/design/rp28-k-1-protocol-drop-vs-keep-decision.md` for the decision rationale and `docs/design/rp28-k-2-execution-record.md` for the execution record.
+oc-rsync supports protocol versions 28-33 inclusive, matching upstream rsync 2.6.x through 3.5.2. A peer that advertises a newer protocol is negotiated down to 33. Native rsync 2.6.3 (protocol 28) and 2.6.9 (protocol 29) peers gate the interop matrix on every pull request, alongside 3.0.9, 3.1.3, 3.4.1, 3.4.4, 3.5.0, 3.5.1 and 3.5.2. Protocols `<= 27` (rsync 2.5.x and earlier) remain unsupported. See `docs/design/rp28-k-1-protocol-drop-vs-keep-decision.md` for the decision rationale and `docs/design/rp28-k-2-execution-record.md` for the execution record.
 
 ---
 

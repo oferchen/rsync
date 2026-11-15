@@ -82,7 +82,7 @@ def baseline_labels(data):
     declared = data.get("baselines")
     if declared:
         return [b["label"] for b in declared]
-    return [data.get("upstream_version") or "3.5.1"]
+    return [data.get("upstream_version") or "3.5.2"]
 
 
 def upstream_series(test, label):
