@@ -94,19 +94,6 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
     Ok(flags)
 }
 
-/// Registers Windows console control handlers via `SetConsoleCtrlHandler`.
-///
-/// Maps CTRL_C/CTRL_CLOSE to `shutdown` and CTRL_BREAK to `graceful_exit`.
-/// Broken pipes surface as I/O errors natively on Windows (no SIGPIPE).
-/// Config reload requires a named event (not yet implemented).
-///
-/// # One-shot constraint
-///
-/// Internally stores flag references in `OnceLock` statics so the
-/// `extern "system"` callback can reach them. This means the function
-/// can only succeed once per process - subsequent calls return
-/// [`crate::error::SignalRegistrationError::AlreadyRegistered`] (wrapped in
-/// `io::ErrorKind::Other`; downcast via `io::Error::get_ref()`).
 #[cfg(any(windows, test))]
 const CONSOLE_CTRL_C_EVENT: u32 = 0;
 #[cfg(any(windows, test))]
@@ -144,6 +131,19 @@ fn dispatch_console_ctrl(
     }
 }
 
+/// Registers Windows console control handlers via `SetConsoleCtrlHandler`.
+///
+/// Maps CTRL_C/CTRL_CLOSE to `shutdown` and CTRL_BREAK to `graceful_exit`.
+/// Broken pipes surface as I/O errors natively on Windows (no SIGPIPE).
+/// Config reload requires a named event (not yet implemented).
+///
+/// # One-shot constraint
+///
+/// Internally stores flag references in `OnceLock` statics so the
+/// `extern "system"` callback can reach them. This means the function
+/// can only succeed once per process - subsequent calls return
+/// [`crate::error::SignalRegistrationError::AlreadyRegistered`] (wrapped in
+/// `io::ErrorKind::Other`; downcast via `io::Error::get_ref()`).
 #[cfg(windows)]
 #[allow(unsafe_code)]
 pub fn register_signal_handlers() -> io::Result<SignalFlags> {
