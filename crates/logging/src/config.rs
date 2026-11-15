@@ -7,15 +7,15 @@
 //! `--debug=FLAGS`).
 //!
 //! The cumulative mapping in [`VerbosityConfig::from_verbose_level`] mirrors
-//! upstream's `set_output_verbosity()` (upstream: options.c:532), which
+//! upstream's `set_output_verbosity()` (upstream: options.c:533), which
 //! iterates `j = 0..=level` over the `info_verbosity[]` and
-//! `debug_verbosity[]` tables (upstream: options.c:244-259).
+//! `debug_verbosity[]` tables (upstream: options.c:245-260).
 
 use super::levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
 
 /// Debug categories each `-v` adds, indexed by verbose count.
 ///
-/// upstream: options.c:244-251 `debug_verbosity[]` - rows 0 and 1 are NULL,
+/// upstream: options.c:245-252 `debug_verbosity[]` - rows 0 and 1 are NULL,
 /// so `-v` enables no debug category.
 const DEBUG_VERBOSITY: [&[(DebugFlag, u8)]; 6] = {
     use DebugFlag::*;
@@ -81,13 +81,13 @@ const DEBUG_VERBOSITY: [&[(DebugFlag, u8)]; 6] = {
 
 /// Highest verbose count with its own table row; larger counts clamp to it.
 ///
-/// upstream: options.c:253 `#define MAX_VERBOSITY` - derived from the length
+/// upstream: options.c:254 `#define MAX_VERBOSITY` - derived from the length
 /// of `debug_verbosity[]`.
 pub const MAX_VERBOSITY: u8 = (DEBUG_VERBOSITY.len() - 1) as u8;
 
 /// Info categories each `-v` adds, indexed by verbose count.
 ///
-/// upstream: options.c:255-259 `info_verbosity[1+MAX_VERBOSITY]` - rows past
+/// upstream: options.c:256-260 `info_verbosity[1+MAX_VERBOSITY]` - rows past
 /// 2 are NULL.
 const INFO_VERBOSITY: [&[(InfoFlag, u8)]; DEBUG_VERBOSITY.len()] = {
     use InfoFlag::*;
@@ -125,7 +125,7 @@ const INFO_VERBOSITY: [&[(InfoFlag, u8)]; DEBUG_VERBOSITY.len()] = {
 /// [`apply_debug_flag`](Self::apply_debug_flag) for `--info=`/`--debug=`
 /// overrides.
 ///
-/// upstream: options.c:263 `info_levels[]` and `debug_levels[]`
+/// upstream: options.c:264 `info_levels[]` and `debug_levels[]`
 #[derive(Clone, Default, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VerbosityConfig {
@@ -141,7 +141,7 @@ impl VerbosityConfig {
     /// Applies rows `0..=level` of the info and debug verbosity tables in
     /// order, each entry overwriting its flag's level, so every level includes
     /// all lower ones. Counts above [`MAX_VERBOSITY`] clamp to it.
-    /// upstream: options.c:532 set_output_verbosity()
+    /// upstream: options.c:533 set_output_verbosity()
     #[must_use]
     pub fn from_verbose_level(level: u8) -> Self {
         let mut config = Self::default();
@@ -159,7 +159,7 @@ impl VerbosityConfig {
 
     /// Lowers every info and debug level above `limit`'s to `limit`'s.
     ///
-    /// upstream: options.c:546-572 limit_output_verbosity() - the per-flag
+    /// upstream: options.c:547-573 limit_output_verbosity() - the per-flag
     /// clamp loop, given limits built from the verbosity tables.
     pub fn limit_to(&mut self, limit: &Self) {
         for flag in InfoFlag::ALL {
@@ -275,7 +275,7 @@ impl VerbosityConfig {
 /// Parse a flag token like `"copy2"` into `("copy", 2)` or `"del"` into `("del", 1)`.
 ///
 /// Tokens without a trailing digit default to level 1, matching upstream
-/// rsync's `parse_output_words()` behaviour (upstream: options.c:459).
+/// rsync's `parse_output_words()` behaviour (upstream: options.c:460).
 fn parse_flag_token(token: &str) -> Result<(&str, u8), String> {
     if token.is_empty() {
         return Err("empty flag token".to_owned());

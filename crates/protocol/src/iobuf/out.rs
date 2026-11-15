@@ -17,14 +17,14 @@ const DATA_HEADER_TAG: u32 = match MessageHeader::new(MessageCode::Data, 0) {
 
 /// Upstream's raw output buffer size.
 ///
-/// upstream: `io.c:1567` `alloc_xbuf(&iobuf.out, ROUND_UP_1024(IO_BUFFER_SIZE * 2))`
+/// upstream: `io.c:1574` `alloc_xbuf(&iobuf.out, ROUND_UP_1024(IO_BUFFER_SIZE * 2))`
 /// with `IO_BUFFER_SIZE = 32*1024` (`rsync.h:160`). Never reallocated
 /// (io.c:678 "We never resize the circular output buffer.").
 pub const OUT_BUFFER_SIZE: usize = 64 * 1024;
 
 /// Circular output buffer with an in-place `MSG_DATA` header reservation.
 ///
-/// Mirrors upstream's `iobuf.out` (`xbuf` in `rsync.h:1118-1123`, driven by
+/// Mirrors upstream's `iobuf.out` (`xbuf` in `rsync.h:1134-1139`, driven by
 /// `io.c:write_buf()` and the drain block at io.c:946-994):
 ///
 /// * `pos` is the offset of the next byte owed to the wire, `len` the number of
@@ -48,7 +48,7 @@ pub struct OutBuf {
     /// Current (possibly temporarily reduced) circular size.
     size: usize,
     /// 0 when raw, 4 once multiplexing reserves a `MSG_DATA` header.
-    /// upstream: `io.c:2690` `iobuf.out_empty_len = 4`.
+    /// upstream: `io.c:2697` `iobuf.out_empty_len = 4`.
     out_empty_len: usize,
     /// Offset of the reserved `MSG_DATA` header inside `buf`.
     /// upstream: `iobuf.raw_data_header_pos`.
@@ -92,7 +92,7 @@ impl OutBuf {
 
     /// Reserves the first `MSG_DATA` header in place, activating multiplexing.
     ///
-    /// upstream: `io.c:2680-2696` `io_start_multiplex_out()` - after a full
+    /// upstream: `io.c:2687-2703` `io_start_multiplex_out()` - after a full
     /// flush it sets `out_empty_len = 4`, records `raw_data_header_pos` and
     /// bumps `out.len` by 4 without writing anything.
     ///
@@ -120,7 +120,7 @@ impl OutBuf {
 
     /// Returns `true` when nothing but a reserved header is buffered.
     ///
-    /// upstream: `out.len == out_empty_len` (io.c:798, io.c:1658). This is the
+    /// upstream: `out.len == out_empty_len` (io.c:798, io.c:1665). This is the
     /// only correct emptiness test on a multiplexed buffer.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -135,7 +135,7 @@ impl OutBuf {
 
     /// Appends `data` to the buffered run without performing any I/O.
     ///
-    /// This is the memcpy half of upstream `write_buf()` (io.c:2490-2502),
+    /// This is the memcpy half of upstream `write_buf()` (io.c:2497-2509),
     /// including the split copy that wraps the circular end. "A write whose bytes
     /// fit performs no I/O" holds by construction: this function takes no writer.
     ///
@@ -154,7 +154,7 @@ impl OutBuf {
             pos -= self.size;
         }
 
-        // upstream: io.c:2494-2499 - split the copy when it wraps the end.
+        // upstream: io.c:2501-2506 - split the copy when it wraps the end.
         if pos >= self.pos {
             let contiguous = self.size - pos;
             if contiguous < data.len() {
@@ -270,7 +270,7 @@ impl OutBuf {
 
     /// Drains everything buffered, back-filling the `MSG_DATA` header first.
     ///
-    /// upstream: `io_flush(FULL_FLUSH)` (io.c:2359-2370) driving `perform_io`.
+    /// upstream: `io_flush(FULL_FLUSH)` (io.c:2366-2377) driving `perform_io`.
     /// The header is written into the buffer *before* the first syscall, so a
     /// short write can split the frame anywhere - including mid-header, exactly
     /// as upstream's can - without ever exposing a header whose payload is not

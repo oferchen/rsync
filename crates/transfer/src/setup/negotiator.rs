@@ -16,7 +16,7 @@ use std::io::{self, Read, Write};
 /// Exchanges compatibility flags between server and client.
 ///
 /// Abstracts the unidirectional compat-flags exchange described in
-/// upstream `compat.c:722-760`. The server writes flags; the client reads them.
+/// upstream `compat.c:731-769`. The server writes flags; the client reads them.
 pub trait CompatFlagsExchanger {
     /// Writes the server's compatibility flags to the output stream.
     ///
@@ -76,7 +76,7 @@ pub trait CapabilityNegotiator {
     ///
     /// When `config.compression_override` is `Some`, the compression vstring
     /// exchange is skipped and the specified algorithm is used directly -
-    /// matching upstream `compat.c:547` (`do_compression && !compress_choice`).
+    /// matching upstream `compat.c:548` (`do_compression && !compress_choice`).
     fn negotiate(
         &self,
         protocol: ProtocolVersion,
@@ -88,12 +88,12 @@ pub trait CapabilityNegotiator {
 
 /// Exchanges the checksum seed between server and client.
 ///
-/// Abstracts the seed exchange at upstream `compat.c:822-827`. The server generates
+/// Abstracts the seed exchange at upstream `compat.c:831-836`. The server generates
 /// (or uses a fixed) seed and writes 4 bytes LE; the client reads them.
 pub trait ChecksumSeedExchanger {
     /// Generates (or uses a fixed) seed and writes it to the output stream.
     ///
-    /// # Seed generation (upstream `compat.c:823-824`)
+    /// # Seed generation (upstream `compat.c:832-833`)
     ///
     /// - `None` or `Some(0)`: generate from `time() ^ (pid << 6)`
     /// - `Some(n)`: use `n` as the fixed seed
@@ -108,7 +108,7 @@ pub trait ChecksumSeedExchanger {
 /// A missing or zero `--checksum-seed` generates `time() ^ (pid << 6)`; any
 /// other value is used as given.
 ///
-/// upstream: compat.c:823-824 `checksum_seed = time(NULL) ^ (getpid() << 6)`
+/// upstream: compat.c:832-833 `checksum_seed = time(NULL) ^ (getpid() << 6)`
 #[must_use]
 pub fn resolve_checksum_seed(fixed_seed: Option<i32>) -> i32 {
     match fixed_seed {

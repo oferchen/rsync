@@ -4,7 +4,7 @@
 /// NSS lookups (getpwuid, getpwnam, getgrgid, getgrnam) with a simple
 /// line-based protocol over stdin/stdout pipes.
 ///
-/// upstream: clientserver.c:1024-1025 spawns the converter with
+/// upstream: clientserver.c:1028-1029 spawns the converter with
 /// `start_pre_exec()` and talks to it over two pipes (`namecvt_call()`,
 /// clientserver.c:1311). Requests are `"{cmd} {arg}\n"`, responses are single
 /// lines. Upstream spawns it before the chroot (:1050) and the privilege drop
@@ -52,7 +52,7 @@ impl ConverterDeath {
 
     /// Records the converter having closed its answer pipe.
     ///
-    /// upstream: clientserver.c:1336-1337 - `read_line_old()` fails for this
+    /// upstream: clientserver.c:1345-1346 - `read_line_old()` fails for this
     /// call, and the next request's write then exits the process at :1333. The
     /// session ends either way; taking it here is what keeps the *first* such
     /// lookup from reading as "no such name".
@@ -76,7 +76,7 @@ impl ConverterStream {
     /// `Ok(None)` is an answer that names nothing (upstream's empty line);
     /// `Err` means the stream is broken and the converter is finished.
     fn exchange(&mut self, request: &str) -> Result<Option<String>, ConverterDeath> {
-        // upstream: clientserver.c:1329-1334 - a write that does not complete
+        // upstream: clientserver.c:1338-1343 - a write that does not complete
         // is `exit_cleanup(RERR_SOCKETIO)`, never a lookup that "found
         // nothing".
         self.stdin
@@ -88,12 +88,12 @@ impl ConverterStream {
 
         let mut line = String::new();
         match self.stdout.read_line(&mut line) {
-            // upstream: clientserver.c:1336-1337 - `read_line_old()` failed.
+            // upstream: clientserver.c:1345-1346 - `read_line_old()` failed.
             Ok(0) => Err(ConverterDeath::exited()),
             Err(err) => Err(ConverterDeath::from_io("reading the answer", &err)),
             Ok(_) => {
                 let trimmed = line.trim_end().to_owned();
-                // upstream: clientserver.c:1345-1346 - `if (!*buf) return
+                // upstream: clientserver.c:1354-1355 - `if (!*buf) return
                 // False`. An empty answer is "unknown"; reading it as the id
                 // `atol("") == 0` is CVE-2026-53798.
                 Ok((!trimmed.is_empty()).then_some(trimmed))
@@ -142,7 +142,7 @@ impl NameConverter {
             // learns that a peer-supplied name was rejected rather than merely
             // unknown. Emitting at the guard - not at a caller - keeps the one
             // site that decides also the one site that speaks.
-            // upstream: clientserver.c:1317-1319 `rprintf(FERROR, "invalid
+            // upstream: clientserver.c:1326-1328 `rprintf(FERROR, "invalid
             // name-converter token: %s\n", *name_p)` then `return False`.
             logging::emit_info_coded(
                 logging::InfoFlag::Misc,
@@ -153,7 +153,7 @@ impl NameConverter {
             return ConverterOutcome::Refused;
         }
         let request = format!("{cmd} {arg}\n");
-        // upstream: clientserver.c:1324 - `len >= (int)sizeof buf` on a 1024-byte
+        // upstream: clientserver.c:1333 - `len >= (int)sizeof buf` on a 1024-byte
         // buffer, so 1024 itself is already too long (snprintf truncated it).
         // Upstream answers a truncated request with
         // `exit_cleanup(RERR_UNSUPPORTED)`, so it is a failure and not a name
@@ -206,14 +206,14 @@ impl NameConverter {
 
 /// Upper bound on a converter request, matching upstream's `char buf[1024]`.
 ///
-/// upstream: clientserver.c:1313 - `char buf[1024]`, refused at `:1324` once the
+/// upstream: clientserver.c:1322 - `char buf[1024]`, refused at `:1324` once the
 /// formatted request reaches that length.
 #[cfg(unix)]
 const NAMECVT_REQUEST_LIMIT: usize = 1024;
 
 /// Rejects a name that cannot be framed as a single request line.
 ///
-/// upstream: clientserver.c:1362-1370 `namecvt_safe_token()` - refuses any byte
+/// upstream: clientserver.c:1371-1379 `namecvt_safe_token()` - refuses any byte
 /// below `' '` or equal to `0x7f`, checked at `:1317` *before* the request is
 /// formatted. Newline is the byte that matters (it desynchronises the
 /// request/answer stream); the rest of the control range comes along because
@@ -225,7 +225,7 @@ fn is_safe_token(name: &str) -> bool {
 
 /// Parses a converter's id answer under upstream's strict digit rule.
 ///
-/// upstream: clientserver.c:1345-1354 - an empty line, any non-digit byte, or a
+/// upstream: clientserver.c:1354-1363 - an empty line, any non-digit byte, or a
 /// value that does not fit `id_t` yields `False` and leaves the id untouched.
 /// The explicit digit loop is why a leading `+` is refused, which Rust's
 /// `str::parse::<u32>` would otherwise accept.
@@ -391,7 +391,7 @@ mod name_converter_tests {
         assert_eq!(answered(nc.name_to_gid("staff")), Some(2002));
     }
 
-    /// upstream: clientserver.c:1345-1346 - `if (!*buf) return False`. An empty
+    /// upstream: clientserver.c:1354-1355 - `if (!*buf) return False`. An empty
     /// answer is the converter saying "I do not know", which is NOT a failure:
     /// the converter must still be usable afterwards.
     #[cfg(unix)]
@@ -423,7 +423,7 @@ mod name_converter_tests {
     /// name has no id" - that answer would hand the caller the sender's own
     /// numeric id for every name for the rest of the session.
     ///
-    /// upstream: clientserver.c:1336-1337 returns False for the EOF itself and
+    /// upstream: clientserver.c:1345-1346 returns False for the EOF itself and
     /// :1329-1334 then exits the process on the NEXT request's write, so the
     /// session never continues past a dead converter either.
     #[cfg(unix)]
@@ -644,7 +644,7 @@ mod name_converter_tests {
         // Exercised through name_to_uid, not the helper directly: a test that
         // calls parse_converter_id() alone still passes when the production
         // path is wired straight to str::parse, which is the mistake to catch.
-        // upstream clientserver.c:1347-1350 walks the bytes explicitly, so the
+        // upstream clientserver.c:1356-1359 walks the bytes explicitly, so the
         // leading `+` that Rust's parse::<u32> accepts must be refused here.
         let outcome = nc.name_to_uid("plus");
         assert!(

@@ -86,15 +86,15 @@ Different root bugs at different layers. Upstream #829: client escapes wildcards
 
 ## URV-3: mode-0 sentinel (PR #5523 vs #910)
 
-Identical wire format (regular `FileEntry` with mode=0). Upstream's fix was a carve-out for `mode==0 && missing_args==2` in `flist.c:recv_file_entry` (a rejection upstream introduced in 3.4.3). oc-rsync never had that rejection - the read path stores mode as-is - so the wire-acceptance side was never broken. PR #5523 adds the deletion consumer mirroring upstream's `generator.c:1360-1364`. Behaviorally equivalent.
+Identical wire format (regular `FileEntry` with mode=0). Upstream's fix was a carve-out for `mode==0 && missing_args==2` in `flist.c:recv_file_entry` (a rejection upstream introduced in 3.4.3). oc-rsync never had that rejection - the read path stores mode as-is - so the wire-acceptance side was never broken. PR #5523 adds the deletion consumer mirroring upstream's `generator.c:1397-1401`. Behaviorally equivalent.
 
 ## URV-4: path = / sender (PRs #5522 + #5532 vs #897)
 
-Architecture differs. Upstream #897 fix in `sender.c:362-381` strips leading slashes from joined `secure_path` before `secure_relative_open(module_dir, relp, ...)`. oc-rsync doesn't use per-file `secure_relative_open`; the daemon passes `module.path` to `ServerConfig` and the engine reads via canonical paths from the flist. The upstream bug class doesn't reproduce. Parser/validator parity is complete (#5522). Follow-up #3620 closes the test-coverage gap.
+Architecture differs. Upstream #897 fix in `sender.c:370-389` strips leading slashes from joined `secure_path` before `secure_relative_open(module_dir, relp, ...)`. oc-rsync doesn't use per-file `secure_relative_open`; the daemon passes `module.path` to `ServerConfig` and the engine reads via canonical paths from the flist. The upstream bug class doesn't reproduce. Parser/validator parity is complete (#5522). Follow-up #3620 closes the test-coverage gap.
 
 ## URV-5: relative alt-basis daemon (PR #5525 vs #915) - RISK
 
-PR #5525 achieves the SYMLINK-handling parity (oc-rsync's `try_reference_dest` now dispatches on `copy_links` matching upstream `link_stat(..., 0)`). But the RELATIVE alt-basis re-anchor diverges: oc-rsync does `module_path.join(rel)` in `client_args.rs:254-259` with NO kernel-level confinement and NO `..`-rejection fallback. Upstream's `secure_relative_open()` (`syscall.c:1791-1896`) uses `openat2(RESOLVE_BENEATH)` on Linux / `O_RESOLVE_BENEATH` on FreeBSD13+/macOS15+, with a portable fallback rejecting `..` outright.
+PR #5525 achieves the SYMLINK-handling parity (oc-rsync's `try_reference_dest` now dispatches on `copy_links` matching upstream `link_stat(..., 0)`). But the RELATIVE alt-basis re-anchor diverges: oc-rsync does `module_path.join(rel)` in `client_args.rs:254-259` with NO kernel-level confinement and NO `..`-rejection fallback. Upstream's `secure_relative_open()` (`syscall.c:1862-1967`) uses `openat2(RESOLVE_BENEATH)` on Linux / `O_RESOLVE_BENEATH` on FreeBSD13+/macOS15+, with a portable fallback rejecting `..` outright.
 
 **Security gap**: `--copy-dest=../../etc` is accepted on a chroot-disabled module today.
 
@@ -115,7 +115,7 @@ This closes URV-5.b.REOPEN and unblocks URV-5.c.5 (Landlock default-on flip).
 
 ## URV-6: NDX_DEL_STATS daemon-upload (PR #5536 vs upstream change) - RISK
 
-Wire format, varint order, and direction all parity. **Verbosity gate diverges**: upstream 3.4.4's whole point in `generator.c:2393, 2437` was REMOVING the `INFO_GTE(STATS, 2)` (`--stats`) requirement - gate is now `delete_mode || force_delete || read_batch`. oc-rsync's `should_send_del_stats()` still requires `do_stats`, so a daemon-upload without `--stats` won't emit, contradicting the 3.4.4 intent.
+Wire format, varint order, and direction all parity. **Verbosity gate diverges**: upstream 3.4.4's whole point in `generator.c:2436, 2437` was REMOVING the `INFO_GTE(STATS, 2)` (`--stats`) requirement - gate is now `delete_mode || force_delete || read_batch`. oc-rsync's `should_send_del_stats()` still requires `do_stats`, so a daemon-upload without `--stats` won't emit, contradicting the 3.4.4 intent.
 
 Minor: protocol gate uses `supports_extended_goodbye()` which is proto 32; upstream uses `protocol_version >= 31`.
 

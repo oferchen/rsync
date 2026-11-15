@@ -235,7 +235,7 @@ fn execute_applies_chmod_modifiers() {
 /// 0o644, so it never self-locks. A directory this transfer creates lands
 /// the composed 0o644 plus the during-transfer owner-`rwx` grant
 /// (generator.c:1904-1905), which persists because 0o644 keeps owner write.
-// upstream: rsync.c:464-486 dest_mode() + generator.c:1904-1920.
+// upstream: rsync.c:464-486 dest_mode() + generator.c:1941-1957.
 #[cfg(unix)]
 #[test]
 fn execute_octal_chmod_without_perms_keeps_existing_dirs_and_succeeds() {

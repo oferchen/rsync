@@ -259,7 +259,7 @@ fn process_curr_dir() -> &'static Path {
 
 /// Maps a module root of `/` to "strip nothing".
 ///
-/// upstream: `clientserver.c:922-923` - `if (module_dirlen == 1)
+/// upstream: `clientserver.c:926-927` - `if (module_dirlen == 1)
 /// module_dirlen = 0;`. A module rooted at `/` has `module_dir == "/"`, whose
 /// length is 1, so upstream deliberately consumes no byte of `curr_dir` and the
 /// rendered name stays absolute.

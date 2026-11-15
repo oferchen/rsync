@@ -12,7 +12,7 @@
 ///
 /// # Upstream reference
 ///
-/// upstream: compat.c:333-364 `parse_negotiate_str()` - each side walks the
+/// upstream: compat.c:334-365 `parse_negotiate_str()` - each side walks the
 /// peer's list and keeps the entry ranked highest in its own list.
 ///
 /// Deviation from upstream: implementations here use the 3.4.x rule, where the
@@ -26,7 +26,7 @@ pub trait CompressionNegotiator: Send + Sync {
     ///
     /// # Upstream reference
     ///
-    /// upstream: compat.c:101-112 `valid_compressions_items[]`
+    /// upstream: compat.c:102-113 `valid_compressions_items[]`
     fn supported_algorithms(&self) -> Vec<&'static str>;
 
     /// Selects the best mutual algorithm given the remote peer's advertised list.
@@ -41,6 +41,6 @@ pub trait CompressionNegotiator: Send + Sync {
     ///
     /// # Upstream reference
     ///
-    /// upstream: compat.c:333-364 `parse_negotiate_str()`
+    /// upstream: compat.c:334-365 `parse_negotiate_str()`
     fn select_algorithm(&self, remote_list: &[&str], is_server: bool) -> &'static str;
 }

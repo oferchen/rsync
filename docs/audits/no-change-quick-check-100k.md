@@ -19,7 +19,7 @@ The quick-check decision is implemented in two places:
   (lines 129-166) - the local-copy executor's comparator used when
   source and destination are both on the local filesystem.
 
-Both follow upstream `generator.c:617 quick_check_ok()` evaluation
+Both follow upstream `generator.c:654 quick_check_ok()` evaluation
 order:
 
 1. Size mismatch -> always transfer.
@@ -99,10 +99,10 @@ runs the same parallel-stat helper over directory entries returned by
 
 ## 3. Comparison with upstream `flist.c` / `generator.c`
 
-Upstream `quick_check_ok` (generator.c:617-671) is structurally
+Upstream `quick_check_ok` (generator.c:654-708) is structurally
 identical: size first, optional `file_checksum`, optional
 `size_only` shortcut, optional `ignore_times`, then `mtime_differs`.
-`mtime_differs` (generator.c:389-396) compares full-resolution mtimes
+`mtime_differs` (generator.c:424-431) compares full-resolution mtimes
 when `ST_MTIME_NSEC` is available, falling back to seconds-only
 comparison otherwise. Our implementation uses
 `std::os::unix::fs::MetadataExt::mtime` on Unix, which returns the
@@ -111,7 +111,7 @@ metadata crate but is not consulted by `quick_check_matches`. This
 matches upstream behaviour when `--modify-window=0` and
 `F_MOD_NSEC_or_0(file)` evaluates to zero, which is the default.
 
-Upstream issues `link_stat` (generator.c:1344) - one `lstat` followed
+Upstream issues `link_stat` (generator.c:1381) - one `lstat` followed
 by an optional `stat` when `keep_dirlinks && is_dir` - per file. Our
 receiver issues `fs::metadata` (one `stat`). The behavioural
 difference: upstream's `lstat` short-circuits symlink dereference,
@@ -123,7 +123,7 @@ file, matching upstream's syscall count.
 
 `flist.c` itself does not implement quick-check; its role on the
 receiver is to consume the file list and hand entries to the
-generator. Upstream's `recv_generator` (generator.c:1207) is the
+generator. Upstream's `recv_generator` (generator.c:1244) is the
 analogue of our `build_files_to_transfer` -> `transfer/pipeline.rs`
 path. We split the loop into A/B/C explicitly to lift the stat phase
 out of the sequential C loop. Upstream's loop is fully sequential.

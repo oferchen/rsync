@@ -401,7 +401,7 @@ fn whole_file_bypasses_fuzzy_search() {
 /// `"fuzzy basis selected for ..."` line whenever the receiver basis search
 /// selects a fuzzy candidate.
 ///
-/// upstream: generator.c:2202-2205 - `DEBUG_GTE(FUZZY, 1)` branch in
+/// upstream: generator.c:2243-2246 - `DEBUG_GTE(FUZZY, 1)` branch in
 /// `recv_generator()`.
 #[test]
 fn fuzzy_basis_selection_emits_debug_fuzzy_line() {

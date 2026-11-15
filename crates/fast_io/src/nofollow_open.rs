@@ -21,7 +21,7 @@
 //!
 //! # Regular files only
 //!
-//! Upstream never reaches its basis open (`generator.c:2313`,
+//! Upstream never reaches its basis open (`generator.c:2355`,
 //! `do_open_checklinks(fnamecmp)`) with a non-regular `fnamecmp`.
 //! `generator.c:2148` has already removed a non-regular destination
 //! (`delete_item(fname, sx.st.st_mode, del_opts | DEL_FOR_FILE)`, leaving
@@ -29,7 +29,7 @@
 //! when `S_ISREG(sxp->st.st_mode)` (`generator.c:1084`); `find_fuzzy()`
 //! skips anything that is not `S_ISREG(fp->mode)` (`generator.c:860,888`);
 //! and the `--partial-dir` fallback is guarded by
-//! `S_ISREG(partial_st.st_mode)` (`generator.c:2175`). Every basis upstream
+//! `S_ISREG(partial_st.st_mode)` (`generator.c:2216`). Every basis upstream
 //! opens is therefore a regular file, and this helper states that invariant
 //! directly.
 //!
@@ -65,7 +65,7 @@ use std::path::Path;
 /// is rejected with `ELOOP`.
 ///
 /// Top-level paths (no `/`) short-circuit to [`File::open`] because
-/// there is no dirname to split, matching upstream `syscall.c:1672-1674`.
+/// there is no dirname to split, matching upstream `syscall.c:1741-1743`.
 ///
 /// # Errors
 ///
@@ -117,7 +117,7 @@ mod imp {
             return open_nonblock(path);
         };
 
-        // Upstream `syscall.c:1672-1674`: `if (!slash) return do_open(...)`.
+        // Upstream `syscall.c:1741-1743`: `if (!slash) return do_open(...)`.
         // Treat the empty parent ("foo" with no slash) and the lone
         // root component identically: there is no dirname to split.
         let dirname = match path.parent() {
@@ -335,7 +335,7 @@ mod tests {
     }
 
     /// A directory opens successfully with `O_RDONLY` but can never be read
-    /// as a delta basis. Upstream removes it at `generator.c:2148`; oc
+    /// as a delta basis. Upstream removes it at `generator.c:2189`; oc
     /// declines it here.
     #[test]
     fn refuses_directory_basis() {

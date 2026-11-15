@@ -30,7 +30,7 @@ pub(crate) fn implied_source_args_for_pull(
     source_paths: &[String],
     files_from_data: Option<&[u8]>,
 ) -> Vec<Vec<u8>> {
-    // upstream: options.c:2677 - a non-zero old_style_args sets
+    // upstream: options.c:2732 - a non-zero old_style_args sets
     // trust_sender_args, so add_implied_include() returns early and the implied
     // list stays empty. Any active level (>= 1) qualifies.
     if config.old_args().unwrap_or(0) >= 1 {
@@ -38,7 +38,7 @@ pub(crate) fn implied_source_args_for_pull(
     }
 
     if config.files_from().is_active() {
-        // upstream: main.c:1580 - the source arg is NOT recorded when
+        // upstream: main.c:1584 - the source arg is NOT recorded when
         // --files-from is active; io.c:512/549 records each forwarded entry.
         return match files_from_data {
             Some(bytes) => files_from_entries(bytes),
@@ -95,14 +95,14 @@ mod tests {
 
     #[test]
     fn old_args_disables_the_mechanism() {
-        // upstream: options.c:2677 - a non-zero old_style_args sets trust_sender_args.
+        // upstream: options.c:2732 - a non-zero old_style_args sets trust_sender_args.
         let config = config_with(Some(1), FilesFromSource::None);
         assert!(implied_source_args_for_pull(&config, &["dir".to_owned()], None).is_empty());
     }
 
     #[test]
     fn local_files_from_folds_entries_and_drops_source_arg() {
-        // upstream: main.c:1580 skips the source arg; io.c:512/549 records each
+        // upstream: main.c:1584 skips the source arg; io.c:512/549 records each
         // forwarded entry instead.
         let config = config_with(None, FilesFromSource::Stdin);
         let bytes = b"from/./\0from/./dir/subdir\0\0";
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn remote_files_from_disables_the_mechanism() {
-        // upstream: options.c:2677 - filesfrom_host != NULL sets trust_sender_args;
+        // upstream: options.c:2732 - filesfrom_host != NULL sets trust_sender_args;
         // no bytes are staged locally.
         let config = config_with(None, FilesFromSource::RemoteFile("list".to_owned()));
         assert!(implied_source_args_for_pull(&config, &["dir".to_owned()], None).is_empty());

@@ -87,7 +87,7 @@ The single-FD variant would be `dup2(sp[0], 0); dup2(sp[0], 1);` on the
 child after a single `socketpair`. Upstream does not do this and there
 is no `HAVE_SOCKETPAIR`-guarded code path that does. The closest
 analogue is the daemon-mode `f_in == f_out` pattern at
-`clientserver.c:174-175`, but that uses a **TCP** socket (`open_socket_out`)
+`clientserver.c:178-179`, but that uses a **TCP** socket (`open_socket_out`)
 where bidirectional sharing is natural, not a `socketpair`.
 
 ### 2.2 Why a single FD looks attractive on paper
@@ -335,7 +335,7 @@ Upstream rsync 3.4.1 (`target/interop/upstream-src/rsync-3.4.1/`):
 
 - `pipe.c:48-97` `piped_child` - two `fd_pair` calls, not one.
 - `util1.c:74-96` `fd_pair` - `socketpair`-or-`pipe` wrapper.
-- `clientserver.c:174-175` - daemon `f_in == f_out` over a TCP socket
+- `clientserver.c:178-179` - daemon `f_in == f_out` over a TCP socket
   (not a socketpair; not analogous to SSH).
 - `io.c:983-1031` `send_msg` - multiplex envelope for remote-rsync
   diagnostics (independent of SSH stderr).

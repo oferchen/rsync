@@ -15,7 +15,7 @@ PR #3557 (commit `39d47722b`, `feat(transfer): enable INC_RECURSE sender
 by default`) flipped the default of `ClientConfig::inc_recursive_send`
 from `false` to `true` so the client-as-sender advertises the `'i'`
 capability bit in the `-e.` string for push transfers, mirroring upstream
-`compat.c:720 set_allow_inc_recurse()`. The flip removed a role-based wire
+`compat.c:721 set_allow_inc_recurse()`. The flip removed a role-based wire
 asymmetry but routed every push through the sender-side INC_RECURSE state
 machine, which had never been validated against upstream interop and was
 not performance-tuned. Pulls were unaffected: the gate governs only what

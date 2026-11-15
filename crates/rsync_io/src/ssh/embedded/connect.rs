@@ -303,7 +303,7 @@ pub fn connect_and_exec(
 ///
 /// The peer `rsync --server` writes the diagnostics it does not frame into the
 /// multiplexed protocol stream - notably the `--append-verify` phase-1 `failed
-/// verification` warning, which upstream routes to fd2 (`log.c:341` maps
+/// verification` warning, which upstream routes to fd2 (`log.c:421` maps
 /// `FWARNING` to stderr) rather than sending a `MSG_WARNING` - to its stderr,
 /// which arrives on the channel as extended data. Forwarding the stderr stream
 /// verbatim mirrors the subprocess transport, whose ssh child inherits our

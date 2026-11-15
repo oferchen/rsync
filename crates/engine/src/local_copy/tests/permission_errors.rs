@@ -74,7 +74,7 @@ fn permission_read_denied_single_file() {
     // Restore permissions for cleanup
     restore_permissions(&unreadable, 0o644);
 
-    // upstream: sender.c:719-721 reports the failed open at its site, and
+    // upstream: sender.c:727-729 reports the failed open at its site, and
     // cleanup.c:217-218 ends the run with RERR_PARTIAL (23).
     let error = result.expect_err("should fail with permission denied");
     assert!(
@@ -125,7 +125,7 @@ fn permission_read_denied_returns_io_error_with_multiple_files() {
             );
         }
         Err(error) => {
-            // upstream: sender.c:719-721 reports the failed open at its site;
+            // upstream: sender.c:727-729 reports the failed open at its site;
             // the run itself ends with RERR_PARTIAL (cleanup.c:217-218).
             assert!(
                 matches!(error.kind(), LocalCopyErrorKind::PartialTransfer),
@@ -248,7 +248,7 @@ fn permission_write_denied_creating_directory_in_readonly_parent() {
     // Restore permissions for cleanup
     restore_permissions(&dest_root, 0o755);
 
-    // upstream: generator.c:1873-1887 reports the mkdir and skips everything
+    // upstream: generator.c:1910-1924 reports the mkdir and skips everything
     // below it (`skip_dir`), so the nested file is never attempted and the run
     // ends RERR_PARTIAL.
     let error = result.expect_err("should fail to create directory");

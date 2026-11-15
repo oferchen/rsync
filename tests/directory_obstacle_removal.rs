@@ -2,7 +2,7 @@
 //! be written is removed, never backed up - and a populated one is refused out
 //! loud.
 //!
-//! upstream `generator.c:2464-2485` `atomic_create()`:
+//! upstream `generator.c:2507-2528` `atomic_create()`:
 //!
 //! ```text
 //! int skip_atomic, dir_in_the_way = del_for_flag && S_ISDIR(sxp->st.st_mode);
@@ -233,7 +233,7 @@ fn an_empty_directory_obstacle_is_removed_for_a_symlink() {
 /// removal now fails loudly instead of silently" - every other cell here would
 /// pass under a change that only added diagnostics.
 ///
-/// upstream: `generator.c:2091` `atomic_create(file, fname, NULL, NULL, rdev,
+/// upstream: `generator.c:2132` `atomic_create(file, fname, NULL, NULL, rdev,
 /// &sx, dest_existed ? del_for_flag : 0)`.
 #[test]
 fn an_empty_directory_obstacle_is_removed_for_a_fifo() {
@@ -301,7 +301,7 @@ fn a_populated_directory_obstacle_is_refused_at_23() {
 
 /// The noun in the refusal comes from the NEW entry's type, not the obstacle's.
 ///
-/// upstream: `generator.c:2041-2047` picks `DEL_FOR_DEVICE` or
+/// upstream: `generator.c:2082-2088` picks `DEL_FOR_DEVICE` or
 /// `DEL_FOR_SPECIAL`; `delete.c:275-282` turns it into the printed noun.
 #[test]
 fn the_refusal_names_the_new_entrys_kind() {
@@ -330,7 +330,7 @@ fn the_refusal_names_the_new_entrys_kind() {
 /// cell from a wrong-data pass into a hard failure on a shape upstream
 /// completes at 0. That is what makes the halves inseparable.
 ///
-/// upstream: `generator.c:2476` - `if (make_backups > 0 && !dir_in_the_way)`.
+/// upstream: `generator.c:2519` - `if (make_backups > 0 && !dir_in_the_way)`.
 #[test]
 fn a_directory_obstacle_is_removed_not_backed_up_under_backup() {
     let fx = fixture(Source::Symlink, false);
@@ -389,7 +389,7 @@ fn a_populated_directory_obstacle_under_backup_is_refused_not_backed_up() {
 /// entry `ITEM_IS_NEW`, so 3.5.0 prints `<f+++++++++ a` for a cleared
 /// obstacle. Measured against 3.5.1, not read off the source.
 ///
-/// upstream: `generator.c:2149` - `delete_item(fname, sx.st.st_mode,
+/// upstream: `generator.c:2190` - `delete_item(fname, sx.st.st_mode,
 /// del_opts | DEL_FOR_FILE)`, then `statret = -1`.
 #[test]
 fn an_empty_directory_obstacle_is_removed_for_a_regular_file() {
@@ -516,7 +516,7 @@ fn a_regular_file_destination_with_no_obstacle_still_transfers() {
 /// `deleting obstacle/occupant` on the wire; the bare run gives 23. oc gave 23
 /// in all four cells.
 ///
-/// upstream: `generator.c:2481` - `int del_opts = delete_mode || force_delete ?
+/// upstream: `generator.c:2524` - `int del_opts = delete_mode || force_delete ?
 /// DEL_RECURSE : 0;`, handed to `delete_item()` and on to
 /// `delete_dir_contents()` (`delete.c:205-211`).
 #[test]
@@ -556,7 +556,7 @@ fn force_clears_a_populated_directory_obstacle() {
 /// new flag would leave this one red, and a fix that only read `flags.delete`
 /// would leave the other one red.
 ///
-/// upstream: `generator.c:2481` - `delete_mode || force_delete`.
+/// upstream: `generator.c:2524` - `delete_mode || force_delete`.
 #[test]
 fn delete_clears_a_populated_directory_obstacle() {
     let fx = fixture(Source::Symlink, true);

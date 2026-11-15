@@ -32,7 +32,7 @@ implicit levels set by `-v`.
 
 ## 2. Upstream info_words[] (13 flags)
 
-Source: `options.c:270-284`.
+Source: `options.c:271-285`.
 
 | Index | Flag | Where | Upstream description | Max useful level |
 |-------|------|-------|---------------------|-----------------|
@@ -52,7 +52,7 @@ Source: `options.c:270-284`.
 
 ## 3. Upstream debug_words[] (24 flags)
 
-Source: `options.c:289-314`.
+Source: `options.c:290-315`.
 
 | Index | Flag | Where | Upstream description | Max useful level |
 |-------|------|-------|---------------------|-----------------|
@@ -83,7 +83,7 @@ Source: `options.c:289-314`.
 
 ## 4. Upstream `-v` to flag mapping
 
-Source: `options.c:228-243`, `set_output_verbosity()` at line 513.
+Source: `options.c:229-244`, `set_output_verbosity()` at line 513.
 
 The mapping is cumulative - each level includes all flags from lower
 levels. `info_verbosity[0]` is always applied (even without `-v`).
@@ -298,14 +298,14 @@ client-requested verbosity).
 
 ### 7.2 `limit_output_verbosity()` not implemented
 
-Upstream provides `limit_output_verbosity()` (options.c:527) which lets
+Upstream provides `limit_output_verbosity()` (options.c:528) which lets
 the daemon cap the client's verbosity to a configured maximum. oc-rsync
 has no equivalent. This matters for daemon mode where an untrusted
 client should not be able to flood the log with `-vvvvv`.
 
 ### 7.3 `negate_output_levels()` not implemented
 
-Upstream's `negate_output_levels()` (options.c:569) negates all
+Upstream's `negate_output_levels()` (options.c:570) negates all
 info/debug levels, used when forwarding options to the remote server
 (so the server knows to suppress its own output). oc-rsync handles
 server-side verbosity suppression through separate mechanisms but does
@@ -313,14 +313,14 @@ not implement level negation.
 
 ### 7.4 `reset_output_levels()` not implemented
 
-Upstream's `reset_output_levels()` (options.c:555) zeroes all levels
+Upstream's `reset_output_levels()` (options.c:556) zeroes all levels
 and resets priorities. Used by the help system and on config reload.
 oc-rsync has no direct equivalent, though constructing a new
 `VerbosityConfig::default()` achieves the same effect.
 
 ### 7.5 `make_output_option()` not implemented
 
-Upstream's `make_output_option()` (options.c:344) serializes current
+Upstream's `make_output_option()` (options.c:345) serializes current
 flag levels back into `--info=...` / `--debug=...` strings for
 forwarding to the remote server. oc-rsync does not yet need this
 because it builds server args through a different mechanism, but it

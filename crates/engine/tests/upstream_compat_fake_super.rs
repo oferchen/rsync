@@ -169,7 +169,7 @@ fn mode_sequence(root: &Path, driver: &dyn Fn(&Path) -> Outcome) -> Vec<Outcome>
     vec![first, rerun, backdated]
 }
 
-/// upstream: generator.c:1745 -> xattrs.c:1372 x_lstat(). A rerun itemizes
+/// upstream: generator.c:1782 -> xattrs.c:1372 x_lstat(). A rerun itemizes
 /// nothing; a backdated run reports only the time.
 #[test]
 fn a_fake_super_rerun_itemizes_like_upstream_locally_and_over_a_pull() {
@@ -385,7 +385,7 @@ fn daemon_pull(binary: &Path, root: &Path) -> Outcome {
     inetd_session(binary, binary, root, &config, &["-a", "URL", "dst/"])
 }
 
-/// upstream: cleanup.c:244-253 exit_cleanup() queues MSG_ERROR_EXIT and then
+/// upstream: cleanup.c:245-254 exit_cleanup() queues MSG_ERROR_EXIT and then
 /// runs io.c:1066-1075 noop_io_until_death(), which returns before draining
 /// while `msgs2stderr` is set (options.c:103). Only a socket daemon clears it
 /// (clientserver.c:1178), so an rsh server sender never delivers the frame

@@ -155,7 +155,7 @@ mod imp {
             )
         })?;
 
-        // upstream: rsync-3.5.1/syscall.c:102-107 open_anchor_dirfd() - no
+        // upstream: rsync-3.5.2/syscall.c:102-107 open_anchor_dirfd() - no
         // `O_NOFOLLOW`, no `resolve` flags, and `directory_traverse_flags()`.
         // The anchor is operator-supplied, so ordinary symlink resolution
         // applies, and it is `*at()` authority only, so search permission is
@@ -333,7 +333,7 @@ mod tests {
     /// reachable: the held anchor is traversal authority only, and traversal
     /// needs search permission, not read. Android exposes `/sdcard` this way.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:83-92` `directory_traverse_flags()`,
+    /// upstream: `rsync-3.5.2/syscall.c:83-92` `directory_traverse_flags()`,
     /// `:102-107` `open_anchor_dirfd()`; testsuite `search-only-destination`.
     #[cfg(target_os = "linux")]
     #[test]

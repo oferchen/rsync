@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Default `--max-alloc` ceiling in bytes (1 GiB).
 ///
-/// upstream: `options.c:209` `#define DEFAULT_MAX_ALLOC (1024L * 1024 * 1024)`.
+/// upstream: `options.c:210` `#define DEFAULT_MAX_ALLOC (1024L * 1024 * 1024)`.
 pub const DEFAULT_MAX_ALLOC: usize = 1024 * 1024 * 1024;
 
 /// The negotiated `--max-alloc` ceiling, mirroring upstream's `max_alloc`
@@ -35,7 +35,7 @@ static MAX_ALLOC: AtomicUsize = AtomicUsize::new(DEFAULT_MAX_ALLOC);
 
 /// Smallest `--max-alloc` upstream's `parse_size_arg` accepts.
 ///
-/// upstream: `options.c:2073` passes `min_value = 1024*1024` to
+/// upstream: `options.c:2109` passes `min_value = 1024*1024` to
 /// `parse_size_arg(max_alloc_arg, 'B', "max-alloc", 1024*1024, -1, True)`.
 pub const MIN_MAX_ALLOC: u64 = 1024 * 1024;
 
@@ -45,7 +45,7 @@ pub const MIN_MAX_ALLOC: u64 = 1024 * 1024;
 /// the size as a signed `ssize_t`. It is also what `--max-alloc=0` means: the
 /// largest limit this build supports, never an unbounded one.
 ///
-/// upstream: `options.c:1164` `#define SIZE_ARG_MAX ((ssize_t)(SIZE_MAX / 2))`.
+/// upstream: `options.c:1182` `#define SIZE_ARG_MAX ((ssize_t)(SIZE_MAX / 2))`.
 pub const SIZE_ARG_MAX: u64 = (usize::MAX / 2) as u64;
 
 /// Applies upstream's `--max-alloc` value rules to an already-parsed byte
@@ -67,7 +67,7 @@ pub const SIZE_ARG_MAX: u64 = (usize::MAX / 2) as u64;
 /// Returns upstream's diagnostic text when the value is non-zero and below
 /// [`MIN_MAX_ALLOC`], or not below [`SIZE_ARG_MAX`].
 pub fn validate_max_alloc(limit: u64, display: &str) -> Result<u64, String> {
-    // upstream: options.c:2074-2086 - `unlimited_0` lets parse_size_arg return
+    // upstream: options.c:2110-2122 - `unlimited_0` lets parse_size_arg return
     // 0, and 0 then resolves to SIZE_ARG_MAX: the same ceiling an explicit
     // value is held below, so the guard stays bounded. A peer-forwarded 0 is
     // resolved the same way, against this side's own SIZE_MAX.
@@ -75,7 +75,7 @@ pub fn validate_max_alloc(limit: u64, display: &str) -> Result<u64, String> {
         return Ok(SIZE_ARG_MAX);
     }
 
-    // upstream: options.c:1250-1253 - a value below the 1 MiB minimum is "too
+    // upstream: options.c:1268-1271 - a value below the 1 MiB minimum is "too
     // small"; do_big_num renders the constant as "1.00M", and `unlimited_0`
     // adds the "or 0 for unlimited" clause.
     if limit < MIN_MAX_ALLOC {
@@ -84,7 +84,7 @@ pub fn validate_max_alloc(limit: u64, display: &str) -> Result<u64, String> {
         ));
     }
 
-    // upstream: options.c:1222-1226 - with no explicit maximum, a value is
+    // upstream: options.c:1240-1244 - with no explicit maximum, a value is
     // "too large" once it reaches SIZE_ARG_MAX, compared as a double.
     if limit as f64 >= SIZE_ARG_MAX as f64 {
         return Err(format!("--max-alloc={display} is too large"));
@@ -101,7 +101,7 @@ pub fn validate_max_alloc(limit: u64, display: &str) -> Result<u64, String> {
 /// come from a library caller; it is ignored, leaving the previous ceiling in
 /// place rather than lifting it.
 ///
-/// upstream: `options.c:2076` assigns `max_alloc = size` after parsing
+/// upstream: `options.c:2112` assigns `max_alloc = size` after parsing
 /// (`options.c:2086` for the `0` spelling).
 pub fn set_max_alloc(bytes: usize) {
     if bytes == 0 {
@@ -152,7 +152,7 @@ mod tests {
 
     /// The ceiling defaults to the upstream `DEFAULT_MAX_ALLOC` so that, absent
     /// an explicit `--max-alloc`, decoders enforce the same 1 GiB bound upstream
-    /// applies by default. upstream: options.c:210.
+    /// applies by default. upstream: options.c:211.
     #[test]
     fn defaults_to_upstream_default() {
         assert_eq!(effective_max_alloc(), DEFAULT_MAX_ALLOC);

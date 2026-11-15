@@ -114,9 +114,9 @@ pub(super) fn open_sandbox_for_dest(dest_dir: &Path) -> Option<Arc<fast_io::DirS
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/util1.c:1363-1393` and `:1450-1466` - the
+/// - `rsync-3.5.2/util1.c:1363-1393` and `:1450-1466` - the
 ///   `!am_chrooted && !am_sender && !insecure_links` arms of `change_dir()`.
-/// - `rsync-3.5.1/main.c:778-781` - a failed `change_dir()` exits
+/// - `rsync-3.5.2/main.c:778-781` - a failed `change_dir()` exits
 ///   `RERR_FILESELECT`.
 #[cfg(unix)]
 pub(super) fn open_operator_destination(dest_dir: &Path) -> io::Result<Option<OwnedFd>> {
@@ -136,7 +136,7 @@ pub(super) fn open_operator_destination(dest_dir: &Path) -> io::Result<Option<Ow
 /// the metadata `DestinationRoot` - is then answered with the walked
 /// descriptor, which is oc's form of upstream's `fchdir()` into it.
 ///
-/// upstream: `rsync-3.5.1/util1.c:1385-1392` - `fchdir(dfd)` after the walk.
+/// upstream: `rsync-3.5.2/util1.c:1385-1392` - `fchdir(dfd)` after the walk.
 #[cfg(unix)]
 pub(super) fn pin_operator_destination(spelling: &Path, anchor: Option<OwnedFd>) -> io::Result<()> {
     fast_io::confinement::clear_destination_root();
@@ -279,7 +279,7 @@ pub(super) fn open_sandbox_for_dest_anchored(
     }
 }
 
-// upstream: clientserver.c:1093 - `use_secure_symlinks = am_daemon &&
+// upstream: clientserver.c:1097 - `use_secure_symlinks = am_daemon &&
 // (!am_chrooted || module_dirlen)`, the gating the chdir-symlink-race fix
 // mirrors. Tests below verify the anchored daemon branch confines the
 // peer-supplied tail beneath the operator's module root, while the plain

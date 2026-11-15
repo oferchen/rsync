@@ -1,6 +1,6 @@
 // Inetd stdin detection for standalone daemon mode.
 //
-// upstream: clientserver.c:1746-1760 - `daemon_main()` checks
+// upstream: clientserver.c:1810-1824 - `daemon_main()` checks
 // `is_inetd_socket(STDIN_FILENO)` before entering the TCP accept loop. When
 // stdin is a connected IP stream (inetd invocation, or `RSYNC_CONNECT_PROG`,
 // whose `sock_exec()` hands the program a loopback TCP pair), the daemon
@@ -19,7 +19,7 @@
 /// On non-Unix platforms this always returns `false` since inetd-style
 /// invocation does not apply.
 ///
-/// upstream: clientserver.c:1726-1743 - `is_inetd_socket()`.
+/// upstream: clientserver.c:1761-1780 - `is_inetd_socket()`.
 #[cfg(unix)]
 fn is_stdin_socket() -> bool {
     is_inetd_socket(&io::stdin())
@@ -46,11 +46,29 @@ fn is_inetd_socket(fd: &impl std::os::fd::AsFd) -> bool {
     // safe (no unsafe block needed). A non-socket fails both
     // getsockopt(SO_TYPE) and getpeername with ENOTSOCK.
     let sock = socket2::SockRef::from(fd);
-    sock.r#type()
+    if !sock
+        .r#type()
         .is_ok_and(|kind| kind == socket2::Type::STREAM)
-        && sock
-            .peer_addr()
-            .is_ok_and(|peer| peer.as_socket().is_some())
+    {
+        return false;
+    }
+    let Ok(peer) = sock.peer_addr() else {
+        return false;
+    };
+    if peer.as_socket().is_some() {
+        return true;
+    }
+    // upstream 3.5.2: clientserver.c:1783-1806 - socket activation may supply a
+    // connected Unix stream whose local endpoint has a name (non-empty sun_path).
+    if peer.is_unix() {
+        return sock.local_addr().is_ok_and(|local| {
+            local
+                .as_pathname()
+                .is_some_and(|p| !p.as_os_str().is_empty())
+                || local.as_abstract_namespace().is_some()
+        });
+    }
+    false
 }
 
 #[cfg(not(unix))]
@@ -65,11 +83,11 @@ fn is_stdin_socket() -> bool {
 /// descriptors, then exits. No TCP binding, signal registration, or
 /// daemonization occurs.
 ///
-/// upstream: clientserver.c:1748-1759 - when `is_inetd_socket(STDIN_FILENO)`
+/// upstream: clientserver.c:1812-1823 - when `is_inetd_socket(STDIN_FILENO)`
 /// is true, `daemon_main()` redirects stdout/stderr to `/dev/null` and calls
 /// `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
 fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
-    // upstream: clientserver.c:1759 - start_daemon(STDIN_FILENO, STDIN_FILENO)
+    // upstream: clientserver.c:1823 - start_daemon(STDIN_FILENO, STDIN_FILENO)
     // reads and writes the one inherited socket; stdout is not the client.
     let socket = inherited_stdin_socket().map_err(|err| {
         let code = ExitCode::SocketIo;
@@ -82,7 +100,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
             .with_role(Role::Daemon),
         )
     })?;
-    // upstream: clientserver.c:1759 - the session socket is STDIN_FILENO.
+    // upstream: clientserver.c:1823 - the session socket is STDIN_FILENO.
     serve_socket_session(options, socket, 0, "inetd daemon session failed")
 }
 
@@ -153,7 +171,7 @@ fn serve_socket_session(
         ));
     }
 
-    // upstream: clientserver.c:1759 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
+    // upstream: clientserver.c:1823 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
     // Under inetd, fd 0 IS the connected socket, so `client_addr()` skips the
     // environment arm entirely and `client_sockaddr()` reads the real peer via
     // `getpeername` (clientname.c:319-327). A fabricated address here would
@@ -165,20 +183,40 @@ fn serve_socket_session(
         // session whose peer cannot be named would evaluate the ACL against
         // nothing.
         Err(err) => {
-            let code = ExitCode::SocketIo;
-            return Err(DaemonError::with_code(
-                code,
-                rsync_error!(
-                    code.as_i32(),
-                    format!("getpeername on fd{fd} failed: {err}")
-                )
-                .with_role(Role::Daemon),
-            ));
+            #[cfg(unix)]
+            if socket2::SockRef::from(&socket)
+                .peer_addr()
+                .is_ok_and(|peer| peer.is_unix())
+            {
+                SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0))
+            } else {
+                let code = ExitCode::SocketIo;
+                return Err(DaemonError::with_code(
+                    code,
+                    rsync_error!(
+                        code.as_i32(),
+                        format!("getpeername on fd{fd} failed: {err}")
+                    )
+                    .with_role(Role::Daemon),
+                ));
+            }
+            #[cfg(not(unix))]
+            {
+                let code = ExitCode::SocketIo;
+                return Err(DaemonError::with_code(
+                    code,
+                    rsync_error!(
+                        code.as_i32(),
+                        format!("getpeername on fd{fd} failed: {err}")
+                    )
+                    .with_role(Role::Daemon),
+                ));
+            }
         }
     };
     let mut stream = DaemonStream::plain(socket);
 
-    // upstream: clientserver.c:1442-1445 - the inetd child runs the same
+    // upstream: clientserver.c:1452-1455 - the inetd child runs the same
     // `proxy protocol` gate as a forked listener child: start_daemon() is the
     // shared entry point (daemon_main() calls it for an inetd socket at :1759).
     let proxy_policy = ProxyProtocolPolicy::new(proxy_protocol, proxy_protocol_hosts);
@@ -262,7 +300,7 @@ mod inetd_tests {
     /// A local socket on stdin (an ADB shell without a PTY) is the launcher's
     /// own I/O channel, not a client connection. Treating it as inetd leaves
     /// the daemon's port unbound and logs `connect from UNKNOWN`.
-    /// upstream: clientserver.c:1738-1742 accepts only AF_INET/AF_INET6.
+    /// upstream: clientserver.c:1775-1779 accepts only AF_INET/AF_INET6.
     #[cfg(unix)]
     #[test]
     fn unix_socketpair_is_not_an_inetd_socket() {
@@ -272,7 +310,7 @@ mod inetd_tests {
 
     /// An IP peer alone is not enough: inetd supplies a stream, and a
     /// connected datagram socket must not be served as one.
-    /// upstream: clientserver.c:1734 `type != SOCK_STREAM`.
+    /// upstream: clientserver.c:1771 `type != SOCK_STREAM`.
     #[cfg(unix)]
     #[test]
     fn connected_udp_socket_is_not_an_inetd_socket() {

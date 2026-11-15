@@ -86,7 +86,7 @@ pub(crate) fn build_filter_order(matches: &ArgMatches, args: &[OsString]) -> Vec
         }
 
         // Short-option cluster: `-F` and `-C` may ride alongside other flags.
-        // upstream: options.c:1718-1726 - each `-F` expands to a filter
+        // upstream: options.c:1754-1762 - each `-F` expands to a filter
         // directive (first: dir-merge, second: exclude) at its argv position.
         if text.starts_with('-') && !text.starts_with("--") && text.len() > 1 {
             for ch in text[1..].chars() {
@@ -182,7 +182,7 @@ fn inline_filter_option(
 
 /// Maps an `-F` occurrence to the filter directive it expands to.
 ///
-/// upstream: options.c:1718-1726 - the first `-F` adds `: /.rsync-filter`
+/// upstream: options.c:1754-1762 - the first `-F` adds `: /.rsync-filter`
 /// (dir-merge), the second adds `- .rsync-filter` (exclude); third and later
 /// occurrences are ignored.
 fn rsync_filter_shortcut_directive(occurrence: usize) -> Option<OsString> {

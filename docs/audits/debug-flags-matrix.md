@@ -29,9 +29,9 @@ diagnostic output.
 
 Upstream defines five priority bands and hard caps:
 
-- `MAX_OUT_LEVEL = 4` (options.c:245). Any per-flag suffix is clamped
+- `MAX_OUT_LEVEL = 4` (options.c:246). Any per-flag suffix is clamped
   to 4; level 0 disables.
-- `MAX_VERBOSITY = 5` (options.c:237) bounds the cumulative `-v` ladder.
+- `MAX_VERBOSITY = 5` (options.c:238) bounds the cumulative `-v` ladder.
 - `DEFAULT_PRIORITY = 0`, `HELP_PRIORITY = 1`, `USER_PRIORITY = 2`,
   `LIMIT_PRIORITY = 3`. User-supplied `--debug=FOO` always wins over
   `-v` defaults; `LIMIT_PRIORITY` is reserved for the server-side
@@ -55,7 +55,7 @@ The **upstream max** column is the largest level `N` ever passed to
 explicit; otherwise `1` is the only useful level upstream emits.
 
 Side bits use `W_CLI`, `W_SRV`, `W_SND`, `W_REC` masks from
-`options.c:254-257` and indicate which roles legitimately emit the
+`options.c:255-258` and indicate which roles legitimately emit the
 flag - oc-rsync accepts the flag regardless of role.
 
 Status legend:
@@ -100,7 +100,7 @@ entry in `debug_words[]` services every level for the flag.
 
 ## Pseudo-flags and prefixes
 
-| Token              | Upstream behaviour (options.c:427-471)                | oc-rsync behaviour                                                                              | Parity |
+| Token              | Upstream behaviour (options.c:428-472)                | oc-rsync behaviour                                                                              | Parity |
 |--------------------|-------------------------------------------------------|-------------------------------------------------------------------------------------------------|--------|
 | `help`             | `output_item_help`, `exit_cleanup(0)`                 | `settings.help_requested = true`; CLI prints `DEBUG_HELP_TEXT` and exits cleanly                | Yes    |
 | `ALL` / `all`      | Sets every flag to level 1                            | `enable_all` sets every flag to `Some(1)`                                                       | Yes    |
@@ -115,7 +115,7 @@ entry in `debug_words[]` services every level for the flag.
 
 ## `-v` ladder
 
-Upstream `set_output_verbosity` (options.c:513) walks
+Upstream `set_output_verbosity` (options.c:514) walks
 `debug_verbosity[]` from row `0` up to the current `-v` count and
 applies each row at `DEFAULT_PRIORITY = 0`:
 
@@ -163,7 +163,7 @@ emitting, so a flag must be enabled at the requested level.
    add `if level > 4` guards to those arms (or a single shared cap)
    to match upstream behaviour.
 3. **No `limit_output_verbosity` clamp** - upstream
-   `options.c:527` invokes `limit_output_verbosity` during
+   `options.c:528` invokes `limit_output_verbosity` during
    server-side option exchange to cap a peer's user-supplied level
    at the implicit `-v` ceiling. oc-rsync has no equivalent on the
    receiving end of wire negotiation; user-supplied levels are

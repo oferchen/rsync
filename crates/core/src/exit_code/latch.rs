@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 ///
 /// Zero is the "unset" sentinel, exactly as in upstream's `exit_code` static:
 /// recording 0 never latches, so a clean first entrant leaves the latch open
-/// for a later error (upstream: cleanup.c:210-212).
+/// for a later error (upstream: cleanup.c:211-213).
 #[derive(Debug)]
 pub struct ExitCodeLatch {
     /// The latched exit code; 0 means no error has been recorded yet.
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn zero_never_latches_so_a_later_error_fills_in() {
-        // upstream: cleanup.c:210-212 - a clean first entrant leaves the
+        // upstream: cleanup.c:211-213 - a clean first entrant leaves the
         // latch open for a later non-zero code.
         let latch = ExitCodeLatch::new();
         assert_eq!(latch.resolve(0), 0);

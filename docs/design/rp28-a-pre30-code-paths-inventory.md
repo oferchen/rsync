@@ -70,7 +70,7 @@ not themselves "branches" - listed for orientation.
   }
   ```
 
-**Upstream**: `io.c:2246-2248` (`read_int(f)` for pre-30) and `io.c:2243-2287`
+**Upstream**: `io.c:2253-2255` (`read_int(f)` for pre-30) and `io.c:2250-2294`
 (`write_ndx`).
 
 **Behaviour difference**: every NDX on the wire. Legacy = `i32_le`. Modern = single byte
@@ -186,7 +186,7 @@ inlined across `flist.c` and `io.c`.
   exist on protocol 30+; pre-30 reuses those bit positions for
   `XMIT_SAME_DEV_PRE30` and `XMIT_RDEV_MINOR_8_PRE30`).
 
-**Upstream**: `flist.c:880-902`.
+**Upstream**: `flist.c:884-906`.
 
 **Behaviour difference**: varint vs fixed `i32`, plus the optional length-prefixed
 owner-name string field disappears entirely on pre-30.
@@ -269,7 +269,7 @@ pre-30 and 30+; mis-gating corrupts the decoder.
 - Consumed by `crates/protocol/src/flist/write/encoding.rs:172` and
   `crates/protocol/src/flist/read/metadata.rs:172`.
 
-**Upstream**: `flist.c:send_file_entry()` flag prelude; `compat.c:740`
+**Upstream**: `flist.c:send_file_entry()` flag prelude; `compat.c:749`
 `do_negotiated_strings`.
 
 **Behaviour difference**: per-entry flag prelude varies between 1, 2, or 1+ varint
@@ -287,7 +287,7 @@ bytes.
 - `crates/daemon/src/daemon/sections/module_access/client_args.rs:25` - matching
   daemon-side reader picks NUL or newline terminator.
 
-**Upstream**: `io.c:1292 read_args()`, `clientserver.c:348-349`.
+**Upstream**: `io.c:1299 read_args()`, `clientserver.c:352-353`.
 
 **Behaviour difference**: terminator byte between every command-line argument
 delivered to the daemon.
@@ -298,7 +298,7 @@ and `crates/protocol/tests/daemon_negotiation.rs`.
 ### W14. `MSG_NO_SEND` is protocol 30+ only
 
 - `crates/transfer/src/reader/multiplex.rs:84` (doc-only ref to upstream
-  `sender.c:367-368`).
+  `sender.c:375-376`).
 - `crates/transfer/src/writer/server.rs:189` (doc-only ref).
 
 The actual gate is upstream-side; we only send `MSG_NO_SEND` when the connection
@@ -325,7 +325,7 @@ for completeness; no in-tree branch is gated against `< 30` here.
   `SetupResult.negotiated_algorithms` and `.compat_flags` are `None` for pre-30.
 - `crates/transfer/src/handshake.rs:38`, `:41` - mirror in `HandshakeResult`.
 
-**Upstream**: `compat.c:setup_protocol()`; `compat.c:740 do_negotiated_strings`.
+**Upstream**: `compat.c:setup_protocol()`; `compat.c:749 do_negotiated_strings`.
 
 **Behaviour difference**: pre-30 does not perform vstring algorithm negotiation
 and skips compat flag exchange entirely.
@@ -337,13 +337,13 @@ and skips compat flag exchange entirely.
 ### C2. Protocol restrictions: `--acls`, `--xattrs`, append, delete-default
 
 - `crates/transfer/src/setup/restrictions.rs:89` - `if version < 30 {` block:
-  - `append_mode == 1` adjusted to `2` (upstream compat.c:653-654).
+  - `append_mode == 1` adjusted to `2` (upstream compat.c:654-655).
   - `--acls` (non-local) rejected with upstream-format error.
   - `--xattrs` (non-local) rejected with upstream-format error.
 - `crates/transfer/src/setup/restrictions.rs:114` - `delete_mode` default
   selects `delete_before` on pre-30 vs `delete_during` on 30+.
 
-**Upstream**: `compat.c:652-668` and `compat.c:671-676`.
+**Upstream**: `compat.c:653-669` and `compat.c:672-677`.
 
 **Behaviour difference**: pre-30 peer cannot use `-A`/`-X` over the network and
 defaults to a different deletion phase.
@@ -362,7 +362,7 @@ Also `crates/transfer/tests/acl_negotiation_missing_remote.rs:90`.
 - `crates/transfer/src/setup/restrictions.rs:122` - `if version < 29 {` block
   rejects each of the four features above with upstream-format errors.
 
-**Upstream**: `compat.c:678-709`.
+**Upstream**: `compat.c:679-710`.
 
 **Behaviour difference**: pre-29 peer cannot use any of these features.
 
@@ -377,7 +377,7 @@ Also `crates/transfer/tests/acl_negotiation_missing_remote.rs:90`.
   `crates/transfer/src/generator/file_list/...` gate INC_RECURSE behaviour on
   the negotiated compat flag, which itself is unavailable below protocol 30.
 
-**Upstream**: `compat.c:720 set_allow_inc_recurse()`.
+**Upstream**: `compat.c:721 set_allow_inc_recurse()`.
 
 **Behaviour difference**: pre-30 peer is forced into batch flist mode (no
 streaming file list).
@@ -391,7 +391,7 @@ streaming file list).
   digest list when `version.as_u8() < 30`; pre-30 clients assume MD4 by convention
   (upstream `csprotocol.txt`).
 - `crates/daemon/src/auth.rs:160`, `crates/daemon/src/daemon/sections/module_access/authentication.rs:30` -
-  doc-only references to `compat.c:858 protocol_version >= 30 ? "md5" : "md4"`.
+  doc-only references to `compat.c:867 protocol_version >= 30 ? "md5" : "md4"`.
 
 ### C6. Daemon auth digest selection
 
@@ -401,7 +401,7 @@ streaming file list).
   MD4 vs MD5 by protocol version when the response length is ambiguous (both
   produce 22-character base64).
 
-**Upstream**: `compat.c:858`.
+**Upstream**: `compat.c:867`.
 
 **Behaviour difference**: silently picks the wrong hash family for the
 challenge-response if mis-gated, breaking daemon authentication.
@@ -428,7 +428,7 @@ setup.
 - `crates/batch/src/replay/mod.rs:124` - `let pre29 =
   reader.config().protocol_version < 29;` consumer.
 
-**Upstream**: `flist.c:3223 protocol_version >= 29 ? t_PATH : t_ITEM`.
+**Upstream**: `flist.c:3234 protocol_version >= 29 ? t_PATH : t_ITEM`.
 
 **Behaviour difference**: a mis-sorted file list produces NDX mismatches across
 the entire transfer - silent data placement errors.
@@ -445,7 +445,7 @@ the entire transfer - silent data placement errors.
 - `crates/transfer/src/generator/protocol_io.rs:67-87` - matching
   `send_io_error_flag`.
 
-**Upstream**: `flist.c:2517-2518` (sender), `flist.c:2738-2742` (receiver).
+**Upstream**: `flist.c:2528-2529` (sender), `flist.c:2749-2753` (receiver).
 
 **Behaviour difference**: 4 extra bytes on the wire on pre-30; their absence on
 30+ is signalled out-of-band.
@@ -462,7 +462,7 @@ the entire transfer - silent data placement errors.
 - `crates/transfer/src/generator/item_flags.rs:149` - matching `ItemFlags::read`.
 - `crates/transfer/src/receiver/transfer/sync.rs:151` (doc-only).
 
-**Upstream**: `sender.c:468-485 write_ndx_and_attrs()`.
+**Upstream**: `sender.c:476-493 write_ndx_and_attrs()`.
 
 **Behaviour difference**: 2 bytes per file index, controlling itemize output and
 transfer skipping logic.
@@ -478,7 +478,7 @@ transfer skipping logic.
   reads goodbye with `read_int()`; 29+ uses `read_ndx_and_attrs()`. (Both routes
   collapse to the protocol-30 dispatch in this codebase via `read_goodbye`.)
 
-**Upstream**: `sender.c:210 max_phase = protocol_version >= 29 ? 2 : 1`.
+**Upstream**: `sender.c:218 max_phase = protocol_version >= 29 ? 2 : 1`.
 
 **Behaviour difference**: pre-29 does not perform the second `SUM_LENGTH = 16`
 re-check phase; failed files are not redone with a stronger checksum.
@@ -514,8 +514,8 @@ re-check phase; failed files are not redone with a stronger checksum.
 - `crates/compress/src/strategy/profile.rs:17` (doc) - `ProtocolCompressionProfile`
   table.
 
-**Upstream**: `compat.c:194-195 CPRES_ZLIB` (default for pre-30);
-`compat.c:100-112 valid_compressions_items[]`.
+**Upstream**: `compat.c:195-196 CPRES_ZLIB` (default for pre-30);
+`compat.c:101-113 valid_compressions_items[]`.
 
 **Behaviour difference**: pre-30 peer only ever speaks zlib; no zstd/lz4/zlibx
 negotiation.
@@ -551,7 +551,7 @@ negotiation.
 - `crates/transfer/src/delta_config.rs:44` (doc).
 
 **Upstream**: `checksum.c` - protocol version determines default; see also
-`compat.c:858`.
+`compat.c:867`.
 
 **Behaviour difference**: hash family changes from MD4 (16 bytes) to MD5
 (16 bytes). Same length, totally different bits - silent corruption if

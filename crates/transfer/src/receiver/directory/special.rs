@@ -97,7 +97,7 @@ impl ReceiverContext {
         sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
     ) -> std::io::Result<()> {
-        // upstream: generator.c:2031 `!drop_devices && ...` - --drop-D
+        // upstream: generator.c:2072 `!drop_devices && ...` - --drop-D
         // withholds CREATION without touching preserve_devices /
         // preserve_specials, which also frame the file list's rdev fields.
         // Entries fall through to the non-regular skip path exactly as they do
@@ -115,14 +115,14 @@ impl ReceiverContext {
             let flist_idx = start + i;
             let is_device = entry.is_device();
             let is_special = entry.is_special();
-            // upstream: generator.c:1662-1676 - the daemon filter is checked
+            // upstream: generator.c:1699-1713 - the daemon filter is checked
             // before the existence gate and the device/special branch.
             if (is_device || is_special)
                 && self.daemon_refuses_non_dir(daemon_filters.as_mut(), writer, entry)
             {
                 continue;
             }
-            // upstream: generator.c:1757-1806 - the existence gate precedes
+            // upstream: generator.c:1794-1843 - the existence gate precedes
             // both the device/special branch and the non-regular skip.
             if (is_device || is_special)
                 && self.skip_non_regular_by_existence_gate(
@@ -138,7 +138,7 @@ impl ReceiverContext {
                 if !self.config.flags.devices {
                     continue;
                 }
-                // upstream: generator.c:2032 - the device arm is
+                // upstream: generator.c:2073 - the device arm is
                 // `am_root && preserve_devices && ftype == FT_DEVICE`. Without
                 // the privilege term an unprivileged receiver enters the
                 // creation branch, unlinks whatever occupies the destination,
@@ -151,7 +151,7 @@ impl ReceiverContext {
                 // is the -1 arm of the tri-state and still writes the 0600
                 // placeholder (`syscall.c:do_mknod()`).
                 if !metadata::am_root() && !self.config.fake_super {
-                    // upstream: generator.c:2109-2114 - INFO_GTE(NONREG, 1),
+                    // upstream: generator.c:2150-2155 - INFO_GTE(NONREG, 1),
                     // which is info_verbosity[0] and so prints at default
                     // verbosity.
                     info_log!(
@@ -170,7 +170,7 @@ impl ReceiverContext {
                 continue;
             }
 
-            // upstream: generator.c:1943-1945 - a follower is handed to
+            // upstream: generator.c:1980-1982 - a follower is handed to
             // hard_link_check() before the FT_SPECIAL/FT_DEVICE branch, so it
             // is linked to its leader (create_hardlinks) and never mknod'ed.
             if self.config.flags.hard_links
@@ -183,12 +183,12 @@ impl ReceiverContext {
             let node_path = dest_dir.join(relative_path);
 
             // Ensure parent directory exists for --relative paths.
-            // upstream: generator.c:1716-1726 make_path() for relative_paths
+            // upstream: generator.c:1753-1763 make_path() for relative_paths
             if let Some(parent) = node_path.parent() {
                 let _ = super::dest_create_dir_all(sandbox, dest_dir, parent);
             }
 
-            // upstream: generator.c:2048-2063 - the destination is read through
+            // upstream: generator.c:2089-2104 - the destination is read through
             // x_lstat(), so a --fake-super placeholder answers with its %stat
             // type and rdev.
             let existing =
@@ -199,7 +199,7 @@ impl ReceiverContext {
                     })?;
             let disposition = SpecialDisposition::of(existing.as_ref(), entry);
             let up_to_date = disposition == SpecialDisposition::UpToDate;
-            // upstream: generator.c:2055/2094 - itemize() compares the stat
+            // upstream: generator.c:2096/2094 - itemize() compares the stat
             // taken before set_file_attrs() refreshes it.
             let iflags = match disposition {
                 SpecialDisposition::UpToDate => {
@@ -219,14 +219,14 @@ impl ReceiverContext {
             // truly absent destination is ITEM_IS_NEW and bumps
             // stats.created_devices / stats.created_specials; a same-type
             // up-to-date node or a replaced wrong-type obstacle is not a
-            // creation (upstream generator.c:2039 `dest_existed`). Probed
+            // creation (upstream generator.c:2080 `dest_existed`). Probed
             // before the obstacle unlink below so a replacement is not
             // misclassified as new.
             let mut dest_existed = up_to_date;
 
             if !up_to_date {
                 dest_existed = super::dest_entry_exists(sandbox, dest_dir, &node_path);
-                // upstream: generator.c:2064 - `else if (basis_dir[0] != NULL)`
+                // upstream: generator.c:2105 - `else if (basis_dir[0] != NULL)`
                 // is reached only when the destination is absent (`statret !=
                 // 0`). An identical node in a `--compare-dest` basis leaves the
                 // destination absent; a `--link-dest` basis is hard-linked. A
@@ -268,12 +268,12 @@ impl ReceiverContext {
                     }
                 }
 
-                // upstream: generator.c:2091 atomic_create(..., del_for_flag) -
+                // upstream: generator.c:2132 atomic_create(..., del_for_flag) -
                 // one decision for the obstacle: rmdir a directory, back up or
                 // unlink anything else. The refusal is reported inside, so a
                 // blocked entry no longer exits 0 in silence.
                 //
-                // upstream: generator.c:2040-2047 - the noun in the refusal
+                // upstream: generator.c:2081-2088 - the noun in the refusal
                 // comes from the NEW entry's type, DEL_FOR_DEVICE for a device
                 // and DEL_FOR_SPECIAL for a FIFO or socket.
                 let make_way_for = if is_device {
@@ -298,7 +298,7 @@ impl ReceiverContext {
                 // A socket the platform cannot create race-safely is SKIPPED
                 // with a warning rather than materialised through an
                 // unconfined path-based bind; the inode is only a placeholder.
-                // upstream: generator.c:2508-2519 - the S_ISSOCK EOPNOTSUPP arm
+                // upstream: generator.c:2551-2562 - the S_ISSOCK EOPNOTSUPP arm
                 if entry.file_type() == FileType::Socket
                     && metadata::socket_creation_unsupported(relative_path)
                 {
@@ -314,7 +314,7 @@ impl ReceiverContext {
                     continue;
                 }
 
-                // upstream: generator.c:2091 atomic_create -> do_mknod_at.
+                // upstream: generator.c:2132 atomic_create -> do_mknod_at.
                 // FIFO and device nodes are materialised through the confined
                 // parent dirfd so a raced parent-component symlink swap cannot
                 // redirect the new node outside the transfer root
@@ -361,7 +361,7 @@ impl ReceiverContext {
                     )
                 };
                 if let Err(error) = create_result {
-                    // upstream: generator.c:2521-2522 atomic_create() -
+                    // upstream: generator.c:2564-2565 atomic_create() -
                     // rsyserr(FERROR_XFER, e, "mknod %s failed",
                     // full_fname(create_name)). FERROR_XFER sets
                     // got_xfer_error (log.c:337-338), which lifts the exit to
@@ -378,7 +378,7 @@ impl ReceiverContext {
                 }
             }
 
-            // upstream: generator.c:2053/2092 set_file_attrs(fname, file, ...) runs
+            // upstream: generator.c:2094/2092 set_file_attrs(fname, file, ...) runs
             // for both the freshly-created and up-to-date branches so the node
             // carries the sender-supplied perms/owner/times.
             let options = MetadataOptions::new()
@@ -448,7 +448,7 @@ impl ReceiverContext {
         _dest_dir: &Path,
         _writer: &mut W,
     ) -> std::io::Result<()> {
-        // upstream: generator.c:2031 - see the unix arm above.
+        // upstream: generator.c:2072 - see the unix arm above.
         if self.config.flags.skip_dest_writes()
             || self.config.flags.drop_devices
             || (!self.config.flags.devices && !self.config.flags.specials)
@@ -514,7 +514,7 @@ enum SpecialDisposition {
 
 #[cfg(unix)]
 impl SpecialDisposition {
-    /// upstream: generator.c:2048-2052 compares `ftype` with `stype`, then
+    /// upstream: generator.c:2089-2093 compares `ftype` with `stype`, then
     /// quick_check_ok() (generator.c:670-680) compares `st_rdev` for a device
     /// and the `_S_IFMT` bits for a special.
     fn of(existing: Option<&fast_io::EntryMetadata>, entry: &FileEntry) -> Self {
@@ -553,7 +553,7 @@ enum SpecialKind {
     Special,
 }
 
-/// upstream: generator.c:614-627 get_file_type() - block and character devices share
+/// upstream: generator.c:651-664 get_file_type() - block and character devices share
 /// `FT_DEVICE`, FIFOs and sockets share `FT_SPECIAL`.
 #[cfg(unix)]
 const fn special_kind(file_type: u32) -> Option<SpecialKind> {

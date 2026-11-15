@@ -85,7 +85,7 @@ pub(super) fn add_link_args(command: ClapCommand) -> ClapCommand {
                 .action(ArgAction::SetTrue)
                 .overrides_with("munge-links"),
         )
-        // upstream: options.c:697-698 - a POPT_ARG_VAL pair that sets
+        // upstream: options.c:698-699 - a POPT_ARG_VAL pair that sets
         // `insecure_links` to 1/0; :134 defaults it to 0. It is a LOCAL-ONLY
         // opt-out: options.c:3078 deliberately does not forward it, and
         // options.c:1084 makes the daemon hard-refuse it, so a client can never
@@ -104,7 +104,7 @@ pub(super) fn add_link_args(command: ClapCommand) -> ClapCommand {
                 .action(ArgAction::SetTrue)
                 .overrides_with("insecure-links"),
         )
-        // upstream: options.c:690 - `--confine-root=DIR` is POPT_ARG_STRING.
+        // upstream: options.c:691 - `--confine-root=DIR` is POPT_ARG_STRING.
         // Declared here as well as in the server table so the client PARSES it
         // instead of passing it through as a positional operand.
         .arg(

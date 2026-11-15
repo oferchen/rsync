@@ -420,7 +420,7 @@ fn server_writer_send_redo_plain_mode_fails() {
 
 /// A remote receiver only learns of vanished/unreadable source files - and thus
 /// reports exit 24/23 - if the sender emits `MSG_IO_ERROR` with the io_error
-/// bits as a 4-byte LE payload (upstream sender.c:811-812, io.c:1740-1747).
+/// bits as a 4-byte LE payload (upstream sender.c:819-820, io.c:1747-1754).
 /// `MSG_NO_SEND` alone carries no exit-code bits. This pins the wire encoding a
 /// real upstream receiver folds via `io_error |= val`.
 #[test]
@@ -555,7 +555,7 @@ fn multiplex_writer_no_recorder_still_works() {
     assert!(!wire.is_empty());
 }
 
-/// upstream `sender.c:502` picks the token stream's destination:
+/// upstream `sender.c:510` picks the token stream's destination:
 /// `f_xfer = write_batch < 0 ? batch_fd : f_out`. Under `--only-write-batch`
 /// the payload goes into the batch INSTEAD of the socket, which is what allows
 /// the remote receiver to run dry and read nothing. Teeing it as well would
@@ -1015,7 +1015,7 @@ fn routed_frames(
     message_frames(&buf)
 }
 
-/// upstream: log.c:357 - by default a server keeps its error and warning
+/// upstream: log.c:437 - by default a server keeps its error and warning
 /// lines off the wire (they go to its own stderr) and frames only FINFO.
 #[test]
 fn errors_to_stderr_route_frames_only_info() {
@@ -1026,7 +1026,7 @@ fn errors_to_stderr_route_frames_only_info() {
     assert_eq!(frames, vec![(2, b"info\n".to_vec())]);
 }
 
-/// upstream: log.c:357 - `msgs2stderr != 1` is false when it is 1, so every line stays off the wire.
+/// upstream: log.c:437 - `msgs2stderr != 1` is false when it is 1, so every line stays off the wire.
 #[test]
 fn all_to_stderr_route_frames_nothing() {
     let frames = routed_frames(
@@ -1036,7 +1036,7 @@ fn all_to_stderr_route_frames_nothing() {
     assert!(frames.is_empty(), "{frames:?}");
 }
 
-/// upstream: log.c:357-366 - `msgs2stderr == 0` frames every line with its
+/// upstream: log.c:437-446 - `msgs2stderr == 0` frames every line with its
 /// own code at protocol 30 and later.
 #[test]
 fn frames_route_frames_every_line_with_its_code() {
@@ -1052,7 +1052,7 @@ fn frames_route_frames_every_line_with_its_code() {
     );
 }
 
-/// upstream: log.c:359-364 - a pre-30 peer receives MSG_ERROR as
+/// upstream: log.c:439-444 - a pre-30 peer receives MSG_ERROR as
 /// MSG_ERROR_XFER and MSG_WARNING as MSG_INFO.
 #[test]
 fn frames_route_downgrades_codes_for_a_pre_30_peer() {
@@ -1091,7 +1091,7 @@ fn queued_frames(
     }
     message_frames(&buf)
 }
-/// upstream: log.c:357 - a line queued by the live sink follows the same
+/// upstream: log.c:437 - a line queued by the live sink follows the same
 /// msgs2stderr rule as a direct one: by default errors and warnings stay on
 /// the server's stderr and only FINFO is framed.
 #[test]
@@ -1102,7 +1102,7 @@ fn queued_lines_follow_the_errors_to_stderr_route() {
     );
     assert_eq!(frames, vec![(2, b"info\n".to_vec())]);
 }
-/// upstream: log.c:357 - `msgs2stderr != 1` is false at 1, so every queued line stays local.
+/// upstream: log.c:437 - `msgs2stderr != 1` is false at 1, so every queued line stays local.
 #[test]
 fn queued_lines_follow_the_all_to_stderr_route() {
     let frames = queued_frames(
@@ -1111,7 +1111,7 @@ fn queued_lines_follow_the_all_to_stderr_route() {
     );
     assert!(frames.is_empty(), "{frames:?}");
 }
-/// upstream: log.c:357-366 - framed queued lines keep their own codes at
+/// upstream: log.c:437-446 - framed queued lines keep their own codes at
 /// protocol 30 and later, and are remapped once, by the writer, for a pre-30
 /// peer.
 #[test]

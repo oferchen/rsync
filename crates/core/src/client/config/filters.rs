@@ -49,7 +49,7 @@ pub struct FilterRuleSpec {
     /// Marks the rule upstream implies for a relative `--partial-dir`, whose
     /// perishable flag depends on the negotiated role and protocol.
     ///
-    /// upstream: compat.c:803-807 - `FILTRULE_PERISHABLE` is set only when
+    /// upstream: compat.c:812-816 - `FILTRULE_PERISHABLE` is set only when
     /// `!am_sender || protocol_version >= 30`.
     implied_partial_dir: bool,
     /// Set on a rule that appears before `--delete-excluded` on the command
@@ -441,7 +441,7 @@ impl FilterRuleSpec {
 
     /// Reports whether the rule is the implied relative `--partial-dir`
     /// exclude, whose perishable flag is resolved once the role and protocol
-    /// are known (upstream: compat.c:803-807).
+    /// are known (upstream: compat.c:812-816).
     #[must_use]
     pub const fn is_implied_partial_dir(&self) -> bool {
         self.implied_partial_dir

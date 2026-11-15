@@ -68,7 +68,7 @@ fn daemon_protocol_28_forced_client_greeting_accepted() {
 
 #[test]
 fn daemon_protocol_28_forced_greeting_carries_the_full_digest_list() {
-    // upstream: compat.c:844-853 - `output_daemon_greeting()` never filters the
+    // upstream: compat.c:853-862 - `output_daemon_greeting()` never filters the
     // list by protocol, so forcing the daemon down to 28 changes only the
     // version number. Verified against rsync 3.4.4, whose `--daemon
     // --protocol=28` banner is `@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4`.

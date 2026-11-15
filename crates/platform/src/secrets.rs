@@ -21,7 +21,7 @@ use std::path::Path;
 /// On Unix, verifies the file is not other-accessible (`mode & 0o006`).
 /// When the daemon runs as root, also verifies the file is owned by root.
 ///
-/// upstream: authenticate.c:172-179 `check_secret()` - `(st.st_mode & 06) != 0`
+/// upstream: authenticate.c:165-172 `check_secret()` - `(st.st_mode & 06) != 0`
 /// rejects other-accessible files; `st.st_uid != ROOT_UID` rejects non-root-owned
 /// files when running as root. Upstream applies both only under `strict modes`;
 /// that gate is the caller's responsibility here.
@@ -31,7 +31,7 @@ pub fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let metadata = fs::metadata(path)?;
-    // upstream: rsync.h:1457 - MY_UID() is geteuid(), so a setuid daemon is
+    // upstream: rsync.h:1473 - MY_UID() is geteuid(), so a setuid daemon is
     // judged by the identity it acts with, not the one that launched it.
     check_secrets_metadata(
         metadata.permissions().mode(),
@@ -44,7 +44,7 @@ pub fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
 /// Applies upstream's two strict-modes rules to an already-fetched mode and
 /// owner, so both rules are testable without running as root.
 ///
-/// upstream: authenticate.c:172-177 check_secret() - `(st.st_mode & 06) != 0`
+/// upstream: authenticate.c:165-170 check_secret() - `(st.st_mode & 06) != 0`
 /// is refused first; otherwise `MY_UID() == ROOT_UID && st.st_uid != ROOT_UID`.
 #[cfg(unix)]
 fn check_secrets_metadata(
@@ -171,7 +171,7 @@ mod tests {
         assert!(check_secrets_file_permissions(&path).is_ok());
     }
 
-    /// upstream: authenticate.c:175-177 - a root daemon refuses a secrets file
+    /// upstream: authenticate.c:168-170 - a root daemon refuses a secrets file
     /// that root does not own, however tight its mode.
     #[cfg(unix)]
     #[test]
@@ -189,7 +189,7 @@ mod tests {
         assert!(check_secrets_metadata(0o600, 1000, false, Path::new("secrets")).is_ok());
     }
 
-    /// upstream: authenticate.c:172 - the mode rule is checked first and does
+    /// upstream: authenticate.c:165 - the mode rule is checked first and does
     /// not depend on who runs the daemon.
     #[cfg(unix)]
     #[test]

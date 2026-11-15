@@ -1,7 +1,7 @@
 //! Oracle: a remote `-v` client prints each file's name before that file's
 //! data moves, as upstream does.
 //!
-//! upstream: sender.c:763-777 logs the name (`log_before_transfer`) before
+//! upstream: sender.c:771-785 logs the name (`log_before_transfer`) before
 //! `match_sums()` sends the data on a push, and receiver.c:1254-1264 logs it
 //! once the temp file opens, before `receive_data()`, on a pull.
 //!

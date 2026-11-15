@@ -1,7 +1,7 @@
 //! An incremental-recursion pull restores every directory's mtime, including
 //! directories whose sub-list the receiver released mid-walk.
 //!
-//! upstream: generator.c:2925 `touch_up_dirs(dir_flist, -1)` walks the
+//! upstream: generator.c:3017 `touch_up_dirs(dir_flist, -1)` walks the
 //! directory list, which flist_free() never touches, so every directory is
 //! re-stamped after its files landed. oc frees a finished segment's entries as
 //! soon as the per-segment NDX_DONE goes out (generator.c:2700-2711), so the

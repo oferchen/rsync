@@ -25,7 +25,7 @@ pub(crate) struct CapabilityMapping {
     pub(crate) requires_inc_recurse: bool,
     /// Whether this capability requires the iconv feature to be compiled in.
     ///
-    /// Mirrors upstream `#ifdef ICONV_OPTION` gating (compat.c:728-730) for
+    /// Mirrors upstream `#ifdef ICONV_OPTION` gating (compat.c:737-739) for
     /// CF_SYMLINK_ICONV. The runtime caller must skip mappings whose
     /// `requires_iconv` is true when the `iconv` cargo feature is disabled,
     /// otherwise the peer will run `sender_symlink_iconv` against a stream
@@ -35,7 +35,7 @@ pub(crate) struct CapabilityMapping {
 
 /// Table-driven capability to flag mappings.
 ///
-/// This mirrors upstream compat.c:712-734 in a maintainable format.
+/// This mirrors upstream compat.c:713-743 in a maintainable format.
 /// Order matches upstream rsync for documentation consistency.
 pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
     // INC_RECURSE: 'i' - requires allow_inc_recurse
@@ -58,7 +58,7 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         requires_iconv: false,
     },
     // SYMLINK_ICONV: 's' - gated on the `iconv` cargo feature, mirroring
-    // upstream's `#ifdef ICONV_OPTION` (compat.c:728-730). Without the
+    // upstream's `#ifdef ICONV_OPTION` (compat.c:737-739). Without the
     // feature the runtime filter in `iconv_capability_compiled_in()` skips
     // this row so we neither advertise CF_SYMLINK_ICONV in `-e.<...>` nor
     // accept it from the peer.
@@ -145,7 +145,7 @@ fn consecutive_match_opt_in() -> bool {
 /// Returns whether the iconv capability ('s' / CF_SYMLINK_ICONV) is
 /// compiled into this build.
 ///
-/// Mirrors upstream's `#ifdef ICONV_OPTION` (compat.c:728-730) which
+/// Mirrors upstream's `#ifdef ICONV_OPTION` (compat.c:737-739) which
 /// gates the advertisement and recognition of CF_SYMLINK_ICONV on
 /// build-time iconv availability.
 #[inline]
@@ -159,7 +159,7 @@ const fn iconv_capability_compiled_in() -> bool {
 /// advertise. Used when the capability string must be a standalone argument
 /// (e.g., daemon text protocol where args are newline-separated).
 ///
-/// Mirrors upstream `options.c:3031-3078 maybe_add_e_option()`.
+/// Mirrors upstream `options.c:3096-3146 maybe_add_e_option()`.
 pub fn build_capability_string(allow_inc_recurse: bool) -> String {
     let mut result = String::from("-e.");
     append_capability_chars(&mut result, allow_inc_recurse);
@@ -168,13 +168,13 @@ pub fn build_capability_string(allow_inc_recurse: bool) -> String {
 
 /// Builds the `e.xxx` capability suffix for embedding into a compact flag string.
 ///
-/// Upstream `options.c:2738` appends the capability characters directly into
+/// Upstream `options.c:2793` appends the capability characters directly into
 /// the same argstr buffer that holds the transfer flags, producing a single
 /// argument like `-logDtprHve.iLsfxCIvu`. This function returns the `e.xxx`
 /// portion without the leading `-` so callers can concatenate it with their
 /// flag string.
 ///
-/// Mirrors upstream `options.c:3031-3078 maybe_add_e_option()`.
+/// Mirrors upstream `options.c:3096-3146 maybe_add_e_option()`.
 pub fn build_capability_string_suffix(allow_inc_recurse: bool) -> String {
     let mut result = String::from("e.");
     append_capability_chars(&mut result, allow_inc_recurse);
@@ -264,7 +264,7 @@ pub(crate) fn parse_client_info(client_args: &[String]) -> Cow<'_, str> {
 
 /// Extracts a peer's advertised `(protocol, subprotocol)` from the `-e`
 /// capability payload embedded in a compact server flag string, mirroring
-/// upstream `check_sub_protocol`'s parse of `client_info` (compat.c:139-148).
+/// upstream `check_sub_protocol`'s parse of `client_info` (compat.c:140-149).
 ///
 /// Upstream's `client_info` is the raw value of the client's `-e` option
 /// (`client_info = shell_cmd`, compat.c:163-164). A pre-release client
@@ -282,13 +282,13 @@ pub(crate) fn parse_peer_subprotocol(flag_string: &str) -> (u8, u8) {
     let Some(info) = e_capability_payload(flag_string) else {
         return (0, 0);
     };
-    // upstream: compat.c:140 `atoi(client_info)` - a leading '.' (release peer)
+    // upstream: compat.c:141 `atoi(client_info)` - a leading '.' (release peer)
     // or any non-digit start yields 0.
     let their_protocol = leading_atoi(info);
     if their_protocol == 0 {
         return (0, 0);
     }
-    // upstream: compat.c:141 `strchr(client_info, '.')` then `atoi(dot+1)`.
+    // upstream: compat.c:142 `strchr(client_info, '.')` then `atoi(dot+1)`.
     let Some(dot) = info.find('.') else {
         return (0, 0);
     };
@@ -368,7 +368,7 @@ pub(crate) fn build_compat_flags_from_client_info(
             continue;
         }
 
-        // upstream: compat.c:713-718 sets CF_SYMLINK_TIMES / CF_SYMLINK_ICONV
+        // upstream: compat.c:714-719 sets CF_SYMLINK_TIMES / CF_SYMLINK_ICONV
         // from the server's OWN compile-time capability (`#ifdef`), NOT from the
         // client's advertisement - only f/x/C/I/v/u are client_info-gated. The
         // platform_ok / requires_iconv guards above already encode that own
@@ -415,7 +415,7 @@ pub(crate) fn client_has_pre_release_v_flag(client_info: &str) -> bool {
 ///
 /// In daemon server mode the client's `-e` capabilities ride `client_args`; in
 /// SSH server mode they are embedded in the compact `flag_string`
-/// (`client_info = shell_cmd`, upstream compat.c:163-164). Returns an empty
+/// (`client_info = shell_cmd`, upstream compat.c:164-165). Returns an empty
 /// string when neither carries an `-e.<...>` capability list. Both branches
 /// scan via [`parse_client_info`], so this stays consistent with the flag-build
 /// path even though the two consumers keep separate call sites.
@@ -464,10 +464,10 @@ pub(crate) fn sender_receiver_symlink_times(
     compat_flags: Option<CompatibilityFlags>,
 ) -> bool {
     if am_server {
-        // upstream compat.c:756-757 - strchr(client_info, 'L') != NULL
+        // upstream compat.c:765-766 - strchr(client_info, 'L') != NULL
         client_info.contains('L')
     } else {
-        // upstream compat.c:758 - !!(compat_flags & CF_SYMLINK_TIMES)
+        // upstream compat.c:767 - !!(compat_flags & CF_SYMLINK_TIMES)
         compat_flags.is_some_and(|f| f.contains(CompatibilityFlags::SYMLINK_TIMES))
     }
 }

@@ -4,7 +4,7 @@
 /// all three exec hooks are suppressed. This allows administrators to disable
 /// exec hooks without modifying the daemon configuration.
 ///
-/// upstream: clientserver.c:959-961 - checks `getenv("RSYNC_NO_XFER_EXEC")` before
+/// upstream: clientserver.c:963-965 - checks `getenv("RSYNC_NO_XFER_EXEC")` before
 /// running any exec hook.
 fn xfer_exec_enabled() -> bool {
     std::env::var_os("RSYNC_NO_XFER_EXEC").is_none()
@@ -26,7 +26,7 @@ struct XferExecContext<'a> {
     request: &'a str,
     /// Numbered client arguments for `RSYNC_ARG0`, `RSYNC_ARG1`, etc.
     ///
-    /// upstream: clientserver.c:570-578 `start_pre_exec()` - the child sets
+    /// upstream: clientserver.c:574-582 `start_pre_exec()` - the child sets
     /// `RSYNC_ARG<n>` for each argument `write_pre_exec_args()` (:611) sent. `RSYNC_ARG0` is typically the
     /// server command name (`rsync`), `RSYNC_ARG1..N` are the remaining args.
     client_args: &'a [String],
@@ -41,7 +41,7 @@ struct XferExecContext<'a> {
 /// `RSYNC_REQUEST` and `RSYNC_ARG<n>`, which upstream sets only in the pre-exec
 /// child (see `build_pre_xfer_command`).
 ///
-/// upstream: clientserver.c:757/770/771/815/920/962 - `RSYNC_MODULE_NAME`,
+/// upstream: clientserver.c:761/770/771/815/920/962 - `RSYNC_MODULE_NAME`,
 /// `RSYNC_HOST_NAME`, `RSYNC_HOST_ADDR`, `RSYNC_USER_NAME`, `RSYNC_MODULE_PATH`,
 /// and `RSYNC_PID` are set on the daemon process and thus inherited by both the
 /// pre-exec child and the post-xfer parent.
@@ -73,7 +73,7 @@ fn build_base_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessC
 /// Builds the pre-xfer (and early) exec environment: the shared base plus
 /// `RSYNC_REQUEST` and the numbered `RSYNC_ARG<n>` variables.
 ///
-/// upstream: clientserver.c:568/577 - `start_pre_exec()` runs in a forked child
+/// upstream: clientserver.c:572/577 - `start_pre_exec()` runs in a forked child
 /// that reads the request and argv from a pipe and sets `RSYNC_REQUEST` +
 /// `RSYNC_ARG<n>` via `set_env_str`/`set_envN_str`. These live only in the
 /// pre-exec child; the post-xfer parent never sees them.
@@ -82,7 +82,7 @@ fn build_pre_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessCo
 
     cmd.env("RSYNC_REQUEST", ctx.request);
 
-    // upstream: clientserver.c:570-578 start_pre_exec() - set numbered RSYNC_ARG<n>
+    // upstream: clientserver.c:574-582 start_pre_exec() - set numbered RSYNC_ARG<n>
     // env vars from the client's argument list.
     for (i, arg) in ctx.client_args.iter().enumerate() {
         cmd.env(format!("RSYNC_ARG{i}"), arg);
@@ -94,7 +94,7 @@ fn build_pre_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessCo
 /// Builds the post-xfer exec environment: the shared base only.
 ///
 /// The caller adds `RSYNC_EXIT_STATUS` (and, on Unix, `RSYNC_RAW_STATUS`).
-/// upstream: clientserver.c:974-991 - the post-xfer parent sets only the shared
+/// upstream: clientserver.c:978-995 - the post-xfer parent sets only the shared
 /// env plus the status variables; it never sets `RSYNC_REQUEST` or
 /// `RSYNC_ARG<n>`, so a post-xfer hook must not see them.
 fn build_post_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessCommand {
@@ -121,7 +121,7 @@ pub(crate) const EARLY_EXEC_REQUEST: &str = "(NONE)";
 /// `early_input` immediately after the exec-setup block (clientserver.c:1035),
 /// before the pre-xfer and name-converter args are written at all.
 ///
-/// Upstream: `clientserver.c:996-1010` - `early_exec()` runs early in the
+/// Upstream: `clientserver.c:1000-1014` - `early_exec()` runs early in the
 /// connection, before argument exchange.
 fn run_early_exec(
     command: &str,
@@ -175,7 +175,7 @@ fn run_early_exec(
 
 /// Most bytes of a pre-exec hook's stdout that upstream keeps.
 ///
-/// upstream: clientserver.c:639-641 - `finish_pre_exec()` reads into a
+/// upstream: clientserver.c:643-645 - `finish_pre_exec()` reads into a
 /// `BIGPATHBUFLEN` buffer, keeping `sizeof buf - 1` bytes for the terminator,
 /// and then closes the pipe.
 const PRE_EXEC_OUTPUT_LIMIT: u64 = 5120 - 1;
@@ -191,7 +191,7 @@ const PRE_EXEC_OUTPUT_LIMIT: u64 = 5120 - 1;
 /// `--early-input` belongs to the early exec hook alone (clientserver.c:630-631
 /// writes it only for `exec_type == 1`).
 ///
-/// upstream: clientserver.c:544-607 start_pre_exec(), :637-686 finish_pre_exec()
+/// upstream: clientserver.c:548-611 start_pre_exec(), :637-686 finish_pre_exec()
 fn run_pre_xfer_exec(command: &str, ctx: &XferExecContext<'_>) -> io::Result<Option<String>> {
     let mut cmd = build_pre_xfer_command(command, ctx);
     cmd.stdin(Stdio::null());
@@ -200,7 +200,7 @@ fn run_pre_xfer_exec(command: &str, ctx: &XferExecContext<'_>) -> io::Result<Opt
     let mut child = cmd.spawn()?;
     let mut output = Vec::new();
     if let Some(stdout) = child.stdout.take() {
-        // upstream: clientserver.c:651 - "Just ignore the read error for now".
+        // upstream: clientserver.c:655 - "Just ignore the read error for now".
         // Dropping the reader closes the pipe once the limit is reached.
         let _ = stdout.take(PRE_EXEC_OUTPUT_LIMIT).read_to_end(&mut output);
     }
@@ -215,7 +215,7 @@ fn run_pre_xfer_exec(command: &str, ctx: &XferExecContext<'_>) -> io::Result<Opt
 /// string) and each CR of a CRLF pair is dropped. The status is the raw wait
 /// status, so `exit 3` reports `768`.
 ///
-/// upstream: clientserver.c:675-684 finish_pre_exec() -
+/// upstream: clientserver.c:679-688 finish_pre_exec() -
 /// `"%s returned failure (%d)%s%s%s\n%s"`.
 fn pre_exec_failure_text(desc: &str, status: std::process::ExitStatus, output: &[u8]) -> String {
     let end = output.iter().position(|&b| b == 0).unwrap_or(output.len());
@@ -247,7 +247,7 @@ fn raw_wait_status(status: std::process::ExitStatus) -> i32 {
 /// (the cooked exit code). Failures are logged but do not change the transfer
 /// exit status.
 ///
-/// upstream: clientserver.c:979-986 - the parent that forks the daemon waits
+/// upstream: clientserver.c:983-990 - the parent that forks the daemon waits
 /// for the child, then sets `RSYNC_RAW_STATUS` to the raw `wait_process()`
 /// result (which encodes both the exit code and any terminating signal) before
 /// cooking it via `WIFEXITED`/`WEXITSTATUS` into `RSYNC_EXIT_STATUS` (or -1 when
@@ -268,7 +268,7 @@ fn run_post_xfer_exec(
     log_sink: Option<&SharedLogSink>,
 ) {
     let mut cmd = build_post_xfer_command(command, ctx);
-    // upstream: clientserver.c:981 - set_env_num("RSYNC_RAW_STATUS", status)
+    // upstream: clientserver.c:985 - set_env_num("RSYNC_RAW_STATUS", status)
     // is emitted before the cooked RSYNC_EXIT_STATUS; preserve that ordering.
     #[cfg(unix)]
     cmd.env("RSYNC_RAW_STATUS", (exit_status << 8).to_string());
@@ -361,7 +361,7 @@ mod xfer_exec_tests {
     }
 
     #[test]
-    /// upstream: clientserver.c:770 sets `RSYNC_HOST_NAME` from the same `host`
+    /// upstream: clientserver.c:774 sets `RSYNC_HOST_NAME` from the same `host`
     /// the ACL and `%h` use, which is never empty - it is `UNKNOWN` or
     /// `UNDETERMINED` when no name was resolved. The previous assertion pinned
     /// oc's empty-string divergence.
@@ -459,7 +459,7 @@ mod xfer_exec_tests {
         assert_eq!(result, None);
     }
 
-    /// upstream: clientserver.c:678-681 reports the RAW wait status, so a hook
+    /// upstream: clientserver.c:682-685 reports the RAW wait status, so a hook
     /// that exits 1 reads `(256)`, and names no module.
     #[cfg(unix)]
     #[test]
@@ -508,7 +508,7 @@ mod xfer_exec_tests {
     #[cfg(unix)]
     #[test]
     fn run_post_xfer_exec_sets_raw_status_consistent_with_exit_status() {
-        // upstream: clientserver.c:979-986 - RSYNC_RAW_STATUS holds the raw
+        // upstream: clientserver.c:983-990 - RSYNC_RAW_STATUS holds the raw
         // wait-status; RSYNC_EXIT_STATUS is the cooked code. For a normal exit
         // with code N, the raw wait encoding is N<<8 and WEXITSTATUS(raw) == N.
         // The hook writes both env vars to a file so the assertions can fail;
@@ -717,7 +717,7 @@ mod xfer_exec_tests {
         assert!(find_env("RSYNC_ARG0").is_none());
     }
 
-    /// upstream: clientserver.c:643-644 - the hook's stdout "is only
+    /// upstream: clientserver.c:647-648 - the hook's stdout "is only
     /// displayed to the user if the script also returns an error status".
     #[cfg(unix)]
     #[test]
@@ -740,7 +740,7 @@ mod xfer_exec_tests {
         );
     }
 
-    /// upstream: clientserver.c:655-664 folds each CRLF to LF and keeps a lone
+    /// upstream: clientserver.c:659-668 folds each CRLF to LF and keeps a lone
     /// CR; the text after the status line is the hook's output verbatim.
     #[cfg(unix)]
     #[test]
@@ -754,7 +754,7 @@ mod xfer_exec_tests {
         );
     }
 
-    /// upstream: clientserver.c:639-641 keeps at most `BIGPATHBUFLEN - 1`
+    /// upstream: clientserver.c:643-645 keeps at most `BIGPATHBUFLEN - 1`
     /// bytes of the hook's output.
     #[cfg(unix)]
     #[test]

@@ -23,13 +23,13 @@ warning that `flist.c:interpret_stat_error` has emitted since at least
 The walk-time tolerance itself is older. The relevant upstream sources
 (`flist.c` is byte-identical between 3.4.1 and 3.4.2) are:
 
-- `flist.c:1804-1812` (`interpret_stat_error`) - on ENOENT from
+- `flist.c:1808-1816` (`interpret_stat_error`) - on ENOENT from
   `link_stat`, set `IOERR_VANISHED`, emit
   `"%s has vanished: %s"`, return (continue traversal).
-- `flist.c:1833-1838` (`send_directory`) - on `opendir` returning
+- `flist.c:1837-1842` (`send_directory`) - on `opendir` returning
   ENOENT, call `interpret_stat_error` (sender) or silently return,
   matching the same "warn and continue" pattern.
-- `flist.c:1269-1296` (`make_file`) - on `readlink_stat` ENOENT, emit
+- `flist.c:1273-1300` (`make_file`) - on `readlink_stat` ENOENT, emit
   `"file has vanished: %s"`, return NULL, traversal continues.
 
 ## 2. oc-rsync status: at parity in the production walk
@@ -52,7 +52,7 @@ are:
 
 `log_stat_error` (walk.rs:307-320) emits `file has vanished:` for
 ENOENT and `link_stat ... failed:` otherwise, matching upstream
-`flist.c:1289`/`flist.c:1810` byte-for-byte. The wording is pinned by
+`flist.c:1293`/`flist.c:1814` byte-for-byte. The wording is pinned by
 `rsyserr_wording_tests` in the same file.
 
 A new regression test
@@ -81,7 +81,7 @@ upstream:
 2. A jwalk error whose `io_error()` is `NotFound` and whose `depth() > 0`
    is also skipped. Depth zero (the root argument the user passed on
    the command line) is still reported because upstream only ignores
-   top-level ENOENT under `--ignore-missing-args` (`flist.c:2393`).
+   top-level ENOENT under `--ignore-missing-args` (`flist.c:2404`).
 
 `tolerates_vanished_subdirectory_mid_walk` (same file) is the
 companion regression test - it creates a subdirectory, deletes it,

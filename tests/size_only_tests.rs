@@ -288,7 +288,7 @@ fn size_only_recursive_directory() {
 /// Test --size-only with --archive mode.
 /// Data transfer is skipped for same-size files, but -a implies -t which
 /// causes mtime to be updated to match the source.
-/// upstream: generator.c:1809-1820 - set_file_attrs() called after quick_check_ok()
+/// upstream: generator.c:1846-1857 - set_file_attrs() called after quick_check_ok()
 #[test]
 #[cfg(unix)]
 fn size_only_with_archive_mode() {
@@ -326,7 +326,7 @@ fn size_only_with_archive_mode() {
         .unwrap()
         .modified()
         .unwrap();
-    // upstream: generator.c:1809-1820 - set_file_attrs() is called even when
+    // upstream: generator.c:1846-1857 - set_file_attrs() is called even when
     // quick_check_ok() returns true (size-only skip). With -a (implies -t),
     // the destination mtime is updated to match the source.
     let src_mtime_secs = fs::metadata(src_dir.join("file.txt"))

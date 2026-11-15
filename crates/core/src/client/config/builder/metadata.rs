@@ -207,7 +207,7 @@ impl ClientConfigBuilder {
     ///
     /// Never reaches the wire and is never forwarded to a peer: it withholds
     /// creation only, leaving the file list's rdev framing alone.
-    /// upstream: options.c:688-689, generator.c:2026-2033.
+    /// upstream: options.c:689-690, generator.c:2067-2074.
     #[must_use]
     #[doc(alias = "--drop-D")]
     pub const fn drop_devices(mut self, enabled: bool) -> Self {

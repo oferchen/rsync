@@ -157,7 +157,7 @@ Crucially, every producer's local batch is **already in upstream's
 intra-cohort order** before publication: the producer walks
 `plan.extras` in the order DEL-1.a section 5.1 cites as commutative
 within a cohort, and upstream's per-cohort `MSG_DELETED` order is the
-reverse-directory order `delete_in_dir` issues (`generator.c:272-347`).
+reverse-directory order `delete_in_dir` issues (`generator.c:307-382`).
 Producers therefore do not need to wait for each other to coordinate
 the intra-cohort order; the buffer only re-orders cohorts, not the
 frames inside a cohort.

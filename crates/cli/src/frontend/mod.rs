@@ -66,7 +66,7 @@ use std::io::{self, Write};
 pub mod arguments;
 mod command_builder;
 // The escaper lives in `logging-sink` so the log-file sink can apply it
-// without depending on the CLI: upstream escapes inside `log.c:125 logit()`,
+// without depending on the CLI: upstream escapes inside `log.c:132 logit()`,
 // the single writer to `logfile_fp`, which is what makes it unbypassable.
 pub(crate) use logging_sink::escape;
 mod execution;
@@ -222,7 +222,7 @@ where
     // non-allowlisted syscall is answered with EPERM, so a first read taken
     // later - inside a sandboxed worker - would cache -1 and collapse
     // `dest_mode()`'s new-file result to mode 000.
-    // upstream: main.c:1904 `umask(orig_umask = umask(0));` runs in main()
+    // upstream: main.c:1908 `umask(orig_umask = umask(0));` runs in main()
     // before any privilege drop or sandbox setup.
     #[cfg(unix)]
     metadata::init_orig_umask();
@@ -238,7 +238,7 @@ where
     let daemon_alias_requested = daemon_invoked_via_program_name(&args, brand);
 
     // Check for --server --daemon (remote-shell daemon mode) BEFORE plain
-    // --server. upstream: main.c:1971-1975 dispatches start_daemon() when both
+    // --server. upstream: main.c:1975-1979 dispatches start_daemon() when both
     // am_server and am_daemon are set, before the normal server path.
     if server::daemon_session_requested(&args) {
         return server::run_daemon_session(&args, stderr);
@@ -249,12 +249,12 @@ where
     }
 
     if server::server_mode_requested(&args) {
-        // upstream: main.c:1919-1921 installs sig_int for every role, the
+        // upstream: main.c:1923-1925 installs sig_int for every role, the
         // server included.
         core::exit_code::process_latch().reset();
         install_signal_handling();
         let code = server::run_server_mode(&args, stdout, stderr);
-        // upstream: cleanup.c:263-264 - a server leaving with a nonzero code
+        // upstream: cleanup.c:264-265 - a server leaving with a nonzero code
         // lingers before close_all() and exit().
         if code != 0 {
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -291,7 +291,7 @@ where
     let raw_token_count = args.len();
     let exit_code = match parse_args(args) {
         Ok(parsed) => {
-            // upstream: options.c:2125 - `human_readable > 1 && argc == 2 &&
+            // upstream: options.c:2161 - `human_readable > 1 && argc == 2 &&
             // !am_server` preserves the historic meaning of a lone `-h` as
             // `--help`. When the only command-line token increments the
             // human-readable counter (`-h`, `-hh`, `-avh`, `--human-readable`),

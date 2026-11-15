@@ -3,7 +3,7 @@
 //!
 //! The `--server` receiver installs its `--compare-dest` / `--copy-dest`
 //! directories as readable roots and its `--link-dest` directories as
-//! link-source roots (upstream: generator.c:1073 `try_dests_reg()`). It opens
+//! link-source roots (upstream: generator.c:1110 `try_dests_reg()`). It opens
 //! a basis there, copies from there, or hard-links out of there into the
 //! destination. A rule granting the full rights the destination gets would
 //! let a raced-in symlink turn a basis read into a write outside the

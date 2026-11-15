@@ -331,4 +331,4 @@ nightlies, whichever is later):
 - SSH push call site: `crates/core/src/client/remote/invocation/builder.rs:184`
 - Daemon push call site: `crates/core/src/client/remote/daemon_transfer/orchestration/arguments.rs:167`
 - v0.6.1 regression audit: `docs/audit/v061-daemon-push-regression.md`
-- Upstream reference: `options.c:3003-3050 maybe_add_e_option()`
+- Upstream reference: `options.c:3068-3115 maybe_add_e_option()`

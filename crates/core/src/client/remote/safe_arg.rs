@@ -1,9 +1,9 @@
-//! Port of upstream `safe_arg()` (`options.c:2703-2769`), the backslash
+//! Port of upstream `safe_arg()` (`options.c:2758-2824`), the backslash
 //! escaping a client applies to each argument it passes to the server.
 //!
 //! A remote shell joins the `--server` argv into one command line and splits it
 //! again, and an upstream daemon reverses the escaping with `unbackslash_arg()`
-//! (`io.c:1467`). Escaping the same bytes upstream escapes is what lets a value
+//! (`io.c:1474`). Escaping the same bytes upstream escapes is what lets a value
 //! carrying spaces, quotes, wildcards or a newline reach the server intact.
 //!
 //! The escape runs over raw bytes on Unix, so a non-UTF-8 path survives
@@ -14,11 +14,11 @@
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 
-/// upstream: options.c:2705 `SHELL_CHARS`. `\n` and `\r` are load-bearing: an
+/// upstream: options.c:2760 `SHELL_CHARS`. `\n` and `\r` are load-bearing: an
 /// unescaped newline ends the remote command and starts a second one.
 const SHELL_CHARS: &[u8] = b"!#$&;|<>(){}\"'` \t\n\r\\";
 
-/// upstream: options.c:2706 `WILD_CHARS`. Brace expansion is deliberately absent.
+/// upstream: options.c:2761 `WILD_CHARS`. Brace expansion is deliberately absent.
 const WILD_CHARS: &[u8] = b"*?[]";
 
 /// The two `safe_arg()` modes, chosen by whether `opt` is `NULL`.
@@ -34,7 +34,7 @@ pub(crate) enum ArgKind {
 
 impl ArgKind {
     fn escapes(self, byte: u8) -> bool {
-        // upstream: options.c:2708 - `is_filename_arg ? SHELL_CHARS : WILD_CHARS SHELL_CHARS`.
+        // upstream: options.c:2763 - `is_filename_arg ? SHELL_CHARS : WILD_CHARS SHELL_CHARS`.
         SHELL_CHARS.contains(&byte) || (self == Self::OptionValue && is_wild(byte))
     }
 }
@@ -48,7 +48,7 @@ fn is_wild(byte: u8) -> bool {
 /// A backslash is doubled unless, in a filename, it precedes a wildcard. A
 /// trailing backslash is always doubled.
 ///
-/// upstream: options.c:2724-2735 (the counter) and :2757-2765 (the writer).
+/// upstream: options.c:2779-2790 (the counter) and :2757-2765 (the writer).
 pub(crate) fn escape_metachars(arg: &[u8], kind: ArgKind) -> Cow<'_, [u8]> {
     let escape_at = |i: usize| match arg[i] {
         b'\\' => !(kind == ArgKind::Filename && arg.get(i + 1).is_some_and(|&b| is_wild(b))),
@@ -75,7 +75,7 @@ pub(crate) fn escape_metachars(arg: &[u8], kind: ArgKind) -> Cow<'_, [u8]> {
 /// applies at all (the `protect_args`/`--old-args` gate) and when the tilde
 /// rule holds (`options.c:2717-2722`).
 ///
-/// upstream: options.c:2710 escape_leading_dash, :2749-2755.
+/// upstream: options.c:2765 escape_leading_dash, :2749-2755.
 pub(crate) fn filename_arg(arg: &OsStr, escape_leading_tilde: bool) -> OsString {
     map_bytes(arg, |bytes| {
         let prefix: &[u8] = match bytes.first() {
@@ -95,7 +95,7 @@ pub(crate) fn filename_arg(arg: &OsStr, escape_leading_tilde: bool) -> OsString 
 /// remote shell can expand a `~/path` value. The caller evaluates upstream's
 /// escape gate.
 ///
-/// upstream: options.c:2711-2747.
+/// upstream: options.c:2766-2802.
 pub(crate) fn option_arg(opt: &str, value: &OsStr, escape: bool) -> OsString {
     map_bytes(value, |bytes| {
         let value = if escape {

@@ -10,8 +10,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/syscall.c:2940` `#define DS_MAXDEPTH 1024`
-//! - `rsync-3.5.1/syscall.c:3004-3010` `ds_push()` - closes the new descriptor
+//! - `rsync-3.5.2/syscall.c:3011` `#define DS_MAXDEPTH 1024`
+//! - `rsync-3.5.2/syscall.c:3075-3081` `ds_push()` - closes the new descriptor
 //!   and fails with `ENOMEM` once `top + 1 >= DS_MAXDEPTH`.
 
 use std::io;
@@ -19,7 +19,7 @@ use std::io;
 /// Directory levels a confined walk may hold below its anchor, counting the
 /// anchor's own slot.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:2940` `DS_MAXDEPTH`.
+/// upstream: `rsync-3.5.2/syscall.c:3011` `DS_MAXDEPTH`.
 pub const SECURE_WALK_MAX_DEPTH: usize = 1024;
 
 /// Refuses a walk that descends through `descents` directories, as upstream's

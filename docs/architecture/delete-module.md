@@ -190,7 +190,7 @@ The `DeletePlan::sort_by_name()` method reproduces upstream's
 2. Reverse the sorted slice in place.
 
 This matches upstream's `for (i = dirlist->used; i--; )` decrementing
-loop (`generator.c:320`). The sort is unstable (`sort_unstable_by`) to
+loop (`generator.c:355`). The sort is unstable (`sort_unstable_by`) to
 match upstream's `qsort` choice.
 
 ### DirTraversalCursor
@@ -398,13 +398,13 @@ serialization, not a limitation of the pipeline design.
 Upstream rsync (`delete.c`, `generator.c`) implements deletion as a
 single-threaded, stack-recursive process:
 
-**`do_delete_pass()` (generator.c:2282-2354):**
+**`do_delete_pass()` (generator.c:2324-2397):**
 - Called once before the transfer loop (Before mode) or driven
   per-directory by the generator during the transfer (During mode).
 - Iterates the file list, identifying directories that need deletion
   passes.
 
-**`delete_in_dir()` (generator.c:272-387):**
+**`delete_in_dir()` (generator.c:307-422):**
 - For one directory: calls `get_dirlist()` to enumerate the destination.
 - Sorts the dirlist using `f_name_cmp`.
 - Iterates in reverse: `for (i = dirlist->used; i--; )`.
@@ -466,11 +466,11 @@ stress test) validates this guarantee continuously in CI.
 
 ### Upstream source references
 
-- `generator.c:272-387` - `delete_in_dir`, `do_delete_pass`.
-- `generator.c:2282-2354` - `do_delete_pass` top-level entry point.
+- `generator.c:307-422` - `delete_in_dir`, `do_delete_pass`.
+- `generator.c:2324-2397` - `do_delete_pass` top-level entry point.
 - `delete.c:48-122` - `delete_dir_contents` (recursive peel).
 - `delete.c:130-225` - `delete_item` (per-entry dispatch).
-- `flist.c:3217-3343` - `f_name_cmp` (comparator used by both sort and
+- `flist.c:3228-3354` - `f_name_cmp` (comparator used by both sort and
   flist lookup).
 - `errcode.h` - `RERR_PARTIAL` (23), `RERR_VANISHED` (24).
 - `main.c:225-247` - `write_del_stats` / `read_del_stats` (goodbye

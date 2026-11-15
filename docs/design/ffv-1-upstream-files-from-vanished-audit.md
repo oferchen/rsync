@@ -19,7 +19,7 @@ int missing_args = 0; /* 0 = FERROR_XFER, 1 = ignore, 2 = delete */
 ```
 
 Both options use `POPT_BIT_SET`, so they OR their value into `missing_args`
-(options.c:718-719):
+(options.c:719-720):
 
 ```c
 {"delete-missing-args", 0, POPT_BIT_SET, &missing_args, 2, 0, 0},
@@ -27,7 +27,7 @@ Both options use `POPT_BIT_SET`, so they OR their value into `missing_args`
 ```
 
 If both options are specified, `missing_args` becomes 3 (1|2), which is
-simplified to 2 at options.c:2218-2219:
+simplified to 2 at options.c:2254-2258:
 
 ```c
 if (missing_args == 3)
@@ -35,11 +35,11 @@ if (missing_args == 3)
 ```
 
 `--delete-missing-args` requires delete cooperation from both sides -
-the sender sends the option to the server (options.c:2848-2853). The sender
+the sender sends the option to the server (options.c:2913-2918). The sender
 can handle `--ignore-missing-args` by itself, so it is only forwarded to
 the remote side when the remote is the sender (`!am_sender`).
 
-### send_file_list() Stat Failure Handling (flist.c:2390-2409)
+### send_file_list() Stat Failure Handling (flist.c:2401-2420)
 
 The same loop processes both `--files-from` entries and command-line argv
 entries. When `link_stat()` fails, the behavior is determined by
@@ -97,15 +97,15 @@ normal "file has vanished" warning and exit code 24 (RERR_VANISHED).
 - **io_error**: Not modified during file list building.
 - **Wire format**: The missing file is sent as a file list entry with `mode = 0`
   (all stat fields zeroed). This is identified by `IS_MISSING_FILE(st)` macro
-  (`rsync.h:917: #define IS_MISSING_FILE(statbuf) ((statbuf).st_mode == 0)`).
-- **Generator behavior** (generator.c:1348-1354): When the generator encounters
+  (`rsync.h:933: #define IS_MISSING_FILE(statbuf) ((statbuf).st_mode == 0)`).
+- **Generator behavior** (generator.c:1385-1391): When the generator encounters
   a mode-0 entry, it calls `delete_item()` on the corresponding destination
   path, removing it if it exists.
-- **List-only output** (generator.c:1159-1162): Missing entries display as
+- **List-only output** (generator.c:1196-1199): Missing entries display as
   `*missing` instead of the normal permissions/size/date line.
 - **Exit code**: 0 (success), assuming the deletion succeeds.
 
-### Server-Side Argument Forwarding (options.c:2848-2853)
+### Server-Side Argument Forwarding (options.c:2913-2918)
 
 ```c
 /* --delete-missing-args needs the cooperation of both sides, but
@@ -208,7 +208,7 @@ behavioral difference in the remote sender path:
 
 - **Upstream**: ENOENT on an initial source arg emits `link_stat %s failed`
   via `FERROR_XFER`, does NOT set `IOERR_GENERAL` (the `errno != ENOENT`
-  guard at flist.c:2396 skips it), but the `FERROR_XFER` message itself
+  guard at flist.c:2407 skips it), but the `FERROR_XFER` message itself
   triggers exit code 23 (RERR_PARTIAL) on the client side.
 - **oc-rsync**: ENOENT on an initial source arg calls `record_io_error()`
   which sets `IOERR_VANISHED` (exit 24, RERR_VANISHED). The warning
@@ -217,9 +217,9 @@ behavioral difference in the remote sender path:
 
 This is incorrect. Upstream distinguishes between:
 
-1. **Initial source arg missing** (flist.c:2398) - `link_stat %s failed` -
+1. **Initial source arg missing** (flist.c:2409) - `link_stat %s failed` -
    treated as a transfer error, exit 23.
-2. **File vanished during scan** (flist.c:1289) - `file has vanished: %s` -
+2. **File vanished during scan** (flist.c:1293) - `file has vanished: %s` -
    treated as a vanished warning, exit 24.
 
 oc-rsync conflates both cases as "vanished" in the remote sender path.
@@ -259,7 +259,7 @@ $ rsync --list-only --delete-missing-args nonexistent.txt /dst/
 
 1. **FFV-2**: Wire `missing_args` config into `GeneratorContext` and
    `build_file_list_with_base()`. Implement the three-mode branch in the
-   remote sender's stat failure path to match upstream flist.c:2393-2409.
+   remote sender's stat failure path to match upstream flist.c:2404-2420.
 
 2. **FFV-3**: Implement mode-0 `FileEntry` (missing file sentinel) in the
    protocol flist encoding. Add `IS_MISSING_FILE` predicate. Wire into

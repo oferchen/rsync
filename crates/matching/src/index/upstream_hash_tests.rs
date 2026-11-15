@@ -97,11 +97,13 @@ fn a_weak_collision_is_a_false_alarm_per_candidate() {
         "the fixture must collide on the weak sum"
     );
     probe_bytes(&mut table, &index, &window);
+    // upstream 3.5.2: duplicate identical basis blocks are unlinked after the
+    // first false alarm, leaving false_alarms == 1.
     assert_eq!(
         table.counters(),
         ProbeCounters {
             hash_hits: 1,
-            false_alarms: index.full_block_count() as u64
+            false_alarms: 1,
         }
     );
 }
@@ -110,17 +112,28 @@ fn a_weak_collision_is_a_false_alarm_per_candidate() {
 /// false alarms are counted (match.c:250).
 #[test]
 fn the_chain_walk_is_capped() {
-    let index = index_over(&vec![b'a'; 4 << 20]);
+    // Build > MAX_CHAIN_LEN distinct blocks with the same weak checksum so
+    // duplicate-chain unlinking does not collapse them before MAX_CHAIN_LEN.
+    let mut data = vec![b'a'; 4 << 20];
+    let probe_idx = index_over(&data);
+    let blen = probe_idx.block_length();
+    let n_blocks = probe_idx.full_block_count();
+    for b in 0..n_blocks {
+        let base = b * blen;
+        let p = b % (blen - 4);
+        let d = ((b / (blen - 4)) + 1) as u8;
+        data[base + p] = b'a' + d;
+        data[base + p + 1] = b'a' - d;
+        data[base + p + 2] = b'a' - d;
+        data[base + p + 3] = b'a' + d;
+    }
+    let index = index_over(&data);
     assert!(
         index.full_block_count() > MAX_CHAIN_LEN as usize,
         "the fixture needs a long chain"
     );
     let mut table = UpstreamHashTable::new(&index, false);
-    let mut window = vec![b'a'; index.block_length()];
-    window[0] += 1;
-    window[3] += 1;
-    window[1] -= 1;
-    window[2] -= 1;
+    let window = vec![b'a'; blen];
     probe_bytes(&mut table, &index, &window);
     assert_eq!(table.counters().false_alarms, u64::from(MAX_CHAIN_LEN));
 }

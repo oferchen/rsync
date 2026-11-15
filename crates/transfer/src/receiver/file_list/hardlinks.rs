@@ -115,7 +115,7 @@ pub(in crate::receiver) fn normalize_pre30_hardlinks(entries: &mut [FileEntry]) 
     // Group entries by (dev, ino) pairs. Key: (dev, ino), Value: list of indices.
     let mut groups: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
 
-    // upstream: flist.c:1560-1586 - every XMIT_HLINKED entry gets a gnum,
+    // upstream: flist.c:1564-1590 - every XMIT_HLINKED entry gets a gnum,
     // whatever its type; the sender flags any non-directory with st_nlink > 1
     // (flist.c:1853-1856), so FIFOs, devices and symlinks group too.
     for (i, entry) in entries.iter().enumerate() {
@@ -391,7 +391,7 @@ mod tests {
         assert!(!entries[2].hlink_first());
     }
 
-    /// upstream: flist.c:1853-1856 - at protocol 28-29 the sender sends a
+    /// upstream: flist.c:1857-1860 - at protocol 28-29 the sender sends a
     /// (dev, ino) pair for every non-directory with `st_nlink > 1`, and
     /// flist.c:1560-1586 gives each one a gnum whatever its type.
     ///

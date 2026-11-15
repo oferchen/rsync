@@ -322,7 +322,7 @@ The verification path:
   i32` field to `TransferStats` (defaulting 0) and wires it through
   the receiver path in `crates/transfer/src/receiver/stats.rs`.
   The new field is read from the partial-flist end marker that the
-  sender already writes (`flist.c:2518 write_int(f, io_error)`
+  sender already writes (`flist.c:2529 write_int(f, io_error)`
   equivalent in `generator/protocol_io.rs`).
 - Exit-code assertion: receiver exit must reflect the partial
   failure. Mapping is documented in

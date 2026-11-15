@@ -22,7 +22,7 @@ use protocol::ProtocolVersion;
 /// Returns `true` when a source and destination are the same rsync file type
 /// for the purposes of the `--update` skip decision.
 ///
-/// Mirrors upstream `generator.c:614 get_file_type()`, which buckets modes into
+/// Mirrors upstream `generator.c:651 get_file_type()`, which buckets modes into
 /// regular / symlink / directory / special / device / unsupported. The
 /// `--update` skip only fires when both sides land in the same bucket
 /// (`stype == ftype`), so e.g. a regular-file source over a symlink destination
@@ -55,7 +55,7 @@ fn same_file_type(source: &fs::Metadata, destination: &fast_io::EntryMetadata) -
 /// Returns `true` when `--update` should skip this file because the
 /// destination is not older than the source by more than `modify_window`.
 ///
-/// Mirrors upstream `generator.c:2136`:
+/// Mirrors upstream `generator.c:2177`:
 /// ```c
 /// if (update_only > 0 && statret == 0 && stype == ftype
 ///     && file->modtime - sx.st.st_mtime < modify_window)
@@ -85,14 +85,14 @@ pub(crate) fn destination_is_newer(
     destination: &fast_io::EntryMetadata,
     modify_window: ModifyWindow,
 ) -> bool {
-    // upstream: generator.c:2135 - the `stype == ftype` guard means a
+    // upstream: generator.c:2176 - the `stype == ftype` guard means a
     // type-mismatched destination is never skipped by `--update`.
     if !same_file_type(source, destination) {
         return false;
     }
     match (source.modified(), destination.modified()) {
         (Ok(src), Ok(dst)) => {
-            // upstream: generator.c:2136
+            // upstream: generator.c:2177
             //   file->modtime - sx.st.st_mtime < modify_window
             // Both operands are whole-second `time_t` values and the signed
             // `int modify_window` is used directly, so the destination counts as
@@ -147,7 +147,7 @@ pub(crate) fn build_delta_signature(
         return Ok(None);
     }
 
-    // upstream: generator.c:711 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`
+    // upstream: generator.c:748 `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)`
     let digest_len = NonZeroU8::new(algorithm.digest_len().min(usize::from(MAX_SUM_LENGTH)) as u8)
         .expect("strong checksum digest length must be non-zero");
     let params = SignatureLayoutParams::new(
@@ -197,7 +197,7 @@ pub(crate) fn build_delta_signature(
     // generator's DELTASUM lines for the basis it just checksummed. This is the
     // local counterpart of `receiver::basis::generate_basis_signature`.
     //
-    // upstream: generator.c:2358-2361 `gen mapped`, :765-770 the geometry
+    // upstream: generator.c:2401-2404 `gen mapped`, :765-770 the geometry
     // `sum_sizes_sqroot()` chose, :817-822 one line per generated chunk. The
     // `generating and sending sums for %d` line (generator.c:2363) has NO local
     // analogue: nothing is sent, and the local executor carries no wire file
@@ -309,7 +309,7 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
         modify_window,
         prefetched_match,
     } = params;
-    if destination.len() != source.len() {
+    if !destination.is_file() || destination.len() != source.len() {
         return false;
     }
 
@@ -750,7 +750,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn destination_is_not_newer_when_dest_is_symlink_over_regular_source() {
-        // upstream: generator.c:2135 requires `stype == ftype` for the --update
+        // upstream: generator.c:2176 requires `stype == ftype` for the --update
         // skip. A newer destination SYMLINK must never cause a regular-file
         // source to be skipped, because a file-format difference is always
         // important enough to update. This is the exact `update` testsuite
@@ -782,7 +782,7 @@ mod tests {
 
     #[test]
     fn destination_is_not_newer_when_dest_subsecond_newer_same_second() {
-        // WHY: upstream generator.c:2136 gates the `--update` skip on
+        // WHY: upstream generator.c:2177 gates the `--update` skip on
         // `file->modtime - sx.st.st_mtime < modify_window`, where both operands
         // are whole-second `time_t` values. A destination that is newer only in
         // its fractional second (same whole second as the source) collapses to a

@@ -320,7 +320,7 @@ a significant fraction of N.
 
 ### 6.1 Upstream rsync's delete path
 
-Upstream rsync (`generator.c:272-347`) performs deletes in a tight loop:
+Upstream rsync (`generator.c:307-382`) performs deletes in a tight loop:
 
 ```c
 // Simplified upstream delete_in_dir:

@@ -114,7 +114,7 @@ fn push_logs_one_recv_line_per_entry() {
         fs::write(src.join(name), vec![b'x'; size]).expect("src file");
     }
     // Backdate the destination module directory so the pushed root `.` reports a
-    // metadata-only `.d..t......` time row (upstream generator.c:526-530), making
+    // metadata-only `.d..t......` time row (upstream generator.c:563-567), making
     // the dir line deterministic rather than dependent on same-second timing.
     let old = FileTime::from_unix_time(1_000_000_000, 0);
     set_file_mtime(&module_dir, old).expect("backdate module dir");
@@ -1314,7 +1314,7 @@ fn directory_rows(client_args: &[&str]) -> Option<Vec<String>> {
 /// deletion then touched it.
 ///
 /// Upstream oracle (rsync 3.5.1 daemon, the same fixture): no `.d` row.
-/// upstream: generator.c:1870-1928 recv_generator() itemizes the directory
+/// upstream: generator.c:1907-1965 recv_generator() itemizes the directory
 /// before `delete_in_dir()`, and generator.c:2780-2801 does the same for each
 /// sub-list's directory under INC_RECURSE.
 #[test]
@@ -1330,7 +1330,7 @@ fn push_delete_during_itemizes_a_directory_before_deleting_in_it() {
 ///
 /// Upstream oracle (rsync 3.5.1 daemon, the same fixture): `.d..t...... ./`
 /// and `.d..t...... d/`.
-/// upstream: generator.c:2280-2281 `do_delete_pass()` runs before
+/// upstream: generator.c:2322-2323 `do_delete_pass()` runs before
 /// generate_files() walks the list.
 #[test]
 fn push_delete_before_itemizes_the_directories_its_pass_changed() {

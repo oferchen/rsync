@@ -13,15 +13,15 @@
 /// General I/O error occurred during file operations.
 /// Must be 1 for backward compatibility with upstream rsync.
 ///
-/// upstream: `rsync.h:191`
+/// upstream: `rsync.h:192`
 pub const IOERR_GENERAL: i32 = 1 << 0;
 /// A file or directory vanished (was deleted) during the transfer.
 ///
-/// upstream: `rsync.h:192`
+/// upstream: `rsync.h:193`
 pub const IOERR_VANISHED: i32 = 1 << 1;
 /// Delete limit was exceeded during --delete operations.
 ///
-/// upstream: `rsync.h:193`
+/// upstream: `rsync.h:194`
 pub const IOERR_DEL_LIMIT: i32 = 1 << 2;
 
 /// Mask of every defined `IOERR_*` bit.
@@ -32,14 +32,14 @@ pub const IOERR_DEL_LIMIT: i32 = 1 << 2;
 /// to steer local decisions. Apply it at each point the value is read off the
 /// wire, not at the consumers.
 ///
-/// upstream: `rsync.h:200` - `IOERR_VALID_MASK`, applied at `io.c:1744`
+/// upstream: `rsync.h:201` - `IOERR_VALID_MASK`, applied at `io.c:1751`
 /// (`MSG_IO_ERROR`) and `flist.c:3193`, `flist.c:3211`, `flist.c:3314`
 /// (`recv_file_list()`).
 pub const IOERR_VALID_MASK: i32 = IOERR_GENERAL | IOERR_VANISHED | IOERR_DEL_LIMIT;
 
 /// Reduces a peer-supplied `io_error` value to the defined `IOERR_*` bits.
 ///
-/// upstream: `flist.c:3193` - `io_error |= err & IOERR_VALID_MASK;`
+/// upstream: `flist.c:3204` - `io_error |= err & IOERR_VALID_MASK;`
 #[must_use]
 pub const fn sanitize_peer_io_error(value: i32) -> i32 {
     value & IOERR_VALID_MASK
@@ -54,7 +54,7 @@ mod tests {
     /// The mask is derived from the bit set, so adding an `IOERR_*` bit without
     /// widening the mask cannot silently make that bit unreachable.
     ///
-    /// upstream: `rsync.h:200`
+    /// upstream: `rsync.h:201`
     #[test]
     fn mask_covers_exactly_the_defined_bits() {
         assert_eq!(IOERR_VALID_MASK, 0b111);
@@ -115,7 +115,7 @@ mod combine_tests {
     /// The `(peer=set, local=0, ignore=true)` row is the one that regressed:
     /// four of five drains re-admitted the peer value after the gate had
     /// filtered it, so a peer-reported error still reached the exit code under
-    /// `--ignore-errors`. upstream: flist.c:3192/3210/3313.
+    /// `--ignore-errors`. upstream: flist.c:3203/3210/3313.
     #[test]
     fn ignore_errors_suppresses_only_the_peer_half() {
         for &(peer, local, ignore, want) in &[

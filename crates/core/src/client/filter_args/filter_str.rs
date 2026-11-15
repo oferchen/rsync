@@ -197,8 +197,13 @@ pub(crate) fn add_rule(list: &mut Vec<FilterRuleSpec>, rule: FilterRuleSpec, xfl
     // leading `**` is left alone: upstream marks it FILTRULE_WILD2_PREFIX
     // (exclude.c:335-339), which matches at the root without the anchor, while
     // prepending `/` would turn `**/*.o` into `/**/*.o` and lose that prefix.
-    let anchor = xflags.abs_if_slash
+    // upstream: exclude.c:297-300 - under XFLG_ABS_IF_SLASH, a leading `/` or
+    // any embedded `/` sets FILTRULE_ABS_PATH so rule_matches() prepends the
+    // module-relative current directory (exclude.c:1022-1027).
+    let set_abs_path = xflags.abs_if_slash
         && !rule.is_abs_path()
+        && (pattern.starts_with('/') || body.contains('/'));
+    let anchor = xflags.abs_if_slash
         && !pattern.starts_with('/')
         && !pattern.starts_with("**")
         && body.contains('/');
@@ -211,6 +216,11 @@ pub(crate) fn add_rule(list: &mut Vec<FilterRuleSpec>, rule: FilterRuleSpec, xfl
             FilterRuleKind::Exclude | FilterRuleKind::Protect
         );
     if !anchor && !wild3 {
+        let rule = if set_abs_path {
+            rule.with_anchor()
+        } else {
+            rule
+        };
         list.push(rule);
         return;
     }
@@ -224,6 +234,11 @@ pub(crate) fn add_rule(list: &mut Vec<FilterRuleSpec>, rule: FilterRuleSpec, xfl
     } else {
         rewritten.push_str(pattern);
     }
+    let rule = if set_abs_path {
+        rule.with_anchor()
+    } else {
+        rule
+    };
     list.push(rule.with_pattern(rewritten));
 }
 

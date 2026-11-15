@@ -49,7 +49,7 @@ fn whole_unix_seconds() -> u64 {
 /// Returns the operands in the order the local-copy executor should process
 /// them so multi-operand itemize / `--list-only` output matches upstream.
 ///
-/// upstream: flist.c:3059 flist_sort_and_clean() sorts the COMBINED
+/// upstream: flist.c:3070 flist_sort_and_clean() sorts the COMBINED
 /// multi-source file list with f_name_cmp before the generator itemizes it, so
 /// top-level operands are emitted in name order, not command-line order. oc's
 /// per-directory walk already emits each operand's subtree in f_name_cmp order,
@@ -124,7 +124,7 @@ struct MergedRootEntry {
 /// transfer, or `None` when the transfer is not that shape (the caller then
 /// falls back to [`ordered_operands`]).
 ///
-/// upstream: flist.c:2739 send_file_list() accumulates every source operand into
+/// upstream: flist.c:2750 send_file_list() accumulates every source operand into
 /// ONE file list; a trailing-slash / copy-contents operand contributes its
 /// immediate CHILDREN (send_directory, flist.c:3005) rather than its own name,
 /// and flist.c:3059 flist_sort_and_clean() then sorts the combined list with
@@ -255,7 +255,7 @@ const CROSS_SCAN_MAX_DEPTH: usize = 1000;
 /// for each destination directory that MORE THAN ONE source operand
 /// contributes to, the union of every contributor's entry names.
 ///
-/// upstream: flist.c:2739 send_file_list() accumulates every source operand
+/// upstream: flist.c:2750 send_file_list() accumulates every source operand
 /// into ONE flist, so a `delete_in_dir()` sweep (generator.c:1924-1927 during,
 /// generator.c:364-396 do_delete_pass for before/after) can never remove an
 /// entry any operand supplies, in any operand order. oc walks each source
@@ -410,7 +410,7 @@ fn merged_root_delete_pass(
     }
     match timing {
         DeleteTiming::Before | DeleteTiming::During => {
-            // upstream: generator.c:304-311 - an I/O error suppresses the
+            // upstream: generator.c:339-346 - an I/O error suppresses the
             // delete pass unless --ignore-errors; the sweep marker keeps a
             // later frame from re-sweeping the root.
             if !context.delete_pass_blocked_by_io_error()
@@ -539,14 +539,14 @@ pub(crate) fn copy_sources(
         })?;
     }
 
-    // upstream: main.c:1870 `starttime = time(NULL)` - the transfer rate span
+    // upstream: main.c:1874 `starttime = time(NULL)` - the transfer rate span
     // is measured between two whole-second time_t marks, not a fractional clock.
     let run_start_secs = whole_unix_seconds();
     let destination_root = plan.destination_spec().path().to_path_buf();
     let mut context = CopyContext::new(mode, options, handler, destination_root);
     context.set_multi_source(plan.sources().len() > 1);
 
-    // upstream: generator.c:2764-2765 - the generator prints the
+    // upstream: generator.c:2850-2851 - the generator prints the
     // delta-transmission status once at DEBUG_GTE(FLIST, 1) (first active at
     // -vv), before the per-file generate loop. A local copy renders its name
     // list post-hoc in the CLI, so that notice is emitted there (in
@@ -618,7 +618,7 @@ pub(crate) fn copy_sources(
             {
                 // A pre-existing non-directory destination blocks the mkdir of a
                 // named directory operand, so clear it first and let the source
-                // name land as `dest/<source>/`. upstream: generator.c:1840-1843
+                // name land as `dest/<source>/`. upstream: generator.c:1877-1880
                 // recv_generator() removes it with `delete_item(fname, ..,
                 // del_opts | DEL_FOR_DIR)` regardless of `--force`, which
                 // contributes only DEL_RECURSE (generator.c:1629) and so
@@ -669,7 +669,7 @@ pub(crate) fn copy_sources(
             let destination_behaves_like_directory =
                 destination_state.is_dir || plan.destination_spec().force_directory();
 
-            // upstream: flist.c:2739 send_file_list() folds every operand into
+            // upstream: flist.c:2750 send_file_list() folds every operand into
             // ONE flist before the generator's delete passes run, so no sweep
             // can remove an entry a sibling operand supplies. Reproduce that
             // shared-flist invariant for the live-walk engine by installing
@@ -750,7 +750,7 @@ pub(crate) fn copy_sources(
                 .or_else(|error| error.report_commit_failure(context.destination_root()));
                 if let Err(error) = result {
                     if error.is_vanished_error() {
-                        // upstream: flist.c:1688 - vanished files produce a warning
+                        // upstream: flist.c:1692 - vanished files produce a warning
                         // and set IOERR_VANISHED, but transfer continues and no
                         // deletion is suppressed. A directory operand re-raising a
                         // vanish from inside its tree already reported it.
@@ -791,7 +791,7 @@ pub(crate) fn copy_sources(
 
             // Write the flist end-of-list marker, ID lists, the pre-30
             // io_error word, then delta data.
-            // upstream: flist.c:3063-3067 - without INC_RECURSE, send_id_lists()
+            // upstream: flist.c:3074-3078 - without INC_RECURSE, send_id_lists()
             // writes uid/gid name mappings after the flist end marker, and
             // protocol < 30 follows them with write_int(io_error).
             context.finalize_batch_flist()?;
@@ -802,7 +802,7 @@ pub(crate) fn copy_sources(
             // Stats are written by core::client::run::batch::finalize_batch()
             // after the engine returns, using actual transfer byte counts.
 
-            // upstream: main.c:1946-1947 - `if (write_batch < 0) dry_run = 1`
+            // upstream: main.c:1950-1951 - `if (write_batch < 0) dry_run = 1`
             // forces dry_run when `--only-write-batch` is set, so the receiver
             // never reaches do_recv() / finish_transfer(). Mirror that by
             // returning before flushing deferred destination updates: in
@@ -865,7 +865,7 @@ pub(crate) fn copy_sources(
 /// - `IOERR_DEL_LIMIT` (25): deletions skipped by `--max-delete`, reported once
 ///   by `generator.c:2904-2907`.
 ///
-/// upstream: `cleanup.c:210-218` applies DEL_LIMIT, then VANISHED, then
+/// upstream: `cleanup.c:211-219` applies DEL_LIMIT, then VANISHED, then
 /// PARTIAL, so a later flag overrides an earlier one: 23 beats 24 beats 25.
 fn completed_run_exit_error(
     context: &CopyContext,
@@ -873,7 +873,10 @@ fn completed_run_exit_error(
 ) -> Option<LocalCopyError> {
     let skipped = context.skipped_deletes();
     if skipped > 0 {
-        eprintln!("Deletions stopped due to --max-delete limit ({skipped} skipped)");
+        eprintln!(
+            "Deletions stopped due to --max-delete limit ({} skipped)",
+            logging::comma_num(skipped)
+        );
     }
     let general = context.flist_io_error_occurred()
         || context.unsupported_operation_skipped()
@@ -899,7 +902,7 @@ fn completed_run_exit_error(
 /// The directory the sender would `chdir` into for `source`, used as the
 /// confinement anchor for that operand's content reads.
 ///
-/// upstream: `rsync-3.5.1/main.c:981` chdirs to the transfer root before the
+/// upstream: `rsync-3.5.2/main.c:981` chdirs to the transfer root before the
 /// sender runs, and `sender.c` opens file content confined beneath it. A
 /// trailing-slash operand (`src/`) transfers the directory's *contents*, so the
 /// operand itself is the root; otherwise the operand is the first entry and its
@@ -939,7 +942,7 @@ fn process_single_source(
     context.set_safety_depth_offset(0);
     context.enforce_timeout()?;
 
-    // upstream: flist.c:2892-2897 - the operand's trailing DOTDIR marker is
+    // upstream: flist.c:2903-2908 - the operand's trailing DOTDIR marker is
     // stripped from the name that gets stat'd, opened and read; the marker
     // itself lives on in `name_type` (here `SourceSpec::copy_contents`). The
     // two must stay separate: the raw `operand/` form makes the kernel resolve
@@ -951,7 +954,7 @@ fn process_single_source(
 
     let (relative_root, relative_parent) = compute_relative_paths(context, source);
 
-    // upstream: flist.c:3059 flist_sort_and_clean() - after every source arg is
+    // upstream: flist.c:3070 flist_sort_and_clean() - after every source arg is
     // merged into one shared flist, an operand that duplicates a subtree already
     // contributed by an earlier `--relative` operand collapses away. The
     // streaming local-copy executor emits each operand's rows as it walks, so a
@@ -1055,7 +1058,7 @@ fn process_single_source(
             .as_deref()
             .and_then(|p| non_empty_path(p))
             .or_else(|| source_path.file_name().map(Path::new));
-        // upstream: flist.c:1718-1721 - INFO_GTE(MOUNT, 1) gates
+        // upstream: flist.c:1722-1725 - INFO_GTE(MOUNT, 1) gates
         // `rprintf(FINFO, "[%s] skipping mount-point dir %s", who_am_i(),
         // thisname)` when `-xx` prunes a root-level mount-point source.
         // The role prefix is added downstream by the renderer.
@@ -1085,7 +1088,7 @@ fn process_single_source(
 
     let record_relative = proc_ctx.compute_record_relative();
 
-    // upstream: flist.c:2010-2024 send_file_name() - a named operand whose basename
+    // upstream: flist.c:2014-2028 send_file_name() - a named operand whose basename
     // cannot be strictly transcoded under --iconv is dropped from the file list
     // with a `cannot convert filename` diagnostic and io_error |= IOERR_GENERAL
     // (exit 23); it never reaches the transfer. The recursive walk gates a
@@ -1115,7 +1118,7 @@ fn process_single_source(
         ));
     }
 
-    // upstream: flist.c:2972-2987 - send_file_list() calls send_implied_dirs()
+    // upstream: flist.c:2983-2998 - send_file_list() calls send_implied_dirs()
     // for each `--relative` operand *before* send_file_name() emits the operand
     // itself, so the implied parent directories precede the operand's row in the
     // itemize / verbose / stats stream. Surface those ancestor rows here, ahead
@@ -1187,7 +1190,7 @@ fn process_single_source(
 /// handler. The directories themselves are still physically materialized by
 /// `prepare_parent_directory` during the leaf's copy - this pass records them.
 ///
-/// upstream: flist.c:2444 `send_implied_dirs()` emits one `FLAG_IMPLIED_DIR`
+/// upstream: flist.c:2455 `send_implied_dirs()` emits one `FLAG_IMPLIED_DIR`
 /// entry per ancestor component (`flist.c:2499-2508`), bypassing the filter
 /// chain (`flist.c:2457`) and deduplicating shared ancestors across operands;
 /// the receiver then itemizes each as `cd+++++++++ <dir>/` and counts it under
@@ -1208,7 +1211,7 @@ fn emit_relative_implied_parents(
         return Ok(());
     };
 
-    // upstream: flist.c:2769-2770 - a protocol >= 30 sender (which a local transfer
+    // upstream: flist.c:2780-2781 - a protocol >= 30 sender (which a local transfer
     // always is, being a proto-32 sender/receiver pair) forces `implied_dirs = 1`
     // so the flagged implied parents are always placed in the shared flist and
     // counted toward "Number of files (dir: N)". `--no-implied-dirs` only tells
@@ -1220,7 +1223,7 @@ fn emit_relative_implied_parents(
     let omit_dir_times = context.omit_dir_times_enabled();
     let modify_window = context.options().modify_window();
 
-    // Dot-dir transfer root ".": upstream flist.c:2862-2881+2929-2932 injects a
+    // Dot-dir transfer root ".": upstream flist.c:2873-2892+2929-2932 injects a
     // synthetic "." entry into the flist only when the operand's remainder after
     // its first `/./` begins with `./` (`implied_dot_dir`), so it counts toward
     // "Number of files" whenever directories are being transferred (the
@@ -1232,7 +1235,7 @@ fn emit_relative_implied_parents(
     if let Some(anchor) = source.implied_dot_dir() {
         let dot = PathBuf::from(".");
         if context.mark_implied_dir_emitted(&dot) {
-            // upstream: flist.c:2931 routes the synthetic "." through
+            // upstream: flist.c:2942 routes the synthetic "." through
             // send_file_name() -> make_file(), whose `if (S_ISDIR(st.st_mode))
             // { if (!xfer_dirs) { rprintf(FINFO, "skipping directory %s\n",
             // thisname); return NULL; } }` (flist.c:1707-1711) drops it when
@@ -1242,7 +1245,7 @@ fn emit_relative_implied_parents(
             // entry at all: the "." is neither sized into the flist nor
             // counted under "Number of files (dir: N)".
             //
-            // upstream: options.c:2323-2329 resolves `xfer_dirs` to
+            // upstream: options.c:2378-2384 resolves `xfer_dirs` to
             // `recurse || -d || (list_only when neither was given)`;
             // options.c:2316-2317 forces it on for --files-from, which takes
             // the operand's own path and never reaches this branch.
@@ -1350,7 +1353,7 @@ fn emit_relative_implied_parents(
         }
 
         let source_dir = source_root.join(&accumulated);
-        // upstream: flist.c:2495 - send_implied_dirs() sets `copy_links =
+        // upstream: flist.c:2506 - send_implied_dirs() sets `copy_links =
         // xfer_dirs = 1` around the ancestor loop, so the implied-parent stat
         // FOLLOWS symlinks: a symlinked ancestor is emitted as a real directory
         // (its `-i` itemize row and `--stats` dir count), matching the two
@@ -1370,7 +1373,7 @@ fn emit_relative_implied_parents(
 
         let relative_path = accumulated.clone();
 
-        // upstream: flist.c:2769-2770 - implied dirs always join the shared flist, so
+        // upstream: flist.c:2780-2781 - implied dirs always join the shared flist, so
         // each counts toward "Number of files (dir: N)" even under
         // --no-implied-dirs.
         context.record_file_list_entry(non_empty_path(relative_path.as_path()));
@@ -1564,12 +1567,13 @@ fn strip_path_suffix(path: &Path, relative: &Path) -> Option<PathBuf> {
 /// Flushes all deferred operations after source processing is complete.
 fn flush_deferred_operations(context: &mut CopyContext) -> Result<(), LocalCopyError> {
     context.flush_deferred_updates()?;
+    context.flush_deferred_symlinks()?;
     context.flush_deferred_deletions()?;
     context.flush_deferred_syncs()?;
     // Final directory-mtime touch-up. Runs once, after every late in-directory
     // mutation above (delayed-update renames, deletions, backups) has bumped
     // the destination directory mtimes that apply_final_directory_metadata set.
-    // upstream: generator.c:2923-2925 touch_up_dirs after handle_delayed_updates.
+    // upstream: generator.c:3015-3017 touch_up_dirs after handle_delayed_updates.
     context.touch_up_dirs();
     context.enforce_timeout()?;
     Ok(())
@@ -1601,7 +1605,7 @@ pub(super) fn delete_missing_source_entry(
         PathBuf::from(Path::new(name))
     };
 
-    // upstream: flist.c:2951-2955 - the sender still lists the missing operand
+    // upstream: flist.c:2962-2966 - the sender still lists the missing operand
     // as a mode-0 entry, and its `IS_SPECIAL` test (flist.c:745) is false for
     // mode 0, so a local copy counts it in the `reg` remainder of "Number of
     // files". Only a receiver's final `else` (flist.c:3248-3249) makes it a
@@ -1633,7 +1637,7 @@ pub(super) fn delete_missing_source_entry(
         return Ok(());
     }
 
-    // upstream: generator.c:1749-1756 - the missing operand reaches
+    // upstream: generator.c:1786-1793 - the missing operand reaches
     // `delete_item(fname, mode, del_opts)`, and `del_opts` carries
     // `DEL_RECURSE` only for `delete_mode || force_delete` (generator.c:1629).
     // Without it a populated directory is kept, even under `--dry-run`.

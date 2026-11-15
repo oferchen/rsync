@@ -59,7 +59,7 @@ fn render_itemize_new_file_transfer() {
     let entry = FileEntry::new_file("docs/readme.txt".into(), 1024, 0o644);
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
 
-    // upstream: log.c:707-710 - a server-mode receiver is the remote end of a
+    // upstream: log.c:792-795 - a server-mode receiver is the remote end of a
     // push (the client is the sender), so the transfer glyph is `<`.
     assert_eq!(
         ctx.render_itemize_line(&iflags, &entry, None).as_deref(),
@@ -76,7 +76,7 @@ fn render_itemize_updated_file_transfer() {
     let entry = FileEntry::new_file("data.bin".into(), 512, 0o644);
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER);
 
-    // upstream: log.c:707-710 - server-mode receiver renders the push `<` glyph.
+    // upstream: log.c:792-795 - server-mode receiver renders the push `<` glyph.
     assert_eq!(
         ctx.render_itemize_line(&iflags, &entry, None).as_deref(),
         Some("<f......... data.bin\n")
@@ -150,14 +150,14 @@ fn render_itemize_up_to_date_file() {
     // No flags - file is up-to-date, no changes
     let iflags = ItemFlags::from_raw(0);
 
-    // upstream: generator.c:574-576 - no line when iflags has no significant
+    // upstream: generator.c:611-613 - no line when iflags has no significant
     // flags (file is completely unchanged)
     assert_eq!(ctx.render_itemize_line(&iflags, &entry, None), None);
 }
 
 #[test]
 fn emit_itemize_server_mode_does_not_forward_msg_info() {
-    // upstream: log.c:869 gates the FCLIENT itemize write on `!am_server`, and
+    // upstream: log.c:954 gates the FCLIENT itemize write on `!am_server`, and
     // generator.c:589-605 writes the iflags over the wire so the client's
     // SENDER prints the push row (sender.c:775). A server-mode receiver (the
     // remote end of a push) must therefore forward NO pre-rendered MSG_INFO
@@ -229,7 +229,7 @@ fn out_format_collects_events_and_suppresses_string_path() {
     assert_eq!(row.mode & 0o777, 0o644);
     assert!(row.is_new);
     assert!(!row.is_dir);
-    // upstream log.c:707-710 - a client-mode (pull) receiver renders the `>`
+    // upstream log.c:792-795 - a client-mode (pull) receiver renders the `>`
     // receive-direction glyph; the string is the fixed 11-char `%i`.
     assert_eq!(row.itemize.len(), 11);
     assert!(row.itemize.starts_with(">f"), "itemize = {:?}", row.itemize);
@@ -367,7 +367,7 @@ fn out_format_pull_hardlink_follower_carries_leader() {
 
 #[test]
 fn out_format_pull_empty_xname_carries_no_leader() {
-    // upstream: log.c:676 gates the ` => hlink` suffix on `hlink && *hlink`, so an
+    // upstream: log.c:761 gates the ` => hlink` suffix on `hlink && *hlink`, so an
     // already-correct hard-link alias itemized with the empty xname (hlink.c:232-236)
     // carries no leader and `%L` stays empty. An empty xname must not populate
     // `hardlink_leader`.
@@ -533,7 +533,7 @@ fn msg_info_sender_default_noop() {
 
 /// With `--backup`, replacing an existing destination symlink must preserve the
 /// old link (its target intact) at the backup path before the new one is
-/// created. upstream: generator.c:2477-2479 - `atomic_create` calls
+/// created. upstream: generator.c:2520-2522 - `atomic_create` calls
 /// `make_backup` before removing the obstacle; without this the receiver would
 /// unlink the old symlink and lose the user's prior target silently.
 #[test]
@@ -597,7 +597,7 @@ fn repointed_symlink_ctx(file_list: Vec<FileEntry>) -> ReceiverContext {
 /// itemize as a CHANGE against the pre-replace lstat - `cLc........` - and
 /// must NOT bump the created-symlinks tally.
 ///
-/// upstream: generator.c:2003-2009 - after `atomic_create`, `itemize()` runs
+/// upstream: generator.c:2044-2050 - after `atomic_create`, `itemize()` runs
 /// with `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE` and `statret == 0` (the old
 /// destination entry IS a symlink), so ITEM_IS_NEW never fires and the row
 /// carries attribute dots, not `+++++++++`. receiver.c:925-938 counts creates
@@ -645,7 +645,7 @@ fn replaced_symlink_itemizes_as_change_not_create() {
 /// Control: a genuinely absent destination symlink still renders
 /// the all-new row (`cL+++++++++`) and bumps the created tally.
 ///
-/// upstream: generator.c:2007 with `statret < 0` -> itemize() adds ITEM_IS_NEW
+/// upstream: generator.c:2048 with `statret < 0` -> itemize() adds ITEM_IS_NEW
 /// (generator.c:584); receiver.c:925-938 counts it.
 #[test]
 #[cfg(unix)]

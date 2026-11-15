@@ -17,7 +17,7 @@ pub(crate) fn render_module_list<W: Write, E: Write>(
         writeln!(stderr, "@WARNING: {warning}")?;
     }
 
-    // upstream: clientserver.c:434-435 prints the MOTD and every module row
+    // upstream: clientserver.c:438-439 prints the MOTD and every module row
     // with rprintf(FINFO), which log.c:344-345 drops under --quiet.
     if logging::finfo_suppressed() {
         return Ok(());
@@ -29,7 +29,7 @@ pub(crate) fn render_module_list<W: Write, E: Write>(
         }
     }
 
-    // upstream: clientserver.c:1381 - `io_printf(fd, "%-15s\t%s\n", name, comment)`
+    // upstream: clientserver.c:1390 - `io_printf(fd, "%-15s\t%s\n", name, comment)`
     // always emits the name, a tab, then the (possibly empty) comment. The name
     // already carries its `%-15s` padding (preserved by the `\t` split in
     // ModuleListEntry::from_line), so a comment-less module renders as

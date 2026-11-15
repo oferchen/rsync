@@ -140,7 +140,7 @@ impl ModuleDefinitionBuilder {
     /// Stores the `auth users` list. An empty list is an explicit "no
     /// restriction" that also overrides an inherited global list.
     ///
-    /// upstream: authenticate.c:302-303 auth_server() - `if (!users || !*users)
+    /// upstream: authenticate.c:297-298 auth_server() - `if (!users || !*users)
     /// return "";` lets anyone in.
     fn set_auth_users(&mut self, users: Vec<AuthUser>) {
         self.auth_users = Some(users);

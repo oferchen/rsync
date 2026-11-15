@@ -139,7 +139,7 @@ impl BatchReader {
             .with_preserve_atimes(preserve_atimes)
             .with_preserve_crtimes(preserve_crtimes);
 
-        // upstream: flist.c:1590 - when always_checksum is set, each regular file
+        // upstream: flist.c:1594 - when always_checksum is set, each regular file
         // entry in the flist carries a trailing checksum of flist_csum_len bytes.
         // Without this, the reader would skip those bytes and go out of sync.
         // The checksum length depends on the negotiated algorithm. For batch files
@@ -184,7 +184,7 @@ impl BatchReader {
         // batch-replay reunification.
         self.io_error = flist_reader.peer_io_error() | flist_reader.local_io_error();
 
-        // upstream: flist.c:3296-3299 - recv_id_list(f, flist) when !inc_recurse
+        // upstream: flist.c:3307-3310 - recv_id_list(f, flist) when !inc_recurse
         // The batch stream contains uid/gid name mapping lists after the flist
         // entries. We must consume them to keep the stream position correct for
         // delta replay. numeric_ids is not recorded in the batch header, but the
@@ -223,7 +223,7 @@ impl BatchReader {
         // between the per-file records recv_files() reads.
         if inc_recurse {
             self.ndx_codec = Some(NdxCodecEnum::new(protocol_version.as_u8()));
-            // upstream: flist.c:3511 - ndx_start = prev->ndx_start + prev->used + 1
+            // upstream: flist.c:3522 - ndx_start = prev->ndx_start + prev->used + 1
             // The initial flist has ndx_start=1, so the next sub-list starts at
             // 1 + entries.len() + 1 (the +1 gap between segments).
             self.flist_next_ndx_start = 1 + entries.len() as i32 + 1;
@@ -286,7 +286,7 @@ impl BatchReader {
         // See the note on the initial-segment drain above: unconditional here
         // because the batch reader has no `ignore_errors` to consult.
         self.io_error |= flist_reader.peer_io_error() | flist_reader.local_io_error();
-        // upstream: flist.c:3511 - ndx_start = prev->ndx_start + prev->used + 1
+        // upstream: flist.c:3522 - ndx_start = prev->ndx_start + prev->used + 1
         // The current segment started at flist_next_ndx_start (set before
         // reset_for_new_segment). The next segment's ndx_start accounts for
         // the entries in this segment plus the +1 gap.

@@ -93,7 +93,7 @@ pub enum RemoteOperandParseError {
     /// would parse as a command-line option (argv injection - e.g.
     /// `-oProxyCommand=evil`).
     ///
-    /// upstream: main.c:1636-1639 start_client() - the same refusal text,
+    /// upstream: main.c:1640-1643 start_client() - the same refusal text,
     /// exit `RERR_SYNTAX`.
     #[error("Invalid remote host: hostnames may not start with '-'.")]
     InvalidHost,

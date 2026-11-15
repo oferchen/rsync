@@ -6,7 +6,7 @@
 //! command line. On a daemon that is a client-chosen file open, so every case
 //! here is checked against what upstream 3.5.1 does on the same fixture.
 //!
-//! upstream: options.c:1620-1656 - `--filter`/`--exclude`/`--include` go to
+//! upstream: options.c:1647-1683 - `--filter`/`--exclude`/`--include` go to
 //! `filter_list` ahead of the rules the client later sends; for
 //! `--exclude-from`/`--include-from` the path is sanitized when
 //! `sanitize_paths` is set (clientserver.c:1067-1068 sets it for a module

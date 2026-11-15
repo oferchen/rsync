@@ -8,9 +8,9 @@
 //! as root and report the skip otherwise - the same gate as upstream's
 //! `symlink-race-dest` test.
 //!
-//! upstream: `rsync-3.5.1/util1.c:1363-1392` `change_dir()`,
-//! `rsync-3.5.1/syscall.c:499-504` (the refusal diagnostic),
-//! `rsync-3.5.1/main.c:778-781` (`RERR_FILESELECT`).
+//! upstream: `rsync-3.5.2/util1.c:1363-1392` `change_dir()`,
+//! `rsync-3.5.2/syscall.c:560-565` (the refusal diagnostic),
+//! `rsync-3.5.2/main.c:778-781` (`RERR_FILESELECT`).
 
 #[cfg(unix)]
 mod untrusted_destination_symlink {

@@ -18,7 +18,7 @@ pub const SYMLINK_MUNGE_PREFIX: &str = "/rsyncd-munged/";
 /// the module directory. The prefix is always prepended, even if the target
 /// is relative; upstream rsync behaves identically.
 ///
-/// upstream: `flist.c:1521-1524` in `recv_file_entry()`
+/// upstream: `flist.c:1525-1528` in `recv_file_entry()`
 #[must_use]
 pub fn munge_symlink(target: &str) -> String {
     let mut munged = String::with_capacity(SYMLINK_MUNGE_PREFIX.len() + target.len());
@@ -32,7 +32,7 @@ pub fn munge_symlink(target: &str) -> String {
 /// Returns `Some(original)` when the prefix was found and removed, or `None`
 /// if the target was not munged.
 ///
-/// upstream: `flist.c:499-502` in `readlink_stat()`
+/// upstream: `flist.c:502-505` in `readlink_stat()`
 pub fn unmunge_symlink(target: &str) -> Option<String> {
     target
         .strip_prefix(SYMLINK_MUNGE_PREFIX)

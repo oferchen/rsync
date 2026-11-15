@@ -614,9 +614,9 @@ file, and they have opposite parallelism profiles:
 | Token stream **order** | `match.c:117` `send_token(f, i, buf, last_match, n, ...)`, called from `matched()`; monotone cursor `last_match` declared `match.c:91`, advanced `match.c:131-133` | **SERIAL.** Tokens are emitted in ascending scan order against one monotone `last_match` cursor. The receiver depends on this order; any reordering changes the wire stream. |
 | Token **run-length delta coding** | `token.c:347-349` run state (`last_token`, `run_start`, `last_run_end`); run emit `token.c:393-409` | **SERIAL.** Each token is delta-coded off the previous token index (`TOKEN_REL`/`TOKENRUN_REL` relative to `run_start`/`last_run_end`). The encoding of token _k_ depends on token _k-1_. |
 | Compression codec **streaming state** | single `z_stream tx_strm` `token.c:352`, `deflateInit2` `token.c:378`; single `ZSTD_CCtx *zstd_cctx` `token.c:730`, created `token.c:740` | **SERIAL - dominant floor under `-z`.** One deflate/zstd stream spans the whole file; each `send_*_token` call mutates shared codec state. Output bytes are non-deterministic under any block reordering. |
-| **Whole-file transfer checksum** | `sum_init(xfer_sum_nni, ...)` `match.c:370`, `sum_update(...)` `match.c:127`/`match.c:378`/`match.c:386`, `sum_end(sender_file_sum)` `match.c:411` | **SERIAL.** The negotiated MD5/xxh128 whole-file digest is fed in scan order and is not a tree/Merkle construction - it is not combinable from independently-hashed segments. |
+| **Whole-file transfer checksum** | `sum_init(xfer_sum_nni, ...)` `match.c:406`, `sum_update(...)` `match.c:127`/`match.c:414`/`match.c:422`, `sum_end(sender_file_sum)` `match.c:447` | **SERIAL.** The negotiated MD5/xxh128 whole-file digest is fed in scan order and is not a tree/Merkle construction - it is not combinable from independently-hashed segments. |
 | **Receiver reconstruct / apply** | `recv_token` `token.c:1097` (streaming inflate via single `rx_strm`); `receive_data` `receiver.c:305`, single monotone output cursor `offset` advanced at `receiver.c:409`/`:450`/`:478` | **SERIAL by construction.** The receiver inflates one stream and writes to one file behind a single monotonically-increasing `offset`. There is no out-of-order apply that preserves the output bytes. |
-| **Sender rolling search** over the basis (spatial stripe split) | `hash_search()` / `match_sums()` `match.c:362` | **PARALLELIZABLE (sender-side, CPU-bound).** The signature index is read-only during the scan; the input range can be split into overlapping stripes matched independently, then merged back into scan order before token emit. |
+| **Sender rolling search** over the basis (spatial stripe split) | `hash_search()` / `match_sums()` `match.c:398` | **PARALLELIZABLE (sender-side, CPU-bound).** The signature index is read-only during the scan; the input range can be split into overlapping stripes matched independently, then merged back into scan order before token emit. |
 | **Per-block strong-sum + rolling checksum** | `get_checksum1/2` (checksum.c); oc SIMD in `crates/checksums` | **PARALLELIZABLE.** Already SIMD-accelerated (NEON/AVX2/SSE2 with scalar parity). Embarrassingly parallel per block. |
 
 Refinement to the pre-existing prose: the earlier `#304/#305` note attributed
@@ -672,7 +672,7 @@ search - is **already implemented and shipped** as the opt-in, default-off
     `index.has_duplicate_blocks()`);
   - consecutive-match extension (`seq_matches >= 2`) -> sequential gated scan
     (`crates/matching/src/generator.rs:997`);
-  - in-place / `updating_basis_file` (upstream `match.c:211`) -> sequential
+  - in-place / `updating_basis_file` (upstream `match.c:215`) -> sequential
     scan that tracks the true global cursor
     (`crates/matching/src/generator.rs:1005`);
   - too-small-to-split or `block_len == 0` -> pruned sequential scan
@@ -701,7 +701,7 @@ contract, not merely internal work distribution:
 - **Content-defined chunking** - changes block boundaries and therefore the
   token stream and whole-file checksum feed order.
 - **BLAKE3 / tree (Merkle) hashing for the negotiated sums** - the whole-file
-  digest is a linear streaming hash (`match.c:370`/`:411`), not tree-combinable;
+  digest is a linear streaming hash (`match.c:406`/`:411`), not tree-combinable;
   swapping in a tree hash changes the negotiated checksum and breaks interop.
 
 ### The dead receiver-side stack
@@ -750,7 +750,7 @@ is a new pipeline. Candidate future work, with honest payoff estimates:
    that reconstructs the true global offset per stripe could re-enable
    parallelism for `--inplace` large files. Payoff: moderate, but only for the
    `--inplace` + large-file + uncompressed intersection; correctness risk at
-   the monotonicity guard (`match.c:211`) is real and must be proven with a
+   the monotonicity guard (`match.c:215`) is real and must be proven with a
    parity test.
 2. **Relax the duplicate-content fallback**
    (`crates/transfer/src/generator/delta.rs:411`). Duplicate-heavy bases

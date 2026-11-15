@@ -91,11 +91,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash tools/ci/tests/test_check_cargo_lockfile_sync.sh
 
-      - name: Fetch upstream rsync 3.5.1
+      - name: Fetch upstream rsync 3.5.2
         if: ${{ !cancelled() }}
         uses: ./.github/actions/fetch-upstream-rsync
         with:
-          version: '3.5.1'
+          version: '3.5.2'
           extract-dir: target/interop/upstream-src
 
       - name: Audit upstream citations against the baseline

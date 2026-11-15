@@ -21,16 +21,16 @@
 //! component, so [`LeafPolicy`] carries that choice as a parameter rather
 //! than letting one arm silently answer for both:
 //!
-//! - `rsync-3.5.1/sender.c:212-250` `sender_open_confined()` - the default.
+//! - `rsync-3.5.2/sender.c:220-258` `sender_open_confined()` - the default.
 //!   Intermediate in-tree symlinks are followed, the leaf is opened
 //!   `O_NOFOLLOW` so a raced leaf-symlink swap is refused.
-//! - `rsync-3.5.1/sender.c:253-331` `sender_open_copylinks_confined()` -
+//! - `rsync-3.5.2/sender.c:261-339` `sender_open_copylinks_confined()` -
 //!   `--copy-links` / `--copy-unsafe-links` / `--copy-dirlinks`. The leaf
 //!   symlink is resolved deliberately, still beneath the root.
 //!
 //! # Platform behaviour
 //!
-//! upstream: `sender.c:679-683`, which selects these helpers when
+//! upstream: `sender.c:687-691`, which selects these helpers when
 //! `secure_relpath_active()` (a non-chroot daemon, or the `/./` inner-module
 //! chroot).
 //!
@@ -64,14 +64,14 @@ pub enum LeafPolicy {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/sender.c:212-250` `sender_open_confined()`
+    /// - `rsync-3.5.2/sender.c:220-258` `sender_open_confined()`
     Nofollow,
     /// Resolve a symlinked leaf, still confined beneath the root: an absolute
     /// target is refused, a relative one is re-resolved through the walk.
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/sender.c:253-331` `sender_open_copylinks_confined()`
+    /// - `rsync-3.5.2/sender.c:261-339` `sender_open_copylinks_confined()`
     FollowConfined,
 }
 
@@ -103,7 +103,7 @@ pub enum LeafPolicy {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/sender.c:679-683` `send_files()` - the call site that picks
+/// - `rsync-3.5.2/sender.c:687-691` `send_files()` - the call site that picks
 ///   between the two helpers this function's `leaf` argument names.
 pub fn open_source_confined(
     root: &Path,
@@ -131,10 +131,10 @@ pub fn open_source_confined(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/sender.c:209-252` `sender_open_confined()` -
+/// - `rsync-3.5.2/sender.c:217-260` `sender_open_confined()` -
 ///   `held_dir_path_fd(anchor, dir)` then `openat(dfd, bname, flags |
 ///   O_NOFOLLOW)`, falling back to the full walk when the cache declines.
-/// - `rsync-3.5.1/syscall.c:3744-3816` `dpc_dir_fd()`.
+/// - `rsync-3.5.2/syscall.c:3812-3884` `dpc_dir_fd()`.
 #[derive(Debug)]
 pub struct ConfinedSourceRoot {
     root: std::path::PathBuf,
@@ -282,11 +282,11 @@ pub enum DestLeaf {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/rsync.c:555-571` the held-fd pin, gated on
+/// - `rsync-3.5.2/rsync.c:555-571` the held-fd pin, gated on
 ///   `S_ISREG || S_ISDIR || S_ISFIFO`
-/// - `rsync-3.5.1/rsync.c:573-599` `set_file_attrs()`'s secure re-pin, and
+/// - `rsync-3.5.2/rsync.c:573-599` `set_file_attrs()`'s secure re-pin, and
 ///   the `xattr_refuse` fallback when the re-pin also fails
-/// - `rsync-3.5.1/xattrs.c:386-390` `fsetxattr` vs `lsetxattr` on `fd >= 0`
+/// - `rsync-3.5.2/xattrs.c:386-390` `fsetxattr` vs `lsetxattr` on `fd >= 0`
 pub fn pin_dest_leaf_confined(root: &Path, relative: &Path) -> io::Result<DestLeaf> {
     validate_relative(relative)?;
     imp::pin_dest_leaf_confined(root, relative)
@@ -318,12 +318,12 @@ pub fn pin_dest_leaf_confined(root: &Path, relative: &Path) -> io::Result<DestLe
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/flist.c:470-480` `scan_readlink()` - reads the leaf with
+/// - `rsync-3.5.2/flist.c:473-483` `scan_readlink()` - reads the leaf with
 ///   `do_readlink_atfd(scan_dirfd, ...)` against the already-open scan dir.
-/// - `rsync-3.5.1/flist.c:2256-2295` `secure_opendir()` - the daemon arm that
+/// - `rsync-3.5.2/flist.c:2260-2306` `secure_opendir()` - the daemon arm that
 ///   obtains that dirfd through `secure_relative_open_at()`, which is what makes
 ///   the subsequent `readlinkat` race-free.
-/// - `rsync-3.5.1/util1.c:1313` `change_dir()` - the same confinement applied to
+/// - `rsync-3.5.2/util1.c:1313` `change_dir()` - the same confinement applied to
 ///   the per-argument directory descent, so a named `dir/link` operand is
 ///   covered even when no directory scan is running.
 pub fn read_link_confined(root: &Path, relative: &Path) -> io::Result<std::path::PathBuf> {
@@ -337,7 +337,7 @@ pub fn read_link_confined(root: &Path, relative: &Path) -> io::Result<std::path:
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:3431-3434` `secure_relative_open_at()`
+/// - `rsync-3.5.2/syscall.c:3502-3505` `secure_relative_open_at()`
 #[cfg(unix)]
 pub(crate) fn open_source_beneath(
     anchor: std::os::fd::BorrowedFd<'_>,
@@ -399,7 +399,7 @@ mod imp {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/sender.c:267` `int hops = 32;`
+    /// - `rsync-3.5.2/sender.c:275` `int hops = 32;`
     const COPYLINKS_MAXHOPS: u32 = 32;
 
     pub(super) fn open_source_confined(
@@ -477,7 +477,7 @@ mod imp {
         let Some(parents) = crate::confinement::pinned_parents_for(root) else {
             return pin(&resolve_parent(root, dir)?.root_arc());
         };
-        // upstream: syscall.c:3702-3720 `dpc_dir_fd()` - a run of entries in
+        // upstream: syscall.c:3770-3788 `dpc_dir_fd()` - a run of entries in
         // one directory resolves it once. A miss through the held parent
         // (the directory was replaced since it was resolved) falls back to a
         // fresh walk, as upstream's held-fd pin falls back to
@@ -572,8 +572,8 @@ mod imp {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/sender.c:212-250` `sender_open_confined()`
-    /// - `rsync-3.5.1/syscall.c:3181-3195` `secure_walk_at()`'s file-leaf arm
+    /// - `rsync-3.5.2/sender.c:220-258` `sender_open_confined()`
+    /// - `rsync-3.5.2/syscall.c:3252-3266` `secure_walk_at()`'s file-leaf arm
     fn walk_then_open_leaf(root: &Path, relative: &Path, noatime: bool) -> io::Result<File> {
         let (_, dir, leaf) = split_leaf(relative)?;
         let parent = resolve_parent(root, dir)?;
@@ -590,7 +590,7 @@ mod imp {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/sender.c:253-331` `sender_open_copylinks_confined()`
+    /// - `rsync-3.5.2/sender.c:261-339` `sender_open_copylinks_confined()`
     fn walk_following_leaf(root: &Path, relative: &Path, noatime: bool) -> io::Result<File> {
         let mut cur = relative.to_path_buf();
         for _ in 0..COPYLINKS_MAXHOPS {
@@ -599,7 +599,7 @@ mod imp {
             let target = match readlinkat(parent.root_dirfd(), leaf) {
                 Ok(target) => target,
                 // EINVAL means "not a symlink", so this is the resolved
-                // target file. upstream: sender.c:309-318.
+                // target file. upstream: sender.c:317-326.
                 Err(error) if error.raw_os_error() == Some(libc::EINVAL) => {
                     return open_leaf(parent.root_dirfd(), leaf, noatime);
                 }
@@ -641,10 +641,10 @@ mod imp {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/sender.c:215-229` `sender_open_confined()`'s `strrchr`
-    /// - `rsync-3.5.1/syscall.c:3143-3147` `secure_walk_at()`'s slash trim
-    /// - `rsync-3.5.1/syscall.c:3166-3177` a final `.` / `..` -> `EISDIR`
-    /// - `rsync-3.5.1/syscall.c:3223-3233` no component at all -> `EISDIR`
+    /// - `rsync-3.5.2/sender.c:223-237` `sender_open_confined()`'s `strrchr`
+    /// - `rsync-3.5.2/syscall.c:3214-3218` `secure_walk_at()`'s slash trim
+    /// - `rsync-3.5.2/syscall.c:3237-3248` a final `.` / `..` -> `EISDIR`
+    /// - `rsync-3.5.2/syscall.c:3294-3304` no component at all -> `EISDIR`
     pub(super) fn split_leaf(relative: &Path) -> io::Result<(&Path, &Path, &OsStr)> {
         let bytes = relative.as_os_str().as_bytes();
         let end = bytes.iter().rposition(|byte| *byte != b'/');
@@ -722,7 +722,7 @@ mod imp {
         /// system races the resolution of a `..` in a followed symlink
         /// (openat2(2)). That is not a verdict on the path, and on a busy host
         /// it failed in-module `../` targets intermittently. The walk is
-        /// upstream's own resolver (`syscall.c:3032-3115`); it pops a pinned
+        /// upstream's own resolver (`syscall.c:3103-3186`); it pops a pinned
         /// parent descriptor for `..`, so it has no such race.
         pub(super) fn openat2_confined(
             root_fd: BorrowedFd<'_>,
@@ -896,7 +896,7 @@ mod tests {
     /// platform.
     ///
     /// WHY: upstream's `ds_descend()` follows a relative in-tree symlink
-    /// (`rsync-3.5.1/syscall.c:3078-3102`) - the behaviour restored for issue
+    /// (`rsync-3.5.2/syscall.c:3149-3173`) - the behaviour restored for issue
     /// #715, so a module whose layout uses a symlinked subdirectory keeps
     /// serving. Before this walk was routed through the shared resolver the
     /// portable arm opened every component `O_NOFOLLOW` and refused, which
@@ -921,7 +921,7 @@ mod tests {
     /// target is in-tree.
     ///
     /// WHY: upstream opens the file leaf `O_NOFOLLOW`
-    /// (`rsync-3.5.1/syscall.c:3188`, `sender.c:248`) so an attacker who wins
+    /// (`rsync-3.5.2/syscall.c:3259`, `sender.c:256`) so an attacker who wins
     /// the race between the file-list scan and the content open cannot swap
     /// the leaf for a symlink and redirect the read. Confinement alone does
     /// not close that: the swapped target may be a *different in-module file*
@@ -950,7 +950,7 @@ mod tests {
     /// `--copy-links` resolves that same leaf, still beneath the root.
     ///
     /// WHY: upstream keeps a second entry point rather than dropping the
-    /// `O_NOFOLLOW` (`rsync-3.5.1/sender.c:253-331`
+    /// `O_NOFOLLOW` (`rsync-3.5.2/sender.c:261-339`
     /// `sender_open_copylinks_confined`), because a symlink-following mode is
     /// an operator instruction that must not be silently downgraded. Collapse
     /// the two and either `-L` stops working or the raced-leaf defence above
@@ -976,7 +976,7 @@ mod tests {
     /// A symlink chain is resolved to its end, then opened.
     ///
     /// WHY: upstream loops rather than resolving one hop
-    /// (`rsync-3.5.1/sender.c:268-331`), and each hop is re-anchored, so a
+    /// (`rsync-3.5.2/sender.c:276-339`), and each hop is re-anchored, so a
     /// chain cannot walk out of the module one link at a time.
     #[test]
     fn follow_confined_resolves_a_symlink_chain() {
@@ -996,7 +996,7 @@ mod tests {
     /// An absolute leaf target is refused under `--copy-links`.
     ///
     /// WHY: upstream refuses an absolute target outright
-    /// (`rsync-3.5.1/sender.c:318-321`) rather than testing where it lands -
+    /// (`rsync-3.5.2/sender.c:326-329`) rather than testing where it lands -
     /// it names a path the module does not contain, even when it happens to
     /// resolve back inside.
     #[test]
@@ -1022,7 +1022,7 @@ mod tests {
     /// WHY: this is the case an absolute-target check alone would miss, and
     /// the one a naive "join and open" would let through. The walk resolves
     /// `..` by popping its held-fd stack and refuses a pop above the anchor
-    /// (`rsync-3.5.1/syscall.c:3037-3042`), so the climb cannot be laundered
+    /// (`rsync-3.5.2/syscall.c:3108-3113`), so the climb cannot be laundered
     /// through a symlink.
     #[test]
     fn follow_confined_refuses_a_relative_leaf_target_that_climbs_out() {
@@ -1044,7 +1044,7 @@ mod tests {
 
     /// A self-referential symlink terminates instead of spinning.
     ///
-    /// WHY: upstream caps the chain at 32 hops (`rsync-3.5.1/sender.c:267`).
+    /// WHY: upstream caps the chain at 32 hops (`rsync-3.5.2/sender.c:275`).
     /// Without the cap a module operator - or an attacker with write access
     /// to the tree - hangs the daemon's sender with two symlinks.
     #[test]
@@ -1093,7 +1093,7 @@ mod tests {
         );
     }
 
-    /// upstream: `rsync-3.5.1/syscall.c:3713-3716` - a held directory swapped
+    /// upstream: `rsync-3.5.2/syscall.c:3781-3784` - a held directory swapped
     /// for a symlink resolves to the inode the fd holds. A file the held inode
     /// lacks falls back to the full confined walk, which refuses the escape;
     /// either way the outside file is never read.
@@ -1205,7 +1205,7 @@ mod tests {
     /// The front-door `..` rejection applies to the *caller's* input only.
     ///
     /// WHY: upstream skips it for a path it re-anchored itself
-    /// (`rsync-3.5.1/syscall.c:3300-3314`, the `reanchored` guard) because a
+    /// (`rsync-3.5.2/syscall.c:3371-3385`, the `reanchored` guard) because a
     /// followed symlink's target legitimately contains parent-relative
     /// components - `secure_relative_open_at_beneath()` exists for exactly
     /// that. Applying the front-door check to a derived path would make

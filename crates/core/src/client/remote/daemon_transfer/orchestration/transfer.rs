@@ -56,7 +56,7 @@ pub(crate) fn run_pull_transfer(
     let filter_rules =
         flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded())?;
 
-    // upstream: compat.c:602 - protocol was negotiated via @RSYNCD text exchange,
+    // upstream: compat.c:603 - protocol was negotiated via @RSYNCD text exchange,
     // setup_protocol() skips the binary exchange because remote_protocol != 0.
     let mut handshake = build_daemon_handshake(config, protocol);
     handshake.buffered = buffered;
@@ -67,7 +67,7 @@ pub(crate) fn run_pull_transfer(
     let fork_point = Arc::new(crate::server::ForkPoint::default());
     let mut server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
 
-    // upstream: main.c:1428-1431 - when pulling with --files-from pointing to a
+    // upstream: main.c:1432-1435 - when pulling with --files-from pointing to a
     // local file or stdin, the client reads the file list locally and forwards
     // it to the daemon's generator over the protocol stream.
     if config
@@ -82,7 +82,7 @@ pub(crate) fn run_pull_transfer(
         server_config.connection.files_from_data = Some(data);
     }
 
-    // upstream: main.c:1581 / io.c:512,549 / flist.c:1368 - the requested daemon
+    // upstream: main.c:1585 / io.c:512,549 / flist.c:1372 - the requested daemon
     // source (module/path), or each local --files-from entry, is recorded as an
     // implied include; the receiver rejects any file-list name it does not cover
     // (CVE-2022-29154). is_daemon_connection drives the module-name strip on the
@@ -92,7 +92,7 @@ pub(crate) fn run_pull_transfer(
         implied_source_args,
         server_config.connection.files_from_data.as_deref(),
     );
-    // upstream: exclude.c:476-494 / main.c:1581 - only a raw daemon module/path
+    // upstream: exclude.c:476-494 / main.c:1585 - only a raw daemon module/path
     // operand is recorded with skip_daemon_module=1; forwarded --files-from
     // entries (io.c:512,549) are already module-relative and keep
     // skip_daemon_module=0. Record the decision now, from the stable
@@ -112,7 +112,7 @@ pub(crate) fn run_pull_transfer(
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
 
-    // upstream: main.c:1311-1313 - the daemon sends MSG_IO_TIMEOUT once, right
+    // upstream: main.c:1311-1316 - the daemon sends MSG_IO_TIMEOUT once, right
     // after io_start_multiplex_out; the client reads it in io.c:1750
     // read_a_msg(). As the client receiver we adopt it and re-apply to the
     // live socket. Build the re-apply hook from the split socket halves;
@@ -194,7 +194,7 @@ pub(crate) fn run_push_transfer(
     let filter_rules =
         flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded())?;
 
-    // upstream: compat.c:602 - if (remote_protocol == 0) { ... }
+    // upstream: compat.c:603 - if (remote_protocol == 0) { ... }
     let mut handshake = build_daemon_handshake(config, protocol);
     handshake.buffered = buffered;
     let bytes_read = Arc::new(AtomicU64::new(0));
@@ -218,7 +218,7 @@ pub(crate) fn run_push_transfer(
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
 
-    // upstream: sender.c:640,775 log_item(FCLIENT) - on a push the client is the
+    // upstream: sender.c:648,775 log_item(FCLIENT) - on a push the client is the
     // sender, and the client-visible itemize row is printed by the SENDER from
     // the iflags the remote receiver's generator writes over the wire
     // (generator.c:593 write_shortint(sock_f_out, iflags) for protocol >=
@@ -228,7 +228,7 @@ pub(crate) fn run_push_transfer(
     // pre-rendered MSG_INFO line (see receiver::emit_itemize). This restores
     // output for oc-client -> upstream-daemon pushes, where upstream never
     // forwards oc's itemize.
-    // upstream: sender.c:640 - plain `-v` (no `-i`) prints the bare `%n%L` name
+    // upstream: sender.c:648 - plain `-v` (no `-i`) prints the bare `%n%L` name
     // per file too, so the callback must be wired whenever the sender has any
     // client-visible per-file output, not only under `-i`. A custom
     // `--out-format` also wants the rows even without `-v`/`-i` so the client can
@@ -303,7 +303,7 @@ pub(crate) fn run_push_transfer(
 /// embedded remote code (local I/O, protocol desync) keep the generic
 /// `transfer failed: ...` (23) diagnostic.
 ///
-/// upstream: io.c:1892-1925 - `MSG_ERROR_EXIT` drives the NORETURN
+/// upstream: io.c:1899-1932 - `MSG_ERROR_EXIT` drives the NORETURN
 /// `_exit_cleanup(val)`, so the client's final exit code is the peer's code.
 fn map_server_transfer_error(
     error: std::io::Error,
@@ -356,7 +356,7 @@ fn remote_exit_code(error: &std::io::Error) -> Option<i32> {
 /// Builds a `HandshakeResult` for daemon transfers where the protocol version
 /// was already negotiated via the `@RSYNCD` text exchange.
 ///
-/// upstream: compat.c:602 - when `remote_protocol != 0`, `setup_protocol()`
+/// upstream: compat.c:603 - when `remote_protocol != 0`, `setup_protocol()`
 /// skips the binary version exchange.
 fn build_daemon_handshake(config: &ClientConfig, protocol: ProtocolVersion) -> HandshakeResult {
     HandshakeResult {

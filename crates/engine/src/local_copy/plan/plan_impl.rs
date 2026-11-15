@@ -78,7 +78,7 @@ impl LocalCopyPlan {
             return Err(LocalCopyError::missing_operands());
         }
 
-        // upstream: flist.c:3594-3624 - flist_sort_and_clean() deduplicates
+        // upstream: flist.c:3605-3635 - flist_sort_and_clean() deduplicates
         // entries with identical paths via FLAG_DUPLICATE, keeping only the
         // first occurrence. We deduplicate source operands here to prevent
         // the same directory or file from being processed multiple times.
@@ -333,7 +333,7 @@ mod tests {
         assert!(debug.contains("LocalCopyPlan"));
     }
 
-    /// upstream: flist.c:3594-3624 - flist_sort_and_clean() marks duplicate
+    /// upstream: flist.c:3605-3635 - flist_sort_and_clean() marks duplicate
     /// entries with FLAG_DUPLICATE. Passing the same source operand multiple
     /// times must not produce duplicate entries in the plan.
     #[test]

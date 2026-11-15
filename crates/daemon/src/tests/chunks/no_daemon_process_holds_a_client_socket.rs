@@ -6,7 +6,7 @@
 /// or forked after the client connected, holds the client socket, and a
 /// session waiting for input outlives the test.
 ///
-/// upstream: main.c:1954 `daemon_main()` runs the daemon as its own process.
+/// upstream: main.c:1958 `daemon_main()` runs the daemon as its own process.
 #[cfg(target_os = "linux")]
 #[test]
 fn no_daemon_process_holds_a_client_socket() {

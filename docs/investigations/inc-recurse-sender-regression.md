@@ -55,7 +55,7 @@ receiver because the gate only suppresses sender-direction advertisement:
 - `crates/transfer/src/receiver/file_list.rs:130-233` -
   `receive_extra_file_lists()` reads one sub-list per loop iteration:
   reads `dir_ndx`, computes `seg_ndx_start = prev_ndx_start + prev_used + 1`
-  (`flist.c:2931`), reads entries via cached `FileListReader`, sorts and
+  (`flist.c:2942`), reads entries via cached `FileListReader`, sorts and
   resolves hardlinks per segment, appends `(flat_start, seg_ndx_start)`
   onto `ndx_segments`. Per-segment cost is bounded; the receiver never
   buffers the full flist.
@@ -102,7 +102,7 @@ context comment.)
 - **`SegmentScheduler`**: `crates/transfer/src/generator/mod.rs:259-298` -
   cursor over the pending vec; `next_if_needed()` yields when
   `remaining_in_current < MIN_FILECNT_LOOKAHEAD` (mirrors
-  `flist.c:2498-2510`).
+  `flist.c:2509-2521`).
 - **`IncrementalState`**: `crates/transfer/src/generator/mod.rs:308-351` -
   holds pending segments, `flist_eof_sent` flag, cached `FileListWriter`
   (the writer cache is what preserves `prev_name`/`prev_mode`/
@@ -126,9 +126,9 @@ context comment.)
 - **NDX_FLIST_EOF**: `crates/transfer/src/generator/protocol_io.rs:370-386` -
   `send_flist_eof()` writes `NDX_FLIST_EOF` and flushes.
 - **Send-loop scheduling**: `crates/transfer/src/generator/transfer.rs:108-129`
-  (top-of-loop, mirrors `sender.c:227`) and
+  (top-of-loop, mirrors `sender.c:235`) and
   `crates/transfer/src/generator/transfer.rs:404-417` (bottom-of-loop,
-  mirrors `sender.c:261`). Both call `scheduler.next_if_needed(remaining)`
+  mirrors `sender.c:269`). Both call `scheduler.next_if_needed(remaining)`
   and call `encode_and_send_segment()` for each yielded segment.
 - **Drain on exit**: `crates/transfer/src/generator/transfer.rs:432-445` -
   if the read loop exits before all segments have been sent, the
@@ -392,7 +392,7 @@ we are chasing and must be fixed before flipping the default.
 
 - `tools/ci/run_interop.sh` push test against upstream rsync 3.0.9,
   3.1.3, and 3.4.1 must pass with `--inc-recursive-send` enabled.
-- No `flist.c:2652-2659` "ABORTING due to invalid path from sender"
+- No `flist.c:2663-2670` "ABORTING due to invalid path from sender"
   on any tested upstream version.
 - The new Mode C row in `scripts/benchmark_flist_memory.sh` (per the
   audit) must be green for two consecutive nightly runs before the

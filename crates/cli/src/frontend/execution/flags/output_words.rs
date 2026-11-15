@@ -8,7 +8,7 @@
 
 /// Whether the token walk should carry on to the next comma-separated item.
 ///
-/// upstream: options.c:465-468 - a `help` item prints the word table and calls
+/// upstream: options.c:466-469 - a `help` item prints the word table and calls
 /// `exit_cleanup(0)` from inside `parse_output_words()`, so nothing after it is
 /// ever examined.
 #[derive(Debug)]
@@ -45,7 +45,7 @@ pub(super) enum OutputWord<'a> {
 
 /// Classifies one comma-delimited token, verbatim.
 ///
-/// upstream: options.c:455-472 `parse_output_words()`. The trailing-digit scan
+/// upstream: options.c:456-473 `parse_output_words()`. The trailing-digit scan
 /// is skipped when the token itself starts with a digit (`if (!isDigit(str))`),
 /// so a bare integer such as `2` stays its own name and falls through to the
 /// unknown-item error rather than selecting a level.
@@ -80,7 +80,7 @@ pub(super) fn classify(token: &str) -> OutputWord<'_> {
 
 /// Splits one `--info=`/`--debug=` value into tokens, dropping empty ones.
 ///
-/// upstream: options.c:448-454 `parse_output_words()` walks the comma list and
+/// upstream: options.c:449-455 `parse_output_words()` walks the comma list and
 /// does `if (!len) continue;`, so `--info=`, `--info=,` and `--info=name,` are
 /// all accepted no-ops rather than errors.
 ///

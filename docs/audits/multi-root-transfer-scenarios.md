@@ -32,7 +32,7 @@ This mirrors upstream rsync 3.4.1 byte-for-byte
 the `while (1) { ... if (argc-- == 0) break; ... *argv++ ... }`
 arg-by-arg loop inside `send_file_list()`). The receiver consumes one
 merged, monotonically-NDX-ordered stream
-(`flist.c:380-575 send_file_entry()`,
+(`flist.c:381-578 send_file_entry()`,
 `crates/protocol/src/codec/ndx/codec.rs:357-407 MonotonicNdxWriter`).
 
 `WorkQueueSender` lives at
@@ -116,12 +116,12 @@ All paths repository-relative.
   `ndx_start` global offset).
 - Upstream rsync 3.4.1 under
   `target/interop/upstream-src/rsync-3.4.1/`:
-  `flist.c:2192 send_file_list()`,
-  `flist.c:2258-2271 while-loop over argv`,
-  `flist.c:380 send_file_entry()`,
-  `flist.c:1534 send_file_name()`,
-  `generator.c:2226 generate_files()`,
-  `generator.c:2312 for (i = cur_flist->low; i <= cur_flist->high; i++)`.
+  `flist.c:2196 send_file_list()`,
+  `flist.c:2262-2282 while-loop over argv`,
+  `flist.c:381 send_file_entry()`,
+  `flist.c:1538 send_file_name()`,
+  `generator.c:2268 generate_files()`,
+  `generator.c:2354 for (i = cur_flist->low; i <= cur_flist->high; i++)`.
 
 ## 1. Status quo: how oc-rsync handles a multi-root invocation today
 
@@ -176,7 +176,7 @@ for source in plan.sources() {
     );
     if let Err(error) = result {
         if error.is_vanished_error() {
-            // upstream: flist.c:1289 - vanished files produce a warning
+            // upstream: flist.c:1293 - vanished files produce a warning
             // and set IOERR_VANISHED, but transfer continues.
             ...
         }
@@ -333,16 +333,16 @@ while (1) {
 
 This is the canonical multi-root traversal: a single thread walking
 `argv++` one name at a time, calling `send_file_name()`
-(`flist.c:1534`) for each. `send_file_name` invokes `send_file_entry`
-(`flist.c:380-575`), which writes one `xflags` byte / shortint, an
+(`flist.c:1538`) for each. `send_file_name` invokes `send_file_entry`
+(`flist.c:381-578`), which writes one `xflags` byte / shortint, an
 optional `first_hlink_ndx`, the fname slice, and the entry's metadata
 fields. Each entry is identified by its position in the combined
 `flist->files[]` array; on the wire the receiver reads them with the
 expectation that **NDX values are strictly increasing within a phase**
-(`flist.c:509`: `np->data = (void*)(long)(first_ndx + ndx);`).
+(`flist.c:512`: `np->data = (void*)(long)(first_ndx + ndx);`).
 
 The receiver-side counterpart, `generate_files()`
-(`generator.c:2226`), is also strictly serial:
+(`generator.c:2268`), is also strictly serial:
 
 ```c
 /* target/interop/upstream-src/rsync-3.4.1/generator.c:2312-2315 */
@@ -357,7 +357,7 @@ for (i = cur_flist->low; i <= cur_flist->high; i++) {
 Upstream walks the merged, sorted file list in monotonic NDX order.
 There is no parallelism, no fan-in, no concurrent producers. INC_RECURSE
 adds incremental sub-list discovery
-(`flist.c:send_extra_file_list` reachable from `flist.c:2069,2071`),
+(`flist.c:send_extra_file_list` reachable from `flist.c:2073,2071`),
 but each sub-list is built and emitted serially before the next
 sub-list begins, again driven by a single thread.
 
@@ -403,7 +403,7 @@ this through `crates/core/src/client/remote/invocation/builder.rs`
 ### 3.3 Mixed file and directory operands
 `oc-rsync -av /etc/hosts /etc/resolv.conf /etc/passwd dst/`
 Three regular files, no directories. Upstream's
-`flist.c:2455-2480` `send1extra` path emits each as a single
+`flist.c:2466-2491` `send1extra` path emits each as a single
 `send_file_name` call.
 
 - Walking is trivial (no recursion).
@@ -414,7 +414,7 @@ Three regular files, no directories. Upstream's
 ### 3.4 `--files-from` plus extra positional roots
 `oc-rsync -av --files-from=list.txt /base/ dst/`
 Upstream rsync requires exactly one positional source when
-`--files-from` is active (`flist.c:2240-2244 change_dir(argv[0])`).
+`--files-from` is active (`flist.c:2244-2248 change_dir(argv[0])`).
 oc-rsync mirrors this in
 `crates/transfer/src/generator/transfer.rs:743-744`:
 
@@ -528,9 +528,9 @@ fn write_ndx<W: Write + ?Sized>(&mut self, writer: &mut W, ndx: i32) -> io::Resu
 }
 ```
 
-Upstream's `send_file_entry` (`flist.c:380-575`) writes
+Upstream's `send_file_entry` (`flist.c:381-578`) writes
 `first_ndx + ndx` as the entry index
-(`flist.c:509: np->data = (void*)(long)(first_ndx + ndx);`). The
+(`flist.c:512: np->data = (void*)(long)(first_ndx + ndx);`). The
 receiver indexes into `cur_flist->files[ndx - cur_flist->ndx_start]`.
 This works **only if `flist->files[]` is the merged, sorted list**.
 A per-root parallel sender that emits two interleaved NDX streams
@@ -553,7 +553,7 @@ sort), but you cannot parallelise the wire emission.
 | Strictly-increasing positive NDX on the wire | `crates/protocol/src/codec/ndx/codec.rs:399-405` (`MonotonicNdxWriter`) | Two concurrent producers would emit interleaved NDX |
 | File-list completion before delta phase | `crates/transfer/src/generator/transfer.rs:737-748` (build then send then run_transfer_loop) | Parallel root walks must complete a global barrier before send_file_list |
 | INC_RECURSE segment ordering | `crates/protocol/src/flist/segment.rs:21-32` (`ndx_start` is global, `parent_dir_ndx` references prior segments) | Cross-root parallelism would race on `ndx_start` allocation |
-| Receiver's `flist->files[]` indexability | Upstream `flist.c:509`, `generator.c:2312` | Requires merged sorted list |
+| Receiver's `flist->files[]` indexability | Upstream `flist.c:512`, `generator.c:2354` | Requires merged sorted list |
 | `MonotonicNdxWriter` debug assertion | `crates/protocol/src/codec/ndx/codec.rs:399-403` | Asserts ndx > prev; trips immediately on out-of-order writes |
 
 The merged-sort barrier in
@@ -658,7 +658,7 @@ Reasoning recap:
    means there is exactly one producer thread, full stop. Cloning the
    sender is a non-op.
 3. Upstream rsync is purely serial across roots
-   (`flist.c:2258-2271`, `generator.c:2312-2315`). Adding parallelism
+   (`flist.c:2262-2282`, `generator.c:2354-2357`). Adding parallelism
    here would diverge from upstream behaviour without a corresponding
    wire benefit.
 4. The narrow scenarios that *would* benefit from per-root

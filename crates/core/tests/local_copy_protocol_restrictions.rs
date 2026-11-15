@@ -2,7 +2,7 @@
 //! `--protocol=N`, so options the protocol cannot carry are refused before any
 //! file is touched. `local_server` exempts only `--acls`/`--xattrs`.
 //!
-//! upstream: compat.c:663-676 (local_server exemption), compat.c:684-713.
+//! upstream: compat.c:664-677 (local_server exemption), compat.c:685-714.
 
 use core::client::{ClientConfig, ClientConfigBuilder, run_client};
 use protocol::ProtocolVersion;

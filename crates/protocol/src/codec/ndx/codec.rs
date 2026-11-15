@@ -23,7 +23,7 @@ enum NdxLead {
 
 /// Classifies the leading byte of a modern NDX value.
 ///
-/// Upstream `io.c:2598-2605` - `read_ndx()` first-byte dispatch.
+/// Upstream `io.c:2605-2612` - `read_ndx()` first-byte dispatch.
 #[inline]
 fn classify_ndx_lead(lead: u8) -> NdxLead {
     if lead == 0xFF {
@@ -41,7 +41,7 @@ fn classify_ndx_lead(lead: u8) -> NdxLead {
 /// This is the single owner of upstream's bound. `read_ndx` accumulates every
 /// arm into a `uint32` and refuses anything above `MAX_INT32` before narrowing
 /// (`io.c:2620-2624`), because the result is used unchecked as a file-list
-/// index; upstream states that reason in its own comment at `io.c:2617-2619`.
+/// index; upstream states that reason in its own comment at `io.c:2624-2626`.
 ///
 /// The UNSIGNED accumulation is as load-bearing as the bound. Upstream's
 /// operands are `uint32` (`io.c:2612-2616`), where overflow is defined and
@@ -64,7 +64,7 @@ fn ndx_from_unsigned(unum: u32) -> io::Result<i32> {
 /// Reconstructs the full 4-byte modern NDX value from the `0xFE`/high-bit form.
 ///
 /// `tag` is the byte whose high bit was set; `b0`, `b1`, `b2` are the three
-/// following bytes. Upstream `io.c:2608-2612`.
+/// following bytes. Upstream `io.c:2615-2619`.
 ///
 /// The masked tag caps this arm at `i32::MAX`, so the bound can never fire
 /// here; it is routed through [`ndx_from_unsigned`] anyway because upstream
@@ -78,7 +78,7 @@ fn decode_ndx_extended_full(tag: u8, b0: u8, b1: u8, b2: u8) -> io::Result<i32> 
 
 /// Reconstructs a modern NDX value from the `0xFE` 2-byte diff form.
 ///
-/// Upstream `io.c:2614`.
+/// Upstream `io.c:2621`.
 #[inline]
 fn decode_ndx_extended_diff(hi: u8, lo: u8, prev_val: i32) -> io::Result<i32> {
     let diff = ((hi as u32) << 8) | (lo as u32);
@@ -87,7 +87,7 @@ fn decode_ndx_extended_diff(hi: u8, lo: u8, prev_val: i32) -> io::Result<i32> {
 
 /// Reconstructs a modern NDX value from the single-byte short-diff form.
 ///
-/// Upstream `io.c:2616`.
+/// Upstream `io.c:2623`.
 #[inline]
 fn decode_ndx_short(diff_byte: u8, prev_val: i32) -> io::Result<i32> {
     ndx_from_unsigned((diff_byte as u32).wrapping_add(prev_val as u32))
@@ -338,11 +338,11 @@ impl NdxCodec for ModernNdxCodec {
             (diff, ndx)
         } else if ndx == NDX_DONE {
             // NDX_DONE is sent as single-byte 0 with no side effects
-            // Upstream io.c:2557-2560
+            // Upstream io.c:2564-2567
             return writer.write_all(&[0x00]);
         } else {
             // All negative index bytes start with 0xFF
-            // Upstream io.c:2561-2566
+            // Upstream io.c:2568-2573
             buf[cnt] = 0xFF;
             cnt += 1;
             let ndx_abs = ndx.wrapping_neg();
@@ -352,13 +352,13 @@ impl NdxCodec for ModernNdxCodec {
         };
 
         // Encode the diff value
-        // Upstream io.c:2568-2583
+        // Upstream io.c:2575-2590
         if diff > 0 && diff < 0xFE {
             buf[cnt] = diff as u8;
             cnt += 1;
         } else if !(0..=0x7FFF).contains(&diff) {
             // Full 4-byte encoding with high bit set
-            // Upstream io.c:2573-2578
+            // Upstream io.c:2580-2585
             buf[cnt] = 0xFE;
             cnt += 1;
             buf[cnt] = ((ndx_positive >> 24) as u8) | 0x80;
@@ -371,7 +371,7 @@ impl NdxCodec for ModernNdxCodec {
             cnt += 1;
         } else {
             // 2-byte diff encoding
-            // Upstream io.c:2579-2583
+            // Upstream io.c:2586-2590
             buf[cnt] = 0xFE;
             cnt += 1;
             buf[cnt] = (diff >> 8) as u8;
@@ -404,11 +404,11 @@ impl NdxCodec for ModernNdxCodec {
 
         let num = if b[0] == 0xFE {
             // Extended encoding
-            // Upstream io.c:2606-2614
+            // Upstream io.c:2613-2621
             reader.read_exact(&mut b[..1])?;
             if b[0] & 0x80 != 0 {
                 // 4-byte full value
-                // Upstream io.c:2608-2612
+                // Upstream io.c:2615-2619
                 let high = b[0];
                 reader.read_exact(&mut b[..3])?;
                 decode_ndx_extended_full(high, b[0], b[1], b[2])

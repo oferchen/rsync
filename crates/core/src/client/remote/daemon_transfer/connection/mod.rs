@@ -46,7 +46,7 @@ impl DaemonTransferRequest {
 
     /// Resolves the port an operand that names none connects to.
     ///
-    /// upstream: `main.c:1609-1612` - `--port` seeds `rsync_port`, and only the
+    /// upstream: `main.c:1613-1616` - `--port` seeds `rsync_port`, and only the
     /// `-1` sentinel (no `--port` and no `:port` in the operand) falls back to
     /// `RSYNC_PORT`. An explicit `:port` in the operand still wins, because
     /// `check_for_hostspec()` (`options.c:3310-3336`) overwrites `rsync_port`
@@ -148,7 +148,7 @@ impl DaemonTransferRequest {
     /// Format: `[user@]host::module[/path]`. `default_port` applies when the
     /// host names no port; see [`Self::resolve_default_port`].
     ///
-    /// upstream: `options.c:3310` `check_for_hostspec()` - `host::module` is
+    /// upstream: `options.c:3378` `check_for_hostspec()` - `host::module` is
     /// equivalent to `rsync://host/module`.
     pub(crate) fn parse_double_colon(
         operand: &OsStr,
@@ -245,7 +245,7 @@ fn split_module_path(module_path: &OsStr) -> (String, OsString) {
 ///
 /// Format: `@RSYNCD: XX.Y [digest_list]`
 ///
-/// upstream: `clientserver.c:209` `exchange_protocols()` -
+/// upstream: `clientserver.c:213` `exchange_protocols()` -
 /// `sscanf(buf, "@RSYNCD: %d.%d", ...)`
 fn parse_protocol_from_greeting(greeting: &str) -> Result<u32, ClientError> {
     let rest = greeting.get(9..).ok_or_else(|| {
@@ -272,7 +272,7 @@ fn parse_protocol_from_greeting(greeting: &str) -> Result<u32, ClientError> {
         )
     })?;
 
-    // upstream: clientserver.c:209 exchange_protocols() only parses the number.
+    // upstream: clientserver.c:213 exchange_protocols() only parses the number.
     // The [MIN, MAX] window is applied after `@RSYNCD: OK`, in
     // `perform_daemon_handshake`, where upstream's setup_protocol() checks it.
     Ok(version_num)
@@ -334,7 +334,7 @@ pub(crate) fn resolve_auth_username(
 /// Echoes a daemon `@ERROR` line to stderr and constructs the matching
 /// client error.
 ///
-/// Mirrors upstream `clientserver.c:425` - `rprintf(FERROR, "%s\n", line)` -
+/// Mirrors upstream `clientserver.c:429` - `rprintf(FERROR, "%s\n", line)` -
 /// which prints the raw `@ERROR` line verbatim to stderr before returning
 /// the fatal error to the caller. External tools (and the upstream
 /// testsuite/daemon-chroot-acl_test.py GHSA-rjfm-3w2m-jf4f regression
@@ -370,7 +370,7 @@ fn handle_daemon_at_error(line: &str) -> ClientError {
 ///
 /// Deviation from upstream: `exchange_protocols()` writes the client greeting
 /// before reading the daemon's (clientserver.c:181, 203); this reads first.
-/// Upstream exits 0 on `@RSYNCD: EXIT` (clientserver.c:416-422); this returns
+/// Upstream exits 0 on `@RSYNCD: EXIT` (clientserver.c:420-426); this returns
 /// an error.
 pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
     reader: &mut BufReader<R>,
@@ -397,10 +397,10 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
         ));
     }
 
-    // upstream: clientserver.c:209 exchange_protocols() - sscanf(buf, "@RSYNCD: %d.%d", ...)
+    // upstream: clientserver.c:213 exchange_protocols() - sscanf(buf, "@RSYNCD: %d.%d", ...)
     let remote_raw = parse_protocol_from_greeting(&greeting)?;
 
-    // upstream: clientserver.c:217-240 (exchange_protocols, am_client == 1) - a
+    // upstream: clientserver.c:221-244 (exchange_protocols, am_client == 1) - a
     // server greeting that omits the subprotocol value (protocol >= 30) or the
     // digest name list (protocol > 31) is fatal. Upstream prints
     // `rsync: the server omitted the <token>: <buf>` to stderr and aborts with
@@ -417,21 +417,21 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
         ));
     }
 
-    // upstream: clientserver.c:228-233 - `daemon_auth_choices` is whatever
+    // upstream: clientserver.c:232-237 - `daemon_auth_choices` is whatever
     // follows the first space past the `"@RSYNCD: "` head, empty string
     // included. The shared helper owns that rule so the presence gate above and
     // this list can never disagree.
     let advertised_digests = advertised_digests_in_greeting(&greeting);
 
-    // upstream: compat.c:855-856 - `am_client && DEBUG_GTE(NSTR, 2)` emits
+    // upstream: compat.c:864-865 - `am_client && DEBUG_GTE(NSTR, 2)` emits
     // "Client auth list (on client): <list>" with the client's OWN default
-    // list (compat.c:851). Deviation from upstream: this echoes the list the
+    // list (compat.c:860). Deviation from upstream: this echoes the list the
     // server advertised instead.
     if let Some(list) = advertised_digests.names() {
         trace_daemon_greeting_auth_list(list);
     }
 
-    // upstream: compat.c:844-853 output_daemon_greeting() - the greeting
+    // upstream: compat.c:853-862 output_daemon_greeting() - the greeting
     // carries our supported auth digests.
     let our_version = protocol_override.unwrap_or(ProtocolVersion::NEWEST);
     let client_version = format!(
@@ -449,13 +449,13 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
         .flush()
         .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
 
-    // upstream: clientserver.c:299-338 - sends `#early_input=<len>\n` followed by
+    // upstream: clientserver.c:303-342 - sends `#early_input=<len>\n` followed by
     // the raw file contents before the module name.
     if let Some(path) = early_input {
         send_early_input(writer, path, request)?;
     }
 
-    // upstream: clientserver.c:395 - module name is sent BEFORE waiting for @RSYNCD: OK
+    // upstream: clientserver.c:399 - module name is sent BEFORE waiting for @RSYNCD: OK
     let module_request = format!("{}\n", request.module);
     writer.write_all(module_request.as_bytes()).map_err(|e| {
         socket_error(
@@ -468,7 +468,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
         .flush()
         .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
 
-    // upstream: clientserver.c:401-436 - loop until @RSYNCD: OK, @ERROR, or
+    // upstream: clientserver.c:405-440 - loop until @RSYNCD: OK, @ERROR, or
     // @RSYNCD: EXIT. Other lines are MOTD output.
     loop {
         let mut line = String::new();
@@ -480,7 +480,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
             )
         })?;
 
-        // upstream: clientserver.c:402-406 - `read_line_old()` returns 0 (false)
+        // upstream: clientserver.c:406-410 - `read_line_old()` returns 0 (false)
         // when the daemon closes the control socket without a proper terminator,
         // and rsync fails with "didn't get server startup line". A 0-byte read is
         // EOF: without this guard `trim()` yields an empty string that matches no
@@ -508,7 +508,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
 
             let username = daemon_auth_username(request.username.as_deref());
 
-            // upstream: authenticate.c:453 `auth_client()` negotiates only
+            // upstream: authenticate.c:448 `auth_client()` negotiates only
             // after the daemon asked for credentials. An absent list falls back
             // to the protocol-keyed default (compat.c:868-873); a list that
             // names nothing we implement - the empty list included - aborts
@@ -524,7 +524,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
                     daemon_auth_negotiation_error(advertised_digests.names().unwrap_or_default())
                 })?;
 
-            // upstream: compat.c:877-880 - `DEBUG_GTE(NSTR, 1)` emits
+            // upstream: compat.c:886-889 - `DEBUG_GTE(NSTR, 1)` emits
             // "Client negotiated auth: <name>" after the strongest mutual
             // digest is selected.
             trace_daemon_auth_negotiated(digest.name());
@@ -561,14 +561,14 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
             return Err(handle_daemon_at_error(trimmed));
         }
 
-        // upstream: clientserver.c:434-435 rprintf(FINFO, "%s\n", line) - MOTD
+        // upstream: clientserver.c:438-439 rprintf(FINFO, "%s\n", line) - MOTD
         // output, dropped under --quiet by log.c:344-345.
         if output_motd && !logging::finfo_suppressed() {
             println!("{trimmed}");
         }
     }
 
-    // upstream: compat.c:621-625 setup_protocol() - only now, after
+    // upstream: compat.c:622-626 setup_protocol() - only now, after
     // `@RSYNCD: OK`, is a daemon outside [MIN_PROTOCOL_VERSION,
     // MAX_PROTOCOL_VERSION] refused, with the shell-clean text and
     // RERR_PROTOCOL. One above ours but within MAX (40, rsync.h:149) clamps to
@@ -578,7 +578,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
     let remote_protocol = ProtocolVersion::from_peer_advertisement(remote_raw)
         .map_err(|e| daemon_error(e.to_string(), PROTOCOL_INCOMPATIBLE_EXIT_CODE))?;
 
-    // upstream: clientserver.c:242-255 exchange_protocols() - negotiate to the
+    // upstream: clientserver.c:246-259 exchange_protocols() - negotiate to the
     // minimum of our and the daemon's version (sub-protocols are 0 in releases).
     let negotiated = if our_version.as_u8() < remote_protocol.as_u8() {
         our_version
@@ -598,7 +598,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
 /// line buffer with `%s is > %d bytes.` (clientserver.c:314-318) instead of
 /// truncating it.
 ///
-/// upstream: clientserver.c:299-338 - `start_inband_exchange()` reads the file
+/// upstream: clientserver.c:303-342 - `start_inband_exchange()` reads the file
 /// specified by `--early-input` before sending it to the daemon, and opens it
 /// at clientserver.c:303 through `open_no_attacker_symlinks()`: the path is
 /// operator-supplied and may transit attacker-writable parents, so a planted
@@ -648,7 +648,7 @@ pub(crate) fn read_early_input_file(path: &Path) -> Result<Vec<u8>, ClientError>
 /// and writes it to the `early exec` command's stdin (clientserver.c:1004,
 /// 630-631).
 ///
-/// upstream: clientserver.c:299-338 - `start_inband_exchange()` sends the early
+/// upstream: clientserver.c:303-342 - `start_inband_exchange()` sends the early
 /// input after `exchange_protocols()` and before the module name.
 fn send_early_input<W: Write>(
     writer: &mut W,

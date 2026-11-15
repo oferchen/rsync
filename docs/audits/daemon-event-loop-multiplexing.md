@@ -106,10 +106,10 @@ Upstream rsync 3.4.1 uses `select(2)` over a small set of listening sockets
 connection. The relevant source is in
 `target/interop/upstream-src/rsync-3.4.1/`:
 
-- `clientserver.c:1496` `daemon_main()` is the entry point. It calls
-  `become_daemon()` (`clientserver.c:1521`), `log_init` (`clientserver.c:1528`),
+- `clientserver.c:1506` `daemon_main()` is the entry point. It calls
+  `become_daemon()` (`clientserver.c:1531`), `log_init` (`clientserver.c:1538`),
   then `start_accept_loop(rsync_port, start_daemon)`
-  (`clientserver.c:1536`).
+  (`clientserver.c:1546`).
 - `socket.c:533` `start_accept_loop()` opens the listening socket(s) via
   `open_socket_in()` (`socket.c:543`), calls `listen(2)` per fd
   (`socket.c:550`), populates an `fd_set` via `FD_SET`
@@ -120,7 +120,7 @@ connection. The relevant source is in
   `socket.c:599`. The child closes the listening sockets
   (`socket.c:603-604`), reopens the log file (`socket.c:607`), and
   invokes the per-connection handler `fn(fd, fd)` (`socket.c:608`,
-  resolving to `start_daemon` at `clientserver.c:1275`). The parent
+  resolving to `start_daemon` at `clientserver.c:1284`). The parent
   closes the accepted fd (`socket.c:621`).
 - SIGCHLD is reaped via `sigchld_handler()` registered at
   `socket.c:597` and reaped on entry at `socket.c:524-526`.
@@ -507,7 +507,7 @@ benchmark validates the win.
   `crates/daemon/Cargo.toml:16-28`.
 - Upstream rsync 3.4.1 daemon:
   `target/interop/upstream-src/rsync-3.4.1/clientserver.c:1275`
-  (`start_daemon`), `clientserver.c:1496` (`daemon_main`),
+  (`start_daemon`), `clientserver.c:1506` (`daemon_main`),
   `socket.c:533` (`start_accept_loop`).
 - Process-model rationale: `docs/DAEMON_PROCESS_MODEL.md`.
 - `mio` 1.x: <https://docs.rs/mio/1>.

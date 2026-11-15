@@ -525,7 +525,7 @@ fn top_level_fixture(root: &Path) -> PathBuf {
     source
 }
 
-/// upstream: options.c:2324-2329 sets `xfer_dirs = 1` for a bare `--list-only`,
+/// upstream: options.c:2379-2384 sets `xfer_dirs = 1` for a bare `--list-only`,
 /// so `source/` lists "." and its children exactly once and does not descend.
 #[test]
 fn list_only_without_recursive_shows_only_top_level() {
@@ -551,7 +551,7 @@ fn list_only_destination_inside_source_does_not_hide_that_entry() {
     );
 }
 
-/// upstream: generator.c:1638-1643 prints the entry and returns before any
+/// upstream: generator.c:1675-1680 prints the entry and returns before any
 /// destination lookup, so a destination that is a regular file is never
 /// inspected and cannot fail the listing.
 #[test]
@@ -599,7 +599,7 @@ fn list_only_shows_device_nodes_when_enabled() {
     assert!(!collector.records.is_empty());
 }
 
-/// upstream: generator.c:1318 list_file_entry() lists every flist entry, so
+/// upstream: generator.c:1355 list_file_entry() lists every flist entry, so
 /// `--list-only` must record a symlink even without `--links`; a real transfer
 /// without `--links` skips it. This encodes WHY the two modes differ: listing
 /// enumerates the flist, transfer applies the generator's skip logic.
@@ -653,7 +653,7 @@ fn list_only_lists_symlink_without_links_flag() {
     );
 }
 
-/// upstream: generator.c:1318 list_file_entry() lists FIFOs regardless of
+/// upstream: generator.c:1355 list_file_entry() lists FIFOs regardless of
 /// `--specials`. `--list-only` records the FIFO; a real transfer without
 /// `--specials` skips it.
 #[cfg(unix)]

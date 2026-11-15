@@ -23,7 +23,7 @@ entries, not from any source-side walk.
 
 ### Per-directory itemize call
 
-- `generator.c:1480-1483` - inside `recv_generator()` directory branch:
+- `generator.c:1517-1520` - inside `recv_generator()` directory branch:
 
   ```c
   if (itemizing && f_out != -1) {
@@ -33,9 +33,9 @@ entries, not from any source-side walk.
   ```
 
   When the destination directory is absent (`statret < 0`), `itemize()` ORs
-  in `ITEM_IS_NEW`, producing the `cd+++++++++` glyph at `generator.c:578`.
+  in `ITEM_IS_NEW`, producing the `cd+++++++++` glyph at `generator.c:615`.
   When the directory already exists with matching attributes, `iflags == 0`
-  and the row is suppressed by the standard gate at `generator.c:574-576`.
+  and the row is suppressed by the standard gate at `generator.c:611-613`.
 
 ### Root-dir special case
 
@@ -45,7 +45,7 @@ because:
 
 - `main.c:803-805` - `flist->files[0]->flags |= FLAG_DIR_CREATED` is set after
   the mkdir succeeds.
-- `generator.c:1464-1465` - `if (file->flags & FLAG_DIR_CREATED) statret = -1;`
+- `generator.c:1501-1502` - `if (file->flags & FLAG_DIR_CREATED) statret = -1;`
   forces the root row to fire even though stat succeeded.
 
 ### "created directory $todir" notice
@@ -162,7 +162,7 @@ if !dir_path.exists() {
    call-site that invokes `create_directories()` (in `setup.rs` /
    `pipelined_incremental.rs`) already owns one.
 2. Inside the `for (_, relative_path, dir_path)` loop in `create_directories()`,
-   compute `iflags` per upstream `generator.c:1481-1482`:
+   compute `iflags` per upstream `generator.c:1518-1519`:
    - if `!dir_path.exists()` was true at loop entry: `ITEM_LOCAL_CHANGE`
      (which `emit_itemize` will OR with `ITEM_IS_NEW` via the existing
      root-dir branch path, generalized to all dirs)

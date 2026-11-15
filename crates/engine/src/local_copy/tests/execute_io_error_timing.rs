@@ -1,6 +1,6 @@
 // Which I/O errors gate which delete pass, and when.
 //
-// upstream: generator.c:304 `delete_in_dir()` is the only gate, testing
+// upstream: generator.c:339 `delete_in_dir()` is the only gate, testing
 // `io_error & IOERR_GENERAL && !ignore_errors`. The generator's `io_error`
 // carries file-list errors as each list arrives (flist.c:2736, flist.c:3070),
 // but a sender open or read failure reaches it only once the whole send loop

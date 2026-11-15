@@ -246,7 +246,7 @@ file count - it scales with unique id count.
 - **Likely fix:** `crates/transfer/src/generator/file_list/entry.rs:162-184`
   - keep the names in a session-local id->name map and emit `add_uid_list`
   + `add_gid_list` after the file-list end marker, matching upstream
-  `flist.c:2475-2509`. Wire-compatible only on protocol >= 30; oc-rsync
+  `flist.c:2486-2520`. Wire-compatible only on protocol >= 30; oc-rsync
   already targets protocol 32 exclusively.
 
 ### R-WIRE-3. id_lists / io_error trailer in a separate mplex frame (phase 21)

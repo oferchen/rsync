@@ -30,7 +30,7 @@
 //! companion an escape assertion would also pass if the fixture were
 //! simply unable to remove anything at all.
 //!
-//! upstream: `rsync-3.5.1/syscall.c:3032` `ds_descend()` - upstream
+//! upstream: `rsync-3.5.2/syscall.c:3103` `ds_descend()` - upstream
 //! resolves a deletion path per component, and at `syscall.c:3094`
 //! refuses an absolute symlink target rather than walking through it.
 

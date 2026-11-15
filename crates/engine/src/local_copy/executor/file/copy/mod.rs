@@ -57,7 +57,7 @@ pub(crate) fn copy_file(
                 .map(PathBuf::from)
                 .unwrap_or_default()
         });
-    // upstream: flist.c:1790-1796 - `--copy-devices` streams a device as a
+    // upstream: flist.c:1794-1800 - `--copy-devices` streams a device as a
     // regular file, so its readable length (not the zero stat size) drives the
     // size checks, stats, and the copy byte count.
     let device_as_file_size = context.copy_device_as_file_size(source, metadata);
@@ -106,7 +106,7 @@ pub(crate) fn copy_file(
 
     let mut destination_previously_existed = existing_metadata.is_some();
 
-    // upstream: generator.c:1757-1806 - the `--existing` / `--ignore-existing`
+    // upstream: generator.c:1794-1843 - the `--existing` / `--ignore-existing`
     // gate reads the lstat taken BEFORE either make-way removal
     // (generator.c:2149 / 2477-2483), so a skipped entry leaves any obstacle
     // standing. The skip itself is recorded once the batch iflags are settled.
@@ -119,7 +119,7 @@ pub(crate) fn copy_file(
         .is_some_and(|existing| existing.file_type().is_dir())
         && existence_skip.is_none()
     {
-        // upstream: generator.c:2148-2153 recv_generator() - a regular file is
+        // upstream: generator.c:2189-2194 recv_generator() - a regular file is
         // arriving over a destination directory. Upstream calls
         // delete_item(fname, mode, del_opts | DEL_FOR_FILE) UNCONDITIONALLY;
         // del_opts carries DEL_RECURSE only under --delete/--force and that
@@ -146,7 +146,7 @@ pub(crate) fn copy_file(
             recurse,
             crate::local_copy::MakeWayFor::File,
         )? {
-            // upstream: generator.c:2150 `goto cleanup` - this entry is skipped,
+            // upstream: generator.c:2191 `goto cleanup` - this entry is skipped,
             // the rest of the transfer continues, and the run finishes 23.
             return Ok(true);
         }
@@ -159,7 +159,7 @@ pub(crate) fn copy_file(
         existing_metadata = None;
     }
 
-    // upstream: generator.c:2148-2153 recv_generator() - the DEVICE arm of the
+    // upstream: generator.c:2189-2194 recv_generator() - the DEVICE arm of the
     // same make-way condition:
     //
     //   if (statret == 0 && !(stype == FT_REG || (write_devices && stype == FT_DEVICE)))
@@ -175,7 +175,7 @@ pub(crate) fn copy_file(
     // name instead (`--inplace`, `--append`, and `--write-devices`'s own
     // implied inplace) wrote through a device the operator never asked to
     // write through. Deciding it here also restores the itemize/stats view:
-    // upstream sets `statret = -1` after the removal (generator.c:2151), so the
+    // upstream sets `statret = -1` after the removal (generator.c:2192), so the
     // entry reports a creation (`>f+++++++++`, "created files: 1") rather than
     // an update against the node that is no longer there.
     //
@@ -194,16 +194,16 @@ pub(crate) fn copy_file(
             .map(fast_io::EntryMetadata::file_type)
             .unwrap_or_else(|| metadata.file_type().into());
         if !crate::local_copy::clear_device_obstacle(context, destination, relative, device_type)? {
-            // upstream: generator.c:2150 `goto cleanup` - this entry is skipped,
+            // upstream: generator.c:2191 `goto cleanup` - this entry is skipped,
             // the rest of the transfer continues, and the run finishes 23.
             return Ok(true);
         }
-        // upstream: generator.c:2151-2152 - `statret = -1; stat_errno = ENOENT;`
+        // upstream: generator.c:2192-2193 - `statret = -1; stat_errno = ENOENT;`
         destination_previously_existed = false;
         existing_metadata = None;
     }
 
-    // upstream: generator.c:583-584 itemize() - `ITEM_IS_NEW` is decided by
+    // upstream: generator.c:620-621 itemize() - `ITEM_IS_NEW` is decided by
     // the pre-transfer destination stat, which has now settled (including
     // the make-way overrides above). Patch it into the iflags word
     // `begin_batch_file_delta()` already reserved for this file, before any
@@ -224,7 +224,7 @@ pub(crate) fn copy_file(
         return Ok(true);
     }
 
-    // upstream: generator.c:2118-2133 recv_generator() - the max-size/min-size
+    // upstream: generator.c:2159-2174 recv_generator() - the max-size/min-size
     // filter runs after the "not creating new" (--existing) check at
     // generator.c:1769, so an out-of-range file absent from the destination
     // reports "not creating new file" rather than a size skip.
@@ -342,7 +342,7 @@ pub(crate) fn copy_file(
         return Ok(true);
     }
 
-    // upstream: generator.c:571-576 - itemize() lights ITEM_REPORT_XATTR only
+    // upstream: generator.c:608-613 - itemize() lights ITEM_REPORT_XATTR only
     // when xattr_diff() finds the destination's attributes differ from the
     // sender's. Capture that here, before the transfer or the metadata apply
     // can write the source attributes onto the destination; comparing after the
@@ -402,7 +402,7 @@ pub(crate) fn copy_file(
 /// Mirrors the `SkippedMissingDestination` recording path so the notice renders
 /// inline during the generator phase (before the statistics block) in file
 /// order, matching upstream `recv_generator()` which prints the notice via
-/// `rprintf(FINFO, ...)` and then `goto cleanup`. upstream: generator.c:2115-2130.
+/// `rprintf(FINFO, ...)` and then `goto cleanup`. upstream: generator.c:2156-2171.
 fn record_size_skip(
     context: &mut CopyContext,
     source: &Path,

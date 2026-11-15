@@ -71,7 +71,7 @@ Upstream cross-references:
 - COPY (uncompressed): `token.c:simple_send_token()` line 318
   (`write_int(f, -(token+1))`).
 - END uncompressed: same path with `token == -1` -> wire value
-  `-((-1)+1) = 0`. See `match.c:343` (`matched(f, s, buf, len, -1)`).
+  `-((-1)+1) = 0`. See `match.c:358` (`matched(f, s, buf, len, -1)`).
 - COPY/END compressed: `token.c:321-329` flag byte definitions, plus the
   `TOKEN_LONG` / `TOKENRUN_LONG` / `TOKEN_REL` / `TOKENRUN_REL` flag bytes
   defined inline.
@@ -219,7 +219,7 @@ are little-endian (upstream `io.c:write_int()`). `read_sum_head()` validates:
 - `count >= 0` (line 1969).
 - `0 <= blength <= max_blength` where `max_blength` is `OLD_MAX_BLOCK_SIZE`
   (`1<<29`) for `protocol_version < 30`, else `MAX_BLOCK_SIZE` (`1<<17`),
-  upstream `io.c:1967`.
+  upstream `io.c:1974`.
 - `0 <= s2length <= xfer_sum_len` (line 1981).
 - `0 <= remainder <= blength` (line 1987).
 
@@ -251,7 +251,7 @@ Upstream sender side reads via `sender.c:receive_sums()` lines 100-122; we
 write via `crates/transfer/src/receiver/wire.rs:406-424`
 (`write_signature_blocks`). The rolling sum is `int32 LE`, the strong sum is
 zero-padded or truncated to exactly `s2length` bytes (matching upstream
-`match.c:395` block transmission and `sender.c:102`'s `read_buf(f,
+`match.c:431` block transmission and `sender.c:110`'s `read_buf(f,
 sum2_at(s, i), s->s2length)`).
 
 Note that the per-block strong sum length sent on the wire is the
@@ -260,7 +260,7 @@ length of MD4/MD5/xxh3 - upstream truncates at write, we truncate at write.
 
 ## 5. Phase-aware checksum lengths
 
-Upstream defines two constants in `rsync.h:714-715`:
+Upstream defines two constants in `rsync.h:730-731`:
 
 ```c
 #define SUM_LENGTH       16
@@ -272,7 +272,7 @@ delta-transfer phases:
 
 - **Phase 1** (initial pass): `csum_length = SHORT_SUM_LENGTH` (= 2). Smaller
   signatures, more false-alarm matches expected. Upstream:
-  `generator.c:2188 csum_length = SHORT_SUM_LENGTH;`.
+  `generator.c:2229 csum_length = SHORT_SUM_LENGTH;`.
 - **Phase 2** (redo pass): `csum_length = SUM_LENGTH` (= 16). Full
   collision-resistance for files that failed phase 1's whole-file MD4/MD5
   trailer. Upstream is set elsewhere in `generator.c` near the redo handler
@@ -295,16 +295,16 @@ oc-rsync conformance:
 - Constants: `crates/signature/src/block_size.rs:76` (`SHORT_SUM_LENGTH = 2`)
   and `:82` (`MAX_SUM_LENGTH = 16`). Test
   `sum_length_constants_match_upstream` at `block_size.rs:580-586` enforces
-  the values match upstream's `rsync.h:714-715`.
+  the values match upstream's `rsync.h:730-731`.
 - Heuristic: `layout.rs::derive_strong_sum_length` reproduces the bias loop,
   with the phase-2 short-circuit `if checksum_length == SUM_LENGTH` returning
   the negotiated digest width (not an unconditional `MAX_SUM_LENGTH`),
   preserving the redo-pass invariant while also applying the
   `max_s2length = MIN(SUM_LENGTH, xfer_sum_len)` cap from
-  `generator.c:705`.
+  `generator.c:742`.
 - Phase distinction: `crates/transfer/src/receiver/mod.rs:75` and `:84`
   document the `csum_length = SHORT_SUM_LENGTH` and `csum_length =
-  SUM_LENGTH` upstream call-sites at `generator.c:2157` and `generator.c:2163`
+  SUM_LENGTH` upstream call-sites at `generator.c:2198` and `generator.c:2204`
   respectively.
 - Tests:
   - `sum_length_derive_strong_phase1_is_dynamic` (`layout.rs`) confirms phase 1
@@ -325,7 +325,7 @@ oc-rsync conformance:
 
 Upstream produces the end marker via two cooperating call-sites:
 
-- `match.c:343` calls `matched(f, s, buf, len, -1)`.
+- `match.c:358` calls `matched(f, s, buf, len, -1)`.
 - `match.c:matched()` line 117 calls `send_token(f, i, ...)` with `i == -1`.
 - For uncompressed mode, `simple_send_token` line 318 writes
   `write_int(f, -((-1)+1)) = write_int(f, 0)` - a four-byte LE zero.
@@ -344,7 +344,7 @@ oc-rsync conformance:
 - Compressed (lz4): `compressed_token/lz4_codec.rs:139-147` same pattern.
 
 After the END marker, upstream writes the **whole-file checksum trailer**
-(`match.c:426 write_buf(f, sender_file_sum, xfer_sum_len)`). This is part of
+(`match.c:462 write_buf(f, sender_file_sum, xfer_sum_len)`). This is part of
 the framing the receiver must drain after recognising END but it is not part
 of the token stream itself; it is handled in
 `crates/transfer/src/receiver/transfer.rs` and is out of scope for this
@@ -490,7 +490,7 @@ respectively.
 
 `crates/transfer/src/receiver/wire.rs:417-421`
 zero-pads or truncates the strong sum to exactly `s2length` bytes before
-write. Upstream `sender.c:102` reads exactly `s2length` bytes per block.
+write. Upstream `sender.c:110` reads exactly `s2length` bytes per block.
 Identical wire footprint.
 
 ### 10.3 Internal opcode-based delta format coexists with the upstream
@@ -614,7 +614,7 @@ four `do_compression` modes (`CPRES_NONE`, `CPRES_ZLIB` / `CPRES_ZLIBX`,
 
 Confirmed parity points:
 
-- LITERAL chunked at 32 KiB (`CHUNK_SIZE`, `rsync.h:158`).
+- LITERAL chunked at 32 KiB (`CHUNK_SIZE`, `rsync.h:159`).
 - COPY encoded as `int32 LE -(token+1)` uncompressed; flag-byte +
   optional run count compressed.
 - END encoded as `int32 LE 0` uncompressed; single `END_FLAG` byte

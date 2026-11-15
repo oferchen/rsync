@@ -38,7 +38,7 @@ per-segment build subsumes all of them: each transient becomes O(segment).
 
 ### 2.1 Data structures
 
-- `struct file_list` (`rsync.h:985-996`): `next`/`prev` ring links,
+- `struct file_list` (`rsync.h:1001-1012`): `next`/`prev` ring links,
   `files`/`sorted` pointer arrays, `file_pool` + `pool_boundary` (allocation
   pool), `used`/`malloced`, `low`/`high` (index range), `ndx_start`,
   `flist_num`, `parent_ndx`, `in_progress`/`to_redo`. The per-field
@@ -48,7 +48,7 @@ per-segment build subsumes all of them: each transient becomes O(segment).
   Transfer lists form a doubly linked ring; `dir_flist` is a separate
   FLIST_TEMP list holding only directory entries, alive for the whole run -
   the accepted O(#dirs) memory floor.
-- `flist_new` (`flist.c:3730-3765`): a FLIST_TEMP list gets its OWN
+- `flist_new` (`flist.c:3741-3776`): a FLIST_TEMP list gets its OWN
   SMALL_EXTENT pool (`:3250-3252`); the first transfer list creates the
   chain's single NORMAL_EXTENT pool and starts at
   `ndx_start = flist_num = inc_recurse ? 1 : 0` (`:3256-3262`); every later
@@ -56,14 +56,14 @@ per-segment build subsumes all of them: each transient becomes O(segment).
   `ndx_start = prev->ndx_start + prev->used + 1` (`:3268`) - the +1 NDX gap
   between segments. Each list snapshots `pool_boundary` at creation
   (`:3274`).
-- `flist_done_allocating` (`flist.c:868-875`) seals a finished list's pool
+- `flist_done_allocating` (`flist.c:872-879`) seals a finished list's pool
   extent via `pool_boundary(pool, 8*1024)` so a later free releases exactly
   that list's extent (`lib/pool_alloc.c:353 pool_boundary`,
   `:300 pool_free_old`).
-- Growth policy: `flist_expand` (`flist.c:816`) with `FLIST_START` 32,
-  `FLIST_START_LARGE` 32*1024, `FLIST_LINEAR` (`rsync.h:967-969`); both the
+- Growth policy: `flist_expand` (`flist.c:820`) with `FLIST_START` 32,
+  `FLIST_START_LARGE` 32*1024, `FLIST_LINEAR` (`rsync.h:983-985`); both the
   initial list and `dir_flist` are pre-expanded to FLIST_START_LARGE
-  (`flist.c:3021,3024`).
+  (`flist.c:3032,3024`).
 
 ### 2.2 The directory tree - THREE node links, not two
 
@@ -72,16 +72,16 @@ with two links. Upstream has THREE, and without `DIR_FIRST_CHILD` the
 depth-first walk cannot descend.
 
 - Each diverted directory entry carries a 3-slot node
-  (`DIRNODE_EXTRA_CNT` = 3, `rsync.h:877`) addressed by `F_DIR_NODE_P`
-  (`rsync.h:930`), with `DIR_PARENT(a) = (a)[0]`,
+  (`DIRNODE_EXTRA_CNT` = 3, `rsync.h:893`) addressed by `F_DIR_NODE_P`
+  (`rsync.h:946`), with `DIR_PARENT(a) = (a)[0]`,
   `DIR_FIRST_CHILD(a) = (a)[1]`, `DIR_NEXT_SIBLING(a) = (a)[2]`
-  (`rsync.h:957-959`).
+  (`rsync.h:973-975`).
 - `make_file` reserves the node under FLAG_DIVERT_DIRS and allocates the
-  entry from `dir_flist->file_pool` (`flist.c:1977-1980`).
-- `add_dirs_to_tree(parent_ndx, from_flist, dir_cnt)` (`flist.c:2425-2463`)
+  entry from `dir_flist->file_pool` (`flist.c:1981-1984`).
+- `add_dirs_to_tree(parent_ndx, from_flist, dir_cnt)` (`flist.c:2436-2474`)
   appends the scanned list's dirs to `dir_flist` in sorted order (the
   sending side keeps `dir_flist->sorted = dir_flist->files`,
-  `flist.c:2433-2435`), links the first dir as the parent's
+  `flist.c:2444-2446`), links the first dir as the parent's
   `DIR_FIRST_CHILD` (`:1991`) and later ones as the previous dir's
   `DIR_NEXT_SIBLING` (`:1989`), initializes each node with
   `DIR_PARENT = parent_ndx`, `DIR_FIRST_CHILD = -1` (`:1996-1997`), and
@@ -89,28 +89,28 @@ depth-first walk cannot descend.
   but not linked as children.
 - The walk cursor is `send_dir_ndx`/`send_dir_depth`; the initial list's
   dirs are rooted with `add_dirs_to_tree(-1, flist, stats.num_dirs)`
-  (`flist.c:3329`) after `send_dir_depth = 1` (`:2842`).
+  (`flist.c:3340`) after `send_dir_depth = 1` (`:2842`).
 - Naming note: 3.5.0 has NO `F_DIR_DEFER` accessor (zero occurrences in the
   tree); it appears only in older sources and stale notes. The 3.5.0
   dir-node accessors are exactly the set above.
 
-### 2.3 Initial list - `send_file_list` (`flist.c:2982`)
+### 2.3 Initial list - `send_file_list` (`flist.c:2993`)
 
-- INC_RECURSE setup (`flist.c:3020-3027`): the transfer list and a separate
+- INC_RECURSE setup (`flist.c:3031-3038`): the transfer list and a separate
   `dir_flist = flist_new(FLIST_TEMP, ...)` are created and
-  `FLAG_DIVERT_DIRS` (`rsync.h:99`) is added to the walk flags; the non-inc
+  `FLAG_DIVERT_DIRS` (`rsync.h:100`) is added to the walk flags; the non-inc
   path aliases `dir_flist = cur_flist`.
-- `send_directory` (`flist.c:2568`) scans exactly ONE directory; it only
+- `send_directory` (`flist.c:2579`) scans exactly ONE directory; it only
   recurses into subdirectories when `!divert_dirs`
-  (`flist.c:2575` flag decode, `:2200` recursion gate). So the initial list
+  (`flist.c:2586` flag decode, `:2200` recursion gate). So the initial list
   holds the arguments plus the first-level children of directory arguments;
   every subdirectory is diverted into `dir_flist` instead of being
   descended.
 - --relative deferral: implied-dir names are NOT expanded up front. Each
   pending name is queued on its lastpath dir entry through
-  `F_DIR_RELNAMES_P` (`rsync.h:932`; producer `flist.c:2773-2776`) and
+  `F_DIR_RELNAMES_P` (`rsync.h:948`; producer `flist.c:2784-2787`) and
   replayed per directory by `send1extra` (Section 2.4).
-- Tail (`flist.c:3297-3344`): `sorted` alias-or-clone (`:2811-2815`, see
+- Tail (`flist.c:3308-3355`): `sorted` alias-or-clone (`:2811-2815`, see
   Section 2.7), `flist_sort_and_clean(flist, 0)` (`:2816`), then BOTH
   `file_total` and `file_old_total` grow by the list's size (`:2817-2818`)
   so the lookahead backlog starts at 0. Id lists are NOT sent up front under
@@ -121,20 +121,20 @@ depth-first walk cannot descend.
   1-entry initial list triggers one eager extra list to detect 1-file
   transfers (`:2854-2858`, `send_extra_file_list(f, 1)` at `:2857`).
 
-### 2.4 Lazy expansion - `send_extra_file_list(f, at_least)` (`flist.c:2876`)
+### 2.4 Lazy expansion - `send_extra_file_list(f, at_least)` (`flist.c:2887`)
 
-Called from the send loop top and bottom (`sender.c:517,551`) with
+Called from the send loop top and bottom (`sender.c:525,551`) with
 `at_least = MIN_FILECNT_LOOKAHEAD`, and from `perform_io` with -1
-(`io.c:891`), which means "one more list" (`flist.c:2886-2887`).
+(`io.c:891`), which means "one more list" (`flist.c:2897-2898`).
 
 - Loop condition: `while (file_total - file_old_total < at_least)`
-  (`flist.c:2891`) - the backlog of entries queued in lists beyond the one
+  (`flist.c:2902`) - the backlog of entries queued in lists beyond the one
   the receiver is working through.
 - Per iteration: take the dir at `send_dir_ndx` from `dir_flist->sorted`
   (`:2412`), allocate a fresh transfer list (`:2417`), announce it with
   `write_ndx(f, NDX_FLIST_OFFSET - dir_ndx)` (`:2424`, constant
-  `rsync.h:320`), remember the sorted ndx in `flist->parent_ndx` (`:2425`),
-  then `send1extra` (`flist.c:2797`) expands that ONE directory:
+  `rsync.h:321`), remember the sorted ndx in `flist->parent_ndx` (`:2425`),
+  then `send1extra` (`flist.c:2808`) expands that ONE directory:
   `change_pathname` + `change_local_filter_dir(fbuf, dlen, send_dir_depth)`
   (`:2328-2331`), and - only if the dir still carries FLAG_CONTENT_DIR - a
   one-level `send_directory` with `FLAG_DIVERT_DIRS | FLAG_CONTENT_DIR`
@@ -158,35 +158,35 @@ Called from the send loop top and bottom (`sender.c:517,551`) with
   move to `DIR_NEXT_SIBLING` (`:2490`).
 - Deferred io_error is flushed at `finish` for protocol 30 (`:2495-2497`).
 
-### 2.4b Receiving an extra list - `recv_file_list(f, dir_ndx)` (`flist.c:3415`)
+### 2.4b Receiving an extra list - `recv_file_list(f, dir_ndx)` (`flist.c:3426`)
 
 The receiver frames each sub-list by `dir_ndx` - an index into ITS OWN
 `dir_flist`, not the transfer list - and defends that numbering:
 
-- dir_ndx guards (`flist.c:3381-3413`): a sub-flist after the final list was
+- dir_ndx guards (`flist.c:3392-3424`): a sub-flist after the final list was
   freed, an out-of-range `dir_ndx`, a `dir_ndx` whose slot
   `flist_sort_and_clean` cleared, and a duplicate flist for a dir already
   marked FLAG_GOT_DIR_FLIST are each refused with `RERR_PROTOCOL`.
-- The hard dirname invariant (`flist.c:3462-3477`): inside the read loop,
+- The hard dirname invariant (`flist.c:3473-3488`): inside the read loop,
   whenever an entry's dirname changes to a value that is neither the cached
   `good_dirname` nor `f_name(dir_flist->files[dir_ndx])`, the receiver
   prints "ABORTING due to invalid path from sender: %s/%s" (`:2984-2986`)
   and exits `RERR_UNSUPPORTED` (`:2987`). It fires when a sender smuggles an
   entry outside the directory the sub-list announced.
 - The receiver grows its own `dir_flist` in the same read loop
-  (`flist.c:3482-3484`) and sorts just the appended range
+  (`flist.c:3493-3495`) and sorts just the appended range
   (`:3041-3050`), before `flist_sort_and_clean(flist, relative_paths)`
   (`:3065`).
 
-### 2.5 Freeing - `flist_free` (`flist.c:3768`)
+### 2.5 Freeing - `flist_free` (`flist.c:3779`)
 
 The RSS mechanism. On each receiver NDX_DONE for a finished list the sender
 does `file_old_total -= first_flist->used; flist_free(first_flist)`
-(`sender.c:532-534`), echoes NDX_DONE and continues without advancing phase
-while more lists remain (`sender.c:535-540`); the phase advances only once
+(`sender.c:540-542`), echoes NDX_DONE and continues without advancing phase
+while more lists remain (`sender.c:543-548`); the phase advances only once
 the chain is empty (`:540-545`).
 
-`flist_free` unlinks the ring entry (`flist.c:3770-3789`), then releases the
+`flist_free` unlinks the ring entry (`flist.c:3781-3800`), then releases the
 list's pool extent via `pool_free_old(flist->file_pool, flist->pool_boundary)`
 (`:3308`) - or `pool_destroy` when the chain empties or the list is the
 FLIST_TEMP `dir_flist` (`:3305-3306`) - and frees `sorted` (only when it is a
@@ -199,35 +199,35 @@ walks the ring from `cur_flist` in either direction until
 `ndx_start-1 <= ndx < ndx_start + used`; out of range is the fatal
 "File-list index %d not in %d - %d" protocol error. A gap NDX
 (`ndx == ndx_start - 1`) resolves to the segment's parent directory entry in
-`dir_flist` (`sender.c:553-559`); a cleared slot is refused
-(`sender.c:560-562`).
+`dir_flist` (`sender.c:561-567`); a cleared slot is refused
+(`sender.c:568-570`).
 
 ### 2.6 Pacing
 
 - `MIN_FILECNT_LOOKAHEAD 1000` / `MAX_FILECNT_LOOKAHEAD 10000`
-  (`rsync.h:151-152`).
-- The send loop keeps at least MIN queued ahead (`sender.c:517,551`), and
+  (`rsync.h:152-153`).
+- The send loop keeps at least MIN queued ahead (`sender.c:525,551`), and
   brackets the blocking read with `extra_flist_sending_enabled`
-  (`sender.c:518,524`).
+  (`sender.c:526,524`).
 - While blocked waiting for input, `perform_io` opportunistically produces
   more lists until MAX is queued: under the ceiling it polls with
   `poll_timeout = 0` (`io.c:872-880`) and, when the socket is idle, calls
   `send_extra_file_list(sock_f_out, -1)` (`io.c:889-892`).
 - The generator applies the mirror-image half-window: a flush hint when the
-  remaining backlog drops under MIN/2 (`generator.c:2703`) and, with
+  remaining backlog drops under MIN/2 (`generator.c:2747`) and, with
   hardlinks, an initial wait until MIN/2 entries exist
-  (`generator.c:2775`).
+  (`generator.c:2861`).
 
 ### 2.7 The sorted-vs-files rule
 
 `sorted` is USUALLY AN ALIAS of `files`, not a copy: both the initial and
 every extra list set `flist->sorted = flist->files` unless
 `need_unsorted_flist` (the iconv/unsorted-index case) forces a clone of the
-POINTER array (`flist.c:2935-2939`, `:2811-2815`). `flist_sort_and_clean`
-sorts `flist->sorted` (`flist.c:3817`) - the pointer array, never the
+POINTER array (`flist.c:2946-2950`, `:2811-2815`). `flist_sort_and_clean`
+sorts `flist->sorted` (`flist.c:3828`) - the pointer array, never the
 ndx-addressed `files[]` order - and computes `low`/`high`
 (`:3325-3328` empty case; scan from both ends otherwise). The sending side
-keeps `dir_flist` sorted-as-built (`flist.c:2433-2435`). `flist_free` frees
+keeps `dir_flist` sorted-as-built (`flist.c:2444-2446`). `flist_free` frees
 `sorted` only when `sorted != files` (`:3310-3311`).
 
 ### 2.8 Duplicate-directory merge under inc_recurse
@@ -235,20 +235,20 @@ keeps `dir_flist` sorted-as-built (`flist.c:2433-2435`). `flist_free` frees
 `flist_sort_and_clean` resolves same-name entries by keeping a dir over a
 non-dir and otherwise the first occurrence; for two dirs on the SENDER under
 inc_recurse the later one is MARKED `FLAG_DUPLICATE` (`rsync.h:84`) and kept
-(`flist.c:3860-3861`) - the receiver instead merges the vital flags onto the
+(`flist.c:3871-3872`) - the receiver instead merges the vital flags onto the
 kept entry (`:3376-3378`). `send_extra_file_list` then expands the
-FLAG_DUPLICATE run as ONE extra list (`flist.c:2914-2924`), so a directory
+FLAG_DUPLICATE run as ONE extra list (`flist.c:2925-2935`), so a directory
 reachable through multiple arguments is announced once and its children are
 listed once.
 
 ### 2.9 Gating predicate
 
-`set_allow_inc_recurse` (`compat.c:162-180`, clauses `:172-180`): cleared
+`set_allow_inc_recurse` (`compat.c:163-181`, clauses `:172-180`): cleared
 when `!recurse || use_qsort`, when a receiving side uses
 `delete_before/delete_after/delay_updates/prune_empty_dirs`, or when a server
 peer did not advertise `i`. The server folds it into CF_INC_RECURSE
-(`compat.c:724`); a client that forced --inc-recursive against a
-non-advertising server errors out (`compat.c:780`). oc's mirror is
+(`compat.c:733`); a client that forced --inc-recursive against a
+non-advertising server errors out (`compat.c:789`). oc's mirror is
 `compute_allow_inc_recurse` (`crates/transfer/src/lib.rs:549`), which also
 carries the (currently load-bearing) receiver-role restriction - see
 Section 9.
@@ -320,8 +320,8 @@ receiver-side machinery, not this sender path.
 Introduce oc's `dir_flist` analog: a `DirFlist` owned by the incremental
 state, holding, per pending directory, its retained `FileEntry`, wire
 `dir_ndx`, source base, and the parent/first-child/next-sibling node trio -
-upstream's DIRNODE encoding (`rsync.h:957-959`, `flist.c:1977-1980`,
-`add_dirs_to_tree` `flist.c:2425`). Dir entries are retained for the whole
+upstream's DIRNODE encoding (`rsync.h:973-975`, `flist.c:1981-1984`,
+`add_dirs_to_tree` `flist.c:2436`). Dir entries are retained for the whole
 run, exactly as upstream's FLIST_TEMP list; this is the O(#dirs) floor.
 
 - Populate it from the existing classification: diverted dirs go into the
@@ -330,7 +330,7 @@ run, exactly as upstream's FLIST_TEMP list; this is the O(#dirs) floor.
 - ONE-TYPE constraint (LF-8f / task 749): this type IS the IR programme's
   `dir_flist` (IR-5a/5b/5c). LF-1a/1b/1c and IR-5a/5b/5c describe the same
   type reached from two construction sites - the initial-list tail
-  (`flist.c:3329`) and the per-extra-list link (`flist.c:2944`). Build it
+  (`flist.c:3340`) and the per-extra-list link (`flist.c:2955`). Build it
   once; do not create an LF dir-queue and an IR dir_flist separately.
 - `PendingSegment` gains nothing; the scheduler, `NdxMap`, and all wire
   paths are untouched.
@@ -342,7 +342,7 @@ run, exactly as upstream's FLIST_TEMP list; this is the O(#dirs) floor.
 Replace "walk all, sort all, reorder all" with upstream's shape:
 
 - Initial list: walk arguments plus first-level children of dir arguments
-  only (`flist.c:2676` recursion gate); push subdirs onto the `DirFlist`
+  only (`flist.c:2687` recursion gate); push subdirs onto the `DirFlist`
   instead of descending. Sort, dedup, iconv-drop, and hardlink/id
   collection run over this segment only.
 - On demand: when `SegmentScheduler::next_to_send` admits a segment, pop
@@ -351,27 +351,27 @@ Replace "walk all, sort all, reorder all" with upstream's shape:
   the same comparator (per-segment sort == global sort restricted to the
   segment, since the global order is (dir, name)-lexicographic), assign
   NDX values from the running `ndx_start + used + 1` counter
-  (`flist.c:3754`), encode, ship, and append newly found dirs to the
+  (`flist.c:3765`), encode, ship, and append newly found dirs to the
   queue.
 - Filter state rides the walk, not the pre-build: enter each directory's
   local filter scope via the `change_local_filter_dir` analog exactly where
-  upstream does (`flist.c:2811` per extra dir; reset at EOF
-  `flist.c:2963`), so dir-merge (`.rsync-filter`) rules load and unload
+  upstream does (`flist.c:2822` per extra dir; reset at EOF
+  `flist.c:2974`), so dir-merge (`.rsync-filter`) rules load and unload
   per scanned directory (LF-3a).
 - --relative: defer implied-dir names per directory through the
-  `F_DIR_RELNAMES_P` analog (`flist.c:2773-2776` produce, `:2346-2394`
+  `F_DIR_RELNAMES_P` analog (`flist.c:2784-2787` produce, `:2346-2394`
   replay), emitting exactly one implied-parent level in the initial list
   (LF-4a/4b).
-- Duplicate dirs: mark-and-coalesce per Section 2.8 (`flist.c:3860-3861`,
+- Duplicate dirs: mark-and-coalesce per Section 2.8 (`flist.c:3871-3872`,
   `:2434-2444`) so a directory reachable twice is expanded exactly once
   (LF-5a/5b).
 - Free: on the receiver's per-list NDX_DONE, drop the retired segment's
   storage entirely (today's `reclaim_oldest_segment` becomes a real free of
-  a per-segment store, `sender.c:532-534`, `flist.c:3794`); this is the
+  a per-segment store, `sender.c:540-542`, `flist.c:3805`); this is the
   container work specified in `rss-flist-segmentation.md` Section 4.
   `resolve_itemize` and the delta loop resolve NDX values through the
   live-segment window (`NdxMap`); a gap NDX resolves to the owning dir's
-  entry in the `DirFlist` (`sender.c:553-559`).
+  entry in the `DirFlist` (`sender.c:561-567`).
 - Pacing: reuse the existing `SegmentScheduler` MIN-lookahead window
   unmodified - the scan happens when the scheduler admits the segment, so
   the window itself bounds resident segments. This is pure backpressure; no
@@ -380,13 +380,13 @@ Replace "walk all, sort all, reorder all" with upstream's shape:
   the ceiling is dead code until this stage lands (task 400 caveat).
 - Incremental cross-segment state, all O(state) not O(N): hardlink
   dev/ino -> first-NDX map (replaces the post-sort full pass; upstream
-  inits hardlinks before the walk, `flist.c:3015-3018`), uid/gid interning
+  inits hardlinks before the walk, `flist.c:3026-3029`), uid/gid interning
   as entries are created (upstream sends ids inline under INC_RECURSE,
-  `flist.c:3306-3307`), and the cached `FileListWriter` compression state
+  `flist.c:3317-3318`), and the cached `FileListWriter` compression state
   already carried across sub-lists.
 - Per-directory scan errors are REPORTED from the lazy producer (LF-2g,
   closing task 659): a failed one-level scan follows upstream's
-  `interpret_stat_error` shape (`flist.c:2465`) rather than silently
+  `interpret_stat_error` shape (`flist.c:2476`) rather than silently
   skipping the segment.
 - The non-inc path keeps the current build-all pipeline untouched: the lazy
   producer is selected by the same `inc_recurse()` test that gates
@@ -405,7 +405,7 @@ there.
   (`stats.flist_size`, file counts).
 - The non-inc sender path is unchanged in every stage.
 - The INC_RECURSE gate stays exactly upstream's predicate
-  (`compat.c:162-180` == `crates/transfer/src/lib.rs:549`), including the
+  (`compat.c:163-181` == `crates/transfer/src/lib.rs:549`), including the
   oc receiver-role restriction until tasks 309-313 lift it; no new
   negotiation, no new capability advertisement.
 - FLAG_DUPLICATE coalescing (Section 2.8) is part of the specification, not
@@ -483,54 +483,54 @@ comment cites them.
 
 | Construct | 3.5.1 anchor | Notes (3.4.4 origin where retargeted) |
 |---|---|---|
-| `MIN_FILECNT_LOOKAHEAD 1000` / `MAX_FILECNT_LOOKAHEAD 10000` | `rsync.h:151-152` | unchanged from 3.4.4 |
-| `NDX_FLIST_OFFSET -101` | `rsync.h:320` | was `rsync.h:313` |
+| `MIN_FILECNT_LOOKAHEAD 1000` / `MAX_FILECNT_LOOKAHEAD 10000` | `rsync.h:152-153` | unchanged from 3.4.4 |
+| `NDX_FLIST_OFFSET -101` | `rsync.h:321` | was `rsync.h:314` |
 | `FLAG_CONTENT_DIR` / `FLAG_DUPLICATE` / `FLAG_DIVERT_DIRS` | `rsync.h:81` / `:84` / `:99` | unchanged |
-| `DIRNODE_EXTRA_CNT 3` | `rsync.h:877` | |
-| `F_DIR_NODE_P` / `F_DIR_RELNAMES_P` | `rsync.h:930` / `:930` | |
-| `DIR_PARENT` / `DIR_FIRST_CHILD` / `DIR_NEXT_SIBLING` | `rsync.h:957-959` | THREE macros (task-719 correction) |
-| `FLIST_START` / `FLIST_START_LARGE` / `FLIST_LINEAR` | `rsync.h:967-969` | |
-| `NORMAL_EXTENT` / `SMALL_EXTENT` / `FLIST_TEMP` | `rsync.h:980-983` | |
-| `struct file_list` | `rsync.h:985-996` | was `:964-975`; same twelve members |
+| `DIRNODE_EXTRA_CNT 3` | `rsync.h:893` | |
+| `F_DIR_NODE_P` / `F_DIR_RELNAMES_P` | `rsync.h:946` / `:930` | |
+| `DIR_PARENT` / `DIR_FIRST_CHILD` / `DIR_NEXT_SIBLING` | `rsync.h:973-975` | THREE macros (task-719 correction) |
+| `FLIST_START` / `FLIST_START_LARGE` / `FLIST_LINEAR` | `rsync.h:983-985` | |
+| `NORMAL_EXTENT` / `SMALL_EXTENT` / `FLIST_TEMP` | `rsync.h:996-999` | |
+| `struct file_list` | `rsync.h:1001-1012` | was `:964-975`; same twelve members |
 | `cur_flist, first_flist, dir_flist` globals | `flist.c:111` | was `:101` |
-| `flist_expand` | `flist.c:816` | |
-| `flist_done_allocating` (8 KiB pool boundary) | `flist.c:868-875` | was `:335` |
-| `make_file` DIRNODE reservation + dir_flist pool | `flist.c:1977-1980` | was `:1376-1384` |
-| `add_dirs_to_tree` | `flist.c:2425-2463` (links `:1989,1991,1996-1997,2000`) | was `:1799` |
-| `send_directory` (one dir; `!divert_dirs` recursion gate) | `flist.c:2568`, `:2099`, `:2200` | was `:1929-1933` |
-| --relative relname deferral (producer) | `flist.c:2773-2776` | |
-| `send1extra` | `flist.c:2797-2874` (filter `:2331`, scan `:2333-2342`, relname replay `:2346-2394`) | was `:2046` |
-| `send_extra_file_list` | `flist.c:2876-2981` | was `:2124` |
-| lookahead loop condition | `flist.c:2891` | was `:2139` |
-| `write_ndx(f, NDX_FLIST_OFFSET - dir_ndx)` | `flist.c:2904` | was `:2152` |
-| duplicate-dir coalescing loop | `flist.c:2914-2924` | was `:2160-2172` |
-| per-list sort/tree-link/seal | `flist.c:2942,2944,2945` | was `:2192` |
-| depth-first cursor advance + NDX_FLIST_EOF | `flist.c:2953-2974` | was `:2207` |
-| `send_file_list` | `flist.c:2982` | was `:2227` |
-| hardlink init before walk | `flist.c:3015-3018` | was `:2262` |
-| INC_RECURSE setup (dir_flist, FLAG_DIVERT_DIRS) | `flist.c:3020-3027` | was `:2267-2272` |
-| tail: sort, totals, inline ids | `flist.c:3297-3307` | was `:2545-2549` |
-| tail: root tree / seal / EOF / 1-file probe | `flist.c:3328-3344` | was `:2571-2585` |
-| `recv_file_list` (receiver dir_flist) | `flist.c:3415,3420` | |
-| `flist_new` (pool alias + `ndx_start = prev + used + 1`) | `flist.c:3730-3765` (gap `:3268`) | was `:2960-2977` (`:2966`) |
-| `flist_free` (`pool_free_old` on the boundary) | `flist.c:3768-3800` (`:3308`) | was `:2980-3012` (`:3006`) |
-| `flist_sort_and_clean` (sorts `sorted[]`; low/high; FLAG_DUPLICATE mark) | `flist.c:3804` (`:3331`, `:3325-3328`, `:3374-3378`) | |
-| sender loop lookahead calls | `sender.c:517,551` (+ enable `:516,522`) | was `:231,265` |
-| NDX_DONE: `flist_free(first_flist)` + echo | `sender.c:526-548` (`:530-532`) | was `:240-258` |
-| gap-NDX parent resolution + cleared-slot refusal | `sender.c:553-562` | was `:266-272` |
-| `successful_send` via `flist_for_ndx` | `sender.c:410-413` | |
+| `flist_expand` | `flist.c:820` | |
+| `flist_done_allocating` (8 KiB pool boundary) | `flist.c:872-879` | was `:335` |
+| `make_file` DIRNODE reservation + dir_flist pool | `flist.c:1981-1984` | was `:1376-1384` |
+| `add_dirs_to_tree` | `flist.c:2436-2474` (links `:1989,1991,1996-1997,2000`) | was `:1799` |
+| `send_directory` (one dir; `!divert_dirs` recursion gate) | `flist.c:2579`, `:2099`, `:2200` | was `:1929-1933` |
+| --relative relname deferral (producer) | `flist.c:2784-2787` | |
+| `send1extra` | `flist.c:2808-2885` (filter `:2331`, scan `:2333-2342`, relname replay `:2346-2394`) | was `:2046` |
+| `send_extra_file_list` | `flist.c:2887-2992` | was `:2124` |
+| lookahead loop condition | `flist.c:2902` | was `:2139` |
+| `write_ndx(f, NDX_FLIST_OFFSET - dir_ndx)` | `flist.c:2915` | was `:2152` |
+| duplicate-dir coalescing loop | `flist.c:2925-2935` | was `:2160-2172` |
+| per-list sort/tree-link/seal | `flist.c:2953,2944,2945` | was `:2192` |
+| depth-first cursor advance + NDX_FLIST_EOF | `flist.c:2964-2985` | was `:2207` |
+| `send_file_list` | `flist.c:2993` | was `:2227` |
+| hardlink init before walk | `flist.c:3026-3029` | was `:2262` |
+| INC_RECURSE setup (dir_flist, FLAG_DIVERT_DIRS) | `flist.c:3031-3038` | was `:2267-2272` |
+| tail: sort, totals, inline ids | `flist.c:3308-3318` | was `:2545-2549` |
+| tail: root tree / seal / EOF / 1-file probe | `flist.c:3339-3355` | was `:2571-2585` |
+| `recv_file_list` (receiver dir_flist) | `flist.c:3426,3420` | |
+| `flist_new` (pool alias + `ndx_start = prev + used + 1`) | `flist.c:3741-3776` (gap `:3268`) | was `:2960-2977` (`:2966`) |
+| `flist_free` (`pool_free_old` on the boundary) | `flist.c:3779-3811` (`:3308`) | was `:2980-3012` (`:3006`) |
+| `flist_sort_and_clean` (sorts `sorted[]`; low/high; FLAG_DUPLICATE mark) | `flist.c:3815` (`:3331`, `:3325-3328`, `:3374-3378`) | |
+| sender loop lookahead calls | `sender.c:525,551` (+ enable `:516,522`) | was `:231,265` |
+| NDX_DONE: `flist_free(first_flist)` + echo | `sender.c:534-556` (`:530-532`) | was `:240-258` |
+| gap-NDX parent resolution + cleared-slot refusal | `sender.c:561-570` | was `:266-272` |
+| `successful_send` via `flist_for_ndx` | `sender.c:418-421` | |
 | `flist_for_ndx` | `rsync.c:951-984` | was `:787-821` |
 | `read_ndx_and_attrs` flist lookup | `rsync.c:394` | |
 | `perform_io` idle production (MAX gate; `-1` call) | `io.c:872-880`, `:853-856` | was `:753-758,771-775` |
-| generator half-window (flush hint; hardlink pre-wait) | `generator.c:2703`, `:2775` | was `:2231,2302` |
-| `set_allow_inc_recurse` | `compat.c:162-180` (clauses `:172-180`) | unchanged |
-| CF_INC_RECURSE fold / mismatch error | `compat.c:724`, `:780` | was `:713`, `:746` |
+| generator half-window (flush hint; hardlink pre-wait) | `generator.c:2747`, `:2775` | was `:2231,2302` |
+| `set_allow_inc_recurse` | `compat.c:163-181` (clauses `:172-180`) | unchanged |
+| CF_INC_RECURSE fold / mismatch error | `compat.c:733`, `:780` | was `:713`, `:746` |
 | `change_local_filter_dir` | `exclude.c:974` | |
 | pool primitives | `lib/pool_alloc.c:300` (`pool_free_old`), `:353` (`pool_boundary`) | |
-| `fsort` stability contract | `flist.c:2405-2419` (comment `:1944-1947`) | identical names keep original order so flist sort matches dir_flist sort |
-| `recv_file_list` dir_ndx guards | `flist.c:3381-3413` | refuses post-final sub-flist, out-of-range, cleared slot, duplicate flist |
-| receiver hard dirname invariant | `flist.c:3462-3477` (message `:2984-2986`, exit `:2987`) | "ABORTING due to invalid path from sender", RERR_UNSUPPORTED |
-| receiver dir_flist append / range sort / clean | `flist.c:3482-3484` / `:3041-3050` / `:3065` | |
+| `fsort` stability contract | `flist.c:2416-2430` (comment `:1944-1947`) | identical names keep original order so flist sort matches dir_flist sort |
+| `recv_file_list` dir_ndx guards | `flist.c:3392-3424` | refuses post-final sub-flist, out-of-range, cleared slot, duplicate flist |
+| receiver hard dirname invariant | `flist.c:3473-3488` (message `:2984-2986`, exit `:2987`) | "ABORTING due to invalid path from sender", RERR_UNSUPPORTED |
+| receiver dir_flist append / range sort / clean | `flist.c:3493-3495` / `:3041-3050` / `:3065` | |
 | `F_DIR_DEFER` | ABSENT in 3.5.0 | zero occurrences; older-source name, do not cite |
 
 ## 11. oc divergence column (verified on master at this revision)
@@ -556,11 +556,11 @@ differs; ABSENT = nothing implements it. The upstream anchors are Section 2's.
 | 3 | `add_dirs_to_tree()`: link a sorted sibling run under its parent, per sub-list and for the initial list | Links are made at CLASSIFICATION time via a parent-name map (`inc_recurse.rs:91-130`), not by post-sort sibling-run linking; walk order then comes from `DirectoryTree::next_directory` (`dir_tree.rs:193`) | PRESENT-DIVERGENT (LF-1c/1d must pin that the link rule equals upstream's sorted-run rule) |
 | 4 | `send_extra_file_list(f, at_least)` + `send1extra()`: scan ONE dir on demand, one fresh `flist_new(0, ...)` per segment, at_least budget | WIRED behind `OC_RSYNC_LAZY_FLIST` (LF-2c, #7949): `LazyFlistProducer` (`crates/transfer/src/generator/segments.rs`) scans one directory per segment via `scan_extra_segment` (LF-2b) over a one-level `build_file_list` walk, driven by `produce_next_lazy_segment` (`inc_recurse.rs`) and refilled on demand from the transfer loop (`refill_lazy_scheduler`). Gated by `lazy_producer_eligible` (single-source, `!relative`/`!hard_links`/`!acls`); the eager pre-built-range path (`SegmentScheduler` + `encode_and_send_segment`) is retained for the flag-off and excluded cases | PRESENT behind flag (LF-2b/2c); DORMANT in production - INC_RECURSE not negotiated live |
 | 5 | Descend/sibling walk picking the next dir; `flist->parent_ndx = send_dir_ndx` | Walk exists: `next_directory` descend/sibling/pop (`dir_tree.rs:193`); parent recorded as `PendingSegment.parent_dir_ndx`/`parent_flat_idx` (`inc_recurse.rs:283-286`) and the initial gap via `NdxMap::set_initial_parent_flat` (`inc_recurse.rs:300`) | PRESENT-DIVERGENT (runs at build time to ORDER pre-built segments, not at send time to drive scanning) |
-| 6 | `ndx_start` arithmetic; the +1 gap IS the parent dir's own NDX | `NdxMap` (`crates/transfer/src/generator/ndx_map.rs:80`), gap applied at `:145` (`prev.ndx_start + prev_used + 1`); gap-NDX resolves to the parent for itemize via `NdxMap::resolve_itemize`; sender-side gap resolution mirrors `sender.c:553-559` | PRESENT-FAITHFUL |
-| 7 | Receiver hard dirname invariant (`flist.c:3462-3477`) and what fires it | `crates/transfer/src/receiver/file_list/receive.rs:548-575` - same predicate, byte-identical "ABORTING due to invalid path from sender" text; exercised by tests in `receiver/file_list/on_demand.rs:833-855`. Note: the in-code citation reads `flist.c:3167-3178`, which is a DRIFTED pre-3.5.0 line range (3.5.0: `:2976-2991`) - flagged for the next citation sweep, not edited in this docs change | PRESENT-FAITHFUL (one stale citation) |
-| 8 | Sort parity: stable sort so flist order matches dir_flist order (`flist.c:2405-2408`, alias comment `:1972-1974`) | `sort_file_list` sorts a key array over stable `sort_by` by default, `sort_unstable_by` only under `--qsort` (`crates/protocol/src/flist/sort.rs:209-245`), same comparator both sides (`compare_file_entries`). Cross-list parity holds today BY CONSTRUCTION (one global sort feeds both); under the lazy producer it becomes LF-1d's explicit obligation | PRESENT-FAITHFUL (parity mechanism differs; the guarantee holds) |
-| 9a | MIN lookahead floor (`sender.c:517,551`; `generator.c:2703,2775`) | `MIN_FILECNT_LOOKAHEAD` + backlog accounting in `SegmentScheduler::next_to_send`/`retire_current_flist` (`segments.rs:28,174,233`) | PRESENT-FAITHFUL (sender side) |
+| 6 | `ndx_start` arithmetic; the +1 gap IS the parent dir's own NDX | `NdxMap` (`crates/transfer/src/generator/ndx_map.rs:80`), gap applied at `:145` (`prev.ndx_start + prev_used + 1`); gap-NDX resolves to the parent for itemize via `NdxMap::resolve_itemize`; sender-side gap resolution mirrors `sender.c:561-567` | PRESENT-FAITHFUL |
+| 7 | Receiver hard dirname invariant (`flist.c:3473-3488`) and what fires it | `crates/transfer/src/receiver/file_list/receive.rs:548-575` - same predicate, byte-identical "ABORTING due to invalid path from sender" text; exercised by tests in `receiver/file_list/on_demand.rs:833-855`. Note: the in-code citation reads `flist.c:3178-3189`, which is a DRIFTED pre-3.5.0 line range (3.5.0: `:2976-2991`) - flagged for the next citation sweep, not edited in this docs change | PRESENT-FAITHFUL (one stale citation) |
+| 8 | Sort parity: stable sort so flist order matches dir_flist order (`flist.c:2416-2419`, alias comment `:1972-1974`) | `sort_file_list` sorts a key array over stable `sort_by` by default, `sort_unstable_by` only under `--qsort` (`crates/protocol/src/flist/sort.rs:209-245`), same comparator both sides (`compare_file_entries`). Cross-list parity holds today BY CONSTRUCTION (one global sort feeds both); under the lazy producer it becomes LF-1d's explicit obligation | PRESENT-FAITHFUL (parity mechanism differs; the guarantee holds) |
+| 9a | MIN lookahead floor (`sender.c:525,551`; `generator.c:2747,2775`) | `MIN_FILECNT_LOOKAHEAD` + backlog accounting in `SegmentScheduler::next_to_send`/`retire_current_flist` (`segments.rs:28,174,233`) | PRESENT-FAITHFUL (sender side) |
 | 9b | MAX ceiling (`io.c:872-880`) | `next_when_idle` (`segments.rs:202-203`) - reachable but DEAD under the eager producer (task 400: next_to_send's >=1000 subsumes >=10000) | PRESENT-INERT until LF lands |
 | 9c | Idle top-up `send_extra_file_list(sock_f_out, -1)` (`io.c:889-892`) | No analogue: nothing produces lists while blocked on input | ABSENT (LF-7b/7c territory) |
-| 9d | Receiver half-window pacing (MIN/2, `generator.c:2703,2775`) | No analogue; moot while oc's receiver never enables INC_RECURSE (Section 9). The receiver DOES have on-demand segment receive (`crates/transfer/src/receiver/file_list/on_demand.rs`) - the marker-driven receive half, not the pacing | ABSENT (pacing), PRESENT (on-demand receive) |
-| - | dir_ndx guards on a received sub-list (`flist.c:3381-3413`) | The receiver `DirFlist` resolves a wire `dir_ndx` to `DirSlot::{Active,Cleared}` (enum at `dir_flist.rs:14-20`) and refuses cleared or out-of-range slots, matching upstream's refusals | PRESENT-FAITHFUL |
+| 9d | Receiver half-window pacing (MIN/2, `generator.c:2747,2775`) | No analogue; moot while oc's receiver never enables INC_RECURSE (Section 9). The receiver DOES have on-demand segment receive (`crates/transfer/src/receiver/file_list/on_demand.rs`) - the marker-driven receive half, not the pacing | ABSENT (pacing), PRESENT (on-demand receive) |
+| - | dir_ndx guards on a received sub-list (`flist.c:3392-3424`) | The receiver `DirFlist` resolves a wire `dir_ndx` to `DirSlot::{Active,Cleared}` (enum at `dir_flist.rs:14-20`) and refuses cleared or out-of-range slots, matching upstream's refusals | PRESENT-FAITHFUL |

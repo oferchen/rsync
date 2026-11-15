@@ -54,7 +54,7 @@ fn start_auth_digest_floor_daemon(dir: &Path, floor: &str) -> (TcpStream, Daemon
 /// attacker takes away to brute-force offline, and a weak digest is what makes
 /// that cheap. The assertion is therefore on the answer line itself.
 ///
-/// upstream: authenticate.c:324-331 returns NULL before `gen_challenge()`
+/// upstream: authenticate.c:319-326 returns NULL before `gen_challenge()`
 /// (:335), and clientserver.c:812 turns that into `@ERROR: auth failed on
 /// module %s`.
 #[test]
@@ -130,7 +130,7 @@ fn auth_digest_floor_admits_a_client_at_or_above_the_floor() {
 /// connection rather than being ignored - an unrecognised floor must never fail
 /// open into "no floor".
 ///
-/// upstream: authenticate.c:317-323, the `floor_rank < 0` arm. Note that the
+/// upstream: authenticate.c:312-318, the `floor_rank < 0` arm. Note that the
 /// daemon itself still started and parsed the config: upstream discovers this at
 /// connection time, per module, so one module's typo cannot take the daemon down.
 #[test]
@@ -287,7 +287,7 @@ fn auth_digest_floor_name_is_case_insensitive() {
 /// The two refusal arms carry upstream's wording into the log line; the
 /// credential arm deliberately carries none, leaving the bare prefix.
 ///
-/// upstream: authenticate.c:318-321 and :325-329.
+/// upstream: authenticate.c:313-316 and :325-329.
 #[test]
 fn auth_denial_log_reasons_match_upstream_wording() {
     assert_eq!(AuthDenial::Credentials.log_suffix(), None);

@@ -21,13 +21,13 @@ Both must match upstream's `output_summary()` (`main.c:416-465`).
 - `main.c:387-407` - `output_itemized_counts()` helper.
 - `main.c:409-414` - `bytes_per_sec_human_dnum()`.
 - `main.c:416-465` - `output_summary()`.
-- `rsync.h:1033-1047` - `struct stats` definition.
+- `rsync.h:1049-1063` - `struct stats` definition.
 - `inums.h:19-57` - `big_num`, `comma_num`, `human_num`, `big_dnum`,
   `comma_dnum`, `human_dnum` inline wrappers.
 - `lib/compat.c:25-39` - `get_number_separator()` locale probe.
-- `lib/compat.c:170-272` - `do_big_num()` and `do_big_dnum()` core formatters.
+- `lib/compat.c:170-282` - `do_big_num()` and `do_big_dnum()` core formatters.
 - `options.c:110` - `int human_readable = 1;` (default).
-- `log.c:889-892` - daemon FLOG stats line.
+- `log.c:974-977` - daemon FLOG stats line.
 
 ## oc-rsync source references
 
@@ -430,7 +430,7 @@ Integer counts (`comma_num` call sites in upstream) are affected differently:
 
 ## Daemon log line
 
-Upstream emits a daemon-only log line via `rprintf(FLOG, ...)` in `log.c:889`:
+Upstream emits a daemon-only log line via `rprintf(FLOG, ...)` in `log.c:974`:
 
 ```
 sent <big_num(written)> bytes  received <big_num(read)> bytes  total size <big_num(total_size)>

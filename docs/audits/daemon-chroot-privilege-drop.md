@@ -22,7 +22,7 @@ oc-rsync source: `crates/daemon/src/`, `crates/platform/src/privilege.rs`,
 Upstream rsync applies a two-stage privilege ladder. The first stage runs
 once at daemon startup, before the accept loop:
 
-| Step | Upstream (`clientserver.c:1301-1339`) | oc-rsync |
+| Step | Upstream (`clientserver.c:1310-1348`) | oc-rsync |
 |------|---------------------------------------|----------|
 | Parse `daemon chroot` | `lp_daemon_chroot()` | Parsed into `RuntimeOptions::daemon_chroot` via `config_parsing/global_directives.rs`. |
 | Apply `daemon chroot` | `chroot(p)` + `chdir("/")` at line 1304-1311 | **Not wired.** Parsed and stored but no code invokes `platform::privilege::apply_chroot` for the daemon-level value. |
@@ -40,7 +40,7 @@ ordering: `setgroups -> setgid -> setuid` (in `platform/src/privilege.rs:54-68`)
 
 The second stage runs per connection after module authentication:
 
-| Step | Upstream (`clientserver.c:692-1045`) | oc-rsync |
+| Step | Upstream (`clientserver.c:696-1049`) | oc-rsync |
 |------|--------------------------------------|----------|
 | Authentication | `auth_server()` at line 759 | `module_access/authentication.rs` via `handle_authentication`. |
 | uid/gid resolution | `user_to_uid(lp_uid(i))` at line 781 (accepts names). `add_a_group()` at line 805 (accepts names, `*` wildcard, multiple groups). | `parse_numeric_identifier` in `module_directives.rs:164,170` - **numeric only**. Single uid and single gid per module. |
@@ -55,7 +55,7 @@ The second stage runs per connection after module authentication:
 ### 1.3 `use chroot` default handling
 
 Upstream `daemon-parm.txt` declares `use_chroot` as `BOOL3` with default
-`Unset`. When unset, upstream auto-detects at `clientserver.c:829-841`:
+`Unset`. When unset, upstream auto-detects at `clientserver.c:833-845`:
 
 1. If the module path contains `/./`, force chroot on.
 2. Else probe with `chroot("/")` - if it succeeds, use chroot; if EPERM
@@ -68,7 +68,7 @@ explicit `use chroot = false` will attempt chroot and fail with
 
 ### 1.4 Chroot and `numeric ids` interaction
 
-Upstream at `clientserver.c:1187-1190` silently forces `numeric_ids = -1`
+Upstream at `clientserver.c:1191-1194` silently forces `numeric_ids = -1`
 when:
 
 - chroot is active, **and**
@@ -88,7 +88,7 @@ implicit override is not applied.
 ### 1.5 Munge symlinks
 
 Upstream defaults `munge_symlinks` to `Unset` (BOOL3). At runtime
-(`clientserver.c:992-993`):
+(`clientserver.c:996-997`):
 
 ```c
 if ((munge_symlinks = lp_munge_symlinks(module_id)) < 0)
@@ -268,7 +268,7 @@ jail.
 In `accept_loop.rs`, after binding and daemonizing but before
 `drop_privileges`, call `apply_chroot(daemon_chroot)` when the
 directive is present. Order: `chroot -> setgid -> setuid`, matching
-upstream `clientserver.c:1301-1339`.
+upstream `clientserver.c:1310-1348`.
 
 ### 4.2 Support name-based uid/gid in per-module directives (addresses 2.2)
 
@@ -298,7 +298,7 @@ EPERM means fall back to no-chroot with a log message.
 Reorder `process_approved_module` in `transfer.rs` so that
 `NameConverter::spawn`, `run_early_exec`, and `run_pre_xfer_exec`
 execute before `apply_module_privilege_restrictions`. This matches
-upstream's ordering at `clientserver.c:897-978` and ensures exec
+upstream's ordering at `clientserver.c:901-982` and ensures exec
 hooks have host-filesystem visibility.
 
 ### 4.6 Apply implicit `numeric ids` override on chroot (addresses 2.6)
@@ -314,7 +314,7 @@ unnecessary id-to-name protocol exchanges.
 After chroot (or after `chdir` to module path when not chrooted),
 stat `/rsyncd-munged` (without trailing slash). If it exists and is a
 directory, abort with `RERR_UNSUPPORTED`. Mirror upstream
-`clientserver.c:994-1003`.
+`clientserver.c:998-1007`.
 
 ### 4.8 Wire Windows privilege drop (addresses 2.8)
 

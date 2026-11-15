@@ -154,7 +154,7 @@ impl<'a> CopyContext<'a> {
 
     /// Removes a non-directory occupying a level where a directory must exist.
     ///
-    /// upstream: `generator.c:2258-2261` `recv_generator()` - a directory entry
+    /// upstream: `generator.c:2300-2303` `recv_generator()` - a directory entry
     /// that finds a non-directory in its place runs `delete_item(fname, ..,
     /// del_opts | DEL_FOR_DIR)` and carries on. `--force` contributes only
     /// `DEL_RECURSE` (`generator.c:2034`), which governs recursing into a
@@ -253,7 +253,7 @@ impl<'a> CopyContext<'a> {
     /// `--force` is set.
     ///
     /// Each destination-tree level is decided on its own, outermost first.
-    /// upstream: `generator.c:2258-2261` `recv_generator()` receives every
+    /// upstream: `generator.c:2300-2303` `recv_generator()` receives every
     /// implied parent as its own file-list entry, so an in-the-way
     /// non-directory is found at the level that holds it. Resolving the whole
     /// path in one step would instead traverse such a level, and a symlink
@@ -313,7 +313,7 @@ impl<'a> CopyContext<'a> {
     /// The failure of a directory entry below an unusable `--no-implied-dirs`
     /// parent, or `None` when `error` is not that case and stands as it is.
     ///
-    /// upstream: `generator.c:1745-1746` stats the directory through the
+    /// upstream: `generator.c:1782-1783` stats the directory through the
     /// confined walk, and the `mkdir` that follows fails the same way
     /// (`generator.c:1873-1887`); its parent's `make_path()` never runs,
     /// because the parent's own following stat succeeds.
@@ -527,7 +527,7 @@ impl<'a> CopyContext<'a> {
                         self.replace_parent_entry_forbidden(parent, &existing)
                     }
                 }
-                // upstream: generator.c:2132-2136 - with `--no-implied-dirs`
+                // upstream: generator.c:2173-2177 - with `--no-implied-dirs`
                 // the implied parent dirs are absent from the flist, but under
                 // `relative_paths && !implied_dirs` recv_generator() still
                 // materializes a missing leading dir on demand via

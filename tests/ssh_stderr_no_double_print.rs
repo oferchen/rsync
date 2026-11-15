@@ -19,7 +19,7 @@
 //!    is deterministic and needs no external rsync.
 //!  - exit 23 post-transfer path: oc-rsync pulling a missing source from a real
 //!    upstream rsync server, whose sender writes `link_stat ... failed` to its
-//!    own fd 2 (upstream `log.c:330`, default `msgs2stderr=2`). Gated on a real
+//!    own fd 2 (upstream `log.c:410`, default `msgs2stderr=2`). Gated on a real
 //!    rsync being available; skipped cleanly otherwise.
 
 #![cfg(unix)]

@@ -55,7 +55,7 @@ impl DestinationState {
 /// - Destination doesn't exist: returns `Missing`
 /// - The existence gate skips the entry: returns `Skipped` before any removal
 ///
-/// upstream: `generator.c:1839-1842` `recv_generator()` - a directory entry
+/// upstream: `generator.c:1876-1879` `recv_generator()` - a directory entry
 /// that finds a non-directory in its place runs `delete_item(fname, ..,
 /// del_opts | DEL_FOR_DIR)` and carries on. `--force` contributes only
 /// `DEL_RECURSE` (`generator.c:1629`), which governs recursing into a
@@ -83,7 +83,7 @@ pub(super) fn check_destination_state(
         }
     };
     let file_type = existing.file_type();
-    // upstream: generator.c:1745 gen_entry_stat() - `keep_dirlinks && is_dir`
+    // upstream: generator.c:1782 gen_entry_stat() - `keep_dirlinks && is_dir`
     // follows a destination symlink, so one resolving to a directory is a
     // directory for the gate and is merged into.
     let directory = if file_type.is_dir() {
@@ -110,7 +110,7 @@ pub(super) fn check_destination_state(
     Ok(DestinationState::Missing)
 }
 
-/// upstream: generator.c:1757-1806 - the existence gate reads the destination
+/// upstream: generator.c:1794-1843 - the existence gate reads the destination
 /// `lstat` before `delete_item()` clears a non-directory obstacle, so
 /// `--ignore-existing` leaves the obstacle standing and `--existing` merges
 /// into it rather than treating the cleared path as absent.

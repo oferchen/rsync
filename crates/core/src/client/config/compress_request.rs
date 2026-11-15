@@ -38,7 +38,7 @@ impl CompressRequest {
     /// Returns `None` when `choice` names no known codec.
     #[must_use]
     pub fn resolve(z_given: bool, choice: Option<&str>, level: Option<i32>) -> Option<Self> {
-        // upstream: compat.c:182-212 parse_compress_choice(0) - the lookup is
+        // upstream: compat.c:183-213 parse_compress_choice(0) - the lookup is
         // case-insensitive and a `none` choice is renamed to "none".
         let (codec, choice) = match choice {
             Some(name) => match CompressionAlgorithm::parse(&name.to_ascii_lowercase()).ok()? {
@@ -48,7 +48,7 @@ impl CompressRequest {
             None if z_given => (RequestedCodec::Fixed(CompressionAlgorithm::Zlib), None),
             None => (RequestedCodec::Off, None),
         };
-        // upstream: options.c:2138-2140 - a level alone turns compression on.
+        // upstream: options.c:2174-2176 - a level alone turns compression on.
         let codec = match codec {
             RequestedCodec::Off if level.is_some() => RequestedCodec::Auto,
             codec => codec,
@@ -62,7 +62,7 @@ impl CompressRequest {
 
     /// Reports whether the compact server flag string carries `z`.
     ///
-    /// upstream: options.c:2898 - only for `do_compression == CPRES_ZLIB`.
+    /// upstream: options.c:2963 - only for `do_compression == CPRES_ZLIB`.
     #[must_use]
     pub fn packs_z(&self) -> bool {
         self.codec == RequestedCodec::Fixed(CompressionAlgorithm::Zlib)
@@ -70,7 +70,7 @@ impl CompressRequest {
 
     /// Returns the forwarded `--compress-level=N` argument, if any.
     ///
-    /// upstream: options.c:2931-2934 - sent unclamped whenever compression is
+    /// upstream: options.c:2996-2999 - sent unclamped whenever compression is
     /// on, `CPRES_AUTO` included, and a level was given.
     #[must_use]
     pub fn level_arg(&self) -> Option<String> {
@@ -92,7 +92,7 @@ impl CompressRequest {
 
     /// Returns the forwarded codec-selection argument, if any.
     ///
-    /// upstream: options.c:2994-2999 - zlibx travels as `--new-compress`, an
+    /// upstream: options.c:3059-3064 - zlibx travels as `--new-compress`, an
     /// explicit zlib as `--old-compress`, anything else (`none` included) as
     /// the verbatim `--compress-choice=NAME`.
     #[must_use]
@@ -107,7 +107,7 @@ impl CompressRequest {
 
     /// Returns the codec an explicit `compress_choice` pins on both peers.
     ///
-    /// upstream: compat.c:547 - a set `compress_choice` skips the vstring
+    /// upstream: compat.c:548 - a set `compress_choice` skips the vstring
     /// negotiation, and a `none` choice stays set (compat.c:209-211) even when
     /// a level re-enables `do_compression`. `None` when no choice was given.
     #[must_use]

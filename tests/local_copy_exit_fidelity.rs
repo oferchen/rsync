@@ -2,7 +2,7 @@
 //! prints its listing and statistics, and picks that exit code the way upstream
 //! does.
 //!
-//! upstream `cleanup.c:210-218` decides the exit status only after the transfer:
+//! upstream `cleanup.c:211-219` decides the exit status only after the transfer:
 //!
 //! ```text
 //! if (io_error & IOERR_DEL_LIMIT) exit_code = RERR_DEL_LIMIT;   /* 25 */

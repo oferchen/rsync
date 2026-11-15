@@ -97,7 +97,7 @@ impl LocalCopyOptions {
 
     /// Reports whether extraneous destination files should be removed.
     ///
-    /// Always `false` under `--list-only`: upstream generator.c:371
+    /// Always `false` under `--list-only`: upstream generator.c:406
     /// `do_delete_pass()` returns early on `list_only` and generator.c:2789
     /// skips the during sweep, so a listing never examines the destination.
     #[must_use]
@@ -126,7 +126,7 @@ impl LocalCopyOptions {
     /// receiver's phase-2 `MSG_DONE`, by which point `handle_delayed_updates()`
     /// has renamed everything and dropped each staging directory.
     ///
-    /// upstream: compat.c:683-688 - `delete_mode` with no `--delete-WHEN`
+    /// upstream: compat.c:684-689 - `delete_mode` with no `--delete-WHEN`
     /// resolves to `delete_during = 1` at protocol >= 30, and `delay_updates`
     /// is not consulted; generator.c:2873-2893 is the barrier and 2899-2902
     /// the late passes it guards; generator.c:1924-1928 is the during sweep.

@@ -47,13 +47,13 @@ pub(crate) fn load_file_list_operands(
             continue;
         }
 
-        // upstream: options.c:2664 opens `--files-from` through
+        // upstream: options.c:2719 opens `--files-from` through
         // `open_no_attacker_symlinks()`. The list is an operator-supplied path
         // that may transit attacker-writable parents, so a planted symlink
         // would redirect the read to a file the operator never named.
         let path_buf = PathBuf::from(path);
         let display = path_buf.display().to_string();
-        // upstream: options.c:2667-2669 - "failed to open files-from file %s: %s"
+        // upstream: options.c:2722-2724 - "failed to open files-from file %s: %s"
         // with strerror(errno) and no errno number.
         let file = crate::frontend::operator_file::open_read(&path_buf).map_err(|error| {
             rsync_error!(
@@ -108,7 +108,7 @@ pub(crate) fn read_file_list_from_reader<R: BufRead>(
                 buffer.pop();
             }
 
-            // upstream: flist.c:2753 sets RL_DUMP_COMMENTS independent of
+            // upstream: flist.c:2764 sets RL_DUMP_COMMENTS independent of
             // eol_nulls, and io.c:1446 read_line() strips leading '#'/';'
             // comment lines even with NUL delimiters. Strip them here too.
             if buffer

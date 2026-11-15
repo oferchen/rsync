@@ -69,7 +69,7 @@ impl ReceiverContext {
         let reader = &mut reader;
         let (file_count, setup) = self.setup_transfer(reader, writer)?;
 
-        // upstream: main.c:1438-1446 - a client handed an empty list skips
+        // upstream: main.c:1442-1450 - a client handed an empty list skips
         // do_recv() entirely; same gate as the network drivers.
         if self.is_empty_client_flist(file_count) {
             return self.finish_empty_client_flist(reader, writer);
@@ -167,7 +167,7 @@ impl ReceiverContext {
                 ..Default::default()
             };
 
-            // upstream: generator.c:2753-2754 - `do_delete_pass()` runs regardless
+            // upstream: generator.c:2839-2840 - `do_delete_pass()` runs regardless
             // of read_batch (the replaying generator forks and runs locally,
             // main.c:652-664). --delete-before / --delete-during sweep here, before
             // the row loop, exactly as the network drivers do (pipelined.rs Early);
@@ -184,7 +184,7 @@ impl ReceiverContext {
             }
 
             // Quick-check walk for its side effects only (metadata-only fixes,
-            // upstream generator.c:2246 set_file_attrs for identical files). The
+            // upstream generator.c:2288 set_file_attrs for identical files). The
             // returned request list is discarded: the recorded stream, not the
             // local plan, decides what is transferred.
             self.build_files_to_transfer(
@@ -214,7 +214,7 @@ impl ReceiverContext {
         };
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
-        // upstream: compat.c:413-415 getenv_nstr() pins every batch to the zlib
+        // upstream: compat.c:414-416 getenv_nstr() pins every batch to the zlib
         // codec, carried on the compact `-z` flag; there is no negotiated
         // vstring on a replay (compat.c:797 do_negotiated_strings = 0).
         let compression = if self.config.flags.compress {
@@ -544,7 +544,7 @@ impl ReceiverContext {
             crate::disk_commit::close_received_file(Some(file), temp_guard.path())?;
 
             if !inplace {
-                // upstream: generator.c:2280-2288 - read_batch with make_backups>0
+                // upstream: generator.c:2322-2330 - read_batch with make_backups>0
                 // still resolves the backup name and preserves the pre-image before
                 // the destination is overwritten. Routed through the same
                 // commit-tier owner the network commit uses (see
@@ -671,7 +671,7 @@ impl ReceiverContext {
                 info_log!(Name, 1, "{}", relative_path.display());
             }
 
-            // upstream: hlink.c:496-565 finish_hard_link() links a cluster to
+            // upstream: hlink.c:510-599 finish_hard_link() links a cluster to
             // the member that completed its transfer. Record the just-committed
             // member as this group's data-holder so create_hardlinks() links the
             // rest to the fresh payload. Which member the batch transferred is
@@ -693,7 +693,7 @@ impl ReceiverContext {
             transferred_file_size += file_entry.size();
         }
 
-        // upstream: generator.c:2641 finish_hard_link() itemizes each follower
+        // upstream: generator.c:2685 finish_hard_link() itemizes each follower
         // before the phase's NDX_DONE, then the followers are linked.
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
         #[cfg(unix)]
@@ -719,13 +719,13 @@ impl ReceiverContext {
 
         // Drain the recorded stream's accumulated io_error before the late
         // sweep consults `stats.io_error`, mirroring the network drivers
-        // (pipelined.rs, upstream generator.c:304-311 gates delete_in_dir on the
+        // (pipelined.rs, upstream generator.c:339-346 gates delete_in_dir on the
         // global io_error). `take_io_error` is destructive and ORs, so the
         // second drain below folds in anything read during finalization without
         // double-counting.
         stats.io_error |= reader.take_io_error();
 
-        // upstream: generator.c:2899-2902 - --delete-after / --delete-delay run
+        // upstream: generator.c:2991-2994 - --delete-after / --delete-delay run
         // the sweep only after every file has landed. Runs before touch_up_dirs
         // so deletion-induced parent mtime changes are re-tidied, matching the
         // network drivers and upstream's touch_up_dirs-after-late-delete order.
@@ -740,7 +740,7 @@ impl ReceiverContext {
             )?;
         }
 
-        // upstream: generator.c:2565-2618 - touch_up_dirs() re-applies
+        // upstream: generator.c:2609-2662 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(
             dest_dir,

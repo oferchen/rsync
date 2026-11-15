@@ -102,10 +102,10 @@ fn error_unknown_module_format() {
 fn error_access_denied_format() {
     // This test documents the expected error format for access denied.
     //
-    // upstream: clientserver.c:733 — access denied:
+    // upstream: clientserver.c:737 — access denied:
     //   "@ERROR: access denied to %s from %s (%s)\n" with (name, host, addr)
     //
-    // upstream: clientserver.c:762 — auth failure:
+    // upstream: clientserver.c:766 — auth failure:
     //   "@ERROR: auth failed on module %s\n" with (name)
     //
     // @RSYNCD: EXIT

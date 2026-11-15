@@ -23,7 +23,7 @@ use core::{
 /// Returns a client-role `Message` for a malformed specification (exit 1), a
 /// charset that cannot be opened (exit 4), or an iconv-disabled build (exit 1).
 ///
-/// upstream: options.c:840 (`--iconv` is a plain string option), options.c:2195-2205
+/// upstream: options.c:843 (`--iconv` is a plain string option), options.c:2231-2241
 /// (`-` clears it on the client), rsync.c:setup_iconv() (splits `LOCAL,REMOTE` and
 /// opens the converters).
 pub(crate) fn resolve_iconv_setting(
@@ -76,7 +76,7 @@ fn accept_parsed_setting(setting: IconvSetting) -> Result<IconvSetting, Message>
 /// Rejects an explicit iconv setting with a hard error when the `iconv`
 /// feature was disabled at build time.
 ///
-/// upstream: options.c:1099-1101 - a build without `ICONV_OPTION` refuses
+/// upstream: options.c:1117-1119 - a build without `ICONV_OPTION` refuses
 /// `--iconv` as an unsupported option.
 #[cfg(not(feature = "iconv"))]
 fn accept_parsed_setting(_setting: IconvSetting) -> Result<IconvSetting, Message> {

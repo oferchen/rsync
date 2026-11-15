@@ -175,7 +175,7 @@ fn multiplex_reader_buffered_partial_read() {
 
 #[test]
 fn multiplex_reader_accumulates_msg_io_error() {
-    // upstream: io.c:1740-1747
+    // upstream: io.c:1747-1754
     let mut stream = Vec::new();
 
     let io_err_val: i32 = 1; // IOERR_GENERAL
@@ -225,7 +225,7 @@ fn multiplex_reader_io_error_wrong_payload_length_aborts() {
     // to invalid_msg and exit_cleanup(RERR_STREAMIO) (exit 12). Silently dropping
     // it would lose the io_error flags the frame carries and desynchronise the
     // demultiplexer, so the read must abort rather than deliver later data.
-    // upstream: io.c:1741 `if (msg_bytes != 4) goto invalid_msg;`
+    // upstream: io.c:1748 `if (msg_bytes != 4) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::IoError, &[1, 0, 0]).unwrap();
@@ -265,7 +265,7 @@ fn accumulate_one_msg_io_error(value: i32) -> i32 {
 /// the value to the defined bits at the read site, so undefined bits are never
 /// stored locally and never re-forwarded to the next hop.
 ///
-/// upstream: io.c:1741-1748 - `val &= IOERR_VALID_MASK; io_error |= val;`
+/// upstream: io.c:1748-1755 - `val &= IOERR_VALID_MASK; io_error |= val;`
 #[test]
 fn msg_io_error_masks_undefined_bits_from_a_hostile_peer() {
     use protocol::{IOERR_GENERAL, IOERR_VALID_MASK, IOERR_VANISHED};
@@ -288,7 +288,7 @@ fn msg_io_error_masks_undefined_bits_from_a_hostile_peer() {
 /// defined bits. Masking at one entry point but not the other is exactly the
 /// defect upstream fixed, so this asserts the property, not one call site.
 ///
-/// upstream: rsync.h:195-200 (the mask's rationale), generator.c:304 (the
+/// upstream: rsync.h:196-201 (the mask's rationale), generator.c:339 (the
 /// delete guard), cleanup.c:213-218 (the exit-code mapping).
 #[test]
 fn no_peer_value_can_steer_the_delete_guard_or_exit_code_off_the_defined_bits() {
@@ -334,7 +334,7 @@ fn server_reader_take_io_error_plain_returns_zero() {
 /// remote pull that loses a source file mid-transfer reports the right code:
 /// IOERR_VANISHED -> 24, IOERR_GENERAL -> 23. This is the value the receiver
 /// transfer path ORs via `stats.io_error |= reader.take_io_error()`.
-/// upstream: io.c:1745 `io_error |= val`; log.c `log_exit` maps to RERR_*.
+/// upstream: io.c:1752 `io_error |= val`; log.c `log_exit` maps to RERR_*.
 #[test]
 fn server_reader_io_error_drives_receiver_exit_code() {
     use crate::generator::io_error_flags::{IOERR_GENERAL, IOERR_VANISHED, to_exit_code};
@@ -396,7 +396,7 @@ fn msg_io_error_round_trip_through_multiplex_layer() {
     // 3. Receiver forwards accumulated flags via multiplex writer
     // 4. Generator receives the forwarded MSG_IO_ERROR
     //
-    // upstream: io.c:1740-1748
+    // upstream: io.c:1747-1755
     use crate::io_error_flags;
     use protocol::{MessageCode, MplexWriter};
     use std::io::Write;
@@ -479,8 +479,8 @@ fn multiplex_reader_surfaces_each_msg_no_send_before_the_data_after_it() {
     // exactly one file at a time, so draining them together would report the
     // first and silently strand the rest.
     //
-    // upstream: io.c:1847-1856 - MSG_NO_SEND retires the entry on the generator
-    // upstream: sender.c:670,725,753 - each emitter `continue`s, writing no response
+    // upstream: io.c:1854-1863 - MSG_NO_SEND retires the entry on the generator
+    // upstream: sender.c:678,725,753 - each emitter `continue`s, writing no response
     let mut stream = Vec::new();
     let ndx1: i32 = 42;
     protocol::send_msg(
@@ -537,7 +537,7 @@ fn multiplex_reader_no_send_wrong_payload_length_aborts() {
     // A wrong-sized MSG_NO_SEND is fatal upstream (invalid_msg ->
     // exit_cleanup(RERR_STREAMIO)). Dropping it would lose the no-send file index
     // the generator needs, so the read must abort instead of continuing.
-    // upstream: io.c:1848 `if (msg_bytes != 4) goto invalid_msg;`
+    // upstream: io.c:1855 `if (msg_bytes != 4) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::NoSend, &[1, 0, 0]).unwrap();
@@ -583,7 +583,7 @@ fn server_reader_surfaces_msg_no_send_through_the_multiplex_arm() {
 
 #[test]
 fn multiplex_reader_accumulates_msg_redo() {
-    // upstream: io.c:1733-1739, receiver.c:1375
+    // upstream: io.c:1740-1746, receiver.c:1375
     let mut stream = Vec::new();
 
     let ndx1: i32 = 5;
@@ -631,7 +631,7 @@ fn multiplex_reader_redo_wrong_payload_length_aborts() {
     // A wrong-sized MSG_REDO is fatal upstream (invalid_msg ->
     // exit_cleanup(RERR_STREAMIO)). Dropping it would lose the redo file index
     // the generator must reprocess, so the read must abort instead of continuing.
-    // upstream: io.c:1734 `if (msg_bytes != 4 || !am_generator) goto invalid_msg;`
+    // upstream: io.c:1741 `if (msg_bytes != 4 || !am_generator) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::Redo, &[1, 0, 0]).unwrap();
@@ -928,7 +928,7 @@ fn batch_recorder_roundtrip_try_borrow_exact_matches_write_side() {
 
 #[test]
 fn multiplex_reader_exit_23_aborts_and_the_late_error_xfer_is_read_after() {
-    // upstream: io.c:1892-1930 - MSG_ERROR_EXIT(23) ends the read like any
+    // upstream: io.c:1899-1937 - MSG_ERROR_EXIT(23) ends the read like any
     // other code. A daemon may send it ahead of the FERROR_XFER that caused
     // it; that frame is read by the wait for the peer's exit
     // (cleanup.c:242-253 noop_io_until_death), not by the transfer.
@@ -1006,7 +1006,7 @@ fn block_stats_stream(payload: &[u8]) -> Vec<u8> {
 /// 8-byte LE int64 payload and keeps reading - the frame precedes the final
 /// goodbye NDX_DONE, so dropping or mis-decoding it would print the wrong
 /// `Number of 4 KiB logical blocks touched` line.
-/// upstream: io.c:1727 `stats.touched_blocks_4k = IVAL64(b, 0);`
+/// upstream: io.c:1734 `stats.touched_blocks_4k = IVAL64(b, 0);`
 #[test]
 fn server_reader_block_stats_accepted_on_sender_is_stored() {
     let payload = 1_024i64.to_le_bytes();
@@ -1023,7 +1023,7 @@ fn server_reader_block_stats_accepted_on_sender_is_stored() {
 /// WHY: before protocol 33, and on any reader that is not the sender, tag 11 is
 /// an unknown message upstream - `invalid_msg` exits RERR_STREAMIO. A reader
 /// that silently accepted it would let a proto-32 peer inject a stats value.
-/// upstream: io.c:1724 `protocol_version < 33 || (!am_generator && !am_sender)`.
+/// upstream: io.c:1731 `protocol_version < 33 || (!am_generator && !am_sender)`.
 #[test]
 fn server_reader_block_stats_rejected_when_not_accepted() {
     let payload = 7i64.to_le_bytes();
@@ -1041,7 +1041,7 @@ fn server_reader_block_stats_rejected_when_not_accepted() {
 
 /// WHY: upstream requires `msg_bytes == 8` exactly; any other length is the
 /// fatal invalid-message path even on an accepting sender.
-/// upstream: io.c:1724 `if (msg_bytes != 8 || ...) goto invalid_msg;`
+/// upstream: io.c:1731 `if (msg_bytes != 8 || ...) goto invalid_msg;`
 #[test]
 fn server_reader_block_stats_wrong_length_rejected() {
     for payload in [&[0u8; 4][..], &[0u8; 9][..], &[][..]] {
@@ -1085,7 +1085,7 @@ fn server_reader_block_stats_defaults_to_zero() {
 /// multiplexed frames. The unframed view must first hand out payload left
 /// over from the current frame, then read the raw bytes without treating
 /// them as a frame header, and dropping the view must resume demultiplexing
-/// exactly at the next frame. upstream: flist.c:2795-2797 / 3013-3014.
+/// exactly at the next frame. upstream: flist.c:2806-2808 / 3013-3014.
 #[test]
 fn server_reader_unframed_view_reads_raw_bytes_between_frames() {
     let mut stream = Vec::new();

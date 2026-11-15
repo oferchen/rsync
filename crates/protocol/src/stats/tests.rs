@@ -363,7 +363,7 @@ fn delete_stats_total() {
     assert_eq!(empty.total(), 0);
 }
 
-/// upstream: rsync.h:181-187 - MAX_WIRE_DEL_STAT = (int32)1 << 28.
+/// upstream: rsync.h:182-188 - MAX_WIRE_DEL_STAT = (int32)1 << 28.
 #[test]
 fn delete_stats_rejects_oversized_wire_value() {
     use crate::varint::write_varint;
@@ -394,7 +394,7 @@ fn delete_stats_rejects_oversized_wire_value() {
     );
 }
 
-/// upstream: rsync.h:181-187 - MAX_WIRE_DEL_STAT = (int32)1 << 28.
+/// upstream: rsync.h:182-188 - MAX_WIRE_DEL_STAT = (int32)1 << 28.
 #[test]
 fn delete_stats_rejects_negative_wire_value() {
     use crate::varint::write_varint;
@@ -421,7 +421,7 @@ fn delete_stats_rejects_negative_wire_value() {
 
 /// Values at exactly MAX_WIRE_DEL_STAT must be accepted.
 ///
-/// upstream: rsync.h:181-187 sets MAX_WIRE_DEL_STAT = `(int32)1 << 28`.
+/// upstream: rsync.h:182-188 sets MAX_WIRE_DEL_STAT = `(int32)1 << 28`.
 #[test]
 fn delete_stats_accepts_value_at_cap() {
     use crate::varint::write_varint;

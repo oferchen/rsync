@@ -151,7 +151,7 @@ fn write_batch_marks_new_file_item_is_new() {
         iflags & ITEM_IS_NEW,
         ITEM_IS_NEW,
         "a file created at a destination that did not previously exist must carry \
-         ITEM_IS_NEW (0x2000) in the recorded iflags word (upstream generator.c:583-584 \
+         ITEM_IS_NEW (0x2000) in the recorded iflags word (upstream generator.c:620-621 \
          itemize() / sender.c:469 write_ndx_and_attrs()); without it a replaying \
          upstream --read-batch itemizes the file as unchanged (`>f.........`) and \
          counts zero created files; got {iflags:#06x}"

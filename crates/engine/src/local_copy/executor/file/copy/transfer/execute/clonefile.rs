@@ -142,7 +142,7 @@ pub(super) fn try_clone(
     // hypothetical one: it is what made the upstream `symlink-race-source`
     // cell leak on macOS while the confined open refused the same shape.
     //
-    // upstream: `rsync-3.5.1/sender.c:215-252` `sender_open_confined()` - the
+    // upstream: `rsync-3.5.2/sender.c:223-260` `sender_open_confined()` - the
     // sender's content read is confined, and this CoW fast path is an oc
     // extension that must not weaken that invariant.
     #[cfg(unix)]

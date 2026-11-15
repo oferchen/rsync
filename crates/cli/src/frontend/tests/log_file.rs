@@ -2,7 +2,7 @@ use super::common::*;
 use super::*;
 
 /// Asserts the upstream log-file line prefix shape
-/// `^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} \[\d+\] ` (upstream: log.c:135).
+/// `^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} \[\d+\] ` (upstream: log.c:142).
 fn assert_upstream_log_prefix(line: &str) -> &str {
     let bytes = line.as_bytes();
     let shape_ok = bytes.len() > 21
@@ -16,7 +16,7 @@ fn assert_upstream_log_prefix(line: &str) -> &str {
         && bytes[20] == b'[';
     assert!(
         shape_ok,
-        "log line missing upstream `%Y/%m/%d %H:%M:%S [pid] ` prefix (log.c:127): {line:?}"
+        "log line missing upstream `%Y/%m/%d %H:%M:%S [pid] ` prefix (log.c:134): {line:?}"
     );
     let (pid, body) = line[21..].split_once("] ").expect("prefix `] ` separator");
     assert!(

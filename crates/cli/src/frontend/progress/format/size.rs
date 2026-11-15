@@ -11,7 +11,7 @@ use core::client::HumanReadableMode;
 /// - Level 2 (`-h`) / level 3 (`-hh`): unit suffixes such as `K`, `M`, or `G`
 ///   with two fractional digits, dividing by 1000 and 1024 respectively.
 pub(crate) fn format_progress_bytes(bytes: u64, human_readable: HumanReadableMode) -> String {
-    format_size(bytes, human_readable)
+    format!("{}B", format_size(bytes, human_readable))
 }
 
 /// Formats a byte count for the active human-readable level: unit-suffixed for
@@ -21,7 +21,7 @@ pub(crate) fn format_size(bytes: u64, human_readable: HumanReadableMode) -> Stri
         return format_human_bytes(bytes, human_readable.unit_base());
     }
 
-    // upstream: lib/compat.c:231 inserts the separator only when human_flag != 0
+    // upstream: lib/compat.c:241 inserts the separator only when human_flag != 0
     // (level 1); level 0 (--no-h) emits the raw digit run.
     if human_readable.uses_separators() {
         format_decimal_bytes(bytes)
@@ -49,34 +49,42 @@ pub(crate) fn format_decimal_bytes(bytes: u64) -> String {
     logging::comma_num(bytes)
 }
 
-/// Formats a byte count with a `K`/`M`/`G`/`T`/`P` suffix and two fractional
-/// digits. `base` is 1000 for `-h` or 1024 for `-hh`; values below `base` render
-/// as plain digits.
+/// Formats a byte count with `K`/`M`/`G`/`T`/`P`/`E` (or `Ki`/`Mi`/... for
+/// base 1024) and upstream 3.5.2 `do_big_num` dynamic precision (`<10` => 2,
+/// `<100` => 1, `>=100` => 0). Values below `base` fall back to
+/// comma-grouped decimal digits.
 pub(crate) fn format_human_bytes(bytes: u64, base: f64) -> String {
-    // upstream: lib/compat.c:do_big_num - values below the multiplier are
-    // printed without a unit suffix; otherwise K/M/G/T/P with two fractional
-    // digits. `base` is 1000 for `-h` and 1024 for `-hh` (lib/compat.c:183).
-    let bytes_f64 = bytes as f64;
-    if bytes_f64 < base {
-        return bytes.to_string();
-    }
+    let mult: u64 = if base >= 1024.0 { 1024 } else { 1000 };
+    let units = ["", "K", "M", "G", "T", "P", "E"];
+    let mut unit_idx = 0usize;
+    let mut powi = 1u64;
 
-    let units = [
-        ("P", base.powi(5)),
-        ("T", base.powi(4)),
-        ("G", base.powi(3)),
-        ("M", base.powi(2)),
-        ("K", base),
-    ];
-
-    for (suffix, threshold) in units {
-        if bytes_f64 >= threshold {
-            let value = bytes_f64 / threshold;
-            return format!("{value:.2}{suffix}");
+    loop {
+        if bytes / mult < powi {
+            break;
         }
+        if unit_idx + 1 >= units.len() {
+            break;
+        }
+        powi *= mult;
+        unit_idx += 1;
     }
 
-    bytes.to_string()
+    if powi > 1 {
+        let whole = bytes / powi;
+        let precision = if whole < 10 {
+            2
+        } else if whole < 100 {
+            1
+        } else {
+            0
+        };
+        let value = bytes as f64 / powi as f64;
+        let binary_i = if mult == 1024 { "i" } else { "" };
+        return format!("{value:.precision$}{}{binary_i}", units[unit_idx]);
+    }
+
+    format_decimal_bytes(bytes)
 }
 
 /// Formats a file size for `--list-only` output, right-aligned to the level's
@@ -147,9 +155,9 @@ mod tests {
         assert_eq!(format_decimal_bytes(u64::MAX), "18,446,744,073,709,551,615");
     }
 
-    // upstream: lib/compat.c:183 - `-h` (level 2) uses base 1000.
+    // upstream: lib/compat.c:185 - `-h` (level 2) uses base 1000.
     const BASE_1000: f64 = 1000.0;
-    // upstream: lib/compat.c:183 - `-hh` (level 3) uses base 1024.
+    // upstream: lib/compat.c:185 - `-hh` (level 3) uses base 1024.
     const BASE_1024: f64 = 1024.0;
 
     #[test]
@@ -183,14 +191,14 @@ mod tests {
     #[test]
     fn format_human_bytes_base_1024() {
         // -hh divides by 1024: 2,201,503 bytes -> 2.10M (not 2.20M at base 1000).
-        assert_eq!(format_human_bytes(2_201_503, BASE_1024), "2.10M");
-        assert_eq!(format_human_bytes(1_024, BASE_1024), "1.00K");
-        assert_eq!(format_human_bytes(1_048_576, BASE_1024), "1.00M");
+        assert_eq!(format_human_bytes(2_201_503, BASE_1024), "2.10Mi");
+        assert_eq!(format_human_bytes(1_024, BASE_1024), "1.00Ki");
+        assert_eq!(format_human_bytes(1_048_576, BASE_1024), "1.00Mi");
     }
 
     #[test]
     fn format_list_size_pads_to_14() {
-        // upstream: generator.c:1322 size_width = 14 (human_readable defaults to 1).
+        // upstream: generator.c:1359 size_width = 14 (human_readable defaults to 1).
         let result = format_list_size(123, HumanReadableMode::Grouped);
         assert_eq!(result.len(), 14);
         assert!(result.trim_start().starts_with("123"));
@@ -297,13 +305,13 @@ mod tests {
         );
         assert_eq!(
             format_size(1_234_567, HumanReadableMode::BinaryUnits),
-            "1.18M"
+            "1.18Mi"
         );
     }
 
     #[test]
     fn format_list_size_raw_is_width_11_no_commas() {
-        // upstream: generator.c:1322 size_width = 11 for level 0; the value is
+        // upstream: generator.c:1359 size_width = 11 for level 0; the value is
         // right-justified raw digits, matching `-rw-r--r--     1234567 ...`.
         let result = format_list_size(1_234_567, HumanReadableMode::Raw);
         assert_eq!(result, "    1234567");
@@ -312,7 +320,7 @@ mod tests {
 
     #[test]
     fn format_list_size_default_is_width_14_with_commas() {
-        // upstream: generator.c:1322 size_width = 14 for level 1.
+        // upstream: generator.c:1359 size_width = 14 for level 1.
         let result = format_list_size(1_234_567, HumanReadableMode::Grouped);
         assert_eq!(result, "     1,234,567");
         assert_eq!(result.len(), 14);

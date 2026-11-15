@@ -48,7 +48,7 @@ pub struct VerifyFailure {
     ///
     /// Upstream's `stdout_format_has_i` is a TRI-STATE, not a flag: `2` when
     /// `am_server` and the format carries `%I`, and `itemize_changes` is a
-    /// counter (`options.c:1694`), so `-ii` also yields `2`. Several upstream
+    /// counter (`options.c:1721`), so `-ii` also yields `2`. Several upstream
     /// sites test `> 1` specifically (`generator.c:589,1142,1298`,
     /// `hlink.c:415`, `log.c:879`). This gate is not one of them -
     /// `receiver.c:1351` tests plain truthiness - so a `bool` is exact here.

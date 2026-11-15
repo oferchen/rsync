@@ -116,14 +116,14 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
             list.iter()
                 .any(|e| e.state().needs_send() || e.state().needs_request())
         });
-        // upstream: generator.c:2377-2386 - the generator forwards the full
+        // upstream: generator.c:2420-2429 - the generator forwards the full
         // itemize iflags (ITEM_TRANSFER plus the pre-transfer attribute-diff
         // bits from itemize(), including ITEM_IS_NEW when the destination did
         // not exist). The sender reads them, echoes them back, and prints the
         // row via log_item(FCLIENT), so on a push a brand-new file shows
         // `<f+++++++++` rather than `<f.........`.
         //
-        // upstream: generator.c:587 `iflags &= 0xffff` keeps every low-16
+        // upstream: generator.c:624 `iflags &= 0xffff` keeps every low-16
         // report bit - including ITEM_REPORT_XATTR (1<<8), which itemize() set
         // from the xattr_diff() comparison (generator.c:571-581). Only bits
         // 16-18 (ITEM_MISSING_DATA/DELETED/MATCHED, all log-only locals) are
@@ -138,7 +138,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         let mut iflags = ((base_iflags & 0xFFFF) as u16
             & !(MANAGED | SenderAttrs::ITEM_REPORT_XATTR))
             | SenderAttrs::ITEM_TRANSFER;
-        // upstream: generator.c:571-575 gate the xattr comparison on
+        // upstream: generator.c:608-612 gate the xattr comparison on
         // preserve_xattrs, so base_iflags only carries the bit when -X is
         // active; re-gate here for safety. The bit is set from the itemized
         // value diff (base_iflags) or from a TODO/abbrev request in xattr_list.
@@ -147,7 +147,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         if report_xattr {
             iflags |= SenderAttrs::ITEM_REPORT_XATTR;
         }
-        // upstream: generator.c:2381-2382 - a non-FNAME basis sets
+        // upstream: generator.c:2424-2425 - a non-FNAME basis sets
         // ITEM_BASIS_TYPE_FOLLOWS so the sender reads the trailing fnamecmp_type
         // byte and echoes it back to the receiver (rsync.c:404-406). The
         // --partial-dir resume basis (FNAMECMP_PARTIAL_DIR) and the
@@ -158,7 +158,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         if emit_basis_type {
             iflags |= SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS;
         }
-        // upstream: generator.c:2383-2384 - a fuzzy basis also sets
+        // upstream: generator.c:2426-2427 - a fuzzy basis also sets
         // ITEM_XNAME_FOLLOWS and sends the basis basename as a vstring so the
         // peer's receiver can open the same file.
         let emit_xname = fnamecmp_type.is_fuzzy() && xname.is_some();
@@ -173,12 +173,12 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
             writer.write_all(&[u8::from(fnamecmp_type)])?;
         }
         if emit_xname {
-            // upstream: generator.c:596-597 write_vstring() - 1- or 2-byte
+            // upstream: generator.c:633-634 write_vstring() - 1- or 2-byte
             // length prefix then the basename bytes (io.c:2520), not a varint.
             protocol::write_vstring(writer, xname.unwrap_or(&[]))?;
         }
 
-        // upstream: generator.c:598-605 - the xattr request payload follows the
+        // upstream: generator.c:635-642 - the xattr request payload follows the
         // basis/xname fields whenever ITEM_REPORT_XATTR is on the wire; the
         // peer's send_files() reads it under the identical condition
         // (sender.c:578-581). want_xattr_optim combined with
@@ -208,7 +208,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         None => SumHead::empty(),
     };
     // The `generating and sending sums for %d` line is NOT emitted here.
-    // Upstream prints it (generator.c:2364-2365) between `gen mapped` and the
+    // Upstream prints it (generator.c:2407-2408) between `gen mapped` and the
     // geometry line that `sum_sizes_sqroot()` produces, i.e. while the basis is
     // being checksummed - which in oc is `receiver::basis`, the owner of all
     // four generator-half DELTASUM lines. Emitting it at this point put it after
@@ -216,7 +216,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     // 3.5.0 on a `--debug=deltasum2` pull).
     sum_head.write(writer)?;
 
-    // upstream: generator.c:792-793 - in append mode, generator skips writing
+    // upstream: generator.c:829-830 - in append mode, generator skips writing
     // signature blocks after sum_head. The sender's receive_sums() (sender.c:354-359)
     // returns early without reading blocks, using sum_head to calculate existing length.
     if !config.append
@@ -237,7 +237,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
             sig.release_blocks();
             PendingTransfer::new_delta_transfer(ndx, file_path, basis, sig, target_size)
         }
-        // upstream: generator.c:2280,2400 - a --whole-file request still
+        // upstream: generator.c:2322,2400 - a --whole-file request still
         // names its basis; the receiver opens it with no sums to match.
         (None, Some(basis)) => {
             PendingTransfer::new_whole_file_against(ndx, file_path, basis, target_size)

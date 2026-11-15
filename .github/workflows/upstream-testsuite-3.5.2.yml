@@ -1,6 +1,6 @@
-name: Upstream Testsuite 3.5.1
+name: Upstream Testsuite 3.5.2
 
-# The REQUIRED upstream-testsuite gate: rsync 3.5.1's own testsuite corpus run
+# The REQUIRED upstream-testsuite gate: rsync 3.5.2's own testsuite corpus run
 # against oc-rsync on {Linux, macOS} x {non-root, root} x {pipe, loopback tcp}.
 #
 # These jobs lived in ci.yml. They have their own workflow so the README can
@@ -40,7 +40,7 @@ on:
 
 # One group per commit: a scheduled or dispatched run never cancels another.
 concurrency:
-  group: upstream-testsuite-3.5.1-${{ github.ref }}-${{ github.sha }}
+  group: upstream-testsuite-3.5.2-${{ github.ref }}-${{ github.sha }}
 
 permissions:
   contents: read
@@ -58,14 +58,14 @@ jobs:
   # Upstream Testsuite - Drive upstream rsync's own testsuite corpus against
   # oc-rsync (reusable workflow)
   # ---------------------------------------------------------------------------
-  # Required check. Pinned to 3.5.1, the release this project targets. The
+  # Required check. Pinned to 3.5.2, the release this project targets. The
   # driver dispatches on the extracted tree's SHAPE, not its version string:
-  # 3.5.1 ships runtests.py + 360 `*_test.py` and takes upstream's own runner,
+  # 3.5.2 ships runtests.py + 360 `*_test.py` and takes upstream's own runner,
   # where 3.4.4 shipped 57 `*.test` shell scripts. That matters because the
   # behavioural axis is what 3.5.x changed (33 CVEs, a rewritten path resolver,
   # new options and daemon directives) - the interop cells in ci.yml cannot see
   # any of it. The 3.5.0 corpus is not run: its test names are a subset of
-  # 3.5.1's apart from two cells asserting 3.5.0 behaviour that 3.5.1 changed.
+  # 3.5.2's apart from two cells asserting 3.5.0 behaviour that 3.5.2 changed.
   #
   # The harness exits non-zero on UNEXPECTED failures or UNEXPECTED passes;
   # both surface regressions worth blocking on.
@@ -83,19 +83,19 @@ jobs:
       # single release we conform to - so sharing one knob would let an
       # operator override drag the conformance gate back to 3.4.4 as a side
       # effect of retargeting interop.
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.2' }}
       # The accepted-divergence ledger, GENERATED from an executed run (each
       # manifest names its run) and committed. --expect-result runs ONLY these
       # tests and fails on any mismatch INCLUDING an unexpected PASS, so a test
       # that starts passing reddens the gate until the baseline is regenerated
       # - the divergence set can only shrink deliberately, never drift.
-      expect_result_nonroot: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.nonroot.txt' || '' }}
-      expect_result_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.root.txt' || '' }}
+      expect_result_nonroot: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.2-expect.nonroot.txt' || '' }}
+      expect_result_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.2-expect.root.txt' || '' }}
 
   # ===========================================================================
   # Upstream Testsuite over a real loopback TCP daemon
   # ---------------------------------------------------------------------------
-  # The same 3.5.1 corpus as the job above, run with `transport: tcp`. The two
+  # The same 3.5.2 corpus as the job above, run with `transport: tcp`. The two
   # transports are NOT redundant: the job above uses upstream's secure default,
   # a stdio socketpair with no listening socket, so it never exercises accept(),
   # the `hosts allow`/`hosts deny` decision, or the peer-address resolution that
@@ -126,16 +126,16 @@ jobs:
     with:
       variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.2' }}
       transport: 'tcp'
       # Separate from the pipe manifests by measurement, not by convention: the
       # tcp legs select a different (smaller) test set, so a shared file would
       # fail the driver's own coverage guard.
-      expect_result_nonroot: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.nonroot.tcp.txt' || '' }}
-      expect_result_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.root.tcp.txt' || '' }}
+      expect_result_nonroot: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.2-expect.nonroot.tcp.txt' || '' }}
+      expect_result_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.2-expect.root.tcp.txt' || '' }}
 
   # ===========================================================================
-  # Upstream testsuite - macOS (3.5.1, pipe and tcp, nonroot and root)
+  # Upstream testsuite - macOS (3.5.2, pipe and tcp, nonroot and root)
   # ---------------------------------------------------------------------------
   # The four Linux legs ({nonroot,root} x {pipe,tcp}) cannot observe a
   # platform-conditional divergence. macOS has no Landlock, so the confinement
@@ -176,9 +176,9 @@ jobs:
     with:
       variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
-      expect_result_macos: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.macos.nonroot.txt' || '' }}
-      expect_result_macos_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.macos.root.txt' || '' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.2' }}
+      expect_result_macos: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.2-expect.macos.nonroot.txt' || '' }}
+      expect_result_macos_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.2-expect.macos.root.txt' || '' }}
 
   upstream-testsuite-macos-tcp:
     needs: changes
@@ -187,9 +187,9 @@ jobs:
     with:
       variant: ${{ needs.changes.outputs.docs_only == 'true' && 'none' || 'all' }}
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.2' }}
       transport: 'tcp'
       # Its OWN manifests: --daemon-tests-only selects a different (smaller) set,
       # so the pipe manifests would fail the driver's coverage guard outright.
-      expect_result_macos: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.macos.nonroot.tcp.txt' || '' }}
-      expect_result_macos_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.macos.root.tcp.txt' || '' }}
+      expect_result_macos: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.2-expect.macos.nonroot.tcp.txt' || '' }}
+      expect_result_macos_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.2-expect.macos.root.tcp.txt' || '' }}

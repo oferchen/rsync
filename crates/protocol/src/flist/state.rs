@@ -12,7 +12,7 @@
 
 /// Maximum path length for file list name compression.
 ///
-/// upstream: `MAXPATHLEN` comes from the platform (4096 on Linux); rsync.h:761-763 falls
+/// upstream: `MAXPATHLEN` comes from the platform (4096 on Linux); rsync.h:777-779 falls
 /// back to 1024 only when the system does not define it.
 const MAXPATHLEN: usize = 4096;
 

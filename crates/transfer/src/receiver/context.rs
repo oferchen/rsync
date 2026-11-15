@@ -61,7 +61,7 @@ pub struct ReceiverContext {
     /// Each entry is `(flat_start, ndx_start)`.
     /// Without INC_RECURSE, contains a single entry `(0, 0)`.
     ///
-    /// upstream: flist.c:3511 - `flist->ndx_start = prev->ndx_start + prev->used + 1`
+    /// upstream: flist.c:3522 - `flist->ndx_start = prev->ndx_start + prev->used + 1`
     pub(in crate::receiver) ndx_segments: Vec<(usize, i32)>,
     /// Each segment's parent directory as a `dir_flist` index, aligned 1:1
     /// with `ndx_segments` (the generator keeps `segment_parent_flat` the same
@@ -245,7 +245,7 @@ pub struct ReceiverContext {
     /// Accumulated I/O error flags from the sender's file list for protocol < 30.
     ///
     /// For protocol < 30, the sender writes a 4-byte LE io_error flag after the
-    /// id lists (upstream: flist.c:2792-2793). Protocol >= 30 uses MSG_IO_ERROR
+    /// id lists (upstream: flist.c:2803-2804). Protocol >= 30 uses MSG_IO_ERROR
     /// or SAFE_FILE_LIST instead.
     pub(in crate::receiver) flist_io_error: i32,
     /// PEER-supplied file-list io_error bits from the protocol < 30 trailer,
@@ -440,7 +440,7 @@ pub struct ReceiverContext {
     /// names to it, avoiding a duplicate name per file.
     pub(in crate::receiver) progress_active: bool,
     /// Count of server-mode hardlink-follower itemize records emitted this phase
-    /// that the peer's sender will echo back (upstream `sender.c:289-295` echoes
+    /// that the peer's sender will echo back (upstream `sender.c:297-303` echoes
     /// every non-transfer item). The pipeline response loop is request-count
     /// driven and never reads these echoes, so they must be drained at the phase
     /// boundary - after the receiver's NDX_DONE unblocks the sender to flush -
@@ -458,7 +458,7 @@ pub struct ReceiverContext {
     /// Phase-ending generator writes (`NDX_DONE`, `NDX_DEL_STATS`) already
     /// sent, so none is written twice.
     ///
-    /// upstream: generator.c:2831-2872 writes them as soon as the receiver
+    /// upstream: generator.c:2917-2958 writes them as soon as the receiver
     /// has finished the previous phase, before the replies to the requests
     /// that precede them are read.
     pub(in crate::receiver) phase_end_writes_sent: std::cell::Cell<usize>,
@@ -489,7 +489,7 @@ pub struct ReceiverContext {
     /// (sender.c:469-486 `write_ndx_and_attrs`) inline. Empty on a pull: a
     /// client-mode receiver prints its rows locally instead.
     ///
-    /// upstream: generator.c:582-593 - `itemize()` wire emission gate.
+    /// upstream: generator.c:619-630 - `itemize()` wire emission gate.
     pub(in crate::receiver) server_no_transfer_itemize: RefCell<Vec<(usize, u16)>>,
     /// Directory itemize rows a server receiver under INC_RECURSE holds back
     /// until the directory's own sub-list is walked, keyed by the directory's
@@ -498,7 +498,7 @@ pub struct ReceiverContext {
     /// upstream likewise keeps directories in `dir_flist`'s pool
     /// (flist.c:1374-1379).
     ///
-    /// upstream: generator.c:1631-1633 - a directory met inside its parent's
+    /// upstream: generator.c:1668-1670 - a directory met inside its parent's
     /// list is `is_dir < 0`, so recv_generator() only creates it there
     /// (generator.c:1819-1834); generate_files() itemizes it when its sub-list
     /// becomes `cur_flist` (generator.c:2780-2787).
@@ -527,7 +527,7 @@ pub struct ReceiverContext {
     /// order upstream's receiver logs them as it reads each index.
     pub(in crate::receiver) daemon_log_rows: RefCell<crate::progress::DaemonLogRows>,
     /// The daemon's module log, set for every daemon receiver with a log sink
-    /// whether or not the module has `transfer logging` (upstream log.c:312
+    /// whether or not the module has `transfer logging` (upstream log.c:392
     /// logs on `am_daemon` alone). Diagnostics and `del.` rows are written
     /// through it as they are raised.
     pub(in crate::receiver) daemon_log_sink: Option<crate::progress::SharedDaemonLog>,
@@ -566,7 +566,7 @@ pub struct ReceiverContext {
     /// `TransferStats::got_xfer_error` alongside the wire-side count. `Cell`
     /// because the emit sites run behind a `&self` receiver method.
     ///
-    /// upstream: log.c:310-311 - `case FERROR_XFER: got_xfer_error = 1;`.
+    /// upstream: log.c:390-391 - `case FERROR_XFER: got_xfer_error = 1;`.
     pub(in crate::receiver) got_xfer_error: std::cell::Cell<bool>,
     /// Extraneous-entry victims decided during the transfer walk for a
     /// `--delete-delay` run, awaiting execution after the transfer completes.
@@ -577,7 +577,7 @@ pub struct ReceiverContext {
     /// physical unlink is postponed to the end of the run. Empty for every other
     /// delete mode.
     ///
-    /// upstream: generator.c:157 `remember_delete()` fills the delete-delay buffer
+    /// upstream: generator.c:192 `remember_delete()` fills the delete-delay buffer
     /// during the walk; generator.c:2419 `do_delayed_deletions()` flushes it after
     /// `generate_files()` finishes.
     ///
@@ -592,7 +592,7 @@ pub struct ReceiverContext {
     /// `delete_in_dir()`; skipping protects destination files that merely never
     /// made it into an incomplete file list from being unlinked as extraneous.
     ///
-    /// upstream: generator.c:304-311 - `delete_in_dir()` returns early (printing
+    /// upstream: generator.c:339-346 - `delete_in_dir()` returns early (printing
     /// once) whenever `io_error & IOERR_GENERAL && !ignore_errors`.
     pub(in crate::receiver) io_error_delete_warning_emitted: bool,
     /// Deletions `--max-delete` refused anywhere in the run - every delete sweep
@@ -637,7 +637,7 @@ pub struct ReceiverContext {
     /// directly. Guarded by a `Mutex` because directory metadata application
     /// may run from the parallel batch path.
     ///
-    /// upstream: generator.c:1904-1912 raise + generator.c:2594 fix_dir_perms.
+    /// upstream: generator.c:1941-1949 raise + generator.c:2638 fix_dir_perms.
     #[cfg(unix)]
     pub(in crate::receiver) dir_perm_restores: std::sync::Mutex<Vec<(std::path::PathBuf, u32)>>,
     /// `--backup-dir` chain validated by this session's previous backup,
@@ -715,13 +715,13 @@ impl ReceiverContext {
         config: ServerConfig,
         pipeline: TransferPipeline,
     ) -> Self {
-        // upstream: flist.c:3201 - ndx_start = inc_recurse ? 1 : 0
+        // upstream: flist.c:3212 - ndx_start = inc_recurse ? 1 : 0
         let inc_recurse = handshake
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
         let initial_ndx_start = if inc_recurse { 1 } else { 0 };
 
-        // upstream: compat.c:653-655 - legacy (protocol < 30) peers verify the
+        // upstream: compat.c:654-656 - legacy (protocol < 30) peers verify the
         // append prefix, so promote plain `--append` to `--append-verify`.
         let mut config = config;
         config.promote_append_mode_for_protocol(handshake.protocol);
@@ -732,7 +732,7 @@ impl ReceiverContext {
             None
         };
 
-        // upstream: clientserver.c:876-895 - daemon_filter_list is built from
+        // upstream: clientserver.c:880-899 - daemon_filter_list is built from
         // module filter/exclude/include directives and used by all roles.
         let daemon_filter_set = compile_daemon_filter_set(&config.daemon_filter_rules);
         let daemon_merge_configs = compile_daemon_merge_configs(&config.daemon_filter_rules);
@@ -851,7 +851,7 @@ impl ReceiverContext {
         header: &engine::batch::BatchHeader,
         config: ServerConfig,
     ) -> std::io::Result<Self> {
-        // upstream: compat.c:604 remote_protocol = read_int(f_in) - the batch
+        // upstream: compat.c:605 remote_protocol = read_int(f_in) - the batch
         // pins the protocol it was recorded under; reject anything the wire
         // types cannot represent or the negotiator does not support.
         let protocol = u8::try_from(header.protocol_version)
@@ -867,7 +867,7 @@ impl ReceiverContext {
                 )
             })?;
 
-        // upstream: compat.c:740 compat_flags = read_varint(f_in) - recorded
+        // upstream: compat.c:749 compat_flags = read_varint(f_in) - recorded
         // only for protocol >= 30, which is exactly when the header carries the
         // varint (io.c:2560-2561). `None` below 30 leaves compat state absent,
         // matching a legacy negotiation.
@@ -888,7 +888,7 @@ impl ReceiverContext {
             // (get_checksum_algorithm falls back to the protocol default).
             negotiated_algorithms: None,
             compat_flags,
-            // upstream: io.c:2562 write_int(batch_fd, checksum_seed) - the seed
+            // upstream: io.c:2569 write_int(batch_fd, checksum_seed) - the seed
             // the basis/signature checksums must reuse on replay.
             checksum_seed: header.checksum_seed,
         };
@@ -1022,7 +1022,7 @@ impl ReceiverContext {
 
     /// Snapshots the raw read counter at the start of a file-list span.
     ///
-    /// upstream: flist.c:3130 `start_read = stats.total_read;`
+    /// upstream: flist.c:3141 `start_read = stats.total_read;`
     pub(in crate::receiver) fn flist_span_start(&self) -> u64 {
         self.raw_read_counter
             .as_ref()
@@ -1031,7 +1031,7 @@ impl ReceiverContext {
 
     /// Accumulates the raw bytes read since `start` into `flist_size`.
     ///
-    /// upstream: flist.c:3334 `stats.flist_size += stats.total_read - start_read;`
+    /// upstream: flist.c:3345 `stats.flist_size += stats.total_read - start_read;`
     pub(in crate::receiver) fn flist_span_end(&mut self, start: u64) {
         if let Some(counter) = &self.raw_read_counter {
             self.flist_size = self
@@ -1163,7 +1163,7 @@ impl ReceiverContext {
         // (options.c), which stays on the non-root side of that test.
         .with_am_root(metadata::am_root() && !self.config.fake_super)
         .with_preserve_atimes(self.config.flags.atimes)
-        // upstream: flist.c:968-971 - `recv_file_entry()` reads the crtime
+        // upstream: flist.c:972-975 - `recv_file_entry()` reads the crtime
         // varlong whenever `crtimes_ndx` is set and XMIT_CRTIME_EQ_MTIME is
         // clear, exactly as it reads the atime above. Without this the receiver
         // desynchronises from the sender's file list the moment a file's birth
@@ -1187,7 +1187,7 @@ impl ReceiverContext {
         }
 
         if let Some(ref converter) = self.config.connection.iconv {
-            // upstream: flist.c:1381 gates recv-side symlink-target conversion on
+            // upstream: flist.c:1385 gates recv-side symlink-target conversion on
             // `sender_symlink_iconv` (compat.c:765-767). Only transcode targets
             // when the peer negotiated CF_SYMLINK_ICONV; otherwise the target
             // arrives as raw local bytes and must pass through untouched.
@@ -1340,12 +1340,12 @@ impl ReceiverContext {
     #[must_use]
     pub(crate) const fn should_activate_input_multiplex(&self) -> bool {
         if self.local_replay {
-            // upstream: main.c:1415 `if (!read_batch)` - the recorded batch
+            // upstream: main.c:1419 `if (!read_batch)` - the recorded batch
             // stream is never multiplexed, so keep the reader Plain.
             return false;
         }
         if self.config.connection.client_mode {
-            // Client mode: >= 23 (upstream main.c:1360-1361)
+            // Client mode: >= 23 (upstream main.c:1364-1365)
             self.protocol.supports_multiplex_io()
         } else {
             // Server mode: >= 30 (upstream main.c:1185-1186)
@@ -1361,7 +1361,7 @@ impl ReceiverContext {
     /// generator, whose `rwrite()` frames it to the client (and a daemon's
     /// also logs it). A client receiver renders it locally.
     ///
-    /// upstream: main.c:1085, log.c:292-301 (forward), log.c:312-366
+    /// upstream: main.c:1085, log.c:372-381 (forward), log.c:392-446
     #[must_use]
     pub(crate) fn reader_role(&self) -> crate::reader::LocalRole {
         crate::reader::LocalRole::from_client_mode(self.config.connection.client_mode)

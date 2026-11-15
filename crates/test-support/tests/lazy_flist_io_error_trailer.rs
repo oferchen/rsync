@@ -2,7 +2,7 @@
 //! receiver in the trailer of the sub-list being sent when the error
 //! happened, so `--delete` stops in exactly the directories walked after it.
 //!
-//! upstream: flist.c:2641 takes `save_io_error` per `send_extra_file_list()`
+//! upstream: flist.c:2652 takes `save_io_error` per `send_extra_file_list()`
 //! call and flist.c:2686-2693 writes the moved `io_error` into the sub-list's
 //! end-of-list trailer; flist.c:3190-3211 folds it into the receiver's
 //! `io_error`, which generator.c:304-311 tests as each `delete_in_dir()`

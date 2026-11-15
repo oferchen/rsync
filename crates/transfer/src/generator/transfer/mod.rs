@@ -56,7 +56,7 @@ mod send_debug_emission_tests {
 
     #[test]
     fn send_files_starting_matches_upstream() {
-        // upstream: sender.c:506-507
+        // upstream: sender.c:514-515
         init_send_level1();
         debug_log!(Send, 1, "send_files starting");
         let msgs = send_messages();
@@ -68,7 +68,7 @@ mod send_debug_emission_tests {
 
     #[test]
     fn send_files_phase_matches_upstream() {
-        // upstream: sender.c:543-544 - "send_files phase=%d"
+        // upstream: sender.c:551-552 - "send_files phase=%d"
         init_send_level1();
         let phase: i32 = 2;
         debug_log!(Send, 1, "send_files phase={}", phase);
@@ -81,7 +81,7 @@ mod send_debug_emission_tests {
 
     #[test]
     fn send_files_per_file_matches_upstream() {
-        // upstream: sender.c:575-576 - "send_files(%d, %s%s%s)"
+        // upstream: sender.c:583-584 - "send_files(%d, %s%s%s)"
         // F_PATHNAME unset -> path/slash empty, only fname emitted.
         init_send_level1();
         let ndx: i32 = 7;
@@ -96,7 +96,7 @@ mod send_debug_emission_tests {
 
     #[test]
     fn sender_finished_matches_upstream() {
-        // upstream: sender.c:803 - "sender finished %s%s%s"
+        // upstream: sender.c:811 - "sender finished %s%s%s"
         init_send_level1();
         let name = PathBuf::from("dir/file.txt");
         debug_log!(Send, 1, "sender finished {}", name.display());
@@ -109,7 +109,7 @@ mod send_debug_emission_tests {
 
     #[test]
     fn send_files_finished_matches_upstream() {
-        // upstream: sender.c:815 - "send files finished"
+        // upstream: sender.c:823 - "send files finished"
         init_send_level1();
         debug_log!(Send, 1, "send files finished");
         let msgs = send_messages();

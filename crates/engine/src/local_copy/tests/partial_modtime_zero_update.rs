@@ -1,6 +1,6 @@
 // Tests for the interaction between partial file mtime=0 stamping and --update.
 //
-// Upstream rsync sets modtime=0 on retained partial files (cleanup.c:174-178)
+// Upstream rsync sets modtime=0 on retained partial files (cleanup.c:175-179)
 // so that a subsequent run with --update never skips them - epoch is always
 // older than any real source timestamp.
 

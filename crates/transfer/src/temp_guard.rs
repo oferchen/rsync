@@ -302,7 +302,7 @@ fn try_create_new(
     // `do_open_at()` contract so the parent walk is the same one the sandbox
     // branch gets.
     //
-    // upstream: `rsync-3.5.1/syscall.c:3505` `do_mkstemp_atfd()` -
+    // upstream: `rsync-3.5.2/syscall.c:3573` `do_mkstemp_atfd()` -
     // `openat(dfd, filename, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW, perms)`.
     // `O_NOFOLLOW` is unconditional there, and `perms` is the mode the caller
     // asks for; the replaced `OpenOptions` create could express neither, and
@@ -1442,7 +1442,7 @@ mod tests {
 /// the LEAF, so the exposure was never the temp name itself: it was a symlink
 /// at a PARENT component redirecting the create out of the tree.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:3505` `do_mkstemp_atfd()`.
+/// upstream: `rsync-3.5.2/syscall.c:3573` `do_mkstemp_atfd()`.
 #[cfg(all(test, unix))]
 mod confined_temp_create {
     use super::try_create_new;

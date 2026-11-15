@@ -100,7 +100,7 @@ fn server_refuses_an_unknown_remote_long_option_without_writing_anything() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert_eq!(output.status.code(), Some(12), "{stderr}");
-    // upstream: options.c:2053 prefixes the popt text with `on remote
+    // upstream: options.c:2089 prefixes the popt text with `on remote
     // machine: ` when am_server, then main.c:1913 exits RERR_SYNTAX.
     let mut lines = stderr.lines();
     assert_eq!(

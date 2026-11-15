@@ -6,7 +6,7 @@
 //! the read, and opens the listed file through the production
 //! [`GeneratorContext::source_open`] policy.
 //!
-//! upstream: `flist.c:2967` records the root, `sender.c:694-704` opens beneath it.
+//! upstream: `flist.c:2978` records the root, `sender.c:702-712` opens beneath it.
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -122,7 +122,7 @@ fn a_relative_operand_root_swapped_after_the_scan_is_refused_with_eloop() {
 /// replaced afterwards is read through that descriptor: the original tree,
 /// never the replacement's target.
 ///
-/// upstream: `flist.c:316-317` reuses the descriptor `flist.c:2265-2266`
+/// upstream: `flist.c:317-318` reuses the descriptor `flist.c:2276-2277`
 /// opened during the scan, and `sender.c:817` releases it only after sending.
 #[test]
 fn a_root_replaced_after_the_scan_is_read_through_the_held_descriptor() {
@@ -149,7 +149,7 @@ fn copy_links_keeps_following_symlinks() {
     let path = listed(&ctx, "sub/f");
 
     swap_sub_for_escaping_symlink(&base);
-    // upstream: sender.c:707-709 - a symlink-following mode takes
+    // upstream: sender.c:715-717 - a symlink-following mode takes
     // do_open_checklinks(), the unconfined open.
     assert_eq!(read_through_sender(&ctx, &path).expect("followed"), SECRET);
 }

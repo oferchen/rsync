@@ -1044,7 +1044,7 @@ mod xattr_tests {
     /// Case 1: an unchanged tree whose xattrs already match must not light the
     /// itemize `x` column anywhere.
     ///
-    /// upstream: generator.c:573-576 - `itemize()` sets `ITEM_REPORT_XATTR`
+    /// upstream: generator.c:610-613 - `itemize()` sets `ITEM_REPORT_XATTR`
     /// only when `xattr_diff()` reports a difference, and `ITEM_REPORT_XATTR`
     /// is itself part of the emit gate (generator.c:588), so a spurious flag
     /// both adds an `x` and prints a row upstream omits entirely. Verified
@@ -1099,7 +1099,7 @@ mod xattr_tests {
 
     /// A dry run itemizes the same `x` column as the real run.
     ///
-    /// upstream: generator.c:2247-2248 - the generator itemizes an up-to-date file
+    /// upstream: generator.c:2289-2290 - the generator itemizes an up-to-date file
     /// whether or not `do_xfers` is set, so `-naXi` and `-aXi` must agree. The
     /// dry-run skip path previously hardcoded "no xattr change", which hid a
     /// genuine drift instead of inventing one.

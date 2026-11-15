@@ -65,16 +65,16 @@ documented range and our gating sites cover the levels actually used.
 
 The 24-entry table matches `COUNT_DEBUG = DEBUG_TIME + 1` from
 `rsync.h`. Side bits use the upstream `W_CLI`, `W_SRV`, `W_SND`, `W_REC`
-mask from `options.c:254-257` and represent which roles legitimately
+mask from `options.c:255-258` and represent which roles legitimately
 emit the flag - these bits are not enforced on our side; we accept the
 flag regardless of role.
 
 ## Pseudo flags: `help`, `ALL`, `NONE`
 
-Upstream `parse_output_words()` (options.c:427) applies these tokens
+Upstream `parse_output_words()` (options.c:428) applies these tokens
 before consulting the `debug_words[]` table:
 
-- `--debug=help` calls `output_item_help()` (options.c:474) which
+- `--debug=help` calls `output_item_help()` (options.c:475) which
   prints one line per flag plus the cumulative `-v` mappings, then
   `exit_cleanup(0)`.
 - `--debug=ALL` (or `--debug=ALLn`) is recognised when the parser sets
@@ -102,7 +102,7 @@ Our parser
 
 ## Numbered subcategories (`FLIST3`, `DELTASUM4`, ...)
 
-Upstream `parse_output_words` (options.c:439-445) treats trailing
+Upstream `parse_output_words` (options.c:440-446) treats trailing
 digits as the level. Token `FLIST3` sets `debug_levels[DEBUG_FLIST] = 3`.
 Levels above `MAX_OUT_LEVEL = 4` are silently clamped to 4.
 
@@ -123,10 +123,10 @@ relies on the CLI-layer pre-check in `flags/debug.rs::apply`.
 
 ## `-vvvv` interaction
 
-Upstream `set_output_verbosity` (options.c:513) walks the
+Upstream `set_output_verbosity` (options.c:514) walks the
 `debug_verbosity[]` table from `j = 0` up to the current `-v` count and
 applies each row at `DEFAULT_PRIORITY = 0`. The rows are
-(`options.c:228-235`):
+(`options.c:229-236`):
 
 | `-v` count | Added debug levels (upstream `debug_verbosity[]`)                                          |
 |:---------:|--------------------------------------------------------------------------------------------|
@@ -147,7 +147,7 @@ because `USER_PRIORITY = 2` always beats `DEFAULT_PRIORITY = 0` in
 upstream, and our config layers override on top of the verbose
 defaults the same way (last-write-wins).
 
-Caveat: upstream's `limit_output_verbosity` (options.c:527) is invoked
+Caveat: upstream's `limit_output_verbosity` (options.c:528) is invoked
 during server-side option exchange to cap a peer's user-supplied level
 at the implicit `-v` ceiling. We do not yet implement an equivalent
 clamp on the receiving end of the wire negotiation - the audit calls

@@ -1244,13 +1244,13 @@ fn golden_legacy_daemon_prefix() {
 #[test]
 fn golden_newest_protocol_advertisement_is_33() {
     assert_eq!(ProtocolVersion::NEWEST.as_u8(), 33);
-    // upstream: compat.c:606 write_int(f_out, protocol_version) - io.c SIVAL,
+    // upstream: compat.c:607 write_int(f_out, protocol_version) - io.c SIVAL,
     // a 4-byte little-endian int.
     let mut binary = Vec::new();
     protocol::write_int(&mut binary, i32::from(ProtocolVersion::NEWEST.as_u8()))
         .expect("write to Vec");
     assert_eq!(binary, [0x21, 0x00, 0x00, 0x00]);
-    // upstream: compat.c:844-854 output_daemon_greeting() - `@RSYNCD: %d.%d`.
+    // upstream: compat.c:853-863 output_daemon_greeting() - `@RSYNCD: %d.%d`.
     assert!(
         protocol::format_legacy_daemon_greeting(ProtocolVersion::NEWEST)
             .starts_with("@RSYNCD: 33.0")

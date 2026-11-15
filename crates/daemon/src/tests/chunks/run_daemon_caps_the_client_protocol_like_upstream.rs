@@ -49,7 +49,7 @@ fn daemon_session_with_client_protocol(client_protocol: u32) -> (String, Vec<u8>
     reader.read_line(&mut reply).expect("module reply");
     let mut after_reply = Vec::new();
     if reply == "@RSYNCD: OK\n" {
-        // upstream: clientserver.c:1154 read_args() splits on NULs from
+        // upstream: clientserver.c:1158 read_args() splits on NULs from
         // protocol 30 and on newlines below it (rl_nulls, clientserver.c:257).
         let separator = if client_protocol >= 30 { b'\0' } else { b'\n' };
         // A client --timeout=1 lets an accepted session end on its own once this
@@ -87,7 +87,7 @@ fn daemon_session_with_client_protocol(client_protocol: u32) -> (String, Vec<u8>
 /// A client newer than us but within MAX_PROTOCOL_VERSION (40) is served at
 /// our protocol.
 ///
-/// upstream: clientserver.c:209 only parses the client's number and
+/// upstream: clientserver.c:213 only parses the client's number and
 /// clientserver.c:242-243 keeps ours when it is lower; compat.c:621-625 finds
 /// 34..40 inside [MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION], so the session
 /// proceeds. The first post-OK frame is the server's checksum-name list.
@@ -114,7 +114,7 @@ fn run_daemon_serves_a_newer_client_at_our_protocol() {
 /// A client outside [28, 40] gets `@RSYNCD: OK` and is then refused by the
 /// setup_protocol check, not taken for a module name.
 ///
-/// upstream: clientserver.c:209 stores `remote_protocol` from the greeting
+/// upstream: clientserver.c:213 stores `remote_protocol` from the greeting
 /// unchecked, so the next line is the module request and the daemon answers
 /// `@RSYNCD: OK`. setup_protocol() then rejects the number (compat.c:621-625)
 /// with the two shell-clean lines and RERR_PROTOCOL. Nothing is multiplexed
@@ -152,7 +152,7 @@ fn run_daemon_refuses_an_unsupported_client_protocol_after_ok() {
 
 /// The daemon's first line is pinned byte for byte at protocol 33.
 ///
-/// upstream: compat.c:844-854 output_daemon_greeting() prints
+/// upstream: compat.c:853-863 output_daemon_greeting() prints
 /// `@RSYNCD: %d.%d %s\n` with PROTOCOL_VERSION (rsync.h:114) and the full
 /// digest list. A newer client negotiates down to this number, so changing it
 /// must be a deliberate edit here.

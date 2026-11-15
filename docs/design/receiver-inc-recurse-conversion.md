@@ -58,128 +58,128 @@ on top of this design.
 ### 2.1 Data structures (shared with the sender)
 
 - Three globals `cur_flist`, `first_flist`, `dir_flist`
-  (`// upstream: flist.c:101`, extern in `generator.c:101`). Received
+  (`// upstream: flist.c:101`, extern in `generator.c:102`). Received
   transfer lists form a linked ring `first_flist -> ... -> cur_flist`;
   `dir_flist` is a separate FLIST_TEMP list holding only directory entries,
   alive for the whole run - the accepted O(#dirs) floor.
 - Segment NDX chaining: `flist->ndx_start = prev->ndx_start + prev->used + 1`
-  (`// upstream: flist.c:2966`) - the +1 NDX gap between segments, identical
+  (`// upstream: flist.c:2977`) - the +1 NDX gap between segments, identical
   to the sender's numbering so both sides address entries by the same NDX.
 
 ### 2.2 Initial list - `recv_file_list(f, -1)`
 
-`recv_file_list` (`// upstream: flist.c:2596`) is called once with
+`recv_file_list` (`// upstream: flist.c:2607`) is called once with
 `dir_ndx = -1` from the receiving entry points
-(`// upstream: main.c:1201` server-recv, `main.c:1379` client-pull).
+(`// upstream: main.c:1201` server-recv, `main.c:1383` client-pull).
 
 - Under INC_RECURSE it allocates the FLIST_TEMP `dir_flist` when
-  `flist->ndx_start == 1` (`// upstream: flist.c:2638-2645`) and remembers
+  `flist->ndx_start == 1` (`// upstream: flist.c:2649-2656`) and remembers
   `dstart = dir_flist->used`.
 - Each received directory entry is appended to `dir_flist` as well as the
-  transfer list (`// upstream: flist.c:2699-2705`, the `S_ISDIR` branch) -
+  transfer list (`// upstream: flist.c:2710-2716`, the `S_ISDIR` branch) -
   this is what populates the per-run directory pool that later sub-list
   headers index by `dir_ndx`.
 - The list is sorted (`fsort` on the `sorted` view, `// upstream:
-  flist.c:2739-2758`), `flist_done_allocating(flist)` records the pool
-  boundary (`// upstream: flist.c:2759`), and the clean/dedup pass runs -
+  flist.c:2750-2769`), `flist_done_allocating(flist)` records the pool
+  boundary (`// upstream: flist.c:2770`), and the clean/dedup pass runs -
   `flist_sort_and_clean` with the receiver-active branch
-  `if (!am_sender || inc_recurse)` (`// upstream: flist.c:3031`) that
+  `if (!am_sender || inc_recurse)` (`// upstream: flist.c:3042`) that
   tombstones duplicate names via `clear_file` without renumbering.
 - `flist_eof` is NOT set under INC_RECURSE (contrast the non-inc branch at
-  `// upstream: flist.c:2762-2766`); it stays clear until the terminator
+  `// upstream: flist.c:2773-2777`); it stays clear until the terminator
   arrives in the sub-list stream.
 - A 1-entry initial list triggers one eager extra list
   (`recv_additional_file_list`, `// upstream: main.c:1207,1381`) to detect a
   1-file transfer, mirroring the sender's eager first extra
-  (`// upstream: flist.c:2585`).
+  (`// upstream: flist.c:2596`).
 
 ### 2.3 On-demand segment pull - `recv_file_list(f, dir_ndx)`
 
 The generator's per-segment loop drives reception. `generate_files`
-(`// upstream: generator.c:2299`) is a `do { ... } while ((cur_flist =
+(`// upstream: generator.c:2341`) is a `do { ... } while ((cur_flist =
 cur_flist->next) != NULL)` over segments:
 
 - For each segment it walks `cur_flist->low..=cur_flist->high` calling
-  `recv_generator` per entry (`// upstream: generator.c:2329-2356`), then at
+  `recv_generator` per entry (`// upstream: generator.c:2372-2399`), then at
   the bottom, if `!flist_eof && !cur_flist->next`, calls `wait_for_receiver`
-  (`// upstream: generator.c:2360-2368`).
-- `wait_for_receiver` (`// upstream: io.c:1750-1786`) reads one NDX. A
+  (`// upstream: generator.c:2403-2411`).
+- `wait_for_receiver` (`// upstream: io.c:1757-1793`) reads one NDX. A
   `NDX_FLIST_OFFSET`-framed value dispatches to `recv_file_list(f, ndx)`
   which appends a new segment and sets `flist->parent_ndx = ndx`; a
   `NDX_FLIST_EOF` sets `flist_eof`; a `NDX_DONE` bumps `msgdone_cnt`.
 - Inside `recv_file_list(f, dir_ndx>=0)` the header's `dir_ndx` is range- and
   duplicate-checked against `dir_flist` before any entry is trusted:
   `dir_ndx >= dir_flist->used` aborts RERR_PROTOCOL
-  (`// upstream: flist.c:2622-2626`); a second sub-list for the same dir
+  (`// upstream: flist.c:2633-2637`); a second sub-list for the same dir
   (FLAG_GOT_DIR_FLIST) aborts RERR_PROTOCOL
-  (`// upstream: flist.c:2627-2632`); every entry's dirname must match
+  (`// upstream: flist.c:2638-2643`); every entry's dirname must match
   `f_name(dir_flist->files[dir_ndx])` or it aborts RERR_UNSUPPORTED
   ("ABORTING due to invalid path from sender", `// upstream:
-  flist.c:2719-2730`).
+  flist.c:2730-2741`).
 - Hardlink look-ahead: with `preserve_hard_links && inc_recurse` the loop
   pre-reads segments while `file_total < MIN_FILECNT_LOOKAHEAD/2`
-  (`// upstream: generator.c:2300-2305`) so a follower's leader in a later
+  (`// upstream: generator.c:2342-2347`) so a follower's leader in a later
   segment resolves before hardlinking.
 
 ### 2.4 Freeing - `flist_free(first_flist)` (the RSS mechanism)
 
-`check_for_finished_files` (`// upstream: generator.c:2219-2239`) is the
+`check_for_finished_files` (`// upstream: generator.c:2261-2281`) is the
 receiver's free point. When `cur_flist != first_flist` and the oldest list has
 no work outstanding (`!first_flist->in_progress && !first_flist->to_redo`), it
 writes `NDX_DONE` for that list, touches up its parent dir, and calls
-`flist_free(first_flist)` (`// upstream: generator.c:2239`,
-`flist.c:2980`), which unlinks the oldest ring entry and releases its pool
+`flist_free(first_flist)` (`// upstream: generator.c:2281`,
+`flist.c:2991`), which unlinks the oldest ring entry and releases its pool
 extent. `dir_flist` is never freed mid-run. Resident received-list memory is
 therefore O(in-flight segments), never O(total).
 
 ### 2.5 The FOUR receiver conditions for INC_RECURSE
 
-`set_allow_inc_recurse` (`// upstream: compat.c:162-180`) is the sole gate for
+`set_allow_inc_recurse` (`// upstream: compat.c:163-181`) is the sole gate for
 `allow_inc_recurse`. On the RECEIVING side all four must hold for it to stay 1
 (pinned from the C source, not guessed):
 
 1. **protocol_version >= 30.** `inc_recurse` is only ever assigned inside the
    `else if (protocol_version >= 30)` arm of the compat-flag exchange
-   (`// upstream: compat.c:711,746`); below 30 it is 0 and no CF_INC_RECURSE
+   (`// upstream: compat.c:712,746`); below 30 it is 0 and no CF_INC_RECURSE
    bit exists.
 2. **recurse && !use_qsort.** `if (!recurse || use_qsort) allow_inc_recurse
-   = 0` (`// upstream: compat.c:172-173`). (`-r`/`--recursive` implies
+   = 0` (`// upstream: compat.c:173-174`). (`-r`/`--recursive` implies
    `xfer_dirs`; the gate itself tests `recurse`.)
 3. **No receiver-disabling flags.** On the receiving side (`!am_sender`),
    `delete_before || delete_after || delay_updates || prune_empty_dirs`
    clears it: `else if (!am_sender && (delete_before || delete_after ||
    delay_updates || prune_empty_dirs)) allow_inc_recurse = 0`
-   (`// upstream: compat.c:174-176`). Note `delete_during` is NOT in the set -
+   (`// upstream: compat.c:175-177`). Note `delete_during` is NOT in the set -
    inc_recurse forces delete-before to delete-during precisely so it stays
    compatible.
 4. **Peer advertised `i` (server side).** `else if (am_server &&
    strchr(client_info, 'i') == NULL) allow_inc_recurse = 0`
-   (`// upstream: compat.c:178-179`). `client_info` is the peer's `-e`
-   capability string (`// upstream: compat.c:163-169`); the receiving server
+   (`// upstream: compat.c:179-180`). `client_info` is the peer's `-e`
+   capability string (`// upstream: compat.c:164-170`); the receiving server
    only enables inc-recurse if the pushing client advertised the `i`
    capability.
 
 The server then folds `allow_inc_recurse` into the wire:
 `compat_flags = allow_inc_recurse ? CF_INC_RECURSE : 0`
-(`// upstream: compat.c:713`, bit at `rsync.h:118`), and BOTH sides set
+(`// upstream: compat.c:714`, bit at `rsync.h:119`), and BOTH sides set
 `inc_recurse = compat_flags & CF_INC_RECURSE ? 1 : 0`
-(`// upstream: compat.c:746`).
+(`// upstream: compat.c:755`).
 
 ## 3. CF_INC_RECURSE negotiation - where upstream sets it, where oc does not
 
 ### 3.1 Upstream
 
 - `set_allow_inc_recurse()` is called only when `am_server`
-  (`// upstream: compat.c:597-598`), so the SERVER is the sole author of the
+  (`// upstream: compat.c:598-599`), so the SERVER is the sole author of the
   bit regardless of transfer direction.
 - Server writes it: `write_varint(f_out, compat_flags)`
-  (`// upstream: compat.c:739`), with the pre-release `V` peer using
-  `write_byte` (`// upstream: compat.c:737`).
+  (`// upstream: compat.c:748`), with the pre-release `V` peer using
+  `write_byte` (`// upstream: compat.c:746`).
 - Client reads it: `compat_flags = read_varint(f_in)`
-  (`// upstream: compat.c:741`).
-- Both derive `inc_recurse` (`// upstream: compat.c:746`); a batch that
+  (`// upstream: compat.c:750`).
+- Both derive `inc_recurse` (`// upstream: compat.c:755`); a batch that
   demands inc_recurse the local side can't allow aborts
-  (`// upstream: compat.c:769-774`).
+  (`// upstream: compat.c:778-783`).
 
 So for a PUSH the receiving server sets the bit (all four conditions checked
 with `am_server` true); for a PULL the sending server sets it and the
@@ -230,7 +230,7 @@ then lifts the role restriction.
   it is exactly upstream parity - #207 verifies it against real upstream
   bytes.
 
-Guard: keep the batch-consistency abort (upstream `compat.c:769-774`) - if a
+Guard: keep the batch-consistency abort (upstream `compat.c:778-783`) - if a
 batch header implies inc_recurse but the four conditions fail locally, error
 out rather than silently downgrade.
 
@@ -243,19 +243,19 @@ and makes the free real.
 
 - Segment table `ndx_segments: Vec<(flat_start, ndx_start)>`
   (`context.rs:60-67`), grown per sub-list (`receive.rs:382`), with the +1 NDX
-  chaining mirrored from `// upstream: flist.c:2966`.
+  chaining mirrored from `// upstream: flist.c:2977`.
 - The `dir_flist` analog: `dir_flist_used` (`context.rs:94`),
   `served_dir_flists` (`context.rs:105`), `dir_flist_names`
   (`context.rs:118`) - the O(#dirs) floor, carrying upstream's range /
-  duplicate / path-belongs guards (`// upstream: flist.c:2622-2632,2719-2730`)
+  duplicate / path-belongs guards (`// upstream: flist.c:2633-2643,2719-2730`)
   with matching fail-closed tests in `on_demand.rs`.
 - Cross-segment reader state: `flist_reader_cache` (`context.rs:125`) keeps
   the entry-decode continuation (prev_name/mode/uid/gid) across sub-lists,
   matching upstream's `static` vars in `recv_file_entry`.
 - On-demand pull primitives (`on_demand.rs`): `read_next_frame` (:67-86),
   `ensure_flat_idx` (:104-128, the lazy per-index pull mirroring
-  `// upstream: generator.c:2299-2368`), `prefetch_for_hardlinks` (:162-177,
-  mirroring `// upstream: generator.c:2300-2305`), plus the NDX<->flat maps
+  `// upstream: generator.c:2341-2411`), `prefetch_for_hardlinks` (:162-177,
+  mirroring `// upstream: generator.c:2342-2347`), plus the NDX<->flat maps
   `wire_to_flat_ndx` / `flat_to_wire_ndx` (`context.rs:541-596`) that already
   resolve through the segment table, not a flat scan.
 - The synchronous driver `sync.rs:130-140` already walks by `ensure_flat_idx`,
@@ -263,7 +263,7 @@ and makes the free real.
 - `first_segment_idx` (`context.rs:78`) and the per-segment `NDX_DONE` +
   `reclaim_oldest_segment` loop (`phases.rs:49-59`) mirror upstream's
   `first_flist` advance and `flist_free` call
-  (`// upstream: generator.c:2226,2239`).
+  (`// upstream: generator.c:2268,2239`).
 
 ### 4.2 What holds the list resident and must change
 
@@ -272,7 +272,7 @@ and makes the free real.
    (`context.rs:911-913`) but leaves every fixed-size `FileEntry` struct and
    the `file_list` Vec capacity in place - residual stays O(N). Upstream's
    `flist_free` releases the whole pool extent
-   (`// upstream: flist.c:2980`). RS-3: make the retired segment's storage
+   (`// upstream: flist.c:2991`). RS-3: make the retired segment's storage
    actually reclaimable. Because NDX resolution already goes through
    `ndx_segments` + `first_segment_idx` (not raw `file_list` indexing), the
    retired prefix can be dropped and the live window compacted, or the entries
@@ -283,8 +283,8 @@ and makes the free real.
 2. **Reclaim fires too late.** It runs only in `exchange_phase_done`
    (`phases.rs:49-59`), after the whole per-file loop. Upstream frees inside
    the transfer loop as each list completes
-   (`// upstream: generator.c:2219-2239`, called per entry via
-   `check_for_finished_files` at `generator.c:2346`). RS-3: move the free to
+   (`// upstream: generator.c:2261-2281`, called per entry via
+   `check_for_finished_files` at `generator.c:2389`). RS-3: move the free to
    fire as the per-file cursor crosses a segment boundary in `sync.rs`, so the
    resident window is bounded DURING the transfer, not just trimmed at the end.
 3. **Two drivers still drain everything.** `pipelined.rs:77` and
@@ -299,7 +299,7 @@ and makes the free real.
 
 After RS-3 the resident received-list memory is O(in-flight segments) +
 O(#dirs) `dir_flist_names`, bounded by the same MIN_FILECNT_LOOKAHEAD window
-upstream uses (`rsync.h:151-152`), not O(N). This is the pull-side twin of the
+upstream uses (`rsync.h:152-153`), not O(N). This is the pull-side twin of the
 sender's O(segment) target in LS-1 Section 7.
 
 ### 4.4 Pacing / backpressure
@@ -319,14 +319,14 @@ RS-3 changes only WHEN oc reads a segment and WHEN it frees one - never the
 bytes. What must stay identical, verified by #207:
 
 - **Segment framing.** Each sub-list header is `NDX_FLIST_OFFSET - dir_ndx`
-  (`// upstream: flist.c:2152`); the receiver only ever READS these (via
+  (`// upstream: flist.c:2156`); the receiver only ever READS these (via
   `read_next_frame`), so the change is read-timing only. The one exception is
   RS-2's compat_flags bit (Section 3.3).
 - **NDX signaling.** The +1 gaps between segments (`ndx_start = prev + used +
   1`) and the flat<->wire NDX maps must stay exact for the live window; the
   per-file reply NDX the receiver writes back is unchanged.
 - **Per-segment done / goodbye sequence.** The per-segment `NDX_DONE`
-  (`phases.rs:56`, `// upstream: generator.c:2226`), the phase `NDX_DONE`s,
+  (`phases.rs:56`, `// upstream: generator.c:2268`), the phase `NDX_DONE`s,
   and the proto-31 `NDX_DEL_STATS` goodbye must keep their count and order.
   Freeing a segment earlier must not change how many `NDX_DONE`s cross the
   wire - one per received segment, then the phase markers.
@@ -395,10 +395,10 @@ the shared wire bytes fixed.
   (`ensure_flat_idx` / `reclaim_oldest_segment` are already no-ops once
   `flist_eof` is set on entry).
 - The INC_RECURSE gate stays exactly upstream's predicate
-  (`compat.c:162-180`); RS-2 adds the receiver arm upstream already has, it
+  (`compat.c:163-181`); RS-2 adds the receiver arm upstream already has, it
   invents no new capability or advertisement.
 - The fail-closed sub-list guards (range, duplicate, path-belongs;
-  `// upstream: flist.c:2622-2632,2719-2730`) are preserved verbatim - RS-3
+  `// upstream: flist.c:2633-2643,2719-2730`) are preserved verbatim - RS-3
   changes retention, not validation.
 - Existing observable divergences are not silently changed by an RS stage;
   any fix there is a separate, wire-verified task.
@@ -464,7 +464,7 @@ marker-aware" story - the MAIN reply read already IS marker-aware:
   <= `MAX_FILECNT_LOOKAHEAD` and DEADLOCKS beyond it: the eager drain blocks on
   the next segment the parked sender will not send without an `NDX_DONE` the
   eager path never emits mid-walk. `MIN_FILECNT_LOOKAHEAD = 1000`,
-  `MAX_FILECNT_LOOKAHEAD = 10000` (`rsync.h:151-152`, mirrored in
+  `MAX_FILECNT_LOOKAHEAD = 10000` (`rsync.h:152-153`, mirrored in
   `crates/transfer/src/generator/segments.rs:28,46`); the sender's throttle is
   advanced only by inbound `NDX_DONE` -> `retire_current_flist`
   (`transfer_loop.rs:694-701`, `segments.rs:235`; upstream io.c:753-754 gates on
@@ -487,9 +487,9 @@ Upstream has no separate "flist read" and "reply read". `read_ndx_and_attrs`
   to its entry by index, so an out-of-order or cross-segment reply is correct by
   construction.
 - The generator's free point `check_for_finished_files`
-  (`// upstream: generator.c:2219-2239`) and the generate loop
-  (`generator.c:2299-2368`) call into the same read via `wait_for_receiver`
-  (`// upstream: io.c:1750-1786`), so freeing a segment and pulling the next are
+  (`// upstream: generator.c:2261-2281`) and the generate loop
+  (`generator.c:2341-2411`) call into the same read via `wait_for_receiver`
+  (`// upstream: io.c:1757-1793`), so freeing a segment and pulling the next are
   the same interleaved read.
 
 ### 8.3 The primitive already exists; RS-3a extends it to the auxiliary reads
@@ -554,11 +554,11 @@ the length comes from.
 ### 9.1 Where the length comes from - computed vs wire-propagated
 
 Upstream does NOT put a segment length on the wire. `recv_file_list` reads
-entries until a zero-flag terminator (`// upstream: flist.c:2653`
+entries until a zero-flag terminator (`// upstream: flist.c:2664`
 `if ((flags = read_varint(f)) == 0) break;`, written by `write_end_of_flist`,
-`// upstream: flist.c:2112`); the segment's length is `flist->used`, KNOWN ONLY
+`// upstream: flist.c:2116`); the segment's length is `flist->used`, KNOWN ONLY
 once the terminator is read. The NDX chaining `flist->ndx_start = prev->ndx_start
-+ prev->used + 1` (`// upstream: flist.c:2966`) likewise uses the computed
++ prev->used + 1` (`// upstream: flist.c:2977`) likewise uses the computed
 `used`. oc mirrors this: each segment boundary is recorded in `ndx_segments`
 (`context.rs:60-67`) as `receive_one_extra_segment` reads to the terminator
 (`receive.rs:297`).
@@ -610,7 +610,7 @@ mirror it exactly:
   writes the segment entry count as a varint; the receiver reads it (only when
   the bit is set) to `reserve` the `file_list` extent and to size prefetch.
   When the bit is off, NOTHING extra is written or read - byte-identical to
-  today and to upstream. The trailing zero-flag terminator (`flist.c:2112/2653`)
+  today and to upstream. The trailing zero-flag terminator (`flist.c:2116/2653`)
   is unchanged and remains the authority on where the segment ends; the
   propagated count is a pre-sizing hint validated against the terminator (a
   mismatch is a protocol violation, fail-closed).
@@ -633,7 +633,7 @@ mirror it exactly:
 4. **Prefetch / backpressure sizing.** The on-demand cursor pulls the next
    segment only when the transfer cursor needs an index the live window does not
    cover (RS-1 Section 4.4), and the pump after each mid-walk `NDX_DONE` is
-   gated on backlog `< MIN_FILECNT_LOOKAHEAD/2` (`// upstream: generator.c:2231`)
+   gated on backlog `< MIN_FILECNT_LOOKAHEAD/2` (`// upstream: generator.c:2273`)
    - both expressed in the computed segment counts.
 
 ### 9.3 Fidelity note

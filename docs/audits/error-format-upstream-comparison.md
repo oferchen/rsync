@@ -131,12 +131,12 @@ parens form.
 ## Error categorisation
 
 Error sites in oc-rsync fall into four buckets, mirroring upstream's `rwrite`
-log codes (`log.c:251-345`):
+log codes (`log.c:317-425`):
 
 | Bucket | Severity | Process exit | Multiplex code | Upstream `rwrite` code | Examples |
 |--------|----------|--------------|----------------|------------------------|----------|
 | Hard error | `rsync error:` | non-zero | `MSG_ERROR` (3) or `MSG_ERROR_XFER` (1) | `FERROR`, `FERROR_XFER` | `crates/core/src/client/error.rs:158-167` (missing operands -> exit 23), socket / file-select / protocol fatals. |
-| Per-file error | `rsync error:` | exit 23 in aggregate | `MSG_ERROR_XFER` | `FERROR_XFER` | Per-file open / stat / xattr failures during transfer. Sets `got_xfer_error` upstream (`log.c:311`). |
+| Per-file error | `rsync error:` | exit 23 in aggregate | `MSG_ERROR_XFER` | `FERROR_XFER` | Per-file open / stat / xattr failures during transfer. Sets `got_xfer_error` upstream (`log.c:391`). |
 | Warning | `rsync warning:` | 0 (or 24) | `MSG_WARNING` (4) | `FWARNING` | "file has vanished" path at `crates/core/src/client/error.rs:244-247`; vanished/RERR_VANISHED downgraded to warning by `strings.rs:116-120`. |
 | Info | `rsync info:` (oc-rsync) / `rsync:` (upstream) | 0 | `MSG_INFO` (2) | `FINFO` | Daemon connect/auth notices (`crates/daemon/src/daemon/sections/...`). |
 
@@ -345,17 +345,17 @@ Routing on the receiver side:
 - `crates/transfer/src/reader/multiplex.rs:166-223` -
   `dispatch_message`. `MessageCode::Error`, `ErrorXfer`, `ErrorSocket`,
   `ErrorUtf8` (lines 182-190) all `eprint!` to stderr - matching upstream
-  `log.c:309-316` where `FERROR_XFER`, `FERROR`, and `FWARNING` all
+  `log.c:389-396` where `FERROR_XFER`, `FERROR`, and `FWARNING` all
   end up at `f = stderr`.
 - `MessageCode::ErrorExit` (lines 191-207) decodes the 4-byte little-endian
   exit code and surfaces it as an `io::Error` for the transfer loop -
-  mirroring `cleanup.c:242-258` where `MSG_ERROR_EXIT` triggers
+  mirroring `cleanup.c:243-259` where `MSG_ERROR_EXIT` triggers
   `_exit_cleanup(val)`.
 - `MessageCode::Info` and `MessageCode::Client` (lines 169-175) go to
-  stdout (`print!`) - matching upstream `log.c:288-289` (FCLIENT folded
+  stdout (`print!`) - matching upstream `log.c:368-369` (FCLIENT folded
   into FINFO and routed to stdout).
 - `MessageCode::Warning` and `MessageCode::Log` (lines 176-181) go to
-  stderr - matching upstream `log.c:309-316` for FWARNING and the
+  stderr - matching upstream `log.c:389-396` for FWARNING and the
   daemon-only log fallthrough.
 - `MessageCode::IoError`, `MessageCode::NoSend`, `MessageCode::Redo` are
   decoded inline (`handle_io_error_msg`, `handle_no_send_msg`,
@@ -369,7 +369,7 @@ The multiplex routing matches upstream byte-for-byte. **MATCH.**
 |---|-----------|-----------|------|
 | 1 | `Role::Daemon` trailer (`[daemon]`) | oc-rsync runs `oc-rsync` as a single binary with `--daemon` mode and surfaces structured daemon errors with a distinct trailer. Upstream collapses daemon errors into `[server]`. | Low - trailer is additive; tooling that whitelists upstream's five values must add `daemon`. |
 | 2 | `ExitCode::LogFileAppend = 6` | oc-rsync explicitly distinguishes log-file open failure from the more general `MessageIo` (13). | Low - the code is unused on upstream wire paths, but a script `case`-matching exit codes will see 6 in oc-rsync output that never appears upstream. Recommend mapping to upstream-equivalent `MessageIo` (13) for parity, or document. |
-| 3 | `rsync info:` severity prefix | oc-rsync labels `MSG_INFO` output as `rsync info: ...`. Upstream emits info text without an `info:` prefix (`log.c:317-320` falls through to plain stdout). | Medium - any test that asserts upstream-exact info-line text will fail. |
+| 3 | `rsync info:` severity prefix | oc-rsync labels `MSG_INFO` output as `rsync info: ...`. Upstream emits info text without an `info:` prefix (`log.c:397-400` falls through to plain stdout). | Medium - any test that asserts upstream-exact info-line text will fail. |
 
 ## Test coverage
 
@@ -418,9 +418,9 @@ output that real call sites use.
 | 6 | Exit code 6 (`LogFileAppend`) | DIVERGE | `crates/core/src/exit_code/codes.rs:46`. No upstream `RERR_LOG_FAILURE`. | Either remap log-failure to upstream `RERR_MESSAGEIO` (13) or document the additional code in user-facing docs. |
 | 7 | `ExitCode::description()` strings drift from `rerr_names` | DIVERGE | `codes.rs:147-177` vs `target/interop/upstream-src/rsync-3.4.1/log.c:80-107`. | Replace `description()` body with a delegation to `crate::message::strings::exit_code_message(code).text()` so the wording lives in one place. Add a parity test. |
 | 8 | `rsync info:` prefix vs upstream `rsync:` for info | DIVERGE | `Severity::as_str()` (search via `crates/core/src/message/severity.rs`) and `Message::render_prefix` at `mod.rs:134-158`. | Document or omit the prefix for `Severity::Info` to match upstream. |
-| 9 | Exit-code numeric mapping (24 codes) | MATCH | `codes.rs:13-134` vs `errcode.h:24-64` and `log.c:80-107`. | None. |
+| 9 | Exit-code numeric mapping (24 codes) | MATCH | `codes.rs:13-134` vs `errcode.h:24-64` and `log.c:87-114`. | None. |
 | 10 | Multiplex frame routing for errors | MATCH | `crates/protocol/src/multiplex/writer.rs:337-356`, `crates/transfer/src/reader/multiplex.rs:166-223`. | None. |
-| 11 | Severity downgrade for code 24 (vanished) | MATCH | `crates/core/src/message/strings.rs:116-120` matches upstream `log.c:903` (`if (code == RERR_VANISHED) ... rsync warning:`). | None. |
+| 11 | Severity downgrade for code 24 (vanished) | MATCH | `crates/core/src/message/strings.rs:116-120` matches upstream `log.c:988` (`if (code == RERR_VANISHED) ... rsync warning:`). | None. |
 | 12 | Interop coverage of error format | PARTIAL | `tests/interop/messages/golden-3.4.1.toml`, `interop-validation.yml:103-162`. Goldens enforce text and role but post-process the version suffix. | Extend goldens to assert source-attribution form (action 1). |
 
 ## Recommendations

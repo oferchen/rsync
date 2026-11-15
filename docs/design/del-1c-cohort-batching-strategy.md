@@ -45,8 +45,8 @@ single-emitter would have visited directories today). Pre-order is the
 correct axis because:
 
 - It matches the order `delete_in_dir`/`do_delete_pass` enumerate
-  destination directories in upstream (`generator.c:272-347`,
-  `generator.c:351-387`). Itemize log lines (the `*deleting   <path>`
+  destination directories in upstream (`generator.c:307-382`,
+  `generator.c:386-422`). Itemize log lines (the `*deleting   <path>`
   output the consumer emits over `MSG_INFO`) land in the same order a
   user running the sequential emitter would see, which is the byte-stream
   parity the DEL-3 gate checks.
@@ -114,7 +114,7 @@ DEL-1.b's per-dir `CohortDeletionBatch` is the unit of work.
 Rationale:
 
 - **Matches upstream's 1-cohort-per-recurse model.** `delete_in_dir`
-  (`generator.c:272-347`) processes one destination directory at a
+  (`generator.c:307-382`) processes one destination directory at a
   time, returning before the caller advances to the next. A 1:1 mapping
   preserves that decomposition and makes the wire-byte parity proof
   trivial: every byte a producer emits corresponds to one upstream
@@ -601,6 +601,6 @@ issue before DEL-3 promotes the feature default-on.
 - Upstream references (verbatim from DEL-1.a):
   - `delete.c:130-225` (`delete_item`),
   - `delete.c:48-122` (`delete_dir_contents`),
-  - `generator.c:272-347` (`delete_in_dir`),
-  - `generator.c:351-387` (`do_delete_pass`),
+  - `generator.c:307-382` (`delete_in_dir`),
+  - `generator.c:386-422` (`do_delete_pass`),
   - `main.c:225-247` (`write_del_stats` / `read_del_stats`).

@@ -28,7 +28,7 @@ enum SumByteOrder {
 
 /// Computes and formats the `%C` full-file checksum for an event.
 ///
-/// Mirrors upstream `log.c:717-732`: `%C` reports the negotiated checksum
+/// Mirrors upstream `log.c:802-817`: `%C` reports the negotiated checksum
 /// (`file_sum_nni` under `--checksum`, otherwise `xfer_sum_nni`) of a regular
 /// file, using the digest length and byte order of `util2.c:sum_as_hex`. A
 /// non-regular entry, an untransferred file without `--checksum`, or a
@@ -43,14 +43,14 @@ pub(super) fn format_full_checksum(event: &ClientEvent, context: &OutFormatConte
     let algorithm = context.full_checksum_algorithm();
     let spaces = || " ".repeat(hex_width(algorithm));
 
-    // upstream: log.c:719 - only a regular file (`S_ISREG`) carries a %C sum.
+    // upstream: log.c:804 - only a regular file (`S_ISREG`) carries a %C sum.
     if let Some(metadata) = event.metadata()
         && metadata.kind() != ClientEntryKind::File
     {
         return spaces();
     }
 
-    // upstream: log.c:720-723 - render `F_SUM` for any regular file under
+    // upstream: log.c:805-808 - render `F_SUM` for any regular file under
     // `--checksum`, else `sender_file_sum` only for a transferred file
     // (`ITEM_TRANSFER`, i.e. a `DataCopied` event).
     let emit_sum = context.always_checksum() || matches!(event.kind(), ClientEventKind::DataCopied);
@@ -93,7 +93,7 @@ fn render_hex(digest: &[u8], order: SumByteOrder) -> String {
 
 /// Returns the space-padded field width (`sum_len * 2`) for an algorithm.
 ///
-/// upstream: log.c:726-729 - the empty `%C` field is `csum_len_for_type(...) * 2`
+/// upstream: log.c:811-814 - the empty `%C` field is `csum_len_for_type(...) * 2`
 /// spaces wide.
 const fn hex_width(algorithm: StrongChecksumAlgorithm) -> usize {
     digest_len(algorithm) * 2

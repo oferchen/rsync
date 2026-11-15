@@ -1,4 +1,4 @@
-//! `--append` must imply `--inplace` (upstream `options.c:2409-2420`).
+//! `--append` must imply `--inplace` (upstream `options.c:2464-2475`).
 //!
 //! The promotion is not cosmetic. Upstream never branches on `append_mode`
 //! after option parsing; it branches on the implied `inplace` flag, and the

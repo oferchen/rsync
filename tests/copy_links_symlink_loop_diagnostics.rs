@@ -21,7 +21,7 @@
 //! ```
 //!
 //! The ancestor case pins only the bound, the ELOOP text and the exit code:
-//! upstream stats each entry through the held scan dirfd (`flist.c:454-468`
+//! upstream stats each entry through the held scan dirfd (`flist.c:457-471`
 //! `scan_link_stat()`), so it reaches the kernel limit one level deeper, in
 //! `opendir`, than a full-path stat does.
 

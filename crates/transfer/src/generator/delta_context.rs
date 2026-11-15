@@ -42,7 +42,7 @@ impl SenderDeltaContext {
     /// Reads this file's block sums from the receiver, replacing the previous
     /// file's.
     ///
-    /// upstream: sender.c:338-390 `receive_sums()`.
+    /// upstream: sender.c:346-398 `receive_sums()`.
     pub(crate) fn receive_sums<R, F>(
         &mut self,
         reader: &mut R,
@@ -189,7 +189,7 @@ fn rebuild_index<'i>(
     *blocks = signature.into_blocks();
     match index.as_ref() {
         Some(index) if built => {
-            // upstream: match.c:436-437 - `match_sums()` announces the table it
+            // upstream: match.c:472-473 - `match_sums()` announces the table it
             // just built, immediately before entering `hash_search()`.
             matching::trace_deltasum::trace_built_hash_table();
             Ok(index)

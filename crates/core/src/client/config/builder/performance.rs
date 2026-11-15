@@ -97,7 +97,7 @@ impl ClientConfigBuilder {
     /// Records the raw `--skip-compress` spec to forward to the remote sender.
     ///
     /// `Some` marks the suffix list as explicitly set so the builder emits
-    /// `--skip-compress=<spec>` verbatim, matching upstream options.c:3035-3036.
+    /// `--skip-compress=<spec>` verbatim, matching upstream options.c:3100-3101.
     #[must_use]
     #[doc(alias = "--skip-compress")]
     pub fn skip_compress_spec(mut self, spec: Option<String>) -> Self {
@@ -190,7 +190,7 @@ impl ClientConfigBuilder {
     ///
     /// Forwarded to the peer in place of the resolved byte count, so each
     /// side resolves `0` against its own address-space ceiling
-    /// (upstream: options.c:2078-2086).
+    /// (upstream: options.c:2114-2122).
     #[doc(alias = "--max-alloc")]
     #[must_use]
     pub fn max_alloc_arg(mut self, value: Option<String>) -> Self {

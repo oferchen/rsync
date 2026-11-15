@@ -4,11 +4,11 @@
     ignore = "flaky on Windows CI: in-process daemon intermittently fails to respond; the trust gate is platform-independent and covered on Linux/macOS"
 )]
 fn daemon_proxy_protocol_untrusted_peer_is_refused() {
-    // upstream: clientserver.c:1443-1446 - with `lp_proxy_protocol()` set the
+    // upstream: clientserver.c:1453-1456 - with `lp_proxy_protocol()` set the
     // daemon consults `proxy_peer_allowed()` on the REAL socket address before
     // reading a single header byte. A direct peer not on `proxy protocol
     // hosts` is dropped without a greeting, and the refusal is logged with
-    // upstream's exact wording (clientserver.c:1394) - the address the header
+    // upstream's exact wording (clientserver.c:1403) - the address the header
     // CLAIMS (here the trusted 203.0.113.7 itself) must never influence the
     // decision, or any client could assert its own source address.
     let _lock = ENV_LOCK.lock().expect("env lock");
@@ -56,7 +56,7 @@ fn daemon_proxy_protocol_untrusted_peer_is_refused() {
 
     let mut line = String::new();
     match reader.read_line(&mut line) {
-        // upstream: start_daemon returns -1 (clientserver.c:1444-1445) - the
+        // upstream: start_daemon returns -1 (clientserver.c:1454-1455) - the
         // socket closes with no @RSYNCD greeting and no @ERROR.
         Ok(0) => {}
         Ok(_) => panic!("daemon answered an untrusted proxy peer: {line:?}"),
@@ -72,7 +72,7 @@ fn daemon_proxy_protocol_untrusted_peer_is_refused() {
     }
 
     let log_contents = fs::read_to_string(&log_path).expect("read log file");
-    // upstream: clientserver.c:1394 - verbatim wording, host is the
+    // upstream: clientserver.c:1403 - verbatim wording, host is the
     // UNDETERMINED sentinel (clientserver.c:1390). The 3.5.0
     // `proxy-protocol-trusted-peer` testsuite cell greps this line.
     assert!(

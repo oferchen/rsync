@@ -204,7 +204,7 @@ fn run_pull(shim: &Path, binary: &Path, batch_flag: &str, src: &Path, dest: &Pat
 }
 
 /// The headline bug: a `--only-write-batch` PULL updated the local destination.
-/// Upstream writes nothing there - `main.c:1866` puts the local receiver into
+/// Upstream writes nothing there - `main.c:1870` puts the local receiver into
 /// `dry_run` and `receiver.c:829-830` drains the sender's stream with
 /// `discard_receive_data()` instead of applying it.
 ///

@@ -1,11 +1,11 @@
 /// Regression test for the post-`@RSYNCD: OK` client-argument parse failure.
 ///
-/// upstream: clientserver.c:1253-1267 - `parse_arguments()` returning 0 sends
+/// upstream: clientserver.c:1262-1276 - `parse_arguments()` returning 0 sends
 /// the parser's own `err_buf` text through `option_error()`
 /// (options.c:915 `rprintf(FERROR, ...)`) and then
 /// `exit_cleanup(RERR_UNSUPPORTED)`. Both run *after* the
 /// `setup_protocol()` + `io_start_multiplex_out()` pair at
-/// clientserver.c:1226-1251, which upstream performs precisely so it "can get
+/// clientserver.c:1235-1260, which upstream performs precisely so it "can get
 /// the error back to the client".
 ///
 /// oc delivered this one rejection with the pre-handshake raw `@ERROR:` writer
@@ -121,7 +121,7 @@ fn run_daemon_post_ok_bad_option_value_uses_multiplexed_error() {
         .read_exact(&mut err_body)
         .expect("read MSG_ERROR_XFER payload");
     let err_text = String::from_utf8(err_body).expect("UTF-8 error payload");
-    // Upstream echoes the rejected value back verbatim (options.c:1260
+    // Upstream echoes the rejected value back verbatim (options.c:1278
     // `"--%s=%s is %s"`), which is what lets an operator see which option was
     // refused. Assert on the value, not just the option name.
     assert!(
@@ -149,7 +149,7 @@ fn run_daemon_post_ok_bad_option_value_uses_multiplexed_error() {
     assert_eq!(
         i32::from_le_bytes(exit_buf),
         crate::daemon::RERR_UNSUPPORTED_EXIT_CODE,
-        "upstream exits RERR_UNSUPPORTED after option_error() (clientserver.c:1266)",
+        "upstream exits RERR_UNSUPPORTED after option_error() (clientserver.c:1275)",
     );
 
     drop(reader);

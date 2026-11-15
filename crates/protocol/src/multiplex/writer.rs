@@ -82,9 +82,9 @@ pub struct MplexWriter<W> {
 }
 
 impl<W> MplexWriter<W> {
-    /// Default buffer size, equal to upstream `IO_BUFFER_SIZE` (32 KiB, `rsync.h:160`).
+    /// Default buffer size, equal to upstream `IO_BUFFER_SIZE` (32 KiB, `rsync.h:161`).
     ///
-    /// Upstream allocates its output buffer at twice that size (`io.c:1567`
+    /// Upstream allocates its output buffer at twice that size (`io.c:1574`
     /// `io_start_buffering_out()`).
     pub const DEFAULT_BUFFER_SIZE: usize = 32 * 1024;
 
@@ -327,7 +327,7 @@ impl<W: Write> MplexWriter<W> {
     /// the peer, so it needs no forwarding and works with every rsync version.
     /// Any buffered DATA is flushed first to maintain proper message ordering.
     ///
-    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1639-1667) sends
+    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1646-1674) sends
     /// `send_msg(MSG_DATA, "", 0, 0)`; see the comment at io.c:1632-1638.
     ///
     /// # Examples

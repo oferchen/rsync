@@ -1,7 +1,7 @@
 //! A local copy whose xattr read fails leaves the entry out of the file list
 //! before the directory's delete pass.
 //!
-//! upstream: a local copy still forks a sender, and flist.c:2058-2063
+//! upstream: a local copy still forks a sender, and flist.c:2062-2067
 //! send_file_name() drops an entry whose get_xattr() fails, after printing
 //! `get_xattr_data: lgetxattr(<full_fname>,"<name>",0) failed: ...`, with
 //! `io_error |= IOERR_GENERAL`. The list is built before the generator

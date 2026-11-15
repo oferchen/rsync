@@ -200,7 +200,7 @@ fn executability_flag_transfers_only_exec_bits() {
 /// `metadata_unchanged` never consulted `--executability`, leaving the
 /// destination at its old mode while the itemized output claimed a `p` change.
 ///
-/// upstream: generator.c:424-432 perms_differ() feeds unchanged_attrs(), so an
+/// upstream: generator.c:461-469 perms_differ() feeds unchanged_attrs(), so an
 /// executability-presence mismatch forces set_file_attrs() on the skip path
 /// (generator.c:2246).
 #[test]
@@ -264,7 +264,7 @@ fn executability_applies_on_up_to_date_files_over_rsh_pull() {
 /// source mode copied exactly, including the read/write bits `-E` alone would
 /// leave untouched.
 ///
-/// upstream: options.c:2866-2869 - the server arg string carries 'p', never
+/// upstream: options.c:2931-2934 - the server arg string carries 'p', never
 /// 'E', when both are set; generator.c:424-427 perms_differ() compares the
 /// full mode under preserve_perms.
 #[test]

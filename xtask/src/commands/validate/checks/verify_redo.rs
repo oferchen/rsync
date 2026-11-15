@@ -678,7 +678,7 @@ mod tests {
     fn verbosity_oracle_matches_the_upstream_gate() {
         // upstream: receiver.c:1088 gates the FWARNING behind INFO_GTE(NAME, 1),
         // so the line exists only under -v; the redo then succeeds, so it never
-        // escalates to the ungated FERROR_XFER form. upstream: log.c:314 maps
+        // escalates to the ungated FERROR_XFER form. upstream: log.c:394 maps
         // FWARNING to stderr, so stdout stays empty at every verbosity.
         let default = Verbosity::Default.expected_warnings();
         assert!(default.stdout.is_empty());

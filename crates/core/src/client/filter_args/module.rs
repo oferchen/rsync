@@ -1,6 +1,6 @@
 //! A daemon module's own filter directives.
 //!
-//! upstream: clientserver.c:929-954 rsync_module() builds
+//! upstream: clientserver.c:933-958 rsync_module() builds
 //! `daemon_filter_list` from five parameters, in this order, each through the
 //! same parse_filter_str()/parse_filter_file() as every other rule, with
 //! `XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3`.
@@ -42,7 +42,7 @@ const MODULE_XFLAGS: Xflags = Xflags {
 
 /// Builds a module's `daemon_filter_list`.
 ///
-/// upstream: clientserver.c:933-952. `files` opens what the directives name:
+/// upstream: clientserver.c:937-956. `files` opens what the directives name:
 /// its `base_dir` is upstream's `dirbuf`, the module root, and its `open` sees
 /// the list built so far, which is what gates the open (exclude.c:1639-1664).
 ///
@@ -73,7 +73,7 @@ pub fn module_filter_rules(
         ..MODULE_XFLAGS
     };
 
-    // upstream: clientserver.c:933-935 - rule_template(FILTRULE_WORD_SPLIT).
+    // upstream: clientserver.c:937-939 - rule_template(FILTRULE_WORD_SPLIT).
     for text in directives.filter {
         let template = words(FilterRuleKind::Exclude);
         parse_filter_str(
@@ -84,7 +84,7 @@ pub fn module_filter_rules(
             &mut ctx,
         )?;
     }
-    // upstream: clientserver.c:937-939 - rule_template(FILTRULE_INCLUDE), plus
+    // upstream: clientserver.c:941-943 - rule_template(FILTRULE_INCLUDE), plus
     // XFLG_OLD_PREFIXES | XFLG_FATAL_ERRORS.
     if let Some(path) = directives.include_from {
         let names = [path.as_os_str().to_os_string()];
@@ -97,7 +97,7 @@ pub fn module_filter_rules(
             MODULE_XFLAGS,
         )?;
     }
-    // upstream: clientserver.c:941-944 - FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT.
+    // upstream: clientserver.c:945-948 - FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT.
     for text in directives.include {
         let template = words(FilterRuleKind::Include);
         parse_filter_str(
@@ -108,7 +108,7 @@ pub fn module_filter_rules(
             &mut ctx,
         )?;
     }
-    // upstream: clientserver.c:946-948 - rule_template(0).
+    // upstream: clientserver.c:950-952 - rule_template(0).
     if let Some(path) = directives.exclude_from {
         let names = [path.as_os_str().to_os_string()];
         append_filter_rules_from_files(
@@ -120,7 +120,7 @@ pub fn module_filter_rules(
             MODULE_XFLAGS,
         )?;
     }
-    // upstream: clientserver.c:950-952 - FILTRULE_WORD_SPLIT.
+    // upstream: clientserver.c:954-956 - FILTRULE_WORD_SPLIT.
     for text in directives.exclude {
         let template = words(FilterRuleKind::Exclude);
         parse_filter_str(

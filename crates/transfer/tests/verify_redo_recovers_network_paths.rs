@@ -50,7 +50,7 @@
 //!
 //! 2. The receiver queued the `failed verification` warning and pushed it to the
 //!    peer as an `MSG_INFO` frame unconditionally, including in CLIENT mode.
-//!    Upstream `log.c:357-372` frames a diagnostic only when `am_server`; a
+//!    Upstream `log.c:437-452` frames a diagnostic only when `am_server`; a
 //!    client writes it to its own stderr. Framing it from a client receiver put
 //!    the text in front of a `--server --sender` whose stdout IS the wire: the
 //!    peer rendered the payload raw into the multiplexed stream, the client's

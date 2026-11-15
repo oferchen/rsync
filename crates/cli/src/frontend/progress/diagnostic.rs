@@ -47,7 +47,7 @@ pub fn eight_bit_output() -> bool {
 
 /// The terminal escape style for a notice, honouring `--8-bit-output` / `-8`.
 ///
-/// upstream: log.c:425 `rwrite()` writes each FINFO/FERROR/FWARNING line through
+/// upstream: log.c:499 `rwrite()` writes each FINFO/FERROR/FWARNING line through
 /// `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0, trailing_CR_or_NL)`, so
 /// the escape rule is the terminal one and the `use_isprint` switch is `-8`.
 fn terminal_escape_style() -> EscapeStyle {
@@ -87,21 +87,21 @@ pub fn msgs_to_stderr() -> bool {
 
 /// The client-side destination `rwrite()` picks for a given log code.
 ///
-/// upstream: log.c:269-429 `rwrite()`. The four outcomes are the stdout
+/// upstream: log.c:349-514 `rwrite()`. The four outcomes are the stdout
 /// default (`FILE *f = ... : stdout`, log.c:272), the stderr override for the
 /// error and warning codes (log.c:337-343), the silent return taken by an
 /// FLOG message with no log destination (log.c:333-334), and the fatal
 /// "Bad logcode" default arm (log.c:352-354).
 /// The context every client-side stream decision is taken in.
 ///
-/// upstream: log.c:269 `rwrite()` is the sole chooser of a stream. The decision
+/// upstream: log.c:349 `rwrite()` is the sole chooser of a stream. The decision
 /// lives in `logging::message_stream` so that this renderer and every other
 /// diagnostic emitter share one implementation of the rule; a second copy here
 /// is what made #352 and #357 two separate bugs instead of one. This helper
 /// keeps the *inputs* to that rule equally singular.
 fn stream_context(msgs2stderr: bool) -> logging::StreamContext {
     logging::StreamContext {
-        // upstream: log.c:345 `if (quiet)` - the FINFO arm of rwrite() returns
+        // upstream: log.c:425 `if (quiet)` - the FINFO arm of rwrite() returns
         // without writing when quiet is set. Folding `--quiet` into
         // `verbose = 0` at parse time silences only the verbosity-gated
         // events; a notice upstream prints at DEFAULT verbosity - `skipping
@@ -179,7 +179,7 @@ pub fn partition_by_summary_stream(
 /// Error and warning codes go to stderr, info codes to stdout, and FLOG
 /// events are dropped, mirroring `rwrite()`. When `msgs2stderr` is true the
 /// stdout default becomes stderr, which upstream does by initialising `f` to
-/// stderr before the code switch (upstream: log.c:272).
+/// stderr before the code switch (upstream: log.c:352).
 ///
 /// # Arguments
 ///
@@ -191,7 +191,7 @@ pub fn partition_by_summary_stream(
 /// # Errors
 ///
 /// Returns an I/O error if writing to either stream fails, or if an event
-/// carries a code `rwrite()` rejects (upstream: log.c:352-354 exits
+/// carries a code `rwrite()` rejects (upstream: log.c:432-434 exits
 /// `RERR_MESSAGEIO`).
 pub fn render_diagnostic_events<O: Write, E: Write>(
     events: &[DiagnosticEvent],
@@ -209,7 +209,7 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
         // String variants carry valid UTF-8, whose bytes are equally the buffer
         // upstream `rwrite()` hands to `filtered_fwrite`.
         let message = event_message_bytes(event);
-        // upstream: log.c:425 rwrite() -> filtered_fwrite escapes the whole line
+        // upstream: log.c:499 rwrite() -> filtered_fwrite escapes the whole line
         // to the terminal before the trailing newline, so a control byte cannot
         // forge a line or drive the terminal (CWE-117) and a non-UTF-8 filename
         // byte reaches the fd verbatim under `-8`. Escape once, here, at the sink.
@@ -225,7 +225,7 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
             }
             Ok(logging::MessageStream::LogOnly | logging::MessageStream::Suppressed) => {}
             Err(_) => {
-                // upstream: log.c:352-354 reports the bad code on stderr and
+                // upstream: log.c:432-434 reports the bad code on stderr and
                 // exits RERR_MESSAGEIO. A renderer cannot exit, so it reports
                 // and hands the failure back to its caller.
                 writeln!(err, "Bad logcode in rwrite(): {}", code.as_u8())?;
@@ -256,7 +256,7 @@ pub fn enable_live_stdio() {
 /// The client's live diagnostic sink: every event goes to stdout or stderr,
 /// one write per line, at the moment it is produced.
 ///
-/// upstream: log.c:420-427 rwrite() - `filtered_fwrite()` then `fflush()` for
+/// upstream: log.c:494-501 rwrite() - `filtered_fwrite()` then `fflush()` for
 /// each line, so a line never waits for the next one.
 struct StdioSink {
     msgs_to_stderr: bool,
@@ -272,7 +272,7 @@ impl logging::DiagnosticSink for StdioSink {
             Ok(logging::MessageStream::Stderr) => Some(true),
             Ok(logging::MessageStream::LogOnly | logging::MessageStream::Suppressed) => None,
             Err(_) => {
-                // upstream: log.c:352-354 reports the bad code on stderr.
+                // upstream: log.c:432-434 reports the bad code on stderr.
                 let _ = writeln!(io::stderr(), "Bad logcode in rwrite(): {}", code.as_u8());
                 None
             }
@@ -397,7 +397,7 @@ mod tests {
         assert!(stderr.is_empty());
     }
 
-    /// upstream: log.c:337-343 - FWARNING (and every error code) overrides the
+    /// upstream: log.c:417-423 - FWARNING (and every error code) overrides the
     /// stdout default with `f = stderr`. stdout and stderr are distinct
     /// observables: a warning on stdout corrupts `--out-format` output for a
     /// caller that redirects the two streams separately.
@@ -455,7 +455,7 @@ mod tests {
         );
     }
 
-    /// upstream: log.c:303-308 simplify FERROR_SOCKET and FERROR_UTF8 to
+    /// upstream: log.c:383-388 simplify FERROR_SOCKET and FERROR_UTF8 to
     /// FERROR before the switch, and log.c:337-343 routes FERROR_XFER and
     /// FERROR alongside FWARNING to stderr.
     #[test]
@@ -487,7 +487,7 @@ mod tests {
         }
     }
 
-    /// upstream: log.c:310-311 rewrites FCLIENT to FINFO, so it keeps the
+    /// upstream: log.c:390-391 rewrites FCLIENT to FINFO, so it keeps the
     /// stdout default rather than falling into the "Bad logcode" arm.
     #[test]
     fn test_client_coded_event_renders_to_stdout() {
@@ -507,7 +507,7 @@ mod tests {
         assert!(stderr.is_empty());
     }
 
-    /// upstream: log.c:352-354 reports an unaccepted code on stderr and exits
+    /// upstream: log.c:432-434 reports an unaccepted code on stderr and exits
     /// RERR_MESSAGEIO. The renderer reports and fails instead of quietly
     /// printing the message to stdout.
     #[test]
@@ -601,7 +601,7 @@ mod tests {
     }
 
     /// `--msgs-to-stderr` moves the stdout-bound codes only; a warning was
-    /// already on stderr and stays there (upstream: log.c:272 initialises `f`
+    /// already on stderr and stays there (upstream: log.c:352 initialises `f`
     /// to stderr, and the switch's `f = stderr` is then a no-op).
     #[test]
     fn test_msgs2stderr_does_not_move_warnings_to_stdout() {

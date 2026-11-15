@@ -21,7 +21,7 @@ impl LocalCopyOptionsBuilder {
             });
         }
 
-        // upstream: options.c:2554 - --append cannot be used with --whole-file.
+        // upstream: options.c:2609 - --append cannot be used with --whole-file.
         // Only an explicit `whole_file = Some(true)` conflicts; the default
         // (None) and `--no-whole-file` (Some(false)) are accepted.
         if self.append && self.whole_file == Some(true) {
@@ -171,6 +171,7 @@ impl LocalCopyOptionsBuilder {
             partial_dir: self.partial_dir,
             temp_dir: self.temp_dir,
             delay_updates: self.delay_updates,
+            delay_symlinks: self.delay_symlinks,
             inplace: self.inplace,
             write_devices: self.write_devices,
             append: self.append,

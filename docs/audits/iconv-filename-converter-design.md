@@ -174,13 +174,13 @@ tree that ships with the interop harness
 
 ### Parse and setup
 
-- `options.c:219` - `char *iconv_opt = ...` global.
-- `options.c:814` - the popt entry `{"iconv", 0, POPT_ARG_STRING,
+- `options.c:220` - `char *iconv_opt = ...` global.
+- `options.c:817` - the popt entry `{"iconv", 0, POPT_ARG_STRING,
   &iconv_opt, 0, 0, 0}`.
-- `options.c:1366` - `iconv_opt = strdup(arg)` on `--iconv=ARG`.
-- `options.c:1396, 1416, 1668` - `iconv_opt = NULL` on `--no-iconv` and
+- `options.c:1384` - `iconv_opt = strdup(arg)` on `--iconv=ARG`.
+- `options.c:1414, 1416, 1668` - `iconv_opt = NULL` on `--no-iconv` and
   on parse failure.
-- `options.c:2716-2722` - the local / remote split: `set =
+- `options.c:2771-2777` - the local / remote split: `set =
   strchr(iconv_opt, ',');` (the upstream parser keeps the *local*
   side before the comma and the *remote* side after).
 - `rsync.c:87-147` - `setup_iconv()` opens two `iconv_t` descriptors:
@@ -201,33 +201,33 @@ tree that ships with the interop harness
 
 ### Per-call-site application
 
-- `flist.c:738-754` - `recv_file_entry()` runs `iconvbufs(ic_recv,
+- `flist.c:742-758` - `recv_file_entry()` runs `iconvbufs(ic_recv,
   &inbuf, &outbuf, ICB_INIT)` on the just-decoded filename. On
   failure it prints `cannot convert filename: %s (%s)` via
   `FERROR_UTF8`, sets `outbuf.len = 0`, and continues with an empty
   thisname (the entry is then dropped by the empty-name check
   downstream). It does **not** silently fall back to raw bytes.
-- `flist.c:1127-1150` - same shape on the symlink-target read,
+- `flist.c:1131-1154` - same shape on the symlink-target read,
   additionally gated on `sender_symlink_iconv`.
-- `flist.c:1579-1603` - `send_file_entry()` runs `iconvbufs(ic_send,
+- `flist.c:1583-1607` - `send_file_entry()` runs `iconvbufs(ic_send,
   ...)` on the outgoing dirname/basename pair. Failure is fatal here
   because the wire format is broken if the sender cannot encode.
-- `flist.c:1605-1621` - same on the symlink target, gated on
+- `flist.c:1609-1625` - same on the symlink target, gated on
   `symlink_len && sender_symlink_iconv`.
 - `io.c:416-452` - `forward_filesfrom_data()` per-record
   `iconvbufs(ic_send, ...)` for `--files-from`.
 - `io.c:983-1031` - `send_msg()` text-message conversion for `MSG_*`
   payloads.
-- `io.c:1240-1289` - `read_line()` with `RL_CONVERT` runs
+- `io.c:1247-1296` - `read_line()` with `RL_CONVERT` runs
   `iconvbufs(ic_recv, ...)` for daemon-side arg reading.
 - `rsync.c:283-313` - `send_protected_args()` per-arg
   `iconvbufs(ic_send, ...)` with `ICB_EXPAND_OUT | ICB_INCLUDE_BAD |
   ICB_INCLUDE_INCOMPLETE | ICB_INIT`. Note the `ICB_INCLUDE_BAD` flag:
   here upstream **does** pass bad bytes through verbatim rather than
   drop them.
-- `compat.c:716-718` - `CF_SYMLINK_ICONV` is set in local
+- `compat.c:717-719` - `CF_SYMLINK_ICONV` is set in local
   compatibility flags only when `iconv_opt != NULL`.
-- `compat.c:763-767` - `sender_symlink_iconv` is true only when **both**
+- `compat.c:772-776` - `sender_symlink_iconv` is true only when **both**
   the peer advertised `CF_SYMLINK_ICONV` and the local `iconv_opt`
   is non-null.
 
@@ -244,10 +244,10 @@ over filter rules themselves (`exclude.c` has no `iconvbufs` calls).
 
 | Site | Direction | On lossy / invalid bytes |
 |---|---|---|
-| `flist.c:738` recv filename | wire -> local | warn + drop entry |
-| `flist.c:1127` recv symlink | wire -> local | warn + drop target |
-| `flist.c:1579, 1595` send filename | local -> wire | hard error, exit |
-| `flist.c:1605` send symlink | local -> wire | hard error, exit |
+| `flist.c:742` recv filename | wire -> local | warn + drop entry |
+| `flist.c:1131` recv symlink | wire -> local | warn + drop target |
+| `flist.c:1583, 1595` send filename | local -> wire | hard error, exit |
+| `flist.c:1609` send symlink | local -> wire | hard error, exit |
 | `rsync.c:304` protected args | local -> wire | include verbatim (`ICB_INCLUDE_BAD`) |
 | `io.c:1025` `MSG_*` body | local -> wire | include verbatim |
 
@@ -413,8 +413,8 @@ already valid local-charset.
 #### Why `Result`, and what error type
 
 `Result<_, ConversionError>` matches the existing API and lets the
-call site decide policy: sender hard-errors (`flist.c:1579-1603`),
-receiver warns and drops (`flist.c:738-754`), protected-args includes
+call site decide policy: sender hard-errors (`flist.c:1583-1607`),
+receiver warns and drops (`flist.c:742-758`), protected-args includes
 verbatim (`rsync.c:283-313` with `ICB_INCLUDE_BAD`). `ConversionError`
 already exists at `crates/protocol/src/iconv/error.rs` and carries
 both a message and the offending bytes
@@ -615,12 +615,12 @@ Closing #1910 (this audit) unblocks the following trackers:
 - **#1912** - `apply on sender file-list emit`. Hook is at
   `crates/protocol/src/flist/write/encoding.rs:312`. Producer at
   `crates/transfer/src/generator/mod.rs:564`. Activates once #1911
-  closes the local-copy gap. Symlink-target sub-gap (`flist.c:1605`)
+  closes the local-copy gap. Symlink-target sub-gap (`flist.c:1609`)
   remains; track in `iconv-pipeline.md` Finding 2.
 - **#1913** - `apply on receiver file-list ingest`. Hook at
   `crates/protocol/src/flist/read/name.rs:101`. Producer at
   `crates/transfer/src/receiver/mod.rs:369`. Symmetric to #1912.
-  Symlink-target sub-gap (`flist.c:1127`) tracked in
+  Symlink-target sub-gap (`flist.c:1131`) tracked in
   `iconv-pipeline.md` Finding 1.
 - **#1914** - `apply in filter-rule path matching`. Filter chain at
   `crates/filters/src/chain.rs:204`. Caller sites at

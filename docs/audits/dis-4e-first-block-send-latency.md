@@ -26,8 +26,8 @@ Sources cited (paths relative to worktree root):
 - `crates/protocol/src/flist/write/mod.rs:375` (`write_entry`)
 - `crates/matching/src/generator.rs` (rolling-checksum bootstrap)
 - upstream: `target/interop/upstream-src/rsync-3.4.1/sender.c:199-462`
-  (`send_files`), `sender.c:71-127` (`receive_sums`),
-  `match.c:362-437` (`match_sums`), `flist.c:2192-2545`
+  (`send_files`), `sender.c:73-135` (`receive_sums`),
+  `match.c:398-473` (`match_sums`), `flist.c:2196-2556`
   (`send_file_list`).
 
 ## 1. Phase 20 - file-list send (DIS-3 row 20)
@@ -75,7 +75,7 @@ fix candidate.
 (`protocol_io.rs:75-87`) are skipped or trivial on the small-files
 corpus (INC_RECURSE off, proto 32 so no proto-<30 `io_error` LE write).
 The trailing `send_id_lists` flush is 1 `writev` symmetric with
-upstream's `flist.c:2513`. DIS-3 row 21 estimate of 0 ms gap is
+upstream's `flist.c:2524`. DIS-3 row 21 estimate of 0 ms gap is
 confirmed - no fix opportunity.
 
 ## 3. Phase 22 - first NDX + first delta header (DIS-3 row 22)
@@ -105,7 +105,7 @@ NDX varint (1-5 B), iflags 2 B (proto >= 29), optional xattr response
 (skipped on vanilla), `sum_head.write` 16 B. All four small writes
 coalesce into the freshly-flushed 32 KiB `MplexWriter` buffer. **No
 syscall per write**; the flush is deferred. Byte-equivalent to upstream
-`sender.c:180-197`.
+`sender.c:188-205`.
 
 ### 3.3 Open source + first read + first MSG_DATA
 

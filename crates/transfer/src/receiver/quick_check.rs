@@ -39,7 +39,7 @@ pub(super) fn is_hardlink_follower(entry: &FileEntry) -> bool {
 ///
 /// Returns `true` when the destination file matches the source entry (skip transfer).
 ///
-/// Follows upstream `generator.c:630 quick_check_ok()` evaluation order:
+/// Follows upstream `generator.c:667 quick_check_ok()` evaluation order:
 /// 1. Size mismatch - always needs transfer
 /// 2. `always_checksum` - compute file checksum and compare (ignores mtime)
 /// 3. `size_only` - size matched, skip transfer
@@ -58,11 +58,11 @@ pub(super) fn quick_check_matches(
     always_checksum: Option<protocol::ChecksumAlgorithm>,
     modify_window: ModifyWindow,
 ) -> bool {
-    // upstream: generator.c:634 - size check first
+    // upstream: generator.c:671 - size check first
     if dest_meta.len() != entry.size() {
         return false;
     }
-    // upstream: generator.c:639-643 - always_checksum compares file checksums
+    // upstream: generator.c:676-680 - always_checksum compares file checksums
     // instead of relying on mtime. Takes priority over size_only and ignore_times.
     if let Some(algorithm) = always_checksum {
         return match entry.checksum() {
@@ -72,15 +72,15 @@ pub(super) fn quick_check_matches(
             None => false,
         };
     }
-    // upstream: generator.c:645-646 - `if (size_only) return 1;` after size match
+    // upstream: generator.c:682-683 - `if (size_only) return 1;` after size match
     if size_only {
         return true;
     }
-    // upstream: generator.c:648-649 - `if (ignore_times) return 0;` forces transfer
+    // upstream: generator.c:685-686 - `if (ignore_times) return 0;` forces transfer
     if ignore_times {
         return false;
     }
-    // upstream: generator.c:651 - `mtime_differs()` -> `same_time()` applies the
+    // upstream: generator.c:688 - `mtime_differs()` -> `same_time()` applies the
     // `--modify-window` tolerance. A negative window compares nanoseconds too
     // (util1.c:1748), so pass the sub-second component from both sides.
     #[cfg(unix)]
@@ -150,7 +150,7 @@ pub(super) fn dest_mtime_newer(
 /// devices both count as `FT_DEVICE` and fifo vs socket both count as
 /// `FT_SPECIAL`.
 ///
-/// upstream: generator.c:614 - `get_file_type()`.
+/// upstream: generator.c:651 - `get_file_type()`.
 fn file_type_category(mode: u32) -> Option<u8> {
     use protocol::flist::FileType;
     FileType::from_mode(mode).map(|ft| match ft {
@@ -172,7 +172,7 @@ fn file_type_category(mode: u32) -> Option<u8> {
 /// source; a type mismatch (e.g. dest symlink vs source regular file) always
 /// transfers.
 ///
-/// upstream: generator.c:2135-2136 - `update_only > 0 && statret == 0
+/// upstream: generator.c:2176-2177 - `update_only > 0 && statret == 0
 /// && stype == ftype && file->modtime - sx.st.st_mtime < modify_window`.
 pub(super) fn dest_type_matches_source(dest_path: &Path, source_entry: &FileEntry) -> bool {
     let Some(source_category) = file_type_category(source_entry.mode()) else {
@@ -215,7 +215,7 @@ fn mode_from_metadata(meta: &fs::Metadata) -> u32 {
 
 /// The strength of an alternate-basis match, mirroring upstream's `match_level`.
 ///
-/// Upstream `try_dests_reg` (generator.c:1073) tracks a `match_level` while
+/// Upstream `try_dests_reg` (generator.c:1110) tracks a `match_level` while
 /// scanning `basis_dir[]`. Levels 0 (nothing found) and 1 (a regular file that
 /// fails `quick_check_ok`, usable only as a delta basis) are not handled
 /// locally by oc, so this enum models only the two levels that produce a
@@ -258,7 +258,7 @@ struct ReferenceMatch<'a> {
 /// the basis path is absolute, and the symlink opt-out. The first two are
 /// session facts and are answered here; the third is per-path and is answered
 /// by [`BasisTrust::arm_for`]; the fourth is answered inside the walk itself,
-/// exactly where upstream answers it (`syscall.c:380-382`, at the top of
+/// exactly where upstream answers it (`syscall.c:434-436`, at the top of
 /// `ona_open()`), so it is deliberately not restated at this predicate.
 ///
 /// Spelled as a three-state type rather than a `bool` because the middle state
@@ -267,22 +267,22 @@ struct ReferenceMatch<'a> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/generator.c:962-1065` `basis_link_stat()` - the arm selection.
+/// - `rsync-3.5.2/generator.c:999-1102` `basis_link_stat()` - the arm selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BasisTrust {
     /// Not a daemon: a local, SSH-server, or `rsync://`-CLIENT receiver.
     ///
-    /// upstream: `generator.c:979` - the `!am_daemon && am_root >= 0 &&
+    /// upstream: `generator.c:1016` - the `!am_daemon && am_root >= 0 &&
     /// !symlink_optout_allowed()` arm.
     LocalReceiver,
     /// A daemon serving a module WITHOUT a per-module `chroot()`.
     ///
-    /// upstream: `generator.c:1004` - `am_daemon && !am_chrooted && path[0] ==
+    /// upstream: `generator.c:1041` - `am_daemon && !am_chrooted && path[0] ==
     /// '/' && !symlink_optout_allowed()`.
     NonChrootedDaemon,
     /// A daemon serving a module inside a per-module `chroot()`.
     ///
-    /// upstream: `generator.c:1046` selects `secure_relative_dirfd()` for a
+    /// upstream: `generator.c:1083` selects `secure_relative_dirfd()` for a
     /// RELATIVE basis here, and `generator.c:1064` the plain `link_stat()` for
     /// an absolute one. oc models only the latter; see [`BasisArm::PlainStat`].
     ChrootedDaemon,
@@ -309,7 +309,7 @@ pub(super) enum BasisArm {
     /// Stat the basis by path (arm 4, the trailing plain `link_stat()`).
     ///
     /// oc reaches this for a chrooted daemon on BOTH an absolute and a relative
-    /// basis. Upstream's arm 3 (`generator.c:1046` - a chrooted daemon with an
+    /// basis. Upstream's arm 3 (`generator.c:1083` - a chrooted daemon with an
     /// inner `/./` module boundary resolving a RELATIVE basis through
     /// `secure_relative_open()`) has no oc counterpart yet; that gap is a
     /// separate, named one and is not what this type papers over.
@@ -332,7 +332,7 @@ impl BasisTrust {
     /// directory and so is a property of the process - unlike a module's
     /// `insecure links` directive, which is per-connection policy.
     ///
-    /// upstream: `generator.c:979` / `:1004` / `:1046` - the three guarded arms.
+    /// upstream: `generator.c:1016` / `:1004` / `:1046` - the three guarded arms.
     #[must_use]
     pub(super) const fn for_receiver(am_daemon: bool, am_chrooted: bool) -> Self {
         if !am_daemon {
@@ -366,7 +366,7 @@ impl BasisTrust {
     /// `link-dest-relative-basis` regression, whose manifest row passes on both
     /// pipe legs.
     ///
-    /// upstream: `generator.c:997-1001` - the comment that spells out exactly
+    /// upstream: `generator.c:1034-1038` - the comment that spells out exactly
     /// this split, and the `path[0] == '/'` term at `generator.c:1004`.
     #[must_use]
     #[cfg(unix)]
@@ -398,7 +398,7 @@ mod basis_trust_tests {
     /// like. This covers the `rsync://` CLIENT too: `am_daemon` is false there,
     /// even though the transfer is a daemon connection.
     ///
-    /// upstream: `rsync-3.5.1/generator.c:979` - `!am_daemon` selects the
+    /// upstream: `rsync-3.5.2/generator.c:1016` - `!am_daemon` selects the
     /// ownership walk.
     #[test]
     fn a_non_daemon_receiver_walks_the_basis_parent() {
@@ -414,7 +414,7 @@ mod basis_trust_tests {
     /// symlink pointing out of the module and so is trusted-OWNED - the
     /// ownership rule alone cannot refuse it.
     ///
-    /// upstream: `rsync-3.5.1/generator.c:1004-1018`.
+    /// upstream: `rsync-3.5.2/generator.c:1041-1055`.
     #[test]
     fn a_non_chrooted_daemon_confines_an_absolute_basis_to_the_module() {
         let trust = BasisTrust::for_receiver(true, false);
@@ -430,7 +430,7 @@ mod basis_trust_tests {
     /// "confine everything" predicate would pass the test above and break
     /// `--link-dest=../01` (#915/#930).
     ///
-    /// upstream: `rsync-3.5.1/generator.c:1004` - the `path[0] == '/'` term.
+    /// upstream: `rsync-3.5.2/generator.c:1041` - the `path[0] == '/'` term.
     #[test]
     fn a_non_chrooted_daemon_keeps_the_plain_stat_for_a_relative_basis() {
         let trust = BasisTrust::for_receiver(true, false);
@@ -443,7 +443,7 @@ mod basis_trust_tests {
     /// chroot is the confinement there. Without this the ownership walk would
     /// start applying to a shape upstream leaves alone.
     ///
-    /// upstream: `rsync-3.5.1/generator.c:1004` (`!am_chrooted`) and
+    /// upstream: `rsync-3.5.2/generator.c:1041` (`!am_chrooted`) and
     /// `generator.c:1064` (the fall-through).
     #[test]
     fn a_chrooted_daemon_falls_through_to_the_plain_stat() {
@@ -462,8 +462,8 @@ mod basis_trust_tests {
     /// `served_module_root()` is the fact that distinguishes them: `None` on the
     /// client, `Some(root)` in the serving process.
     ///
-    /// upstream: `clientserver.c:1093` - `am_daemon` is the serving process
-    /// only; `rsync-3.5.1/generator.c:979` reads that same global.
+    /// upstream: `clientserver.c:1097` - `am_daemon` is the serving process
+    /// only; `rsync-3.5.2/generator.c:1016` reads that same global.
     #[test]
     fn an_rsync_client_is_not_a_daemon_receiver() {
         install_local_session(LocalInsecureLinks::from_local_flag(false), None);
@@ -561,13 +561,13 @@ mod basis_trust_tests {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/generator.c:979-990` `basis_link_stat()` arm 1 - the
+/// - `rsync-3.5.2/generator.c:1016-1027` `basis_link_stat()` arm 1 - the
 ///   non-daemon receiver: `owner_walk_parent()` for the parent components, then
 ///   `link_stat_at()` on the leaf through the returned descriptor.
-/// - `rsync-3.5.1/generator.c:1004-1018` arm 2 - the same walk with
+/// - `rsync-3.5.2/generator.c:1041-1055` arm 2 - the same walk with
 ///   `operator_path_resolve = 1`, for a non-chrooted daemon's ABSOLUTE basis.
-/// - `rsync-3.5.1/generator.c:1064` - the trailing plain `link_stat()`.
-/// - `rsync-3.5.1/syscall.c:704` `owner_walk_parent()` - the walk itself.
+/// - `rsync-3.5.2/generator.c:1101` - the trailing plain `link_stat()`.
+/// - `rsync-3.5.2/syscall.c:773` `owner_walk_parent()` - the walk itself.
 #[cfg(unix)]
 fn basis_stat(path: &Path, trust: BasisTrust) -> Option<fs::Metadata> {
     match trust.arm_for(path) {
@@ -632,7 +632,7 @@ fn best_reference_match<'a>(
             _ => continue,
         };
 
-        // upstream: generator.c:1090 - a basis that fails quick_check_ok is at
+        // upstream: generator.c:1127 - a basis that fails quick_check_ok is at
         // most match_level 1 (a delta basis), which oc does not consume locally.
         if !quick_check_matches(
             entry,
@@ -646,7 +646,7 @@ fn best_reference_match<'a>(
             continue;
         }
 
-        // upstream: generator.c:1096 - unchanged_attrs() distinguishes level 3
+        // upstream: generator.c:1133 - unchanged_attrs() distinguishes level 3
         // (every preserved attr equal) from level 2 (content matches, attrs
         // differ). `metadata_unchanged` is oc's `unchanged_attrs` equivalent.
         let level = if metadata_unchanged(entry, metadata_opts, &ref_meta, modify_window) {
@@ -655,7 +655,7 @@ fn best_reference_match<'a>(
             MatchLevel::Content
         };
 
-        // upstream: generator.c:1086-1099 - best_match keeps the first dir at the
+        // upstream: generator.c:1123-1136 - best_match keeps the first dir at the
         // highest level; only a strictly higher level replaces it.
         if best.as_ref().is_none_or(|b| level > b.level) {
             let exact = level == MatchLevel::Exact;
@@ -664,7 +664,7 @@ fn best_reference_match<'a>(
                 ref_path,
                 level,
             });
-            // upstream: generator.c:1099 - break as soon as a level-3 match is found.
+            // upstream: generator.c:1136 - break as soon as a level-3 match is found.
             if exact {
                 break;
             }
@@ -737,7 +737,7 @@ pub(super) fn try_reference_dest(
     let dest_path = dest_dir.join(relative_path);
     match best.ref_dir.kind {
         ReferenceDirectoryKind::Compare => {
-            // upstream: generator.c:1149-1155 - a COMPARE_DEST match at level 3 is
+            // upstream: generator.c:1186-1192 - a COMPARE_DEST match at level 3 is
             // already correct, so the file finishes with no local copy and the
             // destination stays absent. At level 2 (attrs differ) it falls
             // through to copy_altdest_file so the destination reflects the
@@ -757,7 +757,7 @@ pub(super) fn try_reference_dest(
             }
         }
         ReferenceDirectoryKind::Link => {
-            // upstream: generator.c:1114-1146 - LINK_DEST hard-links only at
+            // upstream: generator.c:1151-1183 - LINK_DEST hard-links only at
             // level 3 (unchanged_attrs). A level-2 match, or a hard-link that
             // fails, copies instead (generator.c:1136-1137 `goto try_a_copy`),
             // leaving the read-only reference inode untouched.
@@ -786,7 +786,7 @@ pub(super) fn try_reference_dest(
             }
         }
         ReferenceDirectoryKind::Copy => {
-            // upstream: generator.c:1114 (COPY_DEST bypasses the level-3 skip)
+            // upstream: generator.c:1151 (COPY_DEST bypasses the level-3 skip)
             // + 1161 - COPY_DEST copies the basis file at both level 2 and 3.
             copy_reference_file(
                 entry,
@@ -848,7 +848,7 @@ fn nonregular_identity_matches(
 
     let ft = ref_meta.file_type();
     match *basis {
-        // upstream: generator.c:656-665 - a symlink basis must itself be a
+        // upstream: generator.c:693-702 - a symlink basis must itself be a
         // symlink whose target string equals the source link's target.
         NonRegularBasis::Symlink { target } => {
             ft.is_symlink()
@@ -856,7 +856,7 @@ fn nonregular_identity_matches(
                     .map(|t| t == target)
                     .unwrap_or(false)
         }
-        // upstream: generator.c:670-673 - fifo vs socket is distinguished by the
+        // upstream: generator.c:707-710 - fifo vs socket is distinguished by the
         // S_IFMT bits, so a socket source never matches a fifo basis (or vice
         // versa) even though both collapse to FT_SPECIAL.
         NonRegularBasis::Special { is_socket } => {
@@ -866,7 +866,7 @@ fn nonregular_identity_matches(
                 ft.is_fifo()
             }
         }
-        // upstream: generator.c:674-679 - a device basis matches on rdev alone;
+        // upstream: generator.c:711-716 - a device basis matches on rdev alone;
         // both block and char nodes share the FT_DEVICE category, so the type
         // test only requires the basis be some device node.
         NonRegularBasis::Device { rdev } => {
@@ -923,19 +923,19 @@ pub(super) fn try_reference_dest_non(
     }
 
     let relative_path = entry.path();
-    // upstream: generator.c:1225-1246 - scan basis_dir[] and keep the strongest
+    // upstream: generator.c:1262-1283 - scan basis_dir[] and keep the strongest
     // match. For a non-regular file only match_level 3 (identity + every
     // preserved attribute equal) alters the on-disk result, so find the first
     // basis dir reaching it. Levels 1 and 2 fall through to normal creation.
     let matched = reference_directories.iter().find_map(|ref_dir| {
         let ref_path = ref_dir.path.join(relative_path);
-        // upstream: generator.c:1227 - basis_link_stat(cmpbuf, &sxp->st) lstats the
+        // upstream: generator.c:1264 - basis_link_stat(cmpbuf, &sxp->st) lstats the
         // basis so a basis symlink is inspected, not its target.
         let ref_meta = fs::symlink_metadata(&ref_path).ok()?;
         if !nonregular_identity_matches(basis, &ref_path, &ref_meta) {
             return None;
         }
-        // upstream: generator.c:1241 - unchanged_attrs() promotes to match_level
+        // upstream: generator.c:1278 - unchanged_attrs() promotes to match_level
         // 3; `metadata_unchanged` is oc's equivalent.
         if !metadata_unchanged(
             entry,
@@ -953,13 +953,13 @@ pub(super) fn try_reference_dest_non(
 
     let dest_path = dest_dir.join(relative_path);
     match kind {
-        // upstream: generator.c:1312 - a COMPARE_DEST level-3 match returns -2;
+        // upstream: generator.c:1349 - a COMPARE_DEST level-3 match returns -2;
         // `if (alt_dest_type != COPY_DEST) goto cleanup` leaves the destination
         // absent because the file is already correct in the reference tree.
         ReferenceDirectoryKind::Compare => true,
-        // upstream: generator.c:1261-1293 - LINK_DEST hard-links the basis node.
+        // upstream: generator.c:1298-1330 - LINK_DEST hard-links the basis node.
         ReferenceDirectoryKind::Link => hard_link_reference_non(&ref_path, &dest_path),
-        // upstream: generator.c:1979/2065 - COPY_DEST (and any non-level-3 match)
+        // upstream: generator.c:2016/2065 - COPY_DEST (and any non-level-3 match)
         // falls through to atomic_create, which materialises the node from the
         // flist entry. There is no payload to copy for a non-regular file.
         ReferenceDirectoryKind::Copy => false,
@@ -974,7 +974,7 @@ pub(super) fn try_reference_dest_non(
 /// like upstream - no `set_file_attrs` runs afterwards. Returns `true` on a
 /// successful link and `false` on failure (the caller then creates the node).
 ///
-/// upstream: generator.c:1269 - `do_link_at(cmpbuf, fname)` then `goto cleanup`
+/// upstream: generator.c:1306 - `do_link_at(cmpbuf, fname)` then `goto cleanup`
 #[cfg(unix)]
 fn hard_link_reference_non(ref_path: &Path, dest_path: &Path) -> bool {
     if let Some(parent) = dest_path.parent() {
@@ -1035,7 +1035,7 @@ fn apply_altdest_metadata(
 /// cannot corrupt the reference tree. A failed link returns `false` so the
 /// caller can fall back to copying (upstream `goto try_a_copy`).
 ///
-/// upstream: generator.c:1133-1139 - `hard_link_one()` then `set_file_attrs()`
+/// upstream: generator.c:1170-1176 - `hard_link_one()` then `set_file_attrs()`
 fn link_reference_file(
     entry: &FileEntry,
     ref_path: &Path,
@@ -1069,7 +1069,7 @@ fn link_reference_file(
 /// On failure it emits the upstream `INFO_GTE(COPY, 1)` notice and returns
 /// `false` so the caller requests a normal transfer.
 ///
-/// upstream: generator.c:917-953 - `copy_altdest_file()`
+/// upstream: generator.c:954-990 - `copy_altdest_file()`
 fn copy_reference_file(
     entry: &FileEntry,
     ref_path: &Path,
@@ -1095,7 +1095,7 @@ fn copy_reference_file(
             true
         }
         Err(error) => {
-            // upstream: generator.c:937 - rsyserr(FINFO, errno,
+            // upstream: generator.c:974 - rsyserr(FINFO, errno,
             // "copy_file %s => %s", full_fname(src), copy_to) under
             // INFO_GTE(COPY, 1). The flag is part of info_verbosity[1]
             // (options.c:257) so this fires at `-v` or `--info=COPY`. Wording
@@ -1129,7 +1129,7 @@ fn file_checksum_matches(
         return false;
     };
     let mut hasher = ChecksumVerifier::for_algorithm(algorithm);
-    // upstream: rsync.h:159 MAX_MAP_SIZE = 256*1024
+    // upstream: rsync.h:160 MAX_MAP_SIZE = 256*1024
     let mut buf = vec![0u8; 256 * 1024];
     let mut remaining = file_size;
     while remaining > 0 {
@@ -1195,7 +1195,7 @@ mod io_uring_linkat_tests {
 
 /// Pinning tests for `--info=COPY` emissions on `--copy-dest` failures.
 ///
-/// upstream: generator.c:936 - `INFO_GTE(COPY, 1)` gates an `rsyserr` call in
+/// upstream: generator.c:973 - `INFO_GTE(COPY, 1)` gates an `rsyserr` call in
 /// `copy_altdest_file()` whose wording reads:
 ///   `copy_file SRC => DST: STRERROR (ERRNO)`
 /// COPY sits in `info_verbosity[1]` (options.c:257) so the flag is enabled at
@@ -1354,7 +1354,7 @@ mod info_copy_emission_tests {
 /// Regression tests for symlink handling in basis-dir lookups under
 /// `--copy-dest` / `--link-dest` / `--compare-dest`.
 ///
-/// upstream: `generator.c:1084` - `basis_link_stat(cmpbuf, &sxp->st)` followed by
+/// upstream: `generator.c:1121` - `basis_link_stat(cmpbuf, &sxp->st)` followed by
 /// `!S_ISREG(sxp->st.st_mode)` filters out a basis-dir entry that is itself a
 /// symlink. `--copy-links` does not lift the filter: `link_stat_at()` honours
 /// `copy_links`, but `do_recv()` zeroes that flag before the generator runs
@@ -1504,7 +1504,7 @@ mod symlink_basis_tests {
     /// needs root to construct; it is pinned at the predicate instead, by
     /// `fast_io::owner_walk`'s `refuses_an_owner_that_is_neither_root_nor_the_euid`.
     ///
-    /// upstream: `generator.c:979-990` `basis_link_stat()` ARM 1 resolves the
+    /// upstream: `generator.c:1016-1027` `basis_link_stat()` ARM 1 resolves the
     /// basis parent with `owner_walk_parent()`; `syscall.c:499` is the
     /// `st_uid != 0 && st_uid != trusted_uid` refusal this cell stays clear of.
     #[test]
@@ -1606,8 +1606,8 @@ mod symlink_basis_tests {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/generator.c:991-1003` - the comment naming this exact cell.
-/// - `rsync-3.5.1/generator.c:1004-1018` - the arm itself.
+/// - `rsync-3.5.2/generator.c:1028-1040` - the comment naming this exact cell.
+/// - `rsync-3.5.2/generator.c:1041-1055` - the arm itself.
 #[cfg(unix)]
 #[cfg(test)]
 mod daemon_module_confined_basis_tests {
@@ -1786,7 +1786,7 @@ mod daemon_module_confined_basis_tests {
 
 /// Regression tests pinning the `--update` (`-u`) same-type skip guard.
 ///
-/// upstream: generator.c:2135-2138 - the "newer dest -> skip" logic is guarded by
+/// upstream: generator.c:2176-2179 - the "newer dest -> skip" logic is guarded by
 /// `stype == ftype`, so a newer destination only suppresses the transfer when
 /// it is the SAME file type as the source. A type mismatch (e.g. a newer dest
 /// symlink over a source regular file) always transfers regardless of mtime.
@@ -2016,7 +2016,7 @@ mod modify_window_tests {
 /// Regression tests pinning `--modify-window` in the `--update` (`-u`) skip on
 /// the remote/daemon receiver path.
 ///
-/// upstream: generator.c:2135-2138 - the "%s is newer" skip is guarded by
+/// upstream: generator.c:2176-2179 - the "%s is newer" skip is guarded by
 /// `file->modtime - sx.st.st_mtime < modify_window` (source mtime minus dest
 /// mtime, strict `<`). With `--modify-window` the destination is still treated
 /// as newer (and the transfer skipped) even when its whole-second mtime is up to
@@ -2273,7 +2273,7 @@ mod alt_dest_match_level_tests {
     }
 
     /// `-U --link-dest` on a basis that differs from the source only in atime
-    /// must still hard-link. upstream: generator.c:474-515 unchanged_attrs()
+    /// must still hard-link. upstream: generator.c:511-552 unchanged_attrs()
     /// compares mtime, perms, ownership, ACLs and xattrs but never atime, so the
     /// basis reaches match_level 3 (generator.c:1096). Treating atime as an
     /// attribute demotes it to level 2 and copies, wasting the space

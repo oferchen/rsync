@@ -7,7 +7,7 @@
 // per-module cap allows, the second is refused with the upstream
 // literal even though the daemon-global cap (10) is nowhere near hit.
 //
-// upstream: target/interop/upstream-src/rsync-3.5.1/clientserver.c:791
+// upstream: target/interop/upstream-src/rsync-3.5.2/clientserver.c:795
 // applies `lp_max_connections(i)` via `claim_connection()` per module;
 // the per-module value binds independently of any daemon-wide limit.
 
@@ -121,7 +121,7 @@ fn run_daemon_per_module_cap_overrides_global_max_connections() {
         "@ERROR: max connections (1) reached -- try again later",
     );
 
-    // upstream: clientserver.c:424-428 - the client treats @ERROR as fatal and
+    // upstream: clientserver.c:428-432 - the client treats @ERROR as fatal and
     // returns before reading further, so no @RSYNCD: EXIT follows the refusal;
     // the socket just closes (next read is EOF).
     line.clear();
@@ -142,7 +142,7 @@ fn run_daemon_per_module_cap_overrides_global_max_connections() {
         .expect("first denial message");
     assert!(line.starts_with("@ERROR: auth failed on module"));
 
-    // upstream: clientserver.c:424-428 - the client treats @ERROR as fatal and
+    // upstream: clientserver.c:428-432 - the client treats @ERROR as fatal and
     // returns before reading further, so no @RSYNCD: EXIT follows the refusal;
     // the socket just closes (next read is EOF).
     line.clear();

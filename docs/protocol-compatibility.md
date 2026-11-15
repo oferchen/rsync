@@ -175,13 +175,13 @@ scenario set and the oracle cells rather than the full feature matrix below.
 Upstream sign-flips every info and debug level for the duration of the
 server-receiver's `--files-from` window when
 `filesfrom_fd >= 0 && msgs2stderr != 1 && protocol_version < 31`, then restores
-them once the file list has been received (`options.c:579-588`
+them once the file list has been received (`options.c:580-589`
 `negate_output_levels`, called at `main.c:1154-1160` and reversed at
 `main.c:1208-1210`). The suppression exists because at protocol < 31 the
 files-from names are forwarded to the sender **un-multiplexed**: upstream
 temporarily switches the server's already-multiplexed output stream
 (`main.c:1265-1266` `io_start_multiplex_out` at protocol >= 23) back to raw
-buffered writes for the duration of the forward (`io.c:1228-1239`
+buffered writes for the duration of the forward (`io.c:1235-1246`
 `start_filesfrom_forwarding`, `MPLX_TO_BUFFERED`, which also clears
 `iobuf.msg` "to be extra sure no messages go out"). During that raw window an
 `rprintf(FINFO, ...)` would otherwise land as raw bytes on the shared socket
@@ -212,9 +212,9 @@ required, because oc-rsync decouples diagnostic **generation** from wire
 Because generation cannot reach the socket and the only wire-emitting calls are
 gated on multiplex state and never fire inside the window, there is no
 interleaving for `negate_output_levels` to prevent. The omission is intentional
-and observably neutral. Upstream references: `options.c:579-588`,
+and observably neutral. Upstream references: `options.c:580-589`,
 `main.c:1154-1210`, `main.c:1265-1266`, `io.c:965-971` (`send_msg` returns 0
-when `!OUT_MULTIPLEXED`), `io.c:1228-1239`, `log.c:329-346`.
+when `!OUT_MULTIPLEXED`), `io.c:1235-1246`, `log.c:409-426`.
 
 ### Protocol Forcing
 

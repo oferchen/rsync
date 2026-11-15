@@ -36,7 +36,7 @@ pub(crate) struct Core<'a> {
     /// anything new is read.
     pending: Vec<u8>,
     /// `stats.total_read`, once input buffering has started; until then reads
-    /// are raw and uncounted (upstream: io.c:2157-2161 read_buf() bypasses
+    /// are raw and uncounted (upstream: io.c:2164-2168 read_buf() bypasses
     /// perform_io() while `iobuf.in_fd < 0`).
     read_counter: Option<Arc<AtomicU64>>,
     /// The peer closed its output; no more input will arrive
@@ -91,7 +91,7 @@ impl<'a> Core<'a> {
 
     /// Starts counting output into `write_counter` and pacing it by
     /// `limiter`, from the point upstream's writes start going through
-    /// perform_io() (upstream: io.c:2693 io_start_multiplex_out(), or
+    /// perform_io() (upstream: io.c:2700 io_start_multiplex_out(), or
     /// io_start_buffering_out() below protocol 30).
     pub(crate) fn start_output_accounting(
         core: &SharedCore<'a>,
@@ -110,7 +110,7 @@ impl<'a> Core<'a> {
     }
 
     /// Starts buffered, counted input, as upstream does once protocol setup
-    /// is done (upstream: io.c:1573 io_start_buffering_in()). Bytes still
+    /// is done (upstream: io.c:1580 io_start_buffering_in()). Bytes still
     /// pending from the handshake move into the input buffer and count as
     /// read, as they did when they first crossed the transport.
     pub(crate) fn start_buffering(core: &SharedCore<'a>, read_counter: Arc<AtomicU64>) {
@@ -726,7 +726,7 @@ mod stream_tests {
     }
 
     /// WHY: protocol setup reads exactly what it parses and is not counted,
-    /// as upstream's pre-buffering read_buf() is (io.c:2157-2161); bytes a
+    /// as upstream's pre-buffering read_buf() is (io.c:2164-2168); bytes a
     /// handshake reader buffered come first, and once buffering starts the
     /// remainder counts as read.
     #[test]

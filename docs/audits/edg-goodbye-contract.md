@@ -183,12 +183,12 @@ error-path validators do not regress the well-formed case.
 - `main.c:883` -- protocol < 29 path: `read_int(f_in)`.
 - `main.c:885-886` -- protocol >= 29 path: `read_ndx_and_attrs()`.
 - `rsync.c:337-342` -- `NDX_DEL_STATS` handling inside `read_ndx_and_attrs()`.
-- `generator.c:2376-2381` -- early del-stats path (`delete_during` /
+- `generator.c:2419-2424` -- early del-stats path (`delete_during` /
   `delete_before` timing).
-- `generator.c:2420-2425` -- late del-stats path (`delete_delay` /
+- `generator.c:2463-2468` -- late del-stats path (`delete_delay` /
   `delete_after` timing).
-- `io.c:2243-2287` -- modern `write_ndx()` wire format.
-- `io.c:2289-2318` -- modern `read_ndx()` wire format.
+- `io.c:2250-2294` -- modern `write_ndx()` wire format.
+- `io.c:2296-2325` -- modern `read_ndx()` wire format.
 
 ## Related tasks
 

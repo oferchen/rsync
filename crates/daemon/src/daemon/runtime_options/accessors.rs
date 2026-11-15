@@ -40,7 +40,7 @@ impl RuntimeOptions {
 
     /// Returns whether incoming connections require a PROXY protocol header.
     ///
-    /// upstream: clientserver.c:1443-1446 `start_daemon()` - checked before any
+    /// upstream: clientserver.c:1453-1456 `start_daemon()` - checked before any
     /// other client data is read.
     #[allow(dead_code)] // REASON: accessor for daemon listener; wired when async daemon starts
     pub(crate) fn proxy_protocol(&self) -> bool {
@@ -69,7 +69,7 @@ impl RuntimeOptions {
     /// `apply_verbosity` at startup to seed the thread-local
     /// `logging::VerbosityConfig` so subsequent `info_gte` / `debug_gte`
     /// checks gate log output per upstream's `set_output_verbosity()`
-    /// semantics (upstream: options.c:2188).
+    /// semantics (upstream: options.c:2224).
     pub(crate) fn verbosity(&self) -> u8 {
         self.verbosity
     }
@@ -95,6 +95,11 @@ impl RuntimeOptions {
             };
             Some(format!("'{directive}' in module [{}]", module.name))
         })
+    }
+
+    /// Applies any configured `--nice` CPU / I/O priority settings.
+    pub(crate) fn apply_niceness(&mut self) {
+        self.niceness.apply_local(core::niceness::ProcessRole::Daemon);
     }
 }
 
@@ -146,7 +151,7 @@ impl RuntimeOptions {
 
     /// Daemon-wide `timeout`, bounding the pre-module handshake phase.
     ///
-    /// upstream: clientserver.c:1441 reads `lp_timeout(-1)`; `None` is its
+    /// upstream: clientserver.c:1451 reads `lp_timeout(-1)`; `None` is its
     /// `timeout <= 0` arm, which falls back to `DAEMON_HANDSHAKE_TIMEOUT`.
     pub(super) fn daemon_timeout(&self) -> Option<NonZeroU64> {
         self.daemon_timeout
@@ -191,4 +196,5 @@ impl RuntimeOptions {
     pub(super) fn daemon_gid(&self) -> Option<u32> {
         self.daemon_gid
     }
+
 }

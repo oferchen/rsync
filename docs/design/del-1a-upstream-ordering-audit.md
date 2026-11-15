@@ -30,18 +30,18 @@ modes plus the `--delete-delay` variant which is a sibling of `delete_during`:
 
 | Mode | Variable | Entry point | Wire effect |
 |------|----------|-------------|-------------|
-| `--delete-before` | `delete_before` | `do_delete_pass` (`generator.c:351-387`) called from `generate_files` before the first content directory is processed (`generator.c:2263-2264`). | One `MSG_DELETED` per deleted entry, emitted in destination-directory traversal order, **before** any file-transfer NDX or any `NDX_DEL_STATS`. |
-| `--delete-during` | `delete_during == 1` | `delete_in_dir` (`generator.c:272-347`) called inline as the generator descends each content directory (`generator.c:1520-1523`, `generator.c:2298-2307`). | `MSG_DELETED` emitted interleaved with the per-file NDX traffic for that directory's content. |
-| `--delete-delay` | `delete_during == 2` | `delete_in_dir` queues entries via `remember_delete` (`generator.c:161-182`) into a `deldelay` temp file; `do_delayed_deletions` (`generator.c:252-265`) replays them at end-of-flist, calling `delete_item` directly. | `MSG_DELETED` emitted **after** the file-transfer phase finishes for that flist segment. |
-| `--delete-after` | `delete_after` | `do_delete_pass` called from `generate_files` after the last content directory (`generator.c:2410-2411`). | `MSG_DELETED` emitted at end-of-transfer, after the redo phase. |
+| `--delete-before` | `delete_before` | `do_delete_pass` (`generator.c:386-422`) called from `generate_files` before the first content directory is processed (`generator.c:2305-2306`). | One `MSG_DELETED` per deleted entry, emitted in destination-directory traversal order, **before** any file-transfer NDX or any `NDX_DEL_STATS`. |
+| `--delete-during` | `delete_during == 1` | `delete_in_dir` (`generator.c:307-382`) called inline as the generator descends each content directory (`generator.c:1557-1560`, `generator.c:2340-2349`). | `MSG_DELETED` emitted interleaved with the per-file NDX traffic for that directory's content. |
+| `--delete-delay` | `delete_during == 2` | `delete_in_dir` queues entries via `remember_delete` (`generator.c:196-217`) into a `deldelay` temp file; `do_delayed_deletions` (`generator.c:287-300`) replays them at end-of-flist, calling `delete_item` directly. | `MSG_DELETED` emitted **after** the file-transfer phase finishes for that flist segment. |
+| `--delete-after` | `delete_after` | `do_delete_pass` called from `generate_files` after the last content directory (`generator.c:2453-2454`). | `MSG_DELETED` emitted at end-of-transfer, after the redo phase. |
 
 The actual deletion syscall and the per-file wire notification both happen
 inside `delete_item` (`delete.c:130-225`). On success, `delete_item` calls
 `log_delete(fbuf, mode)` (`delete.c:180`) which - when running on the server
 side at protocol >= 29 - calls `send_msg(MSG_DELETED, fname, len,
-am_generator)` (`log.c:863`). For directories the trailing NUL is preserved
-(`log.c:861-862`) so the receiver can tell directory deletes from file
-deletes (`io.c:1594-1600`). Recursive directory contents are peeled by
+am_generator)` (`log.c:948`). For directories the trailing NUL is preserved
+(`log.c:946-947`) so the receiver can tell directory deletes from file
+deletes (`io.c:1601-1607`). Recursive directory contents are peeled by
 `delete_dir_contents` (`delete.c:48-122`), which loops over the destination
 listing in reverse and calls `delete_item` per entry, so a single user-visible
 directory delete can fan out into many `MSG_DELETED` lines, in
@@ -57,7 +57,7 @@ parallel consumer never has to think about it.
 
 ## 2. When NDX_DEL_STATS is sent
 
-`NDX_DEL_STATS` is defined as the negative ndx `-3` (`rsync.h:287`). It is
+`NDX_DEL_STATS` is defined as the negative ndx `-3` (`rsync.h:288`). It is
 written by `write_del_stats` (`main.c:225-238`) and read by `read_del_stats`
 (`main.c:240-247`). Both functions live in `main.c` rather than `delete.c`
 because they live on the wire-codec layer, not the delete-policy layer.
@@ -84,24 +84,24 @@ kinds while the per-kind buckets remain isolated.
 
 Triggers, all inside `generate_files` in `generator.c`:
 
-- **Early path** (`generator.c:2376-2381`): fires when `protocol_version >=
+- **Early path** (`generator.c:2419-2424`): fires when `protocol_version >=
   31 && EARLY_DELETE_DONE_MSG()`. The macro
   `EARLY_DELETE_DONE_MSG()` is `!(delete_during == 2 || delete_after)`
-  (`generator.c:124`), so early means "deletes have already happened" - the
+  (`generator.c:155`), so early means "deletes have already happened" - the
   `--delete-before` and inline `--delete-during` modes. The send is gated
   by `(INFO_GTE(STATS, 2) && (delete_mode || force_delete)) || read_batch`.
   The first conjunct is `--stats`; the second guards against sending stats
   for a no-delete run; the `read_batch` path always sends so the batch file
   is self-describing.
-- **Late path** (`generator.c:2420-2425`): fires when `protocol_version >=
+- **Late path** (`generator.c:2463-2468`): fires when `protocol_version >=
   31 && !EARLY_DELETE_DONE_MSG()`, i.e. when `delete_during == 2`
   (`--delete-delay`) or `delete_after`. Gated by `INFO_GTE(STATS, 2) ||
   read_batch`. Emitted **after** `do_delayed_deletions` and the
-  `do_delete_pass` for `--delete-after` (`generator.c:2408-2411`), so the
+  `do_delete_pass` for `--delete-after` (`generator.c:2451-2454`), so the
   stats reflect the deletions that fired in the late pass.
 
 In both cases the frame is followed by `write_ndx(f_out, NDX_DONE)`
-(`generator.c:2380, 2424`) to advance the goodbye state machine.
+(`generator.c:2423, 2424`) to advance the goodbye state machine.
 
 The receiver-side decoder is `read_ndx_and_attrs` (`rsync.c:322-353`), which
 loops over `NDX_DEL_STATS`, calling `read_del_stats(f_in)` and - if `am_sender
@@ -131,10 +131,10 @@ coupled on the wire
 This is the central observation for a parallel consumer.
 
 - **`MSG_DELETED` rides the multiplex side-channel.** `send_msg(MSG_DELETED,
-  fname, len, am_generator)` (`log.c:863`) writes into `iobuf.msg`
+  fname, len, am_generator)` (`log.c:948`) writes into `iobuf.msg`
   (`io.c:965-1058`), which is multiplexed against `MSG_DATA` envelopes
   carrying the main ndx stream (`io.c:680-708`). The wire reader splits the
-  channels in `perform_io`; `MSG_DELETED` is dispatched at `io.c:1549-1601`
+  channels in `perform_io`; `MSG_DELETED` is dispatched at `io.c:1556-1608`
   and turns into a `log_delete` callback on the receiving end. There is no
   ndx in the `MSG_DELETED` payload at all - just the path and an implicit
   file kind (the trailing NUL trick).
@@ -187,14 +187,14 @@ Practically:
   via `log_delete` calls before deferred-replay - confirm: actually for
   `delete_during == 2` the inline `delete_in_dir` call routes through
   `remember_delete` not `delete_item`, so no `MSG_DELETED` fires until
-  `do_delayed_deletions`. See `generator.c:338-342`.)
+  `do_delayed_deletions`. See `generator.c:373-377`.)
 
 INC_RECURSE does **not** subdivide the cohort. Although `generate_files`
 iterates flist segments and calls `delete_in_dir` inside the per-segment
-loop (`generator.c:1520-1523`), the `write_del_stats` calls happen once,
+loop (`generator.c:1557-1560`), the `write_del_stats` calls happen once,
 after the whole flist loop completes. The stats accumulator
 (`stats.deleted_files`, `stats.deleted_dirs`, etc.) is a single global
-struct (`rsync.h:1045`) mutated in place by `delete_item` (`delete.c:181-193`),
+struct (`rsync.h:1061`) mutated in place by `delete_item` (`delete.c:181-193`),
 so the late `write_del_stats` reads the totals across every per-directory
 batch the generator processed.
 
@@ -208,13 +208,13 @@ the receiver drains up to that frame as part of the goodbye sequence
 ### 5.1 What a parallel consumer can reorder safely
 
 - **Per-file `MSG_DELETED` deliveries within a cohort.** The receiver-side
-  handler (`io.c:1549-1601`, `log_delete` at `log.c:839-876`) treats each
+  handler (`io.c:1556-1608`, `log_delete` at `log.c:924-961`) treats each
   message independently. It logs the entry through the itemize formatter
   and updates no shared counter. The relative order of two `MSG_DELETED`
   notifications affects only the order lines appear in `--verbose` /
   `--itemize-changes` output, not protocol correctness.
 - **Per-file syscall dispatch.** `delete_item` (`delete.c:130-225`) and
-  `delete_in_dir` (`generator.c:272-347`) take no inter-entry locks; the
+  `delete_in_dir` (`generator.c:307-382`) take no inter-entry locks; the
   only shared state across entries is `stats.deleted_*`, which is summed
   globally. A parallel consumer that pre-aggregates kind counters and
   atomically merges them before `write_del_stats` runs is wire-equivalent.
@@ -224,7 +224,7 @@ the receiver drains up to that frame as part of the goodbye sequence
   current single-emitter does is still upstream-compatible as long as
   every `MSG_DELETED` for a cohort is on the wire **before** the closing
   `NDX_DONE` that ends the cohort's goodbye phase. The closing `NDX_DONE`
-  (`generator.c:2380, 2424`) is the only hard fence.
+  (`generator.c:2423, 2424`) is the only hard fence.
 
 ### 5.2 What a parallel consumer must serialise
 
@@ -237,7 +237,7 @@ the receiver drains up to that frame as part of the goodbye sequence
   as the next ndx, crashing with `Invalid file index` (`rsync.c:349-352`).
 - **`NDX_DEL_STATS` must precede the next `NDX_DONE` on the ndx channel.**
   Both upstream call sites pair the frame with an immediate `write_ndx(f_out,
-  NDX_DONE)` (`generator.c:2380, 2424`). The receiver's goodbye reader
+  NDX_DONE)` (`generator.c:2423, 2424`). The receiver's goodbye reader
   loops over `NDX_DEL_STATS` and then expects `NDX_DONE`
   (`receiver/transfer/phases.rs:144-162` mirrors this). Emitting `NDX_DONE`
   before `NDX_DEL_STATS` would advance the receiver past the goodbye
@@ -254,7 +254,7 @@ the receiver drains up to that frame as part of the goodbye sequence
   receiver, which accumulates additively, will sum a wrong total).
 - **No per-cohort `NDX_DEL_STATS` if `do_stats` is false in the non-batch
   case.** Upstream skips the frame entirely if `--stats` was not requested
-  (`generator.c:2377, 2422`). A parallel consumer must keep this gate
+  (`generator.c:2420, 2422`). A parallel consumer must keep this gate
   intact; otherwise an old peer that does not expect the frame at this
   point will mis-parse the ndx stream.
 - **`DEL_MAKE_ROOM` deletes are silent.** The `!(flags & DEL_MAKE_ROOM)`
@@ -361,11 +361,11 @@ read normally. No crash, stat-divergence only.
 ### 6.5 NDX_DEL_STATS for a cohort that produced no deletions
 
 Upstream sends the frame with all five varints set to zero when
-`--stats` is on and the cohort dispatched zero deletes (`generator.c:2422`
+`--stats` is on and the cohort dispatched zero deletes (`generator.c:2465`
 late path - the `INFO_GTE(STATS, 2)` gate is the only check). The receiver
 accumulates `+0` into `stats.deleted_*` and proceeds. A parallel consumer
 that suppresses the frame on an empty cohort is upstream-compatible only
-on the early path (`generator.c:2376-2377` gates on `delete_mode ||
+on the early path (`generator.c:2419-2420` gates on `delete_mode ||
 force_delete`); on the late path the frame must be sent unconditionally
 once `do_stats` is on, or interop diverges in the `--stats` output
 formatting (`main.c:424` `output_itemized_counts("Number of deleted files",
@@ -373,7 +373,7 @@ formatting (`main.c:424` `output_itemized_counts("Number of deleted files",
 
 ### 6.6 MSG_DELETED with mismatched directory vs file kind
 
-The trailing-NUL convention (`log.c:861-862`, `io.c:1594-1600`) is the only
+The trailing-NUL convention (`log.c:946-947`, `io.c:1601-1607`) is the only
 in-band kind discriminator. A parallel consumer that emits a directory path
 without the trailing NUL would have it logged as `del.` regular-file rather
 than `del.` directory in `--itemize-changes`. The `S_IFDIR` vs `S_IFREG`
@@ -413,12 +413,12 @@ stats frame and the goodbye `NDX_DONE` on the ndx side.
 - Upstream entry points:
   `target/interop/upstream-src/rsync-3.4.1/delete.c:130-225` (`delete_item`),
   `delete.c:48-122` (`delete_dir_contents`),
-  `generator.c:252-265` (`do_delayed_deletions`),
-  `generator.c:272-347` (`delete_in_dir`),
-  `generator.c:351-387` (`do_delete_pass`),
-  `generator.c:2263-2425` (delete-pass scheduling and `write_del_stats`
+  `generator.c:287-300` (`do_delayed_deletions`),
+  `generator.c:307-382` (`delete_in_dir`),
+  `generator.c:386-422` (`do_delete_pass`),
+  `generator.c:2305-2468` (delete-pass scheduling and `write_del_stats`
   call sites),
   `main.c:225-247` (`write_del_stats` / `read_del_stats`),
   `rsync.c:322-353` (`read_ndx_and_attrs` loop over `NDX_DEL_STATS`),
-  `log.c:839-876` (`log_delete` -> `send_msg(MSG_DELETED, ...)`),
-  `io.c:1549-1601` (receiver-side `MSG_DELETED` dispatch).
+  `log.c:924-961` (`log_delete` -> `send_msg(MSG_DELETED, ...)`),
+  `io.c:1556-1608` (receiver-side `MSG_DELETED` dispatch).

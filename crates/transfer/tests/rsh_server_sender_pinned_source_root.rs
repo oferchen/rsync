@@ -3,7 +3,7 @@
 //!
 //! The sender scans the tree first and opens file content later, so a parent
 //! directory replaced in between redirects a by-path open outside the tree.
-//! upstream: `rsync-3.5.1/flist.c:2967-2969` holds each explicit source root
+//! upstream: `rsync-3.5.2/flist.c:2978-2980` holds each explicit source root
 //! by dev/ino, and `sender.c:694-704` opens content beneath that held root, so
 //! the escaping component is refused and the file fails with exit 23.
 //!
@@ -120,7 +120,7 @@ fn rsh_sender_refuses_a_swapped_directory_without_the_kernel_sandbox() {
 /// `from/sym-to-dir/..` stats as `other` but cleans to `from`, so the held
 /// root and the scanned directory disagree. rsync 3.5.1 refuses the scan with
 /// ELOOP and exits 23 with nothing transferred (3.5.0 sent `other`).
-/// upstream: `rsync-3.5.1/flist.c:302-305` records the root, `flist.c:2266-2267`
+/// upstream: `rsync-3.5.2/flist.c:303-306` records the root, `flist.c:2277-2278`
 /// opens the cleaned operand through it, `flist.c:325-329` refuses the changed
 /// identity and `flist.c:2374` reports the per-item `opendir` failure.
 #[test]

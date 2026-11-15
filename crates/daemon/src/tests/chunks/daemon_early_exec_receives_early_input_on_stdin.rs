@@ -81,7 +81,7 @@ fn early_exec_hook_capture(early_input: Option<&[u8]>) -> String {
     drop(stream);
     let _ = finish_daemon(handle);
 
-    // upstream: clientserver.c:1005 `finish_pre_exec()` waits for the hook
+    // upstream: clientserver.c:1009 `finish_pre_exec()` waits for the hook
     // before the session answers OK, so it has finished once the daemon has.
     let text = fs::read_to_string(&marker).expect("early exec hook wrote its marker");
     assert!(!text.is_empty(), "early exec hook wrote an empty marker");

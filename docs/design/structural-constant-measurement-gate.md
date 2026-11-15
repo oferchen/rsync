@@ -53,14 +53,14 @@ Upstream's own constants are the model, and two of them show why the citation
 carries information the number does not.
 
 `MIN_FILECNT_LOOKAHEAD` and `MAX_FILECNT_LOOKAHEAD` are defined at
-`rsync.h:151-152` (1000 and 10000). The definitions are what a mirror cites. The
-consumers are elsewhere - `sender.c:515` and `sender.c:549` pass the minimum to
-`send_extra_file_list`, `generator.c:2703` and `generator.c:2775` gate flushing
+`rsync.h:152-153` (1000 and 10000). The definitions are what a mirror cites. The
+consumers are elsewhere - `sender.c:523` and `sender.c:557` pass the minimum to
+`send_extra_file_list`, `generator.c:2747` and `generator.c:2861` gate flushing
 on half of it, and `io.c:837` bounds the reader against the maximum - and citing
 a consumer instead of the definition is a common way for a citation to look
 right while pointing at code that can move independently.
 
-`BIGPATHBUFLEN` at `rsync.h:765-769` is the sharper example:
+`BIGPATHBUFLEN` at `rsync.h:781-785` is the sharper example:
 
 ```c
 #if MAXPATHLEN < 4096
@@ -70,14 +70,14 @@ right while pointing at code that can move independently.
 #endif
 ```
 
-With `MAXPATHLEN` taken from the system header (`rsync.h:760-762` supplies 1024
+With `MAXPATHLEN` taken from the system header (`rsync.h:776-778` supplies 1024
 only `#ifndef`), Linux takes the second arm and macOS the first, and both land on
 5120. oc's `MAX_FILTER_RULE_LEN` is 5120 with that derivation written out at the
 site. The value is identical on every supported platform; the note explaining
 that it arrives by two different routes is what stops a future reader from
 "simplifying" it into a divergence.
 
-`DEFAULT_MAX_ALLOC` (`options.c:209`) and the xattr wire caps are mirrors of the
+`DEFAULT_MAX_ALLOC` (`options.c:210`) and the xattr wire caps are mirrors of the
 same kind: cited, and correct because they are cited.
 
 ## What measured looks like
@@ -143,7 +143,7 @@ upstream's `TABLESIZE`. Upstream's constant is named `TRADITIONAL_TABLESIZE`
 `tablesize = (s->count/8) * 10 + 11` and raises it to the floor only if it comes
 out smaller (`match.c:84-88`), with the stated intent of holding hash load near
 80 percent for big files. Upstream then runs different insert and probe paths
-depending on whether it grew (`match.c:98`, `match.c:215`). Above roughly 52k
+depending on whether it grew (`match.c:98`, `match.c:219`). Above roughly 52k
 blocks upstream's table grew and oc's did not, so oc's chains lengthened as block
 count rose. Closed by #7790: `CompactLookup` grows on upstream's rule and carries
 both addressing modes, and `TAG_TABLE_SIZE` is documented as the tag-array size

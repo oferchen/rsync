@@ -105,9 +105,9 @@ pub(crate) fn read_directory_entries_sorted_reuse(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/flist.c:2328` `send_directory()` enumerates the descriptor its
+/// - `rsync-3.5.2/flist.c:2339` `send_directory()` enumerates the descriptor its
 ///   confined open produced.
-/// - `rsync-3.5.1/flist.c:2262-2265` `secure_opendir()` - the `--files-from`
+/// - `rsync-3.5.2/flist.c:2273-2276` `secure_opendir()` - the `--files-from`
 ///   arm, `open_no_attacker_symlinks(fbuf, O_RDONLY | O_DIRECTORY, 0)`.
 fn read_entry_names(path: &Path, root: ScanRoot<'_>) -> Result<Vec<OsString>, LocalCopyError> {
     #[cfg(unix)]
@@ -290,7 +290,7 @@ fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
 /// dir/sub/`, ...). The directory type is taken from the lstat'd metadata, so
 /// an unfollowed symlink-to-directory is a non-directory here, matching
 /// upstream's `S_ISDIR` test on the flist entry.
-/// upstream: flist.c:3797 f_name_cmp() - type-then-name ordering
+/// upstream: flist.c:3808 f_name_cmp() - type-then-name ordering
 fn compare_directory_entries(a: &DirectoryEntry, b: &DirectoryEntry) -> Ordering {
     // `false < true`, so non-directories (is_dir == false) sort first.
     a.metadata
@@ -690,7 +690,7 @@ mod tests {
 
     #[test]
     fn directory_entries_sort_non_directories_before_subdirectories() {
-        // upstream: flist.c:3797 f_name_cmp() - within a directory, every
+        // upstream: flist.c:3808 f_name_cmp() - within a directory, every
         // non-directory sorts before any subdirectory. Plain byte ordering
         // would interleave these as a_dir, b_file, c_dir, d_file; the upstream
         // key yields the two files first, then the two directories.

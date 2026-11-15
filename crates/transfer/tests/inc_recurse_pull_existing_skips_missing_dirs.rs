@@ -1,7 +1,7 @@
 //! `--existing` skips a destination directory that does not exist, and that
 //! skip is not an error.
 //!
-//! upstream: generator.c:1757-1763 - with `ignore_non_existing` an absent
+//! upstream: generator.c:1794-1800 - with `ignore_non_existing` an absent
 //! directory sets `skip_dir` and `FLAG_MISSING_DIR`, and generator.c:1648-1658
 //! returns early for every entry below it. Neither path touches `io_error`, so
 //! the pull exits 0. Under incremental recursion each sub-list reaches the
@@ -87,7 +87,7 @@ fn assert_dirs_only_pull(inc_recurse: Option<bool>) {
     fixture(tmp.path());
     let out = pull(tmp.path(), inc_recurse, &["--include=*/", "--exclude=*"]);
     assert_skipped_cleanly(&out, tmp.path(), &["bar", "foo"]);
-    // upstream: generator.c:1894-1896 names only directories set_file_attrs()
+    // upstream: generator.c:1931-1933 names only directories set_file_attrs()
     // changed; a skipped missing directory is never named.
     for missing in ["foo/down/", "new/"] {
         assert!(

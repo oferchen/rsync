@@ -1,7 +1,7 @@
 //! An OS error reaches the user in upstream's shape, `strerror (errno)`, and
 //! never as Rust's `io::Error` rendering `... (os error N)`.
 //!
-//! upstream: log.c:499-500 `rsyserr()` - every failed syscall is reported as
+//! upstream: log.c:584-585 `rsyserr()` - every failed syscall is reported as
 //! `": %s (%d)"` with `strerror(errno)` and `errno`.
 //!
 //! Each failure is driven through every transport: a local copy, a push and a
@@ -331,7 +331,7 @@ fn assert_site(root: &Path, name: &str, site: &Site) {
     );
 }
 
-/// upstream: options.c:2667-2669 - strerror without the errno number.
+/// upstream: options.c:2722-2724 - strerror without the errno number.
 #[test]
 fn a_missing_files_from_file_is_reported_like_upstream() {
     let tmp = fixture();
@@ -353,7 +353,7 @@ fn a_missing_files_from_file_is_reported_like_upstream() {
     unlock(tmp.path());
 }
 
-/// upstream: log.c:175-182 logfile_open() - reported, then ignored.
+/// upstream: log.c:182-189 logfile_open() - reported, then ignored.
 #[test]
 fn an_unopenable_log_file_is_reported_and_ignored_like_upstream() {
     let tmp = fixture();
@@ -375,7 +375,7 @@ fn an_unopenable_log_file_is_reported_and_ignored_like_upstream() {
     unlock(tmp.path());
 }
 
-/// upstream: clientserver.c:306-307 - rsyserr "failed to open %s".
+/// upstream: clientserver.c:310-311 - rsyserr "failed to open %s".
 #[test]
 fn a_missing_early_input_file_is_reported_like_upstream() {
     let tmp = fixture();
@@ -396,7 +396,7 @@ fn a_missing_early_input_file_is_reported_like_upstream() {
     unlock(tmp.path());
 }
 
-/// upstream: authenticate.c:245-247 - rsyserr "could not open password file
+/// upstream: authenticate.c:238-240 - rsyserr "could not open password file
 /// %s". Upstream opens the file only when the module asks for a password.
 #[test]
 fn a_missing_password_file_is_reported_like_upstream() {

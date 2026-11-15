@@ -1,7 +1,7 @@
 //! Regression coverage for the server's INC_RECURSE grant and the upstream
 //! option predicate `ServerConfig::allows_inc_recurse` it rests on.
 //!
-//! upstream: compat.c:162-178 set_allow_inc_recurse, compat.c:724 (the server
+//! upstream: compat.c:163-179 set_allow_inc_recurse, compat.c:733 (the server
 //! writes `CF_INC_RECURSE` whenever `allow_inc_recurse` survives).
 
 use crate::{ServerConfig, ServerRole};
@@ -86,14 +86,14 @@ mod server_receiver_grant {
 fn plain_recursive_receiver_options_allow_inc_recurse() {
     let mut receiver = config(ServerRole::Receiver, true, false);
     assert!(receiver.allows_inc_recurse());
-    // upstream: compat.c:683-688 - `--delete` and `--delete-delay` are
+    // upstream: compat.c:684-689 - `--delete` and `--delete-delay` are
     // during-deletes and stay compatible with inc-recursion.
     receiver.flags.delete = true;
     receiver.deletion.late_delete = true;
     assert!(receiver.allows_inc_recurse());
 }
 
-/// Each of upstream's four receiver clauses (compat.c:173-176) needs the full
+/// Each of upstream's four receiver clauses (compat.c:174-177) needs the full
 /// file list before the transfer walk, so each alone must refuse inc-recursion.
 #[test]
 fn receiver_options_needing_the_whole_list_refuse_inc_recurse() {
@@ -118,7 +118,7 @@ fn receiver_options_needing_the_whole_list_refuse_inc_recurse() {
 
 /// Drives the real client entry point against a scripted peer that sets
 /// CF_INC_RECURSE unasked, so the wiring from `ServerConfig` into protocol
-/// setup is under test, not just the predicate. upstream: compat.c:780-785.
+/// setup is under test, not just the predicate. upstream: compat.c:789-794.
 mod unasked_inc_recurse_from_peer {
     use super::config;
     use crate::handshake::HandshakeResult;

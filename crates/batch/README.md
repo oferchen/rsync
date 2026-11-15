@@ -30,4 +30,4 @@ recording a transfer to a file and replaying it later on a different machine.
 
 - `zstd` - enables `protocol`'s zstd codec so the test suite can build a
   zstd-framed batch body. Batch replay is pinned to zlib (upstream
-  compat.c:417-418) and never decodes zstd; this feature adds no replay support.
+  compat.c:418-419) and never decodes zstd; this feature adds no replay support.

@@ -77,11 +77,11 @@ pub(crate) fn copy_fifo(
         return Ok(());
     }
 
-    // upstream: generator.c:571-576 / 563-569 - a replace itemize reports
+    // upstream: generator.c:608-613 / 563-569 - a replace itemize reports
     // ITEM_REPORT_XATTR / ITEM_REPORT_ACL when those features are active and the
     // basis differs. Surface the enabled flags on all platforms so the recreate
     // change-set is derivable without cfg branching at the record site.
-    // upstream: generator.c:571-576 - itemize() lights ITEM_REPORT_XATTR from
+    // upstream: generator.c:608-613 - itemize() lights ITEM_REPORT_XATTR from
     // xattr_diff(), not from `preserve_xattrs`. Compare here, before the node is
     // unlinked and recreated, so the diff sees the destination that the row
     // reports against.
@@ -119,7 +119,7 @@ pub(crate) fn copy_fifo(
         .as_ref()
         .is_some_and(|existing| existing.file_type().is_dir())
     {
-        // upstream: generator.c:2469-2483 atomic_create() - `dir_in_the_way`
+        // upstream: generator.c:2512-2526 atomic_create() - `dir_in_the_way`
         // forces `skip_atomic`, so a directory obstacle takes the
         // `delete_item()` arm whether or not --backup is set, and `del_opts`
         // carries DEL_RECURSE only under --delete/--force. That flag selects
@@ -135,14 +135,14 @@ pub(crate) fn copy_fifo(
             recurse,
             crate::local_copy::MakeWayFor::Special,
         )? {
-            // upstream: generator.c:2483 `return 0` - atomic_create() creates
+            // upstream: generator.c:2526 `return 0` - atomic_create() creates
             // nothing, the caller skips this entry, and the run finishes 23.
             return Ok(());
         }
         existing_metadata = None;
     }
 
-    // upstream: generator.c:2048-2051 - a special file (FIFO/socket) whose
+    // upstream: generator.c:2089-2092 - a special file (FIFO/socket) whose
     // destination already holds another special of the same FT_SPECIAL bucket is
     // recreated rather than treated as new; quick_check_ok() (generator.c:670-673)
     // compares the `_S_IFMT` bits (FIFO vs socket). Snapshot the existing special
@@ -200,7 +200,7 @@ pub(crate) fn copy_fifo(
                 Duration::default(),
                 Some(metadata_snapshot),
             );
-            // upstream: generator.c:584 itemize() sets ITEM_IS_NEW (statret < 0)
+            // upstream: generator.c:621 itemize() sets ITEM_IS_NEW (statret < 0)
             // so log.c:768-772 fills slots 2-10 with `+` for a FIFO/socket the
             // receiver newly materialises. A special replacing a differing
             // special is itemized as a local change instead; the generator runs
@@ -236,7 +236,7 @@ pub(crate) fn copy_fifo(
         return Ok(());
     }
 
-    // upstream: generator.c:2032-2055 - a special whose destination already
+    // upstream: generator.c:2073-2096 - a special whose destination already
     // holds a special of the SAME `_S_IFMT` bucket quick-checks equal
     // (quick_check_ok, generator.c:671): the generator applies attributes
     // in place via set_file_attrs and itemizes `iflags=0` (`.S...`), never
@@ -285,7 +285,7 @@ pub(crate) fn copy_fifo(
         context.record_hard_link(metadata, destination);
 
         if let Some(path) = &record_path {
-            // upstream: generator.c:2055 itemize(..., 0, ...) - a quick-check-ok
+            // upstream: generator.c:2096 itemize(..., 0, ...) - a quick-check-ok
             // special sets no ITEM_LOCAL_CHANGE / ITEM_IS_NEW, only the attribute
             // report bits, so the row renders `.S...p...`, not `cS`.
             let change_set = LocalCopyChangeSet::for_file(
@@ -326,14 +326,14 @@ pub(crate) fn copy_fifo(
     }
 
     if let Some(existing) = existing_metadata.take() {
-        // upstream: generator.c:2478 atomic_create() - `make_backup(fname,
+        // upstream: generator.c:2521 atomic_create() - `make_backup(fname,
         // skip_atomic)` with `skip_atomic` false here, so the hard-link tier
         // runs before the rename.
         context.backup_existing_entry(destination, relative, existing.file_type(), false)?;
         remove_existing_destination(destination)?;
     }
 
-    // upstream: generator.c:1205-1316 try_dests_non() - a `--link-dest` basis
+    // upstream: generator.c:1242-1353 try_dests_non() - a `--link-dest` basis
     // special matching the source (same FT_SPECIAL bucket, same `_S_IFMT`,
     // unchanged attrs) is hard-linked into place and itemized `hS` + blank
     // rather than recreated. Only applies when creating fresh.
@@ -366,7 +366,7 @@ pub(crate) fn copy_fifo(
 
     // try to hard-link to an earlier FIFO we made
     if let Some(link_source) = existing_hard_link_target.take() {
-        // upstream: log.c:675-689 - the `%L` field renders ` => leader` for a
+        // upstream: log.c:760-774 - the `%L` field renders ` => leader` for a
         // hard-linked non-symlink. Capture the leader's destination-relative
         // path before the match may move `link_source` back on EXDEV so the
         // itemize row can emit `hS+++++++++ alias => leader`.
@@ -379,7 +379,7 @@ pub(crate) fn copy_fifo(
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 remove_existing_destination(destination)?;
                 if let Err(link_error) = create_hard_link(&link_source, destination) {
-                    // upstream: hlink.c:486-487 - rsyserr(FERROR_XFER, errno,
+                    // upstream: hlink.c:500-501 - rsyserr(FERROR_XFER, errno,
                     // "link %s => %s failed", ...) and the entry is skipped.
                     report_link_failure(context, destination, &link_source, &link_error);
                     context.register_progress();
@@ -481,7 +481,7 @@ pub(crate) fn copy_fifo(
     // A socket the platform cannot create race-safely is SKIPPED with a
     // warning, not turned into a transfer error: a socket inode is only a
     // placeholder, so upstream keeps going and still exits 0.
-    // upstream: generator.c:2506-2521 - atomic_create()'s do_mknod_at failure
+    // upstream: generator.c:2549-2564 - atomic_create()'s do_mknod_at failure
     // arm returns 0 for S_ISSOCK with EOPNOTSUPP/ENOSYS after rprintf(FWARNING).
     #[cfg(unix)]
     if std::os::unix::fs::FileTypeExt::is_socket(&file_type)
@@ -498,7 +498,7 @@ pub(crate) fn copy_fifo(
     {
         let fake_super = metadata_options.fake_super_enabled();
         if let Err(error) = create_fifo_with_fake_super(destination, metadata, fake_super) {
-            // upstream: generator.c:2521-2522 - rsyserr(FERROR_XFER, e,
+            // upstream: generator.c:2564-2565 - rsyserr(FERROR_XFER, e,
             // "mknod %s failed", ...) and the entry is skipped.
             report_mknod_failure(context, destination, &error.into_parts().2);
             context.register_progress();
@@ -587,7 +587,7 @@ pub(crate) fn copy_fifo(
             Some(metadata_snapshot),
         );
         let record = if let Some(existing) = replaced_special.as_ref() {
-            // upstream: generator.c:2091-2096 - a special replacing a differing
+            // upstream: generator.c:2132-2137 - a special replacing a differing
             // special of the same FT_SPECIAL bucket recreates it and itemizes via
             // ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE, not ITEM_IS_NEW. Derive the
             // change-set from the `_S_IFMT` comparison.
@@ -602,7 +602,7 @@ pub(crate) fn copy_fifo(
             );
             record.with_creation(false).with_change_set(change_set)
         } else {
-            // upstream: generator.c:584 itemize() sets ITEM_IS_NEW (statret < 0)
+            // upstream: generator.c:621 itemize() sets ITEM_IS_NEW (statret < 0)
             // so log.c:768-772 fills slots 2-10 with `+` for a FIFO/socket the
             // receiver newly materialises via do_mknod(). A non-special existing
             // entry hits upstream's statret = -1 path and is likewise new.

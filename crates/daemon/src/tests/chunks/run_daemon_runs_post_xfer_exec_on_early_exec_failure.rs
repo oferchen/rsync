@@ -4,7 +4,7 @@
 /// regardless of outcome, so an early-exec abort (child returns `-1`, which
 /// `_exit()` truncates to 255) fires the hook with `RSYNC_EXIT_STATUS=255`.
 ///
-/// upstream: clientserver.c:964-993 - post-xfer exec runs after the child
+/// upstream: clientserver.c:968-997 - post-xfer exec runs after the child
 /// exits for any reason; clientserver.c:994-1009 - early exec runs after the
 /// post-xfer-exec fork point, and its failure returns `-1` from the module
 /// child. Regression guard for the daemon skipping the hook on this
@@ -67,7 +67,7 @@ fn run_daemon_runs_post_xfer_exec_on_early_exec_failure() {
         .expect("send module request");
     stream.flush().expect("flush module request");
 
-    // upstream: clientserver.c:994-1008 - early exec runs (and its failure is
+    // upstream: clientserver.c:998-1012 - early exec runs (and its failure is
     // reported) BEFORE the `@RSYNCD: OK` at clientserver.c:1152, so the
     // client's very next line after naming the module is the fixed
     // `@ERROR: early exec failed` refusal; no OK ever arrives.

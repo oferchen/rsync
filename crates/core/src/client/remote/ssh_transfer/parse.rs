@@ -113,7 +113,7 @@ pub(in crate::client::remote) fn remote_operand_source_paths(
 mod tests {
     use super::*;
 
-    /// upstream: main.c:1636-1639 refuses a dash-led host, after stripping
+    /// upstream: main.c:1640-1643 refuses a dash-led host, after stripping
     /// `user@`, with this exact line and RERR_SYNTAX. Without the refusal the
     /// host reaches the remote shell's argv, where `-oProxyCommand=...` runs a
     /// command.

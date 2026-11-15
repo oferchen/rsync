@@ -9,7 +9,7 @@
 //! non-obvious rules - absolute targets restart at `/`, and the hop budget is
 //! finite - hold.
 //!
-//! upstream: `rsync-3.5.1/syscall.c:365` `ona_open()`.
+//! upstream: `rsync-3.5.2/syscall.c:424` `ona_open()`.
 
 #![cfg(unix)]
 
@@ -66,7 +66,7 @@ fn a_symlink_component_we_own_is_followed() {
 /// An absolute symlink target restarts the walk at `/` rather than being
 /// appended to the current position.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:554`.
+/// upstream: `rsync-3.5.2/syscall.c:615`.
 #[test]
 fn an_absolute_symlink_target_restarts_the_walk_at_the_root() {
     let root = test_support::create_tempdir();
@@ -89,7 +89,7 @@ fn an_absolute_symlink_target_restarts_the_walk_at_the_root() {
 /// treat `EXDEV` as cross-device and fall back to copy+remove, which would
 /// launder the refusal.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:446` `int loops = 40;`.
+/// upstream: `rsync-3.5.2/syscall.c:507` `int loops = 40;`.
 #[test]
 fn a_symlink_cycle_is_refused_with_eloop() {
     let root = test_support::create_tempdir();

@@ -145,7 +145,7 @@ pub fn restrict_to_module_paths(allowed_roots: &[&Path]) -> LandlockOutcome {
 /// Restricts the current thread like [`restrict_to_module_paths`], and also
 /// grants a receiver's basis directories the least each one needs.
 ///
-/// upstream: generator.c:1073 `try_dests_reg()` opens a `--compare-dest` or
+/// upstream: generator.c:1110 `try_dests_reg()` opens a `--compare-dest` or
 /// `--copy-dest` file as a basis or copies it (`copy_altdest_file()`), and
 /// hard-links a `--link-dest` file into the destination. None of them is
 /// ever created in, removed from or renamed within.

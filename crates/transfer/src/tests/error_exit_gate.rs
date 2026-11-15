@@ -1,6 +1,6 @@
 //! Gate coverage for the `MSG_ERROR_EXIT` producer.
 //!
-//! upstream: cleanup.c:242-258 - `_exit_cleanup()` writes the exit code onto the
+//! upstream: cleanup.c:243-259 - `_exit_cleanup()` writes the exit code onto the
 //! multiplexed stream only when the code is not one of the four transport-class
 //! failures, the peer negotiated protocol 31 or later, and this exit was not
 //! itself caused by a `MSG_ERROR_EXIT` the peer sent.
@@ -25,7 +25,7 @@ fn emitted(error: &io::Error, protocol_version: u8) -> Vec<u8> {
     wire
 }
 
-/// upstream: cleanup.c:244-253 + io.c:1066-1075 - a sender queues the frame
+/// upstream: cleanup.c:245-254 + io.c:1066-1075 - a sender queues the frame
 /// but only a socket daemon's `noop_io_until_death()` drains it, so over a
 /// remote shell nothing reaches the peer and it sees the connection close.
 #[test]
@@ -46,7 +46,7 @@ fn a_sender_announces_only_over_a_daemon_socket() {
     assert!(wire.is_empty(), "an unreachable frame is not written");
 }
 
-/// upstream: log.c:357-367 rwrite() - a socket daemon's fatal cause and
+/// upstream: log.c:437-447 rwrite() - a socket daemon's fatal cause and
 /// log_exit() trailer are MSG_ERROR frames queued before the
 /// `MSG_ERROR_EXIT` that exit_cleanup() sends after them.
 #[test]
@@ -109,7 +109,7 @@ fn report_and_announce(
     (rendered.into_inner(), wire)
 }
 
-/// upstream: log.c:357, cleanup.c:221-224 before :250 - with `msgs2stderr = 2`
+/// upstream: log.c:437, cleanup.c:222-225 before :250 - with `msgs2stderr = 2`
 /// (protocol 29 and later over a remote shell) the fatal report is rendered
 /// and written to stderr before `MSG_ERROR_EXIT` goes on the wire, so a client
 /// that signals the server on the exit frame cannot truncate it.
@@ -124,7 +124,7 @@ fn a_report_bound_for_stderr_writes_before_the_exit_frame() {
     assert_eq!(wire, expected_frame(3), "only the exit frame is written");
 }
 
-/// upstream: compat.c:653-654 clears `msgs2stderr` below protocol 29, so the
+/// upstream: compat.c:654-655 clears `msgs2stderr` below protocol 29, so the
 /// report is queued for the client (log.c:357-367 -> io.c:1088 send_msg());
 /// cleanup.c:241-243 neither announces nor flushes RERR_STREAMIO, so nothing
 /// reaches the wire and nothing is left for stderr either.
@@ -142,7 +142,7 @@ fn a_framed_report_for_a_transport_failure_goes_nowhere() {
     );
 }
 
-/// upstream: cleanup.c:221-226 - an exit the peer asked for prints nothing.
+/// upstream: cleanup.c:222-227 - an exit the peer asked for prints nothing.
 #[test]
 fn an_exit_the_peer_asked_for_renders_no_report() {
     let error = io::Error::other(RemoteExitError { code: 23 });
@@ -166,7 +166,7 @@ fn a_file_select_failure_is_announced_at_protocol_31() {
     assert_eq!(emitted(&error, 32), expected_frame(3));
 }
 
-/// upstream: cleanup.c:244 - below protocol 31 nothing is written to the wire;
+/// upstream: cleanup.c:245 - below protocol 31 nothing is written to the wire;
 /// the surviving `am_receiver` arm routes to the forked receiver's sibling
 /// channel, which a single-process port does not have.
 #[test]
@@ -175,7 +175,7 @@ fn protocol_30_announces_nothing() {
     assert!(emitted(&error, 30).is_empty());
 }
 
-/// upstream: cleanup.c:242-243 - `RERR_SOCKETIO`, `RERR_STREAMIO`, `RERR_SIGNAL1`
+/// upstream: cleanup.c:243-244 - `RERR_SOCKETIO`, `RERR_STREAMIO`, `RERR_SIGNAL1`
 /// and `RERR_TIMEOUT` are the transport-class codes; announcing one down the
 /// transport that just failed is pointless, so upstream skips the send.
 #[test]
@@ -193,7 +193,7 @@ fn transport_class_codes_are_not_announced() {
     }
 }
 
-/// upstream: io.c:1930 - receipt of `MSG_ERROR_EXIT` re-enters `_exit_cleanup`
+/// upstream: io.c:1937 - receipt of `MSG_ERROR_EXIT` re-enters `_exit_cleanup`
 /// with a negative line precisely so the code is not echoed straight back.
 #[test]
 fn an_exit_the_peer_asked_for_is_not_echoed_back() {

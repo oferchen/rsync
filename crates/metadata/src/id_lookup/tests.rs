@@ -526,7 +526,7 @@ impl NameConverterCallbacks for DisclaimingConverter {
 
 /// A converter whose request/answer stream has broken.
 ///
-/// upstream: clientserver.c:1329-1334 - a converter that cannot be written to
+/// upstream: clientserver.c:1338-1343 - a converter that cannot be written to
 /// ends the session; it never reports a name as merely absent.
 #[cfg(unix)]
 struct DeadConverter;

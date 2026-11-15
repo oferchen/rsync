@@ -95,7 +95,7 @@ pub struct ParsedServerFlags {
     /// list's rdev fields, so clearing them on one end alone desynchronises the
     /// stream. This flag withholds creation only and never reaches the wire.
     ///
-    /// upstream: options.c:688-689, generator.c:2026-2033
+    /// upstream: options.c:689-690, generator.c:2067-2074
     pub drop_devices: bool,
     /// Preserve modification times (`t` flag, `--times`).
     pub times: bool,
@@ -122,8 +122,8 @@ pub struct ParsedServerFlags {
     /// level needed to surface `-ivv` unchanged rows.
     pub verbose_level: u8,
     /// `--quiet` (`q` flag). The client packs it whenever `msgs2stderr` is
-    /// nonzero (upstream: options.c:2804-2805); a quiet server then drops
-    /// every FINFO line before framing it (upstream: log.c:344-346).
+    /// nonzero (upstream: options.c:2869-2870); a quiet server then drops
+    /// every FINFO line before framing it (upstream: log.c:424-426).
     pub quiet: bool,
     /// Route `-v` name / info output to stderr instead of stdout
     /// (`--msgs2stderr`). Mirrors upstream's `msgs2stderr` FINFO routing;
@@ -142,7 +142,7 @@ pub struct ParsedServerFlags {
     pub xattrs: bool,
     /// Count of `X` flags in the packed server flag string, capped at 2.
     ///
-    /// Upstream keeps `preserve_xattrs` as a counter (`options.c:1990`
+    /// Upstream keeps `preserve_xattrs` as a counter (`options.c:2026`
     /// `preserve_xattrs++`) and doubles the compact letter for the remote
     /// (`options.c:2875-2878`), so the level rides the flag string rather than
     /// a side channel. `-XX` (level 2) transfers the `rsync.%FOO` fake-super
@@ -198,7 +198,7 @@ pub struct ParsedServerFlags {
     /// Only-write-batch mode on a server receiver (`--only-write-batch=X`).
     ///
     /// The push client records the batch locally and writes each file's delta
-    /// to its own batch fd, not the wire (upstream sender.c:502 `f_xfer =
+    /// to its own batch fd, not the wire (upstream sender.c:510 `f_xfer =
     /// write_batch < 0 ? batch_fd : f_out`), so the server receiver reads no
     /// delta data off the wire. It must still send REAL block checksums,
     /// because upstream forces `dry_run = 1` only AFTER `do_xfers` is computed
@@ -224,7 +224,7 @@ pub struct ParsedServerFlags {
     pub sparse: bool,
     /// Preallocate destination file extents before writing (`--preallocate`).
     /// Long-form only (no compact letter); the receiver calls `fallocate()` on
-    /// each destination temp file. upstream: options.c:729 / receiver.c:492-496.
+    /// each destination temp file. upstream: options.c:730 / receiver.c:492-496.
     pub preallocate: bool,
     /// One file system level (`x` flag count, `--one-file-system`).
     /// 0 = off, 1 = single -x, 2 = double -xx.
@@ -266,7 +266,7 @@ pub struct ParsedServerFlags {
     /// Treat dest-side directory symlinks as the directories they point to
     /// (`K` flag, `--keep-dirlinks`).
     ///
-    /// Upstream: options.c:702 `{"keep-dirlinks", 'K', ...}` and
+    /// Upstream: options.c:703 `{"keep-dirlinks", 'K', ...}` and
     /// generator.c:1745 `gen_entry_stat(fname, file, &sx.st, keep_dirlinks && is_dir)`.
     /// On the receiver this prevents replacing a destination symlink-to-dir
     /// with a real directory and lets per-file operations (basis open, chmod
@@ -276,7 +276,7 @@ pub struct ParsedServerFlags {
     /// Follow symlinks that point at directories on the sender (`k` flag,
     /// `--copy-dirlinks`).
     ///
-    /// Upstream: options.c:701 `{"copy-dirlinks", 'k', ...}`. Sender-only
+    /// Upstream: options.c:702 `{"copy-dirlinks", 'k', ...}`. Sender-only
     /// semantics: the file list reports each dir-symlink as the directory
     /// it resolves to. Captured here so the server-side sender process
     /// honours `-k` when the client requested it.
@@ -301,12 +301,12 @@ pub struct ParsedServerFlags {
     /// fails the whole-file checksum and triggers a full re-transmit. Plain
     /// `--append` (`append_mode == 1`) trusts the prefix and never sums it.
     ///
-    /// Upstream: `options.c:733` (`append_mode = 2`), `match.c:414` and
+    /// Upstream: `options.c:734` (`append_mode = 2`), `match.c:450` and
     /// `receiver.c:529` (`if (append_mode == 2)` prefix `sum_update`).
     pub append_verify: bool,
     /// Make backups before overwriting (`b` flag, `--backup`).
     ///
-    /// Upstream: `options.c:2807` - `argstr[x++] = 'b'`.
+    /// Upstream: `options.c:2872` - `argstr[x++] = 'b'`.
     pub backup: bool,
     /// Fuzzy basis file matching level (`y` flag, `--fuzzy`).
     ///
@@ -315,7 +315,7 @@ pub struct ParsedServerFlags {
     /// - 2: also search reference directories (`-yy`)
     ///
     /// Each `y` in the compact flag string increments this counter,
-    /// matching upstream `options.c:1707` - `fuzzy_basis++`.
+    /// matching upstream `options.c:1734` - `fuzzy_basis++`.
     pub fuzzy_level: u8,
     /// Prune empty directories from destination (`m` flag, `--prune-empty-dirs`).
     pub prune_empty_dirs: bool,
@@ -362,7 +362,7 @@ pub struct ParsedServerFlags {
     /// Create missing destination path components (long-form `--mkpath`).
     ///
     /// Not part of the compact flag string; forwarded by the sending client
-    /// only (upstream `options.c:3177-3178` - `if (mkpath_dest_arg &&
+    /// only (upstream `options.c:3245-3246` - `if (mkpath_dest_arg &&
     /// am_sender) args[ac++] = "--mkpath"`). Gates the receiver's dest-arg
     /// path creation: without it, upstream `main.c:817` does a single
     /// `do_mkdir(dest_path)` (which fails when an ancestor is missing); with
@@ -385,7 +385,7 @@ pub struct ParsedServerFlags {
     /// Omit symlink modification times (long-form `--omit-link-times` / `-J`).
     ///
     /// Receiver-side only. Not part of the compact flag string built by
-    /// `build_server_flag_string`: upstream `options.c:2824-2825` packs `'J'`
+    /// `build_server_flag_string`: upstream `options.c:2889-2890` packs `'J'`
     /// into `server_options` only inside the `if (am_sender)` block, so on a
     /// pull the flag is never sent over the wire and the local client (which IS
     /// the receiver) must apply it itself. When set, the receiver skips a
@@ -397,7 +397,7 @@ pub struct ParsedServerFlags {
     /// Preserve executability (long-form `--executability` / `-E`).
     ///
     /// Receiver-side in effect, but it reaches the receiver by two different
-    /// routes. Upstream `options.c:2868-2869` packs `'E'` into
+    /// routes. Upstream `options.c:2933-2934` packs `'E'` into
     /// `server_options` inside the `else if (preserve_executability &&
     /// am_sender)` branch: on a **push** the flag rides the compact string to
     /// the remote server, which is the receiver, so the flag parser has to
@@ -427,7 +427,7 @@ pub struct ParsedServerFlags {
 
     /// Apply the built-in CVS-ignore rule set (`C` flag, `--cvs-exclude`).
     ///
-    /// Sender-side in effect. Upstream `options.c:2885-2886` packs `'C'` into
+    /// Sender-side in effect. Upstream `options.c:2950-2951` packs `'C'` into
     /// the compact string whenever `cvs_exclude` is set, on both a push and a
     /// pull. On a **pull** the remote server is the sender and the CVS rules
     /// are NOT transmitted over the wire (`exclude.c:1951` gates the send on
@@ -510,7 +510,7 @@ impl ParsedServerFlags {
     /// the corresponding feature (`acl` or `xattr`), the flag is cleared
     /// and the feature name is returned so the caller can emit a warning.
     ///
-    /// Deviation from upstream: `options.c:1971-1997` refuses `-A` / `-X`
+    /// Deviation from upstream: `options.c:2007-2033` refuses `-A` / `-X`
     /// with an error when `SUPPORT_ACLS` / `SUPPORT_XATTRS` is not compiled
     /// in; this warns and continues without the unsupported feature.
     ///
@@ -554,7 +554,7 @@ impl ParsedServerFlags {
         // Split the bundle into the two namespaces upstream's popt keeps apart,
         // rather than scanning one flat string.
         //
-        // upstream: options.c:837 `{"rsh", 'e', POPT_ARG_STRING, &shell_cmd, 0,
+        // upstream: options.c:840 `{"rsh", 'e', POPT_ARG_STRING, &shell_cmd, 0,
         // 0, 0}` - `-e` TAKES AN ARGUMENT, so popt binds everything after it as
         // a VALUE and it never re-enters option scanning. `-v` by contrast is
         // `POPT_ARG_NONE` and is counted. The two namespaces happen to share the
@@ -567,7 +567,7 @@ impl ParsedServerFlags {
         // (options.c:3212) is the only writer of an `e` into `argstr`, and it
         // appends last (options.c:2904) after every transfer letter, so the
         // first `e` is always the capability introducer. The payload after it is
-        // upstream's `client_info` (compat.c:165-169) - opaque bytes that only
+        // upstream's `client_info` (compat.c:166-170) - opaque bytes that only
         // `setup::capability` decodes, never option letters. Splitting at `e`
         // rather than at the `.` also keeps a pre-release peer's `-e32.1iLsfx...`
         // version prefix (options.c:3216) out of the transfer-letter scan.
@@ -630,7 +630,7 @@ impl ParsedServerFlags {
             b'H' => self.hard_links = true,
             b'I' => self.ignore_times = true,
             b'A' => self.acls = true,
-            // upstream: options.c:1990 `preserve_xattrs++` - the level is a
+            // upstream: options.c:2026 `preserve_xattrs++` - the level is a
             // count, doubled onto the wire as `-XX` by options.c:2875-2878.
             b'X' => {
                 self.xattrs = true;
@@ -650,10 +650,10 @@ impl ParsedServerFlags {
             b'R' => self.relative = true,
             b'P' => self.partial = true,
             b'u' => self.update = true,
-            // upstream: options.c:2806-2807 - 'b' = backup.
+            // upstream: options.c:2871-2872 - 'b' = backup.
             b'b' => self.backup = true,
             b'N' => self.crtimes = true,
-            // upstream: options.c:2822-2825 - `if (am_sender) { if (omit_dir_times
+            // upstream: options.c:2887-2890 - `if (am_sender) { if (omit_dir_times
             // > 0) 'O'; if (omit_link_times) 'J'; }`. On a push the local client is
             // the sender, so 'O'/'J' ride to the remote server (the receiver),
             // which must skip re-setting a directory's / symlink's mtime
@@ -664,7 +664,7 @@ impl ParsedServerFlags {
             // mtimes instead of leaving them at "now".
             b'O' => self.omit_dir_times = true,
             b'J' => self.omit_link_times = true,
-            // upstream: options.c:2868-2869 - `'E'` rides the compact flag
+            // upstream: options.c:2933-2934 - `'E'` rides the compact flag
             // string in the `else if (preserve_executability && am_sender)`
             // branch, i.e. on a *push*, where the remote server IS the
             // receiver and has to honour it. (On a pull the local client is
@@ -673,9 +673,9 @@ impl ParsedServerFlags {
             // left the server receiver with executability preservation off:
             // it neither copied the exec bit nor reported the `p` column.
             b'E' => self.preserve_executability = true,
-            // upstream: options.c:694 - 'L' = copy_links (resolve symlinks).
+            // upstream: options.c:695 - 'L' = copy_links (resolve symlinks).
             b'L' => self.copy_links = true,
-            // upstream: options.c:702 - 'K' = keep_dirlinks (preserve
+            // upstream: options.c:703 - 'K' = keep_dirlinks (preserve
             // destination dir-symlinks instead of replacing them). The
             // receiver also routes path-based chmod through the
             // keep_dirlinks bypass so the leaf chmod follows the
@@ -684,14 +684,14 @@ impl ParsedServerFlags {
             // file operation on `dir/file` (basis open, chmod) is
             // refused by the dirfd sandbox because `dir` is a symlink.
             b'K' => self.keep_dirlinks = true,
-            // upstream: options.c:701 - 'k' = copy_dirlinks (sender-side
+            // upstream: options.c:702 - 'k' = copy_dirlinks (sender-side
             // follow dir-symlinks). Sender-only knob; recorded for parity
             // so the server-side sender process honours -k.
             b'k' => self.copy_dirlinks = true,
-            // upstream: options.c:1707 - fuzzy_basis++ for each 'y'
+            // upstream: options.c:1734 - fuzzy_basis++ for each 'y'
             b'y' => self.fuzzy_level = self.fuzzy_level.saturating_add(1),
             b'm' => self.prune_empty_dirs = true,
-            // upstream: options.c:2885-2886 - `if (cvs_exclude) argstr = 'C'`.
+            // upstream: options.c:2950-2951 - `if (cvs_exclude) argstr = 'C'`.
             // A pulling client forwards `C` so the server-sender re-derives the
             // CVS-ignore rules itself (they are not sent on a pull); the
             // generator wires this into its filter chain via
@@ -746,7 +746,7 @@ mod tests {
     }
 
     /// The `-e.<caps>` capability suffix must never be decoded as `--info`
-    /// output flags. Upstream's `client_info` (compat.c:165-169) is only
+    /// output flags. Upstream's `client_info` (compat.c:166-170) is only
     /// `strchr`-scanned for protocol capability letters (compat.c:729-745); the
     /// `i` letter is `CF_INC_RECURSE`, not `--itemize`, and `L/s/f/x/C/v/u` are
     /// likewise capabilities. Output requests reach the server as separate
@@ -755,7 +755,7 @@ mod tests {
     /// spuriously set `info_flags.itemize` from the inc-recurse `i` capability.
     #[test]
     fn capability_suffix_letters_are_not_info_flags() {
-        // Upstream release capability string on a pull/push (options.c:3202-3233).
+        // Upstream release capability string on a pull/push (options.c:3270-3301).
         let with_caps = ParsedServerFlags::parse("-logDtpre.LsfxCIvu").unwrap();
         assert_eq!(
             with_caps.info_flags,
@@ -789,7 +789,7 @@ mod tests {
 
     /// The `-e` argument boundary is the `e`, not the `.`.
     ///
-    /// upstream: options.c:837 `{"rsh", 'e', POPT_ARG_STRING, &shell_cmd, ...}` -
+    /// upstream: options.c:840 `{"rsh", 'e', POPT_ARG_STRING, &shell_cmd, ...}` -
     /// popt binds EVERYTHING after `-e` as the option's argument. A pre-release
     /// peer emits its `VER.SUB` in front of the capability letters
     /// (`maybe_add_e_option`, options.c:3216: `snprintf(buf + x, ..., "%d.%d",
@@ -887,7 +887,7 @@ mod tests {
         assert_eq!(flags.verbose_level, 0);
     }
 
-    /// upstream: options.c:2804-2805 - a quiet client packs `q`; the server
+    /// upstream: options.c:2869-2870 - a quiet client packs `q`; the server
     /// must see it to drop FINFO before framing (log.c:344-346).
     #[test]
     fn parses_quiet_from_packed_flags() {
@@ -939,7 +939,7 @@ mod tests {
         assert_eq!(double.xattrs_level, 2);
     }
 
-    /// Upstream caps the transmitted level at two letters (options.c:2875-2878),
+    /// Upstream caps the transmitted level at two letters (options.c:2940-2943),
     /// so a peer that sends more must not overflow the counter.
     #[test]
     fn xattrs_level_saturates_at_two() {
@@ -1016,7 +1016,7 @@ mod tests {
 
     #[test]
     fn parses_executability_flag_from_a_push_flag_string() {
-        // upstream: options.c:2868-2869 - a pushing client packs 'E' into the
+        // upstream: options.c:2933-2934 - a pushing client packs 'E' into the
         // compact string, e.g. `--server -tEre.iLsfxCIvu`.
         let flags = ParsedServerFlags::parse("-tEre.iLsfxCIvu").unwrap();
         assert!(flags.preserve_executability);
@@ -1050,7 +1050,7 @@ mod tests {
     }
 
     /// The client emits `-K` in the compact flag string whenever
-    /// `--keep-dirlinks` is active (upstream `options.c:2817-2818`). Without
+    /// `--keep-dirlinks` is active (upstream `options.c:2882-2883`). Without
     /// recognising the byte the receiver runs
     /// with `keep_dirlinks=false`, so the dirfd sandbox refuses every
     /// chmod through a destination dir-symlink and the
@@ -1072,7 +1072,7 @@ mod tests {
         assert!(!flags.keep_dirlinks);
     }
 
-    /// upstream: options.c:701 - 'k' is `--copy-dirlinks`, captured for
+    /// upstream: options.c:702 - 'k' is `--copy-dirlinks`, captured for
     /// parity even though it only affects the sender. The receiver
     /// process must still ignore unknown bytes silently rather than
     /// reject the flag string.
@@ -1118,7 +1118,7 @@ mod tests {
     /// no clearing occurs. When the feature is absent, the flag is cleared
     /// and the feature name is returned.
     ///
-    /// upstream: options.c:1971-1986 - SUPPORT_ACLS guard
+    /// upstream: options.c:2007-2022 - SUPPORT_ACLS guard
     #[test]
     fn clear_unsupported_features_handles_acls() {
         let mut flags = ParsedServerFlags::parse("-A").unwrap();
@@ -1142,7 +1142,7 @@ mod tests {
     /// no clearing occurs. When the feature is absent, the flag is cleared
     /// and the feature name is returned.
     ///
-    /// upstream: options.c:1988-1997 - SUPPORT_XATTRS guard
+    /// upstream: options.c:2024-2033 - SUPPORT_XATTRS guard
     #[test]
     fn clear_unsupported_features_handles_xattrs() {
         let mut flags = ParsedServerFlags::parse("-X").unwrap();
@@ -1165,7 +1165,7 @@ mod tests {
     /// When both ACLs and xattrs are requested but the platform lacks support,
     /// both are cleared and reported.
     ///
-    /// upstream: options.c:1971-1997 - both guards apply independently
+    /// upstream: options.c:2007-2033 - both guards apply independently
     #[test]
     fn clear_unsupported_features_handles_both_acl_and_xattr() {
         let mut flags = ParsedServerFlags::parse("-AX").unwrap();

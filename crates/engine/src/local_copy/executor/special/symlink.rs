@@ -117,6 +117,41 @@ pub(crate) fn copy_symlink(
     metadata_options: &MetadataOptions,
     relative: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
+    if context.delay_symlinks_enabled()
+        && !matches!(
+            context.mode(),
+            crate::local_copy::LocalCopyExecution::DryRun
+        )
+    {
+        context.push_deferred_symlink(crate::local_copy::context::DeferredSymlink {
+            source: source.to_path_buf(),
+            destination: destination.to_path_buf(),
+            metadata: metadata.clone(),
+            metadata_options: metadata_options.clone(),
+            relative: relative.map(Path::to_path_buf),
+        });
+        return Ok(());
+    }
+    copy_symlink_immediate(
+        context,
+        source,
+        destination,
+        metadata,
+        metadata_options,
+        relative,
+    )
+}
+
+/// Immediately creates and itemizes a symlink (used directly or when flushing
+/// symlinks deferred by `--delay-symlinks`).
+pub(crate) fn copy_symlink_immediate(
+    context: &mut CopyContext,
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+    metadata_options: &MetadataOptions,
+    relative: Option<&Path>,
+) -> Result<(), LocalCopyError> {
     context.enforce_timeout()?;
     let mode = context.mode();
     let file_type = metadata.file_type();
@@ -136,7 +171,7 @@ pub(crate) fn copy_symlink(
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
     context.summary_mut().record_symlink_total();
-    // upstream: flist.c:916/1468 - `if (S_ISREG(mode) || S_ISLNK(mode))
+    // upstream: flist.c:920/1468 - `if (S_ISREG(mode) || S_ISLNK(mode))
     // stats.total_size += F_LENGTH(file)`. A symlink's F_LENGTH is its lstat
     // st_size, i.e. the byte length of its target, so count it into the flist
     // total_size exactly once per preserved symlink. Without this the
@@ -198,7 +233,7 @@ pub(crate) fn copy_symlink(
         .as_ref()
         .is_some_and(|existing| existing.file_type().is_dir())
     {
-        // upstream: generator.c:2469-2483 atomic_create() - `dir_in_the_way`
+        // upstream: generator.c:2512-2526 atomic_create() - `dir_in_the_way`
         // forces `skip_atomic`, so a directory obstacle takes the
         // `delete_item()` arm whether or not --backup is set, and `del_opts`
         // carries DEL_RECURSE only under --delete/--force. That flag selects
@@ -214,7 +249,7 @@ pub(crate) fn copy_symlink(
             recurse,
             crate::local_copy::MakeWayFor::Symlink,
         )? {
-            // upstream: generator.c:2482 `return 0` - atomic_create() creates
+            // upstream: generator.c:2525 `return 0` - atomic_create() creates
             // nothing, the caller skips this entry, and the run finishes 23.
             return Ok(());
         }
@@ -243,7 +278,7 @@ pub(crate) fn copy_symlink(
     // If the link is unsafe but we were told to copy what it points to, do that.
     if unsafe_target {
         if context.copy_unsafe_links_enabled() {
-            // upstream: flist.c:493 - INFO_GTE(SYMSAFE, 1) fires before
+            // upstream: flist.c:496 - INFO_GTE(SYMSAFE, 1) fires before
             // an unsafe symlink is dereferenced into a regular entry.
             info_log!(
                 Symsafe,
@@ -298,7 +333,7 @@ pub(crate) fn copy_symlink(
             }
 
             if is_device(target_type) {
-                // upstream: generator.c:2031-2033 - the same creation
+                // upstream: generator.c:2072-2074 - the same creation
                 // predicate as every other device site; `--copy-links`
                 // resolving to a device does not relax it.
                 if !context.may_create_devices() {
@@ -328,7 +363,7 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    // upstream: generator.c:1299 + try_dests_non() - a `--compare-dest` symlink
+    // upstream: generator.c:1336 + try_dests_non() - a `--compare-dest` symlink
     // whose target matches the basis is neither recreated nor transferred; it
     // itemizes `.L` against the basis. Detect that before any creation work so
     // the destination stays empty (compare-dest semantics) and the row collapses
@@ -354,7 +389,7 @@ pub(crate) fn copy_symlink(
             false,
             context.options().modify_window(),
         );
-        // upstream: generator.c:1299 + receiver.c:750 - a `--compare-dest`
+        // upstream: generator.c:1336 + receiver.c:750 - a `--compare-dest`
         // match leaves the destination absent and itemizes `.L` with no
         // ITEM_IS_NEW, so `stats.created_files`/`created_symlinks` do NOT count
         // it. It is still tallied into num_symlinks via `record_symlink_total`
@@ -387,7 +422,7 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    // upstream: generator.c:1963-1970 - `quick_check_ok(FT_SYMLINK, ...)` -
+    // upstream: generator.c:2000-2007 - `quick_check_ok(FT_SYMLINK, ...)` -
     // when the existing destination is already a symlink pointing at the
     // same target, skip the re-create and only re-apply metadata. The
     // itemize line collapses to `.L         ` under `-vv` and is suppressed
@@ -412,7 +447,7 @@ pub(crate) fn copy_symlink(
             apply_link_metadata(placeholders, destination, metadata, &symlink_options, None)
                 .map_err(map_metadata_error)?;
         }
-        // upstream: generator.c:1963-1970 + receiver.c:925-926 - an existing
+        // upstream: generator.c:2000-2007 + receiver.c:925-926 - an existing
         // symlink already pointing at the same target quick-checks equal:
         // `itemize(..., 0, ...)` sets no ITEM_IS_NEW, so `stats.created_files`
         // does not count it. A no-change re-run therefore reports 0 created
@@ -421,7 +456,7 @@ pub(crate) fn copy_symlink(
         if let Some(path) = &record_path {
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
             let total_bytes = Some(metadata_snapshot.len());
-            // upstream: generator.c:1969 - `itemize(..., 0, ...)` with
+            // upstream: generator.c:2006 - `itemize(..., 0, ...)` with
             // iflags=0 produces no significant change bits when the link
             // already points at the right place, so the `-i` golden omits
             // the entry entirely. Emit a MetadataReused record without
@@ -461,7 +496,7 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    // upstream: generator.c:2005-2008 recv_generator() - when the existing
+    // upstream: generator.c:2046-2049 recv_generator() - when the existing
     // destination is a symlink with a different target, `statret == 0 && stype == FT_SYMLINK`
     // and the recreate-itemize fires with the existing `sx.st` so
     // `mtime_differs()` can compare against the OLD symlink's mtime.
@@ -475,7 +510,7 @@ pub(crate) fn copy_symlink(
         })
         .cloned();
 
-    // upstream: generator.c:1938 - `exists = statret == 0 && stype != FT_DIR`,
+    // upstream: generator.c:1975 - `exists = statret == 0 && stype != FT_DIR`,
     // measured on the `sx.st` lstat taken BEFORE atomic_create()
     // (generator.c:2002) removes the obstacle. dest_mode()'s `exists` arm
     // (rsync.c:470-471) keeps that OLD stat's permission bits, so the obstacle
@@ -490,14 +525,14 @@ pub(crate) fn copy_symlink(
     if !mode.is_dry_run()
         && let Some(existing) = destination_metadata.take()
     {
-        // upstream: generator.c:2478 atomic_create() - `make_backup(fname,
+        // upstream: generator.c:2521 atomic_create() - `make_backup(fname,
         // skip_atomic)` with `skip_atomic` false here, so the hard-link tier
         // runs before the rename.
         context.backup_existing_entry(destination, relative, existing.file_type(), false)?;
         remove_existing_destination(destination)?;
     }
 
-    // upstream: generator.c:1258-1302 try_dests_non() - a `--link-dest` basis
+    // upstream: generator.c:1295-1339 try_dests_non() - a `--link-dest` basis
     // symlink with the same target is hard-linked into place rather than
     // recreated, itemizing as `hL` + blank against the basis. Only applies when
     // the destination is being created fresh (no prior symlink to recreate).
@@ -580,7 +615,7 @@ pub(crate) fn copy_symlink(
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(destination)?;
                     if let Err(link_error) = create_hard_link(&existing_target, destination) {
-                        // upstream: hlink.c:486-487 - rsyserr(FERROR_XFER, errno,
+                        // upstream: hlink.c:500-501 - rsyserr(FERROR_XFER, errno,
                         // "link %s => %s failed", ...) and the entry is skipped.
                         report_link_failure(context, destination, &existing_target, &link_error);
                         context.register_progress();
@@ -640,7 +675,7 @@ pub(crate) fn copy_symlink(
     if mode.is_dry_run() {
         context.summary_mut().record_symlink();
         if let Some(path) = &record_path {
-            // upstream: generator.c:1117-1147 - a dry-run still evaluates
+            // upstream: generator.c:1154-1184 - a dry-run still evaluates
             // alt-dest bases. A `--link-dest` symlink with a matching target
             // itemizes as `hL`; a `--copy-dest` symlink as `cL` against the
             // basis. Both leave attribute columns blank when identical.
@@ -740,7 +775,7 @@ pub(crate) fn copy_symlink(
             context.register_progress();
             return Ok(());
         }
-        // upstream: generator.c:2490-2493 - rsyserr(FERROR_XFER, errno,
+        // upstream: generator.c:2533-2536 - rsyserr(FERROR_XFER, errno,
         // "symlink %s -> \"%s\" failed", ...) and the entry is skipped.
         report_symlink_failure(context, destination, &write_target, &error);
         context.register_progress();
@@ -758,7 +793,7 @@ pub(crate) fn copy_symlink(
     } else {
         metadata_options.clone()
     };
-    // upstream: generator.c:1937-1940 - with `-p` off the generator rewrites
+    // upstream: generator.c:1974-1977 - with `-p` off the generator rewrites
     // `file->mode = dest_mode(file->mode, sx.st.st_mode, dflt_perms, exists)`
     // for every type, symlinks included (the rewrite sits above the
     // `preserve_links && ftype == FT_SYMLINK` branch at generator.c:1948).
@@ -803,7 +838,7 @@ pub(crate) fn copy_symlink(
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_symlink();
     if let Some(path) = &record_path {
-        // upstream: generator.c:1205-1316 try_dests_non() - a symlink absent
+        // upstream: generator.c:1242-1353 try_dests_non() - a symlink absent
         // from the destination but present (with the same target) in a
         // `--copy-dest` basis itemizes as a local change (`cL` + blank)
         // against the basis instead of a new entry (`cL+++++++++`).
@@ -816,7 +851,7 @@ pub(crate) fn copy_symlink(
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
         let total_bytes = Some(metadata_snapshot.len());
 
-        // upstream: generator.c:2005-2006 recv_generator() - when the existing
+        // upstream: generator.c:2046-2047 recv_generator() - when the existing
         // destination is not a symlink (e.g. a regular file being replaced), the recreate
         // path flips `statret = -1` so `itemize()` lights up `ITEM_IS_NEW`
         // and the row renders `cL+++++++++`. Mirror that by treating a
@@ -834,7 +869,7 @@ pub(crate) fn copy_symlink(
         )
         .with_creation(was_created);
 
-        // upstream: generator.c:2005-2008 recv_generator() - when the existing
+        // upstream: generator.c:2046-2049 recv_generator() - when the existing
         // destination was a symlink with a different target, the recreate-itemize is called
         // with `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE` and `statret == 0`;
         // `itemize()` then ORs in `ITEM_REPORT_TIME` when `mtime_differs`

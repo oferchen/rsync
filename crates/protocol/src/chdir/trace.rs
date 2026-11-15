@@ -158,7 +158,7 @@ mod tests {
 
     /// Pins the level 1 emission for the server/daemon-chroot role.
     ///
-    /// upstream: util1.c:1492-1493 emitted from `clientserver.c:1059`
+    /// upstream: util1.c:1492-1493 emitted from `clientserver.c:1063`
     /// `change_dir(module_chdir, CD_NORMAL)` after the daemon chroot
     /// jail is established.
     #[test]

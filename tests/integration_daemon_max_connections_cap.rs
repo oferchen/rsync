@@ -7,7 +7,7 @@
 //! * Exactly 2 clients are admitted (receive `@RSYNCD: OK`).
 //! * Exactly 1 client is refused with the upstream-compatible payload
 //!   `@ERROR: max connections (2) reached -- try again later`
-//!   (DMC-3, upstream `clientserver.c:752`).
+//!   (DMC-3, upstream `clientserver.c:756`).
 //! * The daemon writes exactly one structured warning to its log file in
 //!   the shape introduced by DMC-5:
 //!   `max-connections cap reached: which=<module> peer=<host> (<ip>) cap=2 current=2`.
@@ -125,7 +125,7 @@ fn request_module(stream: &TcpStream) -> Result<ClientOutcome, ClientError> {
     // a protocol refusal, so the module request - and the cap under test - is
     // never reached.
     //
-    // upstream: rsync-3.5.1/clientserver.c:228-238 `exchange_protocols()`.
+    // upstream: rsync-3.5.2/clientserver.c:232-242 `exchange_protocols()`.
     writer
         .write_all(b"@RSYNCD: 32.0 md5 md4\n")
         .map_err(|err| exchange("send handshake", err))?;
@@ -191,7 +191,7 @@ fn run_client(port: u16, all_classified: &Barrier) -> Result<ClientOutcome, Clie
 /// and a level assertion written that way cannot distinguish a warning from an
 /// error.
 ///
-/// upstream: rsync-3.5.1/log.c:135 `logit()` -
+/// upstream: rsync-3.5.2/log.c:142 `logit()` -
 /// `fprintf(logfile_fp, "%s [%d] ", timestring(time(NULL)), (int)getpid())`.
 fn daemon_log_message(line: &str) -> Option<&str> {
     let (date, rest) = line.split_once(' ')?;
@@ -301,12 +301,12 @@ fn daemon_caps_concurrent_module_connections_at_max_connections() {
         "exactly one client should be refused; admitted={admitted} refused={refused:?}"
     );
 
-    // DMC-3: refusal payload mirrors upstream clientserver.c:752 exactly.
+    // DMC-3: refusal payload mirrors upstream clientserver.c:756 exactly.
     let expected_error =
         format!("@ERROR: max connections ({CONNECTION_CAP}) reached -- try again later");
     assert_eq!(
         refused[0], expected_error,
-        "refusal payload must mirror upstream clientserver.c:752 (DMC-3)"
+        "refusal payload must mirror upstream clientserver.c:756 (DMC-3)"
     );
 
     // The daemon reaches `served >= max-sessions` once the third session ends,
@@ -330,7 +330,7 @@ fn daemon_caps_concurrent_module_connections_at_max_connections() {
     );
     let cap_line = cap_lines[0];
     let cap_message = daemon_log_message(cap_line).unwrap_or_else(|| {
-        panic!("cap line must carry the upstream log prefix (log.c:135): {cap_line}")
+        panic!("cap line must carry the upstream log prefix (log.c:142): {cap_line}")
     });
     assert!(
         cap_message.starts_with("oc-rsync warning:"),

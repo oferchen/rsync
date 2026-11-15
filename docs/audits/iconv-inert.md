@@ -110,7 +110,7 @@ shape is:
 
 Key upstream sites for parsing and converter setup:
 
-- `options.c:219, 814, 1366, 1396, 1416, 1668, 2052-2054, 2716-2722`
+- `options.c:220, 814, 1366, 1396, 1416, 1668, 2052-2054, 2716-2722`
   - `iconv_opt` global, popt entry, parse, `--no-iconv` reset, the
   local/remote split (`strchr(iconv_opt, ',')`).
 - `rsync.c:87-147` - `setup_iconv()` opens
@@ -126,18 +126,18 @@ Key upstream sites for parsing and converter setup:
 Per-call-site `iconvbufs` invocations in the 3.4.1 tree
 (file:line - direction - role):
 
-- `flist.c:745` - `recv_file_entry()` filename, wire -> local.
-- `flist.c:1141` - `recv_file_entry()` symlink target, wire ->
+- `flist.c:749` - `recv_file_entry()` filename, wire -> local.
+- `flist.c:1145` - `recv_file_entry()` symlink target, wire ->
   local, gated on `sender_symlink_iconv`.
-- `flist.c:1588, 1595` - `send_file_entry()` dirname/basename,
+- `flist.c:1592, 1595` - `send_file_entry()` dirname/basename,
   local -> wire.
-- `flist.c:1609` - `send_file_entry()` symlink target, local ->
+- `flist.c:1613` - `send_file_entry()` symlink target, local ->
   wire, gated on `symlink_len && sender_symlink_iconv`.
 - `io.c:428, 445` - `forward_filesfrom_data()` per-record,
   local -> wire.
 - `io.c:1025` - `send_msg()` `MSG_*` payload, local -> wire.
-- `io.c:1282` - `read_line(..., RL_CONVERT)`, wire -> local.
-- `io.c:1575` - `MSG_DELETED` path, local -> wire.
+- `io.c:1289` - `read_line(..., RL_CONVERT)`, wire -> local.
+- `io.c:1582` - `MSG_DELETED` path, local -> wire.
 - `rsync.c:304` - `send_protected_args()` per arg, local -> wire,
   with `ICB_INCLUDE_BAD` (verbatim fallback).
 
@@ -172,10 +172,10 @@ The upstream sites differ in how they treat lossy or invalid input:
 
 | Site | Direction | On lossy / invalid bytes |
 |---|---|---|
-| `flist.c:745` recv filename | wire -> local | warn + drop entry |
-| `flist.c:1141` recv symlink | wire -> local | warn + drop target |
-| `flist.c:1588, 1595` send filename | local -> wire | hard error, exit |
-| `flist.c:1609` send symlink | local -> wire | hard error, exit |
+| `flist.c:749` recv filename | wire -> local | warn + drop entry |
+| `flist.c:1145` recv symlink | wire -> local | warn + drop target |
+| `flist.c:1592, 1595` send filename | local -> wire | hard error, exit |
+| `flist.c:1613` send symlink | local -> wire | hard error, exit |
 | `rsync.c:304` protected args | local -> wire | include verbatim (`ICB_INCLUDE_BAD`) |
 | `io.c:1025` `MSG_*` body | local -> wire | include verbatim |
 
@@ -606,8 +606,8 @@ parallel.
 | #1909 | Audit `IconvSetting` parse-path dead-end. | Closed (PR #3514, `iconv-parse-deadend.md`). | n/a |
 | #1910 | Locate or design `FilenameConverter` trait. | Closed (PR #3517, `iconv-filename-converter-design.md`). The struct already exists at `crates/protocol/src/iconv/converter.rs:21`. | n/a |
 | #1911 | Wire `IconvSetting -> FilenameConverter` at config build. | Partial (PR #3458 closed SSH and daemon via `apply_common_server_flags`; local copy remains). | The local-copy gap (3.1, 3.2). |
-| #1912 | Apply on sender file-list emit. | Hook at `crates/protocol/src/flist/write/encoding.rs:312` is wired to a converter when one is present. Producer at `crates/transfer/src/generator/mod.rs:564` activates for SSH and daemon; local-copy needs the engine wiring. Symlink-target sub-gap (`flist.c:1609`) is separate. | (3.1) for local copy; symlink-target sub-gap tracked in `iconv-pipeline.md` Finding 2. |
-| #1913 | Apply on receiver file-list ingest. | Hook at `crates/protocol/src/flist/read/name.rs:101` and producer at `crates/transfer/src/receiver/mod.rs:369` are wired for SSH and daemon. Symlink-target sub-gap (`flist.c:1141`) is separate. | (3.2) for local copy; symlink-target sub-gap tracked in `iconv-pipeline.md` Finding 1. |
+| #1912 | Apply on sender file-list emit. | Hook at `crates/protocol/src/flist/write/encoding.rs:312` is wired to a converter when one is present. Producer at `crates/transfer/src/generator/mod.rs:564` activates for SSH and daemon; local-copy needs the engine wiring. Symlink-target sub-gap (`flist.c:1613`) is separate. | (3.1) for local copy; symlink-target sub-gap tracked in `iconv-pipeline.md` Finding 2. |
+| #1913 | Apply on receiver file-list ingest. | Hook at `crates/protocol/src/flist/read/name.rs:101` and producer at `crates/transfer/src/receiver/mod.rs:369` are wired for SSH and daemon. Symlink-target sub-gap (`flist.c:1145`) is separate. | (3.2) for local copy; symlink-target sub-gap tracked in `iconv-pipeline.md` Finding 1. |
 | #1914 | Apply in filter-rule path matching. | Dead. Repo-wide grep across `crates/filters/` finds no iconv references. | (3.3). |
 | #1915 | Hard-error `--iconv` when feature off. | Closed. `crates/cli/src/frontend/execution/options/iconv.rs:67-74` rejects with `rsync_error!(1, ...)` when `not(feature = "iconv")`. | n/a (already in tree). |
 | #1916 | Interop test against upstream rsync 3.4.1. | Stub at `tools/ci/run_interop.sh:2980-3087` per `docs/audits/iconv-feature-design.md:170-188`. | (5) below. |
@@ -952,21 +952,21 @@ sections 1-3 above. Quick index of the load-bearing entries:
 Source tree: `target/interop/upstream-src/rsync-3.4.1/`. Fetch
 instructions live in the project conventions document.
 
-- `options.c:219` - `iconv_opt` global.
-- `options.c:814` - popt entry.
-- `options.c:958, 995-1011, 1366, 1396, 1416, 1668, 2052-2058,
+- `options.c:220` - `iconv_opt` global.
+- `options.c:817` - popt entry.
+- `options.c:976, 995-1011, 1366, 1396, 1416, 1668, 2052-2058,
   2716-2722` - parse, daemon refuse-list interaction, defaults.
 - `rsync.c:87-147` - `setup_iconv()` and `iconv_open` allocation.
 - `rsync.c:179-281` - `iconvbufs()` core helper.
 - `rsync.c:283-313` - `send_protected_args()` per-arg conversion.
-- `flist.c:738-754, 1127-1150, 1579-1603, 1605-1621` - filename
+- `flist.c:742-758, 1127-1150, 1579-1603, 1605-1621` - filename
   and symlink-target conversion sites.
 - `io.c:416-452, 983-1031, 1240-1289, 1559-1591` -
   `--files-from`, `MSG_*`, `read_line`, `MSG_DELETED`
   conversions.
-- `compat.c:716-718, 763-767` - `CF_SYMLINK_ICONV` advertisement
+- `compat.c:717-719, 763-767` - `CF_SYMLINK_ICONV` advertisement
   and `sender_symlink_iconv` derivation.
-- `clientserver.c:142, 712-717, 1175-1183` - daemon-side
+- `clientserver.c:146, 712-717, 1175-1183` - daemon-side
   `setup_iconv` invocation, per-module `charset`, teardown.
 - `loadparm.c` (per `daemon-parm.txt:19 STRING charset NULL`) -
   per-module charset directive.

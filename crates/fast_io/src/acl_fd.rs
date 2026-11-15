@@ -4,12 +4,12 @@
 //! flipped to a symlink between the receiver's confined pin and the ACL apply
 //! redirects an attacker-chosen ACL outside the destination tree. Upstream
 //! accepts that race on macOS: its only race-safe ACL primitive is Linux-only,
-//! and everywhere else it falls back to the path (`rsync-3.5.1/acls.c:1315-1322`).
+//! and everywhere else it falls back to the path (`rsync-3.5.2/acls.c:1315-1322`).
 //! oc deliberately goes further and applies the ACL to the pinned leaf with
 //! `acl_set_fd_np`, so the parent walk is never repeated.
 //!
 //! Each entry is encoded exactly as upstream's `sys_acl_set_info()` does
-//! (`rsync-3.5.1/lib/sysacls.c:2833-2874`): an `ACL_EXTENDED_ALLOW` or
+//! (`rsync-3.5.2/lib/sysacls.c:2833-2874`): an `ACL_EXTENDED_ALLOW` or
 //! `ACL_EXTENDED_DENY` tag, the member UUID from `mbr_uid_to_uuid` or
 //! `mbr_gid_to_uuid` as the qualifier, then the permission and flag sets.
 

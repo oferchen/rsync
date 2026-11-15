@@ -75,7 +75,7 @@ done, and (b) the loop bound for `find_fuzzy()` and the
 destination dir only). `-yy` becomes `basis_dir_cnt + 1` (destination
 dir at index 0 plus one entry per basis dir).
 
-### `fuzzy_dirlist` construction (`generator.c:1474-1489`)
+### `fuzzy_dirlist` construction (`generator.c:1511-1526`)
 
 ```c
 if (statret != 0 && fuzzy_basis) {
@@ -113,7 +113,7 @@ parent directory; indices 1..N are formed by joining each
 `basis_dir[i-1]` with the relative parent. An empty directory is
 materialised as `NULL`.
 
-### `find_fuzzy()` (`generator.c:728-798`)
+### `find_fuzzy()` (`generator.c:765-835`)
 
 The function has two phases.
 
@@ -266,7 +266,7 @@ diverges below.
 ### Server-args propagation (`crates/core/src/client/remote/invocation/builder.rs:524-527`)
 
 ```rust
-// upstream: options.c:2613 - send 'y' for fuzzy, 'yy' for level 2
+// upstream: options.c:2668 - send 'y' for fuzzy, 'yy' for level 2
 for _ in 0..self.config.fuzzy_level() {
     flags.push('y');
 }

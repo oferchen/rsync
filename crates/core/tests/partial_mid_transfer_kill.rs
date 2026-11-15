@@ -32,7 +32,7 @@ use std::fs;
 
 /// `--partial` must leave the received prefix at the final destination path.
 ///
-/// upstream: `cleanup.c:167-182` renames the temp onto `cleanup_new_fname`
+/// upstream: `cleanup.c:168-183` renames the temp onto `cleanup_new_fname`
 /// when `keep_partial` is set and literal data arrived.
 #[cfg(unix)]
 #[test]
@@ -70,7 +70,7 @@ fn partial_flag_retains_file_on_mid_transfer_kill() {
 /// Without `--partial` nothing may survive - neither the destination file nor
 /// the `.name.XXXXXX` temp the receiver was writing.
 ///
-/// upstream: `cleanup.c:194-197` unlinks `cleanup_fname` when `keep_partial`
+/// upstream: `cleanup.c:195-198` unlinks `cleanup_fname` when `keep_partial`
 /// is unset.
 #[cfg(unix)]
 #[test]
@@ -94,7 +94,7 @@ fn no_partial_flag_cleans_up_on_mid_transfer_kill() {
 /// `--partial-dir=DIR` must put the prefix in `DIR` and leave the final path
 /// untouched.
 ///
-/// upstream: `cleanup.c:167` routes the temp through
+/// upstream: `cleanup.c:168` routes the temp through
 /// `handle_partial_dir(PDIR_CREATE)`, and unlike plain `--partial` it does not
 /// stamp the modtime.
 #[cfg(unix)]

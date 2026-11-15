@@ -55,7 +55,7 @@ auth module).
 ## RERR exit-code banner table
 
 Upstream definition: `target/interop/upstream-src/rsync-3.4.1/log.c:80-107`
-(`rerr_names[]`). Rendered by `log.c:903-907` inside the
+(`rerr_names[]`). Rendered by `log.c:988-992` inside the
 `rsync error: <name> (code <N>) at <file>(<line>) [<role>=<version>]\n`
 envelope.
 
@@ -69,7 +69,7 @@ These two tables disagree with each other for codes 15, 23, 25. The
 `exit_code/codes.rs` table is what `Display for ExitCode` returns and what is
 surfaced in unit tests under `crates/core/tests/exit_code_comprehensive.rs`.
 
-| Code | Upstream verbatim (`log.c:80-107`) | `codes.rs` (`description()`) | `strings.rs` (`EXIT_CODE_TABLE`) | Parity |
+| Code | Upstream verbatim (`log.c:87-114`) | `codes.rs` (`description()`) | `strings.rs` (`EXIT_CODE_TABLE`) | Parity |
 |------|------------------------------------|------------------------------|----------------------------------|--------|
 | 1    | `syntax or usage error`            | `syntax or usage error`      | `syntax or usage error`          | Match  |
 | 2    | `protocol incompatibility`         | `protocol incompatibility`   | `protocol incompatibility`       | Match  |
@@ -109,34 +109,34 @@ condition - acceptable as **Extra**.
 | Upstream string (verbatim) | Upstream `file:line` | Our equivalent | Our `file:line` | Parity |
 |----------------------------|----------------------|----------------|-----------------|--------|
 | `RSYNC_NAME ": connection unexpectedly closed (%s bytes received so far) [%s]\n"` | `io.c:228` | (only referenced inside a comment, no emitted equivalent) | `crates/daemon/src/daemon/sections/module_access/transfer.rs:521` | **Missing** in our code (we exit on the same condition without ever producing this banner string) |
-| `"file has vanished: %s\n"` (where `%s = full_fname(name)`) | `flist.c:1289`, `sender.c:358` | `"file has vanished: {path_display} {error_location!()}{role_trailer::generator()}"` | `crates/transfer/src/generator/protocol_io.rs:134` | **Drift** (we append `error_location!` and a role trailer that upstream does not emit) |
-| `"file has vanished: %s\n"` | `flist.c:1289` | `format!("file has vanished: '{path_display}'")` (single quotes around path) | `crates/core/src/client/error.rs:246` | **Drift** (single-quoted path; upstream prints raw) |
-| `"file has vanished: {} {}{}"` (walk-time stat error) | `flist.c:1289` | `eprintln!("file has vanished: {} {}{}", ...)` | `crates/transfer/src/generator/file_list/walk.rs:319` | **Drift** (extra location + role trailer) |
-| `"send_files failed to open %s"` (rsyserr - prepends `rsync: ` and appends `: <strerror> (<errno>)`) | `sender.c:362-363` | `"rsync: send_files failed to open \"{path_display}\": {} ({}) {}{}"` | `crates/transfer/src/generator/protocol_io.rs:142` | **Drift** (we add `\"...\"` quoting and an extra `error_location!` + role trailer; upstream emits the path verbatim with no quoting) |
-| `"send_files failed to open %s"` | `sender.c:362` | `"rsync: send_files failed to open {:?}: Permission denied (13) {}{}"` (Rust `Debug` format) | `crates/transfer/src/pipeline/receiver.rs:163,221` | **Drift** (`{:?}` produces `"path"` quoting; literal `Permission denied (13)` instead of platform `strerror`; extra location/role trailer) |
-| `"read errors mapping %s"` | `sender.c:437` | (no equivalent literal) | n/a | **Missing** |
+| `"file has vanished: %s\n"` (where `%s = full_fname(name)`) | `flist.c:1293`, `sender.c:366` | `"file has vanished: {path_display} {error_location!()}{role_trailer::generator()}"` | `crates/transfer/src/generator/protocol_io.rs:134` | **Drift** (we append `error_location!` and a role trailer that upstream does not emit) |
+| `"file has vanished: %s\n"` | `flist.c:1293` | `format!("file has vanished: '{path_display}'")` (single quotes around path) | `crates/core/src/client/error.rs:246` | **Drift** (single-quoted path; upstream prints raw) |
+| `"file has vanished: {} {}{}"` (walk-time stat error) | `flist.c:1293` | `eprintln!("file has vanished: {} {}{}", ...)` | `crates/transfer/src/generator/file_list/walk.rs:319` | **Drift** (extra location + role trailer) |
+| `"send_files failed to open %s"` (rsyserr - prepends `rsync: ` and appends `: <strerror> (<errno>)`) | `sender.c:370-371` | `"rsync: send_files failed to open \"{path_display}\": {} ({}) {}{}"` | `crates/transfer/src/generator/protocol_io.rs:142` | **Drift** (we add `\"...\"` quoting and an extra `error_location!` + role trailer; upstream emits the path verbatim with no quoting) |
+| `"send_files failed to open %s"` | `sender.c:370` | `"rsync: send_files failed to open {:?}: Permission denied (13) {}{}"` (Rust `Debug` format) | `crates/transfer/src/pipeline/receiver.rs:163,221` | **Drift** (`{:?}` produces `"path"` quoting; literal `Permission denied (13)` instead of platform `strerror`; extra location/role trailer) |
+| `"read errors mapping %s"` | `sender.c:445` | (no equivalent literal) | n/a | **Missing** |
 | `"read error"` (rsyserr - prepends `rsync: ` and appends `: <strerror>`) | `io.c:804,806` | `"network read error: {e}"` | `crates/transfer/src/transfer_ops/token_loop.rs:103,137` | **Drift** (we use `network read error:`; upstream uses `read error:`) |
 | `"read error"` | `io.c:804,806` | `"{direction} read error: {e}"` (where `direction` is `"sender"` or `"receiver"`) | `crates/core/src/client/remote/remote_to_remote.rs:421` | **Drift** (we prepend a direction word) |
 | `"change_dir#1 %s failed"` | `main.c:749` | (no equivalent literal; we surface a `failed to access destination directory` error instead) | `crates/core/src/client/error.rs:260` | **Drift** (different wording, same exit code 3) |
 | `"change_dir#2 %s failed"` | `main.c:807` | (no equivalent literal) | n/a | **Missing** |
 | `"change_dir#3 %s failed"` | `main.c:827, 936` | (no equivalent literal) | n/a | **Missing** |
 | `"change_dir#4 %s failed"` | `main.c:1161` | (no equivalent literal) | n/a | **Missing** |
-| `"change_dir %s failed"` (flist sender push) | `flist.c:369, 2242` | (no equivalent literal) | n/a | **Missing** |
-| `"failed to open %s, continuing"` (generator partial-dir open) | `generator.c:1871` | (no equivalent literal) | n/a | **Missing** |
-| `"failed to open %s"` (early-input file) | `clientserver.c:270` | (not implemented; early-input is unsupported in oc-rsync) | n/a | **Missing** (intentional - feature out of scope) |
-| `"failed to open lock file %s"` | `clientserver.c:746` | (no equivalent literal; we send a different `@ERROR:` line) | `crates/daemon/src/daemon.rs:124` | **Drift** (different `@ERROR:` payload, see `@ERROR` table below) |
-| `"failed to open log-file %s"` | `log.c:163` | (no equivalent literal; logs unconditionally on log file open failure) | n/a | **Missing** |
-| `"failed to open files-from file %s: %s\n"` | `options.c:2486` | `"failed to open --files-from {}: {e}"` | `crates/core/src/client/remote/daemon_transfer/orchestration/transfer.rs:290` | **Drift** (we prepend `--files-from` rather than emitting `files-from`; identical intent) |
-| `"skipping non-regular file \"%s\"\n"` | `generator.c:1687` | `"skipping non-regular file \"{}\""` | `crates/cli/src/frontend/progress/render.rs:396` | **Match** |
+| `"change_dir %s failed"` (flist sender push) | `flist.c:370, 2242` | (no equivalent literal) | n/a | **Missing** |
+| `"failed to open %s, continuing"` (generator partial-dir open) | `generator.c:1908` | (no equivalent literal) | n/a | **Missing** |
+| `"failed to open %s"` (early-input file) | `clientserver.c:274` | (not implemented; early-input is unsupported in oc-rsync) | n/a | **Missing** (intentional - feature out of scope) |
+| `"failed to open lock file %s"` | `clientserver.c:750` | (no equivalent literal; we send a different `@ERROR:` line) | `crates/daemon/src/daemon.rs:124` | **Drift** (different `@ERROR:` payload, see `@ERROR` table below) |
+| `"failed to open log-file %s"` | `log.c:170` | (no equivalent literal; logs unconditionally on log file open failure) | n/a | **Missing** |
+| `"failed to open files-from file %s: %s\n"` | `options.c:2541` | `"failed to open --files-from {}: {e}"` | `crates/core/src/client/remote/daemon_transfer/orchestration/transfer.rs:290` | **Drift** (we prepend `--files-from` rather than emitting `files-from`; identical intent) |
+| `"skipping non-regular file \"%s\"\n"` | `generator.c:1724` | `"skipping non-regular file \"{}\""` | `crates/cli/src/frontend/progress/render.rs:396` | **Match** |
 | `"make_bak: skipping non-regular file %s\n"` | `backup.c:308` | (no equivalent literal; backup path is not implemented) | n/a | **Missing** (intentional - `--backup` mkdir branch not yet implemented) |
-| `"link_stat %s failed"` | `flist.c:1810, 2398` | `"rsync: link_stat \"{}\" failed: {} ({}) {}{}"` | `crates/transfer/src/generator/file_list/walk.rs:327` | **Drift** (we prepend `rsync: `, quote the path, append `: <e> (<errno>)`, plus location and sender trailer; upstream relies on the `rsyserr` envelope) |
-| `"readlink_stat(%s) failed"` | `flist.c:1294` | (no equivalent literal) | n/a | **Missing** |
+| `"link_stat %s failed"` | `flist.c:1814, 2398` | `"rsync: link_stat \"{}\" failed: {} ({}) {}{}"` | `crates/transfer/src/generator/file_list/walk.rs:327` | **Drift** (we prepend `rsync: `, quote the path, append `: <e> (<errno>)`, plus location and sender trailer; upstream relies on the `rsyserr` envelope) |
+| `"readlink_stat(%s) failed"` | `flist.c:1298` | (no equivalent literal) | n/a | **Missing** |
 | `"mkdir %s failed"` (top-level destination) | `main.c:789` | (no equivalent verbatim literal; surfaced via `io::Error` chain) | n/a | **Missing** |
-| `"recv_generator: mkdir %s failed"` | `generator.c:1323, 1477` | (no equivalent literal) | n/a | **Missing** |
+| `"recv_generator: mkdir %s failed"` | `generator.c:1360, 1477` | (no equivalent literal) | n/a | **Missing** |
 | `"ERROR: cannot stat destination %s"` | `main.c:770` | (no equivalent literal) | n/a | **Missing** |
-| `"unexpected tag %d [%s%s]\n"` (multiplex desync) | `io.c:1703` | (no equivalent literal; we return `io::ErrorKind::InvalidData` from `MplexReader`) | `crates/protocol/tests/network_interruption.rs:375` | **Missing** |
-| `"rsync error: %s (code %d) at %s(%d) [%s=%s]\n"` (envelope) | `log.c:906` | `"rsync error: {message} (code {exit_code}) at {rel_path}:{line} [{role}={version}]"` | `crates/logging/src/error_format.rs:75` | **Drift** (we use `:` between path and line; upstream uses `(<line>)`) |
-| `"rsync warning: %s (code %d) at %s(%d) [%s=%s]\n"` (envelope) | `log.c:903` | `"rsync warning: {message} (code {exit_code}) at {rel_path}:{line} [{role}={version}]"` | `crates/logging/src/error_format.rs:99` | **Drift** (same `:` vs `(line)` divergence) |
+| `"unexpected tag %d [%s%s]\n"` (multiplex desync) | `io.c:1710` | (no equivalent literal; we return `io::ErrorKind::InvalidData` from `MplexReader`) | `crates/protocol/tests/network_interruption.rs:375` | **Missing** |
+| `"rsync error: %s (code %d) at %s(%d) [%s=%s]\n"` (envelope) | `log.c:991` | `"rsync error: {message} (code {exit_code}) at {rel_path}:{line} [{role}={version}]"` | `crates/logging/src/error_format.rs:75` | **Drift** (we use `:` between path and line; upstream uses `(<line>)`) |
+| `"rsync warning: %s (code %d) at %s(%d) [%s=%s]\n"` (envelope) | `log.c:988` | `"rsync warning: {message} (code {exit_code}) at {rel_path}:{line} [{role}={version}]"` | `crates/logging/src/error_format.rs:99` | **Drift** (same `:` vs `(line)` divergence) |
 
 ## `@ERROR:` daemon family
 
@@ -147,26 +147,26 @@ reasons. Upstream emits them via `io_printf(f_out, ...)` from
 
 | Upstream verbatim                                            | Upstream `file:line`     | Our verbatim                                                  | Our `file:line`            | Parity |
 |--------------------------------------------------------------|--------------------------|---------------------------------------------------------------|----------------------------|--------|
-| `@ERROR: protocol startup error\n`                           | `clientserver.c:182`     | (no equivalent literal)                                       | n/a                        | **Missing** |
-| `@ERROR: your client omitted the subprotocol value: %s\n`    | `clientserver.c:191`     | (no equivalent literal)                                       | n/a                        | **Missing** |
-| `@ERROR: your client omitted the digest name list: %s\n`     | `clientserver.c:207`     | (no equivalent literal)                                       | n/a                        | **Missing** |
-| `@ERROR: chdir failed\n`                                     | `clientserver.c:647`     | (no equivalent literal)                                       | n/a                        | **Missing** |
-| `@ERROR: invalid gid %s\n`                                   | `clientserver.c:656`     | (no equivalent literal)                                       | n/a                        | **Missing** |
-| `@ERROR: getpwuid failed\n`                                  | `clientserver.c:682`     | (no equivalent literal)                                       | n/a                        | **Missing** |
-| `@ERROR: Unknown module '%s'\n`                              | `clientserver.c:730`     | `@ERROR: Unknown module '{module}'`                           | `crates/daemon/src/daemon.rs:119` | **Match** (modulo `\n` injected by emitter) |
-| `@ERROR: access denied to %s from %s (%s)\n`                 | `clientserver.c:733-734` | `@ERROR: access denied to {module} from {host} ({addr})`      | `crates/daemon/src/daemon.rs:113` | **Match** |
-| `@ERROR: failed to open lock file\n`                         | `clientserver.c:748`     | `@ERROR: failed to open lock file`                            | `crates/daemon/src/daemon.rs:124-125` | **Match** |
-| `@ERROR: max connections (%d) reached -- try again later\n`  | `clientserver.c:752`     | `@ERROR: max connections ({limit}) reached -- try again later` | `crates/daemon/src/daemon.rs:121-122` | **Match** |
-| `@ERROR: auth failed on module %s\n`                         | `clientserver.c:762`     | `@ERROR: auth failed on module {module}`                      | `crates/daemon/src/daemon.rs:117` | **Match** |
-| `@ERROR: invalid uid %s\n`                                   | `clientserver.c:783`     | (no equivalent literal)                                       | n/a                        | **Missing** |
-| `@ERROR: invalid gid setting.\n`                             | `clientserver.c:802, 811`| (no equivalent literal)                                       | n/a                        | **Missing** |
-| `@ERROR: no path setting.\n`                                 | `clientserver.c:826`     | (no equivalent literal)                                       | n/a                        | **Missing** |
-| `@ERROR: fork failed\n`                                      | `clientserver.c:910`     | (no equivalent literal; oc-rsync does not fork)               | n/a                        | **Missing** (intentional) |
-| `@ERROR: chroot failed\n`                                    | `clientserver.c:981`     | (no equivalent literal; chroot is not implemented)            | n/a                        | **Missing** (intentional) |
-| `@ERROR: setgid failed\n`                                    | `clientserver.c:1010`    | (no equivalent literal)                                       | n/a                        | **Missing** |
-| `@ERROR: setuid failed\n`                                    | `clientserver.c:1039`    | (no equivalent literal)                                       | n/a                        | **Missing** |
-| `@ERROR: invalid early_input length\n`                       | `clientserver.c:1360`    | (no equivalent literal; early-input not implemented)          | n/a                        | **Missing** (intentional) |
-| `@ERROR: Unknown command '%s'\n`                             | `clientserver.c:1379`    | (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: protocol startup error\n`                           | `clientserver.c:186`     | (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: your client omitted the subprotocol value: %s\n`    | `clientserver.c:195`     | (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: your client omitted the digest name list: %s\n`     | `clientserver.c:211`     | (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: chdir failed\n`                                     | `clientserver.c:651`     | (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: invalid gid %s\n`                                   | `clientserver.c:660`     | (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: getpwuid failed\n`                                  | `clientserver.c:686`     | (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: Unknown module '%s'\n`                              | `clientserver.c:734`     | `@ERROR: Unknown module '{module}'`                           | `crates/daemon/src/daemon.rs:119` | **Match** (modulo `\n` injected by emitter) |
+| `@ERROR: access denied to %s from %s (%s)\n`                 | `clientserver.c:737-738` | `@ERROR: access denied to {module} from {host} ({addr})`      | `crates/daemon/src/daemon.rs:113` | **Match** |
+| `@ERROR: failed to open lock file\n`                         | `clientserver.c:752`     | `@ERROR: failed to open lock file`                            | `crates/daemon/src/daemon.rs:124-125` | **Match** |
+| `@ERROR: max connections (%d) reached -- try again later\n`  | `clientserver.c:756`     | `@ERROR: max connections ({limit}) reached -- try again later` | `crates/daemon/src/daemon.rs:121-122` | **Match** |
+| `@ERROR: auth failed on module %s\n`                         | `clientserver.c:766`     | `@ERROR: auth failed on module {module}`                      | `crates/daemon/src/daemon.rs:117` | **Match** |
+| `@ERROR: invalid uid %s\n`                                   | `clientserver.c:787`     | (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: invalid gid setting.\n`                             | `clientserver.c:806, 811`| (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: no path setting.\n`                                 | `clientserver.c:830`     | (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: fork failed\n`                                      | `clientserver.c:914`     | (no equivalent literal; oc-rsync does not fork)               | n/a                        | **Missing** (intentional) |
+| `@ERROR: chroot failed\n`                                    | `clientserver.c:985`     | (no equivalent literal; chroot is not implemented)            | n/a                        | **Missing** (intentional) |
+| `@ERROR: setgid failed\n`                                    | `clientserver.c:1014`    | (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: setuid failed\n`                                    | `clientserver.c:1043`    | (no equivalent literal)                                       | n/a                        | **Missing** |
+| `@ERROR: invalid early_input length\n`                       | `clientserver.c:1369`    | (no equivalent literal; early-input not implemented)          | n/a                        | **Missing** (intentional) |
+| `@ERROR: Unknown command '%s'\n`                             | `clientserver.c:1388`    | (no equivalent literal)                                       | n/a                        | **Missing** |
 | (none in upstream)                                           | n/a                      | `@ERROR: daemon functionality is unavailable in this build`   | `crates/daemon/src/daemon.rs:108` | **Extra** (compile-time fallback when daemon support is stubbed out) |
 
 ## Format-specifier ordering analysis
@@ -210,7 +210,7 @@ Specific punctuation drift:
 Upstream emits the `[sender=<version>]` / `[receiver=<version>]` /
 `[generator=<version>]` / `[server=<version>]` / `[client=<version>]` /
 `[daemon=<version>]` trailer **only** through the `rsync error:` /
-`rsync warning:` envelope produced by `log.c:903-907`. Per-file warnings
+`rsync warning:` envelope produced by `log.c:988-992`. Per-file warnings
 (`file has vanished: %s\n`, `link_stat %s failed`, `send_files failed to
 open %s`) **do not** carry a role trailer in upstream.
 
@@ -242,7 +242,7 @@ protocol change; all are localised string edits.
    stderr.
 2. **Switch the error/warning envelope separator from `:` to `(<line>)`.**
    Edit `crates/logging/src/error_format.rs:75` and `:99` to format `at
-   <file>(<line>)` instead of `at <file>:<line>`. This matches `log.c:903-907`
+   <file>(<line>)` instead of `at <file>:<line>`. This matches `log.c:988-992`
    and the contents of upstream's existing parity tests in
    `crates/core/src/message/tests/part1.rs` and `part8.rs`.
 3. **Emit `connection unexpectedly closed (<n> bytes received so far) [<role>]`.**

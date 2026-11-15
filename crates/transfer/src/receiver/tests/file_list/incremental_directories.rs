@@ -101,7 +101,7 @@ mod create_directory_incremental_tests {
         assert_eq!(failed.count(), 0);
     }
 
-    /// Regression (exclude-lsh / upstream generator.c:1757-1772): with
+    /// Regression (exclude-lsh / upstream generator.c:1794-1809): with
     /// `--existing` (`ignore_non_existing`), a directory that is missing at
     /// the destination must NOT be created, and it must be marked missing so
     /// its descendants are skipped too. Before the fix, the remote-pull
@@ -146,7 +146,7 @@ mod create_directory_incremental_tests {
         assert_eq!(failed.count(), 0);
     }
     /// An `--existing` skip is not an error, and neither is the skip of its
-    /// subtree. upstream: generator.c:1755-1761 sets `skip_dir` without
+    /// subtree. upstream: generator.c:1792-1798 sets `skip_dir` without
     /// touching `io_error`, and generator.c:1646-1656 drops every entry below
     /// it silently. A receiver that recorded the skip as a failed mkdir made
     /// the incremental driver count each descendant in `directories_failed`,
@@ -280,7 +280,7 @@ mod create_directory_incremental_tests {
     /// entry must report `ITEM_REPORT_TIME`, so the transfer root `.` (and any
     /// existing directory) emits a `.d..t......` itemize row.
     ///
-    /// WHY: upstream's `itemize()` (`generator.c:518-579`, reached from
+    /// WHY: upstream's `itemize()` (`generator.c:555-616`, reached from
     /// `generator.c:1869-1872` with `statret == 0`) sets `ITEM_REPORT_TIME`
     /// whenever `mtime_differs(&sxp->st, file)` for a directory under `--times`
     /// (`keep_time` true). This is independent of `--checksum`: a quick-check
@@ -487,7 +487,7 @@ mod create_directory_incremental_tests {
 
     /// Every mkdir failure, not only EACCES, is reported and skipped.
     ///
-    /// upstream: generator.c:1873-1887 handles every errno but EEXIST the same
+    /// upstream: generator.c:1910-1924 handles every errno but EEXIST the same
     /// way: `rsyserr(FERROR_XFER, ... "recv_generator: mkdir %s failed")`, then
     /// `skip_dir` so the directory's contents are never attempted. The fixture
     /// puts a regular file where a parent belongs, so `afile/sub` fails

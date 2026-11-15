@@ -10,7 +10,7 @@
 //!
 //! Upstream reference:
 //! - `target/interop/upstream-src/rsync-3.5.1/clientserver.c` - client protocol
-//! - `target/interop/upstream-src/rsync-3.5.1/main.c:1341-1458` - client_run()
+//! - `target/interop/upstream-src/rsync-3.5.2/main.c:1344-1462` - client_run()
 //!
 //! oc-rsync reference:
 //! - `crates/daemon/src/daemon/` - daemon implementation
@@ -51,7 +51,7 @@ fn test_oc_daemon_starts_and_accepts_connections() {
 /// Test that oc-rsync daemon responds with proper greeting.
 ///
 /// Verifies the daemon implements the @RSYNCD: protocol greeting correctly.
-/// Upstream reference: clientserver.c:125-144 (daemon greeting format)
+/// Upstream reference: clientserver.c:129-148 (daemon greeting format)
 // The oc-rsync daemon is Unix-only by design: `--daemon` on Windows exits 1 with
 // "daemon mode is not supported on this platform" (daemon.rs:208).
 #[test]
@@ -625,7 +625,7 @@ fn test_pull_preserves_mtime() {
 /// Test module listing (#list request) from upstream client.
 ///
 /// Verifies oc-rsync daemon correctly responds to module list requests.
-/// Upstream reference: clientserver.c:210-245 (module listing)
+/// Upstream reference: clientserver.c:214-249 (module listing)
 #[test]
 #[ignore = "requires upstream rsync 3.4.1 and oc-rsync binary"]
 fn test_module_listing_from_upstream_client() {

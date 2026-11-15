@@ -247,7 +247,7 @@ mod short_options {
         assert_eq!(parsed.atimes, Some(1));
     }
 
-    // upstream: options.c:1698 `if (++preserve_atimes > 1)` - a doubled `-UU`
+    // upstream: options.c:1725 `if (++preserve_atimes > 1)` - a doubled `-UU`
     // raises the level to 2, which server_options() forwards as `-UU`. Modelled
     // as a count so the emitted server args match a real `rsync -UU`.
     #[test]
@@ -256,7 +256,7 @@ mod short_options {
         assert_eq!(parsed.atimes, Some(2));
     }
 
-    // upstream: options.c:1990 `preserve_xattrs++` - a doubled `-XX` raises the
+    // upstream: options.c:2026 `preserve_xattrs++` - a doubled `-XX` raises the
     // level to 2, forwarded as `-XX`.
     #[test]
     fn xattrs_double_short_flag_is_level_two() {
@@ -594,7 +594,7 @@ mod long_options {
 
     #[test]
     fn doubled_append_in_server_mode_is_append_verify() {
-        // upstream: options.c:1835-1840 - OPT_APPEND increments append_mode on
+        // upstream: options.c:1871-1876 - OPT_APPEND increments append_mode on
         // am_server, so two --append flags select append-verify (append_mode == 2).
         // The client encodes --append-verify this way; the server must recover it.
         let parsed = parse_test_args(["--server", "--sender", "--append", "--append", ".", "src"])
@@ -608,7 +608,7 @@ mod long_options {
 
     #[test]
     fn doubled_append_client_mode_is_not_verify() {
-        // upstream: options.c:1839 - a non-server invocation caps append_mode at 1,
+        // upstream: options.c:1875 - a non-server invocation caps append_mode at 1,
         // so repeated --append on the client stays plain append (trust prefix).
         let parsed = parse_test_args(["--append", "--append", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.append, Some(true));
@@ -655,7 +655,7 @@ mod long_options {
     }
 
     /// `--insecure-links` / `--no-insecure-links` are a POPT_ARG_VAL pair
-    /// (upstream options.c:697-698) defaulting to 0 (`options.c:134`), so the
+    /// (upstream options.c:698-699) defaulting to 0 (`options.c:134`), so the
     /// last occurrence wins and the default is off.
     #[test]
     fn insecure_links_is_a_last_wins_pair_defaulting_off() {
@@ -719,7 +719,7 @@ mod long_options {
 
     /// `--confine-root=DIR` must be CONSUMED as an option rather than left as a
     /// positional operand, and its value must survive parsing verbatim.
-    /// upstream: options.c:690 - POPT_ARG_STRING.
+    /// upstream: options.c:691 - POPT_ARG_STRING.
     #[test]
     fn confine_root_is_parsed_as_an_option_not_an_operand() {
         let parsed = parse_test_args([confine_root_arg().as_str(), "src/", "dst/"]).expect("parse");
@@ -741,7 +741,7 @@ mod long_options {
     }
 
     /// A relative `--confine-root` is rejected with upstream's exact wording.
-    /// upstream: options.c:2396-2398.
+    /// upstream: options.c:2451-2453.
     #[test]
     fn confine_root_must_be_absolute() {
         let err = parse_test_args(["--confine-root=restricted", "src/", "dst/"])
@@ -755,7 +755,7 @@ mod long_options {
 
     /// The opt-out short-circuits the very walk that enforces the root, so the
     /// pair would silently mean no confinement at all. Upstream reports it
-    /// instead. upstream: options.c:2400-2405.
+    /// instead. upstream: options.c:2455-2460.
     #[test]
     fn insecure_links_conflicts_with_confine_root() {
         let err = parse_test_args([
@@ -772,7 +772,7 @@ mod long_options {
         );
     }
 
-    /// Order matters: upstream checks absoluteness FIRST (options.c:2396), so a
+    /// Order matters: upstream checks absoluteness FIRST (options.c:2451), so a
     /// relative root plus the opt-out reports the absolute-path error, not the
     /// conflict. Without this the two rules could be applied in either order and
     /// still look correct on the single-fault cases above.
@@ -932,7 +932,7 @@ mod long_options {
     fn list_only_long_flag() {
         let parsed = parse_test_args(["--list-only", "src/", "dst/"]).expect("parse");
         assert!(parsed.list_only);
-        // upstream: options.c:2517-2518 - list_only does NOT set dry_run.
+        // upstream: options.c:2572-2573 - list_only does NOT set dry_run.
         assert!(!parsed.dry_run);
     }
 
@@ -948,7 +948,7 @@ mod long_options {
     fn remove_sent_files_alias() {
         let parsed = parse_test_args(["--remove-sent-files", "src/", "dst/"]).expect("parse");
         assert!(parsed.remove_source_files);
-        // upstream: options.c:744,3163-3166 - the deprecated spelling is tracked
+        // upstream: options.c:745,3163-3166 - the deprecated spelling is tracked
         // so it can be forwarded verbatim on the wire.
         assert!(parsed.remove_sent_files);
     }
@@ -1339,7 +1339,7 @@ mod option_values {
     fn suffix_with_equals() {
         let parsed = parse_test_args(["--suffix=.bak", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.backup_suffix, Some(OsString::from(".bak")));
-        // upstream: options.c:2456-2458 - a bare --suffix does not enable backups.
+        // upstream: options.c:2511-2513 - a bare --suffix does not enable backups.
         assert!(!parsed.backup);
     }
 
@@ -1464,7 +1464,7 @@ mod option_values {
     fn max_delete_with_equals() {
         let parsed = parse_test_args(["-r", "--max-delete=100", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.max_delete, Some(OsString::from("100")));
-        // upstream: options.c:2308-2311 - --max-delete never enables deletion.
+        // upstream: options.c:2363-2366 - --max-delete never enables deletion.
         assert!(!parsed.delete_mode.is_enabled());
     }
 
@@ -1476,7 +1476,7 @@ mod option_values {
 
     #[test]
     fn block_size_short_b_forms_match_long() {
-        // upstream: options.c:766 {"block-size", 'B', ...}. -B/-B<v>/-B=<v> and
+        // upstream: options.c:767 {"block-size", 'B', ...}. -B/-B<v>/-B=<v> and
         // --block-size all yield the same value (popt/clap strip the '=').
         let expected = Some(OsString::from("4096"));
         for args in [
@@ -1493,7 +1493,7 @@ mod option_values {
 
     #[test]
     fn temp_dir_short_t_forms_match_long() {
-        // upstream: options.c:839 {"temp-dir", 'T', ...}. -T/-T<v>/-T=<v> and
+        // upstream: options.c:842 {"temp-dir", 'T', ...}. -T/-T<v>/-T=<v> and
         // --temp-dir all yield the same DIR (the leading '=' is stripped).
         let expected = Some(std::path::PathBuf::from("/tmp/rsync-temp"));
         for args in [
@@ -1671,7 +1671,7 @@ mod option_values {
 
     #[test]
     fn human_readable_double_short_is_combined() {
-        // -hh increments to level 3 (base-1024 units). upstream: options.c:1686.
+        // -hh increments to level 3 (base-1024 units). upstream: options.c:1713.
         let parsed = parse_test_args(["-hh", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.human_readable, Some(HumanReadableMode::BinaryUnits));
     }
@@ -1972,7 +1972,7 @@ mod delete_modes {
         let result = parse_test_args(["-r", "--delete-before", "--delete-after", "src/", "dst/"]);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        // upstream: options.c:2336-2338 exact wording.
+        // upstream: options.c:2391-2393 exact wording.
         assert!(
             err.to_string()
                 .contains("You may not combine multiple --delete-WHEN options.")
@@ -2370,7 +2370,7 @@ mod compression_options {
         assert!(!parsed.compress);
     }
 
-    /// upstream: options.c:1742-1753,2131-2132 - `--old-compress`, `--new-compress`
+    /// upstream: options.c:1778-1789,2131-2132 - `--old-compress`, `--new-compress`
     /// and `--compress-choice` overwrite one `compress_choice` in command-line
     /// order, `--no-compress` clears it, and a repeated `-z` alone means zlibx.
     /// The peer runs whichever codec this resolves to, so the order matters.
@@ -2480,7 +2480,7 @@ mod old_args_tests {
 
     #[test]
     fn old_args_flag() {
-        // upstream: options.c:1755-1760 OPT_OLD_ARGS - a single `--old-args` sets
+        // upstream: options.c:1791-1796 OPT_OLD_ARGS - a single `--old-args` sets
         // `old_style_args` to level 1 (skip filename escaping).
         let parsed = parse_test_args(["--old-args", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.old_args, Some(1));
@@ -2488,7 +2488,7 @@ mod old_args_tests {
 
     #[test]
     fn old_args_doubled_reaches_level_two() {
-        // upstream: options.c:1759 - a second `--old-args` does `old_style_args++`
+        // upstream: options.c:1795 - a second `--old-args` does `old_style_args++`
         // to level 2, the state where safe_arg (options.c:2715, `old_style_args
         // < 2`) drops all remaining escaping. A boolean flag could never reach it.
         let parsed = parse_test_args(["--old-args", "--old-args", "src/", "dst/"]).expect("parse");
@@ -2722,7 +2722,7 @@ mod checksum_choice_tests {
         assert_eq!(parsed.checksum_seed, Some(0));
     }
 
-    /// upstream: options.c:861 parses the seed with `POPT_ARG_INT`, which popt
+    /// upstream: options.c:864 parses the seed with `POPT_ARG_INT`, which popt
     /// bounds to `INT_MIN..=INT_MAX` and otherwise fails with
     /// `POPT_ERROR_OVERFLOW`. Accepting `4294967295` here would let us forward
     /// `--checksum-seed=4294967295` (options.c:3057) to a peer that cannot
@@ -2766,7 +2766,7 @@ mod checksum_choice_tests {
         assert!(result.is_err(), "i32::MAX + 1 should be rejected");
     }
 
-    /// upstream: options.c:861 is `POPT_ARG_INT`, so a value below `INT_MIN`
+    /// upstream: options.c:864 is `POPT_ARG_INT`, so a value below `INT_MIN`
     /// fails with `POPT_ERROR_OVERFLOW` (popt/popt.c poptSaveArg).
     #[test]
     fn checksum_seed_below_i32_min_rejected() {
@@ -2851,7 +2851,7 @@ mod open_noatime_tests {
 
     #[test]
     fn double_short_u_enables_open_noatime() {
-        // upstream: options.c:1697-1699 `case 'U': if (++preserve_atimes > 1)
+        // upstream: options.c:1724-1726 `case 'U': if (++preserve_atimes > 1)
         // open_noatime = 1;` - a doubled `-U` (atimes level 2) implies
         // `--open-noatime`, while a single `-U` does not.
         let single = parse_test_args(["-U", "src/", "dst/"]).expect("parse");
@@ -2961,7 +2961,7 @@ mod human_readable_tests {
 
     #[test]
     fn human_readable_rejects_explicit_argument() {
-        // upstream: options.c:625 POPT_ARG_NONE - `--human-readable=N` errors.
+        // upstream: options.c:626 POPT_ARG_NONE - `--human-readable=N` errors.
         assert!(parse_test_args(["--human-readable=0", "src/", "dst/"]).is_err());
         assert!(parse_test_args(["--human-readable=1", "src/", "dst/"]).is_err());
         assert!(parse_test_args(["--human-readable=2", "src/", "dst/"]).is_err());
@@ -2969,7 +2969,7 @@ mod human_readable_tests {
 
     #[test]
     fn no_human_readable_flag_is_raw() {
-        // upstream: options.c:626 sets human_readable = 0 (raw digits, width 11).
+        // upstream: options.c:627 sets human_readable = 0 (raw digits, width 11).
         let parsed = parse_test_args(["--no-human-readable", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.human_readable, Some(HumanReadableMode::Raw));
     }
@@ -3032,7 +3032,7 @@ mod msgs_stderr_tests {
 
     #[test]
     fn stderr_mode_accepts_upstream_prefixes() {
-        // upstream: options.c:2025-2042 OPT_STDERR accepts any non-empty prefix of
+        // upstream: options.c:2061-2078 OPT_STDERR accepts any non-empty prefix of
         // errors/all/client (strncmp), so e/err/al/cli all parse.
         for value in [
             "e", "err", "error", "errors", "a", "al", "all", "c", "cli", "client",
@@ -3066,7 +3066,7 @@ mod msgs_stderr_tests {
 mod dparam_tests {
     use super::*;
 
-    // `--dparam` is a daemon option (upstream options.c:867 `OPT_DAEMON`), so
+    // `--dparam` is a daemon option (upstream options.c:872 `OPT_DAEMON`), so
     // it parses only alongside `--daemon`.
     #[test]
     fn dparam_single() {
@@ -3239,7 +3239,7 @@ mod alias_tests {
 
     #[test]
     fn old_dirs_is_independent_of_mkpath() {
-        // upstream: options.c:2323-2325 - --old-dirs forces recursion and is
+        // upstream: options.c:2378-2380 - --old-dirs forces recursion and is
         // unrelated to --mkpath, so an explicit --mkpath is preserved.
         let parsed = parse_test_args(["--mkpath", "--old-dirs", "src/", "dst/"]).expect("parse");
         assert!(parsed.mkpath);
@@ -3432,7 +3432,7 @@ mod name_level_tests {
 
     #[test]
     fn itemize_with_double_verbose_emits_unchanged() {
-        // upstream: generator.c:589 - INFO_GTE(NAME, 2) (set by -vv) forces the
+        // upstream: generator.c:626 - INFO_GTE(NAME, 2) (set by -vv) forces the
         // itemize line for unchanged entries, so `-ivv` must surface unchanged
         // dirs, files, and symlinks rather than capping at the updated-only level.
         let parsed = parse_test_args(["-i", "-vv", "src/", "dst/"]).expect("parse");
@@ -3595,7 +3595,7 @@ mod env_option_defaults {
         }
     }
 
-    // upstream: options.c:1491-1492 - RSYNC_ICONV supplies the default --iconv
+    // upstream: options.c:1509-1510 - RSYNC_ICONV supplies the default --iconv
     // value when the option is absent; the transfer must honour it exactly as
     // if `--iconv=<value>` had been typed.
     #[test]
@@ -3608,7 +3608,7 @@ mod env_option_defaults {
         assert_eq!(parsed.iconv, Some(OsString::from("utf-8,latin1")));
     }
 
-    // upstream: options.c:1491-1492 - an explicit --iconv wins over the env.
+    // upstream: options.c:1509-1510 - an explicit --iconv wins over the env.
     #[test]
     fn explicit_iconv_overrides_rsync_iconv_env() {
         let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
@@ -3619,7 +3619,7 @@ mod env_option_defaults {
         assert_eq!(parsed.iconv, Some(OsString::from(".")));
     }
 
-    // upstream: options.c:1491 - `protect_args <= 0` guard: an explicitly
+    // upstream: options.c:1509 - `protect_args <= 0` guard: an explicitly
     // enabled protect_args suppresses the RSYNC_ICONV default.
     #[test]
     fn protect_args_suppresses_rsync_iconv_env() {
@@ -3631,7 +3631,7 @@ mod env_option_defaults {
         assert_eq!(parsed.iconv, None);
     }
 
-    // upstream: options.c:2067-2071 - RSYNC_MAX_ALLOC supplies the default cap
+    // upstream: options.c:2103-2107 - RSYNC_MAX_ALLOC supplies the default cap
     // when --max-alloc is absent.
     #[test]
     fn max_alloc_defaults_to_rsync_max_alloc_env() {
@@ -3642,7 +3642,7 @@ mod env_option_defaults {
         assert_eq!(parsed.max_alloc, Some(OsString::from("2G")));
     }
 
-    // upstream: options.c:2067 - an explicit --max-alloc wins over the env.
+    // upstream: options.c:2103 - an explicit --max-alloc wins over the env.
     #[test]
     fn explicit_max_alloc_overrides_rsync_max_alloc_env() {
         let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");

@@ -90,8 +90,8 @@ fn data_frame(payload: &[u8]) -> Vec<u8> {
 /// of `size` is free to mark a temporarily reduced buffer (io.c:200-201).
 #[test]
 fn buffer_sizes_match_upstream() {
-    assert_eq!(IN_BUFFER_SIZE, 32 * 1024, "upstream io.c:1427");
-    assert_eq!(OUT_BUFFER_SIZE, 64 * 1024, "upstream io.c:1408");
+    assert_eq!(IN_BUFFER_SIZE, 32 * 1024, "upstream io.c:1434");
+    assert_eq!(OUT_BUFFER_SIZE, 64 * 1024, "upstream io.c:1415");
     assert_eq!(round_up_1024(1), 1024);
     assert_eq!(round_up_1024(1024), 1024);
     assert_eq!(round_up_1024(1025), 2048);
@@ -193,7 +193,7 @@ fn stall_at_any_offset_resumes_without_loss() {
 ///
 /// This is the case reserve-in-place is easy to get subtly wrong. A stalled
 /// run leaves `pos` part-way through the buffer; the bytes appended behind it
-/// split around the physical end (upstream io.c:2494-2499), the reserved header
+/// split around the physical end (upstream io.c:2501-2506), the reserved header
 /// for that second frame sits immediately in front of them, and the drain has
 /// to stop at the end, rewind `pos` to 0 and continue (io.c:955-985). The wire
 /// must still show two well-formed frames, in order, with nothing re-sent.

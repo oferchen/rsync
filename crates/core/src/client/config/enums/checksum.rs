@@ -9,7 +9,7 @@ use engine::signature::SignatureAlgorithm;
 pub enum StrongChecksumAlgorithm {
     /// Automatically selects the negotiated algorithm.
     ///
-    /// Mirrors upstream negotiation (`compat.c:538 negotiate_the_strings()`,
+    /// Mirrors upstream negotiation (`compat.c:539 negotiate_the_strings()`,
     /// `checksum.c:192 parse_checksum_choice()`): when no explicit `--checksum-choice` is given
     /// and both peers advertise it, the strongest mutually supported checksum
     /// wins. For a local copy - where upstream still negotiates over the forked
@@ -241,7 +241,7 @@ impl StrongChecksumChoice {
     /// Returns the transfer-checksum override that drives protocol 30+
     /// negotiation, mirroring upstream's send-gate and `auto` resolution.
     ///
-    /// upstream: options.c:2117-2123 nulls `checksum_choice` only when the raw
+    /// upstream: options.c:2153-2159 nulls `checksum_choice` only when the raw
     /// string is exactly `auto` or `auto,auto`; any other value stays set and
     /// suppresses the vstring exchange (compat.c:544 `if (!checksum_choice)`).
     /// On that suppressed path `parse_checksum_choice` resolves the transfer
@@ -503,7 +503,7 @@ mod tests {
             );
         }
 
-        // upstream: options.c:2117-2123 + compat.c:544 - "auto,md5" keeps
+        // upstream: options.c:2153-2159 + compat.c:545 - "auto,md5" keeps
         // checksum_choice non-null, so the vstring exchange is SUPPRESSED
         // (send_checksum = checksum_override.is_none() in negotiate.rs). The
         // transfer "auto" resolves to implied md5 (checksum.c:136-141) and the
@@ -548,7 +548,7 @@ mod tests {
             );
         }
 
-        // upstream: options.c:2117-2123 - ONLY "auto" and "auto,auto" null
+        // upstream: options.c:2153-2159 - ONLY "auto" and "auto,auto" null
         // checksum_choice, leaving send_checksum true so negotiate_the_strings
         // exchanges lists and picks the strongest mutual checksum (xxh128 for a
         // modern local copy). WHY: these two forms must keep override == None,

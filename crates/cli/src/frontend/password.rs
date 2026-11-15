@@ -117,8 +117,7 @@ pub(crate) fn load_password_command(command: &OsStr) -> Result<Vec<u8>, Message>
         .with_role(Role::Client));
     }
 
-    let mut bytes = first_line(&output.stdout);
-    trim_trailing_newlines(&mut bytes);
+    let bytes = extract_first_line(&output.stdout).unwrap_or_default();
 
     if bytes.is_empty() {
         return Err(rsync_error!(
@@ -143,15 +142,6 @@ fn build_shell_command(command: &OsStr) -> Command {
     cmd
 }
 
-/// Extracts the first line from raw byte output.
-fn first_line(bytes: &[u8]) -> Vec<u8> {
-    if let Some(pos) = bytes.iter().position(|&b| b == b'\n') {
-        bytes[..pos].to_vec()
-    } else {
-        bytes.to_vec()
-    }
-}
-
 /// Open an operator-named file, refusing an attacker-owned symlink component.
 ///
 /// `--password-file` is named by the operator, never by a peer, and is read
@@ -169,9 +159,9 @@ fn first_line(bytes: &[u8]) -> Vec<u8> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/authenticate.c:245` - `getpassf()` opens `--password-file`
+/// - `rsync-3.5.2/authenticate.c:238` - `getpassf()` opens `--password-file`
 ///   with `open_no_attacker_symlinks(filename, O_RDONLY, 0)`.
-/// - `rsync-3.5.1/syscall.c:675` - `open_no_attacker_symlinks()`; the
+/// - `rsync-3.5.2/syscall.c:744` - `open_no_attacker_symlinks()`; the
 ///   trust rule is at `syscall.c:499`.
 fn open_operator_named(path: &Path) -> io::Result<File> {
     #[cfg(unix)]
@@ -191,13 +181,20 @@ fn open_operator_named(path: &Path) -> io::Result<File> {
 /// workspace's branded diagnostics.
 pub(crate) fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
     if path == Path::new("-") {
-        return read_password_from_stdin().map_err(|error| {
+        let bytes = read_password_from_stdin().map_err(|error| {
             rsync_error!(
                 1,
-                format!("failed to read password from standard input: {}", error)
+                format!("failed to read a password from standard input: {}", error)
             )
             .with_role(Role::Client)
-        });
+        })?;
+        if bytes.is_empty() {
+            return Err(
+                rsync_error!(1, "ERROR: failed to read a password from standard input")
+                    .with_role(Role::Client),
+            );
+        }
+        return Ok(bytes);
     }
 
     let display = path.display();
@@ -206,7 +203,7 @@ pub(crate) fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
     // handle. This mirrors upstream rsync's approach and avoids time-of-check
     // to time-of-use races where an attacker swaps the path after the
     // metadata check but before the read.
-    // upstream: authenticate.c:245-247 - rsyserr(FERROR, errno,
+    // upstream: authenticate.c:238-240 - rsyserr(FERROR, errno,
     // "could not open password file %s") then exit_cleanup(RERR_SYNTAX).
     let mut file = open_operator_named(path).map_err(|error| {
         rsync_error!(
@@ -265,8 +262,13 @@ pub(crate) fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
         .with_role(Role::Client)
     })?;
 
-    trim_trailing_newlines(&mut bytes);
-    Ok(bytes)
+    extract_first_line(&bytes).ok_or_else(|| {
+        rsync_error!(
+            1,
+            format!("ERROR: failed to read a password from {display}")
+        )
+        .with_role(Role::Client)
+    })
 }
 
 /// Reads a password from the process' standard input.
@@ -288,14 +290,15 @@ pub(crate) fn read_password_from_stdin() -> io::Result<Vec<u8>> {
 pub(crate) fn read_password_from_reader<R: Read>(reader: &mut R) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
-    trim_trailing_newlines(&mut bytes);
-    Ok(bytes)
+    Ok(extract_first_line(&bytes).unwrap_or_default())
 }
 
-fn trim_trailing_newlines(bytes: &mut Vec<u8>) {
-    while matches!(bytes.last(), Some(b'\n' | b'\r')) {
-        bytes.pop();
-    }
+fn extract_first_line(bytes: &[u8]) -> Option<Vec<u8>> {
+    let end = bytes
+        .iter()
+        .position(|&b| b == b'\n' || b == b'\r')
+        .unwrap_or(bytes.len());
+    (end > 0).then(|| bytes[..end].to_vec())
 }
 
 #[cfg(test)]
@@ -317,9 +320,7 @@ mod tests {
 
     #[test]
     fn trims_trailing_newlines() {
-        let mut bytes = b"secret\n\r".to_vec();
-        trim_trailing_newlines(&mut bytes);
-        assert_eq!(bytes, b"secret");
+        assert_eq!(extract_first_line(b"secret\r\n"), Some(b"secret".to_vec()));
     }
 
     #[test]
@@ -445,11 +446,17 @@ mod tests {
 
     #[test]
     fn first_line_extracts_before_newline() {
-        assert_eq!(first_line(b"hello\nworld"), b"hello");
-        assert_eq!(first_line(b"only-line"), b"only-line");
-        assert_eq!(first_line(b""), b"");
-        assert_eq!(first_line(b"\n"), b"");
-        assert_eq!(first_line(b"line1\nline2\nline3"), b"line1");
+        assert_eq!(extract_first_line(b"hello\nworld"), Some(b"hello".to_vec()));
+        assert_eq!(
+            extract_first_line(b"only-line"),
+            Some(b"only-line".to_vec())
+        );
+        assert_eq!(extract_first_line(b""), None);
+        assert_eq!(extract_first_line(b"\n"), None);
+        assert_eq!(
+            extract_first_line(b"line1\nline2\nline3"),
+            Some(b"line1".to_vec())
+        );
     }
 
     #[test]

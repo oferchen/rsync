@@ -237,7 +237,7 @@ impl<'a> CopyContext<'a> {
 
     /// The option set the sender half reads.
     ///
-    /// upstream: pipe.c:143-148 local_child() applies `-M` to the receiver only.
+    /// upstream: pipe.c:144-149 local_child() applies `-M` to the receiver only.
     pub(super) fn sender_options(&self) -> &LocalCopyOptions {
         self.options.sender_half()
     }
@@ -272,7 +272,7 @@ impl<'a> CopyContext<'a> {
     /// Used to make per-inode metadata writes (e.g. NTFS DACL writes via
     /// `SetNamedSecurityInfoW`) O(1) per cohort instead of O(N) per follower.
     ///
-    /// upstream: hlink.c:300 `hard_link_check()` returns 1 for followers so
+    /// upstream: hlink.c:307 `hard_link_check()` returns 1 for followers so
     /// generator.c:1944 exits before `set_file_attrs()` and therefore never
     /// calls `set_acl()` on a follower alias.
     #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -285,6 +285,16 @@ impl<'a> CopyContext<'a> {
         self.options.delay_updates_enabled()
     }
 
+    /// Returns whether `--delay-symlinks` is enabled.
+    pub(super) const fn delay_symlinks_enabled(&self) -> bool {
+        self.options.delay_symlinks_enabled()
+    }
+
+    /// Queues a symlink to be created after regular files and delayed updates.
+    pub(super) fn push_deferred_symlink(&mut self, symlink: crate::local_copy::context::DeferredSymlink) {
+        self.deferred_ops.symlinks.push(symlink);
+    }
+
     /// Returns whether a bandwidth limiter is active.
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     pub(in crate::local_copy) const fn has_bandwidth_limiter(&self) -> bool {
@@ -294,7 +304,7 @@ impl<'a> CopyContext<'a> {
     /// Sets the source-tree confinement anchor for the operand about to be
     /// walked.
     ///
-    /// upstream: `rsync-3.5.1/sender.c:692-706` - the sender's content opens are
+    /// upstream: `rsync-3.5.2/sender.c:700-714` - the sender's content opens are
     /// confined beneath the transfer root, which is per source argument.
     pub(in crate::local_copy) fn set_source_anchor(&mut self, anchor: Option<PathBuf>) {
         #[cfg(unix)]
@@ -324,7 +334,7 @@ impl<'a> CopyContext<'a> {
     /// Opens `path` beneath the pinned anchor that holds it, or `None` when no
     /// recorded anchor prefixes it.
     ///
-    /// upstream: `rsync-3.5.1/sender.c:695` opens through
+    /// upstream: `rsync-3.5.2/sender.c:703` opens through
     /// `open_sender_source_path()`, and `flist.c:328-329` refuses a root whose
     /// identity changed since the scan with `ELOOP`.
     pub(in crate::local_copy) fn open_beneath_pinned_anchor(
@@ -337,7 +347,7 @@ impl<'a> CopyContext<'a> {
     /// The error a scan of `path` must fail with because the pinned anchor
     /// holding it no longer has the identity recorded for it.
     ///
-    /// upstream: `rsync-3.5.1/flist.c:325-329` `sender_source_root_fd_for()`
+    /// upstream: `rsync-3.5.2/flist.c:326-330` `sender_source_root_fd_for()`
     /// refuses a changed root with `ELOOP`.
     pub(in crate::local_copy) fn pinned_anchor_error(&self, path: &Path) -> Option<io::Error> {
         self.source_roots.held_root(path)?.err()
@@ -353,7 +363,7 @@ impl<'a> CopyContext<'a> {
     /// `--copy-unsafe-links`, `--copy-dirlinks`, `--insecure-links` or
     /// `--copy-links`; each of those restores the path-following sender.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:149-154` `filesfrom_owner_walk_active()`.
+    /// upstream: `rsync-3.5.2/syscall.c:149-154` `filesfrom_owner_walk_active()`.
     #[cfg(unix)]
     fn filesfrom_owner_walk_active(&self) -> bool {
         self.options.sender_half().files_from_enabled()
@@ -396,7 +406,7 @@ impl<'a> CopyContext<'a> {
 
     /// Non-Unix: upstream's walk needs `openat`/`O_NOFOLLOW`, and without them
     /// `filesfrom_link_stat()` degrades to the plain `link_stat()`
-    /// (`rsync-3.5.1/flist.c:430-432`).
+    /// (`rsync-3.5.2/flist.c:433-435`).
     #[cfg(not(unix))]
     pub(in crate::local_copy) fn set_files_from_base(
         &mut self,
@@ -660,12 +670,12 @@ impl<'a> CopyContext<'a> {
     ///
     /// `--insecure-links` withholds it too: upstream picks the legacy
     /// `opendir()` whenever `symlink_optout_allowed()` holds
-    /// (`rsync-3.5.1/flist.c:2357-2361`, `syscall.c:139-144`).
+    /// (`rsync-3.5.2/flist.c:2368-2372`, `syscall.c:139-144`).
     ///
     /// [`follow_source_symlinks`]: Self::follow_source_symlinks
     /// A `--files-from` scan takes the ownership walk ahead of the anchor, as
     /// upstream's `secure_opendir()` tests `filesfrom_owner_walk_active()`
-    /// first (`rsync-3.5.1/flist.c:2262-2265`).
+    /// first (`rsync-3.5.2/flist.c:2273-2276`).
     pub(super) fn readdir_buf_with_confined_anchor(
         &mut self,
     ) -> (&mut Vec<(OsString, PathBuf)>, ScanRoot<'_>) {
@@ -737,7 +747,7 @@ impl<'a> CopyContext<'a> {
     /// destination (a directory chmod), which suppresses deletes like a walk
     /// error but is not part of the sender's file-list `io_error`.
     ///
-    /// upstream: generator.c:1907-1910 sets the generator's own `io_error`;
+    /// upstream: generator.c:1944-1947 sets the generator's own `io_error`;
     /// the sender never sees it, so a batch does not carry it.
     #[cfg(unix)]
     pub(super) fn record_generator_io_error(&mut self) {
@@ -757,7 +767,7 @@ impl<'a> CopyContext<'a> {
     ///
     /// Also suppresses deletions like any other general I/O error, matching
     /// upstream where `io_error |= IOERR_GENERAL` gates the delete pass.
-    /// upstream: flist.c:2017-2019 send_file_name() and flist.c:1692-1695 make_file()
+    /// upstream: flist.c:2021-2023 send_file_name() and flist.c:1696-1699 make_file()
     /// set io_error |= IOERR_GENERAL.
     pub(super) fn record_flist_io_error(&mut self) {
         self.flist_io_error = true;
@@ -832,7 +842,7 @@ impl<'a> CopyContext<'a> {
     /// skipped, the rest of the transfer continues, and the run finishes
     /// `RERR_PARTIAL` (23).
     ///
-    /// upstream: `generator.c:2490-2522` and `hlink.c:486` report the failure
+    /// upstream: `generator.c:2533-2565` and `hlink.c:500` report the failure
     /// at `FERROR_XFER`, which sets `got_xfer_error` (`log.c:337-338`).
     pub(crate) fn record_create_error(&mut self) {
         self.create_error = true;
@@ -943,7 +953,7 @@ impl<'a> CopyContext<'a> {
     /// neither the warning nor the skip fires in that case - matching
     /// upstream, where the flag both suppresses the notice and lets the
     /// delete pass run.
-    /// upstream: generator.c:304-311 delete_in_dir() prints "IO error
+    /// upstream: generator.c:339-346 delete_in_dir() prints "IO error
     /// encountered -- skipping file deletion" once (guarded by a static
     /// `already_warned`) and returns without deleting whenever
     /// `io_error & IOERR_GENERAL && !ignore_errors`.

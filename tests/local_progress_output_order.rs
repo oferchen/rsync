@@ -122,9 +122,13 @@ fn run_merged_args(binary: &Path, args: &[&str], workdir: &Path) -> String {
 /// Whether `line` is a progress tick: `<size> <pct>% <rate> <time> ...`.
 fn is_progress_tick(line: &str) -> bool {
     let mut fields = line.split_whitespace();
-    let size_is_number = fields
-        .next()
-        .is_some_and(|f| f.chars().all(|c| c.is_ascii_digit() || c == ','));
+    let size_is_number = fields.next().is_some_and(|f| {
+        f.chars().any(|c| c.is_ascii_digit())
+            && f.chars().all(|c| {
+                c.is_ascii_digit()
+                    || matches!(c, ',' | '.' | 'B' | 'K' | 'M' | 'G' | 'T' | 'P' | 'E' | 'i')
+            })
+    });
     size_is_number && fields.next().is_some_and(|f| f.ends_with('%'))
 }
 

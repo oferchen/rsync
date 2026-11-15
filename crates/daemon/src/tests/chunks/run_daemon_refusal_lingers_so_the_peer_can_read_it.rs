@@ -11,7 +11,7 @@
 /// as an intermittent `daemon-refuse-delete-alias` failure on the upstream
 /// 3.5.0 testsuite rather than a hard one.
 ///
-/// upstream never closes immediately: `cleanup.c:263-264` sleeps 100 ms for any
+/// upstream never closes immediately: `cleanup.c:264-265` sleeps 100 ms for any
 /// server exiting non-zero, and `clientserver.c:1266` adds 400 ms on the
 /// post-`@RSYNCD: OK` error path before `exit_cleanup(RERR_UNSUPPORTED)`.
 ///
@@ -181,7 +181,7 @@ fn run_daemon_refusal_lingers_so_the_peer_can_read_it() {
     assert!(
         open_for >= MIN_LINGER,
         "daemon closed {open_for:?} after writing the refusal, before the {MIN_LINGER:?} linger \
-         upstream keeps (cleanup.c:263-264); a close that prompt lets the kernel answer with RST \
+         upstream keeps (cleanup.c:264-265); a close that prompt lets the kernel answer with RST \
          and discard the error frames",
     );
 

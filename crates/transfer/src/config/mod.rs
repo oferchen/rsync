@@ -57,6 +57,9 @@ pub struct WriteConfig {
     /// - `options.c:791`: `--delay-updates` option; `options.c:3067-3068` forwards it
     /// - `receiver.c`: deferred rename sweep at end of transfer
     pub delay_updates: bool,
+    /// Defers symlink creation until after regular files and `--delay-updates`
+    /// renames are in place (upstream `--delay-symlinks`).
+    pub delay_symlinks: bool,
     /// Policy controlling io_uring usage for file I/O.
     pub io_uring_policy: fast_io::IoUringPolicy,
     /// Optional override for the io_uring submission queue depth (`--io-uring-depth=N`).
@@ -94,6 +97,7 @@ impl Default for WriteConfig {
             inplace_partial: false,
             write_devices: false,
             delay_updates: false,
+            delay_symlinks: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             io_uring_depth: None,
             zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
@@ -125,7 +129,7 @@ pub struct DeletionConfig {
     /// only after `set_allow_inc_recurse()` has run, so it never counts as a
     /// before-delete there.
     ///
-    /// upstream: options.c:737 `--delete-before` sets `delete_before`;
+    /// upstream: options.c:738 `--delete-before` sets `delete_before`;
     /// compat.c:174-176 disallows inc-recursion for a receiver with it.
     pub delete_before: bool,
     /// Whether the delete *pass* (the extraneous-entry decision) is deferred
@@ -160,6 +164,11 @@ pub struct DeletionConfig {
     /// upstream: `options.c` `delete_excluded` global; `exclude.c:rule_matches()`
     /// drops the protection an exclude would otherwise grant during deletion.
     pub delete_excluded: bool,
+    /// Suppress server-side `MSG_DELETED` emission when the client requested
+    /// neither deletion verbosity (`-v` / `--info=del`) nor `--itemize-changes`.
+    ///
+    /// upstream: `log.c:912-916` + `clientserver.c:1226-1230`.
+    pub suppress_msg_deleted: bool,
 }
 
 /// Connection and protocol context configuration.
@@ -189,7 +198,7 @@ pub struct ConnectionConfig {
     /// [`crate::writer::MessageRoute::resolve`] picks from the protocol. A daemon
     /// not run over a remote shell sets [`crate::writer::MessageRoute::Frames`].
     ///
-    /// upstream: options.c:103, options.c:2059-2060, clientserver.c:1177-1178.
+    /// upstream: options.c:103, options.c:2095-2096, clientserver.c:1181-1182.
     pub msgs2stderr: Option<crate::writer::MessageRoute>,
     /// Name of the daemon module this server process is serving, when any.
     ///
@@ -500,7 +509,7 @@ pub struct ServerConfig {
     pub protocol: ProtocolVersion,
     /// `--protocol=N` from the server argv, stored verbatim.
     ///
-    /// upstream: options.c:860 binds `--protocol` straight into
+    /// upstream: options.c:863 binds `--protocol` straight into
     /// `protocol_version` as a `POPT_ARG_INT`, so the server advertises any
     /// value it is handed and only `setup_protocol()` range-checks the
     /// negotiated result (compat.c:631-640). `None` advertises the newest
@@ -829,7 +838,7 @@ pub struct ServerConfig {
 /// argv parser and the daemon's long-form parser - so the bound check exists
 /// once rather than once per decoder.
 ///
-/// upstream: options.c:1801-1810 `OPT_BLOCK_SIZE` runs the same check on the
+/// upstream: options.c:1837-1846 `OPT_BLOCK_SIZE` runs the same check on the
 /// server as on the client: `parse_size_arg(arg, 'b', "block-size", 0,
 /// max_blength, False)` with `max_blength = protocol_version < 30 ?
 /// OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE`. A `0` means "unset" and falls back to
@@ -986,6 +995,7 @@ impl ServerConfig {
             || !(self.deletion.delete_before
                 || self.deletion.delete_after
                 || self.write.delay_updates
+                || self.write.delay_symlinks
                 || self.flags.prune_empty_dirs)
     }
 
@@ -1123,7 +1133,7 @@ mod tests {
 
     #[test]
     fn from_flag_string_and_args_accepts_empty_without_args() {
-        // upstream: options.c:2906 omits the flag string when no short option
+        // upstream: options.c:2971 omits the flag string when no short option
         // is set, and the server's popt parse has no slot that requires one.
         let config =
             ServerConfig::from_flag_string_and_args(ServerRole::Receiver, "".to_owned(), vec![])
@@ -1275,7 +1285,7 @@ mod tests {
 
     #[test]
     fn effective_omit_dir_times_implied_by_plain_backup() {
-        // upstream: options.c:2493-2494 - make_backups && !backup_dir => -1.
+        // upstream: options.c:2548-2549 - make_backups && !backup_dir => -1.
         let config = ServerConfig {
             flags: ParsedServerFlags {
                 backup: true,
@@ -1288,7 +1298,7 @@ mod tests {
 
     #[test]
     fn effective_omit_dir_times_not_implied_with_backup_dir() {
-        // upstream: options.c:2493 - the implication is gated on `!backup_dir`.
+        // upstream: options.c:2548 - the implication is gated on `!backup_dir`.
         let config = ServerConfig {
             flags: ParsedServerFlags {
                 backup: true,
@@ -1314,7 +1324,7 @@ mod tests {
 
     #[test]
     fn effective_backup_suffix_empty_when_backup_dir_set() {
-        // upstream: options.c:2448 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
+        // upstream: options.c:2503 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
         let config = ServerConfig {
             backup_dir: Some(".backups".to_owned()),
             ..Default::default()
@@ -1359,7 +1369,7 @@ mod tests {
         config
     }
 
-    // upstream: options.c:2561 - every peer's parse_arguments() sets `inplace`
+    // upstream: options.c:2616 - every peer's parse_arguments() sets `inplace`
     // for any append_mode. The server-side halves (the `--server` argv parser
     // and the daemon's client_args parser) build this config themselves, so the
     // promotion has to land here or their sender would compute
@@ -1390,7 +1400,7 @@ mod tests {
 
     #[test]
     fn promote_append_legacy_protocol_forces_verify() {
-        // upstream compat.c:664-666 - rsync 2.6.9 (proto 29) folds the existing
+        // upstream compat.c:665-667 - rsync 2.6.9 (proto 29) folds the existing
         // prefix into the whole-file checksum for plain --append. Without this
         // promotion oc sends a tail-only checksum, the legacy receiver fails
         // verification, and the phase-2 redo desyncs the stream (garbage
@@ -1437,7 +1447,7 @@ mod tests {
         assert!(config.flags.append_verify);
     }
 
-    /// upstream: options.c:1801-1810 - `max_blength = protocol_version < 30 ?
+    /// upstream: options.c:1837-1846 - `max_blength = protocol_version < 30 ?
     /// OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE`, so the ceiling is protocol-dependent
     /// and a value legal at protocol 29 is rejected at 30+.
     #[test]
@@ -1455,7 +1465,7 @@ mod tests {
         );
     }
 
-    /// upstream: generator.c:720 tests `if (block_size)`, so a forwarded `0` is
+    /// upstream: generator.c:757 tests `if (block_size)`, so a forwarded `0` is
     /// "unset" and must select the square-root heuristic rather than error.
     #[test]
     fn block_size_zero_means_heuristic_not_error() {

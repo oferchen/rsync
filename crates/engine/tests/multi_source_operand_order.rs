@@ -4,7 +4,7 @@
 //!
 //! # Why this matters (observable stdout-fidelity contract)
 //!
-//! Upstream `send_file_list()` (flist.c:2739) accumulates every source operand
+//! Upstream `send_file_list()` (flist.c:2750) accumulates every source operand
 //! into ONE file list and sorts it globally with `f_name_cmp`
 //! (`flist_sort_and_clean`, flist.c:3059) before the generator itemizes it, so
 //! top-level operands are emitted in name order regardless of the order they

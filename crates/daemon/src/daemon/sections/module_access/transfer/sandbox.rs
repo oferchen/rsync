@@ -15,11 +15,11 @@
 /// after sending an error to the client.
 ///
 /// A `chroot()`/`setgid()`/`setuid()` syscall failure runs the module's post-xfer
-/// exec hook before returning: upstream: clientserver.c:1040-1135 -
+/// exec hook before returning: upstream: clientserver.c:1044-1139 -
 /// these syscalls execute after the post-xfer-exec fork point (964-992), so
 /// the waiting parent still observes the child's exit and still fires the
 /// hook. A `resolve_drop_target` uid/gid *name* resolution failure does not:
-/// upstream: clientserver.c:835-838/701-703 - that lookup runs before the
+/// upstream: clientserver.c:839-842/701-703 - that lookup runs before the
 /// fork point, so the waiting parent never sees a child at all.
 /// Publishes this module's `insecure links` opt-out for the ownership walk.
 ///
@@ -68,7 +68,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
     auth_user: Option<&str>,
     client_args: &[String],
 ) -> io::Result<Option<PrivilegeOutcome>> {
-    // upstream: clientserver.c:830-831 - `uid = MY_UID(); am_root = (uid ==
+    // upstream: clientserver.c:834-835 - `uid = MY_UID(); am_root = (uid ==
     // ROOT_UID)`. A root daemon drops to `nobody:nobody` by default even when
     // the module sets no explicit uid/gid.
     let am_root = daemon_is_root();
@@ -108,7 +108,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
     // Resolve the identity BEFORE the chroot, because resolving it is a name
     // lookup and the chroot is what makes names unresolvable.
     //
-    // upstream: clientserver.c:830-875 resolves the uid (`user_to_uid`, :835)
+    // upstream: clientserver.c:834-879 resolves the uid (`user_to_uid`, :835)
     // and the whole group set (`want_all_groups` :849, `add_a_group` :698-707,
     // the `NOBODY_GROUP` default :873) while still outside any jail; the
     // `chroot()` does not happen until :1050. Every impure arm of
@@ -122,7 +122,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
     //
     // Only the `setgid`/`setgroups`/`setuid` SYSCALLS need to run after the
     // chroot (they need the root privileges the chroot also needs); those stay
-    // below. upstream: clientserver.c:1100/1107/1129.
+    // below. upstream: clientserver.c:1104/1107/1129.
     let drop_target = if needs_privdrop {
         match resolve_drop_target(module, am_root) {
             Ok(target) => Some(target),
@@ -132,7 +132,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
                 // SYSCALL failures handled below: it yields `@ERROR: invalid
                 // uid <name>` / `@ERROR: invalid gid <name>` with a matching
                 // FLOG `Invalid uid/gid <name>`.
-                // upstream: clientserver.c:836-838 (uid) / 702-703 (gid). This
+                // upstream: clientserver.c:840-842 (uid) / 702-703 (gid). This
                 // lookup runs before the post-xfer-exec fork point (967), so
                 // no `post-xfer exec` hook fires here.
                 let (flog, error) = err.upstream_reply();
@@ -146,7 +146,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
         None
     };
 
-    // upstream: clientserver.c:1040-1057 - chroot, then chdir into the served
+    // upstream: clientserver.c:1044-1061 - chroot, then chdir into the served
     // root. Only the privilege-drop SYSCALLS follow it; the identity they drop
     // to was resolved above.
     // A rootless auto-fallback (unset `use chroot` + failing probe) yields
@@ -166,8 +166,8 @@ fn apply_privilege_restrictions_with_upstream_errors(
             Ok(ChrootDecision::Anchored { root }) => anchored_root = Some(root),
             Err(err) => {
                 // Operator demanded chroot explicitly: a failure is fatal.
-                // upstream: clientserver.c:1052 - `@ERROR: chroot failed\n`
-                // upstream: clientserver.c:694 - `@ERROR: chdir failed\n`
+                // upstream: clientserver.c:1056 - `@ERROR: chroot failed\n`
+                // upstream: clientserver.c:698 - `@ERROR: chdir failed\n`
                 let text = err.to_string();
                 let error = if text.contains("chdir") {
                     AtError::ChdirFailed
@@ -189,7 +189,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
         }
     }
 
-    // upstream: clientserver.c:1059-1065 - `change_dir(module_chdir, CD_NORMAL)`
+    // upstream: clientserver.c:1063-1069 - `change_dir(module_chdir, CD_NORMAL)`
     // and `module_dirfd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC)` both
     // run here, ABOVE the setgid/setuid at clientserver.c:1096+. The ordering
     // is the whole mechanism: after the drop, every lookup that names the
@@ -233,7 +233,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
         // other uid's is refused. A refusal is upstream's `path_failure()` -
         // the module is not served at all - never a fall back to the absolute
         // path, which would reach the module through the very link the walk
-        // refused. upstream: clientserver.c:1059-1060, :688-695
+        // refused. upstream: clientserver.c:1063-1064, :688-695
         let entered = fast_io::confinement::pin_session_root_fd(module_root)
             .and_then(|()| enter_pinned_module_root(module_root));
         if let Err(err) = entered {
@@ -265,7 +265,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
         && let Err(err) = drop_privileges(target.uid, &target.gids, log_sink)
     {
         // Distinguish upstream error messages based on the error text.
-        // upstream: clientserver.c:1100/1107/1129
+        // upstream: clientserver.c:1104/1107/1129
         let text = err.to_string();
         let error = if text.contains("setgroups") {
             AtError::SetgroupsFailed
@@ -313,7 +313,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
 /// A failure is upstream's failed `change_dir()`, which the caller refuses the
 /// module over.
 ///
-/// upstream: clientserver.c:1059-1065 `change_dir(module_chdir)` and
+/// upstream: clientserver.c:1063-1069 `change_dir(module_chdir)` and
 /// `module_dirfd = open(".")`, above the setgid/setuid at :1098/:1123.
 #[cfg(unix)]
 fn enter_pinned_module_root(module_root: &Path) -> io::Result<()> {
@@ -330,7 +330,7 @@ struct PrivilegeOutcome {
     /// failed (rootless fallback) - downstream path handling must then treat
     /// the module as non-chrooted.
     ///
-    /// upstream: clientserver.c:883-896 - the effective `use_chroot` decides
+    /// upstream: clientserver.c:887-900 - the effective `use_chroot` decides
     /// whether the module path is rewritten to the post-chroot inner path.
     chroot_applied: bool,
     /// The post-chroot working directory to serve from, when `chroot_applied`
@@ -338,7 +338,7 @@ struct PrivilegeOutcome {
     /// marker, in which case it is the normalized remainder after the
     /// marker (e.g. `/module` for `path = /var/data/./module`).
     ///
-    /// upstream: clientserver.c:897-914 - `module_dir` after the `/./` split.
+    /// upstream: clientserver.c:901-918 - `module_dir` after the `/./` split.
     inner_module_path: Option<PathBuf>,
     /// Windows: the host directory the session is served from when `use
     /// chroot` resolved true. There is no jail - Cygwin's chroot is a path
@@ -351,7 +351,7 @@ struct PrivilegeOutcome {
     /// working directory (`.`), or `None` when the transfer keeps naming the
     /// module by the path above.
     ///
-    /// upstream: clientserver.c:1059 - after `change_dir(module_chdir)` the
+    /// upstream: clientserver.c:1063 - after `change_dir(module_chdir)` the
     /// receiver works with names relative to the module root.
     served_root: Option<PathBuf>,
 }

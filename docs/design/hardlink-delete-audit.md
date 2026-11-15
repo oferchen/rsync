@@ -90,7 +90,7 @@ batched sweep never consults any hardlink table when deciding what to
 unlink, which matches upstream `delete_in_dir`
 (`target/interop/upstream-src/rsync-3.4.1/generator.c:272-347`): the
 match is by name via `flist_find_ignore_dirness`
-(`generator.c:333`), with no inode lookup.
+(`generator.c:368`), with no inode lookup.
 
 ### 2.2 New DDP scaffolding
 

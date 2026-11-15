@@ -370,7 +370,7 @@ grep -c "^fn test_" crates/core/tests/upstream_client_to_oc_daemon_interop.rs
 Key upstream rsync source files for protocol reference:
 
 - `clientserver.c` - Daemon protocol implementation
-- `main.c:1267-1384` - Client `client_run()` function
+- `main.c:1267-1388` - Client `client_run()` function
 - `compat.c` - Compatibility flags and negotiation
 - `authenticate.c` - Authentication protocol
 - `checksum.c` - Checksum algorithm negotiation

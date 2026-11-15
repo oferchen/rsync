@@ -80,7 +80,7 @@ fn apply_module_directive(
             let patterns = parse_host_list(value);
             builder.set_hosts_deny(patterns);
         }
-        // upstream: authenticate.c:302-303 - an empty `auth users` lets anyone
+        // upstream: authenticate.c:297-298 - an empty `auth users` lets anyone
         // in; as a P_LOCAL value it also clears an inherited global list.
         "authusers" if value.is_empty() => builder.set_auth_users(Vec::new()),
         "authusers" => {
@@ -96,7 +96,7 @@ fn apply_module_directive(
         "authdigest" => {
             builder.set_auth_digest(value);
         }
-        // upstream: authenticate.c:138-166 check_secret() opens the file when a
+        // upstream: authenticate.c:131-159 check_secret() opens the file when a
         // client authenticates, so a missing or unusable file fails only that
         // authentication. An empty value is legal and means no secrets file.
         "secretsfile" if value.is_empty() => builder.secrets_file = None,
@@ -169,11 +169,11 @@ fn apply_module_directive(
                 builder.set_munge_symlinks(parsed);
             }
         }
-        // upstream: clientserver.c:833 - an empty `uid` means the default
+        // upstream: clientserver.c:837 - an empty `uid` means the default
         // (`*lp_uid(i) ? ... : am_root ? NOBODY_USER : NULL`).
         "uid" if value.is_empty() => builder.uid = None,
         "gid" if value.is_empty() => builder.gid = None,
-        // upstream: clientserver.c:833-870 resolves the names when a client
+        // upstream: clientserver.c:837-874 resolves the names when a client
         // selects the module, so a value that does not resolve now is kept
         // and refuses only that module.
         "uid" => builder.set_uid(parse_uid_setting(value).ok_or_else(|| value.to_owned())),

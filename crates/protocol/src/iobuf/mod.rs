@@ -36,7 +36,7 @@ pub use out::{OUT_BUFFER_SIZE, OutBuf};
 
 /// Rounds `size` up to a whole number of 1024-byte units.
 ///
-/// upstream: `rsync.h:189` `ROUND_UP_1024()`. Every I/O buffer is allocated in
+/// upstream: `rsync.h:190` `ROUND_UP_1024()`. Every I/O buffer is allocated in
 /// 1024-byte units so the low byte of `size` is always zero, which is what lets
 /// [`OutBuf`] borrow that byte as the "size was temporarily reduced" marker
 /// (io.c:200-201 `IOBUF_WAS_REDUCED` / `IOBUF_RESTORE_SIZE`).

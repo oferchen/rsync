@@ -145,7 +145,7 @@ runs the session function (line 608), and `_exit`s (line 610). The
 parent closes the accepted fd (line 621) and continues. Crash
 isolation is the OS process boundary; max-connections enforcement is
 inside the child via `claim_connection` on a lock file
-(`clientserver.c:744`).
+(`clientserver.c:748`).
 
 We replace fork with thread plus `catch_unwind` (`connection.rs:127`)
 and lose three properties upstream gets for free:
@@ -194,7 +194,7 @@ The 1 k waypoint is the operational ceiling today and the 10 k
 waypoint is unreachable without either an async listener (task
 #1935) or a hard admission cap that returns
 `@ERROR: max connections (N) reached` like upstream
-`clientserver.c:752`.
+`clientserver.c:756`.
 
 ## 5. Mitigations, in order of implementation cost
 
@@ -205,7 +205,7 @@ waypoint is unreachable without either an async listener (task
    `@ERROR: max connections (N) reached` to the socket and close.
    One config field, ~30 lines in the accept loop, no protocol
    change, no behaviour change for unconfigured daemons. Matches
-   upstream `clientserver.c:744-756`.
+   upstream `clientserver.c:748-760`.
 2. **Smaller worker stack.** Replace `thread::spawn` at
    `connection.rs:121` with `thread::Builder::new().stack_size(512 *
    1024).spawn(...)`. Reduces glibc reservation from 8 MiB to 512
@@ -233,7 +233,7 @@ Implement option 1 only: a daemon-level `max connections` admission
 cap that consults `ConnectionCounter::active()` before
 `thread::spawn` in `connection.rs:121` and returns
 `@ERROR: max connections (N) reached` (matching upstream
-`clientserver.c:752`) when the limit is hit.
+`clientserver.c:756`) when the limit is hit.
 
 Rationale:
 

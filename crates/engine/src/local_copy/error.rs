@@ -16,7 +16,7 @@ use super::filter_program::{
 };
 
 /// Formats an [`io::Error`] the way upstream rsync's `rsyserr()` does:
-/// `"<strerror> (<errno>)"` (upstream `log.c:500` `": %s (%d)"`), rather than
+/// `"<strerror> (<errno>)"` (upstream `log.c:585` `": %s (%d)"`), rather than
 /// Rust's `std::io::Error` `Display`, which renders `" (os error <errno>)"`.
 /// Errors without an OS errno fall back to the `Display` string verbatim.
 ///
@@ -104,7 +104,7 @@ impl LocalCopyError {
     /// Attaches the report of a run that finished every entry but still owes a
     /// non-zero exit code.
     ///
-    /// upstream: `cleanup.c:210-218` derives the exit code from `io_error` and
+    /// upstream: `cleanup.c:211-219` derives the exit code from `io_error` and
     /// `got_xfer_error` only after the transfer, its itemize lines and its
     /// statistics are complete, so the caller must still render this report.
     #[must_use]
@@ -195,7 +195,7 @@ impl LocalCopyError {
     /// Constructs an error for a non-`--relative` DOTDIR source argument whose
     /// directory cannot be entered.
     ///
-    /// upstream: `flist.c:686-694` `change_pathname()` - `change_dir %s failed`
+    /// upstream: `flist.c:690-698` `change_pathname()` - `change_dir %s failed`
     /// sets `IOERR_GENERAL`, yielding `RERR_PARTIAL`, and the transfer
     /// continues with the remaining sources.
     #[must_use]
@@ -243,7 +243,7 @@ impl LocalCopyError {
     /// is emitted at the skip site; this error only carries the exit code and
     /// the summary message.
     ///
-    /// upstream: `cleanup.c:217-218` `_exit_cleanup()` maps `io_error &
+    /// upstream: `cleanup.c:218-219` `_exit_cleanup()` maps `io_error &
     /// IOERR_GENERAL` to `RERR_PARTIAL`.
     #[must_use]
     pub const fn partial_transfer() -> Self {
@@ -253,7 +253,7 @@ impl LocalCopyError {
     /// Constructs the end-of-run summary for a transfer whose only problem was
     /// a source that vanished; each vanish was reported where it happened.
     ///
-    /// upstream: `cleanup.c:215-216` maps `io_error & IOERR_VANISHED` to
+    /// upstream: `cleanup.c:216-217` maps `io_error & IOERR_VANISHED` to
     /// `RERR_VANISHED`, which `log.c:99` names `some files vanished before
     /// they could be transferred` at warning level.
     #[must_use]
@@ -479,7 +479,7 @@ impl LocalCopyError {
 /// The half of upstream's local copy a fatal error belongs to, which names
 /// the role in its exit trailer.
 ///
-/// upstream: main.c:1412 - a local copy's client process is the sender; its
+/// upstream: main.c:1416 - a local copy's client process is the sender; its
 /// forked generator stats and compares the destination (generator.c:1745).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LocalCopySide {
@@ -551,9 +551,9 @@ pub enum LocalCopyErrorKind {
         duration: Duration,
     },
     /// Deletions were halted because the configured limit was exceeded.
-    // upstream: generator.c:2906 - `Deletions stopped due to --max-delete
+    // upstream: generator.c:2998 - `Deletions stopped due to --max-delete
     // limit (%d skipped)` with no pluralized noun.
-    #[error("Deletions stopped due to --max-delete limit ({skipped} skipped)")]
+    #[error("Deletions stopped due to --max-delete limit ({} skipped)", logging::comma_num(*skipped))]
     DeleteLimitExceeded {
         /// Number of entries that were skipped after reaching the limit.
         skipped: u64,
@@ -588,7 +588,7 @@ pub enum LocalCopyErrorKind {
     /// `RERR_PARTIAL` (exit 23). The per-entry cause was already reported at
     /// the skip site (e.g. an unconvertible `--iconv` filename).
     ///
-    /// upstream: `log.c:98` maps `RERR_PARTIAL` to `some files/attrs were not transferred
+    /// upstream: `log.c:105` maps `RERR_PARTIAL` to `some files/attrs were not transferred
     /// (see previous errors)`, selected when `io_error` is set at exit (`cleanup.c:217`).
     #[error("some files/attrs were not transferred (see previous errors)")]
     PartialTransfer,
@@ -596,7 +596,7 @@ pub enum LocalCopyErrorKind {
     /// nothing worse happened, so the transfer completes with
     /// `RERR_VANISHED` (exit 24). Each vanish was reported where it happened.
     ///
-    /// upstream: `log.c:99` maps `RERR_VANISHED` to `some files vanished
+    /// upstream: `log.c:106` maps `RERR_VANISHED` to `some files vanished
     /// before they could be transferred`, printed as a warning
     /// (`log.c:log_exit()`).
     #[error("some files vanished before they could be transferred")]
@@ -605,7 +605,7 @@ pub enum LocalCopyErrorKind {
     /// exiting `RERR_SIGNAL` (20). The copy loop stopped mid-file so the
     /// destination guard could finalise its `--partial` file.
     ///
-    /// upstream: `log.c:95` maps `RERR_SIGNAL` to the fixed diagnostic
+    /// upstream: `log.c:102` maps `RERR_SIGNAL` to the fixed diagnostic
     /// `received SIGINT, SIGTERM, or SIGHUP`, emitted once by `log.c:log_exit()`.
     #[error("received SIGINT, SIGTERM, or SIGHUP")]
     Interrupted,
@@ -677,7 +677,7 @@ mod tests {
     use super::*;
     use std::io::ErrorKind;
 
-    /// upstream `rsyserr()` prints `"%s (%d)"` (log.c:500). An `io::Error`
+    /// upstream `rsyserr()` prints `"%s (%d)"` (log.c:585). An `io::Error`
     /// built around a custom payload reports no `raw_os_error()`, so the errno
     /// must still be recovered from the rendered text - otherwise wrapping an
     /// error anywhere in the I/O stack silently drops it from the message.
@@ -764,7 +764,7 @@ mod tests {
 
     #[test]
     fn local_copy_error_delete_limit_exceeded_message_matches_upstream() {
-        // upstream: generator.c:2906 emits `Deletions stopped due to
+        // upstream: generator.c:2998 emits `Deletions stopped due to
         // --max-delete limit (%d skipped)` verbatim with no `entry`/`entries`
         // noun, so the count renders identically for one or many skips.
         let one = LocalCopyError::delete_limit_exceeded(1).to_string();

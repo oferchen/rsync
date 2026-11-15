@@ -72,7 +72,7 @@ fn from_raw_preserves_unknown_codes() {
 
 #[test]
 fn other_renders_as_unexplained_error() {
-    // upstream: log.c:951-952 log_exit() - a code with no RERR_* name renders as
+    // upstream: log.c:1039-1040 log_exit() - a code with no RERR_* name renders as
     // "unexplained error" while keeping its raw value in the "(code N)" suffix.
     assert_eq!(ExitCode::Other(42).description(), "unexplained error");
     assert_eq!(ExitCode::Other(42).as_i32(), 42);

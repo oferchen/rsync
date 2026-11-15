@@ -67,7 +67,7 @@ impl FlistMarkerSink for GoodbyeNdxSink<'_> {
     }
 
     fn ndx_is_active(&self, ndx: i32) -> bool {
-        // upstream: sender.c:559-564 - `send_files()` tests F_IS_ACTIVE on the
+        // upstream: sender.c:567-572 - `send_files()` tests F_IS_ACTIVE on the
         // entry the peer named. An out-of-range index is a different fault and
         // is owned by `last_file_ndx`, so it is not reported as cleared here.
         usize::try_from(ndx)
@@ -124,7 +124,7 @@ impl GeneratorContext {
     /// - **Early** (delete_during or delete_before): sent when `do_stats && delete_mode`.
     /// - **Late** (delete_delay or delete_after): sent when `do_stats`.
     ///
-    /// Deviation from upstream: 3.4.4+ (3.5.1 `generator.c:2866-2871`, `generator.c:2911-2916`)
+    /// Deviation from upstream: 3.4.4+ (3.5.1 `generator.c:2952-2957`, `generator.c:3003-3008`)
     /// drops the `INFO_GTE(STATS, 2)` term and sends them whenever
     /// `delete_mode || force_delete || read_batch`.
     ///
@@ -275,17 +275,17 @@ impl GeneratorContext {
     /// - **Late** (`late_delete`): `do_stats`
     ///   (3.4.3 `generator.c:2432` - `INFO_GTE(STATS, 2)`)
     ///
-    /// Deviation from upstream: 3.5.1 `generator.c:2868` and `generator.c:2913` gate
+    /// Deviation from upstream: 3.5.1 `generator.c:2954` and `generator.c:3005` gate
     /// both paths on `delete_mode || force_delete || read_batch` with no `--stats` term.
     pub(in crate::generator) fn should_send_del_stats(&self) -> bool {
         if !self.config.do_stats {
             return false;
         }
         if self.config.deletion.late_delete {
-            // upstream 3.4.3: generator.c:2432 - INFO_GTE(STATS, 2) (already checked above)
+            // upstream 3.4.3: generator.c:2475 - INFO_GTE(STATS, 2) (already checked above)
             true
         } else {
-            // upstream 3.4.3: generator.c:2387 -
+            // upstream 3.4.3: generator.c:2430 -
             // INFO_GTE(STATS, 2) && (delete_mode || force_delete)
             self.config.flags.delete
         }

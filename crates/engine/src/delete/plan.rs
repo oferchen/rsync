@@ -210,7 +210,7 @@ impl DeletePlan {
     /// temporary [`FileEntry`] per entry (using the plan's `directory` as
     /// the parent), then reversed in place. The comparator is
     /// [`compare_file_entries`], which honours the `t_PATH`/`t_ITEM`
-    /// distinction (upstream: `flist.c:3797 f_name_cmp()`): within a directory,
+    /// distinction (upstream: `flist.c:3808 f_name_cmp()`): within a directory,
     /// non-directories sort before directories, so `get_dirlist`'s sorted
     /// order places files first and directories last. A plain byte sort
     /// would instead order dirs and files by name alone, so an

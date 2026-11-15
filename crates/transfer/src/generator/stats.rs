@@ -149,7 +149,7 @@ pub struct GeneratorStats {
     pub files_transferred: usize,
     /// Summed length of every transferred file (upstream: `total_transferred_size`).
     ///
-    /// On a push the local sender computes this itself (`sender.c:635`); upstream
+    /// On a push the local sender computes this itself (`sender.c:643`); upstream
     /// never sends it over the wire in `handle_stats()`, so the pushing client
     /// reports it straight from this locally accumulated total.
     pub transferred_file_size: u64,
@@ -248,7 +248,7 @@ mod tests {
 
     /// `FlistSendStats::record` classifies each sent entry into the per-type
     /// tally and adds `F_LENGTH` to `total_size` for regular files and symlinks
-    /// only, mirroring upstream `send_file_entry()` (flist.c:730-746, 998-999).
+    /// only, mirroring upstream `send_file_entry()` (flist.c:734-750, 998-999).
     /// A directory and a FIFO must not inflate `total_size`, and a symlink's
     /// target length must be counted (the sender flist stores the target length
     /// as the entry size).
@@ -276,7 +276,7 @@ mod tests {
     }
 
     /// The sender must NOT count a `--delete-missing-args` mode-0 placeholder
-    /// as a special. upstream: flist.c:745 tests `IS_SPECIAL(mode)`, which is
+    /// as a special. upstream: flist.c:749 tests `IS_SPECIAL(mode)`, which is
     /// false for mode 0, so the entry falls into the `reg` remainder. Measured
     /// against rsync 3.5.1: a push or local copy of an existing `a` plus a
     /// missing `nope` reports `Number of files: 2 (reg: 2)`; only the receiver

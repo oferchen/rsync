@@ -22,7 +22,7 @@ name: Upstream Testsuite (macOS)
 # safer half of that trade.
 #
 # WHAT THIS LEG BUYS (counted from the committed manifests, not transcribed:
-# `awk '!/^#/ && NF {c[$2]++} END {...}' tools/ci/upstream-3.5.1-expect.*.txt`)
+# `awk '!/^#/ && NF {c[$2]++} END {...}' tools/ci/upstream-3.5.2-expect.*.txt`)
 # ---------------------------------------------------------------------------
 # 247 passed / 1 failed / 112 skipped nonroot. The one `fail` row
 # (strict-basis) is shared with every Linux leg, so no failure is macOS-only.
@@ -86,7 +86,7 @@ on:
       upstream_rsync_version:
         description: 'Upstream rsync version to build and test against'
         type: string
-        default: '3.5.1'
+        default: '3.5.2'
       transport:
         description: >-
           `pipe` (upstream's secure default: a stdio socketpair, no listening
@@ -122,7 +122,7 @@ on:
           selects a different test set, so each carries its OWN manifest; a
           shared file would fail the driver's coverage guard.
         type: string
-        default: 'tools/ci/upstream-3.5.1-expect.macos.nonroot.txt'
+        default: 'tools/ci/upstream-3.5.2-expect.macos.nonroot.txt'
       expect_result_macos_root:
         description: >-
           The root leg's manifest, same contract as `expect_result_macos`.
@@ -134,7 +134,7 @@ on:
           corpus runs and EMIT_EXPECT_RESULT writes the manifest as an artifact,
           which is how a NEW leg obtains its first one.
         type: string
-        default: 'tools/ci/upstream-3.5.1-expect.macos.root.txt'
+        default: 'tools/ci/upstream-3.5.2-expect.macos.root.txt'
       timeout_minutes:
         description: 'Job timeout in minutes'
         type: number

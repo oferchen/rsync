@@ -64,13 +64,13 @@ impl ReceiverContext {
     /// [`recheck_received_filter`](Self::recheck_received_filter) that re-checks
     /// only `entries` (an INC_RECURSE sub-list at `self.file_list[flat_start..]`),
     /// so sub-list entries received on a pull get the same defense-in-depth as
-    /// the level-1 list. upstream: flist.c:1364 `recv_file_entry()` runs the
+    /// the level-1 list. upstream: flist.c:1368 `recv_file_entry()` runs the
     /// server-filter check for every received entry, including sub-lists.
     pub(in crate::receiver) fn recheck_received_filter_entries(
         &self,
         entries: &[FileEntry],
     ) -> io::Result<()> {
-        // upstream: flist.c:1363 - `!trust_sender_filter` guards the whole
+        // upstream: flist.c:1367 - `!trust_sender_filter` guards the whole
         // re-check (options.c:2675-2676/main.c:1552 set it for local/--trust-sender).
         if self.config.trust_sender {
             return Ok(());
@@ -87,7 +87,7 @@ impl ReceiverContext {
             if self.filter_chain.has_per_dir_merge() {
                 return Ok(());
             }
-            // upstream: flist.c:1364 - `check_server_filter(&filter_list, ...)`
+            // upstream: flist.c:1368 - `check_server_filter(&filter_list, ...)`
             // consults the CLIENT's rules only. A server-receiver whose chain
             // had daemon rules prepended re-checks against the client-only
             // view captured before that merge; the daemon rules keep their own
@@ -136,13 +136,13 @@ impl ReceiverContext {
 
         for entry in entries {
             let path = entry.path().as_path();
-            // upstream: flist.c:1361 - the transfer root (`.` / `/.`) is never
+            // upstream: flist.c:1365 - the transfer root (`.` / `/.`) is never
             // re-checked. Cleared entries (empty name, mode 0) are no-ops.
             if path.as_os_str().is_empty() || path == Path::new(".") {
                 continue;
             }
 
-            // upstream: flist.c:1364 - `check_server_filter(...) < 0` means the
+            // upstream: flist.c:1368 - `check_server_filter(...) < 0` means the
             // sender-side rules exclude this name. `allows_during_traversal` is
             // the sender's decision (DecisionContext::Transfer, receiver-only
             // rules elided) evaluated with upstream `exclude.c:rule_matches()`
@@ -154,7 +154,7 @@ impl ReceiverContext {
             // NOT be rejected here. `!allows_during_traversal` is exactly
             // upstream's `check_server_filter(...) < 0`.
             if !filter_set.allows_during_traversal(path, entry.is_dir()) {
-                // upstream: flist.c:1365-1366 - rprintf(FERROR, ...) then
+                // upstream: flist.c:1369-1370 - rprintf(FERROR, ...) then
                 // exit_cleanup(RERR_UNSUPPORTED).
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
@@ -206,7 +206,7 @@ impl ReceiverContext {
     /// [`recheck_received_implied_includes`](Self::recheck_received_implied_includes)
     /// that validates only `entries` (an INC_RECURSE sub-list at
     /// `self.file_list[flat_start..]`) so sub-list entries get the same
-    /// CVE-2022-29154 defense as the level-1 list. upstream: flist.c:1368
+    /// CVE-2022-29154 defense as the level-1 list. upstream: flist.c:1372
     /// `recv_file_entry()` runs the implied-include check for every received
     /// entry, including sub-lists.
     pub(in crate::receiver) fn recheck_received_implied_includes_entries(
@@ -219,14 +219,14 @@ impl ReceiverContext {
 
         for entry in entries {
             let path = entry.path().as_path();
-            // upstream: flist.c:1361 - only the transfer root (`.` / `/.`) is
+            // upstream: flist.c:1365 - only the transfer root (`.` / `/.`) is
             // exempt from the check.
             if path == Path::new(".") || path == Path::new("/.") {
                 continue;
             }
 
             // A name emptied by a failed `--iconv` conversion is cleared to ""
-            // (upstream flist.c:1065-1071 truncates `thisname` to "") but the entry
+            // (upstream flist.c:1069-1075 truncates `thisname` to "") but the entry
             // stays active with its real mode, and upstream still runs it through
             // `check_filter(&implied_filter_list, "", ...)` at flist.c:1368,
             // which returns `<= 0` for the empty name and aborts with
@@ -242,14 +242,14 @@ impl ReceiverContext {
             let covered = if path.as_os_str().is_empty() {
                 !has_type_bits
             } else {
-                // upstream: flist.c:1368 - check_filter(&implied_filter_list,
+                // upstream: flist.c:1372 - check_filter(&implied_filter_list,
                 // ...) <= 0 means no include rule matched, i.e. the name was
                 // never requested. `covers` reproduces `check_filter(...) > 0`
                 // with `rule_matches()` (check_descendants = false) semantics.
                 implied.covers(path, entry.is_dir())
             };
             if !covered {
-                // upstream: flist.c:1369-1370 - rprintf(FERROR, ...) then
+                // upstream: flist.c:1373-1374 - rprintf(FERROR, ...) then
                 // exit_cleanup(RERR_UNSUPPORTED).
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
@@ -331,7 +331,7 @@ impl ReceiverContext {
     /// Range-scoped variant of
     /// [`downgrade_implied_parent_dirs`](Self::downgrade_implied_parent_dirs)
     /// covering only `self.file_list[flat_start..]`, so INC_RECURSE sub-list
-    /// entries get the same defense. upstream: `flist.c:1465` runs per received
+    /// entries get the same defense. upstream: `flist.c:1469` runs per received
     /// entry, sub-lists included.
     pub(in crate::receiver) fn downgrade_implied_parent_dirs_from(
         &mut self,
@@ -346,7 +346,7 @@ impl ReceiverContext {
                 continue;
             }
             if implied.is_parent_only_dir(entry.path().as_path()) {
-                // upstream: flist.c:1474 - both flags, so the entry maps to
+                // upstream: flist.c:1478 - both flags, so the entry maps to
                 // FLAG_IMPLIED_DIR (oc: top_dir without content_dir).
                 entry.set_content_dir(false);
                 entry.set_top_dir(true);

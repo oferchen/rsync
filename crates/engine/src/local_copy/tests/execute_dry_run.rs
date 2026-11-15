@@ -537,7 +537,7 @@ fn dry_run_statistics_match_apply_mode_statistics() {
         summary_apply.directories_created(),
         "directories_created should match between dry-run and apply"
     );
-    // upstream: the transferred *size* (sender.c:634-635) matches between a dry
+    // upstream: the transferred *size* (sender.c:642-643) matches between a dry
     // run and a real run, but literal_data (match.c:477) is only accumulated by
     // the real run - a dry run never calls match_sums(), so its bytes_copied
     // stays 0 while the apply run reports the moved bytes.
@@ -933,7 +933,7 @@ fn dry_run_reports_up_to_date_file_as_unchanged() {
         )
         .expect("dry run succeeds");
 
-    // upstream: generator.c:630-652 quick_check_ok() - the generator runs the quick check in
+    // upstream: generator.c:667-689 quick_check_ok() - the generator runs the quick check in
     // dry-run exactly as in a real run, so a same-size, same-mtime destination
     // is up-to-date and NOT reported as a transfer (rsync -n prints nothing for
     // it). The destination must remain unchanged.
@@ -1121,7 +1121,7 @@ fn dry_run_with_no_implied_dirs_and_missing_parent_succeeds() {
 /// record carried an empty change set (rendering `>f.........`), while the real
 /// run reported the size/time drift (`>f.st......`).
 ///
-/// upstream: generator.c:2377-2386 - the generator itemizes against the
+/// upstream: generator.c:2420-2429 - the generator itemizes against the
 /// existing destination even under dry-run, so `-ni` matches `-i`.
 #[test]
 fn dry_run_existing_differing_dest_itemizes_size_and_time_change() {

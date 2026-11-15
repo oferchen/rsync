@@ -30,15 +30,15 @@ repository-relative paths under `crates/`.
 Upstream sources examined:
 
 - `errcode.h` - numeric `RERR_*` constants (24 defined codes).
-- `log.c:80-107` - `rerr_names[]` table mapping codes to text.
-- `log.c:453-473` - `rsyserr()` format: `rsync: [<role>] <msg>: <strerror> (<errno>)\n`.
-- `log.c:884-910` - `log_exit()` envelope: `rsync error: <name> (code <N>) at <file>(<line>) [<role>=<version>]\n`.
+- `log.c:87-114` - `rerr_names[]` table mapping codes to text.
+- `log.c:538-558` - `rsyserr()` format: `rsync: [<role>] <msg>: <strerror> (<errno>)\n`.
+- `log.c:969-995` - `log_exit()` envelope: `rsync error: <name> (code <N>) at <file>(<line>) [<role>=<version>]\n`.
 - `rsync.c:823-831` - `who_am_i()` role identification.
-- `cleanup.c:103-275` - `_exit_cleanup()` exit-code routing.
+- `cleanup.c:103-276` - `_exit_cleanup()` exit-code routing.
 - `io.c:199,228,804,806,847` - I/O timeout and read/write error messages.
-- `flist.c:1289,1810,2398` - file-list stat warnings.
-- `sender.c:173,362` - sender file-open failures.
-- `generator.c:1116,1322,1477,1794,1871` - generator I/O errors.
+- `flist.c:1293,1810,2398` - file-list stat warnings.
+- `sender.c:181,362` - sender file-open failures.
+- `generator.c:1153,1322,1477,1794,1871` - generator I/O errors.
 - `clientserver.c` - `@ERROR:` daemon rejection strings.
 - `version.h` - `RSYNC_VERSION "3.4.1"`.
 - `rsync.h:29` - `RSYNC_NAME "rsync"`.
@@ -64,8 +64,8 @@ oc-rsync sources examined:
 
 ## 1. Exit-code banner table
 
-Upstream definition: `log.c:80-107` (`rerr_names[]`). Rendered by
-`log.c:903-907` inside:
+Upstream definition: `log.c:87-114` (`rerr_names[]`). Rendered by
+`log.c:988-992` inside:
 
 ```
 rsync error: <name> (code <N>) at <file>(<line>) [<role>=<version>]\n
@@ -135,11 +135,11 @@ some error paths.
 Upstream uses `RSYNC_NAME` (defined as `"rsync"` in `rsync.h:29`) as the
 program name prefix. There are two distinct prefix patterns:
 
-1. **Exit banner** (via `log_exit()` in `log.c:903-907`):
+1. **Exit banner** (via `log_exit()` in `log.c:988-992`):
    - Error: `rsync error: <text> (code <N>) at <file>(<line>) [<role>=<version>]\n`
    - Warning: `rsync warning: <text> (code <N>) at <file>(<line>) [<role>=<version>]\n`
 
-2. **Per-file I/O messages** (via `rsyserr()` in `log.c:453-473`):
+2. **Per-file I/O messages** (via `rsyserr()` in `log.c:538-558`):
    - `rsync: [<role>] <text>: <strerror> (<errno>)\n`
 
 3. **Info-level prefix**: upstream does not use `rsync info:`. Info messages
@@ -258,8 +258,8 @@ const char *who_am_i(void)
 ```
 
 Upstream uses the trailer format `[<role>=<version>]` in exit banners
-(`log.c:903-907`) and `rsyserr()` uses `[<role>]` without version
-(`log.c:459`). Per-file warnings (e.g. `file has vanished: %s\n`) do **not**
+(`log.c:988-992`) and `rsyserr()` uses `[<role>]` without version
+(`log.c:544`). Per-file warnings (e.g. `file has vanished: %s\n`) do **not**
 carry any trailer.
 
 ### oc-rsync roles
@@ -296,7 +296,7 @@ upstream does not. Upstream emits role trailers only in the `rsync error:` /
 
 ### Upstream format
 
-`rsyserr()` (`log.c:453-473`) formats I/O-level errors as:
+`rsyserr()` (`log.c:538-558`) formats I/O-level errors as:
 
 ```
 rsync: [<role>] <msg>: <strerror> (<errno>)\n
@@ -360,8 +360,8 @@ The errno number format `(<errno>)` is produced identically by both via
 
 | Site | Upstream | oc-rsync | Parity |
 |------|----------|----------|--------|
-| sender open | `file has vanished: %s\n` (`sender.c:358`) | `file has vanished: {path} at <basename>(<line>) [generator=<version>]` (`protocol_io.rs:134`) | **Drift** - extra location and role trailer |
-| flist stat | `file has vanished: %s\n` (`flist.c:1289`) | `file has vanished: {path} at <basename>(<line>) [generator=<version>]` (`walk.rs:319`) | **Drift** - extra location and role trailer |
+| sender open | `file has vanished: %s\n` (`sender.c:366`) | `file has vanished: {path} at <basename>(<line>) [generator=<version>]` (`protocol_io.rs:134`) | **Drift** - extra location and role trailer |
+| flist stat | `file has vanished: %s\n` (`flist.c:1293`) | `file has vanished: {path} at <basename>(<line>) [generator=<version>]` (`walk.rs:319`) | **Drift** - extra location and role trailer |
 | client error | (same) | `file has vanished: '{path}'` (`client/error.rs:246`) | **Drift** - single quotes around path |
 
 **Finding D-9**: The `file has vanished` warning is bare text in upstream
@@ -399,7 +399,7 @@ missing from oc-rsync's variant.
 
 ### skipping non-regular file
 
-Upstream (`generator.c:1687`): `rprintf(FERROR_XFER, "skipping non-regular file \"%s\"\n", ...)`.
+Upstream (`generator.c:1724`): `rprintf(FERROR_XFER, "skipping non-regular file \"%s\"\n", ...)`.
 
 oc-rsync: `"skipping non-regular file \"{}\""` at
 `crates/cli/src/frontend/progress/render.rs:396`.
@@ -451,7 +451,7 @@ All numeric values match. Code 6 is an oc-rsync extension.
 ## 8. Severity classification
 
 Upstream treats exit code 24 as a warning (`FWARNING`) and all other non-zero
-codes as errors (`FERROR`). This is implemented in `log.c:901-907`:
+codes as errors (`FERROR`). This is implemented in `log.c:986-992`:
 
 ```c
 if (code == RERR_VANISHED) {
@@ -498,24 +498,24 @@ rejection reasons.
 
 | Upstream verbatim | Upstream source | oc-rsync equivalent | Parity |
 |-------------------|-----------------|---------------------|--------|
-| `@ERROR: Unknown module '%s'\n` | `clientserver.c:730` | `@ERROR: Unknown module '{module}'` | **Match** |
-| `@ERROR: access denied to %s from %s (%s)\n` | `clientserver.c:733-734` | `@ERROR: access denied to {module} from {host} ({addr})` | **Match** |
-| `@ERROR: max connections (%d) reached -- try again later\n` | `clientserver.c:752` | `@ERROR: max connections ({limit}) reached -- try again later` | **Match** |
-| `@ERROR: auth failed on module %s\n` | `clientserver.c:762` | `@ERROR: auth failed on module {module}` | **Match** |
-| `@ERROR: failed to open lock file\n` | `clientserver.c:748` | `@ERROR: failed to open lock file` | **Match** |
-| `@ERROR: protocol startup error\n` | `clientserver.c:182` | (none) | **Missing** |
-| `@ERROR: chdir failed\n` | `clientserver.c:647` | (none) | **Missing** |
-| `@ERROR: Unknown command '%s'\n` | `clientserver.c:1379` | (none) | **Missing** |
-| `@ERROR: invalid uid %s\n` | `clientserver.c:783` | (none) | **Missing** |
-| `@ERROR: invalid gid %s\n` | `clientserver.c:656` | (none) | **Missing** |
-| `@ERROR: invalid gid setting.\n` | `clientserver.c:802,811` | (none) | **Missing** |
-| `@ERROR: no path setting.\n` | `clientserver.c:826` | (none) | **Missing** |
-| `@ERROR: getpwuid failed\n` | `clientserver.c:682` | (none) | **Missing** |
-| `@ERROR: setgid failed\n` | `clientserver.c:1010` | (none) | **Missing** |
-| `@ERROR: setuid failed\n` | `clientserver.c:1039` | (none) | **Missing** |
-| `@ERROR: fork failed\n` | `clientserver.c:910` | (none) | **Missing** (intentional - no fork) |
-| `@ERROR: chroot failed\n` | `clientserver.c:981` | (none) | **Missing** (intentional - no chroot) |
-| `@ERROR: early_input length\n` | `clientserver.c:1360` | (none) | **Missing** (intentional - not implemented) |
+| `@ERROR: Unknown module '%s'\n` | `clientserver.c:734` | `@ERROR: Unknown module '{module}'` | **Match** |
+| `@ERROR: access denied to %s from %s (%s)\n` | `clientserver.c:737-738` | `@ERROR: access denied to {module} from {host} ({addr})` | **Match** |
+| `@ERROR: max connections (%d) reached -- try again later\n` | `clientserver.c:756` | `@ERROR: max connections ({limit}) reached -- try again later` | **Match** |
+| `@ERROR: auth failed on module %s\n` | `clientserver.c:766` | `@ERROR: auth failed on module {module}` | **Match** |
+| `@ERROR: failed to open lock file\n` | `clientserver.c:752` | `@ERROR: failed to open lock file` | **Match** |
+| `@ERROR: protocol startup error\n` | `clientserver.c:186` | (none) | **Missing** |
+| `@ERROR: chdir failed\n` | `clientserver.c:651` | (none) | **Missing** |
+| `@ERROR: Unknown command '%s'\n` | `clientserver.c:1388` | (none) | **Missing** |
+| `@ERROR: invalid uid %s\n` | `clientserver.c:787` | (none) | **Missing** |
+| `@ERROR: invalid gid %s\n` | `clientserver.c:660` | (none) | **Missing** |
+| `@ERROR: invalid gid setting.\n` | `clientserver.c:806,811` | (none) | **Missing** |
+| `@ERROR: no path setting.\n` | `clientserver.c:830` | (none) | **Missing** |
+| `@ERROR: getpwuid failed\n` | `clientserver.c:686` | (none) | **Missing** |
+| `@ERROR: setgid failed\n` | `clientserver.c:1014` | (none) | **Missing** |
+| `@ERROR: setuid failed\n` | `clientserver.c:1043` | (none) | **Missing** |
+| `@ERROR: fork failed\n` | `clientserver.c:914` | (none) | **Missing** (intentional - no fork) |
+| `@ERROR: chroot failed\n` | `clientserver.c:985` | (none) | **Missing** (intentional - no chroot) |
+| `@ERROR: early_input length\n` | `clientserver.c:1369` | (none) | **Missing** (intentional - not implemented) |
 | (none) | n/a | `@ERROR: daemon functionality is unavailable in this build` | **Extra** |
 
 **Finding D-13**: The four most-parsed `@ERROR:` strings (Unknown module,
@@ -575,12 +575,12 @@ in order of user-visible importance.
 | `connection unexpectedly closed (%s bytes received so far) [%s]` | `io.c:228` | High - scripts grep for this |
 | `[%s] io timeout after %d seconds -- exiting` | `io.c:199-200` | Medium - timeout diagnostics |
 | `change_dir#1 %s failed` (and #2, #3, #4) | `main.c:749,807,827,936,1161` | Medium - directory errors |
-| `change_dir %s failed` | `flist.c:369,2242` | Medium |
-| `read errors mapping %s` | `sender.c:437` | Low |
-| `readlink_stat(%s) failed` | `flist.c:1294` | Low |
-| `recv_generator: mkdir %s failed` | `generator.c:1323,1477` | Low |
-| `failed to open %s, continuing` | `generator.c:1871` | Low |
-| `unexpected tag %d [%s%s]` | `io.c:1703` | Low - protocol debug |
+| `change_dir %s failed` | `flist.c:370,2242` | Medium |
+| `read errors mapping %s` | `sender.c:445` | Low |
+| `readlink_stat(%s) failed` | `flist.c:1298` | Low |
+| `recv_generator: mkdir %s failed` | `generator.c:1360,1477` | Low |
+| `failed to open %s, continuing` | `generator.c:1908` | Low |
+| `unexpected tag %d [%s%s]` | `io.c:1710` | Low - protocol debug |
 | `ERROR: cannot stat destination %s` | `main.c:770` | Low |
 
 ---

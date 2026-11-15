@@ -553,7 +553,7 @@ fn delay_updates_dry_run_does_not_modify_existing() {
 /// directory is precisely the kind of entry it would remove - and removing it
 /// discards the pending updates without any error surfacing.
 ///
-/// Upstream never lets the two collide. `generator.c:2881-2894` parks the
+/// Upstream never lets the two collide. `generator.c:2967-2986` parks the
 /// generator on the receiver's phase-2 `MSG_DONE` - the acknowledgement that
 /// `handle_delayed_updates()` has renamed everything and dropped each staging
 /// directory - before running `do_delayed_deletions()` / `do_delete_pass()` at

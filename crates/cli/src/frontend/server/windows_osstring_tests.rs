@@ -52,7 +52,7 @@ const COMPACT_FLAGS: &str = "-logDtpre.iLsfxCIvu";
 /// Every long flag `server_options()` emits as two argv slots. Their value
 /// slot must be consumed regardless of its encoding.
 ///
-/// upstream: options.c:2981-2985 (`--backup-dir`), 3106-3109 (`--temp-dir`),
+/// upstream: options.c:3046-3050 (`--backup-dir`), 3106-3109 (`--temp-dir`),
 /// 3120-3121 (alt-dest via `safe_arg("", basis_dir[i])`), 3145-3146
 /// (`--files-from`), 3062-3066 (`--partial-dir`).
 const TWO_ARG_FLAGS: [&str; 7] = [
@@ -130,7 +130,7 @@ fn multiple_positional_operands_keep_distinct_ill_formed_names() {
 /// The partial directory is where an interrupted transfer's data is parked
 /// and where the retry looks for it. A corrupted spelling silently orphans
 /// the partial file: the retry finds nothing and re-sends the whole file,
-/// defeating the flag. upstream: options.c:3062-3066 emits the value via
+/// defeating the flag. upstream: options.c:3127-3131 emits the value via
 /// `safe_arg`, and the server binds it as an untouched `char *`.
 #[test]
 fn two_arg_partial_dir_value_preserves_unpaired_surrogate() {

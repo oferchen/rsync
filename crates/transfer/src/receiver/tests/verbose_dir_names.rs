@@ -1,5 +1,5 @@
 //! Regression: the plain-`-v` directory NAME lines on a remote pull must be
-//! gated exactly like upstream `generator.c:1895-1897` - a directory is named
+//! gated exactly like upstream `generator.c:1932-1934` - a directory is named
 //! only when `set_file_attrs()` changed it (newly created, or a pre-transfer
 //! attribute differs). Previously the pipelined receiver named every directory
 //! in the file list unconditionally, printing a spurious `./` for the unchanged

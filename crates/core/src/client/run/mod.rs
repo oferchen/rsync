@@ -215,9 +215,9 @@ fn receiver_working_directory(dest: &Path) -> PathBuf {
 /// later open of the root lands in the directory the walk accepted, as
 /// upstream's `fchdir()` does, even if the path is swapped afterwards.
 ///
-/// upstream: `rsync-3.5.1/util1.c:1363-1392` (absolute) and `:1456-1467`
+/// upstream: `rsync-3.5.2/util1.c:1363-1392` (absolute) and `:1456-1467`
 /// (relative, resolved as `curr_dir/dir`) - `open_no_attacker_symlinks_dirfd()`
-/// for a non-daemon receiver; `rsync-3.5.1/main.c:778-781` reports
+/// for a non-daemon receiver; `rsync-3.5.2/main.c:778-781` reports
 /// `change_dir#1` and exits `RERR_FILESELECT` when it fails.
 #[cfg(unix)]
 fn resolve_destination_like_change_dir(dest: &Path) -> Result<(), ClientError> {
@@ -338,7 +338,7 @@ fn run_client_internal(
         .iter()
         .any(|arg| remote::operand_is_remote(arg));
 
-    // upstream: main.c:1442 - the CLIENT receiver runs `check_alt_basis_dirs()`
+    // upstream: main.c:1446 - the CLIENT receiver runs `check_alt_basis_dirs()`
     // once its destination is known. On a PULL the client is the receiver, so
     // the check belongs here, ahead of both remote transports. On a PUSH the
     // remote server is the receiver and runs its own check from the forwarded
@@ -355,7 +355,7 @@ fn run_client_internal(
     }
 
     if has_daemon_url {
-        // upstream: main.c:1611-1626 - when `-e`/`--rsh` is active with `::`,
+        // upstream: main.c:1615-1630 - when `-e`/`--rsh` is active with `::`,
         // the client spawns SSH with `rsync --server --daemon .` as the remote
         // command, then speaks the daemon protocol over the SSH pipes.
         let summary = if config.remote_shell().is_some() {
@@ -449,7 +449,7 @@ fn run_client_internal(
         return Ok(summary);
     }
 
-    // upstream: compat.c:684-713 - a local copy still runs setup_protocol() at
+    // upstream: compat.c:685-714 - a local copy still runs setup_protocol() at
     // the requested `--protocol=N`, so the protocol < 29 refusals apply;
     // `local_server` exempts only --acls/--xattrs (compat.c:667,674).
     if let Some(protocol) = config.protocol_version() {
@@ -460,6 +460,7 @@ fn run_client_internal(
                 basis_dir_count: config.reference_directories().len(),
                 inplace: config.inplace(),
                 prune_empty_dirs: config.prune_empty_dirs(),
+                delay_symlinks: config.delay_symlinks(),
                 local_server: true,
                 ..Default::default()
             },
@@ -493,6 +494,9 @@ fn run_client_internal(
     if local_child::local_copy_uses_server_child(&config) {
         return remote::run_local_child_transfer(config, observer, batch_writer);
     }
+
+    let mut niceness = *config.niceness();
+    niceness.apply_local(crate::niceness::ProcessRole::Client);
 
     // upstream: main.c:721 `get_local_name()` returns NULL when `list_only` is
     // set, so a local listing needs no destination operand. oc-rsync's local
@@ -547,7 +551,7 @@ fn run_client_internal(
     #[cfg(unix)]
     resolve_destination_like_change_dir(plan.destination())?;
 
-    // upstream: main.c:1259 / main.c:1442 call `check_alt_basis_dirs()` once the
+    // upstream: main.c:1259 / main.c:1446 call `check_alt_basis_dirs()` once the
     // destination is known, so a stale `--link-dest` is reported rather than
     // silently costing the hard-link optimisation. Warn-only: the exit code is
     // untouched, matching upstream's FWARNING.
@@ -567,7 +571,7 @@ fn run_client_internal(
     // - never runs. Upstream forks a real local_child server (main.c:662-667)
     // whose parse_checksum_choice/parse_compress_choice still emit the NSTR
     // summary lines, so reproduce them here from the resolved algorithms.
-    // upstream: checksum.c:206-211, compat.c:213-219 (DEBUG_GTE(NSTR, 1) client).
+    // upstream: checksum.c:206-211, compat.c:214-220 (DEBUG_GTE(NSTR, 1) client).
     emit_local_copy_nstr_summaries(&config);
 
     let batch_writer_for_options = if let Some(ref writer) = batch_writer {
@@ -581,7 +585,7 @@ fn run_client_internal(
         options = options.batch_writer(Some(writer_arc.clone()));
     }
 
-    // upstream: main.c:1868-1869 - `--only-write-batch` forces dry_run=1 so
+    // upstream: main.c:1872-1873 - `--only-write-batch` forces dry_run=1 so
     // that the transfer runs (populating the batch file) without creating the
     // destination directory or writing any files.
     let mode = if config.dry_run() || config.list_only() || config.only_write_batch() {
@@ -651,7 +655,7 @@ fn run_client_internal(
             None => return Err(map_local_copy_error(error)),
         },
     };
-    // upstream: a local copy runs at `--protocol=N` when given (compat.c:629-637),
+    // upstream: a local copy runs at `--protocol=N` when given (compat.c:630-638),
     // which gates the protocol-dependent --stats lines (main.c:434-448).
     if let Some(protocol) = config.protocol_version() {
         summary.set_protocol_version(protocol.as_u8());
@@ -698,13 +702,13 @@ fn run_client_internal(
 /// buffers are deallocated and counted via the pool's overflow counter;
 /// subsequent acquires allocate fresh outside the pool.
 ///
-/// Mirrors upstream rsync `options.c:1949-1956`, where `max_alloc` is set
+/// Mirrors upstream rsync `options.c:1985-1992`, where `max_alloc` is set
 /// once during option processing and consumed by allocation paths thereafter.
 fn apply_max_alloc(config: &ClientConfig) {
     let Some(limit) = config.max_alloc() else {
         return;
     };
-    // upstream: options.c:2085-2086 - the CLI parser resolves 0 to
+    // upstream: options.c:2121-2122 - the CLI parser resolves 0 to
     // SIZE_ARG_MAX before it reaches here, so only a library caller can
     // supply it; that leaves the standing ceiling in place rather than
     // lifting it, matching `protocol::set_max_alloc`'s own contract.
@@ -719,7 +723,7 @@ fn apply_max_alloc(config: &ClientConfig) {
         // simply remains uncapped.
         return;
     };
-    // upstream: options.c:1965-1971 rewrites the `max_alloc` global, which then
+    // upstream: options.c:2001-2007 rewrites the `max_alloc` global, which then
     // bounds every attacker-controlled wire allocation (util2.c:75), including
     // the xattr datum decoders. Publish it before any transfer decodes xattrs.
     protocol::set_max_alloc(limit_usize);
@@ -794,7 +798,7 @@ fn emit_local_copy_nstr_summaries(config: &ClientConfig) {
         &local_copy_checksum_nstr_name(config, checksum_negotiated),
     );
 
-    // upstream: compat.c:200-201 calls init_compression_level() before the
+    // upstream: compat.c:201-202 calls init_compression_level() before the
     // debug print whenever `do_compression != CPRES_NONE`, and compat.c:215
     // only emits the line when `do_compression != CPRES_NONE ||
     // do_compression_level != CLVL_NOT_SPECIFIED`. A local copy performs no
@@ -804,14 +808,14 @@ fn emit_local_copy_nstr_summaries(config: &ClientConfig) {
     }
 
     let algorithm = config.compression_algorithm();
-    // upstream prints the verbatim `compress_choice` string (compat.c:208-211,
+    // upstream prints the verbatim `compress_choice` string (compat.c:209-212,
     // 216-219); the algorithm enum folds `zlibx` onto `Zlib`, so prefer the
     // preserved raw name and fall back to the enum name for the default case.
     let name = config
         .compress_choice_name()
         .unwrap_or_else(|| algorithm.name());
     let level = resolve_nstr_compress_level(algorithm, config.compression_level());
-    // upstream: compat.c:218 - the compress " negotiated" qualifier renders
+    // upstream: compat.c:219 - the compress " negotiated" qualifier renders
     // when do_negotiated_strings selected the codec, i.e. when no explicit
     // --compress-choice (compress_choice_name) forced it.
     let compress_negotiated = config.compress_choice_name().is_none();
@@ -993,7 +997,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             DeleteMode::During | DeleteMode::DuringDefault | DeleteMode::Disabled => options,
         };
 
-        // upstream: generator.c:304 delete_in_dir() - `--ignore-errors` lets the
+        // upstream: generator.c:339 delete_in_dir() - `--ignore-errors` lets the
         // delete pass run after a source-scan I/O error instead of skipping it
         // with a notice. The local-copy engine reads the flag from its own
         // options, so it has to be carried across this bridge exactly as the
@@ -1140,7 +1144,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .fuzzy_level(config.fuzzy_level())
             .prune_empty_dirs(config.prune_empty_dirs())
             .inplace(config.inplace())
-            // upstream: generator.c:2148 - the local executor needs the flag
+            // upstream: generator.c:2189 - the local executor needs the flag
             // itself, not just the `--inplace` it implies (options.c:2564):
             // whether an existing DEVICE destination is cleared or written
             // through is decided by `write_devices`, and `--inplace` alone
@@ -1165,6 +1169,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .with_backup_suffix(config.backup_suffix().map(OsStr::to_os_string))
             .with_partial_directory(config.partial_directory().map(Path::to_path_buf))
             .delay_updates(config.delay_updates())
+            .delay_symlinks(config.delay_symlinks())
             .extend_link_dests(config.link_dest_paths().iter().cloned())
     }
 
@@ -1971,7 +1976,7 @@ mod local_copy_option_wiring_tests {
     }
 
     /// `--ignore-errors` lets the delete pass run despite a general I/O error
-    /// (upstream: generator.c:304). The local-copy engine reads it from
+    /// (upstream: generator.c:339). The local-copy engine reads it from
     /// `LocalCopyOptions`, so it has to be carried across this bridge - without
     /// it the engine sees the default `false` and prints the upstream skip
     /// notice on a run where upstream stays silent and deletes.

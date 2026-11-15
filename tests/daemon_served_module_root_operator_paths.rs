@@ -129,7 +129,7 @@ fn traversal_fixture(root: &Path, leg: &str) -> String {
     format!("{}/", secret.display())
 }
 
-/// upstream: options.c:2417 roots an absolute `--backup-dir` at `module_dir`
+/// upstream: options.c:2472 roots an absolute `--backup-dir` at `module_dir`
 /// and options.c:2433-2440 then refuses it when the module excludes it, so a
 /// `..` climb back into the excluded subtree must not replace the victim.
 #[test]

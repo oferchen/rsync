@@ -24,7 +24,7 @@ fn info_progress2_enables_progress_output() {
     let rendered = String::from_utf8(stdout).expect("progress output is UTF-8");
     assert!(!rendered.contains("info-fifo.in"));
     assert!(rendered.contains("to-chk=0/1"));
-    assert!(rendered.contains("0.00kB/s"));
+    assert!(rendered.contains("0B/s"));
 
     let metadata = std::fs::symlink_metadata(&destination).expect("stat destination");
     assert!(metadata.file_type().is_fifo());
@@ -74,7 +74,7 @@ fn progress_implies_name_shows_directory_names() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stdout utf8");
-    // upstream options.c:2511-2515: the `--progress`/`-P` flag sets do_progress,
+    // upstream options.c:2566-2570: the `--progress`/`-P` flag sets do_progress,
     // which bumps NAME to 1, so created directories print their name line even
     // without `-v`. `--info=progress2` (Overall) does NOT set do_progress and
     // stays name-free (info_progress2_enables_progress_output).
@@ -248,7 +248,7 @@ fn debug_flist_levels() {
     let settings = parse_debug_flags(&flags).expect("flags parse");
     assert_eq!(settings.flist, Some(4));
 
-    // upstream: options.c:463-464 - levels above MAX_OUT_LEVEL (4) are clamped, not rejected
+    // upstream: options.c:464-465 - levels above MAX_OUT_LEVEL (4) are clamped, not rejected
     let flags = vec![OsString::from("flist5")];
     let settings = parse_debug_flags(&flags).expect("flags parse");
     assert_eq!(settings.flist, Some(4));
@@ -268,7 +268,7 @@ fn debug_io_levels() {
     let settings = parse_debug_flags(&flags).expect("flags parse");
     assert_eq!(settings.io, Some(4));
 
-    // upstream: options.c:463-464 - levels above MAX_OUT_LEVEL (4) are clamped, not rejected
+    // upstream: options.c:464-465 - levels above MAX_OUT_LEVEL (4) are clamped, not rejected
     let flags = vec![OsString::from("io5")];
     let settings = parse_debug_flags(&flags).expect("flags parse");
     assert_eq!(settings.io, Some(4));
@@ -366,7 +366,7 @@ fn info_name0_suppresses_verbose_output() {
 
 #[test]
 fn info_flist0_suppresses_incremental_banner_at_verbose() {
-    // upstream: flist.c:2764 gates "sending incremental file list" on
+    // upstream: flist.c:2775 gates "sending incremental file list" on
     // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. `-v` raises FLIST to 1
     // (options.c info_verbosity[1]), so the banner normally prints; a following
     // `--info=flist0` drops FLIST back to 0 and must suppress the banner even
@@ -553,7 +553,7 @@ fn debug_rejects_unknown_flag() {
 // `execution::flags::tests::a_whitespace_padded_word_is_an_unknown_item_not_a_trimmed_one`:
 // no layer between argv and `parse_debug_flags` may re-introduce a trim.
 //
-// upstream: options.c:448-454 skips only ZERO-LENGTH comma segments and
+// upstream: options.c:449-455 skips only ZERO-LENGTH comma segments and
 // options.c:475 then compares the raw bytes, so ` flist` is an unknown item.
 // MEASURED: `rsync --debug=" flist"` from rsync 3.5.0 prints
 // `Unknown --debug item: " flist"` and exits 1.

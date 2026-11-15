@@ -14,7 +14,7 @@ against 3.5.1: both cited files, `cleanup.c` and `log.c`, are byte-identical
 to 3.5.0. All
 oc citations are from master at 0870dafa3.
 
-## 1. Upstream `_exit_cleanup` walk (cleanup.c:103-283)
+## 1. Upstream `_exit_cleanup` walk (cleanup.c:103-284)
 
 `_exit_cleanup(code, file, line)` is `NORETURN`. Its state lives in
 function-local statics (`switch_step`, `exit_code`, `exit_file`,
@@ -29,10 +29,10 @@ Pre-switch prologue (runs on every entry):
 - cleanup.c:113-117 - the latch: `if (!exit_code)` record code, file,
   and `abs(line)`. First non-zero writer wins; zero never latches.
 - cleanup.c:119-122 - `am_server && code == 0` promotes `am_server`
-  to 2 so `log_exit` (log.c:947) suppresses the server-side message on
+  to 2 so `log_exit` (log.c:1035) suppresses the server-side message on
   a clean run.
 
-The `switch (switch_step)` ladder (cleanup.c:126-270; each
+The `switch (switch_step)` ladder (cleanup.c:126-271; each
 `case_N.h` include is one step, executed at most once):
 
 | step | lines | what it does |
@@ -46,17 +46,17 @@ The `switch (switch_step)` ladder (cleanup.c:126-270; each
 | 6 | 239-258 | peer notification: unless the code is RERR_SOCKETIO/STREAMIO/SIGNAL1/TIMEOUT or `shutting_down` (:242-243), and `protocol_version >= 31 \|\| am_receiver` (:244), send `send_msg_int(MSG_ERROR_EXIT, exit_code)` when `line > 0` (:245-251); non-senders `io_flush(MSG_FLUSH)` (:252-253, :256-257); then `noop_io_until_death()` (:254) parks reading until the peer FINs |
 | 7 | 260-265 | server-side `msleep(100)` grace when exiting non-zero (:263-264); `close_all()` (:265) shuts down every socket fd |
 
-Exit proper (cleanup.c:272-282): `_exit(exit_code)` when
+Exit proper (cleanup.c:273-283): `_exit(exit_code)` when
 `called_from_signal_handler` (with a gcov dump under coverage builds),
 otherwise `exit(exit_code)`.
 
-`log_exit` itself (log.c:937-963): the sender (or a clean exit) prints
+`log_exit` itself (log.c:1025-1051): the sender (or a clean exit) prints
 the `sent/received/total size` FLOG stats line (:941-946); a non-zero
 code with `am_server != 2` prints `rsync error: <name> (code N) at
 file(line) [role=version]` as FERROR, or FWARNING for RERR_VANISHED
 (:947-962).
 
-Supporting entry points: `cleanup_set` (cleanup.c:293-301) records the
+Supporting entry points: `cleanup_set` (cleanup.c:294-302) records the
 temp/dest pair per in-flight file, `cleanup_disable` (:285-290) clears
 it after commit, `cleanup_set_pid` (:303-306) arms the pid-file
 unlink, and `cleanup_got_literal` (:88) gates step 2.
@@ -76,7 +76,7 @@ code performs the behavior today, not that it is unreachable.
 | step 0 newline flush :132-135 | progress observer `finish()` at `crates/cli/src/frontend/execution/drive/summary.rs:234-240` (Ok arm) and `:345-351` (Err arm); not run on the watchdog abort path |
 | step 0/5 EXIT debug traces :137-141, :231-237 | NO ANALOGUE - `--debug=exit` levels are not implemented |
 | step 1 child reap + worst-wins :146-154 | SSH child only: `crates/core/src/client/remote/ssh_transfer/exit_status.rs:149` `map_child_exit_status()`, worst-wins comparison per its doc (:145) |
-| step 2 partial finalization :159-183 | unwind path: `crates/transfer/src/disk_commit/process/commit.rs:339` `retain_partial_file` (task 402's retention rule); abort path: `crates/engine/src/util/cleanup.rs:371` `CleanupManager::finalize_partials` -> `:184` `finalize_partial` (mtime-0 tweak per cleanup.c:174-180); registration mirror of `cleanup_set`/`cleanup_got_literal`: `crates/transfer/src/disk_commit/process/file_ops.rs:46` `register_temp_with_cleanup`, `:69` `partial_destination`; `handle_partial_dir` split: `cleanup.rs:161` `remove_partial_dir` |
+| step 2 partial finalization :159-183 | unwind path: `crates/transfer/src/disk_commit/process/commit.rs:339` `retain_partial_file` (task 402's retention rule); abort path: `crates/engine/src/util/cleanup.rs:371` `CleanupManager::finalize_partials` -> `:184` `finalize_partial` (mtime-0 tweak per cleanup.c:175-181); registration mirror of `cleanup_set`/`cleanup_got_literal`: `crates/transfer/src/disk_commit/process/file_ops.rs:46` `register_temp_with_cleanup`, `:69` `partial_destination`; `handle_partial_dir` split: `cleanup.rs:161` `remove_partial_dir` |
 | step 3 output flush :189-195 | frontend tail: `flush_diagnostics` + adapter flush at `frontend/mod.rs:370-390`; transfer side: `ServerWriter::flush_all_pending` (called from `announce_error_exit`, `crates/transfer/src/lib.rs:1278`) |
 | step 4 temp unlink :200-201 | `cleanup.rs:300` `CleanupManager::cleanup` / `:312` `cleanup_temp_files`; RAII `TempFileGuard` drop on the unwind path |
 | step 4 `kill_all(SIGUSR1)` :202-203 | NO ANALOGUE - threads, not processes; the watchdog wakes blocked I/O instead (`frontend/mod.rs:541-545`) |
@@ -165,7 +165,7 @@ frontend `run()` tail.
   path, kept in sync only by `partial_destination`
   (`file_ops.rs:69`) mirroring `retain_partial_file`'s branches. The
   funnel becomes the single caller, as upstream's step 2 is
-  (cleanup.c:159-183), with `register_temp_with_cleanup`
+  (cleanup.c:159-184), with `register_temp_with_cleanup`
   (`file_ops.rs:46`) staying the `cleanup_set`/`cleanup_got_literal`
   mirror. Pinned by
   `crates/transfer/src/disk_commit/tests_partial_interrupt_parity.rs`,
@@ -173,8 +173,8 @@ frontend `run()` tail.
   `crates/core/tests/signal_integration.rs`, and
   `crates/core/tests/cleanup_manager.rs`.
 - **io_error -> RERR de-dup (432).** The selection rule has one owner
-  (`io_error_flags::to_exit_code`, cleanup.c:210-219 ordering), but
-  the `got_xfer_error` lift (cleanup.c:217-218) is pasted verbatim at
+  (`io_error_flags::to_exit_code`, cleanup.c:211-220 ordering), but
+  the `got_xfer_error` lift (cleanup.c:218-219) is pasted verbatim at
   both call sites: `stats.rs:117-123` and `exit_status.rs:123-129`.
   Fold both into one helper (or into `to_exit_code` behind a
   `got_xfer_error` parameter) when the funnel takes over step 4.
@@ -192,7 +192,7 @@ frontend `run()` tail.
   `crates/transfer/src/tests/error_exit_gate.rs`.
 - **Pid-file unlink is RAII, the funnel's exit is not.** A watchdog
   `process::exit` skips `PidFileGuard::drop` (`pid_file.rs:37`);
-  upstream unlinks inside the funnel (cleanup.c:204-208). When the
+  upstream unlinks inside the funnel (cleanup.c:205-209). When the
   daemon joins the funnel, the unlink becomes a funnel step or the
   abort path must run the guard explicitly. Pinned by
   `crates/daemon/src/tests/chunks/run_daemon_writes_and_removes_pid_file.rs`.

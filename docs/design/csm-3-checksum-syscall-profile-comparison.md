@@ -19,7 +19,7 @@ Source: `checksum.c:402` (`file_checksum()`), `fileio.c:214` (`map_ptr()`).
 Upstream uses `map_file()` / `map_ptr()` - a read-based sliding window (not
 POSIX mmap despite the name):
 
-- **Buffer**: `MAX_MAP_SIZE = 256 KiB` (`rsync.h:159`).
+- **Buffer**: `MAX_MAP_SIZE = 256 KiB` (`rsync.h:160`).
 - **Sized reads**: `map_ptr()` reads `min(remaining, 256 KiB)` bytes. The
   last read requests exactly the remaining byte count.
 - **No EOF reads**: The loop terminates when `remaining == 0`. No trailing

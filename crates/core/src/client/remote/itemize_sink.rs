@@ -37,7 +37,7 @@ impl ItemizeEventSink {
     /// Writes a client line through the session's diagnostic sink, so it
     /// interleaves with any trace line in production order.
     ///
-    /// upstream: log.c:272-373 rwrite() writes every client line and trace
+    /// upstream: log.c:352-453 rwrite() writes every client line and trace
     /// line to stdout the moment it is produced.
     fn write_line(line: &str) {
         logging::emit_line(logging::LogCode::Info, line.as_bytes());

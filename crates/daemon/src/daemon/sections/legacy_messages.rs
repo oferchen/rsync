@@ -9,7 +9,7 @@
 /// The cache is a process-wide `OnceLock` because the `OK` and `EXIT` payloads
 /// never change, so rebuilding them per connection would only allocate.
 ///
-/// upstream: clientserver.c:1152 sends `@RSYNCD: OK\n` once a module request
+/// upstream: clientserver.c:1156 sends `@RSYNCD: OK\n` once a module request
 /// is accepted, and clientserver.c:1385 sends `@RSYNCD: EXIT\n` after a module
 /// listing.
 #[derive(Debug)]

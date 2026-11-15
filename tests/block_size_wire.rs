@@ -228,7 +228,7 @@ fn run(transport: Transport, block_size: Option<u32>) -> Split {
     split
 }
 
-/// upstream: generator.c:720-721 - `-B` displaces the square-root heuristic on
+/// upstream: generator.c:757-758 - `-B` displaces the square-root heuristic on
 /// whichever side runs the generator, so every transport must land on the same
 /// block length. Before this test, the wire paths silently used the 700-byte
 /// default and produced the `no -B` numbers even when `-B 2048` was given.

@@ -220,7 +220,7 @@ mod stdin_source_tests {
     /// sockets. The FIFO cannot seek, so the replay must decode it exactly as
     /// the buffered `-` source does.
     ///
-    /// upstream: `rsync-3.5.1/batch.c:274-283` - `!S_ISREG && !S_ISFIFO`.
+    /// upstream: `rsync-3.5.2/batch.c:274-283` - `!S_ISREG && !S_ISFIFO`.
     #[test]
     #[cfg(unix)]
     fn read_batch_replays_a_fifo() {
@@ -302,7 +302,7 @@ mod header_tests {
         reader.read_header().unwrap();
 
         // The reader lowers itself to the batch's recorded protocol (30), as
-        // upstream compat.c:608-609 lowers protocol_version to remote_protocol.
+        // upstream compat.c:609-610 lowers protocol_version to remote_protocol.
         // Only a protocol above the ceiling is rejected (see
         // read_header_rejects_batch_from_newer_protocol).
         assert_eq!(reader.config().protocol_version, 30);
@@ -716,7 +716,7 @@ mod flist_deserialization_tests {
     }
 
     /// Under `--numeric-ids` the sender emits no post-flist id-lists
-    /// (upstream `flist.c:3063` requires `numeric_ids <= 0`), so the reader
+    /// (upstream `flist.c:3074` requires `numeric_ids <= 0`), so the reader
     /// must not try to consume them even though `preserve_uid`/`preserve_gid`
     /// are set. Reading them would decode the following delta bytes as a
     /// varint id-list and desync the stream. WHY: this guards the exact
@@ -861,7 +861,7 @@ mod flist_deserialization_tests {
     /// in the flist carries a trailing checksum. If the reader doesn't consume
     /// these bytes, subsequent entries will be deserialized incorrectly.
     ///
-    /// upstream: flist.c:990 writes checksum bytes, flist.c:1601 reads them
+    /// upstream: flist.c:994 writes checksum bytes, flist.c:1605 reads them
     #[test]
     fn protocol_flist_roundtrip_with_always_checksum() {
         let temp_dir = test_support::create_tempdir();

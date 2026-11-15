@@ -1,6 +1,6 @@
 //! `--contimeout` is a daemon connection timeout.
 //!
-//! upstream: main.c:1623-1627 start_client() - `if (connect_timeout &&
+//! upstream: main.c:1627-1631 start_client() - `if (connect_timeout &&
 //! !daemon_connection)` rejects the option with RERR_SYNTAX, so it is refused
 //! for a local copy and for a plain remote-shell transfer. A daemon reached
 //! through `--rsh` still counts as a daemon connection (`daemon_connection ==

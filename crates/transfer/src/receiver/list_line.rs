@@ -2,14 +2,14 @@
 //!
 //! On a push the generator runs on the server, so the server formats each
 //! listing line and `rwrite()` frames it as `MSG_INFO` for the client to print
-//! (upstream: log.c:355-366). The time columns are therefore rendered in the
+//! (upstream: log.c:435-446). The time columns are therefore rendered in the
 //! server's local zone, as upstream's `timestring()` does there.
 
 use crate::receiver::stats::ListOnlyEntry;
 
 /// Width of the size column.
 ///
-/// upstream: generator.c:1322 - `human_readable ? 14 : 11`. `server_options()`
+/// upstream: generator.c:1359 - `human_readable ? 14 : 11`. `server_options()`
 /// never forwards `-h` or `--no-h` (options.c:2778-3190), so a server keeps
 /// `human_readable = 1` (options.c:116) and renders sizes with commas.
 const SIZE_WIDTH: usize = 14;
@@ -30,9 +30,9 @@ impl ListLineStyle {
     /// Renders `entry` as one newline-terminated listing line.
     ///
     /// The name and link target are copied as raw bytes; the client escapes
-    /// them when it prints the line (upstream: log.c:425 `filtered_fwrite()`).
+    /// them when it prints the line (upstream: log.c:499 `filtered_fwrite()`).
     ///
-    /// upstream: generator.c:1318-1356 `list_file_entry()`.
+    /// upstream: generator.c:1355-1393 `list_file_entry()`.
     pub(in crate::receiver) fn render(self, entry: &ListOnlyEntry) -> Vec<u8> {
         let mtime = timestring(entry.mtime);
         let time_width = 1 + mtime.len();
@@ -62,7 +62,7 @@ impl ListLineStyle {
             .into_bytes()
         };
         line.extend_from_slice(name);
-        // upstream: generator.c:1340-1348 gates the arrow on `preserve_links`.
+        // upstream: generator.c:1377-1385 gates the arrow on `preserve_links`.
         // Without `-l` the sender sends no target (flist.c:send_file_entry), so
         // a stored target already implies it.
         if entry.is_symlink
@@ -123,7 +123,7 @@ mod tests {
         String::from_utf8(style.render(entry)).expect("ascii line")
     }
 
-    /// upstream: generator.c:1352 - `"%s %*s %s%*s%*s %s%s%s\n"` with a
+    /// upstream: generator.c:1389 - `"%s %*s %s%*s%*s %s%s%s\n"` with a
     /// 14-wide comma-grouped size column.
     #[test]
     fn regular_file_line_matches_upstream_layout() {
@@ -134,7 +134,7 @@ mod tests {
         );
     }
 
-    /// upstream: generator.c:1340-1348 - a symlink lists ` -> target` when a
+    /// upstream: generator.c:1377-1385 - a symlink lists ` -> target` when a
     /// target was received, and bare otherwise.
     #[test]
     fn symlink_lists_its_received_target() {
@@ -147,7 +147,7 @@ mod tests {
         assert_eq!(render(PLAIN, &link), format!("{base} -> a.txt\n"));
     }
 
-    /// upstream: generator.c:1336 - a directory keeps the atime column's width
+    /// upstream: generator.c:1373 - a directory keeps the atime column's width
     /// but leaves it blank; the crtime column is shown for every type.
     #[test]
     fn time_columns_pad_and_blank_like_upstream() {
@@ -172,7 +172,7 @@ mod tests {
         );
     }
 
-    /// upstream: generator.c:1331-1334 - a deleted missing operand is padded
+    /// upstream: generator.c:1368-1371 - a deleted missing operand is padded
     /// across every column it lacks.
     #[test]
     fn missing_operand_is_listed_as_missing() {

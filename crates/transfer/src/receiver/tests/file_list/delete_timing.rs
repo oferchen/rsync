@@ -289,7 +289,7 @@ fn late_delete_pass_with_dest_rsync_filter_protects_bak() {
 /// whole delete pass and keeps the un-listed dest file, emitting the notice once
 /// even across both (early + late) delete-pass sites.
 ///
-/// upstream: generator.c:304-311 - `io_error & IOERR_GENERAL && !ignore_errors`.
+/// upstream: generator.c:339-346 - `io_error & IOERR_GENERAL && !ignore_errors`.
 #[test]
 fn delete_pass_skipped_when_sender_flist_had_io_error() {
     use super::super::super::stats::TransferStats;
@@ -399,7 +399,7 @@ fn delete_pass_skipped_when_sender_flist_had_io_error() {
 /// already made. `--delete-after`, which decides at the late site, is the
 /// control - the same error there must keep the extraneous file.
 ///
-/// upstream: generator.c:304-311 gates delete_in_dir() (reached by
+/// upstream: generator.c:339-346 gates delete_in_dir() (reached by
 /// `do_delete_pass()` for after, and by the walk for delay's
 /// remember_delete() at generator.c:351-353); generator.c:265-278
 /// do_delayed_deletions() has no io_error test.

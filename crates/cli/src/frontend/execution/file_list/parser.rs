@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 /// Resolves a `--files-from` CLI value into a `FilesFromSource`.
 ///
-/// The resolution mirrors upstream rsync's `options.c:2616-2676`:
+/// The resolution mirrors upstream rsync's `options.c:2671-2731`:
 /// - `"-"` means stdin
 /// - `:path` (bare colon prefix) means a remote file opened by the server
 ///   using the host taken from the transfer operand
@@ -49,7 +49,7 @@ pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client
     // module specs (`host::module`). The latter is for daemon transfers,
     // which we do not currently support for files-from.
     if let Some((host, path)) = split_hostspec(&text) {
-        // upstream: options.c:3311-3335 / options.c:3143-3147 -
+        // upstream: options.c:3379-3403 / options.c:3211-3215 -
         // check_for_hostspec strips the host prefix and forwards the path to
         // the remote server. When the host resolves to localhost AND the
         // stripped path is openable on this client, emit the hybrid variant.
@@ -126,7 +126,7 @@ fn split_hostspec(text: &str) -> Option<(&str, &str)> {
         return None;
     }
 
-    // Reject `host:-` (upstream options.c:2635-2639 rejects remote stdin).
+    // Reject `host:-` (upstream options.c:2690-2694 rejects remote stdin).
     if rest == "-" {
         return None;
     }

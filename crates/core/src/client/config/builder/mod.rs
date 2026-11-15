@@ -36,7 +36,7 @@ impl fmt::Display for ConfigConflict {
                 "a remote shell (from --rsh/-e or the RSYNC_RSH environment variable) cannot be combined with an ssh:// URL operand (ssh:// uses the built-in SSH client); unset RSYNC_RSH or drop --rsh, or use a host:path source for the external ssh"
             );
         }
-        // upstream: options.c:2094-2098 - the secluded/old-args conflict has a
+        // upstream: options.c:2130-2134 - the secluded/old-args conflict has a
         // dedicated phrasing (and operand order) distinct from the generic
         // "--X cannot be used with --Y" template used for other conflicts.
         if matches!((self.option1, self.option2), ("old-args", "secluded-args")) {
@@ -268,6 +268,8 @@ pub struct ClientConfigBuilder {
     backup_dir: Option<PathBuf>,
     backup_suffix: Option<OsString>,
     delay_updates: bool,
+    delay_symlinks: bool,
+    niceness: crate::niceness::PriorityOptions,
     inplace: bool,
     append: bool,
     append_verify: bool,
@@ -336,7 +338,7 @@ impl ClientConfigBuilder {
     /// Applies the option implications upstream resolves after argument
     /// parsing, before its conflict table runs.
     ///
-    /// upstream: options.c:2551-2563 - `if (append_mode) { ...; inplace = 1; }`.
+    /// upstream: options.c:2606-2618 - `if (append_mode) { ...; inplace = 1; }`.
     /// From here on `inplace` is the only flag any consumer reads: the
     /// receiver's write target (`receiver.c:1212`), its closing truncate
     /// (`receiver.c:668`), the pre-write backup copy (`generator.c:2281,2328`),
@@ -359,9 +361,9 @@ impl ClientConfigBuilder {
     /// table below fires for `--append` without naming the flag twice.
     ///
     /// - `--append` conflicts with `--whole-file`
-    ///   (upstream: options.c:2551-2552 `if (append_mode) { if (whole_file > 0) ... }`)
+    ///   (upstream: options.c:2606-2607 `if (append_mode) { if (whole_file > 0) ... }`)
     /// - `--inplace` conflicts with `--partial-dir` and `--delay-updates`
-    ///   (upstream: options.c:2575-2582), reported against the option the user
+    ///   (upstream: options.c:2630-2637), reported against the option the user
     ///   typed - upstream's `append_mode ? "append" : "inplace"` ternary
     /// - `--rsh`/`-e` conflicts with an `ssh://` URL operand (oc-specific: the
     ///   URL scheme selects the built-in SSH client, which ignores `--rsh`)
@@ -397,7 +399,7 @@ impl ClientConfigBuilder {
 
         self.apply_implied_options();
 
-        // upstream: options.c:2094-2098 - --old-args conflicts with --secluded-args.
+        // upstream: options.c:2130-2134 - --old-args conflicts with --secluded-args.
         // Any active level (>= 1) triggers the conflict, matching upstream's
         // `else if (old_style_args)` truthiness test.
         if self.old_args.unwrap_or(0) >= 1 && self.protect_args == Some(true) {
@@ -407,7 +409,7 @@ impl ClientConfigBuilder {
             });
         }
 
-        // upstream: options.c:2551-2556 - --append cannot be used with --whole-file.
+        // upstream: options.c:2606-2611 - --append cannot be used with --whole-file.
         // Only an explicit `--whole-file` (Some(true)) conflicts; the default
         // (None) and `--no-whole-file` (Some(false)) are accepted.
         if self.append && self.whole_file == Some(true) {
@@ -427,7 +429,7 @@ impl ClientConfigBuilder {
                 });
             }
 
-            // upstream: options.c:2575-2582 - `--inplace`/`--append` cannot be
+            // upstream: options.c:2630-2637 - `--inplace`/`--append` cannot be
             // used with `--partial-dir`. Upstream rejects this pair
             // unconditionally, before any capability negotiation. The
             // `CF_INPLACE_PARTIAL_DIR` capability (compat.c:789-790,
@@ -438,6 +440,27 @@ impl ClientConfigBuilder {
                 return Err(ConfigConflict {
                     option1: mode,
                     option2: "partial-dir",
+                });
+            }
+        }
+
+        if self.delay_symlinks {
+            if self.remove_source_files {
+                return Err(ConfigConflict {
+                    option1: "delay-symlinks",
+                    option2: "remove-source-files",
+                });
+            }
+            if self.preserve_hard_links {
+                return Err(ConfigConflict {
+                    option1: "delay-symlinks",
+                    option2: "hard-links",
+                });
+            }
+            if !self.reference_directories.is_empty() {
+                return Err(ConfigConflict {
+                    option1: "delay-symlinks",
+                    option2: "link-dest",
                 });
             }
         }
@@ -464,10 +487,10 @@ impl ClientConfigBuilder {
             self.whole_file = Some(true);
         }
         self.apply_implied_options();
-        // upstream: options.c:2487-2490 - inject `P *<suffix>` so files saved
+        // upstream: options.c:2542-2545 - inject `P *<suffix>` so files saved
         // as backups beside the destination are protected from the delete pass.
         self.push_backup_protect_filter();
-        // upstream: compat.c:803-808 - append the implicit `--partial-dir`
+        // upstream: compat.c:812-817 - append the implicit `--partial-dir`
         // exclude at the tail of the filter list, after every CLI rule.
         self.push_implicit_partial_dir_filter();
         ClientConfig {
@@ -585,6 +608,8 @@ impl ClientConfigBuilder {
             backup_dir: self.backup_dir,
             backup_suffix: self.backup_suffix,
             delay_updates: self.delay_updates,
+            delay_symlinks: self.delay_symlinks,
+            niceness: self.niceness,
             inplace: self.inplace,
             append: self.append,
             append_verify: self.append_verify,

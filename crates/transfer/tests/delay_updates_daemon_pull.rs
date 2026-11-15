@@ -3,7 +3,7 @@
 //!
 //! # Background
 //!
-//! `--delay-updates` is a plain receiver-side option (upstream `options.c:791`,
+//! `--delay-updates` is a plain receiver-side option (upstream `options.c:792`,
 //! no `am_sender` gate). Upstream forwards `--delay-updates` to the remote only
 //! on a push (`options.c:3062-3068`, `partial_dir && am_sender`); on a pull the
 //! local client IS the receiver and the flag never travels over the wire, so

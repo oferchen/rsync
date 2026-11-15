@@ -13,7 +13,7 @@ use super::SignalHandlerFn;
 
 /// Installs `handler` for `signum` with no `sa_flags`.
 ///
-/// upstream: `rsync.h:1294` defines `SIGACTION(n,h)` as
+/// upstream: `rsync.h:1310` defines `SIGACTION(n,h)` as
 /// `sigact.sa_handler = (h), sigaction((n), &sigact, NULL)` over a
 /// file-static `struct sigaction sigact` (`main.c:137`, `cleanup.c:43`) that
 /// is never given any flags, so `sa_flags == 0` and `SA_RESTART` is *not*

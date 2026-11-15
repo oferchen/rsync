@@ -7,7 +7,7 @@
 //! rsync's `io.c:sleep_for_bwlimit()`; each scenario below targets a
 //! specific feedback-loop property of that algorithm.
 //
-// upstream: io.c:2323 sleep_for_bwlimit()
+// upstream: io.c:2330 sleep_for_bwlimit()
 use super::{BandwidthLimiter, recorded_sleep_session};
 use std::num::NonZeroU64;
 use std::time::Duration;

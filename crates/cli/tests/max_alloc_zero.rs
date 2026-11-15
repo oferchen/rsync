@@ -1,6 +1,6 @@
 //! `--max-alloc=0` means "the largest limit this build supports".
 //!
-//! upstream: rsync 3.5.1 `options.c:2072-2086` - `parse_size_arg(..,
+//! upstream: rsync 3.5.1 `options.c:2108-2122` - `parse_size_arg(..,
 //! unlimited_0 = True)` accepts 0, and `if (!max_alloc) max_alloc =
 //! SIZE_ARG_MAX;` resolves it to SIZE_MAX/2: bounded, not unlimited.
 //! `server_options()` then forwards `max_alloc_arg` - the operator's spelling,
@@ -178,7 +178,7 @@ fn a_value_is_forwarded_in_the_operator_spelling() {
 #[cfg(unix)]
 #[test]
 fn the_default_value_is_not_forwarded() {
-    // upstream: options.c:3039 - `max_alloc != DEFAULT_MAX_ALLOC` gates the
+    // upstream: options.c:3104 - `max_alloc != DEFAULT_MAX_ALLOC` gates the
     // forward, so spelling out the 1 GiB default sends nothing.
     let logged = forwarded_argv("1G");
     assert!(

@@ -78,7 +78,7 @@ use logging::{DebugFlag, debug_gte, debug_log};
 /// Whether the match counters are reported, the only time a scan replays
 /// upstream's hash table to produce them.
 ///
-/// upstream: match.c:480 `match_report()` prints them at `DEBUG_GTE(DELTASUM, 1)`.
+/// upstream: match.c:516 `match_report()` prints them at `DEBUG_GTE(DELTASUM, 1)`.
 #[inline]
 #[must_use]
 pub fn counters_reported() -> bool {
@@ -88,7 +88,7 @@ pub fn counters_reported() -> bool {
 /// Level 2 `hash search b=%ld len=%s` - scan start with block length and the
 /// source length the scan was sized from.
 ///
-/// upstream: match.c:180-182 `hash_search()`.
+/// upstream: match.c:182-184 `hash_search()`.
 #[inline]
 pub fn trace_hash_search_start(block_length: usize, source_len: u64) {
     debug_log!(Deltasum, 2, "hash search b={block_length} len={source_len}");
@@ -96,7 +96,7 @@ pub fn trace_hash_search_start(block_length: usize, source_len: u64) {
 
 /// Level 3 `hash search s->blength=%ld len=%s count=%s` - scan parameters.
 ///
-/// upstream: match.c:199-202 `hash_search()`.
+/// upstream: match.c:201-204 `hash_search()`.
 #[inline]
 pub fn trace_hash_search_params(block_length: usize, source_len: u64, count: u64) {
     debug_log!(
@@ -109,7 +109,7 @@ pub fn trace_hash_search_params(block_length: usize, source_len: u64, count: u64
 /// Level 3 `sum=%.8x k=%ld` - the initial window checksum over the first `k`
 /// source bytes.
 ///
-/// upstream: match.c:192-193 `hash_search()`.
+/// upstream: match.c:194-195 `hash_search()`.
 #[inline]
 pub fn trace_initial_sum(sum: u32, k: usize) {
     debug_log!(Deltasum, 3, "sum={sum:08x} k={k}");
@@ -117,7 +117,7 @@ pub fn trace_initial_sum(sum: u32, k: usize) {
 
 /// Level 4 `offset=%s sum=%04x%04x` - per-offset rolling sum during the scan.
 ///
-/// upstream: match.c:210-213 `hash_search()`.
+/// upstream: match.c:214-217 `hash_search()`.
 #[inline]
 pub fn trace_scan_offset(offset: u64, s2: u16, s1: u16) {
     debug_log!(Deltasum, 4, "offset={offset} sum={s2:04x}{s1:04x}");
@@ -125,7 +125,7 @@ pub fn trace_scan_offset(offset: u64, s2: u16, s1: u16) {
 
 /// Level 3 `potential match at %s i=%ld sum=%08x` - a weak-checksum candidate.
 ///
-/// upstream: match.c:258-262 `hash_search()`. Upstream prints every chain
+/// upstream: match.c:271-275 `hash_search()`. Upstream prints every chain
 /// candidate whose weak sum and length match, BEFORE the strong-checksum
 /// verify; oc's index probe confirms the strong checksum internally, so this
 /// fires only for confirmed candidates and `i` is the confirmed block index
@@ -155,7 +155,7 @@ pub fn trace_match(offset: u64, last_match: u64, j: u64, len: usize, n: u64) {
 
 /// Level 2 `built hash table` - the signature hash index is ready.
 ///
-/// upstream: match.c:437-438 `match_sums()`.
+/// upstream: match.c:473-474 `match_sums()`.
 #[inline]
 pub fn trace_built_hash_table() {
     debug_log!(Deltasum, 2, "built hash table");
@@ -163,7 +163,7 @@ pub fn trace_built_hash_table() {
 
 /// Level 2 `done hash search` - the scan over the source completed.
 ///
-/// upstream: match.c:442-443 `match_sums()`.
+/// upstream: match.c:478-479 `match_sums()`.
 #[inline]
 pub fn trace_done_hash_search() {
     debug_log!(Deltasum, 2, "done hash search");
@@ -172,7 +172,7 @@ pub fn trace_done_hash_search() {
 /// Level 2 `sending file_sum` - the sender is about to write the whole-file
 /// checksum trailer.
 ///
-/// upstream: match.c:465-466 `match_sums()`.
+/// upstream: match.c:501-502 `match_sums()`.
 #[inline]
 pub fn trace_sending_file_sum() {
     debug_log!(Deltasum, 2, "sending file_sum");
@@ -181,7 +181,7 @@ pub fn trace_sending_file_sum() {
 /// Level 2 `false_alarms=%d hash_hits=%d matches=%d` - per-file scan counters,
 /// printed after the file's checksum trailer.
 ///
-/// upstream: match.c:469-472 `match_sums()`. Counter semantics are oc-native
+/// upstream: match.c:505-508 `match_sums()`. Counter semantics are oc-native
 /// (see [`crate::ProbeCounters`]): `hash_hits` counts bithash-prefilter
 /// positives and `false_alarms` counts prefilter positives that produced no
 /// confirmed match, where upstream counts bucket hits and strong-sum rejects.
@@ -199,7 +199,7 @@ pub fn trace_match_counters(false_alarms: u64, hash_hits: u64, matches: u64) {
 /// and the single space before `data=`; `data` is `big_num(stats.literal_data)`,
 /// which is plain decimal per inums.h:19-23).
 ///
-/// upstream: match.c:485-488 `match_report()`.
+/// upstream: match.c:521-524 `match_report()`.
 #[inline]
 #[must_use]
 pub fn match_totals_line(matches: u64, hash_hits: u64, false_alarms: u64, data: u64) -> String {
@@ -211,7 +211,7 @@ pub fn match_totals_line(matches: u64, hash_hits: u64, false_alarms: u64, data: 
 /// Level 1 `total: matches=%d  hash_hits=%d  false_alarms=%d data=%s` - the
 /// once-per-run sender totals.
 ///
-/// upstream: match.c:480-489 `match_report()`, called after `send_files()`
+/// upstream: match.c:516-525 `match_report()`, called after `send_files()`
 /// finishes (sender.c:818). The LOCAL copy path renders this line directly
 /// from the client summary (`cli::frontend::progress::render`) to keep
 /// upstream's position between the name list and the summary trailer; this
@@ -232,7 +232,7 @@ pub fn trace_match_totals(matches: u64, hash_hits: u64, false_alarms: u64, data:
 /// Level 3 `count=%s n=%ld rem=%ld` - the sender's view of the received sum
 /// header.
 ///
-/// upstream: sender.c:349-351 `receive_sums()`.
+/// upstream: sender.c:357-359 `receive_sums()`.
 #[inline]
 pub fn trace_receive_sums_head(count: u64, block_length: usize, remainder: u32) {
     debug_log!(
@@ -245,7 +245,7 @@ pub fn trace_receive_sums_head(count: u64, block_length: usize, remainder: u32) 
 /// Level 3 `chunk[%d] len=%d offset=%s sum1=%08x` - one received signature
 /// block on the sender.
 ///
-/// upstream: sender.c:383-387 `receive_sums()`.
+/// upstream: sender.c:391-395 `receive_sums()`.
 #[inline]
 pub fn trace_receive_sums_chunk(i: u64, len: usize, offset: u64, sum1: u32) {
     debug_log!(
@@ -258,7 +258,7 @@ pub fn trace_receive_sums_chunk(i: u64, len: usize, offset: u64, sum1: u32) {
 /// Level 2 `send_files mapped %s%s%s of size %s` - the sender opened its
 /// source for scanning.
 ///
-/// upstream: sender.c:763-765 `send_files()` (the `%s%s%s` is
+/// upstream: sender.c:771-773 `send_files()` (the `%s%s%s` is
 /// path/slash/fname; oc passes the joined path).
 #[inline]
 pub fn trace_send_files_mapped(path: &dyn std::fmt::Display, size: u64) {
@@ -268,7 +268,7 @@ pub fn trace_send_files_mapped(path: &dyn std::fmt::Display, size: u64) {
 /// Level 2 `calling match_sums %s%s%s` - the sender is entering the delta
 /// scan for this file.
 ///
-/// upstream: sender.c:771-772 `send_files()`.
+/// upstream: sender.c:779-780 `send_files()`.
 #[inline]
 pub fn trace_calling_match_sums(path: &dyn std::fmt::Display) {
     debug_log!(Deltasum, 2, "calling match_sums {path}");
@@ -277,7 +277,7 @@ pub fn trace_calling_match_sums(path: &dyn std::fmt::Display) {
 /// Level 3 `gen mapped %s of size %s` - the generator opened the basis it
 /// will checksum.
 ///
-/// upstream: generator.c:2359-2361 `recv_generator()`.
+/// upstream: generator.c:2402-2404 `recv_generator()`.
 #[inline]
 pub fn trace_gen_mapped(path: &dyn std::fmt::Display, size: u64) {
     debug_log!(Deltasum, 3, "gen mapped {path} of size {size}");
@@ -286,7 +286,7 @@ pub fn trace_gen_mapped(path: &dyn std::fmt::Display, size: u64) {
 /// Level 2 `generating and sending sums for %d` - the generator is producing
 /// the signature for file index `ndx`.
 ///
-/// upstream: generator.c:2364-2365 `recv_generator()`.
+/// upstream: generator.c:2407-2408 `recv_generator()`.
 #[inline]
 pub fn trace_generating_sums(ndx: i32) {
     debug_log!(Deltasum, 2, "generating and sending sums for {ndx}");
@@ -295,7 +295,7 @@ pub fn trace_generating_sums(ndx: i32) {
 /// Level 2 `count=%s rem=%ld blength=%ld s2length=%d flength=%s` - the
 /// signature geometry chosen for a basis.
 ///
-/// upstream: generator.c:766-770 `sum_sizes_sqroot()`.
+/// upstream: generator.c:803-807 `sum_sizes_sqroot()`.
 #[inline]
 pub fn trace_sum_geometry(
     count: u64,
@@ -314,7 +314,7 @@ pub fn trace_sum_geometry(
 /// Level 3 `chunk[%s] offset=%s len=%ld sum1=%08lx` - one generated signature
 /// block on the generator.
 ///
-/// upstream: generator.c:818-822 `generate_and_send_sums()`.
+/// upstream: generator.c:855-859 `generate_and_send_sums()`.
 #[inline]
 pub fn trace_gen_chunk(i: u64, offset: u64, len: usize, sum1: u32) {
     debug_log!(

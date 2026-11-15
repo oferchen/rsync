@@ -32,7 +32,7 @@ use crate::writer::MsgInfoSender;
 /// payload on the wire.
 ///
 /// Bundles the NDX with the iflags-gated trailing fields that always travel
-/// together (upstream `sender.c:469-486`): `fnamecmp_type` is emitted when
+/// together (upstream `sender.c:477-494`): `fnamecmp_type` is emitted when
 /// `iflags.has_basis_type()` and `xname` when `iflags.has_xname()`. Grouping
 /// them as a single parameter object keeps the two writer methods below at a
 /// manageable arity and prevents the four fields from drifting apart at call
@@ -93,7 +93,7 @@ impl GeneratorContext {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
 
-        // upstream: flist.c:3063 - `if (numeric_ids <= 0 && !inc_recurse)
+        // upstream: flist.c:3074 - `if (numeric_ids <= 0 && !inc_recurse)
         // send_id_lists(f);`. The list stays on the wire for `numeric_ids <= 0`
         // (Off and daemon-forced -1); only an explicit client --numeric-ids
         // (`> 0`) drops it. Under daemon-forced numeric-ids the list is sent but
@@ -193,7 +193,7 @@ impl GeneratorContext {
     /// - `flist.c:3067-3068`: `write_int(f, ignore_errors ? 0 : io_error);`
     pub(super) fn send_io_error_flag<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         if self.protocol.uses_fixed_encoding() {
-            // upstream: flist.c:2757-2758
+            // upstream: flist.c:2768-2769
             let value = if self.config.deletion.ignore_errors {
                 0
             } else {
@@ -241,8 +241,8 @@ impl GeneratorContext {
         if iflags.raw() & ItemFlags::ITEM_REPORT_XATTR == 0 {
             return Ok(None);
         }
-        // upstream: sender.c:580 also gates on the want_xattr_optim hardlink
-        // optimisation. upstream: compat.c:758 -
+        // upstream: sender.c:588 also gates on the want_xattr_optim hardlink
+        // optimisation. upstream: compat.c:767 -
         // `want_xattr_optim = protocol_version >= 31 && !(compat_flags & CF_AVOID_XATTR_OPTIM)`.
         // The optimisation only exists at protocol 31+, so it must stay off for
         // proto-30 peers (rsync 3.0.x) where CF_AVOID_XATTR_OPTIM is undefined -
@@ -309,7 +309,7 @@ impl GeneratorContext {
         } = *attrs;
         ndx_codec.write_ndx(writer, ndx)?;
         if self.protocol.supports_iflags() {
-            // upstream: sender.c:469-486 - write_shortint(f_out, iflags) writes the
+            // upstream: sender.c:477-494 - write_shortint(f_out, iflags) writes the
             // FULL 16-bit iflags, including the ITEM_BASIS_TYPE_FOLLOWS /
             // ITEM_XNAME_FOLLOWS framing bits. The receiver reads those bits to
             // decide whether the trailing fnamecmp_type / xname fields follow;
@@ -319,7 +319,7 @@ impl GeneratorContext {
             // data and the kernel RSTs the stream.
             writer.write_all(&((iflags.raw() & 0xFFFF) as u16).to_le_bytes())?;
         }
-        // upstream: sender.c:478-480 - write fnamecmp_type and the extended name
+        // upstream: sender.c:486-488 - write fnamecmp_type and the extended name
         // immediately after iflags when their *_FOLLOWS bits are set.
         if iflags.has_basis_type()
             && let Some(ft) = fnamecmp_type
@@ -327,7 +327,7 @@ impl GeneratorContext {
             writer.write_all(&[ft.to_wire()])?;
         }
         if iflags.has_xname() {
-            // upstream: sender.c:481 write_vstring(f_out, xname, strlen(xname)).
+            // upstream: sender.c:489 write_vstring(f_out, xname, strlen(xname)).
             // The xname length prefix is a 1- or 2-byte vstring (io.c:2520), NOT
             // a varint: the two encodings only agree for len <= 0x7F, so a longer
             // fuzzy basename or hard-link leader name would desync the receiver's
@@ -335,7 +335,7 @@ impl GeneratorContext {
             // byte.
             protocol::write_vstring(writer, xname.unwrap_or(&[]))?;
         }
-        // upstream: sender.c:484-488 - send_xattr_request(fname, file, f_out)
+        // upstream: sender.c:492-496 - send_xattr_request(fname, file, f_out)
         // is invoked from inside write_ndx_and_attrs() when ITEM_REPORT_XATTR
         // is set in iflags. Skipping this body causes the receiver to read the
         // following bytes as a stale xattr request, desyncing the goodbye phase.
@@ -379,7 +379,7 @@ impl GeneratorContext {
         if kind == SenderDiagnostic::ErrorXfer {
             self.got_xfer_error = true;
         }
-        // upstream: log.c:344-346 - `case FINFO: if (quiet) return;` sits in
+        // upstream: log.c:424-426 - `case FINFO: if (quiet) return;` sits in
         // rwrite's switch, which runs BEFORE the `am_server` send_msg() at
         // log.c:357. A quiet server therefore never frames the message at all,
         // rather than framing it and leaving the client to drop it.
@@ -387,7 +387,7 @@ impl GeneratorContext {
             return Ok(());
         }
         if self.config.connection.client_mode || !writer.is_multiplexed() {
-            // upstream: log.c:349-357 - `rwrite()` sends FINFO to the "out"
+            // upstream: log.c:429-437 - `rwrite()` sends FINFO to the "out"
             // stream (stdout) and FWARNING/FERROR_XFER to stderr, and `--quiet`
             // is applied on the FINFO arm only. Routing Info through the
             // logging facility keeps both of those, where `eprint!` would put
@@ -456,7 +456,7 @@ impl GeneratorContext {
         let fname = crate::full_fname::full_fname(path_display, self.full_fname_paths());
         if error.kind() == io::ErrorKind::NotFound {
             self.io_error |= super::io_error_flags::IOERR_VANISHED;
-            // upstream: sender.c:715-718 - rprintf(c, "file has vanished: %s\n", full_fname(...)).
+            // upstream: sender.c:723-726 - rprintf(c, "file has vanished: %s\n", full_fname(...)).
             // `c` is FERROR only for a protocol < 28 daemon; oc's protocol floor
             // is 28, so this is always FWARNING. `fname` is already quoted and
             // carries the daemon module suffix (util1.c:1528 full_fname).
@@ -467,7 +467,7 @@ impl GeneratorContext {
             )?;
         } else {
             self.io_error |= super::io_error_flags::IOERR_GENERAL;
-            // upstream: sender.c:720 - rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
+            // upstream: sender.c:728 - rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
             let text = format!(
                 "rsync: [sender] send_files failed to open {fname}: {}\n",
                 engine::local_copy::upstream_io_error(error),
@@ -528,7 +528,7 @@ impl GeneratorContext {
         ndx: i32,
         path_display: &str,
     ) -> io::Result<()> {
-        // upstream: sender.c:748 - rprintf(FWARNING, "skipped diminished file: %s\n", ...)
+        // upstream: sender.c:756 - rprintf(FWARNING, "skipped diminished file: %s\n", ...)
         // full_fname quotes the path and appends the daemon module suffix.
         self.emit_sender_diagnostic(
             writer,
@@ -553,7 +553,7 @@ impl GeneratorContext {
     /// generator instead, so forwarding a sender-direction row here would
     /// duplicate every entry under `-ii`/`-vv`.
     ///
-    /// Upstream `generator.c:588-589` emits when ANY of four OR'd conditions
+    /// Upstream `generator.c:625-626` emits when ANY of four OR'd conditions
     /// hold: significant flags set, `INFO_GTE(NAME, 2)`, `stdout_format_has_i
     /// > 1`, or an alternate basis name follows. Mirror the same semantic so
     /// unchanged entries (`iflags == 0`) still appear under `-vv` (the case
@@ -576,12 +576,12 @@ impl GeneratorContext {
         xname: Option<&[u8]>,
         itemize_cb: &mut Option<&mut dyn super::super::ItemizeCallback>,
     ) -> io::Result<()> {
-        // upstream: sender.c:585 maybe_log_item / sender.c:787 log_item - a daemon
+        // upstream: sender.c:593 maybe_log_item / sender.c:795 log_item - a daemon
         // sender writes each processed entry to its module log file regardless of
         // the client's `-i`. Collect the FLOG row before the client-visible gate
         // below (which upstream reaches only when !am_server).
         self.record_daemon_log(ndx, iflags, xname);
-        // upstream: log.c:869-870 - log_item renders `stdout_format` (a custom
+        // upstream: log.c:954-955 - log_item renders `stdout_format` (a custom
         // `--out-format`) whenever it is set, independent of `-i`. So the sender
         // emits the itemize row under `-i` OR a custom out-format; the client
         // renders `line` (default) or its template (out-format).
@@ -589,7 +589,7 @@ impl GeneratorContext {
         {
             return Ok(());
         }
-        // upstream: generator.c:588-589 - the gate is the OR of four
+        // upstream: generator.c:625-626 - the gate is the OR of four
         // conditions. Significant flags is the common case; INFO_GTE(NAME, 2)
         // makes `-vv` surface unchanged entries; `stdout_format_has_i > 1` is
         // the `-ii` "show even unchanged" knob (tracked as
@@ -612,12 +612,12 @@ impl GeneratorContext {
         let ctx = self.itemize_context();
         // Generator role is always the sender side. The wire xname carries the
         // hard-link leader for an ITEM_XNAME_FOLLOWS follower so `%L` can append
-        // the ` => leader` suffix (upstream sender.c:585 maybe_log_item passes
+        // the ` => leader` suffix (upstream sender.c:593 maybe_log_item passes
         // the xname buffer as the hlink arg to log_item -> log.c:675-678).
         let line = super::itemize::format_itemize_line(iflags, entry, true, &ctx, xname);
 
         if self.config.connection.client_mode {
-            // upstream: log.c:869-870 - when !am_server, rwrite() sends FCLIENT
+            // upstream: log.c:954-955 - when !am_server, rwrite() sends FCLIENT
             // to stdout. In a pull the local client is the receiver and this
             // Generator(sender) callback path surfaces the client-side row.
             if let Some(cb) = itemize_cb.as_mut() {
@@ -640,7 +640,7 @@ impl GeneratorContext {
             }
             Ok(())
         } else {
-            // upstream: sender.c:500 - `itemizing = am_server ?
+            // upstream: sender.c:508 - `itemizing = am_server ?
             // logfile_format_has_i : stdout_format_has_i`. On a server-sender
             // (am_server) with no `--log-file-format`, logfile_format_has_i == 0,
             // so the sender emits no client-visible itemize at all:
@@ -681,7 +681,7 @@ impl GeneratorContext {
     /// Reports whether a transferred file's client line is logged before its
     /// data rather than after it.
     ///
-    /// upstream: options.c:2504-2524 - `log_before_transfer = !am_server` for
+    /// upstream: options.c:2559-2579 - `log_before_transfer = !am_server` for
     /// plain `-v` and `-i`; sender.c:774-775 then logs with `FCLIENT` ahead of
     /// `match_sums()`. A custom `--out-format` keeps the after-transfer row,
     /// since its `%b`/`%c`/`%C` codes need the transferred byte counts.
@@ -724,12 +724,12 @@ impl GeneratorContext {
         {
             return Ok(());
         }
-        // upstream: log.c:869 - rwrite() forwards FCLIENT to stdout only when
+        // upstream: log.c:954 - rwrite() forwards FCLIENT to stdout only when
         // !am_server. A server-sender's names are owned by the peer receiver.
         if !self.config.connection.client_mode {
             return Ok(());
         }
-        // upstream: log.c:875-890 maybe_log_item - a non-transfer item is named
+        // upstream: log.c:960-975 maybe_log_item - a non-transfer item is named
         // only when it carries significant iflags (a new/changed dir, symlink,
         // device, or special); a data-transfer item is always named.
         if !is_transfer && !iflags.has_significant_flags() {
@@ -800,7 +800,7 @@ impl GeneratorContext {
             .incremental
             .initial_segment_count
             .unwrap_or(self.file_list.len());
-        // upstream: flist.c:2777-2781 - the list, and under INC_RECURSE the
+        // upstream: flist.c:2788-2792 - the list, and under INC_RECURSE the
         // separate dir_flist, start with room for FLIST_START_LARGE entries.
         let mut growth = FlistGrowth::default();
         growth.expand(FLIST_START_LARGE, ProcessRole::Sender)?;
@@ -810,20 +810,20 @@ impl GeneratorContext {
                 .expand(FLIST_START_LARGE, ProcessRole::Sender)?;
         }
         self.fill_flist_checksums(0..count)?;
-        // upstream: flist.c:2988-3009 - entries go out in the order the walk made
+        // upstream: flist.c:2999-3020 - entries go out in the order the walk made
         // them; the list is sorted only afterwards (flist.c:3059).
         for i in self.send_order(0..count) {
             let entry = &self.file_list[i];
             self.send_flist_entry(i, &mut flist_writer, &mut probed)?;
-            // upstream: flist.c:730-746,998-999 - send_file_entry() tallies the
+            // upstream: flist.c:734-750,998-999 - send_file_entry() tallies the
             // per-type counts and total_size as each entry is written.
             self.flist_send_stats.record(entry);
-            // upstream: flist.c:2094 - send_file_name() grows the list after
+            // upstream: flist.c:2098 - send_file_name() grows the list after
             // sending each entry.
             growth.push(ProcessRole::Sender)?;
         }
 
-        // upstream: flist.c:3024-3031 - `if (io_error == 0 || ignore_errors)
+        // upstream: flist.c:3035-3042 - `if (io_error == 0 || ignore_errors)
         // write_end_of_flist(f, 0); else if (use_safe_inc_flist)
         // write_end_of_flist(f, 1); ...`. --ignore-errors suppresses the value
         // exactly as it does on the pre-30 path (send_io_error_flag above,
@@ -849,11 +849,11 @@ impl GeneratorContext {
         // where upstream reads EOF and reports RERR_STREAMIO.
         flist_writer.write_end(&mut probed, io_error_for_end)?;
         if self.inc_recurse() {
-            // upstream: flist.c:3086 - add_dirs_to_tree(-1, flist, ...)
+            // upstream: flist.c:3097 - add_dirs_to_tree(-1, flist, ...)
             self.grow_dir_flist(0..count)?;
         }
 
-        // upstream: flist.c:3078-3081 - dump the (initial) flist at
+        // upstream: flist.c:3089-3092 - dump the (initial) flist at
         // DEBUG_GTE(FLIST, 3), then `send_file_list done` at level 2. The
         // bases slice is clamped rather than indexed: tests seed `file_list`
         // without the parallel `source_bases`, and a dump must never panic.
@@ -865,7 +865,7 @@ impl GeneratorContext {
             true,
         );
         protocol::flist::trace_send_file_list_done();
-        // upstream: flist.c:3344-3350 - without INC_RECURSE the whole list is
+        // upstream: flist.c:3355-3361 - without INC_RECURSE the whole list is
         // now sent, so the sender sets flist_eof here; under INC_RECURSE the
         // marker is only set when `send_flist_eof` writes NDX_FLIST_EOF.
         if self.incremental.initial_segment_count.is_none() {
@@ -956,7 +956,7 @@ impl GeneratorContext {
     /// `--delete`/`--delete-during` (value 1) and `delay` for `--delete-delay`
     /// (value 2); `None` for no deletion or a before/after pass.
     ///
-    /// upstream: options.c `delete_during`, compat.c:683-688
+    /// upstream: options.c `delete_during`, compat.c:684-689
     fn delete_during_mode(&self) -> Option<&'static str> {
         let deletion = &self.config.deletion;
         if !self.config.flags.delete || deletion.delete_before || deletion.delete_after {
@@ -995,7 +995,7 @@ impl GeneratorContext {
         );
 
         // Signal new sub-list to receiver.
-        // upstream: flist.c:2664 - write_ndx(f, NDX_FLIST_OFFSET - dir_ndx)
+        // upstream: flist.c:2675 - write_ndx(f, NDX_FLIST_OFFSET - dir_ndx)
         ndx_codec.write_ndx(writer, NDX_FLIST_OFFSET - segment.parent_dir_ndx)?;
 
         // Set first_ndx so abbreviated vs unabbreviated followers are
@@ -1013,19 +1013,19 @@ impl GeneratorContext {
         for i in self.send_order(segment.flist_start..end) {
             let entry = &self.file_list[i];
             self.send_flist_entry(i, flist_writer, writer)?;
-            // upstream: flist.c:730-746,998-999 - send_file_entry() tallies the
+            // upstream: flist.c:734-750,998-999 - send_file_entry() tallies the
             // per-type counts and total_size as each entry is written.
             self.flist_send_stats.record(entry);
-            // upstream: flist.c:2094 - send_file_name()'s flist_expand().
+            // upstream: flist.c:2098 - send_file_name()'s flist_expand().
             growth.push(ProcessRole::Sender)?;
         }
 
         let trailer_io_error = self.sublist_trailer_io_error(flist_writer)?;
         flist_writer.write_end(writer, trailer_io_error)?;
-        // upstream: flist.c:2704 - add_dirs_to_tree(send_dir_ndx, flist, ...)
+        // upstream: flist.c:2715 - add_dirs_to_tree(send_dir_ndx, flist, ...)
         self.grow_dir_flist(segment.flist_start..end)?;
 
-        // upstream: flist.c:2710 - send_extra_file_list() dumps each sub-list
+        // upstream: flist.c:2721 - send_extra_file_list() dumps each sub-list
         // at DEBUG_GTE(FLIST, 3). The bases slice is clamped rather than
         // indexed: tests seed `file_list` without the parallel `source_bases`,
         // and a dump must never panic.
@@ -1047,7 +1047,7 @@ impl GeneratorContext {
     /// Appends the directories in `range` of the file list to the sender's
     /// `dir_flist`, refusing at `--max-alloc` as upstream's `my_alloc()` does.
     ///
-    /// upstream: flist.c:2198 - add_dirs_to_tree() `flist_expand(dir_flist, dir_cnt)`
+    /// upstream: flist.c:2202 - add_dirs_to_tree() `flist_expand(dir_flist, dir_cnt)`
     fn grow_dir_flist(&mut self, range: Range<usize>) -> io::Result<()> {
         let dirs = self.file_list.as_slice()[range]
             .iter()
@@ -1225,7 +1225,7 @@ impl GeneratorContext {
     ) -> io::Result<()> {
         ndx_codec.write_ndx(writer, NDX_FLIST_EOF)?;
         self.incremental.flist_eof_sent = true;
-        // upstream: flist.c:2721 - the sender prints `[sender] flist_eof=1` at
+        // upstream: flist.c:2732 - the sender prints `[sender] flist_eof=1` at
         // DEBUG_GTE(FLIST, 3) as it writes NDX_FLIST_EOF.
         protocol::flist::trace_flist_eof(protocol::flist::ProcessRole::Sender);
         Ok(())
@@ -1239,7 +1239,7 @@ impl GeneratorContext {
 /// `num >= max_alloc / size`, naming the allocation's line. An empty
 /// signature allocates nothing.
 ///
-/// upstream: sender.c:364-365 receive_sums(), util2.c:73-80 my_alloc(),
+/// upstream: sender.c:372-373 receive_sums(), util2.c:73-80 my_alloc(),
 /// rsync.h:999-1005 struct sum_buf
 pub(crate) fn refuse_sum_allocation(sum_head: &SumHead, xfer_sum_len: u32) -> io::Result<()> {
     // sizeof (struct sum_buf): OFF_T, int32, uint32, int32 and short, padded
@@ -1318,7 +1318,7 @@ where
     R: Read,
     F: FnMut() -> io::Result<()>,
 {
-    // upstream: sender.c:349-351 - `receive_sums()` reports the header it just
+    // upstream: sender.c:357-359 - `receive_sums()` reports the header it just
     // read, before the block loop, and does so even for an empty signature.
     matching::trace_deltasum::trace_receive_sums_head(
         u64::from(sum_head.count),
@@ -1346,7 +1346,7 @@ where
                 ),
             )
         })?;
-    // upstream: sender.c:378-381 - the per-block offset the trace reports is
+    // upstream: sender.c:386-389 - the per-block offset the trace reports is
     // the running sum of block lengths, with the remainder applying to the
     // last block only.
     let mut block_offset = 0u64;
@@ -1359,14 +1359,14 @@ where
 
         reader.read_exact(strong_sum)?;
 
-        // upstream: sender.c:374-375 - the last block takes the remainder when
+        // upstream: sender.c:382-383 - the last block takes the remainder when
         // it is non-zero; every other block spans a full blength.
         let block_len = if i + 1 == sum_head.count && sum_head.remainder != 0 {
             sum_head.remainder as usize
         } else {
             sum_head.blength as usize
         };
-        // upstream: sender.c:383-387
+        // upstream: sender.c:391-395
         matching::trace_deltasum::trace_receive_sums_chunk(
             u64::from(i),
             block_len,
@@ -1381,7 +1381,7 @@ where
             strong_sum,
         ));
 
-        // upstream: sender.c:380 - if (lull_mod && !(i % lull_mod))
+        // upstream: sender.c:388 - if (lull_mod && !(i % lull_mod))
         //     maybe_send_keepalive(time(NULL), True);
         // Poke a keepalive at the same cadence so a long checksum read on an
         // older protocol keeps the write side alive.

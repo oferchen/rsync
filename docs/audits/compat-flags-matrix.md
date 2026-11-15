@@ -10,7 +10,7 @@ protocol >= 30. Compares upstream rsync 3.4.1 (`compat.c`,
 
 ## 1. CF_* Bit Definitions (Reference)
 
-Upstream `compat.c:117-125`. Exchanged as a server-written varint at
+Upstream `compat.c:118-126`. Exchanged as a server-written varint at
 protocol >= 30; client reads it. No exchange at protocol < 30.
 
 | Bit | Upstream macro | Value | oc-rsync constant | Cap char |
@@ -33,25 +33,25 @@ Source: `crates/protocol/src/compatibility/flags.rs:34-50`,
 | Option | Upstream compat_flags effect | oc-rsync effect | Proto req | Status |
 |--------|------------------------------|-----------------|:---------:|:------:|
 | `--checksum` (`-c`) | Indirect: algorithm selected via vstring negotiation gated by `CF_VARINT_FLIST_FLAGS` (bit 7); seed ordering controlled by `CF_CHKSUM_SEED_FIX` (bit 5) | Same: `should_negotiate()` gates vstring exchange on bit 7; seed ordering keyed on `CHECKSUM_SEED_FIX` | >= 28 | ok |
-| `--inplace` | Direct: `CF_INPLACE_PARTIAL_DIR` (bit 6) enables coexistence with `--partial-dir`; `inplace_partial = 1` when bit set (`compat.c:777-778`) | Same: bit 6 set unconditionally in SSH mode (`setup/mod.rs:215`) and via cap char `I` in daemon mode | >= 28; >= 29 with basis dirs | ok |
+| `--inplace` | Direct: `CF_INPLACE_PARTIAL_DIR` (bit 6) enables coexistence with `--partial-dir`; `inplace_partial = 1` when bit set (`compat.c:786-787`) | Same: bit 6 set unconditionally in SSH mode (`setup/mod.rs:215`) and via cap char `I` in daemon mode | >= 28; >= 29 with basis dirs | ok |
 | `--partial` | None - purely local option controlling keep_partial | None | >= 28 | ok |
-| `--whole-file` (`-W`) | None - no CF_* interaction; mutual exclusion with `--append` at options level (`options.c:2382-2387`) | None | >= 28 | ok |
-| `--append` | Indirect: forces `inplace = 1` (`options.c:2392`); at proto < 30, `append_mode` 1 forced to 2 (`compat.c:653-654`); does not directly set/clear any CF_* bit | Same: `restrictions.rs:91-93` forces mode 1 to 2 at proto < 30; inplace forced in config builder | >= 28 | ok |
-| `--compress` (`-z`) | Negotiation: algorithm selected via vstring exchange gated by `CF_VARINT_FLIST_FLAGS` (bit 7); without negotiation, defaults to `CPRES_ZLIB` (`compat.c:195`) | Same: `should_negotiate()` gates vstring; legacy fallback to zlib at `setup/mod.rs:163-165` | >= 28 | ok |
-| `--compress-choice` | Negotiation: when set, vstring exchange is skipped (`compat.c:543` - `!compress_choice`); specified algorithm used directly | Same: `setup/mod.rs:109` - `config.compress_choice.is_none()` mirrors upstream gate | >= 28 | ok |
-| `--delete-before` | Indirect: suppresses `allow_inc_recurse` on receiver side (`compat.c:174`), preventing `CF_INC_RECURSE` (bit 0) | Same: config-build time suppression | >= 28 | ok |
-| `--delete-during` | None - does not affect `allow_inc_recurse` or any CF_* bit; selected as default delete phase at proto >= 30 (`compat.c:675`) | Same: `restrictions.rs:113-119` selects default phase | >= 28 | ok |
-| `--delete-after` | Indirect: suppresses `allow_inc_recurse` on receiver side (`compat.c:174`) | Same: config-build time suppression | >= 28 | ok |
+| `--whole-file` (`-W`) | None - no CF_* interaction; mutual exclusion with `--append` at options level (`options.c:2437-2442`) | None | >= 28 | ok |
+| `--append` | Indirect: forces `inplace = 1` (`options.c:2447`); at proto < 30, `append_mode` 1 forced to 2 (`compat.c:654-655`); does not directly set/clear any CF_* bit | Same: `restrictions.rs:91-93` forces mode 1 to 2 at proto < 30; inplace forced in config builder | >= 28 | ok |
+| `--compress` (`-z`) | Negotiation: algorithm selected via vstring exchange gated by `CF_VARINT_FLIST_FLAGS` (bit 7); without negotiation, defaults to `CPRES_ZLIB` (`compat.c:196`) | Same: `should_negotiate()` gates vstring; legacy fallback to zlib at `setup/mod.rs:163-165` | >= 28 | ok |
+| `--compress-choice` | Negotiation: when set, vstring exchange is skipped (`compat.c:544` - `!compress_choice`); specified algorithm used directly | Same: `setup/mod.rs:109` - `config.compress_choice.is_none()` mirrors upstream gate | >= 28 | ok |
+| `--delete-before` | Indirect: suppresses `allow_inc_recurse` on receiver side (`compat.c:175`), preventing `CF_INC_RECURSE` (bit 0) | Same: config-build time suppression | >= 28 | ok |
+| `--delete-during` | None - does not affect `allow_inc_recurse` or any CF_* bit; selected as default delete phase at proto >= 30 (`compat.c:676`) | Same: `restrictions.rs:113-119` selects default phase | >= 28 | ok |
+| `--delete-after` | Indirect: suppresses `allow_inc_recurse` on receiver side (`compat.c:175`) | Same: config-build time suppression | >= 28 | ok |
 | `--delete-excluded` | None - sets `delete_excluded` flag; feeds into `delete_mode` but does not independently affect `allow_inc_recurse` or any CF_* bit | None | >= 28 | ok |
 | `--hard-links` (`-H`) | None - no direct CF_* interaction; tangential: xattr optimization for hardlinks controlled by `CF_AVOID_XATTR_OPTIM` (bit 4) when combined with `--xattrs` | Same: `want_xattr_optim` keyed off bit 4 and proto >= 31 | >= 28 | ok |
-| `--xattrs` (`-X`) | Direct: `CF_AVOID_XATTR_OPTIM` (bit 4) controls xattr hardlink optimization; `want_xattr_optim = proto >= 31 && !(compat & CF_AVOID_XATTR_OPTIM)` (`compat.c:746`); restriction: requires proto >= 30 (`compat.c:662-668`) | Same: bit 4 set unconditionally in SSH mode; restriction at `restrictions.rs:104-109` | >= 30 | ok |
-| `--acls` (`-A`) | Restriction: requires proto >= 30 (`compat.c:655-661`) with `local_server` bypass; no dedicated CF_* bit | Same: `restrictions.rs:96-102` with `local_server` bypass | >= 30 | ok |
-| `--inc-recursive` / `--no-inc-recursive` | Direct: `--inc-recursive` sets `allow_inc_recurse = 1`; `--no-inc-recursive` sets it to 0 (`options.c:614-617`); this directly controls whether `CF_INC_RECURSE` (bit 0) is set in `compat_flags` (`compat.c:712`) | Same: `allow_inc_recurse` config field controls bit 0 in `build_our_flags()` (`setup/mod.rs:233-235`) and `build_capability_string()` (`capability.rs:144-146`) | >= 30 (bit exchange) | ok |
-| `--fake-super` | None - sets `am_root = -1` (`options.c:653`); no CF_* interaction; uses xattrs for metadata storage but at the application layer, not protocol negotiation | None | >= 28 | ok |
+| `--xattrs` (`-X`) | Direct: `CF_AVOID_XATTR_OPTIM` (bit 4) controls xattr hardlink optimization; `want_xattr_optim = proto >= 31 && !(compat & CF_AVOID_XATTR_OPTIM)` (`compat.c:755`); restriction: requires proto >= 30 (`compat.c:663-669`) | Same: bit 4 set unconditionally in SSH mode; restriction at `restrictions.rs:104-109` | >= 30 | ok |
+| `--acls` (`-A`) | Restriction: requires proto >= 30 (`compat.c:656-662`) with `local_server` bypass; no dedicated CF_* bit | Same: `restrictions.rs:96-102` with `local_server` bypass | >= 30 | ok |
+| `--inc-recursive` / `--no-inc-recursive` | Direct: `--inc-recursive` sets `allow_inc_recurse = 1`; `--no-inc-recursive` sets it to 0 (`options.c:615-618`); this directly controls whether `CF_INC_RECURSE` (bit 0) is set in `compat_flags` (`compat.c:713`) | Same: `allow_inc_recurse` config field controls bit 0 in `build_our_flags()` (`setup/mod.rs:233-235`) and `build_capability_string()` (`capability.rs:144-146`) | >= 30 (bit exchange) | ok |
+| `--fake-super` | None - sets `am_root = -1` (`options.c:654`); no CF_* interaction; uses xattrs for metadata storage but at the application layer, not protocol negotiation | None | >= 28 | ok |
 | `--copy-devices` | None - purely options-level; does not appear in `compat.c`; not involved in compat_flags exchange | None | >= 28 | ok |
-| `--write-devices` | None - forces `inplace = 1` (`options.c:2395-2400`); does not appear in `compat.c`; no direct CF_* interaction; the forced `inplace` inherits `CF_INPLACE_PARTIAL_DIR` behaviour indirectly | None directly; forced `inplace` handled at config-build time | >= 28 | ok |
-| `--atimes` (`-U`) | None - sets `preserve_atimes`; allocates file-list extras in `setup_protocol()` (`compat.c:579-580`) but does not set/clear any CF_* bit | Same: file-list extras allocation; no CF_* interaction | >= 28 | ok |
-| `--crtimes` (`-N`) | Direct: requires `CF_VARINT_FLIST_FLAGS` (bit 7) to be set; if `!xfer_flags_as_varint && preserve_crtimes`, upstream aborts with "Both rsync versions must be at least 3.2.0 for --crtimes" (`compat.c:750-753`) | Same: protocol layer enforces the `VARINT_FLIST_FLAGS` requirement for `--crtimes` | >= 30 (needs bit 7) | ok |
+| `--write-devices` | None - forces `inplace = 1` (`options.c:2450-2455`); does not appear in `compat.c`; no direct CF_* interaction; the forced `inplace` inherits `CF_INPLACE_PARTIAL_DIR` behaviour indirectly | None directly; forced `inplace` handled at config-build time | >= 28 | ok |
+| `--atimes` (`-U`) | None - sets `preserve_atimes`; allocates file-list extras in `setup_protocol()` (`compat.c:580-581`) but does not set/clear any CF_* bit | Same: file-list extras allocation; no CF_* interaction | >= 28 | ok |
+| `--crtimes` (`-N`) | Direct: requires `CF_VARINT_FLIST_FLAGS` (bit 7) to be set; if `!xfer_flags_as_varint && preserve_crtimes`, upstream aborts with "Both rsync versions must be at least 3.2.0 for --crtimes" (`compat.c:759-762`) | Same: protocol layer enforces the `VARINT_FLIST_FLAGS` requirement for `--crtimes` | >= 30 (needs bit 7) | ok |
 
 ## 3. Per-Option Detail
 
@@ -61,16 +61,16 @@ Source: `crates/protocol/src/compatibility/flags.rs:34-50`,
 interactions:
 
 1. **Checksum seed ordering.** `proper_seed_order = compat_flags &
-   CF_CHKSUM_SEED_FIX` (`compat.c:747`) determines whether the MD5 seed
+   CF_CHKSUM_SEED_FIX` (`compat.c:756`) determines whether the MD5 seed
    is prepended or appended. Both peers must support bit 5 for the fixed
    ordering.
 
 2. **Algorithm negotiation.** The checksum algorithm (MD4/MD5/XXH3) is
-   negotiated via vstrings in `negotiate_the_strings()` (`compat.c:534-570`).
+   negotiated via vstrings in `negotiate_the_strings()` (`compat.c:535-571`).
    Vstring exchange is gated by `do_negotiated_strings`, which requires
    `CF_VARINT_FLIST_FLAGS` (bit 7) to be set. Without bit 7 (proto < 30 or
    peer without `v` capability), the fallback is MD5 for proto >= 30 or MD4
-   for proto < 30 (`compat.c:552`).
+   for proto < 30 (`compat.c:553`).
 
 The `--checksum` flag itself merely changes the comparison strategy from
 quick-check (mtime+size) to always-checksum. It does not influence which
@@ -87,13 +87,13 @@ checksums crate. Algorithm negotiation via `should_negotiate()`
 
 **Upstream.** Direct interaction with `CF_INPLACE_PARTIAL_DIR` (bit 6).
 When the compat flags include bit 6, `inplace_partial = 1` is set
-(`compat.c:777-778`), allowing `--partial-dir` to coexist with `--inplace`
+(`compat.c:786-787`), allowing `--partial-dir` to coexist with `--inplace`
 at the protocol level. Without bit 6, `--inplace` and `--partial-dir` are
-mutually exclusive (`options.c:2406-2414`).
+mutually exclusive (`options.c:2461-2469`).
 
 Protocol < 29 restriction: `--inplace` combined with basis directories
 (`--compare-dest`/`--copy-dest`/`--link-dest`) is rejected
-(`compat.c:687-693`).
+(`compat.c:688-694`).
 
 **oc-rsync.** Bit 6 set unconditionally in SSH client mode
 (`setup/mod.rs:215`) and via capability char `I` in daemon mode
@@ -118,7 +118,7 @@ itself is orthogonal to compat_flags.
 
 **Upstream.** No CF_* bit interaction. Tri-state (`whole_file = -1/0/1`)
 that controls whether the delta algorithm is bypassed. Mutually exclusive
-with `--append` at the options level (`options.c:2382-2387`), but this is
+with `--append` at the options level (`options.c:2437-2442`), but this is
 enforced before compat_flags exchange.
 
 **oc-rsync.** No CF_* interaction. The mutual exclusion with `--append` is
@@ -132,11 +132,11 @@ validation issue, not a compat-flag divergence).
 **Upstream.** No direct CF_* bit set or checked. Two indirect interactions:
 
 1. **Forced `inplace`.** `--append` forces `inplace = 1`
-   (`options.c:2392`), inheriting the `CF_INPLACE_PARTIAL_DIR` behaviour
+   (`options.c:2447`), inheriting the `CF_INPLACE_PARTIAL_DIR` behaviour
    and mutual-exclusion constraints of `--inplace`.
 
 2. **Protocol < 30 mode forcing.** `append_mode == 1` is forced to
-   `append_mode = 2` at proto < 30 (`compat.c:653-654`), enabling the
+   `append_mode = 2` at proto < 30 (`compat.c:654-655`), enabling the
    verifying-append behaviour with older peers.
 
 `--append` does not appear in `set_allow_inc_recurse()`, so it does not
@@ -155,10 +155,10 @@ with `--partial-dir`/`--delay-updates` at config-build time.
 
 1. `do_compression` is set by `-z`.
 2. In `negotiate_the_strings()`, compression vstrings are exchanged only
-   when `do_compression && !compress_choice` (`compat.c:543`).
+   when `do_compression && !compress_choice` (`compat.c:544`).
 3. Vstring exchange gated by `do_negotiated_strings`, which requires bit 7.
 4. Without negotiation, default compression is `CPRES_ZLIB`
-   (`compat.c:195`).
+   (`compat.c:196`).
 
 No CF_* bit is directly set or cleared by `--compress`.
 
@@ -171,15 +171,15 @@ to zlib at `setup/mod.rs:163-165`.
 ### 3.7 `--compress-choice`
 
 **Upstream.** When `--compress-choice=ALGO` is specified, the vstring
-exchange for compression is skipped (`compat.c:543` - `!compress_choice`
+exchange for compression is skipped (`compat.c:544` - `!compress_choice`
 is false). The specified algorithm is used directly via
-`parse_compress_choice()` (`compat.c:181-220`). This does not affect
+`parse_compress_choice()` (`compat.c:182-221`). This does not affect
 which CF_* bits are set - the `CF_VARINT_FLIST_FLAGS` bit is still
 negotiated independently.
 
 Related options `--old-compress` and `--new-compress` are syntactic sugar
 that set `compress_choice` to `"zlib"` or `"zlibx"` respectively
-(`options.c:1614-1618`).
+(`options.c:1641-1645`).
 
 **oc-rsync.** `setup/mod.rs:109` - `config.compress_choice.is_none()`
 mirrors upstream gate. When set, compression override is passed directly
@@ -192,11 +192,11 @@ to the negotiator.
 **Upstream.** Four variants with distinct compat_flags interactions:
 
 - `--delete-before`: Suppresses `allow_inc_recurse` on receiver side
-  (`compat.c:174`), preventing `CF_INC_RECURSE` (bit 0) from being set.
+  (`compat.c:175`), preventing `CF_INC_RECURSE` (bit 0) from being set.
 - `--delete-during`: Does not affect `allow_inc_recurse`. This is the
-  default delete phase at proto >= 30 (`compat.c:675`).
+  default delete phase at proto >= 30 (`compat.c:676`).
 - `--delete-after`: Suppresses `allow_inc_recurse` on receiver side
-  (`compat.c:174`).
+  (`compat.c:175`).
 - `--delete-excluded`: Sets `delete_excluded` flag; feeds into
   `delete_mode` but does not independently affect `allow_inc_recurse` or
   any CF_* bit. It is the `delete_mode` combined with explicit
@@ -204,11 +204,11 @@ to the negotiator.
 
 Default phase selection: when `--delete` is specified without an explicit
 phase, upstream defaults to `delete_before` for proto < 30 and
-`delete_during` for proto >= 30 (`compat.c:671-676`).
+`delete_during` for proto >= 30 (`compat.c:672-677`).
 
 **oc-rsync.** Default phase selection at `restrictions.rs:113-119`.
 `allow_inc_recurse` suppression for `delete_before`/`delete_after` at
-config-build time. `delay_updates` also suppresses it (`compat.c:175`),
+config-build time. `delay_updates` also suppresses it (`compat.c:176`),
 matching our config builder.
 
 **Status: ok.**
@@ -220,7 +220,7 @@ connection is `CF_AVOID_XATTR_OPTIM` (bit 4): when `--hard-links` and
 `--xattrs` are both active, upstream uses an xattr optimization for
 hardlinked files. This optimization is disabled when
 `CF_AVOID_XATTR_OPTIM` is set (`want_xattr_optim = protocol >= 31 &&
-!(compat & CF_AVOID_XATTR_OPTIM)`, `compat.c:746`).
+!(compat & CF_AVOID_XATTR_OPTIM)`, `compat.c:755`).
 
 **oc-rsync.** `want_xattr_optim` computation keyed off bit 4 and
 proto >= 31.
@@ -231,11 +231,11 @@ proto >= 31.
 
 **Upstream.** Two interactions:
 
-1. **Protocol restriction.** Requires proto >= 30 (`compat.c:662-668`),
+1. **Protocol restriction.** Requires proto >= 30 (`compat.c:663-669`),
    with `local_server` bypass.
 2. **`CF_AVOID_XATTR_OPTIM` (bit 4).** Controls xattr hardlink
    optimization: `want_xattr_optim = protocol >= 31 && !(compat &
-   CF_AVOID_XATTR_OPTIM)` (`compat.c:746`). Bit 4 signals the peer does
+   CF_AVOID_XATTR_OPTIM)` (`compat.c:755`). Bit 4 signals the peer does
    not support or want the optimization.
 
 **oc-rsync.** Protocol restriction at `restrictions.rs:104-109`. Bit 4
@@ -247,9 +247,9 @@ capability char `x` in daemon mode (`capability.rs:80-86`).
 ### 3.11 `--acls` (`-A`)
 
 **Upstream.** Protocol restriction: requires proto >= 30
-(`compat.c:655-661`), with `local_server` bypass. No dedicated CF_* bit
+(`compat.c:656-662`), with `local_server` bypass. No dedicated CF_* bit
 for ACLs. ACL data is embedded in file-list extras (`acls_ndx`,
-`compat.c:591`).
+`compat.c:592`).
 
 **oc-rsync.** Protocol restriction at `restrictions.rs:96-102`, with
 `local_server` bypass.
@@ -260,19 +260,19 @@ for ACLs. ACL data is embedded in file-list extras (`acls_ndx`,
 
 **Upstream.** Direct control over `CF_INC_RECURSE` (bit 0).
 `--inc-recursive` sets `allow_inc_recurse = 1`;
-`--no-inc-recursive` sets it to 0 (`options.c:614-617`).
+`--no-inc-recursive` sets it to 0 (`options.c:615-618`).
 
-On the server side, `set_allow_inc_recurse()` (`compat.c:161-179`)
+On the server side, `set_allow_inc_recurse()` (`compat.c:162-180`)
 applies further filtering: `allow_inc_recurse` is cleared when
 `!recurse`, `use_qsort`, or (on receiver) any of `delete_before`,
 `delete_after`, `delay_updates`, `prune_empty_dirs` is set. The surviving
 value directly determines whether bit 0 is set in `compat_flags`
-(`compat.c:712`).
+(`compat.c:713`).
 
 On the client side, the received `CF_INC_RECURSE` bit is masked off when
 local `allow_inc_recurse` is false. If the bit survives while
 `allow_inc_recurse` is false, upstream aborts with "Incompatible options
-specified for inc-recursive" (`compat.c:768-774`).
+specified for inc-recursive" (`compat.c:777-783`).
 
 **oc-rsync.** `allow_inc_recurse` controls bit 0 in `build_our_flags()`
 (`setup/mod.rs:233-235`) and capability char `i` in
@@ -286,7 +286,7 @@ suppression for `delete_before`, `delete_after`, `delay_updates`,
 
 ### 3.13 `--fake-super`
 
-**Upstream.** Sets `am_root = -1` (`options.c:653`). No CF_* bit
+**Upstream.** Sets `am_root = -1` (`options.c:654`). No CF_* bit
 interaction. Causes xattrs to store ownership and permission metadata,
 but this is handled at the application layer in `xattrs.c`, not during
 protocol negotiation.
@@ -298,10 +298,10 @@ interaction.
 
 ### 3.14 `--copy-devices`
 
-**Upstream.** Sets `copy_devices = 1` (`options.c:664`). Does not appear
+**Upstream.** Sets `copy_devices = 1` (`options.c:665`). Does not appear
 in `compat.c`. No CF_* bit interaction. On the receiver side, when
 `!am_sender`, the server arg `--copy-devices` is sent
-(`options.c:2969`).
+(`options.c:3034`).
 
 **oc-rsync.** No CF_* interaction.
 
@@ -309,14 +309,14 @@ in `compat.c`. No CF_* bit interaction. On the receiver side, when
 
 ### 3.15 `--write-devices`
 
-**Upstream.** Sets `write_devices = 1` (`options.c:665`) and forces
-`inplace = 1` (`options.c:2395-2400`). Does not appear in `compat.c` -
+**Upstream.** Sets `write_devices = 1` (`options.c:666`) and forces
+`inplace = 1` (`options.c:2450-2455`). Does not appear in `compat.c` -
 no direct CF_* bit is set or checked. The forced `inplace` inherits all
 `CF_INPLACE_PARTIAL_DIR` behaviour and mutual-exclusion constraints of
 `--inplace` (see section 3.2).
 
 On the sender side, `--write-devices` is sent as a server arg only when
-`am_sender` (`options.c:2961`).
+`am_sender` (`options.c:3026`).
 
 **oc-rsync.** The `--write-devices` flag is present in config.
 The forced `inplace = 1` aliasing is a known options-level gap
@@ -332,7 +332,7 @@ separately).
 
 **Upstream.** Sets `preserve_atimes` (`options.c:65`). In
 `setup_protocol()`, allocates file-list extras for atimes storage
-(`compat.c:579-580`). No CF_* bit is set or checked for `--atimes`.
+(`compat.c:580-581`). No CF_* bit is set or checked for `--atimes`.
 
 The `--atimes` option has no protocol-version minimum. It does allocate
 an `EXTRA64_CNT` slot in the file-list extras array, but this is handled
@@ -355,7 +355,7 @@ if (!xfer_flags_as_varint && preserve_crtimes) {
     exit_cleanup(RERR_PROTOCOL);
 }
 ```
-(`compat.c:750-753`)
+(`compat.c:759-762`)
 
 This means `--crtimes` requires the peer to support varint flist flags
 (bit 7). Since bit 7 is only available at proto >= 30 from peers that
@@ -363,7 +363,7 @@ advertise `v` in their capability string, `--crtimes` effectively
 requires both sides to be rsync >= 3.2.0.
 
 The `--crtimes` option also allocates file-list extras
-(`compat.c:581-582`).
+(`compat.c:582-583`).
 
 **oc-rsync.** The `VARINT_FLIST_FLAGS` requirement for `--crtimes` is
 enforced at the protocol layer.
@@ -374,35 +374,35 @@ enforced at the protocol layer.
 
 The `CF_INC_RECURSE` bit (0) is the most cross-cutting flag because
 several options suppress it indirectly through
-`set_allow_inc_recurse()` (`compat.c:161-179`).
+`set_allow_inc_recurse()` (`compat.c:162-180`).
 
 | Condition | Upstream cite | oc-rsync handling | Status |
 |-----------|---------------|-------------------|:------:|
-| `!recurse` | `compat.c:171` | config-build time | ok |
-| `use_qsort` | `compat.c:171` | config-build time | ok |
-| Receiver + `delete_before` | `compat.c:173-174` | config-build time | ok |
-| Receiver + `delete_after` | `compat.c:174` | config-build time | ok |
-| Receiver + `delay_updates` | `compat.c:175` | config-build time | ok |
-| Receiver + `prune_empty_dirs` | `compat.c:175` | config-build time | ok |
-| Server + client lacks `i` | `compat.c:177-178` | `build_compat_flags_from_client_info()` | ok |
-| `--no-inc-recursive` | `options.c:615` | config field | ok |
+| `!recurse` | `compat.c:172` | config-build time | ok |
+| `use_qsort` | `compat.c:172` | config-build time | ok |
+| Receiver + `delete_before` | `compat.c:174-175` | config-build time | ok |
+| Receiver + `delete_after` | `compat.c:175` | config-build time | ok |
+| Receiver + `delay_updates` | `compat.c:176` | config-build time | ok |
+| Receiver + `prune_empty_dirs` | `compat.c:176` | config-build time | ok |
+| Server + client lacks `i` | `compat.c:178-179` | `build_compat_flags_from_client_info()` | ok |
+| `--no-inc-recursive` | `options.c:616` | config field | ok |
 
 ## 5. Cross-Cutting: Protocol-Version Restrictions
 
 Options that impose protocol-version minimums, enforced in
-`compat.c:641-709` / `restrictions.rs`.
+`compat.c:642-710` / `restrictions.rs`.
 
 | Option | Min proto | Upstream cite | oc-rsync cite | Status |
 |--------|:---------:|---------------|---------------|:------:|
-| `--acls` | 30 | `compat.c:655-661` | `restrictions.rs:96-102` | ok |
-| `--xattrs` | 30 | `compat.c:662-668` | `restrictions.rs:104-109` | ok |
-| `--fuzzy` | 29 | `compat.c:679-685` | `restrictions.rs:124-129` | ok |
-| `--inplace` + basis dirs | 29 | `compat.c:687-693` | `restrictions.rs:132-139` | ok |
-| Multiple basis dirs | 29 | `compat.c:695-701` | `restrictions.rs:143-151` | ok |
-| `--prune-empty-dirs` | 29 | `compat.c:703-709` | `restrictions.rs:154-161` | ok |
-| `--append` (mode 1 -> 2) | < 30 forces mode 2 | `compat.c:653-654` | `restrictions.rs:91-93` | ok |
-| `--delete` default phase | < 30: before; >= 30: during | `compat.c:671-676` | `restrictions.rs:113-119` | ok |
-| `--crtimes` | needs bit 7 (>= 3.2.0) | `compat.c:750-753` | protocol layer | ok |
+| `--acls` | 30 | `compat.c:656-662` | `restrictions.rs:96-102` | ok |
+| `--xattrs` | 30 | `compat.c:663-669` | `restrictions.rs:104-109` | ok |
+| `--fuzzy` | 29 | `compat.c:680-686` | `restrictions.rs:124-129` | ok |
+| `--inplace` + basis dirs | 29 | `compat.c:688-694` | `restrictions.rs:132-139` | ok |
+| Multiple basis dirs | 29 | `compat.c:696-702` | `restrictions.rs:143-151` | ok |
+| `--prune-empty-dirs` | 29 | `compat.c:704-710` | `restrictions.rs:154-161` | ok |
+| `--append` (mode 1 -> 2) | < 30 forces mode 2 | `compat.c:654-655` | `restrictions.rs:91-93` | ok |
+| `--delete` default phase | < 30: before; >= 30: during | `compat.c:672-677` | `restrictions.rs:113-119` | ok |
+| `--crtimes` | needs bit 7 (>= 3.2.0) | `compat.c:759-762` | protocol layer | ok |
 
 ## 6. Negotiation-Dependent Options
 
@@ -414,7 +414,7 @@ Options whose behaviour varies based on vstring negotiation outcome
 | `--checksum` | MD4 (proto < 30); MD5 (proto >= 30) | Peer-negotiated (XXH3/XXH128/MD5/MD4) | Legacy fallback (`setup/mod.rs:162-173`) and vstring path |
 | `--compress` | CPRES_ZLIB only | Peer-negotiated (zstd/lz4/zlibx/zlib) | Legacy fallback and `send_compression` guard |
 | `--compress-choice=ALGO` | Specified directly (no exchange) | Specified directly (vstring skipped) | `compress_choice.is_none()` gate |
-| `--crtimes` | Rejected (`compat.c:750-753`) | Allowed | Protocol-layer enforcement |
+| `--crtimes` | Rejected (`compat.c:759-762`) | Allowed | Protocol-layer enforcement |
 
 ## 7. Summary of Findings
 

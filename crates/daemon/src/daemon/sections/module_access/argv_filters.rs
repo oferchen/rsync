@@ -9,7 +9,7 @@
 /// The message upstream sends when a client argv filter option names a file
 /// the daemon's filter hides.
 ///
-/// upstream: `options.c:2684-2686`.
+/// upstream: `options.c:2739-2741`.
 const ARGV_FILTER_OPTIONS_REJECTED: &str = "Your options have been rejected by the server.";
 
 /// Why a client argv filter option ends the session.
@@ -17,7 +17,7 @@ const ARGV_FILTER_OPTIONS_REJECTED: &str = "Your options have been rejected by t
 enum ArgvFilterRefusal {
     /// A `-from` file the daemon's filter hides, or an empty `-from` name.
     ///
-    /// upstream: `options.c:1636-1652` jumps to `options_rejected`.
+    /// upstream: `options.c:1663-1679` jumps to `options_rejected`.
     Rejected,
     /// A malformed rule or an unreadable file, with upstream's exit code.
     ///
@@ -194,7 +194,7 @@ fn read_module_file(root: &Path, relative: &str) -> io::Result<String> {
 /// the reason reaches the daemon log alone, followed by the totals line every
 /// daemon exit logs.
 ///
-/// upstream: `clientserver.c:1254-1267` reports the rejection's `err_buf` and
+/// upstream: `clientserver.c:1263-1276` reports the rejection's `err_buf` and
 /// exits; `exclude.c:136` and `exclude.c:1714-1719` call `exit_cleanup()`
 /// from `parse_arguments()` (`clientserver.c:1160`), ahead of the
 /// `setup_protocol()` at `clientserver.c:1226`; `cleanup.c:222-226` runs

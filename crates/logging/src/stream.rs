@@ -1,6 +1,6 @@
 //! The single place a message's destination stream is chosen.
 //!
-//! Upstream funnels every diagnostic message through `rprintf` (log.c:433) or
+//! Upstream funnels every diagnostic message through `rprintf` (log.c:518) or
 //! `rsyserr` (log.c:480) into `rwrite` (log.c:269), which is the sole function
 //! that picks a `FILE *`. Over 600 `rprintf(F*)` call sites, one chooser. The
 //! only direct `fprintf(stderr, ...)` calls left in the message path are five
@@ -75,15 +75,15 @@ pub struct BadLogCode(pub LogCode);
 /// abort should surface it; they must not silently pick a stream, which is the
 /// defect this function exists to prevent.
 ///
-/// upstream: log.c:269-355 rwrite()
+/// upstream: log.c:349-435 rwrite()
 pub const fn message_stream(
     code: LogCode,
     ctx: StreamContext,
 ) -> Result<MessageStream, BadLogCode> {
-    // upstream: log.c:303-308 - FERROR_SOCKET simplifies to FERROR, and
+    // upstream: log.c:383-388 - FERROR_SOCKET simplifies to FERROR, and
     // FERROR_UTF8 becomes FERROR with is_utf8 forced on. Both therefore take
     // the stderr arm below rather than reaching the default.
-    // upstream: log.c:310-311 - FCLIENT is rewritten to FINFO.
+    // upstream: log.c:390-391 - FCLIENT is rewritten to FINFO.
     let code = match code {
         LogCode::ErrorSocket | LogCode::ErrorUtf8 => LogCode::Error,
         LogCode::Client => LogCode::Info,
@@ -91,21 +91,21 @@ pub const fn message_stream(
     };
 
     match code {
-        // upstream: log.c:312-332 - an FLOG message is written to the log and
+        // upstream: log.c:392-412 - an FLOG message is written to the log and
         // returns before the stream switch; with no log destination it is
         // discarded outright (log.c:333-334).
         LogCode::Log => Ok(MessageStream::LogOnly),
-        // upstream: log.c:337-343 - FERROR_XFER falls through to FERROR and
+        // upstream: log.c:417-423 - FERROR_XFER falls through to FERROR and
         // FWARNING; all three set `f = stderr`. FERROR_XFER additionally sets
         // `got_xfer_error` (log.c:338), which is the caller's concern.
         LogCode::ErrorXfer | LogCode::Error | LogCode::Warning => Ok(MessageStream::Stderr),
-        // upstream: log.c:344-347 - FINFO keeps the default stream, and
+        // upstream: log.c:424-427 - FINFO keeps the default stream, and
         // `quiet` returns without writing at all.
         LogCode::Info => {
             if ctx.quiet {
                 Ok(MessageStream::Suppressed)
             } else {
-                // upstream: log.c:272 - the default `f` is stderr only when
+                // upstream: log.c:352 - the default `f` is stderr only when
                 // msgs2stderr == 1, so --no-msgs2stderr and the unset default
                 // both keep stdout.
                 match ctx.msgs2stderr {
@@ -114,7 +114,7 @@ pub const fn message_stream(
                 }
             }
         }
-        // upstream: log.c:352-354 - FNONE is "never sent" (rsync.h:283) and
+        // upstream: log.c:432-434 - FNONE is "never sent" (rsync.h:284) and
         // lands in the default arm, which exits RERR_MESSAGEIO.
         LogCode::None => Err(BadLogCode(LogCode::None)),
         // Normalised above; listed so a code added later must be classified
@@ -188,7 +188,7 @@ mod tests {
         }
     }
 
-    /// upstream: log.c:312-334 - FLOG is written to the log destination and
+    /// upstream: log.c:392-414 - FLOG is written to the log destination and
     /// returns before the stream switch, so it can never surface on a client
     /// stream regardless of configuration.
     #[test]
@@ -202,7 +202,7 @@ mod tests {
         }
     }
 
-    /// upstream: log.c:352-354 - an unroutable code is a fatal error
+    /// upstream: log.c:432-434 - an unroutable code is a fatal error
     /// (`exit_cleanup(RERR_MESSAGEIO)`), never a silent stdout default. A
     /// mapper that guessed here is how a new code would inherit stdout.
     #[test]
@@ -216,7 +216,7 @@ mod tests {
         }
     }
 
-    /// upstream: log.c:310-311 - `if (code == FCLIENT) code = FINFO;`. FCLIENT
+    /// upstream: log.c:390-391 - `if (code == FCLIENT) code = FINFO;`. FCLIENT
     /// must behave exactly as FINFO, including under --quiet and
     /// --msgs2stderr, or the normalisation is only half applied.
     #[test]
@@ -230,7 +230,7 @@ mod tests {
         }
     }
 
-    /// upstream: log.c:344-346 - `case FINFO: if (quiet) return;`. Upstream
+    /// upstream: log.c:424-426 - `case FINFO: if (quiet) return;`. Upstream
     /// suppresses FINFO inside rwrite; oc historically folded --quiet into
     /// `verbosity = 0` at parse time
     /// (cli/frontend/arguments/parser/entry.rs), which silences only
@@ -255,7 +255,7 @@ mod tests {
         }
     }
 
-    /// upstream: log.c:272 - `FILE *f = msgs2stderr == 1 ? stderr : stdout;`.
+    /// upstream: log.c:352 - `FILE *f = msgs2stderr == 1 ? stderr : stdout;`.
     /// Only the `== 1` state moves the default; modelling msgs2stderr as a
     /// bool would collapse Never and Default, which differ at log.c:357.
     #[test]

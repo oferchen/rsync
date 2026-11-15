@@ -505,7 +505,7 @@ fn append_verify_success_stays_a_single_pass() {
 
 #[test]
 fn plain_append_never_redoes_even_with_a_mismatching_prefix() {
-    // upstream: match.c:414-428 folds the pre-existing prefix into the
+    // upstream: match.c:450-464 folds the pre-existing prefix into the
     // whole-file sum only when `append_mode == 2` (--append-verify). Plain
     // --append leaves both sides summing just the appended tail, so the sums
     // always agree, no redo is ever requested, and the destination is left

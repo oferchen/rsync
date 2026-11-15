@@ -24,12 +24,12 @@ use std::io;
 /// Must be called before spawning threads (fork is not async-signal-safe
 /// with threads).
 ///
-/// upstream: clientserver.c:1691 - `become_daemon()`. Upstream writes the pid file
+/// upstream: clientserver.c:1726 - `become_daemon()`. Upstream writes the pid file
 /// from inside `become_daemon()` (clientserver.c:1705); here the caller does it.
 #[cfg(unix)]
 #[allow(unsafe_code)]
 pub fn become_daemon() -> io::Result<()> {
-    // upstream: clientserver.c:1694
+    // upstream: clientserver.c:1729
     // SAFETY: fork() is safe to call before threads are spawned.
     let pid = unsafe { libc::fork() };
     match pid {
@@ -38,10 +38,10 @@ pub fn become_daemon() -> io::Result<()> {
         _ => std::process::exit(0),
     }
 
-    // upstream: clientserver.c:1709
+    // upstream: clientserver.c:1744
     nix::unistd::setsid().map_err(|e| io::Error::from_raw_os_error(e as i32))?;
 
-    // upstream: clientserver.c:1719-1722
+    // upstream: clientserver.c:1754-1757
     redirect_stdio_to_devnull()
 }
 
@@ -58,7 +58,7 @@ pub fn redirect_stdio_to_devnull() -> io::Result<()> {
 /// An inetd daemon serves the socket on stdin alone, so nothing a library
 /// writes to stdout or stderr reaches whatever inetd left on them.
 ///
-/// upstream: clientserver.c:1749-1757 daemon_main()
+/// upstream: clientserver.c:1813-1821 daemon_main()
 #[cfg(unix)]
 pub fn redirect_output_to_devnull() -> io::Result<()> {
     redirect_to_devnull(1..=2)

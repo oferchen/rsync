@@ -32,7 +32,7 @@ const MODES: [Mode; 3] = [Mode::Local, Mode::Pull, Mode::Push];
 /// Both the text and the number are the libc's (glibc, musl and macOS differ),
 /// so the needle is built, never spelled out.
 ///
-/// upstream: log.c:499-500 `rsyserr()` - `": %s (%d)"`.
+/// upstream: log.c:584-585 `rsyserr()` - `": %s (%d)"`.
 fn errno_text(errno: Errno) -> String {
     let error = std::io::Error::from_raw_os_error(errno.raw_os_error());
     format!(": {}", logging::upstream_errno_text(&error))
@@ -139,7 +139,7 @@ fn a_symlinked_parent_leading_out_is_kept_and_its_entries_are_reported() {
         for (needle, lines) in [
             ("recv_generator: failed to stat \"", 2),
             ("recv_generator: mkdir \"", 1),
-            // upstream: syscall.c:2920-2931 - the portable walk refuses an
+            // upstream: syscall.c:2991-3002 - the portable walk refuses an
             // escape with ELOOP; oc's EXDEV escape signal must not leak out.
             (eloop.as_str(), 3),
             (exdev.as_str(), 0),
@@ -306,7 +306,7 @@ fn a_recursed_operand_leaves_its_implied_parent_alone() {
 /// is reported once with the skip line, and nothing below it is written,
 /// on every transport and both recursion modes. Measured on 3.5.1.
 ///
-/// upstream: generator.c:1745-1746 stats the directory through the confined
+/// upstream: generator.c:1782-1783 stats the directory through the confined
 /// walk, generator.c:1873-1887 reports the failed mkdir and skips its
 /// contents.
 #[test]

@@ -10,7 +10,7 @@ benchmark, completed), #1049 (string interning evaluation, completed),
 Upstream rsync packs every file-list entry into a single
 pool-allocated extent: `FILE_STRUCT_LEN` (24 B header on 64-bit) plus the
 NUL-terminated basename plus optional extras, sharing dirname pointers via a
-once-per-directory `lastdir` cache (`flist.c:697,768`). oc-rsync stores the
+once-per-directory `lastdir` cache (`flist.c:701,768`). oc-rsync stores the
 relative path as a `PathBuf` (24 B inline header + heap allocation with
 capacity slack) plus an `Arc<Path>` dirname (16 B inline header + heap
 allocation with reference counter). For a 100 K-file workload the path
@@ -150,10 +150,10 @@ alignment regardless of the flexible array). All optional fields - uid,
 gid, atime, crtime, hardlink, ACL, xattr indices - live as `union
 file_extras` slots prepended *before* the struct in the same pool
 allocation, accessed via the negative-offset `REQ_EXTRA(f,ndx)` /
-`OPT_EXTRA(f,bump)` macros (`rsync.h:837-842`). When none are configured
-(`compat.c:574-594`), `extra_len` is zero.
+`OPT_EXTRA(f,bump)` macros (`rsync.h:853-858`). When none are configured
+(`compat.c:575-595`), `extra_len` is zero.
 
-`flist.c:1018-1027` (recv path):
+`flist.c:1022-1031` (recv path):
 
 ```c
 alloc_len = FILE_STRUCT_LEN + extra_len + basename_len + linkname_len;
@@ -167,12 +167,12 @@ memcpy(bp, basename, basename_len);
 
 The pool itself is bump-allocated 128 KiB extents (`SMALL_EXTENT`) for
 INC_RECURSE per-segment lists, 256 KiB (`NORMAL_EXTENT`) for the main flist
-(`flist.c:2914,2920`, constants in `rsync.h:936-937`). Per-allocation
+(`flist.c:2925,2920`, constants in `rsync.h:952-953`). Per-allocation
 metadata cost is one pointer-aligned padding gap per extent boundary, not
 per entry; allocator overhead is therefore amortised to ~0 B per file.
 
 Dirname deduplication uses the static `lastdir` cache
-(`flist.c:697,767-773` send-side; `flist.c:1233,1375-1378` recv-side):
+(`flist.c:701,767-773` send-side; `flist.c:1237,1375-1378` recv-side):
 
 ```c
 if (len != lastdir_len || memcmp(thisname, lastdir, len) != 0) {
@@ -183,13 +183,13 @@ if (len != lastdir_len || memcmp(thisname, lastdir, len) != 0) {
     lastdir_depth = count_dir_elements(lastdir);
 }
 ...
-file->dirname = lastdir;  /* flist.c:1076,1487 */
+file->dirname = lastdir;  /* flist.c:1080,1487 */
 ```
 
 `lastdir` is a separately heap-allocated string (one per unique directory
 encountered in *sequential* sort order); `file->dirname` is just the
 8 B pointer. There is no Arc; once the flist is freed
-(`flist.c:2969-2971` via `pool_destroy`), all dirname strings owned by
+(`flist.c:2980-2982` via `pool_destroy`), all dirname strings owned by
 that flist are freed via the pool itself only if they were pool-allocated
 (in INC_RECURSE) - otherwise `lastdir` outlives the flist by design and is
 freed at process exit. The total dirname heap is **D unique strings, each
@@ -282,7 +282,7 @@ at 100 K - and is dropped after `FileListReader` finishes.
 
 ### A. Replace `PathBuf` with `Box<[u8]>` post-sort
 
-After `flist_sort_and_clean()` runs (`flist.c:3071-3084`,
+After `flist_sort_and_clean()` runs (`flist.c:3082-3095`,
 oc-rsync mirror in `crates/protocol/src/flist/sort.rs`), the path is
 immutable. `Box<[u8]>` is 16 B inline (data + len, no cap) vs PathBuf's
 24 B; `prepend_dir` and `strip_leading_slashes` would need a copying
@@ -349,7 +349,7 @@ saves the entire 16 B inline + 32 B heap:
 
 Pursue option **B (per-flist `Arc<[u8]>` arena with `(offset,len)`
 slices)** as part of #1050. The design choice is forced by the upstream
-parity goal (`compat.c:574-594` only supports a fixed set of `file_extras`
+parity goal (`compat.c:575-595` only supports a fixed set of `file_extras`
 slots; deviating from the pool layout has zero protocol benefit and high
 maintenance cost). Concretely:
 

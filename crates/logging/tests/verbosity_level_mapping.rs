@@ -575,7 +575,7 @@ fn progressive_filtering_deltasum_example() {
     assert_eq!(events5.len(), 4); // All deltasum levels
 }
 
-/// upstream: options.c:244-251 `debug_verbosity[]`, copied verbatim.
+/// upstream: options.c:245-252 `debug_verbosity[]`, copied verbatim.
 const UPSTREAM_DEBUG_VERBOSITY: [&str; 6] = [
     "",
     "",
@@ -585,7 +585,7 @@ const UPSTREAM_DEBUG_VERBOSITY: [&str; 6] = [
     "CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK",
 ];
 
-/// upstream: options.c:255-259 `info_verbosity[1+MAX_VERBOSITY]`, copied
+/// upstream: options.c:256-260 `info_verbosity[1+MAX_VERBOSITY]`, copied
 /// verbatim; the unlisted tail entries are NULL.
 const UPSTREAM_INFO_VERBOSITY: [&str; 6] = [
     "NONREG",
@@ -602,7 +602,7 @@ const UPSTREAM_INFO_VERBOSITY: [&str; 6] = [
 const OC_DEBUG_VERBOSITY_ADDITIONS: [&str; 6] =
     ["", "", "", "SECCOMP,LANDLOCK", "SECCOMP2,LANDLOCK2", ""];
 
-/// Replays upstream `set_output_verbosity()` (options.c:532-543): clamp the
+/// Replays upstream `set_output_verbosity()` (options.c:533-544): clamp the
 /// level to `MAX_VERBOSITY`, then apply every table row `0..=level` in order,
 /// each word overwriting the previous level of its flag. Each debug row is
 /// followed by its [`OC_DEBUG_VERBOSITY_ADDITIONS`] entry.

@@ -306,6 +306,6 @@ to 0 incremental ones.
   `crates/fast_io/src/io_uring/disk_batch.rs:23-246` - opcode
   probe and batching template for proposal 4.3.
 - Upstream: `flist.c:send_directory()`, `flist.c:make_file()`,
-  `flist.c:readlink_stat()`, `generator.c:617 quick_check_ok()`.
+  `flist.c:readlink_stat()`, `generator.c:654 quick_check_ok()`.
 - Linux man pages: `statx(2)`, `fstatat(2)`, `getdents64(2)`,
   `io_uring_enter(2)`, `io_uring_register(2)`.

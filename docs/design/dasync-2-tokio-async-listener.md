@@ -469,7 +469,7 @@ Source anchors:
 
 Upstream rsync 3.4.4 anchors:
 
-- `clientserver.c:752` - upstream `@ERROR: max connections` wire
+- `clientserver.c:756` - upstream `@ERROR: max connections` wire
   output that the async refusal preserves byte-for-byte.
 - `socket.c:537 start_accept_loop()` - upstream TCP accept loop that
   forks per connection; the async path replaces fork with

@@ -166,7 +166,7 @@ pub fn create_device_node_from_parts(
 ///
 /// Always `false` where `mknodat(2)` handles `S_IFSOCK` directly (Linux),
 /// matching the platform split the rest of this module already draws.
-// upstream: syscall.c:1508-1517 do_mknod_at() - the socket arm
+// upstream: syscall.c:1577-1586 do_mknod_at() - the socket arm
 #[must_use]
 #[cfg(all(
     unix,
@@ -185,7 +185,7 @@ pub fn socket_creation_unsupported(relative: &Path) -> bool {
 
 /// Reports whether a socket node named `relative` cannot be created on this
 /// platform. `mknodat(2)` materialises `S_IFSOCK` here, so nothing is refused.
-// upstream: syscall.c:1501 do_mknod_at() - mknodat handles every type on Linux
+// upstream: syscall.c:1570 do_mknod_at() - mknodat handles every type on Linux
 #[must_use]
 #[cfg(not(all(
     unix,
@@ -205,7 +205,7 @@ pub fn socket_creation_unsupported(_relative: &Path) -> bool {
 ///
 /// `destination` is the full name, matching upstream's `full_fname()`, which
 /// wraps the path in double quotes.
-/// upstream: generator.c:2516-2519 - rprintf(FWARNING, "skipping socket ...")
+/// upstream: generator.c:2559-2562 - rprintf(FWARNING, "skipping socket ...")
 #[must_use]
 pub fn format_skipped_socket_message(destination: &Path) -> String {
     format!(
@@ -220,7 +220,7 @@ pub fn format_skipped_socket_message(destination: &Path) -> String {
 /// beneath its confined parent, so neither a planted leaf symlink nor a
 /// swapped parent component can redirect the create. The caller has already
 /// removed any obstacle, as upstream's generator does before `do_mknod()`.
-// upstream: syscall.c:1415-1427 do_mknod_at() - the `am_root < 0` arm opens
+// upstream: syscall.c:1484-1496 do_mknod_at() - the `am_root < 0` arm opens
 // the leaf with openat(dfd, bname, O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW, 0600).
 fn create_fake_super_placeholder(
     destination: &Path,
@@ -577,7 +577,7 @@ fn create_fifo_parts_inner(
 /// The bind path is bounded by `sizeof(sun_path)` (104 bytes on Apple); an
 /// over-long path surfaces as an `ENAMETOOLONG` error rather than silently
 /// truncating, matching upstream's `strlcpy` length check.
-// upstream: syscall.c:1338-1361 do_mknod() - socket()+bind() fallback when mknod() fails
+// upstream: syscall.c:1407-1430 do_mknod() - socket()+bind() fallback when mknod() fails
 #[cfg(all(
     unix,
     any(
@@ -889,7 +889,7 @@ mod tests {
     // nested one is refused. Pinned on the platforms that HAVE the refusal,
     // so a regression that widens or narrows it is caught rather than merely
     // observed through a testsuite cell.
-    // upstream: syscall.c:1508-1517 do_mknod_at() - the socket arm
+    // upstream: syscall.c:1577-1586 do_mknod_at() - the socket arm
     #[cfg(all(
         unix,
         any(
@@ -908,7 +908,7 @@ mod tests {
 
     // `mknodat(2)` materialises S_IFSOCK where it is available, so nothing is
     // refused there and the caller must never skip.
-    // upstream: syscall.c:1501 do_mknod_at() - mknodat handles every type
+    // upstream: syscall.c:1570 do_mknod_at() - mknodat handles every type
     #[cfg(not(all(
         unix,
         any(
@@ -926,7 +926,7 @@ mod tests {
 
     // The wording is upstream's verbatim, including `full_fname()`'s quotes:
     // the testsuite cell greps stderr, so the text is part of the contract.
-    // upstream: generator.c:2516-2519
+    // upstream: generator.c:2559-2562
     #[test]
     fn the_skipped_socket_notice_matches_upstream_wording() {
         assert_eq!(
@@ -937,7 +937,7 @@ mod tests {
 
     // On Apple targets, `mknod(2)` with `S_IFSOCK` is unsupported, so a
     // socket destination must be materialised via socket()+bind()+chmod,
-    // mirroring upstream's socket()+bind() fallback (syscall.c:1338-1361).
+    // mirroring upstream's socket()+bind() fallback (syscall.c:1407-1430).
     // The result must be a real socket node carrying the requested mode, and
     // a stale entry at the destination must be replaced rather than error.
     #[cfg(all(
@@ -1215,7 +1215,7 @@ mod tests {
         let dest_meta = fs::symlink_metadata(&dest).expect("fifo metadata");
         assert!(dest_meta.file_type().is_fifo());
     }
-    // upstream: syscall.c:1415-1427 do_mknod_at() - the fake-super placeholder
+    // upstream: syscall.c:1484-1496 do_mknod_at() - the fake-super placeholder
     // is opened with O_NOFOLLOW, so a symlink planted at the leaf cannot
     // redirect the create into the file it names.
     #[cfg(unix)]

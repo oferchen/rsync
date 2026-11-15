@@ -67,7 +67,7 @@ pub(crate) struct ParsedConfigModules {
     bind_address: Option<(IpAddr, ConfigDirectiveOrigin)>,
     /// Process-wide daemon uid from the `daemon uid` global directive.
     ///
-    /// upstream: daemon-parm.txt:6 `daemon_uid`; clientserver.c:1509-1522
+    /// upstream: daemon-parm.txt:6 `daemon_uid`; clientserver.c:1519-1532
     /// `start_daemon()` applies `lp_daemon_uid()` per connection. Deviation from
     /// upstream: oc applies it once in the listener before the accept loop.
     /// Distinct from the P_LOCAL `uid` module default. The value is a username
@@ -75,7 +75,7 @@ pub(crate) struct ParsedConfigModules {
     daemon_uid: Option<(String, ConfigDirectiveOrigin)>,
     /// Process-wide daemon gid from the `daemon gid` global directive.
     ///
-    /// upstream: daemon-parm.txt:5 `daemon_gid`; clientserver.c:1496-1508
+    /// upstream: daemon-parm.txt:5 `daemon_gid`; clientserver.c:1506-1518
     /// `start_daemon()` applies `lp_daemon_gid()` per connection. Distinct
     /// from the P_LOCAL `gid` module default. The
     /// value is a groupname string or numeric gid resolved at runtime.

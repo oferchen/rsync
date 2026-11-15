@@ -37,7 +37,7 @@ const DEFAULT_BUFFER_LEN: usize = 128 * 1024;
 /// `offset - blength` once the backlog reaches `blength + CHUNK_SIZE`, while
 /// this scan flushes the whole backlog, so literal token boundaries can differ.
 ///
-/// upstream: rsync.h:158, match.c:372 `hash_search()`
+/// upstream: rsync.h:159, match.c:408 `hash_search()`
 const CHUNK_SIZE: usize = 32 * 1024;
 
 /// Minimum bytes per parallel stripe in [`DeltaGenerator::generate_chunked_counted`].
@@ -51,7 +51,7 @@ const MIN_PARALLEL_CHUNK_BYTES: usize = 1024 * 1024;
 /// Per-scan counters backing the `--debug=deltasum` per-file line and the
 /// sender's run totals.
 ///
-/// upstream: match.c:397-401 zeroes `false_alarms`/`hash_hits`/`matches` at the
+/// upstream: match.c:433-437 zeroes `false_alarms`/`hash_hits`/`matches` at the
 /// top of `match_sums()`; match.c:474-476 folds them into the run totals that
 /// `match_report()` prints. `hash_hits`/`false_alarms` are replayed from
 /// upstream's own hash table (see [`UpstreamHashTable`]) while they are
@@ -60,9 +60,9 @@ const MIN_PARALLEL_CHUNK_BYTES: usize = 1024 * 1024;
 pub struct ScanCounters {
     /// Confirmed block matches emitted as `Copy` tokens.
     pub matches: u64,
-    /// upstream: match.c:228 - offsets whose `hash_table` bucket was non-empty.
+    /// upstream: match.c:236 - offsets whose `hash_table` bucket was non-empty.
     pub hash_hits: u64,
-    /// upstream: match.c:271 - chain candidates the strong compare rejected.
+    /// upstream: match.c:284 - chain candidates the strong compare rejected.
     pub false_alarms: u64,
 }
 
@@ -146,7 +146,7 @@ fn short_final_block_len(index: &DeltaSignatureIndex, block_len: usize) -> Optio
 /// splits its gap literals at exactly this same cadence, so both paths frame
 /// literals identically by construction rather than by coincidence.
 ///
-/// upstream: match.c:372-373 (`backup >= s->blength+CHUNK_SIZE`).
+/// upstream: match.c:408-409 (`backup >= s->blength+CHUNK_SIZE`).
 #[inline]
 const fn literal_flush_cadence(block_len: usize) -> usize {
     block_len + CHUNK_SIZE
@@ -351,7 +351,7 @@ impl DeltaGenerator {
     /// Purely diagnostic: the scan itself never reads this value, so setting it
     /// cannot change a token, a counter, or a wire byte.
     ///
-    /// upstream: match.c:180-182, :199-202 print `len` from `map_file()`'s
+    /// upstream: match.c:182-184, :199-202 print `len` from `map_file()`'s
     /// known source length.
     #[must_use]
     pub const fn with_source_len(mut self, len: u64) -> Self {
@@ -391,7 +391,7 @@ impl DeltaGenerator {
     /// aligned offset (`SUMFLG_SAME_OFFSET`) and re-aligns zero runs
     /// (match.c:275-319).
     ///
-    /// upstream: match.c:235 (`if (updating_basis_file && s->sums[i].offset <
+    /// upstream: match.c:243 (`if (updating_basis_file && s->sums[i].offset <
     /// offset ...)`), sender.c:629-630 (`updating_basis_file = ... inplace ...`).
     #[must_use]
     pub fn with_updating_basis_file(mut self, updating: bool) -> Self {
@@ -435,7 +435,7 @@ impl DeltaGenerator {
     /// [`ScanCounters`] the caller needs for the `--debug=deltasum` per-file
     /// counter line and the sender's run totals.
     ///
-    /// upstream: match.c:397-401 (per-file counters), match.c:474-476 (run
+    /// upstream: match.c:433-437 (per-file counters), match.c:510-512 (run
     /// total accumulation).
     pub fn generate_counted<R: Read>(
         &self,
@@ -573,11 +573,17 @@ impl DeltaGenerator {
         // most likely first match. Probing the hint before the hash table
         // lookup skips the probe entirely when data is sequential.
         let mut want_i: Option<usize> = Some(0);
+        let mut same_offset = if self.updating_basis_file {
+            vec![false; index.block_count()]
+        } else {
+            Vec::new()
+        };
+        let mut consecutive_false_offsets = 0u32;
 
         let mut buffer_pos = 0usize;
         let mut buffer_len = 0usize;
 
-        // upstream: match.c:180-182 - the scan-start line, before the first
+        // upstream: match.c:182-184 - the scan-start line, before the first
         // window checksum. The level-3 companion (`s->blength`/`count`) waits
         // for that checksum, exactly as upstream orders them.
         if let Some(source_len) = self.source_len {
@@ -607,7 +613,7 @@ impl DeltaGenerator {
                 if emit_literals {
                     pending_literals.push(outgoing_byte);
 
-                    // upstream: match.c:372-373 - flush early to bound memory growth
+                    // upstream: match.c:408-409 - flush early to bound memory growth
                     if pending_literals.len() >= literal_flush_cadence(block_len) {
                         literal_bytes += pending_literals.len() as u64;
                         total_bytes += pending_literals.len() as u64;
@@ -628,7 +634,7 @@ impl DeltaGenerator {
 
             if first_window {
                 first_window = false;
-                // upstream: match.c:192-193 then :199-202 - the initial window
+                // upstream: match.c:194-195 then :199-202 - the initial window
                 // checksum, then the scan parameters, in that order.
                 trace_deltasum::trace_initial_sum(digest.value(), window.len());
                 if let Some(source_len) = self.source_len {
@@ -640,27 +646,94 @@ impl DeltaGenerator {
                 }
             }
 
-            // upstream: match.c:210-213
+            // upstream: match.c:214-217
             trace_deltasum::trace_scan_offset(offset, digest.sum2(), digest.sum1());
 
-            // upstream: match.c:321-334 - probe the want_i hint first; it picks the
+            // upstream: match.c:336-349 - probe the want_i hint first; it picks the
             // same block `check_want_i` would prefer.
             let (first, second) = window.as_slices();
             if let Some(replay) = replay.as_mut() {
                 replay.probe_window(index, digest, offset, first, second);
             }
-            let matched = match want_i {
-                Some(hint) if index.check_block_match_slices(hint, digest, first, second) => {
-                    Some(hint)
-                }
-                _ => index.find_match_slices(digest, first, second),
+            let inplace_ok = |idx: usize| -> bool {
+                !self.updating_basis_file
+                    || (index.block(idx).index() * block_len as u64) >= offset
+                    || same_offset.get(idx).copied().unwrap_or(false)
             };
-            // upstream: match.c:235 - under --inplace, drop any candidate whose
-            // basis offset precedes the write cursor (fall back to literal).
-            let matched =
-                matched.filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
+            let (matched, had_weak_candidate) = match want_i {
+                Some(hint)
+                    if inplace_ok(hint)
+                        && index.check_block_match_slices(hint, digest, first, second) =>
+                {
+                    (Some(hint), true)
+                }
+                _ => index.find_match_slices_with(digest, first, second, inplace_ok),
+            };
+            if matched.is_some() || !had_weak_candidate {
+                consecutive_false_offsets = 0;
+            } else {
+                consecutive_false_offsets += 1;
+                if consecutive_false_offsets >= 4 && block_len > 1 {
+                    // upstream 3.5.2 CVE-2026-119741: bound strong-checksum work
+                    // on consecutive weak-checksum collisions by skipping
+                    // `block_len - 1` bytes as literals.
+                    let (w1, w2) = window.as_slices();
+                    let last_byte = if !w2.is_empty() {
+                        w2[w2.len() - 1]
+                    } else {
+                        w1[w1.len() - 1]
+                    };
+                    if emit_literals {
+                        let skip1 = if w2.is_empty() {
+                            w1.len() - 1
+                        } else {
+                            w1.len()
+                        };
+                        pending_literals.extend_from_slice(&w1[..skip1]);
+                        if !w2.is_empty() {
+                            pending_literals.extend_from_slice(&w2[..w2.len() - 1]);
+                        }
+                        if pending_literals.len() >= literal_flush_cadence(block_len) {
+                            literal_bytes += pending_literals.len() as u64;
+                            total_bytes += pending_literals.len() as u64;
+                            let filled = std::mem::replace(
+                                &mut pending_literals,
+                                Vec::with_capacity(block_len),
+                            );
+                            tokens.push(DeltaToken::Literal(filled.into()));
+                        }
+                    }
+                    window.clear();
+                    window.push_back(last_byte);
+                    let need = block_len - 2;
+                    let mut filled = 0usize;
+                    while filled < need {
+                        if buffer_pos == buffer_len {
+                            buffer_len = reader.read(buffer)?;
+                            buffer_pos = 0;
+                            if buffer_len == 0 {
+                                break;
+                            }
+                        }
+                        let take = (buffer_len - buffer_pos).min(need - filled);
+                        window.extend_from_slice(&buffer[buffer_pos..buffer_pos + take]);
+                        filled += take;
+                        buffer_pos += take;
+                    }
+                    rolling.reset();
+                    let (s1, s2) = window.as_slices();
+                    rolling.update(s1);
+                    if !s2.is_empty() {
+                        rolling.update(s2);
+                    }
+                    offset += (block_len - 1) as u64;
+                    consecutive_false_offsets = 3;
+                    continue;
+                }
+            }
             if let Some(mut match_idx) = matched {
-                // upstream: match.c:336-344 - emit the match and advance one block.
+                consecutive_false_offsets = 0;
+                // upstream: match.c:351-361 - emit the match and advance one block.
                 // After each match, refill the window in bulk and compute the
                 // rolling checksum via SIMD-accelerated update() instead of
                 // block_len individual push_back()+update_byte() calls. Chained
@@ -676,11 +749,16 @@ impl DeltaGenerator {
                 let mut run_len: usize = 0;
                 loop {
                     matches += 1;
+                    if !same_offset.is_empty()
+                        && index.block(match_idx).index() * block_len as u64 == offset
+                    {
+                        same_offset[match_idx] = true;
+                    }
                     if let Some(replay) = replay.as_mut() {
                         replay.mark_same_offset(match_idx, offset);
                     }
 
-                    // upstream: match.c:258-262
+                    // upstream: match.c:271-275
                     trace_deltasum::trace_potential_match(
                         offset,
                         match_idx as u64,
@@ -754,7 +832,7 @@ impl DeltaGenerator {
                     rolling.reset();
                     offset += block_len as u64;
 
-                    // upstream: match.c:338-342 - recomputes checksum from scratch
+                    // upstream: match.c:353-357 - recomputes checksum from scratch
                     // over the next window via get_checksum1() (SIMD-accelerated).
                     let mut filled = 0usize;
                     while filled < block_len {
@@ -782,7 +860,7 @@ impl DeltaGenerator {
                         rolling.update(s2);
                     }
 
-                    // upstream: match.c:321-334 - try the want_i hint at the next
+                    // upstream: match.c:336-349 - try the want_i hint at the next
                     // block boundary before falling back to a hash probe.
                     // The probe uses the index's recorded
                     // [`DeltaSignatureIndex::next_match`] link so a stored
@@ -793,14 +871,19 @@ impl DeltaGenerator {
                     if let Some(replay) = replay.as_mut() {
                         replay.probe_window(index, adj_digest, offset, f, s);
                     }
+                    let adj_inplace_ok = |idx: usize| -> bool {
+                        !self.updating_basis_file
+                            || (index.block(idx).index() * block_len as u64) >= offset
+                            || same_offset.get(idx).copied().unwrap_or(false)
+                    };
                     let adj_match = index
                         .try_next_match_slices(last_matched, adj_digest, f, s)
-                        .or_else(|| index.find_match_slices(adj_digest, f, s));
-                    // upstream: match.c:235 - `offset` has advanced by one block
-                    // above, so re-apply the in-place guard to the adjacent
-                    // candidate before extending the run.
-                    let adj_match = adj_match
-                        .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
+                        .filter(|&idx| adj_inplace_ok(idx))
+                        .or_else(|| {
+                            index
+                                .find_match_slices_with(adj_digest, f, s, adj_inplace_ok)
+                                .0
+                        });
                     if let Some(next_idx) = adj_match {
                         match_idx = next_idx;
                     } else {
@@ -858,13 +941,13 @@ impl DeltaGenerator {
                 let digest = RollingDigest::from_bytes(tail);
                 index
                     .find_tail_match(digest, tail, &[])
-                    // upstream: match.c:235 - the in-place guard applies
+                    // upstream: match.c:243 - the in-place guard applies
                     // to the tail candidate like any other.
                     .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset))
             };
             if let Some(tail_idx) = tail_hit {
                 matches += 1;
-                // upstream: match.c:258-262 then :133-138 - the short
+                // upstream: match.c:271-275 then :133-138 - the short
                 // final block is matched and emitted like any other,
                 // just with its own shorter length.
                 trace_deltasum::trace_potential_match(
@@ -928,8 +1011,8 @@ impl DeltaGenerator {
             }
         }
 
-        // upstream: match.c:442-443. The per-file counter line is NOT emitted
-        // here: upstream prints it at match.c:469-472, AFTER `sending file_sum`
+        // upstream: match.c:478-479. The per-file counter line is NOT emitted
+        // here: upstream prints it at match.c:505-508, AFTER `sending file_sum`
         // and the checksum trailer (match.c:465-466). The counters therefore
         // travel out through `ScanCounters` and the caller that writes that
         // trailer emits the line, which is what keeps the three lines in
@@ -998,8 +1081,14 @@ impl DeltaGenerator {
             .then(|| UpstreamHashTable::new(index, self.updating_basis_file));
         let mut matches = 0u64;
         let mut last_match = 0u64;
+        let mut consecutive_false_offsets = 0u32;
+        let mut same_offset = if self.updating_basis_file {
+            vec![false; index.block_count()]
+        } else {
+            Vec::new()
+        };
 
-        // upstream: match.c:180-182
+        // upstream: match.c:182-184
         if let Some(source_len) = self.source_len {
             trace_deltasum::trace_hash_search_start(block_len, source_len);
             trace_deltasum::trace_hash_search_params(
@@ -1051,21 +1140,76 @@ impl DeltaGenerator {
             }
 
             let digest = rolling.digest();
-            // upstream: match.c:210-213
+            // upstream: match.c:214-217
             trace_deltasum::trace_scan_offset(offset, digest.sum2(), digest.sum1());
             let (first, second) = window.as_slices();
-            // upstream: match.c:235 - under --inplace, suppress a candidate whose
+            // upstream: match.c:243 - under --inplace, suppress a candidate whose
             // basis offset precedes the write cursor so it demotes to a literal.
             if let Some(replay) = replay.as_mut() {
                 replay.probe_window(index, digest, offset, first, second);
             }
-            let matched = index
-                .find_match_slices(digest, first, second)
-                .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
+            let inplace_ok = |idx: usize| -> bool {
+                !self.updating_basis_file
+                    || (index.block(idx).index() * block_len as u64) >= offset
+                    || same_offset.get(idx).copied().unwrap_or(false)
+            };
+            let (matched, had_weak_candidate) =
+                index.find_match_slices_with(digest, first, second, inplace_ok);
 
             let Some(mut match_idx) = matched else {
+                if !had_weak_candidate {
+                    consecutive_false_offsets = 0;
+                } else {
+                    consecutive_false_offsets += 1;
+                    if consecutive_false_offsets >= 4 && block_len > 1 {
+                        let (w1, w2) = window.as_slices();
+                        let last_byte = if !w2.is_empty() {
+                            w2[w2.len() - 1]
+                        } else {
+                            w1[w1.len() - 1]
+                        };
+                        let skip1 = if w2.is_empty() {
+                            w1.len() - 1
+                        } else {
+                            w1.len()
+                        };
+                        pending_literals.extend_from_slice(&w1[..skip1]);
+                        if !w2.is_empty() {
+                            pending_literals.extend_from_slice(&w2[..w2.len() - 1]);
+                        }
+                        if pending_literals.len() >= literal_flush_cadence(block_len) {
+                            flush_pending!();
+                        }
+                        window.clear();
+                        window.push_back(last_byte);
+                        let need = block_len - 2;
+                        let mut filled = 0usize;
+                        while filled < need {
+                            if buffer_pos == buffer_len {
+                                buffer_len = reader.read(buffer)?;
+                                buffer_pos = 0;
+                                if buffer_len == 0 {
+                                    break;
+                                }
+                            }
+                            let take = (buffer_len - buffer_pos).min(need - filled);
+                            window.extend_from_slice(&buffer[buffer_pos..buffer_pos + take]);
+                            filled += take;
+                            buffer_pos += take;
+                        }
+                        rolling.reset();
+                        let (s1, s2) = window.as_slices();
+                        rolling.update(s1);
+                        if !s2.is_empty() {
+                            rolling.update(s2);
+                        }
+                        offset += (block_len - 1) as u64;
+                        consecutive_false_offsets = 3;
+                    }
+                }
                 continue;
             };
+            consecutive_false_offsets = 0;
 
             // A run begins: flush any literals accumulated before it.
             flush_pending!();
@@ -1091,10 +1235,15 @@ impl DeltaGenerator {
                     lone_src.extend_from_slice(s2);
                 }
                 matches += 1;
+                if !same_offset.is_empty()
+                    && index.block(match_idx).index() * block_len as u64 == offset
+                {
+                    same_offset[match_idx] = true;
+                }
                 if let Some(replay) = replay.as_mut() {
                     replay.mark_same_offset(match_idx, offset);
                 }
-                // upstream: match.c:258-262 then :133-138
+                // upstream: match.c:271-275 then :133-138
                 trace_deltasum::trace_potential_match(
                     offset,
                     match_idx as u64,
@@ -1191,7 +1340,7 @@ impl DeltaGenerator {
         }
         flush_pending!();
 
-        // upstream: match.c:442-443. As in `scan`, the counter
+        // upstream: match.c:478-479. As in `scan`, the counter
         // line belongs to the caller that writes the checksum trailer.
         trace_deltasum::trace_done_hash_search();
 
@@ -1320,7 +1469,7 @@ impl DeltaGenerator {
     /// locking. Only a stripe that runs to `source.len()` sees the file's real
     /// EOF, so only it may claim the basis's short final block; a stripe that
     /// stops at a boundary would otherwise place that block mid-file, where
-    /// upstream's `MIN((OFF_T)s->blength, len-offset)` test (`match.c:254-256`) never
+    /// upstream's `MIN((OFF_T)s->blength, len-offset)` test (`match.c:270-270`) never
     /// admits it.
     fn scan_ranges_and_merge<'a>(
         &self,

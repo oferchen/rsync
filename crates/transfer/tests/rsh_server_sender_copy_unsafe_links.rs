@@ -2,14 +2,14 @@
 //!
 //! On a pull the remote side builds the file list, so it is the side that
 //! decides whether an unsafe symlink travels as a link or as its referent.
-//! upstream: options.c:3075-3076 forwards `--copy-unsafe-links` to the server,
+//! upstream: options.c:3143-3144 forwards `--copy-unsafe-links` to the server,
 //! and flist.c:492 (`readlink_stat()`) makes that server dereference every
 //! symlink whose target is absolute or climbs out with `..`. A server that
 //! drops the flag delivers those links verbatim with exit 0, so a client that
 //! asked for an escape-free copy silently receives links pointing outside the
 //! transferred tree.
 //!
-//! A dangling unsafe link cannot be dereferenced. upstream: flist.c:1676-1681
+//! A dangling unsafe link cannot be dereferenced. upstream: flist.c:1680-1685
 //! reports it as `symlink has no referent` under FERROR_XFER and sets
 //! IOERR_GENERAL, so the run exits 23 rather than treating it as a vanished
 //! file (24).

@@ -151,7 +151,7 @@ impl Drop for TestDir {
 
 /// Writes a destination file that rsync must treat as genuinely out of date.
 ///
-/// upstream: generator.c:624-647 `quick_check_ok()` compares size and then
+/// upstream: generator.c:661-684 `quick_check_ok()` compares size and then
 /// mtime at whole-second granularity. A fixture that writes both sides in the
 /// same second with equal-length payloads therefore describes a file rsync
 /// legitimately skips, whatever the contents are. Backdating the destination

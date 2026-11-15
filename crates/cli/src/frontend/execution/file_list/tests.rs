@@ -145,7 +145,7 @@ fn read_file_list_zero_terminated_no_trailing_null() {
 
 #[test]
 fn read_file_list_zero_terminated_strips_hash_and_semicolon_comments() {
-    // upstream: flist.c:2753 sets RL_DUMP_COMMENTS independent of eol_nulls,
+    // upstream: flist.c:2764 sets RL_DUMP_COMMENTS independent of eol_nulls,
     // and io.c:1446 read_line() strips leading '#'/';' comment lines even with
     // NUL delimiters. Comment entries are dropped; normal entries are kept.
     let input = b"#comment\0keep.txt\0;also-comment\0other.txt\0";
@@ -595,7 +595,7 @@ fn resolve_files_from_daemon_module_spec_is_local() {
 
 #[test]
 fn resolve_files_from_remote_stdin_marker_falls_through() {
-    // upstream `options.c:2635-2639` aborts on `host:-`; we route through
+    // upstream `options.c:2690-2694` aborts on `host:-`; we route through
     // LocalFile so the downstream loader returns a clear error rather
     // than silently routing the literal `-` to the remote side.
     let files = vec![OsString::from("host:-")];

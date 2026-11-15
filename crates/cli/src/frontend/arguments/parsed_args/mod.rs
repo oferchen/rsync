@@ -74,7 +74,7 @@ pub struct ParsedArgs {
     /// The client's own option set when a local transfer applied `-M` values
     /// to its receiver half; `self` is then the receiver's.
     ///
-    /// upstream: pipe.c:143-148 local_child() re-runs parse_arguments() over
+    /// upstream: pipe.c:144-149 local_child() re-runs parse_arguments() over
     /// the `-M` values in the forked receiver only.
     pub local_sender: Option<Box<ParsedArgs>>,
 
@@ -88,7 +88,7 @@ pub struct ParsedArgs {
     ///
     /// Encodes the `old_style_args` level: `None` when unset, `Some(0)` for an
     /// explicit `--no-old-args`, and `Some(1)`/`Some(2)` for the counted
-    /// `--old-args` (doubled reaches level 2). upstream: options.c:1755-1760.
+    /// `--old-args` (doubled reaches level 2). upstream: options.c:1791-1796.
     pub old_args: Option<u8>,
 
     /// `--ipv4`, `-4` / `--ipv6`, `-6` - address family preference.
@@ -283,7 +283,7 @@ pub struct ParsedArgs {
     /// (clap `overrides_with` mirrors upstream's last-wins popt semantics). The
     /// deprecated spelling is forwarded verbatim on the wire.
     ///
-    /// upstream: options.c:744, 3163-3166.
+    /// upstream: options.c:745, 3163-3166.
     pub remove_sent_files: bool,
 
     /// `--trust-sender` - trust the sending side's file list.
@@ -397,13 +397,13 @@ pub struct ParsedArgs {
 
     /// `--insecure-links` / `--no-insecure-links` - drop the ownership check on
     /// operator-supplied path symlinks. Local-only: it is never forwarded to a
-    /// peer (upstream options.c:3078) and a daemon hard-refuses it
+    /// peer (upstream options.c:3146) and a daemon hard-refuses it
     /// (options.c:1084).
     pub insecure_links: bool,
 
     /// `--confine-root=DIR` - confine every operator- and peer-supplied path
     /// beneath DIR. Validated absolute at parse time
-    /// (upstream options.c:2396-2398).
+    /// (upstream options.c:2451-2453).
     pub confine_root: Option<PathBuf>,
 
     /// `--devices` / `--no-devices` - preserve device files.
@@ -414,7 +414,7 @@ pub struct ParsedArgs {
 
     /// `--drop-D` / `--no-drop-D` - receiver refuses to CREATE devices and
     /// special files. Orthogonal to `devices`/`specials`, which frame the file
-    /// list's rdev fields (upstream options.c:688-689, generator.c:2026-2033).
+    /// list's rdev fields (upstream options.c:689-690, generator.c:2067-2074).
     pub drop_devices: bool,
 
     /// `--copy-devices` - copy device file contents as regular files.
@@ -587,6 +587,11 @@ pub struct ParsedArgs {
 
     /// `--delay-updates` - use temp files and rename after all transfers complete.
     pub delay_updates: bool,
+    /// Whether `--delay-symlinks` was specified.
+    pub delay_symlinks: bool,
+
+    /// `--nice` / `--no-nice` - process CPU and I/O priority settings.
+    pub niceness: core::niceness::PriorityOptions,
 
     /// `--temp-dir`, `-T` - directory for temporary files during transfer.
     pub temp_dir: Option<PathBuf>,

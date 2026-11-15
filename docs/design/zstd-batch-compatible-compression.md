@@ -71,7 +71,7 @@ three preconditions the batch file does not guarantee:
    breaks any compressed token that back-references basis bytes.
 
 Upstream rsync sidesteps the problem by forcing `compress_choice =
-"zlib"` in `compat.c:413-414` and falling back to CPRES_ZLIBX (no
+"zlib"` in `compat.c:414-415` and falling back to CPRES_ZLIBX (no
 dictionary) when batching. Our #1684 guard surfaces the protocol-28
 case where codec negotiation does not exist: at proto 28,
 `do_compression` means CPRES_ZLIB unconditionally, the dictionary
@@ -237,7 +237,7 @@ restricting all changes to:
 ### Interop with upstream batch files
 
 Upstream write-batch with `--compress` always emits zlib
-(compat.c:413-414). Our reader keeps recognizing that format unchanged
+(compat.c:414-415). Our reader keeps recognizing that format unchanged
 (the new flag bit is unset on upstream-produced files). A batch file
 written by `oc-rsync --write-batch --compress` is NOT readable by
 upstream `rsync --read-batch`. Acceptable because:
@@ -421,7 +421,7 @@ where independent.
   `lz4_flex` crates are already workspace dependencies. No new
   Cargo.toml entry.
 - **Replaying upstream-produced zstd batch files.** Upstream forces
-  zlib for write-batch (compat.c:413-414), so these do not exist in
+  zlib for write-batch (compat.c:414-415), so these do not exist in
   practice. The existing zstd auto-detect (replay.rs:1005-1112) is
   defensive against patched upstream binaries and stays. The new
   codec uses `ZSTD_e_end` per token; the auto-detected one uses
@@ -456,8 +456,8 @@ where independent.
 
 ### Upstream rsync 3.4.1
 
-- `compat.c:413-414` - `--write-batch` forces zlib.
-- `compat.c:194-195` - batch read defaults to CPRES_ZLIB.
+- `compat.c:414-415` - `--write-batch` forces zlib.
+- `compat.c:195-196` - batch read defaults to CPRES_ZLIB.
 - `token.c:357-485` - `send_deflated_token`.
 - `token.c:500-630` - `recv_deflated_token`.
 - `token.c:631-670` - `see_deflate_token` (the dictionary feeder

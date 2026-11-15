@@ -210,9 +210,9 @@ after* the `file_struct` header in the same allocation. Optional
 extras (atime/crtime/hardlink/checksum/length-high/mtime-nsec) are
 **prepended** to the header inside the same allocation and addressed
 via negative indexing (`OPT_EXTRA(f, bump)` and
-`REQ_EXTRA(f, ndx)` in `rsync.h:837-848`).
+`REQ_EXTRA(f, ndx)` in `rsync.h:853-864`).
 
-`compat.c:572-594` shows how the per-flist `file_extra_cnt` is set
+`compat.c:573-595` shows how the per-flist `file_extra_cnt` is set
 once at handshake based on which transfer options are active:
 
 ```c
@@ -227,7 +227,7 @@ if (preserve_xattrs)  xattrs_ndx   = ++file_extra_cnt;                 /* 1 slot
 ```
 
 The `dirname` field is a `const char *` shared via the `lastdir`
-cache (`flist.c:697,1421-1442`): when the parsed dir matches the
+cache (`flist.c:701,1421-1442`): when the parsed dir matches the
 previous entry's dir, the same heap pointer is reused. Otherwise a
 single `new_array(char, len + 1)` copy is made (also out of the pool).
 
@@ -276,7 +276,7 @@ metadata (jemalloc bins effectively 0 inline but pays in slab
 padding). 100 K entries -> 100 K calls into `malloc`/`free`.
 
 Upstream's basename lives inside the pool extent immediately after
-the `file_struct` header (`flist.c:1027`, flexible-array tail).
+the `file_struct` header (`flist.c:1031`, flexible-array tail).
 Allocator cost is ~0; basename storage is exactly `basename_len` (no
 size-class rounding) and is freed in O(1) per extent via
 `pool_destroy()`.
@@ -312,7 +312,7 @@ each `ArcInner<Path>` is 32 B with 16 B `ArcInner` header storing
 
 Upstream's `dirname` is a `const char *` with no refcount, shared via
 `lastdir`. Reuse is detected by string comparison on the most-recent
-entry only (`flist.c:697,1421-1442`); when reuse hits, **no copy and
+entry only (`flist.c:701,1421-1442`); when reuse hits, **no copy and
 no allocation** happens. Free is `pool_destroy()`, not per-entry.
 
 The amortised per-entry memory cost of `dirname` is small. The cost
@@ -369,7 +369,7 @@ that RSS-4/5 should design against is the *allocation count* and the
 7. Pool allocation contract read from
    `target/interop/upstream-src/rsync-3.4.1/flist.c:1018-1027`
    (single `pool_alloc()` per entry with header + basename + extras +
-   linkname contiguous) and `flist.c:697,1421-1442` (`lastdir`
+   linkname contiguous) and `flist.c:701,1421-1442` (`lastdir`
    cache).
 8. Empirical RSS gap cross-referenced against
    `docs/benchmarks/flist-memory-baseline-2026-05-01.md` (Mode-B

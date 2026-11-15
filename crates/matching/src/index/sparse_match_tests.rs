@@ -41,7 +41,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.1/match.c:229-273` -
+//! - `target/interop/upstream-src/rsync-3.5.2/match.c:237-288` -
 //!   `hash_search()` two-stage gate (rolling sum then strong sum).
 //! - zsync `librcksum/rsum.c:362-366` - the bithash probe expression
 //!   that this fixture pins.

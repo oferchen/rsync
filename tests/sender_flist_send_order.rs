@@ -184,7 +184,7 @@ fn file_lists(stream: &SenderStream, inc_recurse: bool) -> (usize, Vec<Vec<FileE
         .with_preserve_links(true)
         .with_preserve_hard_links(true);
     let mut cur = Cursor::new(stream.data.as_slice());
-    // upstream: flist.c:2777 - an incremental list numbers from 1.
+    // upstream: flist.c:2788 - an incremental list numbers from 1.
     let mut ndx_start = i32::from(inc_recurse);
     let mut lists = vec![read_list(&mut reader, &mut cur, ndx_start).expect("initial list")];
     if inc_recurse {
@@ -195,7 +195,7 @@ fn file_lists(stream: &SenderStream, inc_recurse: bool) -> (usize, Vec<Vec<FileE
                 break;
             }
             assert!(ndx <= NDX_FLIST_OFFSET, "a sub-list header, got NDX {ndx}");
-            // upstream: flist.c:3511 - each sub-list opens one past the last.
+            // upstream: flist.c:3522 - each sub-list opens one past the last.
             ndx_start += lists.last().map_or(0, Vec::len) as i32 + 1;
             lists.push(read_list(&mut reader, &mut cur, ndx_start).expect("sub-list"));
         }

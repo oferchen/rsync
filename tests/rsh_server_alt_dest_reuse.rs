@@ -1,6 +1,6 @@
 //! An rsh `--server` receiver must reuse an up-to-date alt-dest file.
 //!
-//! upstream: generator.c:1073 `try_dests_reg()` - when a missing destination
+//! upstream: generator.c:1110 `try_dests_reg()` - when a missing destination
 //! has a match in a `--compare-dest` / `--copy-dest` / `--link-dest`
 //! directory that passes the quick check and has unchanged attributes
 //! (match level 3), compare-dest skips the file, link-dest hard-links it and

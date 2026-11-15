@@ -94,7 +94,7 @@ impl WireTotals {
 
     /// Records whether the generator itemizes entries that did not change.
     ///
-    /// upstream: generator.c:587-588 `itemize()` sends an NDX and iflags for
+    /// upstream: generator.c:624-625 `itemize()` sends an NDX and iflags for
     /// an unchanged entry when `INFO_GTE(NAME, 2)` (`-vv`) or
     /// `stdout_format_has_i > 1` (`-ii`).
     #[must_use]
@@ -319,7 +319,7 @@ impl WireTally {
             dry_run,
             deleted: 0,
             delete_mode: options.delete_extraneous(),
-            // upstream: generator.c:127 EARLY_DELETE_DONE_MSG() is false for
+            // upstream: generator.c:158 EARLY_DELETE_DONE_MSG() is false for
             // `--delete-after` and `--delete-delay` (delete_during == 2).
             late_delete: options.delete_after_enabled() || options.delete_delay_enabled(),
             encoder: token_encoder(options, totals.protocol()),
@@ -378,7 +378,7 @@ impl WireTally {
 
     /// Records a deletion the generator reports to the client.
     ///
-    /// upstream: log.c:913-916 `log_delete()` - a server half sends every
+    /// upstream: log.c:998-1001 `log_delete()` - a server half sends every
     /// deleted name as `MSG_DELETED`, a directory with its trailing NUL.
     pub(crate) fn deleted(&mut self, relative: &Path, is_dir: bool) {
         let name = relative.as_os_str().as_encoded_bytes().len() as u64;
@@ -578,11 +578,11 @@ impl WireTally {
         request: bool,
     ) {
         codec.write_ndx(out, ndx).expect("counting never fails");
-        // upstream: rsync.c:384 / sender.c:476 - write_shortint(iflags).
+        // upstream: rsync.c:384 / sender.c:484 - write_shortint(iflags).
         if self.totals.protocol().as_u8() >= 29 {
             out.0 += 2;
         }
-        // upstream: generator.c:598-605 and sender.c:482-484 - with
+        // upstream: generator.c:635-642 and sender.c:490-492 - with
         // ITEM_REPORT_XATTR each side follows the iflags with its xattr
         // block, unless nothing is transferred (do_xfers).
         if !self.dry_run
@@ -598,7 +598,7 @@ impl WireTally {
         }
         head.write(out).expect("counting never fails");
         if request {
-            // upstream: generator.c:793-806 - each block's rolling sum (4)
+            // upstream: generator.c:830-843 - each block's rolling sum (4)
             // and its `s2length`-byte strong sum.
             out.0 += u64::from(head.count()) * (4 + u64::from(head.s2length()));
         } else {
@@ -617,7 +617,7 @@ impl WireTally {
                 .with_preserve_atimes(self.preserve_atimes)
                 .with_preserve_crtimes(self.preserve_crtimes)
                 .with_preserve_xattrs(self.preserve_xattrs)
-                // upstream: flist.c:789-790,799-800 - inline owner names ride in
+                // upstream: flist.c:793-794,799-800 - inline owner names ride in
                 // the entries only under incremental recursion.
                 .with_name_follows(self.totals.inc_recurse() && !self.numeric_ids);
         match self.flist_sum_len {
@@ -646,7 +646,7 @@ impl WireTally {
     /// Encodes the file list as incremental lists and plans which lists
     /// travel in which protocol round.
     ///
-    /// upstream: flist.c:3082-3101 - the initial list goes out with
+    /// upstream: flist.c:3093-3112 - the initial list goes out with
     /// `NDX_FLIST_EOF` when it has no directories to expand; a one-entry
     /// initial list is followed by sub-lists until one adds an entry
     /// (`send_extra_file_list(f, 1)`); `main.c:1398` flushes; the rest go out
@@ -709,7 +709,7 @@ impl WireTally {
     /// Writes one incremental list's members in wire order, then its end
     /// marker.
     ///
-    /// upstream: flist.c:789-800 - an inline owner name follows only an entry
+    /// upstream: flist.c:793-804 - an inline owner name follows only an entry
     /// whose uid or gid differs from the previous entry's (no `XMIT_SAME_UID`
     /// or `XMIT_SAME_GID`), so names are looked up for the list's first entry
     /// and wherever an id changes; the writer still decides each flag.
@@ -767,7 +767,7 @@ impl WireTally {
 
     /// Encodes the file list as one flat list followed by the id lists.
     ///
-    /// upstream: flist.c:send_file_list() then flist.c:3063 `send_id_lists()`
+    /// upstream: flist.c:send_file_list() then flist.c:3074 `send_id_lists()`
     /// when `numeric_ids <= 0 && !inc_recurse`.
     fn flat_layout(
         &self,

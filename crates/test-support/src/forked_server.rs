@@ -1,6 +1,6 @@
 //! A server a test drives, run as a process of its own, as upstream's is.
 //!
-//! upstream: main.c:1954 `daemon_main()` runs the daemon as its own process and
+//! upstream: main.c:1958 `daemon_main()` runs the daemon as its own process and
 //! socket.c:761 `start_accept_loop()` forks every session from it, so a client
 //! is always another process and closing its socket delivers FIN.
 //!

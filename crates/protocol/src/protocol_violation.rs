@@ -50,7 +50,7 @@ impl ProtocolViolation {
 
 impl fmt::Display for ProtocolViolation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // upstream: log.c:83 rerr_names - the name log_exit() prints for 2.
+        // upstream: log.c:90 rerr_names - the name log_exit() prints for 2.
         f.write_str(self.cause_line().unwrap_or("protocol incompatibility"))
     }
 }

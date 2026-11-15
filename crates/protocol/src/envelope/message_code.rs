@@ -54,7 +54,7 @@ pub enum MessageCode {
     #[doc(alias = "MSG_BLOCK_STATS")]
     /// Receiver's count of distinct 4 KiB logical blocks written, destined for
     /// the sender (protocol >= 33). The payload is an 8-byte little-endian
-    /// `int64`. upstream: rsync.h:302, main.c:1112-1117, io.c:1721-1732.
+    /// `int64`. upstream: rsync.h:303, main.c:1112-1117, io.c:1728-1739.
     BlockStats = 11,
     #[doc(alias = "MSG_IO_ERROR")]
     /// Sender encountered an I/O error while accessing the source tree.
@@ -105,7 +105,7 @@ impl ParseMessageCodeError {
 impl MessageCode {
     /// Alias constant for the upstream `MSG_FLUSH` name, equal to [`MessageCode::Info`].
     ///
-    /// Upstream `MSG_FLUSH` (`rsync.h:228`) is not a message tag: it is an
+    /// Upstream `MSG_FLUSH` (`rsync.h:229`) is not a message tag: it is an
     /// `io_flush()` flush type ("flush iobuf.msg only", `io.c:2366`) that sits
     /// beside `FULL_FLUSH` and `NORMAL_FLUSH` and happens to equal 2. The alias
     /// only lets callers parse or name that value; it never appears as a tag.
@@ -150,7 +150,7 @@ impl MessageCode {
     ///
     /// The variants are arranged by their numeric value so that callers can
     /// iterate deterministically when constructing golden multiplexed streams
-    /// or exhaustively testing round-trips (upstream: `rsync.h:293-310`
+    /// or exhaustively testing round-trips (upstream: `rsync.h:294-311`
     /// `enum msgcode`).
     pub const ALL: [MessageCode; 19] = [
         MessageCode::Data,
@@ -232,7 +232,7 @@ impl MessageCode {
     /// `ErrorSocket`, `ErrorUtf8`, and `ErrorExit`. Useful for counting remote
     /// errors received through the multiplex channel.
     ///
-    /// upstream: `rsync.h:282-310` - the `FERROR*` values of `enum logcode`
+    /// upstream: `rsync.h:283-311` - the `FERROR*` values of `enum logcode`
     /// reuse the same numbers in `enum msgcode`.
     #[inline]
     #[must_use]
@@ -402,7 +402,7 @@ mod tests {
         assert_eq!(MessageCode::all().len(), 19);
     }
 
-    /// WHY: tag 11 is upstream's `MSG_BLOCK_STATS` (rsync.h:302); a different
+    /// WHY: tag 11 is upstream's `MSG_BLOCK_STATS` (rsync.h:303); a different
     /// number would put the protocol-33 block count on a tag the peer rejects.
     #[test]
     fn block_stats_is_tag_11() {

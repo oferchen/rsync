@@ -1664,7 +1664,7 @@ fn read_dir_via_sandbox_anchors_a_multi_component_path() {
     assert_eq!(names[0], OsStr::new("leaf"));
 }
 
-// upstream: syscall.c:3858-3871 held_dfd_for - a nested directory is opened
+// upstream: syscall.c:3926-3939 held_dfd_for - a nested directory is opened
 // beneath the destination, so a parent swapped for a symlink after the
 // receiver resolved it cannot redirect the listing out of the tree.
 #[test]
@@ -1764,7 +1764,7 @@ fn read_dir_view_via_sandbox_matches_std_for_subdir_listing() {
 ///
 /// Anchoring needs no kernel support off Linux: `anchor_parent` resolves
 /// the parent with `DirSandbox::open_subdir_confined`, oc's port of
-/// upstream's portable `ds_descend()` (`syscall.c:3032-3106`). So the one
+/// upstream's portable `ds_descend()` (`syscall.c:3103-3177`). So the one
 /// state that degrades to the path-based fallback is a Linux kernel
 /// without `openat2(RESOLVE_BENEATH)`. Off implies that fallback is
 /// exercised.
@@ -2110,7 +2110,7 @@ fn single_component_symlinkat_unchanged_by_nested_path() {
 /// upstream 3.5.1 suite (`temp-dir-symlink-injection`); what is pinned here is
 /// that the ownership walk is *selected* at all.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:2065` (absolute -> `owner_walk_parent`),
+/// upstream: `rsync-3.5.2/syscall.c:2136` (absolute -> `owner_walk_parent`),
 /// `:1945` (relative-with-slash -> `secure_relative_open`), `:1949` (slashless
 /// -> `AT_FDCWD`).
 mod endpoint_provenance {
@@ -2297,7 +2297,7 @@ mod no_sandbox_tail {
     /// symlink. Without that pair, a broken fixture would satisfy the refusal
     /// cell for the wrong reason.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:1658` - `openat(dfd, bname,
+    /// upstream: `rsync-3.5.2/syscall.c:1727` - `openat(dfd, bname,
     /// flags | O_NOFOLLOW, mode)`.
     #[test]
     fn open_tail_honours_o_nofollow_on_the_leaf() {
@@ -2330,7 +2330,7 @@ mod no_sandbox_tail {
     ///
     /// This is the companion rather than "the same leaf without `O_NOFOLLOW`":
     /// arm 2 adds `O_NOFOLLOW` on the caller's behalf whatever the caller
-    /// asked for (`rsync-3.5.1/syscall.c:1658`), so a follow could not be
+    /// asked for (`rsync-3.5.2/syscall.c:1727`), so a follow could not be
     /// observed here without contradicting upstream. `O_DIRECTORY` is not
     /// added by either side, so it isolates the flag word itself.
     #[test]
@@ -2430,7 +2430,7 @@ mod no_sandbox_tail {
 
 /// The held parent directory the receiver reuses across a run of files.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:3713-3716` - a held ancestor "raced/
+/// upstream: `rsync-3.5.2/syscall.c:3781-3784` - a held ancestor "raced/
 /// replaced ... resolves to the original inode the fd holds -- the held-dirfd
 /// race-safety property". A symlink swapped in for a directory AFTER it was
 /// resolved must therefore never be followed: operations keep landing in the
@@ -2634,7 +2634,7 @@ fn inplace_eacces_recovery_stays_beneath_the_pinned_destination() {
     );
 }
 
-// The held parent's `ENOENT` is authoritative (upstream: syscall.c:3858-3871
+// The held parent's `ENOENT` is authoritative (upstream: syscall.c:3926-3939
 // held_dfd_for): a missing leaf under the held parent is answered by the one
 // `*at` call against the held dirfd, never by re-resolving the parent. The
 // held `a/b` is renamed away and a fresh `a/b` holding the leaf takes its
@@ -2672,7 +2672,7 @@ fn missing_leaf_under_a_held_parent_is_not_re_resolved() {
 /// the ordinary missing-entry answer. The parents need not exist, so the
 /// refusal is the ceiling's alone - a walk that tried them would say ENOENT.
 ///
-/// upstream: rsync-3.5.1/syscall.c:3004-3010 `ds_push()`
+/// upstream: rsync-3.5.2/syscall.c:3075-3081 `ds_push()`
 #[test]
 fn a_leaf_below_1024_parents_is_refused_with_enomem() {
     let (_keep, root) = test_support::create_canonical_tempdir();

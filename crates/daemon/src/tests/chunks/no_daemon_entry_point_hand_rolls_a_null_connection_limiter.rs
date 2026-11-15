@@ -12,7 +12,7 @@
 /// `build_module_runtimes_with_lock_file` instead - it opens the daemon-wide
 /// lock file and applies per-module overrides in one place.
 ///
-/// upstream: clientserver.c:791 - `claim_connection()` is called from
+/// upstream: clientserver.c:795 - `claim_connection()` is called from
 /// `rsync_module()`, the single per-module entry every daemon connection
 /// reaches. The `am_daemon > 0` test immediately above it guards only the
 /// "allowed access" log line, so the cap is deliberately not standalone-only.

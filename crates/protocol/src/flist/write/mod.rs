@@ -101,7 +101,7 @@ pub struct FileListWriter {
     /// Against a proto-30 / pre-3.1 peer that lacks the capability, targets are
     /// sent as raw local bytes even while filenames are transcoded.
     ///
-    /// upstream: compat.c:776-778 `sender_symlink_iconv = iconv_opt && (...)`,
+    /// upstream: compat.c:785-787 `sender_symlink_iconv = iconv_opt && (...)`,
     /// applied at flist.c:2028.
     symlink_iconv: bool,
     /// Cached: whether varint flag encoding is enabled (computed once at construction).
@@ -336,7 +336,7 @@ impl FileListWriter {
     /// Reports whether the next entry owned by `uid` sends its user name
     /// inline: names are on, `uid` is preserved, and no earlier entry named it.
     ///
-    /// upstream: flist.c:787-790 - `user_name = add_uid(uid)` is non-NULL only
+    /// upstream: flist.c:791-794 - `user_name = add_uid(uid)` is non-NULL only
     /// on the id's first sighting, and only then is `XMIT_USER_NAME_FOLLOWS`
     /// set under `inc_recurse`.
     #[inline]
@@ -350,7 +350,7 @@ impl FileListWriter {
 
     /// Group counterpart of [`Self::needs_user_name`].
     ///
-    /// upstream: flist.c:797-800 - `group_name = add_gid(gid)`.
+    /// upstream: flist.c:801-804 - `group_name = add_gid(gid)`.
     #[inline]
     #[must_use]
     pub fn needs_group_name(&self, gid: u32) -> bool {
@@ -448,7 +448,7 @@ impl FileListWriter {
     /// `--iconv`. When `false`, symlink targets are written as raw local bytes
     /// even if a filename converter is attached.
     ///
-    /// upstream: compat.c:776-778 `sender_symlink_iconv`, applied at flist.c:2028.
+    /// upstream: compat.c:785-787 `sender_symlink_iconv`, applied at flist.c:2032.
     #[inline]
     #[must_use]
     pub const fn with_symlink_iconv(mut self, symlink_iconv: bool) -> Self {

@@ -1,6 +1,6 @@
 //! An INC_RECURSE sender names each owner inline once, from its id list.
 //!
-//! upstream: flist.c:787-800 - `user_name = add_uid(uid)` /
+//! upstream: flist.c:791-804 - `user_name = add_uid(uid)` /
 //! `group_name = add_gid(gid)`; uidlist.c:340-371 returns the name only on the
 //! id's first sighting, and only then does `XMIT_USER_NAME_FOLLOWS` /
 //! `XMIT_GROUP_NAME_FOLLOWS` carry it. Without inc_recurse no name goes

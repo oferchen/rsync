@@ -132,7 +132,7 @@ fn level_1_scan_emits_nothing() {
 /// At `-vvv` (DELTASUM level 2) the scan reports its milestones but NOT the
 /// per-file counter line.
 ///
-/// upstream orders the three level-2 lines `done hash search` (match.c:442-443),
+/// upstream orders the three level-2 lines `done hash search` (match.c:478-479),
 /// `sending file_sum` (match.c:465-466), `false_alarms=... hash_hits=...
 /// matches=...` (match.c:469-472) - the counters come AFTER the checksum trailer.
 /// The scan does not write that trailer, so it cannot own the line without
@@ -164,7 +164,7 @@ fn level_2_scan_emits_milestones_but_not_the_counter_line() {
 /// The counters the scan hands back are the ones the driver prints, so a scan
 /// that matched a block and left a literal run must report both.
 ///
-/// upstream: match.c:474-476 - the same three values fold into the run totals.
+/// upstream: match.c:510-512 - the same three values fold into the run totals.
 #[test]
 fn scan_counters_describe_the_work_done() {
     init_deltasum(0);

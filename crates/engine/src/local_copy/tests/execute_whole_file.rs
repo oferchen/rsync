@@ -580,7 +580,7 @@ fn execute_whole_file_vs_delta_transfer_comparison() {
 /// must copy zero literal bytes, even when the file size is not a multiple of
 /// the block size.
 ///
-/// Upstream rsync matches the basis's final partial block (`match.c:254`
+/// Upstream rsync matches the basis's final partial block (`match.c:270`
 /// shrinks the last hash-search window to `l = MIN(blength, len-offset)`), so
 /// an identical basis reports `Matched == total`, `Literal == 0`. The local
 /// delta matcher previously refused to probe any window shorter than one full

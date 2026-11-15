@@ -11,7 +11,7 @@ valid state transitions.
 
 | State              | Description                                                      |
 |--------------------|------------------------------------------------------------------|
-| `Handshake`        | Binary or legacy ASCII version exchange (`compat.c:602-604`)     |
+| `Handshake`        | Binary or legacy ASCII version exchange (`compat.c:603-605`)     |
 | `FilterExchange`   | Filter/exclude list transmission (`exclude.c:recv_filter_list`)  |
 | `FileListTransfer` | File list build, send, or receive (`flist.c:send_file_list`)     |
 | `DeltaTransfer`    | Per-file signature/delta loop (`receiver.c:recv_files`)          |

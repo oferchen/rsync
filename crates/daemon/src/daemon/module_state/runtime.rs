@@ -20,7 +20,7 @@ use super::{ConnectionLimiter, ConnectionLockGuard, MaxConnections, ModuleDefini
 /// their module table on SIGHUP need to hand the same daemon-wide handle to
 /// [`build_module_runtimes`] again.
 ///
-/// upstream: clientserver.c:791 calls `claim_connection()` from
+/// upstream: clientserver.c:795 calls `claim_connection()` from
 /// `rsync_module()` - the one per-module entry every daemon connection reaches,
 /// whether it arrived over a listening socket, inetd or a remote shell. The
 /// `am_daemon > 0` test just above it guards only the "allowed access" log
@@ -42,7 +42,7 @@ pub(in crate::daemon) fn build_module_runtimes_with_lock_file(
 /// file). Distinct override paths are opened once and shared via the cache so
 /// two modules naming the same file coordinate through one handle.
 ///
-/// upstream: clientserver.c:791 calls `claim_connection(lp_lock_file(i),
+/// upstream: clientserver.c:795 calls `claim_connection(lp_lock_file(i),
 /// lp_max_connections(i))`. The lock file is a P_LOCAL parameter, so each module
 /// claims its slot in the file named by its own (inherited or overridden) value.
 pub(in crate::daemon) fn build_module_runtimes(

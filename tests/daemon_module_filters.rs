@@ -1,6 +1,6 @@
 //! A daemon module's own filter directives, as 3.5.1 applies them.
 //!
-//! upstream: clientserver.c:929-954 builds `daemon_filter_list` from `filter`,
+//! upstream: clientserver.c:933-958 builds `daemon_filter_list` from `filter`,
 //! `include from`, `include`, `exclude from` and `exclude` through the same
 //! parse_filter_str()/parse_filter_file() as every other rule, with
 //! `XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3`. A directive the parser refuses ends

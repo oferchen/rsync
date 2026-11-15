@@ -33,7 +33,7 @@ pub(crate) fn handle_batch_read(
         return None;
     }
 
-    // upstream: main.c:1538-1543 - only the destination (`argv[argc-1]`) is
+    // upstream: main.c:1542-1547 - only the destination (`argv[argc-1]`) is
     // checked; every earlier operand is dropped unread.
     let has_remote_dest = config.transfer_args().last().is_some_and(|arg| {
         let s = arg.to_string_lossy();
@@ -319,7 +319,7 @@ fn replay_batch(
     batch_cfg: &BatchConfig,
     config: &ClientConfig,
 ) -> Result<ClientSummary, ClientError> {
-    // upstream: main.c:1538-1541 - with --read-batch no source is specified;
+    // upstream: main.c:1542-1545 - with --read-batch no source is specified;
     // the destination is the last (and only counted) operand.
     let dest_root = config
         .transfer_args()
@@ -334,7 +334,7 @@ fn replay_batch(
     let replay_cfg = batch_cfg.clone().with_active_flags(active_flags);
 
     let mut reader = engine::batch::BatchReader::new(replay_cfg).map_err(map_batch_error)?;
-    // upstream: main.c:1941-1942 read_stream_flags(batch_fd), then
+    // upstream: main.c:1945-1946 read_stream_flags(batch_fd), then
     // compat.c:604-613 setup_protocol() reads protocol/compat/seed back from
     // the batch fd; the reader's single header parse covers both, and rejects
     // a too-new batch protocol with RERR_PROTOCOL (compat.c:609-613).
@@ -358,7 +358,7 @@ fn replay_batch(
 
     let mut ctx = crate::server::ReceiverContext::for_batch_replay(&header, server_config)
         .map_err(|e| {
-            // upstream: compat.c:625-638 - a protocol outside the supported
+            // upstream: compat.c:626-639 - a protocol outside the supported
             // bounds aborts with exit_cleanup(RERR_PROTOCOL).
             ClientError::new(2, rsync_error!(2, "{}", e).with_role(Role::Client))
         })?;
@@ -374,7 +374,7 @@ fn replay_batch(
         crate::server::ServerStats::Receiver(stats),
         start.elapsed(),
     );
-    // upstream: compat.c:604 - a replay runs at the protocol the batch was
+    // upstream: compat.c:605 - a replay runs at the protocol the batch was
     // recorded under, which gates the protocol-dependent --stats lines
     // (main.c:434-448).
     summary.set_protocol_version(ctx.protocol().as_u8());
@@ -418,7 +418,7 @@ fn map_replay_error(e: std::io::Error) -> ClientError {
 /// printing the reconcile notices, and returns the options the replay runs
 /// with.
 ///
-/// upstream: compat.c:641-642 - setup_protocol() calls check_batch_flags()
+/// upstream: compat.c:642-643 - setup_protocol() calls check_batch_flags()
 /// under read_batch. Visited mismatches are forced to the batch's value; an
 /// --iconv mismatch is fatal (RERR_SYNTAX, via the FlagMismatch arm of
 /// map_batch_error).
@@ -446,7 +446,7 @@ fn map_batch_error(e: engine::batch::BatchError) -> ClientError {
         engine::batch::BatchError::FlagMismatch(msg) => {
             ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
         }
-        // upstream: compat.c:609-613 setup_protocol() - a batch recorded with
+        // upstream: compat.c:610-614 setup_protocol() - a batch recorded with
         // a protocol newer than this build supports aborts with
         // exit_cleanup(RERR_PROTOCOL) (exit 2), printing the bare "too new"
         // diagnostic rather than the generic replay-failure message. The
@@ -481,7 +481,7 @@ fn map_batch_error(e: engine::batch::BatchError) -> ClientError {
 /// the receiver, exactly the position a batch replay is in - then overrides
 /// what a recorded batch dictates:
 ///
-/// - no daemon connection is involved (upstream: main.c:1538 read_batch
+/// - no daemon connection is involved (upstream: main.c:1542 read_batch
 ///   forces `local_server = 1`), and
 /// - every data-stream-affecting option takes its reconciled value: the
 ///   batch's bit where `check_batch_flags()` visits it, the invocation's
@@ -492,7 +492,7 @@ fn build_replay_server_config(
     stream_flags: &engine::batch::BatchFlags,
     compat_flags: Option<protocol::CompatibilityFlags>,
 ) -> Result<crate::server::ServerConfig, ClientError> {
-    // upstream: main.c:1426 send_filter_list(read_batch ? -1 : f_out) - the
+    // upstream: main.c:1430 send_filter_list(read_batch ? -1 : f_out) - the
     // replay parses the local filter rules without a peer to send them to.
     let filter_rules =
         remote::flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded())?;
@@ -540,12 +540,12 @@ fn build_replay_server_config(
     server_config.write.inplace = stream_flags.inplace;
     server_config.flags.append = stream_flags.append;
     server_config.flags.append_verify = stream_flags.append_verify;
-    // upstream: compat.c:414 getenv_nstr() pins a batch to zlib, which is
+    // upstream: compat.c:415 getenv_nstr() pins a batch to zlib, which is
     // exactly the compact `-z` codec path; explicit choices do not apply.
     server_config.flags.compress = stream_flags.do_compression;
     server_config.connection.compress_choice = None;
     if server_config.flags.compress && server_config.connection.compression_level.is_none() {
-        // upstream: options.c:2765-2768 - compress_level defaults to 6.
+        // upstream: options.c:2820-2823 - compress_level defaults to 6.
         server_config.connection.compression_level =
             Some(compress::zlib::CompressionLevel::Default);
     }
@@ -605,7 +605,7 @@ mod tests {
     /// supports must abort with `RERR_PROTOCOL` (exit 2), not the generic
     /// exit 1 replay-failure code.
     ///
-    /// WHY: upstream compat.c:609-612 setup_protocol() prints "The protocol
+    /// WHY: upstream compat.c:610-613 setup_protocol() prints "The protocol
     /// version in the batch file is too new (%d > %d)." and calls
     /// exit_cleanup(RERR_PROTOCOL). The reader tags this case as a
     /// `protocol::ProtocolViolation`; if the dispatch map_err collapsed it to
@@ -676,7 +676,7 @@ mod tests {
         BatchConfig::new(BatchMode::Read, path, 32)
     }
 
-    /// upstream main.c:652-654 + compat.c:780-785: --read-batch evaluates
+    /// upstream main.c:652-654 + compat.c:789-794: --read-batch evaluates
     /// set_allow_inc_recurse() on the invocation's own options, so replaying an
     /// inc-recursive batch with options that need the whole list (or without
     /// -r, which the batch's recurse bit does not rescue) aborts RERR_SYNTAX
@@ -1047,7 +1047,7 @@ mod tests {
     /// `--read-batch --delete` must run the real receiver's delete pass, so an
     /// extraneous destination file is removed and the summary counts it.
     ///
-    /// WHY: upstream generator.c:2753-2754 `do_delete_pass()` runs regardless of
+    /// WHY: upstream generator.c:2839-2840 `do_delete_pass()` runs regardless of
     /// read_batch (the replaying generator forks and runs locally, main.c:652-664).
     /// The reunified replay drive skipped every delete site, so `--delete` was a
     /// silent no-op. The paired control (no `--delete`) proves the stale file
@@ -1120,7 +1120,7 @@ mod tests {
     /// `--read-batch -b` must preserve the pre-image at the backup name, exactly
     /// as the network receiver's commit tier does.
     ///
-    /// WHY: upstream generator.c:2280-2288 resolves `get_backup_name` under
+    /// WHY: upstream generator.c:2322-2330 resolves `get_backup_name` under
     /// read_batch + make_backups; the network commit (sync.rs) renames the
     /// existing file to its backup before the temp file lands, but the reunified
     /// replay drive reimplemented the commit inline and omitted the backup step.
@@ -1507,7 +1507,7 @@ mod tests {
     /// file in an untrusted tree - would end the here-doc early and append a
     /// shell command; the refusal keeps it out of the script entirely.
     ///
-    /// upstream: batch.c:217-229 write_filter_rules(), main.c:1944.
+    /// upstream: batch.c:217-229 write_filter_rules(), main.c:1948.
     #[test]
     fn write_batch_header_refuses_newline_rule_like_upstream() {
         let temp = test_support::create_tempdir();

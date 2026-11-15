@@ -14,7 +14,7 @@ Upstream rsync runs two distinct chroot+drop ladders:
 
 ### 1a. Daemon-process ladder (`start_daemon`, before `accept()` loop)
 
-`clientserver.c:1301-1339`:
+`clientserver.c:1310-1348`:
 
 1. `lp_daemon_chroot()` -> `chroot(p)` then `chdir("/")` (line 1304-1311).
 2. `lp_daemon_gid()` -> `group_to_gid(p, &gid, True)` then `setgid(gid)` (line 1313-1325).
@@ -33,7 +33,7 @@ must be supplied). Upstream documents this in `rsyncd.conf(5)` under
 
 ### 1b. Per-module ladder (`rsync_module`, after auth)
 
-`clientserver.c:692-1045`:
+`clientserver.c:696-1049`:
 
 1. Authentication (`auth_server`, line 759).
 2. uid/gid resolution: `user_to_uid(lp_uid(i), ...)` at line 781,
@@ -145,11 +145,11 @@ Our code:
 
 The chroot fixes `module.path` to "/" via the `effective_module` rebinding
 in `transfer.rs:399-407` so downstream code sees a chroot-relative root,
-matching upstream's `module_dir = "/"` reset at `clientserver.c:858`.
+matching upstream's `module_dir = "/"` reset at `clientserver.c:862`.
 
 ## 5. `numeric ids` vs. name-lookup interaction
 
-Upstream behaviour (`clientserver.c:1187-1190`):
+Upstream behaviour (`clientserver.c:1191-1194`):
 
 ```c
 if (!numeric_ids
@@ -172,7 +172,7 @@ Our equivalent: `crates/daemon/src/daemon/sections/module_access/client_args.rs:
 sets `config.flags.numeric_ids = true` in response to the module's stored
 `numeric_ids` flag (`module_definition/finish.rs:85`). We do **not**
 currently apply the chroot+no-name-converter implicit override that
-upstream applies at `clientserver.c:1187`. As a result, a chrooted module
+upstream applies at `clientserver.c:1191`. As a result, a chrooted module
 without an explicit `numeric ids = yes` and without a `name converter`
 will attempt id->name lookups inside the jail and silently fall back to
 numeric ids when the lookup fails (because `metadata::id_lookup` returns
@@ -232,7 +232,7 @@ Coverage gaps:
 `RuntimeOptions::daemon_chroot` in `runtime_options/config.rs:96-97`, and
 exposed via `accessors.rs:46-48`, but no caller invokes
 `platform::privilege::apply_chroot` for the daemon-level value before the
-accept loop. Upstream applies this chroot at `clientserver.c:1301-1312`
+accept loop. Upstream applies this chroot at `clientserver.c:1310-1321`
 before `accept()`. Our `accept_loop.rs:229-246` only invokes
 `drop_privileges(daemon_uid, daemon_gid, ...)` and silently ignores
 `daemon_chroot`. **Severity: high** - operators relying on the
@@ -241,7 +241,7 @@ before `accept()`. Our `accept_loop.rs:229-246` only invokes
 ### 7.2. Per-module `uid`/`gid` reject username/groupname strings
 
 Upstream `lp_uid`/`lp_gid` accept usernames and groupnames; resolution runs
-through `user_to_uid`/`group_to_gid` at `clientserver.c:781, 805`. Our
+through `user_to_uid`/`group_to_gid` at `clientserver.c:785, 805`. Our
 config parsers at
 `crates/daemon/src/daemon/sections/config_parsing/module_directives.rs:163-174`
 and `crates/daemon/src/daemon/sections/module_parsing.rs:469-478` use
@@ -253,7 +253,7 @@ specify `uid = nobody` per module.
 
 ### 7.3. Name-converter spawn happens after chroot, not before
 
-Upstream forks the name-converter helper at `clientserver.c:962-969`,
+Upstream forks the name-converter helper at `clientserver.c:966-973`,
 **before** `chroot(module_chdir)` at line 978, so the helper inherits
 host-filesystem visibility (especially `/etc/passwd`). Our code spawns
 the name converter at
@@ -267,7 +267,7 @@ are mounted into the jail.
 
 ### 7.4. Pre-xfer / early / post-xfer exec spawn after chroot
 
-Same root cause as 7.3. Upstream at `clientserver.c:897-970` forks all
+Same root cause as 7.3. Upstream at `clientserver.c:901-974` forks all
 exec hooks before the chroot. Our `module_access/transfer.rs:453-462`
 runs `run_pre_xfer_exec` post-chroot. **Severity: medium** - any exec
 hook that depends on host-filesystem state (e.g. `/usr/bin/env`,
@@ -276,7 +276,7 @@ the upstream contract documented in `rsyncd.conf(5)`.
 
 ### 7.5. `numeric ids` implicit override on chroot is not applied
 
-Upstream `clientserver.c:1187-1190` silently flips `numeric_ids = -1` when
+Upstream `clientserver.c:1191-1194` silently flips `numeric_ids = -1` when
 chroot is active and no `name converter` is configured. Our daemon flag
 plumbing in `module_access/client_args.rs:350` only honours the explicit
 `numeric ids` directive. Behaviour is observationally similar (lookups
@@ -296,7 +296,7 @@ the Windows daemon lacks any module-level identity transition.
 
 ### 7.7. `munge symlinks` safety check is not run
 
-Upstream at `clientserver.c:992-1004` performs a stat against
+Upstream at `clientserver.c:996-1008` performs a stat against
 `SYMLINK_PREFIX` after chroot and aborts with `RERR_UNSUPPORTED` if a
 collision exists. We compute `effective_munge_symlinks` for filtering
 purposes (`crates/daemon/src/daemon/sections/symlink_munge.rs`) but never
@@ -305,7 +305,7 @@ a narrow misconfiguration scenario.
 
 ### 7.8. `chdir(module_chdir)` after chroot is not explicit
 
-Upstream at `clientserver.c:987-990` calls `change_dir(module_chdir,
+Upstream at `clientserver.c:991-994` calls `change_dir(module_chdir,
 CD_NORMAL)` after chroot to land the process inside the inner-path when
 the module path used the `/outer/./inner` syntax. Our `apply_chroot` calls
 `std::env::set_current_dir("/")` (`platform/src/privilege.rs:29`) but the
@@ -338,7 +338,7 @@ operators using the idiomatic `/srv/rsync/./module` pattern.
 
 1. Wire `RuntimeOptions::daemon_chroot` into `accept_loop.rs` between
    `become_daemon` and `drop_privileges`, mirroring
-   `clientserver.c:1301-1312`. (Discrepancy 7.1.)
+   `clientserver.c:1310-1321`. (Discrepancy 7.1.)
 2. Replace `parse_numeric_identifier` with `resolve_uid`/`resolve_gid` for
    per-module `uid`/`gid` directives. (Discrepancy 7.2.)
 3. Reorder `transfer.rs` so name-converter and pre-xfer-exec hooks spawn

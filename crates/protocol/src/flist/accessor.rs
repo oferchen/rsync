@@ -17,7 +17,7 @@ use super::entry::FileType;
 /// # Upstream Reference
 ///
 /// The field set mirrors upstream rsync's `struct file_struct` plus its
-/// conditional `union file_extras` slots (upstream: `rsync.h:844-855`,
+/// conditional `union file_extras` slots (upstream: `rsync.h:860-871`,
 /// `rsync.h:829-835`).
 pub trait FileEntryAccessor {
     // -- Path accessors --

@@ -1,7 +1,7 @@
 //! Destination-side ACL comparison for the itemize `a` column
 //! (`ITEM_REPORT_ACL`).
 //!
-//! Mirrors upstream's `itemize()` ACL leg (`generator.c:563-570`), which reads
+//! Mirrors upstream's `itemize()` ACL leg (`generator.c:600-607`), which reads
 //! the destination's current ACL (`get_acl`) and probes whether applying the
 //! sender's cached ACL would change it (`set_acl(NULL, file, sxp, mode)`,
 //! `acls.c:1376-1428`). The single destination read plus comparison lives here

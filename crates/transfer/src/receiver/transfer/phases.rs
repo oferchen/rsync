@@ -77,7 +77,7 @@ impl ReceiverContext {
             }
             self.sender_phase_dones.set(1);
 
-            // upstream: generator.c:2848-2850 - phase++ then "generate_files phase=%d"
+            // upstream: generator.c:2934-2936 - phase++ then "generate_files phase=%d"
             // The first `phase++` after the per-segment loop advances 0 -> 1.
             let mut phase: i32 = 1;
             // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
@@ -88,7 +88,7 @@ impl ReceiverContext {
                 self.write_phase_end(writer)?;
                 writer.flush()?;
                 self.read_phase_end_ndx_done(ndx_read_codec, reader, "phase transition")?;
-                // upstream: generator.c:2366-2368 - phase++ on each additional
+                // upstream: generator.c:2409-2411 - phase++ on each additional
                 // iteration (covers the redo phase).
                 phase += 1;
                 // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
@@ -99,7 +99,7 @@ impl ReceiverContext {
             self.write_phase_end(writer)?;
             writer.flush()?;
 
-            // upstream: generator.c:2882-2887 - protocol >= 29 emits a final
+            // upstream: generator.c:2974-2979 - protocol >= 29 emits a final
             // phase=3 for the delay-updates pass. INC_RECURSE implies
             // protocol >= 30, so this always fires once on this branch.
             if self.protocol.supports_multi_phase() {
@@ -114,7 +114,7 @@ impl ReceiverContext {
                 phase += 1;
                 // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
                 debug_log!(Recv, 1, "recv_files phase={}", phase);
-                // upstream: generator.c:2846-2848, 2366-2368, 2392-2394
+                // upstream: generator.c:2932-2934, 2366-2368, 2392-2394
                 // "generate_files phase=%d" emitted after each phase++.
                 debug_log!(Genr, 1, "generate_files phase={}", phase);
                 if phase > max_phase {
@@ -137,7 +137,7 @@ impl ReceiverContext {
     ///
     /// A server-mode push forwards `NDX + iflags + xname` for each hardlink
     /// follower (see `emit_server_hardlink_follower_itemize`); the peer's sender
-    /// echoes every non-transfer item back (upstream `sender.c:581-587`), yet the
+    /// echoes every non-transfer item back (upstream `sender.c:589-595`), yet the
     /// request-count-driven pipeline response loop never reads them. The sender
     /// buffers those echoes until it reads the receiver's NDX_DONE, so this runs
     /// on the first NDX_DONE read - once the sender has flushed - consuming each
@@ -243,7 +243,7 @@ impl ReceiverContext {
     /// the number of sender phase `NDX_DONE`s that must be read before it
     /// goes out.
     ///
-    /// upstream: generator.c:2831-2833 ends phase 0 right after the last
+    /// upstream: generator.c:2917-2919 ends phase 0 right after the last
     /// request (under INC_RECURSE the per-segment `NDX_DONE`s end it instead).
     /// generator.c:2853-2872 then waits only for the receiver to finish phase
     /// 0 before writing the redo phase's `NDX_DONE`, the delay phase's unless
@@ -256,8 +256,9 @@ impl ReceiverContext {
         let inc_recurse = self
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
-        // upstream: generator.c:126-127 EARLY_DELAY_DONE_MSG / EARLY_DELETE_DONE_MSG.
-        let delay_gate = if self.config.write.delay_updates {
+        // upstream: generator.c:160-162 EARLY_DELAY_DONE_MSG / EARLY_DELETE_DONE_MSG.
+        let defer_symlinks = self.config.write.delay_symlinks && !self.config.flags.dry_run;
+        let delay_gate = if self.config.write.delay_updates || defer_symlinks {
             2
         } else {
             1
@@ -275,11 +276,15 @@ impl ReceiverContext {
             // upstream: main.c:229 write_del_stats() is gated on
             // `delete_mode || force_delete || read_batch`; `read_batch` never
             // reaches a network receiver.
+            let del_late = late || defer_symlinks;
             if self.config.flags.delete || self.config.flags.force {
-                plan.push((if late { AT_GOODBYE } else { 1 }, PhaseEndWrite::DelStats));
+                plan.push((
+                    if del_late { AT_GOODBYE } else { 1 },
+                    PhaseEndWrite::DelStats,
+                ));
             }
             plan.push((
-                if late { AT_GOODBYE } else { delay_gate },
+                if del_late { AT_GOODBYE } else { delay_gate },
                 PhaseEndWrite::Done,
             ));
         }
@@ -325,7 +330,7 @@ impl ReceiverContext {
     /// to the phase-0 `NDX_DONE`, then the echoes of the hard-link follower
     /// rows written after it.
     ///
-    /// upstream: generator.c:2846-2856 sends the redo requests in phase 1,
+    /// upstream: generator.c:2932-2942 sends the redo requests in phase 1,
     /// after the phase-0 `NDX_DONE`, and the sender answers that `NDX_DONE`
     /// after its last phase-0 reply (sender.c:540-549), so the redo replies
     /// follow it. The read is counted, so [`Self::exchange_phase_done`] does
@@ -508,7 +513,7 @@ impl ReceiverContext {
     ///
     /// The late delete pass belongs there. The sender writes `MSG_IO_ERROR`
     /// only after its send loop, just before that final `NDX_DONE`
-    /// (sender.c:811-820), and upstream's generator deletes only after the
+    /// (sender.c:819-828), and upstream's generator deletes only after the
     /// receiver has read it: generator.c:2891-2900 waits for the receiver's
     /// third `MSG_DONE`, sent by main.c:1111 after `recv_files()` returns and
     /// `handle_stats()` has run. The deletions' `NDX_DEL_STATS` then leads the
@@ -579,7 +584,7 @@ impl ReceiverContext {
         // upstream: receiver.c:1393-1394 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files finished");
 
-        // upstream: generator.c:2928-2929 - "generate_files finished" emitted at
+        // upstream: generator.c:3020-3021 - "generate_files finished" emitted at
         // the bottom of generate_files() after the final goodbye handshake.
         debug_log!(Genr, 1, "generate_files finished");
 
@@ -646,7 +651,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn generator_starting_matches_upstream() {
-        // upstream: generator.c:2751-2752 - "generator starting pid=%d"
+        // upstream: generator.c:2837-2838 - "generator starting pid=%d"
         init_genr_level1();
         let pid: u32 = 12345;
         debug_log!(Genr, 1, "generator starting pid={}", pid);
@@ -659,7 +664,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn recv_generator_per_file_matches_upstream() {
-        // upstream: generator.c:1636-1637 - "recv_generator(%s,%d)"
+        // upstream: generator.c:1673-1674 - "recv_generator(%s,%d)"
         init_genr_level1();
         let name = PathBuf::from("dir/file.txt");
         let ndx: i32 = 7;
@@ -673,7 +678,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn generate_files_phase_matches_upstream() {
-        // upstream: generator.c:2846-2848, 2366-2368, 2392-2394
+        // upstream: generator.c:2932-2934, 2366-2368, 2392-2394
         // "generate_files phase=%d" - the phase counter advances 1 -> 2 -> 3
         // across the regular, redo, and protocol-29+ delay-updates phases.
         init_genr_level1();
@@ -692,7 +697,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn generate_files_finished_matches_upstream() {
-        // upstream: generator.c:2928-2929 - "generate_files finished"
+        // upstream: generator.c:3020-3021 - "generate_files finished"
         init_genr_level1();
         debug_log!(Genr, 1, "generate_files finished");
         let msgs = genr_messages();
@@ -741,7 +746,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn delta_transmission_enabled_matches_upstream() {
-        // upstream: generator.c:2763-2768 - "delta-transmission enabled" when
+        // upstream: generator.c:2849-2854 - "delta-transmission enabled" when
         // whole_file is off (the rolling-checksum delta path is used).
         init_flist_level1();
         debug_log!(Flist, 1, "delta-transmission {}", "enabled");
@@ -754,7 +759,7 @@ mod genr_debug_emission_tests {
 
     #[test]
     fn delta_transmission_disabled_matches_upstream() {
-        // upstream: generator.c:2763-2768 - "delta-transmission disabled for
+        // upstream: generator.c:2849-2854 - "delta-transmission disabled for
         // local transfer or --whole-file" when whole_file is on.
         init_flist_level1();
         debug_log!(

@@ -153,9 +153,9 @@ pub fn read_dir(path: &Path) -> io::Result<ReadDir> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/flist.c:2257-2295` `secure_opendir()`, chosen at `:2355-2359`.
-/// - `rsync-3.5.1/syscall.c:83-92` `directory_traverse_flags()`.
-/// - `rsync-3.5.1/syscall.c:3172`, `:3218` - the `openat(fd, ".", flags |
+/// - `rsync-3.5.2/flist.c:2261-2306` `secure_opendir()`, chosen at `:2355-2359`.
+/// - `rsync-3.5.2/syscall.c:83-92` `directory_traverse_flags()`.
+/// - `rsync-3.5.2/syscall.c:3243`, `:3218` - the `openat(fd, ".", flags |
 ///   O_NOFOLLOW)` that carries the search check.
 #[cfg(unix)]
 pub fn read_dir_searchable(path: &Path) -> io::Result<ReadDir> {
@@ -211,9 +211,9 @@ pub fn read_dir_searchable(path: &Path) -> io::Result<ReadDir> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/flist.c:2256-2295` `secure_opendir()` - the confined open that
+/// - `rsync-3.5.2/flist.c:2260-2306` `secure_opendir()` - the confined open that
 ///   produces `scan_dirfd` for a daemon's directory scan.
-/// - `rsync-3.5.1/syscall.c:163` `confinement_root()` - `am_daemon ? module_dir
+/// - `rsync-3.5.2/syscall.c:163` `confinement_root()` - `am_daemon ? module_dir
 ///   : confine_root`, the value this parameter carries.
 #[cfg(unix)]
 pub fn read_dir_under(root: &Path, path: &Path) -> io::Result<ReadDir> {
@@ -376,8 +376,8 @@ mod imp {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.1/syscall.c:4131-4155` `do_lstat_atfd()` / `do_stat_atfd()`.
-    /// - `rsync-3.5.1/flist.c:535` `link_stat_at()` - the caller that picks
+    /// - `rsync-3.5.2/syscall.c:4199-4223` `do_lstat_atfd()` / `do_stat_atfd()`.
+    /// - `rsync-3.5.2/flist.c:538` `link_stat_at()` - the caller that picks
     ///   between them.
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub(super) fn fstatat_relative(
@@ -386,7 +386,7 @@ mod imp {
         follow: bool,
     ) -> io::Result<crate::dir_sandbox::AtMetadata> {
         // `pinned_root_relative` already spells "the root itself" as `.`, which
-        // is the name upstream uses for that same directory (`flist.c:2295`).
+        // is the name upstream uses for that same directory (`flist.c:2306`).
         let name = relative.as_os_str();
         if follow {
             crate::dir_sandbox::fstatat_follow(dirfd, name)
@@ -418,7 +418,7 @@ mod imp {
 
     /// Flags for a descriptor that only anchors further lookups.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:83-92` `directory_traverse_flags()`.
+    /// upstream: `rsync-3.5.2/syscall.c:83-92` `directory_traverse_flags()`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) const TRAVERSAL_FLAGS: i32 = libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]

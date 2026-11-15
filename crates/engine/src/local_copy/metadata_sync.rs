@@ -74,7 +74,7 @@ pub(crate) fn sync_xattrs_if_requested(
 /// Whether the destination's extended attributes differ from the sender's
 /// list, for the itemize `x` column.
 ///
-/// Mirrors upstream `generator.c:571-577`, which calls `xattr_diff()` for every
+/// Mirrors upstream `generator.c:608-614`, which calls `xattr_diff()` for every
 /// itemized entry under `preserve_xattrs`. In a local copy upstream still forks
 /// a sender and a generator, so the two sides collect their lists with
 /// different `rsync_xal_get()` globals: the sender with `am_sender = 1`
@@ -187,7 +187,7 @@ pub(crate) fn sync_acls_if_requested(
 /// The `--fake-super` setting of each half of a local copy.
 ///
 /// A local transfer applies its `-M` values to the forked receiver only
-/// (upstream: pipe.c:143-148 local_child()), so `-M--fake-super` stashes the
+/// (upstream: pipe.c:144-149 local_child()), so `-M--fake-super` stashes the
 /// destination's ACLs while the sender still reads the source's real ones.
 #[cfg(all(any(unix, windows), feature = "acl"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -389,7 +389,7 @@ pub(crate) fn fake_super_source_stat(
 ///
 /// A record that does not parse ends the copy with `RERR_FILEIO`, raised by
 /// the generator as upstream's is.
-/// upstream: generator.c:1745 gen_entry_stat() -> link_stat() ->
+/// upstream: generator.c:1782 gen_entry_stat() -> link_stat() ->
 /// xattrs.c:1372 x_lstat() -> xattrs.c:1253-1258 get_stat_xattr().
 pub(crate) fn fake_super_destination_stat(
     destination: &std::path::Path,

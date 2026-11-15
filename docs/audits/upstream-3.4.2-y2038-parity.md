@@ -56,7 +56,7 @@ Every internal representation is `i64`; varlong on the wire carries up to
 `protocol_version < 30` (`crates/protocol/src/wire/file_entry/encode.rs:259`)
 and `LegacyCodec::write_mtime` casts via `mtime as u32`
 (`crates/protocol/src/codec/protocol/legacy.rs:66`). This mirrors upstream
-`flist.c:585` (`write_int(f, modtime)`) and `flist.c` legacy
+`flist.c:588` (`write_int(f, modtime)`) and `flist.c` legacy
 `write_uint(f, modtime)`. Protocol < 30 corresponds to rsync < 3.0.0 and
 is Y2038-broken in upstream by design; oc-rsync matches the upstream wire
 contract byte-for-byte. Verdict: **DIVERGENT-BY-DESIGN** (intentional
@@ -99,7 +99,7 @@ bounded by `[0, 1_000_000_000)` and is unaffected by Y2038. Verdict:
 
 | Site | Purpose |
 |------|---------|
-| `crates/transfer/src/setup/negotiator.rs:194` | Checksum seed: `SystemTime::now().duration_since(UNIX_EPOCH).as_secs() as i32`, XORed with `pid << 6`. Mirrors upstream `options.c:835` (`(int32)time(NULL)`). The seed is intentionally a 32-bit nonce, not a timestamp semantic; truncation is required for byte-for-byte parity with the upstream wire. Verdict: **DIVERGENT-BY-DESIGN**. |
+| `crates/transfer/src/setup/negotiator.rs:194` | Checksum seed: `SystemTime::now().duration_since(UNIX_EPOCH).as_secs() as i32`, XORed with `pid << 6`. Mirrors upstream `options.c:838` (`(int32)time(NULL)`). The seed is intentionally a 32-bit nonce, not a timestamp semantic; truncation is required for byte-for-byte parity with the upstream wire. Verdict: **DIVERGENT-BY-DESIGN**. |
 | `crates/transfer/src/lib.rs:551` | `MSG_IO_TIMEOUT` payload: `timeout_secs as i32`. Bounded by user-supplied `--timeout` (max `i32::MAX` seconds = 68 years). Not a wall-clock value. Verdict: **SAFE**. |
 
 ## 3. Verdict summary

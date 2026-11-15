@@ -926,7 +926,7 @@ fn no_perms_existing_file_from_entry_keeps_prior_mode() {
 /// (rsync.c:470-471) then discards the tweak in favour of the destination's
 /// own permission bits. Applying the tweak to the destination is the inverted
 /// composition this pin guards against.
-// upstream: flist.c:1221-1222 tweak_mode + rsync.c:464-486 dest_mode().
+// upstream: flist.c:1225-1226 tweak_mode + rsync.c:464-486 dest_mode().
 #[cfg(unix)]
 #[test]
 fn chmod_without_perms_existing_file_from_entry_keeps_prior_mode() {
@@ -964,7 +964,7 @@ fn chmod_without_perms_existing_file_from_entry_keeps_prior_mode() {
 /// and `dest_mode()`'s fresh arm then masks it by `dflt_perms` (umask 022 ->
 /// 0o755), so `F666` yields 0o644 - never the unmasked 0o666 the inverted
 /// composition (tweak after collapse) produces.
-// upstream: flist.c:1221-1222 tweak_mode + rsync.c:483-485 dest_mode() fresh arm.
+// upstream: flist.c:1225-1226 tweak_mode + rsync.c:483-485 dest_mode() fresh arm.
 #[cfg(unix)]
 #[test]
 fn chmod_without_perms_new_file_from_entry_masks_tweak_by_umask() {
@@ -1060,7 +1060,7 @@ fn chmod_without_perms_pre_transfer_rides_the_exists_split() {
 /// then keeps the during-transfer owner-`rwx` grant when the owner can
 /// write (generator.c:1904-1905 fixup; touch_up_dirs only restores a mode
 /// lacking owner write).
-// upstream: generator.c:1856 dest_mode() for dirs + generator.c:1904-1920.
+// upstream: generator.c:1893 dest_mode() for dirs + generator.c:1941-1957.
 #[cfg(unix)]
 #[test]
 fn chmod_without_perms_directory_rides_the_exists_split() {
@@ -1116,7 +1116,7 @@ fn chmod_without_perms_directory_rides_the_exists_split() {
 /// Non-vacuity companion: with `--perms` the tweak applies to the source
 /// mode EXACTLY - `dest_mode()` never runs (receiver.c:1198) - so the
 /// exists split above cannot be satisfied by simply never chmodding.
-// upstream: flist.c:1221-1222 tweak_mode; preserve_perms skips dest_mode().
+// upstream: flist.c:1225-1226 tweak_mode; preserve_perms skips dest_mode().
 #[cfg(unix)]
 #[test]
 fn chmod_with_perms_applies_tweaked_source_mode_exactly() {
@@ -2074,7 +2074,7 @@ fn metadata_unchanged_returns_false_on_mtime_mismatch() {
     );
 }
 
-/// upstream: generator.c:402 `mtime_differs()` -> util1.c:1744 `same_time()` -
+/// upstream: generator.c:439 `mtime_differs()` -> util1.c:1744 `same_time()` -
 /// `unchanged_attrs()` must treat two mtimes within `--modify-window` as equal.
 /// Before threading the window, oc compared the mtime exactly, so a
 /// within-window destination was mis-classified as changed and its metadata was
@@ -2145,7 +2145,7 @@ fn metadata_unchanged_honors_modify_window() {
 /// quick-check gates on; if it were wrong (or absent) a dest differing ONLY in
 /// the read-only attribute would be judged unchanged and never re-stamped. This
 /// runs on Linux to lock the mapping (0o200 clear == read-only) independent of
-/// any Windows filesystem, mirroring upstream `perms_differ()` (generator.c:424).
+/// any Windows filesystem, mirroring upstream `perms_differ()` (generator.c:461).
 #[test]
 fn windows_readonly_differs_maps_owner_write_bit() {
     // Sender mode is writable (0o644): a read-only dest differs, a writable
@@ -2263,7 +2263,7 @@ fn metadata_unchanged_ignores_perms_when_not_preserved() {
     );
 }
 
-/// upstream: generator.c:424-433 perms_differ() - without --perms,
+/// upstream: generator.c:461-470 perms_differ() - without --perms,
 /// --executability must flag an executability-presence mismatch so the
 /// receiver's quick-check skip path still runs the attribute pass. Before the
 /// fix the network attr-only path left an up-to-date 0644 file at 0644 when
@@ -2319,7 +2319,7 @@ fn metadata_unchanged_detects_executability_presence_mismatch() {
     );
 }
 
-/// upstream: generator.c:429-430 - perms_differ() under --executability
+/// upstream: generator.c:466-467 - perms_differ() under --executability
 /// compares only exec-bit PRESENCE; read/write differences and matching
 /// presence must not trigger the attribute pass, and non-regular entries are
 /// never tweaked by dest_mode() (rsync.c:472 S_ISREG check).
@@ -2751,7 +2751,7 @@ fn atime_needs_set_mirrors_set_file_attrs_atime_leg() {
     );
 }
 
-/// upstream: generator.c:2246 passes ATTRS_ACCURATE_TIME on a -c match, so
+/// upstream: generator.c:2288 passes ATTRS_ACCURATE_TIME on a -c match, so
 /// rsync.c:742 re-stamps atime even when the stat taken before the checksum
 /// read already matched. The read itself may have bumped atime since, so the
 /// apply must not trust that stale stat to skip the utimes.
@@ -2993,7 +2993,7 @@ fn apply_permissions_from_entry_refuses_parent_symlink_escape() {
 /// KDL.8: with `--keep-dirlinks` active, a path-based chmod through a
 /// destination whose parent is a symlink-to-a-real-dir must succeed by
 /// resolving the symlink, instead of being refused by the dirfd-anchored
-/// `secure_chmod_at` sandbox. Mirrors upstream `generator.c:1745`'s
+/// `secure_chmod_at` sandbox. Mirrors upstream `generator.c:1782`'s
 /// `gen_entry_stat(fname, file, &sx.st, keep_dirlinks && is_dir)` which follows the
 /// symlinked parent at stat time.
 ///
@@ -3240,7 +3240,7 @@ fn dir_without_perms_over_entry_path_lands_source_mode() {
         .preserve_times(false);
     apply_metadata_from_file_entry(&dir, &entry, &opts).expect("apply dir entry");
 
-    // upstream: generator.c:1856 + rsync.c:484 - a new directory
+    // upstream: generator.c:1893 + rsync.c:484 - a new directory
     // without -p lands the source mode masked by dflt_perms, so a 0700 source
     // dir stays 0700 rather than the mkdir umask default 0755.
     assert_eq!(
@@ -3522,7 +3522,7 @@ fn symlink_chmod_spec_is_ignored_without_preserve_perms_local_copy() {
     assert_eq!(
         fs::symlink_metadata(&dst).unwrap().permissions().mode() & 0o7777,
         0o777,
-        "--chmod alone must not touch a link's mode (upstream flist.c:1966-1967 \
+        "--chmod alone must not touch a link's mode (upstream flist.c:1970-1971 \
          gates the tweak on !S_ISLNK); the link must keep its own 0o777"
     );
 }

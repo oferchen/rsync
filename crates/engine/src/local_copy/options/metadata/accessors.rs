@@ -90,7 +90,7 @@ impl LocalCopyOptions {
     /// metadata preservation.
     ///
     /// A plain `--backup` without `--backup-dir` implies omit-dir-times so a
-    /// directory's mtime is never applied - upstream `options.c:2493-2494`
+    /// directory's mtime is never applied - upstream `options.c:2548-2549`
     /// (`if (make_backups && !backup_dir) omit_dir_times = -1;`) feeding
     /// `rsync.c:719-721` (`ATTRS_SKIP_MTIME` for directories). The implication is
     /// receiver/local-side only; it is never advertised as the sender `-O`
@@ -142,7 +142,7 @@ impl LocalCopyOptions {
     /// path, mirroring upstream's `am_root < 0` sentinel.
     /// upstream: options.c:95 - am_root tri-state: 0 normal, 1 root, 2 --super,
     ///                          -1 --fake-super (negative is "fake")
-    /// upstream: clientserver.c:1198-1201 - daemon `fake super = yes` forces am_root=-1
+    /// upstream: clientserver.c:1202-1205 - daemon `fake super = yes` forces am_root=-1
     /// upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes 0600 placeholder
     #[must_use]
     pub fn am_root(&self) -> bool {
@@ -184,7 +184,7 @@ pub(super) fn effective_am_root(super_mode: Option<bool>, fake_super: bool) -> b
 /// privilege drop. It is `false` on Windows, matching upstream's `am_root = 0`
 /// on platforms without POSIX uid semantics.
 ///
-/// upstream: `main.c:1871` `our_uid = MY_UID()` - the libc `geteuid()`
+/// upstream: `main.c:1875` `our_uid = MY_UID()` - the libc `geteuid()`
 /// (`rsync.h:1457`), re-sampled by `become_copy_as_user()` after the
 /// `--copy-as` drop. A raw `geteuid` syscall answers neither: `fakeroot`
 /// interposes the libc symbol and not the syscall, so it reports the real

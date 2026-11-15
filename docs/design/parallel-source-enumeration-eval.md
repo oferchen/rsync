@@ -54,7 +54,7 @@ Only then does the transfer loop hand the file list to
 
 ```
 crates/transfer/src/generator/transfer.rs:771-783
-    // upstream: flist.c:2192 - send_file_list()
+    // upstream: flist.c:2196 - send_file_list()
     if files_from_paths.is_empty() {
         self.build_file_list(paths)?;
     } else {

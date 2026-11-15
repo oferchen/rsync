@@ -12,12 +12,12 @@ use std::str::FromStr;
 
 /// Lowest protocol version upstream rsync accepts on the command line.
 ///
-/// upstream: rsync.h:147 `MIN_PROTOCOL_VERSION 20`. `setup_protocol`
+/// upstream: rsync.h:148 `MIN_PROTOCOL_VERSION 20`. `setup_protocol`
 /// (compat.c:631-635) rejects anything below this with `RERR_PROTOCOL`.
 const UPSTREAM_MIN_PROTOCOL: u8 = 20;
 /// Highest protocol version upstream rsync accepts on the command line.
 ///
-/// upstream: rsync.h:114 `PROTOCOL_VERSION 33`. `setup_protocol`
+/// upstream: rsync.h:115 `PROTOCOL_VERSION 33`. `setup_protocol`
 /// (compat.c:636-640) rejects anything above this with `RERR_PROTOCOL`.
 const UPSTREAM_MAX_PROTOCOL: u8 = 33;
 
@@ -101,7 +101,7 @@ fn syntax_error(display: &str, detail: String) -> Message {
 
 /// Builds the exit-2 diagnostic for a value below upstream's minimum (20).
 ///
-/// upstream: compat.c:632 "--protocol must be at least %d on the %s."
+/// upstream: compat.c:633 "--protocol must be at least %d on the %s."
 fn floor_error(display: &str) -> Message {
     rsync_error!(
         PROTOCOL_INCOMPATIBLE_EXIT_CODE,
@@ -114,7 +114,7 @@ fn floor_error(display: &str) -> Message {
 
 /// Builds the exit-2 diagnostic for a value above upstream's maximum (33).
 ///
-/// upstream: compat.c:637 "--protocol must be no more than %d on the %s."
+/// upstream: compat.c:638 "--protocol must be no more than %d on the %s."
 fn ceiling_error(display: &str) -> Message {
     rsync_error!(
         PROTOCOL_INCOMPATIBLE_EXIT_CODE,

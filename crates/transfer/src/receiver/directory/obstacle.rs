@@ -175,7 +175,7 @@ impl ReceiverContext {
         };
 
         if metadata.is_dir() {
-            // upstream: generator.c:2469 - dir_in_the_way, so neither the
+            // upstream: generator.c:2512 - dir_in_the_way, so neither the
             // backup arm nor the atomic temp-and-rename applies.
             return self.rmdir_obstacle(
                 writer,
@@ -187,7 +187,7 @@ impl ReceiverContext {
             );
         }
 
-        // upstream: generator.c:2477 / delete.c:228-230 - the backup arm, which
+        // upstream: generator.c:2520 / delete.c:228-230 - the backup arm, which
         // the `is_dir` test above has already excluded a directory from.
         match self.backup_existing_before_replace(existing, relative_path, dest_dir, sandbox) {
             Ok(true) => return Ok(()),

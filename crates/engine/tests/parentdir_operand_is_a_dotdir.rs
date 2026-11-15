@@ -22,11 +22,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/flist.c:2835-2842` - the `/.` append and `DOTDIR_NAME`.
-//! - `rsync-3.5.1/flist.c:2821-2823` - the `--relative` short-circuit above it.
-//! - `rsync-3.5.1/flist.c:2850-2861` - the non-relative last-`/` split.
-//! - `rsync-3.5.1/flist.c:2898-2907` - the `--relative` `..` rejection.
-//! - `rsync-3.5.1/flist.c:117-120` - `NORMAL_NAME` / `DOTDIR_NAME`.
+//! - `rsync-3.5.2/flist.c:2846-2853` - the `/.` append and `DOTDIR_NAME`.
+//! - `rsync-3.5.2/flist.c:2832-2834` - the `--relative` short-circuit above it.
+//! - `rsync-3.5.2/flist.c:2861-2872` - the non-relative last-`/` split.
+//! - `rsync-3.5.2/flist.c:2909-2918` - the `--relative` `..` rejection.
+//! - `rsync-3.5.2/flist.c:117-120` - `NORMAL_NAME` / `DOTDIR_NAME`.
 
 #![cfg(unix)]
 
@@ -174,7 +174,7 @@ fn parent_dir_operand_matches_the_trailing_slash_and_dot_spellings() {
 /// exit 23, nothing transferred. Measured against stock 3.5.1 (3.5.0 copied
 /// `other`'s contents and exited 0).
 ///
-/// upstream: `rsync-3.5.1/flist.c:2969` records the root (`remember_sender_source_arg()`),
+/// upstream: `rsync-3.5.2/flist.c:2980` records the root (`remember_sender_source_arg()`),
 /// `flist.c:246-260` keys it on the lexically cleaned path, `flist.c:2266-2267` opens
 /// the scan through the held root, `flist.c:326-329` refuses the changed identity
 /// with `ELOOP`, and
@@ -292,7 +292,7 @@ fn parent_dir_rule_is_scoped_to_non_relative() {
 
     assert!(
         result.is_err(),
-        "under `--relative` upstream REJECTS a `..` operand (flist.c:2898-2907); \
+        "under `--relative` upstream REJECTS a `..` operand (flist.c:2909-2918); \
          it must not be granted the DOTDIR contents semantics of the \
          non-relative arm. Destination held: {:?}",
         snapshot(&to),

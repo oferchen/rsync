@@ -48,7 +48,7 @@ fn run_daemon_records_log_file_entries() {
     reader.read_line(&mut line).expect("module acknowledgement");
     assert_eq!(line, "@RSYNCD: OK\n");
 
-    // upstream: clientserver.c:1152-1154 - after `@RSYNCD: OK` the daemon
+    // upstream: clientserver.c:1156-1158 - after `@RSYNCD: OK` the daemon
     // blocks in read_args() waiting for the client's argv; it volunteers
     // nothing further. The log lines this test asserts are already written by
     // module selection (clientserver.c:1526 `connect from`, :787 `rsync
@@ -63,7 +63,7 @@ fn run_daemon_records_log_file_entries() {
     }
 
     let log_contents = fs::read_to_string(&log_path).expect("read log file");
-    // upstream: log.c:125-135 logit() writes the raw rwrite() buffer after
+    // upstream: log.c:132-142 logit() writes the raw rwrite() buffer after
     // the `%Y/%m/%d %H:%M:%S [pid] ` prefix; FLOG/FINFO bodies carry no
     // severity tag (e.g. `rsyncd version %s starting`, clientserver.c:1791).
     assert!(
@@ -90,13 +90,13 @@ fn run_daemon_records_log_file_entries() {
     for line in log_contents.lines() {
         assert!(
             prefix_ok(line),
-            "log line missing upstream `timestamp [pid] ` prefix (log.c:127): {line:?}"
+            "log line missing upstream `timestamp [pid] ` prefix (log.c:134): {line:?}"
         );
     }
-    // upstream: clientserver.c:1526 - `connect from %s (%s)`
+    // upstream: clientserver.c:1536 - `connect from %s (%s)`
     assert!(log_contents.contains("connect from"));
     assert!(log_contents.contains("127.0.0.1"));
-    // upstream: clientserver.c:787 - `rsync allowed access on module %s from %s (%s)`
+    // upstream: clientserver.c:791 - `rsync allowed access on module %s from %s (%s)`
     assert!(
         log_contents.contains("rsync allowed access on module docs"),
         "log should record upstream module-access grant: {log_contents:?}"

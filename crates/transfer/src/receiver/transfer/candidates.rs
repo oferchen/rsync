@@ -41,14 +41,14 @@ use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
 /// read that follows each request may append a sub-list segment to the file
 /// list (`rsync.c:323-448` `read_ndx_and_attrs`), so a plan must not pin it.
 ///
-/// upstream: `generator.c:581-600` - `itemize()` writes `write_ndx(ndx)` plus
+/// upstream: `generator.c:618-637` - `itemize()` writes `write_ndx(ndx)` plus
 /// the `iflags` shortint for every entry whose flags are significant, so a
 /// dry-run plan is exactly "the entries upstream would put on the wire".
 pub(in crate::receiver) type DryRunItem = (usize, u32);
 
 /// The itemize seed for a regular file the generator is about to request.
 ///
-/// upstream: `generator.c:2378-2380`
+/// upstream: `generator.c:2421-2423`
 ///
 /// ```c
 /// int iflags = ITEM_TRANSFER;
@@ -143,7 +143,7 @@ impl ReceiverContext {
     ) -> Vec<ListOnlyEntry> {
         self.file_list[range]
             .iter()
-            // upstream: generator.c:1640 - implied parents are not listed.
+            // upstream: generator.c:1677 - implied parents are not listed.
             .filter(|entry| !self.skips_implied_dir(entry))
             .map(|entry| {
                 let is_symlink = entry.is_symlink();
@@ -161,7 +161,7 @@ impl ReceiverContext {
                     atime_nsec: entry.atime_nsec(),
                     crtime: entry.crtime(),
                     crtime_nsec: 0,
-                    // upstream: generator.c:1345 lists `F_SYMLINK(f)`, the target
+                    // upstream: generator.c:1382 lists `F_SYMLINK(f)`, the target
                     // as recv_file_entry() stored it, munge prefix and
                     // sanitizing included (flist.c:1521-1524, :1553).
                     symlink_target: if is_symlink {
@@ -242,7 +242,7 @@ impl ReceiverContext {
         acl_cache: Option<&crate::disk_commit::LiveAclCache>,
         acl_id_map: Option<&metadata::AclIdMapper>,
     ) -> io::Result<Vec<(usize, PathBuf, u32)>> {
-        // upstream: generator.c:1636-1637 - "recv_generator(%s,%d)" emitted at
+        // upstream: generator.c:1673-1674 - "recv_generator(%s,%d)" emitted at
         // the top of recv_generator() for every file the generator considers
         // (regular files, directories, symlinks, devices, specials). Skipping
         // the loop when the flag is off keeps the hot path allocation-free.
@@ -279,12 +279,12 @@ impl ReceiverContext {
             .map(|(i, e)| (range.start + i, e))
             .filter(|(_, e)| e.is_file())
             .filter(|(_, e)| !is_hardlink_follower(e))
-            // upstream: generator.c:1646-1656 - a file below a directory
+            // upstream: generator.c:1683-1693 - a file below a directory
             // --existing skipped returns early and silently, before the daemon
             // filter check; it is neither refused nor counted.
             .filter(|(_, e)| !failed_dirs.is_some_and(|fd| fd.is_missing_or_below(e.path())))
             .filter(|(_, e)| {
-                // upstream: generator.c:1662-1676 - check_filter(&daemon_filter_list, ...)
+                // upstream: generator.c:1699-1713 - check_filter(&daemon_filter_list, ...)
                 // rejects daemon-excluded files before accepting transfer data.
                 // The refusal is never silent: generator.c:1670-1672 reports
                 // `ERROR: daemon refused to receive file "%s"` as FERROR_XFER,
@@ -316,19 +316,19 @@ impl ReceiverContext {
             })
             .collect();
 
-        // upstream: generator.c:2277 - dry_run (!do_xfers) skips stat and data
+        // upstream: generator.c:2319 - dry_run (!do_xfers) skips stat and data
         // transfer but still builds the candidate list so NDX requests are sent
         // to the sender, which logs each file name for verbose output. List-only
         // also skips the destination stat/quick-check; its caller never issues
         // per-file NDX requests (the list_only branch in `run_pipelined`).
         if self.config.flags.skip_dest_writes() {
-            // upstream: generator.c:2376-2377 - dry-run still itemizes with
+            // upstream: generator.c:2419-2420 - dry-run still itemizes with
             // ITEM_TRANSFER; the dry-run loop writes the bare ITEM_TRANSFER
             // attrs over the wire and does not consume this precomputed value.
             return Ok(candidates
                 .into_iter()
                 .filter(|(_, entry)| {
-                    // upstream: generator.c:1757-1806 - the existence gate runs
+                    // upstream: generator.c:1794-1843 - the existence gate runs
                     // before the `do_xfers` split, so a dry run plans exactly
                     // the files the real run would request.
                     if has_existence_gate {
@@ -347,7 +347,7 @@ impl ReceiverContext {
                             return false;
                         }
                     }
-                    // upstream: generator.c:2118-2132 - the max/min-size skip
+                    // upstream: generator.c:2159-2173 - the max/min-size skip
                     // (`goto cleanup`) fires before the `do_xfers` gate, so a
                     // dry run still excludes out-of-range files and emits the
                     // SKIP-gated notice in flist order.
@@ -365,7 +365,7 @@ impl ReceiverContext {
                 .collect());
         }
 
-        // upstream: generator.c:648 - the quick-check mtime gate keys on
+        // upstream: generator.c:685 - the quick-check mtime gate keys on
         // ignore_times alone; -t/--times only governs whether mtime is applied.
         let ignore_times = self.config.flags.ignore_times;
         let size_only = self.config.file_selection.size_only;
@@ -383,7 +383,7 @@ impl ReceiverContext {
         // per-file method dispatch for the common no-itemize case.
         let emit_itemize = self.should_emit_itemize();
 
-        // upstream: generator.c:2378-2380 - the seed the generator hands to
+        // upstream: generator.c:2421-2423 - the seed the generator hands to
         // itemize() at `notify_others` is `ITEM_TRANSFER`, plus
         // `ITEM_REPORT_CHANGE` whenever `always_checksum > 0`. Under
         // `--checksum` every transferred file therefore carries the position-2
@@ -448,7 +448,7 @@ impl ReceiverContext {
         let mut files_to_transfer = Vec::with_capacity(stat_results.len() / 4 + 1);
         for (idx, file_path, stat_result) in stat_results {
             let entry = &self.file_list[idx];
-            // upstream: generator.c:2213-2223 - a stat that failed for any
+            // upstream: generator.c:2254-2265 - a stat that failed for any
             // reason but ENOENT is reported and the file skipped; only a
             // missing destination proceeds as new.
             let mut dest_meta = match stat_result {
@@ -459,7 +459,7 @@ impl ReceiverContext {
                         "recv_generator: failed to stat {}",
                         self.full_fname_in_dest(dest_dir, &file_path)
                     );
-                    // upstream: syscall.c:2920-2931 - a confinement refusal
+                    // upstream: syscall.c:2991-3002 - a confinement refusal
                     // prints as ELOOP; EXDEV is oc's internal escape signal.
                     let shown = fast_io::refusal_errno::reported_refusal(&error);
                     let _ = self.emit_generator_error_xfer(
@@ -470,7 +470,7 @@ impl ReceiverContext {
                     continue;
                 }
             };
-            // upstream: generator.c:1393-1399 - under --fake-super the
+            // upstream: generator.c:1430-1436 - under --fake-super the
             // generator's link_stat() goes through x_lstat(), which folds the
             // %stat record in; a record that does not parse is fatal
             // (xattrs.c:1253-1258).
@@ -484,7 +484,7 @@ impl ReceiverContext {
                     },
                 )?);
             }
-            // upstream: generator.c:2822-2827 generate_files() - the per-file
+            // upstream: generator.c:2908-2913 generate_files() - the per-file
             // generate loop pokes maybe_send_keepalive once the I/O lull has
             // elapsed so a remote sender's --timeout does not fire while the
             // generator quick-checks a long run of up-to-date files without
@@ -502,7 +502,7 @@ impl ReceiverContext {
                 continue;
             }
             if let Some(ref meta) = dest_meta {
-                // upstream: generator.c:2118-2132 - the max/min-size skip is
+                // upstream: generator.c:2159-2173 - the max/min-size skip is
                 // tested per file after the `--ignore-existing` "exists" notice
                 // (1798) and before the `--update` "is newer" notice (2138), so
                 // the size notices interleave with the other skip notices in
@@ -514,13 +514,13 @@ impl ReceiverContext {
                     && dest_type_matches_source(&file_path, entry)
                     && dest_mtime_newer(meta, entry, modify_window)
                 {
-                    // upstream: generator.c:2135 - the `-u` skip is guarded by
+                    // upstream: generator.c:2176 - the `-u` skip is guarded by
                     // `stype == ftype`, so a newer destination only suppresses
                     // the transfer when it is the SAME file type as the source.
                     // A type mismatch (e.g. dest symlink vs source regular file)
                     // always transfers regardless of mtime.
                     //
-                    // upstream: generator.c:2137-2138 - `if (INFO_GTE(SKIP, 1))
+                    // upstream: generator.c:2178-2179 - `if (INFO_GTE(SKIP, 1))
                     // rprintf(FINFO, "%s is newer\n", fname)`. Report the skip on
                     // the same sink as itemize so the ordering matches upstream.
                     if logging::info_gte(logging::InfoFlag::Skip, 1) {
@@ -538,12 +538,12 @@ impl ReceiverContext {
                     always_checksum,
                     modify_window,
                 ) {
-                    // upstream: generator.c:2248 - itemize() with iflags=0 for an
+                    // upstream: generator.c:2290 - itemize() with iflags=0 for an
                     // up-to-date file; the attr-comparison may still surface a
                     // metadata-only row (perms/owner/group differing while
                     // size+mtime match).
                     // The `x` column is now part of itemize_existing_flags
-                    // itself (upstream generator.c:572-577), and this call
+                    // itself (upstream generator.c:609-614), and this call
                     // still runs before the apply below overwrites the
                     // destination's xattrs.
                     let unchanged_iflags =
@@ -567,7 +567,7 @@ impl ReceiverContext {
                     );
                     continue;
                 }
-                // upstream: generator.c:2261 - after a failed quick check,
+                // upstream: generator.c:2303 - after a failed quick check,
                 // `--append` leaves a regular destination that is already at
                 // least as long as the source untouched: no data request and
                 // no attribute update.
@@ -575,7 +575,7 @@ impl ReceiverContext {
                     continue;
                 }
             } else {
-                // upstream: generator.c:1704-1718 - a not-yet-existing file
+                // upstream: generator.c:1741-1755 - a not-yet-existing file
                 // still hits the max/min-size skip (after the not-creating
                 // check at 1368), so the size notice for an absent file appears
                 // in flist order alongside the other per-file notices.
@@ -601,7 +601,7 @@ impl ReceiverContext {
                     continue;
                 }
             }
-            // upstream: generator.c:2148-2153 -
+            // upstream: generator.c:2189-2194 -
             //   `if (statret == 0 && !(stype == FT_REG || (write_devices && stype == FT_DEVICE))) {
             //        if (delete_item(fname, sx.st.st_mode, del_opts | DEL_FOR_FILE) != 0)
             //                goto cleanup;
@@ -638,14 +638,14 @@ impl ReceiverContext {
                 {
                     continue;
                 }
-                // upstream: generator.c:2151-2152 - `statret = -1; stat_errno =
+                // upstream: generator.c:2192-2193 - `statret = -1; stat_errno =
                 // ENOENT;`. The obstacle is gone, so every decision below sees
                 // an absent destination: ITEM_IS_NEW on the itemize row and a
                 // created-file tally rather than a replacement.
                 dest_meta = None;
             }
 
-            // upstream: generator.c:521-584 itemize() - compute the base itemize
+            // upstream: generator.c:558-621 itemize() - compute the base itemize
             // flags before the data transfer so the row reflects attribute
             // changes against the pre-transfer destination. A non-existent dest
             // (statret < 0) is ITEM_IS_NEW; an existing one OR-s the per-attr
@@ -660,7 +660,7 @@ impl ReceiverContext {
                 // too, since it is still requested and materialised.
                 self.record_created(entry.mode());
             }
-            // upstream: generator.c:2376-2388 - the generator emits the transfer
+            // upstream: generator.c:2419-2431 - the generator emits the transfer
             // itemize right after write_ndx(ndx), in flist order. With
             // log_before_transfer (`!am_server`, i.e. client mode) the row is
             // written to stdout before the data moves, so emit it here in the
@@ -734,7 +734,7 @@ impl ReceiverContext {
         dest_dir: &Path,
         candidates: &[(usize, PathBuf, u32)],
     ) -> Vec<DryRunItem> {
-        // upstream: generator.c:648 - the quick-check mtime gate keys on
+        // upstream: generator.c:685 - the quick-check mtime gate keys on
         // ignore_times alone; -t/--times only governs whether mtime is applied.
         let ignore_times = self.config.flags.ignore_times;
         let size_only = self.config.file_selection.size_only;
@@ -761,7 +761,7 @@ impl ReceiverContext {
             } else {
                 dest_dir.join(rel)
             };
-            // upstream: generator.c:1757-1806 - the existence gate precedes the
+            // upstream: generator.c:1794-1843 - the existence gate precedes the
             // `do_xfers` split for every file type; regular files were gated
             // in the candidate pass.
             if !entry.is_file()
@@ -830,14 +830,14 @@ impl ReceiverContext {
         use crate::generator::ItemFlags;
         let new_iflags = |base: u32| base | ItemFlags::ITEM_IS_NEW;
         if entry.is_dir() {
-            // upstream: generator.c:1870-1872 - new dir -> ITEM_LOCAL_CHANGE |
+            // upstream: generator.c:1907-1909 - new dir -> ITEM_LOCAL_CHANGE |
             // ITEM_IS_NEW; existing dir -> itemize() attribute diff.
             match fs::metadata(dest_path) {
                 Ok(_) => self.existing_dir_iflags(entry, dest_path),
                 Err(_) => new_iflags(ItemFlags::ITEM_LOCAL_CHANGE),
             }
         } else if entry.is_symlink() {
-            // upstream: generator.c:1964-2009 - an up-to-date symlink (same
+            // upstream: generator.c:2001-2050 - an up-to-date symlink (same
             // target) is metadata-only. A recreated one is itemized with base
             // ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE (generator.c:2007-2008):
             // when the existing destination is itself a symlink, `statret`
@@ -854,14 +854,14 @@ impl ReceiverContext {
                 Ok(_) | Err(_) => self.itemize_existing_flags(entry, dest_path, None, base),
             }
         } else if entry.is_device() || entry.is_special() {
-            // upstream: generator.c:2091-2095 - a node newly materialised via do_mknod
+            // upstream: generator.c:2132-2136 - a node newly materialised via do_mknod
             // is ITEM_IS_NEW; an existing node of the same type is metadata-only.
             match fs::symlink_metadata(dest_path) {
                 Ok(_) => 0,
                 Err(_) => new_iflags(ItemFlags::ITEM_LOCAL_CHANGE),
             }
         } else {
-            // upstream: generator.c:2373-2385 - regular file at notify_others:
+            // upstream: generator.c:2416-2428 - regular file at notify_others:
             // absent -> ITEM_TRANSFER | ITEM_IS_NEW; present and quick-check
             // match -> itemize(...,0,...); present and differing -> ITEM_TRANSFER
             // plus the attribute diff.
@@ -908,7 +908,7 @@ impl ReceiverContext {
     /// The iflags of a phase-2 redo request for `idx`, or `None` when the
     /// destination cannot be stat'd and the file is skipped.
     ///
-    /// upstream: generator.c:2667-2705 re-enters recv_generator() for the
+    /// upstream: generator.c:2711-2749 re-enters recv_generator() for the
     /// redo index, which re-stats the destination (generator.c:2213-2223
     /// reports and skips any failure but ENOENT) and itemizes the request
     /// against it (generator.c:2378-2384). The failed temp was discarded, so a
@@ -961,7 +961,7 @@ impl ReceiverContext {
         use crate::generator::ItemFlags;
         let mut iflags = base;
         let Some(dest_meta) = dest_meta else {
-            // upstream: generator.c:578-582 - the `statret < 0` leg is not
+            // upstream: generator.c:615-619 - the `statret < 0` leg is not
             // ITEM_IS_NEW alone: it first runs `xattr_diff(file, NULL, 1)`,
             // which compares the sender's list against an empty destination
             // (xattrs.c:583-589 sets `rec_cnt = 0` for a NULL `sxp`), so a
@@ -971,11 +971,11 @@ impl ReceiverContext {
             }
             return iflags | ItemFlags::ITEM_IS_NEW;
         };
-        // upstream: generator.c:527 - S_ISREG(file->mode) && F_LENGTH(file) != st_size
+        // upstream: generator.c:564 - S_ISREG(file->mode) && F_LENGTH(file) != st_size
         if entry.is_file() && entry.size() != dest_meta.len() {
             iflags |= ItemFlags::ITEM_REPORT_SIZE;
         }
-        // upstream: generator.c:532-536 - REPORT_TIME is a TWO-branch ternary,
+        // upstream: generator.c:569-573 - REPORT_TIME is a TWO-branch ternary,
         // not a single `keep_time &&` test:
         //
         //     } else if (keep_time
@@ -989,7 +989,7 @@ impl ReceiverContext {
         // changed, because the receiver is about to leave the destination mtime
         // at "now" instead of the sender's value - which is what makes a plain
         // `rsync -i src/ dst/` print `>f..T......` rather than `>f.........`.
-        // upstream: generator.c:519-523 - `keep_time` is not `preserve_mtimes`;
+        // upstream: generator.c:556-560 - `keep_time` is not `preserve_mtimes`;
         // it is type-gated:
         //
         //     int keep_time = !preserve_mtimes ? 0
@@ -1006,7 +1006,7 @@ impl ReceiverContext {
             && !(entry.is_dir() && self.config.effective_omit_dir_times())
             && !(entry.is_symlink() && self.config.flags.omit_link_times);
         let report_time = if keep_time {
-            // upstream: generator.c:402-409 - `mtime_differs()` is
+            // upstream: generator.c:439-446 - `mtime_differs()` is
             // `!same_time(...)`, which applies the `--modify-window` tolerance
             // and, for a negative window, compares nanoseconds too
             // (util1.c:1744-1754). A raw `!=` on whole seconds ignored both.
@@ -1018,9 +1018,9 @@ impl ReceiverContext {
                 entry.mtime_nsec(),
             )
         } else {
-            // upstream: generator.c:534-536 - all three conjuncts.
+            // upstream: generator.c:571-573 - all three conjuncts.
             //
-            // ITEM_MATCHED (rsync.h:263, log-only bit 18) is set by upstream's
+            // ITEM_MATCHED (rsync.h:264, log-only bit 18) is set by upstream's
             // `unchanged_attrs()`/hard-link bookkeeping; nothing in oc sets it
             // yet, so this conjunct cannot fire today. It is written out
             // anyway so the predicate stays a faithful transcription and
@@ -1038,7 +1038,7 @@ impl ReceiverContext {
         if report_time {
             iflags |= ItemFlags::ITEM_REPORT_TIME;
         }
-        // upstream: generator.c:535-540 - under `--crtimes` the generator reads
+        // upstream: generator.c:572-577 - under `--crtimes` the generator reads
         // the destination's creation time and reports a difference through
         // `same_time()`:
         //
@@ -1075,7 +1075,7 @@ impl ReceiverContext {
         }
         #[cfg(unix)]
         {
-            // upstream: generator.c:537-539 - `atimes_ndx && !S_ISDIR &&
+            // upstream: generator.c:574-576 - `atimes_ndx && !S_ISDIR &&
             // !S_ISLNK && !same_time(F_ATIME(file), 0, sxp->st.st_atime, 0)`.
             // Both nsec arguments are literal zeros upstream, but the
             // comparison still goes through `same_time()`, so a positive
@@ -1130,7 +1130,7 @@ impl ReceiverContext {
                     iflags |= ItemFlags::ITEM_REPORT_PERMS;
                 }
             }
-            // upstream: generator.c:559-560 - uid_ndx && am_root && uid differs
+            // upstream: generator.c:596-597 - uid_ndx && am_root && uid differs
             if self.config.flags.owner
                 && metadata::am_root()
                 && let Some(uid) = entry.uid()
@@ -1138,7 +1138,7 @@ impl ReceiverContext {
             {
                 iflags |= ItemFlags::ITEM_REPORT_OWNER;
             }
-            // upstream: generator.c:561-562 - `gid_ndx && !(file->flags &
+            // upstream: generator.c:598-599 - `gid_ndx && !(file->flags &
             // FLAG_SKIP_GROUP) && sxp->st.st_gid != (gid_t)F_GROUP(file)`.
             //
             // FLAG_SKIP_GROUP is stamped on the mapped id at uidlist.c:284
@@ -1155,7 +1155,7 @@ impl ReceiverContext {
                 iflags |= ItemFlags::ITEM_REPORT_GROUP;
             }
         }
-        // upstream: generator.c:563-569 - with `preserve_acls` and a non-symlink
+        // upstream: generator.c:600-606 - with `preserve_acls` and a non-symlink
         // the generator reads the destination ACL (`get_acl`) and probes whether
         // applying the sender's cached ACL would change it
         // (`set_acl(NULL, file, sxp, file->mode)`); a non-zero return lights the
@@ -1164,7 +1164,7 @@ impl ReceiverContext {
         if self.acl_itemize_active() && !entry.is_symlink() && self.dest_acl_differs(entry, path) {
             iflags |= ItemFlags::ITEM_REPORT_ACL;
         }
-        // upstream: generator.c:521-528 - the last thing the `statret >= 0` leg
+        // upstream: generator.c:558-565 - the last thing the `statret >= 0` leg
         // does is a lazy `get_xattr(fnamecmp, sxp)` followed by
         // `xattr_diff(file, sxp, 1)`. It runs for every itemized entry, not
         // just for one that was skipped as up to date.
@@ -1411,7 +1411,7 @@ impl ReceiverContext {
     /// Reports whether a `--dry-run` receive skips `entry` at the `--append`
     /// size gate.
     ///
-    /// upstream: generator.c:2261 - the gate runs after a failed quick check
+    /// upstream: generator.c:2303 - the gate runs after a failed quick check
     /// and before the `do_xfers` split, so a dry run plans exactly the files the
     /// real run requests. An up-to-date file stays a candidate so `-ii` still
     /// itemizes it as unchanged.
@@ -1441,7 +1441,7 @@ impl ReceiverContext {
     /// Applies the `--existing` / `--ignore-existing` gate to a regular file and
     /// emits the SKIP notice, returning `true` when the file is skipped.
     ///
-    /// upstream: generator.c:1757-1806 - tested ahead of every other per-file
+    /// upstream: generator.c:1794-1843 - tested ahead of every other per-file
     /// skip, so a gated file never reaches the size, `--update` or quick-check
     /// notices.
     fn skip_regular_by_existence_gate<W: crate::writer::MsgInfoSender + ?Sized>(
@@ -1457,7 +1457,7 @@ impl ReceiverContext {
         {
             return false;
         }
-        // upstream: generator.c:2172 - the gate reads `link_stat()`, so a
+        // upstream: generator.c:2213 - the gate reads `link_stat()`, so a
         // dangling destination symlink the following stat missed still exists.
         let lstat = dest_meta
             .is_none()
@@ -1568,7 +1568,7 @@ impl ReceiverContext {
         has_xattrs: bool,
         needs_metadata_apply: bool,
     ) {
-        // upstream: generator.c:2248 - itemize() for an up-to-date file. The
+        // upstream: generator.c:2290 - itemize() for an up-to-date file. The
         // attr-comparison flags were computed against the pre-apply dest stat;
         // emit_itemize's own gate drops the row when nothing is significant
         // unless the itemize level requests unchanged rows (generator.c:588-589).
@@ -1586,13 +1586,13 @@ impl ReceiverContext {
             self.record_server_no_transfer_itemize(flist_idx, unchanged_iflags);
         }
 
-        // upstream: generator.c:474 unchanged_attrs() - fast-path check avoids
+        // upstream: generator.c:511 unchanged_attrs() - fast-path check avoids
         // the per-function-call overhead of apply_metadata when all attributes
         // already match. Skip entirely when no preservation flags are active.
         // On a no-change scan this eliminates ownership mapping, permission
         // comparison, and timestamp construction for every file.
         //
-        // upstream: generator.c:1646 + 2246 - under --checksum the call carries
+        // upstream: generator.c:1683 + 2246 - under --checksum the call carries
         // ATTRS_ACCURATE_TIME, so rsync.c:489 same_mtime() compares nanoseconds
         // exactly and ignores modify_window; a negative window is that test.
         let mtime_window = if self.config.flags.checksum {
@@ -1628,7 +1628,7 @@ impl ReceiverContext {
                 attrs_flags,
             )
         {
-            // upstream: generator.c:2246 set_file_attrs() on a quick-check
+            // upstream: generator.c:2288 set_file_attrs() on a quick-check
             // match; its chown/utimes/chmod arms are rsyserr(FERROR_XFER).
             let _ = self.emit_generator_attrs_failure(writer, dest_dir, &e);
         }
@@ -1756,7 +1756,7 @@ mod itemize_order_tests {
         config
     }
 
-    /// upstream: generator.c:582-593 - on a push the server-side generator
+    /// upstream: generator.c:619-630 - on a push the server-side generator
     /// writes `NDX + write_shortint(iflags)` for a quick-check-matched file
     /// whose attributes still differ; the pushing client's sender renders the
     /// `.f...p.....` row from those wire iflags (sender.c:587-588
@@ -1827,7 +1827,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:648 `quick_check_ok()` - the mtime quick-check runs
+    /// upstream: generator.c:685 `quick_check_ok()` - the mtime quick-check runs
     /// whenever `ignore_times` is off; `-t`/`--times` only decides whether the
     /// mtime is *applied* to the destination, never whether the comparison runs.
     /// A bare `-r` (recursion, no `-t`, no `-I`) over an unchanged tree must
@@ -1924,7 +1924,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:1646 + 2246 - under `--checksum` the up-to-date
+    /// upstream: generator.c:1683 + 2246 - under `--checksum` the up-to-date
     /// path calls `set_file_attrs()` with `ATTRS_ACCURATE_TIME`, so
     /// rsync.c:489 `same_mtime()` compares the nanoseconds exactly instead of
     /// through the whole-second `modify_window` test.
@@ -2087,7 +2087,7 @@ mod itemize_order_tests {
         (meta.atime(), meta.atime_nsec())
     }
 
-    /// upstream: generator.c:1646 + 2246 - a `-c` match calls set_file_attrs()
+    /// upstream: generator.c:1683 + 2246 - a `-c` match calls set_file_attrs()
     /// with ATTRS_ACCURATE_TIME, so rsync.c:741 re-stamps the sender's atime
     /// even when the pre-checksum stat already matched. The checksum read of
     /// the destination moves its atime; without the forced stamp `-cU` leaves
@@ -2153,7 +2153,7 @@ mod itemize_order_tests {
         }
     }
 
-    /// upstream: generator.c:587-589 - `iflags &= 0xffff` puts the full low
+    /// upstream: generator.c:624-626 - `iflags &= 0xffff` puts the full low
     /// word on the wire, but the record is only emitted when a significant
     /// flag survives (or `-ii` / `-vv` force unchanged rows), and this
     /// no-trailing-fields path must never advertise `ITEM_REPORT_XATTR`,
@@ -2191,7 +2191,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:537-539. Under `--atimes` (`-U`), an otherwise
+    /// upstream: generator.c:574-576. Under `--atimes` (`-U`), an otherwise
     /// up-to-date regular file whose source atime differs from the destination's
     /// still itemizes an `ITEM_REPORT_ATIME` (`u`) row. Without `-U` the same
     /// atime difference is invisible, and matching mtimes must not add
@@ -2260,7 +2260,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:532-536. REPORT_TIME is a two-branch ternary. The
+    /// upstream: generator.c:569-573. REPORT_TIME is a two-branch ternary. The
     /// `!keep_time` branch is what makes a plain `rsync -i` (no `--times`)
     /// print `>f..T......` for every transferred file: the receiver is about to
     /// leave the destination mtime at "now", so the time column reports a
@@ -2348,7 +2348,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:521-528 (`statret >= 0`) and :573-575
+    /// upstream: generator.c:558-565 (`statret >= 0`) and :573-575
     /// (`statret < 0`). Both legs of `itemize()` compare xattrs, so the `x`
     /// column belongs on the *transfer* seed as much as on the up-to-date row.
     ///
@@ -2431,7 +2431,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:548-558. The permission compare is an
+    /// upstream: generator.c:585-595. The permission compare is an
     /// `if (preserve_perms) ... else if (preserve_executability ...)`, so `-E`
     /// without `-p` reports `p` only when the *executability* changes - the
     /// only bit the receiver is going to copy.
@@ -2517,7 +2517,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:561-562 + uidlist.c:284. FLAG_SKIP_GROUP is
+    /// upstream: generator.c:598-599 + uidlist.c:284. FLAG_SKIP_GROUP is
     /// stamped on any group a non-root process does not belong to, and the
     /// itemize test is `!(file->flags & FLAG_SKIP_GROUP)`.
     ///
@@ -2587,7 +2587,7 @@ mod itemize_order_tests {
         }
     }
 
-    /// upstream: generator.c:519-523. `keep_time` is type-gated, not simply
+    /// upstream: generator.c:556-560. `keep_time` is type-gated, not simply
     /// `preserve_mtimes`: under `--omit-dir-times` a directory and under
     /// `--omit-link-times` a symlink drop to the `!keep_time` branch, because
     /// the receiver is not going to set that type's mtime at all.
@@ -2658,7 +2658,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:402-409 + util1.c:1744-1754. `mtime_differs()` is
+    /// upstream: generator.c:439-446 + util1.c:1744-1754. `mtime_differs()` is
     /// `!same_time(...)`, so the mtime comparison honours `--modify-window`
     /// (and, for a negative window, nanoseconds). oc used a raw `!=` on whole
     /// seconds and so reported `t` for a difference the user asked it to
@@ -2727,7 +2727,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:535-540. Under `--crtimes` the row reports the
+    /// upstream: generator.c:572-577. Under `--crtimes` the row reports the
     /// destination's creation time against the sender's through `same_time()`.
     ///
     /// Why it matters: the `n` glyph (log.c:763) was rendered but never
@@ -2800,7 +2800,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:2378-2380. `--checksum` seeds every transfer with
+    /// upstream: generator.c:2421-2423. `--checksum` seeds every transfer with
     /// `ITEM_REPORT_CHANGE`, because the checksum - not the mtime - is what
     /// decided the file changed, so `rsync -rtci` prints `>fc........`.
     ///
@@ -2817,7 +2817,7 @@ mod itemize_order_tests {
         assert_eq!(transfer_seed(false), ItemFlags::ITEM_TRANSFER);
     }
 
-    /// upstream: generator.c:578-582. The `statret < 0` leg runs
+    /// upstream: generator.c:615-619. The `statret < 0` leg runs
     /// `xattr_diff(file, NULL, 1)` before adding ITEM_IS_NEW, and a NULL `sxp`
     /// means an empty receiver list (xattrs.c:583-589). A sender entry with no
     /// xattrs must therefore leave the `x` column clear - otherwise every
@@ -3050,7 +3050,7 @@ mod itemize_order_tests {
             vec![
                 (0, ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW),
                 (1, ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW),
-                // upstream: generator.c:2007-2008 - the symlink create path
+                // upstream: generator.c:2048-2049 - the symlink create path
                 // passes ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE to itemize(), so
                 // the wire bits carry REPORT_CHANGE even when ITEM_IS_NEW makes
                 // the rendered row all `+`.
@@ -3117,7 +3117,7 @@ mod itemize_order_tests {
     }
 
     /// A server-mode receiver (the remote end of a PUSH) records no local row -
-    /// upstream's `log.c:869` gates the `FCLIENT` write on `!am_server` and the
+    /// upstream's `log.c:954` gates the `FCLIENT` write on `!am_server` and the
     /// client's sender prints instead - but it must still classify every entry,
     /// because those classifications ARE the push's output once they cross the
     /// wire as iflags.
@@ -3320,7 +3320,7 @@ mod skip_notice_tests {
         writer.lines
     }
 
-    /// upstream: generator.c:2118-2132. A file over `--max-size` or under
+    /// upstream: generator.c:2159-2173. A file over `--max-size` or under
     /// `--min-size` is skipped with `"%s is over max-size"` / `"%s is under
     /// min-size"`, gated on `INFO_GTE(SKIP, 1)`. Below the gate the skip is
     /// silent. The order (over-max before under-min) mirrors upstream.
@@ -3357,7 +3357,7 @@ mod skip_notice_tests {
         assert!(run(cfg(), 0, files(), dest).is_empty());
     }
 
-    /// upstream: generator.c:2109-2133 recv_generator() - the max/min-size
+    /// upstream: generator.c:2150-2174 recv_generator() - the max/min-size
     /// tests run only after the `ftype != FT_REG` branch has returned, so they
     /// gate regular files alone. A directory, symlink or FIFO whose length is
     /// outside the window is still created and never draws a size notice; a
@@ -3392,7 +3392,7 @@ mod skip_notice_tests {
         );
     }
 
-    /// upstream: generator.c:1757-1783. With `--existing`, a regular file
+    /// upstream: generator.c:1794-1820. With `--existing`, a regular file
     /// absent at the destination is never created; upstream prints `not
     /// creating new file "%s"` (literal quotes) at `INFO_GTE(SKIP, 1)`, silent
     /// otherwise.
@@ -3416,7 +3416,7 @@ mod skip_notice_tests {
         assert!(run(cfg(), 0, files(), dest).is_empty());
     }
 
-    /// upstream: generator.c:1608-2457. `recv_generator` tests every
+    /// upstream: generator.c:1645-2500. `recv_generator` tests every
     /// per-file skip in one strictly sequential pass, so the max/min-size skip
     /// (2118-2133) is evaluated right after the `--existing` not-creating check
     /// (1757) for the *same* file. The notices therefore interleave in flist
@@ -3461,7 +3461,7 @@ mod skip_notice_tests {
         );
     }
 
-    /// upstream: generator.c:1784-1805. With `--ignore-existing`, a file
+    /// upstream: generator.c:1821-1842. With `--ignore-existing`, a file
     /// already present is skipped with `"%s exists%s"`. At SKIP1 the suffix is
     /// empty; at SKIP2 it names the reason. The suffix must NOT leak at SKIP1
     /// (else oc would out-chatter upstream).
@@ -3500,7 +3500,7 @@ mod skip_notice_tests {
         assert!(run(base_cfg(), 0, files(), dest).is_empty());
     }
 
-    /// Type-change branch - upstream: generator.c:1789-1790. When the
+    /// Type-change branch - upstream: generator.c:1826-1827. When the
     /// destination is a directory but the source is a regular file, the SKIP2
     /// suffix is " (type change)".
     #[test]
@@ -3646,7 +3646,7 @@ mod uptodate_notice_tests {
         writer.lines
     }
 
-    /// upstream: syscall.c:3858-3871 `held_dfd_for()` - the generator stats a
+    /// upstream: syscall.c:3926-3939 `held_dfd_for()` - the generator stats a
     /// regular-file destination through the held parent beneath the pinned
     /// root, and its `link_stat()` fallback walks the same way, so a parent
     /// directory swapped for a symlink to a tree outside the destination is
@@ -3759,7 +3759,7 @@ mod uptodate_notice_tests {
     /// diagnostic buffer, NOT frame it and NOT write it straight to stdout.
     /// Framing would send generator chatter to the server; writing directly to
     /// stdout would jump ahead of the buffered `delta-transmission` notice and
-    /// invert upstream's order (generator.c:2764 before rsync.c:828).
+    /// invert upstream's order (generator.c:2850 before rsync.c:828).
     #[test]
     fn client_mode_routes_uptodate_through_event_buffer() {
         let dir = test_support::create_tempdir();
@@ -3787,7 +3787,7 @@ mod uptodate_notice_tests {
         );
     }
 
-    /// upstream: generator.c:2727 - `maybe_ATTRS_REPORT` is zeroed while
+    /// upstream: generator.c:2811 - `maybe_ATTRS_REPORT` is zeroed while
     /// itemize output is active (`stdout_format_has_i`), so `-i -vv` must not
     /// add uptodate lines on top of the itemize rows.
     #[test]
@@ -3808,7 +3808,7 @@ mod uptodate_notice_tests {
 
 /// A real hardlink follower decoded by a receiver running without -H.
 ///
-/// upstream: flist.c:1100-1101 reads the follower group-index varint under
+/// upstream: flist.c:1104-1105 reads the follower group-index varint under
 /// `protocol_version >= 30 && BITS_SETnUNSET(xflags, XMIT_HLINKED,
 /// XMIT_HLINK_FIRST)` with no `preserve_hard_links` check, so the no--H
 /// receiver consumes the same bytes a -H sender wrote or the flist stream
@@ -3841,7 +3841,7 @@ mod hlink_wire_flag_tests {
     ///
     /// A -H sender emits a leader (`XMIT_HLINK_FIRST`, full metadata) followed
     /// by an abbreviated follower (`XMIT_HLINKED` + a group-index varint, no
-    /// metadata). upstream: flist.c:1100-1101 reads that varint on the flag bits
+    /// metadata). upstream: flist.c:1104-1105 reads that varint on the flag bits
     /// alone, so the no--H receiver consumes the same bytes or the stream
     /// desyncs; recv_file_entry() then clears the surviving `FLAG_HLINKED`
     /// interpretation when -H is off (read/mod.rs) so the follower stays a
@@ -4053,7 +4053,7 @@ mod append_gate_tests {
         std::fs::write(dest.join("shorter"), b"12").unwrap();
     }
 
-    /// upstream: generator.c:2261 - `--append` only ever adds bytes past the
+    /// upstream: generator.c:2303 - `--append` only ever adds bytes past the
     /// destination's end, so a destination already as long as the source (or
     /// longer) has nothing to receive and is skipped. Requesting it instead
     /// rewrites the file from the sender's data and truncates a longer
@@ -4066,7 +4066,7 @@ mod append_gate_tests {
         assert_eq!(requested(dir.path(), false), vec!["shorter".to_owned()]);
     }
 
-    /// upstream: generator.c:2734 runs before the `do_xfers` split, so a dry
+    /// upstream: generator.c:2818 runs before the `do_xfers` split, so a dry
     /// run must plan exactly the files the real run would request.
     #[test]
     fn append_dry_run_plans_only_destinations_shorter_than_source() {

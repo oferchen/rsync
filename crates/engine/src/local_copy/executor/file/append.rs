@@ -245,7 +245,7 @@ mod tests {
         assert!(matches!(result, AppendMode::Skip));
     }
 
-    /// upstream: generator.c:2261 tests `st_size >= F_LENGTH(file)` with no
+    /// upstream: generator.c:2303 tests `st_size >= F_LENGTH(file)` with no
     /// empty-file exception, so an empty source over an empty destination whose
     /// mtime differs is skipped and the destination mtime stays stale.
     #[test]

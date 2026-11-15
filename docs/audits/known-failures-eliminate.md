@@ -84,7 +84,7 @@ for the merge SHAs.
     `see_deflate_token()` performs during a live transfer is missing
     on the batch reader path.
   - `target/interop/upstream-src/rsync-3.4.1/compat.c:194-195`
-    hardcodes `CPRES_ZLIB` for batch reads, and `compat.c:413-414`
+    hardcodes `CPRES_ZLIB` for batch reads, and `compat.c:414-415`
     forces `compress_choice = "zlib"` for batch writes, so the batch
     writer always tees raw `DEFLATED_DATA` tokens whose inflate
     dictionary is never re-primed on replay.
@@ -150,10 +150,10 @@ needing to install older upstream binaries on every runner.
 - **Category:** upstream protocol limitation.
 - **Root cause:** Algorithm selection requires vstring (variable
   string) negotiation, which depends on the `'v'` compat flag.
-  Upstream `compat.c:556-564` (`negotiate_the_strings()`) and
-  `compat.c:729-742` only enable `'v'` at protocol >= 30. At protocol
+  Upstream `compat.c:557-565` (`negotiate_the_strings()`) and
+  `compat.c:738-751` only enable `'v'` at protocol >= 30. At protocol
   < 30 upstream falls back to a hardcoded `strlcpy(tmpbuf, "zlib",
-  MAX_NSTR_STRLEN)` at `compat.c:383`. zstd cannot be negotiated
+  MAX_NSTR_STRLEN)` at `compat.c:384`. zstd cannot be negotiated
   because the negotiation surface does not exist. Verified: upstream
   `rsync --compress-choice=zstd --protocol=29` silently picks zlib,
   causing codec mismatch downstream.
@@ -184,9 +184,9 @@ needing to install older upstream binaries on every runner.
 | Category | Entry | Direction | Eliminate path | Complexity | Tracking |
 |---|---|---|---|---|---|
 | upstream bug | `standalone:upstream-compressed-batch-self-roundtrip` | standalone | Permanent: upstream `token.c:608` batch inflate dictionary sync bug. oc-rsync reads correctly via `crates/batch/src/replay.rs:475-479,807-824` | n/a | [`docs/audits/zstd-batch-compatibility.md`](zstd-batch-compatibility.md) (#1685) |
-| upstream protocol limitation | `up:acls` | up | Permanent: `compat.c:655-661` hard-exits at proto < 30, no ACL wire format below 30 | n/a | upstream contract |
-| upstream protocol limitation | `up:xattrs` | up | Permanent: `compat.c:662-668` hard-exits at proto < 30, no xattr wire format below 30 | n/a | upstream contract |
-| upstream protocol limitation | `up:compress-zstd` | up | Permanent: `compat.c:556-564,729-742` vstring negotiation requires proto >= 30; `compat.c:383` falls back to `"zlib"` | n/a | upstream contract |
+| upstream protocol limitation | `up:acls` | up | Permanent: `compat.c:656-662` hard-exits at proto < 30, no ACL wire format below 30 | n/a | upstream contract |
+| upstream protocol limitation | `up:xattrs` | up | Permanent: `compat.c:663-669` hard-exits at proto < 30, no xattr wire format below 30 | n/a | upstream contract |
+| upstream protocol limitation | `up:compress-zstd` | up | Permanent: `compat.c:557-565,729-742` vstring negotiation requires proto >= 30; `compat.c:384` falls back to `"zlib"` | n/a | upstream contract |
 | upstream protocol limitation | `up:compress-lz4` | up | Permanent: same as `up:compress-zstd` (vstring negotiation requires proto >= 30) | n/a | upstream contract |
 | upstream protocol limitation | `up:merge-filter` | up | Permanent: `exclude.c:1530` `legal_len=1` at proto < 29 forbids dir-merge `':'` prefix | n/a | upstream contract |
 

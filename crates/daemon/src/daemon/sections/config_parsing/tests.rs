@@ -238,7 +238,7 @@ mod config_parsing_tests {
     /// A relative `pid file` is kept verbatim, so the daemon writes it against
     /// its own working directory.
     ///
-    /// upstream: clientserver.c:1584 `create_pid_file()` opens the string
+    /// upstream: clientserver.c:1594 `create_pid_file()` opens the string
     /// `lp_pid_file()` returns, with no config-directory rebase. Prefixing the
     /// config file's directory puts the pid file where nothing looks for it:
     /// the 3.5.0 `daemon-standalone-detach` cell waits on the pid file it named
@@ -2911,7 +2911,7 @@ mod config_parsing_tests {
     /// A relative `log file` is kept verbatim, so the daemon opens it against
     /// its own working directory.
     ///
-    /// upstream: log.c:217 log_init() assigns `lp_log_file(module_id)` -
+    /// upstream: log.c:224 log_init() assigns `lp_log_file(module_id)` -
     /// loadparm.c's stored string - to `logfile_name`, and log.c:169
     /// logfile_open() opens that string unchanged. Rebasing it on the config
     /// file's directory prefixes a path that is already relative to the
@@ -3384,7 +3384,7 @@ mod config_parsing_tests {
         );
     }
 
-    // WHY: upstream clientserver.c:835 - an explicit per-module `uid` overrides
+    // WHY: upstream clientserver.c:839 - an explicit per-module `uid` overrides
     // the inherited global default, exactly like every other P_LOCAL parameter.
     #[test]
     fn module_uid_overrides_global_uid_default() {
@@ -3408,7 +3408,7 @@ mod config_parsing_tests {
 
     // WHY: upstream daemon-parm.txt marks `daemon_uid`/`daemon_gid` P_GLOBAL;
     // `daemon uid` sets the process-wide drop oc's listener applies once before
-    // the accept loop (upstream applies it per connection, clientserver.c:1509),
+    // the accept loop (upstream applies it per connection, clientserver.c:1519),
     // and must NOT leak into per-module uid defaults. Keeps the two identity
     // mechanisms cleanly separated.
     #[test]
@@ -3438,7 +3438,7 @@ mod config_parsing_tests {
         );
     }
 
-    /// upstream: authenticate.c:302-303 - `if (!users || !*users) return "";`
+    /// upstream: authenticate.c:297-298 - `if (!users || !*users) return "";`
     /// An empty `auth users` loads and leaves the module open; it is not a
     /// configuration error.
     #[test]
@@ -3982,7 +3982,7 @@ mod config_parsing_tests {
         // upstream: `secrets file` is a NULL-default P_LOCAL string. A module
         // created before any global `secrets file` has a NULL copy, so
         // FN_LOCAL_STRING reads the final global value when the client
-        // authenticates (authenticate.c:156). The config is valid upstream.
+        // authenticates (authenticate.c:149). The config is valid upstream.
         let dir = TempDir::new().expect("create temp dir");
         let data = section_model_data_dir(&dir);
         let secrets = dir.path().join("rsyncd.secrets");
@@ -4236,7 +4236,7 @@ mod config_parsing_tests {
 
     #[test]
     fn empty_chmod_in_a_module_clears_the_global_default() {
-        // upstream: clientserver.c:1294-1302 `if (*p && ...)` - an empty
+        // upstream: clientserver.c:1303-1311 `if (*p && ...)` - an empty
         // module `incoming chmod` overrides the global one with no chmod.
         let dir = TempDir::new().expect("create temp dir");
         let data = section_model_data_dir(&dir);
@@ -4250,7 +4250,7 @@ mod config_parsing_tests {
 
     #[test]
     fn missing_secrets_file_is_not_a_config_error() {
-        // upstream: authenticate.c:138-166 check_secret() opens the secrets
+        // upstream: authenticate.c:131-159 check_secret() opens the secrets
         // file per login, so a file that does not exist yet fails only that
         // login. The daemon must still start and serve its other modules.
         let dir = TempDir::new().expect("create temp dir");
@@ -4272,7 +4272,7 @@ mod config_parsing_tests {
 
     #[test]
     fn auth_users_without_any_secrets_file_is_not_a_config_error() {
-        // upstream: authenticate.c:156-157 - with no secrets file every login
+        // upstream: authenticate.c:149-150 - with no secrets file every login
         // fails with "no secrets file"; the config itself still loads.
         let dir = TempDir::new().expect("create temp dir");
         let data = section_model_data_dir(&dir);
@@ -4336,7 +4336,7 @@ mod config_parsing_tests {
 
     #[test]
     fn relative_motd_secrets_and_lock_files_are_stored_verbatim() {
-        // upstream: clientserver.c:183-188 (motd), authenticate.c:156
+        // upstream: clientserver.c:187-192 (motd), authenticate.c:149
         // (secrets) and connection.c claim_connection (lock) open the value as
         // given, so a relative path resolves against the daemon's cwd - never
         // against the directory the config file lives in.
@@ -4364,7 +4364,7 @@ mod config_parsing_tests {
 
     #[test]
     fn unresolvable_uid_and_gid_load_and_are_refused_per_module() {
-        // upstream: clientserver.c:833-870 resolves `uid`/`gid` when a client
+        // upstream: clientserver.c:837-874 resolves `uid`/`gid` when a client
         // selects the module, so a name the host does not know yet still
         // loads, refuses only that module, and `uid` is reported before `gid`.
         let dir = TempDir::new().expect("create temp dir");

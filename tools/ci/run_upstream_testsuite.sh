@@ -79,7 +79,7 @@ workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # gets - and 3.4.4 silently routed those runs into the 57-cell `*.test` shell
 # suite instead of the 360-cell Python suite the committed expect-manifests are
 # written against, which reads as a passing run over a sixth of the coverage.
-upstream_version="${UPSTREAM_VERSION:-3.5.1}"
+upstream_version="${UPSTREAM_VERSION:-3.5.2}"
 # Git-ref mode is selected by an explicit UPSTREAM_REF, or by the sentinel
 # UPSTREAM_VERSION=master. Default (empty UPSTREAM_REF, numeric version) keeps
 # the release-tarball path untouched.

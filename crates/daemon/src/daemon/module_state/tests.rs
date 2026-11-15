@@ -65,7 +65,7 @@ fn module_definition_permits_respects_hosts_deny() {
 
 #[test]
 fn module_definition_allow_match_short_circuits_deny() {
-    // upstream: access.c:293-296 - "If we match an allow-list item, we
+    // upstream: access.c:357-360 - "If we match an allow-list item, we
     // always allow access." A peer matching any allow pattern is admitted
     // before the deny list is consulted, even when a deny pattern would
     // otherwise match.
@@ -83,7 +83,7 @@ fn module_definition_allow_match_short_circuits_deny() {
 
 #[test]
 fn module_definition_deny_applies_when_allow_does_not_match() {
-    // upstream: access.c:297-308 - when the allow list is non-empty but
+    // upstream: access.c:361-372 - when the allow list is non-empty but
     // the peer matches none of its entries, fall through to the deny list.
     // A deny-list match here refuses the connection; a non-match admits
     // (access.c:307-308 "Allow all other access").
@@ -111,7 +111,7 @@ fn module_definition_deny_applies_when_allow_does_not_match() {
 
 #[test]
 fn module_definition_allow_short_circuit_skips_dns_fail_closed_guard() {
-    // upstream: access.c:293-299 - an allow-list match returns 1 before
+    // upstream: access.c:357-363 - an allow-list match returns 1 before
     // the deny list is consulted. A hostname-pattern deny rule combined
     // with unresolvable reverse DNS must not refuse a peer that already
     // matched an IP-based allow rule, because upstream never reaches the
@@ -529,7 +529,7 @@ fn module_peer_hostname_uses_cache() {
 // The second assertion is the one that discriminates: an implementation that
 // ignores `lock_file` and returns `None` still satisfies the first arm.
 //
-// upstream: clientserver.c:791 - `rsync_module()` calls `claim_connection()`
+// upstream: clientserver.c:795 - `rsync_module()` calls `claim_connection()`
 // for every daemon connection regardless of how it arrived.
 #[test]
 fn build_module_runtimes_with_lock_file_shares_the_daemon_wide_limiter() {
@@ -569,7 +569,7 @@ fn build_module_runtimes_with_lock_file_shares_the_daemon_wide_limiter() {
     );
 }
 
-// upstream: clientserver.c:791 `claim_connection(lp_lock_file(i), ...)` - the
+// upstream: clientserver.c:795 `claim_connection(lp_lock_file(i), ...)` - the
 // lock file is P_LOCAL, so a module that sets its own `lock file` claims slots
 // in that file while modules without an override share the daemon-wide file.
 #[test]
@@ -628,7 +628,7 @@ fn build_module_runtimes_honours_per_module_lock_file() {
     ));
 }
 
-// upstream: clientserver.c:766-769 - when the global default disables reverse
+// upstream: clientserver.c:770-773 - when the global default disables reverse
 // lookup (host stays undetermined), a module that enables it resolves the peer
 // via `lp_reverse_lookup(i)`. The call site computes the effective value as
 // `global || module.reverse_lookup`; this proves the module override reaches
@@ -677,7 +677,7 @@ fn per_module_reverse_lookup_gates_resolution_when_global_disabled() {
 // WHY: only a module that carries a resolved syslog tag/facility should reopen
 // the process-wide syslog handle for its connection; a module inheriting the
 // daemon-global logger must leave it untouched (returns None) so the startup
-// tag/facility keep serving. upstream: log.c:186-205 log_init(1) reopens per module.
+// tag/facility keep serving. upstream: log.c:193-212 log_init(1) reopens per module.
 #[cfg(unix)]
 #[test]
 fn reconfigure_syslog_only_when_module_sets_a_value() {

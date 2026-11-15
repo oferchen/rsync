@@ -72,7 +72,7 @@ struct Scenario {
 /// update-glyph + file-type-glyph, or a `*deleting` line. Drops the
 /// "sending incremental file list" preamble and the byte-count summary.
 ///
-/// upstream: log.c:733-784 - `%i` produces `YXcstpoguax`, where `Y` is one of
+/// upstream: log.c:818-869 - `%i` produces `YXcstpoguax`, where `Y` is one of
 /// `<>ch.*` and `X` is one of `fdDLS`; deletions render `*deleting`.
 fn is_itemize_row(line: &str) -> bool {
     if line.starts_with("*deleting") {

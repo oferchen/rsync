@@ -176,7 +176,7 @@ pub fn read_signature<R: Read>(reader: &mut R) -> io::Result<(u32, u32, u8, Vec<
     let block_length = read_varint(reader)? as u32;
     let strong_sum_length = read_varint(reader)? as u8;
 
-    // upstream: sender.c:364 receive_sums() allocates the peer-declared count
+    // upstream: sender.c:372 receive_sums() allocates the peer-declared count
     // via new_array(), which my_alloc() refuses once `num >= max_alloc / size`
     // (util2.c:73-80, RERR_MALLOC).
     let max_alloc = effective_max_alloc();

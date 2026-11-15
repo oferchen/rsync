@@ -88,7 +88,7 @@ fn delete_boundary_device(_context: &CopyContext) -> Option<u64> {
 /// Whether `destination` lies on another filesystem than the transfer root
 /// under `-x`, in which case the delete pass must not scan it at all.
 ///
-/// upstream: generator.c:316-326 delete_in_dir() returns before get_dirlist()
+/// upstream: generator.c:351-361 delete_in_dir() returns before get_dirlist()
 /// for a directory whose device is not a top directory's.
 #[cfg(unix)]
 fn scans_foreign_filesystem(context: &CopyContext, destination: &Path) -> bool {
@@ -365,7 +365,7 @@ where
 /// DURING state - the destination's per-dir merge files have not been copied
 /// yet) and defers the concrete plan for execution after the transfer.
 ///
-/// upstream: generator.c:351 `delete_during == 2` calls `remember_delete(fp, ...)`
+/// upstream: generator.c:386 `delete_during == 2` calls `remember_delete(fp, ...)`
 /// from inside `delete_in_dir` - the decision (including
 /// `change_local_filter_dir`) happens during the walk, only the unlink is
 /// postponed to `do_delayed_deletions()` (generator.c:2900). Deciding at flush
@@ -473,7 +473,7 @@ fn delete_extraneous_entries_capped<S: AsRef<OsStr>>(
 
 /// Orders two directory children the way upstream `get_dirlist` sorts them
 /// for a delete pass: protocol-29 `f_name_cmp` places non-directories before
-/// directories (t_ITEM before t_PATH, upstream: flist.c:3803), then by name.
+/// directories (t_ITEM before t_PATH, upstream: flist.c:3814), then by name.
 /// Callers `reverse()` the sorted slice to reproduce upstream's reverse
 /// dirlist iteration (`for (i = dirlist->used; i--; )`, delete.c:141 /
 /// generator.c:333), so directories are visited first, then files - the
@@ -522,7 +522,7 @@ fn remove_entry_capped(
         }
     };
 
-    // upstream: generator.c:337 / delete.c:144-152 - a mount point is never
+    // upstream: generator.c:372 / delete.c:144-152 - a mount point is never
     // deleted and pins its enclosing directory as non-empty. Under
     // --one-file-system a directory on a different device than the transfer
     // root is that mount point: preserve it and return `false` so the caller
@@ -539,7 +539,7 @@ fn remove_entry_capped(
                 entry_relative.display()
             );
         } else {
-            // upstream: generator.c:336-340 - delete_in_dir() reports a
+            // upstream: generator.c:371-375 - delete_in_dir() reports a
             // top-level one at INFO_GTE(MOUNT, 1).
             info_log!(
                 Mount,
@@ -913,7 +913,7 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
     relative: Option<&Path>,
     source_entries: &[S],
 ) -> Result<Option<DeletePlan>, LocalCopyError> {
-    // upstream: generator.c:314 delete_in_dir() - the delete pass calls
+    // upstream: generator.c:349 delete_in_dir() - the delete pass calls
     // `change_local_filter_dir(fbuf, F_DEPTH(file))` with the destination
     // directory so the receiver applies any per-dir merge rules found in the
     // directory being scanned, INHERITING an ancestor directory's rules into
@@ -934,7 +934,7 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
         .iter()
         .map(|s| normalize_filename_for_compare(s.as_ref()))
         .collect();
-    // upstream: flist.c:2739 send_file_list() folds EVERY source operand into
+    // upstream: flist.c:2750 send_file_list() folds EVERY source operand into
     // one flist, so delete_in_dir() (generator.c:1924-1927) can never remove an
     // entry a sibling operand supplies. oc walks each source live; the sources
     // orchestrator pre-computes the sibling contributions per destination
@@ -1004,7 +1004,7 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
             )
         })?;
 
-        // upstream: generator.c:337-342 delete_in_dir() skips a dest directory
+        // upstream: generator.c:372-377 delete_in_dir() skips a dest directory
         // flagged FLAG_MOUNT_DIR ("cannot delete mount point"). Under
         // --one-file-system a destination directory on a different device than
         // the transfer root is that mount point: exclude it from the plan so it
@@ -1126,7 +1126,7 @@ fn classify_kind(file_type: fs::FileType) -> DeleteEntryKind {
 ///
 /// Directories recurse into their contents so per-entry counters match
 /// upstream's `delete_in_dir` walk (one count per leaf, mirroring
-/// `target/interop/upstream-src/rsync-3.5.1/generator.c:285-360`).
+/// `target/interop/upstream-src/rsync-3.5.2/generator.c:320-395`).
 fn apply_delete_side_effects(
     context: &mut CopyContext,
     destination: &Path,
@@ -1272,7 +1272,7 @@ pub(crate) fn record_directory_subtree(
 /// Removes the source entry after a successful copy when `--remove-source-files`
 /// is active, applying upstream's `successful_send` safety guards first.
 ///
-/// Mirrors upstream `successful_send()` (sender.c:396). Before unlinking the
+/// Mirrors upstream `successful_send()` (sender.c:404). Before unlinking the
 /// source the guards run in order:
 ///
 /// 1. **Re-stat** the source (`do_lstat`). A vanished source (`ENOENT`) is the
@@ -1306,12 +1306,12 @@ pub(crate) fn remove_source_entry_if_requested(
         return Ok(());
     }
 
-    // upstream: sender.c:427-429 - re-stat the source before removing it.
+    // upstream: sender.c:435-437 - re-stat the source before removing it.
     let current = match fs::symlink_metadata(source) {
         Ok(metadata) => metadata,
-        // upstream: sender.c:458-459 - ENOENT is the benign "already removed" case.
+        // upstream: sender.c:466-467 - ENOENT is the benign "already removed" case.
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        // upstream: sender.c:430-431,179-180 - any other re-lstat failure is an
+        // upstream: sender.c:438-439,179-180 - any other re-lstat failure is an
         // FERROR_XFER: leave the source in place and finish RERR_PARTIAL (23).
         Err(error) => {
             eprintln!(
@@ -1324,14 +1324,14 @@ pub(crate) fn remove_source_entry_if_requested(
         }
     };
 
-    // upstream: sender.c:148 - directories are never removed. Prefer the
+    // upstream: sender.c:156 - directories are never removed. Prefer the
     // freshly-stat'd type; fall back to the copy-time type only if it is a dir.
     let _ = file_type;
     if current.file_type().is_dir() {
         return Ok(());
     }
 
-    // upstream: sender.c:434-441 - refuse removal when the source is the very
+    // upstream: sender.c:442-449 - refuse removal when the source is the very
     // inode just written to the destination (local_server num_dev_ino_buf).
     #[cfg(unix)]
     {
@@ -1349,7 +1349,7 @@ pub(crate) fn remove_source_entry_if_requested(
     #[cfg(not(unix))]
     let _ = destination;
 
-    // upstream: sender.c:443-452 - refuse to remove a source that changed size
+    // upstream: sender.c:451-460 - refuse to remove a source that changed size
     // or modification time since it was copied.
     if source_identity_changed(recorded, &current) {
         eprintln!(
@@ -1360,7 +1360,7 @@ pub(crate) fn remove_source_entry_if_requested(
         return Ok(());
     }
 
-    // upstream: sender.c:454 - do_unlink(fname) once every guard passed.
+    // upstream: sender.c:462 - do_unlink(fname) once every guard passed.
     match fs::remove_file(source) {
         Ok(()) => {
             info_log!(Remove, 1, "removing source {}", source.display());
@@ -1378,9 +1378,9 @@ pub(crate) fn remove_source_entry_if_requested(
             context.register_progress();
             Ok(())
         }
-        // upstream: sender.c:457-458 - ENOENT after the guards is still benign.
+        // upstream: sender.c:465-466 - ENOENT after the guards is still benign.
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        // upstream: sender.c:455,179-180 - a failed unlink is an FERROR_XFER:
+        // upstream: sender.c:463,179-180 - a failed unlink is an FERROR_XFER:
         // record the soft error so the run finishes RERR_PARTIAL (23).
         Err(error) => {
             eprintln!(
@@ -1400,7 +1400,7 @@ pub(crate) fn remove_source_entry_if_requested(
 /// only when the recorded timestamp carried nanoseconds (upstream gates the
 /// nsec compare on `NSEC_BUMP`, i.e. a transmitted `FLAG_MOD_NSEC`).
 ///
-/// upstream: sender.c:443-452
+/// upstream: sender.c:451-460
 #[cfg(unix)]
 fn source_identity_changed(recorded: &fs::Metadata, current: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -1413,7 +1413,7 @@ fn source_identity_changed(recorded: &fs::Metadata, current: &fs::Metadata) -> b
 /// inode - i.e. the source *is* the file just written to the destination, so
 /// removing it would delete the destination.
 ///
-/// upstream: sender.c:435-440 `(int64)st.st_dev == IVAL64(num_dev_ino_buf, 4)`
+/// upstream: sender.c:443-448 `(int64)st.st_dev == IVAL64(num_dev_ino_buf, 4)`
 #[cfg(unix)]
 fn is_destination_inode(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -1424,7 +1424,7 @@ fn is_destination_inode(source: &fs::Metadata, destination: &fs::Metadata) -> bo
 /// modification time. `recorded` and `current` are both the untouched source at
 /// different instants, so an equality compare never spuriously fires.
 ///
-/// upstream: sender.c:443-452
+/// upstream: sender.c:451-460
 #[cfg(not(unix))]
 fn source_identity_changed(recorded: &fs::Metadata, current: &fs::Metadata) -> bool {
     if recorded.len() != current.len() {
@@ -1470,7 +1470,7 @@ mod sender_remove_guard_tests {
     #[test]
     fn retouched_source_is_not_removed() {
         // Data safety: same size but a newer mtime means the file was rewritten
-        // in place; upstream refuses the remove (sender.c:443 st_mtime compare).
+        // in place; upstream refuses the remove (sender.c:451 st_mtime compare).
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("f");
         fs::write(&path, b"data").expect("write");
@@ -1528,7 +1528,7 @@ mod mount_boundary_tests {
     /// an ordinary deletion candidate; an entry on any other device is a mount
     /// point that must be preserved.
     ///
-    /// upstream: flist.c:1715 (`st.st_dev != filesystem_dev` -> FLAG_MOUNT_DIR),
+    /// upstream: flist.c:1719 (`st.st_dev != filesystem_dev` -> FLAG_MOUNT_DIR),
     /// generator.c:337 (delete_in_dir skips it).
     #[test]
     fn mount_boundary_predicate_distinguishes_devices() {
@@ -1594,7 +1594,7 @@ mod mount_boundary_tests {
                     "a same-device directory must remain deletable",
                 );
                 // A non-directory on a foreign device is not a mount point:
-                // upstream restricts FLAG_MOUNT_DIR to S_ISDIR (flist.c:1725).
+                // upstream restricts FLAG_MOUNT_DIR to S_ISDIR (flist.c:1729).
                 assert!(
                     !is_delete_mount_point(Some(ROOT_DEV), &foreign_file, file_ft),
                     "only directories can be mount points",

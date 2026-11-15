@@ -1,6 +1,6 @@
 //! Where a local copy refuses `--checksum` with a `none` file checksum.
 //!
-//! upstream: flist.c:1815-1816 - the sender's `make_file()` calls
+//! upstream: flist.c:1819-1820 - the sender's `make_file()` calls
 //! `file_checksum()` for every regular file under `--checksum`, and
 //! checksum.c:548-551 refuses `none` there. The file must open first: an
 //! unreadable one gets a zero sum (checksum.c:426-430). So a source with no

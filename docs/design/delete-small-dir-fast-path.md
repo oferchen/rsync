@@ -36,7 +36,7 @@ For a directory with 5-50 extraneous files, this machinery adds:
 - **Two-map bookkeeping** (`by_key` + `cohorts` in `ReorderBuffer`).
 
 Upstream rsync has none of this overhead. For `--delete-before`,
-upstream's `do_delete_pass` (`generator.c:351-387`) walks the flist
+upstream's `do_delete_pass` (`generator.c:386-422`) walks the flist
 sequentially and calls `delete_in_dir` directly - no buffering, no
 reordering, no per-operation allocation beyond the stack-local `delbuf`.
 

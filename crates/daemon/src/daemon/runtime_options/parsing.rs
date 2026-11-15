@@ -32,10 +32,10 @@ impl RuntimeOptions {
     /// Checks `arguments` alone, reading no `rsyncd.conf`, so an inetd daemon
     /// can report a bad option before it redirects stderr.
     ///
-    /// upstream: main.c:1911 parse_arguments() runs before main.c:1954
+    /// upstream: main.c:1915 parse_arguments() runs before main.c:1958
     /// daemon_main() redirects stderr and reads the config
     /// (clientserver.c:1749-1760).
-    fn check_arguments(arguments: &[OsString], brand: Brand) -> Result<(), DaemonError> {
+    pub(crate) fn check_arguments(arguments: &[OsString], brand: Brand) -> Result<(), DaemonError> {
         Self::parse_arguments(arguments, brand, false, false).map(drop)
     }
 
@@ -86,7 +86,7 @@ impl RuntimeOptions {
                 options.sockopts = Some(value.to_string_lossy().into_owned());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
                 options.port = parse_port(&value)?;
-                // upstream: clientserver.c:1784 - `--port 0` is treated as
+                // upstream: clientserver.c:1849 - `--port 0` is treated as
                 // "unspecified": it does not override a config `port` directive
                 // and falls through to the 873 default below. Only a non-zero
                 // CLI port suppresses the config value.
@@ -118,6 +118,15 @@ impl RuntimeOptions {
                 zero_copy_flag = Some(fast_io::ZeroCopyPolicy::Enabled);
             } else if argument == "--no-zero-copy" {
                 zero_copy_flag = Some(fast_io::ZeroCopyPolicy::Disabled);
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--nice")? {
+                let spec = value.to_string_lossy();
+                if options.niceness.parse_into(&spec).is_err() {
+                    return Err(config_error(format!(
+                        "Invalid argument passed to --nice ({spec})"
+                    )));
+                }
+            } else if argument == "--no-nice" {
+                options.niceness.reset();
             } else if argument == "--no-detach" {
                 options.detach = false;
             } else if argument == "--detach" {
@@ -130,7 +139,7 @@ impl RuntimeOptions {
                 let max = parse_max_connections(&value)?;
                 options.set_max_connections(max)?;
             } else if argument == "--ipv4" || argument == "-4" {
-                // upstream: options.c:880-881 `long_daemon_options` maps both
+                // upstream: options.c:885-886 `long_daemon_options` maps both
                 // `--ipv4`/`-4` and `--ipv6`/`-6` onto `default_af_hint`.
                 options.force_address_family(AddressFamily::Ipv4)?;
             } else if argument == "--ipv6" || argument == "-6" {
@@ -139,7 +148,7 @@ impl RuntimeOptions {
                 options.set_tcp_fastopen(parse_tcp_fastopen_mode(&value, brand)?);
             } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file-format")?
             {
-                // upstream: options.c:885 - a repeated option simply
+                // upstream: options.c:890 - a repeated option simply
                 // overwrites `logfile_format`, so the last value wins.
                 options.log_file_format = Some(value.to_string_lossy().into_owned());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")? {
@@ -191,7 +200,7 @@ impl RuntimeOptions {
             module.zero_copy_policy = options.zero_copy_policy;
         }
 
-        // upstream: clientserver.c:1784-1785 `daemon_main()` -
+        // upstream: clientserver.c:1849-1850 `daemon_main()` -
         //   `if (rsync_port == 0 && (rsync_port = lp_rsync_port()) == 0)
         //        rsync_port = RSYNC_PORT;`
         // After CLI and config resolution, a still-zero port coerces to the
@@ -266,7 +275,7 @@ impl RuntimeOptions {
 /// Returns `true` when `arg` is `-v`, `-vv`, `-vvv`, ... (a hyphen followed
 /// by one or more `v` characters and nothing else).
 ///
-/// upstream: options.c:1570-1572 - popt delivers each stacked `v` as its own
+/// upstream: options.c:1588-1590 - popt delivers each stacked `v` as its own
 /// `'v'` option, so `-vvv` increments `verbose` by three. The daemon accepts the same stacked form via popt's short-option
 /// dispatch.
 fn is_stacked_short_verbose(arg: &OsString) -> bool {
@@ -276,7 +285,7 @@ fn is_stacked_short_verbose(arg: &OsString) -> bool {
 
 /// Collects the `--dparam`/`-M` overrides from the daemon's arguments.
 ///
-/// upstream: options.c:1558-1568 - each value must contain `=`, otherwise
+/// upstream: options.c:1576-1586 - each value must contain `=`, otherwise
 /// "--dparam value is missing an '='" ends the parse (`RERR_SYNTAX`); after
 /// the whole command line is read, options.c:1583 set_dparams(1) refuses a
 /// name that is not a daemon parameter with `Unknown parameter "<name>"`. The

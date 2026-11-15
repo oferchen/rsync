@@ -206,7 +206,7 @@ pub(crate) fn build_fixture(id: FixtureId) -> WireCaptureFixture {
 
 All fixtures rely on the `DirTraversalCursor`'s deterministic depth-first
 order (the cursor walks directories in `f_name_cmp`-ascending order per
-upstream `generator.c:272-347`). Within a directory, extras are sorted by
+upstream `generator.c:307-382`). Within a directory, extras are sorted by
 name ascending (matching `compute_extras` which sorts via `BTreeSet`
 semantics). This double-determinism means repeated fixture runs produce
 identical byte sequences regardless of filesystem readdir ordering.
@@ -430,7 +430,7 @@ The harness relies on three determinism invariants:
 
 1. **Cursor order is deterministic.** `DirTraversalCursor` surfaces
    directories in `f_name_cmp`-ascending pre-order (upstream
-   `generator.c:272-347`). This is a property of the cursor's BTree
+   `generator.c:307-382`). This is a property of the cursor's BTree
    internals, not filesystem readdir order.
 
 2. **Extras within a directory are sorted.** `compute_extras` produces

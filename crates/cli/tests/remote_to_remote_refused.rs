@@ -1,6 +1,6 @@
 //! A remote source with a remote destination is a syntax error.
 //!
-//! upstream: main.c:1486-1489 start_client() - when the source operand and
+//! upstream: main.c:1490-1493 start_client() - when the source operand and
 //! the destination operand are both host specs, upstream prints "The source
 //! and destination cannot both be remote." and exits RERR_SYNTAX (1) before
 //! any remote shell is spawned.

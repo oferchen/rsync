@@ -18,7 +18,7 @@ fn runtime_options_unreadable_motd_is_not_fatal() {
     // fails identically on every platform and needs no second uid.
     fs::create_dir(dir.path().join("motd.txt")).expect("motd as a directory");
 
-    // upstream: clientserver.c:183-188 opens the value as given, so the test
+    // upstream: clientserver.c:187-192 opens the value as given, so the test
     // names the motd by its absolute path.
     fs::write(
         &config_path,
@@ -51,7 +51,7 @@ fn runtime_options_readable_motd_still_delivers_its_lines() {
     let config_path = dir.path().join("rsyncd.conf");
     fs::write(dir.path().join("motd.txt"), "Greetings\n").expect("write motd");
 
-    // upstream: clientserver.c:183-188 opens the value as given, so the test
+    // upstream: clientserver.c:187-192 opens the value as given, so the test
     // names the motd by its absolute path.
     fs::write(
         &config_path,

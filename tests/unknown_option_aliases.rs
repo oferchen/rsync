@@ -72,7 +72,7 @@ fn client_rejects_option_spellings_upstream_does_not_have() {
         let output = run(&["-a", option, &src_arg, &dest_arg]);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{option}: {stderr}");
-        // upstream: options.c:915 option_error() then main.c:1913 exit_cleanup.
+        // upstream: options.c:933 option_error() then main.c:1917 exit_cleanup.
         let mut lines = stderr.lines();
         assert_eq!(
             lines.next(),
@@ -93,7 +93,7 @@ fn client_rejects_option_spellings_upstream_does_not_have() {
 /// A local transfer hands its `-M` values to the server child it forks, so an
 /// unknown one is refused there, not by the client.
 ///
-/// upstream: pipe.c:143-148 - the local child runs `parse_arguments()` on
+/// upstream: pipe.c:144-149 - the local child runs `parse_arguments()` on
 /// `remote_options[]` with am_server set, so popt's text carries the
 /// `on remote machine: ` prefix (options.c:2053) and the child exits
 /// RERR_SYNTAX as the receiver. The parent then reads EOF on the pipe and

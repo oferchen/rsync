@@ -15,11 +15,11 @@ The entire `--iconv` feature is gated behind `ICONV_OPTION`, defined in
 
 The default build (`config.h:649`) sets `ICONV_OPTION NULL` - the option exists but is not active unless the user passes `--iconv`.
 
-Reference: `configure.ac:987-998`, `rsync.h:515-531`, `options.c:219-224`.
+Reference: `configure.ac:987-998`, `rsync.h:531-547`, `options.c:220-225`.
 
 ### Argument format
 
-`--iconv` accepts a string argument (`options.c:814`):
+`--iconv` accepts a string argument (`options.c:817`):
 
 ```
 --iconv LOCAL[,REMOTE]
@@ -28,36 +28,36 @@ Reference: `configure.ac:987-998`, `rsync.h:515-531`, `options.c:219-224`.
 - Single value: used for both local and remote sides
 - Comma-separated: first part is local charset, second is remote charset
 - `.` or empty string: use the system's locale charset (`nl_langinfo(CODESET)` or `locale_charset()`)
-- `-` (dash, on client only): disable iconv processing (`options.c:2053-2054`)
+- `-` (dash, on client only): disable iconv processing (`options.c:2089-2090`)
 
-The `--no-iconv` flag (`OPT_NO_ICONV`) sets `iconv_opt = NULL` (`options.c:1666-1669`).
+The `--no-iconv` flag (`OPT_NO_ICONV`) sets `iconv_opt = NULL` (`options.c:1693-1696`).
 
 ### Environment variable
 
 If `RSYNC_ICONV` is set and non-empty, it is used as the default when `--iconv`
 is not specified on the command line. This only applies to the client (not
-daemon, not when `protect_args` is active). Reference: `options.c:1364-1367`.
+daemon, not when `protect_args` is active). Reference: `options.c:1382-1385`.
 
 ### Daemon and server reset
 
-When `--server` is parsed, `iconv_opt` is reset to `NULL` (`options.c:1395-1397`).
+When `--server` is parsed, `iconv_opt` is reset to `NULL` (`options.c:1413-1415`).
 The server side only gets iconv re-enabled when the client sends `--iconv` via
-`server_options()`. Same for `--daemon` (`options.c:1415-1417`).
+`server_options()`. Same for `--daemon` (`options.c:1433-1435`).
 
 ### Refuse logic
 
 Daemons can refuse `--iconv`. If `ICONV_OPTION` is compiled in but the module's
 `charset` parameter is empty, `iconv` is added to the refuse list
-(`options.c:994-996`). If `ICONV_OPTION` is not compiled at all, `iconv` is
-always refused (`options.c:1010-1011`).
+(`options.c:1012-1014`). If `ICONV_OPTION` is not compiled at all, `iconv` is
+always refused (`options.c:1028-1029`).
 
 The `refused_no_iconv` variable tracks whether `--no-iconv` was refused
-(`options.c:327, 1051-1052`), which prevents the client from disabling a
+(`options.c:328, 1051-1052`), which prevents the client from disabling a
 daemon-mandated charset.
 
 ### Post-parse validation
 
-After all options are parsed (`options.c:2051-2062`):
+After all options are parsed (`options.c:2087-2098`):
 
 - If `--iconv` is `-` on the client side, iconv is disabled (`iconv_opt = NULL`)
 - Otherwise `need_unsorted_flist = 1` is set, because charset conversion can
@@ -88,10 +88,10 @@ Upstream maintains three `iconv_t` handles (`rsync.c:71-73`):
 
 Called at multiple points:
 
-1. Server startup (`main.c:1820`) - sets up `ic_chck` only (no `iconv_opt` on server until client sends it)
+1. Server startup (`main.c:1824`) - sets up `ic_chck` only (no `iconv_opt` on server until client sends it)
 2. After spawning child/SSH (`main.c:638, 648, 653`) - sets up all three
-3. Client daemon connection (`clientserver.c:142`) - sets up all three
-4. Daemon module selection (`clientserver.c:712-717`) - temporary setup using module's `charset`, then resets `iconv_opt` to `NULL`
+3. Client daemon connection (`clientserver.c:146`) - sets up all three
+4. Daemon module selection (`clientserver.c:716-721`) - temporary setup using module's `charset`, then resets `iconv_opt` to `NULL`
 
 The comma-separated `LOCAL,REMOTE` format is parsed here:
 
@@ -120,7 +120,7 @@ Reference: `rsync.c:87-147`, `configure.ac:999`.
 
 ## 3. Charset Conversion in the Transfer Pipeline
 
-### 3.1 File list sending (flist.c:1579-1624)
+### 3.1 File list sending (flist.c:1583-1628)
 
 When `ic_send != (iconv_t)-1`, `send_file_entry()` converts:
 
@@ -134,9 +134,9 @@ UTF-8.
 On conversion error, the function sets `io_error |= IOERR_GENERAL`, logs an error
 via `FERROR_XFER`, and returns `NULL` (skipping the file).
 
-Reference: `flist.c:1579-1624`.
+Reference: `flist.c:1583-1628`.
 
-### 3.2 File list receiving (flist.c:738-754)
+### 3.2 File list receiving (flist.c:742-758)
 
 When `ic_recv != (iconv_t)-1`, `recv_file_entry()` converts the received filename
 from UTF-8 back to the local charset:
@@ -146,9 +146,9 @@ from UTF-8 back to the local charset:
 3. On error: sets `io_error |= IOERR_GENERAL`, logs via `FERROR_UTF8`, and sets
    the output length to 0 (producing an empty filename)
 
-Reference: `flist.c:738-754`.
+Reference: `flist.c:742-758`.
 
-### 3.3 Symlink targets on receive (flist.c:1127-1152)
+### 3.3 Symlink targets on receive (flist.c:1131-1156)
 
 When `sender_symlink_iconv` is set, the receiver:
 
@@ -159,7 +159,7 @@ When `sender_symlink_iconv` is set, the receiver:
    zeroes the symlink data
 
 The double-size buffer is allocated because conversion to a multi-byte local
-charset could expand the data. Reference: `flist.c:935-941, 1127-1152`.
+charset could expand the data. Reference: `flist.c:939-945, 1127-1152`.
 
 ### 3.4 Protected args (rsync.c:283-320)
 
@@ -170,7 +170,7 @@ means bad bytes are passed through verbatim rather than causing an error.
 
 Reference: `rsync.c:283-320`.
 
-### 3.5 Protected args receiving (io.c:1292-1302)
+### 3.5 Protected args receiving (io.c:1299-1309)
 
 On the server side, `read_args()` adds `RL_CONVERT` to the read-line flags when
 `protect_args` is active and `ic_recv` is valid. The `read_line()` function then
@@ -178,9 +178,9 @@ reads into a temporary `iconv_buf`, converts via `iconvbufs(ic_recv, ...)` with
 `ICB_INCLUDE_BAD | ICB_INCLUDE_INCOMPLETE | ICB_INIT`, and writes the result to
 the caller's buffer.
 
-Reference: `io.c:1240-1302`.
+Reference: `io.c:1247-1309`.
 
-### 3.6 MSG_DELETED messages (io.c:1558-1591)
+### 3.6 MSG_DELETED messages (io.c:1565-1598)
 
 Delete messages received over the multiplex channel are converted using `ic_send`
 (local-to-UTF8) when `ic_recv` is valid. This is used when the receiver is
@@ -198,7 +198,7 @@ the UTF-8 wire name to local charset for `log_delete()`. Using `ic_send` here
 may be a naming confusion in the upstream code, or there may be a subtlety in
 the generator/receiver process relationship that makes this correct.
 
-Reference: `io.c:1558-1591`.
+Reference: `io.c:1565-1598`.
 
 ### 3.7 send_msg() with conversion (io.c:983-1030)
 
@@ -246,11 +246,11 @@ returns -1 with `errno = EILSEQ`, and the caller decides what to do:
 - **recv_file_entry** (filename): logs error, sets `io_error`, output length set to 0
 - **recv_file_entry** (symlink): logs error, sets `io_error`, symlink data zeroed
 
-### Display output sanitization (log.c:362-401)
+### Display output sanitization (log.c:442-475)
 
 The `rwrite()` function uses `ic_chck` (or `ic_recv` for UTF-8 messages) to
 validate log output. When conversion encounters EILSEQ or EINVAL, the invalid
-byte is displayed as `\#NNN` (octal escape, `log.c:386`). This is the `ic_chck`
+byte is displayed as `\#NNN` (octal escape, `log.c:460`). This is the `ic_chck`
 path - separate from `--iconv` but related.
 
 ### Summary of error behaviors by call site
@@ -298,12 +298,12 @@ the receiving side, patterns are matched after conversion.
   charset but filter rules from the config file are in whatever encoding the
   config file was written in
 
-## 6. Server Args Forwarding (options.c:2715-2724)
+## 6. Server Args Forwarding (options.c:2770-2779)
 
 ### Format sent to remote
 
 The client sends `--iconv` to the server via `server_options()`. The logic
-(`options.c:2716-2723`):
+(`options.c:2771-2778`):
 
 1. If `iconv_opt` contains a comma, send only the part after the comma (the remote charset)
 2. If no comma, send the entire `iconv_opt` value
@@ -324,14 +324,14 @@ to/from UTF-8.
 ### CF_SYMLINK_ICONV flag
 
 Protocol version >= 30 negotiates symlink iconv support via the `compat_flags`
-byte (`compat.c:117-119`):
+byte (`compat.c:118-120`):
 
 - `CF_SYMLINK_ICONV (1<<2)` - advertised by server when `ICONV_OPTION` is compiled in
 - The client reads this flag from the compat_flags response
 
 ### sender_symlink_iconv
 
-Set in `compat.c:764-767`:
+Set in `compat.c:773-776`:
 
 ```c
 sender_symlink_iconv = iconv_opt && (am_server
@@ -343,7 +343,7 @@ The `'s'` in the client_info capability string indicates the client supports
 symlink iconv. The flag controls whether symlink targets are charset-converted
 in addition to filenames.
 
-### files-from conversion (compat.c:799-806)
+### files-from conversion (compat.c:808-815)
 
 When `protect_args` is active and `files_from` is set:
 
@@ -366,15 +366,15 @@ This controls whether `--files-from` entries are charset-converted during I/O.
 Daemon modules can set a `charset` parameter in `rsyncd.conf`
 (`daemon-parm.txt:19`). When a client connects to a module:
 
-1. `lp_charset(i)` retrieves the module's charset (`clientserver.c:713`)
+1. `lp_charset(i)` retrieves the module's charset (`clientserver.c:717`)
 2. If non-empty, `setup_iconv()` is called to set up `ic_send` and `ic_recv`
    using the module's charset
-3. `iconv_opt` is immediately reset to `NULL` (`clientserver.c:716`)
+3. `iconv_opt` is immediately reset to `NULL` (`clientserver.c:720`)
 
 This means the daemon temporarily opens iconv descriptors for the module listing
 phase (converting module names/comments), then closes them.
 
-### Post-option-parse cleanup (clientserver.c:1174-1185)
+### Post-option-parse cleanup (clientserver.c:1178-1189)
 
 After the client's options are parsed on the server side, if `iconv_opt` is
 `NULL` (client did not send `--iconv`), any previously opened iconv descriptors
@@ -384,14 +384,14 @@ listing but the client is not using `--iconv`.
 ### Refuse interaction
 
 If a daemon module has no `charset` set, `--iconv` is added to the refuse list
-(`options.c:994-996`). This means a client cannot use `--iconv` with a module
+(`options.c:1012-1014`). This means a client cannot use `--iconv` with a module
 that has not configured a charset.
 
 ### One-sided iconv
 
 If only the daemon side has `charset` configured but the client does not send
 `--iconv`, the iconv descriptors are closed after option parsing
-(`clientserver.c:1174-1185`). No conversion occurs. The `charset` parameter alone
+(`clientserver.c:1178-1189`). No conversion occurs. The `charset` parameter alone
 does not force conversion - the client must also request it.
 
 If the client sends `--iconv` but the daemon module has no `charset`, the option
@@ -423,7 +423,7 @@ conversion processes each null-terminated string separately
 ### Receiving side
 
 On the receiving side, `recv_file_list()` sets `RL_CONVERT` in the read-line
-flags when `filesfrom_convert` is set (`flist.c:2207-2209`). This causes
+flags when `filesfrom_convert` is set (`flist.c:2211-2213`). This causes
 `read_line()` to convert each filename through `ic_recv` as it is read.
 
 ### Divergence risks for oc-rsync
@@ -438,7 +438,7 @@ flags when `filesfrom_convert` is set (`flist.c:2207-2209`). This causes
 ### Why iconv requires unsorted flist
 
 When iconv is active and `protect_args` is not set to 2, `need_unsorted_flist`
-is set to 1 (`options.c:2056`). This is because charset conversion can change
+is set to 1 (`options.c:2092`). This is because charset conversion can change
 the lexicographic sort order of filenames. The sender sorts filenames in its
 local charset, but the receiver sorts in its local charset (which may differ).
 If the receiver re-sorted the converted names, index numbers would not match
@@ -449,7 +449,7 @@ The solution is to maintain two views of the file list:
 1. `flist->files` - unsorted, preserving the sender's index order
 2. `flist->sorted` - sorted copy for local operations (generator, flist_find)
 
-This is allocated in `flist.c:2149-2153` (sender side) and `flist.c:2696-2703`
+This is allocated in `flist.c:2153-2157` (sender side) and `flist.c:2707-2714`
 (receiver side) when `need_unsorted_flist` is true.
 
 ### Divergence risks for oc-rsync

@@ -31,7 +31,7 @@ fn parse_args_recognises_only_write_batch_prefix() {
     assert!(parsed.read_batch.is_none());
 }
 
-/// upstream: options.c:2280-2283 - a dry run records nothing, so `-n` must
+/// upstream: options.c:2319-2322 - a dry run records nothing, so `-n` must
 /// drop both write forms; a surviving name would create the batch and `.sh`
 /// that rsync 3.5.1 never writes under `-n`.
 #[test]
@@ -66,7 +66,7 @@ fn parse_args_dry_run_keeps_read_batch() {
     assert_eq!(parsed.read_batch, Some(OsString::from("replay")));
 }
 
-/// upstream: options.c:1780-1788 - both write forms set the single
+/// upstream: options.c:1816-1824 - both write forms set the single
 /// `write_batch` mode, so combining them is legal and the later one wins.
 #[test]
 fn parse_args_later_write_batch_form_wins() {
@@ -88,7 +88,7 @@ fn parse_args_later_write_batch_form_wins() {
     assert!(parsed.only_write_batch.is_none());
 }
 
-/// upstream: options.c:2265-2269 - a write form with `--read-batch` is
+/// upstream: options.c:2304-2308 - a write form with `--read-batch` is
 /// refused with this exact text, whichever order or write form is used.
 #[test]
 fn parse_args_refuses_write_with_read_batch() {

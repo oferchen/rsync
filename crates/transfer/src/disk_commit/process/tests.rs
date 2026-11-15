@@ -310,7 +310,7 @@ fn delay_updates_config(partial_mode: crate::disk_commit::PartialMode) -> DiskCo
 }
 
 /// Verifies a bare `--delay-updates` stages into `.~tmp~/<basename>` beside
-/// the destination file, matching upstream `options.c:2572-2573`, which the
+/// the destination file, matching upstream `options.c:2627-2628`, which the
 /// receiver applies when deriving its `PartialMode`.
 #[test]
 fn delay_updates_stages_into_implicit_tmp_dir() {
@@ -707,7 +707,7 @@ fn make_backup_backup_dir_subdir_inherits_source_mode() {
         dir_cache: Default::default(),
         dest_dir: dest_dir.clone(),
         backup_dir: Some(backup_dir.clone()),
-        // upstream: options.c:2305-2306 - the default suffix is empty when a
+        // upstream: options.c:2360-2361 - the default suffix is empty when a
         // backup directory is set.
         suffix: OsString::new(),
     };
@@ -793,7 +793,7 @@ fn make_backup_backup_dir_clears_nondir_obstruction() {
 /// `--inplace` that file is the destination inode about to be rewritten in
 /// place, so it must survive the backup step.
 ///
-/// upstream: generator.c:1862 - `copy_file(fname, backupptr, ...)` copies the
+/// upstream: generator.c:1899 - `copy_file(fname, backupptr, ...)` copies the
 /// pre-image aside while the destination stays put for the inplace rewrite.
 #[test]
 fn make_backup_copy_duplicates_and_keeps_original() {
@@ -961,7 +961,7 @@ fn commit_rename_refuses_parent_symlink_escape() {
 /// (its symlink target escapes beneath the root), so the rename fails safe and
 /// nothing lands outside the module.
 ///
-/// upstream: `syscall.c:1049` `do_rename_at()` opens each slashed path's parent
+/// upstream: `syscall.c:1118` `do_rename_at()` opens each slashed path's parent
 /// via `secure_relative_open()` before `renameat()`.
 ///
 /// Linux + openat2 only, by test scope rather than by capability: off Linux the

@@ -86,7 +86,7 @@ DECIDE produces a `DeletePlan` (`crates/engine/src/delete/plan.rs:147-235`):
 a frozen, per-directory list of `DeleteEntry` values in upstream
 `delete_in_dir` emission order. `DeletePlan::sort_by_name`
 (`plan.rs:214-224`) sorts with upstream's `f_name_cmp` ascending and then
-reverses, matching upstream's reverse-directory loop (`generator.c:320`).
+reverses, matching upstream's reverse-directory loop (`generator.c:355`).
 The plan tracks a `sorted` flag so the ordering invariant can be asserted
 before publication (`plan.rs:155`, `plan.rs:202-205`).
 
@@ -237,13 +237,13 @@ The model is anchored to upstream rsync 3.4.x:
   `pop_local_filters`) before iterating one directory's candidates
   (`target/interop/upstream-src/rsync-3.4.1/generator.c:272-347`, in
   particular the `change_local_filter_dir(fbuf, dlen, F_DEPTH(file))` call
-  at `generator.c:301` followed by the reverse-directory candidate loop at
-  `generator.c:320-344`). oc-rsync's per-worker `enter_directory` replay
+  at `generator.c:336` followed by the reverse-directory candidate loop at
+  `generator.c:355-379`). oc-rsync's per-worker `enter_directory` replay
   (`deletion.rs:246-259`) and the local-copy destination merge guard
   (`cleanup.rs:184-185`) reproduce that reload.
 
 - The reverse emission order matches upstream's
-  `for (i = dirlist->used; i--; )` loop (`generator.c:320`), reproduced by
+  `for (i = dirlist->used; i--; )` loop (`generator.c:355`), reproduced by
   `DeletePlan::sort_by_name`'s ascending-then-reverse (`plan.rs:214-224`).
 
 - The per-candidate exclusion test matches upstream's

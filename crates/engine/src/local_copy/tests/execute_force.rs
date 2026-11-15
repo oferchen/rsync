@@ -39,7 +39,7 @@ fn force_file_replaces_non_empty_directory() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// upstream: generator.c:2148-2153 makes room for the arriving regular file with
+// upstream: generator.c:2189-2194 makes room for the arriving regular file with
 // `delete_item(fname, mode, del_opts | DEL_FOR_FILE)`, called with no option
 // gate at all; `del_opts` carries DEL_RECURSE only under --delete/--force and
 // selects the RECURSION (delete.c:205-210). An EMPTY directory obstacle is
@@ -136,7 +136,7 @@ fn force_directory_replaces_file() {
 
 /// Companion to `force_replaces_file_with_directory_during_recursive_copy`:
 /// clearing a non-directory that obstructs a directory is not `--force`'s job.
-/// upstream: `generator.c:1839-1842` runs `delete_item(.., DEL_FOR_DIR)`
+/// upstream: `generator.c:1876-1879` runs `delete_item(.., DEL_FOR_DIR)`
 /// unconditionally; `--force` only adds `DEL_RECURSE` (`generator.c:1629`),
 /// which governs recursing into a non-empty *directory*.
 #[test]
@@ -237,7 +237,7 @@ fn force_replaces_file_entry_with_directory_during_recursive_copy() {
     );
 }
 
-// upstream: generator.c:2148-2153 calls `delete_item(fname, mode, del_opts |
+// upstream: generator.c:2189-2194 calls `delete_item(fname, mode, del_opts |
 // DEL_FOR_FILE)` UNCONDITIONALLY when a regular file arrives over a
 // destination that is not a regular file. `del_opts` carries `DEL_RECURSE`
 // only under `--delete`/`--force`, and delete.c:209 says what that flag
@@ -282,7 +282,7 @@ fn force_disabled_recursive_copy_replaces_an_empty_directory() {
 
 // The multi-source exception the cell above used to claim for itself.
 //
-// upstream: flist.c:3606-3625 flist_sort_and_clean() drops the colliding
+// upstream: flist.c:3617-3636 flist_sort_and_clean() drops the colliding
 // regular file and keeps the directory, so the entry never reaches
 // recv_generator and the destination directory is left alone at exit 0.
 #[test]
@@ -377,7 +377,7 @@ fn force_dry_run_make_room_for_empty_directory_is_silent() {
         .expect("dry-run succeeds");
 
     let summary = report.summary();
-    // upstream: generator.c:2148-2151 clears the conflicting directory with
+    // upstream: generator.c:2189-2192 clears the conflicting directory with
     // DEL_FOR_FILE; delete.c:191 delete_item() removes the make-room target
     // silently and uncounted. An empty directory has no contents to recurse
     // over, so no deletion is itemized or counted.
@@ -427,7 +427,7 @@ fn force_symlink_replaces_non_empty_directory() {
     assert_eq!(fs::read_link(&destination).expect("read link"), link_target);
 }
 
-// upstream: generator.c:2469-2483 atomic_create() - `dir_in_the_way` forces
+// upstream: generator.c:2512-2526 atomic_create() - `dir_in_the_way` forces
 // `skip_atomic`, so a directory obstacle takes the `delete_item()` arm whether
 // or not --backup is set, and `del_opts` selects only the RECURSION. An EMPTY
 // directory is therefore rmdir'd and the symlink created in its place at exit

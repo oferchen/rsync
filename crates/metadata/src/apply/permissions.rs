@@ -23,7 +23,7 @@ use std::os::fd::BorrowedFd;
 /// daemon chmod paths all compute one identical result (DRY). `am_root` is
 /// sampled through the same libc `geteuid` the ownership gate uses so
 /// `fakeroot`'s faked identity is honoured.
-/// upstream: generator.c:1904-1912 fixup + generator.c:2565-2611 touch_up_dirs.
+/// upstream: generator.c:1941-1949 fixup + generator.c:2609-2655 touch_up_dirs.
 #[cfg(unix)]
 fn tweak_directory_transfer_mode(mode: u32, file_type: fs::FileType) -> u32 {
     if !file_type.is_dir() {
@@ -137,14 +137,14 @@ fn cached_umask() -> u32 {
 
 /// Returns the default permission seed for a child created under `parent`.
 ///
-/// Mirrors upstream `generator.c:1738-1741` which calls `default_perms_for_dir(dn)`
+/// Mirrors upstream `generator.c:1775-1778` which calls `default_perms_for_dir(dn)`
 /// when `--perms` is off. The helper folds the parent directory's POSIX default
 /// ACL `user_obj`/`group_obj`/`other_obj` entries into the seed; when there is
 /// no default ACL (or the filesystem does not support POSIX default ACLs) it
 /// returns the umask-derived `ACCESSPERMS & ~orig_umask`.
 ///
 /// upstream: `acls.c:1453-1508` `default_perms_for_dir`
-/// upstream: `generator.c:1738-1741` per-parent `dflt_perms` lookup
+/// upstream: `generator.c:1775-1778` per-parent `dflt_perms` lookup
 #[cfg(unix)]
 fn default_perms_seed(parent: Option<&Path>) -> u32 {
     let umask = cached_umask();
@@ -183,8 +183,8 @@ fn default_perms_seed(parent: Option<&Path>) -> u32 {
 /// umask-derived seed when the parent is unknown or no default ACL is present.
 ///
 /// upstream: rsync.c:464-487 `dest_mode()`
-/// upstream: generator.c:1740-1742 `dflt_perms = default_perms_for_dir(dn)`
-/// upstream: generator.c:2770 `dflt_perms = (ACCESSPERMS & ~orig_umask)`
+/// upstream: generator.c:1777-1779 `dflt_perms = default_perms_for_dir(dn)`
+/// upstream: generator.c:2856 `dflt_perms = (ACCESSPERMS & ~orig_umask)`
 #[cfg(unix)]
 fn compute_dest_mode(
     source_mode: u32,
@@ -546,7 +546,7 @@ fn apply_fake_super_stat_by_path(
     };
     let plan = StatPlan::new(current, intended);
     if plan.chmod {
-        // upstream: syscall.c:1909 do_chmod_at() - a symlink goes to
+        // upstream: syscall.c:1980 do_chmod_at() - a symlink goes to
         // do_chmod(), which uses lchmod() where it exists and never follows
         // the link.
         if current.is_symlink() {
@@ -747,7 +747,7 @@ pub(super) fn apply_fake_super_from_entry(
         ),
         (None, None) => None,
     };
-    // upstream: generator.c:1937-1940, receiver.c:1197-1208 - dest_mode()
+    // upstream: generator.c:1974-1977, receiver.c:1197-1208 - dest_mode()
     // runs only without --perms, after flist.c:1221 applied --chmod.
     let mode = chmod_tweaked_dest_mode_from(
         options.chmod(),
@@ -841,7 +841,7 @@ pub(super) fn apply_permissions_with_chmod(
         use std::os::unix::fs::PermissionsExt;
         let source_mode = metadata.permissions().mode();
         if metadata.file_type().is_dir() {
-            // upstream: generator.c:1856 - even when !preserve_perms the
+            // upstream: generator.c:1893 - even when !preserve_perms the
             // generator rewrites `file->mode = dest_mode(...)` for a
             // directory, judging `exists` by the pre-mkdir `statret`, and
             // set_file_attrs() (rsync.c:812) chmods the directory to it. The
@@ -1029,7 +1029,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
 /// interposed by fakeroot's LD_PRELOAD wrapper, so no raw-syscall path bypasses
 /// the faked mode here.
 ///
-/// upstream: rsync.c:set_file_attrs() / generator.c:1745 gen_entry_stat()
+/// upstream: rsync.c:set_file_attrs() / generator.c:1782 gen_entry_stat()
 ///
 /// `parent_dirfd` optionally carries the destination's parent directory,
 /// already resolved through the SAME `secure_open_dir` walk `secure_chmod_at`
@@ -1346,7 +1346,7 @@ fn existing_fake_super_mode(destination: &Path) -> Option<u32> {
 /// executor uses this to detect a transfer-root directory whose tweaked mode
 /// strips owner execute and therefore self-locks (see
 /// [`crate::transfer_root_self_locks`]).
-/// upstream: rsync.c:set_file_attrs() new_mode, pre generator.c:1904-1912 fixup.
+/// upstream: rsync.c:set_file_attrs() new_mode, pre generator.c:1941-1949 fixup.
 #[cfg(unix)]
 pub(super) fn chmod_directory_target_mode(
     destination: &Path,
@@ -1464,7 +1464,7 @@ fn chmod_tweaked_dest_mode_from(
         None => source_mode,
     };
     if options.permissions() {
-        // upstream: receiver.c:1198 / generator.c:1855 - `dest_mode()` only
+        // upstream: receiver.c:1198 / generator.c:1892 - `dest_mode()` only
         // runs when `!preserve_perms`; with `--perms` the tweaked mode is
         // applied as-is.
         return tweaked;
@@ -1648,7 +1648,7 @@ pub(super) fn apply_permissions_from_entry(
                     );
                 }
             } else if entry.file_type().is_dir() {
-                // upstream: generator.c:1856 - even when !preserve_perms
+                // upstream: generator.c:1893 - even when !preserve_perms
                 // the generator runs `file->mode = dest_mode(...)` for
                 // directories, and set_file_attrs() (rsync.c:812) chmods
                 // the dir to it. A new dir therefore lands the source mode
@@ -1684,7 +1684,7 @@ pub(super) fn apply_permissions_from_entry(
                 if pre_transfer_meta.is_none() && (current_mode & 0o2000) != 0 {
                     new_mode |= 0o2000;
                 }
-                // upstream: generator.c:1904-1912 - a non-root transfer raises
+                // upstream: generator.c:1941-1949 - a non-root transfer raises
                 // a directory lacking full owner-rwx to `mode | S_IRWXU` at its
                 // first visit so its contents can still be written; the gate is
                 // `!am_root && (file->mode & S_IRWXU) != S_IRWXU &&
@@ -1733,7 +1733,7 @@ pub(super) fn apply_permissions_from_entry(
                 // symlink swapped into any parent component cannot redirect
                 // the chmod outside the receiver's confinement (testsuite
                 // chdir-symlink-race). Under `--keep-dirlinks` the helper
-                // follows symlinked parents to mirror upstream `generator.c:1745`.
+                // follows symlinked parents to mirror upstream `generator.c:1782`.
                 chmod_path_honoring_keep_dirlinks(
                     destination,
                     mode,
@@ -1746,7 +1746,7 @@ pub(super) fn apply_permissions_from_entry(
         }
 
         if let Some(chmod) = options.chmod() {
-            // upstream: flist.c:1221-1222 - `recv_file_entry` runs
+            // upstream: flist.c:1225-1226 - `recv_file_entry` runs
             // `tweak_mode(mode, chmod_modes)` while the flist is built, and
             // `dest_mode()` (rsync.c:464-486) then collapses the TWEAKED
             // mode when `!preserve_perms`. The chmod baseline is therefore
@@ -1786,7 +1786,7 @@ pub(super) fn apply_permissions_from_entry(
             if (new_mode & 0o7777) != (current_mode & 0o7777) {
                 // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
                 // Helper follows symlinked parents under `--keep-dirlinks` to
-                // mirror upstream `generator.c:1745`.
+                // mirror upstream `generator.c:1782`.
                 chmod_path_honoring_keep_dirlinks(
                     destination,
                     new_mode,
@@ -1832,7 +1832,7 @@ pub(super) fn apply_permissions_from_entry(
             if (current_meta.mode() & 0o7777) != destination_permissions {
                 // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
                 // Helper follows symlinked parents under `--keep-dirlinks` to
-                // mirror upstream `generator.c:1745`.
+                // mirror upstream `generator.c:1782`.
                 chmod_path_honoring_keep_dirlinks(
                     destination,
                     destination_permissions,
@@ -2193,7 +2193,7 @@ mod tests {
         );
     }
 
-    /// upstream: generator.c:1937-1940 reads `sx.st.st_mode` BEFORE
+    /// upstream: generator.c:1974-1977 reads `sx.st.st_mode` BEFORE
     /// `atomic_create` (generator.c:2002) deletes an obstacle, so a link that
     /// replaced one must feed `dest_mode()` the OBSTACLE's old bits, not the
     /// umask default the fresh `symlink(2)` left behind. `explicit` carries
@@ -2245,7 +2245,7 @@ mod tests {
     /// DO reach it (contrast with a link), and that the result excludes the
     /// during-transfer owner-rwx raise.
     ///
-    /// upstream: generator.c:1856 (`exists` judged by the pre-mkdir statret) +
+    /// upstream: generator.c:1893 (`exists` judged by the pre-mkdir statret) +
     /// rsync.c:464-486 dest_mode().
     #[test]
     fn directory_dest_mode_new_dir_masks_the_source_and_drops_special_bits() {
@@ -2292,7 +2292,7 @@ mod tests {
         std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).expect("unlock");
     }
 
-    /// upstream: flist.c:1966-1967 gates `tweak_mode()` on `!S_ISLNK`, so a
+    /// upstream: flist.c:1970-1971 gates `tweak_mode()` on `!S_ISLNK`, so a
     /// directory IS tweaked (with `is_dir` selecting the `D` clauses), and with
     /// `--perms` the tweaked mode passes through with no collapse
     /// (generator.c:1856 runs only under `!preserve_perms`).

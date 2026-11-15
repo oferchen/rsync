@@ -18,12 +18,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.1/generator.c:285-360`
+//! - `target/interop/upstream-src/rsync-3.5.2/generator.c:320-395`
 //!   (`delete_in_dir`): scans `get_dirlist(fbuf, ...)` then for every
 //!   item calls `flist_find_ignore_dirness(cur_flist, fp) < 0` to decide
 //!   whether to delete. We perform the same set subtraction in pure
 //!   Rust: hash the segment's basenames, then walk the dest directory.
-//! - `target/interop/upstream-src/rsync-3.5.1/flist.c:3452`
+//! - `target/interop/upstream-src/rsync-3.5.2/flist.c:3463`
 //!   (`flist_find_ignore_dirness`, which retries `flist_find` with the
 //!   opposite directory-ness).
 

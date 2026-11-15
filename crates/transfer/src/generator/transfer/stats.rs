@@ -32,7 +32,7 @@ impl GeneratorContext {
         flist_buildtime_ms: u64,
         flist_xfertime_ms: u64,
     ) -> io::Result<()> {
-        // upstream: flist.c:915-916 - stats.total_size accumulates F_LENGTH for
+        // upstream: flist.c:919-920 - stats.total_size accumulates F_LENGTH for
         // regular files and symlinks only, tallied in send_file_entry() as each
         // entry is written. Read that running total rather than summing
         // `self.file_list` (which INC_RECURSE has drained down to the final

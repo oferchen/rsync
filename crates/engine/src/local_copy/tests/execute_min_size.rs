@@ -459,7 +459,7 @@ fn min_size_prunes_empty_directories_when_enabled() {
     );
 }
 
-/// upstream: generator.c:2109-2133 recv_generator() - `--min-size` is tested
+/// upstream: generator.c:2150-2174 recv_generator() - `--min-size` is tested
 /// only after the `ftype != FT_REG` branch has returned, so it gates regular
 /// files alone. A symlink's `F_LENGTH` is its target length, yet the link is
 /// still created even when that length is under the limit, while a regular

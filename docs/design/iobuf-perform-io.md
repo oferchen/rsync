@@ -51,7 +51,7 @@ upstream: io.c:101-110.
 | `IN_MULTIPLEXED_AND_READY` | `in_multiplexed > 0` | io.c:204 |
 | read-error branch | reports and exits; **does not drain** | io.c:918-925 |
 | write-error branch | reports, **drains**, then exits | io.c:961-967 |
-| `drain_multiplex_messages()` | the drain itself | io.c:1940-1956 |
+| `drain_multiplex_messages()` | the drain itself | io.c:1947-1963 |
 | no-fd-for-output branch | the **second** drain site | io.c:834-840 |
 
 The asymmetry between the two error branches is deliberate and worth stating:
@@ -62,16 +62,16 @@ what failed there is nothing left to drain. Only the write branch drains.
 
 It is an `int`, not a flag:
 
-- `0` - raw mode. Set by `io_end_multiplex_in` (io.c:2715).
+- `0` - raw mode. Set by `io_end_multiplex_in` (io.c:2722).
 - `1` - multiplexed, not currently inside a message. Set by
-  `io_start_multiplex_in` (io.c:2704) and restored at **every** exit arm of
-  `read_a_msg` (io.c:1713, :1693, :1699, :1710, :1716, :1738, :1746, :1791,
+  `io_start_multiplex_in` (io.c:2711) and restored at **every** exit arm of
+  `read_a_msg` (io.c:1720, :1693, :1699, :1710, :1716, :1738, :1746, :1791,
   :1803, :1817, :1845, :1861).
-- `-1` - **inside `read_a_msg`**. Set once at its top (io.c:1691).
+- `-1` - **inside `read_a_msg`**. Set once at its top (io.c:1698).
 
 So `IN_MULTIPLEXED_AND_READY` (`> 0`) is a **reentrancy guard**, not a
 readiness hint: it means "not already inside `read_a_msg`". `read_a_msg` asserts
-the invariant on the way out (`assert(iobuf.in_multiplexed > 0)`, io.c:1937).
+the invariant on the way out (`assert(iobuf.in_multiplexed > 0)`, io.c:1944).
 
 This is the single most important thing to carry over. Modelling it as a `bool`
 collapses `1` and `-1` into "true" and makes the drain re-enter the reader from
@@ -89,7 +89,7 @@ static void drain_multiplex_messages(void)
 }
 ```
 
-upstream: io.c:1940-1956, loop condition at io.c:1942. Two properties are
+upstream: io.c:1947-1963, loop condition at io.c:1949. Two properties are
 load-bearing:
 
 1. **It never blocks.** The loop condition is `iobuf.in.len` - bytes *already
@@ -136,9 +136,9 @@ if (!ret || err_msg) {
 }
 ```
 
-upstream: clientserver.c:1254-1268. `option_error()` is
+upstream: clientserver.c:1263-1277. `option_error()` is
 `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)` followed by `io_flush(MSG_FLUSH)`
-(options.c:907-916). `RERR_UNSUPPORTED` is 4, matching both measured
+(options.c:925-934). `RERR_UNSUPPORTED` is 4, matching both measured
 upstream-daemon cells.
 
 The `msleep(400)` is a deliberate linger so the client can drain before the

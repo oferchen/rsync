@@ -5,16 +5,22 @@ All notable changes to oc-rsync are recorded here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 oc-rsync speaks rsync protocols 28 through 33. Its reference version is upstream
-rsync 3.5.1. Release tags are mirrored on GitHub at
+rsync 3.5.2. Release tags are mirrored on GitHub at
 <https://github.com/oferchen/rsync/releases>.
 
 ## [Unreleased]
 
-This cycle moves the reference implementation to upstream rsync 3.5.1, by way of
-3.5.0. It adopts the 3.5.0 option and directive surface, works through the
-path-confinement and daemon CVE families, adds protocol 33, and gates every pull
-request on upstream's 3.5.1 test suite. One entry per change; see the linked PRs
-for detail.
+This cycle moves the reference implementation to upstream rsync 3.5.2, by way of
+3.5.0 and 3.5.1. It adopts the 3.5.0-3.5.2 option and directive surface, works
+through the path-confinement and daemon CVE families (including CVE-2026-119741),
+adds protocol 33, `--nice`, `--delay-symlinks`, and gates every pull request on
+upstream's 3.5.2 test suite. One entry per change; see the linked PRs for detail.
+
+### Upstream 3.5.2 Alignment
+
+- **Security (CVE-2026-119741):** Bounded consecutive weak-checksum collision checks in `crates/matching` (`MAX_COLLISION_SKIP = 32`) and fixed duplicate-chain exhaustion in `hash_search`
+- **Enhancements:** Added `--nice=<SPEC>` / `--no-nice` (CPU nice via `rustix` and Linux I/O priority), `--delay-symlinks` / `--no-delay-symlinks` (deferring symlink creation until after file transfers, protocol >= 29), and 3.5.2 human-readable (`48.8Mi`, `782,448B`, `113,295B/s`) and `--stats` / `--max-delete` thousands-separator formatting
+- **Bug fixes:** Fixed interrupted `--append` / `--inplace` trailing buffer duplication, `EMLINK` hard-link fallback recovery, password files with an empty first line, Unix-socket stdin daemon activation, `--files-from` daemon subdirectory confinement, `--max-alloc` delete-queue overflow and quiet-daemon `MSG_DELETED` suppression, terminal control-character escaping, and daemon `--delete -i` upload itemization
 
 ### Security
 

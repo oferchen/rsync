@@ -162,7 +162,7 @@ Wire-compat constrains every translation:
    highest block index first, as upstream's head-inserted chain does
    (`match.c:98-110`). Both decide which `Copy` index goes on the wire.
    The only upstream retirement is the `--inplace` offset rule
-   (`match.c:232-240`), owned by `with_updating_basis_file`.
+   (`match.c:240-261`), owned by `with_updating_basis_file`.
 4. **INC_RECURSE segments:** state (bithash, `next_match` hint) lives
    inside `DeltaSignatureIndex`. Every
    per-segment `MatchIndex::build` rebuilds them from scratch, which
@@ -202,7 +202,7 @@ upstream:
   the low 16 bits of `s1` (`match.c:45-51`).
 - `seq_matches`: absent. Upstream uses a `want_i` adjacent-block hint
   that only checks `i+1`, not multi-block sequential probing
-  (`match.c:289-300`).
+  (`match.c:304-315`).
 - Matched-block hash removal: absent. Upstream chains stay intact
   for the duration of the transfer.
 - Compact key: absent. Upstream uses 32-bit (or modulo) keys; no key

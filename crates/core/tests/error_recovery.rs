@@ -104,7 +104,7 @@ mod error_recovery {
     /// abort the transfer: each looping entry is dropped with its own error and
     /// the rest of the tree is still copied.
     ///
-    /// upstream: flist.c:1658-1697 make_file() - `readlink_stat()` fails with
+    /// upstream: flist.c:1662-1701 make_file() - `readlink_stat()` fails with
     /// ELOOP, the entry is omitted with `io_error |= IOERR_GENERAL`, the walk
     /// continues, and main.c exits RERR_PARTIAL (23). There is no cycle
     /// detector; the kernel's ELOOP is the bound.
@@ -152,7 +152,7 @@ mod error_recovery {
     /// temporarily raising the directory to mode|S_IRWXU before writing its
     /// contents, then restoring the original mode afterwards.
     ///
-    /// upstream: generator.c:1904-1912 chmods a pre-existing unwritable
+    /// upstream: generator.c:1941-1949 chmods a pre-existing unwritable
     /// directory writable before its contents and restores the final mode
     /// once the directory is done; the transfer exits 0.
     #[test]

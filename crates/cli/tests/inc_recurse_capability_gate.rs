@@ -1,6 +1,6 @@
 //! The `-e` capability string advertises `i` only for a recursive transfer.
 //!
-//! upstream: `compat.c:162-179 set_allow_inc_recurse()` runs
+//! upstream: `compat.c:163-180 set_allow_inc_recurse()` runs
 //! `if (!recurse || use_qsort) allow_inc_recurse = 0;` from `server_options()`
 //! (options.c:2901), immediately before `maybe_add_e_option()` decides whether
 //! to append `i` (options.c:3220-3221). `allow_inc_recurse` initialises to 1
@@ -98,7 +98,7 @@ fn qsort_push_omits_inc_recurse_capability() {
     let flags = server_flag_string(&["-r", "--qsort"]);
     assert!(
         !capabilities(&flags).contains('i'),
-        "--qsort must not advertise 'i' (upstream compat.c:172 use_qsort): {flags}"
+        "--qsort must not advertise 'i' (upstream compat.c:173 use_qsort): {flags}"
     );
 }
 

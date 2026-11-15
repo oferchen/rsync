@@ -58,7 +58,7 @@ fn push_into_module_with_temp_dir(temp_dir: &str, create: bool) -> (Result<(), S
 /// A module `temp dir` names a directory inside the module, whether it is
 /// written absolute or relative.
 ///
-/// upstream: options.c:2415-2416 re-roots an absolute `tmpdir` at the module
+/// upstream: options.c:2470-2471 re-roots an absolute `tmpdir` at the module
 /// (`sanitize_path(NULL, tmpdir, NULL, 0, SP_DEFAULT)`), and main.c:1059-1061
 /// do_recv() resolves a relative one from the destination it has chdir'd
 /// into. rsync 3.5.1 serves both configs below with exit 0.

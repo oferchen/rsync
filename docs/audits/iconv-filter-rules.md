@@ -26,15 +26,15 @@ considers native.
 The hand-off between iconv and the filter system happens entirely at the
 flist boundary in upstream rsync. The relevant call sites are:
 
-- **Sender side.** `flist.c:1332` calls `is_excluded(thisname, ...)` from
+- **Sender side.** `flist.c:1336` calls `is_excluded(thisname, ...)` from
   `make_file()` *before* `send_file_entry()` runs `iconvbufs(ic_send,
-  ...)` at `flist.c:1579-1603`. `thisname` is the path returned by
+  ...)` at `flist.c:1583-1607`. `thisname` is the path returned by
   `readlink_stat()` on the local filesystem - it is in the local
   charset, never the remote charset.
-- **Receiver side.** `flist.c:738-754` runs `iconvbufs(ic_recv, ...)`
+- **Receiver side.** `flist.c:742-758` runs `iconvbufs(ic_recv, ...)`
   inside `recv_file_entry()` and stores the converted (local-charset)
   bytes back into `thisname` *before* the entry is appended to the
-  receiver's flist. Later, `flist.c:3107` calls
+  receiver's flist. Later, `flist.c:3118` calls
   `is_excluded(f_name(file, fbuf), 1, ALL_FILTERS)` while pruning the
   received list for `--delete-excluded`. Because the file list now holds
   local-charset names, the filter sees local-charset input.
@@ -55,8 +55,8 @@ ISO-8859-1.
 
 | Upstream call site | Direction | oc-rsync call site | Charset at filter input | Status |
 |---|---|---|---|---|
-| `flist.c:1332` `is_excluded(thisname, ...)` in `make_file()` (sender walk) | local | `crates/transfer/src/generator/file_list/walk.rs:106` `self.filter_chain.allows(&relative, ...)` | local (raw filesystem path; iconv not yet applied) | Correct. |
-| `flist.c:3107` `is_excluded(f_name(file, fbuf), 1, ALL_FILTERS)` (receiver `--delete-excluded` prune) | local | `crates/transfer/src/receiver/directory/deletion.rs:138` `filter_chain.allows_deletion(&rel_for_filter, ...)` | local (entry name from `read_dir`; receiver flist names are post-`ic_recv`) | Correct. |
+| `flist.c:1336` `is_excluded(thisname, ...)` in `make_file()` (sender walk) | local | `crates/transfer/src/generator/file_list/walk.rs:106` `self.filter_chain.allows(&relative, ...)` | local (raw filesystem path; iconv not yet applied) | Correct. |
+| `flist.c:3118` `is_excluded(f_name(file, fbuf), 1, ALL_FILTERS)` (receiver `--delete-excluded` prune) | local | `crates/transfer/src/receiver/directory/deletion.rs:138` `filter_chain.allows_deletion(&rel_for_filter, ...)` | local (entry name from `read_dir`; receiver flist names are post-`ic_recv`) | Correct. |
 | `generator.c:delete_in_dir()` `check_filter(...)` against `dirent.d_name` | local | `crates/transfer/src/receiver/directory/deletion.rs:138` (same site as above) | local (`entry.file_name()` from `read_dir`) | Correct. |
 | Local-copy walker `is_excluded()` | local | `crates/engine/src/walk/filtered_walker.rs:109` and `crates/engine/src/local_copy/context_impl/options.rs:449` | local (no iconv on `cp`-style local copies) | Correct. |
 

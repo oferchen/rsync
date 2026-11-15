@@ -154,7 +154,7 @@ is not a key pin. Production code uses it only in tests.
 | Scope | `module_directives.rs:391-415` | Global only. A module-level `quic client ca file` is a hard config error |
 | Identity to session | `quic_listener.rs:313-317` | `RelayRecord.client_identity` is always `None`. The session never learns who the certificate named |
 | TCP bypass | `accept_loop.rs:393-398` | The TCP listener serves the same modules with no certificate requirement |
-| `auth users` / `secrets file` | Unchanged daemon session code | Runs inside the tunnel as on TCP. Secrets-file strict modes are enforced by `platform::secrets::check_secrets_file_permissions` (`crates/platform/src/secrets.rs:26-58`), mirroring upstream `authenticate.c:172-179` |
+| `auth users` / `secrets file` | Unchanged daemon session code | Runs inside the tunnel as on TCP. Secrets-file strict modes are enforced by `platform::secrets::check_secrets_file_permissions` (`crates/platform/src/secrets.rs:26-58`), mirroring upstream `authenticate.c:165-172` |
 
 mTLS and `auth users` are independent today: when both are configured, a
 client must pass both, but nothing maps a certificate to an rsync user.
@@ -247,14 +247,14 @@ when unused, 0-RTT off unless replay-safe, no key logging in production).
 | G3 | No Retry. Spoofed Initials hold backlog slots (handshaking counts toward 128, `driver.rs:29-35`, `:509-516`) until idle timeout, then real clients get `refuse` | quinn `Incoming::retry` / address validation; RFC 9000 section 8.1 | **High** (availability; runtime **unverified**) |
 | G4 | Daemon with an unusable identity (missing cert file, unreadable key, key mismatch) starts and serves TCP only (`quic_listener.rs:131-145`); only a missing *directive* is fatal (`accept_loop.rs:51-57`) | sshd refuses to start without a loadable host key; fail-loud policy | **Medium** |
 | G5 | mTLS gates only the QUIC listener; TCP serves the same modules with no certificate. mTLS is global only and the verified identity never reaches the session (`quic_listener.rs:316`) | An operator who sets `quic client ca file` reasonably expects the data to require a certificate | **Medium** |
-| G6 | No permission checks on `quic key file` or `--quic-key` (`trust.rs:575-591`) | Upstream strict modes for the secrets file (`authenticate.c:172-179`) and the password file (`authenticate.c:258-265`, exit `RERR_SYNTAX`); OpenSSH refuses group/other-readable private keys | **Medium** |
+| G6 | No permission checks on `quic key file` or `--quic-key` (`trust.rs:575-591`) | Upstream strict modes for the secrets file (`authenticate.c:165-172`) and the password file (`authenticate.c:251-258`, exit `RERR_SYNTAX`); OpenSSH refuses group/other-readable private keys | **Medium** |
 | G7 | The daemon key is read after `daemon chroot` and uid drop, by the parent (`accept_loop.rs:349-403`, `quic_listener.rs:139`). It must be readable by the runtime uid and live inside the chroot, and its bytes pass through the heap that later session children inherit | sshd, nginx: read keys as root before dropping privileges | **Medium** |
 | G8 | No pin-only mode. `--quic-known-key` is documented (`quic-transport-policy.md:145-149`, `:326`) and advertised by the notice (`trust.rs:460`) but not implemented | curl `--pinnedpubkey`; OpenSSH `StrictHostKeyChecking=yes` with a provisioned `known_hosts` | **Medium** |
 | G9 | Server allows 100+100 peer-initiated streams with a 64 MiB window it never reads (`transport.rs:372-373`, `tuning.rs:55`, `driver.rs:299-313`) | Set peer stream limits to what the protocol needs | **Low** (runtime **unverified**) |
 | G10 | Connection migration on (`quinn-proto config/mod.rs:244`) although the policy defers it (`quic-transport-policy.md:299-301`); `hosts allow` is judged once, at hand-off (`quic_listener.rs:310-317`) | Disable features not in use | **Low** |
 | G11 | The pinning notice says "add --quic-ca" even when `--quic-ca` is set, and names a flag that does not exist (`trust.rs:456-462`) | Accurate diagnostics | **Low** |
 | G12 | known-hosts: whole-certificate hash, not the SPKI the policy specifies (`trust.rs:54-71` vs `quic-transport-policy.md:131-133`); no hashing of host names; no permission check on read; no multi-key rotation; no revocation checking anywhere | OpenSSH `HashKnownHosts`, `UpdateHostKeys` | **Low** |
-| G13 | Unreachable QUIC daemon exits 5, TCP exits 10 (`connect.rs:486-497` vs upstream `clientserver.c:163-165`); `--contimeout`, `RSYNC_PROXY` and `RSYNC_CONNECT_PROG` are silently not applied on the QUIC arm (`connect.rs:371-372`) | Exit-code parity; fail loud | **Low** |
+| G13 | Unreachable QUIC daemon exits 5, TCP exits 10 (`connect.rs:486-497` vs upstream `clientserver.c:167-169`); `--contimeout`, `RSYNC_PROXY` and `RSYNC_CONNECT_PROG` are silently not applied on the QUIC arm (`connect.rs:371-372`) | Exit-code parity; fail loud | **Low** |
 | G14 | No certificate or client-CA reload on SIGHUP (`reload.rs`, 2.8) | nginx/sshd reload | **Low** (documentation) |
 | G15 | 0-RTT off and key logging off only by library default; no test pins either (2.5) | A dependency upgrade or a switch to `QuicServerConfig::new` would silently enable 0-RTT | **Low** |
 | G16 | One front process holds keys and plaintext for every QUIC session; Landlock is Linux only (`landlock_stub.rs:67-69`) | Per-connection isolation | **Low** (residual, mitigated) |
@@ -338,7 +338,7 @@ Three independent mechanisms, combined with AND:
   not match the certificate, bad permissions - stops the daemon before it
   serves anything, exit 1 (`RERR_SYNTAX`), the code the daemon already uses
   for a missing QUIC directive (`accept_loop.rs:51-57`) and upstream uses for a
-  config it cannot load (`clientserver.c:1762-1764`). A UDP bind failure keeps
+  config it cannot load (`clientserver.c:1826-1828`). A UDP bind failure keeps
   its socket-error path (exit 10, upstream `socket.c:706-707`).
 - **Load keys before dropping privileges (G7, decision D5).** Fork the QUIC
   front after the pid file is written and before `daemon chroot` / uid drop
@@ -358,7 +358,7 @@ Three independent mechanisms, combined with AND:
     value. Failure: `quic key file must not be other-accessible (see strict
     modes option): 'PATH'`, exit 1 at startup.
   - Client `--quic-key`: the upstream password-file rule
-    (`authenticate.c:258-265`): refuse if other-accessible, with
+    (`authenticate.c:251-258`): refuse if other-accessible, with
     `ERROR: --quic-key file must not be other-accessible`, exit 1.
   - Both are no-ops on Windows, as for secrets files (`secrets.rs:59-60`).
 - **Reload:** unchanged. Document that the identity and client CA are read at
@@ -395,12 +395,12 @@ direct UDP: `--quic cannot be combined with RSYNC_PROXY` (exit 1).
 
 | Condition | Text (after `QUIC connection to H:P failed: `) | Exit | Why |
 |-----------|------|------|-----|
-| No response, unreachable, handshake timeout | `no QUIC response` / io detail | **10** `RERR_SOCKETIO` | Same class as a failed TCP connect (upstream `clientserver.c:163-165`); decision D9 |
+| No response, unreachable, handshake timeout | `no QUIC response` / io detail | **10** `RERR_SOCKETIO` | Same class as a failed TCP connect (upstream `clientserver.c:167-169`); decision D9 |
 | CA verify failure (`ca`, `ca+pin`, `tofu` with `@ca`) | `quic certificate verify failed for H:P: <reason>` | 5 `RERR_STARTCLIENT` | Refusal before the protocol starts; matches the policy's text (`:180-181`) |
 | Pin mismatch (`pin`, `ca+pin`, `tofu`) | `quic host key mismatch for H:P: pinned ... got ...` | 5 | Unchanged |
 | ALPN mismatch, mTLS rejected by daemon | rustls detail | 5 | Unchanged |
-| Bad `--quic-ca` / `--quic-known-key` value, `--quic-cert` without `--quic-key`, key-file permissions, `--quic` with proxy env | specific text | **1** `RERR_SYNTAX` | Usage or local-configuration errors; upstream uses 1 for the password-file checks (`authenticate.c:258-265`). Today the cert/key pairing errors exit 5 (`connect.rs:414-425`) |
-| Daemon: identity or client CA cannot load, key permissions | `failed to load the QUIC server identity: ...` | 1 | Config error at start (`clientserver.c:1762-1764`) |
+| Bad `--quic-ca` / `--quic-known-key` value, `--quic-cert` without `--quic-key`, key-file permissions, `--quic` with proxy env | specific text | **1** `RERR_SYNTAX` | Usage or local-configuration errors; upstream uses 1 for the password-file checks (`authenticate.c:251-258`). Today the cert/key pairing errors exit 5 (`connect.rs:414-425`) |
+| Daemon: identity or client CA cannot load, key permissions | `failed to load the QUIC server identity: ...` | 1 | Config error at start (`clientserver.c:1826-1828`) |
 | Daemon: UDP bind failed | existing `bind_error` text | 10 | `socket.c:706-707` |
 
 ## 6. Implementation plan
@@ -440,7 +440,7 @@ These change user-visible behaviour or reverse the task 134 design.
 | D6 | Key-file permission enforcement | (a) enforce as upstream does for secrets and password files, exit 1; (b) warn only; (c) none | **(a)**, gated by `strict modes` on the daemon, matching upstream semantics |
 | D7 | Client-auth model | (a) mTLS and `auth users` independent (AND), per-module `require client cert`, no cert-to-user mapping; (b) also map a certificate field to an `auth users` name; (c) no change | **(a)**. Closes the TCP bypass with one boolean. Mapping (b) adds a second credential system the policy rejected (`:302-307`); defer until an operator asks |
 | D8 | TCP fallback | (a) never, and refuse `--quic` with proxy env vars; (b) opt-in fallback flag | **(a)**. A fallback flag is a scripted downgrade |
-| D9 | Exit code for an unreachable QUIC daemon | (a) 10, as for TCP; (b) 5 (today) | **(a)**. Parity with `clientserver.c:163-165`; keeps 5 for refusals so scripts can tell "down" from "rejected" |
+| D9 | Exit code for an unreachable QUIC daemon | (a) 10, as for TCP; (b) 5 (today) | **(a)**. Parity with `clientserver.c:167-169`; keeps 5 for refusals so scripts can tell "down" from "rejected" |
 | D10 | Retry policy | (a) always Retry; (b) Retry only when the backlog is over half full | **(a)**. One code path, no tuning knob; the extra round trip is negligible for rsync sessions |
 | D11 | Connection migration | (a) off; (b) on (today, by library default) | **(a)**. Matches the policy's deferral and TCP semantics |
 | D12 | Reconcile the policy note | (a) update `quic-transport-policy.md` to the shipped model; (b) leave it as a historical record | **(a)**. The note is cited as the authority by code comments and by `known_failures.conf`, so it must be accurate |

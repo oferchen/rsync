@@ -76,7 +76,7 @@ fn generator_without_bwlimit_is_passthrough() {
 /// A daemon-clamped rate reaches the live sender limiter unchanged.
 ///
 /// WHY: `server_config.rs` clamps the client rate to the daemon cap
-/// (upstream: options.c:2543-2544 min(client, daemon)) and carries the result on
+/// (upstream: options.c:2598-2599 min(client, daemon)) and carries the result on
 /// `ConnectionConfig::bwlimit`; the effective rate must reach the live limiter
 /// so the sender paces at exactly that rate, not the unclamped client value.
 #[test]

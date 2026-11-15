@@ -62,5 +62,8 @@ pub fn run_local_child_transfer(
         .spawn()
         .map_err(|e| invalid_argument_error(&format!("fork: {e}"), IPC_EXIT_CODE))?;
 
+    let mut niceness = *config.niceness();
+    niceness.apply_local(crate::niceness::ProcessRole::Client);
+
     run_push_transfer(&config, connection, sources, observer, batch_writer)
 }

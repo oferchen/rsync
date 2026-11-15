@@ -101,7 +101,7 @@ fn build_batch_flist_writer(options: &LocalCopyOptions) -> Option<protocol::flis
             // id lists name it (write_batch_id_lists).
             .with_acl_send_names(inc_recurse && !numeric_ids);
 
-        // upstream: flist.c:1336 - under always_checksum every regular-file
+        // upstream: flist.c:1340 - under always_checksum every regular-file
         // entry carries a trailing digest. The reader re-derives the length
         // from the protocol version (batch/src/reader/flist.rs
         // default_flist_csum_len), so the two must agree or the reader

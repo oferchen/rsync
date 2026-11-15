@@ -104,7 +104,7 @@ fn test_generator_for_path(
 
 /// Builds a generator for a trailing-slash (DOTDIR) source under `-d`.
 ///
-/// upstream: flist.c:2963-2966 - a directory operand is skipped outright
+/// upstream: flist.c:2974-2977 - a directory operand is skipped outright
 /// unless `xfer_dirs` is on, and `xfer_dirs` comes from `-r`, `-d`, or
 /// `--list-only` (options.c:2323-2329). A DOTDIR fixture with none of them
 /// builds an EMPTY file list, so a cell that means to describe "`.` plus the
@@ -483,7 +483,7 @@ fn inc_recurse_gap_ndx_round_trip_preserves_original() {
     // 0 + (0 - 1) as usize = usize::MAX, and flat_to_wire_ndx(usize::MAX)
     // produced a garbage value instead of 0.
     //
-    // upstream: sender.c:552-558 - gap NDX echoed unchanged
+    // upstream: sender.c:560-566 - gap NDX echoed unchanged
     use protocol::CompatibilityFlags;
 
     let mut handshake = test_handshake_with_protocol(32);
@@ -579,7 +579,7 @@ fn inc_recurse_orphan_entry_is_reported_not_silently_emitted() {
 
 #[test]
 fn inc_recurse_gap_ndx_itemizes_parent_directory() {
-    // upstream: generator.c:2779-2787 - under INC_RECURSE every directory is
+    // upstream: generator.c:2865-2873 - under INC_RECURSE every directory is
     // itemized exactly once, via the "gap NDX" `ndx_start - 1` of ITS OWN
     // sub-list, not its own NDX. A push of `src/` containing `sub/child.txt`
     // has TWO sub-lists: the initial list (contents of the transfer root `.`)
@@ -638,7 +638,7 @@ fn inc_recurse_gap_ndx_itemizes_parent_directory() {
 
     // Dispatching sub/'s sub-list appends its (flat_start, ndx_start) and
     // owning-flat rows, exactly as encode_and_send_segment does in the transfer
-    // loop. upstream flist.c:3511: ndx_start = prev(1) + prev_used(2) + 1 = 4,
+    // loop. upstream flist.c:3522: ndx_start = prev(1) + prev_used(2) + 1 = 4,
     // so sub/'s gap NDX is 3. The initial list keeps ndx_start 1, gap NDX 0.
     ctx.incremental.ndx_map.set_initial_parent_flat(0);
     let sub_ndx_start = ctx.incremental.ndx_map.push_sublist(2, 1, 1);
@@ -1534,7 +1534,7 @@ fn item_flags_read_trailing_basis_type() {
     assert_eq!(consumed, 1);
 }
 
-/// Encodes an xname length exactly as upstream `write_vstring()` (io.c:2520):
+/// Encodes an xname length exactly as upstream `write_vstring()` (io.c:2527):
 /// one byte for `len <= 0x7F`, otherwise `[len/0x100 + 0x80, len & 0xFF]`.
 fn encode_xname_vstring(payload: &[u8]) -> Vec<u8> {
     let len = payload.len();
@@ -1551,7 +1551,7 @@ fn encode_xname_vstring(payload: &[u8]) -> Vec<u8> {
 fn item_flags_read_trailing_short_xname_matches_upstream_vstring() {
     // A short xname (len <= 0x7F) is a single length byte followed by the
     // payload. The generator/sender must decode the vstring prefix, not a
-    // varint - upstream io.c:2212 read_vstring().
+    // varint - upstream io.c:2219 read_vstring().
     let payload = b"basis.old";
     let wire = encode_xname_vstring(payload);
     let mut cursor = Cursor::new(&wire[..]);
@@ -1571,7 +1571,7 @@ fn item_flags_read_trailing_short_xname_matches_upstream_vstring() {
 fn item_flags_read_trailing_long_xname_uses_two_byte_prefix() {
     // A 200-byte xname exercises the 2-byte vstring prefix. read_varint would
     // decode [0x80, 0xC8] as a completely different length and desync the
-    // stream; the vstring decode yields exactly 200. upstream io.c:2045-2046.
+    // stream; the vstring decode yields exactly 200. upstream io.c:2052-2053.
     let payload = vec![b'x'; 200];
     let wire = encode_xname_vstring(&payload);
     // Sanity: upstream 2-byte framing for len=200 is [0x80, 0xC8].
@@ -1589,7 +1589,7 @@ fn item_flags_read_trailing_long_xname_uses_two_byte_prefix() {
 
 #[test]
 fn item_flags_read_trailing_rejects_over_long_xname() {
-    // upstream io.c:2212-2229: a vstring length of >= MAXPATHLEN (4096) is a
+    // upstream io.c:2219-2236: a vstring length of >= MAXPATHLEN (4096) is a
     // protocol error. Truncating would leave the tail on the wire and desync
     // every subsequent read, so read_trailing must surface an error instead.
     // len = 4096 -> two-byte prefix [0x90, 0x00].
@@ -1635,7 +1635,7 @@ fn item_flags_combined_flags() {
 
 #[test]
 fn item_flags_constants() {
-    // Verify constant values match upstream rsync.h:214-233
+    // Verify constant values match upstream rsync.h:215-234
     assert_eq!(ItemFlags::ITEM_REPORT_ATIME, 0x0001);
     assert_eq!(ItemFlags::ITEM_REPORT_CHANGE, 0x0002);
     assert_eq!(ItemFlags::ITEM_REPORT_SIZE, 0x0004);
@@ -1660,7 +1660,7 @@ fn item_flags_constants() {
 
 #[test]
 fn significant_item_flags_masks_framing_and_internal_bits() {
-    // upstream rsync.h:235-236 - strips BASIS_TYPE_FOLLOWS, XNAME_FOLLOWS, LOCAL_CHANGE
+    // upstream rsync.h:236-237 - strips BASIS_TYPE_FOLLOWS, XNAME_FOLLOWS, LOCAL_CHANGE
     let mask = ItemFlags::SIGNIFICANT_ITEM_FLAGS;
     assert_eq!(mask & ItemFlags::ITEM_BASIS_TYPE_FOLLOWS, 0);
     assert_eq!(mask & ItemFlags::ITEM_XNAME_FOLLOWS, 0);
@@ -1827,7 +1827,7 @@ fn read_signature_blocks_multiple_blocks() {
 
 /// The wire `remainder` must land on the LAST block, and only there.
 ///
-/// upstream: `sender.c:374-375` (receive_sums)
+/// upstream: `sender.c:382-383` (receive_sums)
 ///   `if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;`
 ///   `else                                      s->sums[i].len = s->blength;`
 ///
@@ -1940,7 +1940,7 @@ fn signature_wire(count: u32) -> Vec<u8> {
 
 /// On an older protocol with a slow/large checksum read, the sender must poke a
 /// keepalive every `lull_mod` blocks so the peer's --timeout does not fire while
-/// the write side is starved. upstream: sender.c:380.
+/// the write side is starved. upstream: sender.c:388.
 #[test]
 fn read_signature_blocks_keepalive_fires_on_cadence() {
     let data = signature_wire(5);
@@ -2001,7 +2001,7 @@ fn read_signature_blocks_keepalive_empty_never_fires() {
     assert_eq!(pokes, 0);
 }
 
-/// upstream: sender.c:341 - `lull_mod = protocol_version >= 31 ? 0 : allowed_lull * 5`.
+/// upstream: sender.c:349 - `lull_mod = protocol_version >= 31 ? 0 : allowed_lull * 5`.
 /// Protocol 31 and newer multiplex the checksum stream, so the sender never pokes
 /// keepalives during the signature read.
 #[test]
@@ -2017,7 +2017,7 @@ fn signature_read_lull_mod_disabled_on_modern_protocol() {
 }
 
 /// On protocols below 31, the cadence is `allowed_lull * 5` blocks (seconds).
-/// upstream: sender.c:341.
+/// upstream: sender.c:349.
 #[test]
 fn signature_read_lull_mod_scales_with_lull_on_old_protocol() {
     assert_eq!(
@@ -2291,7 +2291,7 @@ fn send_io_error_flag_with_errors_protocol_29() {
 
 #[test]
 fn send_io_error_flag_ignore_errors_suppresses_value() {
-    // Tests upstream behavior: flist.c:3068: write_int(f, ignore_errors ? 0 : io_error);
+    // Tests upstream behavior: flist.c:3079: write_int(f, ignore_errors ? 0 : io_error);
     let handshake = test_handshake_with_protocol(29);
     let mut config = test_config();
     config.deletion.ignore_errors = true;
@@ -2335,7 +2335,7 @@ fn sender_io_error_bytes(protocol: u8, io_error: i32, ignore_errors: bool) -> Ve
 /// CLASS GUARD: `--ignore-errors` suppresses the sender's io_error in BOTH wire
 /// eras, not just the legacy one.
 ///
-/// Upstream states one rule twice - `flist.c:3024-3031` selects
+/// Upstream states one rule twice - `flist.c:3035-3042` selects
 /// `write_end_of_flist(f, 0)` when `io_error == 0 || ignore_errors`, and
 /// `flist.c:3068` writes `ignore_errors ? 0 : io_error` on the pre-30 path.
 /// oc implemented only the second, and the gap was invisible from behaviour:
@@ -2581,7 +2581,7 @@ fn id_lists_round_trip_with_numeric_ids_true() {
 /// collapse broke - the sender would send the list while the receiver skipped
 /// it (or vice versa), desyncing the stream.
 ///
-/// upstream: flist.c:3063 (send, `numeric_ids <= 0`) and uidlist.c:465,473
+/// upstream: flist.c:3074 (send, `numeric_ids <= 0`) and uidlist.c:465,473
 /// (recv, `numeric_ids <= 0`).
 #[test]
 fn id_lists_round_trip_with_daemon_forced_numeric_ids() {
@@ -2715,7 +2715,7 @@ fn walk_includes_fifo_as_special_entry_type() {
     let handshake = test_handshake();
     let mut config = test_config();
     config.flags.specials = true;
-    // upstream: flist.c:2963-2966 - `-d` is what lets a DOTDIR operand reach
+    // upstream: flist.c:2974-2977 - `-d` is what lets a DOTDIR operand reach
     // the walk at all; without any `xfer_dirs` source the operand is skipped
     // and the list is empty (options.c:2323-2329).
     config.flags.dirs = true;
@@ -2964,7 +2964,7 @@ fn del_stats_not_sent_without_do_stats() {
 
 #[test]
 fn del_stats_early_sent_with_do_stats_and_delete() {
-    // upstream: generator.c:2387 (3.4.3) - early path: INFO_GTE(STATS, 2) && delete_mode
+    // upstream: generator.c:2430 (3.4.3) - early path: INFO_GTE(STATS, 2) && delete_mode
     let handshake = test_handshake();
     let mut config = test_config();
     config.do_stats = true;
@@ -2976,7 +2976,7 @@ fn del_stats_early_sent_with_do_stats_and_delete() {
 
 #[test]
 fn del_stats_early_not_sent_without_delete() {
-    // upstream: generator.c:2387 (3.4.3) - early path requires delete_mode || force_delete
+    // upstream: generator.c:2430 (3.4.3) - early path requires delete_mode || force_delete
     let handshake = test_handshake();
     let mut config = test_config();
     config.do_stats = true;
@@ -2988,7 +2988,7 @@ fn del_stats_early_not_sent_without_delete() {
 
 #[test]
 fn del_stats_late_sent_with_do_stats_only() {
-    // upstream: generator.c:2432 (3.4.3) - late path: INFO_GTE(STATS, 2) is sufficient
+    // upstream: generator.c:2475 (3.4.3) - late path: INFO_GTE(STATS, 2) is sufficient
     let handshake = test_handshake();
     let mut config = test_config();
     config.do_stats = true;
@@ -3101,7 +3101,7 @@ fn to_exit_code_del_limit_returns_25() {
 
 #[test]
 fn to_exit_code_general_outranks_vanished_and_del_limit() {
-    // upstream: cleanup.c:210-218 - three INDEPENDENT `if`s assign in the order
+    // upstream: cleanup.c:211-219 - three INDEPENDENT `if`s assign in the order
     // DEL_LIMIT, VANISHED, GENERAL, each overwriting the last, so the GENERAL
     // arm is the one that survives when several flags are set.
     //
@@ -3136,7 +3136,7 @@ mod legacy_goodbye_tests {
 
     /// NDX_DONE as encoded by the modern (protocol >= 30) codec.
     ///
-    /// upstream io.c:2372-2375 - single 0x00 byte with no side effects.
+    /// upstream io.c:2379-2382 - single 0x00 byte with no side effects.
     const NDX_DONE_MODERN: [u8; 1] = [0x00];
 
     /// Creates a `GeneratorContext` for a specific protocol version.
@@ -3474,7 +3474,7 @@ mod files_from {
         // A top-level entry keeps the source argument as its walk base.
         assert_eq!(result[0].path, PathBuf::from("/src/file1.txt"));
         assert_eq!(result[0].base, PathBuf::from("/src"));
-        // upstream: flist.c:2850-2861 - the default `--files-from` mode is
+        // upstream: flist.c:2861-2872 - the default `--files-from` mode is
         // non-relative (relative_paths == 0), so a nested entry splits on its
         // LAST `/`: the parent directory becomes the walk base and only the
         // basename is transmitted (`subdir/file2.txt` -> base `/src/subdir`,
@@ -3600,7 +3600,7 @@ mod files_from {
         let mut config = test_config();
         config.args = vec![OsString::from(&src)];
         // A nested wire-relative name (`subdir/file.txt`) only implies its
-        // parent directory in relative mode. upstream: options.c:2313-2316 -
+        // parent directory in relative mode. upstream: options.c:2368-2371 -
         // `if (!relative_paths) implied_dirs = 0;`, so non-relative --files-from
         // flattens each entry to its basename (flist.c:2850-2861) and emits no
         // implied parents. This test exercises the implied-parent path, so it
@@ -3626,7 +3626,7 @@ mod files_from {
             names.iter().any(|n| n.contains("file.txt")),
             "expected file.txt in {names:?}"
         );
-        // upstream: flist.c:2848-2899 - a plain --files-from list (no leading
+        // upstream: flist.c:2859-2910 - a plain --files-from list (no leading
         // `./` anchor) in non-relative mode emits NO transfer-root `.` entry.
         // The old code emitted one unconditionally, producing a spurious
         // `.d ./` itemize row and, with --delete, scoping deletion over the
@@ -3637,7 +3637,7 @@ mod files_from {
         );
     }
 
-    /// upstream: flist.c:2495-2497 send_implied_dirs() - `copy_links = xfer_dirs = 1`
+    /// upstream: flist.c:2506-2508 send_implied_dirs() - `copy_links = xfer_dirs = 1`
     /// is in force while the ancestor chain is emitted, so each implied parent is
     /// stat-ed through symlinks. Stat-ing with `symlink_metadata` reports a
     /// symlinked ancestor as a non-directory and emits nothing for it, so the
@@ -3687,7 +3687,7 @@ mod files_from {
         );
     }
 
-    /// upstream: the sender has no `--safe-links` check. options.c:696 binds
+    /// upstream: the sender has no `--safe-links` check. options.c:697 binds
     /// `safe_symlinks`, and its only transfer-time consumers sit on the
     /// receiving side: the generator (generator.c:1951 `safe_symlinks &&
     /// unsafe_symlink(sl, fname)`) and the backup path (backup.c:289, :370).
@@ -3723,7 +3723,7 @@ mod files_from {
         }
     }
 
-    /// upstream: flist.c:2404-2431 send_file1() - a name that cannot be
+    /// upstream: flist.c:2415-2442 send_file1() - a name that cannot be
     /// strictly transcoded under --iconv is dropped (io_error |= IOERR_GENERAL,
     /// "cannot convert filename", return NULL) so it never enters the file list.
     /// The --files-from build path runs the same per-source send_file_name(), so
@@ -3763,7 +3763,7 @@ mod files_from {
             "unconvertible --files-from name must be dropped, not passed \
              through: {names:?}"
         );
-        // upstream: flist.c:1858 - io_error |= IOERR_GENERAL -> exit 23.
+        // upstream: flist.c:1862 - io_error |= IOERR_GENERAL -> exit 23.
         assert_ne!(
             ctx.io_error() & io_error_flags::IOERR_GENERAL,
             0,
@@ -3773,7 +3773,7 @@ mod files_from {
 
     #[test]
     fn build_file_list_with_base_leading_dot_anchor_emits_implied_root_dot() {
-        // upstream: flist.c:2897-2899 - in --relative mode a leading `./`
+        // upstream: flist.c:2908-2910 - in --relative mode a leading `./`
         // anchor (`implied_dot_dir`) emits ONE transfer-root `.` via
         // `send_file_name(".", ..., (flags | FLAG_IMPLIED_DIR) & ~FLAG_CONTENT_DIR, ...)`:
         // FLAG_IMPLIED_DIR set, FLAG_TOP_DIR unset, FLAG_CONTENT_DIR cleared.
@@ -3819,7 +3819,7 @@ mod files_from {
 
     #[test]
     fn build_file_list_with_base_leading_dot_without_relative_emits_no_root_dot() {
-        // upstream: flist.c:2929 - the `implied_dot_dir` root `.` lives inside
+        // upstream: flist.c:2940 - the `implied_dot_dir` root `.` lives inside
         // the `if (relative_paths)` branch. Without --relative, even a leading
         // `./` files-from entry emits no transfer-root `.`.
         let temp_dir = TempDir::new().unwrap();
@@ -3881,7 +3881,7 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.args = vec![OsString::from(&src)];
-        // upstream: options.c:2332 - --files-from turns --relative on, which is
+        // upstream: options.c:2387 - --files-from turns --relative on, which is
         // what gates the implied-parent emission (flist.c:2711).
         config.flags.relative = true;
         config.flags.recursive = true;
@@ -3973,7 +3973,7 @@ mod files_from {
         assert!(
             names.contains(&"dir"),
             "an --exclude matching an implied parent must not remove it: \
-             upstream never filters implied dirs (flist.c:2175) and a real \
+             upstream never filters implied dirs (flist.c:2179) and a real \
              receiver aborts on the orphaned child: {names:?}"
         );
         let parent = ctx
@@ -3985,7 +3985,7 @@ mod files_from {
             parent.is_dir(),
             "implied parent must be sent as a directory"
         );
-        // upstream: flist.c:2456 - implied parents clear FLAG_CONTENT_DIR so an
+        // upstream: flist.c:2467 - implied parents clear FLAG_CONTENT_DIR so an
         // upstream receiver does not scan them for --delete.
         assert!(
             !parent.content_dir(),
@@ -4016,7 +4016,7 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.args = vec![OsString::from(&src)];
-        // Mirror upstream `options.c:2313-2316` - `--files-from` disables
+        // Mirror upstream `options.c:2368-2371` - `--files-from` disables
         // global recursion; the per-entry `recurse` flag drives the
         // DOTDIR rescan instead.
         config.flags.recursive = false;
@@ -4045,7 +4045,7 @@ mod files_from {
     #[cfg(unix)]
     #[test]
     fn relative_absolute_source_preserves_full_prefix() {
-        // upstream: flist.c:2823 - no "/./" anchor on an absolute source path
+        // upstream: flist.c:2834 - no "/./" anchor on an absolute source path
         // sends the entire path (minus the leading slash, stripped post-sort
         // by the receiver) as the relative name.
         let temp_dir = TempDir::new().unwrap();
@@ -4105,7 +4105,7 @@ mod files_from {
     #[cfg(unix)]
     #[test]
     fn relative_dot_anchor_splits_base_and_relative() {
-        // upstream: flist.c:2863 - `/./` anchor splits source: dir before the
+        // upstream: flist.c:2874 - `/./` anchor splits source: dir before the
         // anchor is treated as the base, the rest becomes the relative name.
         let temp_dir = TempDir::new().unwrap();
         let anchored = temp_dir.path().join("root");
@@ -4144,7 +4144,7 @@ mod files_from {
 
     #[test]
     fn implied_dirs_force_on_gated_to_protocol_30() {
-        // upstream: flist.c:2769 - `if (relative_paths && protocol_version
+        // upstream: flist.c:2780 - `if (relative_paths && protocol_version
         // >= 30) implied_dirs = 1;` forces the sender to emit flagged implied
         // parent dirs at protocol >= 30 regardless of --no-implied-dirs. At
         // protocol < 30 the flag is honoured (flist.c:2983 `else if
@@ -4315,7 +4315,7 @@ mod files_from {
     fn files_from_implied_parent_dir_clears_content_dir() {
         // DATA-LOSS, sender wire: oc's --files-from implied-parent
         // loop emitted purely implied parent dirs with the default
-        // content_dir=true. Upstream flist.c:2456 sets implied parents to
+        // content_dir=true. Upstream flist.c:2467 sets implied parents to
         // `(flags | FLAG_IMPLIED_DIR) & ~(FLAG_TOP_DIR | FLAG_CONTENT_DIR)`,
         // which serializes as XMIT_TOP_DIR | XMIT_NO_CONTENT_DIR (flist.c:735)
         // and a receiver decodes to FLAG_IMPLIED_DIR (flist.c:1481-1484) - so
@@ -4415,7 +4415,7 @@ mod files_from {
 
     #[test]
     fn non_relative_mode_emits_source_basename() {
-        // upstream: flist.c:2850-2861 - non-relative mode splits each
+        // upstream: flist.c:2861-2872 - non-relative mode splits each
         // positional on its last `/`: `dir` becomes the chdir target,
         // `fn` is link_stat'd. For source `<tmp>/payload`, dir = <tmp>
         // and fn = payload, so the wire entries carry the basename
@@ -4460,7 +4460,7 @@ mod files_from {
 
     #[test]
     fn non_relative_mode_trailing_slash_collapses_to_dot() {
-        // upstream: flist.c:2823-2845 DOTDIR_NAME branch - a trailing
+        // upstream: flist.c:2834-2856 DOTDIR_NAME branch - a trailing
         // slash makes the engine emit `.` for the source root and
         // children without the basename prefix, mirroring upstream's
         // "transfer the contents only" semantic.
@@ -4494,7 +4494,7 @@ mod files_from {
     #[test]
     fn build_file_list_with_base_skips_missing_files() {
         // Default mode emits the link_stat FERROR_XFER and leaves io_error
-        // clear; the exit code comes from got_xfer_error (upstream flist.c:2940-2944).
+        // clear; the exit code comes from got_xfer_error (upstream flist.c:2951-2955).
         let temp_dir = TempDir::new().unwrap();
         let src = temp_dir.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
@@ -4511,7 +4511,7 @@ mod files_from {
             .unwrap();
 
         // exists.txt only; missing.txt is skipped with io_error. No implied
-        // root "." for a non-anchored files-from list (upstream flist.c:2897
+        // root "." for a non-anchored files-from list (upstream flist.c:2908
         // emits the root dot only when a leading "./" anchor sets
         // implied_dot_dir).
         assert_eq!(count, 1, "exists.txt only");
@@ -4523,7 +4523,7 @@ mod files_from {
             "no implied root . for a non-anchored list"
         );
 
-        // upstream: flist.c:2940-2944 - `if (errno != ENOENT) io_error |=
+        // upstream: flist.c:2951-2955 - `if (errno != ENOENT) io_error |=
         // IOERR_GENERAL`. A --files-from entry that never existed takes the
         // ENOENT arm, so no io_error bit is raised at all: that bit reaches the
         // receiver (flist.c:2793) and would inhibit its deletions, which
@@ -4536,7 +4536,7 @@ mod files_from {
             0,
             "ENOENT must leave the wire-visible io_error clear"
         );
-        // upstream: log.c:337-338 - the FERROR_XFER the walk queued is what
+        // upstream: log.c:417-418 - the FERROR_XFER the walk queued is what
         // sets got_xfer_error, and cleanup.c:217-218 turns that into exit 23.
         // Set when the queued diagnostic is framed, mirroring `rwrite()`.
         let mut buf = Vec::new();
@@ -4581,7 +4581,7 @@ mod files_from {
             .unwrap();
 
         // exists.txt only; missing.txt silently skipped. No implied root "."
-        // for a non-anchored files-from list (upstream flist.c:2897 emits the
+        // for a non-anchored files-from list (upstream flist.c:2908 emits the
         // root dot only when a leading "./" anchor sets implied_dot_dir).
         assert_eq!(count, 1, "exists.txt only");
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
@@ -4621,7 +4621,7 @@ mod files_from {
 
         // exists.txt + mode-0 sentinel for missing.txt. No implied root "."
         // for a plain files-from list without a leading "./" anchor
-        // (upstream flist.c:2880 emits the root dot only for relative + ./ anchor).
+        // (upstream flist.c:2891 emits the root dot only for relative + ./ anchor).
         assert_eq!(count, 2, "exists.txt + sentinel for missing.txt");
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
         assert!(names.contains(&"exists.txt"));
@@ -4757,7 +4757,7 @@ mod files_from {
 
     #[test]
     fn build_file_list_trailing_slash_missing_source_fails_change_dir_not_missing_args() {
-        // upstream: flist.c:2914-2921 + 686-694 - without --relative, `nope/`
+        // upstream: flist.c:2925-2932 + 686-694 - without --relative, `nope/`
         // is entered as a directory before anything is stat'd. The chdir
         // failure reports `change_dir`, sets IOERR_GENERAL (which also stops
         // the receiver's deletions) and skips the operand, so the mode-0
@@ -4801,7 +4801,7 @@ mod files_from {
     }
     #[test]
     fn build_file_list_default_missing_source_reports_via_error_xfer_only() {
-        // upstream: flist.c:2940-2944 - a top-level source that never existed
+        // upstream: flist.c:2951-2955 - a top-level source that never existed
         // takes the `errno == ENOENT` path, which reports FERROR_XFER but skips
         // `io_error |= IOERR_GENERAL` so the bit the receiver reads (and would
         // inhibit its deletions on) stays clear. Exit 23 comes from
@@ -4879,7 +4879,7 @@ mod files_from {
 
     #[test]
     fn read_files_from_local_path_nul_delimited_strips_comments() {
-        // upstream: flist.c:2753 sets RL_DUMP_COMMENTS for local files
+        // upstream: flist.c:2764 sets RL_DUMP_COMMENTS for local files
         // independent of eol_nulls; io.c:1446 strips leading '#'/';' comment
         // lines even under --from0. Comment entries are dropped, normals kept.
         let temp_dir = TempDir::new().unwrap();
@@ -5146,7 +5146,7 @@ fn server_mode_flushes_writer_before_filter_list_read() {
     // client's filter list. Without this flush, the client may wait for
     // server output before sending its filter list, causing a deadlock.
     //
-    // upstream: main.c:1302-1312 - io_start_multiplex_out() then recv_filter_list()
+    // upstream: main.c:1302-1315 - io_start_multiplex_out() then recv_filter_list()
     // upstream: io.c:perform_io() - flushes output buffer while waiting for input
 
     use std::sync::Arc;
@@ -5223,7 +5223,7 @@ fn scheduler_with(count: usize, per_segment: usize) -> super::segments::SegmentS
 
 #[test]
 fn segment_scheduler_starts_with_an_empty_lookahead() {
-    // upstream flist.c:2785-2786 - send_file_list() adds the initial list's
+    // upstream flist.c:2796-2797 - send_file_list() adds the initial list's
     // `used` to BOTH file_total and file_old_total, so the very first
     // send_extra_file_list() call sees a backlog of 0 and always dispatches.
     // The initial list is `cur_flist`, never lookahead.
@@ -5238,7 +5238,7 @@ fn segment_scheduler_starts_with_an_empty_lookahead() {
 
 #[test]
 fn segment_scheduler_stops_the_burst_once_the_backlog_is_reached() {
-    // upstream flist.c:2651 - `while (file_total - file_old_total < at_least)`
+    // upstream flist.c:2662 - `while (file_total - file_old_total < at_least)`
     // is re-tested every iteration, and file_total grows by each sub-list it
     // sends. Two 500-entry sub-lists reach exactly MIN_FILECNT_LOOKAHEAD, and
     // `1000 < 1000` is false, so the third must not go out.
@@ -5288,7 +5288,7 @@ fn segment_scheduler_dispatches_one_sub_list_below_the_threshold() {
 
 #[test]
 fn segment_scheduler_resumes_when_the_receiver_finishes_a_sub_list() {
-    // upstream sender.c:535-539 - on the receiver's NDX_DONE the sender frees
+    // upstream sender.c:543-547 - on the receiver's NDX_DONE the sender frees
     // the oldest file-list and re-points file_old_total at the new cur_flist,
     // which drops the backlog by exactly that list's entry count and lets the
     // next send_extra_file_list() call push one more sub-list.
@@ -5366,7 +5366,7 @@ fn segment_scheduler_idle_growth_stops_at_the_ceiling() {
 
 #[test]
 fn segment_scheduler_admits_a_directory_larger_than_the_whole_ceiling() {
-    // upstream flist.c:2651 tests the backlog BEFORE send1extra() runs, and
+    // upstream flist.c:2662 tests the backlog BEFORE send1extra() runs, and
     // send1extra() emits one entire directory (flist.c:2657-2670). A directory
     // with more children than the whole ceiling is therefore still sent whole
     // the moment the backlog is under the bound - upstream has the same
@@ -5402,7 +5402,7 @@ fn segment_scheduler_admits_a_directory_larger_than_the_whole_ceiling() {
 #[test]
 fn segment_scheduler_idle_growth_resumes_as_the_receiver_retires_sub_lists() {
     // The ceiling is a window, not a latch: each sub-list the receiver finishes
-    // drops out of the backlog (upstream sender.c:532-536) and makes room for
+    // drops out of the backlog (upstream sender.c:540-544) and makes room for
     // one more. A bound that failed to reopen would stall a transfer whose tree
     // is larger than the ceiling.
     use super::segments::{MAX_FILECNT_LOOKAHEAD, MIN_FILECNT_LOOKAHEAD};
@@ -5485,7 +5485,7 @@ fn segment_scheduler_forced_drain_ignores_the_backlog() {
 fn empty_segment_sends_wire_bytes() {
     // Regression test for empty-dir flist_done overcounting.
     // An empty segment (count==0) must still produce wire output (NDX header
-    // + end-of-flist marker), matching upstream flist.c:2353,2375-2382.
+    // + end-of-flist marker), matching upstream flist.c:2364,2375-2382.
     // The old code returned early for count==0 producing zero wire bytes,
     // which desynchronised flist_done_remaining from the receiver.
     let handshake = test_handshake();
@@ -5996,7 +5996,7 @@ fn batched_flush_mixed_ndx_and_data_parity() {
 
 /// Regression tests for the `maybe_emit_itemize` emit-gate.
 ///
-/// Upstream `generator.c:588-589` emits an itemize line when ANY of four
+/// Upstream `generator.c:625-626` emits an itemize line when ANY of four
 /// conditions hold: significant flags set, `INFO_GTE(NAME, 2)`,
 /// `stdout_format_has_i > 1`, or `ITEM_XNAME_FOLLOWS`. The previous Rust
 /// gate only honored the first condition, so the `itemize.test` testsuite
@@ -6046,7 +6046,7 @@ mod itemize_emit_gate {
         captured.borrow().clone()
     }
 
-    /// upstream: generator.c:588 - `INFO_GTE(NAME, 2)` forces emission even
+    /// upstream: generator.c:625 - `INFO_GTE(NAME, 2)` forces emission even
     /// when `iflags == 0`. Without this branch the upstream `itemize.test`
     /// testsuite (run under `-ivvplrtH`) lost `.d ./`, `.d bar/`,
     /// `.f foo/config1`, and `.L foo/sym` rows on master.
@@ -6060,7 +6060,7 @@ mod itemize_emit_gate {
         );
     }
 
-    /// upstream: generator.c:588 - `INFO_GTE(NAME, 2)` is the gate.
+    /// upstream: generator.c:625 - `INFO_GTE(NAME, 2)` is the gate.
     /// `-v` (NAME level 1) is below the threshold, so unchanged entries
     /// must stay silent. This is the existing pre-fix behaviour for
     /// significant-flag-only emission.
@@ -6073,7 +6073,7 @@ mod itemize_emit_gate {
         );
     }
 
-    /// upstream: generator.c:590 - `(xname && *xname)` (encoded as
+    /// upstream: generator.c:627 - `(xname && *xname)` (encoded as
     /// `ITEM_XNAME_FOLLOWS` on the wire) forces emission. Verbose level 0
     /// proves the new branch alone is sufficient.
     #[test]
@@ -6091,7 +6091,7 @@ mod itemize_emit_gate {
     /// leader vstring (upstream `hlink.c:232-234`), and the client-side sender
     /// owns the visible itemize (`sender.c:585 maybe_log_item`). The follower row
     /// must render `hf+++++++++ follower => leader`, not a bare
-    /// `hf+++++++++ follower`, matching upstream `%L` (`log.c:675-678`).
+    /// `hf+++++++++ follower`, matching upstream `%L` (`log.c:760-763`).
     #[test]
     fn hardlink_follower_renders_leader_suffix_through_emit_path() {
         init({
@@ -6383,7 +6383,7 @@ fn two_list_sender_with_pending_removals(
 /// unlinked `b`, a source the peer never confirmed.
 #[test]
 fn msg_success_for_a_gap_ndx_never_unlinks_the_next_lists_first_file() {
-    // upstream prints no line of its own here (sender.c:410-411): only the
+    // upstream prints no line of its own here (sender.c:418-419): only the
     // standard RERR_PROTOCOL exit line.
     assert_eq!(refuse_success(1), "protocol incompatibility");
 }
@@ -6466,7 +6466,7 @@ fn msg_success_with_a_negative_index_is_refused() {
 }
 
 /// Once the initial list is freed its indices are gone, as flist_free()
-/// drops them from upstream's chain (sender.c:535-536): a late success for
+/// drops them from upstream's chain (sender.c:543-544): a late success for
 /// `a` is refused rather than resolved against a reclaimed entry.
 #[test]
 fn msg_success_for_a_freed_list_is_refused() {
@@ -6523,7 +6523,7 @@ fn msg_success_is_ignored_without_remove_source_files() {
 /// [`confirm_source_removal`](GeneratorContext::confirm_source_removal) only for
 /// the indices that actually arrived; every index whose `MSG_SUCCESS` never
 /// crossed the wire stays pending, so its source survives. Encodes the
-/// upstream crash-safety contract (sender.c:396 `successful_send()`): an
+/// upstream crash-safety contract (sender.c:404 `successful_send()`): an
 /// interrupted transfer never deletes a source that did not safely land at the
 /// destination. The kill point is forced by choosing which confirmations are
 /// delivered - no sleeps, no race, fully deterministic.
@@ -6831,7 +6831,7 @@ fn vanished_open_failure_frames_a_warning_in_server_mode() {
     );
 }
 
-/// upstream log.c:359-364 - protocol < 30 has no MSG_WARNING, so FWARNING
+/// upstream log.c:439-444 - protocol < 30 has no MSG_WARNING, so FWARNING
 /// downgrades to MSG_INFO. Sending code 4 to a protocol-29 peer would abort it
 /// with an unknown-message error.
 #[test]
@@ -6849,7 +6849,7 @@ fn vanished_open_failure_downgrades_to_info_below_protocol_30() {
     );
 }
 
-/// upstream sender.c:720 uses `rsyserr(FERROR_XFER, ...)`, which the peer's
+/// upstream sender.c:728 uses `rsyserr(FERROR_XFER, ...)`, which the peer's
 /// `rwrite()` counts as a transfer error (exit 23). MSG_ERROR_XFER exists at
 /// every supported protocol, so it never downgrades.
 #[test]
@@ -6888,7 +6888,7 @@ fn open_failure_emits_no_diagnostic_frame_in_client_mode() {
     }
 }
 
-/// upstream sender.c:748 - the diminished skip is an FWARNING, so a server
+/// upstream sender.c:756 - the diminished skip is an FWARNING, so a server
 /// frames it for the client exactly like the vanished warning.
 #[test]
 fn diminished_skip_frames_a_warning_in_server_mode() {
@@ -6921,7 +6921,7 @@ fn diminished_skip_frames_a_warning_in_server_mode() {
     assert_eq!(frames[1].0, protocol::MessageCode::NoSend);
     assert_eq!(
         ctx.io_error, 0,
-        "a diminished skip sets no io_error bit (upstream sender.c:422-430)"
+        "a diminished skip sets no io_error bit (upstream sender.c:430-438)"
     );
 }
 
@@ -6929,7 +6929,7 @@ fn diminished_skip_frames_a_warning_in_server_mode() {
 /// and returns the frames the queued file-list diagnostics produce on a
 /// multiplexed writer.
 ///
-/// `client_mode` selects upstream's `!am_server` branch (log.c:330), where the
+/// `client_mode` selects upstream's `!am_server` branch (log.c:410), where the
 /// text goes to the local terminal and nothing is framed. `module_root` is
 /// upstream's `module_dir`; a `None` root models a non-daemon server, whose
 /// `module_id < 0` leaves the absolute path untouched.
@@ -6951,7 +6951,7 @@ fn flist_walk_frames(
     let mut ctx = GeneratorContext::new_for_test(&handshake, config);
     // A daemon hands the sender a trailing-slash source for `rsync://h/mod/`
     // and `rsync://h/mod/sub/` alike (path_resolution.rs preserves it), which
-    // is what puts upstream's `curr_dir` at that directory (flist.c:2823-2845
+    // is what puts upstream's `curr_dir` at that directory (flist.c:2834-2856
     // DOTDIR_NAME -> `push_dir(dir)`).
     build_file_list_for_contents(&mut ctx, base);
 
@@ -6984,7 +6984,7 @@ fn restore_subdir(denied: &Path) {
     fs::set_permissions(denied, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// upstream flist.c:2374 - `rsyserr(FERROR_XFER, errno, "opendir %s failed",
+/// upstream flist.c:2385 - `rsyserr(FERROR_XFER, errno, "opendir %s failed",
 /// full_fname(fbuf))`, and `rwrite()` (log.c:330-340) re-sends an `am_server`
 /// diagnostic as a MSG frame instead of writing it to the server's own stderr.
 /// A daemon's stderr goes to its log, not to the client, so without the frame
@@ -7013,7 +7013,7 @@ fn flist_opendir_failure_frames_an_error_xfer_in_server_mode() {
     assert_eq!(
         io_error,
         super::io_error_flags::IOERR_GENERAL,
-        "upstream flist.c:2102 sets IOERR_GENERAL, which lands the run on exit 23"
+        "upstream flist.c:2106 sets IOERR_GENERAL, which lands the run on exit 23"
     );
 }
 
@@ -7096,7 +7096,7 @@ fn flist_opendir_failure_emits_no_frame_in_client_mode() {
     );
 }
 
-/// upstream log.c:359-364 - protocol < 30 has no MSG_WARNING, so the FWARNING
+/// upstream log.c:439-444 - protocol < 30 has no MSG_WARNING, so the FWARNING
 /// the walk raises for a vanished entry (flist.c:1686-1689) must ride MSG_INFO.
 /// Sending code 4 to a protocol-29 peer would abort it with an unknown-message
 /// error.
@@ -7152,7 +7152,7 @@ fn banner_ctx(client_mode: bool, recursive: bool, inc_recurse: bool) -> Generato
 }
 
 /// A recursive client-side push that negotiated INC_RECURSE at `-v` (FLIST
-/// level 1) announces the incremental file list (upstream flist.c:2763-2764).
+/// level 1) announces the incremental file list (upstream flist.c:2774-2775).
 #[test]
 fn negotiated_inc_recurse_announces_sending_banner() {
     logging::init(logging::VerbosityConfig::from_verbose_level(1));
@@ -7237,7 +7237,7 @@ fn server_sender_symlink_time_glyph(
     row.chars().nth(4).unwrap()
 }
 
-/// WHY: upstream compat.c:766-773 derives a server-sender's
+/// WHY: upstream compat.c:775-782 derives a server-sender's
 /// `receiver_symlink_times` from the RECEIVER's advertised `'L'` capability
 /// (`strchr(client_info, 'L')`), NOT from the server's own
 /// `CAN_SET_SYMLINK_TIMES` platform capability (which is what the negotiated
@@ -7451,7 +7451,7 @@ fn inc_recurse_partitions_an_already_materialised_file_list() {
 /// first NDX plus the leader's send position in it, and the leader is the
 /// group's first member in send order.
 ///
-/// upstream: flist.c:824-831 numbers groups in `send_file_entry()`, so the gnum
+/// upstream: flist.c:828-835 numbers groups in `send_file_entry()`, so the gnum
 /// is `first_ndx + ndx` of the first member *sent*, gaps included
 /// (flist.c:3511), with `ndx` counted before the sub-list is sorted. The sorted
 /// position names a different entry whenever readdir order differs from name
@@ -7855,7 +7855,7 @@ fn the_recursive_walk_still_expands_the_same_fixture() {
 #[test]
 fn consecutive_entries_in_one_directory_share_a_dirname_allocation() {
     // Non-vacuity guard for the sender-side `lastdir` cache
-    // (upstream: flist.c:1772-1782, flist.c:1908-1909). `FileEntry::new_file`
+    // (upstream: flist.c:1776-1786, flist.c:1912-1913). `FileEntry::new_file`
     // derives a FRESH `Arc<Path>` per entry, so without the cache in
     // `push_file_item` each of these three entries would own a separate copy
     // of "a/b" and the pointer-equality assertions below would fail.
@@ -8238,7 +8238,7 @@ fn inc_recurse_dir_flist_is_bounded_by_max_alloc_across_sub_lists() {
 /// A network sender resolves `--files-from` entries through upstream's
 /// ownership walk: the flist stat, the directory scan and the content open.
 ///
-/// upstream: `syscall.c:149` `filesfrom_owner_walk_active()`, `flist.c:465-466`
+/// upstream: `syscall.c:149` `filesfrom_owner_walk_active()`, `flist.c:468-469`
 /// `scan_link_stat()`, `sender.c:692-693` `do_open_checklinks()`.
 #[cfg(unix)]
 mod files_from_owner_walk {

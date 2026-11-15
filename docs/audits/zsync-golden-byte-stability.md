@@ -443,7 +443,7 @@ already cite upstream's behaviour:
   transfer (no prune), and the bucket walk is deterministic in
   block-index order.
 - `docs/design/zsync-seq-match.md` "Mapping to oc-rsync architecture"
-  cites upstream `match.c:144-190` as the `want_i` adjacent-match hint
+  cites upstream `match.c:144-192` as the `want_i` adjacent-match hint
   pattern oc-rsync already mirrors at `crates/match/src/generator.rs:103`
   and lines 177-187.
 - `docs/design/zsync-inspired-matching.md` "Not present in upstream

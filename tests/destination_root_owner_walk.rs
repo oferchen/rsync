@@ -21,8 +21,8 @@
 //! cells use `sudo -n` when not root and report a loud skip when neither is
 //! available.
 //!
-//! upstream: `rsync-3.5.1/util1.c:1363-1393` and `:1450-1466` `change_dir()`,
-//! `rsync-3.5.1/syscall.c:499-504` (the diagnostic), `rsync-3.5.1/main.c:778-781`
+//! upstream: `rsync-3.5.2/util1.c:1363-1393` and `:1450-1466` `change_dir()`,
+//! `rsync-3.5.2/syscall.c:560-565` (the diagnostic), `rsync-3.5.2/main.c:778-781`
 //! (`RERR_FILESELECT`), `rsync-3.5.1/NEWS.md:142-148`.
 #![cfg(unix)]
 use std::fs;
@@ -87,7 +87,7 @@ fn fixture(files: &[(&str, usize)]) -> (tempfile::TempDir, PathBuf) {
 /// `relative` names the destination relative to `base` (the cwd), exercising
 /// upstream's `curr_dir` arm. `server_args` reach only the remote side, which
 /// is how a remote-shell peer is given a local-only option such as
-/// `--insecure-links` (upstream: options.c:3077-3080 never forwards it).
+/// `--insecure-links` (upstream: options.c:3145-3148 never forwards it).
 fn command(
     receiver: Receiver,
     base: &Path,
@@ -420,8 +420,8 @@ fn a_real_destination_directory_transfers_for_every_receiver() {
 /// the first one became visible (a network receiver's temp file, or a local
 /// copy's `O_TMPFILE` link at commit).
 ///
-/// upstream: `rsync-3.5.1/main.c:865` and `rsync-3.5.1/util1.c:1448-1466`
-/// (enter with `fchdir`), `rsync-3.5.1/receiver.c:413` (relative temp names).
+/// upstream: `rsync-3.5.2/main.c:865` and `rsync-3.5.2/util1.c:1448-1466`
+/// (enter with `fchdir`), `rsync-3.5.2/receiver.c:413` (relative temp names).
 fn assert_swap_after_entry_is_contained(receiver: Receiver) {
     const LEN: usize = 256 << 10;
     const FILES: [&str; 3] = ["a_big", "b_big", "c_big"];

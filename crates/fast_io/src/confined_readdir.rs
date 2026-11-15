@@ -17,7 +17,7 @@
 //!
 //! - `rsync-3.5.1/flist.c` `send_directory()` enumerates the descriptor its
 //!   confined open produced, not the path it was asked for.
-//! - `rsync-3.5.1/syscall.c:3032` `ds_descend()` - the per-component walk this
+//! - `rsync-3.5.2/syscall.c:3103` `ds_descend()` - the per-component walk this
 //!   anchors on, shared with the content open.
 
 use std::ffi::OsString;
@@ -74,7 +74,7 @@ pub(crate) fn read_dir_names_at(dirfd: std::os::fd::BorrowedFd<'_>) -> io::Resul
 /// itself needs only read permission, as upstream's `fdopendir()` of the leaf
 /// `ona_open()` returned does.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:593-605` - `ona_open()` opens a
+/// upstream: `rsync-3.5.2/syscall.c:662-674` - `ona_open()` opens a
 /// non-symlink leaf with the caller's flags, and `flist.c:2266` lists it.
 #[cfg(unix)]
 pub(crate) fn read_dir_names_owned(dir: std::os::fd::OwnedFd) -> io::Result<Vec<OsString>> {
@@ -110,7 +110,7 @@ mod imp {
     /// directory it enumerates. A searchable but unreadable directory
     /// therefore fails here with `EACCES`, as upstream's does.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:3384-3386` - "Callers that read
+    /// upstream: `rsync-3.5.2/syscall.c:3455-3457` - "Callers that read
     /// directory entries ... must continue to use `O_RDONLY | O_DIRECTORY`".
     pub(super) fn read_names(dirfd: BorrowedFd<'_>) -> io::Result<Vec<OsString>> {
         let readable = crate::dir_sandbox::at_syscalls::openat(

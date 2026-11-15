@@ -93,7 +93,7 @@ Like the parallel hasher, it is currently unused by the
 
 ## 2. Upstream rsync 3.4.1 read paths
 
-### 2.1 Quick-check path (`flist.c:1412`, `checksum.c:402`)
+### 2.1 Quick-check path (`flist.c:1416`, `checksum.c:402`)
 
 Upstream's `quick_check_ok()` in `generator.c` calls `file_checksum()`
 (`checksum.c:402`) with the destination stat:
@@ -110,7 +110,7 @@ EVP_DigestFinal_ex(evp, sum, NULL);
 close(fd); unmap_file(buf);
 ```
 
-Constants from `rsync.h:158`:
+Constants from `rsync.h:159`:
 
 - `CHUNK_SIZE = 32 * 1024` (32 KiB hash feed)
 - `MAX_MAP_SIZE = 256 * 1024` (256 KiB sliding window)
@@ -136,12 +136,12 @@ For `file_checksum`, where `i` advances monotonically by
 window misses every 8 chunks. Steady state: 1 `read(256 KiB)` per 8
 hash updates of 32 KiB.
 
-### 2.3 Sender-side flist (`flist.c:1412-1416`)
+### 2.3 Sender-side flist (`flist.c:1416-1420`)
 
 `always_checksum && am_sender && S_ISREG()` triggers
 `file_checksum(thisname, &st, tmp_sum)` during `make_file()`,
 populating `F_SUM(file)` (line 1505) so each `FileEntry` writes
-`flist_csum_len` non-zero bytes via `flist.c:670`.
+`flist_csum_len` non-zero bytes via `flist.c:674`.
 
 ## 3. Read-size and seek pattern differences
 

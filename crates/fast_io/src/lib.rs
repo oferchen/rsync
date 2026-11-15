@@ -125,7 +125,7 @@ pub mod dir_sandbox;
 pub mod entry_metadata;
 pub use entry_metadata::{EntryFileType, EntryMetadata};
 /// Unix-only: ownership-walk resolution for a sender's `--files-from`
-/// entries, mirroring upstream `filesfrom_link_stat()` (`flist.c:400`).
+/// entries, mirroring upstream `filesfrom_link_stat()` (`flist.c:403`).
 #[cfg(unix)]
 pub mod files_from_walk;
 /// Active-allocator heap counters for the `--info=stats3` diagnostic block.
@@ -191,7 +191,7 @@ pub mod secure_dir;
 /// Batched read-ahead of small sender source files (io_uring on Linux).
 pub mod source_prefetch;
 /// Explicit source roots a non-daemon sender holds by identity, mirroring
-/// upstream `open_sender_source_path()` (`flist.c:345`).
+/// upstream `open_sender_source_path()` (`flist.c:346`).
 pub mod source_roots;
 /// Cross-platform temporary file strategy abstraction.
 pub mod temp_file_strategy;
@@ -704,7 +704,7 @@ pub use status::{
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:499` - `if (lst.st_uid != 0 && lst.st_uid != trusted_uid)`
+/// - `rsync-3.5.2/syscall.c:560` - `if (lst.st_uid != 0 && lst.st_uid != trusted_uid)`
 ///   refuses with `ELOOP`.
 #[must_use]
 pub fn is_symlink_refusal(error: &std::io::Error) -> bool {

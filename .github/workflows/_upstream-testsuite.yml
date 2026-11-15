@@ -10,7 +10,7 @@ on:
       upstream_rsync_version:
         description: 'Upstream rsync version for cache key'
         type: string
-        default: '3.5.1'
+        default: '3.5.2'
       variant:
         description: 'Which variant(s) to run: all | nonroot | root | none (docs-only pull requests: both legs report skipped)'
         type: string

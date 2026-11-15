@@ -1,7 +1,7 @@
 //! A tree deeper than upstream's confined resolver can walk transfers only
 //! the levels 3.5.1 reaches, and fails the rest the way 3.5.1 does.
 //!
-//! upstream: syscall.c:2940 `DS_MAXDEPTH 1024` and syscall.c:3004-3010
+//! upstream: syscall.c:3011 `DS_MAXDEPTH 1024` and syscall.c:3075-3081
 //! `ds_push()` - a walk holding 1024 descriptors fails with `ENOMEM`. The
 //! sender's `opendir` of a directory 1024 levels below its base fails there
 //! (flist.c:2356), so the 1024th level's file is never listed. With `-L` the

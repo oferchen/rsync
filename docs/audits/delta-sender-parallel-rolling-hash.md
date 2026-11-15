@@ -85,18 +85,18 @@ phase-for-phase:
 1. Read NDX from receiver (`generator/transfer.rs:138`).
 2. Read iflags + trailing fnamecmp / xname (`transfer.rs:227-232`).
 3. If transfer not requested, emit itemize and continue
-   (`transfer.rs:240-244`). This mirrors `sender.c:286-305`.
+   (`transfer.rs:240-244`). This mirrors `sender.c:294-313`.
 4. Read sum-head and signature blocks (`transfer.rs:267,281`,
    delegating to `read_signature_blocks` in `protocol_io.rs`). Mirrors
-   `sender.c:347` (`receive_sums()`).
+   `sender.c:355` (`receive_sums()`).
 5. If `has_basis`, compute the delta script via
    `generate_delta_from_signature` (`generator/delta.rs:91`), then write
    NDX, iflags, token stream, and trailing file checksum
-   (`transfer.rs:316-352`). Mirrors `match.c:362 match_sums()` followed
+   (`transfer.rs:316-352`). Mirrors `match.c:398 match_sums()` followed
    by `sum_end()` and the trailing checksum write at
-   `match.c:411`.
+   `match.c:447`.
 6. Else stream the whole file via `stream_whole_file_transfer`
-   (`generator/delta.rs:199`). Mirrors `sender.c:354-369`'s whole-file
+   (`generator/delta.rs:199`). Mirrors `sender.c:362-377`'s whole-file
    path.
 
 Steps 5 and 6 happen back-to-back inside the same single-threaded loop
@@ -117,7 +117,7 @@ iteration; there is no concurrent dispatch across files.
   inner adjacent-match refill loop
   (`match/src/generator.rs:188-281`) recomputes the rolling sum from
   scratch via SIMD-accelerated `update()` mirroring
-  `match.c:303-308`.
+  `match.c:318-323`.
 - **Strong checksum on the sender** is invoked in two distinct places:
   1. **Per-block strong-sum verification** during delta generation, via
      `DeltaSignatureIndex::find_match_slices` /
@@ -131,9 +131,9 @@ iteration; there is no concurrent dispatch across files.
      `compute_file_checksum` (`generator/delta.rs:289`) for the delta
      path and `ChecksumVerifier` inside `stream_whole_file_transfer`
      (`generator/delta.rs:217,232,249`) for the whole-file path. Mirrors
-     `match.c:370 sum_init()` followed by the per-chunk
+     `match.c:406 sum_init()` followed by the per-chunk
      `sum_update()` in `match.c:125-128` and the final
-     `sum_end()` at `match.c:411`.
+     `sum_end()` at `match.c:447`.
 
 ### 1.3 The per-file iteration loop
 
@@ -175,7 +175,7 @@ across files today.
 ### 2.1 What the sender writes per file
 
 Following `target/interop/upstream-src/rsync-3.4.1/sender.c:411-424` and
-`match.c:362-424`, one file record is:
+`match.c:398-460`, one file record is:
 
 1. `write_ndx(f_out, ndx)` - file index (varint NDX, monotonic).
 2. `iflags` (2 bytes) and optional fnamecmp_type / xname trailers.
@@ -186,11 +186,11 @@ Following `target/interop/upstream-src/rsync-3.4.1/sender.c:411-424` and
    (`token.c:send_token()` via `match.c:117`) or a back-reference token
    (`-(i+1)`). `match_sums()` always finishes with a final
    `matched(f, s, buf, len, -1)` to flush the EOF token
-   (`match.c:407-408`).
+   (`match.c:443-444`).
 5. After the EOF token, the trailing whole-file checksum is written by
    the caller via `sum_end(sender_file_sum)` then
    `write_buf(f_xfer, sender_file_sum, xfer_sum_len)` in
-   `match.c:411` and the wrapping send loop. oc-rsync mirrors this in
+   `match.c:447` and the wrapping send loop. oc-rsync mirrors this in
    `crates/transfer/src/generator/transfer.rs:316-352`.
 
 The token stream for a single file is therefore a contiguous wire
@@ -206,7 +206,7 @@ loops on `read_ndx_and_attrs(f_in, f_out, &iflags, ...)`
 not assume the NDX it reads is sequential with the previous one; it
 indexes into the file list by `ndx - cur_flist->ndx_start`
 (`receiver.c:590-593`), which mirrors the sender's mapping at
-`sender.c:263-266`. This is the hook that already supports
+`sender.c:271-274`. This is the hook that already supports
 INC_RECURSE: sub-list NDX values can arrive in arbitrary order
 relative to `cur_flist` boundaries, and the existing dispatch in
 oc-rsync tolerates this (`generator/transfer.rs:223-224
@@ -221,8 +221,8 @@ What the receiver *does* require:
   immediately after the EOF token in
   `receiver.c:receive_data()` -> `recv_files()`.
 - Phase ordering: phase 1 must complete (sender writes `NDX_DONE`
-  marker, `sender.c:252-256`) before phase 2 redos start
-  (`sender.c:312-329 csum_length` toggle). This is *cross-phase*
+  marker, `sender.c:260-264`) before phase 2 redos start
+  (`sender.c:320-337 csum_length` toggle). This is *cross-phase*
   ordering, not per-file ordering inside a phase.
 - Generator-pull ordering: the sender only emits a record for an NDX
   the receiver *asked for* via the inbound NDX read. `generate_files`
@@ -508,17 +508,17 @@ Do not run this benchmark on master; the flag must be off by default.
   reads from a file the receiver may also be writing. Today this is
   serial; with fan-out, multiple workers could be reading the same
   inode if the sender and the receiver share the disk (local
-  transfer). The `match.c:208-215` pruning of `s->sums[i]` entries
+  transfer). The `match.c:212-219` pruning of `s->sums[i]` entries
   with `offset < offset` is per-file state and stays per-worker, so
   no cross-worker hazard, but we need to ensure the `--inplace` open
   uses `O_RDONLY` (it does:
   `crates/transfer/src/generator/transfer.rs` opens via
   `open_source_reader`).
-- **`--append`.** Append mode (`sender.c:372-391`) takes a different
+- **`--append`.** Append mode (`sender.c:380-399`) takes a different
   `match_sums()` early path that just hashes the prefix and emits
   zero matches. It is faster than the regular path but still per-
   file serial; fan-out helps here too. No new hazard.
-- **INC_RECURSE.** Sub-list streaming (`sender.c:227,261
+- **INC_RECURSE.** Sub-list streaming (`sender.c:235,261
   send_extra_file_list`) interleaves new file-list segments with
   file transfers. The fan-out producer (NDX-read thread) must
   continue to drive `encode_and_send_segment`

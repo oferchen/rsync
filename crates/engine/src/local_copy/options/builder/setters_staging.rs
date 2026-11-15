@@ -42,6 +42,13 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
+    /// Configures `--delay-symlinks` for local copies.
+    #[must_use]
+    pub fn delay_symlinks(mut self, enabled: bool) -> Self {
+        self.delay_symlinks = enabled;
+        self
+    }
+
     /// Enables inplace mode.
     #[must_use]
     pub fn inplace(mut self, enabled: bool) -> Self {
@@ -52,7 +59,7 @@ impl LocalCopyOptionsBuilder {
     /// Allows an existing device destination to be written through instead of
     /// replaced.
     ///
-    /// upstream: `options.c:684` `--write-devices`; the decision itself is
+    /// upstream: `options.c:685` `--write-devices`; the decision itself is
     /// `generator.c:2148`'s `write_devices && stype == FT_DEVICE`.
     #[must_use]
     pub fn write_devices(mut self, enabled: bool) -> Self {
@@ -91,7 +98,7 @@ impl LocalCopyOptionsBuilder {
 
     /// Enables `--list-only` listing semantics.
     ///
-    /// upstream: generator.c:1318 `list_file_entry()`.
+    /// upstream: generator.c:1355 `list_file_entry()`.
     #[must_use]
     pub fn list_only(mut self, enabled: bool) -> Self {
         self.list_only = enabled;

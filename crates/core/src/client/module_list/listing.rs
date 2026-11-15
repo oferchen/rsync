@@ -198,7 +198,7 @@ pub fn run_module_list_with_password_and_options(
     // `host::` listing reaches the daemon through the remote shell
     // (daemon-over-rsh); otherwise RSYNC_CONNECT_PROG, otherwise plain TCP.
     let mut stream = if let Some(shell_args) = options.remote_shell() {
-        // upstream: main.c:615-630 + main.c:1648-1670 - spawn the remote shell
+        // upstream: main.c:615-630 + main.c:1652-1674 - spawn the remote shell
         // with `rsync --server --daemon .` and speak the `@RSYNCD:` listing
         // handshake over its pipes instead of opening a TCP socket. Matches
         // `clientserver.c:start_inband_exchange` carried over the shell.
@@ -302,7 +302,7 @@ pub fn run_module_list_with_password_and_options(
                     continue;
                 }
                 Ok(LegacyDaemonMessage::Exit) => {
-                    // upstream: clientserver.c:1374-1384 send_listing() - a
+                    // upstream: clientserver.c:1383-1393 send_listing() - a
                     // listing has no @RSYNCD: OK; the MOTD comes first, then one
                     // "%-15s\t%s" row per module, then @RSYNCD: EXIT. The rows
                     // are the trailing run of tab-carrying lines; everything
@@ -353,7 +353,7 @@ pub fn run_module_list_with_password_and_options(
                             })?
                     };
 
-                    // upstream: authenticate.c:453 `auth_client()` calls
+                    // upstream: authenticate.c:448 `auth_client()` calls
                     // `negotiate_daemon_auth(-1, 1)` only once the daemon has
                     // asked for credentials, so a server list we cannot match is
                     // fatal here and nowhere earlier - an unauthenticated
@@ -454,7 +454,7 @@ pub fn run_module_list_with_password_and_options(
 
 /// Enforces upstream's greeting-completeness gate on the daemon's banner.
 ///
-/// upstream: clientserver.c:203-240 `exchange_protocols()` (am_client == 1) -
+/// upstream: clientserver.c:207-244 `exchange_protocols()` (am_client == 1) -
 /// after parsing the `@RSYNCD:` greeting the client rejects a banner that omits
 /// the subprotocol value (`remote_protocol >= 30`) or the digest name list
 /// (`remote_protocol > 31`), printing `rsync: the server omitted the <token>:
@@ -666,7 +666,7 @@ mod tests {
         );
     }
 
-    /// upstream: clientserver.c:218 - a `remote_protocol >= 30` banner that omits
+    /// upstream: clientserver.c:222 - a `remote_protocol >= 30` banner that omits
     /// the subprotocol value is fatal for the client with `RERR_STARTCLIENT`.
     /// The message and exit code must match so a listing sees the same failure a
     /// transfer would.
@@ -683,7 +683,7 @@ mod tests {
         );
     }
 
-    /// upstream: clientserver.c:234 - a `remote_protocol > 31` banner that omits
+    /// upstream: clientserver.c:238 - a `remote_protocol > 31` banner that omits
     /// the digest name list is fatal for the client with `RERR_STARTCLIENT`.
     #[test]
     fn listing_rejects_missing_digest_list() {

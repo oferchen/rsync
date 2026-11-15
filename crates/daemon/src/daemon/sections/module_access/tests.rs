@@ -92,7 +92,7 @@ mod module_access_tests {
         assert!(args.is_empty());
     }
 
-    // upstream: io.c:1467-1476 unbackslash_arg().
+    // upstream: io.c:1474-1483 unbackslash_arg().
     #[test]
     fn unbackslash_arg_collapses_backslash_escapes() {
         assert_eq!(unbackslash_arg("plain"), "plain");
@@ -109,7 +109,7 @@ mod module_access_tests {
         assert_eq!(unbackslash_arg("\\\\"), "\\");
     }
 
-    // upstream: io.c:1513-1535 - unescape applies only to args before the `.`
+    // upstream: io.c:1520-1542 - unescape applies only to args before the `.`
     // CWD marker; file args after the dot pass through verbatim because the
     // upstream loop dispatches them through glob_expand() instead.
     #[test]
@@ -132,7 +132,7 @@ mod module_access_tests {
         );
     }
 
-    // upstream: clientserver.c:1154 - first read_args() call passes
+    // upstream: clientserver.c:1158 - first read_args() call passes
     // `unescape=1` so a non-protect daemon receiver round-trips shell-escaped
     // option values. Without this, --groupmap=*:1234 sent under non-protect
     // arrives at the daemon as the literal "\*:1234".
@@ -152,7 +152,7 @@ mod module_access_tests {
         );
     }
 
-    // upstream: clientserver.c:1154,1164 - the daemon parses BOTH phase 1
+    // upstream: clientserver.c:1158,1164 - the daemon parses BOTH phase 1
     // (cmdline) and phase 2 (stdin / secluded-args) and the union of their
     // options drives the transfer. The compact flag string (`-slogDtprIzxe...`)
     // and the role marker `--sender` live in phase 1; long-form options such
@@ -242,12 +242,12 @@ mod module_access_tests {
         assert_eq!(mapping.spec(), "*:1234");
     }
 
-    // upstream: options.c:2498-2507 - the daemon parses the client-forwarded
+    // upstream: options.c:2553-2562 - the daemon parses the client-forwarded
     // --log-format to set stdout_format_has_i. `%i` enables itemize of
     // significant items; `%i%I` is the `-ii` level that also itemizes unchanged
     // entries. Without the `%I` -> itemize_unchanged mapping a `-ii` push to an
     // oc daemon drops every unchanged row.
-    // upstream: compat.c:174-176 - set_allow_inc_recurse() keys on an explicit
+    // upstream: compat.c:175-177 - set_allow_inc_recurse() keys on an explicit
     // --delete-before, so a daemon receiver must keep it apart from the plain
     // --delete / --delete-during it used to fold it into.
     #[test]
@@ -300,10 +300,10 @@ mod module_access_tests {
     // expose phase 2's real compact flag string as the first short-form
     // arg so the daemon's option region parser sees both correctly.
     //
-    // upstream: clientserver.c:439-451 phase 1 wire layout
-    // upstream: clientserver.c:345-348 `.` and module path land in phase 2
-    // upstream: options.c:2921 NULL marker between phase 1 and phase 2
-    // upstream: options.c:818 `--secluded-args` long-form alias of `-s`
+    // upstream: clientserver.c:443-455 phase 1 wire layout
+    // upstream: clientserver.c:349-352 `.` and module path land in phase 2
+    // upstream: options.c:2986 NULL marker between phase 1 and phase 2
+    // upstream: options.c:821 `--secluded-args` long-form alias of `-s`
     //
     // Windows lacks POSIX user/group concepts so the metadata crate ships a
     // `GroupMapping::parse` stub that always returns `Err` (see
@@ -420,7 +420,7 @@ mod module_access_tests {
     /// string. Collapsing the two is the divergence this replaces: oc printed
     /// one lowercase `unknown` for both, and the bare IP in the access lines.
     ///
-    /// upstream: clientserver.c:126 + :1525.
+    /// upstream: clientserver.c:130 + :1525.
     #[test]
     fn peer_host_display_reports_undetermined_when_no_lookup_ran() {
         assert_eq!(peer_host_display(None, false), "UNDETERMINED");
@@ -466,7 +466,7 @@ mod module_access_tests {
         assert!(matches!(determine_server_role(&args), ServerRole::Receiver));
     }
 
-    // upstream: clientserver.c:1374-1381 governs the format_daemon_module_listing
+    // upstream: clientserver.c:1383-1390 governs the format_daemon_module_listing
     // wire layout exercised below.
 
     #[test]
@@ -598,7 +598,7 @@ mod module_access_tests {
             ..Default::default()
         };
 
-        // upstream: authenticate.c:172-184 check_secret() - a strict-modes
+        // upstream: authenticate.c:165-177 check_secret() - a strict-modes
         // violation is an auth denial, not a fatal error: verify returns
         // Ok(false) so the daemon emits `@ERROR: auth failed on module X`
         // rather than dropping the socket mid-handshake.
@@ -695,7 +695,7 @@ mod module_access_tests {
     /// for every member - without this, a `auth users = @grp` + `@grp:pass`
     /// config would authorize the user then wrongly deny at the secret lookup.
     ///
-    /// upstream: authenticate.c:199-206 - an `@`-prefixed secrets key is matched
+    /// upstream: authenticate.c:192-199 - an `@`-prefixed secrets key is matched
     /// against the authorizing group rather than the username.
     #[test]
     fn verify_secret_matches_group_line_for_group_member() {
@@ -727,7 +727,7 @@ mod module_access_tests {
             "group member must authenticate via @devs shared secret"
         );
 
-        // upstream: authenticate.c:416 - a plain-username authorization passes a
+        // upstream: authenticate.c:411 - a plain-username authorization passes a
         // NULL group, so `@group:` lines are never consulted. Denied here.
         let denied = verify_secret_response(
             &module,
@@ -749,7 +749,7 @@ mod module_access_tests {
     /// correct-password line for the same user cannot flip the denial. This
     /// mirrors upstream setting the name pointer to NULL on mismatch.
     ///
-    /// upstream: authenticate.c:214-215 - on password mismatch `err =
+    /// upstream: authenticate.c:207-208 - on password mismatch `err =
     /// "password mismatch"; *ptr = NULL;` ends the search for that name.
     #[test]
     fn verify_secret_first_username_match_wins() {
@@ -860,7 +860,7 @@ mod module_access_tests {
         );
     }
 
-    /// upstream: options.c:3024-3025 / generator.c:2481 - a daemon receiver
+    /// upstream: options.c:3089-3090 / generator.c:2524 - a daemon receiver
     /// invoked with `--force` must set the second term of `delete_mode ||
     /// force_delete`, which is what lets a POPULATED directory obstacle be
     /// cleared. This is the SECOND server-arg parser: the stdio `--server` path
@@ -1050,7 +1050,7 @@ mod module_access_tests {
         assert!(config.reference_directories.is_empty());
     }
 
-    // upstream: options.c:2944-2955 - server_options() sends --log-format=%i
+    // upstream: options.c:3009-3020 - server_options() sends --log-format=%i
     // when the client uses -i/--itemize-changes. The daemon must parse this
     // to set info_flags.itemize so the receiver emits MSG_INFO itemize frames.
 
@@ -1430,7 +1430,7 @@ mod module_access_tests {
         );
         assert!(
             config.flags.dry_run,
-            "upstream clientserver.c:1195 forces dry_run when write_batch < 0"
+            "upstream clientserver.c:1199 forces dry_run when write_batch < 0"
         );
     }
 
@@ -1455,7 +1455,7 @@ mod module_access_tests {
         assert!(!config.flags.dry_run);
     }
 
-    // upstream: options.c:3008-3011 - `server_options()` forwards
+    // upstream: options.c:3073-3076 - `server_options()` forwards
     // `--min-size`/`--max-size` only under `if (am_sender)`, i.e. only to a
     // daemon that is RECEIVING a push, because enforcement lives in the
     // generator (generator.c:2118-2133) on the receiving side. Dropping the
@@ -1508,7 +1508,7 @@ mod module_access_tests {
     // family), so each of these was a live behaviour difference between the two
     // transports rather than a diagnostic.
 
-    // upstream: options.c:2924 - `if (list_only > 1) args[ac++] = "--list-only"`.
+    // upstream: options.c:2989 - `if (list_only > 1) args[ac++] = "--list-only"`.
     #[test]
     fn apply_long_form_args_honours_a_forwarded_list_only() {
         let args = daemon_argv("-logDtpr", &["--list-only"]);
@@ -1524,7 +1524,7 @@ mod module_access_tests {
     // default would let a missing arm pass, since the default is already the
     // value being asserted.
 
-    // upstream: options.c:2927-2929 - `-d --delete` on the client emits `--no-r`
+    // upstream: options.c:2992-2994 - `-d --delete` on the client emits `--no-r`
     // so the remote may delete without `-r`; options.c:632 clears the same
     // `recurse` global the compact `r` letter set.
     #[test]
@@ -1536,7 +1536,7 @@ mod module_access_tests {
         assert!(!config.flags.recursive);
     }
 
-    // upstream: options.c:2936-2940 - `-D` covers devices only, so a client that
+    // upstream: options.c:3001-3005 - `-D` covers devices only, so a client that
     // preserves devices but not specials sends `--no-specials`.
     #[test]
     fn apply_long_form_args_honours_a_forwarded_no_specials() {
@@ -1547,7 +1547,7 @@ mod module_access_tests {
         assert!(!config.flags.specials);
     }
 
-    // upstream: options.c:2941-2942 - `--specials` without `-D` is the other
+    // upstream: options.c:3006-3007 - `--specials` without `-D` is the other
     // half of the same branch: specials preserved, devices not.
     #[test]
     fn apply_long_form_args_honours_a_forwarded_specials() {
@@ -1557,7 +1557,7 @@ mod module_access_tests {
         assert!(config.flags.specials);
     }
 
-    // upstream: options.c:2958-2961 - the two spellings set the same global to 1
+    // upstream: options.c:3023-3026 - the two spellings set the same global to 1
     // and 0. Feeding both in order proves the negation arm exists and wins,
     // which asserting the default alone could not.
     #[test]
@@ -1573,7 +1573,7 @@ mod module_access_tests {
         assert!(!config.flags.msgs_to_stderr);
     }
 
-    // upstream: options.c:3069-3070 - `else if (keep_partial && am_sender)`
+    // upstream: options.c:3134-3135 - `else if (keep_partial && am_sender)`
     // sends the bare `--partial` to a daemon receiver.
     #[test]
     fn apply_long_form_args_honours_a_forwarded_partial() {
@@ -1583,7 +1583,7 @@ mod module_access_tests {
         assert!(config.flags.partial);
     }
 
-    // upstream: options.c:3138-3140 - an `--inplace --sparse` sender emits
+    // upstream: options.c:3206-3208 - an `--inplace --sparse` sender emits
     // `--no-W` so the receiver still asks for a delta; options.c:760 clears the
     // same `whole_file` global the compact `W` letter set.
     #[test]
@@ -1595,7 +1595,7 @@ mod module_access_tests {
         assert!(!config.flags.whole_file);
     }
 
-    // upstream: options.c:3153-3154 - a `--files-from` transfer with relative
+    // upstream: options.c:3221-3222 - a `--files-from` transfer with relative
     // paths off sends `--no-relative`; options.c:707-708 spell it both ways.
     #[test]
     fn apply_long_form_args_honours_both_no_relative_spellings() {
@@ -1608,7 +1608,7 @@ mod module_access_tests {
         }
     }
 
-    // upstream: options.c:3163-3166 - the daemon SENDER unlinks each source file
+    // upstream: options.c:3231-3234 - the daemon SENDER unlinks each source file
     // once the receiver acknowledges it. Dropping this left every source in
     // place on a daemon pull that asked for them to be moved.
     #[test]
@@ -1624,7 +1624,7 @@ mod module_access_tests {
         }
     }
 
-    // upstream: options.c:3171-3172 - forwarded to a daemon receiver so it
+    // upstream: options.c:3239-3240 - forwarded to a daemon receiver so it
     // fallocate()s each destination file before writing.
     #[test]
     fn apply_long_form_args_honours_a_forwarded_preallocate() {
@@ -1634,7 +1634,7 @@ mod module_access_tests {
         assert!(config.flags.preallocate);
     }
 
-    // upstream: options.c:3174-3175 - forwarded so the daemon sender opens
+    // upstream: options.c:3242-3243 - forwarded so the daemon sender opens
     // source files O_NOATIME.
     #[test]
     fn apply_long_form_args_honours_a_forwarded_open_noatime() {
@@ -1644,7 +1644,7 @@ mod module_access_tests {
         assert!(config.write.open_noatime);
     }
 
-    // upstream: compat.c:544 - the checksum vstring is sent only when
+    // upstream: compat.c:545 - the checksum vstring is sent only when
     // `!checksum_choice`. A daemon that dropped the option kept sending a list
     // its peer had already decided not to read, which desyncs the exchange;
     // this is the wire-affecting member of the set, not a preference.
@@ -1703,7 +1703,7 @@ mod module_access_tests {
         );
     }
 
-    // upstream: options.c:3056-3059 + compat.c:823-825 - the SERVER picks the
+    // upstream: options.c:3121-3124 + compat.c:832-834 - the SERVER picks the
     // seed and writes it on the wire, so a daemon that drops the client's value
     // makes `--checksum-seed` a no-op over a daemon while it works over ssh.
     #[test]
@@ -1714,7 +1714,7 @@ mod module_access_tests {
         assert_eq!(config.checksum_seed, Some(12345));
     }
 
-    // upstream: options.c:861 is POPT_ARG_INT and options.c:3057 prints `%d`, so
+    // upstream: options.c:864 is POPT_ARG_INT and options.c:3122 prints `%d`, so
     // the value can be negative. `write_seed` puts it back on the wire as the
     // same 32 bits, so a u32-only parse would drop exactly the values upstream
     // can emit.
@@ -1726,7 +1726,7 @@ mod module_access_tests {
         assert_eq!(config.checksum_seed, Some(-5));
     }
 
-    // upstream: options.c:1178-1181 - the digit scan leaves the cursor on the
+    // upstream: options.c:1196-1199 - the digit scan leaves the cursor on the
     // terminator, so an empty value parses as 0. For `--max-size` that means
     // "exclude every non-empty file", NOT "no limit"; treating it as absent
     // would ship the files upstream withholds.
@@ -1738,7 +1738,7 @@ mod module_access_tests {
         assert_eq!(config.file_selection.max_file_size, Some(0));
     }
 
-    // upstream: options.c:1814-1823 - a `parse_size_arg` failure aborts option
+    // upstream: options.c:1850-1859 - a `parse_size_arg` failure aborts option
     // parsing, and options.c:1260 renders `--%s=%s is %s`. Silently ignoring
     // the value would re-open the drop this arm exists to close, so the
     // rejection carries the value's own message rather than the
@@ -1870,7 +1870,7 @@ mod module_access_tests {
 
     #[test]
     fn reopen_module_log_sink_targets_each_modules_log_file() {
-        // upstream: log.c:186-221 `log_init(1)` at clientserver.c:956 - selecting
+        // upstream: log.c:193-228 `log_init(1)` at clientserver.c:960 - selecting
         // a module reopens the daemon log to that module's `log file`, so two
         // modules with distinct `log file` directives write their diagnostics to
         // distinct files rather than sharing one sink.
@@ -2115,7 +2115,7 @@ mod module_access_tests {
     /// Landlock rule overrides a shallower one, so a module tree containing
     /// `etc/` or `var/` would silently become read-only.
     ///
-    /// upstream: clientserver.c:912-925 sets `module_dir = "/"` then zeroes
+    /// upstream: clientserver.c:916-929 sets `module_dir = "/"` then zeroes
     /// `module_dirlen`, so clientserver.c:1093
     /// `use_secure_symlinks = am_daemon && (!am_chrooted || module_dirlen)`
     /// is false here - upstream reaches the same conclusion for its own
@@ -2142,7 +2142,7 @@ mod module_access_tests {
     /// lands on the OUTER path, so nothing kernel-side confines the inner
     /// module boundary. Pin the post-chroot inner directory as the root.
     ///
-    /// upstream: clientserver.c:1084-1093 - "the kernel chroot confines the
+    /// upstream: clientserver.c:1088-1097 - "the kernel chroot confines the
     /// outer path but not the inner module", which is why upstream keeps its
     /// own secure-symlink path active for exactly this configuration.
     #[test]
@@ -2370,7 +2370,7 @@ mod module_access_tests {
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
 
-        // upstream: clientserver.c:933-952 - order is:
+        // upstream: clientserver.c:937-956 - order is:
         // filter, include_from, include, exclude_from, exclude
         assert_eq!(rules.len(), 5);
         assert_eq!(rules[0].pattern, "*.tmp");
@@ -2449,9 +2449,9 @@ mod module_access_tests {
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
         assert_eq!(rules.len(), 3);
-        // filter rules are processed first (upstream: clientserver.c:933)
+        // filter rules are processed first (upstream: clientserver.c:937)
         assert_eq!(rules[0].pattern, "*.bak");
-        // then excludes (upstream: clientserver.c:950)
+        // then excludes (upstream: clientserver.c:954)
         assert_eq!(rules[1].pattern, "*.tmp");
         assert_eq!(rules[2].pattern, "*.log");
         // All should be excludes
@@ -2519,7 +2519,7 @@ mod module_access_tests {
 
     /// A leading `- ` in an `exclude from` file is an ACTION PREFIX.
     ///
-    /// upstream: `clientserver.c:946-948` reads `exclude from` with
+    /// upstream: `clientserver.c:950-952` reads `exclude from` with
     /// `XFLG_OLD_PREFIXES`, and `exclude.c:1277-1279` strips the two bytes.
     ///
     /// MEASURED against real rsync 3.5.0 and oc daemons on loopback (module
@@ -2858,7 +2858,7 @@ mod module_access_tests {
     /// The STRING parameters carry `XFLG_OLD_PREFIXES` too - and they are
     /// word-split, so the prefix binds to the next token only.
     ///
-    /// upstream: `clientserver.c:950-952` passes both `FILTRULE_WORD_SPLIT`
+    /// upstream: `clientserver.c:954-956` passes both `FILTRULE_WORD_SPLIT`
     /// (via the template) and `XFLG_OLD_PREFIXES`; `exclude.c:1458-1462` ends
     /// the pattern at the next whitespace, so `bar` falls back to the template.
     #[test]
@@ -4534,7 +4534,7 @@ mod module_access_tests {
 
     /// A rule's trailing whitespace is PATTERN TEXT, not decoration.
     ///
-    /// upstream: `clientserver.c:947` reads `exclude from` with
+    /// upstream: `clientserver.c:951` reads `exclude from` with
     /// `parse_filter_file()`, whose reader stops at the terminator and hands the
     /// record over verbatim (`exclude.c:1794-1808`); `parse_rule_tok` then takes
     /// `len = strlen(s)` (`exclude.c:1465`). No end is trimmed.
@@ -4582,7 +4582,7 @@ mod module_access_tests {
         );
     }
 
-    /// upstream: `clientserver.c:946-948` passes XFLG_FATAL_ERRORS, so a
+    /// upstream: `clientserver.c:950-952` passes XFLG_FATAL_ERRORS, so a
     /// missing file refuses the module (exclude.c:1703-1720).
     #[test]
     fn exclude_from_a_missing_file_refuses() {
@@ -4732,7 +4732,7 @@ mod module_access_tests {
 
     #[test]
     fn apply_long_form_args_backup_dir_effective_suffix_is_empty() {
-        // upstream: options.c:2447-2448 - when --backup-dir is set and no
+        // upstream: options.c:2502-2503 - when --backup-dir is set and no
         // explicit --suffix is sent, the default suffix is "" (empty).
         let args = vec![
             "--server".to_owned(),
@@ -5463,11 +5463,11 @@ mod module_access_tests {
 
     #[test]
     fn resolve_sender_sources_returns_module_root_without_positional() {
-        // upstream: clientserver.c:1154 - bare module request (no sub-path)
+        // upstream: clientserver.c:1158 - bare module request (no sub-path)
         // means the sender walks the module root directly. The trailing `/`
         // signals "transfer the module contents" so the engine's
         // non_relative_walk_base keeps base == path and the walk emits a
-        // `.` entry with FLAG_TOP_DIR (upstream `flist.c:2824-2834`
+        // `.` entry with FLAG_TOP_DIR (upstream `flist.c:2835-2845`
         // `DOTDIR_NAME` branch). Without the trailing slash, the engine
         // would split on the last `/` and emit `upload`/`upload/...`
         // instead of `./...`.
@@ -5491,7 +5491,7 @@ mod module_access_tests {
 
     /// The `/./` pivot survives the daemon's argv sanitize under `--relative`.
     ///
-    /// upstream: `options.c:2414` sanitizes every daemon positional with
+    /// upstream: `options.c:2469` sanitizes every daemon positional with
     /// `SP_KEEP_DOT_DIRS`, and `util1.c:1240` turns that into
     /// `drop_dot_dirs = !relative_paths`. Under `--relative` the `.` component
     /// therefore survives all the way to `flist.c:2863`'s
@@ -5579,7 +5579,7 @@ mod module_access_tests {
 
     #[test]
     fn resolve_sender_sources_joins_single_file_subpath_with_module_root() {
-        // upstream: flist.c:2820-2846 - a single-file sub-path positional is
+        // upstream: flist.c:2831-2857 - a single-file sub-path positional is
         // joined with module_path so the sender walks exactly that one path
         // and the per-positional dir/fn split emits the basename.
         let module_path = std::path::Path::new("/srv/upload");
@@ -5593,7 +5593,7 @@ mod module_access_tests {
 
     #[test]
     fn resolve_sender_sources_preserves_trailing_slash_on_subdir() {
-        // upstream: flist.c:2824-2834 - a trailing slash promotes the source
+        // upstream: flist.c:2835-2845 - a trailing slash promotes the source
         // to DOTDIR_NAME; we must keep the slash intact so the sender's walk
         // emits "." with FLAG_TOP_DIR for the sub-directory's contents.
         let module_path = std::path::Path::new("/srv/upload");
@@ -6004,7 +6004,7 @@ mod module_access_tests {
     // host OS (upstream `util1.c pathjoin()`), and Windows accepts mixed `/`
     // and `\` separators inside Win32 paths. The asserts below lock the exact
     // byte sequence the resolver must emit so the trailing-slash preservation
-    // (upstream `flist.c:2824-2834 DOTDIR_NAME`) and the leading-separator
+    // (upstream `flist.c:2835-2845 DOTDIR_NAME`) and the leading-separator
     // strip both survive Windows path encodings.
     //
     // This is the Windows cross-platform parity attestation - no wire-format change, no
@@ -6031,7 +6031,7 @@ mod module_access_tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn resolve_sender_sources_preserves_trailing_slash_on_windows_module_root() {
-        // Trailing-slash promotion to DOTDIR_NAME (upstream flist.c:2824-2834)
+        // Trailing-slash promotion to DOTDIR_NAME (upstream flist.c:2835-2845)
         // must survive on Windows hosts. The resolver detects the trailing
         // separator via byte-level check that already accepts both `/` and
         // `\` (client_args.rs:478), so a Windows client request like
@@ -6147,7 +6147,7 @@ mod module_access_tests {
         }
         for &byte in value.as_bytes() {
             if byte == b'\\' {
-                // upstream options.c:2757-2759 - option args
+                // upstream options.c:2812-2814 - option args
                 // (is_filename_arg=0) always double a literal backslash.
                 out.push('\\');
             } else if WILD_CHARS.contains(&byte) || SHELL_CHARS.contains(&byte) {
@@ -6167,8 +6167,8 @@ mod module_access_tests {
     // option parsing, or `--groupmap=\*:GID` reaches `parse_name_map()`
     // and the wildcard silently mismatches.
     //
-    // upstream: options.c:2703-2767 safe_arg() (client-side escape)
-    // upstream: io.c:1467-1476 unbackslash_arg() (daemon-side un-escape)
+    // upstream: options.c:2758-2822 safe_arg() (client-side escape)
+    // upstream: io.c:1474-1483 unbackslash_arg() (daemon-side un-escape)
     #[test]
     fn unbackslash_arg_reverses_upstream_safe_arg_groupmap_wildcard() {
         let original = "--groupmap=*:42";
@@ -6177,7 +6177,7 @@ mod module_access_tests {
         assert_eq!(unbackslash_arg(&escaped), original);
     }
 
-    // upstream: options.c:2708 - `escapes = WILD_CHARS SHELL_CHARS`
+    // upstream: options.c:2763 - `escapes = WILD_CHARS SHELL_CHARS`
     // for option args. The daemon's `unbackslash_arg` must reverse every
     // member of that set: `*?[]` (wildcards) plus `!#$&;|<>(){}\"'` \t\\`
     // (shell). A regression that drops any character from the un-escape
@@ -6208,7 +6208,7 @@ mod module_access_tests {
     }
 
     // Round-trip parity for the wildcard family across `--usermap` and
-    // `--groupmap` together. Mirrors upstream `options.c:3094-3097` which
+    // `--groupmap` together. Mirrors upstream `options.c:3162-3165` which
     // routes both options through `safe_arg("--usermap"|"--groupmap", ...)`.
     #[test]
     fn unbackslash_arg_round_trips_usermap_groupmap_wildcards() {
@@ -6229,7 +6229,7 @@ mod module_access_tests {
         }
     }
 
-    // upstream: authenticate.c:438-441 - an authenticated user's `:ro` suffix
+    // upstream: authenticate.c:433-436 - an authenticated user's `:ro` suffix
     // forces read_only=1, `:rw` forces read_only=0. The per-user override must
     // win over the module's own `read only` for the session; otherwise a
     // `name:rw` user could never push to a `read only = yes` module and, worse,
@@ -6265,7 +6265,7 @@ mod module_access_tests {
         assert!(access_effective_read_only(true, UserAccessLevel::Deny));
     }
 
-    // upstream: clientserver.c:1193-1194 - `if (lp_ignore_errors(module_id))
+    // upstream: clientserver.c:1197-1198 - `if (lp_ignore_errors(module_id))
     // ignore_errors = 1;` forces error-tolerant deletion for the session.
     #[test]
     fn module_ignore_errors_forces_config_flag() {
@@ -6310,7 +6310,7 @@ mod module_access_tests {
         assert!(!cfg.write.open_noatime);
     }
 
-    // upstream: clientserver.c:1283-1286 - `numeric ids = yes` forces
+    // upstream: clientserver.c:1292-1295 - `numeric ids = yes` forces
     // `numeric_ids = -1` for the session (NOT `1`), except under chroot when a
     // `name converter` is configured (the converter maps names inside the
     // chroot). The `-1` sentinel is load-bearing: it suppresses local name
@@ -6344,7 +6344,7 @@ mod module_access_tests {
 
     // A client that explicitly passed --numeric-ids is already in the Explicit
     // state; the daemon directive must not downgrade it and the wire list stays
-    // dropped (upstream `!numeric_ids` at clientserver.c:1283 is false for `1`).
+    // dropped (upstream `!numeric_ids` at clientserver.c:1292 is false for `1`).
     #[test]
     fn client_explicit_numeric_ids_not_downgraded_by_module() {
         let module = ModuleDefinition {
@@ -6401,7 +6401,7 @@ mod module_access_tests {
         assert!(cfg.flags.numeric_ids.is_off());
     }
 
-    // upstream: clientserver.c:1283-1286 - under chroot the BOOL3 test is
+    // upstream: clientserver.c:1292-1295 - under chroot the BOOL3 test is
     // `lp_numeric_ids(module_id) != False`, so an UNSET `numeric ids`
     // (`None`, the daemon default) forces numeric ids on. Inside the chroot
     // there is no `/etc/passwd`, so name<->id resolution is impossible and the
@@ -6424,7 +6424,7 @@ mod module_access_tests {
         );
     }
 
-    // upstream: clientserver.c:1283-1286 - an explicit `numeric ids = no`
+    // upstream: clientserver.c:1292-1295 - an explicit `numeric ids = no`
     // (BOOL3 `False`) is NOT overridden even under chroot, because
     // `lp_numeric_ids(module_id) != False` is false for an explicit `False`.
     #[test]
@@ -6440,7 +6440,7 @@ mod module_access_tests {
         assert!(cfg.flags.numeric_ids.is_off());
     }
 
-    // upstream: clientserver.c:1283-1286 - without chroot the BOOL3 test is
+    // upstream: clientserver.c:1292-1295 - without chroot the BOOL3 test is
     // `lp_numeric_ids(module_id) == True`, so an UNSET `numeric ids` stays at
     // the client's default and is NOT forced on.
     #[test]
@@ -6459,7 +6459,7 @@ mod module_access_tests {
 
 /// Pins upstream's `MAX_DAEMON_ARGS` ceiling on the phase-1 argument read.
 ///
-/// upstream: `io.c:1502-1505` - `if (mod_name && argc >= MAX_DAEMON_ARGS - 1)`
+/// upstream: `io.c:1509-1512` - `if (mod_name && argc >= MAX_DAEMON_ARGS - 1)`
 /// then `rprintf(FERROR, "too many daemon arguments\n")` and
 /// `exit_cleanup(RERR_PROTOCOL)`.
 #[cfg(test)]
@@ -6507,7 +6507,7 @@ mod daemon_argv_limit_tests {
     /// An oversized argument is cut to the daemon line buffer, and the bytes
     /// past the cut are still consumed so the next argument stays aligned.
     ///
-    /// upstream: `io.c:1430-1441` - `read_line()` reads on to the terminator
+    /// upstream: `io.c:1437-1448` - `read_line()` reads on to the terminator
     /// whatever the length and drops what does not fit; it never refuses.
     #[test]
     fn read_client_arguments_truncates_an_oversized_arg_and_stays_aligned() {
@@ -6568,7 +6568,7 @@ mod daemon_argv_limit_tests {
 /// Pins what a peer can and cannot get appended to the operator's log file
 /// through the daemon's per-request line.
 ///
-/// upstream: io.c:1512-1521 - `request` is assembled from the argv entries
+/// upstream: io.c:1519-1528 - `request` is assembled from the argv entries
 /// AFTER the `.` cwd marker, so a client's OPTION args never reach the log at
 /// any verbosity, while its file operands do, exactly as upstream writes them.
 #[cfg(test)]

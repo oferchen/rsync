@@ -99,7 +99,7 @@ Sub-list dispatch and EOF:
 - `crates/transfer/src/generator/protocol_io.rs:431-500` -
   `encode_and_send_segment` writes `NDX_FLIST_OFFSET - parent_dir_ndx`, the
   segment entries, and the 0 end marker. Updates `ndx_segments` per
-  `flist.c:2931` (`ndx_start = prev->ndx_start + prev->used + 1`).
+  `flist.c:2942` (`ndx_start = prev->ndx_start + prev->used + 1`).
 - `crates/transfer/src/generator/protocol_io.rs:563-579` - `send_flist_eof`
   emits `NDX_FLIST_EOF` once `SegmentScheduler::is_exhausted()`.
 
@@ -107,7 +107,7 @@ Loop integration:
 - `crates/transfer/src/generator/transfer/transfer_loop.rs:84-125` -
   `let inc_recurse = self.inc_recurse();` then per-iteration
   `scheduler.next_if_needed(remaining)` -> `encode_and_send_segment`, and a
-  one-shot `send_flist_eof` when exhausted. Mirrors `sender.c:227,261`.
+  one-shot `send_flist_eof` when exhausted. Mirrors `sender.c:235,261`.
 
 ## 4. Sender file-list construction entry point
 
@@ -126,7 +126,7 @@ Orchestrator (top-level build/partition/send sequence):
 Builders (rust counterparts to upstream `send_file_list` flist build):
 - `crates/transfer/src/generator/file_list/mod.rs:52-128` -
   `pub fn build_file_list(&mut self, base_paths: &[PathBuf]) -> io::Result<usize>`
-  (cites `flist.c:2192 send_file_list()`).
+  (cites `flist.c:2196 send_file_list()`).
 - `crates/transfer/src/generator/file_list/mod.rs:142-244` -
   `build_file_list_with_base` for the `--files-from` variant.
 
@@ -181,15 +181,15 @@ PARTIAL-NEEDS-WORK. All sender-side machinery is implemented, upstream-cited, an
 - ISI.c: add a sender-direction integration test asserting the `-e.xxx` capability contains `'i'` post-flip and that `GeneratorContext::inc_recurse()` returns `true` after compat exchange in push mode.
 - ISI.d: invert the hard-coded `inc_recursive_send(off)` expectations at `client/remote/invocation/tests.rs:74,114` and `client/remote/daemon_transfer/orchestration/tests.rs:83-132` so the flip PR is mechanical.
 - ISI.e: audit `MIN_FILECNT_LOOKAHEAD = 1000` (`transfer/generator/segments.rs:23`) vs upstream `flist.c:46`; confirm the throttle does not starve dispatch on tiny trees.
-- ISI.f: verify `partition_file_list_for_inc_recurse` (`inc_recurse.rs:38`) preserves `parent_dir_ndx` alignment for every interop fixture - the `flist.c:2652-2659` "ABORTING due to invalid path from sender" risk flagged in the module header (lines 7-22).
+- ISI.f: verify `partition_file_list_for_inc_recurse` (`inc_recurse.rs:38`) preserves `parent_dir_ndx` alignment for every interop fixture - the `flist.c:2663-2670` "ABORTING due to invalid path from sender" risk flagged in the module header (lines 7-22).
 - ISI.g: surface diagnostic counters in `transfer/generator/diagnostics.rs` at `--info=flist1` / `--info=stats3` for operator visibility during rollout.
 - ISI.h: flip `client/config/builder/mod.rs:437` default; update doc comments at `client/config/client/performance.rs:217-225` and `client/config/builder/performance.rs:220-225` with the validated-version list from ISI.b.
 
 ## Upstream cross-references already in-tree
 
-- `compat.c:720 set_allow_inc_recurse()` - `client/config/builder/performance.rs:229`, `client/config/client/performance.rs:201`.
-- `options.c:3003-3050 maybe_add_e_option()` - `transfer/setup/capability.rs:137`.
-- `flist.c:2192 send_file_list()` - `transfer/generator/file_list/mod.rs:17,48`, `transfer/generator/protocol_io.rs:325`.
+- `compat.c:721 set_allow_inc_recurse()` - `client/config/builder/performance.rs:229`, `client/config/client/performance.rs:201`.
+- `options.c:3068-3115 maybe_add_e_option()` - `transfer/setup/capability.rs:137`.
+- `flist.c:2196 send_file_list()` - `transfer/generator/file_list/mod.rs:17,48`, `transfer/generator/protocol_io.rs:325`.
 - `flist.c:send_extra_file_list()` - `transfer/generator/protocol_io.rs:429`, `transfer/generator/segments.rs:32`.
-- `flist.c:2534-2545` NDX_FLIST_EOF - `transfer/generator/protocol_io.rs:560-562`, `transfer/generator/segments.rs:132`.
-- `sender.c:227,261` send-loop interleaving - `transfer/generator/segments.rs:13,80`, `transfer/generator/transfer/transfer_loop.rs:83`.
+- `flist.c:2545-2556` NDX_FLIST_EOF - `transfer/generator/protocol_io.rs:560-562`, `transfer/generator/segments.rs:132`.
+- `sender.c:235,261` send-loop interleaving - `transfer/generator/segments.rs:13,80`, `transfer/generator/transfer/transfer_loop.rs:83`.

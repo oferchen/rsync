@@ -119,7 +119,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // When `Some`, the copy reconstructs the file from a `--copy-dest` basis.
     // The transfer itemizes as a local change (`c`) compared against the basis
     // rather than a network transfer (`>`).
-    // upstream: generator.c:1178 try_dests_reg() -
+    // upstream: generator.c:1215 try_dests_reg() -
     // itemize(..., ITEM_LOCAL_CHANGE, ...).
     reference_basis: Option<PathBuf>,
 ) -> Result<TransferOutcome, LocalCopyError> {
@@ -152,7 +152,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         redoing,
     } = flags;
 
-    // upstream: flist.c:1790-1796 - stream a `--copy-devices` device as a
+    // upstream: flist.c:1794-1800 - stream a `--copy-devices` device as a
     // regular file of its readable byte length instead of the zero stat size.
     let device_as_file_size = context.copy_device_as_file_size(source, metadata);
     let file_size = device_as_file_size.unwrap_or(metadata.len());
@@ -175,7 +175,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
 
     // When the exact destination is absent and --fuzzy is active, look for a
     // similarly-named file in the destination directory to serve as the delta
-    // basis. upstream: generator.c:1767-1795 - when `statret != 0 &&
+    // basis. upstream: generator.c:1804-1832 - when `statret != 0 &&
     // fuzzy_basis`, `find_fuzzy()` selects the closest-named candidate and the
     // generator uses it as `fnamecmp` (the delta basis) instead of sending the
     // whole file.
@@ -186,7 +186,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // receiver rewrites the reconstruction into that same leaf in place
     // (`one_inplace`). Compute it once here so the basis selection below, the
     // in-place write strategy, and the delta loop all agree on the one file.
-    // upstream: generator.c:2172-2179 + 2270-2274, receiver.c:1153-1155.
+    // upstream: generator.c:2213-2220 + 2270-2274, receiver.c:1153-1155.
     let one_inplace_partial_file =
         super::write_strategy::one_inplace_partial_file(context, destination);
     let partial_dir_basis: Option<(&Path, fast_io::EntryMetadata)> = match one_inplace_partial_file
@@ -199,7 +199,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
 
     let fuzzy_basis =
         if !whole_file_enabled && existing_metadata.is_none() && partial_dir_basis.is_none() {
-            // upstream: generator.c:858 compares against the source file's mtime
+            // upstream: generator.c:895 compares against the source file's mtime
             // (whole seconds) for the fuzzy size/modtime fast-path.
             let target_mtime = metadata.modified().ok().map(system_time_to_unix_secs);
             find_fuzzy_basis(
@@ -223,7 +223,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         let algorithm = context.options().transfer_checksum_algorithm();
         let sum_length = block_sum_length(redoing);
         match partial_dir_basis {
-            // upstream: generator.c:2270-2274 `prepare_to_open` - `partialptr`
+            // upstream: generator.c:2312-2316 `prepare_to_open` - `partialptr`
             // overrides both the destination and any fuzzy basis as `fnamecmp`.
             Some((leaf, ref meta)) => {
                 build_delta_signature(leaf, meta, block_size, algorithm, sum_length)?
@@ -261,7 +261,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     let mut delta_basis_override: Option<PathBuf> =
         fuzzy_basis.as_ref().map(|(path, _)| path.clone());
     if let Some(existing) = existing_metadata {
-        // upstream: generator.c:2281,2328 - under --inplace, --backup COPIES the
+        // upstream: generator.c:2323,2328 - under --inplace, --backup COPIES the
         // pre-image aside (preserving the destination inode for the in-place
         // rewrite) rather than renaming the destination away. Only a regular-file
         // inplace update qualifies; every other entry keeps the rename path.
@@ -301,7 +301,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // socket, or a device without `--copy-devices`) is materialised as an empty
     // placeholder. A `--copy-devices` device (`device_as_file_size.is_some()`)
     // instead falls through to the generic read/write loop below, which streams
-    // its `file_size` bytes just like a regular file (upstream sender.c:738-745).
+    // its `file_size` bytes just like a regular file (upstream sender.c:746-753).
     if !file_type.is_file() && device_as_file_size.is_none() {
         // A placeholder write carries no appended tail and no whole-file
         // checksum, so it can never fail verification.
@@ -433,7 +433,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // bytes.
     //
     // `--copy-devices` is the one case that must keep the recorded value: a
-    // device is streamed as `file_size` bytes (upstream sender.c:738-745) while
+    // device is streamed as `file_size` bytes (upstream sender.c:746-753) while
     // its own `st_size` is 0, so fstat here would bound the copy to nothing.
     let transfer_size = match device_as_file_size {
         Some(size) => size,
@@ -520,7 +520,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         ) {
             Ok(file) => file,
             Err(error) => {
-                // upstream: generator.c:931 - rsyserr(FINFO, errno,
+                // upstream: generator.c:968 - rsyserr(FINFO, errno,
                 // "copy_file %s => %s", full_fname(src), copy_to) under
                 // INFO_GTE(COPY, 1). The override path is the alt-base
                 // (`--copy-dest` / `--link-dest` after cross-device degrade)
@@ -559,7 +559,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // `one_inplace_partial_file` (the `--partial-dir` leaf, upstream's
     // `partialptr`) was resolved once above where the delta basis is selected;
     // it is both the basis name and, under `one_inplace`, the file the
-    // reconstruction is written into. upstream: generator.c:2173-2179 +
+    // reconstruction is written into. upstream: generator.c:2214-2220 +
     // receiver.c:1153.
     let strategy = select_write_strategy(
         append_offset,
@@ -627,7 +627,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // preallocated blocks allocated). Under --sparse the reservation must span
     // the file's size for the punch to reach it, so the sparse setting selects
     // the reservation upstream makes.
-    // upstream: syscall.c:2736 - `sparse_files <= 0` selects FALLOC_FL_KEEP_SIZE.
+    // upstream: syscall.c:2807 - `sparse_files <= 0` selects FALLOC_FL_KEEP_SIZE.
     let mut preallocated_len = maybe_preallocate_destination(
         &mut writer,
         preallocate_target,
@@ -870,7 +870,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     context.summary_mut().record_elapsed(elapsed);
     // upstream: only receive_data() -> write_file() credits touched blocks
     // (fileio.c:251-252). A --copy-dest / match-level-2 --link-dest basis copy
-    // is upstream's copy_altdest_file() -> copy_file() (generator.c:931), which
+    // is upstream's copy_altdest_file() -> copy_file() (generator.c:968), which
     // writes through full_write() and is never counted.
     if copy_source_override.is_none() {
         context
@@ -886,7 +886,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     let total_bytes = Some(metadata_snapshot.len());
     let wrote_data = outcome.literal_bytes() > 0 || append_offset > 0;
 
-    // upstream: generator.c:1178 try_dests_reg() - a `--copy-dest` reconstruction
+    // upstream: generator.c:1215 try_dests_reg() - a `--copy-dest` reconstruction
     // itemizes the attribute columns against the alternate basis (`sxp->st`), not the
     // (absent) prior destination, and never sets ITEM_IS_NEW. Comparing source
     // against the basis with `destination_previously_existed = true` keeps the
@@ -1023,7 +1023,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
 /// `--debug=FUZZY` selection line and returns the candidate's path and
 /// metadata so the caller can build a delta signature against it.
 ///
-/// upstream: generator.c:836 - `find_fuzzy()` selects the basis and the
+/// upstream: generator.c:873 - `find_fuzzy()` selects the basis and the
 /// generator announces `"fuzzy basis selected for %s: %s"` at
 /// `DEBUG_GTE(FUZZY, 1)` before using it as `fnamecmp`.
 fn find_fuzzy_basis(
@@ -1049,7 +1049,7 @@ fn find_fuzzy_basis(
         return None;
     }
 
-    // upstream: generator.c:1787-1793 - announce the selected basis at FUZZY,1
+    // upstream: generator.c:1824-1830 - announce the selected basis at FUZZY,1
     // as `"fuzzy basis selected for %s: %s"`, where the target is `fname` (the
     // relative transfer path) and the basis is `f_name(fuzzy_file)` - the
     // basis's relative flist name, not an absolute filesystem path. The basis
@@ -1070,7 +1070,7 @@ fn find_fuzzy_basis(
 }
 
 /// Converts a [`std::time::SystemTime`] to whole seconds since the Unix epoch
-/// for the fuzzy size/modtime fast-path comparison. upstream: generator.c:858
+/// for the fuzzy size/modtime fast-path comparison. upstream: generator.c:895
 /// `same_time(fp->modtime, 0, file->modtime, 0)`.
 fn system_time_to_unix_secs(time: std::time::SystemTime) -> i64 {
     match time.duration_since(std::time::UNIX_EPOCH) {

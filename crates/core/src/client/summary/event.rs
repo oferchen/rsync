@@ -69,7 +69,7 @@ impl ClientEventKind {
     /// up-to-date (quick-check match) entry is still counted here but stays
     /// silent under `--progress`/`-P`.
     ///
-    /// upstream: progress.c:69-135 rprint_progress()
+    /// upstream: progress.c:70-131 rprint_progress()
     pub const fn is_progress(&self) -> bool {
         matches!(
             self,
@@ -197,7 +197,7 @@ impl ClientEvent {
         let created = match &action {
             // Honour the explicit `was_created` bit for every action whose
             // record represents an entry that may either be newly created
-            // OR re-pointed/updated in place. upstream: log.c:768-769 -
+            // OR re-pointed/updated in place. upstream: log.c:853-854 -
             // `(iflags & ITEM_IS_NEW)` flips slots 2-10 to `+`; that bit is
             // only set by the generator when the destination did not exist
             // (`statret < 0`). The renderer mirrors that gate via
@@ -213,10 +213,10 @@ impl ClientEvent {
             // mkdirs set `.with_creation(true)`, while a directory reconstructed
             // from a `--copy-dest` basis records a change set without creation so
             // its row stays `cd` + blank instead of `cd+++++++++`.
-            // upstream: generator.c:1297-1302 - the copy-dest match itemizes with
+            // upstream: generator.c:1334-1339 - the copy-dest match itemizes with
             // ITEM_LOCAL_CHANGE, never ITEM_IS_NEW.
             | LocalCopyAction::DirectoryCreated => was_created,
-            // upstream: generator.c:1178 itemizes the copy-dest reconstruction
+            // upstream: generator.c:1215 itemizes the copy-dest reconstruction
             // with statret == 0 (the basis was stat'd successfully), so
             // ITEM_IS_NEW is never set and attribute slots are never `+`.
             LocalCopyAction::ReferenceCopied
@@ -379,7 +379,7 @@ impl ClientEvent {
 
     /// Returns the hard-link group leader's transfer-relative name for a
     /// remote-pull hard-link follower, which `%L` renders as ` => <leader>`
-    /// (upstream `log.c:675-678`). `None` for every other event, including a
+    /// (upstream `log.c:760-763`). `None` for every other event, including a
     /// local-copy hard link, whose leader travels through the metadata
     /// `symlink_target` slot instead.
     #[must_use]
@@ -473,7 +473,7 @@ impl ClientEvent {
     /// do not advance `xfr#` - matching upstream's silent second run. They
     /// surface only with `-vv`/`-i`.
     ///
-    /// upstream: hlink.c:229-240, generator.c:1153-1154/1304-1306,
+    /// upstream: hlink.c:229-240, generator.c:1190-1191/1304-1306,
     /// rsync.c:824-828 - the generator records these as "is uptodate" without
     /// opening a receiver progress block.
     #[must_use]
@@ -500,7 +500,7 @@ impl ClientEvent {
     /// Returns whether upstream's generator writes this entry's line itself, the
     /// moment it checks the entry, instead of itemizing it to the sender.
     ///
-    /// upstream: generator.c:1154,1305 and rsync.c:828 write `is uptodate`, and
+    /// upstream: generator.c:1191,1305 and rsync.c:828 write `is uptodate`, and
     /// recv_generator() the skip notices (generator.c:1769,1798,2122,2130,2138),
     /// with rprintf(); log.c:log_delete() sends a deletion as its own
     /// MSG_DELETED. Every other entry is itemized to the sender, which logs it
@@ -748,7 +748,7 @@ mod tests {
 
     #[test]
     fn client_event_kind_is_progress_returns_true_for_directory_created() {
-        // upstream: stats.num_files counts directories (flist.c:3076), so they
+        // upstream: stats.num_files counts directories (flist.c:3087), so they
         // belong in the `to-chk` denominator even though they never transfer.
         assert!(ClientEventKind::DirectoryCreated.is_progress());
     }

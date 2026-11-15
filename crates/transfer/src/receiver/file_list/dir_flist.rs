@@ -55,7 +55,7 @@ pub(in crate::receiver) enum DirSlot {
 ///
 /// That would be the literal transcription of upstream's pointer, and it is
 /// unsafe here. `sorted` is an **alias** of `files` in the default arm
-/// (`flist.c:3289`; the sender's `:2700`, `:3058`), so upstream's sort is in-place too and its
+/// (`flist.c:3300`; the sender's `:2700`, `:3058`), so upstream's sort is in-place too and its
 /// pointers simply follow the struct - oc's owned entries move instead, and an
 /// index recorded before the sort would address a different entry after it.
 /// The separate `sorted[]` array exists only under `need_unsorted_flist`

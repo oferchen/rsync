@@ -38,7 +38,7 @@ Source tree audited: `target/interop/upstream-src/rsync-3.4.1/`.
 The Cygwin port is opportunistic: the only `__CYGWIN__` blocks in
 the upstream tree are:
 
-- `rsync.h:587` - feature gate for `SUPPORT_CRTIMES` when the
+- `rsync.h:603` - feature gate for `SUPPORT_CRTIMES` when the
   toolchain advertises either `HAVE_GETATTRLIST` or `__CYGWIN__`.
 - `syscall.c:69,457,465` - Cygwin reaches `crtime` via Win32
   `SetFileTime` instead of macOS `getattrlist`/`setattrlist`. No

@@ -1089,7 +1089,7 @@ fn execute_does_not_preserve_permissions_by_default() {
     );
 }
 
-// upstream: generator.c:2148-2153 deletes a non-regular obstacle and sets
+// upstream: generator.c:2189-2194 deletes a non-regular obstacle and sets
 // statret = -1, and receiver.c:1074-1107/1190-1193 opens the basis O_NOFOLLOW and drops
 // any non-regular fd, so a symlink obstacle takes the exists == 0 dest_mode()
 // rule: the new file lands `source_mode & ~umask`, never the symlink's own

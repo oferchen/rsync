@@ -1,6 +1,6 @@
 //! A sender whose xattr read fails leaves the entry out of the file list.
 //!
-//! upstream: flist.c:2058-2063 send_file_name() - when get_xattr() returns
+//! upstream: flist.c:2062-2067 send_file_name() - when get_xattr() returns
 //! -1 the sender sets `io_error |= IOERR_GENERAL` and returns NULL, so the
 //! file never joins the list; get_xattr_data() has already printed
 //! `get_xattr_data: lgetxattr(<full_fname>,"<name>",0) failed: ...`

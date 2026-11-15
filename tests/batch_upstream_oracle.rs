@@ -226,7 +226,7 @@ ${1:-'dst/'} <<'#E#'\n- x\0-r keep\0;\n#E#\n",
     );
 }
 
-/// upstream: options.c:2280-2283 - `--dry-run` zeroes `write_batch` for both
+/// upstream: options.c:2319-2322 - `--dry-run` zeroes `write_batch` for both
 /// write forms, so rsync 3.5.1 leaves neither the batch nor its `.sh` behind.
 /// A batch written under `-n` would also be a lie: no update was applied, yet
 /// the replay script claims to reproduce one.
@@ -300,7 +300,7 @@ fn read_batch_reconcile_notice_follows_info_misc() {
     }
 }
 
-/// upstream: main.c:1538-1546 - `--read-batch` checks only the destination
+/// upstream: main.c:1542-1550 - `--read-batch` checks only the destination
 /// (`argv[argc-1]`) for a host spec; earlier operands are discarded, so a
 /// remote-looking source is not an error.
 #[test]
@@ -336,7 +336,7 @@ fn read_batch_ignores_remote_looking_source_operand() {
     }
 }
 
-/// upstream: options.c:1780-1792, 2265-2269 - the two write forms share one
+/// upstream: options.c:1816-1828, 2265-2269 - the two write forms share one
 /// `write_batch` mode, so combining them is legal and the later one decides;
 /// only a write form with `--read-batch` is refused, with upstream's text.
 #[test]
@@ -480,7 +480,7 @@ fn script_elides_operands_under_files_from() {
     );
 }
 
-/// upstream: batch.c:247-258 opens the `.sh` at startup and compat.c:838-839
+/// upstream: batch.c:247-258 opens the `.sh` at startup and compat.c:847-848
 /// writes it during protocol setup, so a run that fails afterwards (here: the
 /// destination's parent is a regular file) still leaves a complete script.
 #[test]
@@ -627,7 +627,7 @@ fn script_open_error_names_the_full_path() {
     }
 }
 
-/// upstream: compat.c:739-740 sets CF_ID0_NAMES for a local transfer (its
+/// upstream: compat.c:748-749 sets CF_ID0_NAMES for a local transfer (its
 /// child advertises 'u'), and with no INC_RECURSE (no `-r`) the header's
 /// compat varint is `81 fe`.
 /// The id lists then end with the name of id 0 (uidlist.c:398-405), so each
@@ -791,7 +791,7 @@ fn deepen(fx: &Fixture) {
     fs::write(fx.root.join("src/sub/deep/d.txt"), b"delta\n").unwrap();
 }
 
-/// upstream: compat.c:162-180 set_allow_inc_recurse() keeps CF_INC_RECURSE
+/// upstream: compat.c:163-181 set_allow_inc_recurse() keeps CF_INC_RECURSE
 /// for a recursive local recording, so 3.5.1 writes `81 ff` and lays the file
 /// list out incrementally: the top level first, then one sub-list per
 /// directory (flist.c send_extra_file_list()). Each implementation must
@@ -829,7 +829,7 @@ fn recursive_local_batch_is_inc_recurse_like_upstream() {
     }
 }
 
-/// upstream: compat.c:162-180 set_allow_inc_recurse() - recursion without
+/// upstream: compat.c:163-181 set_allow_inc_recurse() - recursion without
 /// `--qsort` records CF_INC_RECURSE unless the receiving side deletes before or
 /// after the transfer, delays updates or prunes empty directories, and
 /// `--no-inc-recursive` (options.c:634) clears it. The header's last compat
@@ -875,7 +875,7 @@ fn local_batch_inc_recurse_bit_follows_set_allow_inc_recurse() {
     }
 }
 
-/// upstream: flist.c:824-850 - under INC_RECURSE a hard-link follower names
+/// upstream: flist.c:828-854 - under INC_RECURSE a hard-link follower names
 /// its leader by the leader's NDX, which counts the one-slot gap before every
 /// sub-list (flist.c:3511). A follower in a later sub-list than its leader
 /// therefore carries an NDX that a flat numbering would get wrong, and the
@@ -1051,7 +1051,7 @@ fn inc_recurse_batch_round_trips(dirs: usize, files: usize) {
     }
 }
 
-/// upstream: sender.c:515-547 - past the 1000-entry lookahead (rsync.h:151)
+/// upstream: sender.c:523-555 - past the 1000-entry lookahead (rsync.h:152)
 /// 3.5.1 sends sub-lists between file-data records: the first lists up to
 /// the lookahead, then one more each time the records reach the next list
 /// (rsync.c:396-401, flist.c:2651). The replaying receiver must take them
@@ -1070,7 +1070,7 @@ fn small_inc_recurse_batch_round_trips_like_upstream() {
     inc_recurse_batch_round_trips(4, 50);
 }
 
-/// upstream: generator.c:2780-2801 - with --delete under INC_RECURSE the
+/// upstream: generator.c:2866-2887 - with --delete under INC_RECURSE the
 /// replaying generator deletes in each list's directory as that list
 /// arrives, mid-stream once the lists interleave with the file data. The
 /// extraneous entries sit in early, middle and late lists, and in the last.
@@ -1168,7 +1168,7 @@ fn itemize_rows(out: &Output) -> Vec<String> {
         .collect()
 }
 
-/// upstream: flist.c:3065-3067 - below protocol 30 the file list is followed
+/// upstream: flist.c:3076-3078 - below protocol 30 the file list is followed
 /// by the id lists and `write_int(io_error)`; checksum.c:142-144 sums each
 /// file with seeded MD4; generator.c:517-548 itemize() fills the iflags the
 /// batch replays (protocol 29), the transfer root's `.d..t......` included.
@@ -1241,7 +1241,7 @@ fn id_name(flag: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
-/// upstream: flist.c:787-797 add_uid()/add_gid() collect each owner the file
+/// upstream: flist.c:791-801 add_uid()/add_gid() collect each owner the file
 /// list carries, and uidlist.c:388-406 send_one_list() names them after a
 /// non-incremental list; inline names exist only under INC_RECURSE
 /// (flist.c:791). Below protocol 30 the id lists are the batch's only copy of
@@ -1272,7 +1272,7 @@ fn pre30_local_batch_names_owners_like_upstream() {
     }
 }
 
-/// upstream: flist.c:2205-2210 send_directory() sets IOERR_GENERAL when a
+/// upstream: flist.c:2209-2214 send_directory() sets IOERR_GENERAL when a
 /// listing fails, and the end marker of the list being built carries it
 /// (flist.c:2683-2690, :3024-3031; below 30 the write_int after the id
 /// lists). The replaying generator then refuses deletions from that list on
@@ -1385,7 +1385,7 @@ fn batch_into_a_new_root_itemizes_the_created_root_like_upstream() {
     }
 }
 
-/// upstream: generator.c:1904-1910 - `--chmod=Du-x` self-locks a new root,
+/// upstream: generator.c:1941-1947 - `--chmod=Du-x` self-locks a new root,
 /// and the failed chmod sets the generator's io_error. The forked sender
 /// never sees it, so the batch reports no error and a `--delete` replay
 /// still deletes.
@@ -1457,7 +1457,7 @@ fn acl_snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
     acls
 }
 
-/// upstream: flist.c:2050-2066 send_file_entry() reads each file's ACL with
+/// upstream: flist.c:2054-2070 send_file_entry() reads each file's ACL with
 /// get_acl() and send_acl() writes it into the file list, so a batch carries
 /// every named entry; acls.c:821-826 send_ida_entries() adds each named id to
 /// the id lists (non-incremental lists) or names it inline (inc_recurse,
@@ -1571,7 +1571,7 @@ fn xattr_snapshot(dir: &Path) -> std::collections::BTreeMap<String, Vec<String>>
     xattrs
 }
 
-/// upstream: io.c:2747 start_write_batch() tees the sender's stream, so a
+/// upstream: io.c:2754 start_write_batch() tees the sender's stream, so a
 /// batch carries each entry's xattrs in the file list (flist.c:2058-2068
 /// get_xattr(), send_xattr()) and, for a value longer than MAX_FULL_DATUM
 /// (xattrs.c:49), only its digest there: the full value follows the entry's

@@ -43,6 +43,7 @@ pub mod memory;
 /// Windows account name to RID resolution.
 pub mod name_resolution;
 /// Process privilege operations - chroot and uid/gid dropping.
+pub mod priority;
 pub mod privilege;
 /// Secrets file permission validation.
 pub mod secrets;

@@ -264,8 +264,8 @@ pub(crate) struct IncrementalState {
     /// error in its trailer, so the receiver learns of a failure found while
     /// scanning a later directory before it walks that list.
     ///
-    /// upstream: flist.c:2641 `save_io_error = io_error` records the base.
-    /// upstream: flist.c:2686-2693 `io_error == save_io_error || ignore_errors` picks the trailer.
+    /// upstream: flist.c:2652 `save_io_error = io_error` records the base.
+    /// upstream: flist.c:2697-2704 `io_error == save_io_error || ignore_errors` picks the trailer.
     pub(crate) sublist_io_error_base: i32,
     /// Cached file list writer for compression state continuity across sub-lists.
     ///
@@ -289,7 +289,7 @@ pub(crate) struct IncrementalState {
     /// Growth of the sender's `dir_flist`, which under INC_RECURSE holds every
     /// directory sent for the whole transfer.
     ///
-    /// upstream: flist.c:2780-2781,2198
+    /// upstream: flist.c:2791-2792,2198
     pub(crate) dir_flist_growth: protocol::flist::FlistGrowth,
 }
 

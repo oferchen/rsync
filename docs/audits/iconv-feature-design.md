@@ -37,20 +37,20 @@ Daemons may set a default via the `charset` keyword in
 Upstream call sites (per `docs/audits/iconv-pipeline.md`):
 
 - `options.c` parses `--iconv` into `iconv_opt` (`LOCAL,REMOTE`).
-- `compat.c:716-718` advertises `CF_SYMLINK_ICONV` only when iconv is
-  compiled in; `compat.c:763-767` derives `sender_symlink_iconv` from
+- `compat.c:717-719` advertises `CF_SYMLINK_ICONV` only when iconv is
+  compiled in; `compat.c:772-776` derives `sender_symlink_iconv` from
   the peer's `CF_SYMLINK_ICONV` bit AND the local `iconv_opt`.
-- `flist.c:1579-1603` runs `iconvbufs(ic_send, ...)` on outgoing
-  filenames; `flist.c:738-754` runs `iconvbufs(ic_recv, ...)` on
-  incoming ones. `flist.c:1605-1621` and `1127-1150` extend the same
+- `flist.c:1583-1607` runs `iconvbufs(ic_send, ...)` on outgoing
+  filenames; `flist.c:742-758` runs `iconvbufs(ic_recv, ...)` on
+  incoming ones. `flist.c:1609-1625` and `1127-1150` extend the same
   to symlink targets, gated on `sender_symlink_iconv`.
 - `io.c:416-452` runs `iconvbufs(ic_send, ...)` on `--files-from`
-  strings (`filesfrom_convert`). `io.c:1240-1289` runs the receive
+  strings (`filesfrom_convert`). `io.c:1247-1296` runs the receive
   direction in `read_line(..., RL_CONVERT)`.
 - `io.c:983-1031` transcodes `MSG_*` text payloads.
 - `rsync.c:283-320` transcodes each `--secluded-args` /
   `--protect-args` element.
-- `log.c:251-371` transcodes log output via `ic_chck` or `ic_recv`.
+- `log.c:317-451` transcodes log output via `ic_chck` or `ic_recv`.
 
 Xattr names and values are not transcoded (`xattrs.c` makes no iconv
 calls).
@@ -163,7 +163,7 @@ clear error rather than mojibake.
 **Capability advertisement.** Gate the `'s'` capability character on
 `IconvSetting` being active rather than the unconditional
 `CAPABILITY_MAPPINGS` entry, and OR `CF_SYMLINK_ICONV` into the local
-flags only when iconv is active. Mirror `compat.c:716-718` exactly.
+flags only when iconv is active. Mirror `compat.c:717-719` exactly.
 
 ## Interop test plan
 

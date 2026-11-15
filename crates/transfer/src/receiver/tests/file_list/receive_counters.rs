@@ -271,7 +271,7 @@ fn missing_args_placeholder_counts_as_special() {
     let handshake = test_handshake();
     let protocol = handshake.protocol;
     let mut config = test_config();
-    // upstream: flist.c:1197-1200 - a mode-0 entry is legal only under
+    // upstream: flist.c:1201-1204 - a mode-0 entry is legal only under
     // `--delete-missing-args`.
     config.file_selection.delete_missing_args = true;
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);

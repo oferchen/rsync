@@ -4,7 +4,7 @@ use std::io;
 ///
 /// This list mirrors upstream rsync 3.5.1's `valid_checksums_items[]`
 /// (checksum.c:49-65) verbatim - names AND order - as a full-featured
-/// upstream build compiles it. `get_default_nno_list()` (compat.c:462-504)
+/// upstream build compiles it. `get_default_nno_list()` (compat.c:463-505)
 /// renders the default advertisement from it: the client drops the trailing
 /// "none", the server keeps it, and the "xxhash" alias never appears because
 /// upstream marks it a duplicate of "xxh64". The default wire bytes must
@@ -21,7 +21,7 @@ pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
 /// Returns supported compression algorithms in preference order for negotiation.
 ///
 /// This list controls which algorithms are advertised during vstring
-/// negotiation (upstream compat.c:547-548). The order matches upstream's
+/// negotiation (upstream compat.c:548-549). The order matches upstream's
 /// `valid_compressions_items[]` preference: zstd > lz4 > zlibx > zlib > none.
 ///
 /// Both zstd and lz4 are included when their respective features are enabled -
@@ -35,20 +35,20 @@ pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
 /// capability) is negotiated, which restricts lz4/zstd selection to peers new
 /// enough to send that flag (upstream 3.2.0+, protocol 31), mirroring upstream.
 /// Explicit `--compress-choice=lz4` still works independently of this list
-/// (upstream compat.c:547).
+/// (upstream compat.c:548).
 ///
 /// # Upstream reference
 ///
-/// upstream: compat.c:101-112 `valid_compressions_items[]` - preference-ordered
+/// upstream: compat.c:102-113 `valid_compressions_items[]` - preference-ordered
 /// list guarded by `SUPPORT_ZSTD` and `SUPPORT_LZ4` compile flags.
 pub(super) fn supported_compressions() -> Vec<&'static str> {
     let mut list = Vec::with_capacity(5);
 
-    // upstream: compat.c:102-104 - zstd is first when SUPPORT_ZSTD is defined
+    // upstream: compat.c:103-105 - zstd is first when SUPPORT_ZSTD is defined
     #[cfg(feature = "zstd")]
     list.push("zstd");
 
-    // upstream: compat.c:105-107 - lz4 follows zstd when SUPPORT_LZ4 is defined
+    // upstream: compat.c:106-108 - lz4 follows zstd when SUPPORT_LZ4 is defined
     #[cfg(feature = "lz4")]
     list.push("lz4");
 
@@ -59,7 +59,7 @@ pub(super) fn supported_compressions() -> Vec<&'static str> {
 /// Resolves a checksum name to its canonical wire spelling, or `None` when the
 /// name is not a build-supported algorithm.
 ///
-/// Mirrors upstream `get_nni_by_name()` (compat.c:223-238): the lookup is
+/// Mirrors upstream `get_nni_by_name()` (compat.c:224-239): the lookup is
 /// case-insensitive (`strncasecmp`), and an alias entry resolves to its
 /// `main_nni` canonical name (`xxhash` becomes `xxh64`). Unrecognised names
 /// resolve to `None` so callers skip them, exactly as upstream's negotiation

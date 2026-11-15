@@ -157,7 +157,7 @@ fn sibling_landed(fx: &Fixture) -> bool {
 /// and streamed the payload straight into the device, leaving the node in place
 /// and the operator's file unwritten at the destination.
 ///
-/// upstream: `generator.c:2148` - `write_devices` is false here, so a
+/// upstream: `generator.c:2189` - `write_devices` is false here, so a
 /// `stype == FT_DEVICE` destination fails the keep condition and
 /// `delete_item(..., DEL_FOR_FILE)` clears it.
 #[test]
@@ -184,7 +184,7 @@ fn inplace_without_write_devices_replaces_a_device_destination() {
 /// same decision. Keeping it separate from the `--inplace` cell above pins that
 /// the predicate lives in the make-way decision rather than in one strategy.
 ///
-/// upstream: `generator.c:2148`; `options.c:2564` is what makes `--append` and
+/// upstream: `generator.c:2189`; `options.c:2619` is what makes `--append` and
 /// `--write-devices` share the in-place write, which is exactly why the device
 /// question cannot be answered from `inplace` alone.
 #[test]
@@ -209,7 +209,7 @@ fn append_without_write_devices_replaces_a_device_destination() {
 /// This cell fails on a tree that removes the node but forgets the reset, which
 /// no filesystem assertion above can catch.
 ///
-/// upstream: `generator.c:2151-2152` - `statret = -1; stat_errno = ENOENT;`
+/// upstream: `generator.c:2192-2193` - `statret = -1; stat_errno = ENOENT;`
 #[test]
 fn a_replaced_device_destination_itemizes_as_a_creation() {
     let Some(fx) = device_fixture() else { return };
@@ -252,7 +252,7 @@ fn a_replaced_device_destination_is_backed_up_not_unlinked() {
 /// The negative control that stops the predicate degenerating into "always
 /// clear": with `--write-devices` the node survives and is written through.
 ///
-/// upstream: `generator.c:2148` - the `write_devices && stype == FT_DEVICE`
+/// upstream: `generator.c:2189` - the `write_devices && stype == FT_DEVICE`
 /// half keeps the node; `receiver.c:1187` then writes into it.
 #[test]
 fn write_devices_keeps_a_device_destination() {

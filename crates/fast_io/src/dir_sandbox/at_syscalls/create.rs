@@ -194,7 +194,7 @@ pub fn linkat(
 /// - `EINVAL` when `name` contains an interior NUL byte (translated from
 ///   [`std::ffi::NulError`]).
 ///
-/// upstream: syscall.c:1424-1426 do_mknod_at() - mknodat() on the walked parent
+/// upstream: syscall.c:1493-1495 do_mknod_at() - mknodat() on the walked parent
 pub fn mknodat(dirfd: BorrowedFd<'_>, name: &OsStr, mode: u32, dev: u64) -> io::Result<()> {
     let c_name =
         CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
@@ -239,7 +239,7 @@ pub fn mknodat(dirfd: BorrowedFd<'_>, name: &OsStr, mode: u32, dev: u64) -> io::
 /// Surfaces the underlying syscall error verbatim, plus `EINVAL` when
 /// `name` contains an interior NUL byte.
 ///
-/// upstream: syscall.c:1427-1439 do_mknod_at() - the mkfifoat() retry
+/// upstream: syscall.c:1496-1508 do_mknod_at() - the mkfifoat() retry
 pub fn mkfifoat(dirfd: BorrowedFd<'_>, name: &OsStr, mode: u32) -> io::Result<()> {
     let c_name =
         CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
@@ -274,7 +274,7 @@ pub fn mkfifoat(dirfd: BorrowedFd<'_>, name: &OsStr, mode: u32) -> io::Result<()
 /// The `mknodat(2)` / `mkfifoat(2)` errno verbatim, or `EOPNOTSUPP` for a
 /// socket beneath a real dirfd.
 ///
-/// upstream: syscall.c:1498-1519 do_mknod_at() - mknodat() then the per-call
+/// upstream: syscall.c:1567-1588 do_mknod_at() - mknodat() then the per-call
 /// mkfifoat() retry and the S_ISSOCK EOPNOTSUPP arm.
 pub(crate) fn mknodat_with_retry(
     dirfd: BorrowedFd<'_>,
@@ -312,7 +312,7 @@ pub(crate) fn mknodat_with_retry(
 ///
 /// The `unlinkat(2)` / `openat(2)` errno verbatim.
 ///
-/// upstream: syscall.c:1415-1423 / 1336-1356 do_mknod_at() - the fake-super
+/// upstream: syscall.c:1484-1492 / 1336-1356 do_mknod_at() - the fake-super
 /// placeholder created against the held dirfd.
 pub(crate) fn fake_super_placeholder_at(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
     match super::unlinkat(dirfd, name, super::UnlinkFlags::File) {
@@ -513,7 +513,7 @@ pub fn symlinkat_via_sandbox_or_fallback(
 /// The terminal `mknodat`/`mkfifoat`/`openat` errno, or the ownership walk's
 /// refusal (`ELOOP` / `EXDEV`). A socket beneath a real dirfd is `EOPNOTSUPP`.
 ///
-/// upstream: rsync-3.5.1/syscall.c:1392-1527 do_mknod_at() - the secure_relpath
+/// upstream: rsync-3.5.2/syscall.c:1461-1596 do_mknod_at() - the secure_relpath
 /// arm (split parent + mknodat on the held dirfd), including the mkfifoat retry
 /// and the S_ISSOCK EOPNOTSUPP refusal for a nested node.
 pub fn mknodat_via_sandbox_or_fallback(
@@ -669,9 +669,9 @@ pub fn linkat_via_sandbox_or_fallback(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:1076` `do_link_at()` - resolves the parent of each
+/// - `rsync-3.5.2/syscall.c:1145` `do_link_at()` - resolves the parent of each
 ///   side and issues `linkat` against the resulting dirfd.
-/// - `rsync-3.5.1/syscall.c:3032` `ds_descend()` - the per-component walk that
+/// - `rsync-3.5.2/syscall.c:3103` `ds_descend()` - the per-component walk that
 ///   refuses an absolute symlink target.
 ///
 /// # Errors
@@ -741,7 +741,7 @@ pub fn confined_link_anonymous(staged: BorrowedFd<'_>, root: &Path, dest: &Path)
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:3032` `ds_descend()` - the per-component walk.
+/// - `rsync-3.5.2/syscall.c:3103` `ds_descend()` - the per-component walk.
 /// - `rsync-3.5.1/receiver.c` - upstream's always-stage-then-rename shape.
 ///
 /// # Errors

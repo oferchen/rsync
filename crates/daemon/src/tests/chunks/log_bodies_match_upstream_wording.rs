@@ -2,7 +2,7 @@
 /// rsync's exact `rprintf(FLOG, ...)` format strings byte-for-byte (only the
 /// timestamp/pid prefix, handled by the logging sink, differs).
 ///
-/// upstream: clientserver.c:787 / :774 / :1555 / :1568 and authenticate.c:341.
+/// upstream: clientserver.c:791 / :774 / :1555 / :1568 and authenticate.c:336.
 #[test]
 fn log_bodies_match_upstream_wording() {
     let dir = tempdir().expect("log dir");
@@ -13,15 +13,15 @@ fn log_bodies_match_upstream_wording() {
     let ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 17));
     let addr = std::net::SocketAddr::new(ip, 873);
 
-    // upstream: clientserver.c:787 - module access granted.
+    // upstream: clientserver.c:791 - module access granted.
     log_module_request(&log, host, ip, "docs");
-    // upstream: authenticate.c:318/:325/:341 - auth failure prefix.
+    // upstream: authenticate.c:313/:325/:341 - auth failure prefix.
     log_module_auth_failure(&log, host, ip, "docs", None);
-    // upstream: clientserver.c:774 - access denied by allow/deny rules.
+    // upstream: clientserver.c:778 - access denied by allow/deny rules.
     log_module_denied(&log, host, ip, "docs");
-    // upstream: clientserver.c:1568 - request for an undefined module.
+    // upstream: clientserver.c:1578 - request for an undefined module.
     log_unknown_module(&log, host, ip, "docs");
-    // upstream: clientserver.c:1555 - `#list` / empty module request.
+    // upstream: clientserver.c:1565 - `#list` / empty module request.
     log_list_request(&log, host, addr);
 
     drop(log);
@@ -60,7 +60,7 @@ fn log_bodies_match_upstream_wording() {
 
 /// An `auth users` refusal must name the user AND the rule outcome.
 ///
-/// upstream: authenticate.c:433 -
+/// upstream: authenticate.c:428 -
 /// `auth failed on module %s from %s (%s) for %s: %s`, where the reason comes
 /// from :411-414 - `"no matching rule"` when the scan matched no token and
 /// `"denied by rule"` when the matched entry carried `:deny`.

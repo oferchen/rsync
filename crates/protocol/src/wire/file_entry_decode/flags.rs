@@ -82,7 +82,7 @@ pub fn decode_flags<R: Read>(
             // Wire: [XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST] + varint(err).
             // Without this, decode_end_marker is never called; the error
             // varint leaks into the next entry parse, corrupting the flist.
-            // upstream: flist.c:3203 recv_file_list() XMIT_IO_ERROR_ENDLIST branch.
+            // upstream: flist.c:3214 recv_file_list() XMIT_IO_ERROR_ENDLIST branch.
             // The sentinel is exactly [XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST].
             // XMIT_IO_ERROR_ENDLIST shares its bit with XMIT_HLINK_FIRST; a bitmask
             // test would fire on any hardlink-leader or atime-inherit entry that also

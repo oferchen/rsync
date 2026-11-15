@@ -6,7 +6,7 @@ This audit reconciles every `CF_*` compatibility bit defined in upstream rsync
 enumerates the wire bits, the `-e.<chars>` capability characters that gate
 them, the protocol version each was introduced in, and how our code negotiates
 and emits them. A side-by-side comparison of `build_our_flags` against the
-upstream `compat.c:710-743` block follows, along with the golden-byte tests
+upstream `compat.c:711-752` block follows, along with the golden-byte tests
 that pin the wire encoding.
 
 ## Sources Consulted
@@ -24,28 +24,28 @@ that pin the wire encoding.
 
 ## 1. `CF_*` Bit-by-Bit Matrix
 
-Upstream defines the bits in `compat.c:117-125`. The exchange itself is gated
-on `protocol_version >= 30` (`compat.c:710`); pre-30 peers never see a compat
+Upstream defines the bits in `compat.c:118-126`. The exchange itself is gated
+on `protocol_version >= 30` (`compat.c:711`); pre-30 peers never see a compat
 byte. Bits are written by the server only; the client reads them
-(`compat.c:736-741`). All known bits live in the low 9 positions; bit 7
+(`compat.c:745-750`). All known bits live in the low 9 positions; bit 7
 forces varint encoding even though every known value fits in a single byte.
 
 | Bit | Macro | Char | Intro proto | Upstream semantics | Our wire constant | Our handling |
 |----:|-------|:----:|:-----------:|--------------------|-------------------|--------------|
-| 0 | `CF_INC_RECURSE` | `i` | 30 | Sender and receiver both support incremental file-list recursion. Server only sets bit when `allow_inc_recurse` survives the `set_allow_inc_recurse()` filters (`compat.c:161-179`, `compat.c:712`). | `CompatibilityFlags::INC_RECURSE` (`flags.rs:34`) | Capability table row at `setup/capability.rs:42-48` (`requires_inc_recurse: true`). `build_our_flags` sets the bit only when `config.allow_inc_recurse` is true (`setup/mod.rs:233-235`). Client clears the bit on read when not allowed (`setup/mod.rs:121-123`). |
-| 1 | `CF_SYMLINK_TIMES` | `L` | 30 | Receiver can apply mtime to symlinks (`CAN_SET_SYMLINK_TIMES`). Upstream sets it unconditionally on Unix (`compat.c:713-715`). | `CompatibilityFlags::SYMLINK_TIMES` (`flags.rs:36`) | Capability row at `capability.rs:50-59` is `platform_ok=cfg(unix)`. SSH client mode sets the bit under `#[cfg(unix)]` (`setup/mod.rs:219-222`). Daemon server mirrors via the table-driven path. |
-| 2 | `CF_SYMLINK_ICONV` | `s` | 30 | Symlink contents need iconv translation. Gated on `#ifdef ICONV_OPTION` upstream (`compat.c:716-718`). | `CompatibilityFlags::SYMLINK_ICONV` (`flags.rs:38`) | Capability row at `capability.rs:65-71` is `requires_iconv: true`; advertised and accepted only when the `iconv` cargo feature is on (`iconv_capability_compiled_in()` at `capability.rs:127-129`). SSH client mode mirrors with `#[cfg(all(unix, feature = "iconv"))]` (`setup/mod.rs:228-231`). |
-| 3 | `CF_SAFE_FLIST` | `f` | 30 | Receiver supports the safe (recoverable) flist transmission scheme. Forced on for protocol >= 31 (`compat.c:775`). | `CompatibilityFlags::SAFE_FILE_LIST` (`flags.rs:40`) | Capability row at `capability.rs:72-78`. SSH client mode enables it unconditionally (`setup/mod.rs:213`). The protocol >= 31 forcing happens at the protocol layer that consumes the flags. |
-| 4 | `CF_AVOID_XATTR_OPTIM` | `x` | 30 | Disables the xattr-on-hardlink fast path. Upstream pairs the bit with `want_xattr_optim = protocol >= 31 && !(compat & CF_AVOID_XATTR_OPTIM)` (`compat.c:746`). | `CompatibilityFlags::AVOID_XATTR_OPTIMIZATION` (`flags.rs:42`) | Capability row at `capability.rs:80-86`. SSH client mode advertises it (`setup/mod.rs:214`). Consumers in `engine`/`metadata` use `compat_flags.contains(...)` to pick the slow path. |
-| 5 | `CF_CHKSUM_SEED_FIX` | `C` | 30 | Switches MD5 checksum seed ordering to the post-3.0.0 fix. Upstream stores it as `proper_seed_order` (`compat.c:747`). | `CompatibilityFlags::CHECKSUM_SEED_FIX` (`flags.rs:44`) | Capability row at `capability.rs:88-94`. SSH client mode always sets it (`setup/mod.rs:211`). The checksums crate keys block-checksum seeding off this flag. |
-| 6 | `CF_INPLACE_PARTIAL_DIR` | `I` | 30 | When set together with `--inplace`, allows a `--partial-dir` to be respected. Upstream stores it as `inplace_partial` (`compat.c:777-778`). | `CompatibilityFlags::INPLACE_PARTIAL_DIR` (`flags.rs:46`) | Capability row at `capability.rs:96-102`. SSH client mode enables it (`setup/mod.rs:215`). Validation of `--inplace` versus `--partial-dir` happens at config-build time (see `crates/transfer/src/setup/restrictions.rs`). |
-| 7 | `CF_VARINT_FLIST_FLAGS` | `v` | 30 (modernised in 3.2.x) | Switches the file-list xfer flag word from a u8 to a varint and enables string-based algorithm negotiation (`do_negotiated_strings`, `compat.c:730-732,742`). | `CompatibilityFlags::VARINT_FLIST_FLAGS` (`flags.rs:48`) | Capability row at `capability.rs:103-109`. SSH client mode always advertises it (`setup/mod.rs:212`). `should_negotiate()` (`setup/mod.rs:251-268`) consults this bit on both sides to gate the vstring exchange. |
-| 8 | `CF_ID0_NAMES` | `u` | 31+ (3.2.4) | Sender will transmit names for uid 0 / gid 0 instead of the historical optimisation that omitted them (`compat.c:727-728,749`). | `CompatibilityFlags::ID0_NAMES` (`flags.rs:50`) | Capability row at `capability.rs:111-117`. SSH client mode always advertises it (`setup/mod.rs:216`). Consumed in the file-list crate when serialising user/group strings. |
-| 9-31 | (unassigned) | - | - | Future bits are tolerated but ignored upstream (`compat.c:740-743` reads as varint). | `CompatibilityFlags::has_unknown_bits()` / `unknown_bits()` (`flags.rs:84-101`) | `without_unknown_bits()` (`flags.rs:111-114`) clears unknown bits when our daemon needs to forward a sanitised value. The varint reader preserves them so diagnostics keep the original word. |
+| 0 | `CF_INC_RECURSE` | `i` | 30 | Sender and receiver both support incremental file-list recursion. Server only sets bit when `allow_inc_recurse` survives the `set_allow_inc_recurse()` filters (`compat.c:162-180`, `compat.c:713`). | `CompatibilityFlags::INC_RECURSE` (`flags.rs:34`) | Capability table row at `setup/capability.rs:42-48` (`requires_inc_recurse: true`). `build_our_flags` sets the bit only when `config.allow_inc_recurse` is true (`setup/mod.rs:233-235`). Client clears the bit on read when not allowed (`setup/mod.rs:121-123`). |
+| 1 | `CF_SYMLINK_TIMES` | `L` | 30 | Receiver can apply mtime to symlinks (`CAN_SET_SYMLINK_TIMES`). Upstream sets it unconditionally on Unix (`compat.c:714-716`). | `CompatibilityFlags::SYMLINK_TIMES` (`flags.rs:36`) | Capability row at `capability.rs:50-59` is `platform_ok=cfg(unix)`. SSH client mode sets the bit under `#[cfg(unix)]` (`setup/mod.rs:219-222`). Daemon server mirrors via the table-driven path. |
+| 2 | `CF_SYMLINK_ICONV` | `s` | 30 | Symlink contents need iconv translation. Gated on `#ifdef ICONV_OPTION` upstream (`compat.c:717-719`). | `CompatibilityFlags::SYMLINK_ICONV` (`flags.rs:38`) | Capability row at `capability.rs:65-71` is `requires_iconv: true`; advertised and accepted only when the `iconv` cargo feature is on (`iconv_capability_compiled_in()` at `capability.rs:127-129`). SSH client mode mirrors with `#[cfg(all(unix, feature = "iconv"))]` (`setup/mod.rs:228-231`). |
+| 3 | `CF_SAFE_FLIST` | `f` | 30 | Receiver supports the safe (recoverable) flist transmission scheme. Forced on for protocol >= 31 (`compat.c:784`). | `CompatibilityFlags::SAFE_FILE_LIST` (`flags.rs:40`) | Capability row at `capability.rs:72-78`. SSH client mode enables it unconditionally (`setup/mod.rs:213`). The protocol >= 31 forcing happens at the protocol layer that consumes the flags. |
+| 4 | `CF_AVOID_XATTR_OPTIM` | `x` | 30 | Disables the xattr-on-hardlink fast path. Upstream pairs the bit with `want_xattr_optim = protocol >= 31 && !(compat & CF_AVOID_XATTR_OPTIM)` (`compat.c:755`). | `CompatibilityFlags::AVOID_XATTR_OPTIMIZATION` (`flags.rs:42`) | Capability row at `capability.rs:80-86`. SSH client mode advertises it (`setup/mod.rs:214`). Consumers in `engine`/`metadata` use `compat_flags.contains(...)` to pick the slow path. |
+| 5 | `CF_CHKSUM_SEED_FIX` | `C` | 30 | Switches MD5 checksum seed ordering to the post-3.0.0 fix. Upstream stores it as `proper_seed_order` (`compat.c:756`). | `CompatibilityFlags::CHECKSUM_SEED_FIX` (`flags.rs:44`) | Capability row at `capability.rs:88-94`. SSH client mode always sets it (`setup/mod.rs:211`). The checksums crate keys block-checksum seeding off this flag. |
+| 6 | `CF_INPLACE_PARTIAL_DIR` | `I` | 30 | When set together with `--inplace`, allows a `--partial-dir` to be respected. Upstream stores it as `inplace_partial` (`compat.c:786-787`). | `CompatibilityFlags::INPLACE_PARTIAL_DIR` (`flags.rs:46`) | Capability row at `capability.rs:96-102`. SSH client mode enables it (`setup/mod.rs:215`). Validation of `--inplace` versus `--partial-dir` happens at config-build time (see `crates/transfer/src/setup/restrictions.rs`). |
+| 7 | `CF_VARINT_FLIST_FLAGS` | `v` | 30 (modernised in 3.2.x) | Switches the file-list xfer flag word from a u8 to a varint and enables string-based algorithm negotiation (`do_negotiated_strings`, `compat.c:739-741,742`). | `CompatibilityFlags::VARINT_FLIST_FLAGS` (`flags.rs:48`) | Capability row at `capability.rs:103-109`. SSH client mode always advertises it (`setup/mod.rs:212`). `should_negotiate()` (`setup/mod.rs:251-268`) consults this bit on both sides to gate the vstring exchange. |
+| 8 | `CF_ID0_NAMES` | `u` | 31+ (3.2.4) | Sender will transmit names for uid 0 / gid 0 instead of the historical optimisation that omitted them (`compat.c:736-737,749`). | `CompatibilityFlags::ID0_NAMES` (`flags.rs:50`) | Capability row at `capability.rs:111-117`. SSH client mode always advertises it (`setup/mod.rs:216`). Consumed in the file-list crate when serialising user/group strings. |
+| 9-31 | (unassigned) | - | - | Future bits are tolerated but ignored upstream (`compat.c:749-752` reads as varint). | `CompatibilityFlags::has_unknown_bits()` / `unknown_bits()` (`flags.rs:84-101`) | `without_unknown_bits()` (`flags.rs:111-114`) clears unknown bits when our daemon needs to forward a sanitised value. The varint reader preserves them so diagnostics keep the original word. |
 
 ### Pre-release `'V'` Quirk
 
-Upstream `compat.c:733-738` recognises a deprecated pre-release `'V'`: when the
+Upstream `compat.c:742-747` recognises a deprecated pre-release `'V'`: when the
 client advertises `'V'`, the server implicitly ORs in `CF_VARINT_FLIST_FLAGS`
 and writes the flag word as a single byte (`write_byte`) rather than a varint
 (`write_varint`). We mirror this in `setup/compat.rs:write_compat_flags`
@@ -56,7 +56,7 @@ ourselves; we only honour it when a peer sends it.
 ## 2. Capability-String Character Table (`-e.<chars>`)
 
 Upstream constructs the capability string in `options.c:maybe_add_e_option()`
-and parses it from `client_info` in `compat.c:712-732`. We construct it in
+and parses it from `client_info` in `compat.c:713-741`. We construct it in
 `build_capability_string()` (`setup/capability.rs:138-153`) from the
 single-source-of-truth `CAPABILITY_MAPPINGS` table at `capability.rs:40-118`.
 Order matches upstream for documentation consistency.
@@ -86,7 +86,7 @@ forms such as `-vvde.LsfxCIvu` where the leading `.` is a version placeholder
 
 ## 3. `INC_RECURSE` (`'i'`) Specifics
 
-`set_allow_inc_recurse()` upstream (`compat.c:161-179`) clears
+`set_allow_inc_recurse()` upstream (`compat.c:162-180`) clears
 `allow_inc_recurse` when:
 
 - `!recurse || use_qsort`, or
@@ -108,7 +108,7 @@ In our code, the same conditions are validated at config-build time in
    `CF_INC_RECURSE` only when `allow_inc_recurse` is true.
 4. The client-side read path masks `INC_RECURSE` off when our local
    `allow_inc_recurse` is false even if the server set it (`mod.rs:121-123`),
-   matching upstream's batch-time defensive check at `compat.c:768-774`.
+   matching upstream's batch-time defensive check at `compat.c:777-783`.
 
 A note from project memory: receiver-side INC_RECURSE is fully implemented and
 tested; sender-side push transfers historically passed `!is_sender` to gate
@@ -118,7 +118,7 @@ guarding above is unaffected.
 
 ## 4. `VARINT_FLIST_FLAGS` (`'v'`) Specifics
 
-Upstream `compat.c:729-743`:
+Upstream `compat.c:738-752`:
 
 ```c
 if (strchr(client_info, 'v') != NULL) {
@@ -141,7 +141,7 @@ Three observable consequences:
    `client_info.contains('v') || has_pre_release_v_flag(info)`; client side
    checks `peer_flags.contains(CF_VARINT_FLIST_FLAGS)` on the bit it just read.
 2. **File-list flag width.** `xfer_flags_as_varint = compat_flags &
-   CF_VARINT_FLIST_FLAGS ? 1 : 0` (`compat.c:748`) decides whether the
+   CF_VARINT_FLIST_FLAGS ? 1 : 0` (`compat.c:757`) decides whether the
    per-entry flag word is a single byte or a varint. The protocol crate's
    file-list reader keys off `compat_flags.contains(VARINT_FLIST_FLAGS)`.
 3. **Encoding asymmetry for pre-release `'V'`.** A peer that sent `'V'`
@@ -160,7 +160,7 @@ which pins `0x1FF` to `[0x81, 0xFF]`.
 
 ## 5. `build_our_flags` vs Upstream Side-by-Side
 
-Upstream (`compat.c:711-732`, server side only):
+Upstream (`compat.c:712-741`, server side only):
 
 ```c
 if (am_server) {
@@ -198,7 +198,7 @@ fn build_our_flags<'a>(
 ) -> (CompatibilityFlags, Option<std::borrow::Cow<'a, str>>) {
     if let Some(args) = config.client_args {
         // Daemon server mode: parse client capabilities from -e option
-        // upstream: compat.c:712-732
+        // upstream: compat.c:713-741
         let client_info = negotiator.parse_client_info(args);
         let flags = negotiator.build_flags_from_client_info(&client_info, config.allow_inc_recurse);
         (flags, Some(client_info))
@@ -236,7 +236,7 @@ fn build_our_flags<'a>(
 | Pre-release `'V'` byte encoding | `write_byte` | `writer.write_all(&[bits as u8])` in `compat.rs:write_compat_flags` | Match |
 | Default-byte encoding | `write_varint` | `protocol::write_varint` in same path | Match |
 | Client-side read | `read_varint` | `negotiator.read_compat_flags()` -> `CompatibilityFlags::read_from()` -> `read_varint` | Match |
-| Client-side `INC_RECURSE` defensive clear | Implicit via `if (inc_recurse && !allow_inc_recurse)` abort (`compat.c:768-774`) | Explicit `flags &= !CompatibilityFlags::INC_RECURSE` when `!config.allow_inc_recurse` (`mod.rs:121-123`) | Stricter: we silently mask instead of aborting. Acceptable because it preserves upstream's "the bit must not survive when not allowed" invariant without forcing a transfer abort on corner-case batches. |
+| Client-side `INC_RECURSE` defensive clear | Implicit via `if (inc_recurse && !allow_inc_recurse)` abort (`compat.c:777-783`) | Explicit `flags &= !CompatibilityFlags::INC_RECURSE` when `!config.allow_inc_recurse` (`mod.rs:121-123`) | Stricter: we silently mask instead of aborting. Acceptable because it preserves upstream's "the bit must not survive when not allowed" invariant without forcing a transfer abort on corner-case batches. |
 | SSH-direction defaults | (no equivalent; upstream never executes the `else` branch on a non-server) | We seed sensible defaults so an SSH/client-mode build still emits the same `-e` capability set the daemon would | Match (additive; the SSH code path is exercised in our crates only). |
 
 ### Per-character upstream-vs-ours table

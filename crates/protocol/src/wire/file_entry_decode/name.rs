@@ -12,7 +12,7 @@ use super::super::file_entry::{XMIT_LONG_NAME, XMIT_SAME_NAME};
 /// Maximum total file name length on the wire.
 ///
 /// Matches upstream rsync's `MAXPATHLEN` (the system value, 4096 on Linux;
-/// `rsync.h:761-762` falls back to 1024). Upstream checks
+/// `rsync.h:777-778` falls back to 1024). Upstream checks
 /// `l2 >= MAXPATHLEN - l1` before allocating the name buffer.
 ///
 /// upstream: rsync.h `MAXPATHLEN`, flist.c:recv_file_entry()
@@ -25,7 +25,7 @@ pub(crate) const MAXPATHLEN: usize = 4096;
 /// daemon log for `overflow:` must find the same line whichever decoder read
 /// the entry.
 ///
-/// upstream: flist.c:1044-1048 - `rprintf(FERROR, "overflow: xflags=0x%x l1=%d
+/// upstream: flist.c:1048-1052 - `rprintf(FERROR, "overflow: xflags=0x%x l1=%d
 /// l2=%d lastname=%s [%s]\n", xflags, l1, l2, lastname, who_am_i())` followed
 /// by `overflow_exit("recv_file_entry")`. The trailing `[%s]` is `who_am_i()`,
 /// which this crate has no role for; oc's diagnostic layers append their own
@@ -103,7 +103,7 @@ pub fn decode_name<R: Read>(
         buf[0] as usize
     };
 
-    // upstream: flist.c:1044 `l2 >= MAXPATHLEN - l1` overflow exit. `same_len`
+    // upstream: flist.c:1048 `l2 >= MAXPATHLEN - l1` overflow exit. `same_len`
     // is one wire byte, so the subtraction cannot underflow.
     if suffix_len >= MAXPATHLEN - same_len {
         return Err(name_overflow_error(flags, same_len, suffix_len, prev_name));

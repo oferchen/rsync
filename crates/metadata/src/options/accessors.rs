@@ -105,7 +105,7 @@ impl MetadataOptions {
     /// `fast_io::secure_chmod_at`) must bypass that guard, because the user
     /// has explicitly opted into following dest-side symlinks-to-dirs.
     ///
-    /// upstream: generator.c:1745 - `gen_entry_stat(fname, file, &sx.st, keep_dirlinks && is_dir)`.
+    /// upstream: generator.c:1782 - `gen_entry_stat(fname, file, &sx.st, keep_dirlinks && is_dir)`.
     #[must_use]
     pub const fn keep_dirlinks(&self) -> bool {
         self.keep_dirlinks

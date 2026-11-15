@@ -1,7 +1,7 @@
 //! A `-L` transfer that meets a dangling symlink must report "symlink has no
 //! referent" and exit 23, not call the entry vanished and exit 24.
 //!
-//! upstream `flist.c:1668-1681`, `make_file()`: when one of the `--copy*links`
+//! upstream `flist.c:1672-1685`, `make_file()`: when one of the `--copy*links`
 //! options made the sender dereference the entry, an `ENOENT` on a path that
 //! `lstat` still shows as a symlink sets `IOERR_GENERAL` and logs
 //! `FERROR_XFER "symlink has no referent: %s"`. Only a genuinely missing entry

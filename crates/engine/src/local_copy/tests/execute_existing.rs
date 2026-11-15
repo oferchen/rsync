@@ -1107,7 +1107,7 @@ fn existing_combined_with_ignore_existing_and_update() {
     assert!(!dest_root.join("new.txt").exists());
 }
 
-/// upstream: generator.c:1757 - `--existing` skips only a destination whose
+/// upstream: generator.c:1794 - `--existing` skips only a destination whose
 /// lstat failed with ENOENT. A non-directory where a directory arrives EXISTS,
 /// so the entry is not skipped: the obstacle is replaced by the directory
 /// (generator.c:1840 delete_item(DEL_FOR_DIR)). Skipping after the removal
@@ -1138,7 +1138,7 @@ fn existing_replaces_file_obstacle_with_directory() {
     );
 }
 
-/// upstream: generator.c:1757 - `--existing` never creates an absent FIFO.
+/// upstream: generator.c:1794 - `--existing` never creates an absent FIFO.
 #[cfg(unix)]
 #[test]
 fn existing_skips_new_fifo() {

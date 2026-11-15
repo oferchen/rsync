@@ -14,7 +14,7 @@ use std::collections::HashMap;
 /// Host string reported when reverse lookup is switched off, so no name was
 /// ever sought.
 ///
-/// upstream: clientserver.c:126 `const char undetermined_hostname[] =
+/// upstream: clientserver.c:130 `const char undetermined_hostname[] =
 /// "UNDETERMINED";`, selected at clientserver.c:1525 when
 /// `lp_reverse_lookup(-1)` is false.
 pub(in crate::daemon) const UNDETERMINED_HOSTNAME: &str = "UNDETERMINED";
@@ -39,7 +39,7 @@ pub(in crate::daemon) const UNKNOWN_HOSTNAME: &str = "UNKNOWN";
 /// Access control consumes the same string through [`PeerHost`], which keeps
 /// the resolved/sentinel distinction the ACL rules need.
 ///
-/// upstream: clientserver.c:1525 `host = lp_reverse_lookup(-1) ?
+/// upstream: clientserver.c:1535 `host = lp_reverse_lookup(-1) ?
 /// client_name(addr) : undetermined_hostname;`
 pub(in crate::daemon) fn peer_host_display(resolved: Option<&str>, reverse_lookup: bool) -> &str {
     match resolved {
@@ -134,7 +134,7 @@ pub(crate) fn module_peer_hostname<'a>(
 /// The name keeps the case the resolver returned, so `%h` and
 /// `RSYNC_HOST_NAME` show it as upstream does (clientname.c `client_name`
 /// never folds it). `hosts allow`/`hosts deny` stay case-insensitive because
-/// the matcher folds the host, as upstream's `iwildmatch` does (access.c:57).
+/// the matcher folds the host, as upstream's `iwildmatch` does (access.c:61).
 ///
 /// The PTR-derived name is forward-confirmed before being returned: the name's
 /// A/AAAA records must include `peer_ip`. A name that does not forward-resolve
@@ -220,7 +220,7 @@ fn resolve_forward_key(key: &str) -> Option<Vec<IpAddr>> {
 /// Tests inject deterministic membership via `TEST_NETGROUP_MEMBERS`, keeping
 /// access-control tests hermetic and free of a real netgroup database.
 ///
-/// upstream: access.c:45 `innetgr(tok + 1, host, NULL, NULL)` - only the
+/// upstream: access.c:49 `innetgr(tok + 1, host, NULL, NULL)` - only the
 /// netgroup's host field is consulted (user and domain are NULL).
 #[cfg(not(test))]
 pub(in crate::daemon) fn netgroup_contains(netgroup: &str, host: &str) -> bool {

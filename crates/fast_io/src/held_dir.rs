@@ -16,9 +16,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/syscall.c:3703-3720` - the persistent ancestor-dirfd stack
+//! - `rsync-3.5.2/syscall.c:3771-3788` - the persistent ancestor-dirfd stack
 //!   and why a raced ancestor resolving to the held inode is sound.
-//! - `rsync-3.5.1/syscall.c:3744-3816` `dpc_dir_fd()` - reuse while the path
+//! - `rsync-3.5.2/syscall.c:3812-3884` `dpc_dir_fd()` - reuse while the path
 //!   matches, re-resolve (and release the old descriptors) when it diverges.
 
 use std::io;

@@ -55,8 +55,8 @@ Key characteristics:
 - **No EOF probe.** The loop `for (i = 0; i + CHUNK_SIZE <= len; i += CHUNK_SIZE)`
   uses the known length. The remainder `len - i` handles the final
   partial chunk. No read-until-zero pattern.
-- **CHUNK_SIZE = 32 KB.** Defined in `rsync.h:158`. Each `map_ptr()`
-  call triggers a `read()` of up to `MAX_MAP_SIZE` (256 KB, `rsync.h:159`)
+- **CHUNK_SIZE = 32 KB.** Defined in `rsync.h:159`. Each `map_ptr()`
+  call triggers a `read()` of up to `MAX_MAP_SIZE` (256 KB, `rsync.h:160`)
   into a reusable window buffer, so the actual kernel reads are 256 KB
   each. Subsequent `map_ptr()` calls for adjacent offsets hit the
   in-window cache without a syscall.

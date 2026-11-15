@@ -224,7 +224,8 @@ impl CompiledRule {
         if matches!(
             action,
             FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
-        ) {
+        ) || wild3_suffix
+        {
             if !suppress_descendants {
                 descendant_patterns.insert([core_pattern.as_ref(), b"/**"].concat());
                 if !anchored && !has_double_star {

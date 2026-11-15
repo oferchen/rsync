@@ -38,7 +38,7 @@ regression:
   `ClientConfig::inc_recursive_send` from `false` to `true` so the
   client-as-sender advertised the `'i'` capability bit in the `-e.`
   string for push transfers, mirroring upstream
-  `compat.c:720 set_allow_inc_recurse()`.
+  `compat.c:721 set_allow_inc_recurse()`.
 - **Mechanism**: the flip removed a role-based wire asymmetry but routed
   every push through the sender-side INC_RECURSE state machine, which
   had never been validated against upstream interop and was not

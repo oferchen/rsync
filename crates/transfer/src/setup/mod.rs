@@ -57,7 +57,7 @@ use std::io::{self, Read, Write};
 /// [`setup_protocol_with`] with a [`RsyncNegotiator`] instance, preserving
 /// full upstream rsync wire compatibility.
 ///
-/// Mirrors upstream rsync's `setup_protocol()` at `compat.c:572-644`.
+/// Mirrors upstream rsync's `setup_protocol()` at `compat.c:573-645`.
 ///
 /// # Arguments
 ///
@@ -83,9 +83,9 @@ pub fn setup_protocol(
 ///
 /// # Protocol phases (upstream compat.c order)
 ///
-/// 1. Compat flags exchange (protocol >= 30) - upstream compat.c:710-743
-/// 2. Capability negotiation (protocol >= 30) - upstream compat.c:534-585
-/// 3. Checksum seed exchange (ALL protocols) - upstream compat.c:750
+/// 1. Compat flags exchange (protocol >= 30) - upstream compat.c:711-752
+/// 2. Capability negotiation (protocol >= 30) - upstream compat.c:535-586
+/// 3. Checksum seed exchange (ALL protocols) - upstream compat.c:759
 ///
 /// # Arguments
 ///
@@ -101,18 +101,18 @@ pub fn setup_protocol_with<'a>(
 ) -> io::Result<SetupResult> {
     let mut stdin = safe_read::SafeRead::new(stdin);
     let stdin: &mut dyn Read = &mut stdin;
-    // upstream compat.c:599-607 - when remote_protocol != 0 (daemon mode),
+    // upstream compat.c:600-608 - when remote_protocol != 0 (daemon mode),
     // binary 4-byte protocol exchange was already done via @RSYNCD text protocol.
 
     let (compat_flags, negotiated_algorithms) =
         if config.protocol.uses_binary_negotiation() && !config.skip_compat_exchange {
             let (our_flags, client_info) = build_our_flags(config, negotiator);
-            // upstream: compat.c:543 - compression vstrings are only exchanged
+            // upstream: compat.c:544 - compression vstrings are only exchanged
             // when do_compression && !compress_choice. When --compress-choice is
             // specified, both sides already know the algorithm.
             let send_compression = config.do_compression && config.compress_choice.is_none();
 
-            // Compat flags exchange is UNIDIRECTIONAL (upstream compat.c:710-741):
+            // Compat flags exchange is UNIDIRECTIONAL (upstream compat.c:711-750):
             // Server writes, client reads.
             let compat_flags = if config.is_server {
                 let info_ref = client_info.as_deref().unwrap_or("");
@@ -122,7 +122,7 @@ pub fn setup_protocol_with<'a>(
             } else {
                 // The compat-flags exchange is unidirectional: the server writes
                 // the negotiated set and the client honours it verbatim.
-                // upstream: compat.c:745-746 recv side -
+                // upstream: compat.c:754-755 recv side -
                 //   `inc_recurse = compat_flags & CF_INC_RECURSE ? 1 : 0;`
                 // The server only sets CF_INC_RECURSE when the client advertised
                 // the 'i' capability (compat.c:713, gated by
@@ -137,7 +137,7 @@ pub fn setup_protocol_with<'a>(
                 negotiator.read_compat_flags(stdin)?
             };
 
-            // upstream: compat.c:751-753 - create-times ride the extended varint
+            // upstream: compat.c:760-762 - create-times ride the extended varint
             // file-list flags (crtimes_ndx, compat.c:582-583). A peer that never
             // advertised CF_VARINT_FLIST_FLAGS (rsync older than 3.2.0) cannot
             // parse that field, so upstream aborts with RERR_PROTOCOL here -
@@ -146,7 +146,7 @@ pub fn setup_protocol_with<'a>(
             // are exchanged on failure.
             require_crtimes_capability(config.preserve_crtimes, compat_flags)?;
 
-            // upstream: compat.c:780-785 - checked after the crtimes abort and
+            // upstream: compat.c:789-794 - checked after the crtimes abort and
             // before negotiate_the_strings(), so nothing more is exchanged.
             refuse_incompatible_inc_recurse(config.options_allow_inc_recurse, compat_flags, false)?;
 
@@ -164,11 +164,11 @@ pub fn setup_protocol_with<'a>(
             );
 
             // Determine whether capability negotiation should happen.
-            // upstream compat.c:740-742 - do_negotiated_strings requires CF_VARINT_FLIST_FLAGS.
+            // upstream compat.c:749-751 - do_negotiated_strings requires CF_VARINT_FLIST_FLAGS.
             let do_negotiation =
                 should_negotiate(config.is_server, &client_info, our_flags, compat_flags);
 
-            // upstream: compat.c:819 parse_compress_choice(1) - when an
+            // upstream: compat.c:828 parse_compress_choice(1) - when an
             // explicit compress_choice is set (--compress-choice=ALGO,
             // --new-compress, --old-compress), pass it as a compression
             // override so the protocol layer uses it directly without
@@ -182,14 +182,14 @@ pub fn setup_protocol_with<'a>(
                     send_compression,
                     is_daemon_mode: config.is_daemon_mode,
                     is_server: config.is_server,
-                    // upstream: compat.c:819 parse_checksum_choice(1) - an
+                    // upstream: compat.c:828 parse_checksum_choice(1) - an
                     // explicit --checksum-choice=ALGO forces the algorithm and
                     // skips the checksum vstring exchange (compat.c:541). Mirror
                     // the compress_choice threading directly above.
                     checksum_override: config.checksum_choice,
                     compression_override: config.compress_choice,
                     compression_level: config.compression_level,
-                    // upstream: compat.c:412-414 getenv_nstr() - `write_batch`
+                    // upstream: compat.c:413-415 getenv_nstr() - `write_batch`
                     // overrides both lists with the old-style choice.
                     write_batch: config.write_batch,
                 },
@@ -215,7 +215,7 @@ pub fn setup_protocol_with<'a>(
             (None, legacy_algorithms)
         };
 
-    // Checksum seed exchange (ALL protocols, upstream compat.c:750)
+    // Checksum seed exchange (ALL protocols, upstream compat.c:759)
     let checksum_seed = if config.is_server {
         negotiator.write_seed(stdout, config.checksum_seed)?
     } else {
@@ -312,7 +312,7 @@ pub fn refuse_incompatible_inc_recurse(
 ///
 /// Returns the flags and optionally the parsed client info string.
 ///
-/// upstream: compat.c:161-179 - `set_allow_inc_recurse()` sets `client_info`
+/// upstream: compat.c:162-180 - `set_allow_inc_recurse()` sets `client_info`
 /// from `shell_cmd` (SSH) or `maybe_add_e_option()` (local), then
 /// compat.c:712-732 uses `client_info` to build compat flags.
 fn build_our_flags<'a>(
@@ -321,7 +321,7 @@ fn build_our_flags<'a>(
 ) -> (CompatibilityFlags, Option<std::borrow::Cow<'a, str>>) {
     if let Some(args) = config.client_args {
         // Daemon server mode: parse client capabilities from -e option
-        // upstream: compat.c:712-732
+        // upstream: compat.c:713-741
         let client_info = negotiator.parse_client_info(args);
         let flags = negotiator.build_flags_from_client_info(&client_info, config.allow_inc_recurse);
         (flags, Some(client_info))
@@ -365,7 +365,7 @@ fn build_our_flags<'a>(
 /// Used when we are the client (advertising our capabilities) or when
 /// the server has no capability string from the remote.
 ///
-/// upstream: compat.c:712-732 - flags set based on compile-time features.
+/// upstream: compat.c:713-741 - flags set based on compile-time features.
 fn build_default_flags(allow_inc_recurse: bool) -> CompatibilityFlags {
     let mut flags = CompatibilityFlags::CHECKSUM_SEED_FIX
         | CompatibilityFlags::VARINT_FLIST_FLAGS
@@ -374,13 +374,13 @@ fn build_default_flags(allow_inc_recurse: bool) -> CompatibilityFlags {
         | CompatibilityFlags::INPLACE_PARTIAL_DIR
         | CompatibilityFlags::ID0_NAMES;
 
-    // upstream: CAN_SET_SYMLINK_TIMES at compat.c:713-714
+    // upstream: CAN_SET_SYMLINK_TIMES at compat.c:714-715
     #[cfg(unix)]
     {
         flags |= CompatibilityFlags::SYMLINK_TIMES;
     }
 
-    // upstream: compat.c:715-716 - CF_SYMLINK_ICONV is gated on
+    // upstream: compat.c:716-717 - CF_SYMLINK_ICONV is gated on
     // `#ifdef ICONV_OPTION`. Mirror that with the `iconv` cargo feature
     // so SSH/client builds without iconv neither set the flag locally
     // nor advertise 's' to the peer (see capability::CAPABILITY_MAPPINGS).
@@ -422,7 +422,7 @@ fn should_negotiate(
         )
     } else {
         // Client checks SERVER's compat flags
-        // upstream: compat.c:740-742
+        // upstream: compat.c:749-751
         peer_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
     }
 }

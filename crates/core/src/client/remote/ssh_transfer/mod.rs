@@ -133,7 +133,7 @@ mod tests {
     /// (under implied `--relative`) mirroring its absolute path on the
     /// destination.
     ///
-    /// upstream: `options.c:2664 filesfrom_fd = open_no_attacker_symlinks(files_from, ...)`,
+    /// upstream: `options.c:2719 filesfrom_fd = open_no_attacker_symlinks(files_from, ...)`,
     /// `flist.c:2787-2809` send_file_list() walking the open fd.
     #[test]
     fn generator_config_sets_files_from_path_for_local_file_push() {
@@ -159,7 +159,7 @@ mod tests {
 
     /// SSH push with stdin-sourced `--files-from`: the local sender reads
     /// filenames from its standard input. The transfer crate signals this with
-    /// the sentinel path "-" mirroring upstream's `options.c:2622-2623
+    /// the sentinel path "-" mirroring upstream's `options.c:2677-2678
     /// filesfrom_fd = 0` assignment.
     #[test]
     fn generator_config_sets_files_from_path_for_stdin_push() {
@@ -184,7 +184,7 @@ mod tests {
     /// SSH push with remote-sourced `--files-from`: the local sender consumes
     /// the list bytes forwarded by the remote receiver over the wire. The
     /// transfer crate's protocol stream is the "-" sentinel here too;
-    /// upstream wires this via `main.c:1383-1384 filesfrom_fd = f_in`.
+    /// upstream wires this via `main.c:1387-1388 filesfrom_fd = f_in`.
     #[test]
     fn generator_config_sets_files_from_stdin_for_remote_push() {
         use super::super::super::config::FilesFromSource;

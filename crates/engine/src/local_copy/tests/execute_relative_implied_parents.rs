@@ -1,6 +1,6 @@
 // Tests for --relative implied-parent creation across an in-the-way symlink.
 //
-// upstream: generator.c:1839-1842 recv_generator() receives each implied parent
+// upstream: generator.c:1876-1879 recv_generator() receives each implied parent
 // as its own file-list entry and decides that level on its own: a non-directory
 // found in its place is removed and a real directory created there. Resolving
 // the whole parent path in one step instead follows such a component, and the

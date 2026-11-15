@@ -68,7 +68,7 @@ impl HostPattern {
             return Ok(Self::Any);
         }
 
-        // upstream: access.c:44-45 - a token of the form `@name` tests the
+        // upstream: access.c:48-49 - a token of the form `@name` tests the
         // client's resolved hostname for membership in the netgroup `name`
         // (`innetgr(tok + 1, host, NULL, NULL)`). A bare `@` (no name) is not a
         // netgroup (`tok[1]` is required, access.c:44) and falls through to be
@@ -171,7 +171,7 @@ impl HostPattern {
     /// `hostname` is never empty - it is either a resolved name or one of
     /// upstream's `UNKNOWN`/`UNDETERMINED` sentinels - which is why the
     /// hostname and netgroup arms match it unconditionally. upstream:
-    /// access.c:40-41 refuses only a NULL or empty `host`, a state upstream
+    /// access.c:44-45 refuses only a NULL or empty `host`, a state upstream
     /// never reaches either.
     fn matches(&self, addr: IpAddr, hostname: &str) -> bool {
         match (self, addr) {
@@ -195,7 +195,7 @@ impl HostPattern {
                 }
             }
             (Self::Hostname(pattern), _) => pattern.matches(hostname),
-            // upstream: access.c:44-45 `innetgr(tok + 1, host, NULL, NULL)` -
+            // upstream: access.c:48-49 `innetgr(tok + 1, host, NULL, NULL)` -
             // the client's resolved hostname is tested for netgroup membership.
             // Like the reverse-DNS name match, this needs a resolved hostname;
             // without one (access.c:40-41 `if (!host || !*host) return 0`) it
@@ -210,7 +210,7 @@ impl HostPattern {
     /// Returns whether this pattern requires a resolved hostname.
     ///
     /// Both hostname-pattern and `@netgroup` tokens are evaluated against the
-    /// client's resolved hostname (upstream access.c:40-41, 57), so a deny rule
+    /// client's resolved hostname (upstream access.c:44-45, 57), so a deny rule
     /// of either kind must fail closed when no hostname is available
     /// (GHSA-rjfm-3w2m-jf4f).
     const fn requires_hostname(&self) -> bool {
@@ -240,7 +240,7 @@ impl HostPattern {
     /// returns `deny` (access.c:68-74), so an unresolvable **deny** token
     /// matches - we cannot prove the peer is not the denied host - while an
     /// unresolvable **allow** token still does not. Both gates above return 0
-    /// regardless of `deny`, exactly as upstream does at access.c:60-65.
+    /// regardless of `deny`, exactly as upstream does at access.c:64-69.
     fn forward_resolve_matches(&self, addr: IpAddr, forward_lookup: bool, deny: bool) -> bool {
         if !forward_lookup {
             return false;
@@ -255,7 +255,7 @@ impl HostPattern {
 
 /// Compares `addr` and `network` under `mask`, all of one address family.
 ///
-/// upstream: access.c:90 match_binary() - `(b1[i] ^ b2[i]) & mask[i]` must be
+/// upstream: access.c:154 match_binary() - `(b1[i] ^ b2[i]) & mask[i]` must be
 /// zero for every byte, which is `(a & m) == (t & m)`.
 fn masked_equal(addr: IpAddr, network: IpAddr, mask: IpAddr) -> bool {
     match (addr, network, mask) {
@@ -272,7 +272,7 @@ fn masked_equal(addr: IpAddr, network: IpAddr, mask: IpAddr) -> bool {
 /// Returns whether a `hosts allow`/`hosts deny` token is a simple hostname
 /// eligible for forward-DNS resolution.
 ///
-/// upstream: access.c:63-65 - the forward lookup is skipped when the token is
+/// upstream: access.c:67-69 - the forward lookup is skipped when the token is
 /// an address (consisting solely of dots and digits) or a wildcarded/netmask
 /// entry (containing any of `:` `/` `*` `?` `[`). Only simple hostnames are
 /// forward-resolved.
@@ -322,14 +322,14 @@ impl HostnamePattern {
             return Err("host pattern must be non-empty".to_owned());
         }
 
-        // upstream: access.c:48-54 - a peer name arrives from DNS as ASCII,
+        // upstream: access.c:52-58 - a peer name arrives from DNS as ASCII,
         // so an IDN token is folded to its A-label form before it is matched
         // or forward-resolved. A token that cannot be folded stays as typed
         // and so matches nothing rather than too much.
         let trimmed = core::idn::host_to_ascii(trimmed);
         let trimmed = trimmed.as_ref();
 
-        // upstream: access.c:268 `strlower(list2)` lowercases the whole host
+        // upstream: access.c:332 `strlower(list2)` lowercases the whole host
         // list before tokenizing; the token is used verbatim (dots retained)
         // for the forward `gethostbyname` lookup at access.c:68.
         let original = trimmed.to_ascii_lowercase();
@@ -361,7 +361,7 @@ impl HostnamePattern {
     /// Forward-resolves this hostname token and matches `addr` against the
     /// resolved A/AAAA records.
     ///
-    /// upstream: access.c:63-81 - forward DNS applies only to simple hostname
+    /// upstream: access.c:67-88 - forward DNS applies only to simple hostname
     /// tokens; the token is resolved and each returned address is compared to
     /// the connecting address (access.c:77-78). The eligibility gate is
     /// [`token_is_forward_resolvable`]; resolution goes through the shared
@@ -372,10 +372,10 @@ impl HostnamePattern {
         }
 
         match module_state::forward_resolve(&self.original) {
-            // upstream: access.c:77-84 - a successful lookup matches only when
+            // upstream: access.c:84-107 - a successful lookup matches only when
             // one of the returned records IS the peer.
             Some(resolved) => resolved.into_iter().any(|record| record == addr),
-            // upstream: access.c:68-74 - a token the resolver cannot resolve
+            // upstream: access.c:72-81 - a token the resolver cannot resolve
             // returns `deny`, so a deny rule fails CLOSED.
             None => deny,
         }
@@ -411,7 +411,7 @@ impl HostnamePattern {
                         .get(hostname.len() - suffix.len() - 1)
                         .is_some_and(|byte| *byte == b'.')
             }
-            // upstream: access.c:57 `iwildmatch(tok, host)` - the token is
+            // upstream: access.c:61 `iwildmatch(tok, host)` - the token is
             // matched with the full shell-glob matcher, not a `*`/`?`-only
             // one, so bracket expressions work in a host token.
             HostnamePatternKind::Wildcard(pattern) => {
@@ -424,7 +424,7 @@ impl HostnamePattern {
 /// Returns whether `byte` makes a `hosts allow`/`hosts deny` token a glob
 /// rather than a literal name.
 ///
-/// upstream: access.c:64 `tok[strcspn(tok, ":/*?[")]` - `[` is a wildcard
+/// upstream: access.c:68 `tok[strcspn(tok, ":/*?[")]` - `[` is a wildcard
 /// metacharacter, on equal footing with `*` and `?`, and disqualifies the token
 /// from forward DNS for exactly that reason. `\` joins them because
 /// `iwildmatch()` reads it as an escape. `:` and `/` are absent here: they
@@ -437,7 +437,7 @@ const fn is_wildmatch_metachar(byte: u8) -> bool {
 /// Warns the operator that `proxy protocol = true` with no trusted-proxy list
 /// rejects every connection.
 ///
-/// upstream: clientserver.c:1768-1777
+/// upstream: clientserver.c:1833-1842
 ///
 /// ```c
 /// /* "proxy protocol = true" with no trusted-proxy list rejects every
@@ -533,7 +533,7 @@ impl ProxyProtocolPolicy {
     /// Returns whether `proxy protocol = true` was set with no trusted-proxy
     /// list - the fail-closed combination upstream warns about at startup.
     ///
-    /// upstream: clientserver.c:1771-1772.
+    /// upstream: clientserver.c:1836-1837.
     pub(in crate::daemon) fn rejects_every_peer(&self) -> bool {
         matches!(self, Self::Enabled(trusted) if trusted.is_empty())
     }
@@ -542,7 +542,7 @@ impl ProxyProtocolPolicy {
 /// Returns whether `addr` is a trusted proxy allowed to supply a PROXY
 /// protocol header.
 ///
-/// upstream: access.c:311-317
+/// upstream: access.c:375-381
 ///
 /// ```c
 /// int allow_proxy_protocol_peer(const char *list, const char *addr, const char **host_ptr)
@@ -578,7 +578,7 @@ fn allow_proxy_protocol_peer(list: &[HostPattern], addr: IpAddr) -> bool {
 /// [`HostPattern`]. A token that cannot be parsed becomes
 /// [`HostPattern::Unmatchable`], and an *empty* value is an empty list.
 ///
-/// upstream: access.c:286-289 - `allow_access()` normalises an empty list
+/// upstream: access.c:350-353 - `allow_access()` normalises an empty list
 /// string to `NULL` (`if (allow_list && !*allow_list) allow_list = NULL;`)
 /// before it decides anything, so `hosts allow =` is legal config meaning
 /// "no list", indistinguishable from the directive being absent.

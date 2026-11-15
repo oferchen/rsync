@@ -28,16 +28,16 @@
 //!
 //! # Upstream reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.1/delete.c:91-183`
+//! - `target/interop/upstream-src/rsync-3.5.2/delete.c:91-183`
 //!   (`delete_dir_contents`): recursive directory peel used when an
 //!   `rmdir` would fail with `ENOTEMPTY`.
-//! - `target/interop/upstream-src/rsync-3.5.1/delete.c:191-288`
+//! - `target/interop/upstream-src/rsync-3.5.2/delete.c:191-288`
 //!   (`delete_item`): empties a directory through `delete_dir_contents`
 //!   first, then `rmdir`s it; everything else goes through `del_unlink`
 //!   (`robust_unlink` fallback). `ENOTEMPTY` on a directory yields
 //!   `DR_NOT_EMPTY`, `ENOENT` counts as success, and any other error is
 //!   logged as `FERROR_XFER` and reported via `DR_FAILURE`.
-//! - `target/interop/upstream-src/rsync-3.5.1/generator.c:285-360`
+//! - `target/interop/upstream-src/rsync-3.5.2/generator.c:320-395`
 //!   (`delete_in_dir`): reverse iteration over the sorted destination
 //!   listing, one `delete_item` call per non-matched entry.
 //! - `target/interop/upstream-src/rsync-3.5.1/errcode.h`: `RERR_PARTIAL`
@@ -316,7 +316,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// caller should surface when the drain completed without a fatal
     /// abort. Returns `0` on a clean run, `24` if every failure was a
     /// vanished-file race, and `23` for any other I/O error. Mirrors
-    /// upstream `cleanup.c:210-219 _exit_cleanup()`, where `RERR_PARTIAL`
+    /// upstream `cleanup.c:211-220 _exit_cleanup()`, where `RERR_PARTIAL`
     /// overrides `RERR_VANISHED` when `IOERR_GENERAL` is also set.
     #[must_use]
     pub fn exit_code(&self) -> i32 {

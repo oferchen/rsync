@@ -79,7 +79,7 @@ fn remove_source_files_unlinks_transferred_files() {
         "source dir/subdir/leaf.txt should have been removed"
     );
 
-    // upstream: sender.c:396 successful_send() unlinks only the sent file,
+    // upstream: sender.c:404 successful_send() unlinks only the sent file,
     // never its parent directory, so the empty dir hierarchy must survive.
     assert!(from.join("dir").is_dir(), "source dir/ should remain");
     assert!(

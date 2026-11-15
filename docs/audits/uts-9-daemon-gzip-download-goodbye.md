@@ -68,7 +68,7 @@ crates/transfer/src/generator/transfer/orchestrator.rs
 ```
 
 This mirrors upstream `main.c:983` (`do_server_sender()`) and
-`main.c:1344` (`client_run()`), both of which call
+`main.c:1347` (`client_run()`), both of which call
 `io_flush(FULL_FLUSH)` immediately before returning. Because every
 daemon-sender path - batch-mode (UTS-15.c) and `-zz` daemon-pull
 (UTS-9) - flows through the same `run()` exit point, a single flush
@@ -107,6 +107,6 @@ default CI.
 
 - `main.c:983` `do_server_sender()` - `io_flush(FULL_FLUSH)` before
   return
-- `main.c:1344` `client_run()` - `io_flush(FULL_FLUSH)` before return
+- `main.c:1347` `client_run()` - `io_flush(FULL_FLUSH)` before return
 - `main.c:875-906` `read_final_goodbye()` - goodbye exchange contract
-- `options.c:2011-2012` `-zz` -> `compress_choice = "zlibx"` mapping
+- `options.c:2047-2048` `-zz` -> `compress_choice = "zlibx"` mapping

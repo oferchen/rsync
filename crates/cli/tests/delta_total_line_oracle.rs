@@ -1,6 +1,6 @@
 //! Oracle: the `-vv` `total:` line of a delta transfer equals rsync 3.5.1's.
 //!
-//! upstream: match.c:480-489 `match_report()`. `matches` and `data` follow
+//! upstream: match.c:516-525 `match_report()`. `matches` and `data` follow
 //! from the delta itself, but `hash_hits` and `false_alarms` are defined by
 //! upstream's own `hash_table` (match.c:84-110, 214-271), which oc's matcher
 //! does not use; oc replays that table to report them. Each fixture runs as a

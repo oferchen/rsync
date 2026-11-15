@@ -36,7 +36,7 @@ let mut buf = [0u8; 64 * 1024];
 while remaining > 0 { file.read_exact(&mut buf[..to_read])?; hasher.update(...); }
 ```
 
-Mirrors `generator.c:626 quick_check_ok()` and `checksum.c:402
+Mirrors `generator.c:663 quick_check_ok()` and `checksum.c:402
 file_checksum()` (no rolling, no seed).
 
 ## 2. Per-file cost breakdown

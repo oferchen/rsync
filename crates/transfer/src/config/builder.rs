@@ -375,7 +375,7 @@ impl ServerConfigBuilder {
     /// Sets the fixed delta block length from `-B` / `--block-size`.
     ///
     /// Only the receiving side acts on it, at the one point that sizes the
-    /// blocks it checksums. upstream: generator.c:720-721.
+    /// blocks it checksums. upstream: generator.c:757-758.
     pub fn block_size(&mut self, size: Option<NonZeroU32>) -> &mut Self {
         self.block_size = size;
         self
@@ -583,7 +583,7 @@ impl ServerConfigBuilder {
 
     /// Validates the builder configuration.
     fn validate(&self) -> Result<(), BuilderError> {
-        // upstream: options.c:2572-2582 - --delay-updates implies a partial dir, which
+        // upstream: options.c:2627-2637 - --delay-updates implies a partial dir, which
         // --inplace refuses
         if self.write.inplace && self.write.delay_updates {
             return Err(BuilderError::ConflictingOptions {
@@ -592,7 +592,7 @@ impl ServerConfigBuilder {
             });
         }
 
-        // upstream: options.c:2551-2561, 2575-2582 - --append implies --inplace, which
+        // upstream: options.c:2606-2616, 2575-2582 - --append implies --inplace, which
         // conflicts with --partial-dir
         if self.flags.append && self.has_partial_dir {
             return Err(BuilderError::ConflictingOptions {
@@ -601,7 +601,7 @@ impl ServerConfigBuilder {
             });
         }
 
-        // upstream: options.c:2575-2582 - `if (inplace) { if (partial_dir) {
+        // upstream: options.c:2630-2637 - `if (inplace) { if (partial_dir) {
         // "--inplace cannot be used with --partial-dir" }}`. --inplace writes
         // straight into the destination, so a partial-dir staging basis is
         // meaningless; upstream refuses the combination outright.

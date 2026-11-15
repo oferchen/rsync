@@ -40,13 +40,13 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/options.c:2417-2418` - `backup_dir = sanitize_path(NULL,
+//! - `rsync-3.5.2/options.c:2472-2473` - `backup_dir = sanitize_path(NULL,
 //!   backup_dir, NULL, 0, SP_DEFAULT)` for a sanitizing (daemon) receiver.
-//! - `rsync-3.5.1/util1.c:1242-1248` - the rootdir prefix is applied only when
+//! - `rsync-3.5.2/util1.c:1242-1248` - the rootdir prefix is applied only when
 //!   the value starts with `/`; a relative value keeps no prefix.
-//! - `rsync-3.5.1/util1.c:1281-1294` - with `depth <= 0` every `..` component is
+//! - `rsync-3.5.2/util1.c:1281-1294` - with `depth <= 0` every `..` component is
 //!   collapsed away rather than kept at the start.
-//! - `rsync-3.5.1/main.c:845-872` - `get_local_name()` mode 2: a single-file
+//! - `rsync-3.5.2/main.c:845-872` - `get_local_name()` mode 2: a single-file
 //!   destination chdirs to the operand's parent and returns its basename.
 
 #![cfg(unix)]

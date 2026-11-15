@@ -525,7 +525,7 @@ mod device_predicate_tests {
         meta.file_type().is_char_device().then_some(meta)
     }
 
-    /// upstream: `generator.c:2148` - without `write_devices` an `FT_DEVICE`
+    /// upstream: `generator.c:2189` - without `write_devices` an `FT_DEVICE`
     /// destination fails the keep condition, so `delete_item()` clears it.
     #[test]
     fn a_device_destination_is_an_obstacle_without_write_devices() {

@@ -147,7 +147,7 @@ fn descent_refuses_absolute_symlink_target_without_disturbing_stack() {
 /// refuses a symlink leaf regardless of target. That platform split is a
 /// real residual, not an oversight in this test.
 ///
-/// upstream: `syscall.c:3102`.
+/// upstream: `syscall.c:3173`.
 #[cfg(target_os = "linux")]
 #[test]
 fn descent_follows_relative_in_tree_symlink() {

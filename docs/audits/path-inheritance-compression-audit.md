@@ -62,7 +62,7 @@ at 255 (the maximum value that fits in a single byte). When `same_len`
 is non-zero, `XMIT_SAME_NAME` (`0x20`) is set in `xflags` and a single
 `u8` carries the prefix length.
 
-Upstream sender (`flist.c:534-540`):
+Upstream sender (`flist.c:537-543`):
 
 ```c
 for (l1 = 0;
@@ -166,7 +166,7 @@ self.state.update_name(&name);
 ### Empty names
 
 Upstream rejects empty filenames at the sender side
-(`flist.c:1873`). The Rust receiver enforces the same invariant as
+(`flist.c:1877`). The Rust receiver enforces the same invariant as
 defense in depth - after `read_name()` returns, the caller checks
 `name.is_empty()` and surfaces `InvalidData` with
 `"received file entry with zero-length filename"`
@@ -236,7 +236,7 @@ if same_len > self.state.prev_name().len() {
 
 (`crates/protocol/src/flist/read/name.rs:68-77`). This is stricter
 than upstream, which performs only a `MAXPATHLEN` overflow check
-(`flist.c:724-729`) and otherwise trusts the sender. The Rust check is
+(`flist.c:728-733`) and otherwise trusts the sender. The Rust check is
 covered by `read_name_rejects_invalid_prefix_length`
 (`crates/protocol/src/flist/read/tests.rs:582-604`). Behaviour is
 hardening, not divergence: a benign sender will never trigger it.
@@ -258,7 +258,7 @@ zero pairs, and `same_len = 0`. The xflags pass leaves
 In incremental recursion the file list is shipped as a sequence of
 segments, each starting at a different `ndx_start`. Upstream uses
 function-static `lastname` buffers in both `send_file_entry()`
-(`flist.c:399`) and `recv_file_entry()` (`flist.c:697`). C statics
+(`flist.c:402`) and `recv_file_entry()` (`flist.c:701`). C statics
 persist across calls, so a sub-list entry can - and routinely does -
 share its prefix with the *last entry of the previous segment*. The
 only segment-scoped state on the wire is the index base.
@@ -342,7 +342,7 @@ laxer; neither breaks interop with a well-formed peer.
 
 1. **Receiver rejects oversized `same_len`**
    (`read/name.rs:68-77`). Upstream only checks `l2 >= MAXPATHLEN -
-   l1` (`flist.c:724`); it does not validate `l1` independently. A
+   l1` (`flist.c:728`); it does not validate `l1` independently. A
    crafted stream where the sender claims `same_len > prev_name_len`
    would return `InvalidData` from oc-rsync but be silently accepted
    by upstream (which would copy garbage from its `lastname[]`

@@ -30,7 +30,7 @@ pub(crate) struct RuntimeOptions {
     /// than picking one. The accept-loop interprets this as "iterate IPv6
     /// then IPv4, surface per-family bind failures as warnings, succeed as
     /// long as at least one family bound." See
-    /// `target/interop/upstream-src/rsync-3.5.1/socket.c:560-658`
+    /// `target/interop/upstream-src/rsync-3.5.2/socket.c:560-658`
     /// (`open_socket_in`) for the family-iteration loop oc-rsync reproduces.
     pub(crate) dual_stack: bool,
     bind_address_overridden: bool,
@@ -42,10 +42,11 @@ pub(crate) struct RuntimeOptions {
     /// Daemon-wide zero-copy policy: `--zero-copy` / `--no-zero-copy`, else
     /// `OC_RSYNC_ZERO_COPY`, else off. Stamped onto every module.
     zero_copy_policy: fast_io::ZeroCopyPolicy,
+    pub(super) niceness: core::niceness::PriorityOptions,
     /// Daemon-wide `timeout`, read as the GLOBAL value rather than a module
     /// default.
     ///
-    /// upstream: clientserver.c:1441 - `set_daemon_handshake_timeout(
+    /// upstream: clientserver.c:1451 - `set_daemon_handshake_timeout(
     /// daemon_handshake_timeout(-1))` bounds the pre-module handshake with
     /// `lp_timeout(-1)`, the global value, before any module is selected.
     /// `None` is upstream's `timeout <= 0`: no configured bound, so the phase
@@ -131,7 +132,7 @@ pub(crate) struct RuntimeOptions {
     socket_options_from_config: bool,
     /// `--sockopts`, which replaces the config's `socket options` entirely.
     ///
-    /// upstream: options.c:887 in `long_daemon_options`.
+    /// upstream: options.c:892 in `long_daemon_options`.
     sockopts: Option<String>,
     /// TCP Fast Open mode applied to the daemon listener and accepted
     /// client sockets. Defaults to [`TcpFastOpenMode::Auto`] which enables
@@ -164,11 +165,11 @@ pub(crate) struct RuntimeOptions {
     /// `--dparam`/`-M` overrides (`name=value`), applied to every config file
     /// this daemon parses, including a SIGHUP reload.
     ///
-    /// upstream: options.c:1558-1568 collects them into `dparam_list`.
+    /// upstream: options.c:1576-1586 collects them into `dparam_list`.
     dparams: Vec<String>,
     /// CLI verbosity counter incremented per `-v` / `--verbose` flag.
     ///
-    /// upstream: options.c:891 - `{"verbose", 'v', POPT_ARG_NONE, 0, 'v', 0, 0}`
+    /// upstream: options.c:898 - `{"verbose", 'v', POPT_ARG_NONE, 0, 'v', 0, 0}`
     /// in `long_daemon_options`. Stacked `-vv` / `-vvv` increment the same
     /// counter; `--no-verbose` / `--no-v` (options.c:892-893) reset it to zero.
     pub(crate) verbosity: u8,
@@ -194,6 +195,7 @@ impl Default for RuntimeOptions {
             log_file_format: None,
             log_file_from_config: false,
             zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
+            niceness: core::niceness::PriorityOptions::default(),
             daemon_timeout: None,
             global_refuse_options: None,
             global_secrets_file: None,

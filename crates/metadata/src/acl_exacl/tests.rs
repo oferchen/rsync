@@ -121,7 +121,7 @@ fn sync_acls_via_fake_super_carries_the_stash_not_the_real_acl() {
     assert!(!stashed.names.is_empty());
 }
 
-// upstream: pipe.c:143-148 local_child() appends `-M--fake-super` to the
+// upstream: pipe.c:144-149 local_child() appends `-M--fake-super` to the
 // forked receiver's argv only, so the sender reads the source's real ACL
 // (acls.c:609-631) and the receiver stashes it in `%aacl` (acls.c:933-971).
 // MEASURED: the 3.5.1 testsuite's fake-super-acl-xattr leg 1, a local

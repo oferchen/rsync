@@ -193,7 +193,7 @@ fn execute_without_specials_records_skip_event() {
 /// Verifies that skipping a non-regular source emits the upstream
 /// `--info=NONREG` notice through the diagnostic event queue.
 ///
-/// NONREG sits in upstream's `info_verbosity[0]` table (options.c:256) and
+/// NONREG sits in upstream's `info_verbosity[0]` table (options.c:257) and
 /// is therefore enabled by default at level 1, independent of `-v`. The
 /// emitted wording mirrors `generator.c:2113`:
 /// `skipping non-regular file "<path>"`.
@@ -248,7 +248,7 @@ fn skipping_non_regular_emits_info_nonreg_notice() {
 }
 
 /// Verifies that `--info=nononreg` (level 0) suppresses the NONREG notice,
-/// matching upstream's `INFO_GTE(NONREG, 1)` gate (generator.c:2110).
+/// matching upstream's `INFO_GTE(NONREG, 1)` gate (generator.c:2151).
 #[cfg(unix)]
 #[test]
 fn nononreg_suppresses_info_nonreg_notice() {
@@ -1072,7 +1072,7 @@ fn execute_recopy_fifo_reuses_existing_same_identity_fifo() {
 
     let metadata = fs::symlink_metadata(&dest_fifo).expect("dest metadata");
     assert!(metadata.file_type().is_fifo());
-    // upstream: generator.c:2047-2058 - an existing FIFO of the same _S_IFMT
+    // upstream: generator.c:2088-2099 - an existing FIFO of the same _S_IFMT
     // bucket quick-checks equal, so the generator applies attributes in place
     // (set_file_attrs) and itemizes iflags=0 (`.S...`), never recreating the
     // node; it is therefore NOT counted as a created special. Before the
@@ -1081,7 +1081,7 @@ fn execute_recopy_fifo_reuses_existing_same_identity_fifo() {
     assert_eq!(
         report.summary().fifos_created(),
         0,
-        "a metadata-only FIFO change is not a creation (upstream generator.c:2055)"
+        "a metadata-only FIFO change is not a creation (upstream generator.c:2096)"
     );
     assert!(
         report
@@ -1846,7 +1846,7 @@ fn execute_copy_unsafe_links_in_tree_preserves_safe_and_dereferences_unsafe() {
 /// `--info=SYMSAFE` notice once for each unsafe symlink that gets
 /// followed.
 ///
-/// Mirrors `flist.c:492-497` in upstream rsync 3.5.1:
+/// Mirrors `flist.c:495-500` in upstream rsync 3.5.1:
 /// ```c
 /// if (copy_unsafe_links && unsafe_symlink(linkbuf, path)) {
 ///     if (INFO_GTE(SYMSAFE, 1)) {
@@ -1915,7 +1915,7 @@ fn copy_unsafe_links_emits_info_symsafe_notice() {
 
 /// Verifies that the default verbosity configuration (no `--info=SYMSAFE`)
 /// suppresses the notice during a `--copy-unsafe-links` dereference,
-/// matching upstream's `INFO_GTE(SYMSAFE, 1)` gate (flist.c:493).
+/// matching upstream's `INFO_GTE(SYMSAFE, 1)` gate (flist.c:496).
 #[cfg(unix)]
 #[test]
 fn copy_unsafe_links_default_verbosity_suppresses_info_symsafe_notice() {

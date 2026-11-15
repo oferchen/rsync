@@ -59,14 +59,14 @@ mapped to exit code 2 (`RERR_PROTOCOL`).
 
 | # | Upstream wording (cited) | oc-rsync wording (cited) | Status |
 |---|---|---|---|
-| P1 | `protocol version mismatch -- is your shell clean?\n` followed by `(see the rsync manpage for an explanation)\n` (`compat.c:620-621`) | `protocol version mismatch -- is your shell clean?\n(see the rsync manpage for an explanation)` (`crates/protocol/src/error.rs`, `NegotiationError::UnsupportedVersion`) | EXACT (FIXED #2172) |
-| P2 | `The protocol version in the batch file is too new (%d > %d).\n` (`compat.c:609-610`) | None emitted on the batch-read path | MISSING |
-| P3 | `--protocol must be at least %d on the %s.\n` (`compat.c:629-630`) | None emitted | MISSING |
-| P4 | `--protocol must be no more than %d on the %s.\n` (`compat.c:634-635`) | None emitted | MISSING |
-| P5 | `protocol incompatibility` (banner text from `rerr_names[]` at `log.c:82`) | `protocol incompatibility` (`crates/core/src/message/strings.rs:91`) | EXACT |
-| P6 | `(Server) Protocol versions: remote=%d, negotiated=%d\n` debug line (`compat.c:614-616`) | None emitted; no equivalent INFO log | MISSING |
-| P7 | `unexpected tag %d [%s%s]\n` (`io.c:1703`) | None emitted | MISSING |
-| P8 | `your client does not support one of our daemon-auth checksums: %s\n` (`compat.c:872`) | None emitted | MISSING |
+| P1 | `protocol version mismatch -- is your shell clean?\n` followed by `(see the rsync manpage for an explanation)\n` (`compat.c:621-622`) | `protocol version mismatch -- is your shell clean?\n(see the rsync manpage for an explanation)` (`crates/protocol/src/error.rs`, `NegotiationError::UnsupportedVersion`) | EXACT (FIXED #2172) |
+| P2 | `The protocol version in the batch file is too new (%d > %d).\n` (`compat.c:610-611`) | None emitted on the batch-read path | MISSING |
+| P3 | `--protocol must be at least %d on the %s.\n` (`compat.c:630-631`) | None emitted | MISSING |
+| P4 | `--protocol must be no more than %d on the %s.\n` (`compat.c:635-636`) | None emitted | MISSING |
+| P5 | `protocol incompatibility` (banner text from `rerr_names[]` at `log.c:89`) | `protocol incompatibility` (`crates/core/src/message/strings.rs:91`) | EXACT |
+| P6 | `(Server) Protocol versions: remote=%d, negotiated=%d\n` debug line (`compat.c:615-617`) | None emitted; no equivalent INFO log | MISSING |
+| P7 | `unexpected tag %d [%s%s]\n` (`io.c:1710`) | None emitted | MISSING |
+| P8 | `your client does not support one of our daemon-auth checksums: %s\n` (`compat.c:881`) | None emitted | MISSING |
 
 Family totals: 2 EXACT, 0 DIVERGENT, 6 MISSING.
 
@@ -79,17 +79,17 @@ citations are in `clientserver.c`.
 
 | # | Upstream wording (cited) | oc-rsync wording (cited) | Status |
 |---|---|---|---|
-| D1 | `@ERROR: Unknown module '%s'\n` (`clientserver.c:730`) | `@ERROR: Unknown module '{module}'` (`crates/daemon/src/daemon.rs:120`) | EXACT |
-| D2 | `@ERROR: access denied to %s from %s (%s)\n` (`clientserver.c:733-734`) | `@ERROR: access denied to {module} from {host} ({addr})` (`crates/daemon/src/daemon.rs:114`) | EXACT |
-| D3 | `@ERROR: max connections (%d) reached -- try again later\n` (`clientserver.c:752`) | `@ERROR: max connections ({limit}) reached -- try again later` (`crates/daemon/src/daemon.rs:123`) | EXACT |
-| D4 | `@ERROR: auth failed on module %s\n` (`clientserver.c:762`) | `@ERROR: auth failed on module {module}` (`crates/daemon/src/daemon.rs:118`) | EXACT |
-| D5 | `@ERROR: failed to open lock file\n` (`clientserver.c:748`) | `@ERROR: failed to open lock file` (`crates/daemon/src/daemon.rs:125-126`) | EXACT |
-| D6 | `@ERROR: chdir failed\n` (`clientserver.c:647`) | None emitted | MISSING |
-| D7 | `@ERROR: protocol startup error\n` (`clientserver.c:182`) | None emitted | MISSING |
-| D8 | `@ERROR: Unknown command '%s'\n` (`clientserver.c:1379`) | None emitted | MISSING |
-| D9 | `@ERROR: invalid uid %s\n` (`clientserver.c:783`) | None emitted | MISSING |
-| D10 | `@ERROR: invalid gid %s\n` (`clientserver.c:656`) | None emitted | MISSING |
-| D11 | `@ERROR: no path setting.\n` (`clientserver.c:826`) | None emitted | MISSING |
+| D1 | `@ERROR: Unknown module '%s'\n` (`clientserver.c:734`) | `@ERROR: Unknown module '{module}'` (`crates/daemon/src/daemon.rs:120`) | EXACT |
+| D2 | `@ERROR: access denied to %s from %s (%s)\n` (`clientserver.c:737-738`) | `@ERROR: access denied to {module} from {host} ({addr})` (`crates/daemon/src/daemon.rs:114`) | EXACT |
+| D3 | `@ERROR: max connections (%d) reached -- try again later\n` (`clientserver.c:756`) | `@ERROR: max connections ({limit}) reached -- try again later` (`crates/daemon/src/daemon.rs:123`) | EXACT |
+| D4 | `@ERROR: auth failed on module %s\n` (`clientserver.c:766`) | `@ERROR: auth failed on module {module}` (`crates/daemon/src/daemon.rs:118`) | EXACT |
+| D5 | `@ERROR: failed to open lock file\n` (`clientserver.c:752`) | `@ERROR: failed to open lock file` (`crates/daemon/src/daemon.rs:125-126`) | EXACT |
+| D6 | `@ERROR: chdir failed\n` (`clientserver.c:651`) | None emitted | MISSING |
+| D7 | `@ERROR: protocol startup error\n` (`clientserver.c:186`) | None emitted | MISSING |
+| D8 | `@ERROR: Unknown command '%s'\n` (`clientserver.c:1388`) | None emitted | MISSING |
+| D9 | `@ERROR: invalid uid %s\n` (`clientserver.c:787`) | None emitted | MISSING |
+| D10 | `@ERROR: invalid gid %s\n` (`clientserver.c:660`) | None emitted | MISSING |
+| D11 | `@ERROR: no path setting.\n` (`clientserver.c:830`) | None emitted | MISSING |
 | D12 | `ERROR: module is read only\n` via `rprintf(FERROR, ...)` (`main.c:1149`, no `@` prefix; arrives through `MSG_ERROR`) | `@ERROR: module is read only` via daemon greeting (`crates/daemon/src/daemon/sections/module_access/transfer.rs:332`); wrong frame and extra `@` prefix | DIVERGENT |
 | D13 | `ERROR: module is write only\n` via `rprintf(FERROR, ...)` (`main.c:917`) | `@ERROR: module is write only` (`crates/daemon/src/daemon/sections/module_access/transfer.rs:337`) | DIVERGENT |
 | D14 | (none - upstream has no equivalent) | `@ERROR: daemon functionality is unavailable in this build` (`crates/daemon/src/daemon.rs:109`) | Extra (oc-rsync only) |
@@ -100,7 +100,7 @@ Family totals: 5 EXACT, 2 DIVERGENT, 6 MISSING, 3 Extra.
 
 ## 4. File operation warnings (per-file `rsyserr`)
 
-Upstream formats these via `rsyserr()` (`log.c:453-473`) as
+Upstream formats these via `rsyserr()` (`log.c:538-558`) as
 `rsync: [<role>] <msg>: <strerror> (<errno>)\n`. No source location is
 emitted; no `[<role>=<version>]` trailer is appended; the path is raw `%s`
 (not quoted). oc-rsync emits the same code paths via `eprintln!` with three
@@ -109,12 +109,12 @@ systematic additions: double-quoted path, appended `error_location!()`
 
 | # | Upstream wording (cited) | oc-rsync wording (cited) | Status |
 |---|---|---|---|
-| F1 | `rsync: [sender] link_stat %s failed: <strerror> (<errno>)\n` (`flist.c:1810`, `rsyserr`) | `rsync: [sender] link_stat "<path>" failed: <e> (<errno>)` (`crates/transfer/src/generator/file_list/walk.rs:325`) | FIXED (task #2174) |
-| F2 | `rsync: [sender] send_files failed to open %s: <strerror> (<errno>)\n` (`sender.c:362`) | `rsync: [sender] send_files failed to open "<path>": <e> (<errno>)` (`crates/transfer/src/generator/protocol_io.rs:140`) | FIXED (task #2174) |
-| F3 | `rsync: [sender] opendir %s failed: <strerror> (<errno>)\n` (`flist.c:1842`) | `rsync: [sender] opendir "<path>" failed: <e> (<errno>)` (`crates/transfer/src/generator/file_list/walk.rs:147,213`) | FIXED (task #2174) |
-| F4 | `rsync: [sender] readdir(%s): <strerror> (<errno>)\n` (`flist.c:1888`) | `rsync: [sender] readdir("<path>"): <e> (<errno>)` (`crates/transfer/src/generator/file_list/walk.rs:244`) | FIXED (task #2174) |
-| F5 | `file has vanished: %s\n` where `%s` is `full_fname()` and resolves to `"<path>"` (`flist.c:1289`, `sender.c:358`, `util1.c:1228`) | `file has vanished: "<path>"` (transfer + engine crates and `crates/core/src/client/error.rs:247`) | FIXED (task #2174) |
-| F6 | `skipping non-regular file "%s"\n` (`generator.c:1687`) | `skipping non-regular file "<path>"` (`crates/cli/src/frontend/progress/render.rs:396`) | EXACT |
+| F1 | `rsync: [sender] link_stat %s failed: <strerror> (<errno>)\n` (`flist.c:1814`, `rsyserr`) | `rsync: [sender] link_stat "<path>" failed: <e> (<errno>)` (`crates/transfer/src/generator/file_list/walk.rs:325`) | FIXED (task #2174) |
+| F2 | `rsync: [sender] send_files failed to open %s: <strerror> (<errno>)\n` (`sender.c:370`) | `rsync: [sender] send_files failed to open "<path>": <e> (<errno>)` (`crates/transfer/src/generator/protocol_io.rs:140`) | FIXED (task #2174) |
+| F3 | `rsync: [sender] opendir %s failed: <strerror> (<errno>)\n` (`flist.c:1846`) | `rsync: [sender] opendir "<path>" failed: <e> (<errno>)` (`crates/transfer/src/generator/file_list/walk.rs:147,213`) | FIXED (task #2174) |
+| F4 | `rsync: [sender] readdir(%s): <strerror> (<errno>)\n` (`flist.c:1892`) | `rsync: [sender] readdir("<path>"): <e> (<errno>)` (`crates/transfer/src/generator/file_list/walk.rs:244`) | FIXED (task #2174) |
+| F5 | `file has vanished: %s\n` where `%s` is `full_fname()` and resolves to `"<path>"` (`flist.c:1293`, `sender.c:366`, `util1.c:1228`) | `file has vanished: "<path>"` (transfer + engine crates and `crates/core/src/client/error.rs:247`) | FIXED (task #2174) |
+| F6 | `skipping non-regular file "%s"\n` (`generator.c:1724`) | `skipping non-regular file "<path>"` (`crates/cli/src/frontend/progress/render.rs:396`) | EXACT |
 | F7 | `WARNING: %s failed verification -- update %s%s.\n` where `%s` cycles {`discarded`, `put into partial-dir`, `retained`} and `%s%s` is ` (will try again)` or ` (may try again)` (`receiver.c:965-968`) | `WARNING: <path> failed verification -- update discarded (will try again).` (`crates/transfer/src/pipeline/receiver.rs:278-281`) | FIXED (task #2174) |
 | F8 | `ERROR: %s failed verification -- update %s.\n` (`receiver.c:957-968`, redo phase) | `ERROR: <path> failed verification -- update discarded.` (`crates/transfer/src/pipeline/receiver.rs:287-289`) | FIXED (task #2174) |
 | F9 | `rsync: [sender] make_file failed for %s: <strerror>` (no upstream direct site; `flist.c` paths surface as plain `rsyserr` strings) | `rsync: [sender] make_file failed for "<path>": <e> (<errno>)` (`crates/transfer/src/generator/file_list/walk.rs:128`) | FIXED (task #2174) |
@@ -134,7 +134,7 @@ rsync error: <name> (code <N>) at <basename>(<line>) [<role>=<version>]\n
 rsync warning: <name> (code <N>) at <basename>(<line>) [<role>=<version>]\n
 ```
 
-`<name>` comes from `rerr_names[]` (`log.c:80-107`), `<basename>` from
+`<name>` comes from `rerr_names[]` (`log.c:87-114`), `<basename>` from
 `src_file()` (`util2.c:132-145`) which strips the directory prefix, and
 `<role>` from `who_am_i()` (`rsync.c:823-831`). oc-rsync renders the envelope
 through `Message::as_segments()` at
@@ -142,28 +142,28 @@ through `Message::as_segments()` at
 
 | Aspect | Upstream | oc-rsync | Status |
 |---|---|---|---|
-| Error severity prefix | `rsync error: ` (`log.c:906`) | `rsync error: ` (`crates/core/src/message/severity.rs:68`) | EXACT |
-| Warning severity prefix | `rsync warning: ` (`log.c:903`) | `rsync warning: ` (`crates/core/src/message/severity.rs:67`) | EXACT |
+| Error severity prefix | `rsync error: ` (`log.c:991`) | `rsync error: ` (`crates/core/src/message/severity.rs:68`) | EXACT |
+| Warning severity prefix | `rsync warning: ` (`log.c:988`) | `rsync warning: ` (`crates/core/src/message/severity.rs:67`) | EXACT |
 | Info severity prefix | (none - bare text via `rprintf(FINFO, ...)`) | `rsync info: ` (`crates/core/src/message/severity.rs:66`) | DIVERGENT |
-| Body text - code 1 | `syntax or usage error` (`log.c:81`) | `syntax or usage error` (`strings.rs:90`) | EXACT |
-| Body text - code 2 | `protocol incompatibility` (`log.c:82`) | `protocol incompatibility` (`strings.rs:91`) | EXACT |
-| Body text - code 23 | `some files/attrs were not transferred (see previous errors)` (`log.c:97`) | `some files/attrs were not transferred (see previous errors)` (`strings.rs:114`) | EXACT |
-| Body text - code 24 | `some files vanished before they could be transferred` (`log.c:98`) | `some files vanished before they could be transferred` (`strings.rs:119`) | EXACT |
-| `(code <N>)` suffix | `(code %d)` (`log.c:903,906`) | `(code <digits>)` (`message_impl/mod.rs:101-105`) | EXACT |
-| Source separator | `at <basename>(<line>)` parens-delimited (`log.c:903,906` and `util2.c:132-145`) | `at <workspace-relative-path>:<line>` colon-delimited (`message_impl/mod.rs:108-113`) | DIVERGENT |
+| Body text - code 1 | `syntax or usage error` (`log.c:88`) | `syntax or usage error` (`strings.rs:90`) | EXACT |
+| Body text - code 2 | `protocol incompatibility` (`log.c:89`) | `protocol incompatibility` (`strings.rs:91`) | EXACT |
+| Body text - code 23 | `some files/attrs were not transferred (see previous errors)` (`log.c:104`) | `some files/attrs were not transferred (see previous errors)` (`strings.rs:114`) | EXACT |
+| Body text - code 24 | `some files vanished before they could be transferred` (`log.c:105`) | `some files vanished before they could be transferred` (`strings.rs:119`) | EXACT |
+| `(code <N>)` suffix | `(code %d)` (`log.c:988,906`) | `(code <digits>)` (`message_impl/mod.rs:101-105`) | EXACT |
+| Source separator | `at <basename>(<line>)` parens-delimited (`log.c:988,906` and `util2.c:132-145`) | `at <workspace-relative-path>:<line>` colon-delimited (`message_impl/mod.rs:108-113`) | DIVERGENT |
 | Source path style | basename only via `src_file()` | full workspace-relative path | DIVERGENT |
-| Role trailer | `[<role>=<version>]` (`log.c:903,906`) | `[<role>=<version>]` (`message_impl/mod.rs:115-121`) | EXACT |
+| Role trailer | `[<role>=<version>]` (`log.c:988,906`) | `[<role>=<version>]` (`message_impl/mod.rs:115-121`) | EXACT |
 | Version in trailer | `3.4.1` (`version.h`) | own crate version (e.g. `0.5.8`); intentional - identifies the producing binary | EXACT (intentional difference) |
-| Trailing `\n` | yes (`log.c:903,906`) | yes when `include_newline` set (`message_impl/mod.rs:123-125`) | EXACT |
-| Severity for code 24 | warning (`log.c:902`) | warning (`strings.rs:117`) | EXACT |
-| Severity for all other codes | error (`log.c:906`) | error (`strings.rs:90-131`) | EXACT |
+| Trailing `\n` | yes (`log.c:988,906`) | yes when `include_newline` set (`message_impl/mod.rs:123-125`) | EXACT |
+| Severity for code 24 | warning (`log.c:987`) | warning (`strings.rs:117`) | EXACT |
+| Severity for all other codes | error (`log.c:991`) | error (`strings.rs:90-131`) | EXACT |
 
 Family totals: 11 EXACT, 3 DIVERGENT, 0 MISSING.
 
 Project-memory cross-check: an earlier note in agent memory described
 oc-rsync's trailer as `... (code N) at <repo-rel-path>:<line> [<role>=<version>]`
 with the claim "upstream has no `[role=version]` trailer". Source evidence
-contradicts that claim - `log.c:903` and `log.c:906` emit the trailer as
+contradicts that claim - `log.c:988` and `log.c:991` emit the trailer as
 `[%s=%s]\n` keyed on `who_am_i()` and `rsync_version()`. The `[role=version]`
 trailer is therefore upstream-faithful and must stay; the actual envelope
 divergences are the source separator and the path style (see the row pair
@@ -252,16 +252,16 @@ diff -u up.err oc.err
 
 ## 10. Upstream source references
 
-- `log.c:80-107` - `rerr_names[]` table.
-- `log.c:453-473` - `rsyserr()` format
+- `log.c:87-114` - `rerr_names[]` table.
+- `log.c:538-558` - `rsyserr()` format
   (`rsync: [<role>] <msg>: <strerror> (<errno>)`).
-- `log.c:884-910` - `log_exit()` envelope.
+- `log.c:969-995` - `log_exit()` envelope.
 - `io.c:199-202` - `[<role>] io timeout after <N> seconds -- exiting`.
 - `io.c:228-232` - `rsync: connection unexpectedly closed (<N> bytes received so far) [<role>]`.
 - `io.c:804-806,847` - `read error` / `writefd_unbuffered failed`.
-- `io.c:1703` - `unexpected tag %d`.
-- `compat.c:609-636,872` - protocol-mismatch and daemon-auth wording.
-- `clientserver.c:182-1386` - all `@ERROR:` greeting lines.
+- `io.c:1710` - `unexpected tag %d`.
+- `compat.c:610-637,872` - protocol-mismatch and daemon-auth wording.
+- `clientserver.c:186-1395` - all `@ERROR:` greeting lines.
 - `main.c:917,1149` - `ERROR: module is write only` / `ERROR: module is read only`.
 - `main.c:1077,1222` - `Invalid packet at end of run` / `Your options have been rejected`.
 - `receiver.c:947-968` - `failed verification -- update %s` matrix.

@@ -26,7 +26,7 @@ option interaction matrix, protocol version gating, and risk assessment.
 
 ## 1. Flag Inventory
 
-All 9 bits defined in upstream `compat.c:117-125`. Exchanged as a
+All 9 bits defined in upstream `compat.c:118-126`. Exchanged as a
 server-written varint at protocol >= 30; client reads. No exchange at
 protocol < 30.
 
@@ -60,11 +60,11 @@ Source: `crates/protocol/src/compatibility/flags.rs:34-50`,
 
 **Reads and honours from peer:** Yes.
 - Client clears the bit on read when local `allow_inc_recurse` is
-  false (`setup/mod.rs:121-123`), matching upstream `compat.c:720`.
+  false (`setup/mod.rs:121-123`), matching upstream `compat.c:721`.
 - Generator checks `compat_flags.contains(INC_RECURSE)` to enable
   incremental file list partitioning (`generator/mod.rs:506-509`).
 - Generator skips uid/gid id-list sending when INC_RECURSE is active
-  (`generator/protocol_io.rs:45-52`), matching upstream `flist.c:2513`.
+  (`generator/protocol_io.rs:45-52`), matching upstream `flist.c:2524`.
 - Receiver skips id-list reading when INC_RECURSE is active
   (`receiver/file_list.rs:60-65`).
 - Generator transfer loop handles per-segment flist processing and
@@ -81,7 +81,7 @@ Source: `crates/protocol/src/compatibility/flags.rs:34-50`,
 
 **Sets in `build_our_flags()`:** Yes.
 - SSH/client mode: set under `#[cfg(unix)]` (`setup/mod.rs:219-222`),
-  mirroring upstream `#ifdef CAN_SET_SYMLINK_TIMES` (`compat.c:713-714`).
+  mirroring upstream `#ifdef CAN_SET_SYMLINK_TIMES` (`compat.c:714-715`).
 - Daemon server mode: `CAPABILITY_MAPPINGS` row with `platform_ok`
   gated on `cfg(unix)` (`capability.rs:50-59`).
 
@@ -89,7 +89,7 @@ Source: `crates/protocol/src/compatibility/flags.rs:34-50`,
 - Generator's `itemize_context()` reads the bit to set
   `receiver_symlink_times`, controlling the `t`/`T` display at
   position 4 in itemize output (`generator/mod.rs:524-527`).
-- Upstream reference: `compat.c:756-761` sets `receiver_symlink_times`
+- Upstream reference: `compat.c:765-770` sets `receiver_symlink_times`
   from the bit (or `client_info` for server-sender direction).
 
 **Upstream match:** Yes.
@@ -103,7 +103,7 @@ Source: `crates/protocol/src/compatibility/flags.rs:34-50`,
 **Sets in `build_our_flags()`:** Yes.
 - SSH/client mode: set under `#[cfg(all(unix, feature = "iconv"))]`
   (`setup/mod.rs:228-231`), mirroring upstream `#ifdef ICONV_OPTION`
-  (`compat.c:716-718`).
+  (`compat.c:717-719`).
 - Daemon server mode: `CAPABILITY_MAPPINGS` row with
   `requires_iconv: true` (`capability.rs:65-71`); skipped at runtime
   when `iconv_capability_compiled_in()` returns false
@@ -136,7 +136,7 @@ advertise `s`.
 - File list writer enables safe mode when the bit is present or
   protocol >= 31 (`flist/write/mod.rs:161-162`), matching upstream
   `use_safe_inc_flist = (compat_flags & CF_SAFE_FLIST) ||
-  protocol_version >= 31` (`compat.c:775`).
+  protocol_version >= 31` (`compat.c:784`).
 - File list reader mirrors the same logic (`flist/read/flags.rs:43-47`).
 - Generator writes io_error with end marker in SAFE_FILE_LIST mode
   (`generator/protocol_io.rs:243`).
@@ -161,7 +161,7 @@ advertise `s`.
 **Reads and honours from peer:** SEMANTIC INVERSION FOUND.
 
 Upstream sets `want_xattr_optim = protocol_version >= 31 &&
-!(compat_flags & CF_AVOID_XATTR_OPTIM)` (`compat.c:746`). The variable
+!(compat_flags & CF_AVOID_XATTR_OPTIM)` (`compat.c:755`). The variable
 is `true` when the optimization SHOULD be used (peer does NOT set the
 AVOID flag) and `false` when it should be avoided (AVOID flag IS set).
 
@@ -220,7 +220,7 @@ upstream rsync when those specific conditions are met.
 - When true: MD5 seed is hashed before data (proper order).
 - When false: MD5 seed is hashed after data (legacy order).
 - Matches upstream `proper_seed_order = compat_flags &
-  CF_CHKSUM_SEED_FIX ? 1 : 0` (`compat.c:747`).
+  CF_CHKSUM_SEED_FIX ? 1 : 0` (`compat.c:756`).
 
 **Upstream match:** Yes.
 
@@ -240,7 +240,7 @@ upstream rsync when those specific conditions are met.
 - After compat exchange, `lib.rs:442-447` checks the bit and sets
   `config.write.inplace_partial = true` when a partial directory is
   configured. Matches upstream `if (compat_flags &
-  CF_INPLACE_PARTIAL_DIR) inplace_partial = 1` (`compat.c:777-778`).
+  CF_INPLACE_PARTIAL_DIR) inplace_partial = 1` (`compat.c:786-787`).
 - `WriteConfig::inplace_partial` is consumed in the receiver transfer
   pipeline to decide per-file write strategy
   (`transfer_ops/mod.rs:31-41`).
@@ -292,7 +292,7 @@ string negotiation gate, file-list flag width, and encoding asymmetry.
 - Receiver's `receive_id_lists()` reads the extra id=0 name when the
   bit is set (`receiver/file_list.rs:260,307`).
 - Matches upstream `xmit_id0_names = compat_flags & CF_ID0_NAMES ? 1
-  : 0` (`compat.c:749`).
+  : 0` (`compat.c:758`).
 
 **Upstream match:** Yes.
 
@@ -371,7 +371,7 @@ The `--compress` flag participates in compression algorithm negotiation
 gated by `CF_VARINT_FLIST_FLAGS`:
 
 1. Vstring exchange occurs only when `do_compression && !compress_choice`
-   (`setup/mod.rs:109`), matching upstream `compat.c:543`.
+   (`setup/mod.rs:109`), matching upstream `compat.c:544`.
 2. Without negotiation, default is zlib (`setup/mod.rs:163-165`).
 3. `--compress-choice=ALGO` skips vstring exchange; specified algorithm
    used directly.
@@ -383,7 +383,7 @@ When `CF_INPLACE_PARTIAL_DIR` (bit 6) is negotiated:
 - Files whose basis comes from `--partial-dir` are written in-place
   (`transfer_ops/mod.rs:31-41`).
 - Other files still use temp+rename.
-- Matches upstream `compat.c:777-778` and `receiver.c:797`.
+- Matches upstream `compat.c:786-787` and `receiver.c:797`.
 
 ## 4. Protocol Version Gating
 
@@ -400,7 +400,7 @@ protocol < 30, no flags are exchanged and `compat_flags` is `None`.
 | `CF_INC_RECURSE` | 30 | Only exchanged at >= 30 | Correct - exchange gate |
 | `CF_SYMLINK_TIMES` | 30 | Only exchanged at >= 30 | Correct - exchange gate |
 | `CF_SYMLINK_ICONV` | 30 | Only exchanged at >= 30 | Correct - exchange gate |
-| `CF_SAFE_FLIST` | 30 | Forced on at >= 31 (`compat.c:775`) | Correct - `safe_file_list_always_enabled()` |
+| `CF_SAFE_FLIST` | 30 | Forced on at >= 31 (`compat.c:784`) | Correct - `safe_file_list_always_enabled()` |
 | `CF_AVOID_XATTR_OPTIM` | 30 | Consumer gated on >= 31 upstream | **MISSING** - no >= 31 gate in oc-rsync |
 | `CF_CHKSUM_SEED_FIX` | 30 | Only exchanged at >= 30 | Correct - exchange gate |
 | `CF_INPLACE_PARTIAL_DIR` | 30 | Only exchanged at >= 30 | Correct - exchange gate |
@@ -409,37 +409,37 @@ protocol < 30, no flags are exchanged and `compat_flags` is `None`.
 
 ### Protocol restriction enforcement
 
-All restrictions from upstream `compat.c:641-709` are enforced in
+All restrictions from upstream `compat.c:642-710` are enforced in
 `restrictions.rs`:
 
 | Restriction | Proto | Upstream cite | oc-rsync cite | Status |
 |-------------|:-----:|---------------|---------------|:------:|
-| `--acls` requires 30+ | < 30 | `compat.c:655-661` | `restrictions.rs:96-102` | ok |
-| `--xattrs` requires 30+ | < 30 | `compat.c:662-668` | `restrictions.rs:104-109` | ok |
-| `--fuzzy` requires 29+ | < 29 | `compat.c:679-685` | `restrictions.rs:124-129` | ok |
-| `--inplace` + basis requires 29+ | < 29 | `compat.c:687-693` | `restrictions.rs:132-139` | ok |
-| Multiple basis dirs requires 29+ | < 29 | `compat.c:695-701` | `restrictions.rs:143-151` | ok |
-| `--prune-empty-dirs` requires 29+ | < 29 | `compat.c:703-709` | `restrictions.rs:154-161` | ok |
-| `append_mode` 1 forced to 2 | < 30 | `compat.c:653-654` | `restrictions.rs:91-93` | ok |
-| Default delete phase | < 30 | `compat.c:671-676` | `restrictions.rs:113-119` | ok |
-| `--crtimes` requires varint flags | >= 30 | `compat.c:750-753` | protocol layer | ok |
+| `--acls` requires 30+ | < 30 | `compat.c:656-662` | `restrictions.rs:96-102` | ok |
+| `--xattrs` requires 30+ | < 30 | `compat.c:663-669` | `restrictions.rs:104-109` | ok |
+| `--fuzzy` requires 29+ | < 29 | `compat.c:680-686` | `restrictions.rs:124-129` | ok |
+| `--inplace` + basis requires 29+ | < 29 | `compat.c:688-694` | `restrictions.rs:132-139` | ok |
+| Multiple basis dirs requires 29+ | < 29 | `compat.c:696-702` | `restrictions.rs:143-151` | ok |
+| `--prune-empty-dirs` requires 29+ | < 29 | `compat.c:704-710` | `restrictions.rs:154-161` | ok |
+| `append_mode` 1 forced to 2 | < 30 | `compat.c:654-655` | `restrictions.rs:91-93` | ok |
+| Default delete phase | < 30 | `compat.c:672-677` | `restrictions.rs:113-119` | ok |
+| `--crtimes` requires varint flags | >= 30 | `compat.c:759-762` | protocol layer | ok |
 
 ## 5. Cross-Cutting: `allow_inc_recurse` Suppressors
 
 The `CF_INC_RECURSE` bit is the most cross-cutting flag. Upstream's
-`set_allow_inc_recurse()` (`compat.c:161-179`) clears
+`set_allow_inc_recurse()` (`compat.c:162-180`) clears
 `allow_inc_recurse` under these conditions:
 
 | Condition | Upstream cite | oc-rsync handling | Status |
 |-----------|---------------|-------------------|:------:|
-| `!recurse` | `compat.c:171` | config-build time | ok |
-| `use_qsort` | `compat.c:171` | config-build time | ok |
-| Receiver + `delete_before` | `compat.c:173-174` | config-build time | ok |
-| Receiver + `delete_after` | `compat.c:174` | config-build time | ok |
-| Receiver + `delay_updates` | `compat.c:175` | config-build time | ok |
-| Receiver + `prune_empty_dirs` | `compat.c:175` | config-build time | ok |
-| Server + client lacks `i` | `compat.c:177-178` | `build_compat_flags_from_client_info()` | ok |
-| `--no-inc-recursive` | `options.c:615` | config field | ok |
+| `!recurse` | `compat.c:172` | config-build time | ok |
+| `use_qsort` | `compat.c:172` | config-build time | ok |
+| Receiver + `delete_before` | `compat.c:174-175` | config-build time | ok |
+| Receiver + `delete_after` | `compat.c:175` | config-build time | ok |
+| Receiver + `delay_updates` | `compat.c:176` | config-build time | ok |
+| Receiver + `prune_empty_dirs` | `compat.c:176` | config-build time | ok |
+| Server + client lacks `i` | `compat.c:178-179` | `build_compat_flags_from_client_info()` | ok |
+| `--no-inc-recursive` | `options.c:616` | config field | ok |
 
 ## 6. Risk Assessment Summary
 

@@ -134,7 +134,7 @@ fn pull_removing_sources(spelling: &str) -> Option<(bool, bool, bool)> {
 }
 
 /// Both spellings name the same option in `parse_arguments()`;
-/// `--remove-sent-files` is upstream's deprecated alias (options.c:744-745) and
+/// `--remove-sent-files` is upstream's deprecated alias (options.c:745-746) and
 /// is what an older client sends, so a daemon that honours only the modern
 /// spelling still drops the request from half its peers.
 #[test]

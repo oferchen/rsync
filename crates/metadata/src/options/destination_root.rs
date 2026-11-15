@@ -74,7 +74,7 @@ impl DestinationRoot {
     /// The receiver hands in its destination sandbox's cache: both resolve
     /// the same root-relative parents beneath the same pinned root, so
     /// sharing it opens each parent once rather than once per consumer.
-    /// upstream: `syscall.c:3858-3871` `held_dfd_for()` - one held parent
+    /// upstream: `syscall.c:3926-3939` `held_dfd_for()` - one held parent
     /// serves every per-entry operation.
     #[cfg(unix)]
     #[must_use]
@@ -109,7 +109,7 @@ impl DestinationRoot {
     /// stops a run of files in one directory from resolving it once per
     /// attribute per file. A directory swapped for a symlink after it was
     /// resolved keeps resolving to the held inode, as upstream's held dirfd
-    /// does. upstream: syscall.c:3702-3720 and `dpc_dir_fd()` (syscall.c:3744).
+    /// does. upstream: syscall.c:3770-3788 and `dpc_dir_fd()` (syscall.c:3812).
     #[cfg(unix)]
     pub(crate) fn held_dir_beneath(&self, tail: &Path) -> std::io::Result<Arc<OwnedFd>> {
         let anchor = self.anchor()?;
@@ -125,7 +125,7 @@ impl DestinationRoot {
     ///   change_dir() open_no_attacker_symlinks_dirfd().
     /// - Daemon-served: the module root is opened as the operator's, and the
     ///   peer's remainder is walked beneath it on every platform the way
-    ///   upstream's `ds_descend()` walks it (syscall.c:3032): a relative
+    ///   upstream's `ds_descend()` walks it (syscall.c:3103): a relative
     ///   in-tree symlink is followed, an absolute target or a climb above the
     ///   module is refused (`ELOOP`).
     #[cfg(unix)]

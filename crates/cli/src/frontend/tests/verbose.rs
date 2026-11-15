@@ -211,7 +211,7 @@ fn verbose_transfer_reports_skipped_specials() {
     assert_eq!(code, 0);
     assert!(std::fs::symlink_metadata(&destination).is_err());
 
-    // The upstream-format NONREG notice (generator.c:2113) must appear on
+    // The upstream-format NONREG notice (generator.c:2154) must appear on
     // either stream: emit_verbose renders it to stdout at -v, and the
     // default-on `--info=NONREG` emission feeds the diagnostic queue.
     let stdout_text = String::from_utf8(stdout).expect("verbose stdout is UTF-8");
@@ -366,12 +366,12 @@ fn verbose_human_readable_combined_formats_sizes() {
     let rendered = String::from_utf8(stdout).expect("verbose output utf8");
     // upstream: `-hh` divides by 1024 (1536/1024 = 1.50K)
     // and never appends an exact-value component.
-    assert!(rendered.contains("1.50K bytes") && !rendered.contains("(1,536)"));
+    assert!(rendered.contains("1.50Ki bytes") && !rendered.contains("(1,536)"));
 }
 
 /// Verifies that -vv lists files using upstream's bare `%n%L` format
 /// (no `copied:`/`symlink:` descriptor prefix, no byte-count wrapper).
-/// Upstream: options.c:2523 sets `stdout_format = "%n%L"`; log.c:665-690
+/// Upstream: options.c:2578 sets `stdout_format = "%n%L"`; log.c:750-775
 /// expands `%n` to the filename and `%L` to ` -> target` for symlinks.
 /// The upstream testsuite `duplicates.test` greps `^name1$` to detect
 /// duplicate copies, so the per-file line must be bare.
@@ -448,7 +448,7 @@ fn level_2_includes_summary_totals() {
 /// sent ... bytes  received ... bytes  ...
 /// ```
 ///
-/// upstream: generator.c:2762-2767 prints the delta-transmission notice at
+/// upstream: generator.c:2848-2853 prints the delta-transmission notice at
 /// `DEBUG_GTE(FLIST, 1)` before the generate loop; match.c:480-489
 /// `match_report()` prints the `total:` line at `DEBUG_GTE(DELTASUM, 1)` after
 /// `send_files()` and before `output_summary()`. Both first activate at `-vv`.
@@ -504,7 +504,7 @@ fn level_2_local_brackets_name_list_with_delta_and_total() {
     // A single well-placed emitter: the match_report total: line must appear
     // exactly once. Guards against a second emitter (e.g. an engine-side
     // debug_log flushed dead-last) re-introducing a duplicate or mispositioned
-    // total: line. upstream: match.c:480 match_report() prints it once.
+    // total: line. upstream: match.c:516 match_report() prints it once.
     assert_eq!(
         rendered.matches("total: matches=").count(),
         1,
@@ -515,7 +515,7 @@ fn level_2_local_brackets_name_list_with_delta_and_total() {
 /// A local `--no-whole-file` transfer must print the same single `total:` line,
 /// carrying the delta matcher's REAL counters rather than hardcoded zeros.
 ///
-/// upstream: `match_report()` (match.c:480-489) is gated on
+/// upstream: `match_report()` (match.c:516-525) is gated on
 /// `DEBUG_GTE(DELTASUM, 1)` alone - `--whole-file` does not suppress the line,
 /// it merely leaves the counters at zero. Two regressions this pins, both of
 /// which oc has actually shipped:
@@ -1047,7 +1047,7 @@ fn quiet_flag_produces_no_output() {
     assert_eq!(std::fs::read(destination).expect("read"), b"quiet mode");
 }
 
-/// upstream: log.c:344-345 - the `--stats` summary and the `-i` itemize rows
+/// upstream: log.c:424-425 - the `--stats` summary and the `-i` itemize rows
 /// are FINFO/FCLIENT writes, which rwrite() drops under `--quiet`.
 #[test]
 fn quiet_suppresses_stats_and_itemize_output() {
@@ -1277,7 +1277,7 @@ fn verbose_dry_run_with_stats_shows_statistics() {
 /// bare `name1` line and exactly one `name2 -> target` line on -vv stdout.
 /// The test greps `^name1$` / `^name2 -> ` to detect duplicate copies, so
 /// any prefix (`copied:`, `symlink:`) or byte-count wrapper breaks interop.
-/// Upstream: `testsuite/duplicates.test`, options.c:2523 (`stdout_format = "%n%L"`).
+/// Upstream: `testsuite/duplicates.test`, options.c:2578 (`stdout_format = "%n%L"`).
 #[cfg(unix)]
 #[test]
 fn duplicates_testsuite_emits_bare_name_lines() {
@@ -1375,7 +1375,7 @@ fn level_2_all_uptodate_matches_upstream_banner_and_uptodate_lines() {
         "first line must be the FCLIENT banner (flist.c:2488), got: {rendered:?}"
     );
 
-    // Per upstream rsync.c:828 + sender.c:776, no bare `<name>` lines should
+    // Per upstream rsync.c:828 + sender.c:784, no bare `<name>` lines should
     // precede the `is uptodate` notice when --progress is absent. A regression
     // would surface as e.g. `foo/a.txt` on its own line right after the banner.
     let uptodate_count = lines.iter().filter(|l| l.ends_with(" is uptodate")).count();
@@ -1724,7 +1724,7 @@ fn verbose_directory_listing_has_trailing_slash_and_root_row() {
 /// summary (misordered) - so the output showed both a bare name and a trailing
 /// duplicate. Encodes the ordering + text contract, not merely presence.
 ///
-/// upstream: delete.c:180 log_delete() -> log.c:920 fmt "deleting %n".
+/// upstream: delete.c:180 log_delete() -> log.c:1005 fmt "deleting %n".
 #[test]
 fn verbose_delete_renders_deleting_before_summary_no_bare_leak() {
     use std::fs;
@@ -1836,7 +1836,7 @@ fn verbose_delete_renders_deleting_before_summary_no_bare_leak() {
 /// `--quiet` suppresses info output no matter where `-v` sits on the command
 /// line, and `-v` alone still produces output.
 ///
-/// upstream: `-q` and `-v` are independent - `options.c:1710-1711` just does
+/// upstream: `-q` and `-v` are independent - `options.c:1737-1738` just does
 /// `quiet++`, and the suppression happens once at the output funnel
 /// (`log.c:344-346` `case FINFO: if (quiet) return;`). Neither flag overrides
 /// the other during parsing, so the result does not depend on their order.
@@ -1962,7 +1962,7 @@ fn dirs_verbose_banner_terminates_with_done() {
 }
 
 /// The two writes concatenate into one line, emitted exactly once and ahead of
-/// the per-file names - upstream: flist.c:2761-2762, which runs at the top of
+/// the per-file names - upstream: flist.c:2772-2773, which runs at the top of
 /// `send_file_list()` before any entry is listed.
 #[test]
 fn dirs_verbose_prints_building_banner_once_and_first() {

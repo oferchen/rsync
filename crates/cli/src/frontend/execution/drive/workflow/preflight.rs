@@ -93,7 +93,7 @@ where
 
 /// Parses and resolves the `--protocol` argument into a [`ProtocolVersion`].
 ///
-/// upstream: `setup_protocol` (compat.c:631-640) runs for local copies too, so
+/// upstream: `setup_protocol` (compat.c:632-641) runs for local copies too, so
 /// upstream accepts `--protocol` on a local transfer (protocol `20..=33` all
 /// exit 0; local output is identical regardless). This build never negotiates a
 /// protocol for a local copy, so any accepted value is simply ignored there
@@ -149,7 +149,7 @@ where
 ///
 /// `show_version` is a count: 1 = human-readable output (upstream `-V`),
 /// 2+ = machine-readable JSON (upstream `-VV`).
-/// upstream: options.c:2062-2063 - version_opt_cnt selects JSON vs human-readable
+/// upstream: options.c:2098-2099 - version_opt_cnt selects JSON vs human-readable
 pub(crate) fn maybe_print_help_or_version<Out>(
     show_help: bool,
     show_version: u8,

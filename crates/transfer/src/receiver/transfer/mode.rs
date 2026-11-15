@@ -130,7 +130,7 @@ impl ReceiverContext {
     /// it renders each line and sends it to the client as `MSG_INFO`, leaving
     /// `stats` empty.
     ///
-    /// upstream: generator.c:1637-1643 - `list_file_entry()` runs as
+    /// upstream: generator.c:1674-1680 - `list_file_entry()` runs as
     /// recv_generator() reaches each entry, so under INC_RECURSE a directory is
     /// listed at the head of its own sub-list, not inside its parent's; its
     /// `rprintf(FINFO, ...)` reaches the client through log.c:355-366 `rwrite()`.

@@ -60,7 +60,7 @@ fn apply_verbosity_seeds_logging_levels() {
 
     // verbosity = 3 -> RECV/SEND/GENR/OWN debug flags activate at level 1
     // (upstream `debug_verbosity[3]`). This is the cumulative behaviour
-    // documented in `set_output_verbosity()` (upstream: options.c:532).
+    // documented in `set_output_verbosity()` (upstream: options.c:533).
     std::thread::spawn(|| {
         apply_verbosity(3);
         assert!(logging::debug_gte(DebugFlag::Recv, 1));

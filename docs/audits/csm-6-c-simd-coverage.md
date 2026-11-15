@@ -15,7 +15,7 @@ what hash backend, what lane width, and what dispatcher is actually used
 today? The cross-tab below feeds CSM-7 (synthesis) and CSM-8 (the fix).
 
 The audit is restricted to the **whole-file** strong digest used by `-c`
-(`generator.c:617 quick_check_ok` -> `checksum.c:402 file_checksum`). It
+(`generator.c:654 quick_check_ok` -> `checksum.c:402 file_checksum`). It
 also covers the receiver-side **per-chunk** verify step that BR-3i.c wired
 up, because that path shares the same single-stream backends and the user
 asked it to be inventoried alongside `-c`.

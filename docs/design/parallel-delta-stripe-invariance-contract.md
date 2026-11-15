@@ -67,7 +67,7 @@ them.
 Upstream requires this and nothing weaker. Upstream has no striping at
 all, so there is no upstream rule about which of several valid token
 streams a sender must emit; `match.c` documents the opposite freedom in
-its own comment at `match.c:330-331`, where the adjacency hint is
+its own comment at `match.c:345-346`, where the adjacency hint is
 justified as making "the RLL coder happy", i.e. as an encoding
 preference, not a correctness rule. A sender that emits more literals and
 fewer copies is slower and fatter on the wire but not wrong.
@@ -146,28 +146,28 @@ Cited from `target/interop/upstream-src/rsync-3.5.1/match.c`, the pinned
 oracle (`match.c` is byte-identical in 3.5.0 and 3.5.1, so the 3.5.0 line
 numbers below hold).
 
-- `match.c:197` - `end = len + 1 - s->sums[s->count-1].len;`. The scan
+- `match.c:199` - `end = len + 1 - s->sums[s->count-1].len;`. The scan
   bound is expressed in terms of the LAST block's length, which is the
   short final block. This is the upstream reason only an EOF-reaching
   scan may claim that block: at any earlier offset `l = MIN(blength,
-  len-offset)` (`match.c:254`) is the full block length and the
-  `l != s->sums[i].len` test at `match.c:255` rejects it.
-- `match.c:215-228` - the hash lookup and `hash_hits++`. The hash table
+  len-offset)` (`match.c:270`) is the full block length and the
+  `l != s->sums[i].len` test at `match.c:270` rejects it.
+- `match.c:219-236` - the hash lookup and `hash_hits++`. The hash table
   is built once by `build_hash_table` (`match.c:78-111`) and, absent
   `updating_basis_file`, is not mutated by the scan.
-- `match.c:232-239` - under `updating_basis_file`, a bypassed chain entry
+- `match.c:240-247` - under `updating_basis_file`, a bypassed chain entry
   is physically UNLINKED from the hash chain (`*prev = s->sums[i].chain`).
   This is a scan-order-dependent mutation of the shared index, performed
   by upstream itself, and it is decided against the running `offset`.
-- `match.c:321-334` - `check_want_i`. After a hash match is found,
+- `match.c:336-349` - `check_want_i`. After a hash match is found,
   upstream may REDIRECT the resolved index to `want_i` when `want_i`
   matches equally well (same `sum1`, same length, same `sum2`), and then
   sets `want_i = i + 1`. The redirect can only change the outcome when
   two basis blocks have identical content, which is the exact condition
   `has_duplicate_blocks()` names.
-- `match.c:372` - `if (backup >= s->blength+CHUNK_SIZE && end-offset >
+- `match.c:408` - `if (backup >= s->blength+CHUNK_SIZE && end-offset >
   CHUNK_SIZE)`, the early literal flush, with `CHUNK_SIZE` = 32 KiB
-  (`rsync.h:158`).
+  (`rsync.h:159`).
 
 ## 4. The four routes back to sequential
 
@@ -178,7 +178,7 @@ route is actually taken rather than assumed.
 | # | Condition | Site | Reason | Test row |
 |---|---|---|---|---|
 | 1 | `consecutive_match_needed >= 2` and enough full blocks | `crates/matching/src/generator.rs:1117-1121` | The seq-match predicate needs cross-stripe block adjacency; routed to `generate_gated` | PDS-3b (task 940) |
-| 2 | `updating_basis_file` | `crates/matching/src/generator.rs:1127-1130` | The `match.c:235-236` in-place guard compares a basis offset against the GLOBAL source cursor; a stripe knows only a stripe-local cursor | new row, see section 8 |
+| 2 | `updating_basis_file` | `crates/matching/src/generator.rs:1127-1130` | The `match.c:243-244` in-place guard compares a basis offset against the GLOBAL source cursor; a stripe knows only a stripe-local cursor | new row, see section 8 |
 | 3 | `chunks <= 1` or `block_len == 0` | `crates/matching/src/generator.rs:1143-1146` | Too small to split; also the degenerate arm PDS-2c pins | PDS-2c |
 | 4 | `index.has_duplicate_blocks()` | `crates/transfer/src/generator/delta.rs:408-413` | Duplicate content makes block resolution history-dependent (see section 5, row B) | PDS-2e (task 936) |
 
@@ -304,8 +304,8 @@ These three are the reason PDS-2d exists and they interlock:
 
 - E: only the stripe whose end equals `n` receives `tail_match = true`,
   so only it may claim the basis's short final block. The upstream reason
-  is `match.c:197` plus the `l != s->sums[i].len` rejection at
-  `match.c:255`: at any non-EOF offset that block's length test fails, so
+  is `match.c:199` plus the `l != s->sums[i].len` rejection at
+  `match.c:270`: at any non-EOF offset that block's length test fails, so
   a mid-file stripe claiming it would be emitting a match upstream's own
   scan could never produce.
 - F: each stripe scans `block_len` bytes past its end so a straddling
@@ -340,7 +340,7 @@ bytes.
 
 Two observations that the PDS-2b author should carry, both unmeasured:
 
-- Upstream's flush at `match.c:372` has a second conjunct,
+- Upstream's flush at `match.c:408` has a second conjunct,
   `end-offset > CHUNK_SIZE`, which suppresses the early flush near EOF.
   oc's `literal_flush_cadence` models only the first conjunct. This is a
   question about oc's sequential path versus upstream, not about
@@ -348,8 +348,8 @@ Two observations that the PDS-2b author should carry, both unmeasured:
   bear on task 942's upstream-reconstruct cell, and it should be measured
   there rather than assumed either way.
 - oc's citation for the cadence
-  (`crates/matching/src/generator.rs:96`, "match.c:339-340") has drifted
-  at the 3.5.0 pin. The construct is at `match.c:372`. Reported, not
+  (`crates/matching/src/generator.rs:96`, "match.c:354-355") has drifted
+  at the 3.5.0 pin. The construct is at `match.c:408`. Reported, not
   fixed: `crates/matching` is being edited concurrently and this note
   changes no code.
 
@@ -439,12 +439,12 @@ Upstream rsync 3.5.1 (`target/interop/upstream-src/rsync-3.5.1/`; `match.c` is
 unchanged from 3.5.0):
 
 - `match.c:78-111` - `build_hash_table`, index built once
-- `match.c:197` - scan bound expressed via the short final block
-- `match.c:215-228` - hash lookup, `hash_hits++`
-- `match.c:232-239` - `updating_basis_file` chain unlink
-- `match.c:254-255` - block length test
-- `match.c:321-334` - `check_want_i` adjacency redirect
-- `match.c:372` - early literal flush; `rsync.h:158` - `CHUNK_SIZE`
+- `match.c:199` - scan bound expressed via the short final block
+- `match.c:219-236` - hash lookup, `hash_hits++`
+- `match.c:240-247` - `updating_basis_file` chain unlink
+- `match.c:270-270` - block length test
+- `match.c:336-349` - `check_want_i` adjacency redirect
+- `match.c:408` - early literal flush; `rsync.h:159` - `CHUNK_SIZE`
 
 oc-rsync sources:
 

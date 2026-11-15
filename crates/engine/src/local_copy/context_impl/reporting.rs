@@ -1,7 +1,7 @@
 impl<'a> CopyContext<'a> {
     /// Records one `--list-only` row for a source entry.
     ///
-    /// upstream: generator.c:1638-1643 recv_generator() - under `list_only` the
+    /// upstream: generator.c:1675-1680 recv_generator() - under `list_only` the
     /// generator prints the entry with `list_file_entry()` and returns before
     /// any destination lookup, and main.c:725 `get_local_name()` returns NULL,
     /// so no destination state may shape the listing. `action` names the
@@ -113,7 +113,7 @@ impl<'a> CopyContext<'a> {
     /// arm alone is unreachable in exactly the case upstream prints. `--quiet`
     /// still suppresses it, at `rwrite()`'s FINFO arm, which
     /// `logging::message_stream` owns.
-    /// upstream: flist.c:1709 and flist.c:2964 -
+    /// upstream: flist.c:1713 and flist.c:2975 -
     /// `rprintf(FINFO, "skipping directory %s\n", ...)`: the bare relative name
     /// with no surrounding quotes and no trailing "(no recursion)" suffix.
     pub(super) fn record_skipped_directory(&mut self, relative: Option<&Path>) {
@@ -185,7 +185,7 @@ impl<'a> CopyContext<'a> {
     /// `--stats` counters, verbose line), `false` when an earlier source arg
     /// already surfaced the same ancestor.
     ///
-    /// upstream: flist.c:2444 `send_implied_dirs()` dedups shared ancestors via
+    /// upstream: flist.c:2455 `send_implied_dirs()` dedups shared ancestors via
     /// its `lastpath` cache and the later `flist_sort_and_clean()` pass so each
     /// implied directory appears once even when several `--relative` operands
     /// share a prefix. The local-copy executor never builds a shared sorted
@@ -276,7 +276,7 @@ impl<'a> CopyContext<'a> {
     /// absent). The flush executes `plan` verbatim, without re-scanning the
     /// destination or re-evaluating filters.
     ///
-    /// upstream: generator.c:351 `remember_delete()` records the concrete
+    /// upstream: generator.c:386 `remember_delete()` records the concrete
     /// victim during `delete_in_dir`; `do_delayed_deletions()` (generator.c:2899-2900)
     /// later unlinks it without any further filter check.
     pub(super) fn defer_decided_deletion(
@@ -345,7 +345,7 @@ impl<'a> CopyContext<'a> {
     /// destination directory mtimes. The perm repair is independent of that
     /// gating and always runs for the directories that were kept writable.
     ///
-    /// upstream: generator.c:2923-2925 - touch_up_dirs(dir_flist, -1) runs
+    /// upstream: generator.c:3015-3017 - touch_up_dirs(dir_flist, -1) runs
     /// after handle_delayed_updates() and the delete phase; generator.c:2565
     /// touch_up_dirs(); generator.c:2594 fix_dir_perms restores the real
     /// mode; generator.c:2744 need_retouch_dir_times = preserve_mtimes &&
@@ -361,7 +361,7 @@ impl<'a> CopyContext<'a> {
         let do_times = preserve_times && !backup_without_dir;
 
         // Deepest-first, so a child's perm/mtime change cannot re-clobber a
-        // parent handled earlier. Deviation from upstream: generator.c:2581
+        // parent handled earlier. Deviation from upstream: generator.c:2625
         // touch_up_dirs() walks the list forward (`for (i = start; i <= end; ...)`).
         dirs.sort_by(|a, b| {
             b.path
@@ -373,7 +373,7 @@ impl<'a> CopyContext<'a> {
             // Reinstate the real (restricted) directory mode last, after every
             // deferred deletion/update ran while the directory was kept
             // writable. This runs regardless of the mtime gating above.
-            // upstream: generator.c:2598-2599 - fix_dir_perms does
+            // upstream: generator.c:2642-2643 - fix_dir_perms does
             // do_chmod_at(fname, file->mode) before the mtime repair.
             #[cfg(unix)]
             if let Some(mode) = dir.restore_mode {
@@ -386,7 +386,7 @@ impl<'a> CopyContext<'a> {
             let Some(mtime) = dir.mtime else {
                 continue;
             };
-            // upstream: generator.c:2602 - only re-set when mtime_differs(), so
+            // upstream: generator.c:2646 - only re-set when mtime_differs(), so
             // directories untouched by a late mutation are left alone.
             let needs_update = match fast_io::destination_at::metadata(&dir.path) {
                 Ok(meta) => meta.modified_filetime() != mtime,
@@ -411,7 +411,7 @@ impl<'a> CopyContext<'a> {
     /// source mtime). It is intentionally retained here to keep this change
     /// scoped to one concern; folding it into the final pass is a deferred DRY
     /// cleanup. Both set the identical value, so the overlap is harmless.
-    /// upstream: generator.c:2899-2900 do_delayed_deletions() runs after generate_files()
+    /// upstream: generator.c:2991-2992 do_delayed_deletions() runs after generate_files()
     pub(super) fn flush_deferred_deletions(&mut self) -> Result<(), LocalCopyError> {
         // Nothing queued means no delete pass ran, so there is no notice to
         // emit - upstream only prints the skip notice from inside delete_in_dir
@@ -564,7 +564,7 @@ impl<'a> CopyContext<'a> {
 /// source filesystem paths, so a descendant match means `candidate`'s bytes were
 /// physically walked when `root`'s subtree was expanded.
 ///
-/// upstream: flist.c:3594-3624 flist_sort_and_clean() collapses an operand that
+/// upstream: flist.c:3605-3635 flist_sort_and_clean() collapses an operand that
 /// duplicates a subtree already contributed by an earlier `--relative` operand.
 fn source_root_covers(root: &Path, candidate: &Path) -> bool {
     candidate == root || candidate.starts_with(root)

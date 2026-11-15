@@ -73,11 +73,11 @@ pub(crate) fn copy_device(
         return Ok(());
     }
 
-    // upstream: generator.c:571-576 / 563-569 - a replace itemize reports
+    // upstream: generator.c:608-613 / 563-569 - a replace itemize reports
     // ITEM_REPORT_XATTR / ITEM_REPORT_ACL when those features are active and the
     // basis differs. Mirror the enabled flags across all platforms so the
     // recreate change-set is derivable without cfg branching at the record site.
-    // upstream: generator.c:571-576 - itemize() lights ITEM_REPORT_XATTR from
+    // upstream: generator.c:608-613 - itemize() lights ITEM_REPORT_XATTR from
     // xattr_diff(), not from `preserve_xattrs`. Compare here, before the node is
     // unlinked and recreated, so the diff sees the destination that the row
     // reports against.
@@ -115,7 +115,7 @@ pub(crate) fn copy_device(
         .as_ref()
         .is_some_and(|existing| existing.file_type().is_dir())
     {
-        // upstream: generator.c:2469-2483 atomic_create() - `dir_in_the_way`
+        // upstream: generator.c:2512-2526 atomic_create() - `dir_in_the_way`
         // forces `skip_atomic`, so a directory obstacle takes the
         // `delete_item()` arm whether or not --backup is set, and `del_opts`
         // carries DEL_RECURSE only under --delete/--force. That flag selects
@@ -131,14 +131,14 @@ pub(crate) fn copy_device(
             recurse,
             crate::local_copy::MakeWayFor::Device,
         )? {
-            // upstream: generator.c:2483 `return 0` - atomic_create() creates
+            // upstream: generator.c:2526 `return 0` - atomic_create() creates
             // nothing, the caller skips this entry, and the run finishes 23.
             return Ok(());
         }
         existing_metadata = None;
     }
 
-    // upstream: generator.c:2048-2051 - a device whose destination already
+    // upstream: generator.c:2089-2092 - a device whose destination already
     // holds another device (same FT_DEVICE bucket) is recreated rather than
     // treated as new; quick_check_ok() (generator.c:674-679) compares st_rdev
     // to decide. Snapshot the existing device and its rdev-difference before
@@ -192,7 +192,7 @@ pub(crate) fn copy_device(
                 Duration::default(),
                 Some(metadata_snapshot),
             );
-            // upstream: generator.c:584 itemize() sets ITEM_IS_NEW (statret < 0)
+            // upstream: generator.c:621 itemize() sets ITEM_IS_NEW (statret < 0)
             // so log.c:768-772 fills slots 2-10 with `+` for a device the
             // receiver newly materialises. A device replacing another device is
             // itemized as a local change (`cDc.T.`) instead; the generator runs
@@ -228,7 +228,7 @@ pub(crate) fn copy_device(
         return Ok(());
     }
 
-    // upstream: generator.c:2032-2055 + quick_check_ok (generator.c:676
+    // upstream: generator.c:2073-2096 + quick_check_ok (generator.c:713
     // compares st_rdev) - a device whose destination already holds a device
     // (the one FT_DEVICE bucket, block or char) with the SAME rdev is applied
     // in place via set_file_attrs and itemized `iflags=0` (`.D...`), never
@@ -278,7 +278,7 @@ pub(crate) fn copy_device(
             context.record_hard_link(metadata, destination);
 
             if let Some(path) = &record_path {
-                // upstream: generator.c:2055 itemize(..., 0, ...) - a
+                // upstream: generator.c:2096 itemize(..., 0, ...) - a
                 // quick-check-ok device sets no ITEM_LOCAL_CHANGE / ITEM_IS_NEW,
                 // only the attribute report bits, so the row renders `.D...p...`.
                 let change_set = LocalCopyChangeSet::for_file(
@@ -320,14 +320,14 @@ pub(crate) fn copy_device(
     }
 
     if let Some(existing) = existing_metadata.take() {
-        // upstream: generator.c:2478 atomic_create() - `make_backup(fname,
+        // upstream: generator.c:2521 atomic_create() - `make_backup(fname,
         // skip_atomic)` with `skip_atomic` false here, so the hard-link tier
         // runs before the rename.
         context.backup_existing_entry(destination, relative, existing.file_type(), false)?;
         remove_existing_destination(destination)?;
     }
 
-    // upstream: generator.c:1205-1316 try_dests_non() - a `--link-dest` basis
+    // upstream: generator.c:1242-1353 try_dests_non() - a `--link-dest` basis
     // device matching the source (same FT_DEVICE bucket, same st_rdev, unchanged
     // attrs) is hard-linked into place and itemized `hD` + blank rather than
     // recreated. Only applies when creating fresh (no device is being replaced).
@@ -360,7 +360,7 @@ pub(crate) fn copy_device(
 
     // try to materialise as hard link to an earlier device we created
     if let Some(link_source) = existing_hard_link_target.take() {
-        // upstream: log.c:675-689 - the `%L` field renders ` => leader` for a
+        // upstream: log.c:760-774 - the `%L` field renders ` => leader` for a
         // hard-linked non-symlink. Capture the leader's destination-relative
         // path before the match may move `link_source` back on EXDEV so the
         // itemize row can emit `hD+++++++++ alias => leader`.
@@ -373,7 +373,7 @@ pub(crate) fn copy_device(
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 remove_existing_destination(destination)?;
                 if let Err(link_error) = create_hard_link(&link_source, destination) {
-                    // upstream: hlink.c:486-487 - rsyserr(FERROR_XFER, errno,
+                    // upstream: hlink.c:500-501 - rsyserr(FERROR_XFER, errno,
                     // "link %s => %s failed", ...) and the entry is skipped.
                     report_link_failure(context, destination, &link_source, &link_error);
                     context.register_progress();
@@ -499,7 +499,7 @@ pub(crate) fn copy_device(
         // syscall.c:do_mknod()'s am_root < 0 branch).
         let fake_super = metadata_options.fake_super_enabled();
         if let Err(error) = create_device_node_with_fake_super(destination, metadata, fake_super) {
-            // upstream: generator.c:2521-2522 - rsyserr(FERROR_XFER, e,
+            // upstream: generator.c:2564-2565 - rsyserr(FERROR_XFER, e,
             // "mknod %s failed", ...) and the entry is skipped.
             report_mknod_failure(context, destination, &error.into_parts().2);
             context.register_progress();
@@ -562,7 +562,7 @@ pub(crate) fn copy_device(
                 Some(metadata_snapshot),
             );
             let record = if let Some(existing) = replaced_device.as_ref() {
-                // upstream: generator.c:2091-2096 - a device replacing another
+                // upstream: generator.c:2132-2137 - a device replacing another
                 // device of the same FT_DEVICE bucket recreates it and itemizes
                 // via ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE (`cDc.T.`), not
                 // ITEM_IS_NEW. Derive the change-set from the rdev comparison.
@@ -577,7 +577,7 @@ pub(crate) fn copy_device(
                 );
                 record.with_creation(false).with_change_set(change_set)
             } else {
-                // upstream: generator.c:584 itemize() sets ITEM_IS_NEW
+                // upstream: generator.c:621 itemize() sets ITEM_IS_NEW
                 // (statret < 0) so log.c:768-772 fills slots 2-10 with `+` for a
                 // device the receiver newly materialises via do_mknod(). A
                 // non-device existing entry hits upstream's statret = -1 path and

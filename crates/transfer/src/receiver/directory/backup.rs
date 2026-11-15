@@ -669,7 +669,7 @@ impl ReceiverContext {
     /// This is the backup ARM of the obstacle decision, not the decision
     /// itself: it is reached only from
     /// [`ReceiverContext::make_way_for_replacement`], which has already ruled
-    /// out a directory. Upstream's `dir_in_the_way` (`generator.c:2469`) makes
+    /// out a directory. Upstream's `dir_in_the_way` (`generator.c:2512`) makes
     /// `make_backup` unreachable for a directory in both modes, so calling this
     /// with one would back up something upstream removes.
     ///
@@ -693,7 +693,7 @@ impl ReceiverContext {
             return Ok(false);
         }
 
-        // upstream: generator.c:2018 - `make_backup(fname, False)`, so the
+        // upstream: generator.c:2059 - `make_backup(fname, False)`, so the
         // hard-link tier runs first for a symlink/special replacement.
         let metadata_opts = self.build_metadata_options();
         place_report_and_clear(
@@ -726,7 +726,7 @@ impl ReceiverContext {
             return Ok(false);
         }
 
-        // upstream: generator.c:2018 - `make_backup(fname, False)`.
+        // upstream: generator.c:2059 - `make_backup(fname, False)`.
         let metadata_opts = self.build_metadata_options();
         place_report_and_clear(
             existing,

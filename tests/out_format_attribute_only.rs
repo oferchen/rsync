@@ -1,6 +1,6 @@
 //! A non-itemizing `--out-format` does not announce attribute-only changes.
 //!
-//! upstream: log.c:875-890 `maybe_log_item()` gates `see_item` on `itemizing`,
+//! upstream: log.c:960-975 `maybe_log_item()` gates `see_item` on `itemizing`,
 //! so a format without `%i` reports only entries that actually moved data. An
 //! attribute-only change - a chmod against an otherwise up-to-date file - is
 //! announced solely when the format itemizes.

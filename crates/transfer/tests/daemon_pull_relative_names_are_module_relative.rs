@@ -32,7 +32,7 @@
 //! independent reason: the daemon's own argv sanitize dropped the `.`
 //! component before the sender could split on it.
 //!
-//! Upstream keeps that decision on ONE axis. `options.c:2414` sanitizes every
+//! Upstream keeps that decision on ONE axis. `options.c:2469` sanitizes every
 //! daemon positional with `SP_KEEP_DOT_DIRS`, and `util1.c:1240` reduces the
 //! flag to `drop_dot_dirs = !relative_paths || !(flags & SP_KEEP_DOT_DIRS)` -
 //! so on this path the surviving condition is `!relative_paths`. Under
@@ -53,13 +53,13 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/clientserver.c:1059` - `change_dir(module_chdir, CD_NORMAL)`
-//! - `rsync-3.5.1/util1.c:884` - `glob_expand_module()` strips `MODULE/`
-//! - `rsync-3.5.1/options.c:2414` - `sanitize_path(NULL, argv[i], "", 0, ..)`
-//! - `rsync-3.5.1/flist.c:2850-2900` - the per-positional `dir`/`fn` split
-//! - `rsync-3.5.1/flist.c:1369` - `rejecting unrequested file-list name`
-//! - `rsync-3.5.1/util1.c:1240` - `drop_dot_dirs = !relative_paths || ..`
-//! - `rsync-3.5.1/flist.c:2863` - `if ((p = strstr(fbuf, "/./")) != NULL)`
+//! - `rsync-3.5.2/clientserver.c:1063` - `change_dir(module_chdir, CD_NORMAL)`
+//! - `rsync-3.5.2/util1.c:884` - `glob_expand_module()` strips `MODULE/`
+//! - `rsync-3.5.2/options.c:2469` - `sanitize_path(NULL, argv[i], "", 0, ..)`
+//! - `rsync-3.5.2/flist.c:2861-2911` - the per-positional `dir`/`fn` split
+//! - `rsync-3.5.2/flist.c:1373` - `rejecting unrequested file-list name`
+//! - `rsync-3.5.2/util1.c:1240` - `drop_dot_dirs = !relative_paths || ..`
+//! - `rsync-3.5.2/flist.c:2874` - `if ((p = strstr(fbuf, "/./")) != NULL)`
 
 #![cfg(unix)]
 
@@ -332,7 +332,7 @@ fn a_non_relative_pull_of_the_same_subpath_is_unchanged() {
 /// An interior `/./` pivots the transmitted name: everything before it is the
 /// directory the sender walks from, and only the tail rides the wire.
 ///
-/// upstream: `flist.c:2863-2874` splits `a/./b/file.txt` into `dir = "a"` and
+/// upstream: `flist.c:2874-2885` splits `a/./b/file.txt` into `dir = "a"` and
 /// `fn = "b/file.txt"`. The split can only happen if the `.` survived the
 /// daemon's `options.c:2414` sanitize, which it does exactly when
 /// `relative_paths` is on (`util1.c:1240`).
@@ -495,7 +495,7 @@ fn concurrent_connections_do_not_share_the_relative_pivot() {
 /// Negative control for the DESTINATION half of the axis: a non-`--relative`
 /// push into a `/.`-terminated daemon destination must still collapse the dot.
 ///
-/// Upstream sanitizes the dest positional through the same `options.c:2414`
+/// Upstream sanitizes the dest positional through the same `options.c:2469`
 /// call as the sources, so `util1.c:1240` applies there too: with
 /// `relative_paths` off the `.` is dropped and `wrmod/dest/.` becomes
 /// `dest/`, which `get_local_name()` (main.c:807) reads as the

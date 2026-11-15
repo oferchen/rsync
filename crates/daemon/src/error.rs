@@ -49,7 +49,7 @@ impl DaemonError {
 
     /// Attaches text printed verbatim, on its own lines, before the trailer.
     ///
-    /// upstream: options.c:1576,1595 - a daemon-mode parse error prints its
+    /// upstream: options.c:1603,1595 - a daemon-mode parse error prints its
     /// cause with a bare `rprintf(FERROR, ...)` and only then exits through
     /// `exit_cleanup(RERR_SYNTAX)`, whose trailer stands on a separate line.
     pub(crate) fn with_preamble(mut self, preamble: String) -> Self {
@@ -164,7 +164,7 @@ impl ErrorCodification for DaemonError {
             ExitCode::CommandKilled => "RERR_CMD_KILLED",
             ExitCode::CommandRun => "RERR_CMD_RUN",
             ExitCode::CommandNotFound => "RERR_CMD_NOTFOUND",
-            // upstream: log.c:950-952 log_exit() - an unrecognized code has no
+            // upstream: log.c:1038-1040 log_exit() - an unrecognized code has no
             // RERR_* name.
             ExitCode::Other(_) => "RERR_UNKNOWN",
         }

@@ -14,8 +14,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.1/util1.c:599` `robust_rename()` - the `EXDEV` arm.
-//! - `rsync-3.5.1/rsync.c:882` `finish_transfer()`.
+//! - `rsync-3.5.2/util1.c:599` `robust_rename()` - the `EXDEV` arm.
+//! - `rsync-3.5.2/rsync.c:882` `finish_transfer()`.
 
 #![cfg(target_os = "linux")]
 

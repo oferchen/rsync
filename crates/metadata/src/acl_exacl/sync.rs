@@ -155,7 +155,7 @@ pub fn sync_acls(
 /// `--fake-super` (`sender_fake_super`), the source ACL is its `%aacl`/`%dacl`
 /// stash alone ([`crate::read_sender_acl`]): a source without one sends the
 /// empty ACL, and the destination then gets no xattr. A local copy's
-/// `-M--fake-super` reaches the receiver half only (upstream: pipe.c:143-148),
+/// `-M--fake-super` reaches the receiver half only (upstream: pipe.c:144-149),
 /// so the sender then reads the source's real ACL.
 ///
 /// Symbolic links do not support ACLs; when `follow_symlinks` is `false`,

@@ -167,7 +167,7 @@ fn write_names_omitted_for_protocol_29() {
     assert_eq!(read_entry.group_name(), None);
 }
 
-/// upstream: flist.c:783-791 - `add_uid()` names a uid only on its first
+/// upstream: flist.c:787-795 - `add_uid()` names a uid only on its first
 /// sighting (uidlist.c:340-354), so an owner that comes back after another
 /// one is sent without its name, in a later sub-list as in the same one.
 #[test]
@@ -197,7 +197,7 @@ fn returning_owner_is_not_named_again() {
     assert_eq!(named, [true, true, false]);
 }
 
-/// upstream: flist.c:787-800 - the sender names an owner from its id list
+/// upstream: flist.c:791-804 - the sender names an owner from its id list
 /// (`add_uid()`/`add_gid()`), not from the file entry. A nameless entry
 /// still sends the names the caller hands the writer, and only on the ids'
 /// first sighting.
@@ -255,7 +255,7 @@ fn pending_owner_names_do_not_leak_into_the_next_entry() {
     assert!(!buf.windows(5).any(|w| w == b"alice"));
 }
 
-/// upstream: flist.c:789-790 - inline names need `inc_recurse`; without it
+/// upstream: flist.c:793-794 - inline names need `inc_recurse`; without it
 /// the names travel only in the trailing id list, so none is asked for.
 #[test]
 fn no_inline_owner_name_is_needed_without_name_follows() {

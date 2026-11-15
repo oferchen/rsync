@@ -40,7 +40,7 @@ pub enum FilesFromSource {
     /// - PULL: the local receiver stages `local_path`'s bytes and the remote
     ///   sender reads `--files-from=-`; `wire_arg` is not forwarded.
     ///
-    /// Matches upstream `options.c:3311 check_for_hostspec()` +
+    /// Matches upstream `options.c:3379 check_for_hostspec()` +
     /// `options.c:2623-2639` single-host semantics.
     HybridLocalRemote {
         /// Local filesystem path to open in the applicable direction.

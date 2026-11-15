@@ -1,6 +1,6 @@
 //! Sender-side `--checksum` sums for the file list.
 //!
-//! upstream: flist.c:1815 - `always_checksum && am_sender && S_ISREG(st.st_mode)`
+//! upstream: flist.c:1819 - `always_checksum && am_sender && S_ISREG(st.st_mode)`
 //! makes `make_file()` call `file_checksum()` (checksum.c:419, unseeded) and
 //! store the result in `F_SUM(file)`, which `send_file_entry()` writes into the
 //! flist (flist.c:1228). The receiver's quick check (generator.c:639,

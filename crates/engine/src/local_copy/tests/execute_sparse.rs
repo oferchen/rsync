@@ -77,7 +77,7 @@ fn execute_with_sparse_enabled_creates_holes() {
 /// sparse: `KEEP_SIZE` is selected **only when no holes will be punched**
 /// (otherwise the reserved blocks sit beyond EOF where a punch cannot reach
 /// them), and `do_fallocate()` reports the reserved length instead of 0.
-// upstream: syscall.c:2736 do_fallocate() - `(inplace || preallocate_files)
+// upstream: syscall.c:2807 do_fallocate() - `(inplace || preallocate_files)
 // && sparse_files <= 0 ? DO_FALLOC_OPTIONS : 0`
 // upstream: fileio.c:88 flush_sparse_hole() - `sparse_past_write >= preallocated_len`
 #[cfg(target_os = "linux")]

@@ -351,7 +351,7 @@ pub fn apply_dest_mode_pre_transfer(
 /// `am_root` is sampled through the same libc `geteuid` the chmod apply path
 /// uses, so the self-lock decision and the on-disk fixup agree under
 /// `fakeroot`. See [`crate::transfer_root_self_locks`] for the mechanism.
-/// upstream: rsync.c:set_file_attrs() new_mode + generator.c:1904-1912 fixup.
+/// upstream: rsync.c:set_file_attrs() new_mode + generator.c:1941-1949 fixup.
 #[cfg(unix)]
 pub fn transfer_root_chmod_self_lock(
     destination: &Path,
@@ -513,7 +513,7 @@ pub fn apply_file_metadata_with_fd_if_changed(
 /// (generator.c:424-433) to a single read-only-bit compare, mirroring the Unix
 /// arm's permission leg. Kept as a pure, platform-independent helper so it is
 /// unit-testable on Linux even though it only gates the `cfg(not(unix))` path.
-/// upstream: generator.c:424 perms_differ() - the mode compare behind
+/// upstream: generator.c:461 perms_differ() - the mode compare behind
 /// unchanged_attrs()'s `if perms_differ(...)` leg.
 #[cfg(any(not(unix), test))]
 pub(crate) fn windows_readonly_differs(entry_permissions: u32, current_readonly: bool) -> bool {
@@ -523,7 +523,7 @@ pub(crate) fn windows_readonly_differs(entry_permissions: u32, current_readonly:
 
 /// Fast check whether all metadata attributes already match the destination.
 ///
-/// Mirrors upstream `generator.c:474 unchanged_attrs()` - a pure in-memory
+/// Mirrors upstream `generator.c:511 unchanged_attrs()` - a pure in-memory
 /// comparison that avoids the function-call overhead of the full
 /// [`apply_metadata_with_cached_stat`] path. Returns `true` when every
 /// preserved attribute (permissions, ownership, mtime) matches the
@@ -559,13 +559,13 @@ pub fn metadata_unchanged(
 ) -> bool {
     #[cfg(unix)]
     {
-        // upstream: generator.c:500-501 - perms_differ(file, sxp)
+        // upstream: generator.c:537-538 - perms_differ(file, sxp)
         if options.permissions() && (cached_meta.mode() & 0o7777) != (entry.permissions() & 0o7777)
         {
             return false;
         }
 
-        // upstream: generator.c:424-433 perms_differ() - without --perms,
+        // upstream: generator.c:461-470 perms_differ() - without --perms,
         // --executability compares only executability presence. dest_mode()
         // (rsync.c:472-480) tweaks x-bits solely for regular files, so
         // non-regular entries never differ on this leg.
@@ -577,7 +577,7 @@ pub fn metadata_unchanged(
             return false;
         }
 
-        // upstream: generator.c:502-503 - ownership_differs(file, sxp)
+        // upstream: generator.c:539-540 - ownership_differs(file, sxp)
         if options.owner()
             && let Some(uid) = entry.uid()
             && cached_meta.uid() != uid
@@ -591,7 +591,7 @@ pub fn metadata_unchanged(
             return false;
         }
 
-        // upstream: generator.c:498-499 - any_time_differs(sxp, file, fname)
+        // upstream: generator.c:535-536 - any_time_differs(sxp, file, fname)
         // -> mtime_differs() -> same_time(), so the `--modify-window` tolerance
         // governs this leg. Pass the sub-second component from both sides; a
         // negative window compares it (util1.c:1749) while the default zero
@@ -610,7 +610,7 @@ pub fn metadata_unchanged(
 
     #[cfg(not(unix))]
     {
-        // upstream: generator.c:500-501 perms_differ(). Windows preserves only
+        // upstream: generator.c:537-538 perms_differ(). Windows preserves only
         // the read-only attribute, so the full-mode compare collapses to a
         // single read-only-bit compare (`windows_readonly_differs`). The apply
         // path (permissions::set_permissions_like /
@@ -638,7 +638,7 @@ pub fn metadata_unchanged(
         }
     }
 
-    // upstream: flist.c:1221-1222 - the `--chmod` tweak rides the flist mode,
+    // upstream: flist.c:1225-1226 - the `--chmod` tweak rides the flist mode,
     // and dest_mode() (rsync.c:470-471) then keeps an EXISTING destination's
     // own permission bits when `!preserve_perms`. On this quick-check path
     // the destination exists by definition, so only the `--perms` compare
@@ -757,7 +757,7 @@ pub fn apply_symlink_metadata_with_options(
 /// supplies the `lstat` the destination had before the link was written. Every
 /// symlink apply runs after `symlink(2)`, so the link's own stat cannot
 /// distinguish "was already here" from "we just made it, and destroyed what
-/// was"; upstream reads `sx.st` at generator.c:1937-1940, BEFORE
+/// was"; upstream reads `sx.st` at generator.c:1974-1977, BEFORE
 /// `atomic_create` (generator.c:2002) deletes the obstacle, and feeds that to
 /// `dest_mode()`. A destination that was replaced - a symlink to a different
 /// target, or a non-symlink obstacle - therefore keeps contributing its OLD
@@ -823,7 +823,7 @@ pub fn apply_symlink_metadata_from_entry(
 /// supplies the `lstat` the destination had before the link was written. Every
 /// symlink apply runs after `symlinkat(2)`, so the link's own stat cannot
 /// distinguish "was already here" from "we just made it, and destroyed what
-/// was"; upstream reads `sx.st` at generator.c:1937-1940, BEFORE
+/// was"; upstream reads `sx.st` at generator.c:1974-1977, BEFORE
 /// `atomic_create` deletes the obstacle, and feeds that to `dest_mode()`. A
 /// destination that was replaced - a symlink to a different target, or a
 /// non-symlink obstacle - therefore keeps contributing its OLD permission bits

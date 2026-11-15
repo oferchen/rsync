@@ -175,7 +175,7 @@ fn a_non_empty_size_value_still_parses_and_applies() {
 /// limit this build allows (SIZE_MAX/2) rather than a refusal. A non-zero
 /// value below the minimum is still rejected.
 ///
-/// upstream: options.c:2073 `parse_size_arg(..., "max-alloc", 1024*1024, -1, True)`,
+/// upstream: options.c:2109 `parse_size_arg(..., "max-alloc", 1024*1024, -1, True)`,
 /// options.c:2085-2086 `if (!max_alloc) max_alloc = SIZE_ARG_MAX;`
 #[test]
 fn an_empty_max_alloc_means_the_largest_limit() {

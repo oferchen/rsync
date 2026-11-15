@@ -20,7 +20,7 @@
 //! | rsync  | rsync  | 32       | 11                   |
 //! | rsync  | rsync  | 30       | 12                   |
 //!
-//! The protocol split is upstream's gate. `cleanup.c:244` reads
+//! The protocol split is upstream's gate. `cleanup.c:245` reads
 //! `protocol_version >= 31 || am_receiver`, but `am_receiver` selects the forked
 //! receiver child's *sibling* message channel, not the socket; a single-process
 //! port must gate on the protocol version alone, which is exactly what the two
@@ -182,7 +182,7 @@ fn push_into_unwritable_parent(client: &Path, extra: &[&str]) -> (i32, String, P
 /// The server's own report: rsyserr()'s line, then log_exit()'s `RERR_FILEIO`
 /// trailer naming the unforked receiver, each exactly once and in that order.
 ///
-/// upstream: main.c:817-821, log.c:937-963, rsync.c:987-995
+/// upstream: main.c:817-821, log.c:1025-1051, rsync.c:987-995
 fn assert_server_report(client: &Path, root: &Path, text: &str) {
     assert_mkdir_report(client, &format!("\"{}\"", root.display()), text);
 }
@@ -212,7 +212,7 @@ fn assert_mkdir_report(client: &Path, fname: &str, text: &str) {
 /// `RERR_FILESELECT` its EACCES would grade, and its report must survive the
 /// 3.5.1 client's kill.
 ///
-/// upstream: main.c:817-821; cleanup.c:250 `send_msg_int(MSG_ERROR_EXIT,
+/// upstream: main.c:817-821; cleanup.c:251 `send_msg_int(MSG_ERROR_EXIT,
 /// exit_code)`; io.c:1930 `_exit_cleanup(val, __FILE__, 0 - __LINE__)`.
 #[test]
 fn server_fatal_exit_code_reaches_the_client() {
@@ -236,7 +236,7 @@ fn server_fatal_exit_code_reaches_the_client() {
 /// client is left inferring `RERR_STREAMIO` (12) from the closed stream. A
 /// blanket "always propagate" change would redden it.
 ///
-/// upstream: cleanup.c:244 `protocol_version >= 31`.
+/// upstream: cleanup.c:245 `protocol_version >= 31`.
 ///
 /// Measured against rsync 3.5.1 (50 runs each, rsync client and server):
 /// protocol 30 exits 12 every time, never 10. The client writes the file list
@@ -359,7 +359,7 @@ fn local_copy_dest_mkdir_failure_reports_file_io() {
 ///   twice is counted twice (flist.c:3060), so both fail the pre-flight mkdir
 ///   with `RERR_FILEIO`.
 ///
-/// upstream: main.c:808-821, flist.c:3096 send_extra_file_list()
+/// upstream: main.c:808-821, flist.c:3107 send_extra_file_list()
 /// Builds a cell's source operands from the fixture's source directory.
 type OperandsFor = fn(&Path) -> Vec<String>;
 

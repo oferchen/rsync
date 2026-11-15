@@ -37,7 +37,7 @@ pub const ZSTD_BEST_LEVEL: i32 = 19;
 pub const LZ4_DEFAULT_ACCELERATION: i32 = 1;
 
 /// Raw `do_compression_level` value upstream uses when the user did not pass
-/// `--compress-level`. upstream: rsync.h:1210 `#define CLVL_NOT_SPECIFIED INT_MIN`.
+/// `--compress-level`. upstream: rsync.h:1226 `#define CLVL_NOT_SPECIFIED INT_MIN`.
 ///
 /// [`CompressionAlgorithm::resolve_debug_level`] treats this sentinel as
 /// "unspecified" and substitutes the codec's default level, mirroring
@@ -87,7 +87,7 @@ impl CompressionAlgorithm {
 
     /// Returns the default compression algorithm used when callers enable `--compress`.
     ///
-    /// upstream: compat.c:101-112 `valid_compressions_items[]` lists the negotiation
+    /// upstream: compat.c:102-113 `valid_compressions_items[]` lists the negotiation
     /// precedence in table order - zstd, lz4, zlibx, zlib, none.
     #[must_use]
     pub const fn default_algorithm() -> Self {

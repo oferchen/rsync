@@ -244,7 +244,7 @@ fn ignore_errors_option_independent_of_delete_timing() {
 #[cfg(unix)]
 #[test]
 fn delete_suppressed_when_io_errors_and_ignore_errors_not_set() {
-    // upstream: generator.c:304 - `delete_in_dir` skips ALL file deletion once
+    // upstream: generator.c:339 - `delete_in_dir` skips ALL file deletion once
     // `io_error & IOERR_GENERAL` is set and `--ignore-errors` is off, printing
     // "IO error encountered -- skipping file deletion". The general IO error is
     // raised while BUILDING the file list (e.g. an unreadable directory whose
@@ -291,7 +291,7 @@ fn delete_suppressed_when_io_errors_and_ignore_errors_not_set() {
     let _ = fs::set_permissions(source.join("baddir"), fs::Permissions::from_mode(0o755));
 
     // The extra file in the later directory must survive because the general IO
-    // error suppresses deletion (upstream generator.c:304).
+    // error suppresses deletion (upstream generator.c:339).
     assert!(
         dest.join("zsub/extra.txt").exists(),
         "zsub/extra.txt must survive when a directory-read IO error suppresses deletion"
@@ -308,7 +308,7 @@ fn io_error_skip_deletion_emits_upstream_notice() {
     // upstream prints "IO error encountered -- skipping file deletion" once
     // before abandoning the delete pass. This asserts the notice reaches the
     // diagnostic queue, not merely that the extra file survives.
-    // upstream: generator.c:304-311 delete_in_dir().
+    // upstream: generator.c:339-346 delete_in_dir().
     use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
     use std::os::unix::fs::PermissionsExt;
 
@@ -379,7 +379,7 @@ fn ignore_errors_suppresses_io_error_skip_notice() {
     // With --ignore-errors the delete pass runs to completion, so the skip
     // notice must NOT appear and the extraneous file must be deleted. The
     // flag both silences the warning and re-enables deletion upstream.
-    // upstream: generator.c:304 `io_error & IOERR_GENERAL && !ignore_errors`.
+    // upstream: generator.c:339 `io_error & IOERR_GENERAL && !ignore_errors`.
     use logging::{DiagnosticEvent, VerbosityConfig, drain_events, init};
     use std::os::unix::fs::PermissionsExt;
 

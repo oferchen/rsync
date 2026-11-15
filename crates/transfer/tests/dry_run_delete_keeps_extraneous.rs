@@ -2,7 +2,7 @@
 //!
 //! Upstream reports every deletion a dry run would make and performs none of
 //! them: `delete_item()` still logs and counts the victim, but the unlink and
-//! rmdir underneath are no-ops (upstream: syscall.c:779-781 `do_unlink()` and
+//! rmdir underneath are no-ops (upstream: syscall.c:848-850 `do_unlink()` and
 //! syscall.c:1529-1531 `do_rmdir()` return 0 under `dry_run`). A receiver that
 //! skips that gate destroys exactly the files the user asked to preview.
 //!

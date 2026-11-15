@@ -36,7 +36,7 @@ pub(crate) fn append_filter_rules_from_files(
         return Err(message);
     }
 
-    // upstream: options.c:1635-1657 - --exclude-from and --include-from
+    // upstream: options.c:1662-1684 - --exclude-from and --include-from
     // feed parse_filter_file with XFLG_OLD_PREFIXES so per-line `- pat`,
     // `+ pat`, and `!` prefixes flip the rule kind or clear the list. Kinds
     // other than Include/Exclude have no upstream OLD_PREFIXES analogue, so

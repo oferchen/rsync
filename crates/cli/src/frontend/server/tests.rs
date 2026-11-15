@@ -211,7 +211,7 @@ fn detect_secluded_args_ignores_program_name() {
 
 #[test]
 fn detect_secluded_args_in_compact_flag_string() {
-    // upstream: options.c:2795-2796 - server_options() puts 's' at argstr[1]
+    // upstream: options.c:2860-2861 - server_options() puts 's' at argstr[1]
     // when protect_args is active, producing e.g. `-slogDtprze.iLsfxCIvu`.
     let args: Vec<OsString> = vec![
         OsString::from("rsync"),
@@ -240,7 +240,7 @@ fn detect_secluded_args_in_compact_flag_string_middle() {
 fn detect_secluded_args_ignores_s_in_capability_string() {
     // The 's' after the dot is the symlink-iconv capability char,
     // not secluded-args. Must not trigger secluded-args detection.
-    // upstream: options.c:3225-3227 - 's' in capability string = ICONV_OPTION
+    // upstream: options.c:3293-3295 - 's' in capability string = ICONV_OPTION
     let args: Vec<OsString> = vec![
         OsString::from("rsync"),
         OsString::from("--server"),
@@ -322,7 +322,7 @@ fn parse_server_args_skips_known_long_args() {
 /// `failed to create destination root --confine-root=/...: No such file or
 /// directory`, rc=12, on every `rrsync-*` test that serves a non-"/" dir.
 ///
-/// upstream: `support/rrsync` main():637-644 appends it; options.c:690 is the
+/// upstream: `support/rrsync` main():637-644 appends it; options.c:691 is the
 /// POPT_ARG_STRING entry that consumes it.
 #[test]
 fn parse_server_args_does_not_leak_confine_root_into_the_destination() {
@@ -363,7 +363,7 @@ fn parse_server_args_does_not_leak_confine_root_into_the_destination() {
 ///   `--log-file=protected` in the module root and exited 0. That vacuous
 ///   success is why `rrsync-no-overwrite-logfile` passed on one platform.
 ///
-/// upstream: options.c:796 - the `POPT_ARG_STRING` entry that binds the value
+/// upstream: options.c:799 - the `POPT_ARG_STRING` entry that binds the value
 /// on the server side, so it is never an operand there either.
 #[test]
 fn parse_server_args_does_not_leak_log_file_into_the_destination() {
@@ -412,7 +412,7 @@ fn long_flags_default_confine_root_is_absent() {
     assert!(flags.confine_root.is_none());
 }
 
-/// upstream: options.c:696 binds `safe_symlinks` via the one popt table both
+/// upstream: options.c:697 binds `safe_symlinks` via the one popt table both
 /// sides parse, and server_options() forwards the bare `--safe-links` long
 /// flag (options.c:3083-3084). Only the receiving side consumes it
 /// (generator.c:1951); dropping it here left a push's server receiver
@@ -424,7 +424,7 @@ fn long_flags_capture_safe_links() {
     assert!(flags.safe_links);
 }
 
-/// upstream: options.c:3075-3076 forwards `--copy-unsafe-links` as a bare long
+/// upstream: options.c:3143-3144 forwards `--copy-unsafe-links` as a bare long
 /// flag, and flist.c:492 has the server SENDER dereference every unsafe
 /// symlink it walks. Swallowing the flag let an rsh pull deliver absolute and
 /// `..` symlinks as symlinks - an escape the client explicitly asked to close.
@@ -521,7 +521,7 @@ fn parse_server_args_skips_value_bearing_long_flags() {
 }
 
 /// Regression for upstream `symlink-dirlink-basis_test.py` test 7:
-/// upstream `server_options()` (options.c:3062-3066) emits `--partial-dir`
+/// upstream `server_options()` (options.c:3127-3131) emits `--partial-dir`
 /// and its value as TWO separate argv entries. Both `--partial-dir` itself
 /// and the value that follows must be stripped from the positional list,
 /// otherwise the value (`.rsync-partial`) shows up as a destination path
@@ -881,7 +881,7 @@ fn long_flags_receiver() {
 /// copies it onto `config.flags.remove_source_files` so the sender
 /// generator can act on it after a successful transfer.
 ///
-/// upstream: options.c:3163-3166 - `server_options()` emits
+/// upstream: options.c:3231-3234 - `server_options()` emits
 /// `--remove-source-files` whenever the client requested it.
 #[test]
 fn long_flags_remove_source_files() {
@@ -919,7 +919,7 @@ fn remove_source_files_recognised_as_known_long_flag() {
     assert!(is_known_server_long_flag("--remove-sent-files"));
 }
 
-/// upstream: options.c:3075-3084 - server_options() emits `--copy-unsafe-links`
+/// upstream: options.c:3143-3152 - server_options() emits `--copy-unsafe-links`
 /// and `--safe-links` as bare flags when the matching booleans are set on the
 /// client side. The flag-string scanner must register them so the path that
 /// follows is not consumed as a positional argument (which causes the sender
@@ -1027,7 +1027,7 @@ fn long_flags_io_uring_depth_default_is_none() {
     assert!(flags.io_uring_depth.is_none());
 }
 
-// upstream: options.c:3127-3130 - server_options() forwards --info=FLAGS so
+// upstream: options.c:3195-3198 - server_options() forwards --info=FLAGS so
 // the server must recognise it as a long flag and not let it leak into the
 // positional path list.
 #[test]
@@ -1058,7 +1058,7 @@ fn long_flags_write_devices() {
     assert!(flags.write_devices);
 }
 
-// upstream: options.c:3168-3169 - a PULL client (upstream or oc) forwards
+// upstream: options.c:3236-3237 - a PULL client (upstream or oc) forwards
 // `--copy-devices` to the server sender. The flag-string scanner must treat it
 // as a known long flag; otherwise it leaks into the positional list and becomes
 // a stray source/destination path.
@@ -1078,7 +1078,7 @@ fn copy_devices_is_known_and_not_positional() {
     assert_eq!(pos_args, vec![OsString::from("src/")]);
 }
 
-// upstream: options.c:2931-2935 - a client that pins `--compress-level=N`
+// upstream: options.c:2996-3000 - a client that pins `--compress-level=N`
 // forwards it to the server. The flag-string scanner must treat it as a known
 // long flag; otherwise it leaks into the positional list and the receiver
 // fails with `failed to create destination root --compress-level=6` (exit 12).
@@ -1097,7 +1097,7 @@ fn compress_level_is_known_and_not_positional() {
     assert_eq!(pos_args, vec![OsString::from("dst/")]);
 }
 
-// upstream: options.c:2931-2935 - the forwarded level is captured so the
+// upstream: options.c:2996-3000 - the forwarded level is captured so the
 // server codec compresses at the same level the client requested.
 #[test]
 fn long_flags_capture_compress_level() {
@@ -1109,7 +1109,7 @@ fn long_flags_capture_compress_level() {
     assert_eq!(flags.compression_level.as_deref(), Some("6"));
 }
 
-// upstream: options.c:2987-2989 - `server_options()` emits
+// upstream: options.c:3052-3054 - `server_options()` emits
 // `safe_arg("--suffix", backup_suffix)` (joined `--suffix=VALUE`). Without a
 // match arm the token leaked into the positional list and the receiver failed
 // with `failed to create destination root --suffix=.bak` (exit 12).
@@ -1132,7 +1132,7 @@ fn suffix_is_known_and_not_positional() {
     );
 }
 
-// upstream: options.c:2987-2989 - the forwarded suffix is captured so the
+// upstream: options.c:3052-3054 - the forwarded suffix is captured so the
 // server's backup path uses the same suffix the client requested.
 #[test]
 fn long_flags_capture_suffix() {
@@ -1141,7 +1141,7 @@ fn long_flags_capture_suffix() {
     assert_eq!(flags.backup_suffix.as_deref(), Some(".bak"));
 }
 
-// upstream: options.c:3093-3094 - `server_options()` emits
+// upstream: options.c:3161-3162 - `server_options()` emits
 // `safe_arg("--usermap", usermap)` (joined `--usermap=VALUE`) in the am_sender
 // block. It must be recognised so a server receiver maps ownership rather than
 // treating the token as a positional destination path.
@@ -1164,7 +1164,7 @@ fn usermap_is_known_and_not_positional() {
     );
 }
 
-// upstream: options.c:3093-3094 - the forwarded usermap spec is captured so the
+// upstream: options.c:3161-3162 - the forwarded usermap spec is captured so the
 // server receiver can parse it into a UserMapping and remap ownership.
 #[test]
 fn long_flags_capture_usermap() {
@@ -1176,7 +1176,7 @@ fn long_flags_capture_usermap() {
     assert_eq!(flags.usermap.as_deref(), Some("0:1000"));
 }
 
-// upstream: options.c:3096-3097 - `server_options()` emits
+// upstream: options.c:3164-3165 - `server_options()` emits
 // `safe_arg("--groupmap", groupmap)` (joined `--groupmap=VALUE`) alongside
 // `--usermap`. Wildcard specs (`*:GID`) must survive intact into the flag list.
 #[test]
@@ -1198,7 +1198,7 @@ fn groupmap_is_known_and_not_positional() {
     );
 }
 
-// upstream: options.c:3096-3097 - the forwarded groupmap spec is captured
+// upstream: options.c:3164-3165 - the forwarded groupmap spec is captured
 // verbatim (wildcard intact) for GroupMapping::parse.
 #[test]
 fn long_flags_capture_groupmap() {
@@ -1210,7 +1210,7 @@ fn long_flags_capture_groupmap() {
     assert_eq!(flags.groupmap.as_deref(), Some("*:5678"));
 }
 
-// upstream: options.c:3035-3036 - `server_options()` emits
+// upstream: options.c:3100-3101 - `server_options()` emits
 // `safe_arg("--skip-compress", skip_compress)` (joined `--skip-compress=VALUE`)
 // in the client-receiver branch so a server sender skips compression for the
 // listed suffixes. It must not leak into the positional path list.
@@ -1234,7 +1234,7 @@ fn skip_compress_is_known_and_not_positional() {
     );
 }
 
-// upstream: options.c:3035-3036 - the forwarded skip-compress list is captured
+// upstream: options.c:3100-3101 - the forwarded skip-compress list is captured
 // so the server sender can build a SkipCompressList.
 #[test]
 fn long_flags_capture_skip_compress() {
@@ -1246,7 +1246,7 @@ fn long_flags_capture_skip_compress() {
     assert_eq!(flags.skip_compress.as_deref(), Some("gz/zip/jpg"));
 }
 
-// upstream: options.c:2963-2964 - block_size is forwarded as a standalone
+// upstream: options.c:3028-3029 - block_size is forwarded as a standalone
 // `-B%u` token (e.g. `-B131072`) after the compact flag string. Without
 // recognition the token leaked into the positional list and the receiver
 // failed with `failed to create destination root -B131072` (exit 12).
@@ -1269,7 +1269,7 @@ fn block_size_is_known_and_not_positional() {
     );
 }
 
-// upstream: options.c:2963-2964 - the forwarded block-size digits are captured.
+// upstream: options.c:3028-3029 - the forwarded block-size digits are captured.
 #[test]
 fn long_flags_capture_block_size() {
     let args = vec![OsString::from("--server"), OsString::from("-B131072")];
@@ -1288,7 +1288,7 @@ fn block_size_guard_rejects_non_digit_suffix() {
     assert_eq!(flags.block_size, None);
 }
 
-// upstream: options.c:2923-2924 - the server recognises the forwarded
+// upstream: options.c:2988-2989 - the server recognises the forwarded
 // `--list-only` and records it so the transfer lists without writing.
 #[test]
 fn long_flags_capture_list_only() {
@@ -1297,7 +1297,7 @@ fn long_flags_capture_list_only() {
     assert!(flags.list_only);
 }
 
-// upstream: options.c:2958-2961 - `--msgs2stderr` / `--no-msgs2stderr` are
+// upstream: options.c:3023-3026 - `--msgs2stderr` / `--no-msgs2stderr` are
 // recognised (consumed) so they never leak into the positional path list.
 #[test]
 fn msgs2stderr_flags_are_known_and_not_positional() {
@@ -1330,7 +1330,7 @@ fn long_flags_qsort() {
     assert!(flags.qsort);
 }
 
-// upstream: options.c:3069-3070 - bare --partial (no compact 'P') tells the receiver
+// upstream: options.c:3134-3135 - bare --partial (no compact 'P') tells the receiver
 // to keep interrupted temp files. The server must parse it, or an oc/upstream
 // client's PUSH loses keep_partial on the oc receiver.
 #[test]
@@ -1348,7 +1348,7 @@ fn long_flags_partial_default_none() {
     assert!(!flags.partial);
 }
 
-// upstream: options.c:2937-2942 - --specials / --no-specials convey
+// upstream: options.c:3002-3007 - --specials / --no-specials convey
 // preserve_specials separately from the compact 'D' (devices) letter.
 /// `--drop-D` must be recognised on the SERVER side, because that is the only
 /// way it can reach a remote receiver: it is never forwarded automatically, so
@@ -1388,7 +1388,7 @@ fn long_flags_specials_and_no_specials() {
     assert!(is_known_server_long_flag("--no-specials"));
 }
 
-// upstream: options.c:2928-2929 - `if (xfer_dirs && !recurse && delete_mode &&
+// upstream: options.c:2993-2994 - `if (xfer_dirs && !recurse && delete_mode &&
 // am_sender) args[ac++] = "--no-r"`. A real upstream client running
 // `--files-from --delete` forwards `--no-r`; the server-side popt table clears
 // `recurse` (options.c:632). Without recognition the token leaks into the
@@ -1405,7 +1405,7 @@ fn long_flags_no_r_recognized_and_parsed() {
     assert!(is_known_server_long_flag("--no-r"));
 }
 
-// upstream: options.c:3136-3140 - under `--inplace`, `if (sparse_files &&
+// upstream: options.c:3204-3208 - under `--inplace`, `if (sparse_files &&
 // !whole_file && am_sender) args[ac++] = "--no-W"`. Clears `whole_file`
 // server-side (options.c:760) so `--inplace --sparse` streams a delta.
 #[test]
@@ -1419,7 +1419,7 @@ fn long_flags_no_w_recognized_and_parsed() {
     assert!(is_known_server_long_flag("--no-W"));
 }
 
-// upstream: options.c:3143-3155 - `--no-relative` is emitted with
+// upstream: options.c:3211-3223 - `--no-relative` is emitted with
 // `--files-from` when `!relative_paths`. Clears `relative_paths` server-side
 // (options.c:707).
 #[test]
@@ -1437,7 +1437,7 @@ fn long_flags_no_relative_recognized_and_parsed() {
 // Regression: the four `--no-*` negations upstream emits must be split off the
 // compact flag string and never surface as positional destination paths. This
 // reproduces the `--files-from --delete` push where the client sends `--no-r`.
-// upstream: options.c:2929/3140/3154/3158.
+// upstream: options.c:2994/3140/3154/3158.
 #[test]
 fn no_negations_do_not_leak_as_positional_paths() {
     let args = [
@@ -1863,7 +1863,7 @@ fn parse_server_args_iconv_and_timeout_strip_to_dest() {
 
 #[test]
 fn is_known_server_long_flag_compression_choices() {
-    // upstream: options.c:2994-2999 - server_options() emits these whenever the
+    // upstream: options.c:3059-3064 - server_options() emits these whenever the
     // negotiated codec is not the default CPRES_ZLIB carried by the compact `-z`
     // flag. Without them in the known list, the dest path is silently corrupted
     // (same failure mode as the iconv/timeout regression above).
@@ -1926,7 +1926,7 @@ fn parse_server_args_compress_choice_strips_from_dest() {
 
 #[test]
 fn parse_server_long_flags_log_format_itemize() {
-    // upstream: options.c:2950-2951 - client sends --log-format=%i for itemize
+    // upstream: options.c:3015-3016 - client sends --log-format=%i for itemize
     let args = vec![
         OsString::from("--server"),
         OsString::from("--log-format=%i"),
@@ -1937,7 +1937,7 @@ fn parse_server_long_flags_log_format_itemize() {
 
 #[test]
 fn parse_server_long_flags_log_format_itemize_extended() {
-    // upstream: options.c:2948-2949 - %i%I when stdout_format_has_i > 1
+    // upstream: options.c:3013-3014 - %i%I when stdout_format_has_i > 1
     let args = vec![
         OsString::from("--server"),
         OsString::from("--log-format=%i%I"),
@@ -1948,7 +1948,7 @@ fn parse_server_long_flags_log_format_itemize_extended() {
 
 #[test]
 fn parse_server_long_flags_log_format_operation() {
-    // upstream: options.c:2952-2953 - %o when stdout_format_has_o_or_i
+    // upstream: options.c:3017-3018 - %o when stdout_format_has_o_or_i
     let args = vec![
         OsString::from("--server"),
         OsString::from("--log-format=%o"),
@@ -1959,7 +1959,7 @@ fn parse_server_long_flags_log_format_operation() {
 
 #[test]
 fn parse_server_long_flags_log_format_placeholder() {
-    // upstream: options.c:2954-2955 - X when not verbose, no i/o tokens
+    // upstream: options.c:3019-3020 - X when not verbose, no i/o tokens
     let args = vec![OsString::from("--server"), OsString::from("--log-format=X")];
     let flags = parse_server_long_flags(&args);
     assert_eq!(flags.log_format.as_deref(), Some("X"));
@@ -2092,7 +2092,7 @@ fn server_daemon_arguments_sets_daemon_program_name() {
 /// `missing rsync server flag string` against any upstream-client -> oc-rsync
 /// server transfer that sets `-s`.
 ///
-/// upstream: rsync.c:284 send_protected_args() / io.c:1480 read_args() /
+/// upstream: rsync.c:284 send_protected_args() / io.c:1487 read_args() /
 /// main.c::read_args() callsite at main.c:1959.
 #[test]
 fn server_mode_merges_cmdline_and_stdin_secluded_args() {
@@ -2185,7 +2185,7 @@ fn server_mode_merges_cmdline_and_stdin_standalone_s_flag() {
 ///
 /// Mirrors the exact wire from the upstream alt-dest test running over
 /// lsh.sh: `--server -vlogDtpre.iLsfxCIvu --copy-dest /tmp/ad/alt3 . /tmp/ad/to/`.
-// upstream: options.c:3120-3121 `alt_dest_opt(0)` + `safe_arg("", basis_dir[i])`
+// upstream: options.c:3188-3189 `alt_dest_opt(0)` + `safe_arg("", basis_dir[i])`
 #[test]
 fn parse_server_args_handles_split_copy_dest_form() {
     let args = vec![
@@ -2209,7 +2209,7 @@ fn parse_server_args_handles_split_copy_dest_form() {
 
 /// `--link-dest` and `--compare-dest` share the same `alt_dest_opt(0)`
 /// emission path in upstream, so their split form must also be skipped.
-// upstream: options.c:3119-3122
+// upstream: options.c:3187-3190
 #[test]
 fn parse_server_args_handles_split_link_dest_and_compare_dest_forms() {
     let args = vec![
@@ -2230,7 +2230,7 @@ fn parse_server_args_handles_split_link_dest_and_compare_dest_forms() {
 /// Upstream also splits `--files-from`, `--backup-dir`, and `--temp-dir`
 /// into two argv slots. Recognising each one drains the value slot so it
 /// cannot masquerade as a positional destination.
-// upstream: options.c:2981-2985 (--backup-dir), 3106-3109 (--temp-dir),
+// upstream: options.c:3046-3050 (--backup-dir), 3106-3109 (--temp-dir),
 //           2964-2965 (--files-from)
 #[test]
 fn parse_server_args_handles_remaining_split_path_flags() {
@@ -2274,7 +2274,7 @@ fn parse_server_args_joined_copy_dest_does_not_eat_positional() {
 /// path even when upstream emits it as two argv slots. Without this, the
 /// alt-dest behaviour (basis-file copy-from instead of delta-from-empty)
 /// is lost: the receiver would fall back to whole-file transfer.
-// upstream: options.c:3119-3122
+// upstream: options.c:3187-3190
 #[test]
 fn long_flags_captures_split_copy_dest_value() {
     use engine::ReferenceDirectoryKind;
@@ -2348,7 +2348,7 @@ fn long_flags_captures_multiple_split_alt_dest_values() {
 /// `parse_server_long_flags` must capture the split-form `--files-from`
 /// value so `--files-from /list` keeps working when upstream emits it
 /// as two argv slots.
-// upstream: options.c:3143-3146 `--files-from`
+// upstream: options.c:3211-3214 `--files-from`
 #[test]
 fn long_flags_captures_split_files_from_value() {
     let args = vec![
@@ -2366,10 +2366,10 @@ fn long_flags_captures_split_files_from_value() {
 // -- that upstream `server_options()` (options.c) emits but oc did not
 // -- recognise in `is_known_server_long_flag`.
 
-/// upstream: options.c:3089-3090 - `if (use_qsort) args[ac++] = "--use-qsort"`.
+/// upstream: options.c:3157-3158 - `if (use_qsort) args[ac++] = "--use-qsort"`.
 /// This is the exact spelling server_options() emits (oc's own forwarder uses
 /// `--qsort`). It must be recognised so it does not leak, and it maps onto the
-/// same `qsort` sink so flist ordering matches upstream (flist.c:2178).
+/// same `qsort` sink so flist ordering matches upstream (flist.c:2182).
 #[test]
 fn long_flags_use_qsort_maps_to_qsort() {
     let args = vec![OsString::from("--server"), OsString::from("--use-qsort")];
@@ -2378,7 +2378,7 @@ fn long_flags_use_qsort_maps_to_qsort() {
     assert!(is_known_server_long_flag("--use-qsort"));
 }
 
-/// upstream: options.c:3174-3175 - `if (open_noatime && preserve_atimes <= 1)
+/// upstream: options.c:3242-3243 - `if (open_noatime && preserve_atimes <= 1)
 /// args[ac++] = "--open-noatime"`, forwarded to the sender.
 #[test]
 fn long_flags_open_noatime() {
@@ -2388,7 +2388,7 @@ fn long_flags_open_noatime() {
     assert!(is_known_server_long_flag("--open-noatime"));
 }
 
-/// upstream: options.c:3044-3047 - `--delete-missing-args` (missing_args == 2)
+/// upstream: options.c:3109-3112 - `--delete-missing-args` (missing_args == 2)
 /// and `--ignore-missing-args` (missing_args == 1). Mirrors the daemon
 /// long-form parser (long_form_args.rs).
 #[test]
@@ -2411,7 +2411,7 @@ fn long_flags_missing_args_variants() {
     assert!(is_known_server_long_flag("--ignore-missing-args"));
 }
 
-/// upstream: options.c:3024-3025 / 3028-3029 / 3171-3172 - `--force`
+/// upstream: options.c:3089-3090 / 3028-3029 / 3171-3172 - `--force`
 /// (force_delete), `--super` (am_root > 1), and `--preallocate`
 /// (preallocate_files) are emitted only when the client is the sender and reach a server
 /// acting as the receiver. All three MUST be recognised so they never surface
@@ -2426,7 +2426,7 @@ fn force_super_preallocate_recognised_as_known_long_flags() {
     assert!(is_known_server_long_flag("--preallocate"));
 }
 
-/// upstream: options.c:3024-3025 / generator.c:2481 - a server receiver invoked
+/// upstream: options.c:3089-3090 / generator.c:2524 - a server receiver invoked
 /// with `--force` must set the second term of `int del_opts = delete_mode ||
 /// force_delete ? DEL_RECURSE : 0`, which is what lets a POPULATED directory
 /// obstacle be cleared for an incoming non-directory. The flag has no compact
@@ -2443,7 +2443,7 @@ fn parse_server_long_flags_sets_force() {
     assert!(with.force, "--force must set the flag");
 }
 
-/// upstream: options.c:3171-3172 / receiver.c:492 - a server receiver invoked
+/// upstream: options.c:3239-3240 / receiver.c:492 - a server receiver invoked
 /// with `--preallocate` must fallocate() each destination file. The flag has no
 /// compact letter, so it arrives only as the long-form arg; parsing must set
 /// `preallocate` so `run.rs` can carry it onto `config.flags.preallocate` and
@@ -2912,7 +2912,7 @@ fn no_capability_letter_leaks_into_operands() {
 
 /// The end-of-options marker (`--`) on the server argument list.
 ///
-/// upstream: options.c:1497 - the server runs the same popt parser as the
+/// upstream: options.c:1515 - the server runs the same popt parser as the
 /// client, and popt consumes a bare `--` and hands back everything after it as
 /// operands. `support/rrsync:655` builds `(RSYNC, *opts, '--', '.', *args)` and
 /// its comment at `:558` states the property it depends on: "an arg that starts
@@ -3049,7 +3049,7 @@ mod end_of_options {
 /// An operator-injected `--fake-super` must not be mistaken for the compact
 /// flag string.
 ///
-/// upstream: options.c:672 `{"fake-super", 0, POPT_ARG_VAL, &am_root, -1, 0,
+/// upstream: options.c:673 `{"fake-super", 0, POPT_ARG_VAL, &am_root, -1, 0,
 /// 0}` is an ordinary entry in the one popt table both ends parse, so it binds
 /// wherever it sits in argv. `server_options()` deliberately never emits it -
 /// which is precisely why an operator injects it, via
@@ -3138,7 +3138,7 @@ fn fake_super_reaches_the_server_config() {
     assert!(config.fake_super);
 
     // Absent: left alone, so a daemon module's `fake super = yes` survives an
-    // argv that never mentions it (upstream clientserver.c:1198).
+    // argv that never mentions it (upstream clientserver.c:1202).
     let mut untouched = core::server::ServerConfig {
         fake_super: true,
         ..core::server::ServerConfig::default()
@@ -3159,7 +3159,7 @@ fn fake_super_is_a_known_server_long_flag() {
     assert!(is_known_server_long_flag("--fake-super"));
 }
 
-/// upstream: options.c:670-672 has no `no-fake-super` entry, so popt refuses
+/// upstream: options.c:671-673 has no `no-fake-super` entry, so popt refuses
 /// it anywhere in the server argv; a path after `--` is never an option.
 #[test]
 fn unknown_long_options_are_refused_and_nothing_else_is() {
@@ -3261,7 +3261,7 @@ fn parsed_timeout_flag_feeds_the_server_io_timeout() {
     );
 }
 
-// upstream: options.c:860 - `--protocol` is a server-table popt option, and
+// upstream: options.c:863 - `--protocol` is a server-table popt option, and
 // server_options() appends `-M` remote options before the `.` placeholder. If
 // the token were taken for an operand it would become the destination root.
 #[test]
@@ -3330,7 +3330,7 @@ fn parse_server_protocol_mirrors_popt_int() {
     }
 }
 
-/// upstream: options.c:2905-2907 `server_options()` adds the compact flag
+/// upstream: options.c:2970-2972 `server_options()` adds the compact flag
 /// string only when a short option is set, so a flagless push below protocol
 /// 30 (no `-e.` letters) sends `--server . DEST`. popt has no flag-string slot:
 /// the placeholder and operands must not wait for one.

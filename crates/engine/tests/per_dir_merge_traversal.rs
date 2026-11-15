@@ -172,7 +172,7 @@ fn same_dir_nested_dir_merge_applies_to_current_dir_and_descendants() {
 /// the source-side `allows()` evaluation, so the `- .filt`/`- *.old`/`- *.bak`
 /// rules stopped matching and the excluded files were copied back and survived.
 ///
-/// upstream: generator.c:285-360 delete_in_dir runs the destination per-dir filter
+/// upstream: generator.c:320-395 delete_in_dir runs the destination per-dir filter
 /// push/pop against a separate delete_filt chain, isolating it from the sender
 /// filter_list; exclude.c:900 push_local_filters keeps inherited rules in
 /// lp->head, so a destination merge file may register nested directives an

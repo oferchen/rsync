@@ -4,7 +4,7 @@
 //! fast-path pass followed by a lowest-distance pass over every candidate in
 //! the destination directory (and, at level 2, the reference directories).
 //!
-//! upstream: generator.c:836 `find_fuzzy()`.
+//! upstream: generator.c:873 `find_fuzzy()`.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -61,7 +61,7 @@ impl FuzzyMatcher {
     /// `target_mtime` is the source file's modification time in whole seconds
     /// since the Unix epoch; `None` disables the fast-path.
     ///
-    /// upstream: generator.c:836 `find_fuzzy()`.
+    /// upstream: generator.c:873 `find_fuzzy()`.
     pub fn find_fuzzy_basis(
         &self,
         target_name: &OsStr,
@@ -72,7 +72,7 @@ impl FuzzyMatcher {
         let target_bytes = os_str_bytes(target_name);
         let target_suffix = find_filename_suffix(&target_bytes).to_vec();
 
-        // upstream: generator.c:848/873 - iterate dirlist_array[0..fuzzy_basis],
+        // upstream: generator.c:885/873 - iterate dirlist_array[0..fuzzy_basis],
         // the destination directory first then each reference directory.
         let mut dirs: Vec<&Path> = Vec::with_capacity(1 + self.fuzzy_basis_dirs.len());
         dirs.push(dest_dir);
@@ -85,7 +85,7 @@ impl FuzzyMatcher {
             .map(|dir| collect_candidates(dir, &target_bytes))
             .collect();
 
-        // Pass 1: exact size + mtime fast-path. upstream: generator.c:847-871.
+        // Pass 1: exact size + mtime fast-path. upstream: generator.c:884-908.
         if let Some(target_secs) = target_mtime {
             for candidates in &per_dir {
                 for candidate in candidates {
@@ -100,7 +100,7 @@ impl FuzzyMatcher {
             }
         }
 
-        // Pass 2: lowest-distance wins. upstream: generator.c:873-913.
+        // Pass 2: lowest-distance wins. upstream: generator.c:910-950.
         let mut lowest_dist = self.max_distance;
         let mut best: Option<FuzzyMatch> = None;
         for candidates in &per_dir {
@@ -111,10 +111,10 @@ impl FuzzyMatcher {
                     &target_suffix,
                     lowest_dist,
                 );
-                // upstream: generator.c:901-904 - emit each candidate's distance
+                // upstream: generator.c:938-941 - emit each candidate's distance
                 // as fixed-point `%d.%05d` for --debug=FUZZY parsers.
                 trace_fuzzy_distance(&String::from_utf8_lossy(&candidate.name), dist);
-                // upstream: generator.c:905 - `<=` lets a later equal-distance
+                // upstream: generator.c:942 - `<=` lets a later equal-distance
                 // candidate win; the sorted scan order makes this deterministic.
                 if dist <= lowest_dist {
                     lowest_dist = dist;
@@ -131,13 +131,13 @@ impl FuzzyMatcher {
 }
 
 /// Collects the eligible fuzzy candidates in `dir`, sorted by basename to
-/// mirror upstream's sorted dirlist ordering (flist.c:3561
+/// mirror upstream's sorted dirlist ordering (flist.c:3572
 /// `flist_sort_and_clean`).
 ///
 /// Skips non-regular files, zero-length files, and the exact-name file (which,
 /// when present, is used as the direct basis before fuzzy matching runs).
 ///
-/// upstream: generator.c:857-861,888 - `F_IS_ACTIVE`, `S_ISREG`, and
+/// upstream: generator.c:894-898,888 - `F_IS_ACTIVE`, `S_ISREG`, and
 /// `!F_LENGTH(fp)` screening.
 fn collect_candidates(dir: &Path, target_name: &[u8]) -> Vec<Candidate> {
     let Ok(entries) = fs::read_dir(dir) else {
@@ -151,7 +151,7 @@ fn collect_candidates(dir: &Path, target_name: &[u8]) -> Vec<Candidate> {
             _ => continue,
         };
 
-        // upstream: generator.c:860 - skip zero-length files.
+        // upstream: generator.c:897 - skip zero-length files.
         if metadata.len() == 0 {
             continue;
         }
@@ -292,7 +292,7 @@ mod tests {
         /// A candidate with the exact target size and mtime must be returned by
         /// the fast-path (distance 0) ahead of any closer-named candidate.
         ///
-        /// upstream: generator.c:863-868 - size/modtime match short-circuits.
+        /// upstream: generator.c:900-905 - size/modtime match short-circuits.
         #[test]
         fn size_mtime_match_wins_over_closer_name() {
             let dir = test_support::create_tempdir();
