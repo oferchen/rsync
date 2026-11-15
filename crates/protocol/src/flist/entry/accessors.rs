@@ -735,10 +735,8 @@ impl FileEntry {
     /// - `sender.c:533` - sender calls `flist_free(first_flist)` on NDX_DONE
     /// - `receiver.c:863` - receiver calls `flist_free(first_flist)` on NDX_DONE
     pub fn reclaim_heap_data(&mut self) {
-        // Drop the path buffer contents without deallocating.
         self.name = PathBuf::new();
         self.dirname = empty_dirname();
-        // Drop the extras box.
         self.extras = None;
         // Zero scalar fields - not strictly necessary for memory but
         // makes reclaimed entries clearly inert.

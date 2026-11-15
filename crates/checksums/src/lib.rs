@@ -4,7 +4,7 @@
 //!
 //! This crate provides the cryptographic and non-cryptographic hash algorithms
 //! used by rsync for delta-transfer operations. All implementations are
-//! byte-for-byte compatible with upstream rsync 3.5.1, ensuring interoperability
+//! byte-for-byte compatible with upstream rsync 3.5.2, ensuring interoperability
 //! with the C reference implementation.
 //!
 //! # Quick Start
@@ -307,7 +307,7 @@
 //!
 //! # Upstream Compatibility
 //!
-//! All algorithms produce output identical to upstream rsync 3.5.1:
+//! All algorithms produce output identical to upstream rsync 3.5.2:
 //!
 //! - Rolling checksums match `checksum.c:get_checksum1()`
 //! - MD4/MD5 match `checksum.c:get_checksum2()` and `checksum.c:file_checksum()`

@@ -29,7 +29,7 @@
 //!
 //! # Upstream Reference
 //!
-//! Upstream counterparts in rsync 3.5.1:
+//! Upstream counterparts in rsync 3.5.2:
 //! - `main.c:1919-1928` - Signal handler installation
 //! - `rsync.c:843-875` `sig_int()` - Interrupt handling
 //! - `cleanup.c` `_exit_cleanup()` - Cleanup and temp file removal

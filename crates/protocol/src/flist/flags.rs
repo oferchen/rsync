@@ -117,8 +117,10 @@ pub const XMIT_GROUP_NAME_FOLLOWS: u8 = 1 << 3;
 /// Extended flag: hardlink first / I/O error end list (bit 12).
 ///
 /// Upstream: `XMIT_HLINK_FIRST (1<<12)` for protocol 30+ non-dirs
-/// Upstream: `XMIT_IO_ERROR_ENDLIST (1<<12)` for protocol 31+ end marker
 pub const XMIT_HLINK_FIRST: u8 = 1 << 4;
+/// Extended flag: end-of-list I/O error marker (bit 12, protocol 31+).
+///
+/// Upstream: `XMIT_IO_ERROR_ENDLIST (1<<12)`
 pub const XMIT_IO_ERROR_ENDLIST: u8 = 1 << 4;
 
 /// Extended flag: mtime has nanoseconds (bit 13, protocol 31+).
