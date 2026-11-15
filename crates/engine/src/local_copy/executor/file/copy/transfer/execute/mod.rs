@@ -454,7 +454,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
 
     // upstream: receiver.c - skip when dest >= source size in append mode
     if matches!(append_mode, AppendMode::Skip) {
-        context.record_hard_link(metadata, destination);
+        context.record_hard_link_for_path(source, metadata, destination);
         context.summary_mut().record_regular_file_matched();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
             .virtualize_fake_super(source, context.sender_options().fake_super_enabled());

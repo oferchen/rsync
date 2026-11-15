@@ -107,6 +107,43 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
 /// can only succeed once per process - subsequent calls return
 /// [`crate::error::SignalRegistrationError::AlreadyRegistered`] (wrapped in
 /// `io::ErrorKind::Other`; downcast via `io::Error::get_ref()`).
+#[cfg(any(windows, test))]
+const CONSOLE_CTRL_C_EVENT: u32 = 0;
+#[cfg(any(windows, test))]
+const CONSOLE_CTRL_BREAK_EVENT: u32 = 1;
+#[cfg(any(windows, test))]
+const CONSOLE_CTRL_CLOSE_EVENT: u32 = 2;
+
+/// Dispatches a Windows console control event to the shutdown / graceful-exit flags.
+///
+/// Returns `true` when the event was handled (`CTRL_C_EVENT`,
+/// `CTRL_CLOSE_EVENT`, or `CTRL_BREAK_EVENT`) and `false` otherwise so Windows
+/// chains to the next registered handler.
+#[cfg(any(windows, test))]
+fn dispatch_console_ctrl(
+    ctrl_type: u32,
+    shutdown: Option<&AtomicBool>,
+    graceful: Option<&AtomicBool>,
+) -> bool {
+    use std::sync::atomic::Ordering;
+
+    match ctrl_type {
+        CONSOLE_CTRL_C_EVENT | CONSOLE_CTRL_CLOSE_EVENT => {
+            if let Some(flag) = shutdown {
+                flag.store(true, Ordering::Relaxed);
+            }
+            true
+        }
+        CONSOLE_CTRL_BREAK_EVENT => {
+            if let Some(flag) = graceful {
+                flag.store(true, Ordering::Relaxed);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 #[cfg(windows)]
 #[allow(unsafe_code)]
 pub fn register_signal_handlers() -> io::Result<SignalFlags> {
@@ -129,26 +166,21 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
         .set(Arc::clone(&flags.graceful_exit))
         .map_err(|_| io::Error::from(SignalRegistrationError::AlreadyRegistered))?;
 
+    const _: () = {
+        assert!(CONSOLE_CTRL_C_EVENT == CTRL_C_EVENT);
+        assert!(CONSOLE_CTRL_BREAK_EVENT == CTRL_BREAK_EVENT);
+        assert!(CONSOLE_CTRL_CLOSE_EVENT == CTRL_CLOSE_EVENT);
+    };
+
     // SAFETY: The handler function signature matches what SetConsoleCtrlHandler expects.
     // The OnceLock statics ensure the Arc references remain valid for the process lifetime.
     unsafe extern "system" fn handler(ctrl_type: u32) -> windows::core::BOOL {
-        use std::sync::atomic::Ordering;
-
-        match ctrl_type {
-            x if x == CTRL_C_EVENT || x == CTRL_CLOSE_EVENT => {
-                if let Some(flag) = SHUTDOWN.get() {
-                    flag.store(true, Ordering::Relaxed);
-                }
-                windows::core::BOOL(1)
-            }
-            x if x == CTRL_BREAK_EVENT => {
-                if let Some(flag) = GRACEFUL.get() {
-                    flag.store(true, Ordering::Relaxed);
-                }
-                windows::core::BOOL(1)
-            }
-            _ => windows::core::BOOL(0),
-        }
+        let handled = dispatch_console_ctrl(
+            ctrl_type,
+            SHUTDOWN.get().map(Arc::as_ref),
+            GRACEFUL.get().map(Arc::as_ref),
+        );
+        windows::core::BOOL(i32::from(handled))
     }
 
     // SAFETY: `handler` is a static `extern "system" fn` with the signature
@@ -384,5 +416,58 @@ mod windows_console_ctrl_tests {
                 .is_some_and(|e| matches!(e, SignalRegistrationError::AlreadyRegistered)),
             "second registration must surface AlreadyRegistered, got: {inner}"
         );
+    }
+}
+
+#[cfg(test)]
+mod console_ctrl_dispatch_tests {
+    use super::{
+        CONSOLE_CTRL_BREAK_EVENT, CONSOLE_CTRL_C_EVENT, CONSOLE_CTRL_CLOSE_EVENT,
+        dispatch_console_ctrl,
+    };
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn ctrl_c_and_close_set_shutdown_only() {
+        for event in [CONSOLE_CTRL_C_EVENT, CONSOLE_CTRL_CLOSE_EVENT] {
+            let shutdown = AtomicBool::new(false);
+            let graceful = AtomicBool::new(false);
+            assert!(dispatch_console_ctrl(
+                event,
+                Some(&shutdown),
+                Some(&graceful),
+            ));
+            assert!(shutdown.load(Ordering::Relaxed));
+            assert!(!graceful.load(Ordering::Relaxed));
+        }
+    }
+
+    #[test]
+    fn ctrl_break_sets_graceful_only() {
+        let shutdown = AtomicBool::new(false);
+        let graceful = AtomicBool::new(false);
+        assert!(dispatch_console_ctrl(
+            CONSOLE_CTRL_BREAK_EVENT,
+            Some(&shutdown),
+            Some(&graceful),
+        ));
+        assert!(!shutdown.load(Ordering::Relaxed));
+        assert!(graceful.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn unknown_event_is_not_handled() {
+        let shutdown = AtomicBool::new(false);
+        let graceful = AtomicBool::new(false);
+        assert!(!dispatch_console_ctrl(5, Some(&shutdown), Some(&graceful)));
+        assert!(!shutdown.load(Ordering::Relaxed));
+        assert!(!graceful.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn missing_flags_do_not_panic() {
+        assert!(dispatch_console_ctrl(CONSOLE_CTRL_C_EVENT, None, None));
+        assert!(dispatch_console_ctrl(CONSOLE_CTRL_BREAK_EVENT, None, None));
+        assert!(!dispatch_console_ctrl(6, None, None));
     }
 }

@@ -42,22 +42,13 @@ use super::super::guard::remove_existing_destination;
 /// upstream: hlink.c - `hard_link_check()` skips re-creation when the
 /// destination inode already matches the source group leader.
 fn is_already_hardlinked(destination: &Path, target: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let Ok(dest_meta) = fs::symlink_metadata(destination) else {
-            return false;
-        };
-        let Ok(target_meta) = fs::symlink_metadata(target) else {
-            return false;
-        };
-        dest_meta.dev() == target_meta.dev() && dest_meta.ino() == target_meta.ino()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (destination, target);
-        false
-    }
+    let Some(dest_id) = fast_io::same_fs::file_identity(destination) else {
+        return false;
+    };
+    let Some(target_id) = fast_io::same_fs::file_identity(target) else {
+        return false;
+    };
+    dest_id.volume_id == target_id.volume_id && dest_id.file_index == target_id.file_index
 }
 
 /// Result of hard-link and reference-directory processing for a file.
@@ -288,7 +279,7 @@ pub(super) fn process_links(
     }
 
     // 2. link to an already-copied inode we cached
-    if let Some(existing_target) = context.existing_hard_link_target(metadata) {
+    if let Some(existing_target) = context.existing_hard_link_target_for_path(source, metadata) {
         // upstream: hlink.c - hard_link_check() skips re-creation when the
         // destination already shares the same inode as the group leader.
         // Without this check, an up-to-date hardlink emits `hf+++++++++`
@@ -324,7 +315,7 @@ pub(super) fn process_links(
                 true,
                 Some(context.destination_root()),
             )?;
-            context.record_hard_link(metadata, destination);
+            context.record_hard_link_for_path(source, metadata, destination);
             context.summary_mut().record_regular_file_matched();
             let total_bytes = Some(metadata.len());
             let mut change_set = LocalCopyChangeSet::for_file(

@@ -254,11 +254,39 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records a hard-link source with its path so platforms without
+    /// inode fields in `fs::Metadata` (Windows) can query file identity.
+    pub(super) fn record_hard_link_for_path(
+        &mut self,
+        source: &Path,
+        metadata: &fs::Metadata,
+        destination: &Path,
+    ) {
+        if self.options.hard_links_enabled() {
+            self.hard_links
+                .record_for_path(source, metadata, destination);
+        }
+    }
+
     /// Returns the existing hard-link target for a file, if one was previously
     /// recorded with the same inode/device.
     pub(super) fn existing_hard_link_target(&self, metadata: &fs::Metadata) -> Option<PathBuf> {
         if self.options.hard_links_enabled() {
             self.hard_links.existing_target(metadata)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the existing hard-link target for `source`, if one was
+    /// previously recorded with the same volume/inode identity.
+    pub(super) fn existing_hard_link_target_for_path(
+        &self,
+        source: &Path,
+        metadata: &fs::Metadata,
+    ) -> Option<PathBuf> {
+        if self.options.hard_links_enabled() {
+            self.hard_links.existing_target_for_path(source, metadata)
         } else {
             None
         }
