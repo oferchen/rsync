@@ -36,9 +36,11 @@ on:
     # Windows schedule.
     - cron: '0 8 * * *'
   workflow_dispatch:
+  # Master push CI calls this leg via ci-master.yml.
+  workflow_call:
 
 concurrency:
-  group: windows-nightly-openssh-${{ github.ref }}
+  group: windows-nightly-openssh-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:

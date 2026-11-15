@@ -27,9 +27,11 @@ on:
     # benchmark workflows, so the Windows runner pool is not contended.
     - cron: '0 5 * * *'
   workflow_dispatch:
+  # Master push CI calls this leg via ci-master.yml.
+  workflow_call:
 
 concurrency:
-  group: windows-nightly-iocp-${{ github.ref }}
+  group: windows-nightly-iocp-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:
