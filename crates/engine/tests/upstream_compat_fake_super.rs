@@ -646,7 +646,6 @@ fn a_failing_daemon_receiver_reports_like_upstream() {
         stderr: vec![
             "Corrupt user.rsync.%stat xattr attached to \"f\" (in m): \"garbage\"".to_owned(),
             "rsync error: error in file IO (code 11) [generator]".to_owned(),
-            "rsync: [sender] read error: Connection reset by peer (104)".to_owned(),
         ],
         code: Some(11),
     };
@@ -678,7 +677,14 @@ fn a_failing_daemon_receiver_reports_like_upstream() {
                 &config,
                 &["-a", "src/", "URL"],
             );
-            assert_eq!(outcome, expected, "{}, fifo {fifo}", daemon.display());
+            // Single-process oc drains `MSG_ERROR_EXIT` cleanly (`drain_until_peer_exits`),
+            // whereas upstream's forked generator closes the socket unread so the
+            // client may also report `Connection reset by peer (104)`.
+            let mut normalized = outcome;
+            normalized.stderr.retain(|line| {
+                line != "rsync: [sender] read error: Connection reset by peer (104)"
+            });
+            assert_eq!(normalized, expected, "{}, fifo {fifo}", daemon.display());
         }
     }
 }
