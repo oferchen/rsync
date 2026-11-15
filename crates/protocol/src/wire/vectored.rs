@@ -68,7 +68,6 @@ fn write_vectored_impl<W: Write>(writer: &mut W, buffers: &[&[u8]]) -> io::Resul
                         writer.write_all(partial_buf)?;
                         total += partial_buf.len() as u64;
                         slices = &slices[1..];
-                        // Write remaining slices sequentially
                         for s in slices {
                             writer.write_all(s)?;
                             total += s.len() as u64;

@@ -22,7 +22,7 @@
 //!
 //! # Invariants
 //!
-//! - The mapping matches rsync 3.5.1's `rerr_names` table byte-for-byte.
+//! - The mapping matches rsync 3.5.2's `rerr_names` table byte-for-byte.
 //! - Exit code 24 is the only warning; all other known codes remain errors.
 //! - Unknown codes return `None`, leaving higher layers to supply bespoke text.
 //!

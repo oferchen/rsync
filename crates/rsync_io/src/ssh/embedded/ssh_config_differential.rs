@@ -229,6 +229,7 @@ pub(super) struct Differential {
 }
 
 impl Differential {
+    /// Returns every cell whose verdict is [`Verdict::Mismatch`].
     pub fn mismatches(&self) -> Vec<&Cell> {
         self.cells
             .iter()
@@ -236,10 +237,12 @@ impl Differential {
             .collect()
     }
 
+    /// Looks up the cell for `keyword`, if present.
     pub fn cell(&self, keyword: &str) -> Option<&Cell> {
         self.cells.iter().find(|c| c.keyword == keyword)
     }
 
+    /// Counts how many cells recorded `verdict`.
     pub fn count(&self, verdict: &Verdict) -> usize {
         self.cells.iter().filter(|c| &c.verdict == verdict).count()
     }
