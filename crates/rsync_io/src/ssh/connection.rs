@@ -529,23 +529,6 @@ impl SshChildHandle {
         self.take_and_wait_child()
     }
 
-    /// Polls the subprocess once without blocking, signals it if it is still
-    /// running, and releases it.
-    ///
-    /// Mirrors an aborting client's exit: `wait_process(cleanup_child_pid,
-    /// &status, WNOHANG)` (upstream: cleanup.c:146-153), then
-    /// `kill_all(SIGUSR1)` (cleanup.c:202-203). An exited child yields its
-    /// status; one still running gets `SIGUSR1` on Unix and is never waited
-    /// for, so a remote shell that ignores end-of-file cannot hold up the exit.
-    ///
-    /// # Errors
-    ///
-    /// Returns the `try_wait` error, or `io::ErrorKind::InvalidInput` when the
-    /// child was already taken by a prior wait.
-    pub fn poll_exit(self) -> io::Result<Option<ExitStatus>> {
-        self.poll_exit_deferred().map(|(status, _guard)| status)
-    }
-
     /// Polls the subprocess once without blocking and returns a drop guard that
     /// sends `SIGUSR1` when dropped if the child is still running.
     ///
