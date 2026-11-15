@@ -12,13 +12,13 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ALL_VERSIONS = {"2.6.3", "2.6.9", "3.0.9", "3.1.3", "3.2.7", "3.4.4", "3.5.0", "3.5.1"}
+ALL_VERSIONS = {"2.6.3", "2.6.9", "3.0.9", "3.1.3", "3.2.7", "3.4.4", "3.5.0", "3.5.1", "3.5.2"}
 
 # PROTOCOL_VERSION in each release's rsync.h. oc speaks 28 through 33, so a
 # session with any of these peers runs at the peer's own protocol, which every
 # core cell checks on the wire for the baseline and the candidate alike.
 NATIVE_PROTOCOL = {"2.6.3": 28, "2.6.9": 29, "3.0.9": 30, "3.1.3": 31, "3.2.7": 31,
-                   "3.4.4": 32, "3.5.0": 32, "3.5.1": 33}
+                   "3.4.4": 32, "3.5.0": 32, "3.5.1": 33, "3.5.2": 33}
 
 # Fixture mtimes. Both lie before interop_oracle.WALL_CLOCK_NS, so any time a
 # transfer preserves is compared exactly; the basis ("pre") is older than the
