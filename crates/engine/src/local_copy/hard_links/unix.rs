@@ -34,10 +34,27 @@ impl HardLinkTracker {
         Self::key(metadata).and_then(|key| self.entries.get(&key).cloned())
     }
 
+    pub(crate) fn existing_target_for_path(
+        &self,
+        _source: &Path,
+        metadata: &fs::Metadata,
+    ) -> Option<PathBuf> {
+        self.existing_target(metadata)
+    }
+
     pub(crate) fn record(&mut self, metadata: &fs::Metadata, destination: &Path) {
         if let Some(key) = Self::key(metadata) {
             self.entries.insert(key, destination.to_path_buf());
         }
+    }
+
+    pub(crate) fn record_for_path(
+        &mut self,
+        _source: &Path,
+        metadata: &fs::Metadata,
+        destination: &Path,
+    ) {
+        self.record(metadata, destination);
     }
 
     /// Returns `true` the first time `reference` is registered as the source

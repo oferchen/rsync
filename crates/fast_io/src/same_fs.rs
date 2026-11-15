@@ -91,7 +91,9 @@ pub fn volume_id(path: &Path) -> Option<u64> {
 
     #[cfg(windows)]
     {
-        windows_volume_serial(path).ok()
+        windows_file_info(path, true)
+            .ok()
+            .map(|info| u64::from(info.dwVolumeSerialNumber))
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -101,27 +103,83 @@ pub fn volume_id(path: &Path) -> Option<u64> {
     }
 }
 
-/// Windows helper: opens `path` and returns its volume serial number.
+/// Stable per-file identity (volume, file index/inode, hard-link count).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct FileIdentity {
+    /// Volume / device identifier (`st_dev` on Unix, `dwVolumeSerialNumber` on Windows).
+    pub volume_id: u64,
+    /// File index / inode number (`st_ino` on Unix, 64-bit `nFileIndex` on Windows).
+    pub file_index: u64,
+    /// Hard-link count (`st_nlink` on Unix, `nNumberOfLinks` on Windows).
+    pub nlink: u32,
+}
+
+/// Returns the symlink-non-following [`FileIdentity`] for `path`, or `None`
+/// when unavailable.
+///
+/// Mirrors `lstat(2)` on Unix and `GetFileInformationByHandle` with
+/// `FILE_FLAG_OPEN_REPARSE_POINT` on Windows.
+#[must_use]
+pub fn file_identity(path: &Path) -> Option<FileIdentity> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        Some(FileIdentity {
+            volume_id: meta.dev(),
+            file_index: meta.ino(),
+            nlink: meta.nlink().try_into().unwrap_or(u32::MAX),
+        })
+    }
+
+    #[cfg(windows)]
+    {
+        let info = windows_file_info(path, false).ok()?;
+        let file_index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+        Some(FileIdentity {
+            volume_id: u64::from(info.dwVolumeSerialNumber),
+            file_index,
+            nlink: info.nNumberOfLinks,
+        })
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// Windows helper: opens `path` and returns its `BY_HANDLE_FILE_INFORMATION`.
+///
+/// When `follow_reparse` is `true`, junctions and symlinks are followed to
+/// their target (matching `stat(2)` for `-x`); when `false`, the reparse
+/// point itself is queried (matching `lstat(2)` for hard-link identity).
 #[cfg(windows)]
-fn windows_volume_serial(path: &Path) -> std::io::Result<u64> {
+fn windows_file_info(
+    path: &Path,
+    follow_reparse: bool,
+) -> std::io::Result<windows_sys::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION> {
     use std::fs::OpenOptions;
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
 
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle,
+        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        GetFileInformationByHandle,
     };
 
-    // Query-only access, shared for everything, with BACKUP_SEMANTICS so a
-    // directory handle can be opened. No OPEN_REPARSE_POINT: a junction is
-    // followed to its target so the reported volume is the one the directory's
-    // contents actually live on - the boundary `-x` must not cross.
+    let mut flags = FILE_FLAG_BACKUP_SEMANTICS;
+    if !follow_reparse {
+        flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+    }
+
     let file = OpenOptions::new()
         .access_mode(FILE_READ_ATTRIBUTES)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .custom_flags(flags)
         .open(path)?;
 
     // SAFETY: `BY_HANDLE_FILE_INFORMATION` is plain-old-data with no invalid
@@ -135,7 +193,7 @@ fn windows_volume_serial(path: &Path) -> std::io::Result<u64> {
         if GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) == 0 {
             return Err(std::io::Error::last_os_error());
         }
-        Ok(u64::from(info.dwVolumeSerialNumber))
+        Ok(info)
     }
 }
 
@@ -191,5 +249,21 @@ mod volume_tests {
     fn volume_id_missing_path_is_none() {
         let dir = test_support::create_tempdir();
         assert_eq!(volume_id(&dir.path().join("does-not-exist")), None);
+    }
+
+    #[test]
+    fn file_identity_matches_for_hard_links() {
+        let dir = test_support::create_tempdir();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        std::fs::write(&a, b"data").unwrap();
+        std::fs::hard_link(&a, &b).unwrap();
+
+        let id_a = file_identity(&a).expect("file_identity(a)");
+        let id_b = file_identity(&b).expect("file_identity(b)");
+        assert_eq!(id_a.volume_id, id_b.volume_id);
+        assert_eq!(id_a.file_index, id_b.file_index);
+        assert_eq!(id_a.nlink, 2);
+        assert_eq!(id_b.nlink, 2);
     }
 }

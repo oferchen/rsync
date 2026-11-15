@@ -150,3 +150,22 @@ mod key_tests {
         assert_eq!(key, cloned);
     }
 }
+
+#[test]
+fn tracker_detects_hard_links_via_for_path() {
+    let temp = crate::local_copy::test_support::create_tempdir();
+    let src1 = temp.path().join("src1.txt");
+    let src2 = temp.path().join("src2.txt");
+    std::fs::write(&src1, b"shared").unwrap();
+    std::fs::hard_link(&src1, &src2).unwrap();
+
+    let meta1 = std::fs::metadata(&src1).unwrap();
+    let meta2 = std::fs::metadata(&src2).unwrap();
+    let dest1 = temp.path().join("dest1.txt");
+
+    let mut tracker = HardLinkTracker::new();
+    assert!(tracker.existing_target_for_path(&src1, &meta1).is_none());
+    tracker.record_for_path(&src1, &meta1, &dest1);
+
+    assert_eq!(tracker.existing_target_for_path(&src2, &meta2), Some(dest1),);
+}
