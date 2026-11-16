@@ -3,7 +3,7 @@
 
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci-master.yml/badge.svg?branch=master&event=push)](https://github.com/oferchen/rsync/actions/workflows/ci-master.yml?query=branch%3Amaster+event%3Apush)
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg?branch=master)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml?query=branch%3Amaster)
-[![Upstream Rsync Testsuite 3.5.2](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.2.yml?branch=master&event=schedule&label=Upstream%20Rsync%20Testsuite%203.5.2)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.2.yml?query=branch%3Amaster+event%3Aschedule)
+[![Upstream Rsync Testsuite 3.5.2](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.2.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.2)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.2.yml?query=branch%3Amaster)
 
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
