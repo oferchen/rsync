@@ -54,6 +54,14 @@ fn copy_tree(binary: &Path, args: &[&str]) -> (String, String) {
         .status()
         .unwrap();
     assert!(seeded.success());
+    // Pin `src`'s mtime to a fixed past epoch so `src/` and `dst/` never
+    // depend on whether `symlink("f1", ...)` and `seeded` happened to land in
+    // the same whole wall-clock second (`./ is uptodate` vs `./`).
+    let fixed = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    fs::File::open(&src)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(fixed))
+        .unwrap();
     let output = Command::new(binary)
         .arg("-a")
         .args(args)

@@ -102,7 +102,7 @@ jobs:
         run: |
           mkdir -p interop-artifact/bin interop-artifact/upstream
           cp target/release/oc-rsync interop-artifact/bin/
-          cp -RPf target/interop/upstream-install/. interop-artifact/upstream/
+          cp -RP --remove-destination target/interop/upstream-install/. interop-artifact/upstream/
 
       - name: Upload interop artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -143,7 +143,7 @@ jobs:
           mkdir -p target/release target/interop/upstream-install
           cp interop-artifact/bin/oc-rsync target/release/oc-rsync
           chmod +x target/release/oc-rsync
-          cp -RPf interop-artifact/upstream/. target/interop/upstream-install/
+          cp -RP --remove-destination interop-artifact/upstream/. target/interop/upstream-install/
           find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Validate exit codes
@@ -195,7 +195,7 @@ jobs:
           mkdir -p target/release target/interop/upstream-install
           cp interop-artifact/bin/oc-rsync target/release/oc-rsync
           chmod +x target/release/oc-rsync
-          cp -RPf interop-artifact/upstream/. target/interop/upstream-install/
+          cp -RP --remove-destination interop-artifact/upstream/. target/interop/upstream-install/
           find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Validate messages
@@ -247,7 +247,7 @@ jobs:
           mkdir -p target/release target/interop/upstream-install
           cp interop-artifact/bin/oc-rsync target/release/oc-rsync
           chmod +x target/release/oc-rsync
-          cp -RPf interop-artifact/upstream/. target/interop/upstream-install/
+          cp -RP --remove-destination interop-artifact/upstream/. target/interop/upstream-install/
           find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run behavior comparison
@@ -291,7 +291,7 @@ jobs:
           mkdir -p target/release target/interop/upstream-install
           cp interop-artifact/bin/oc-rsync target/release/oc-rsync
           chmod +x target/release/oc-rsync
-          cp -RPf interop-artifact/upstream/. target/interop/upstream-install/
+          cp -RP --remove-destination interop-artifact/upstream/. target/interop/upstream-install/
           find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run batch interop tests
@@ -333,7 +333,7 @@ jobs:
           mkdir -p target/release target/interop/upstream-install
           cp interop-artifact/bin/oc-rsync target/release/oc-rsync
           chmod +x target/release/oc-rsync
-          cp -RPf interop-artifact/upstream/. target/interop/upstream-install/
+          cp -RP --remove-destination interop-artifact/upstream/. target/interop/upstream-install/
           find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run filter interop tests
@@ -379,7 +379,7 @@ jobs:
           mkdir -p target/release target/interop/upstream-install
           cp interop-artifact/bin/oc-rsync target/release/oc-rsync
           chmod +x target/release/oc-rsync
-          cp -RPf interop-artifact/upstream/. target/interop/upstream-install/
+          cp -RP --remove-destination interop-artifact/upstream/. target/interop/upstream-install/
           find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run compress interop tests
@@ -425,7 +425,7 @@ jobs:
           mkdir -p target/release target/interop/upstream-install
           cp interop-artifact/bin/oc-rsync target/release/oc-rsync
           chmod +x target/release/oc-rsync
-          cp -RPf interop-artifact/upstream/. target/interop/upstream-install/
+          cp -RP --remove-destination interop-artifact/upstream/. target/interop/upstream-install/
           find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run INC_RECURSE interop tests
@@ -480,7 +480,7 @@ jobs:
           mkdir -p target/release target/interop/upstream-install
           cp interop-artifact/bin/oc-rsync target/release/oc-rsync
           chmod +x target/release/oc-rsync
-          cp -RPf interop-artifact/upstream/. target/interop/upstream-install/
+          cp -RP --remove-destination interop-artifact/upstream/. target/interop/upstream-install/
           find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Regenerate exit code goldens
