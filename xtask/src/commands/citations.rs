@@ -1760,7 +1760,7 @@ mod tests {
     fn openssh_manifest_matches_the_pinned_source() {
         let workspace = crate::workspace::workspace_root().expect("workspace root");
         let root = workspace.join(OPENSSH_SOURCE_DIR);
-        if !root.is_dir() {
+        if !root.join("readconf.c").is_file() {
             eprintln!(
                 "OpenSSH source absent at {OPENSSH_SOURCE_DIR}; manifest cross-check skipped"
             );
@@ -1786,7 +1786,7 @@ mod tests {
     fn manifest_matches_the_pinned_source() {
         let workspace = crate::workspace::workspace_root().expect("workspace root");
         let root = workspace.join(PINNED_SOURCE_DIR);
-        if !root.is_dir() {
+        if !root.join("rsync.h").is_file() {
             eprintln!("pinned source absent at {PINNED_SOURCE_DIR}; manifest cross-check skipped");
             return;
         }
