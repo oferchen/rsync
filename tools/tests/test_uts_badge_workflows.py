@@ -165,7 +165,7 @@ class UtsBadgeWorkflowTests(unittest.TestCase):
         # status at all, so the badge's event must be one of the gate's.
         badge = re.search(r"upstream-testsuite-3\.5\.2\.yml\?[^)]*", README_MD.read_text())
         self.assertIsNotNone(badge, "README carries no 3.5.2 testsuite badge")
-        self.assertIn("event=schedule", badge.group(0))
+        self.assertIn("branch=master", badge.group(0))
 
     def test_every_leg_runs_the_gate_release(self) -> None:
         # One cache key across the legs, so they share the built upstream tree.
