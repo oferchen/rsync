@@ -572,7 +572,7 @@ fn handle_authentication(
         ctx.reader,
         ctx.limiter,
         module,
-        ctx.peer.ip(),
+        ctx.peer.text(),
         ctx.messages,
         protocol_version,
         ctx.client_digests,
@@ -663,13 +663,7 @@ fn handle_module_denied(
     if let Some(log) = ctx.log_sink {
         log_module_denied(log, &host, ctx.peer, ctx.request);
     }
-    deny_module(
-        ctx.reader.get_mut(),
-        module,
-        ctx.peer,
-        &host,
-        ctx.limiter,
-    )
+    deny_module(ctx.reader.get_mut(), module, ctx.peer, &host, ctx.limiter)
 }
 
 /// Handles a client's module access request.
@@ -726,8 +720,10 @@ fn respond_with_module_request(
     // resolves it per-module when `lp_reverse_lookup(i)` is set. The effective
     // per-module value is therefore the global default OR the module override.
     let module_reverse_lookup = reverse_lookup || module.reverse_lookup;
-    let module_peer_host =
-        module_peer_hostname(module, &mut hostname_cache, peer.ip(), module_reverse_lookup);
+    let module_peer_host = match peer.ip() {
+        Some(ip) => module_peer_hostname(module, &mut hostname_cache, ip, module_reverse_lookup),
+        None => None,
+    };
 
     let mut ctx = ModuleRequestContext {
         reader,
@@ -751,7 +747,7 @@ fn respond_with_module_request(
     // same never-empty host string the log lines use, sentinels included - so a
     // `hosts allow = UNKNOWN` line works as clientname.c:93-95 documents.
     let access_host = PeerHost::new(module_peer_host, module_reverse_lookup);
-    if !module.permits(peer.ip(), access_host) {
+    if !module.permits_peer(peer.ip(), access_host) {
         return handle_module_denied(&mut ctx, module);
     }
 

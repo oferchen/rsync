@@ -20,7 +20,7 @@ fn xfer_exec_enabled() -> bool {
 struct XferExecContext<'a> {
     module_name: &'a str,
     module_path: &'a Path,
-    host_addr: IpAddr,
+    host_addr: &'a str,
     host_name: &'a str,
     user_name: Option<&'a str>,
     request: &'a str,
@@ -62,7 +62,7 @@ fn build_base_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessC
 
     cmd.env("RSYNC_MODULE_NAME", ctx.module_name);
     cmd.env("RSYNC_MODULE_PATH", ctx.module_path);
-    cmd.env("RSYNC_HOST_ADDR", ctx.host_addr.to_string());
+    cmd.env("RSYNC_HOST_ADDR", ctx.host_addr);
     cmd.env("RSYNC_HOST_NAME", ctx.host_name);
     cmd.env("RSYNC_USER_NAME", ctx.user_name.unwrap_or_default());
     cmd.env("RSYNC_PID", std::process::id().to_string());
@@ -307,7 +307,6 @@ fn run_post_xfer_exec(
 #[cfg(test)]
 mod xfer_exec_tests {
     use super::*;
-    use std::net::Ipv4Addr;
 
     const TEST_ARGS: [String; 0] = [];
 
@@ -315,7 +314,7 @@ mod xfer_exec_tests {
         XferExecContext {
             module_name: "testmod",
             module_path: Path::new("/srv/testmod"),
-            host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            host_addr: "192.168.1.100",
             host_name: "client.example.com",
             user_name: Some("testuser"),
             request: "testmod/subdir",
@@ -369,7 +368,7 @@ mod xfer_exec_tests {
         let ctx = XferExecContext {
             module_name: "mod",
             module_path: Path::new("/data"),
-            host_addr: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            host_addr: "10.0.0.1",
             host_name: crate::daemon::module_state::UNKNOWN_HOSTNAME,
             user_name: None,
             request: "mod",
@@ -669,7 +668,7 @@ mod xfer_exec_tests {
         let ctx = XferExecContext {
             module_name: "testmod",
             module_path: Path::new("/srv/testmod"),
-            host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            host_addr: "192.168.1.100",
             host_name: "client.example.com",
             user_name: Some("testuser"),
             request: "testmod/subdir",
@@ -699,7 +698,7 @@ mod xfer_exec_tests {
         let ctx = XferExecContext {
             module_name: "testmod",
             module_path: Path::new("/srv/testmod"),
-            host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            host_addr: "192.168.1.100",
             host_name: "client.example.com",
             user_name: Some("testuser"),
             request: "testmod/subdir",
@@ -777,7 +776,7 @@ mod xfer_exec_tests {
         let ctx = XferExecContext {
             module_name: "testmod",
             module_path: Path::new("/srv/testmod"),
-            host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            host_addr: "192.168.1.100",
             host_name: "client.example.com",
             user_name: Some("testuser"),
             request: "testmod/subdir",
@@ -806,7 +805,7 @@ mod xfer_exec_tests {
         let ctx = XferExecContext {
             module_name: "testmod",
             module_path: Path::new("/srv/testmod"),
-            host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            host_addr: "192.168.1.100",
             host_name: "client.example.com",
             user_name: Some("testuser"),
             request: "testmod/subdir",

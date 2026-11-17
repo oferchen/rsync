@@ -300,7 +300,15 @@ impl ModuleDefinition {
     /// upstream: clientserver.c:1458-1478 `start_daemon()` - reverse DNS
     /// before chroot ensures `client_name()` returns a real hostname when
     /// ACLs are evaluated.
-    pub(crate) fn permits(&self, addr: std::net::IpAddr, host: super::PeerHost<'_>) -> bool {
+    ///
+    /// `addr` is `None` for a peer whose address text this platform cannot
+    /// read; see `unresolved_peer_matches_address_token` for how it meets
+    /// address tokens.
+    pub(crate) fn permits_peer(
+        &self,
+        addr: Option<std::net::IpAddr>,
+        host: super::PeerHost<'_>,
+    ) -> bool {
         // upstream: access.c:357-363 - allow-list short-circuit. A peer
         // matching any allow pattern is admitted before the deny list is
         // consulted; a peer matching nothing in a non-empty allow list is
@@ -382,12 +390,18 @@ impl ModuleDefinition {
     fn host_matches(
         &self,
         pattern: &HostPattern,
-        addr: std::net::IpAddr,
+        addr: Option<std::net::IpAddr>,
         host: super::PeerHost<'_>,
         deny: bool,
     ) -> bool {
-        pattern.matches(addr, host.as_str())
+        pattern.matches_peer(addr, host.as_str(), deny)
             || pattern.forward_resolve_matches(addr, self.forward_lookup, deny)
+    }
+
+    /// [`Self::permits_peer`] for a peer with a readable address.
+    #[cfg(test)]
+    pub(crate) fn permits(&self, addr: std::net::IpAddr, host: super::PeerHost<'_>) -> bool {
+        self.permits_peer(Some(addr), host)
     }
 
     /// Returns whether any host pattern requires DNS hostname resolution.

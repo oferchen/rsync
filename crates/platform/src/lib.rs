@@ -42,6 +42,8 @@ pub mod local_time;
 pub mod memory;
 /// Windows account name to RID resolution.
 pub mod name_resolution;
+/// Network interface name and index lookups for IPv6 scope ids.
+pub mod net_interface;
 /// Process privilege operations - chroot and uid/gid dropping.
 pub mod priority;
 pub mod privilege;

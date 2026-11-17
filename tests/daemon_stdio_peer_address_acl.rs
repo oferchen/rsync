@@ -108,11 +108,16 @@ fn setup_with_rule(rule: &str) -> (tempfile::TempDir, PathBuf) {
 /// Pulls from the module over a remote-shell daemon, optionally advertising a
 /// peer address the way `sshd` would.
 fn pull(root: &Path, peer_env: Option<(&str, &str)>) -> Output {
+    pull_with(&oc_binary(), root, peer_env)
+}
+
+/// [`pull`] with `binary` as both the client and the remote-shell daemon.
+fn pull_with(binary: &Path, root: &Path, peer_env: Option<(&str, &str)>) -> Output {
     let shim = write_rsh_shim(root);
     let dest = root.join("dest");
     fs::create_dir_all(&dest).expect("mkdir dest");
 
-    let mut cmd = Command::new(oc_binary());
+    let mut cmd = Command::new(binary);
     cmd.current_dir(root)
         // upstream: flist.c:2974-2977 - a directory operand is skipped outright
         // ("skipping directory .") unless `xfer_dirs` is on, and `xfer_dirs`
@@ -124,7 +129,7 @@ fn pull(root: &Path, peer_env: Option<(&str, &str)>) -> Output {
         .arg("-e")
         .arg(&shim)
         .arg("--rsync-path")
-        .arg(oc_binary())
+        .arg(binary)
         .arg("fakehost::m/")
         .arg(&dest);
 
@@ -137,7 +142,7 @@ fn pull(root: &Path, peer_env: Option<(&str, &str)>) -> Output {
         cmd.env(name, value);
     }
 
-    cmd.output().expect("run oc-rsync")
+    cmd.output().expect("run the rsync client")
 }
 
 fn transferred(output: &Output, dest: &Path) -> bool {
@@ -257,4 +262,53 @@ fn ssh_connection_peer_passes_a_deny_rule_naming_another_host() {
         String::from_utf8_lossy(&out.stderr),
     );
     drop(tmp);
+}
+
+/// Pulls with a leading-zero `REMOTE_HOST` against a module guarded by `rule`,
+/// returning whether the payload arrived.
+#[cfg(target_os = "linux")]
+fn leading_zero_peer_admitted(binary: &Path, rule: &str) -> bool {
+    let (tmp, root) = setup_with_rule(rule);
+    let out = pull_with(binary, &root, Some(("REMOTE_HOST", "010.1.2.3")));
+    let admitted = transferred(&out, &root.join("dest"));
+    drop(tmp);
+    admitted
+}
+
+/// Task 754: a leading-zero peer string must not slip past a deny rule.
+///
+/// upstream: clientname.c:76 `valid_ipaddr()` accepts `010.1.2.3` and keeps it
+/// as the peer string; access.c:219 `match_address()` then parses it with
+/// `getaddrinfo(AI_NUMERICHOST)`, which on glibc and musl reads `010` as octal,
+/// so the peer is 8.1.2.3 and `hosts deny = 8.1.2.3` refuses it. oc read the
+/// string as `0.0.0.0` and admitted it.
+///
+/// The second case is the control: a deny rule for the decimal reading
+/// (10.1.2.3) must NOT refuse, which a daemon refusing every leading-zero peer
+/// would fail. Linux only: macOS's resolver reads `010` as decimal.
+#[cfg(target_os = "linux")]
+#[test]
+fn leading_zero_peer_is_refused_by_a_deny_rule_for_its_octal_address() {
+    let oc = oc_binary();
+    assert!(
+        !leading_zero_peer_admitted(&oc, "hosts deny = 8.1.2.3"),
+        "REMOTE_HOST=010.1.2.3 is 8.1.2.3 to the resolver; `hosts deny = 8.1.2.3` must refuse it"
+    );
+    assert!(
+        leading_zero_peer_admitted(&oc, "hosts deny = 10.1.2.3"),
+        "REMOTE_HOST=010.1.2.3 is not 10.1.2.3; a deny rule for 10.1.2.3 must not refuse it"
+    );
+
+    let Some(upstream) =
+        test_support::require_upstream_rsync(test_support::UpstreamVersion::V3_5_2)
+    else {
+        return;
+    };
+    for rule in ["hosts deny = 8.1.2.3", "hosts deny = 10.1.2.3"] {
+        assert_eq!(
+            leading_zero_peer_admitted(&oc, rule),
+            leading_zero_peer_admitted(upstream.binary(), rule),
+            "`{rule}` with REMOTE_HOST=010.1.2.3: oc must decide as rsync 3.5.2 does"
+        );
+    }
 }

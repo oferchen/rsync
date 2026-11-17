@@ -704,3 +704,65 @@ fn reconfigure_syslog_only_when_module_sets_a_value() {
     };
     assert!(with_tag.reconfigure_syslog().is_some());
 }
+
+/// A module guarded by the given `hosts allow` and `hosts deny` token lists.
+fn module_with_rules(allow: &[&str], deny: &[&str]) -> ModuleDefinition {
+    let parse = |tokens: &[&str]| -> Vec<HostPattern> {
+        tokens
+            .iter()
+            .map(|token| HostPattern::parse(token).expect("host token"))
+            .collect()
+    };
+    ModuleDefinition {
+        hosts_allow: parse(allow),
+        hosts_deny: parse(deny),
+        forward_lookup: false,
+        ..Default::default()
+    }
+}
+
+/// Task 754, oc-only rows: a peer string this platform cannot read as an
+/// address (`08.1.2.3` on glibc) fails closed. rsync 3.5.2 admits it past
+/// `hosts deny = 8.1.2.3`, because access.c:219 `match_address()` returns 0
+/// when `getaddrinfo` cannot parse the peer; oc refuses it instead.
+#[test]
+fn an_unreadable_peer_is_refused_by_any_deny_address_token() {
+    let host = PeerHost::new(None, false);
+    for deny in [
+        "8.1.2.3",
+        "10.0.0.0/8",
+        "fe80::/10",
+        "8.1.2.3/255.255.255.0",
+    ] {
+        assert!(
+            !module_with_rules(&[], &[deny]).permits_peer(None, host),
+            "`hosts deny = {deny}` must refuse a peer with no readable address"
+        );
+    }
+}
+
+/// The allow side: a peer with no readable address matches no allow address
+/// token, so an allow-only module refuses it, and a non-matching allow list
+/// falls through to the deny list, which refuses it too.
+#[test]
+fn an_unreadable_peer_is_admitted_by_no_allow_address_token() {
+    let host = PeerHost::new(None, false);
+    assert!(!module_with_rules(&["8.1.2.3"], &[]).permits_peer(None, host));
+    assert!(!module_with_rules(&["8.1.2.3"], &["9.9.9.9"]).permits_peer(None, host));
+}
+
+/// Controls: the fail-closed rule is about address tokens only. With no rules,
+/// with `*`, or with a deny list of names, the peer is decided exactly as any
+/// peer is - so the refusals above are the address rule, not a blanket refusal.
+#[test]
+fn an_unreadable_peer_is_decided_normally_by_non_address_tokens() {
+    let host = PeerHost::new(None, false);
+    assert!(module_with_rules(&[], &[]).permits_peer(None, host));
+    assert!(module_with_rules(&["*"], &["8.1.2.3"]).permits_peer(None, host));
+    // A failed reverse lookup leaves the `UNKNOWN` sentinel (clientname.c:93-95).
+    assert!(module_with_rules(&["unknown"], &[]).permits_peer(None, PeerHost::new(None, true)));
+    assert!(
+        module_with_rules(&[], &["other.example"])
+            .permits_peer(None, PeerHost::new(Some("peer.example"), true))
+    );
+}

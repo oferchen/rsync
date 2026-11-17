@@ -74,7 +74,7 @@ fn run_post_xfer_finalizer(
     let xfer_ctx = XferExecContext {
         module_name: &module.name,
         module_path: &module.path,
-        host_addr: ctx.peer.ip(),
+        host_addr: ctx.peer.text(),
         host_name,
         user_name,
         request: ctx.request,
@@ -393,7 +393,7 @@ fn process_approved_module(
         let early_ctx = XferExecContext {
             module_name: &module.name,
             module_path: &module.path,
-            host_addr: ctx.peer.ip(),
+            host_addr: ctx.peer.text(),
             host_name: ctx.host_display(),
             user_name: auth_user.as_deref(),
             // Early exec runs before the client names a request, so
@@ -596,7 +596,7 @@ fn process_approved_module(
     let xfer_ctx = XferExecContext {
         module_name: &module.name,
         module_path: &module.path,
-        host_addr: ctx.peer.ip(),
+        host_addr: ctx.peer.text(),
         host_name: &host_name_owned,
         user_name: auth_user.as_deref(),
         request: ctx.request,

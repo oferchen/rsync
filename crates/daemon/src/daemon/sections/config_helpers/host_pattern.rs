@@ -207,6 +207,27 @@ impl HostPattern {
         }
     }
 
+    /// Returns whether the connecting peer matches this pattern, where `addr`
+    /// is `None` for a peer whose address text this platform cannot read.
+    ///
+    /// Such a peer still matches name, netgroup and `*` tokens as any peer
+    /// does; how it meets an address token is
+    /// [`unresolved_peer_matches_address_token`]'s decision alone.
+    fn matches_peer(&self, addr: Option<IpAddr>, hostname: &str, deny: bool) -> bool {
+        let Some(addr) = addr else {
+            return match self {
+                Self::Ipv4 { .. } | Self::Ipv6 { .. } | Self::Masked { .. } => {
+                    unresolved_peer_matches_address_token(deny)
+                }
+                Self::Any => true,
+                Self::Hostname(pattern) => pattern.matches(hostname),
+                Self::Netgroup(name) => module_state::netgroup_contains(name, hostname),
+                Self::Unmatchable(_) => false,
+            };
+        };
+        self.matches(addr, hostname)
+    }
+
     /// Returns whether this pattern requires a resolved hostname.
     ///
     /// Both hostname-pattern and `@netgroup` tokens are evaluated against the
@@ -241,7 +262,12 @@ impl HostPattern {
     /// matches - we cannot prove the peer is not the denied host - while an
     /// unresolvable **allow** token still does not. Both gates above return 0
     /// regardless of `deny`, exactly as upstream does at access.c:64-69.
-    fn forward_resolve_matches(&self, addr: IpAddr, forward_lookup: bool, deny: bool) -> bool {
+    fn forward_resolve_matches(
+        &self,
+        addr: Option<IpAddr>,
+        forward_lookup: bool,
+        deny: bool,
+    ) -> bool {
         if !forward_lookup {
             return false;
         }
@@ -251,6 +277,22 @@ impl HostPattern {
             _ => false,
         }
     }
+}
+
+/// How a peer whose address text cannot be read meets an address token
+/// (`a.b.c.d`, `a.b.c.d/n`, `addr/mask`, IPv6 forms): it matches every one in
+/// `hosts deny` and none in `hosts allow`.
+///
+/// Deliberate deviation from rsync 3.5.2 (task 754). Upstream keeps such a
+/// string (clientname.c:76 `valid_ipaddr` accepts `08.1.2.3`), but
+/// access.c:219 `match_address()` returns 0 when `getaddrinfo` cannot parse
+/// it, so on glibc `hosts deny = 8.1.2.3` never refuses `08.1.2.3`. oc fails
+/// closed instead: a deny rule naming an address cannot be proved not to name
+/// this peer, so it refuses, as access.c:84-89 already does for a deny
+/// hostname that cannot be resolved. An allow rule still admits only a peer it
+/// can prove. Mirroring upstream exactly is returning `false` here.
+const fn unresolved_peer_matches_address_token(deny: bool) -> bool {
+    deny
 }
 
 /// Compares `addr` and `network` under `mask`, all of one address family.
@@ -366,15 +408,16 @@ impl HostnamePattern {
     /// the connecting address (access.c:77-78). The eligibility gate is
     /// [`token_is_forward_resolvable`]; resolution goes through the shared
     /// [`module_state::forward_resolve`] seam so failures fail closed.
-    fn forward_resolve_matches(&self, addr: IpAddr, deny: bool) -> bool {
+    fn forward_resolve_matches(&self, addr: Option<IpAddr>, deny: bool) -> bool {
         if !token_is_forward_resolvable(&self.original) {
             return false;
         }
 
         match module_state::forward_resolve(&self.original) {
             // upstream: access.c:84-107 - a successful lookup matches only when
-            // one of the returned records IS the peer.
-            Some(resolved) => resolved.into_iter().any(|record| record == addr),
+            // one of the returned records IS the peer; a peer string that
+            // `getaddrinfo` cannot parse leaves `a` NULL and matches none.
+            Some(resolved) => addr.is_some_and(|addr| resolved.contains(&addr)),
             // upstream: access.c:72-81 - a token the resolver cannot resolve
             // returns `deny`, so a deny rule fails CLOSED.
             None => deny,

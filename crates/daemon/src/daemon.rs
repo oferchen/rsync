@@ -476,17 +476,16 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     let pair = crate::daemon_stream::StdioPair::remote_shell(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    let peer_addr = remote_shell_session_peer()?;
+    let peer = remote_shell_session_peer()?;
 
     // upstream: clientname.c `client_name` forward-confirms unconditionally;
     // per-module `forward lookup` governs the access-control match.
     let peer_host = if reverse_lookup {
-        resolve_peer_hostname(peer_addr.ip())
+        peer.ip().and_then(resolve_peer_hostname)
     } else {
         None
     };
 
-    let peer = PeerAddress::from_socket(peer_addr);
     if let Some(log) = log_sink.as_ref() {
         log_connection(
             log,
@@ -524,10 +523,11 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
 /// Behind a remote shell that is usually a pipe, so `getpeername` fails and
 /// upstream exits `RERR_SOCKETIO` (clientname.c:323-327); a socket stdin
 /// yields its real peer.
-fn remote_shell_session_peer() -> Result<SocketAddr, DaemonError> {
+fn remote_shell_session_peer() -> Result<PeerAddress, DaemonError> {
     match peer_address::remote_shell_peer_addr() {
-        peer_address::RemoteShellPeer::Addr(ip) => Ok(SocketAddr::new(ip, 0)),
+        peer_address::RemoteShellPeer::Addr(peer) => Ok(peer),
         peer_address::RemoteShellPeer::Unusable => peer_address::inherited_socket_peer_addr()
+            .map(PeerAddress::from_socket)
             .map_err(|error| {
                 let code = ExitCode::SocketIo;
                 DaemonError::with_code(

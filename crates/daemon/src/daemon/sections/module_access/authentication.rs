@@ -209,7 +209,7 @@ fn perform_module_authentication(
     reader: &mut BufReader<DaemonStream>,
     limiter: &mut Option<BandwidthLimiter>,
     module: &ModuleDefinition,
-    peer_ip: IpAddr,
+    peer_addr: &str,
     messages: &LegacyMessageCache,
     protocol_version: Option<ProtocolVersion>,
     client_digests: AdvertisedDigests<'_>,
@@ -239,7 +239,7 @@ fn perform_module_authentication(
         return Ok(AuthenticationStatus::Denied(denial));
     }
 
-    let challenge = ChallengeGenerator::generate(peer_ip, digest);
+    let challenge = ChallengeGenerator::generate(peer_addr, digest);
     if !challenge.kernel_random
         && let Some(log) = log_sink
     {

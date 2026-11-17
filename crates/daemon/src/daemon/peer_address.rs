@@ -38,7 +38,7 @@
 //! admitting every client under the canonical `hosts allow = 127.0.0.1`, and
 //! rejecting every legitimate client under an allow-list naming real subnets.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// The connecting peer as the daemon reports and checks it.
 ///
@@ -46,12 +46,13 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 /// clientserver.c:775 exports it as `RSYNC_HOST_ADDR`, the log and `@ERROR`
 /// lines print it (clientserver.c:778-791), and `allow_access()` parses it
 /// again for the `hosts allow`/`hosts deny` match (access.c:84-130). This
-/// value carries all three facts so no consumer re-derives one from another:
-/// the text that is shown and the address that is matched.
+/// value carries both facts so no consumer re-derives one from the other: the
+/// text that is shown and, when the text names one, the address that is
+/// matched.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PeerAddress {
     text: String,
-    ip: IpAddr,
+    ip: Option<IpAddr>,
 }
 
 impl PeerAddress {
@@ -59,12 +60,35 @@ impl PeerAddress {
     pub(crate) fn from_socket(addr: SocketAddr) -> Self {
         Self {
             text: addr.ip().to_string(),
-            ip: addr.ip(),
+            ip: Some(addr.ip()),
         }
     }
 
-    /// The address `hosts allow`/`hosts deny` and reverse lookups use.
-    pub(crate) const fn ip(&self) -> IpAddr {
+    /// A peer named by a remote-shell environment string that `valid_ipaddr`
+    /// accepted. The string is kept exactly as given and the address is
+    /// whatever this platform's numeric-host reading makes of it.
+    ///
+    /// upstream: clientname.c:76 returns `ipaddr_buf` itself, so
+    /// `RSYNC_HOST_ADDR` and the log lines show `010.1.2.3` or `fe80::1%eth0`
+    /// verbatim. A string the reading rejects has no address at all - never a
+    /// stand-in such as `0.0.0.0` - and the access check decides it by the
+    /// unresolved-peer rule in `config_helpers/host_pattern.rs`.
+    fn from_remote_shell(text: &str) -> Self {
+        let ip = numeric_host(
+            NumericHostRule::HOST,
+            text,
+            platform::net_interface::interface_index,
+        )
+        .map(|(ip, _scope_id)| ip);
+        Self {
+            text: text.to_owned(),
+            ip,
+        }
+    }
+
+    /// The address `hosts allow`/`hosts deny` and reverse lookups use, or
+    /// `None` when the peer string names no address this platform can read.
+    pub(crate) const fn ip(&self) -> Option<IpAddr> {
         self.ip
     }
 
@@ -114,24 +138,21 @@ const IPADDR_BUF_LEN: usize = 100;
 /// leading field is the peer address in both.
 ///
 /// Returns `None` when upstream would reject the value and fall through to the
-/// socket. An accepted value that `IpAddr` cannot represent (a leading-zero or
-/// signed IPv4 octet, which `strtol` reads but `getaddrinfo` may not) becomes
-/// [`REMOTE_SHELL_DEFAULT_ADDR`]: upstream keeps the raw string, and a string
-/// that does not parse as a numeric host matches no `hosts allow` address
-/// token. A scope suffix (`fe80::1%eth0`) is dropped before conversion - it
-/// names a local interface, not the peer.
+/// socket. An accepted value becomes the peer string as it stands, with
+/// whatever address this platform reads from it - see
+/// [`PeerAddress::from_remote_shell`].
 ///
 /// upstream: clientname.c:70-77 plus `valid_ipaddr(buf, True)`.
-fn parse_peer_env_value(value: &str) -> Option<IpAddr> {
+fn parse_peer_env_value(value: &str) -> Option<PeerAddress> {
     let bytes = value.as_bytes();
     let copied = &bytes[..bytes.len().min(IPADDR_BUF_LEN - 1)];
     let field = copied.split(|&b| b == b' ').next().unwrap_or(copied);
     if !valid_ipaddr(field, true) {
         return None;
     }
-    let text = std::str::from_utf8(field).ok()?;
-    let bare = text.split_once('%').map_or(text, |(addr, _scope)| addr);
-    Some(bare.parse().unwrap_or(REMOTE_SHELL_DEFAULT_ADDR))
+    std::str::from_utf8(field)
+        .ok()
+        .map(PeerAddress::from_remote_shell)
 }
 
 /// Byte-for-byte port of upstream's address validator, including its quirks:
@@ -264,12 +285,136 @@ fn strtol_decimal(s: &[u8], start: usize) -> Option<(i64, usize)> {
     (i > digits_start).then_some((if negative { -value } else { value }, i))
 }
 
+/// How this platform's `getaddrinfo(addr, NULL, AI_NUMERICHOST)` reads a peer
+/// string that `valid_ipaddr()` accepted.
+///
+/// upstream: access.c:92 and :219 parse the peer string with that call before
+/// any `hosts allow`/`hosts deny` address comparison, so the reading belongs to
+/// the C library, not to rsync, and differs by platform. oc reproduces each
+/// reading in Rust instead of calling the resolver: the result is fixed per
+/// target, needs no DNS, and every rule is testable on every host.
+///
+/// `valid_ipaddr()` has already limited IPv4 to four parts of at most three
+/// digits, so the `inet_aton` forms it rejects (hex `0x8.1.2.3`, short forms
+/// `8.66051` and `134283779`) never reach a rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NumericHostRule {
+    /// glibc and musl. IPv4 parts are read by `inet_aton`, so a leading `0`
+    /// makes a part octal (`010` is 8, `08` fails). An interface-name scope
+    /// resolves only on a link-local address, and an unknown name fails.
+    /// Sources: glibc resolv/inet_addr.c `inet_aton_end` and
+    /// inet/inet6_scopeid_pton.c; musl src/network/inet_aton.c and
+    /// src/network/lookup_ipliteral.c. The tables were also measured against
+    /// both libraries' `getaddrinfo`.
+    InetAton,
+    /// Darwin, measured on Darwin 27 via `getaddrinfo` (not read from source).
+    /// IPv4 parts are decimal with leading zeros allowed (`010` is 10, `08` is
+    /// 8). An interface-name scope resolves on any address, and an unknown
+    /// name gives scope 0.
+    LenientDecimal,
+    /// Every other target, Windows included, none of them measured. Plain
+    /// decimal without leading zeros, and an interface-name scope must
+    /// resolve. Anything else has no address, which the access check fails
+    /// closed on.
+    StrictDecimal,
+}
+
+impl NumericHostRule {
+    #[cfg(target_os = "linux")]
+    const HOST: Self = Self::InetAton;
+    #[cfg(target_vendor = "apple")]
+    const HOST: Self = Self::LenientDecimal;
+    #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+    const HOST: Self = Self::StrictDecimal;
+
+    /// Reads a four-part dotted quad.
+    fn ipv4(self, text: &str) -> Option<Ipv4Addr> {
+        if self == Self::StrictDecimal {
+            return text.parse().ok();
+        }
+        let mut octets = [0u8; 4];
+        let mut parts = text.split('.');
+        for octet in &mut octets {
+            let part = parts.next()?;
+            if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            let octal = self == Self::InetAton && part.len() > 1 && part.starts_with('0');
+            *octet = u8::from_str_radix(part, if octal { 8 } else { 10 }).ok()?;
+        }
+        parts.next().is_none().then(|| Ipv4Addr::from(octets))
+    }
+
+    /// Reads an IPv6 address without its scope. glibc's and musl's
+    /// `inet_pton` take an embedded dotted quad as plain decimal only; Darwin
+    /// reads it as it reads IPv4 (`::ffff:010.1.2.3` is `::ffff:10.1.2.3`).
+    fn ipv6(self, text: &str) -> Option<Ipv6Addr> {
+        if self == Self::LenientDecimal
+            && let Some((head, quad)) = text.rsplit_once(':')
+            && quad.contains('.')
+        {
+            let quad = self.ipv4(quad)?;
+            return format!("{head}:{quad}").parse().ok();
+        }
+        text.parse().ok()
+    }
+
+    /// The scope id for an interface-name scope on `addr`, given what
+    /// `if_nametoindex` returned for the name.
+    fn named_scope(self, addr: Ipv6Addr, index: Option<u32>) -> Option<u32> {
+        match self {
+            Self::InetAton => index.filter(|_| names_an_interface_scope(addr)),
+            Self::LenientDecimal => Some(index.unwrap_or(0)),
+            Self::StrictDecimal => index,
+        }
+    }
+}
+
+/// Reads `text` by `rule`, returning the address and its IPv6 scope id, or
+/// `None` where the platform's `getaddrinfo(AI_NUMERICHOST)` fails.
+///
+/// A `%` scope that is all digits is the index itself (`%01` is 1, at most
+/// `u32::MAX`) on every platform and any address; a name goes through
+/// `interface_index` and then the rule.
+fn numeric_host(
+    rule: NumericHostRule,
+    text: &str,
+    interface_index: impl FnOnce(&str) -> Option<u32>,
+) -> Option<(IpAddr, u32)> {
+    let Some((addr, scope)) = text.split_once('%') else {
+        return if text.contains(':') {
+            rule.ipv6(text).map(|v6| (IpAddr::V6(v6), 0))
+        } else {
+            rule.ipv4(text).map(|v4| (IpAddr::V4(v4), 0))
+        };
+    };
+    let v6 = rule.ipv6(addr)?;
+    let scope_id = if !scope.is_empty() && scope.bytes().all(|b| b.is_ascii_digit()) {
+        scope.parse().ok()?
+    } else {
+        rule.named_scope(v6, interface_index(scope))?
+    };
+    Some((IpAddr::V6(v6), scope_id))
+}
+
+/// Whether glibc or musl resolves an interface-name scope on `addr`.
+///
+/// glibc: inet/inet6_scopeid_pton.c - link-local unicast, node-local and
+/// link-local multicast. musl: src/network/lookup_ipliteral.c - link-local
+/// unicast and link-local multicast only.
+fn names_an_interface_scope(addr: Ipv6Addr) -> bool {
+    let first = addr.segments()[0];
+    let multicast_scope = (first & 0xff00 == 0xff00).then_some(first & 0x000f);
+    let node_local = cfg!(not(target_env = "musl")) && multicast_scope == Some(1);
+    addr.is_unicast_link_local() || multicast_scope == Some(2) || node_local
+}
+
 /// Outcome of resolving a remote-shell peer address.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::daemon) enum RemoteShellPeer {
-    /// An address to use: either one parsed from the environment, or the
+    /// The peer to use: either the string the environment named, or the
     /// `0.0.0.0` default when the environment said nothing.
-    Addr(IpAddr),
+    Addr(PeerAddress),
     /// An environment variable was set but did not hold a usable address.
     ///
     /// Upstream falls through to `client_sockaddr()` here, which on a remote
@@ -287,7 +432,10 @@ pub(in crate::daemon) fn remote_shell_peer_addr() -> RemoteShellPeer {
         .iter()
         .find_map(|name| std::env::var(name).ok())
     else {
-        return RemoteShellPeer::Addr(REMOTE_SHELL_DEFAULT_ADDR);
+        return RemoteShellPeer::Addr(PeerAddress::from_socket(SocketAddr::new(
+            REMOTE_SHELL_DEFAULT_ADDR,
+            0,
+        )));
     };
 
     parse_peer_env_value(&raw).map_or(RemoteShellPeer::Unusable, RemoteShellPeer::Addr)
@@ -365,40 +513,58 @@ mod tests {
     use super::*;
     use crate::test_env::EnvGuard;
     use std::ffi::OsStr;
-    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    /// The address an environment value yields: `None` when `valid_ipaddr`
+    /// rejects it, `Some(None)` when it is kept but names no address.
+    fn ip_of(value: &str) -> Option<Option<IpAddr>> {
+        parse_peer_env_value(value).map(|peer| peer.ip())
+    }
+
+    fn text_of(value: &str) -> Option<String> {
+        parse_peer_env_value(value).map(|peer| peer.text().to_owned())
+    }
 
     /// upstream: clientname.c:73-74 - `SSH_CONNECTION` carries four
     /// space-separated fields and only the first is the peer.
     #[test]
     fn env_value_truncates_at_the_first_space() {
         assert_eq!(
-            parse_peer_env_value("192.0.2.7 54321 198.51.100.1 22"),
-            Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7)))
+            ip_of("192.0.2.7 54321 198.51.100.1 22"),
+            Some(Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7))))
+        );
+        assert_eq!(
+            text_of("192.0.2.7 54321 198.51.100.1 22").as_deref(),
+            Some("192.0.2.7")
         );
     }
 
     #[test]
     fn env_value_accepts_a_bare_address() {
         assert_eq!(
-            parse_peer_env_value("198.51.100.9"),
-            Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 9)))
+            ip_of("198.51.100.9"),
+            Some(Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 9))))
         );
     }
 
     /// upstream passes `allow_scope = True` to `valid_ipaddr`, so a link-local
-    /// address carrying an interface scope is usable.
+    /// address carrying an interface scope is usable, and the scope stays in
+    /// the peer string `RSYNC_HOST_ADDR` and the logs show (clientname.c:76).
     #[test]
     fn env_value_accepts_a_scoped_ipv6_address() {
         assert_eq!(
-            parse_peer_env_value("fe80::1%eth0 22 fe80::2 22"),
-            Some(IpAddr::V6("fe80::1".parse::<Ipv6Addr>().unwrap()))
+            text_of("fe80::1%eth0 22 fe80::2 22").as_deref(),
+            Some("fe80::1%eth0")
+        );
+        assert_eq!(
+            ip_of("fe80::1%1 22 fe80::2 22"),
+            Some(Some(IpAddr::V6("fe80::1".parse::<Ipv6Addr>().unwrap())))
         );
     }
 
     #[test]
     fn env_value_rejects_a_non_address() {
-        assert_eq!(parse_peer_env_value("not-an-address 22"), None);
-        assert_eq!(parse_peer_env_value(""), None);
+        assert_eq!(ip_of("not-an-address 22"), None);
+        assert_eq!(ip_of(""), None);
     }
 
     /// upstream: `valid_ipaddr()` has no scope branch on the IPv4 path, so an
@@ -406,46 +572,90 @@ mod tests {
     /// the socket rather than trusting the variable.
     #[test]
     fn env_value_rejects_a_scope_on_an_ipv4_address() {
-        assert_eq!(parse_peer_env_value("192.0.2.7%eth0 22"), None);
+        assert_eq!(ip_of("192.0.2.7%eth0 22"), None);
     }
 
     /// upstream: clientname.c:521-522 - the scope must be non-empty and
     /// alphanumeric (`!*s && s[-1] != '%'`).
     #[test]
     fn env_value_rejects_an_empty_or_non_alphanumeric_scope() {
-        assert_eq!(parse_peer_env_value("fe80::1%"), None);
-        assert_eq!(parse_peer_env_value("fe80::1%eth-0"), None);
+        assert_eq!(ip_of("fe80::1%"), None);
+        assert_eq!(ip_of("fe80::1%eth-0"), None);
     }
 
     /// upstream: clientname.c:476-483 - a scope is legal mid-address only after
     /// a `::` was seen; a full 8-group address may still carry one at the end.
     #[test]
     fn env_value_scope_placement_follows_upstream() {
-        assert_eq!(parse_peer_env_value("1:2:3:4:5:6:7%eth0"), None);
+        assert_eq!(ip_of("1:2:3:4:5:6:7%eth0"), None);
         assert_eq!(
-            parse_peer_env_value("1:2:3:4:5:6:7:8%eth0"),
-            Some(IpAddr::V6("1:2:3:4:5:6:7:8".parse::<Ipv6Addr>().unwrap()))
+            ip_of("1:2:3:4:5:6:7:8%1"),
+            Some(Some(IpAddr::V6(
+                "1:2:3:4:5:6:7:8".parse::<Ipv6Addr>().unwrap()
+            )))
         );
     }
 
     /// upstream reads IPv4 octets with `strtol`, so `010` and `+2` pass
-    /// `valid_ipaddr` and the daemon keeps the value instead of consulting the
-    /// socket. The string is not a numeric host `getaddrinfo` reads the way
-    /// `IpAddr` does, so it must match no address rule: the sentinel.
+    /// `valid_ipaddr` and the daemon keeps the value as the peer string instead
+    /// of consulting the socket (clientname.c:76).
     #[test]
-    fn env_value_accepts_strtol_octets_as_an_unmatchable_peer() {
-        assert_eq!(
-            parse_peer_env_value("010.1.2.3 22"),
-            Some(REMOTE_SHELL_DEFAULT_ADDR)
-        );
-        assert_eq!(
-            parse_peer_env_value("1.+2.3.4"),
-            Some(REMOTE_SHELL_DEFAULT_ADDR)
-        );
-        assert_eq!(parse_peer_env_value("1.2.3.1000"), None);
-        assert_eq!(parse_peer_env_value("1.2.3.256"), None);
-        assert_eq!(parse_peer_env_value("1.2.3"), None);
-        assert_eq!(parse_peer_env_value("1.2.3.4.5"), None);
+    fn env_value_keeps_strtol_octets_as_the_peer_string() {
+        assert_eq!(text_of("010.1.2.3 22").as_deref(), Some("010.1.2.3"));
+        assert_eq!(text_of("1.+2.3.4").as_deref(), Some("1.+2.3.4"));
+        assert_eq!(ip_of("1.2.3.1000"), None);
+        assert_eq!(ip_of("1.2.3.256"), None);
+        assert_eq!(ip_of("1.2.3"), None);
+        assert_eq!(ip_of("1.2.3.4.5"), None);
+    }
+
+    /// The `inet_aton` forms `valid_ipaddr` rejects - hex, and the one-, two-
+    /// and three-part short forms - fall through to the socket as upstream
+    /// does, whatever the C library would have made of them: glibc reads all
+    /// three below as 8.1.2.3.
+    #[test]
+    fn env_value_rejects_hex_and_short_inet_aton_forms() {
+        assert_eq!(ip_of("0x8.1.2.3"), None);
+        assert_eq!(ip_of("8.66051"), None);
+        assert_eq!(ip_of("134283779"), None);
+    }
+
+    /// Task 754: an accepted string this platform cannot read keeps NO address.
+    /// oc used to substitute `0.0.0.0`, which a deny rule for the peer's real
+    /// address never matched. The address is `None` - never `0.0.0.0` or any
+    /// other stand-in - and the text is the string as given.
+    #[test]
+    fn an_unreadable_accepted_peer_has_no_substitute_address() {
+        let mut unreadable = vec!["1.+2.3.4", "-0.1.2.3"];
+        if NumericHostRule::HOST != NumericHostRule::LenientDecimal {
+            unreadable.extend(["fe80::1%1x", "fe80::1%ocnosuchif0"]);
+        }
+        if NumericHostRule::HOST == NumericHostRule::InetAton {
+            unreadable.extend(["08.1.2.3", "009.1.2.3", "::ffff:010.1.2.3"]);
+        }
+        for value in unreadable {
+            let peer = parse_peer_env_value(value)
+                .unwrap_or_else(|| panic!("valid_ipaddr accepts {value}"));
+            assert_eq!(peer.ip(), None, "{value} must keep no address");
+            assert_eq!(peer.text(), value, "{value} must be kept verbatim");
+        }
+    }
+
+    /// Only a string that IS a zero address may read as one: `0.0.0.0` is
+    /// upstream's seed, not a fallback for strings the platform cannot read.
+    #[test]
+    fn only_a_zero_address_string_reads_as_the_unspecified_address() {
+        let zero = Some(Some(IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
+        assert_eq!(ip_of("0.0.0.0"), zero);
+        for value in [
+            "1.+2.3.4",
+            "-0.1.2.3",
+            "08.1.2.3",
+            "010.1.2.3",
+            "fe80::1%1x",
+        ] {
+            assert_ne!(ip_of(value), zero, "{value} must not read as 0.0.0.0");
+        }
     }
 
     /// upstream: clientname.c:71 - `strlcpy` into the 100-byte buffer drops
@@ -455,10 +665,8 @@ mod tests {
         let mut value = String::from("fe80::1%");
         value.push_str(&"a".repeat(IPADDR_BUF_LEN - 1 - value.len()));
         value.push('-');
-        assert_eq!(
-            parse_peer_env_value(&value),
-            Some(IpAddr::V6("fe80::1".parse::<Ipv6Addr>().unwrap()))
-        );
+        let kept = &value[..IPADDR_BUF_LEN - 1];
+        assert_eq!(text_of(&value).as_deref(), Some(kept));
     }
 
     /// upstream: clientname.c:478-485 - a dotted quad may only fill the last
@@ -466,10 +674,12 @@ mod tests {
     #[test]
     fn env_value_ipv6_with_embedded_ipv4_follows_upstream() {
         assert_eq!(
-            parse_peer_env_value("::ffff:192.0.2.1"),
-            Some(IpAddr::V6("::ffff:192.0.2.1".parse::<Ipv6Addr>().unwrap()))
+            ip_of("::ffff:192.0.2.1"),
+            Some(Some(IpAddr::V6(
+                "::ffff:192.0.2.1".parse::<Ipv6Addr>().unwrap()
+            )))
         );
-        assert_eq!(parse_peer_env_value("1:2:3:192.0.2.1"), None);
+        assert_eq!(ip_of("1:2:3:192.0.2.1"), None);
     }
 
     /// `SSH_CONNECTION`, as `sshd` sets it, names the peer. The full
@@ -485,10 +695,11 @@ mod tests {
         let _ssh2_client = EnvGuard::remove("SSH2_CLIENT");
         let _ssh_connection =
             EnvGuard::set("SSH_CONNECTION", OsStr::new("10.1.2.3 5555 10.0.0.1 22"));
-        assert_eq!(
-            remote_shell_peer_addr(),
-            RemoteShellPeer::Addr(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3)))
-        );
+        let RemoteShellPeer::Addr(peer) = remote_shell_peer_addr() else {
+            panic!("SSH_CONNECTION names a usable peer");
+        };
+        assert_eq!(peer.ip(), Some(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3))));
+        assert_eq!(peer.text(), "10.1.2.3");
     }
 
     /// upstream: clientname.c:65 - with no variable set the seed survives.
@@ -496,10 +707,11 @@ mod tests {
     fn no_peer_environment_yields_the_unspecified_seed() {
         let _env_lock = crate::test_env::ENV_LOCK.lock().expect("lock environment");
         let _guards = REMOTE_SHELL_PEER_ENV.map(EnvGuard::remove);
-        assert_eq!(
-            remote_shell_peer_addr(),
-            RemoteShellPeer::Addr(REMOTE_SHELL_DEFAULT_ADDR)
-        );
+        let RemoteShellPeer::Addr(peer) = remote_shell_peer_addr() else {
+            panic!("the seed is a usable peer");
+        };
+        assert_eq!(peer.ip(), Some(REMOTE_SHELL_DEFAULT_ADDR));
+        assert_eq!(peer.text(), "0.0.0.0");
     }
 
     /// upstream: clientname.c:66 - the FIRST set variable wins even when it is
@@ -553,5 +765,146 @@ mod tests {
         let sentinel = SocketAddr::new(REMOTE_SHELL_DEFAULT_ADDR, 0);
         assert_eq!(sentinel.ip(), IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         assert_ne!(sentinel.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+}
+
+#[cfg(test)]
+mod numeric_host_tests {
+    use super::*;
+
+    /// Reads `text` by `rule` with one known interface, `eth0` at index 2, so
+    /// the tables do not depend on the host's interfaces.
+    fn read(rule: NumericHostRule, text: &str) -> Option<String> {
+        numeric_host(rule, text, |name| (name == "eth0").then_some(2))
+            .map(|(ip, scope)| format!("{ip}%{scope}"))
+    }
+
+    fn check(rule: NumericHostRule, rows: &[(&str, Option<&str>)]) {
+        for &(input, expected) in rows {
+            assert_eq!(
+                read(rule, input).as_deref(),
+                expected,
+                "{rule:?} reading {input:?}"
+            );
+        }
+    }
+
+    /// glibc 2.44 and musl, measured with `getaddrinfo(AI_NUMERICHOST)` and
+    /// matching glibc resolv/inet_addr.c and inet/inet6_scopeid_pton.c and
+    /// musl src/network/inet_aton.c and lookup_ipliteral.c. The leading-zero
+    /// rows are the security-relevant ones: `hosts deny = 8.1.2.3` must see
+    /// 8.1.2.3 in `010.1.2.3`, as rsync 3.5.2 on Linux does.
+    #[test]
+    fn inet_aton_rule_reads_like_glibc_and_musl() {
+        check(
+            NumericHostRule::InetAton,
+            &[
+                ("010.1.2.3", Some("8.1.2.3%0")),
+                ("077.1.2.3", Some("63.1.2.3%0")),
+                ("00.0.0.0", Some("0.0.0.0%0")),
+                ("10.1.2.3", Some("10.1.2.3%0")),
+                ("08.1.2.3", None),
+                ("009.1.2.3", None),
+                ("256.1.2.3", None),
+                ("+1.2.3.4", None),
+                ("-0.1.2.3", None),
+                ("1.+2.3.4", None),
+                ("\t1.2.3.4", None),
+                // Never reaches a rule (valid_ipaddr rejects it); glibc's own
+                // inet_aton would read each as 8.1.2.3.
+                ("0x8.1.2.3", None),
+                ("8.66051", None),
+                ("134283779", None),
+                ("::ffff:10.1.2.3", Some("::ffff:10.1.2.3%0")),
+                ("::ffff:010.1.2.3", None),
+                ("::ffff:+1.2.3.4", None),
+                ("fe80::1%99", Some("fe80::1%99")),
+                ("fe80::1%01", Some("fe80::1%1")),
+                ("fe80::1%0", Some("fe80::1%0")),
+                ("2001:db8::1%1", Some("2001:db8::1%1")),
+                ("fe80::1%4294967295", Some("fe80::1%4294967295")),
+                ("fe80::1%4294967296", None),
+                ("fe80::1%eth0", Some("fe80::1%2")),
+                ("ff02::1%eth0", Some("ff02::1%2")),
+                ("fe80::1%nosuch", None),
+                ("fe80::1%1x", None),
+                ("2001:db8::1%eth0", None),
+                ("::1%eth0", None),
+                ("ff05::1%eth0", None),
+            ],
+        );
+    }
+
+    /// glibc names a node-local multicast scope; musl does not.
+    #[test]
+    fn inet_aton_rule_node_local_scope_follows_the_c_library() {
+        let expected = if cfg!(target_env = "musl") {
+            None
+        } else {
+            Some("ff01::1%2")
+        };
+        assert_eq!(
+            read(NumericHostRule::InetAton, "ff01::1%eth0").as_deref(),
+            expected
+        );
+    }
+
+    /// Measured on Darwin 27 via `getaddrinfo(AI_NUMERICHOST)`; not read from
+    /// source.
+    #[test]
+    fn lenient_decimal_rule_reads_like_darwin() {
+        check(
+            NumericHostRule::LenientDecimal,
+            &[
+                ("010.1.2.3", Some("10.1.2.3%0")),
+                ("08.1.2.3", Some("8.1.2.3%0")),
+                ("009.1.2.3", Some("9.1.2.3%0")),
+                ("077.1.2.3", Some("77.1.2.3%0")),
+                ("+1.2.3.4", None),
+                ("-0.1.2.3", None),
+                ("\t1.2.3.4", None),
+                ("::ffff:010.1.2.3", Some("::ffff:10.1.2.3%0")),
+                ("fe80::1%99", Some("fe80::1%99")),
+                ("fe80::1%01", Some("fe80::1%1")),
+                ("fe80::1%eth0", Some("fe80::1%2")),
+                ("2001:db8::1%eth0", Some("2001:db8::1%2")),
+                ("fe80::1%nosuch", Some("fe80::1%0")),
+            ],
+        );
+    }
+
+    /// Unmeasured targets: anything but plain decimal and a resolvable or
+    /// numeric scope has no address, so the access check fails closed on it.
+    #[test]
+    fn strict_decimal_rule_rejects_every_ambiguous_form() {
+        check(
+            NumericHostRule::StrictDecimal,
+            &[
+                ("10.1.2.3", Some("10.1.2.3%0")),
+                ("010.1.2.3", None),
+                ("08.1.2.3", None),
+                ("+1.2.3.4", None),
+                ("::ffff:10.1.2.3", Some("::ffff:10.1.2.3%0")),
+                ("::ffff:010.1.2.3", None),
+                ("fe80::1%7", Some("fe80::1%7")),
+                ("fe80::1%eth0", Some("fe80::1%2")),
+                ("fe80::1%nosuch", None),
+            ],
+        );
+    }
+
+    /// The build host's loopback name resolves through the platform wrapper.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_host_rule_resolves_a_real_interface_name() {
+        let lo = platform::net_interface::interface_index("lo").expect("loopback index");
+        assert_eq!(
+            numeric_host(
+                NumericHostRule::HOST,
+                "fe80::1%lo",
+                platform::net_interface::interface_index
+            ),
+            Some((IpAddr::V6("fe80::1".parse().unwrap()), lo))
+        );
     }
 }

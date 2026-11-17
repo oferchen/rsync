@@ -2,8 +2,6 @@
 //!
 //! Run with: `cargo bench -p daemon --bench daemon_benchmark`
 
-use std::net::IpAddr;
-
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use daemon::auth::{
@@ -24,20 +22,20 @@ fn generate_secrets(user_count: usize) -> String {
 /// Benchmarks challenge generation and auth response computation across digest algorithms.
 fn bench_auth_challenge_response(c: &mut Criterion) {
     let mut group = c.benchmark_group("daemon_auth_challenge_response");
-    let peer_ip: IpAddr = "192.168.1.100".parse().unwrap();
+    let peer_addr = "192.168.1.100";
     let password = b"benchmark_secret_password";
 
     // Benchmark challenge generation for modern and legacy protocols
     group.bench_function("challenge_gen_md5", |b| {
-        b.iter(|| ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5));
+        b.iter(|| ChallengeGenerator::generate(peer_addr, DaemonAuthDigest::Md5));
     });
 
     group.bench_function("challenge_gen_md4", |b| {
-        b.iter(|| ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md4));
+        b.iter(|| ChallengeGenerator::generate(peer_addr, DaemonAuthDigest::Md4));
     });
 
     // Benchmark response computation for each digest algorithm
-    let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5).text;
+    let challenge = ChallengeGenerator::generate(peer_addr, DaemonAuthDigest::Md5).text;
     let digests = [
         ("sha512", DaemonAuthDigest::Sha512),
         ("sha256", DaemonAuthDigest::Sha256),
