@@ -94,9 +94,8 @@ pub(crate) fn apply_merge_directive(
     // grow it.
     if visited.len() >= filters::MAX_MERGE_DEPTH {
         // upstream renders the offending directive with rule_text() and prefixes
-        // who_am_i(); filter arguments are parsed before any fork, where
-        // who_am_i() is "client" - the role this error already carries.
-        let text = filters::depth_limit_exceeded("client", &display);
+        // who_am_i() (exclude.c:1619-1623).
+        let text = filters::depth_limit_exceeded(files.who().as_str(), &display);
         return Err(rsync_error!(11, text));
     }
     visited.push(guard_key.clone());

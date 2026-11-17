@@ -22,8 +22,8 @@ where
     let cvs = filters::CvsSession::default();
     // upstream: options.c parses these in the client before any fork, where
     // who_am_i() is "client" (rsync.c:989-990).
-    let filter_rules =
-        build_filter_rules(inputs, &cvs, &ProcessFilterFiles).map_err(|refusal| {
+    let filter_rules = build_filter_rules(inputs, &cvs, &ProcessFilterFiles { who: Role::Client })
+        .map_err(|refusal| {
             let brand = stderr.brand();
             write_refusal(stderr.writer_mut(), brand, Role::Client, &refusal)
                 .unwrap_or_else(|_| refusal.code().unwrap_or(1))

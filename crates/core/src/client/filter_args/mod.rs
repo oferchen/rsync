@@ -27,6 +27,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use crate::client::FilterRuleSpec;
+use crate::message::Role;
 
 pub use build::{FilterInputs, build_filter_rules};
 pub use module::{ModuleFilterDirectives, daemon_list_rules, module_filter_rules};
@@ -44,6 +45,10 @@ pub use server_argv::server_argv_filter_rules;
 pub trait FilterFileSource {
     /// The directory a relative merge-file name resolves against.
     fn base_dir(&self) -> PathBuf;
+
+    /// Upstream's `who_am_i()` for the process parsing these rules, which a
+    /// refusal that names its process carries (exclude.c:1619-1623).
+    fn who(&self) -> Role;
 
     /// Opens `path` for reading; `-` names standard input.
     ///
@@ -94,6 +99,10 @@ pub(crate) fn set_filter_stdin_input(data: Vec<u8>) {
 impl FilterFileSource for TestFiles {
     fn base_dir(&self) -> PathBuf {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    }
+
+    fn who(&self) -> Role {
+        Role::Client
     }
 
     fn open(

@@ -73,11 +73,17 @@ struct ModuleArgvFiles<'a> {
     daemon_rules: &'a [FilterRuleWireFormat],
     /// Set when a hidden `-from` name rejected the options.
     rejected: std::cell::Cell<bool>,
+    /// The daemon's `who_am_i()` while it parses the options.
+    who: Role,
 }
 
 impl core::client::filter_args::FilterFileSource for ModuleArgvFiles<'_> {
     fn base_dir(&self) -> std::path::PathBuf {
         self.root.to_path_buf()
+    }
+
+    fn who(&self) -> Role {
+        self.who
     }
 
     fn open(
@@ -109,8 +115,17 @@ impl core::client::filter_args::FilterFileSource for ModuleArgvFiles<'_> {
                 }
             };
         }
-        let content = read_module_file(self.root, &relative)?;
-        Ok(Box::new(std::io::Cursor::new(content.into_bytes())))
+        // upstream: exclude.c:704-715 parse_merge_name() returns a name with
+        // no slash unchanged, unsanitized, so `..` reaches the confined open
+        // and is refused there (ELOOP, MEASURED on 3.5.2) while `.` opens the
+        // module root itself.
+        let bare = !name.as_os_str().as_encoded_bytes().contains(&b'/');
+        let open_name = if bare {
+            name.to_string_lossy().into_owned()
+        } else {
+            relative
+        };
+        open_module_file(self.root, &open_name)
     }
 }
 
@@ -140,6 +155,7 @@ fn build_argv_filter_rules(
         root: module_root,
         daemon_rules,
         rejected: std::cell::Cell::new(false),
+        who: argv_parse_role(client_args),
     };
     core::client::filter_args::server_argv_filter_rules(&options, from0, &files).map_err(
         |message| {
@@ -160,28 +176,35 @@ fn build_argv_filter_rules(
     )
 }
 
-/// Reads `relative` beneath the module root, never leaving it.
+/// Opens `relative` beneath the module root, never leaving it.
+///
+/// The parser reads the file, so a name that opens as a directory ends at its
+/// first read like an empty file, as on the client (exclude.c:1764-1769).
 ///
 /// On Unix the open goes through the confined resolver, so a symlink or `..`
 /// cannot lead outside the module. Elsewhere the sanitized name, which can no
 /// longer be absolute or climb, is joined onto the root.
-fn read_module_file(root: &Path, relative: &str) -> io::Result<String> {
+fn open_module_file(root: &Path, relative: &str) -> io::Result<Box<dyn std::io::Read>> {
     #[cfg(unix)]
     {
-        use std::io::Read as _;
-        let mut file = fast_io::open_source_confined(
+        match fast_io::open_source_confined(
             root,
             Path::new(relative),
             fast_io::LeafPolicy::FollowConfined,
             false,
-        )?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        Ok(content)
+        ) {
+            Ok(file) => Ok(Box::new(file)),
+            // The resolver refuses to hand back the module root itself as a
+            // file; upstream opens it and reads nothing.
+            Err(error) if error.raw_os_error() == Some(libc::EISDIR) => {
+                Ok(Box::new(std::io::empty()))
+            }
+            Err(error) => Err(error),
+        }
     }
     #[cfg(not(unix))]
     {
-        fs::read_to_string(root.join(relative))
+        Ok(Box::new(fs::File::open(root.join(relative))?))
     }
 }
 

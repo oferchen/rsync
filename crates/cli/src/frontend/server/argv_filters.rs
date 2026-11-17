@@ -24,7 +24,11 @@ pub(super) fn server_argv_filter_rules(
     args: &[OsString],
     from0: bool,
 ) -> Result<Vec<FilterRuleWireFormat>, Message> {
-    core::client::filter_args::server_argv_filter_rules(args, from0, &ProcessFilterFiles)
+    core::client::filter_args::server_argv_filter_rules(
+        args,
+        from0,
+        &ProcessFilterFiles { who: Role::Server },
+    )
 }
 
 /// Prints a refused server-argv filter as upstream does and returns its exit.

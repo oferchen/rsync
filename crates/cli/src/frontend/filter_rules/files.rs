@@ -5,17 +5,25 @@ use std::path::{Path, PathBuf};
 
 use core::client::FilterRuleSpec;
 use core::client::filter_args::{FilterFileKind, FilterFileSource};
+use core::message::Role;
 
 /// Opens the client's (and a remote-shell server's) filter files: relative to
 /// the cwd, through the ownership walk, and standard input for `-`.
 ///
 /// upstream: `exclude.c:1680-1684` - `parse_filter_file()` opens with
 /// `operator_path_resolve` set, and reads `stdin` for a name of `-`.
-pub(crate) struct ProcessFilterFiles;
+pub(crate) struct ProcessFilterFiles {
+    /// The process parsing the rules: the client, or a remote-shell server.
+    pub(crate) who: Role,
+}
 
 impl FilterFileSource for ProcessFilterFiles {
     fn base_dir(&self) -> PathBuf {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    }
+
+    fn who(&self) -> Role {
+        self.who
     }
 
     fn open(
@@ -60,12 +68,14 @@ pub(crate) fn set_filter_stdin_input(data: Vec<u8>) {
 mod tests {
     use super::*;
 
+    const CLIENT_FILES: ProcessFilterFiles = ProcessFilterFiles { who: Role::Client };
+
     /// upstream: `-f '. ..'` opens the directory and reads it as an empty file,
     /// so 3.5.2 exits 0 where oc refused it with EINVAL (exit 11).
     #[test]
     fn a_merge_name_without_a_final_component_reads_as_empty() {
         for name in [".", ".."] {
-            let mut reader = ProcessFilterFiles
+            let mut reader = CLIENT_FILES
                 .open(Path::new(name), FilterFileKind::MergeFile, &[])
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
             let mut contents = Vec::new();
@@ -80,7 +90,7 @@ mod tests {
         let temp = test_support::create_tempdir();
         let missing = temp.path().join("nosuch").join("..");
         assert!(
-            ProcessFilterFiles
+            CLIENT_FILES
                 .open(&missing, FilterFileKind::MergeFile, &[])
                 .is_err()
         );
