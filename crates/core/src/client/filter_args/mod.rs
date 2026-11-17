@@ -52,6 +52,25 @@ pub trait FilterFileSource {
     /// refusal that names its process carries (exclude.c:1619-1623).
     fn who(&self) -> Role;
 
+    /// The path a merge-file `name` resolves to and is reported under:
+    /// upstream's parse_merge_name() result.
+    ///
+    /// The default is the unsanitized form the client and a remote-shell
+    /// server use. A name with no slash stays as given, so it opens from the
+    /// cwd (exclude.c:704-715). Any other relative name is joined onto
+    /// `base_dir`, and the result is cleaned with
+    /// `clean_fname(CFN_COLLAPSE_DOT_DOT_DIRS)`, so `merge a/b/../test` opens
+    /// `a/test` even when `a/b` does not exist (exclude.c:730-747).
+    fn merge_path(&self, name: &Path, base_dir: &Path) -> PathBuf {
+        let has_slash = name.as_os_str().as_encoded_bytes().contains(&b'/');
+        let joined = if name.is_absolute() || !has_slash {
+            name.to_path_buf()
+        } else {
+            base_dir.join(name)
+        };
+        filters::collapse_dot_dot_dirs(&joined)
+    }
+
     /// Opens `path` for reading; `-` names standard input.
     ///
     /// `list` is the list this parse has built so far, upstream's `listp`.

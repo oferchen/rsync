@@ -54,22 +54,7 @@ pub(crate) fn apply_merge_directive(
     let (resolved_path, display, canonical_path) = if is_stdin {
         (PathBuf::from("-"), String::from("-"), None)
     } else {
-        let raw_path = PathBuf::from(directive.source());
-        // upstream: exclude.c:704-715 parse_merge_name() returns a name with
-        // no slash unchanged, so it opens from the cwd, never from `dirbuf`.
-        let has_slash = directive.source().as_encoded_bytes().contains(&b'/');
-        let joined = if raw_path.is_absolute() || !has_slash {
-            raw_path
-        } else {
-            base_dir.join(raw_path)
-        };
-        // upstream: exclude.c parse_merge_name() runs the merge-file name
-        // through `clean_fname(fn, CFN_COLLAPSE_DOT_DOT_DIRS)`, and again after
-        // joining it onto the filter dir, so `merge a/b/../test` opens
-        // `a/test`. The collapse is lexical and happens before the open, which
-        // is why it succeeds when `a/b` does not exist - handing the raw name
-        // to the OS instead fails with ENOENT.
-        let resolved = filters::collapse_dot_dot_dirs(&joined);
+        let resolved = files.merge_path(Path::new(directive.source()), base_dir);
         let display = reported_merge_name(directive.source());
         let canonical = std::fs::canonicalize(&resolved).ok();
         (resolved, display, canonical)

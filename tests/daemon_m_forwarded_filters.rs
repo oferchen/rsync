@@ -360,3 +360,46 @@ fn a_merge_file_naming_a_directory_reads_as_empty() {
     assert_silent_daemon_exit(&output, "-M--filter=. ..");
     assert!(names(&dest).is_empty(), "nothing may be transferred");
 }
+
+/// Upstream's `strerror (errno)` rendering of ELOOP on this platform: glibc,
+/// musl and macOS differ in the wording, and macOS in the number.
+fn eloop_text() -> String {
+    logging::upstream_errno_text(&std::io::Error::from_raw_os_error(libc::ELOOP))
+}
+
+#[test]
+fn a_merge_file_escaping_the_module_is_refused_with_eloop() {
+    // MEASURED against rsync 3.5.2: the daemon opens a client's merge file
+    // with the ownership walk judged against the module (exclude.c:1677-1690),
+    // so a bare `..` and a symlink pointing out of the module are each refused
+    // with ELOOP ("Too many levels of symbolic links (40)" on glibc), and the
+    // client sees only
+    // EOF. A symlink that stays in the module is followed.
+    let fixture = Fixture::new();
+    let outside = fixture.temp.path().join("outside-rules");
+    fs::write(&outside, b"- keep\n").expect("write outside rules");
+    std::os::unix::fs::symlink(&outside, fixture.module().join("outlink")).expect("symlink");
+    std::os::unix::fs::symlink("rules", fixture.module().join("inlink")).expect("symlink");
+    for arg in ["-M--filter=. ..", "-M--filter=. outlink"] {
+        let (output, dest) = fixture.pull(&[arg]);
+        assert_silent_daemon_exit(&output, arg);
+        assert!(names(&dest).is_empty(), "{arg}: nothing may be transferred");
+        let log = fs::read_to_string(fixture.temp.path().join("rsyncd.log")).expect("read log");
+        let name = arg.trim_start_matches("-M--filter=. ");
+        assert!(
+            log.contains(&format!(
+                "failed to open exclude file {name}: {}",
+                eloop_text()
+            )),
+            "{arg}: {log}"
+        );
+    }
+    let (output, dest) = fixture.pull(&["-M--filter=. inlink"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let pulled = names(&dest);
+    assert!(pulled.contains(&"keep".to_owned()), "{pulled:?}");
+    assert!(
+        !pulled.contains(&"keep2".to_owned()),
+        "the followed rules exclude keep2: {pulled:?}"
+    );
+}
