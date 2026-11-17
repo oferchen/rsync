@@ -181,3 +181,40 @@ fn verbosity_alone_prints_no_landlock_line() {
         "{explicit:?}"
     );
 }
+
+/// The first word of each line that marks the receiver resolving the
+/// destination or the generator starting, in the order printed.
+fn startup_order(transcript: &str) -> Vec<&str> {
+    transcript
+        .lines()
+        .filter(|line| {
+            [
+                "get_local_name ",
+                "generator starting ",
+                "delta-transmission ",
+            ]
+            .iter()
+            .any(|head| line.starts_with(head))
+        })
+        .filter_map(|line| line.split(' ').next())
+        .collect()
+}
+
+/// upstream: main.c:1248-1290 - the receiver reads the file list and resolves
+/// the destination before do_recv() forks the generator, whose
+/// generate_files() then prints its first two lines (generator.c:2836-2854).
+#[test]
+fn generator_starts_after_the_destination_is_resolved() {
+    let oc = run(&oc_rsync_bin(), "recv1,genr1,flist1");
+    assert_eq!(
+        startup_order(&oc),
+        ["get_local_name", "generator", "delta-transmission"],
+        "{oc}"
+    );
+
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    let reference = run(upstream.binary(), "recv1,genr1,flist1");
+    assert_eq!(startup_order(&oc), startup_order(&reference));
+}
