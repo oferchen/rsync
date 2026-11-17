@@ -2238,6 +2238,7 @@ version = "0.6.4"
 dependencies = [
  "checksums",
  "criterion",
+ "fast_io",
  "logging",
  "proptest",
  "protocol",

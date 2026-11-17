@@ -227,6 +227,13 @@ pub fn read_dir_via_sandbox_or_fallback(
     }
 }
 
+/// Lists the directory `dir` refers to, without `.` and `..`, classifying
+/// each entry as [`read_dir_entry_views`] does.
+pub(crate) fn list_dir_fd(dir: File) -> io::Result<Vec<DirEntryView>> {
+    let parent = dir.try_clone()?;
+    read_dir_entry_views(dir, std::os::fd::AsFd::as_fd(&parent), None)
+}
+
 /// Materialise the full listing for the directory `dirfile` refers to,
 /// classifying each entry by `d_type` when the filesystem provides it
 /// and falling back to [`fstatat_nofollow`] off `parent_dirfd` when it

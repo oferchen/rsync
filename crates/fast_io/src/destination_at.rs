@@ -120,6 +120,73 @@ pub fn open_dir(path: &Path) -> io::Result<std::os::fd::OwnedFd> {
     open(path, libc::O_RDONLY | libc::O_DIRECTORY, 0)
 }
 
+/// Opens a destination file for reading, anchored on the pinned destination.
+///
+/// Upstream reads a basis, a `--partial-dir` leaf, a `--fuzzy` candidate and
+/// the `--inplace --backup` pre-image by a name relative to the cwd
+/// `change_dir()` entered, so a destination swapped after the walk cannot
+/// redirect the read to another directory's file. A symlink leaf is refused,
+/// as upstream opens both with `O_NOFOLLOW`.
+///
+/// upstream: `rsync-3.5.2/receiver.c:1086-1093` opens the basis by its
+/// relative name (`do_open_atfd()` adds `O_NOFOLLOW`, syscall.c:4084);
+/// `rsync-3.5.2/util1.c:411-412` `copy_file()` opens the pre-image the same
+/// way.
+///
+/// # Errors
+///
+/// The underlying `openat`/`open` error; `ELOOP` for a symlink leaf.
+pub fn open_read(path: &Path) -> io::Result<std::fs::File> {
+    #[cfg(unix)]
+    {
+        open(path, libc::O_RDONLY | libc::O_NOFOLLOW, 0).map(std::fs::File::from)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::File::open(path)
+    }
+}
+
+/// Lists a destination directory, anchored on the pinned destination, with
+/// each entry's `lstat`.
+///
+/// `.` and `..` are omitted and the order is the directory's own. An entry
+/// whose `lstat` fails - removed between the listing and the stat - is left
+/// out, as a vanished candidate is of no use to the caller.
+///
+/// upstream: `rsync-3.5.2/generator.c:2230` reads the `--fuzzy` dirlist by a
+/// name relative to the entered destination (`get_dirlist(dn, -1, ...)`), so a
+/// swapped destination cannot offer another directory's files as candidates.
+///
+/// # Errors
+///
+/// The error opening or reading the directory.
+pub fn read_dir(path: &Path) -> io::Result<Vec<(std::ffi::OsString, EntryMetadata)>> {
+    #[cfg(unix)]
+    if crate::confinement::pinned_destination_relative(path).is_some() {
+        use std::os::fd::AsFd;
+        let dir = std::fs::File::from(open_dir(path)?);
+        let lookup = dir.try_clone()?;
+        let names = crate::dir_sandbox::at_syscalls::list_dir_fd(dir)?;
+        return Ok(names
+            .into_iter()
+            .filter_map(|entry| {
+                let name = entry.into_file_name();
+                crate::dir_sandbox::fstatat_nofollow(lookup.as_fd(), &name)
+                    .ok()
+                    .map(|meta| (name, EntryMetadata::At(meta)))
+            })
+            .collect());
+    }
+    Ok(std::fs::read_dir(path)?
+        .flatten()
+        .filter_map(|entry| {
+            let meta = entry.metadata().ok()?;
+            Some((entry.file_name(), EntryMetadata::Std(meta)))
+        })
+        .collect())
+}
+
 /// `chmod(2)` of a destination path, anchored on the pinned destination. The
 /// leaf is followed, as `chmod` follows it.
 ///
@@ -208,23 +275,32 @@ fn at_call(
 /// joined with the remainder, which the kernel resolves exactly as
 /// `fstatat(N, remainder)` would, so the consumer's own syscalls are anchored
 /// without changing in number. The descriptor is held for the duration of
-/// `call`, so the number cannot be reused under it. Elsewhere, when nothing is
-/// pinned, or when `/proc` is not mounted (a chroot without it), `call` gets
-/// `path` itself.
-pub fn with_anchored_path<T>(path: &Path, call: impl FnOnce(&Path) -> T) -> T {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::fd::AsRawFd;
-        static PROC_FD_MOUNTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if let Some((fd, relative)) = crate::confinement::pinned_destination_relative(path)
-            && *PROC_FD_MOUNTED.get_or_init(|| Path::new("/proc/self/fd").is_dir())
+/// `call`, so the number cannot be reused under it. When nothing is pinned, or
+/// `path` lies outside the pin, `call` gets `Some(path)` itself.
+///
+/// A pinned path that has no such spelling - `/proc` not mounted (a chroot
+/// without it), or a Unix without `/proc/self/fd` - gives `call` `None`: the
+/// consumer then reaches the entry through a descriptor opened beneath the pin
+/// ([`open`], [`open_dir`]), or by the means its platform offers, rather than
+/// resolving `path` from `/` as if nothing were pinned.
+pub fn with_anchored_path<T>(path: &Path, call: impl FnOnce(Option<&Path>) -> T) -> T {
+    #[cfg(unix)]
+    if let Some((fd, relative)) = crate::confinement::pinned_destination_relative(path) {
+        #[cfg(target_os = "linux")]
         {
-            let anchored = std::path::PathBuf::from(format!("/proc/self/fd/{}", fd.as_raw_fd()))
-                .join(relative);
-            let result = call(&anchored);
-            drop(fd);
-            return result;
+            use std::os::fd::AsRawFd;
+            static PROC_FD_MOUNTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            if *PROC_FD_MOUNTED.get_or_init(|| Path::new("/proc/self/fd").is_dir()) {
+                let anchored =
+                    std::path::PathBuf::from(format!("/proc/self/fd/{}", fd.as_raw_fd()))
+                        .join(relative);
+                let result = call(Some(&anchored));
+                drop(fd);
+                return result;
+            }
         }
+        drop((fd, relative));
+        return call(None);
     }
-    call(path)
+    call(Some(path))
 }

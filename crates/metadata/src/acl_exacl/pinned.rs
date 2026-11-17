@@ -44,12 +44,12 @@ const ACL_EA_ENT_LEN: usize = 8;
 
 // Kernel tag values (`include/uapi/linux/posix_acl.h`), whose numeric order is
 // the canonical entry order the kernel validator expects.
-const ACL_USER_OBJ: u16 = 0x01;
+pub(super) const ACL_USER_OBJ: u16 = 0x01;
 const ACL_USER: u16 = 0x02;
-const ACL_GROUP_OBJ: u16 = 0x04;
+pub(super) const ACL_GROUP_OBJ: u16 = 0x04;
 const ACL_GROUP: u16 = 0x08;
-const ACL_MASK: u16 = 0x10;
-const ACL_OTHER: u16 = 0x20;
+pub(super) const ACL_MASK: u16 = 0x10;
+pub(super) const ACL_OTHER: u16 = 0x20;
 const ACL_UNDEFINED_ID: u32 = u32::MAX;
 
 /// What the ACL xattrs are written through.
@@ -299,6 +299,75 @@ fn encode(mut entries: Vec<AclEnt>) -> Vec<u8> {
         buf.extend_from_slice(&id.to_le_bytes());
     }
     buf
+}
+
+/// Reads the default ACL of the directory `dir` refers to, as `(tag, perm)`
+/// pairs in the kernel's xattr order. An absent default ACL is empty.
+///
+/// upstream: lib/acl.c:339-342 `xacl_get_fd()`.
+pub(super) fn default_acl_entries(dir: &File) -> io::Result<Vec<(u16, u16)>> {
+    read_default_acl(
+        || rustix::fs::fgetxattr_query(dir, ACL_XATTR_DEFAULT),
+        |buf| rustix::fs::fgetxattr(dir, ACL_XATTR_DEFAULT, buf),
+    )
+}
+
+/// Reads the default ACL of the directory `path` names, following a final
+/// symlink as libacl's `acl_get_file()` does.
+pub(super) fn default_acl_entries_at(path: &Path) -> io::Result<Vec<(u16, u16)>> {
+    read_default_acl(
+        || rustix::fs::getxattr_query(path, ACL_XATTR_DEFAULT),
+        |buf| rustix::fs::getxattr(path, ACL_XATTR_DEFAULT, buf),
+    )
+}
+
+/// Reads the whole `system.posix_acl_default` value: `query` answers its
+/// size and `get` reads it.
+///
+/// upstream: lib/acl.c:317-337 `acl_get_common()` and :276-315
+/// `read_full_xattr()` - up to eight tries when the value grows between the
+/// size query and the read (`ERANGE`); `ENODATA` means no ACL.
+fn read_default_acl(
+    query: impl Fn() -> rustix::io::Result<usize>,
+    get: impl Fn(&mut [u8]) -> rustix::io::Result<usize>,
+) -> io::Result<Vec<(u16, u16)>> {
+    let mut buf = Vec::new();
+    for _ in 0..8 {
+        let size = match query() {
+            Ok(size) => size,
+            Err(rustix::io::Errno::NODATA) => return Ok(Vec::new()),
+            Err(errno) => return Err(errno.into()),
+        };
+        buf.resize(size.max(1), 0);
+        match get(&mut buf[..]) {
+            Ok(len) => return decode(&buf[..len]),
+            Err(rustix::io::Errno::RANGE) => {}
+            Err(rustix::io::Errno::NODATA) => return Ok(Vec::new()),
+            Err(errno) => return Err(errno.into()),
+        }
+    }
+    Err(rustix::io::Errno::RANGE.into())
+}
+
+/// Parses the kernel xattr layout into `(tag, perm)` pairs.
+///
+/// upstream: lib/acl.c:156-185 xattr_to_acl()
+fn decode(buf: &[u8]) -> io::Result<Vec<(u16, u16)>> {
+    let Some((header, entries)) = buf.split_first_chunk::<4>() else {
+        return Err(io::Error::from_raw_os_error(libc::EINVAL));
+    };
+    if u32::from_le_bytes(*header) != ACL_EA_VERSION || entries.len() % ACL_EA_ENT_LEN != 0 {
+        return Err(io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    Ok(entries
+        .chunks_exact(ACL_EA_ENT_LEN)
+        .map(|entry| {
+            (
+                u16::from_le_bytes([entry[0], entry[1]]),
+                u16::from_le_bytes([entry[2], entry[3]]),
+            )
+        })
+        .collect())
 }
 
 #[cfg(test)]

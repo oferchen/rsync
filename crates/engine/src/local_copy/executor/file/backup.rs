@@ -47,11 +47,19 @@ use crate::local_copy::create_symlink;
 /// `copy_file(..., back_file->mode)`) without ever re-resolving the path the
 /// walk has already vetted.
 ///
+/// The source is read beneath the pinned destination, as upstream's
+/// `copy_file()` opens it by a name relative to the destination it entered
+/// (util1.c:411-412), so a destination swapped after the walk cannot hand
+/// another directory's file to the backup. Its metadata comes from the open
+/// descriptor before the copy, so it describes the bytes that were copied,
+/// and is returned for the caller's `set_file_attrs()` on the backup.
+///
 /// A vanished source surfaces as [`io::ErrorKind::NotFound`], exactly as
 /// `fs::copy` did, so callers keep their existing "nothing to back up" arm.
-pub fn copy_pre_image_to_backup(source: &Path, backup_path: &Path) -> io::Result<()> {
-    let mut reader = fs::File::open(source)?;
-    let permissions = reader.metadata()?.permissions();
+pub fn copy_pre_image_to_backup(source: &Path, backup_path: &Path) -> io::Result<fs::Metadata> {
+    let mut reader = fast_io::destination_at::open_read(source)?;
+    let source_meta = reader.metadata()?;
+    let permissions = source_meta.permissions();
 
     #[cfg(unix)]
     let mut writer = {
@@ -68,7 +76,7 @@ pub fn copy_pre_image_to_backup(source: &Path, backup_path: &Path) -> io::Result
 
     io::copy(&mut reader, &mut writer)?;
     writer.set_permissions(permissions)?;
-    Ok(())
+    Ok(source_meta)
 }
 
 /// Computes the backup file path for a destination file.
@@ -621,6 +629,38 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o640, "backup must inherit the source mode");
         }
+    }
+
+    /// The pre-image is read beneath the pinned destination, as upstream's
+    /// `copy_file()` opens it by a name relative to the destination it
+    /// entered (util1.c:411-412). A destination swapped for a symlink after
+    /// the walk must not hand the backup another directory's file - here the
+    /// swapped-in directory has no such file at all, so a by-path read fails.
+    #[cfg(unix)]
+    #[test]
+    fn copy_pre_image_to_backup_reads_the_pinned_destination_after_a_swap() {
+        struct PinGuard;
+        impl Drop for PinGuard {
+            fn drop(&mut self) {
+                fast_io::confinement::clear_destination_root();
+            }
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let base = fs::canonicalize(dir.path()).expect("canonicalize");
+        let dest = base.join("dest");
+        fs::create_dir(&dest).expect("mkdir dest");
+        fs::create_dir(base.join("outside")).expect("mkdir outside");
+        fs::write(dest.join("f"), b"PRE-IMAGE").expect("write pre-image");
+        let anchor = fast_io::operator_open_destination(&dest).expect("walk dest");
+        fast_io::confinement::pin_destination_root(&dest, anchor).expect("pin dest");
+        let _guard = PinGuard;
+        fs::rename(&dest, base.join("entered")).expect("move dest aside");
+        std::os::unix::fs::symlink(base.join("outside"), &dest).expect("plant symlink");
+        let backup = base.join("f~");
+
+        copy_pre_image_to_backup(&dest.join("f"), &backup).expect("copy the pre-image aside");
+
+        assert_eq!(fs::read(&backup).expect("read backup"), b"PRE-IMAGE");
     }
 
     /// upstream `robust_unlink`s an existing backup before writing the new one
