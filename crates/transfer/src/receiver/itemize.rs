@@ -1034,7 +1034,7 @@ impl ReceiverContext {
     /// `range` is done. The caller reads the echoes of one call before it
     /// makes the next; writing a long list's records in one go leaves both
     /// sides blocked, each on a buffer the other has stopped reading.
-    pub(in crate::receiver) fn emit_server_hardlink_follower_itemize<W>(
+    pub(in crate::receiver) fn emit_hardlink_follower_itemize<W>(
         &self,
         writer: &mut W,
         ndx_codec: &mut protocol::codec::NdxCodecEnum,
@@ -1155,14 +1155,14 @@ impl ReceiverContext {
         std::cell::Ref::map(self.hardlink_leader_index.borrow(), |index| &index.leaders)
     }
 
-    /// Flushes any remaining `server_no_transfer_itemize` rows directly to
+    /// Flushes any remaining `no_transfer_itemize` rows directly to
     /// `writer` using `ndx_codec` and records their count in
     /// `hardlink_follower_echoes` so `exchange_phase_done` drains the sender's
     /// echoes before reading `NDX_DONE`.
     ///
     /// Used after deferred `--delay-symlinks` creation, which runs after the
     /// candidate feed has already closed.
-    pub(in crate::receiver) fn flush_server_no_transfer_itemize<W>(
+    pub(in crate::receiver) fn flush_no_transfer_itemize<W>(
         &self,
         writer: &mut W,
         ndx_codec: &mut protocol::codec::NdxCodecEnum,
@@ -1175,7 +1175,7 @@ impl ReceiverContext {
         if !self.protocol.supports_iflags() {
             return Ok(());
         }
-        let rows = std::mem::take(&mut *self.server_no_transfer_itemize.borrow_mut());
+        let rows = std::mem::take(&mut *self.no_transfer_itemize.borrow_mut());
         if rows.is_empty() {
             return Ok(());
         }
@@ -1249,11 +1249,7 @@ impl ReceiverContext {
     ///
     /// - `generator.c:588-599` - `itemize()` wire emission and its gate
     /// - `sender.c:295-297` - the sender logs the row and echoes the attrs
-    pub(in crate::receiver) fn record_server_no_transfer_itemize(
-        &self,
-        flist_idx: usize,
-        iflags: u32,
-    ) {
+    pub(in crate::receiver) fn record_no_transfer_itemize(&self, flist_idx: usize, iflags: u32) {
         if !self.protocol.supports_iflags() {
             return;
         }
@@ -1272,7 +1268,7 @@ impl ReceiverContext {
         if self.defer_dir_row(flist_idx, u32::from(wire)) {
             return;
         }
-        self.server_no_transfer_itemize
+        self.no_transfer_itemize
             .borrow_mut()
             .push((flist_idx, wire));
     }

@@ -635,7 +635,7 @@ impl ReceiverContext {
                 // arm this is a no-op client-side (server, no -i) that only feeds
                 // the FLOG hook.
                 let _ = self.emit_or_record_itemize(writer, *idx, &iflags, entry);
-                self.record_server_no_transfer_itemize(*idx, iflags.raw());
+                self.record_no_transfer_itemize(*idx, iflags.raw());
             }
         }
 

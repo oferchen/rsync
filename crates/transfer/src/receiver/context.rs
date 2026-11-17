@@ -495,7 +495,7 @@ pub struct ReceiverContext {
     /// client-mode receiver prints its rows locally instead.
     ///
     /// upstream: generator.c:619-630 - `itemize()` wire emission gate.
-    pub(in crate::receiver) server_no_transfer_itemize: RefCell<Vec<(usize, u16)>>,
+    pub(in crate::receiver) no_transfer_itemize: RefCell<Vec<(usize, u16)>>,
     /// Directory itemize rows a server receiver under INC_RECURSE holds back
     /// until the directory's own sub-list is walked, keyed by the directory's
     /// name, as `(flist index, iflags, entry)`. The entry is kept with the row
@@ -796,7 +796,7 @@ impl ReceiverContext {
             phase_end_writes_sent: std::cell::Cell::new(0),
             sender_phase_dones: std::cell::Cell::new(0),
             sender_ndx_dones: std::cell::Cell::new(0),
-            server_no_transfer_itemize: RefCell::new(Vec::new()),
+            no_transfer_itemize: RefCell::new(Vec::new()),
             deferred_dir_rows: RefCell::new(HashMap::new()),
             released_dir_heads: RefCell::new(HashMap::new()),
             daemon_log_active: false,

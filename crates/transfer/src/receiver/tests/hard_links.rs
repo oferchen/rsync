@@ -33,7 +33,7 @@ fn call_create_hardlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         .expect("create_hardlinks must succeed in fixture-controlled tempdirs");
 }
 
-/// `emit_server_hardlink_follower_itemize` took a `dest_dir` plus a
+/// `emit_hardlink_follower_itemize` took a `dest_dir` plus a
 /// `#[cfg(unix)]` sandbox so it can skip an already-linked follower
 /// (HL-2 / upstream `hlink.c:215-227`). Route every test call through this
 /// cfg-aware shim rather than gating each site.
@@ -46,11 +46,10 @@ fn call_emit_follower_itemize<W: std::io::Write + ?Sized>(
     let leaders = ctx.hardlink_leaders();
     let whole_list = 0..ctx.file_list.len();
     #[cfg(unix)]
-    let resume = ctx
-        .emit_server_hardlink_follower_itemize(buf, ndx_codec, &leaders, whole_list, dest, None)?;
-    #[cfg(not(unix))]
     let resume =
-        ctx.emit_server_hardlink_follower_itemize(buf, ndx_codec, &leaders, whole_list, dest)?;
+        ctx.emit_hardlink_follower_itemize(buf, ndx_codec, &leaders, whole_list, dest, None)?;
+    #[cfg(not(unix))]
+    let resume = ctx.emit_hardlink_follower_itemize(buf, ndx_codec, &leaders, whole_list, dest)?;
     assert_eq!(resume, ctx.file_list.len(), "a short list fits one batch");
     Ok(())
 }
@@ -723,7 +722,7 @@ fn finalize_links_followers_after_delayed_leader_rename() {
 }
 
 /// Builds a client-mode (pull) receiver over the same hardlink fixture so the
-/// scope guard in [`ReceiverContext::emit_server_hardlink_follower_itemize`] can
+/// scope guard in [`ReceiverContext::emit_hardlink_follower_itemize`] can
 /// be exercised. A pull renders follower rows locally in `create_hardlinks`, so
 /// nothing must cross the wire here.
 fn pull_receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContext {

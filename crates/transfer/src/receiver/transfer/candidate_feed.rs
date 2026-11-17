@@ -180,7 +180,7 @@ impl ReceiverContext {
     /// of its sub-list (generator.c:2780-2787), not at its own place in the
     /// parent's list.
     fn absorb_no_transfer_rows(&self, rows: &mut VecDeque<(usize, u16)>) {
-        let recorded = std::mem::take(&mut *self.server_no_transfer_itemize.borrow_mut());
+        let recorded = std::mem::take(&mut *self.no_transfer_itemize.borrow_mut());
         if recorded.is_empty() {
             return;
         }

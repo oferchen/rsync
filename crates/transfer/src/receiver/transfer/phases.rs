@@ -136,7 +136,7 @@ impl ReceiverContext {
     /// records before an NDX_DONE read.
     ///
     /// A server-mode push forwards `NDX + iflags + xname` for each hardlink
-    /// follower (see `emit_server_hardlink_follower_itemize`); the peer's sender
+    /// follower (see `emit_hardlink_follower_itemize`); the peer's sender
     /// echoes every non-transfer item back (upstream `sender.c:589-595`), yet the
     /// request-count-driven pipeline response loop never reads them. The sender
     /// buffers those echoes until it reads the receiver's NDX_DONE, so this runs

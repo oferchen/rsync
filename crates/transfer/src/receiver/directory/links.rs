@@ -284,7 +284,7 @@ impl ReceiverContext {
                         let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
                     }
                     let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
-                    self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
+                    self.record_no_transfer_itemize(flist_idx, iflags.raw());
                     // upstream: rsync.c:823-828 set_file_attrs() - "%s is uptodate"
                     // at INFO_GTE(NAME, 2)
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
@@ -455,7 +455,7 @@ impl ReceiverContext {
             );
             let iflags = ItemFlags::from_raw(raw);
             let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
-            self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
+            self.record_no_transfer_itemize(flist_idx, iflags.raw());
             if raw & ItemFlags::ITEM_IS_NEW != 0 {
                 // upstream: receiver.c:925-934 - only an ITEM_IS_NEW row bumps
                 // stats.created_files / created_symlinks.
@@ -624,7 +624,7 @@ impl ReceiverContext {
                         let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
                     }
                     let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
-                    self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
+                    self.record_no_transfer_itemize(flist_idx, iflags.raw());
                     // upstream: rsync.c:823-828 set_file_attrs() - "%s is uptodate"
                     // at INFO_GTE(NAME, 2)
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
@@ -747,7 +747,7 @@ impl ReceiverContext {
             );
             let iflags = ItemFlags::from_raw(raw);
             let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
-            self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
+            self.record_no_transfer_itemize(flist_idx, iflags.raw());
             if raw & ItemFlags::ITEM_IS_NEW != 0 {
                 // upstream: receiver.c:925-934 - only an ITEM_IS_NEW row bumps
                 // stats.created_files / created_symlinks.

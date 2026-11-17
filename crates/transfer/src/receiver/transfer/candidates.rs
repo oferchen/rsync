@@ -1593,7 +1593,7 @@ impl ReceiverContext {
             // metadata-only row interleaves with directory and transfer rows in
             // flist-index order at flush time; emitted immediately otherwise.
             let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
-            self.record_server_no_transfer_itemize(flist_idx, unchanged_iflags);
+            self.record_no_transfer_itemize(flist_idx, unchanged_iflags);
         }
 
         // upstream: generator.c:511 unchanged_attrs() - fast-path check avoids
@@ -1825,7 +1825,7 @@ mod itemize_order_tests {
                 files.is_empty(),
                 "a quick-check match must not request a transfer"
             );
-            ctx.server_no_transfer_itemize.borrow().clone()
+            ctx.no_transfer_itemize.borrow().clone()
         };
 
         assert_eq!(
@@ -2176,21 +2176,21 @@ mod itemize_order_tests {
     /// would block reading a basis byte, xname vstring, or xattr request that
     /// never arrives.
     #[test]
-    fn record_server_no_transfer_itemize_strips_framing_and_gates_significance() {
+    fn record_no_transfer_itemize_strips_framing_and_gates_significance() {
         use crate::generator::ItemFlags;
 
         let hs = handshake();
         let ctx = ReceiverContext::new_for_test(&hs, itemize_server_config());
-        ctx.record_server_no_transfer_itemize(
+        ctx.record_no_transfer_itemize(
             2,
             ItemFlags::ITEM_REPORT_PERMS
                 | ItemFlags::ITEM_REPORT_XATTR
                 | ItemFlags::ITEM_BASIS_TYPE_FOLLOWS
                 | ItemFlags::ITEM_XNAME_FOLLOWS,
         );
-        ctx.record_server_no_transfer_itemize(3, 0);
+        ctx.record_no_transfer_itemize(3, 0);
         assert_eq!(
-            ctx.server_no_transfer_itemize.borrow().as_slice(),
+            ctx.no_transfer_itemize.borrow().as_slice(),
             &[(2usize, ItemFlags::ITEM_REPORT_PERMS as u16)],
             "framing bits are stripped and an all-clear record is dropped"
         );
@@ -2198,9 +2198,9 @@ mod itemize_order_tests {
         let mut ii = itemize_server_config();
         ii.flags.info_flags.itemize_unchanged = true;
         let ctx = ReceiverContext::new_for_test(&hs, ii);
-        ctx.record_server_no_transfer_itemize(3, 0);
+        ctx.record_no_transfer_itemize(3, 0);
         assert_eq!(
-            ctx.server_no_transfer_itemize.borrow().as_slice(),
+            ctx.no_transfer_itemize.borrow().as_slice(),
             &[(3usize, 0u16)],
             "-ii (stdout_format_has_i > 1) keeps the unchanged record"
         );

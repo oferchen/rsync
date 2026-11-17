@@ -402,7 +402,7 @@ impl ReceiverContext {
             self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
             #[cfg(not(unix))]
             self.create_symlinks(&setup.dest_dir, writer)?;
-            self.flush_server_no_transfer_itemize(writer, ndx_write_codec.inner_mut())?;
+            self.flush_no_transfer_itemize(writer, ndx_write_codec.inner_mut())?;
         }
 
         // Flush any trailing buffered `-v` directory names (those with no

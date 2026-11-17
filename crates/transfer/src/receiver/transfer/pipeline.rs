@@ -1060,7 +1060,7 @@ impl ReceiverContext {
                 let mut next = 0;
                 while next < end {
                     #[cfg(unix)]
-                    let resume = self.emit_server_hardlink_follower_itemize(
+                    let resume = self.emit_hardlink_follower_itemize(
                         writer,
                         ndx_write_codec.inner_mut(),
                         &leaders,
@@ -1069,7 +1069,7 @@ impl ReceiverContext {
                         setup.sandbox.as_deref(),
                     )?;
                     #[cfg(not(unix))]
-                    let resume = self.emit_server_hardlink_follower_itemize(
+                    let resume = self.emit_hardlink_follower_itemize(
                         writer,
                         ndx_write_codec.inner_mut(),
                         &leaders,
@@ -1122,7 +1122,7 @@ impl ReceiverContext {
     /// and queues its pending echo behind the in-flight transfer requests.
     ///
     /// The record produces no sum head, basis byte, or xname - the framing
-    /// bits were stripped at record time (`record_server_no_transfer_itemize`).
+    /// bits were stripped at record time (`record_no_transfer_itemize`).
     /// The sender answers it with a bare `write_ndx_and_attrs()` echo, so a
     /// placeholder pending rides the FIFO queue and the pop side consumes the
     /// echo in order with the transfer replies.

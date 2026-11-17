@@ -181,7 +181,7 @@ impl ReceiverContext {
                         // flist-index order immediately before its children at
                         // flush time, matching run_pipelined and upstream.
                         let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, file_entry);
-                        self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
+                        self.record_no_transfer_itemize(flist_idx, iflags.raw());
                     }
                     // upstream: generator.c:1792-1798 - an --existing skip
                     // is not an error.
@@ -311,7 +311,7 @@ impl ReceiverContext {
                 // ahead of its own sub-list, on that sub-list's gap NDX.
                 for segment_idx in 0..self.ndx_segments.len() {
                     if let Some((idx, iflags)) = self.release_segment_head_row(segment_idx) {
-                        self.server_no_transfer_itemize
+                        self.no_transfer_itemize
                             .borrow_mut()
                             .push((idx, iflags as u16));
                     }
@@ -445,7 +445,7 @@ impl ReceiverContext {
             self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
             #[cfg(not(unix))]
             self.create_symlinks(&setup.dest_dir, writer)?;
-            self.flush_server_no_transfer_itemize(writer, ndx_write_codec.inner_mut())?;
+            self.flush_no_transfer_itemize(writer, ndx_write_codec.inner_mut())?;
         }
 
         stats.files_transferred = files_transferred;
@@ -779,7 +779,7 @@ impl ReceiverContext {
             if let ReceiverMode::Transfer = mode
                 && let Some((idx, iflags)) = self.release_segment_head_row(segment_idx)
             {
-                self.server_no_transfer_itemize
+                self.no_transfer_itemize
                     .borrow_mut()
                     .push((idx, iflags as u16));
             }
@@ -980,7 +980,7 @@ impl ReceiverContext {
             self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
             #[cfg(not(unix))]
             self.create_symlinks(&setup.dest_dir, writer)?;
-            self.flush_server_no_transfer_itemize(writer, ndx_write_codec.inner_mut())?;
+            self.flush_no_transfer_itemize(writer, ndx_write_codec.inner_mut())?;
         }
 
         stats.files_transferred = files_transferred;
@@ -1170,7 +1170,7 @@ impl ReceiverContext {
                 }
                 let iflags = crate::generator::ItemFlags::from_raw(iflags_raw);
                 let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, file_entry);
-                self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
+                self.record_no_transfer_itemize(flist_idx, iflags.raw());
             }
             // upstream: generator.c:1792-1798 - an --existing skip
             // is not an error.
@@ -1215,7 +1215,7 @@ impl ReceiverContext {
             // may take in a new sub-list.
             let leaders = self.hardlink_leaders();
             #[cfg(unix)]
-            let resume = self.emit_server_hardlink_follower_itemize(
+            let resume = self.emit_hardlink_follower_itemize(
                 writer,
                 ndx_write_codec.inner_mut(),
                 &leaders,
@@ -1224,7 +1224,7 @@ impl ReceiverContext {
                 setup.sandbox.as_deref(),
             )?;
             #[cfg(not(unix))]
-            let resume = self.emit_server_hardlink_follower_itemize(
+            let resume = self.emit_hardlink_follower_itemize(
                 writer,
                 ndx_write_codec.inner_mut(),
                 &leaders,

@@ -199,7 +199,7 @@ impl ReceiverContext {
                 acl_cache.as_ref(),
                 acl_id_map.as_deref(),
             )?;
-            self.server_no_transfer_itemize.borrow_mut().clear();
+            self.no_transfer_itemize.borrow_mut().clear();
             // The generator half above itemizes against the LOCAL quick-check (it
             // classifies which files it would transfer), but on a replay the
             // recorded stream - not the local plan - decides what is itemized and
@@ -207,7 +207,7 @@ impl ReceiverContext {
             // receiver.c:919 maybe_log_item for non-transfer rows, receiver.c:1290
             // log_item for transfer rows). Drop the speculative rows so only the
             // recorded rows emitted in the loop below survive; this is the itemize
-            // counterpart of the server_no_transfer_itemize clear above.
+            // counterpart of the no_transfer_itemize clear above.
             self.itemize_rows.borrow_mut().clear();
             self.event_rows.borrow_mut().clear();
             (metadata_errors, stats)
@@ -705,7 +705,7 @@ impl ReceiverContext {
         let mut next = 0;
         while next < end {
             #[cfg(unix)]
-            let resume = self.emit_server_hardlink_follower_itemize(
+            let resume = self.emit_hardlink_follower_itemize(
                 writer,
                 ndx_write_codec.inner_mut(),
                 &leaders,
@@ -714,7 +714,7 @@ impl ReceiverContext {
                 sandbox.as_deref(),
             )?;
             #[cfg(not(unix))]
-            let resume = self.emit_server_hardlink_follower_itemize(
+            let resume = self.emit_hardlink_follower_itemize(
                 writer,
                 ndx_write_codec.inner_mut(),
                 &leaders,
@@ -854,8 +854,7 @@ impl ReceiverContext {
             // dropped, then put them back.
             let recorded_rows = std::mem::take(&mut *self.itemize_rows.borrow_mut());
             let recorded_events = std::mem::take(&mut *self.event_rows.borrow_mut());
-            let recorded_no_transfer =
-                std::mem::take(&mut *self.server_no_transfer_itemize.borrow_mut());
+            let recorded_no_transfer = std::mem::take(&mut *self.no_transfer_itemize.borrow_mut());
             stats.io_error |= self.flist_reader_io_error() | self.flist_io_error;
             let head = if walk_dirs {
                 self.segment_root_head(segment_idx)
@@ -903,7 +902,7 @@ impl ReceiverContext {
             );
             *self.itemize_rows.borrow_mut() = recorded_rows;
             *self.event_rows.borrow_mut() = recorded_events;
-            *self.server_no_transfer_itemize.borrow_mut() = recorded_no_transfer;
+            *self.no_transfer_itemize.borrow_mut() = recorded_no_transfer;
             walked?;
         }
         Ok(())
