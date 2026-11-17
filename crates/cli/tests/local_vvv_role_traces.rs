@@ -25,16 +25,18 @@ fn fixture(root: &Path) {
 
 /// Stdout of a local `-a` copy of the fixture with the given debug words.
 fn run(binary: &Path, debug: &str) -> String {
-    run_with(binary, &format!("--debug={debug}"))
+    run_with(binary, &[&format!("--debug={debug}")])
 }
 
-/// Stdout of a local `-a` copy of the fixture with one extra option.
-fn run_with(binary: &Path, option: &str) -> String {
+/// Stdout of a local `-a` copy of the fixture with extra options.
+fn run_with(binary: &Path, options: &[&str]) -> String {
     let dir = TempDir::new().unwrap();
     fixture(dir.path());
     let output = Command::new(binary)
         .current_dir(dir.path())
-        .args(["-a", option, "src/", "dst/"])
+        .arg("-a")
+        .args(options)
+        .args(["src/", "dst/"])
         .output()
         .expect("run rsync");
     assert!(output.status.success(), "{output:?}");
@@ -217,4 +219,39 @@ fn generator_starts_after_the_destination_is_resolved() {
     };
     let reference = run(upstream.binary(), "recv1,genr1,flist1");
     assert_eq!(startup_order(&oc), startup_order(&reference));
+}
+
+/// The `recv_files(<name>)` lines naming one entry each, in the order printed.
+fn received_names(transcript: &str) -> Vec<&str> {
+    transcript
+        .lines()
+        .filter(|line| line.starts_with("recv_files(") && line.ends_with(')'))
+        .collect()
+}
+
+/// upstream: receiver.c:900-901 - the receiver names every index it reads,
+/// including the itemize-only echoes of the directories and the symlink,
+/// which the sender never transfers.
+#[test]
+fn receiver_names_every_entry_it_reads() {
+    let flat = run_with(&oc_rsync_bin(), &["--debug=recv1", "--no-inc-recursive"]);
+    let flat_names = received_names(&flat);
+    for entry in ["recv_files(.)", "recv_files(sub)", "recv_files(l)"] {
+        assert!(flat_names.contains(&entry), "{entry} missing: {flat}");
+    }
+    let incremental = run(&oc_rsync_bin(), "recv1");
+    let names = received_names(&incremental);
+    for entry in ["recv_files(.)", "recv_files(sub)", "recv_files(l)"] {
+        assert!(names.contains(&entry), "{entry} missing: {incremental}");
+    }
+
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    let reference = run_with(upstream.binary(), &["--debug=recv1", "--no-inc-recursive"]);
+    assert_eq!(flat_names, received_names(&reference));
+    // Under incremental recursion each directory's row comes back on the gap
+    // NDX below its sub-list, which names the directory (receiver.c:880-886).
+    let reference = run(upstream.binary(), "recv1");
+    assert_eq!(names, received_names(&reference));
 }

@@ -1372,6 +1372,22 @@ impl ReceiverContext {
         }
     }
 
+    /// The directory whose sub-list starts just above `wire_ndx`, for a gap
+    /// NDX that no file-list entry owns.
+    ///
+    /// upstream: receiver.c:880-886 - an index below `cur_flist->ndx_start`
+    /// names `dir_flist->files[cur_flist->parent_ndx]`.
+    pub(in crate::receiver) fn gap_ndx_dir_name(
+        &self,
+        wire_ndx: i32,
+    ) -> Option<std::path::PathBuf> {
+        let segment_idx = self
+            .ndx_segments
+            .binary_search_by_key(&wire_ndx.checked_add(1)?, |&(_, ndx_start)| ndx_start)
+            .ok()?;
+        self.segment_head_name(segment_idx)
+    }
+
     /// Whether segment `segment_idx` still has its directory's row to send.
     pub(in crate::receiver) fn segment_has_deferred_head(&self, segment_idx: usize) -> bool {
         self.segment_head_name(segment_idx)

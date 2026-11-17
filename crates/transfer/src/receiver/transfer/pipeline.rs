@@ -938,7 +938,7 @@ impl ReceiverContext {
                         request_config.want_xattr_optim,
                     );
                     match echo {
-                        Ok(Some(_)) => {}
+                        Ok(Some((ndx, _))) => self.trace_recv_files(ndx),
                         // upstream: rsync.c:334-335 + receiver.c:852-876 - the
                         // sender's NDX_DONE is its phase boundary, whatever is
                         // still outstanding.
@@ -1393,7 +1393,10 @@ impl ReceiverContext {
             preserve_xattrs,
             want_xattr_optim,
         )? {
-            Some(_) => Ok(()),
+            Some((ndx, _)) => {
+                self.trace_recv_files(ndx);
+                Ok(())
+            }
             // upstream: rsync.c:334-335 - NDX_DONE ends the phase; an echo still
             // outstanding means the sender dropped it.
             None => Err(io::Error::new(
@@ -1402,6 +1405,28 @@ impl ReceiverContext {
                  still outstanding - protocol violation",
             )),
         }
+    }
+
+    /// Names the entry behind a wire NDX the receiver has just read.
+    ///
+    /// upstream: receiver.c:900-901 - recv_files() prints this for every
+    /// index it reads, before it knows whether the sender will transfer it,
+    /// so an itemize-only echo (a directory, a symlink, an up-to-date file)
+    /// is named as well as a transfer. Under INC_RECURSE a directory's row
+    /// travels on the gap NDX just below its sub-list, which names that
+    /// sub-list's directory (receiver.c:880-886).
+    pub(in crate::receiver) fn trace_recv_files(&self, wire_ndx: i32) {
+        if !logging::debug_gte(logging::DebugFlag::Recv, 1) {
+            return;
+        }
+        let name = match self.wire_to_flat_ndx(wire_ndx) {
+            Some(flat_idx) => self.file_list[flat_idx].path().to_path_buf(),
+            None => match self.gap_ndx_dir_name(wire_ndx) {
+                Some(name) => name,
+                None => return,
+            },
+        };
+        debug_log!(Recv, 1, "recv_files({})", name.display());
     }
 
     /// Receiver loop for `--only-write-batch=X` (upstream `write_batch < 0`).
