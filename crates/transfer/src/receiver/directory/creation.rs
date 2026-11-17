@@ -17,6 +17,7 @@ use protocol::flist::FileEntry;
 use protocol::xattr::XattrList;
 
 use super::FailedDirectories;
+use super::obstacle::MakeWayFor;
 
 /// Why the parallel directory-metadata phase could not finish one directory.
 enum DirApplyFailure {
@@ -29,10 +30,11 @@ use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
 
 /// Outcome of classifying a directory destination before creation.
 ///
-/// Mirrors upstream's generator dir preparation: `link_stat(fname, &sx.st,
-/// keep_dirlinks && is_dir)` (`generator.c:1745`) classifies the destination,
-/// then a non-directory destination is deleted via `delete_item(...,
-/// del_opts | DEL_FOR_DIR)` before `do_mkdir_at()` (`generator.c:1840-1843`).
+/// Mirrors upstream's generator dir preparation: `gen_entry_stat(fname, file,
+/// &sx.st, keep_dirlinks && is_dir)` (`generator.c:1782`) classifies the
+/// destination, then a non-directory destination is deleted via
+/// `delete_item(..., del_opts | DEL_FOR_DIR)` before the mkdir
+/// (`generator.c:1876-1880`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DirDestination {
     /// Destination is absent - create it (and honour `--existing` skipping).
@@ -40,15 +42,16 @@ enum DirDestination {
     /// Destination already usable as a directory - reuse it. Either a real
     /// directory, or a symlink-to-directory followed under `--keep-dirlinks`.
     Existing,
-    /// A conflicting symlink was removed - create a real directory in its
-    /// place. The destination existed, so `--existing` does NOT skip it.
-    ReplacedSymlink,
+    /// A non-directory stood in the way and was cleared - create a real
+    /// directory in its place. The destination existed, so `--existing` does
+    /// NOT skip it.
+    ReplacedNonDirectory,
 }
 
 impl DirDestination {
     /// Whether a directory must be materialised (mkdir) for this outcome.
     const fn needs_mkdir(self) -> bool {
-        matches!(self, Self::Missing | Self::ReplacedSymlink)
+        matches!(self, Self::Missing | Self::ReplacedNonDirectory)
     }
 }
 
@@ -148,83 +151,96 @@ impl ReceiverContext {
         }
     }
 
-    /// Classifies a directory destination, removing a conflicting symlink first
-    /// when required.
+    /// Classifies a directory destination, clearing a non-directory out of the
+    /// way first when required.
     ///
     /// A `.exists()`-style probe would be wrong here: it follows symlinks, so a
     /// destination symlink-to-directory would always be treated as an existing
     /// directory and never replaced, diverging from upstream when
-    /// `--keep-dirlinks` is off.
+    /// `--keep-dirlinks` is off. Treating every non-symlink as a directory is
+    /// wrong the other way: a regular file, FIFO, socket or device would then
+    /// receive the directory's attributes and every entry below it would fail
+    /// `ENOTDIR`.
     ///
-    /// The removal is confined. The entry being unlinked is a symlink the peer
-    /// chose the target of, sitting on the receiver's destination path, so a
-    /// path-based `unlink(2)` here re-resolves every component under the peer's
-    /// influence. `sandbox` may be `None`: that is a supported arm of
-    /// [`fast_io::unlink_via_sandbox_or_fallback`], not a gap - it then applies
-    /// upstream's three-arm `do_unlink_at()` contract, which errors rather than
-    /// falling back to a plain syscall when the ownership walk refuses.
-    fn classify_dir_destination(
+    /// The removal goes through [`ReceiverContext::make_way_for_replacement`],
+    /// the receiver's one `delete_item()` counterpart, so the obstacle is backed
+    /// up under `--backup`, the unlink is confined to the destination, and a
+    /// refusal is reported in upstream's words before the `Err` comes back.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1782` - `gen_entry_stat(fname, file, &sx.st, keep_dirlinks && is_dir)`
+    /// - `generator.c:1876-1880` - `statret == 0 && stype != FT_DIR` reaches
+    ///   `delete_item(fname, sx.st.st_mode, del_opts | DEL_FOR_DIR)`, then `statret = -1`
+    /// - `delete.c:228-238` - the non-directory arm: `make_backup()` or `unlink`
+    fn classify_dir_destination<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
+        writer: &mut W,
         dir_path: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         dest_dir: &Path,
         relative_path: &Path,
     ) -> io::Result<DirDestination> {
-        // `dest_dir` / `relative_path` anchor the confined unlink, which only
-        // exists on Unix.
-        #[cfg(not(unix))]
-        let _ = (dest_dir, relative_path);
+        // `writer`, `dest_dir` and `relative_path` serve the obstacle removal,
+        // which has a confined arm on Unix and a reporting arm on Windows.
+        #[cfg(not(any(unix, windows)))]
+        let _ = (&writer, dest_dir, relative_path);
         // upstream: generator.c:1782 gen_entry_stat() - do_lstat_at() against
         // the pinned destination, so a parent swapped after entry is not walked.
         #[cfg(unix)]
-        let probe = super::dest_lstat(sandbox, dest_dir, dir_path, false).map(|m| m.is_symlink());
+        let probe = super::dest_lstat(sandbox, dest_dir, dir_path, false)
+            .map(|m| (m.is_dir(), m.is_symlink()));
         #[cfg(not(unix))]
-        let probe = fs::symlink_metadata(dir_path).map(|m| m.file_type().is_symlink());
+        let probe = fs::symlink_metadata(dir_path).map(|m| (m.is_dir(), m.is_symlink()));
         match probe {
-            Ok(true) => {
-                #[cfg(unix)]
-                let resolves_to_dir =
-                    super::dest_lstat(sandbox, dest_dir, dir_path, true).is_ok_and(|m| m.is_dir());
-                #[cfg(not(unix))]
-                let resolves_to_dir = fs::metadata(dir_path)
-                    .map(|meta| meta.file_type().is_dir())
-                    .unwrap_or(false);
-                if self.config.flags.keep_dirlinks && resolves_to_dir {
-                    // upstream: generator.c:1782 - keep_dirlinks follows the
-                    // destination symlink-to-directory instead of replacing it.
-                    Ok(DirDestination::Existing)
-                } else {
-                    // upstream: generator.c:1878 - delete_item(fname, ...,
-                    // del_opts | DEL_FOR_DIR) removes the conflicting symlink
-                    // before mkdir. That reaches delete.c:71-78 del_unlink(),
-                    // which takes do_unlink_atfd() against a held dirfd or else
-                    // robust_unlink() -> util1.c:548 -> do_unlink_at() - the
-                    // CONFINED wrapper. Upstream issues no plain unlink() on
-                    // this path, so neither do we.
-                    if !self.config.flags.skip_dest_writes() {
-                        #[cfg(unix)]
-                        fast_io::unlink_via_sandbox_or_fallback(
-                            sandbox,
-                            dest_dir,
-                            relative_path,
-                            dir_path,
-                            fast_io::UnlinkFlags::File,
-                        )?;
-                        #[cfg(not(unix))]
-                        fs::remove_file(dir_path)?;
+            Ok((true, _)) => Ok(DirDestination::Existing),
+            Ok((false, is_symlink)) => {
+                if is_symlink && self.config.flags.keep_dirlinks {
+                    #[cfg(unix)]
+                    let resolves_to_dir = super::dest_lstat(sandbox, dest_dir, dir_path, true)
+                        .is_ok_and(|m| m.is_dir());
+                    #[cfg(not(unix))]
+                    let resolves_to_dir = fs::metadata(dir_path).is_ok_and(|meta| meta.is_dir());
+                    if resolves_to_dir {
+                        // upstream: generator.c:1782 - keep_dirlinks follows the
+                        // destination symlink-to-directory instead of replacing it.
+                        return Ok(DirDestination::Existing);
                     }
-                    Ok(DirDestination::ReplacedSymlink)
                 }
+                // upstream: generator.c:1876-1880 - anything that is not a
+                // directory is handed to delete_item(fname, sx.st.st_mode,
+                // del_opts | DEL_FOR_DIR) before the mkdir. syscall.c makes the
+                // unlink a no-op under dry_run, which still leaves statret at
+                // -1, so a dry run classifies the same way without removing.
+                if !self.config.flags.skip_dest_writes() {
+                    #[cfg(unix)]
+                    self.make_way_for_replacement(
+                        writer,
+                        dir_path,
+                        relative_path,
+                        dest_dir,
+                        sandbox,
+                        MakeWayFor::Directory,
+                    )?;
+                    #[cfg(windows)]
+                    self.make_way_for_replacement(
+                        writer,
+                        dir_path,
+                        relative_path,
+                        dest_dir,
+                        MakeWayFor::Directory,
+                    )?;
+                    #[cfg(not(any(unix, windows)))]
+                    fs::remove_file(dir_path)?;
+                }
+                Ok(DirDestination::ReplacedNonDirectory)
             }
-            // An existing real directory (or any other existing non-symlink
-            // entry, matching the prior `.exists()` semantics) is reused.
-            Ok(false) => Ok(DirDestination::Existing),
             // A stat failure of ANY errno class classifies as `Missing`; it is
             // never raised from here.
             //
             // upstream: generator.c:1782-1783 - `statret = gen_entry_stat(...);
             // stat_errno = errno;`. Every later branch tests `statret`, not the
-            // errno class, and `generator.c:1840` gates the obstruction removal
+            // errno class, and `generator.c:1876` gates the obstruction removal
             // on `statret == 0`. A stat that failed therefore never reaches
             // `delete_item()`: it falls through to `gen_entry_mkdir()`
             // (`generator.c:1831`/`1873`), and that mkdir's error is the one
@@ -232,8 +248,8 @@ impl ReceiverContext {
             // ENOENT test at generator.c:1758.
             //
             // Consequently the ONLY `Err` this function may return is the
-            // confined unlink above - upstream's `goto skipping_dir_contents`
-            // (`generator.c:1841-1842`), which the caller treats as a hard
+            // refused removal above - upstream's `goto skipping_dir_contents`
+            // (`generator.c:1878-1879`), which the caller treats as a hard
             // failure that skips the directory and its contents. Raising the
             // stat error here instead would route ENOTDIR - the "a plain file
             // sits where a parent directory should be" shape - into that same
@@ -387,7 +403,10 @@ impl ReceiverContext {
                 )
             })
             .collect();
-        for (idx, relative_path, dir_path) in &dir_entries {
+        for (pos, (idx, relative_path, dir_path)) in dir_entries.iter().enumerate() {
+            // `pos` is only read on Unix (the transient owner-rwx raise).
+            #[cfg(not(unix))]
+            let _ = pos;
             // `relative_path` is only read on Unix (mkdirat fast path).
             #[cfg(not(unix))]
             let _ = relative_path;
@@ -432,6 +451,7 @@ impl ReceiverContext {
             // whole family: a runtime denial is a real failure and is
             // deliberately NOT retried unconfined.
             let dir_dest = match self.classify_dir_destination(
+                &mut *writer,
                 dir_path,
                 #[cfg(unix)]
                 sandbox,
@@ -440,15 +460,13 @@ impl ReceiverContext {
             ) {
                 Ok(dest) => dest,
                 Err(error) => {
-                    if self.config.flags.verbose && self.config.connection.client_mode {
-                        info_log!(
-                            Misc,
-                            1,
-                            "failed to prepare directory {}: {}",
-                            dir_path.display(),
-                            error
-                        );
-                    }
+                    // upstream: generator.c:1878-1879 - delete_item() has
+                    // printed why; `skipping_dir_contents` (generator.c:1924)
+                    // adds this notice.
+                    let _ = self.emit_error_line(
+                        writer,
+                        "*** Skipping any contents from this failed directory ***\n",
+                    );
                     emit_lsm_audit_hint_once();
                     // Mirrors the mkdir-failure arm below: record the directory
                     // as failed so the itemize and metadata passes skip it and
@@ -462,6 +480,27 @@ impl ReceiverContext {
             };
             let is_new = dir_dest.needs_mkdir();
             dir_was_new.push(is_new);
+            // upstream: generator.c:1941-1949 - a directory its owner cannot
+            // fully use is chmod'ed to `mode | S_IRWXU` when it is visited,
+            // ahead of every entry below it, and touch_up_dirs() puts the real
+            // mode back. The metadata pass further down applies that raise
+            // too, but only once every directory of the list has been made,
+            // which is too late for a child of an existing 0555 directory.
+            #[cfg(unix)]
+            if !is_new
+                && !metadata_opts.fake_super_enabled()
+                && !metadata::am_root()
+                && let Some(existing) = pre_mkdir_meta[pos].as_ref()
+                && existing.is_dir()
+                && existing.mode() & 0o700 != 0o700
+            {
+                let _ = super::dest_chmod(
+                    sandbox,
+                    dest_dir,
+                    dir_path,
+                    (existing.mode() & 0o7777) | 0o700,
+                );
+            }
             if is_new {
                 #[cfg(all(
                     feature = "acl",
@@ -631,11 +670,12 @@ impl ReceiverContext {
         )> = dir_entries
             .into_iter()
             .zip(dir_was_new.iter().copied())
-            .filter(|((_, _, dir_path), _)| {
+            .zip(pre_mkdir_meta)
+            .filter(|(((_, _, dir_path), _), _)| {
                 !failed_dir_paths.contains_key(dir_path)
                     && !skipped_existing_dirs.contains(dir_path)
             })
-            .map(|((idx, _, dir_path), is_new)| {
+            .map(|(((idx, _, dir_path), is_new), pre_mkdir)| {
                 let entry = &self.file_list[idx];
                 let xattr_list = self.resolve_xattr_list(entry);
                 // `mut` is only exercised by the Unix transient-writable-mode
@@ -653,16 +693,9 @@ impl ReceiverContext {
                 // (exists=false). Supply the pre-transfer stat only for a
                 // dir that already existed so the !perms dest_mode() apply
                 // takes the exists=true branch and never rewrites its bits.
-                let pre_transfer = if is_new {
-                    None
-                } else {
-                    pre_transfer_stat(
-                        #[cfg(unix)]
-                        sandbox,
-                        dest_dir,
-                        &dir_path,
-                    )
-                };
+                // It is the stat taken before the pass above raised the
+                // directory, as upstream's `sx` is (generator.c:1782).
+                let pre_transfer = if is_new { None } else { pre_mkdir };
                 (dir_path, entry, xattr_list, pre_transfer)
             })
             .collect();
@@ -1068,6 +1101,7 @@ impl ReceiverContext {
         // which reports the un-removed symlink as an existing directory and
         // walks the transfer straight through it.
         let dir_dest = match self.classify_dir_destination(
+            &mut *writer,
             &dir_path,
             #[cfg(unix)]
             sandbox,
@@ -1075,16 +1109,14 @@ impl ReceiverContext {
             relative_path,
         ) {
             Ok(dest) => dest,
-            Err(error) => {
-                if self.config.flags.verbose && self.config.connection.client_mode {
-                    info_log!(
-                        Misc,
-                        1,
-                        "failed to prepare directory {}: {}",
-                        dir_path.display(),
-                        error
-                    );
-                }
+            Err(_) => {
+                // upstream: generator.c:1878-1879 - delete_item() has printed
+                // why; `skipping_dir_contents` (generator.c:1924) adds this
+                // notice.
+                let _ = self.emit_error_line(
+                    writer,
+                    "*** Skipping any contents from this failed directory ***\n",
+                );
                 emit_lsm_audit_hint_once();
                 failed_dirs.mark_failed(entry.path());
                 return Ok(None);
@@ -1342,6 +1374,7 @@ impl ReceiverContext {
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
+        failed_dirs: &FailedDirectories,
     ) {
         if self.config.flags.skip_dest_writes() {
             return;
@@ -1413,6 +1446,16 @@ impl ReceiverContext {
             }
 
             let relative_path = entry.path();
+            // upstream: generator.c:2639 - a directory flagged
+            // FLAG_MISSING_DIR is not retouched: one that could not be made
+            // (generator.c:1923), one `--existing` skipped (generator.c:1799),
+            // or one below either (generator.c:1688). What stands at its path,
+            // if anything, is not the directory this entry describes.
+            if failed_dirs.failed_ancestor(relative_path).is_some()
+                || failed_dirs.is_missing_or_below(relative_path)
+            {
+                continue;
+            }
             let dir_path = if relative_path.as_os_str() == "." {
                 dest_dir.to_path_buf()
             } else {
@@ -1618,11 +1661,45 @@ mod touch_up_dirs_tests {
     ///
     /// The fixture denies the removal with a read-only parent, which is the
     /// portable stand-in for any refusal - a confined-walk rejection or a
-    /// syscall-filter denial reaches the same arm.
+    /// syscall-filter denial reaches the same arm. The refusal is reachable
+    /// here because nothing raises the parent first: in a whole transfer the
+    /// parent's own entry is raised to `u+w` before its children are visited
+    /// (generator.c:1941-1949).
+    ///
+    /// The three frames are upstream's, in its order and on its channels:
+    /// delete.c:264-265 `rsyserr(FERROR_XFER, errno, "delete_file: %s(%s)
+    /// failed", what, fbuf)`, delete.c:283-285 `rprintf(FERROR_XFER, "could not
+    /// make way for %s %s: %s\n", ...)` with `desc = "directory"`
+    /// (delete.c:277), and the `skipping_dir_contents` notice at `FERROR`
+    /// (generator.c:1924).
     #[cfg(unix)]
     #[test]
     fn a_refused_obstruction_removal_is_reported_not_reclassified() {
         use std::os::unix::fs::{PermissionsExt, symlink};
+
+        /// Records each error frame with the channel it was sent on.
+        #[derive(Default)]
+        struct FrameCapture(Vec<(&'static str, String)>);
+        impl std::io::Write for FrameCapture {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl crate::writer::MsgInfoSender for FrameCapture {
+            fn send_msg_error_xfer(&mut self, data: &[u8]) -> std::io::Result<()> {
+                self.0
+                    .push(("FERROR_XFER", String::from_utf8_lossy(data).into_owned()));
+                Ok(())
+            }
+            fn send_msg_error(&mut self, data: &[u8]) -> std::io::Result<()> {
+                self.0
+                    .push(("FERROR", String::from_utf8_lossy(data).into_owned()));
+                Ok(())
+            }
+        }
 
         if metadata::am_root() {
             // root bypasses the directory write bit, so the fixture cannot
@@ -1630,50 +1707,211 @@ mod touch_up_dirs_tests {
             return;
         }
 
+        for obstacle_is_symlink in [true, false] {
+            let dir = test_support::create_tempdir();
+            let dest = dir.path();
+            let obstacle = dest.join("d");
+            if obstacle_is_symlink {
+                let target = dest.join("real");
+                fs::create_dir(&target).unwrap();
+                symlink(&target, &obstacle).unwrap();
+            } else {
+                fs::write(&obstacle, b"not a directory").unwrap();
+            }
+
+            // Deny the unlink by removing write permission from the parent.
+            let original = fs::metadata(dest).unwrap().permissions();
+            fs::set_permissions(dest, fs::Permissions::from_mode(0o555)).unwrap();
+            // The errno tail is whatever this system reports for the refusal.
+            let refusal = fs::remove_file(&obstacle).expect_err("the parent denies the unlink");
+
+            let hs = handshake();
+            let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
+            ctx.file_list = vec![FileEntry::new_directory("d".into(), 0o755)].into();
+
+            let opts = metadata::MetadataOptions::default();
+            let mut writer = FrameCapture::default();
+            let errors = ctx.create_directories(
+                dest,
+                &opts,
+                None,
+                None,
+                &mut crate::receiver::directory::FailedDirectories::new(),
+                &mut writer,
+                #[cfg(unix)]
+                None,
+            );
+
+            // Restore before asserting so a failure does not leave the tempdir
+            // undeletable.
+            fs::set_permissions(dest, original).unwrap();
+
+            let errors = errors.expect("create_directories returns the error set, not Err");
+            assert!(
+                !errors.is_empty(),
+                "a denied obstruction removal must be reported so io_error reaches \
+                 the exit code; reclassifying it as an existing directory walks the \
+                 transfer through the surviving symlink"
+            );
+            assert_eq!(
+                fs::symlink_metadata(&obstacle)
+                    .expect("the entry still exists")
+                    .file_type()
+                    .is_symlink(),
+                obstacle_is_symlink,
+                "the fixture is only meaningful while the removal actually failed"
+            );
+            assert_eq!(
+                writer.0,
+                [
+                    (
+                        "FERROR_XFER",
+                        format!(
+                            "rsync: [generator] delete_file: unlink(d) failed: {}\n",
+                            logging::upstream_errno_text(&refusal)
+                        ),
+                    ),
+                    (
+                        "FERROR_XFER",
+                        "could not make way for new directory: d\n".to_owned(),
+                    ),
+                    (
+                        "FERROR",
+                        "*** Skipping any contents from this failed directory ***\n".to_owned(),
+                    ),
+                ],
+                "obstacle_is_symlink={obstacle_is_symlink}"
+            );
+        }
+    }
+
+    /// A directory is made inside an existing one its owner cannot write to,
+    /// with and without `-p`, and the parent ends with its real mode.
+    ///
+    /// upstream: generator.c:1941-1949 raises a directory to `mode | S_IRWXU`
+    /// when it is visited, before the entries below it, and `touch_up_dirs()`
+    /// restores it (generator.c:2638-2643). This pass makes every directory of
+    /// the list before any of them gets its attributes, so the raise has to
+    /// happen as each existing directory is passed, or the child's mkdir is
+    /// refused.
+    #[cfg(unix)]
+    #[test]
+    fn a_child_is_made_under_an_existing_unwritable_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata::am_root() {
+            // root is never refused, so the cell would pass without the raise.
+            return;
+        }
+
+        for preserve_perms in [true, false] {
+            let dir = test_support::create_tempdir();
+            let dest = dir.path();
+            let parent = dest.join("ro");
+            fs::create_dir(&parent).unwrap();
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
+
+            let hs = handshake();
+            let mut config = config_with_times(false);
+            config.flags.perms = preserve_perms;
+            let mut ctx = ReceiverContext::new_for_test(&hs, config);
+            ctx.file_list = vec![
+                FileEntry::new_directory("ro".into(), 0o555),
+                FileEntry::new_directory("ro/sub".into(), 0o755),
+            ]
+            .into();
+
+            let opts = metadata::MetadataOptions::default().preserve_permissions(preserve_perms);
+            let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+            let mut failed = crate::receiver::directory::FailedDirectories::new();
+            let errors = ctx
+                .create_directories(dest, &opts, None, None, &mut failed, &mut writer, None)
+                .expect("create_directories succeeds");
+            assert!(errors.is_empty(), "perms={preserve_perms}: {errors:?}");
+            assert!(
+                parent.join("sub").is_dir(),
+                "perms={preserve_perms}: the child must be made"
+            );
+
+            ctx.touch_up_dirs(dest, None, &mut writer, &failed);
+            let mode = fs::metadata(&parent).unwrap().permissions().mode() & 0o7777;
+            // Restore before asserting so a failure leaves a removable tempdir.
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(
+                mode, 0o555,
+                "perms={preserve_perms}: the parent must end with its real mode"
+            );
+        }
+    }
+
+    /// A directory that could not be made is left alone by the final retouch,
+    /// so whatever still stands at its path keeps its own mode and time.
+    ///
+    /// upstream: generator.c:2639 - `touch_up_dirs()` skips every entry that
+    /// carries `FLAG_MISSING_DIR`, which `skipping_dir_contents` sets
+    /// (generator.c:1923). Retouching it stamped the directory's time, and
+    /// under `-p` its mode, on the file whose removal had been refused.
+    ///
+    /// The removal is refused by a read-only parent. That is reachable here
+    /// because nothing raises the parent first: in a whole transfer the
+    /// parent's own entry is raised to `u+w` before its children are visited.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_that_could_not_be_made_is_not_retouched() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata::am_root() {
+            // root bypasses the directory write bit, so nothing is refused.
+            return;
+        }
+
         let dir = test_support::create_tempdir();
         let dest = dir.path();
-        let target = dest.join("real");
-        fs::create_dir(&target).unwrap();
-        symlink(&target, dest.join("d")).unwrap();
+        let obstacle = dest.join("d");
+        fs::write(&obstacle, b"not a directory").unwrap();
+        fs::set_permissions(&obstacle, fs::Permissions::from_mode(0o644)).unwrap();
+        let own_time = FileTime::from_unix_time(1_546_300_800, 0);
+        filetime::set_file_mtime(&obstacle, own_time).unwrap();
 
-        // Deny the unlink by removing write permission from the parent.
         let original = fs::metadata(dest).unwrap().permissions();
         fs::set_permissions(dest, fs::Permissions::from_mode(0o555)).unwrap();
 
+        let mut entry = FileEntry::new_directory("d".into(), 0o555);
+        entry.set_mtime(1_577_836_800, 0);
         let hs = handshake();
-        let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
-        ctx.file_list = vec![FileEntry::new_directory("d".into(), 0o755)].into();
+        let mut config = config_with_times(true);
+        config.flags.perms = true;
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = vec![entry].into();
 
-        let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
-        let errors = ctx.create_directories(
+        let mut failed = crate::receiver::directory::FailedDirectories::new();
+        let created = ctx.create_directories(
             dest,
-            &opts,
+            &metadata::MetadataOptions::default(),
             None,
             None,
-            &mut crate::receiver::directory::FailedDirectories::new(),
+            &mut failed,
             &mut writer,
-            #[cfg(unix)]
             None,
         );
-
-        // Restore before asserting so a failure does not leave the tempdir
-        // undeletable.
         fs::set_permissions(dest, original).unwrap();
+        created.expect("create_directories returns the error set, not Err");
+        assert_eq!(failed.count(), 1, "the removal must have been refused");
 
-        let errors = errors.expect("create_directories returns the error set, not Err");
-        assert!(
-            !errors.is_empty(),
-            "a denied obstruction removal must be reported so io_error reaches \
-             the exit code; reclassifying it as an existing directory walks the \
-             transfer through the surviving symlink"
+        ctx.touch_up_dirs(dest, None, &mut writer, &failed);
+
+        let meta = fs::symlink_metadata(&obstacle).unwrap();
+        assert!(meta.is_file(), "the obstacle is still the regular file");
+        assert_eq!(
+            FileTime::from_last_modification_time(&meta),
+            own_time,
+            "the file must keep its own mtime"
         );
-        assert!(
-            fs::symlink_metadata(dest.join("d"))
-                .expect("the entry still exists")
-                .file_type()
-                .is_symlink(),
-            "the fixture is only meaningful while the removal actually failed"
+        assert_eq!(
+            meta.permissions().mode() & 0o7777,
+            0o644,
+            "the file must keep its own mode"
         );
     }
 
@@ -1854,6 +2092,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let meta = fs::metadata(&sub).unwrap();
@@ -1897,6 +2136,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let meta = fs::metadata(&sub).unwrap();
@@ -1981,6 +2221,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
         if !metadata::am_root() {
             let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
@@ -2050,6 +2291,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
         let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
         let _ = fs::set_permissions(&sub, fs::Permissions::from_mode(0o755));
@@ -2099,6 +2341,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let mode = fs::metadata(dest.join("sub")).unwrap().permissions().mode() & 0o777;
@@ -2162,6 +2405,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
         let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
         let _ = fs::set_permissions(&sub, fs::Permissions::from_mode(0o755));
@@ -2195,6 +2439,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let after = FileTime::from_last_modification_time(&fs::metadata(&sub).unwrap());
@@ -2236,6 +2481,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let parent_actual = FileTime::from_last_modification_time(&fs::metadata(&parent).unwrap());
@@ -2272,6 +2518,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let actual = FileTime::from_last_modification_time(&fs::metadata(dir.path()).unwrap());
@@ -2372,6 +2619,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let actual = FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
@@ -2417,6 +2665,7 @@ mod touch_up_dirs_tests {
 
         let decision = ctx
             .classify_dir_destination(
+                &mut crate::writer::ServerWriter::new_plain(Vec::new()),
                 &link,
                 #[cfg(unix)]
                 None,
@@ -2426,7 +2675,7 @@ mod touch_up_dirs_tests {
             .expect("classify succeeds");
         assert_eq!(
             decision,
-            super::DirDestination::ReplacedSymlink,
+            super::DirDestination::ReplacedNonDirectory,
             "without -K the conflicting dest symlink must be replaced"
         );
         assert!(decision.needs_mkdir(), "a real directory must be created");
@@ -2455,6 +2704,7 @@ mod touch_up_dirs_tests {
 
         let decision = ctx
             .classify_dir_destination(
+                &mut crate::writer::ServerWriter::new_plain(Vec::new()),
                 &link,
                 #[cfg(unix)]
                 None,
@@ -2497,6 +2747,7 @@ mod touch_up_dirs_tests {
 
         let decision = ctx
             .classify_dir_destination(
+                &mut crate::writer::ServerWriter::new_plain(Vec::new()),
                 &link,
                 #[cfg(unix)]
                 None,
@@ -2506,12 +2757,43 @@ mod touch_up_dirs_tests {
             .expect("classify succeeds");
         assert_eq!(
             decision,
-            super::DirDestination::ReplacedSymlink,
+            super::DirDestination::ReplacedNonDirectory,
             "-K follows only symlinks-to-directories; a symlink-to-file is replaced"
         );
         assert!(
             fs::symlink_metadata(&link).is_err(),
             "the symlink-to-file conflict must have been removed"
+        );
+    }
+
+    /// A regular file where a directory must go is not a directory to reuse:
+    /// upstream hands every non-directory to `delete_item(..., DEL_FOR_DIR)`
+    /// (`generator.c:1876-1880`). Reusing it stamped the directory's attributes
+    /// on the file and failed every entry below it with `ENOTDIR`.
+    #[test]
+    fn a_regular_file_in_the_way_is_cleared_for_the_directory() {
+        let dir = test_support::create_tempdir();
+        let obstacle = dir.path().join("d");
+        fs::write(&obstacle, b"not a directory").unwrap();
+
+        let hs = handshake();
+        let ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
+
+        let decision = ctx
+            .classify_dir_destination(
+                &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+                &obstacle,
+                #[cfg(unix)]
+                None,
+                dir.path(),
+                std::path::Path::new("d"),
+            )
+            .expect("classify succeeds");
+        assert_eq!(decision, super::DirDestination::ReplacedNonDirectory);
+        assert!(decision.needs_mkdir(), "a real directory must be created");
+        assert!(
+            fs::symlink_metadata(&obstacle).is_err(),
+            "the file in the way must have been removed"
         );
     }
 }

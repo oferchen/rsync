@@ -832,9 +832,19 @@ impl ReceiverContext {
         if entry.is_dir() {
             // upstream: generator.c:1907-1909 - new dir -> ITEM_LOCAL_CHANGE |
             // ITEM_IS_NEW; existing dir -> itemize() attribute diff.
-            match fs::metadata(dest_path) {
-                Ok(_) => self.existing_dir_iflags(entry, dest_path),
-                Err(_) => new_iflags(ItemFlags::ITEM_LOCAL_CHANGE),
+            // upstream: generator.c:1782, 1876-1880 - the stat follows a
+            // symlink only under keep_dirlinks, and a non-directory in the way
+            // leaves `statret = -1`, so the directory that replaces it is new.
+            let found = fs::symlink_metadata(dest_path).is_ok_and(|meta| {
+                meta.is_dir()
+                    || (meta.is_symlink()
+                        && self.config.flags.keep_dirlinks
+                        && fs::metadata(dest_path).is_ok_and(|target| target.is_dir()))
+            });
+            if found {
+                self.existing_dir_iflags(entry, dest_path)
+            } else {
+                new_iflags(ItemFlags::ITEM_LOCAL_CHANGE)
             }
         } else if entry.is_symlink() {
             // upstream: generator.c:2001-2050 - an up-to-date symlink (same

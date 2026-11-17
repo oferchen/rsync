@@ -501,6 +501,7 @@ impl ReceiverContext {
                     setup.sandbox.as_ref(),
                     writer,
                     &mut stats,
+                    &failed_dirs,
                 )
             },
         )?;
@@ -1020,6 +1021,7 @@ impl ReceiverContext {
                     setup.sandbox.as_ref(),
                     writer,
                     &mut stats,
+                    &failed_dirs,
                 )
             },
         )?;

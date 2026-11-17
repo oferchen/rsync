@@ -124,6 +124,7 @@ fn touch_up_dirs_never_retouches_a_directory_outside_the_tree() {
         &tmp.path().join("dest"),
         Some(&sandbox),
         &mut TestDeletionWriter,
+        &crate::receiver::directory::FailedDirectories::new(),
     );
 
     let meta = fs::metadata(&bait).unwrap();
@@ -153,7 +154,12 @@ fn touch_up_dirs_retouches_a_nested_directory_inside_the_tree() {
     dir.set_mtime(1_000_000, 0);
     let ctx = receiver(vec![dir]);
 
-    ctx.touch_up_dirs(&dest, Some(&sandbox), &mut TestDeletionWriter);
+    ctx.touch_up_dirs(
+        &dest,
+        Some(&sandbox),
+        &mut TestDeletionWriter,
+        &crate::receiver::directory::FailedDirectories::new(),
+    );
 
     let meta = fs::metadata(dest.join("a/b")).unwrap();
     assert_eq!(
