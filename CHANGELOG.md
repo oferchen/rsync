@@ -694,6 +694,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `--only-write-batch` skips a source file the sender cannot open and exits 23 with the rest of the batch written, like 3.5.2, on a push and a pull; it used to stop with exit 11 (#8406)
 - `--only-write-batch` over a remote shell itemizes directories, symlinks and every other entry that is not transferred, sends each file request with its real itemize flags, and records them in the batch, like 3.5.2; `-i` used to print bare `<f.........` rows for files only (#8406)
 - A new device or special file is itemized to the peer with the flags rsync 3.5.2 sends: the record now carries the change bit as well (#8406)
+- A push of many thousands of hard links to this server without incremental recursion no longer stalls: the receiver reads the sender's replies to its hard-link records as it goes (#8406)
 
 ### Removed
 

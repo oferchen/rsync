@@ -43,20 +43,16 @@ fn call_emit_follower_itemize<W: std::io::Write + ?Sized>(
     buf: &mut W,
     ndx_codec: &mut protocol::codec::NdxCodecEnum,
 ) -> std::io::Result<()> {
+    let leaders = ctx.hardlink_leaders();
+    let whole_list = 0..ctx.file_list.len();
     #[cfg(unix)]
-    {
-        ctx.emit_server_hardlink_follower_itemize(
-            buf,
-            ndx_codec,
-            0..ctx.file_list.len(),
-            dest,
-            None,
-        )
-    }
+    let resume = ctx
+        .emit_server_hardlink_follower_itemize(buf, ndx_codec, &leaders, whole_list, dest, None)?;
     #[cfg(not(unix))]
-    {
-        ctx.emit_server_hardlink_follower_itemize(buf, ndx_codec, 0..ctx.file_list.len(), dest)
-    }
+    let resume =
+        ctx.emit_server_hardlink_follower_itemize(buf, ndx_codec, &leaders, whole_list, dest)?;
+    assert_eq!(resume, ctx.file_list.len(), "a short list fits one batch");
+    Ok(())
 }
 
 #[test]
@@ -899,6 +895,49 @@ fn pull_receiver_emits_no_follower_wire_record() {
         ctx.hardlink_follower_echoes.get(),
         0,
         "a pull emits nothing, so there are no echoes to drain",
+    );
+}
+
+/// The leader map is asked for once per file-list segment, so it must look
+/// at each entry once: rebuilding it from the whole list on every call cost
+/// 0.3 s of a 2.5 s pull of 50,000 groups in 100 segments. Counts entries
+/// examined, not time.
+#[test]
+fn leader_map_examines_each_entry_once_across_segments() {
+    let mut ctx = pull_receiver_with_hardlinks(vec![
+        make_hlink_leader("a1", 14, 1),
+        make_hlink_follower("a2", 14, 1),
+        make_hlink_leader("b1", 14, 2),
+        make_hlink_follower("b2", 14, 2),
+    ]);
+    assert_eq!(ctx.hardlink_leaders().len(), 2);
+    assert_eq!(ctx.hardlink_leader_index.borrow().visits, 4);
+
+    ctx.file_list.extend(vec![
+        make_hlink_leader("c1", 14, 3),
+        make_hlink_follower("c2", 14, 3),
+    ]);
+    {
+        let leaders = ctx.hardlink_leaders();
+        assert_eq!(leaders.get(&1), Some(&0));
+        assert_eq!(leaders.get(&2), Some(&2));
+        assert_eq!(
+            leaders.get(&3),
+            Some(&4),
+            "the new segment's leader is found"
+        );
+    }
+    assert_eq!(
+        ctx.hardlink_leader_index.borrow().visits,
+        6,
+        "the second segment costs its own two entries, not the whole list again",
+    );
+
+    drop(ctx.hardlink_leaders());
+    assert_eq!(
+        ctx.hardlink_leader_index.borrow().visits,
+        6,
+        "a call with nothing new examines nothing",
     );
 }
 

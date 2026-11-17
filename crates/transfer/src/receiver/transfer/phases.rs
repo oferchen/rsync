@@ -166,6 +166,35 @@ impl ReceiverContext {
         Ok(false)
     }
 
+    /// Reads the echoes of the hard-link follower rows written so far, so
+    /// the next rows can go out without the sender stalling on unread echoes.
+    ///
+    /// When the pass has already written its phase-ending `NDX_DONE`, the
+    /// sender answers that before it echoes rows written after it
+    /// (sender.c:540-549), so the answer is read first and counted for
+    /// [`Self::finish_request_phase`].
+    pub(in crate::receiver) fn read_follower_echoes<R: Read>(
+        &self,
+        reader: &mut R,
+        ndx_read_codec: &mut NdxCodecEnum,
+    ) -> io::Result<()> {
+        let mut sink = self.no_lazy_flist_sink();
+        if self.phase_end_writes_sent.get() > 0
+            && self.sender_phase_dones.get() == 0
+            && self.early_sender_ndx_dones.get() == 0
+        {
+            self.read_sender_ndx_done(ndx_read_codec, reader, &mut sink, "phase transition")?;
+            self.note_sender_ndx_done();
+            self.note_early_sender_ndx_done();
+        }
+        if self.drain_hardlink_follower_echoes(ndx_read_codec, reader, &mut sink)? {
+            return Err(protocol::protocol_violation(
+                "expected the echo of a hard-link follower row, got NDX_DONE",
+            ));
+        }
+        Ok(())
+    }
+
     /// Records that a response read consumed the sender's phase-boundary
     /// `NDX_DONE`, so the next [`Self::read_expected_ndx_done`] counts it
     /// instead of reading another.

@@ -698,21 +698,32 @@ impl ReceiverContext {
         // upstream: generator.c:2685 finish_hard_link() itemizes each follower
         // before the phase's NDX_DONE, then the followers are linked.
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
-        #[cfg(unix)]
-        self.emit_server_hardlink_follower_itemize(
-            writer,
-            ndx_write_codec.inner_mut(),
-            0..self.file_list.len(),
-            dest_dir,
-            sandbox.as_deref(),
-        )?;
-        #[cfg(not(unix))]
-        self.emit_server_hardlink_follower_itemize(
-            writer,
-            ndx_write_codec.inner_mut(),
-            0..self.file_list.len(),
-            dest_dir,
-        )?;
+        // A replay has no sender to echo the rows, so the batches follow one
+        // another without a read between them.
+        let leaders = self.hardlink_leaders();
+        let end = self.file_list.len();
+        let mut next = 0;
+        while next < end {
+            #[cfg(unix)]
+            let resume = self.emit_server_hardlink_follower_itemize(
+                writer,
+                ndx_write_codec.inner_mut(),
+                &leaders,
+                next..end,
+                dest_dir,
+                sandbox.as_deref(),
+            )?;
+            #[cfg(not(unix))]
+            let resume = self.emit_server_hardlink_follower_itemize(
+                writer,
+                ndx_write_codec.inner_mut(),
+                &leaders,
+                next..end,
+                dest_dir,
+            )?;
+            next = resume;
+        }
+        drop(leaders);
 
         #[cfg(unix)]
         self.create_hardlinks(dest_dir, sandbox.as_deref(), writer)?;

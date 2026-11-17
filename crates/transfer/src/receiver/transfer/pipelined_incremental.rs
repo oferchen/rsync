@@ -1209,29 +1209,39 @@ impl ReceiverContext {
         ndx_write_codec: &mut MonotonicNdxWriter,
         ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<()> {
-        #[cfg(unix)]
-        self.emit_server_hardlink_follower_itemize(
-            writer,
-            ndx_write_codec.inner_mut(),
-            range,
-            &setup.dest_dir,
-            setup.sandbox.as_deref(),
-        )?;
-        #[cfg(not(unix))]
-        self.emit_server_hardlink_follower_itemize(
-            writer,
-            ndx_write_codec.inner_mut(),
-            range,
-            &setup.dest_dir,
-        )?;
-        // No decline can arrive here: the segment's request window is drained
-        // before these rows are written, and a sender declines only a transfer
-        // request (sender.c:678, 733, 761).
-        for _ in 0..self.hardlink_follower_echoes.take() {
-            if read_ndx_and_attrs(reader, ndx_read_codec, self, false, false)?.is_none() {
-                return Err(protocol::protocol_violation(
-                    "expected the echo of a hard-link follower row, got NDX_DONE",
-                ));
+        let mut next = range.start;
+        while next < range.end {
+            // The map is borrowed for the write only: the echo read below
+            // may take in a new sub-list.
+            let leaders = self.hardlink_leaders();
+            #[cfg(unix)]
+            let resume = self.emit_server_hardlink_follower_itemize(
+                writer,
+                ndx_write_codec.inner_mut(),
+                &leaders,
+                next..range.end,
+                &setup.dest_dir,
+                setup.sandbox.as_deref(),
+            )?;
+            #[cfg(not(unix))]
+            let resume = self.emit_server_hardlink_follower_itemize(
+                writer,
+                ndx_write_codec.inner_mut(),
+                &leaders,
+                next..range.end,
+                &setup.dest_dir,
+            )?;
+            drop(leaders);
+            next = resume;
+            // No decline can arrive here: the segment's request window is
+            // drained before these rows are written, and a sender declines
+            // only a transfer request (sender.c:678, 733, 761).
+            for _ in 0..self.hardlink_follower_echoes.take() {
+                if read_ndx_and_attrs(reader, ndx_read_codec, self, false, false)?.is_none() {
+                    return Err(protocol::protocol_violation(
+                        "expected the echo of a hard-link follower row, got NDX_DONE",
+                    ));
+                }
             }
         }
         Ok(())

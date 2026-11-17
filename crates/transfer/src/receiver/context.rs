@@ -447,6 +447,11 @@ pub struct ReceiverContext {
     /// before [`Self::read_expected_ndx_done`] expects the sender's NDX_DONE.
     /// `Cell` because the emit site runs behind a `&self` pipeline closure.
     pub(in crate::receiver) hardlink_follower_echoes: std::cell::Cell<usize>,
+    /// The hard-link leaders seen so far, extended as file-list segments
+    /// arrive. `RefCell` because the follower records are written behind
+    /// `&self`.
+    pub(in crate::receiver) hardlink_leader_index:
+        RefCell<crate::receiver::itemize::HardlinkLeaderIndex>,
     /// Sender `NDX_DONE`s already consumed by a response read, each the
     /// sender's phase boundary arriving while a request was unanswered.
     ///
@@ -786,6 +791,7 @@ impl ReceiverContext {
             name_rows: RefCell::new(BTreeMap::new()),
             progress_active: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
+            hardlink_leader_index: RefCell::default(),
             early_sender_ndx_dones: std::cell::Cell::new(0),
             phase_end_writes_sent: std::cell::Cell::new(0),
             sender_phase_dones: std::cell::Cell::new(0),

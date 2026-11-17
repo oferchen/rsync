@@ -1055,22 +1055,33 @@ impl ReceiverContext {
             // pass, which carries no new followers) so a pushing client's
             // sender renders each `hf...` / `=> leader` row.
             if !is_redo_pass && !self.itemize_followers_per_segment {
-                let whole_list = 0..self.file_list.len();
-                #[cfg(unix)]
-                self.emit_server_hardlink_follower_itemize(
-                    writer,
-                    ndx_write_codec.inner_mut(),
-                    whole_list,
-                    &setup.dest_dir,
-                    setup.sandbox.as_deref(),
-                )?;
-                #[cfg(not(unix))]
-                self.emit_server_hardlink_follower_itemize(
-                    writer,
-                    ndx_write_codec.inner_mut(),
-                    whole_list,
-                    &setup.dest_dir,
-                )?;
+                let leaders = self.hardlink_leaders();
+                let end = self.file_list.len();
+                let mut next = 0;
+                while next < end {
+                    #[cfg(unix)]
+                    let resume = self.emit_server_hardlink_follower_itemize(
+                        writer,
+                        ndx_write_codec.inner_mut(),
+                        &leaders,
+                        next..end,
+                        &setup.dest_dir,
+                        setup.sandbox.as_deref(),
+                    )?;
+                    #[cfg(not(unix))]
+                    let resume = self.emit_server_hardlink_follower_itemize(
+                        writer,
+                        ndx_write_codec.inner_mut(),
+                        &leaders,
+                        next..end,
+                        &setup.dest_dir,
+                    )?;
+                    next = resume;
+                    // The last batch's echoes are read at the phase boundary.
+                    if next < end {
+                        self.read_follower_echoes(&mut *reader, ndx_read_codec)?;
+                    }
+                }
             }
 
             let redo_indices = pipelined_receiver.take_redo_indices();
