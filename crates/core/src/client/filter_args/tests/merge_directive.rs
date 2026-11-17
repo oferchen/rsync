@@ -264,3 +264,55 @@ fn an_argument_sourced_rule_is_still_echoed_verbatim() {
         "an operator's own text stays visible: {error}"
     );
 }
+
+/// The test files, parsed as a remote-shell server parses them.
+struct ServerFiles;
+
+impl super::super::FilterFileSource for ServerFiles {
+    fn base_dir(&self) -> PathBuf {
+        super::super::FilterFileSource::base_dir(&TestFiles)
+    }
+
+    fn who(&self) -> crate::message::Role {
+        crate::message::Role::Server
+    }
+
+    fn open(
+        &self,
+        path: &Path,
+        kind: super::super::FilterFileKind,
+        list: &[FilterRuleSpec],
+    ) -> std::io::Result<Box<dyn std::io::Read>> {
+        super::super::FilterFileSource::open(&TestFiles, path, kind, list)
+    }
+}
+
+/// upstream: exclude.c:1619-1623 prefixes the depth-limit refusal with
+/// who_am_i(), so a remote-shell server says `[server]` (MEASURED on 3.5.2
+/// with `-M-f '. self'`); oc hardcoded `[client]` for every process.
+#[test]
+fn the_depth_limit_refusal_names_the_parsing_process() {
+    let temp = test_support::create_tempdir();
+    let merge_file = temp.path().join("self");
+    std::fs::write(&merge_file, format!(". {}\n", merge_file.display())).expect("write");
+    let mut rules = Vec::new();
+    let mut visited = Vec::new();
+    let error = super::super::merge::apply_merge_directive(
+        MergeDirective::new(merge_file.into_os_string(), None),
+        temp.path(),
+        &mut rules,
+        &mut visited,
+        filters::RuleSource::Argument,
+        &filters::CvsSession::default(),
+        &ServerFiles,
+    )
+    .expect_err("a self-including merge file hits the depth limit");
+    assert_eq!(error.code(), Some(11));
+    assert!(
+        error
+            .text()
+            .starts_with("[server] merge-file include depth limit (32) exceeded at "),
+        "{}",
+        error.text()
+    );
+}

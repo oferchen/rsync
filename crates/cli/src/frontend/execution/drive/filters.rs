@@ -1,10 +1,11 @@
 #![deny(unsafe_code)]
 
 use core::client::ClientConfigBuilder;
+use core::client::filter_args::write_refusal;
 pub(crate) use core::client::filter_args::{FilterInputs, build_filter_rules};
+use core::message::Role;
 use logging_sink::MessageSink;
 
-use super::messages::fail_with_message;
 use crate::frontend::filter_rules::ProcessFilterFiles;
 
 /// Applies CLI-provided filter rules to the [`ClientConfigBuilder`].
@@ -19,8 +20,14 @@ where
     Err: std::io::Write,
 {
     let cvs = filters::CvsSession::default();
-    let filter_rules = build_filter_rules(inputs, &cvs, &ProcessFilterFiles)
-        .map_err(|message| fail_with_message(message, stderr))?;
+    // upstream: options.c parses these in the client before any fork, where
+    // who_am_i() is "client" (rsync.c:989-990).
+    let filter_rules = build_filter_rules(inputs, &cvs, &ProcessFilterFiles { who: Role::Client })
+        .map_err(|refusal| {
+            let brand = stderr.brand();
+            write_refusal(stderr.writer_mut(), brand, Role::Client, &refusal)
+                .unwrap_or_else(|_| refusal.code().unwrap_or(1))
+        })?;
     let builder = if filter_rules.is_empty() {
         builder
     } else {

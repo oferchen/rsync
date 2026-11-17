@@ -308,6 +308,13 @@ impl core::client::filter_args::FilterFileSource for ModuleConfigFiles<'_> {
         self.root.to_path_buf()
     }
 
+    /// upstream: `am_starting_up` is cleared when `--daemon` is parsed
+    /// (options.c:1634) and no role flag is set yet, so who_am_i() is the
+    /// pre-fork "Receiver" (rsync.c:991-994). MEASURED on 3.5.2.
+    fn who(&self) -> Role {
+        Role::PreForkReceiver
+    }
+
     fn open(
         &self,
         path: &Path,

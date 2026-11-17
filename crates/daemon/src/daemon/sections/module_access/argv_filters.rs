@@ -28,7 +28,7 @@ enum ArgvFilterRefusal {
         /// The exit code the session ends with.
         code: ExitCode,
         /// The cause, as the parser reported it.
-        text: String,
+        refusal: Message,
     },
 }
 
@@ -73,11 +73,17 @@ struct ModuleArgvFiles<'a> {
     daemon_rules: &'a [FilterRuleWireFormat],
     /// Set when a hidden `-from` name rejected the options.
     rejected: std::cell::Cell<bool>,
+    /// The daemon's `who_am_i()` while it parses the options.
+    who: Role,
 }
 
 impl core::client::filter_args::FilterFileSource for ModuleArgvFiles<'_> {
     fn base_dir(&self) -> std::path::PathBuf {
         self.root.to_path_buf()
+    }
+
+    fn who(&self) -> Role {
+        self.who
     }
 
     fn open(
@@ -109,9 +115,26 @@ impl core::client::filter_args::FilterFileSource for ModuleArgvFiles<'_> {
                 }
             };
         }
-        let content = read_module_file(self.root, &relative)?;
-        Ok(Box::new(std::io::Cursor::new(content.into_bytes())))
+        // upstream: exclude.c:704-715 parse_merge_name() returns a name with
+        // no slash unchanged, unsanitized, so `..` reaches the confined open
+        // and is refused there (ELOOP, MEASURED on 3.5.2) while `.` opens the
+        // module root itself.
+        let open_name = if is_bare_merge_name(name) {
+            name.to_string_lossy().into_owned()
+        } else {
+            relative
+        };
+        open_module_file(self.root, &open_name)
     }
+}
+
+/// Whether a client-named merge file opens as given rather than sanitized.
+///
+/// Upstream's bare-name rule keys on `/` alone; only on Unix is that the sole
+/// separator, so elsewhere a name such as `..\x` could still climb and every
+/// name keeps its sanitized form.
+fn is_bare_merge_name(name: &Path) -> bool {
+    cfg!(unix) && !name.as_os_str().as_encoded_bytes().contains(&b'/')
 }
 
 /// Builds the rules the client's argv filter options add, in argv order.
@@ -140,6 +163,7 @@ fn build_argv_filter_rules(
         root: module_root,
         daemon_rules,
         rejected: std::cell::Cell::new(false),
+        who: argv_parse_role(client_args),
     };
     core::client::filter_args::server_argv_filter_rules(&options, from0, &files).map_err(
         |message| {
@@ -153,35 +177,42 @@ fn build_argv_filter_rules(
                 };
                 ArgvFilterRefusal::Fatal {
                     code,
-                    text: message.text().to_owned(),
+                    refusal: message,
                 }
             }
         },
     )
 }
 
-/// Reads `relative` beneath the module root, never leaving it.
+/// Opens `relative` beneath the module root, never leaving it.
+///
+/// The parser reads the file, so a name that opens as a directory ends at its
+/// first read like an empty file, as on the client (exclude.c:1764-1769).
 ///
 /// On Unix the open goes through the confined resolver, so a symlink or `..`
 /// cannot lead outside the module. Elsewhere the sanitized name, which can no
 /// longer be absolute or climb, is joined onto the root.
-fn read_module_file(root: &Path, relative: &str) -> io::Result<String> {
+fn open_module_file(root: &Path, relative: &str) -> io::Result<Box<dyn std::io::Read>> {
     #[cfg(unix)]
     {
-        use std::io::Read as _;
-        let mut file = fast_io::open_source_confined(
+        match fast_io::open_source_confined(
             root,
             Path::new(relative),
             fast_io::LeafPolicy::FollowConfined,
             false,
-        )?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        Ok(content)
+        ) {
+            Ok(file) => Ok(Box::new(file)),
+            // The resolver refuses to hand back the module root itself as a
+            // file; upstream opens it and reads nothing.
+            Err(error) if error.raw_os_error() == Some(libc::EISDIR) => {
+                Ok(Box::new(std::io::empty()))
+            }
+            Err(error) => Err(error),
+        }
     }
     #[cfg(not(unix))]
     {
-        fs::read_to_string(root.join(relative))
+        Ok(Box::new(fs::File::open(root.join(relative))?))
     }
 }
 
@@ -219,18 +250,86 @@ fn refuse_argv_filters(
                 client_args,
             )
         }
-        ArgvFilterRefusal::Fatal { code, text } => {
-            let code = *code;
-            *ctx.session_exit_code = Some(code);
+        ArgvFilterRefusal::Fatal { code, refusal } => {
+            *ctx.session_exit_code = Some(*code);
+            let brand = ctx
+                .log_sink
+                .and_then(|log| log.lock().ok().map(|sink| sink.brand()))
+                .unwrap_or(Brand::Oc);
+            let mut lines = Vec::new();
+            let _ = core::client::filter_args::write_refusal(
+                &mut lines,
+                brand,
+                argv_parse_role(client_args),
+                refusal,
+            );
+            // upstream: msgs2stderr keeps its default of 2 until after
+            // parse_arguments() returns (options.c:103, clientserver.c:1164-1182),
+            // so rwrite() puts these lines on the daemon's own stderr as well as
+            // in its log; the client reads only EOF.
+            let _ = io::stderr().write_all(&lines);
             if let Some(log) = ctx.log_sink {
-                log_message(
-                    log,
-                    &rsync_error!(code.as_i32(), text.clone()).with_role(Role::Daemon),
-                );
+                for line in lines
+                    .split(|byte| *byte == b'\n')
+                    .filter(|line| !line.is_empty())
+                {
+                    log_raw_line(log, line);
+                }
                 let totals = "sent 0 bytes  received 0 bytes  total size 0";
                 log_message(log, &rsync_info!(totals).with_role(Role::Daemon));
             }
             Ok(())
         }
+    }
+}
+
+/// The `who_am_i()` a daemon reports while it parses the client's options.
+///
+/// upstream: rsync.c:987-995 - `am_sender` is already set from `--sender` by
+/// then, and a receiving daemon has not forked, so it is the pre-fork
+/// `Receiver`.
+fn argv_parse_role(client_args: &[String]) -> Role {
+    if client_args.iter().any(|arg| arg == "--sender") {
+        Role::Sender
+    } else {
+        Role::PreForkReceiver
+    }
+}
+
+#[cfg(test)]
+mod argv_parse_role_tests {
+    use super::*;
+
+    #[test]
+    fn a_name_with_a_slash_is_never_bare() {
+        assert!(!is_bare_merge_name(Path::new("sub/rules")));
+        assert!(!is_bare_merge_name(Path::new("../rules")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_slashless_unix_name_opens_as_given() {
+        assert!(is_bare_merge_name(Path::new("..")));
+        assert!(is_bare_merge_name(Path::new("rules")));
+    }
+
+    /// A backslash separates on Windows, so `..\secret` must keep its
+    /// sanitized form instead of climbing out of the module.
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_name_is_never_bare() {
+        assert!(!is_bare_merge_name(Path::new(r"..\secret")));
+        assert!(!is_bare_merge_name(Path::new("..")));
+    }
+
+    /// upstream: rsync.c:987-995 - a 3.5.2 daemon prints its argv filter
+    /// refusal as `[sender]` on a pull and as the pre-fork `[Receiver]` on a
+    /// push (measured with `-M--filter='. nope'`).
+    #[test]
+    fn the_refusal_names_the_daemons_side() {
+        let pull = ["--server".to_owned(), "--sender".to_owned(), ".".to_owned()];
+        let push = ["--server".to_owned(), ".".to_owned()];
+        assert_eq!(argv_parse_role(&pull), Role::Sender);
+        assert_eq!(argv_parse_role(&push), Role::PreForkReceiver);
     }
 }

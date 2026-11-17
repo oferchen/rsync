@@ -16,6 +16,7 @@ mod merge;
 mod module;
 mod order;
 mod parsing;
+mod refusal;
 mod server_argv;
 mod sources;
 
@@ -26,10 +27,12 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use crate::client::FilterRuleSpec;
+use crate::message::Role;
 
 pub use build::{FilterInputs, build_filter_rules};
 pub use module::{ModuleFilterDirectives, daemon_list_rules, module_filter_rules};
 pub use order::FilterOrderToken;
+pub use refusal::write_refusal;
 pub use server_argv::server_argv_filter_rules;
 
 /// Where the files that filter options name are read from.
@@ -44,6 +47,10 @@ pub trait FilterFileSource {
     /// `dirbuf`: empty for the client and a remote-shell server (the name
     /// stays cwd-relative), the module root for a daemon.
     fn base_dir(&self) -> PathBuf;
+
+    /// Upstream's `who_am_i()` for the process parsing these rules, which a
+    /// refusal that names its process carries (exclude.c:1619-1623).
+    fn who(&self) -> Role;
 
     /// Opens `path` for reading; `-` names standard input.
     ///
@@ -94,6 +101,10 @@ pub(crate) fn set_filter_stdin_input(data: Vec<u8>) {
 impl FilterFileSource for TestFiles {
     fn base_dir(&self) -> PathBuf {
         PathBuf::new()
+    }
+
+    fn who(&self) -> Role {
+        Role::Client
     }
 
     fn open(

@@ -64,3 +64,17 @@ pub(crate) fn open_read_confined(path: &Path) -> io::Result<File> {
         File::open(path)
     }
 }
+
+/// Opens an operator-named directory through the same walk, without reading it.
+///
+/// upstream: `rsync-3.5.2/syscall.c:752` `open_no_attacker_symlinks_dirfd()`.
+pub(crate) fn open_dir(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        fast_io::operator_open_dir(path).map(drop)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::read_dir(path).map(drop)
+    }
+}
