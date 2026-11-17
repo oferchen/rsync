@@ -447,6 +447,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 **Daemon**
 - A daemon run over a remote shell shows the peer exactly as the environment named it, `fe80::1%eth0` or `010.1.2.3`, in `RSYNC_HOST_ADDR` and its log lines, as rsync 3.5.2 does (#8400)
+- `hosts allow` / `hosts deny` hostname rules skip a forward-DNS IPv6 record scoped to another interface than the peer's, as rsync 3.5.2 does (#8400)
 - A fatal `-M` filter option - an `--exclude-from`, `--include-from` or `merge` file the daemon cannot open, or a malformed rule - ends the daemon session without a message, logging the reason, so the client exits 12 like upstream instead of 4 (#8231)
 - Itemize a directory before deleting in it under `--delete`, and after the `--delete-before` pass, so the log carries upstream's `.d..t......` rows (#8226)
 - The daemon log holds each diagnostic and per-file row before the client sees the transfer end, as upstream's `rwrite()` writes it ahead of the frame (#8217)

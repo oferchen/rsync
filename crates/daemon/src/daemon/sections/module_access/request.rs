@@ -747,7 +747,7 @@ fn respond_with_module_request(
     // same never-empty host string the log lines use, sentinels included - so a
     // `hosts allow = UNKNOWN` line works as clientname.c:93-95 documents.
     let access_host = PeerHost::new(module_peer_host, module_reverse_lookup);
-    if !module.permits_peer(peer.ip(), access_host) {
+    if !module.permits_peer(peer, access_host) {
         return handle_module_denied(&mut ctx, module);
     }
 

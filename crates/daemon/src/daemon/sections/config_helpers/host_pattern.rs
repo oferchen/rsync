@@ -264,7 +264,7 @@ impl HostPattern {
     /// regardless of `deny`, exactly as upstream does at access.c:64-69.
     fn forward_resolve_matches(
         &self,
-        addr: Option<IpAddr>,
+        peer: &PeerAddress,
         forward_lookup: bool,
         deny: bool,
     ) -> bool {
@@ -273,10 +273,27 @@ impl HostPattern {
         }
 
         match self {
-            Self::Hostname(pattern) => pattern.forward_resolve_matches(addr, deny),
+            Self::Hostname(pattern) => pattern.forward_resolve_matches(peer, deny),
             _ => false,
         }
     }
+}
+
+/// Whether one forward-resolved record names the connecting peer.
+///
+/// upstream: access.c:124-126 - an IPv6 record that carries a scope id is
+/// skipped unless the peer is on that same scope; a record with scope 0
+/// matches a peer on any scope. glibc's files and DNS backends attach no scope
+/// to a record (files NSS rejects a `%scope` in /etc/hosts), so on glibc this
+/// rule can only fire for a resolver that does.
+fn resolved_record_is_peer(record: SocketAddr, ip: IpAddr, scope_id: u32) -> bool {
+    if let SocketAddr::V6(v6) = record
+        && v6.scope_id() != 0
+        && v6.scope_id() != scope_id
+    {
+        return false;
+    }
+    record.ip() == ip
 }
 
 /// How a peer whose address text cannot be read meets an address token
@@ -408,16 +425,20 @@ impl HostnamePattern {
     /// the connecting address (access.c:77-78). The eligibility gate is
     /// [`token_is_forward_resolvable`]; resolution goes through the shared
     /// [`module_state::forward_resolve`] seam so failures fail closed.
-    fn forward_resolve_matches(&self, addr: Option<IpAddr>, deny: bool) -> bool {
+    fn forward_resolve_matches(&self, peer: &PeerAddress, deny: bool) -> bool {
         if !token_is_forward_resolvable(&self.original) {
             return false;
         }
 
         match module_state::forward_resolve(&self.original) {
-            // upstream: access.c:84-107 - a successful lookup matches only when
+            // upstream: access.c:84-130 - a successful lookup matches only when
             // one of the returned records IS the peer; a peer string that
             // `getaddrinfo` cannot parse leaves `a` NULL and matches none.
-            Some(resolved) => addr.is_some_and(|addr| resolved.contains(&addr)),
+            Some(resolved) => peer.ip().is_some_and(|ip| {
+                resolved
+                    .into_iter()
+                    .any(|record| resolved_record_is_peer(record, ip, peer.scope_id()))
+            }),
             // upstream: access.c:72-81 - a token the resolver cannot resolve
             // returns `deny`, so a deny rule fails CLOSED.
             None => deny,

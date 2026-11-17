@@ -1,8 +1,8 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use dns_lookup::lookup_addr;
 #[cfg(not(test))]
-use dns_lookup::lookup_host;
+use dns_lookup::{AddrInfoHints, SockType, getaddrinfo};
 
 use super::ModuleDefinition;
 
@@ -168,10 +168,11 @@ fn reverse_lookup_name(peer_ip: IpAddr) -> Option<String> {
 /// matching upstream `check_name`'s fail-closed behaviour on `getaddrinfo`
 /// error (clientname.c:437-441).
 fn forward_confirms(name: &str, peer_ip: IpAddr) -> bool {
-    forward_resolve(name).is_some_and(|addrs| addrs.into_iter().any(|addr| addr == peer_ip))
+    forward_resolve(name).is_some_and(|addrs| addrs.into_iter().any(|addr| addr.ip() == peer_ip))
 }
 
-/// Forward-resolves `name` to its A/AAAA records.
+/// Forward-resolves `name` to its A/AAAA records, each with the IPv6 scope id
+/// the resolver attached (0 for none).
 ///
 /// This is the single forward-DNS seam shared by two callers: reverse-name
 /// forward-confirmation (`forward_confirms`) and the forward resolution of
@@ -191,7 +192,7 @@ fn forward_confirms(name: &str, peer_ip: IpAddr) -> bool {
 /// an entry resolved successfully to those addresses (an empty slice models a
 /// successful lookup with no records); a name with no entry models a failed
 /// lookup.
-pub(in crate::daemon) fn forward_resolve(name: &str) -> Option<Vec<IpAddr>> {
+pub(in crate::daemon) fn forward_resolve(name: &str) -> Option<Vec<SocketAddr>> {
     let key = normalize_hostname_owned(name.to_owned());
     resolve_forward_key(&key)
 }
@@ -200,15 +201,29 @@ pub(in crate::daemon) fn forward_resolve(name: &str) -> Option<Vec<IpAddr>> {
 /// reports a FAILED lookup for unknown names, keeping access-control tests
 /// hermetic and free of real DNS traffic.
 #[cfg(test)]
-fn resolve_forward_key(key: &str) -> Option<Vec<IpAddr>> {
+fn resolve_forward_key(key: &str) -> Option<Vec<SocketAddr>> {
     TEST_FORWARD_OVERRIDES.with(|map| map.borrow().get(key).cloned())
 }
 
 /// Production forward resolver: queries the system resolver, reporting `None`
 /// when the lookup itself fails so callers can apply upstream's per-list rule.
+///
+/// upstream: access.c:76-82 `getaddrinfo(tok, NULL, &hints, &res0)` with
+/// `PF_UNSPEC` and `SOCK_STREAM`; the full socket address is kept because
+/// access.c:124-126 compares the IPv6 `sin6_scope_id`.
 #[cfg(not(test))]
-fn resolve_forward_key(key: &str) -> Option<Vec<IpAddr>> {
-    lookup_host(key).map(|addrs| addrs.collect()).ok()
+fn resolve_forward_key(key: &str) -> Option<Vec<SocketAddr>> {
+    let hints = AddrInfoHints {
+        socktype: SockType::Stream.into(),
+        ..AddrInfoHints::default()
+    };
+    let records = getaddrinfo(Some(key), None, Some(hints)).ok()?;
+    Some(
+        records
+            .filter_map(Result::ok)
+            .map(|info| info.sockaddr)
+            .collect(),
+    )
 }
 
 /// Tests whether the connecting client `host` belongs to the named `netgroup`.
@@ -258,7 +273,7 @@ pub(super) fn normalize_hostname_owned(name: String) -> String {
 thread_local! {
     pub(in crate::daemon) static TEST_HOSTNAME_OVERRIDES: RefCell<HashMap<IpAddr, Option<String>>> =
         RefCell::new(HashMap::new());
-    pub(in crate::daemon) static TEST_FORWARD_OVERRIDES: RefCell<HashMap<String, Vec<IpAddr>>> =
+    pub(in crate::daemon) static TEST_FORWARD_OVERRIDES: RefCell<HashMap<String, Vec<SocketAddr>>> =
         RefCell::new(HashMap::new());
     pub(in crate::daemon) static TEST_NETGROUP_MEMBERS: RefCell<HashMap<String, Vec<String>>> =
         RefCell::new(HashMap::new());
@@ -282,9 +297,17 @@ pub(crate) fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
 #[cfg(test)]
 #[allow(dead_code)]
 pub(crate) fn set_test_forward_override(name: &str, addrs: &[IpAddr]) {
+    let records: Vec<SocketAddr> = addrs.iter().map(|&ip| SocketAddr::new(ip, 0)).collect();
+    set_test_forward_records(name, &records);
+}
+
+/// Sets a test override for the forward resolution of `name` to full socket
+/// addresses, so a record can carry an IPv6 scope id.
+#[cfg(test)]
+pub(crate) fn set_test_forward_records(name: &str, records: &[SocketAddr]) {
     let normalized = normalize_hostname_owned(name.to_owned());
     TEST_FORWARD_OVERRIDES.with(|map| {
-        map.borrow_mut().insert(normalized, addrs.to_vec());
+        map.borrow_mut().insert(normalized, records.to_vec());
     });
 }
 

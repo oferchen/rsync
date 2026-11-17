@@ -53,14 +53,21 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 pub(crate) struct PeerAddress {
     text: String,
     ip: Option<IpAddr>,
+    scope_id: u32,
 }
 
 impl PeerAddress {
-    /// A peer named by a socket address, shown as its address.
+    /// A peer named by a socket address, shown as its address, with the IPv6
+    /// scope id the socket reported (0 for IPv4).
     pub(crate) fn from_socket(addr: SocketAddr) -> Self {
+        let scope_id = match addr {
+            SocketAddr::V6(v6) => v6.scope_id(),
+            SocketAddr::V4(_) => 0,
+        };
         Self {
             text: addr.ip().to_string(),
             ip: Some(addr.ip()),
+            scope_id,
         }
     }
 
@@ -73,16 +80,16 @@ impl PeerAddress {
     /// verbatim. A string the reading rejects has no address at all - never a
     /// stand-in such as `0.0.0.0` - and the access check decides it by the
     /// unresolved-peer rule in `config_helpers/host_pattern.rs`.
-    fn from_remote_shell(text: &str) -> Self {
-        let ip = numeric_host(
+    pub(in crate::daemon) fn from_remote_shell(text: &str) -> Self {
+        let parsed = numeric_host(
             NumericHostRule::HOST,
             text,
             platform::net_interface::interface_index,
-        )
-        .map(|(ip, _scope_id)| ip);
+        );
         Self {
             text: text.to_owned(),
-            ip,
+            ip: parsed.map(|(ip, _)| ip),
+            scope_id: parsed.map_or(0, |(_, scope_id)| scope_id),
         }
     }
 
@@ -90,6 +97,11 @@ impl PeerAddress {
     /// `None` when the peer string names no address this platform can read.
     pub(crate) const fn ip(&self) -> Option<IpAddr> {
         self.ip
+    }
+
+    /// The peer's IPv6 scope id, 0 when it has none.
+    pub(crate) const fn scope_id(&self) -> u32 {
+        self.scope_id
     }
 
     /// The peer as `RSYNC_HOST_ADDR` and the log lines show it.
