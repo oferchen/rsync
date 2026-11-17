@@ -528,6 +528,11 @@ where
     // `allow_8bit_chars` global, which every `rwrite()` boundary reads (log.c:425).
     if pass.is_process() {
         logging::escape::set_eight_bit_output(eight_bit_output);
+        // upstream: rsync.c:95-98 - a process that is not a server opens
+        // `ic_chck` unless `-8` is in effect, so its terminal lines are checked
+        // against the locale charset (log.c:462-494). This path is the client;
+        // the server and daemon entry points never set it.
+        logging::escape::set_message_charset_check(!eight_bit_output);
     }
 
     let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);

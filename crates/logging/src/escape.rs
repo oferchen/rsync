@@ -1,9 +1,9 @@
 //! Filename octal escaping matching upstream rsync's `filtered_fwrite`
-//! in `log.c:242-264`.
+//! in `log.c:295-344`.
 //!
 //! Upstream rsync escapes non-printable bytes in filenames as `\#ooo`
 //! (backslash, hash, three octal digits). Which bytes qualify depends on the
-//! destination, so `filtered_fwrite` takes two independent switches - see
+//! destination and on the process locale - see
 //! [`EscapeStyle`](crate::escape::EscapeStyle).
 //!
 //! The path is spelled out because `lib.rs` puts a `///` comment on
@@ -13,13 +13,13 @@
 
 use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 /// Process-wide `--8-bit-output` / `-8` state.
 ///
 /// upstream: `allow_8bit_chars` is a single file-scope global (options.c:105),
 /// consulted only where a buffer is written to the terminal - `rwrite()` ->
-/// `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0, ..)` (log.c:425). A
+/// `filtered_fwrite(f, buf, len, !allow_8bit_chars, ..)` (log.c:499). A
 /// process global (not a thread-local) mirrors that exactly: the flag is one
 /// CLI decision that every output boundary on every transfer thread must read.
 /// Defaults to `false`, upstream's default (every non-`isprint` byte escaped).
@@ -39,6 +39,95 @@ pub fn eight_bit_output() -> bool {
     ALLOW_8BIT_CHARS.load(Ordering::Relaxed)
 }
 
+/// How the process `LC_CTYPE` codeset classifies name bytes.
+///
+/// upstream: main.c:1911 `setlocale(LC_CTYPE, "")` adopts the environment's
+/// locale, and every multibyte decision afterwards - `mbrtowc()` in
+/// log.c:251-274 `locale_char_len()`, and the `iconv` validation of
+/// rsync.c:95-98 `ic_chck` - is made in that locale's codeset. oc-rsync decodes
+/// only the codesets it can decode without `iconv`; any other codeset keeps the
+/// byte-at-a-time escaping, which escapes every byte at or above 0x80 on the
+/// terminal (see [`set_locale_codeset`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocaleCharset {
+    /// 7-bit ASCII - the `C`/`POSIX` locale. No byte at or above 0x80 starts a
+    /// character, so `mbrtowc()` rejects each one and `iconv` reports `EILSEQ`.
+    Ascii,
+    /// UTF-8.
+    Utf8,
+    /// Any other codeset (ISO-8859-x, GBK, EUC-JP, ...). Not decoded.
+    Other,
+}
+
+/// The process codeset class; `Ascii` until [`set_locale_codeset`] runs, which
+/// is the `C` locale a process starts in before `setlocale()`.
+static LOCALE_CHARSET: AtomicU8 = AtomicU8::new(LocaleCharset::Ascii as u8);
+
+/// Records the codeset `nl_langinfo(CODESET)` reported after the process
+/// adopted its `LC_CTYPE` locale.
+///
+/// `None` (no codeset could be read) keeps the `C` locale's ASCII codeset.
+/// Codeset names are compared ignoring case, `-` and `_`, so glibc's `UTF-8`
+/// and `ANSI_X3.4-1968` and the BSDs' `US-ASCII` are all recognised.
+pub fn set_locale_codeset(codeset: Option<&str>) {
+    LOCALE_CHARSET.store(classify_codeset(codeset) as u8, Ordering::Relaxed);
+}
+
+/// Reads the process codeset class recorded by [`set_locale_codeset`].
+#[must_use]
+pub fn locale_charset() -> LocaleCharset {
+    match LOCALE_CHARSET.load(Ordering::Relaxed) {
+        x if x == LocaleCharset::Utf8 as u8 => LocaleCharset::Utf8,
+        x if x == LocaleCharset::Other as u8 => LocaleCharset::Other,
+        _ => LocaleCharset::Ascii,
+    }
+}
+
+fn classify_codeset(codeset: Option<&str>) -> LocaleCharset {
+    let Some(codeset) = codeset else {
+        return LocaleCharset::Ascii;
+    };
+    let folded: String = codeset
+        .chars()
+        .filter(|c| !matches!(c, '-' | '_'))
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    match folded.as_str() {
+        "utf8" => LocaleCharset::Utf8,
+        "ansix3.41968" | "usascii" | "ascii" | "646" | "" => LocaleCharset::Ascii,
+        _ => LocaleCharset::Other,
+    }
+}
+
+/// Process-wide "check messages against the locale charset" state - upstream's
+/// `ic_chck`.
+///
+/// upstream: rsync.c:95-98 opens `ic_chck = iconv_open(defset, defset)` only
+/// for a process that is not a server and runs without `-8`. While it is open,
+/// log.c:462-494 `rwrite()` validates every terminal line in the locale
+/// codeset: a byte that does not start a valid character is written as
+/// `\#ooo`, and the valid characters go through `filtered_fwrite(.., 0, ..)`
+/// (log.c:476), which keeps printable multibyte characters raw. A server or a
+/// `-8` client never opens it and takes `filtered_fwrite(.., !allow_8bit_chars,
+/// ..)` (log.c:499) instead.
+static MESSAGE_CHARSET_CHECK: AtomicBool = AtomicBool::new(false);
+
+/// Records whether this process checks terminal output against the locale
+/// charset (upstream `ic_chck`): true for a client without `-8`.
+pub fn set_message_charset_check(value: bool) {
+    MESSAGE_CHARSET_CHECK.store(value, Ordering::Relaxed);
+}
+
+/// Whether a `use_isprint` terminal line takes upstream's `ic_chck` branch.
+///
+/// The branch is exact only for the codesets oc-rsync can validate without
+/// `iconv` - ASCII and UTF-8. Under any other codeset the line keeps the
+/// `isprint()` branch, which escapes every byte at or above 0x80.
+fn message_charset_checked() -> bool {
+    MESSAGE_CHARSET_CHECK.load(Ordering::Relaxed)
+        && matches!(locale_charset(), LocaleCharset::Ascii | LocaleCharset::Utf8)
+}
+
 /// The terminal escape style honouring the process-wide `-8` setting.
 ///
 /// upstream: log.c:499 `rwrite()` selects `filtered_fwrite(.., !allow_8bit_chars,
@@ -49,28 +138,28 @@ pub fn terminal_style() -> EscapeStyle {
     EscapeStyle::terminal(eight_bit_output())
 }
 
-/// The two `filtered_fwrite` escape switches, resolved per destination.
+/// The `filtered_fwrite` escape switch, resolved per destination.
 ///
-/// upstream: log.c:249 `filtered_fwrite(FILE *f, const char *in_buf, int
-/// in_len, int use_isprint, int escape_c1, char end_char)`. Upstream passes a
-/// different pair for each sink, so oc-rsync carries the pair rather than the
-/// `--8-bit-output` flag alone:
-///   - the terminal sink gets `use_isprint = !allow_8bit_chars, escape_c1 = 0`
-///     (log.c:425);
-///   - the log-file sink gets `use_isprint = 0, escape_c1 = 1` (log.c:136),
-///     which is deliberately *not* gated on `--8-bit-output`.
+/// upstream: log.c:295 `filtered_fwrite(FILE *f, const char *in_buf, int
+/// in_len, int use_isprint, char end_char)`. Every call site escapes C0 (tab
+/// excepted), DEL and 0x80-0x9F (log.c:288-291); `use_isprint` additionally
+/// escapes every byte `isprint()` rejects. The sinks differ only in that flag:
+///   - the terminal sink of a server or a `-8` client passes
+///     `!allow_8bit_chars` (log.c:499);
+///   - a client without `-8` validates the line against the locale charset
+///     first and passes 0 (log.c:462-494, see [`set_message_charset_check`]);
+///   - the log-file sink passes 0 (log.c:143), which is deliberately *not*
+///     gated on `--8-bit-output`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EscapeStyle {
     /// Escape every byte libc `isprint()` rejects (upstream `use_isprint`).
     use_isprint: bool,
-    /// Escape the C1 control range 0x80-0x9F (upstream `escape_c1`).
-    escape_c1: bool,
-    /// Escape the C0 controls below 0x20, tab excepted.
+    /// Escape C0 (tab excepted), DEL and 0x80-0x9F.
     ///
-    /// Upstream has no switch for this: every `filtered_fwrite` call site
-    /// escapes them (log.c:254 `*(uchar*)in_buf < ' '`). oc-rsync needs the switch because
-    /// it has a sink upstream does not - [`EscapeStyle::passthrough`], for a
-    /// producer whose own sink escapes.
+    /// Upstream has no switch for this: every `filtered_fwrite` call escapes
+    /// them (log.c:288-291). oc-rsync needs the switch because it has a sink
+    /// upstream does not - [`EscapeStyle::passthrough`], for a producer whose
+    /// own sink escapes.
     escape_controls: bool,
 }
 
@@ -84,32 +173,32 @@ impl Default for EscapeStyle {
 impl EscapeStyle {
     /// Escaping for stdout/stderr, honouring `--8-bit-output` / `-8`.
     ///
-    /// upstream: log.c:499 `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0,
-    /// trailing_CR_or_NL)`. Without `-8` every non-`isprint` byte is escaped,
-    /// which covers DEL (0x7F) and the whole high range 0x80-0xFF; with `-8`
-    /// only the sub-0x20 controls (tab excepted) are.
+    /// upstream: log.c:499 `filtered_fwrite(f, buf, len, !allow_8bit_chars,
+    /// trailing_NL)`. Without `-8` every non-`isprint` byte is escaped, which
+    /// covers DEL (0x7F) and the whole high range 0x80-0xFF; with `-8` a valid
+    /// printable locale character and a high byte outside 0x80-0x9F pass. A
+    /// client without `-8` takes the locale-checked branch instead (log.c:476),
+    /// selected in the escaper by [`set_message_charset_check`].
     #[must_use]
     pub const fn terminal(allow_8bit: bool) -> Self {
         Self {
             use_isprint: !allow_8bit,
-            escape_c1: false,
             escape_controls: true,
         }
     }
 
     /// Escaping for the log file (CWE-117 log injection defence).
     ///
-    /// upstream: log.c:143 `filtered_fwrite(logfile_fp, buf, len, 0, 1,
-    /// trailing)`. The `isprint()` filter is off, so DEL and 0xA0-0xFF reach
-    /// the log verbatim and a non-UTF-8 name stays readable; in exchange the
-    /// C1 range is escaped unconditionally, so neither a 7-bit `ESC` nor an
-    /// 8-bit `CSI` can forge a log line or drive the operator's terminal. The
-    /// pair does not depend on `--8-bit-output`.
+    /// upstream: log.c:143 `filtered_fwrite(logfile_fp, buf, len, 0,
+    /// trailing)`. The `isprint()` filter is off, so 0xA0-0xFF reach the log
+    /// verbatim and a non-UTF-8 name stays readable, while C0, DEL and the C1
+    /// range are still escaped, so neither a 7-bit `ESC` nor an 8-bit `CSI` can
+    /// forge a log line or drive the operator's terminal. The style does not
+    /// depend on `--8-bit-output`.
     #[must_use]
     pub const fn log_file() -> Self {
         Self {
             use_isprint: false,
-            escape_c1: true,
             escape_controls: true,
         }
     }
@@ -118,7 +207,7 @@ impl EscapeStyle {
     ///
     /// upstream has no `filtered_fwrite` call in `log_formatted()` at all: the
     /// renderer builds the line and escaping happens later, once, in the
-    /// writer - `log.c:136 logit()` for the log file, `log.c:425 rwrite()` for
+    /// writer - `log.c:143 logit()` for the log file, `log.c:499 rwrite()` for
     /// the terminal. `LogFileWriter` (in the `logging-sink` crate) now owns
     /// the log-file half, so a renderer feeding it must select this style;
     /// applying [`EscapeStyle::log_file`] there too would escape the backslash
@@ -127,7 +216,6 @@ impl EscapeStyle {
     pub const fn passthrough() -> Self {
         Self {
             use_isprint: false,
-            escape_c1: false,
             escape_controls: false,
         }
     }
@@ -144,42 +232,27 @@ fn is_c_print(byte: u8) -> bool {
 
 /// Decides whether a single byte must be octal-escaped as `\#ooo`.
 ///
-/// upstream: log.c:320-321 `filtered_fwrite` escape condition:
-///   `*in_buf != '\t' && ((use_isprint && !isPrint(in_buf)) || *(uchar*)in_buf < ' '
-///     || (escape_c1 && *(uchar*)in_buf >= 0x80 && *(uchar*)in_buf <= 0x9f))`
+/// upstream: log.c:289-291 `filtered_char_len()` escape condition:
+///   `*buf != '\t' && ((use_isprint && !isPrint(buf)) || byte < ' '
+///     || byte == 0x7f || (byte >= 0x80 && byte <= 0x9f))`
 #[inline]
 fn should_escape_byte(byte: u8, style: EscapeStyle) -> bool {
     byte != b'\t'
         && ((style.use_isprint && !is_c_print(byte))
             || (style.escape_controls
-                && (byte < b' '
-                    || (!style.use_isprint && (byte == 0x7F || (0x80..=0x9F).contains(&byte)))))
-            || (style.escape_c1 && (0x80..=0x9F).contains(&byte)))
+                && (byte < b' ' || byte == 0x7F || (0x80..=0x9F).contains(&byte))))
 }
 
-/// Reports whether the active `LC_CTYPE` locale (checking `LC_ALL`,
-/// `LC_CTYPE`, then `LANG` in POSIX precedence) uses UTF-8 encoding.
-fn is_utf8_locale() -> bool {
-    for var in ["LC_ALL", "LC_CTYPE", "LANG"] {
-        if let Some(val) = std::env::var_os(var) {
-            let s = val.to_string_lossy();
-            if !s.is_empty() {
-                let lower = s.to_ascii_lowercase();
-                return lower.contains("utf-8") || lower.contains("utf8");
-            }
-        }
-    }
-    false
-}
-
-/// Decodes one multibyte character in the active `LC_CTYPE` locale,
-/// returning `(byte_len, is_control)`. Returns `None` in non-UTF-8 locales or
-/// on invalid/incomplete sequences so callers fall back to byte-by-byte
-/// filtering.
+/// Decodes one multibyte character in the process `LC_CTYPE` codeset,
+/// returning `(byte_len, is_control)`. Returns `None` when the codeset is not
+/// UTF-8 or on an invalid/incomplete sequence, so callers fall back to
+/// byte-by-byte filtering.
 ///
-/// upstream: `log.c:locale_char_len`.
+/// upstream: log.c:251-274 `locale_char_len()` - `mbrtowc()` in the locale the
+/// process adopted at main.c:1911. In the `C` locale it rejects every byte at or
+/// above 0x80.
 fn locale_char_len(buf: &[u8]) -> Option<(usize, bool)> {
-    if !is_utf8_locale() {
+    if locale_charset() != LocaleCharset::Utf8 {
         return None;
     }
     let slice = &buf[..buf.len().min(4)];
@@ -196,7 +269,7 @@ fn locale_char_len(buf: &[u8]) -> Option<(usize, bool)> {
 }
 
 /// Escapes non-printable bytes for display output, matching upstream
-/// rsync's `filtered_fwrite` in `log.c:242-264`.
+/// rsync's `filtered_fwrite` in `log.c:295-344`.
 ///
 /// Which bytes qualify is decided by `style` - see [`EscapeStyle`]. Tab
 /// (0x09) is always passed through unescaped.
@@ -264,6 +337,18 @@ fn escape_bytes_slow(input: &[u8], style: EscapeStyle) -> Vec<u8> {
     let mut output: Vec<u8> = Vec::with_capacity(input.len() + input.len() / 4);
     let len = input.len();
     let mut i = 0;
+    // upstream: log.c:462-494 - with `ic_chck` open, `iconvbufs()` passes the
+    // valid characters to `filtered_fwrite(f, convbuf, len, 0, ..)` (log.c:476)
+    // and writes each byte it rejects as `\#ooo` (log.c:484-486).
+    let charset_checked = style.use_isprint && style.escape_controls && message_charset_checked();
+    let style = if charset_checked {
+        EscapeStyle {
+            use_isprint: false,
+            escape_controls: true,
+        }
+    } else {
+        style
+    };
 
     while i < len {
         let byte = input[i];
@@ -281,6 +366,12 @@ fn escape_bytes_slow(input: &[u8], style: EscapeStyle) -> Vec<u8> {
                 output.extend_from_slice(&input[i..i + char_len]);
             }
             i += char_len;
+            continue;
+        }
+
+        if charset_checked && byte >= 0x80 {
+            let _ = write!(output, "\\#{byte:03o}");
+            i += 1;
             continue;
         }
 
@@ -363,7 +454,7 @@ mod tests {
     /// The log-file sink (upstream log.c:143 `logit`).
     const LOGFILE: EscapeStyle = EscapeStyle::log_file();
 
-    // -- escape_for_output: terminal style, no -8 (use_isprint=1, escape_c1=0) --
+    // -- escape_for_output: terminal style, no -8 (use_isprint=1) --
 
     #[test]
     fn ascii_printable_passes_through() {
@@ -436,7 +527,7 @@ mod tests {
         assert_eq!(escape_for_output(&[0xFF], TERMINAL), b"\\#377".to_vec());
     }
 
-    // -- escape_for_output: terminal style under -8 (use_isprint=0, escape_c1=0) --
+    // -- escape_for_output: terminal style under -8 (use_isprint=0) --
 
     #[test]
     fn control_char_escaped_in_8bit_mode() {
@@ -655,7 +746,7 @@ mod tests {
         assert_eq!(escape_for_output(b"", TERMINAL_8BIT), Vec::<u8>::new());
     }
 
-    // -- log-file style (upstream log.c:143: use_isprint=0, escape_c1=1) --
+    // -- log-file style (upstream log.c:143: use_isprint=0) --
 
     /// WHY: a filename carrying `\n` or `ESC` must not be able to forge a log
     /// line or drive the operator's terminal when they later `cat` the log
@@ -672,7 +763,7 @@ mod tests {
     /// WHY: 0x9B is the 8-bit CSI - on a terminal that decodes C1 it starts a
     /// control sequence exactly as `ESC [` does, so the log sink escapes the
     /// whole C1 range whether or not `--8-bit-output` is in play.
-    /// upstream: log.c:321 `escape_c1 && *(uchar*)in_buf >= 0x80 && <= 0x9f`.
+    /// upstream: log.c:291 `byte >= 0x80 && byte <= 0x9f`.
     #[test]
     fn log_file_escapes_the_c1_range() {
         assert_eq!(escape_for_output(&[0x80], LOGFILE), b"\\#200".to_vec());
@@ -714,7 +805,7 @@ mod tests {
     }
 
     /// CLASS GUARD: for every byte value, the log style must escape exactly the
-    /// set upstream's `filtered_fwrite(.., use_isprint=0, escape_c1=1, ..)`
+    /// set upstream's `filtered_fwrite(.., use_isprint=0, ..)`
     /// escapes - no more, no less - and must never be gated on `-8`.
     #[test]
     fn log_file_style_matches_upstream_predicate_for_every_byte() {
@@ -733,11 +824,171 @@ mod tests {
         }
     }
 
-    /// The log style is a fixed pair, so it cannot be reached from the `-8`
-    /// flag: constructing it twice must yield the same rule either way.
+    /// The log style is fixed: log.c:143 always passes `use_isprint = 0`, so
+    /// flipping the process `-8` flag must not change what it escapes. (In
+    /// 3.5.2 it equals the `-8` terminal rule; only the non-`-8` terminal
+    /// differs.)
     #[test]
     fn log_file_style_is_independent_of_eight_bit_output() {
+        let sample = b"a\x1b\x7f\x85\xc3\xa9\xff";
+        set_eight_bit_output(false);
+        let without = escape_for_output(sample, EscapeStyle::log_file());
+        set_eight_bit_output(true);
+        let with = escape_for_output(sample, EscapeStyle::log_file());
+        assert_eq!(without, with);
         assert_ne!(EscapeStyle::log_file(), EscapeStyle::terminal(false));
-        assert_ne!(EscapeStyle::log_file(), EscapeStyle::terminal(true));
+    }
+}
+
+/// Terminal escaping under the process locale and `ic_chck` (rsync 3.5.2
+/// rsync.c:95-98, log.c:251-293, log.c:462-499).
+///
+/// Each test sets the process-wide codeset and `ic_chck` state; nextest runs
+/// every test in its own process, so the settings cannot leak into a peer.
+#[cfg(test)]
+mod locale_checked_tests {
+    use super::*;
+
+    /// A client without `-8` - upstream opens `ic_chck`.
+    fn client_in(codeset: &str) {
+        set_locale_codeset(Some(codeset));
+        set_message_charset_check(true);
+    }
+
+    fn terminal(input: &[u8]) -> Vec<u8> {
+        escape_for_output(input, EscapeStyle::terminal(false))
+    }
+
+    #[test]
+    fn codeset_names_classify_like_nl_langinfo_reports_them() {
+        assert_eq!(classify_codeset(Some("UTF-8")), LocaleCharset::Utf8);
+        assert_eq!(classify_codeset(Some("utf8")), LocaleCharset::Utf8);
+        assert_eq!(
+            classify_codeset(Some("ANSI_X3.4-1968")),
+            LocaleCharset::Ascii
+        );
+        assert_eq!(classify_codeset(Some("US-ASCII")), LocaleCharset::Ascii);
+        assert_eq!(classify_codeset(Some("ISO-8859-1")), LocaleCharset::Other);
+        assert_eq!(classify_codeset(Some("GBK")), LocaleCharset::Other);
+        assert_eq!(classify_codeset(None), LocaleCharset::Ascii);
+    }
+
+    /// WHY: under a UTF-8 locale upstream prints a printable multibyte name
+    /// raw (log.c:476 -> filtered_fwrite(.., 0, ..)); escaping it was the bug.
+    #[test]
+    fn utf8_client_keeps_printable_multibyte_raw() {
+        client_in("UTF-8");
+        assert_eq!(terminal(b"caf\xc3\xa9"), b"caf\xc3\xa9".to_vec());
+        assert_eq!(terminal(b"nb\xc2\xa0x"), b"nb\xc2\xa0x".to_vec());
+    }
+
+    /// WHY: a valid C1 character is a control (log.c:264-265), so all of its
+    /// bytes are escaped even though the sequence is valid UTF-8.
+    #[test]
+    fn utf8_client_escapes_c1_character_bytewise() {
+        client_in("UTF-8");
+        assert_eq!(terminal(b"c1\xc2\x85x"), b"c1\\#302\\#205x".to_vec());
+    }
+
+    /// WHY: `iconv` rejects a byte that does not start a valid character and
+    /// rwrite() writes it as `\#ooo` (log.c:484-486), whatever its value.
+    #[test]
+    fn utf8_client_escapes_each_invalid_byte() {
+        client_in("UTF-8");
+        assert_eq!(terminal(b"bad\xff"), b"bad\\#377".to_vec());
+        assert_eq!(terminal(b"trunc\xc3"), b"trunc\\#303".to_vec());
+        assert_eq!(
+            terminal(b"sur\xed\xa0\x80"),
+            b"sur\\#355\\#240\\#200".to_vec()
+        );
+        assert_eq!(terminal(b"lone\x85x"), b"lone\\#205x".to_vec());
+        assert_eq!(terminal(b"lat\xe9x"), b"lat\\#351x".to_vec());
+    }
+
+    /// WHY: C0 (tab excepted) and DEL are escaped on every path (log.c:288-291).
+    #[test]
+    fn utf8_client_escapes_c0_and_del_but_not_tab() {
+        client_in("UTF-8");
+        assert_eq!(terminal(b"esc\x1bx"), b"esc\\#033x".to_vec());
+        assert_eq!(terminal(b"cr\rx"), b"cr\\#015x".to_vec());
+        assert_eq!(terminal(b"del\x7f"), b"del\\#177".to_vec());
+        assert_eq!(terminal(b"tab\tx"), b"tab\tx".to_vec());
+    }
+
+    /// WHY: a literal `\#ddd` would read as an escape, so its backslash is
+    /// escaped (log.c:287-288) under every locale.
+    #[test]
+    fn utf8_client_escapes_literal_escape_sequence() {
+        client_in("UTF-8");
+        assert_eq!(terminal(b"lit\\#123"), b"lit\\#134#123".to_vec());
+        assert_eq!(
+            terminal(b"caf\xc3\xa9\\#123"),
+            b"caf\xc3\xa9\\#134#123".to_vec()
+        );
+    }
+
+    /// WHY: the `C` codeset is ASCII, so every byte at or above 0x80 is invalid
+    /// and escaped - the same bytes `isprint()` rejects.
+    #[test]
+    fn c_locale_client_escapes_every_high_byte() {
+        client_in("ANSI_X3.4-1968");
+        assert_eq!(terminal(b"caf\xc3\xa9"), b"caf\\#303\\#251".to_vec());
+        assert_eq!(terminal(b"c1\xc2\x85x"), b"c1\\#302\\#205x".to_vec());
+        assert_eq!(terminal(b"bad\xff"), b"bad\\#377".to_vec());
+        assert_eq!(terminal(b"del\x7f\tx"), b"del\\#177\tx".to_vec());
+        assert_eq!(terminal(b"lit\\#123"), b"lit\\#134#123".to_vec());
+    }
+
+    /// WHY: a server never opens `ic_chck` (rsync.c:95 `!am_server`), so it
+    /// keeps the `isprint()` branch (log.c:499) even under a UTF-8 locale.
+    #[test]
+    fn server_keeps_isprint_escaping_under_utf8() {
+        set_locale_codeset(Some("UTF-8"));
+        set_message_charset_check(false);
+        assert_eq!(terminal(b"caf\xc3\xa9"), b"caf\\#303\\#251".to_vec());
+    }
+
+    /// WHY: `-8` closes `ic_chck`; filtered_fwrite(.., 0, ..) then keeps a
+    /// valid printable character and an invalid byte outside 0x80-0x9F raw.
+    #[test]
+    fn eight_bit_client_under_utf8_passes_invalid_high_bytes() {
+        set_locale_codeset(Some("UTF-8"));
+        set_message_charset_check(false);
+        let style = EscapeStyle::terminal(true);
+        assert_eq!(
+            escape_for_output(b"caf\xc3\xa9", style),
+            b"caf\xc3\xa9".to_vec()
+        );
+        assert_eq!(escape_for_output(b"bad\xff", style), b"bad\xff".to_vec());
+        assert_eq!(
+            escape_for_output(b"lone\x85x", style),
+            b"lone\\#205x".to_vec()
+        );
+        assert_eq!(
+            escape_for_output(b"c1\xc2\x85x", style),
+            b"c1\\#302\\#205x".to_vec()
+        );
+    }
+
+    /// WHY: oc-rsync cannot validate other codesets without `iconv`, so a
+    /// client there keeps the conservative `isprint()` escaping. This pins the
+    /// documented gap: upstream would print a printable ISO-8859-1 byte raw.
+    #[test]
+    fn unsupported_codeset_client_keeps_conservative_escaping() {
+        client_in("ISO-8859-1");
+        assert_eq!(terminal(b"caf\xe9"), b"caf\\#351".to_vec());
+    }
+
+    /// WHY: the log file never takes the `ic_chck` branch (log.c:143), so the
+    /// client's check must not change it.
+    #[test]
+    fn log_file_is_unaffected_by_the_client_check() {
+        client_in("UTF-8");
+        let style = EscapeStyle::log_file();
+        assert_eq!(escape_for_output(b"bad\xff", style), b"bad\xff".to_vec());
+        assert_eq!(
+            escape_for_output(b"c1\xc2\x85x", style),
+            b"c1\\#302\\#205x".to_vec()
+        );
     }
 }

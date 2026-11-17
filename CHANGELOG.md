@@ -596,6 +596,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Resolve an inline file-list owner name as the entry is decoded (#7687)
 
 **CLI and output**
+- Under a UTF-8 locale the client prints valid UTF-8 file names raw, as rsync 3.5.2 does; invalid bytes and control characters are still escaped as `\#ooo` (#8397)
 - The `-vv` `total:` line reports upstream's `hash_hits` and `false_alarms` for local copies, pushes and pulls; oc now replays upstream's own hash table for them (#8252)
 - `--help` lists `--quic-cert` and `--quic-key`, and the environment reference documents `OC_RSYNC_QUIC_CC` and `OC_RSYNC_QUIC_WINDOW` (#8229)
 - Honour `--` in server argv, and mirror upstream option parsing for `-M`, repeated options and popt arity (#7402, #7413, #7835, #7846, #7154, #7160)

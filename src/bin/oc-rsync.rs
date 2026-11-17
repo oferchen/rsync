@@ -70,6 +70,10 @@ fn main() -> ExitCode {
     // without the flag just keeps THP. oc-only; see `platform::memory`.
     let _ = platform::memory::disable_transparent_huge_pages();
 
+    // Still before any thread exists: `setlocale` is not thread-safe.
+    // upstream: main.c:1911 `setlocale(LC_CTYPE, "")`.
+    cli::init_process_locale();
+
     // Do NOT hold `StdoutLock`/`StderrLock` here. Both are process-wide
     // reentrant locks owned by the acquiring thread. In TCP-daemon mode `main`
     // parks in the accept loop for the process lifetime while each session runs
