@@ -202,8 +202,9 @@ impl ReceiverContext {
                 Ok((0, 0))
             }
             NonTransferMode::OnlyWriteBatch => {
-                // The same reporting pass the plain dry run uses; only the wire
-                // loop differs (real block checksums, no plan). A push receiver
+                // The same reporting pass and the same plan the plain dry run
+                // uses; the wire differs only for the transfer items, which
+                // carry real block checksums. A push receiver
                 // reads no delta - the client sender diverted it into its own
                 // batch fd (sender.c:502) - while a pull receiver drains the
                 // remote sender's delta via discard_receive_data()
@@ -215,9 +216,11 @@ impl ReceiverContext {
                     files_to_transfer,
                 );
                 stats.directories_created += self.new_dir_count(&plan);
+                let plan = self.order_plan_for_walk(plan, segments);
                 self.run_only_write_batch_loop(
                     reader,
                     writer,
+                    &plan,
                     files_to_transfer,
                     setup,
                     ndx_write_codec,
@@ -240,7 +243,7 @@ impl ReceiverContext {
                 );
                 stats.directories_created += self.new_dir_count(&plan);
                 let plan = self.order_plan_for_walk(plan, segments);
-                self.run_dry_run_loop(reader, writer, &plan, ndx_write_codec, ndx_read_codec)
+                self.run_plan_loop(reader, writer, &plan, ndx_write_codec, ndx_read_codec, None)
             }
         }
     }

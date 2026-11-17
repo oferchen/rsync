@@ -681,6 +681,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Public rustdoc no longer links private items in `batch`, `test-support` and `transfer`, so the strict "rustdoc links" job passes (#8276)
 - `-c` with a `none` file checksum (`--checksum-choice=none` or `md5,none`) exits 4 with `Invalid checksum-choice for --checksum: none (0)` at the first regular file, as 3.5.1 does; it used MD4 and exited 0 (#8262)
 - `--only-write-batch` skips a source file the sender cannot open and exits 23 with the rest of the batch written, like 3.5.2, on a push and a pull; it used to stop with exit 11 (#PRNUM)
+- `--only-write-batch` over a remote shell itemizes directories, symlinks and every other entry that is not transferred, sends each file request with its real itemize flags, and records them in the batch, like 3.5.2; `-i` used to print bare `<f.........` rows for files only (#PRNUM)
 
 ### Removed
 
