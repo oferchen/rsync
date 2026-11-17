@@ -31,8 +31,7 @@ pub(crate) fn append_filter_rules_from_files(
         let message = rsync_error!(
             1,
             "dir-merge directives cannot be loaded via --include-from/--exclude-from in this build"
-        )
-        .with_role(Role::Client);
+        );
         return Err(message);
     }
 
@@ -112,6 +111,9 @@ pub(crate) fn append_filter_rules_from_files(
 /// a filesystem probe through the filter parser. Only the TEXT differs between
 /// the arms; both exit `RERR_FILEIO`, which is why the code is set once below.
 ///
+/// Only the `rsyserr` arm carries a role: a filter refusal names a role exactly
+/// when upstream's line carries `who_am_i()` (see `write_refusal`).
+///
 /// The include/exclude wording follows `template->rflags & FILTRULE_INCLUDE` in
 /// BOTH arms, so a merge rule carrying a `+` modifier (`.+ FILE`,
 /// `merge,+ FILE`) says "include file" either way.
@@ -127,17 +129,17 @@ fn filter_file_open_error(
 ) -> Message {
     let word = if include { "in" } else { "ex" };
     let name = path.display().to_string();
-    let text = if source.is_from_file() {
-        format!(
+    if source.is_from_file() {
+        let text = format!(
             "failed to open {word}clude file {}",
             source.rule_text(&name)
-        )
-    } else {
-        format!(
-            "failed to open {word}clude file {name}: {}",
-            upstream_io_error(error)
-        )
-    };
+        );
+        return rsync_error!(FILE_IO_EXIT_CODE, text);
+    }
+    let text = format!(
+        "failed to open {word}clude file {name}: {}",
+        upstream_io_error(error)
+    );
     rsync_error!(FILE_IO_EXIT_CODE, text).with_role(Role::Client)
 }
 
@@ -159,8 +161,7 @@ pub(crate) fn load_filter_file_patterns(
     let reader = files
         .open(path, FilterFileKind::RuleList, list)
         .map_err(|error| filter_file_open_error(path, include, &error, RuleSource::Argument))?;
-    let mut reader = BufReader::new(reader);
-    read_filter_patterns(&mut reader, eol_nulls).map_err(|error| read_failure(path, &error))
+    Ok(read_filter_patterns(&mut BufReader::new(reader), eol_nulls))
 }
 
 /// Reads a merge file's entire contents as a string. `include` selects
@@ -175,30 +176,30 @@ pub(super) fn read_merge_file(
     list: &[FilterRuleSpec],
 ) -> Result<String, Message> {
     // Opened separately from the read so that only a genuine open failure takes
-    // upstream's wording and exit code; a mid-file read error (or non-UTF-8
-    // contents) is a different condition and keeps its own report.
+    // upstream's wording and exit code. A read error ends the file instead.
     let mut reader = files
         .open(path, FilterFileKind::MergeFile, list)
         .map_err(|error| filter_file_open_error(path, include, &error, source))?;
-    let mut contents = String::new();
-    reader
-        .read_to_string(&mut contents)
-        .map_err(|error| read_failure(path, &error))?;
-    Ok(contents)
+    let mut contents = Vec::new();
+    // upstream: exclude.c:1764-1769 - the getc() loop retries only EINTR and
+    // ends the file on any other read error, so a merge file naming a directory
+    // contributes no rules. `read_to_end` likewise retries EINTR and keeps the
+    // bytes read before the error.
+    let _ = reader.read_to_end(&mut contents);
+    String::from_utf8(contents).map_err(|_| non_utf8_contents(path))
 }
 
-/// Reports a filter file that opened but could not be read.
-///
-/// Upstream has no analogue: its getc loop cannot distinguish a read error
-/// from EOF, so a post-open failure silently ends the file. Keep oc's louder
-/// report rather than inventing an upstream citation for it.
-fn read_failure(path: &Path, error: &io::Error) -> Message {
-    let text = if path == Path::new("-") {
-        format!("failed to read filter patterns from standard input: {error}")
-    } else {
+/// Reports merge-file contents that are not UTF-8, which the rule parser
+/// cannot carry yet (task 627 moves patterns to raw bytes).
+fn non_utf8_contents(path: &Path) -> Message {
+    let error = io::Error::new(
+        io::ErrorKind::InvalidData,
+        "stream did not contain valid UTF-8",
+    );
+    rsync_error!(
+        1,
         format!("failed to read filter file '{}': {error}", path.display())
-    };
-    rsync_error!(1, text).with_role(Role::Client)
+    )
 }
 
 /// Splits a reader into filter pattern records, skipping EMPTY records and
@@ -213,10 +214,12 @@ fn read_failure(path: &Path, error: &io::Error) -> Message {
 /// `rule_src_line` counts every record read (exclude.c:1759-1761), before the
 /// comment and empty-record test, so a bad rule is reported at the line an
 /// editor shows.
+///
+/// A read error ends the records like end of file (exclude.c:1764-1769).
 pub(super) fn read_filter_patterns<R: BufRead>(
     reader: &mut R,
     eol_nulls: bool,
-) -> io::Result<Vec<(String, usize)>> {
+) -> Vec<(String, usize)> {
     let mut buffer = Vec::new();
     let mut patterns = Vec::new();
     let mut line = 0;
@@ -229,10 +232,10 @@ pub(super) fn read_filter_patterns<R: BufRead>(
 
     loop {
         buffer.clear();
-        let bytes_read = reader.read_until(delimiter, &mut buffer)?;
-
-        if bytes_read == 0 {
-            break;
+        // `read_until` retries EINTR itself.
+        match reader.read_until(delimiter, &mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
         }
 
         // upstream: exclude.c:1806. `filters::filter_file_line_is_rule` is the
@@ -265,7 +268,7 @@ pub(super) fn read_filter_patterns<R: BufRead>(
         }
     }
 
-    Ok(patterns)
+    patterns
 }
 
 #[cfg(test)]
@@ -283,7 +286,7 @@ mod tests {
     fn read_filter_patterns_parses_simple_lines() {
         let input = b"pattern1\npattern2\npattern3\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, false));
         assert_eq!(result, vec!["pattern1", "pattern2", "pattern3"]);
     }
 
@@ -291,7 +294,7 @@ mod tests {
     fn read_filter_patterns_skips_empty_lines() {
         let input = b"pattern1\n\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, false));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -299,7 +302,7 @@ mod tests {
     fn read_filter_patterns_skips_hash_comments() {
         let input = b"pattern1\n# this is a comment\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, false));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -307,7 +310,7 @@ mod tests {
     fn read_filter_patterns_skips_semicolon_comments() {
         let input = b"pattern1\n; this is a comment\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, false));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -315,7 +318,7 @@ mod tests {
     fn read_filter_patterns_handles_crlf_line_endings() {
         let input = b"pattern1\r\npattern2\r\npattern3\r\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, false));
         assert_eq!(result, vec!["pattern1", "pattern2", "pattern3"]);
     }
 
@@ -323,7 +326,7 @@ mod tests {
     fn read_filter_patterns_handles_no_trailing_newline() {
         let input = b"pattern1\npattern2";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, false));
         assert_eq!(result, vec!["pattern1", "pattern2"]);
     }
 
@@ -331,7 +334,7 @@ mod tests {
     fn read_filter_patterns_handles_empty_input() {
         let input = b"";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, false));
         assert!(result.is_empty());
     }
 
@@ -339,7 +342,7 @@ mod tests {
     fn read_filter_patterns_handles_only_comments() {
         let input = b"# comment 1\n; comment 2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, false));
         assert!(result.is_empty());
     }
 
@@ -351,7 +354,7 @@ mod tests {
         // `   ` excludes a file literally named `   `.
         let input = b"pattern1\n   \n\t\npattern2\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, false));
         assert_eq!(result, vec!["pattern1", "   ", "\t", "pattern2"]);
     }
 
@@ -362,7 +365,7 @@ mod tests {
         // holding only `  #a` excludes a file literally named `  #a`.
         let input = b"  #a\n  ;b\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, false));
         assert_eq!(result, vec!["  #a", "  ;b"]);
     }
 
@@ -370,7 +373,7 @@ mod tests {
     fn read_filter_patterns_preserves_leading_whitespace() {
         let input = b"  pattern_with_leading_space\n";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, false).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, false));
         assert_eq!(result, vec!["  pattern_with_leading_space"]);
     }
 
@@ -597,7 +600,7 @@ mod tests {
         // NUL-separated record rather than one per line.
         let input = b"*.log\nwith space\0*.tmp\0";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, true).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, true));
         assert_eq!(result, vec!["*.log\nwith space", "*.tmp"]);
     }
 
@@ -607,7 +610,7 @@ mod tests {
         // even without a trailing delimiter.
         let input = b"only\0last";
         let mut reader = Cursor::new(input.to_vec());
-        let result = texts(read_filter_patterns(&mut reader, true).expect("read"));
+        let result = texts(read_filter_patterns(&mut reader, true));
         assert_eq!(result, vec!["only", "last"]);
     }
 
@@ -653,5 +656,40 @@ mod tests {
         let patterns = load_filter_file_patterns(&link, false, false, &TestFiles, &[])
             .expect("a self-owned symlink must be followed, not refused");
         assert_eq!(texts(patterns), vec!["*.bak"]);
+    }
+
+    /// A reader that yields `data` and then fails.
+    struct FailsAfter(Cursor<Vec<u8>>);
+
+    impl Read for FailsAfter {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            match self.0.read(buf)? {
+                0 => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+                n => Ok(n),
+            }
+        }
+    }
+
+    /// upstream: exclude.c:1764-1769 - the getc() loop ends the file on a read
+    /// error other than EINTR, keeping the rules read so far. oc used to turn
+    /// the error into an exit-1 refusal upstream never prints.
+    #[test]
+    fn read_filter_patterns_ends_the_records_at_a_read_error() {
+        let mut reader = BufReader::new(FailsAfter(Cursor::new(b"a\nb\n".to_vec())));
+        assert_eq!(
+            texts(read_filter_patterns(&mut reader, false)),
+            vec!["a", "b"]
+        );
+    }
+
+    /// upstream: a merge file naming a directory opens, reads EISDIR, and so
+    /// contributes no rules (3.5.2 `-f '. DIR'` exits 0).
+    #[cfg(unix)]
+    #[test]
+    fn read_merge_file_reads_a_directory_as_empty() {
+        let temp = test_support::create_tempdir();
+        let contents = read_merge_file(temp.path(), false, RuleSource::Argument, &TestFiles, &[])
+            .expect("a directory is not an open failure");
+        assert_eq!(contents, "");
     }
 }

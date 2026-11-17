@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
-use crate::message::{Message, Role};
+use crate::message::Message;
 use crate::rsync_error;
 use filters::{CvsSession, RuleSource};
 
@@ -97,7 +97,7 @@ pub(crate) fn apply_merge_directive(
         // who_am_i(); filter arguments are parsed before any fork, where
         // who_am_i() is "client" - the role this error already carries.
         let text = filters::depth_limit_exceeded("client", &display);
-        return Err(rsync_error!(11, text).with_role(Role::Client));
+        return Err(rsync_error!(11, text));
     }
     visited.push(guard_key.clone());
 
@@ -179,8 +179,7 @@ fn parse_merge_contents(
                 let message = rsync_error!(
                     1,
                     format!("list-clearing '!' is not permitted in merge file '{display}'")
-                )
-                .with_role(Role::Client);
+                );
                 return Err(message);
             }
 
@@ -242,8 +241,7 @@ fn parse_merge_contents(
             let message = rsync_error!(
                 1,
                 format!("list-clearing '!' is not permitted in merge file '{display}'")
-            )
-            .with_role(Role::Client);
+            );
             return Err(message);
         }
 
@@ -321,8 +319,7 @@ pub(crate) fn process_merge_directive(
                         "specified-side merge file contains specified-side filter: {}",
                         source.rule_text(directive)
                     )
-                )
-                .with_role(Role::Client));
+                ));
             }
             rule.apply_dir_merge_overrides(options);
             destination.push(rule);

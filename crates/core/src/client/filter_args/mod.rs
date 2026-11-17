@@ -16,6 +16,7 @@ mod merge;
 mod module;
 mod order;
 mod parsing;
+mod refusal;
 mod server_argv;
 mod sources;
 
@@ -30,6 +31,7 @@ use crate::client::FilterRuleSpec;
 pub use build::{FilterInputs, build_filter_rules};
 pub use module::{ModuleFilterDirectives, daemon_list_rules, module_filter_rules};
 pub use order::FilterOrderToken;
+pub use refusal::write_refusal;
 pub use server_argv::server_argv_filter_rules;
 
 /// Where the files that filter options name are read from.
