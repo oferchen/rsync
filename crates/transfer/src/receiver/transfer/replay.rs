@@ -249,6 +249,8 @@ impl ReceiverContext {
         let mut gap_heads = self.gap_ndx_heads();
 
         loop {
+            // No decline can arrive here: a batch records only the data bytes
+            // read_buf() returns (io.c:2175-2177), never a MSG_NO_SEND frame.
             let row = crate::receiver::ndx_stream::read_ndx_and_attrs(
                 reader,
                 &mut ndx_read_codec,

@@ -155,6 +155,9 @@ impl ReceiverContext {
         reader: &mut R,
         sink: &mut NoLazyFlist,
     ) -> io::Result<bool> {
+        // No decline can arrive here: these rows are written after every
+        // transfer reply of the phase has been read, and a sender declines
+        // only a transfer request (sender.c:678, 733, 761).
         for _ in 0..self.hardlink_follower_echoes.take() {
             if read_ndx_and_attrs(reader, ndx_read_codec, sink, false, false)?.is_none() {
                 return Ok(true);
