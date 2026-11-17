@@ -969,6 +969,35 @@ fn run_module_list_uses_connect_program_command() {
     assert_eq!(entry.comment(), Some("example.com:873"));
 }
 
+/// The connect program inherits the client's environment untouched: upstream
+/// exports `RSYNC_PORT` only to a daemon reached over a remote shell
+/// (main.c:1653-1654), never to `RSYNC_CONNECT_PROG` (socket.c:1055-1080
+/// `sock_exec`). Exporting the daemon port here would hand the program a
+/// variable no upstream client ever sets.
+#[cfg(unix)]
+#[test]
+fn connect_program_does_not_receive_rsync_port() {
+    let _guard = env_lock().lock().expect("env mutex poisoned");
+    let command = OsString::from(
+        "sh -c 'printf \"@RSYNCD: 31.0\\n\"\n\
+         read greeting\n\
+         printf \"@RSYNCD: OK\\n\"\n\
+         read request\n\
+         printf \"example\\t${RSYNC_PORT-unset}\\n@RSYNCD: EXIT\\n\"'",
+    );
+    let _prog_guard = EnvGuard::set_os("RSYNC_CONNECT_PROG", &command);
+    let _port_guard = EnvGuard::remove("RSYNC_PORT");
+    let _shell_guard = EnvGuard::remove("RSYNC_SHELL");
+    let _proxy_guard = EnvGuard::remove("RSYNC_PROXY");
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new("example.com".to_string(), 2222),
+        None,
+        ProtocolVersion::NEWEST,
+    );
+    let list = run_module_list(request).expect("connect program listing succeeds");
+    assert_eq!(list.entries()[0].comment(), Some("unset"));
+}
+
 /// A host refused by the `%H` safety check must exit `RERR_SOCKETIO` (10), the
 /// code upstream uses for a connection that could not be opened - not the
 /// syntax code.

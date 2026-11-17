@@ -112,7 +112,6 @@ pub(crate) fn connect_via_program(
     builder.stdin(child_stdin);
     builder.stdout(child_stdout);
     builder.stderr(Stdio::inherit());
-    builder.env("RSYNC_PORT", addr.port().to_string());
 
     let child = builder.spawn().map_err(|error| {
         daemon_error(
@@ -179,7 +178,6 @@ pub(crate) fn connect_via_program(
     builder.stdin(Stdio::piped());
     builder.stdout(Stdio::piped());
     builder.stderr(Stdio::inherit());
-    builder.env("RSYNC_PORT", addr.port().to_string());
 
     let mut child = builder.spawn().map_err(|error| {
         daemon_error(

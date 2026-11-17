@@ -69,6 +69,9 @@ fn main() -> ExitCode {
     // jemalloc extent is promoted to a huge page first. Best-effort: a kernel
     // without the flag just keeps THP. oc-only; see `platform::memory`.
     let _ = platform::memory::disable_transparent_huge_pages();
+    // Before any thread exists, so the environment mutation cannot race; every
+    // remote shell, connect program and daemon hook then inherits the result.
+    platform::env::unset_display_without_askpass();
 
     // Still before any thread exists: `setlocale` is not thread-safe.
     // upstream: main.c:1911 `setlocale(LC_CTYPE, "")`.

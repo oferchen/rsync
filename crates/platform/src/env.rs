@@ -70,6 +70,23 @@ impl Drop for EnvGuard {
     }
 }
 
+/// Drops `DISPLAY` from the process environment unless `SSH_ASKPASS` is set,
+/// so a remote shell spawned later cannot reach an X11 display. A set but
+/// empty `SSH_ASKPASS` still keeps `DISPLAY`, as `getenv` returns non-NULL.
+///
+/// Must run before any thread is spawned: it mutates the process environment.
+///
+/// upstream: main.c:1879-1881 - `if (!getenv("SSH_ASKPASS")) unset_env_var("DISPLAY")`.
+#[allow(unsafe_code)]
+pub fn unset_display_without_askpass() {
+    if env::var_os("SSH_ASKPASS").is_none() {
+        // SAFETY: the caller runs this from `main` before any other thread
+        // exists, so no concurrent reader or writer of the environment can race.
+        unsafe {
+            env::remove_var("DISPLAY");
+        }
+    }
+}
 /// The local host's name, as `gethostname(2)` reports it.
 ///
 /// `None` when the kernel cannot supply a name or it is not valid UTF-8.
@@ -97,6 +114,24 @@ mod tests {
 
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+    #[test]
+    fn display_is_dropped_when_askpass_is_unset() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let _askpass = EnvGuard::remove("SSH_ASKPASS");
+        let _display = EnvGuard::set("DISPLAY", OsStr::new(":9"));
+        unset_display_without_askpass();
+        assert!(env::var_os("DISPLAY").is_none());
+    }
+    #[test]
+    fn display_is_kept_when_askpass_is_set_even_empty() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        for askpass in ["/usr/bin/ssh-askpass", ""] {
+            let _askpass = EnvGuard::set("SSH_ASKPASS", OsStr::new(askpass));
+            let _display = EnvGuard::set("DISPLAY", OsStr::new(":9"));
+            unset_display_without_askpass();
+            assert_eq!(env::var_os("DISPLAY").as_deref(), Some(OsStr::new(":9")));
+        }
+    }
     #[test]
     fn set_restores_on_drop() {
         let _lock = TEST_LOCK.lock().unwrap();

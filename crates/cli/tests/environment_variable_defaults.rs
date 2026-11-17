@@ -303,3 +303,27 @@ fn test_flags_override_all_env_vars() {
         "Flag should override RSYNC_PARTIAL_DIR"
     );
 }
+
+// upstream: options.c:2124-2129 reads RSYNC_OLD_ARGS before options.c:2139-2152
+// reads RSYNC_PROTECT_ARGS, and a set RSYNC_OLD_ARGS pins secluded args off.
+#[test]
+#[serial]
+fn rsync_old_args_env_wins_over_rsync_protect_args_env() {
+    let _protect = EnvGuard::set("RSYNC_PROTECT_ARGS", "1");
+    let _old = EnvGuard::set("RSYNC_OLD_ARGS", "1");
+    let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
+    assert_eq!(args.protect_args, Some(false));
+    assert_eq!(args.old_args, Some(1));
+}
+
+// upstream: options.c:2130-2135 - an explicit --old-args turns secluded args off
+// before RSYNC_PROTECT_ARGS is consulted, so the pair is not a conflict.
+#[test]
+#[serial]
+fn explicit_old_args_overrides_rsync_protect_args_env() {
+    let _protect = EnvGuard::set("RSYNC_PROTECT_ARGS", "1");
+    let _old = EnvGuard::remove("RSYNC_OLD_ARGS");
+    let args = parse_args(["oc-rsync", "--old-args", "src", "dest"]).unwrap();
+    assert_eq!(args.protect_args, Some(false));
+    assert_eq!(args.old_args, Some(1));
+}

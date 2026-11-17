@@ -104,7 +104,13 @@ where
         return None;
     }
 
-    let module_list_port = daemon_port.unwrap_or(ModuleListRequest::DEFAULT_PORT);
+    // upstream: main.c - an explicit `-e`/`--rsh` makes `host::` listings reach
+    // the daemon over the remote shell (daemon-over-rsh) rather than TCP. Parse
+    // the shell spec the same way the transfer path does (config.rs). A
+    // malformed spec is ignored, matching the transfer path's lenient handling.
+    let remote_shell_args = remote_shell.and_then(|spec| ssh::parse_remote_shell(spec).ok());
+    let module_list_port =
+        ModuleListRequest::default_port(daemon_port, remote_shell_args.is_some());
     let request = match ModuleListRequest::from_operands_with_port(remainder, module_list_port) {
         Ok(Some(request)) => request,
         Ok(None) => return None,
@@ -131,12 +137,6 @@ where
     } else {
         request
     };
-
-    // upstream: main.c - an explicit `-e`/`--rsh` makes `host::` listings reach
-    // the daemon over the remote shell (daemon-over-rsh) rather than TCP. Parse
-    // the shell spec the same way the transfer path does (config.rs). A
-    // malformed spec is ignored, matching the transfer path's lenient handling.
-    let remote_shell_args = remote_shell.and_then(|spec| ssh::parse_remote_shell(spec).ok());
 
     #[cfg_attr(not(feature = "quic"), allow(unused_mut))]
     let mut list_options = ModuleListOptions::default()

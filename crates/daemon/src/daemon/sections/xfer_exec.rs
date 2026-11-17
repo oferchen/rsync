@@ -32,11 +32,40 @@ struct XferExecContext<'a> {
     client_args: &'a [String],
 }
 
+/// Builds the command that runs a daemon hook string through a shell.
+///
+/// See [`hook_shell_command_with`]; the shell override is read from
+/// `RSYNC_SHELL` at each spawn, as upstream calls `getenv` per hook.
+fn hook_shell_command(command: &str) -> ProcessCommand {
+    hook_shell_command_with(env::var_os("RSYNC_SHELL"), command)
+}
+
+/// Builds `<shell> -c <command>` when a shell override is given, otherwise the
+/// platform shell: `/bin/sh -c` on Unix (what `system(3)` runs), `cmd /C` on
+/// Windows.
+///
+/// upstream: main.c:176-191 `shell_exec()` - `execlp(shell, shell, "-c", cmd)`
+/// when `RSYNC_SHELL` is set, else `system(cmd)`. Every daemon hook goes
+/// through it: early exec, pre-xfer exec and the name converter via
+/// `start_pre_exec()` (clientserver.c:592), and post-xfer exec
+/// (clientserver.c:991).
+fn hook_shell_command_with(shell: Option<OsString>, command: &str) -> ProcessCommand {
+    let (program, flag) = match shell {
+        Some(shell) => (shell, "-c"),
+        #[cfg(unix)]
+        None => (OsString::from("/bin/sh"), "-c"),
+        #[cfg(windows)]
+        None => (OsString::from("cmd"), "/C"),
+    };
+    let mut cmd = ProcessCommand::new(program);
+    cmd.args([flag, command]);
+    cmd
+}
+
 /// Builds a shell command with the exec-hook environment variables that
 /// upstream sets for *every* hook phase (early, pre, and post).
 ///
-/// On Unix, runs via `sh -c <command>`. On Windows, runs via `cmd /C <command>`.
-/// This is the shared base: the module/connection identity that upstream sets
+/// The shell comes from [`hook_shell_command`]. This is the shared base: the module/connection identity that upstream sets
 /// in the daemon process before forking any hook child. It deliberately omits
 /// `RSYNC_REQUEST` and `RSYNC_ARG<n>`, which upstream sets only in the pre-exec
 /// child (see `build_pre_xfer_command`).
@@ -46,20 +75,7 @@ struct XferExecContext<'a> {
 /// and `RSYNC_PID` are set on the daemon process and thus inherited by both the
 /// pre-exec child and the post-xfer parent.
 fn build_base_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessCommand {
-    #[cfg(unix)]
-    let mut cmd = {
-        let mut c = ProcessCommand::new("sh");
-        c.args(["-c", command]);
-        c
-    };
-
-    #[cfg(windows)]
-    let mut cmd = {
-        let mut c = ProcessCommand::new("cmd");
-        c.args(["/C", command]);
-        c
-    };
-
+    let mut cmd = hook_shell_command(command);
     cmd.env("RSYNC_MODULE_NAME", ctx.module_name);
     cmd.env("RSYNC_MODULE_PATH", ctx.module_path);
     cmd.env("RSYNC_HOST_ADDR", ctx.host_addr);
@@ -392,9 +408,31 @@ mod xfer_exec_tests {
     fn build_xfer_command_uses_sh_on_unix() {
         let ctx = test_context();
         let cmd = build_pre_xfer_command("echo hello", &ctx);
-        assert_eq!(cmd.get_program(), "sh");
+        assert_eq!(cmd.get_program(), "/bin/sh");
         let args: Vec<_> = cmd.get_args().collect();
         assert_eq!(args, vec!["-c", "echo hello"]);
+    }
+
+    /// upstream: main.c:176-191 `shell_exec()` - with `RSYNC_SHELL` set, a
+    /// hook runs as `$RSYNC_SHELL -c <command>` on every platform, so an
+    /// operator who points it at bash gets bash semantics in every hook.
+    #[test]
+    fn hook_shell_honours_the_rsync_shell_override() {
+        let cmd = hook_shell_command_with(Some(OsString::from("/bin/bash")), "echo hi");
+        assert_eq!(cmd.get_program(), "/bin/bash");
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(args, vec!["-c", "echo hi"]);
+    }
+
+    /// The pre-xfer hook reads `RSYNC_SHELL` from the daemon's environment.
+    #[test]
+    fn pre_xfer_command_reads_rsync_shell_from_the_environment() {
+        let _env_lock = crate::test_env::ENV_LOCK
+            .lock()
+            .expect("lock environment guard");
+        let _guard = crate::test_env::EnvGuard::set("RSYNC_SHELL", OsStr::new("/opt/hook-shell"));
+        let cmd = build_pre_xfer_command("echo hello", &test_context());
+        assert_eq!(cmd.get_program(), "/opt/hook-shell");
     }
 
     #[cfg(windows)]

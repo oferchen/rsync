@@ -35,7 +35,7 @@ use super::flags::{
 use super::values::join_os_values;
 use super::{
     BandwidthArgument, ParsedArgs, detect_program_name, env_iconv_default, env_max_alloc_default,
-    env_protect_args_default,
+    resolve_arg_protection,
 };
 
 /// Maximum number of alt-dest directories rsync accepts across `--compare-dest`,
@@ -608,11 +608,12 @@ fn parsed_args_from_matches(
     } else if matches.get_flag("protect-args") {
         Some(true)
     } else {
-        env_protect_args_default()
+        None
     };
     // upstream: options.c:1791-1796 OPT_OLD_ARGS increments `old_style_args`; the
     // level (1 vs doubled 2) selects how much safe_arg escaping is skipped.
     let old_args = leveled_flag_pair(&matches, "old-args", "no-old-args");
+    let (protect_args, old_args) = resolve_arg_protection(protect_args, old_args);
     let address_mode = if matches.get_flag("ipv4") {
         AddressMode::Ipv4
     } else if matches.get_flag("ipv6") {
@@ -853,17 +854,13 @@ fn parsed_args_from_matches(
     }
     let no_iconv = matches.get_flag("no-iconv");
     // upstream: options.c:1509-1510 - `if (!am_daemon && protect_args <= 0 &&
-    // (arg = getenv("RSYNC_ICONV")) != NULL && *arg) iconv_opt = strdup(arg);`.
-    // RSYNC_ICONV seeds the default --iconv value when the option is absent,
-    // unless the caller explicitly enabled protect_args (`protect_args > 0`,
-    // i.e. `Some(true)` here). `--no-iconv` still wins over the env default.
-    let iconv = matches.remove_one::<OsString>("iconv").or_else(|| {
-        if no_iconv || protect_args == Some(true) {
-            None
-        } else {
-            env_iconv_default()
-        }
-    });
+    // (arg = getenv("RSYNC_ICONV")) != NULL && *arg) iconv_opt = strdup(arg);`
+    // runs before popt parses the command line, so on a client `protect_args`
+    // is still its initial -1 and neither `-s` nor RSYNC_PROTECT_ARGS can
+    // suppress RSYNC_ICONV. `--no-iconv` and `--iconv` still win over it.
+    let iconv = matches
+        .remove_one::<OsString>("iconv")
+        .or_else(|| if no_iconv { None } else { env_iconv_default() });
     let owner = archive_aware_flag(&matches, "owner", "no-owner", archive_index, true);
     let group = archive_aware_flag(&matches, "group", "no-group", archive_index, true);
     let usermap = join_os_values(matches.remove_many::<OsString>("usermap"));
