@@ -165,6 +165,7 @@ fn touch_up_dirs_keepalive_gated_on_timeout() {
         #[cfg(unix)]
         None,
         &mut writer,
+        &crate::receiver::directory::FailedDirectories::new(),
     );
     assert_only_keepalives(&sink.bytes());
 
@@ -174,6 +175,7 @@ fn touch_up_dirs_keepalive_gated_on_timeout() {
         #[cfg(unix)]
         None,
         &mut writer,
+        &crate::receiver::directory::FailedDirectories::new(),
     );
     assert!(
         sink.bytes().is_empty(),

@@ -747,6 +747,7 @@ impl ReceiverContext {
             #[cfg(unix)]
             sandbox.as_deref(),
             writer,
+            &failed_dirs,
         );
 
         // Flush any buffered `-v` names then the deferred itemize rows in

@@ -656,6 +656,7 @@ impl ReceiverContext {
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
         stats: &mut TransferStats,
+        failed_dirs: &crate::receiver::directory::FailedDirectories,
     ) -> io::Result<()>
     where
         W: Write + crate::writer::MsgInfoSender + ?Sized,
@@ -677,6 +678,7 @@ impl ReceiverContext {
             #[cfg(unix)]
             sandbox.map(|held| &**held),
             writer,
+            failed_dirs,
         );
         Ok(())
     }
