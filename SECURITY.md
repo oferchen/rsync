@@ -153,7 +153,7 @@ Count the statuses:
 grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uniq -c
 ```
 
-**Hardening gaps without a CVE.** The coverage matrix in [`docs/audits/cve-uts351-matrix.md`](./docs/audits/cve-uts351-matrix.md) found these next to the rows above. All four are now fixed:
+**Hardening gaps without a CVE.** The coverage matrix in [`docs/audits/cve-uts351-matrix.md`](./docs/audits/cve-uts351-matrix.md) found the first four next to the rows above; the fifth is an oc-rsync defect found by the rsync 3.5.2 peer-address audit. All five are now fixed:
 
 | Gap | Upstream behaviour | Fixed in |
 |---|---|---|
@@ -161,6 +161,7 @@ grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uni
 | `--max-alloc` bounded only xattr allocations; peer-driven file-list growth was unbounded | `my_alloc()` exits 22 (util2.c) | PR #8171 |
 | A negative hard-link gnum was accepted; the xattr count was unbounded on the live path | exits 2 (flist.c, xattrs.c) | PR #8173 |
 | The zstd token decoder inflated a whole packet into one buffer | fixed `out_buffer_size` per step (token.c) | PR #8172 |
+| `hosts deny` bypass on a daemon run over a remote shell. The peer comes from `REMOTE_HOST` / `SSH_CONNECTION` / `SSH_CLIENT` / `SSH2_CLIENT`; oc read a leading-zero value such as `010.1.2.3` as `0.0.0.0`, so `hosts deny = 8.1.2.3` admitted it. Exposed: a remote-shell daemon whose client can influence that variable (for example through sshd `AcceptEnv`) and that relies on `hosts deny`; TCP daemons take the peer from the socket and were not affected. Fixed: the string is kept as given and read by the platform C library's rule (glibc and musl: octal), and a string that cannot be read matches every `hosts deny` address rule and no `hosts allow` one. Tests: `leading_zero_peer_is_refused_by_a_deny_rule_for_its_octal_address` (against 3.5.2), `inet_aton_rule_reads_like_glibc_and_musl`, `an_unreadable_accepted_peer_has_no_substitute_address`, `an_unreadable_peer_is_refused_by_any_deny_address_token`, `an_unreadable_peer_is_admitted_by_no_allow_address_token`. Deliberate difference: for a string the C library cannot parse (`08.1.2.3` on glibc), 3.5.2 matches no address rule and so admits it past `hosts deny = 8.1.2.3`; oc refuses it | keeps the string (clientname.c:76) and parses it with `getaddrinfo(AI_NUMERICHOST)` for each address match (access.c:92, :219); glibc reads `010` as octal | PR #8400 |
 
 **New options in 3.5.0.** `--confine-root=DIR`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links`, and the `auth digest`, `insecure links` and `proxy protocol hosts` daemon directives are implemented (PRs #7396, #7299, #7350, #7484, #7648). Like upstream, `--confine-root` and `--drop-D` are not forwarded to the remote side.
 
