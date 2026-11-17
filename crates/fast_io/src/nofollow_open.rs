@@ -78,7 +78,22 @@ use std::path::Path;
 ///   removed the obstacle at `generator.c:2148`.
 /// - Any other I/O error from opening the parent directory or the
 ///   basename (forwarded verbatim from the underlying syscall).
+///
+/// A path beneath the pinned destination opens relative to the pin instead
+/// of from `/`, as upstream's relative name opens from the cwd
+/// `change_dir()` entered, so a destination component swapped after the walk
+/// cannot redirect a `--partial-dir`, `--fuzzy` or backup basis to a file
+/// outside the tree (upstream: `rsync-3.5.2/receiver.c:1086-1093`).
 pub fn open_basis_nofollow(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    if crate::confinement::pinned_destination_relative(path).is_some() {
+        let fd = crate::destination_at::open(
+            path,
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+            0,
+        )?;
+        return require_regular_basis(File::from(fd));
+    }
     let file = imp::open_basis_nofollow(path)?;
     require_regular_basis(file)
 }

@@ -7,7 +7,6 @@
 //! upstream: generator.c:873 `find_fuzzy()`.
 
 use std::ffi::OsStr;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -137,30 +136,31 @@ impl FuzzyMatcher {
 /// Skips non-regular files, zero-length files, and the exact-name file (which,
 /// when present, is used as the direct basis before fuzzy matching runs).
 ///
+/// The directory is listed beneath the pinned destination, so a destination
+/// swapped after the receiver entered it cannot offer another directory's
+/// files as candidates.
+///
 /// upstream: generator.c:894-898,888 - `F_IS_ACTIVE`, `S_ISREG`, and
-/// `!F_LENGTH(fp)` screening.
+/// `!F_LENGTH(fp)` screening; generator.c:2230 reads the dirlist by a name
+/// relative to the entered destination.
 fn collect_candidates(dir: &Path, target_name: &[u8]) -> Vec<Candidate> {
-    let Ok(entries) = fs::read_dir(dir) else {
+    let Ok(entries) = fast_io::destination_at::read_dir(dir) else {
         return Vec::new();
     };
 
     let mut out = Vec::new();
-    for entry in entries.flatten() {
-        let metadata = match entry.metadata() {
-            Ok(m) if m.is_file() => m,
-            _ => continue,
-        };
-
-        // upstream: generator.c:897 - skip zero-length files.
-        if metadata.len() == 0 {
+    for (file_name, metadata) in entries {
+        if !metadata.is_file() {
             continue;
         }
 
-        let path = entry.path();
-        let name = match path.file_name() {
-            Some(name) => os_str_bytes(name),
-            None => continue,
-        };
+        // upstream: generator.c:897 - skip zero-length files.
+        if metadata.is_empty() {
+            continue;
+        }
+
+        let name = os_str_bytes(&file_name);
+        let path = dir.join(&file_name);
 
         // The exact-name file is used as the direct basis (FNAMECMP_FNAME)
         // before fuzzy matching runs, never as a fuzzy candidate. Compare raw
@@ -197,6 +197,7 @@ fn system_time_to_secs(time: SystemTime) -> i64 {
 mod tests {
     use super::*;
     use crate::fuzzy::{FUZZY_LEVEL_1, MAX_FUZZY_DISTANCE};
+    use std::fs;
     use std::path::PathBuf;
 
     mod fuzzy_matcher_tests {
@@ -276,6 +277,39 @@ mod tests {
             let matcher = FuzzyMatcher::with_level(2);
             assert!(matcher.fuzzy_basis_dirs.is_empty());
         }
+    }
+
+    /// The `--fuzzy` dirlist is read beneath the pinned destination, as
+    /// upstream reads it by a name relative to the entered destination
+    /// (generator.c:2230). A destination swapped for a symlink after the walk
+    /// must not offer the swapped-in directory's files as candidates.
+    #[cfg(unix)]
+    #[test]
+    fn fuzzy_scan_lists_the_pinned_destination_after_a_swap() {
+        struct PinGuard;
+        impl Drop for PinGuard {
+            fn drop(&mut self) {
+                fast_io::confinement::clear_destination_root();
+            }
+        }
+        let temp = test_support::create_tempdir();
+        let base = fs::canonicalize(temp.path()).expect("canonicalize");
+        let dest = base.join("dest");
+        fs::create_dir(&dest).expect("mkdir dest");
+        fs::create_dir(base.join("outside")).expect("mkdir outside");
+        fs::write(dest.join("report-v1.txt"), b"entered candidate").expect("candidate");
+        fs::write(base.join("outside/report-v2.txt"), b"swapped-in decoy").expect("decoy");
+        let anchor = fast_io::operator_open_destination(&dest).expect("walk dest");
+        fast_io::confinement::pin_destination_root(&dest, anchor).expect("pin dest");
+        let _guard = PinGuard;
+        fs::rename(&dest, base.join("entered")).expect("move dest aside");
+        std::os::unix::fs::symlink(base.join("outside"), &dest).expect("plant symlink");
+
+        let found = FuzzyMatcher::with_level(FUZZY_LEVEL_1)
+            .find_fuzzy_basis(OsStr::new("report-v3.txt"), &dest, 17, None)
+            .expect("a candidate from the entered directory");
+
+        assert_eq!(found.path, dest.join("report-v1.txt"));
     }
 
     mod fast_path_tests {

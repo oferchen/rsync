@@ -258,7 +258,10 @@ impl<'a> CopyContext<'a> {
         // the write cursor.
         let mut last_match = 0u64;
 
-        let mut destination_reader = Some(fs::File::open(destination).map_err(|error| {
+        // upstream: receiver.c:1086-1093 - the basis opens by a name relative
+        // to the entered destination, so it resolves from the pinned root.
+        let mut destination_reader =
+            Some(fast_io::destination_at::open_read(destination).map_err(|error| {
             LocalCopyError::io(
                 "read existing destination",
                 destination.to_path_buf(),

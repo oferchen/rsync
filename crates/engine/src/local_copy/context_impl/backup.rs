@@ -368,21 +368,22 @@ impl<'a> CopyContext<'a> {
         // state. The backup path is operator-named, so it resolves through the
         // ownership walk - generator.c:2286 raises `operator_path_resolve` for
         // exactly this copy because it bypasses `make_backup()`.
-        match copy_pre_image_to_backup(destination, &backup_path) {
-            Ok(_) => {}
+        let source_meta = match copy_pre_image_to_backup(destination, &backup_path) {
+            Ok(meta) => meta,
             // A vanished destination has nothing to back up, mirroring the
             // NotFound arm of the rename path (backup.c:make_backup returns 3).
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => {
                 return Err(LocalCopyError::io("create backup", backup_path, error));
             }
-        }
+        };
 
         // upstream: generator.c:2489 set_file_attrs(backupptr, back_file, ...) -
         // the backup carries the source node's mode/owner/times. fs::copy
         // preserves only permissions, so reapply full metadata like the
-        // cross-device COPY fallback in backup_existing_entry.
-        if let Ok(source_meta) = fs::symlink_metadata(destination) {
+        // cross-device COPY fallback in backup_existing_entry. The metadata is
+        // the copied pre-image's own, read from its descriptor.
+        {
             let metadata_options = self.metadata_options();
             apply_file_metadata_with_options(&backup_path, &source_meta, &metadata_options)
                 .map_err(map_metadata_error)?;

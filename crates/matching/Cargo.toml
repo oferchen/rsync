@@ -15,6 +15,7 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
+fast_io = { path = "../fast_io" }
 signature = { path = "../signature" }
 logging = { path = "../logging" }
 rustc-hash = { workspace = true }

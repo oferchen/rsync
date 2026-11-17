@@ -1337,6 +1337,64 @@ mod tests {
         );
     }
 
+    /// The `--partial-dir` basis opens beneath the pinned destination, as
+    /// upstream's generator opens `partialptr` by a name relative to the
+    /// destination it entered (generator.c:2213-2219, receiver.c:1086-1093).
+    /// After the destination is swapped for a symlink to a directory without
+    /// the partial file, a by-path open finds nothing and the transfer would
+    /// lose its basis - or, with a planted file, sign the attacker's.
+    #[cfg(unix)]
+    #[test]
+    fn partial_dir_basis_opens_beneath_the_pinned_destination_after_a_swap() {
+        struct PinGuard;
+        impl Drop for PinGuard {
+            fn drop(&mut self) {
+                fast_io::confinement::clear_destination_root();
+            }
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base = fs::canonicalize(tmp.path()).expect("canonicalize");
+        let dest_dir = base.join("dest");
+        fs::create_dir_all(dest_dir.join(".rsync-partial")).expect("mkdir partial-dir");
+        fs::create_dir(base.join("outside")).expect("mkdir outside");
+        let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+        fs::write(dest_dir.join(".rsync-partial/file.bin"), &data).expect("write partial");
+        let anchor = fast_io::operator_open_destination(&dest_dir).expect("walk dest");
+        fast_io::confinement::pin_destination_root(&dest_dir, anchor).expect("pin dest");
+        let _guard = PinGuard;
+        fs::rename(&dest_dir, base.join("entered")).expect("move dest aside");
+        std::os::unix::fs::symlink(base.join("outside"), &dest_dir).expect("plant symlink");
+
+        let dest_file = dest_dir.join("file.bin");
+        let config = BasisFileConfig {
+            sandbox: None,
+            ndx: 0,
+            file_path: &dest_file,
+            dest_dir: &dest_dir,
+            relative_path: std::path::Path::new("file.bin"),
+            target_size: data.len() as u64,
+            target_mtime: 0,
+            fuzzy_level: 0,
+            reference_directories: &[],
+            partial_dir: Some(std::path::Path::new(".rsync-partial")),
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            whole_file: false,
+            compat_flags: None,
+            block_size: None,
+            inplace_backup: None,
+        };
+
+        let result = find_basis_file_with_config(&config);
+
+        assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::PartialDir);
+        assert!(
+            result.signature.is_some(),
+            "the partial basis must be read from the entered directory"
+        );
+    }
+
     /// Issue #264 regression: when the destination is absent but an
     /// interrupted transfer left a same-named file under `--partial-dir`, the
     /// generator must select that partial file as the delta basis and tag it

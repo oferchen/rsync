@@ -49,7 +49,10 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
         let dir_label = dir.to_string_lossy();
         // upstream: acls.c:1460-1464 reads the default ACL of a name relative to
         // the cwd change_dir() entered, so the lookup is anchored on the held
-        // destination rather than re-resolving `dir`.
+        // destination rather than re-resolving `dir`. Where the pin cannot be
+        // spelled as a path (no /proc/self/fd, so always on FreeBSD) the read
+        // fails closed and the umask default applies: resolving `dir` itself
+        // could follow a swapped destination component.
         let entries = match fast_io::destination_at::with_anchored_path(dir, |dir| {
             getfacl(dir, Some(AclOption::DEFAULT_ACL))
         }) {
