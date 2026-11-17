@@ -1,12 +1,16 @@
 # Contributing to oc-rsync
+
 Thanks for your interest in contributing. This document describes the
 workflow and conventions the maintainers follow. For architecture see
 [`README.md`](./README.md) and [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md);
 for security disclosures see [`SECURITY.md`](./SECURITY.md).
+
 ---
+
 ## Ground rules
-- **Upstream is the source of truth.** oc-rsync mirrors upstream rsync 3.5.1
-  (protocol 33). Read the C source in `target/interop/upstream-src/rsync-3.5.1/`
+
+- **Upstream is the source of truth.** oc-rsync mirrors upstream rsync 3.5.2
+  (protocol 33). Read the C source in `target/interop/upstream-src/rsync-3.5.2/`
   before changing behaviour, and match it exactly. Any deliberate deviation
   must be stated in the PR, not made silently.
 - **No placeholders.** No `todo!`, `unimplemented!`, `TODO`, `FIXME` or `XXX`
@@ -18,14 +22,19 @@ for security disclosures see [`SECURITY.md`](./SECURITY.md).
 Fetch the upstream source if it is missing:
 ```sh
 mkdir -p target/interop/upstream-src
-curl -L https://download.samba.org/pub/rsync/src/rsync-3.5.1.tar.gz \
+curl -L https://download.samba.org/pub/rsync/src/rsync-3.5.2.tar.gz \
   | tar xz -C target/interop/upstream-src
 ```
+
 ---
+
 ## Build, lint and test
+
 Run one cargo command at a time: cargo holds an exclusive build-directory
 lock, and concurrent invocations queue behind it.
+
 ### Format and lint
+
 ```sh
 cargo fmt --all -- --check
 python3 tools/ci/check_rustfmt_all.py
@@ -33,14 +42,18 @@ cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
 ```
 `check_rustfmt_all.py` formats every tracked `.rs` file. `cargo fmt` reaches
 only files in the `mod` tree, so it misses `include!()`-ed and orphaned files.
+
 ### Tests
+
 Use `cargo-nextest`, never `cargo test`. Configuration lives in
 [`.config/nextest.toml`](./.config/nextest.toml). Locally, run only the tests
 your change touches; the full suite runs in CI:
 ```sh
 cargo nextest run -p <crate> --all-features -E 'test(<pattern>)'
 ```
+
 ### Repository gates
+
 Each of these runs in CI and blocks the PR:
 ```sh
 cargo run --locked -p xtask -- no-placeholders
@@ -54,12 +67,14 @@ cargo xtask citations
 - `dead_code_census.py gate` fails on a `pub fn` with no production caller and
   no test reference unless it is allowlisted with a reason and expiry.
 - `surface_diff.sh --check` diffs user-facing surfaces (options, daemon
-  directives, exit codes, message codes and more) against upstream 3.5.1 and
+  directives, exit codes, message codes and more) against upstream 3.5.2 and
   fails on any divergence not declared in `tools/ci/surface_diff.accepted`. It
   needs the upstream source tree above.
 - `cargo xtask citations` is described under
   [Upstream source citations](#upstream-source-citations).
+
 ### Cross-platform checks
+
 `cargo run -p xtask -- cross-check` runs the required cross-platform gates in
 sequence and prints a per-target summary:
 1. `cargo clippy --locked --workspace --all-targets --all-features --no-deps -- -D warnings`
@@ -76,8 +91,11 @@ cargo check --target x86_64-pc-windows-gnu -p <crate> --all-features --tests
 `cargo run -p xtask -- validate` is the full local pre-push run: the drop-in
 fidelity matrix against upstream across every client transport, then the
 cross-check above. It does not reformat, so run `cargo fmt --all` first.
+
 ---
+
 ## Platform and test rules
+
 - **Code must build and pass on Linux, macOS and Windows.** Gate
   platform-specific code with `#[cfg(unix)]` / `#[cfg(windows)]`. Unsupported
   platforms or features get a stub that returns a graceful result or error,
@@ -99,8 +117,11 @@ cross-check above. It does not reformat, so run `cargo fmt --all` first.
   `fmt + clippy` job. Exempt a known-safe test with a
   `<repo-relative-path>::<fn_name>` line in `tools/ci/envguard_lint.ignore`.
   Design and EOL plan: `docs/design/bpf-4-envguard-ci-lint-spec.md`.
+
 ---
+
 ## Unsafe code
+
 Unsafe code belongs to two crates, split by subject:
 - **`fast_io`** - I/O syscalls (io_uring, copy dispatch, reflink, the confined
   path resolver).
@@ -114,22 +135,25 @@ and only then a new `#[allow(unsafe_code)]` function in an owner crate, with a
 a crate that denies it. `tools/ci/unsafe_owner_deps.py gate` enforces the
 dependency side; existing exceptions are listed with a reason and expiry in
 `tools/ci/unsafe_owner_deps_allowlist.tsv`.
+
 ---
+
 ## Upstream source citations
+
 Annotate non-obvious protocol and wire behaviour with the upstream file and
 function, e.g. `// upstream: sender.c:803 send_files() - "sender finished"`.
 - **One pinned baseline.** Line numbers refer to the pinned tree
-  `target/interop/upstream-src/rsync-3.5.1/`. Do not append a version to each
+  `target/interop/upstream-src/rsync-3.5.2/`. Do not append a version to each
   citation; the baseline is recorded once, in
   `tools/ci/citation_drift_audit.py` (`VER`) and `docs/UPSTREAM_COMPARISON.md`.
 - **Quote a distinctive anchor.** Include a short verbatim string or symbol
   from the cited line so the reference can be relocated when lines move.
 - **The hard gate.** `cargo xtask citations` checks that every citation in the
   repository names a `.c`, `.h`, `.py` or `.sh` file the pinned release has,
-  at a line that file has. It reads `tools/ci/upstream-3.5.1-lines.tsv`, so it
+  at a line that file has. It reads `tools/ci/upstream-3.5.2-lines.tsv`, so it
   needs no source tree. Citations under a directory the rsync tarball does not
   ship (zsync's `librcksum/`) are out of scope.
-- **Naming a release.** `rsync-3.5.1/flist.c:2717` is accepted and checked as
+- **Naming a release.** `rsync-3.5.2/flist.c:2717` is accepted and checked as
   the bare name; prefer the bare name. Any other release, such as
   `rsync-3.4.1/delete.c:130`, fails as a stale citation. Only this file,
   `xtask/src/commands/citations.rs` and `docs/` may name another release.
@@ -143,8 +167,11 @@ function, e.g. `// upstream: sender.c:803 send_files() - "sender finished"`.
   and line text, and lists the ones it cannot place. Never shift line numbers
   by a fixed offset. Regenerate the manifest with
   `cargo xtask citations --write-manifest` in the same change that moves `VER`.
+
 ---
+
 ## Dependencies and Cargo.lock
+
 `Cargo.lock` is committed and CI builds with `--locked`, so builds are
 reproducible and dependency drift cannot slip in unnoticed.
 - **Adding an optional dependency.** Declare it `optional = true` in the
@@ -166,8 +193,11 @@ reproducible and dependency drift cannot slip in unnoticed.
   [`cargo-lockfile-sync.yml`](./.github/workflows/cargo-lockfile-sync.yml)
   pushes a refreshed `Cargo.lock` to any first-party PR that edits a workspace
   `Cargo.toml`, and posts the patch as a comment on fork PRs.
+
 ---
+
 ## Opening a pull request
+
 Master is protected: changes land only through a pull request, and force
 pushes to master are blocked. Merge via GitHub (`gh pr merge`).
 - **Branch naming.** `<category>/<short-description>`, for example
@@ -191,7 +221,7 @@ pushes to master are blocked. Merge via GitHub (`gh pr merge`).
   72 characters; put detail in the body.
 - **PR body.** Follow
   [`.github/PULL_REQUEST_TEMPLATE.md`](./.github/PULL_REQUEST_TEMPLATE.md).
-- **Required checks.** All 15 must pass before merge:
+- **Required checks.** All 16 must pass before merge:
   - `fmt + clippy`
   - `nextest (stable)`
   - `Windows (stable)`
@@ -207,14 +237,21 @@ pushes to master are blocked. Merge via GitHub (`gh pr merge`).
   - `upstream-testsuite-macos-tcp / upstream testsuite (macOS)`
   - `upstream-testsuite-macos-tcp / upstream testsuite (macOS, root)`
   - `unsafe-safety-comment-audit`
+  - `rustdoc links`
 - **Authorship hygiene.** PR titles, bodies, branch names, commit messages and
   added files must not reference internal tooling or non-human authoring aids.
+
 ---
+
 ## Parallel work
+
 Use `git worktree add` so each in-flight branch has its own checkout and build
 state. If a flake or regression on master blocks several PRs, fix it in the
 branch closest to mergeable rather than opening a separate hotfix PR.
+
 ---
+
 ## License
+
 By contributing you agree that your contributions will be licensed under
 GPL-3.0-or-later, matching the project license in [`LICENSE`](./LICENSE).

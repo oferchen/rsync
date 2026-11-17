@@ -157,7 +157,7 @@ cargo build --workspace --release
 | `tokio-transfer` | `protocol` | no | Async multiplex read leaf; not wired into a transfer path. | experimental |
 | `tracing` | `core`, `engine`, `transfer`, `daemon`, `protocol`, `filters`, `logging`, `matching`, `signature` | no | Structured `tracing` instrumentation. | stable |
 
-Not listed: `landlock` (`fast_io`), which `cli` and `daemon` always enable on Linux; `syscall_batch` (`fast_io`), an empty alias; `block2` (`fast_io`), the `macos-gcd` dependency; and the internal `serde`, `bench-internal` and `test-support` features.
+Not listed: `landlock` (`fast_io`), which `cli` and `daemon` always enable on Linux; `syscall_batch` (`fast_io`), an empty alias; `block2` (`fast_io`), the `macos-gcd` dependency; and the internal `serde`, `bench-internal` and `test-support` features, and `daemon` (`test-support` crate).
 
 ---
 
