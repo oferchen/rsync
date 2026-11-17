@@ -116,6 +116,10 @@ struct SemInner {
 pub struct AdaptiveSemaphore {
     inner: Mutex<SemInner>,
     available: Condvar,
+    /// Signalled when an acquirer is counted as blocked, so a test can wait
+    /// for a waiter to park instead of guessing with a timeout.
+    #[cfg(test)]
+    blocked: Condvar,
 }
 
 impl AdaptiveSemaphore {
@@ -135,6 +139,8 @@ impl AdaptiveSemaphore {
                 acquire_count: 0,
             }),
             available: Condvar::new(),
+            #[cfg(test)]
+            blocked: Condvar::new(),
         })
     }
 
@@ -150,6 +156,8 @@ impl AdaptiveSemaphore {
         inner.acquire_count += 1;
         if inner.in_flight >= inner.cap {
             inner.block_count += 1;
+            #[cfg(test)]
+            self.blocked.notify_all();
             while inner.in_flight >= inner.cap {
                 inner = self
                     .available
@@ -172,6 +180,18 @@ impl AdaptiveSemaphore {
             true
         } else {
             false
+        }
+    }
+
+    /// Blocks until `count` acquirers have been counted as blocked.
+    ///
+    /// The count rises under the lock, which an acquirer gives up only by
+    /// parking, so on return that many acquirers are parked.
+    #[cfg(test)]
+    fn wait_for_blocked(&self, count: u64) {
+        let mut inner = self.lock();
+        while inner.block_count < count {
+            inner = self.blocked.wait(inner).unwrap_or_else(|e| e.into_inner());
         }
     }
 
@@ -304,9 +324,6 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::mpsc;
-    use std::time::Duration;
-
-    const RECV_TIMEOUT: Duration = Duration::from_secs(5);
 
     #[test]
     fn acquire_release_round_trip() {
@@ -347,13 +364,15 @@ mod tests {
             })
         };
 
-        // The worker cannot have acquired yet - capacity is 1 and it is held.
-        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        // The worker is parked: capacity is 1 and it is held. Without this
+        // wait a worker that had not started yet would acquire after the
+        // grow without ever having been a waiter.
+        sem.wait_for_blocked(1);
+        assert!(rx.try_recv().is_err());
 
         // Growing capacity must wake the waiter even though no release occurred.
         sem.resize(2).unwrap();
-        rx.recv_timeout(RECV_TIMEOUT)
-            .expect("worker should acquire after grow");
+        rx.recv().expect("worker should acquire after grow");
         worker.join().unwrap();
         assert_eq!(sem.in_flight(), 2);
     }
@@ -439,11 +458,13 @@ mod tests {
             })
         };
 
-        // Worker is blocked; release lets it proceed.
-        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        // Worker is parked; release lets it proceed. Releasing before the
+        // worker reached `acquire` would let it through unblocked and leave
+        // the count at zero.
+        sem.wait_for_blocked(1);
+        assert!(rx.try_recv().is_err());
         sem.release();
-        rx.recv_timeout(RECV_TIMEOUT)
-            .expect("worker should acquire after release");
+        rx.recv().expect("worker should acquire after release");
         worker.join().unwrap();
 
         // Exactly one of the two acquires had to block.
