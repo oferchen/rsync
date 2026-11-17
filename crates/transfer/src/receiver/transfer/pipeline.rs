@@ -146,7 +146,7 @@ impl InFlightRequests {
     /// A decline for `awaited` drops the front, which is already popped. A
     /// decline for a later request retires that entry and puts the front back,
     /// because the front's own reply is still coming: an upstream sender emits
-    /// `MSG_NO_SEND` the moment an open fails (sender.c:670,725,753), ahead of
+    /// `MSG_NO_SEND` the moment an open fails (sender.c:678,733,761), ahead of
     /// the replies it has yet to write.
     ///
     /// The sender has already set its I/O error, which is what makes the run
@@ -1301,7 +1301,7 @@ impl ReceiverContext {
     /// Unlike [`run_dry_run_loop`](Self::run_dry_run_loop), the generator sends
     /// REAL block checksums (a full sum head + signature per file), because
     /// upstream forces `dry_run = 1` only after `do_xfers` is computed
-    /// (main.c:1866), so `do_xfers` stays 1 and the sender needs the checksums
+    /// (main.c:1950), so `do_xfers` stays 1 and the sender needs the checksums
     /// to build its batch. Nothing is written to the destination either way -
     /// upstream's `write_batch < 0` arm logs the item and `continue`s
     /// (receiver.c:827-833) - but where the sender's delta goes differs by
@@ -1309,7 +1309,7 @@ impl ReceiverContext {
     ///
     /// - PUSH (this side is the remote server receiver, `am_server`): the
     ///   client sender diverted its token stream into its own batch fd
-    ///   (sender.c:220 `f_xfer = write_batch < 0 ? batch_fd : f_out`), so only
+    ///   (sender.c:510 `f_xfer = write_batch < 0 ? batch_fd : f_out`), so only
     ///   the bare NDX+attrs echo from `write_ndx_and_attrs(f_out, ...)`
     ///   (sender.c:469-486) reaches the wire. Reading further would block forever.
     /// - PULL (this side is the local client receiver, `!am_server`): upstream
@@ -1326,7 +1326,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1866` - `if (write_batch < 0) dry_run = 1` (do_xfers stays 1)
+    /// - `main.c:1950` - `if (write_batch < 0) dry_run = 1` (do_xfers stays 1)
     /// - `sender.c:768-769` - `write_ndx_and_attrs(f_out); write_sum_head(f_xfer)`
     /// - `receiver.c:827-833` - `write_batch < 0`: log, `if (!am_server)`
     ///   `discard_receive_data()`, no dest write
