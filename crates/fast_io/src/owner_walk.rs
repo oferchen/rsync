@@ -1471,6 +1471,57 @@ pub fn operator_open_read_confined(path: &Path) -> io::Result<std::fs::File> {
     )
 }
 
+/// [`operator_open_read_confined`] for a `relative` name that starts at `root`
+/// instead of the process working directory.
+///
+/// Upstream's daemon opens a client's merge file from its cwd, which is the
+/// module root, and seeds the walk's tracker with `module_dir`. oc does not
+/// change directory, so the root is opened through the ownership walk and the
+/// walk starts there. Everything else is the same walk: an untrusted-owner
+/// symlink is refused, a trusted one is followed, and a name that resolves
+/// outside the session's confinement root - a `..` climbing above it, or a
+/// symlink pointing out - is refused with `ELOOP`.
+///
+/// The judgement is against the SESSION root, as for every confined open;
+/// `root` only says where a relative name starts. Without a session root
+/// there would be nothing to judge against and the walk would run unconfined,
+/// so that case is refused up front with `EPERM` instead.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.2/syscall.c:444-447` - a daemon seeds `abspath` with
+///   `module_dir`.
+/// - `rsync-3.5.2/exclude.c:1677-1690` - a peer-named merge file is opened
+///   with `operator_path_resolve` set.
+///
+/// # Errors
+///
+/// - `EPERM` when no confinement root is installed for the session.
+/// - `ELOOP` when a component is an untrusted-owner symlink, or when the
+///   resolved path lands outside the confinement root.
+/// - Otherwise see `operator_open_with` and `operator_open_dir`.
+pub fn operator_open_read_confined_at(root: &Path, relative: &Path) -> io::Result<std::fs::File> {
+    if crate::confinement::session_confinement_root().is_none() {
+        return Err(io::Error::from_raw_os_error(libc::EPERM));
+    }
+    let dir = operator_open_dir(root)?;
+    let physical = root.canonicalize()?;
+    let base = WalkBase {
+        dir: dir.as_fd(),
+        physical: &physical,
+    };
+    let mut resolved = None;
+    owner_walk_open_tracked(
+        relative,
+        OFlags::RDONLY,
+        Mode::empty(),
+        crate::confinement::PathKind::Confined,
+        Some(&base),
+        &mut resolved,
+    )
+    .map(std::fs::File::from)
+}
+
 /// Open an operator-supplied path for appending, creating it if absent.
 ///
 /// This is the `--log-file` shape, and the reason the leaf `O_NOFOLLOW` matters
@@ -2420,6 +2471,91 @@ mod tests {
         let mut body = String::new();
         opened.read_to_string(&mut body).expect("read");
         assert_eq!(body, "INSIDE");
+    }
+
+    /// A daemon's merge-file name starts at the module root, not the cwd: the
+    /// in-root control for the `_at` cells below, so they cannot pass by
+    /// refusing everything.
+    #[test]
+    fn at_a_relative_name_resolves_beneath_the_given_root() {
+        let (_temp, root, _inside, _outside) = confined_fixture();
+        confine_to(&root);
+        let mut opened = super::operator_open_read_confined_at(&root, Path::new("payload"))
+            .expect("an in-root name resolves from the root");
+        let mut body = String::new();
+        opened.read_to_string(&mut body).expect("read");
+        assert_eq!(body, "INSIDE");
+    }
+
+    /// upstream: a 3.5.2 daemon refuses `-M--filter='. ..'` with "Too many
+    /// levels of symbolic links (40)": the walk climbs above the module and
+    /// `abspath_outside_confinement()` fails it with `ELOOP`
+    /// (syscall.c:686-691). The transfer-path front door said `EINVAL`.
+    #[test]
+    fn at_a_dot_dot_climbing_above_the_root_is_refused_with_eloop() {
+        let (_temp, root, _inside, _outside) = confined_fixture();
+        confine_to(&root);
+        for name in ["..", "../outside/secret"] {
+            let error = super::operator_open_read_confined_at(&root, Path::new(name))
+                .expect_err("a climb above the root must be refused");
+            assert_eq!(error.raw_os_error(), Some(libc::ELOOP), "{name}");
+        }
+    }
+
+    /// An absolute name walks from `/` and is judged like any other: outside
+    /// the root it is refused, never read.
+    #[test]
+    fn at_an_absolute_name_outside_the_root_is_refused() {
+        let (_temp, root, _inside, outside) = confined_fixture();
+        confine_to(&root);
+        let error = super::operator_open_read_confined_at(&root, &outside)
+            .expect_err("an absolute name outside the root must be refused");
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    }
+
+    /// A symlink in the module that points out of it - absolute or climbing -
+    /// is refused, as 3.5.2 refuses `-M--filter='. outlink'` with ELOOP (40).
+    #[test]
+    fn at_a_symlink_pointing_out_of_the_root_is_refused() {
+        let (_temp, root, _inside, outside) = confined_fixture();
+        confine_to(&root);
+        std::os::unix::fs::symlink(&outside, root.join("abs")).expect("symlink");
+        std::os::unix::fs::symlink("../outside/secret", root.join("rel")).expect("symlink");
+        for name in ["abs", "rel"] {
+            let error = super::operator_open_read_confined_at(&root, Path::new(name))
+                .expect_err("a symlink out of the root must be refused");
+            assert_eq!(error.raw_os_error(), Some(libc::ELOOP), "{name}");
+        }
+    }
+
+    /// A trusted symlink that stays in the module is followed, as 3.5.2
+    /// follows `-M--filter='. inlink'` (MEASURED: rc 0, its rules applied).
+    #[test]
+    fn at_a_symlink_staying_inside_the_root_is_followed() {
+        let (_temp, root, _inside, _outside) = confined_fixture();
+        confine_to(&root);
+        std::os::unix::fs::symlink("payload", root.join("inlink")).expect("symlink");
+        let mut opened = super::operator_open_read_confined_at(&root, Path::new("inlink"))
+            .expect("an in-root symlink is followed");
+        let mut body = String::new();
+        opened.read_to_string(&mut body).expect("read");
+        assert_eq!(body, "INSIDE");
+    }
+
+    /// With no confinement root there is nothing to judge the walk against,
+    /// so the open is refused rather than run unconfined.
+    #[test]
+    fn at_without_a_session_root_is_refused() {
+        let (_temp, root, _inside, _outside) = confined_fixture();
+        install_session(&Activation {
+            role: Role::Receiver,
+            daemon: DaemonState::NotDaemon,
+            insecure_links: LocalInsecureLinks::default(),
+            confine_root: None,
+        });
+        let error = super::operator_open_read_confined_at(&root, Path::new("payload"))
+            .expect_err("an unjudged walk must not run");
+        assert_eq!(error.raw_os_error(), Some(libc::EPERM));
     }
 
     /// Constraint 4, the ancestor pin: an ancestor of the confinement root is
