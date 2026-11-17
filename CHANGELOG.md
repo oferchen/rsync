@@ -692,6 +692,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - A directory the receiver could not make is skipped by the final directory retouch, like 3.5.2's `FLAG_MISSING_DIR`; a file whose removal was refused keeps its own mode and time (#8401)
 - Without incremental recursion or under `--delete-after`, a receiver makes a directory inside an existing one that lacks owner write permission, raising it first and restoring it afterwards like 3.5.2; it used to fail with `Permission denied` and exit 23 (#8401)
 - `--only-write-batch` skips a source file the sender cannot open and exits 23 with the rest of the batch written, like 3.5.2, on a push and a pull; it used to stop with exit 11 (#8406)
+- `--only-write-batch` over a remote shell itemizes directories, symlinks and every other entry that is not transferred, sends each file request with its real itemize flags, and records them in the batch, like 3.5.2; `-i` used to print bare `<f.........` rows for files only (#8406)
 
 ### Removed
 
