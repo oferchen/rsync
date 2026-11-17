@@ -41,8 +41,8 @@ pub(in crate::daemon) use runtime::{build_module_runtimes, build_module_runtimes
 pub(in crate::daemon) use hostname::UNKNOWN_HOSTNAME;
 #[cfg(test)]
 pub(crate) use hostname::{
-    clear_test_hostname_overrides, set_test_forward_override, set_test_hostname_override,
-    set_test_netgroup_members,
+    clear_test_hostname_overrides, set_test_forward_override, set_test_forward_records,
+    set_test_hostname_override, set_test_netgroup_members,
 };
 #[cfg(test)]
 pub(in crate::daemon) use test_support::TEST_CONFIG_CANDIDATES;

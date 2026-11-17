@@ -62,7 +62,6 @@
 //! use core::auth::{DaemonAuthDigest, negotiate_server_daemon_digest};
 //! use daemon::auth::{ChallengeGenerator, SecretsFile, verify_client_response};
 //! use protocol::AdvertisedDigests;
-//! use std::net::IpAddr;
 //!
 //! # fn example() -> std::io::Result<()> {
 //! // Parse the module's secrets file contents
@@ -73,8 +72,7 @@
 //!     .expect("client offered a supported digest");
 //!
 //! // Generate challenge
-//! let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-//! let challenge = ChallengeGenerator::generate(peer_ip, digest).text;
+//! let challenge = ChallengeGenerator::generate("192.168.1.1", digest).text;
 //!
 //! // Client sends: "alice <response>"
 //! let client_response = "alice dGVzdHJlc3BvbnNl"; // Base64-encoded hash
@@ -138,7 +136,6 @@ pub use core::auth::{
 
 use std::collections::HashMap;
 use std::io;
-use std::net::IpAddr;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -198,21 +195,19 @@ impl ChallengeGenerator {
     /// ```
     /// use core::auth::DaemonAuthDigest;
     /// use daemon::auth::ChallengeGenerator;
-    /// use std::net::IpAddr;
     ///
-    /// let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-    /// let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5);
+    /// let challenge = ChallengeGenerator::generate("192.168.1.1", DaemonAuthDigest::Md5);
     ///
     /// // Challenge is base64-encoded hash (22 characters without padding)
     /// assert_eq!(challenge.text.len(), 22);
     /// ```
     #[must_use]
-    pub fn generate(peer_ip: IpAddr, digest: DaemonAuthDigest) -> Challenge {
+    pub fn generate(peer_addr: &str, digest: DaemonAuthDigest) -> Challenge {
         let since_epoch = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default();
         Self::generate_from(
-            peer_ip,
+            peer_addr,
             digest,
             since_epoch,
             std::process::id(),
@@ -221,15 +216,14 @@ impl ChallengeGenerator {
     }
 
     fn generate_from(
-        peer_ip: IpAddr,
+        peer_addr: &str,
         digest: DaemonAuthDigest,
         since_epoch: Duration,
         pid: u32,
         fill_random: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>,
     ) -> Challenge {
         let mut input = [0u8; 32];
-        let address_text = peer_ip.to_string();
-        let address_bytes = address_text.as_bytes();
+        let address_bytes = peer_addr.as_bytes();
         let copy_len = address_bytes.len().min(16);
         input[..copy_len].copy_from_slice(&address_bytes[..copy_len]);
         let seconds = (since_epoch.as_secs() & u64::from(u32::MAX)) as u32;
@@ -433,8 +427,7 @@ mod tests {
 
     #[test]
     fn challenge_generator_produces_valid_base64() {
-        let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-        let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md5).text;
+        let challenge = ChallengeGenerator::generate("192.168.1.1", DaemonAuthDigest::Md5).text;
 
         // MD5 hash is 16 bytes, base64 without padding is 22 characters
         assert_eq!(challenge.len(), 22);
@@ -449,8 +442,7 @@ mod tests {
 
     #[test]
     fn challenge_generator_produces_valid_base64_legacy_protocol() {
-        let peer_ip: IpAddr = "192.168.1.1".parse().unwrap();
-        let challenge = ChallengeGenerator::generate(peer_ip, DaemonAuthDigest::Md4).text;
+        let challenge = ChallengeGenerator::generate("192.168.1.1", DaemonAuthDigest::Md4).text;
 
         // MD4 hash is also 16 bytes, base64 without padding is 22 characters
         assert_eq!(challenge.len(), 22);
@@ -481,7 +473,7 @@ mod tests {
         fill_random: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>,
     ) -> Challenge {
         ChallengeGenerator::generate_from(
-            FIXED_PEER.parse().unwrap(),
+            FIXED_PEER,
             DaemonAuthDigest::Md5,
             FIXED_TIME,
             FIXED_PID,
@@ -656,7 +648,7 @@ mod tests {
         let password = b"daemon_secret";
 
         for &digest in SUPPORTED_DAEMON_DIGESTS {
-            let challenge = ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), digest).text;
+            let challenge = ChallengeGenerator::generate("10.0.0.1", digest).text;
             assert_eq!(challenge.len(), digest.base64_len());
 
             let response = compute_auth_response(password, &challenge, digest);
@@ -676,8 +668,7 @@ mod tests {
     #[test]
     fn verify_client_response_ignores_a_non_negotiated_digest() {
         let password = b"secret";
-        let challenge =
-            ChallengeGenerator::generate("10.0.0.1".parse().unwrap(), DaemonAuthDigest::Md5).text;
+        let challenge = ChallengeGenerator::generate("10.0.0.1", DaemonAuthDigest::Md5).text;
 
         let md4_resp = compute_auth_response(password, &challenge, DaemonAuthDigest::Md4);
         assert!(!verify_client_response(

@@ -153,7 +153,7 @@ Count the statuses:
 grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uniq -c
 ```
 
-**Hardening gaps without a CVE.** The coverage matrix in [`docs/audits/cve-uts351-matrix.md`](./docs/audits/cve-uts351-matrix.md) found these next to the rows above. All four are now fixed:
+**Hardening gaps without a CVE.** The coverage matrix in [`docs/audits/cve-uts351-matrix.md`](./docs/audits/cve-uts351-matrix.md) found the first four next to the rows above; the fifth is an oc-rsync defect found by the rsync 3.5.2 peer-address audit. All five are now fixed:
 
 | Gap | Upstream behaviour | Fixed in |
 |---|---|---|
@@ -161,6 +161,7 @@ grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uni
 | `--max-alloc` bounded only xattr allocations; peer-driven file-list growth was unbounded | `my_alloc()` exits 22 (util2.c) | PR #8171 |
 | A negative hard-link gnum was accepted; the xattr count was unbounded on the live path | exits 2 (flist.c, xattrs.c) | PR #8173 |
 | The zstd token decoder inflated a whole packet into one buffer | fixed `out_buffer_size` per step (token.c) | PR #8172 |
+| `hosts deny` bypass on a daemon run over a remote shell. The peer comes from `REMOTE_HOST` / `SSH_CONNECTION` / `SSH_CLIENT` / `SSH2_CLIENT`; oc read a leading-zero value such as `010.1.2.3` as `0.0.0.0`, so `hosts deny = 8.1.2.3` admitted it. Exposed: a remote-shell daemon whose client can influence that variable (for example through sshd `AcceptEnv`) and that relies on `hosts deny`; TCP daemons take the peer from the socket and were not affected. Fixed: the string is kept as given and read by the platform C library's rule (glibc and musl: octal), and a string that cannot be read matches every `hosts deny` address rule and no `hosts allow` one. Tests: `leading_zero_peer_is_refused_by_a_deny_rule_for_its_octal_address` (against 3.5.2), `inet_aton_rule_reads_like_glibc_and_musl`, `an_unreadable_accepted_peer_has_no_substitute_address`, `an_unreadable_peer_is_refused_by_any_deny_address_token`, `an_unreadable_peer_is_admitted_by_no_allow_address_token`. Deliberate difference: for a string the C library cannot parse (`08.1.2.3` on glibc), 3.5.2 matches no address rule and so admits it past `hosts deny = 8.1.2.3`; oc refuses it | keeps the string (clientname.c:76) and parses it with `getaddrinfo(AI_NUMERICHOST)` for each address match (access.c:92, :219); glibc reads `010` as octal | PR #8400 |
 
 **New options in 3.5.0.** `--confine-root=DIR`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links`, and the `auth digest`, `insecure links` and `proxy protocol hosts` daemon directives are implemented (PRs #7396, #7299, #7350, #7484, #7648). Like upstream, `--confine-root` and `--drop-D` are not forwarded to the remote side.
 
@@ -192,7 +193,7 @@ grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uni
 | `--files-from` pull from a daemon module subdirectory read from the module root instead | Fixed | `crates/daemon/src/daemon/sections/module_access/client_args/path_resolution.rs` preserves module-relative paths for `--files-from` pulls. `daemon-files-from-subdir` passes. |
 | Daemon receiver stack/memory overflow when queued deletion messages reach `--max-alloc` | Fixed | `crates/transfer/src/receiver/directory/deletion.rs` and `crates/daemon/src/daemon/sections/module_access/client_args/server_config.rs` track queued delete bytes against `--max-alloc` and suppress `MSG_DELETED` on quiet/non-itemize daemon transfers. `daemon-delete-msg-overflow` passes. |
 | Escape terminal control characters in filenames and diagnostics | Fixed | `crates/logging/src/escape.rs` escapes C0/DEL/C1 control characters in output filenames and diagnostics. `output-control-chars` passes. |
-| IPv6 forward-DNS matching in daemon `hosts allow` / `hosts deny` | Fixed | `crates/daemon/src/daemon/sections/module_access/access_control.rs` compares resolved IPv4/IPv6 addresses cleanly by family. |
+| IPv6 forward-DNS matching in daemon `hosts allow` / `hosts deny` | Fixed | `HostnamePattern::forward_resolve_matches` (`crates/daemon/src/daemon/sections/config_helpers/host_pattern.rs`) compares each resolved record with the peer by family and skips an IPv6 record whose non-zero scope id differs from the peer's, as access.c:124-126 does; `a_scoped_record_on_another_interface_does_not_name_the_peer` and its control pin it. On glibc with `files` or DNS resolution the scope rule cannot fire: the files backend rejects a `%scope` in /etc/hosts and DNS carries no scope, so every record has scope 0. This was shown in an unprivileged network namespace with the same link-local address on two interfaces and `hosts: files`. |
 | Daemon `--nice` / `rrsync` priority restriction | Fixed | `crates/core/src/niceness.rs` rejects remote priority requests and non-19/non-idle daemon client requests. `niceness` passes. |
 
 No 3.5.2 testsuite cell fails on any leg. A future `fail` row would be listed, with cause and owner, by `awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.2-expect.*.txt | sort -u`.

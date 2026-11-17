@@ -114,11 +114,12 @@ fn handle_session(
     } else {
         None
     };
+    let peer = PeerAddress::from_socket(peer_addr);
     if let Some(log) = log_sink.as_ref() {
         log_connection(
             log,
             peer_host_display(peer_host.as_deref(), reverse_lookup),
-            peer_addr,
+            &peer,
         );
     }
 
@@ -132,7 +133,7 @@ fn handle_session(
             // reaches the listening parent's accept loop (cleanup.c:264).
             handle_legacy_session(
                 stream,
-                peer_addr,
+                peer,
                 LegacySessionParams {
                     modules,
                     motd_lines,
@@ -353,10 +354,10 @@ fn end_session(state: ConnectionState, exit_code: Option<ExitCode>) -> Option<Ex
 /// `RERR_UNSUPPORTED` auth-digest refusal). Upstream forks per connection, so the
 /// listening parent is unaffected; only the single-session entry points (stdio,
 /// inetd) turn the code into a process exit status.
-#[cfg_attr(feature = "tracing", instrument(skip(stream, params), fields(peer = %peer_addr), name = "legacy_session"))]
+#[cfg_attr(feature = "tracing", instrument(skip(stream, params), fields(peer = %peer), name = "legacy_session"))]
 fn handle_legacy_session(
     stream: DaemonStream,
-    peer_addr: SocketAddr,
+    peer: PeerAddress,
     params: LegacySessionParams<'_>,
 ) -> io::Result<Option<ExitCode>> {
     let LegacySessionParams {
@@ -623,7 +624,7 @@ fn handle_legacy_session(
             log_list_request(
                 log,
                 peer_host_display(peer_host.as_deref(), reverse_lookup),
-                peer_addr,
+                &peer,
             );
         }
         respond_with_module_list(reader.get_mut(), &mut limiter, modules, messages)?;
@@ -644,7 +645,7 @@ fn handle_legacy_session(
             &mut limiter,
             modules,
             &request,
-            peer_addr.ip(),
+            &peer,
             peer_host.as_deref(),
             log_sink.as_ref(),
             reverse_lookup,

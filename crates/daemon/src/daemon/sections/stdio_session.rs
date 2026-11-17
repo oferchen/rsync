@@ -118,16 +118,16 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
     };
     let stream = DaemonStream::stdio(pair);
 
-    let peer_addr = remote_shell_session_peer()?;
+    let peer = remote_shell_session_peer()?;
     let peer_host = if reverse_lookup {
-        resolve_peer_hostname(peer_addr.ip())
+        peer.ip().and_then(resolve_peer_hostname)
     } else {
         None
     };
 
     let outcome = handle_legacy_session(
         stream,
-        peer_addr,
+        peer,
         LegacySessionParams {
             modules: &modules,
             motd_lines: &motd_lines,

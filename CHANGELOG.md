@@ -94,6 +94,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `proxy protocol hosts` gates who may send a PROXY header, on TCP and inetd sessions, and fails closed when unset (CVE-2026-53791, #7648, #7852, #8077)
 - Resolve the real peer address on the inetd and remote-shell entry points instead of `127.0.0.1` (#7303)
 - `hosts deny` no longer fails open when a hostname does not resolve (CVE-2026-70452, #7314)
+- A daemon run over a remote shell reads a leading-zero peer address such as `REMOTE_HOST=010.1.2.3` the way the C library does, so on Linux `hosts deny = 8.1.2.3` refuses it as rsync 3.5.2 does; it was read as `0.0.0.0` and admitted. A peer string that cannot be read as an address now matches every `hosts deny` address rule and no `hosts allow` one (#8400)
 - Refuse shell metacharacters in `pre-xfer exec` / `post-xfer exec` hook variables (CVE-2026-53790, #7465)
 - Validate and quote the `RSYNC_CONNECT_PROG` `%H` substitution (#7430)
 - Close two injections in the generated batch replay script (#7445)
@@ -447,6 +448,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Network backups follow upstream: rename is preferred, extraneous files are backed up before the delete pass unlinks them, `--omit-dir-times` is implied and `--backup-dir` attributes are inherited, and backup parents clear obstructions (#6941, #6854, #7115, #7152)
 
 **Daemon**
+- A daemon run over a remote shell shows the peer exactly as the environment named it, `fe80::1%eth0` or `010.1.2.3`, in `RSYNC_HOST_ADDR` and its log lines, as rsync 3.5.2 does (#8400)
+- `hosts allow` / `hosts deny` hostname rules skip a forward-DNS IPv6 record scoped to another interface than the peer's, as rsync 3.5.2 does (#8400)
 - A fatal `-M` filter option - an `--exclude-from`, `--include-from` or `merge` file the daemon cannot open, or a malformed rule - ends the daemon session without a message, logging the reason, so the client exits 12 like upstream instead of 4 (#8231)
 - Itemize a directory before deleting in it under `--delete`, and after the `--delete-before` pass, so the log carries upstream's `.d..t......` rows (#8226)
 - The daemon log holds each diagnostic and per-file row before the client sees the transfer end, as upstream's `rwrite()` writes it ahead of the frame (#8217)

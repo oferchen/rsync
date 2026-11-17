@@ -248,17 +248,18 @@ fn serve_socket_session(
         None
     };
 
+    let peer = PeerAddress::from_socket(peer_addr);
     if let Some(log) = log_sink.as_ref() {
         log_connection(
             log,
             peer_host_display(peer_host.as_deref(), reverse_lookup),
-            peer_addr,
+            &peer,
         );
     }
 
     let outcome = handle_legacy_session(
         stream,
-        peer_addr,
+        peer,
         LegacySessionParams {
             modules: &modules,
             motd_lines: &motd_lines,

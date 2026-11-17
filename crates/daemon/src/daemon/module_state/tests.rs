@@ -704,3 +704,145 @@ fn reconfigure_syslog_only_when_module_sets_a_value() {
     };
     assert!(with_tag.reconfigure_syslog().is_some());
 }
+
+/// A module guarded by the given `hosts allow` and `hosts deny` token lists.
+fn module_with_rules(allow: &[&str], deny: &[&str]) -> ModuleDefinition {
+    let parse = |tokens: &[&str]| -> Vec<HostPattern> {
+        tokens
+            .iter()
+            .map(|token| HostPattern::parse(token).expect("host token"))
+            .collect()
+    };
+    ModuleDefinition {
+        hosts_allow: parse(allow),
+        hosts_deny: parse(deny),
+        forward_lookup: false,
+        ..Default::default()
+    }
+}
+
+/// A peer string `valid_ipaddr` accepts that no platform rule reads: a sign
+/// inside an octet.
+fn unreadable_peer() -> crate::daemon::peer_address::PeerAddress {
+    let peer = crate::daemon::peer_address::PeerAddress::from_remote_shell("1.+2.3.4");
+    assert_eq!(peer.ip(), None);
+    peer
+}
+
+/// Task 754, oc-only rows: a peer string this platform cannot read as an
+/// address (`08.1.2.3` on glibc) fails closed. rsync 3.5.2 admits it past
+/// `hosts deny = 8.1.2.3`, because access.c:219 `match_address()` returns 0
+/// when `getaddrinfo` cannot parse the peer; oc refuses it instead.
+#[test]
+fn an_unreadable_peer_is_refused_by_any_deny_address_token() {
+    let host = PeerHost::new(None, false);
+    for deny in [
+        "8.1.2.3",
+        "10.0.0.0/8",
+        "fe80::/10",
+        "8.1.2.3/255.255.255.0",
+    ] {
+        assert!(
+            !module_with_rules(&[], &[deny]).permits_peer(&unreadable_peer(), host),
+            "`hosts deny = {deny}` must refuse a peer with no readable address"
+        );
+    }
+}
+
+/// The allow side: a peer with no readable address matches no allow address
+/// token, so an allow-only module refuses it, and a non-matching allow list
+/// falls through to the deny list, which refuses it too.
+#[test]
+fn an_unreadable_peer_is_admitted_by_no_allow_address_token() {
+    let host = PeerHost::new(None, false);
+    assert!(!module_with_rules(&["8.1.2.3"], &[]).permits_peer(&unreadable_peer(), host));
+    assert!(!module_with_rules(&["8.1.2.3"], &["9.9.9.9"]).permits_peer(&unreadable_peer(), host));
+}
+
+/// Controls: the fail-closed rule is about address tokens only. With no rules,
+/// with `*`, or with a deny list of names, the peer is decided exactly as any
+/// peer is - so the refusals above are the address rule, not a blanket refusal.
+#[test]
+fn an_unreadable_peer_is_decided_normally_by_non_address_tokens() {
+    let host = PeerHost::new(None, false);
+    assert!(module_with_rules(&[], &[]).permits_peer(&unreadable_peer(), host));
+    assert!(module_with_rules(&["*"], &["8.1.2.3"]).permits_peer(&unreadable_peer(), host));
+    // A failed reverse lookup leaves the `UNKNOWN` sentinel (clientname.c:93-95).
+    assert!(
+        module_with_rules(&["unknown"], &[])
+            .permits_peer(&unreadable_peer(), PeerHost::new(None, true))
+    );
+    assert!(module_with_rules(&[], &["other.example"]).permits_peer(
+        &unreadable_peer(),
+        PeerHost::new(Some("peer.example"), true)
+    ));
+}
+
+/// The link-local peer `fe80::1` connecting on interface `scope_id`.
+fn link_local_peer(scope_id: u32) -> crate::daemon::peer_address::PeerAddress {
+    crate::daemon::peer_address::PeerAddress::from_socket(link_local_record(scope_id))
+}
+
+/// A forward-DNS record for `fe80::1` carrying `scope_id`.
+fn link_local_record(scope_id: u32) -> std::net::SocketAddr {
+    std::net::SocketAddr::V6(std::net::SocketAddrV6::new(
+        "fe80::1".parse().expect("fe80::1"),
+        0,
+        0,
+        scope_id,
+    ))
+}
+
+/// A module whose only rule names `lan.example` in `hosts allow` or
+/// `hosts deny`, with forward lookup on so the name is resolved.
+fn module_naming_lan_host(deny: bool) -> ModuleDefinition {
+    let rule = vec![HostPattern::parse("lan.example").expect("host token")];
+    let (hosts_allow, hosts_deny) = if deny {
+        (Vec::new(), rule)
+    } else {
+        (rule, Vec::new())
+    };
+    ModuleDefinition {
+        hosts_allow,
+        hosts_deny,
+        forward_lookup: true,
+        ..Default::default()
+    }
+}
+
+/// Task 663. upstream: access.c:124-126 skips a resolved IPv6 record whose
+/// non-zero scope id differs from the peer's, so the same link-local address
+/// on another interface is a different host. Without the rule a peer on
+/// interface 2 would match a record for interface 3.
+#[test]
+fn a_scoped_record_on_another_interface_does_not_name_the_peer() {
+    let host = PeerHost::new(Some("peer.example"), true);
+    set_test_forward_records("lan.example", &[link_local_record(3)]);
+    assert!(
+        !module_naming_lan_host(false).permits_peer(&link_local_peer(2), host),
+        "`hosts allow = lan.example` (fe80::1%3) must not admit fe80::1%2"
+    );
+    assert!(
+        module_naming_lan_host(true).permits_peer(&link_local_peer(2), host),
+        "`hosts deny = lan.example` (fe80::1%3) must not refuse fe80::1%2"
+    );
+}
+
+/// The controls: a record with no scope matches the address on any
+/// interface, and a record on the peer's own interface matches it - so the
+/// refusal above is the scope rule, not a link-local address never matching.
+#[test]
+fn a_record_with_no_scope_or_the_peers_scope_names_the_peer() {
+    let host = PeerHost::new(Some("peer.example"), true);
+    for record_scope in [0, 2] {
+        set_test_forward_records("lan.example", &[link_local_record(record_scope)]);
+        assert!(
+            module_naming_lan_host(false).permits_peer(&link_local_peer(2), host),
+            "a record on scope {record_scope} must admit fe80::1%2"
+        );
+        assert!(
+            !module_naming_lan_host(true).permits_peer(&link_local_peer(2), host),
+            "a record on scope {record_scope} must refuse fe80::1%2"
+        );
+    }
+}

@@ -395,7 +395,7 @@ fn validate_module_path(
             "module '{}' path validation failed for {} ({}): path does not exist: {}",
             ctx.request,
             ctx.host_display(),
-            ctx.peer_ip,
+            ctx.peer,
             module.path.display()
         );
         let message = rsync_error!(1, text).with_role(Role::Daemon);

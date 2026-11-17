@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use super::{AuthUser, MaxConnections};
 // HostPattern is defined in the parent daemon module (via include!() of config_helpers.rs).
 use crate::daemon::HostPattern;
+use crate::daemon::peer_address::PeerAddress;
 
 /// Resolved `gid` directive for a daemon module's privilege drop.
 ///
@@ -300,7 +301,10 @@ impl ModuleDefinition {
     /// upstream: clientserver.c:1458-1478 `start_daemon()` - reverse DNS
     /// before chroot ensures `client_name()` returns a real hostname when
     /// ACLs are evaluated.
-    pub(crate) fn permits(&self, addr: std::net::IpAddr, host: super::PeerHost<'_>) -> bool {
+    ///
+    /// A peer whose address text this platform cannot read has no address; see
+    /// `unresolved_peer_matches_address_token` for how it meets address tokens.
+    pub(crate) fn permits_peer(&self, peer: &PeerAddress, host: super::PeerHost<'_>) -> bool {
         // upstream: access.c:357-363 - allow-list short-circuit. A peer
         // matching any allow pattern is admitted before the deny list is
         // consulted; a peer matching nothing in a non-empty allow list is
@@ -309,7 +313,7 @@ impl ModuleDefinition {
             if self
                 .hosts_allow
                 .iter()
-                .any(|pattern| self.host_matches(pattern, addr, host, false))
+                .any(|pattern| self.host_matches(pattern, peer, host, false))
             {
                 return true;
             }
@@ -355,7 +359,7 @@ impl ModuleDefinition {
         if self
             .hosts_deny
             .iter()
-            .any(|pattern| self.host_matches(pattern, addr, host, true))
+            .any(|pattern| self.host_matches(pattern, peer, host, true))
         {
             return false;
         }
@@ -382,12 +386,21 @@ impl ModuleDefinition {
     fn host_matches(
         &self,
         pattern: &HostPattern,
-        addr: std::net::IpAddr,
+        peer: &PeerAddress,
         host: super::PeerHost<'_>,
         deny: bool,
     ) -> bool {
-        pattern.matches(addr, host.as_str())
-            || pattern.forward_resolve_matches(addr, self.forward_lookup, deny)
+        pattern.matches_peer(peer.ip(), host.as_str(), deny)
+            || pattern.forward_resolve_matches(peer, self.forward_lookup, deny)
+    }
+
+    /// [`Self::permits_peer`] for a peer connecting from `addr` with no scope.
+    #[cfg(test)]
+    pub(crate) fn permits(&self, addr: std::net::IpAddr, host: super::PeerHost<'_>) -> bool {
+        self.permits_peer(
+            &PeerAddress::from_socket(std::net::SocketAddr::new(addr, 0)),
+            host,
+        )
     }
 
     /// Returns whether any host pattern requires DNS hostname resolution.
