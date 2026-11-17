@@ -379,15 +379,21 @@ fn build_daemon_handshake(config: &ClientConfig, protocol: ProtocolVersion) -> H
 ///
 /// upstream: clientserver.c - the server exits after file list processing when
 /// `!do_xfers` (dry-run mode).
+///
+/// A close that carries the peer's `MSG_ERROR_EXIT` code is the peer's own
+/// fatal exit, such as a daemon receiver refusing its destination in
+/// get_local_name() (main.c:798-870), not that early close: the client exits
+/// with the peer's code (io.c:1899-1932).
 pub(super) fn is_dry_run_remote_close(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
-        std::io::ErrorKind::BrokenPipe
-            | std::io::ErrorKind::ConnectionReset
-            | std::io::ErrorKind::ConnectionAborted
-            | std::io::ErrorKind::UnexpectedEof
-            | std::io::ErrorKind::WouldBlock
-    )
+    remote_exit_code(error).is_none()
+        && matches!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::WouldBlock
+        )
 }
 
 /// Adapts a [`ClientProgressObserver`] to [`TransferProgressCallback`].
@@ -492,6 +498,17 @@ mod map_server_transfer_error_tests {
         }
         let nested = std::io::Error::other(Wrap(RemoteExitError { code: 7 }));
         assert_eq!(remote_exit_code(&nested), Some(7));
+    }
+
+    /// A dry-run push whose daemon refuses its destination closes the socket
+    /// after `MSG_ERROR_EXIT`; that close must keep the daemon's code instead
+    /// of passing for the quiet dry-run close (exit 0).
+    #[test]
+    fn a_close_carrying_the_peers_exit_code_is_not_the_dry_run_close() {
+        assert!(!is_dry_run_remote_close(&remote_exit_io(3)));
+        assert!(is_dry_run_remote_close(&std::io::Error::from(
+            std::io::ErrorKind::ConnectionAborted
+        )));
     }
 
     #[test]
