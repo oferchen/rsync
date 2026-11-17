@@ -60,6 +60,33 @@ pub fn comma_num(num: u64) -> String {
     grouped
 }
 
+/// Renders `dnum` with `decimal_digits` fraction digits and, from 1000 up in
+/// magnitude, a comma between every group of three integer digits.
+///
+/// The fraction comes from the rounded rendering but the grouped integer part
+/// from the truncated value, so `1234.999` renders `1,234.00` while `999.999`
+/// renders `1000.00`.
+///
+/// upstream: lib/compat.c:262-282 `do_big_dnum()` with `human_flag == 1` - the
+/// `comma_dnum()` and `human_dnum()` rendering at the default `-h` level.
+#[must_use]
+pub fn comma_dnum(dnum: f64, decimal_digits: usize) -> String {
+    let rendered = format!("{dnum:.decimal_digits$}");
+    if dnum < 1000.0 && dnum > -1000.0 {
+        return rendered;
+    }
+    let fract_start = rendered[1..]
+        .find(|c: char| !c.is_ascii_digit())
+        .map_or(rendered.len(), |at| at + 1);
+    let whole = dnum as i64;
+    let sign = if whole < 0 { "-" } else { "" };
+    format!(
+        "{sign}{}{}",
+        comma_num(whole.unsigned_abs()),
+        &rendered[fract_start..]
+    )
+}
+
 /// Renders `unix_secs` as upstream `timestring()` does for a zone `offset`
 /// seconds east of UTC.
 ///
@@ -140,6 +167,26 @@ mod tests {
         assert_eq!(comma_num(4_096), "4,096");
         assert_eq!(comma_num(123_456_789), "123,456,789");
         assert_eq!(comma_num(u64::MAX), "18,446,744,073,709,551,615");
+    }
+
+    /// upstream: lib/compat.c:262-282 `do_big_dnum()` - grouping starts at a
+    /// magnitude of 1000, and the integer digits are the TRUNCATED value while
+    /// the fraction is the rounded one. Both quirks are visible in 3.5.2's
+    /// summary, so a rounding-first port would print `1,235.00` and `1,000.00`
+    /// where upstream prints `1,234.00` and `1000.00`.
+    #[test]
+    fn comma_dnum_mirrors_do_big_dnum() {
+        assert_eq!(comma_dnum(0.0, 2), "0.00");
+        assert_eq!(comma_dnum(1.0, 2), "1.00");
+        assert_eq!(comma_dnum(999.99, 2), "999.99");
+        assert_eq!(comma_dnum(999.999, 2), "1000.00");
+        assert_eq!(comma_dnum(1000.0, 2), "1,000.00");
+        assert_eq!(comma_dnum(26_548.672_566, 2), "26,548.67");
+        assert_eq!(comma_dnum(6_001_786.0, 2), "6,001,786.00");
+        assert_eq!(comma_dnum(1234.999, 2), "1,234.00");
+        assert_eq!(comma_dnum(-1234.5, 2), "-1,234.50");
+        assert_eq!(comma_dnum(1234.5678, 3), "1,234.568");
+        assert_eq!(comma_dnum(1234.0, 0), "1,234");
     }
 
     /// upstream: util1.c:1722-1739 `timestring()` over the whole `time_t`
