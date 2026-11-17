@@ -22,6 +22,17 @@ pub use frontend::dry_run::{
 };
 pub use frontend::itemize::{FileType, ItemizeChange, UpdateType, format_itemize};
 pub use frontend::progress::diagnostic::enable_live_stdio;
+
+/// Adopts the environment's `LC_CTYPE` locale for the whole process and records
+/// its codeset for terminal escaping.
+///
+/// upstream: main.c:1911 `setlocale(LC_CTYPE, "")` runs before option parsing,
+/// and every later multibyte decision on output uses that locale's codeset
+/// (rsync.c:75-83 `default_charset()`, log.c:251-274 `locale_char_len()`).
+/// Call once from `main`, before any thread exists.
+pub fn init_process_locale() {
+    logging::escape::set_locale_codeset(::platform::locale::init_ctype_locale().as_deref());
+}
 pub use frontend::progress_format;
 pub use frontend::stats_format;
 pub use frontend::{exit_code_from, run};
