@@ -753,8 +753,8 @@ fn execute_empty_file_in_nonexistent_directory_errors_without_mkpath() {
         .expect_err("missing dest-arg parent should error without --mkpath");
 
     match error.kind() {
-        LocalCopyErrorKind::Io { action, source, .. } => {
-            assert_eq!(*action, "create parent directory");
+        LocalCopyErrorKind::DestinationParentUnusable { path, source } => {
+            assert_eq!(Some(path.as_path()), destination.parent());
             assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
         }
         other => panic!("unexpected error kind: {other:?}"),

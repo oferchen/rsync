@@ -312,7 +312,7 @@ fn no_implied_dirs_recursive_copy_with_nested_structure() {
 }
 
 #[test]
-fn no_implied_dirs_dry_run_skips_parent_check() {
+fn no_implied_dirs_dry_run_still_enters_the_parent() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     fs::write(&source, b"content").expect("write source");
@@ -326,8 +326,13 @@ fn no_implied_dirs_dry_run_skips_parent_check() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().implied_dirs(false);
 
-    plan.execute_with_options(LocalCopyExecution::DryRun, options)
-        .expect("dry-run succeeds without checking parent");
+    let error = plan
+        .execute_with_options(LocalCopyExecution::DryRun, options)
+        .expect_err("a dry run still enters the destination's parent");
+    assert!(matches!(
+        error.kind(),
+        LocalCopyErrorKind::DestinationParentUnusable { .. }
+    ));
     assert!(!destination.exists());
 }
 
@@ -423,8 +428,8 @@ fn no_implied_dirs_single_file_requires_existing_parent() {
         .expect_err("should fail without parent directory");
 
     match error.kind() {
-        LocalCopyErrorKind::Io { action, .. } => {
-            assert_eq!(*action, "create parent directory");
+        LocalCopyErrorKind::DestinationParentUnusable { path, .. } => {
+            assert_eq!(Some(path.as_path()), destination.parent());
         }
         other => panic!("unexpected error kind: {other:?}"),
     }
@@ -581,9 +586,9 @@ fn relative_no_implied_dirs_creates_leading_dirs_with_default_mode() {
     );
 }
 
-// upstream: main.c:714 get_local_name() - without --mkpath a missing leading
-// prefix of the destination ARGUMENT is never auto-created; the transfer fails
-// with ENOENT. Archive defaults enable --implied-dirs, which only governs
+// upstream: main.c:865-868 get_local_name() - without --mkpath a missing leading
+// prefix of the destination ARGUMENT is never auto-created; entering it fails
+// `change_dir#3` with ENOENT and RERR_FILESELECT (3). Archive defaults enable --implied-dirs, which only governs
 // source-relative subdirs created UNDER an existing destination root, NOT the
 // destination arg's own missing parent. This is the negative control the
 // upstream `mkpath` conformance test relies on: a transfer WITHOUT --mkpath
@@ -611,12 +616,13 @@ fn default_does_not_create_missing_dest_arg_parent() {
         .expect_err("transfer must fail without --mkpath when parent is missing");
 
     match error.kind() {
-        LocalCopyErrorKind::Io { action, source, .. } => {
-            assert_eq!(*action, "create parent directory");
+        LocalCopyErrorKind::DestinationParentUnusable { path, source } => {
+            assert_eq!(Some(path.as_path()), destination.parent());
             assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
         }
         other => panic!("unexpected error kind: {other:?}"),
     }
+    assert_eq!(error.exit_code(), 3);
 
     // Nothing may be created along the missing prefix.
     assert!(!missing_prefix.exists());

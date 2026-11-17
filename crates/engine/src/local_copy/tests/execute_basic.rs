@@ -126,6 +126,9 @@ fn execute_with_relative_preserves_parent_directories() {
     assert_eq!(summary.files_copied(), 1);
 }
 
+/// `-R src/./dir/file.txt` lists the implied directory `dir` too, so the file
+/// list holds two entries and an existing file cannot receive it.
+/// upstream: main.c:785-790 get_local_name(), flist.c:2994-2997.
 #[test]
 fn execute_with_relative_requires_directory_destination() {
     let temp = create_tempdir();
@@ -153,8 +156,9 @@ fn execute_with_relative_requires_directory_destination() {
     let error = result.expect_err("relative paths require directory destination");
     assert!(matches!(
         error.kind(),
-        LocalCopyErrorKind::InvalidArgument(LocalCopyArgumentError::DestinationMustBeDirectory)
+        LocalCopyErrorKind::DestinationConflict(DestinationConflict::MoreThanOneFile)
     ));
+    assert_eq!(error.exit_code(), 3);
     assert_eq!(fs::read(&destination).expect("read destination"), b"target");
 }
 

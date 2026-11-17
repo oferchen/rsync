@@ -420,8 +420,7 @@ fn execute_without_implied_dirs_requires_existing_parent() {
         .expect_err("missing parent should error");
 
     match error.kind() {
-        LocalCopyErrorKind::Io { action, path, .. } => {
-            assert_eq!(*action, "create parent directory");
+        LocalCopyErrorKind::DestinationParentUnusable { path, .. } => {
             assert_eq!(path, destination.parent().expect("parent"));
         }
         other => panic!("unexpected error kind: {other:?}"),
@@ -430,7 +429,7 @@ fn execute_without_implied_dirs_requires_existing_parent() {
 }
 
 #[test]
-fn execute_dry_run_without_implied_dirs_skips_parent_check() {
+fn execute_dry_run_without_implied_dirs_still_enters_the_parent() {
     let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("missing").join("dest.txt");
@@ -443,8 +442,13 @@ fn execute_dry_run_without_implied_dirs_skips_parent_check() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().implied_dirs(false);
 
-    plan.execute_with_options(LocalCopyExecution::DryRun, options)
-        .expect("dry-run succeeds without checking parent");
+    let error = plan
+        .execute_with_options(LocalCopyExecution::DryRun, options)
+        .expect_err("a dry run still enters the destination's parent");
+    assert!(matches!(
+        error.kind(),
+        LocalCopyErrorKind::DestinationParentUnusable { .. }
+    ));
 
     assert!(!destination.exists());
 }
@@ -472,8 +476,8 @@ fn execute_with_implied_dirs_still_requires_dest_arg_parent() {
         .expect_err("missing dest-arg parent should error without --mkpath");
 
     match error.kind() {
-        LocalCopyErrorKind::Io { action, source, .. } => {
-            assert_eq!(*action, "create parent directory");
+        LocalCopyErrorKind::DestinationParentUnusable { path, source } => {
+            assert_eq!(Some(path.as_path()), destination.parent());
             assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
         }
         other => panic!("unexpected error kind: {other:?}"),
@@ -529,11 +533,16 @@ fn execute_with_dry_run_silently_keeps_directory_on_conflict() {
     );
 }
 
+/// `--force` only governs deleting a non-empty directory; it does not let an
+/// existing file take a multi-entry file list. rsync 3.5.2 (`-r --force
+/// source-dir dest`): `ERROR: destination must be a directory when copying
+/// more than 1 file`, exit 3, the file untouched.
+/// upstream: main.c:785-790 get_local_name().
 #[test]
-fn execute_directory_replaces_file_when_force_enabled() {
+fn execute_directory_refuses_an_existing_file_even_with_force() {
     let temp = create_tempdir();
     let source_root = temp.path().join("source-dir");
-    fs::create_dir_all(&source_root).expect("create source directory");
+    fs::create_dir_all(&source_root).expect("create source dir");
     fs::write(source_root.join("file.txt"), b"payload").expect("write source file");
 
     let destination = temp.path().join("dest");
@@ -545,19 +554,18 @@ fn execute_directory_replaces_file_when_force_enabled() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let summary = plan
+    let error = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
             LocalCopyOptions::default().force_replacements(true),
         )
-        .expect("forced replacement succeeds");
+        .expect_err("--force does not make a file a directory");
 
-    assert!(destination.is_dir(), "file should be replaced by directory");
-    assert_eq!(
-        fs::read(destination.join("source-dir").join("file.txt")).expect("read copied file"),
-        b"payload"
-    );
-    assert!(summary.directories_created() >= 1);
+    assert!(matches!(
+        error.kind(),
+        LocalCopyErrorKind::DestinationConflict(DestinationConflict::MoreThanOneFile)
+    ));
+    assert_eq!(fs::read(&destination).expect("read destination"), b"old");
 }
 
 #[cfg(unix)]
@@ -1115,19 +1123,19 @@ fn execute_directory_nested_already_exists_merges_content() {
     );
 }
 
-/// upstream: `generator.c:1876-1879` `recv_generator()` clears a non-directory
-/// standing where a directory belongs and carries on. `--force` contributes
-/// only `DEL_RECURSE` (`generator.c:1629`), which governs recursing into a
-/// non-empty *directory*, so this replacement needs no flag.
+/// A directory and its child are two entries, which an existing file cannot
+/// hold. rsync 3.5.2 (`-r source dest`): `ERROR: destination must be a
+/// directory when copying more than 1 file`, exit 3, the file untouched.
+/// upstream: main.c:785-790 get_local_name().
 #[test]
-fn execute_directory_replaces_destination_file_without_force() {
+fn execute_directory_refuses_an_existing_destination_file() {
     let temp = create_tempdir();
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source dir");
     fs::write(source_root.join("child.txt"), b"content").expect("write child");
 
     let destination = temp.path().join("dest");
-    fs::write(&destination, b"existing file").expect("write existing file");
+    fs::write(&destination, b"existing file").expect("write destination file");
 
     let operands = vec![
         source_root.into_os_string(),
@@ -1135,16 +1143,17 @@ fn execute_directory_replaces_destination_file_without_force() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    plan.execute()
-        .expect("obstructing file is cleared, not refused");
+    let error = plan
+        .execute()
+        .expect_err("an existing file cannot hold two entries");
 
-    assert!(
-        destination.is_dir(),
-        "destination file replaced by a directory"
-    );
+    assert!(matches!(
+        error.kind(),
+        LocalCopyErrorKind::DestinationConflict(DestinationConflict::MoreThanOneFile)
+    ));
     assert_eq!(
-        fs::read(destination.join("source").join("child.txt")).expect("read copied child"),
-        b"content"
+        fs::read(&destination).expect("read destination"),
+        b"existing file"
     );
 }
 

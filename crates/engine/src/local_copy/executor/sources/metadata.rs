@@ -122,7 +122,6 @@ pub(super) fn fetch_source_metadata(
     source_path: &Path,
     destination_path: &Path,
     destination_behaves_like_directory: bool,
-    multiple_sources: bool,
     relative_root: Option<&Path>,
     metadata_start: Instant,
 ) -> Result<SourceMetadataResult, LocalCopyError> {
@@ -145,7 +144,6 @@ pub(super) fn fetch_source_metadata(
                     source,
                     destination_path,
                     destination_behaves_like_directory,
-                    multiple_sources,
                     relative_root,
                 )?;
                 Ok(SourceMetadataResult::Handled)

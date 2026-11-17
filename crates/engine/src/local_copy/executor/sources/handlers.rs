@@ -181,7 +181,6 @@ pub(super) fn handle_directory_copy(
     destination_path: &Path,
     destination_base: &Path,
     destination_behaves_like_directory: bool,
-    multiple_sources: bool,
     root_device: Option<u64>,
 ) -> Result<(), LocalCopyError> {
     let recursion_enabled = context.recursive_enabled();
@@ -222,7 +221,7 @@ pub(super) fn handle_directory_copy(
     // `destination_behaves_like_directory`. An empty source directory
     // (file_total == 1) keeps the flag false and is materialised AS the
     // destination (its own name dropped), matching `rsync -r empty n` -> `n/`.
-    let target = if destination_behaves_like_directory || multiple_sources {
+    let target = if destination_behaves_like_directory {
         // upstream: flist.c:2004-2027 + flist.c:1062-1076 - filename is
         // transcoded LOCAL -> wire -> REMOTE; for local-copy this
         // collapses to LOCAL -> REMOTE applied here before joining.

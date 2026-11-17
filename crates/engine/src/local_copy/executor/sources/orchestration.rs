@@ -13,19 +13,19 @@ use protocol::flist::{FileEntry, compare_file_entries};
 
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
-    CopyContext, CopyOutcome, DeleteTiming, LocalCopyAction, LocalCopyArgumentError,
-    LocalCopyChangeSet, LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyOptions,
-    LocalCopyPlan, LocalCopyRecord, LocalCopyRecordHandler, SourceSpec, delete_extraneous_entries,
+    CopyContext, CopyOutcome, DeleteTiming, DestinationConflict, LocalCopyAction,
+    LocalCopyArgumentError, LocalCopyChangeSet, LocalCopyError, LocalCopyExecution,
+    LocalCopyMetadata, LocalCopyOptions, LocalCopyPlan, LocalCopyRecord, LocalCopyRecordHandler,
+    SourceSpec, delete_extraneous_entries,
 };
 
-use super::super::file::remove_existing_destination;
 use super::super::non_empty_path;
 use super::super::refuse_populated_directory;
 use super::super::{
     emit_cannot_convert_filename, name_is_convertible, transcode_filename_component,
 };
 use super::destination::{ensure_destination_directory, query_destination_state};
-use super::file_total::{file_total_exceeds_one, parse_operand_merge_files};
+use super::file_total::{FileTotal, file_total, listed_operands, parse_operand_merge_files};
 use super::handlers::{
     handle_directory_contents_copy, handle_directory_copy, handle_non_directory_source,
 };
@@ -571,7 +571,10 @@ pub(crate) fn copy_sources(
             } else {
                 query_destination_state(destination_path)?
             };
-            if context.keep_dirlinks_enabled() && destination_state.symlink_to_dir {
+            // upstream: main.c:771 get_local_name() - `do_stat(dest_path)`
+            // follows a symlink, so a link to a directory is entered as one
+            // whether or not --keep-dirlinks is set.
+            if destination_state.symlink_to_dir {
                 destination_state.is_dir = true;
             }
 
@@ -582,7 +585,8 @@ pub(crate) fn copy_sources(
             // signal here so the CLI itemize gate (rendered in
             // emit_transfer_summary) and the synthesized `cd+++++++++ ./`
             // root record (rendered by copy_directory_recursive) both fire.
-            parse_operand_merge_files(context, plan)?;
+            let operands = listed_operands(context, plan);
+            parse_operand_merge_files(context, &operands)?;
             let mut destination_root_created = false;
             let mkpath = context.mkpath_enabled();
             if plan.destination_spec().force_directory() {
@@ -594,54 +598,44 @@ pub(crate) fn copy_sources(
                 )?;
             }
 
-            if multiple_sources {
-                destination_root_created |= ensure_destination_directory(
-                    destination_path,
-                    &mut destination_state,
-                    context.mode(),
-                    mkpath,
-                )?;
-            }
-
-            // upstream: main.c:808 get_local_name() - `if (file_total > 1 ||
-            // trailing_slash) { do_mkdir(dest_path); ... }`, decided ONCE from
-            // the first file list before anything is transferred; a failure
-            // ends the run with mkdir_error (main.c:817-821). The trailing-slash
-            // and multi-operand halves are handled above; the count of a single
-            // operand comes from `file_total_exceeds_one`. A no-trailing-slash
-            // directory under `-d` alone contributes only its own entry, so the
-            // name is dropped and the destination is materialised AS the
-            // directory; one whose children are all filtered out does the same.
-            if !multiple_sources
-                && !plan.destination_spec().force_directory()
-                && !destination_state.is_dir
-                && file_total_exceeds_one(context, plan)?
-            {
-                // A pre-existing non-directory destination blocks the mkdir of a
-                // named directory operand, so clear it first and let the source
-                // name land as `dest/<source>/`. upstream: generator.c:1877-1880
-                // recv_generator() removes it with `delete_item(fname, ..,
-                // del_opts | DEL_FOR_DIR)` regardless of `--force`, which
-                // contributes only DEL_RECURSE (generator.c:1629) and so
-                // governs recursing into a non-empty *directory*, not this.
-                let replaces_obstacle = destination_state.exists
-                    && plan.sources().first().is_some_and(|source| {
-                        !source.copy_contents()
-                            && fs::symlink_metadata(source.path()).is_ok_and(|meta| meta.is_dir())
-                    });
-                if replaces_obstacle && !context.mode().is_dry_run() {
-                    remove_existing_destination(destination_path)?;
-                }
-                if replaces_obstacle {
-                    destination_state.exists = false;
-                }
-                if !destination_state.exists {
-                    destination_root_created |= ensure_destination_directory(
-                        destination_path,
-                        &mut destination_state,
-                        context.mode(),
-                        mkpath,
-                    )?;
+            // upstream: main.c:775-868 get_local_name() - decided ONCE from the
+            // first file list before anything is transferred. A destination
+            // that is not a directory receives more than one entry only as a
+            // new directory (main.c:785-790, main.c:808-821); a single entry is
+            // written under the destination's own name, from inside its parent
+            // (main.c:791-796, main.c:843-868).
+            let mut single_entry_parent_error = None;
+            let mut single_entry_source = None;
+            if !destination_state.is_dir && !plan.destination_spec().force_directory() {
+                match file_total(context, &operands)? {
+                    FileTotal::Many => {
+                        if destination_state.exists {
+                            return Err(LocalCopyError::destination_conflict(
+                                DestinationConflict::MoreThanOneFile,
+                            ));
+                        }
+                        destination_root_created |= ensure_destination_directory(
+                            destination_path,
+                            &mut destination_state,
+                            context.mode(),
+                            mkpath,
+                        )?;
+                    }
+                    FileTotal::AtMostOne(listed) => {
+                        if destination_state.exists && listed.is_some_and(|listed| listed.is_dir) {
+                            return Err(LocalCopyError::destination_conflict(
+                                DestinationConflict::DirectoryOverNonDirectory,
+                            ));
+                        }
+                        // upstream: main.c:852-863 - `--mkpath` has already
+                        // created the parent, or under --dry-run skips entering it.
+                        if !mkpath {
+                            single_entry_parent_error =
+                                unusable_destination_parent(destination_path);
+                        }
+                        single_entry_source =
+                            listed.map(|listed| plan.sources()[listed.index].path());
+                    }
                 }
             }
 
@@ -729,6 +723,13 @@ pub(crate) fn copy_sources(
 
             let mut first_io_error: Option<LocalCopyError> = None;
             for source in &worklist {
+                // upstream: the sender's file list, with every link_stat and
+                // `skipping directory` notice, is complete before the receiver
+                // fails to enter the destination's parent.
+                if single_entry_parent_error.is_some() && single_entry_source == Some(source.path())
+                {
+                    continue;
+                }
                 context.set_source_anchor(source_confinement_anchor(source));
                 // Without the held base no entry can be resolved through the
                 // ownership walk, so the operand fails rather than falling back
@@ -790,6 +791,10 @@ pub(crate) fn copy_sources(
                 }
             }
 
+            if let Some(error) = single_entry_parent_error {
+                return Err(error);
+            }
+
             // Write the flist end-of-list marker, ID lists, the pre-30
             // io_error word, then delta data.
             // upstream: flist.c:3074-3078 - without INC_RECURSE, send_id_lists()
@@ -847,6 +852,26 @@ pub(crate) fn copy_sources(
             Err(error)
         }
     }
+}
+
+/// The error entering the parent of a single-entry destination would fail
+/// with, if any.
+///
+/// upstream: main.c:843-868 get_local_name() - `change_dir(dest_path)` on the
+/// destination's leading directories, failing `change_dir#3` with
+/// `RERR_FILESELECT`. A destination without a directory component is written
+/// in the current directory and needs no change. Statting `<parent>/.` needs
+/// the same search permission `chdir` does.
+fn unusable_destination_parent(destination: &Path) -> Option<LocalCopyError> {
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())?;
+    let error = match fs::metadata(parent.join(".")) {
+        Ok(metadata) if metadata.is_dir() => return None,
+        Ok(_) => io::Error::from(io::ErrorKind::NotADirectory),
+        Err(error) => error,
+    };
+    Some(LocalCopyError::destination_parent_unusable(parent, error))
 }
 
 /// Decides the exit status a run owes once every entry has been processed.
@@ -980,7 +1005,6 @@ fn process_single_source(
         source_path,
         destination_path,
         destination_behaves_like_directory,
-        multiple_sources,
         relative_root.as_deref(),
         metadata_start,
     )?;
@@ -1113,12 +1137,6 @@ fn process_single_source(
 
     context.record_file_list_entry(record_relative.as_deref());
 
-    if proc_ctx.requires_directory_destination() && !destination_behaves_like_directory {
-        return Err(LocalCopyError::invalid_argument(
-            LocalCopyArgumentError::DestinationMustBeDirectory,
-        ));
-    }
-
     // upstream: flist.c:2983-2998 - send_file_list() calls send_implied_dirs()
     // for each `--relative` operand *before* send_file_name() emits the operand
     // itself, so the implied parent directories precede the operand's row in the
@@ -1163,7 +1181,6 @@ fn process_single_source(
                 destination_path,
                 &proc_ctx.destination_base,
                 destination_behaves_like_directory,
-                multiple_sources,
                 root_device,
             )?;
         }
@@ -1589,7 +1606,6 @@ pub(super) fn delete_missing_source_entry(
     source: &SourceSpec,
     destination_path: &Path,
     destination_behaves_like_directory: bool,
-    multiple_sources: bool,
     relative_root: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
     if source.copy_contents() {
@@ -1614,7 +1630,7 @@ pub(super) fn delete_missing_source_entry(
     context.record_file_list_entry(non_empty_path(relative.as_path()));
     context.summary_mut().record_regular_file_total();
 
-    let target = if destination_behaves_like_directory || multiple_sources {
+    let target = if destination_behaves_like_directory {
         destination_path.join(&relative)
     } else {
         destination_path.to_path_buf()

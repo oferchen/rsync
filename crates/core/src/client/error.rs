@@ -505,6 +505,22 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             );
             program_line_error(line, ExitCode::FileIo, Role::PreForkReceiver)
         }
+        LocalCopyErrorKind::DestinationParentUnusable { path, source } => {
+            // upstream: main.c:865-868 get_local_name() - `rsyserr(FERROR,
+            // errno, "change_dir#3 %s failed", full_fname(dest_path))`.
+            let line = format!(
+                "[Receiver] change_dir#3 {} failed: {}",
+                logging::full_fname(&path),
+                upstream_io_error(&source)
+            );
+            program_line_error(line, ExitCode::FileSelect, Role::PreForkReceiver)
+        }
+        LocalCopyErrorKind::DestinationConflict(conflict) => {
+            // upstream: main.c:785-796 get_local_name() - an unprefixed
+            // `rprintf(FERROR, ...)`, then `exit_cleanup(RERR_FILESELECT)`.
+            remote_exit_error(ExitCode::FileSelect, Role::PreForkReceiver)
+                .with_cause_line(conflict.message().to_owned())
+        }
         LocalCopyErrorKind::Timeout { duration } => {
             let code = ExitCode::Timeout;
             let text = format!(
@@ -1362,6 +1378,50 @@ mod tests {
         /// "mkdir %s failed", full_fname(dest_path))` then
         /// `exit_cleanup(RERR_FILEIO)`. It runs before the fork, so both the
         /// line and the trailer name the `Receiver`.
+        #[test]
+        fn map_destination_parent_unusable_reports_change_dir_3_as_receiver() {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let parent = temp.path().join("nodir");
+            let missing = || std::fs::metadata(&parent).expect_err("parent is missing");
+            let local_error = LocalCopyError::destination_parent_unusable(&parent, missing());
+            let client_error = map_local_copy_error(local_error);
+            assert_eq!(client_error.code(), ExitCode::FileSelect);
+            assert_eq!(client_error.exit_code(), 3);
+            let expected = format!(
+                "[Receiver] change_dir#3 {} failed: {}",
+                logging::full_fname(&parent),
+                upstream_io_error(&missing())
+            );
+            assert_eq!(client_error.program_line(), Some(expected.as_str()));
+            let msg = client_error.to_string();
+            assert!(msg.contains("(code 3)"), "{msg}");
+            assert!(msg.contains("[Receiver="), "{msg}");
+        }
+
+        #[test]
+        fn map_destination_conflict_prints_upstream_cause_unprefixed() {
+            use engine::local_copy::DestinationConflict;
+            for (conflict, line) in [
+                (
+                    DestinationConflict::MoreThanOneFile,
+                    "ERROR: destination must be a directory when copying more than 1 file",
+                ),
+                (
+                    DestinationConflict::DirectoryOverNonDirectory,
+                    "ERROR: cannot overwrite non-directory with a directory",
+                ),
+            ] {
+                let client_error =
+                    map_local_copy_error(LocalCopyError::destination_conflict(conflict));
+                assert_eq!(client_error.exit_code(), 3);
+                assert_eq!(client_error.cause_line(), Some(line));
+                assert_eq!(client_error.program_line(), None);
+                let msg = client_error.to_string();
+                assert!(msg.contains("(code 3)"), "{msg}");
+                assert!(msg.contains("[Receiver="), "{msg}");
+            }
+        }
+
         #[test]
         fn map_destination_mkdir_failed_reports_file_io_as_receiver() {
             // The errno a failed mkdir reports for a read-only parent.
