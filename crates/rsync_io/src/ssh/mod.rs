@@ -110,7 +110,9 @@ pub use connect::{
     DEFAULT_CONNECT_TIMEOUT, DEFAULT_KEEPALIVE_INTERVAL, DEFAULT_KEEPALIVE_MAX_FAILURES,
     KeepAliveConfig, SshConnectConfig,
 };
-pub use connection::{CleanupChild, SshChildHandle, SshConnection, SshReader, SshWriter};
+pub use connection::{
+    CleanupChild, SshChildHandle, SshConnection, SshReader, SshWriter, WireShutdown,
+};
 pub use operand::{RemoteOperand, RemoteOperandParseError, parse_ssh_operand};
 pub use parse::{RemoteShellParseError, parse_remote_shell};
 pub use wire::WirePrimitive;

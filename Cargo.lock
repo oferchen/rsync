@@ -4036,6 +4036,7 @@ dependencies = [
  "libc",
  "platform",
  "rcgen",
+ "rustix",
  "socket2",
  "tempfile",
 ]

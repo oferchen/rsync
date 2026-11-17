@@ -281,15 +281,26 @@ impl<'a> Core<'a> {
     /// starts a wait is for one direction only, as upstream's raw
     /// safe_read()/safe_write() are (io.c:310, io.c:387). A wait that ends
     /// with nothing ready checks `--timeout` (upstream: io.c:876, io.c:335).
+    ///
+    /// A requested shutdown ends the wait before it starts and when it
+    /// returns, and an interrupted wait counts as an empty one (upstream:
+    /// io.c:849-850 and io.c:997-998 read `got_kill_signal`; io.c:866-884
+    /// treats an interrupted poll like a timeout).
     fn wait(&mut self, want_output: bool) -> io::Result<()> {
+        crate::shared::check_shutdown()?;
         let poll_input = if self.buffering() {
             !self.in_eof && self.input.has_room()
         } else {
             !want_output
         };
-        let ready = self
+        let ready = match self
             .transport
-            .wait(poll_input, want_output, self.timeout.wait_bound())?;
+            .wait(poll_input, want_output, self.timeout.wait_bound())
+        {
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => Default::default(),
+            other => other?,
+        };
+        crate::shared::check_shutdown()?;
         if !ready.readable && !ready.writable {
             return self.timeout.check();
         }
@@ -747,5 +758,75 @@ mod stream_tests {
         reader.read_to_end(&mut rest).unwrap();
         assert_eq!(rest, b"adtail");
         assert_eq!(counter.load(Ordering::Relaxed), 6);
+    }
+
+    /// A transport that is never writable, whose waits first report an
+    /// interruption and then output room, and which can request a shutdown
+    /// from inside a wait the way a signal handler would.
+    struct InterruptedWait {
+        waits: u32,
+        shutdown_in_wait: bool,
+    }
+
+    impl Transport for InterruptedWait {
+        fn try_read(&mut self, _: &mut [u8]) -> io::Result<Option<usize>> {
+            Ok(None)
+        }
+
+        fn try_write(&mut self, buf: &[u8]) -> io::Result<Option<usize>> {
+            Ok((self.waits > 1).then_some(buf.len()))
+        }
+
+        fn wait(
+            &mut self,
+            _: bool,
+            output: bool,
+            _: Option<std::time::Duration>,
+        ) -> io::Result<fast_io::transport::Readiness> {
+            self.waits += 1;
+            if self.waits == 1 {
+                if self.shutdown_in_wait {
+                    fast_io::signal::mark_shutdown();
+                }
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            Ok(fast_io::transport::Readiness {
+                readable: false,
+                writable: output,
+            })
+        }
+    }
+
+    fn write_through(shutdown_in_wait: bool) -> io::Result<usize> {
+        fast_io::signal::reset_shutdown_for_testing();
+        let core = Core::new(
+            Box::new(InterruptedWait {
+                waits: 0,
+                shutdown_in_wait,
+            }),
+            Vec::new(),
+            IoTimeout::new(None, "sender"),
+        );
+        Core::start_buffering(&core, Arc::new(AtomicU64::new(0)));
+        let result = CoreWriter::new(&core).write(b"data");
+        fast_io::signal::reset_shutdown_for_testing();
+        result
+    }
+
+    /// Task 757: a signal that requests a shutdown while the core waits for
+    /// output room ends the write with the shutdown error (graded 20), not
+    /// with `Interrupted`, which every `write_all` above would retry
+    /// (upstream: io.c:997-998 reads `got_kill_signal` after the wait).
+    #[test]
+    fn a_shutdown_during_a_wait_ends_the_write_with_the_shutdown_error() {
+        let err = write_through(true).unwrap_err();
+        assert!(crate::shared::is_signal_shutdown(&err), "{err}");
+    }
+
+    /// The control: an interrupted wait with no shutdown requested is an
+    /// empty one, and the write carries on (upstream: io.c:866-884).
+    #[test]
+    fn an_interrupted_wait_without_a_shutdown_is_an_empty_wait() {
+        assert_eq!(write_through(false).unwrap(), 4);
     }
 }

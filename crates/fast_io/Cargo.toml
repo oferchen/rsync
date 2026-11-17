@@ -218,6 +218,8 @@ proptest = { workspace = true }
 test-support = { path = "../test-support" }
 
 [target.'cfg(unix)'.dev-dependencies]
+# The signal tests mask a signal on one thread and raise it on another.
+nix = { workspace = true, features = ["signal"] }
 # The dir_sandbox descriptor-exhaustion test lowers RLIMIT_NOFILE to provoke a
 # real EMFILE from the kernel. rustix's `process` feature exposes a safe
 # setrlimit/getrlimit pair, so the test needs no `unsafe` libc call; the crate

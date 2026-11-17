@@ -69,6 +69,30 @@ fn arm_io_stall(
     }
 }
 
+/// Shuts down both socketpairs of a remote-shell wire from any thread, so a
+/// read or write blocked on the wire returns at once.
+///
+/// It holds duplicates of the parent ends, so it must be dropped before the
+/// connection relies on closing them: a live duplicate keeps the child's
+/// stdin open.
+#[derive(Debug)]
+pub struct WireShutdown {
+    #[cfg(unix)]
+    ends: [std::os::unix::net::UnixStream; 2],
+}
+
+impl WireShutdown {
+    /// Shuts down both directions of both socketpairs. Best effort: an end
+    /// whose peer is already gone reports `ENOTCONN`, and nothing is blocked
+    /// on it.
+    pub fn shutdown(&self) {
+        #[cfg(unix)]
+        for end in &self.ends {
+            let _ = end.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
 /// Owns an active SSH subprocess and exposes its stdio handles.
 ///
 /// The connection can be used directly via the [`Read`] and [`Write`] traits,
@@ -130,6 +154,39 @@ impl SshConnection {
             io_stall_watchdog,
             stall,
         }
+    }
+
+    /// A [`WireShutdown`] for this connection's wire, taken before
+    /// [`split`](Self::split).
+    ///
+    /// `None` on a pipe wire and on Windows: `shutdown(2)` exists only for
+    /// sockets, and closing a duplicate of a pipe end does not wake a writer
+    /// blocked on it. Also `None` once a half has been taken.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `dup(2)` error.
+    pub fn wire_shutdown(&self) -> io::Result<Option<WireShutdown>> {
+        #[cfg(unix)]
+        {
+            use std::os::fd::OwnedFd;
+            use std::os::unix::net::UnixStream;
+
+            if self.wire_primitive != WirePrimitive::Socketpair {
+                return Ok(None);
+            }
+            let (Some(to_child), Some(from_child)) = (&self.stdin, &self.stdout) else {
+                return Ok(None);
+            };
+            let dup = |end: &std::fs::File| -> io::Result<UnixStream> {
+                Ok(UnixStream::from(OwnedFd::from(end.try_clone()?)))
+            };
+            Ok(Some(WireShutdown {
+                ends: [dup(to_child)?, dup(from_child)?],
+            }))
+        }
+        #[cfg(not(unix))]
+        Ok(None)
     }
 
     /// Disarms the connection establishment watchdog.

@@ -295,6 +295,14 @@ fn run_server_over_ssh_connection(
     batch_ctx: Option<BatchContext>,
     render_out_format_locally: bool,
 ) -> Result<(crate::server::ServerStats, u8, Vec<ClientEvent>), ClientError> {
+    // upstream: io.c:849-850 reads got_kill_signal once the interrupted
+    // poll returns; a multi-threaded client cannot rely on the signal
+    // reaching the thread blocked on the wire, so the signal watcher shuts
+    // the socketpair down instead (the daemon socket does the same,
+    // module_list/connect/mod.rs register_shutdown_wake).
+    let wire_shutdown = connection
+        .wire_shutdown()
+        .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
     let (reader, mut writer, mut child_handle) = connection
         .split()
         .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
@@ -375,6 +383,8 @@ fn run_server_over_ssh_connection(
     // bytes perform_io() read once buffered input started (io.c:938).
     let bytes_read = Arc::new(AtomicU64::new(0));
     let fork_point = Arc::new(crate::server::ForkPoint::default());
+    let wake_guard = wire_shutdown
+        .and_then(|wire| crate::signal::register_io_waker(Arc::new(move || wire.shutdown())));
     let transfer_result = crate::server::run_server_with_handshake_adopting(
         config,
         handshake,
@@ -393,6 +403,9 @@ fn run_server_over_ssh_connection(
             ..Default::default()
         },
     );
+    // The waker holds duplicates of the wire; release them before the
+    // child is waited on, so closing our ends reaches it as end of file.
+    drop(wake_guard);
     let side = ReportingSide::of(local_role, &fork_point);
 
     let stats = match transfer_result {
