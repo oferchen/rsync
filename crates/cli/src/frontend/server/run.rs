@@ -166,11 +166,11 @@ fn landlock_root_for_dest(dest: &std::path::Path) -> Option<std::path::PathBuf> 
 ///   anomalous like a failed install, warned like one; matches the daemon
 ///   site's arm in `daemon/src/daemon/sections/module_access/transfer/sandbox.rs`.
 /// - **Success** (`Enforced(FullyEnforced)`): debug at the same `Landlock` 1
-///   gate, so `-vvv` can tell "engaged" from "skipped" without adding noise
-///   at lower verbosity.
+///   gate, so `--debug=landlock` can tell "engaged" from "skipped" without
+///   adding noise to any `-v` level.
 ///
-/// Whenever the ruleset was enforced, `Landlock` 2 (`-vvvv`, or
-/// `--debug=landlock2`) adds the detail: every allowlisted path and, for a
+/// Whenever the ruleset was enforced, `Landlock` 2 (`--debug=landlock2`)
+/// adds the detail: every allowlisted path and, for a
 /// partial enforcement, the rights this kernel's ABI dropped.
 ///
 /// [`is_supported`]: fast_io::landlock::is_supported
@@ -226,8 +226,8 @@ fn surface_landlock_outcome(
     }
 }
 
-/// Traces every path the Landlock ruleset admits, at `Landlock` 2 (`-vvvv`
-/// or `--debug=landlock2`): the detail behind the level-1 decision line.
+/// Traces every path the Landlock ruleset admits, at `Landlock` 2
+/// (`--debug=landlock2`): the detail behind the level-1 decision line.
 fn trace_landlock_allowlist(allowed: &[&std::path::Path]) {
     if logging::debug_gte(logging::DebugFlag::Landlock, 2) {
         let rendered: Vec<String> = allowed.iter().map(|p| p.display().to_string()).collect();
@@ -916,7 +916,7 @@ where
                     // without the `landlock` feature, and every non-Linux
                     // target land here. It is the normal state on those
                     // hosts, so a warning would be noise - debug only, at
-                    // the level `-vvv` or `--debug=landlock` reaches.
+                    // the level `--debug=landlock` reaches.
                     logging::debug_log!(
                         Landlock,
                         1,
@@ -2009,18 +2009,19 @@ mod landlock_surfacing_tests {
     fn partial_enforcement_is_debug_gated() {
         let outcome = LandlockOutcome::Enforced(EnforcementStatus::PartiallyEnforced);
 
-        let below = landlock_events(2, &outcome);
+        let below = landlock_events(5, &outcome);
         assert!(
             below.is_empty(),
-            "partial enforcement is availability, not failure - it must emit \
-             nothing below the recv debug gate, got: {below:?}"
+            "partial enforcement is availability, not failure - no -v count \
+             may print it, got: {below:?}"
         );
 
-        let at_gate = landlock_events(3, &outcome);
+        let at_gate = landlock_events_with("landlock", &outcome);
         assert_eq!(
             count_landlock_debug(&at_gate, 1, "partially enforced over 1 root(s)"),
             1,
-            "partial enforcement must surface exactly once at -vvv, got: {at_gate:?}"
+            "partial enforcement must surface exactly once under --debug=landlock, \
+             got: {at_gate:?}"
         );
         assert_eq!(
             count_warnings(&at_gate, "landlock"),
@@ -2036,18 +2037,18 @@ mod landlock_surfacing_tests {
     fn full_enforcement_never_warns_and_is_debug_gated() {
         let outcome = LandlockOutcome::Enforced(EnforcementStatus::FullyEnforced);
 
-        let below = landlock_events(2, &outcome);
+        let below = landlock_events(5, &outcome);
         assert!(
             below.is_empty(),
-            "success must be silent below the recv debug gate, got: {below:?}"
+            "no -v count may print an oc-only line 3.5.2 lacks, got: {below:?}"
         );
 
-        let at_gate = landlock_events(3, &outcome);
+        let at_gate = landlock_events_with("landlock", &outcome);
         assert_eq!(
             count_landlock_debug(&at_gate, 1, "fully enforced over 1 root(s)"),
             1,
-            "success must be visible at -vvv so 'engaged' and 'skipped' are \
-             distinguishable, got: {at_gate:?}"
+            "success must be visible under --debug=landlock so 'engaged' and \
+             'skipped' are distinguishable, got: {at_gate:?}"
         );
         assert_eq!(
             count_warnings(&at_gate, "landlock"),
@@ -2077,22 +2078,16 @@ mod landlock_surfacing_tests {
             "seccomp must not enable landlock: {seccomp_only:?}"
         );
     }
-    /// The allowlist detail is level 2 only: `-vvvv` and `--debug=landlock2`
-    /// show it, `-vvv` does not, and the `sandbox` umbrella reaches it too.
+    /// The allowlist detail is level 2 only: `--debug=landlock2` shows it,
+    /// `--debug=landlock` does not, and the `sandbox` umbrella reaches it too.
     #[test]
     fn the_allowlist_detail_appears_only_at_level_two() {
         let outcome = LandlockOutcome::Enforced(EnforcementStatus::FullyEnforced);
-        let at_three = landlock_events(3, &outcome);
+        let at_one = landlock_events_with("landlock", &outcome);
         assert_eq!(
-            count_landlock_debug(&at_three, 2, "allowlist"),
+            count_landlock_debug(&at_one, 2, "allowlist"),
             0,
-            "{at_three:?}"
-        );
-        let at_four = landlock_events(4, &outcome);
-        assert_eq!(
-            count_landlock_debug(&at_four, 2, "landlock: allowlist: /srv/dest"),
-            1,
-            "{at_four:?}"
+            "{at_one:?}"
         );
         for token in ["landlock2", "sandbox2"] {
             let events = landlock_events_with(token, &outcome);

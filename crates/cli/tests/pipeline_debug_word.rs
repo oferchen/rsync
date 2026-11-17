@@ -149,8 +149,9 @@ fn the_pipeline_word_prints_its_lines_by_level() {
 }
 
 /// Every line a local `-vvv` copy prints, 3.5.1 prints too, except the
-/// kernel sandbox decisions: SECCOMP and LANDLOCK join the `-vvv` and
-/// `-vvvv` rows by the 2026-10-14 decision, and 3.5.1 has no sandbox.
+/// seccomp decisions: SECCOMP joins the `-vvv` and `-vvvv` rows by the
+/// 2026-10-14 decision, and 3.5.1 has no sandbox. LANDLOCK is in no row, so
+/// a `landlock: ` line here is a regression.
 #[test]
 fn local_vvv_prints_no_oc_only_line_but_the_sandbox_ones() {
     if !upstream_compat_enabled() {
@@ -166,7 +167,7 @@ fn local_vvv_prints_no_oc_only_line_but_the_sandbox_ones() {
         let oc_only: Vec<String> = line_shapes(&oc, &oc_root)
             .into_iter()
             .filter(|line| !upstream_shapes.contains(line))
-            .filter(|line| !line.starts_with("landlock: ") && !line.starts_with("seccomp: "))
+            .filter(|line| !line.starts_with("seccomp: "))
             .collect();
         assert!(
             oc_only.is_empty(),

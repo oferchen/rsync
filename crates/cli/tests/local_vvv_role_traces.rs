@@ -25,11 +25,16 @@ fn fixture(root: &Path) {
 
 /// Stdout of a local `-a` copy of the fixture with the given debug words.
 fn run(binary: &Path, debug: &str) -> String {
+    run_with(binary, &format!("--debug={debug}"))
+}
+
+/// Stdout of a local `-a` copy of the fixture with one extra option.
+fn run_with(binary: &Path, option: &str) -> String {
     let dir = TempDir::new().unwrap();
     fixture(dir.path());
     let output = Command::new(binary)
         .current_dir(dir.path())
-        .args(["-a", &format!("--debug={debug}"), "src/", "dst/"])
+        .args(["-a", option, "src/", "dst/"])
         .output()
         .expect("run rsync");
     assert!(output.status.success(), "{output:?}");
@@ -134,4 +139,45 @@ fn receiver_names_each_temp_file_it_renames() {
         return;
     };
     assert_eq!(oc, rename_lines(&run(upstream.binary(), "recv1")));
+}
+
+/// The `landlock:` lines of a local `-a` copy into an existing destination
+/// (the server receiver sandboxes only a destination that exists).
+#[cfg(target_os = "linux")]
+fn landlock_lines(options: &[&str]) -> Vec<String> {
+    let dir = TempDir::new().unwrap();
+    fixture(dir.path());
+    fs::create_dir(dir.path().join("dst")).unwrap();
+    let output = Command::new(oc_rsync_bin())
+        .current_dir(dir.path())
+        .args(["-a"])
+        .args(options)
+        .args(["src/", "dst/"])
+        .output()
+        .expect("run oc-rsync");
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8_lossy(&[output.stdout, output.stderr].concat())
+        .lines()
+        .filter(|line| line.starts_with("landlock:"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// rsync 3.5.2 prints no Landlock line at any verbosity, so oc's `-vvv` must
+/// not either. The explicit oc-only word still reaches the server receiver,
+/// which proves the copy took the sandboxed path the bare `-vvv` stays quiet on.
+#[cfg(target_os = "linux")]
+#[test]
+fn verbosity_alone_prints_no_landlock_line() {
+    for option in ["-vvv", "-vvvv"] {
+        assert_eq!(landlock_lines(&[option]), Vec::<String>::new(), "{option}");
+    }
+    // Empty only on a kernel without Landlock, where the cell above is moot.
+    let explicit = landlock_lines(&["-vvv", "--debug=landlock"]);
+    assert!(
+        explicit
+            .iter()
+            .all(|line| line.ends_with("enforced over 1 root(s)")),
+        "{explicit:?}"
+    );
 }

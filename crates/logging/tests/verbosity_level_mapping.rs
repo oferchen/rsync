@@ -597,10 +597,10 @@ const UPSTREAM_INFO_VERBOSITY: [&str; 6] = [
 ];
 
 /// The only words oc adds to `debug_verbosity[]`, by row: the decision (row
-/// 3, `-vvv`) and detail (row 4, `-vvvv`) levels of the two oc-only kernel
-/// sandbox layers. Any other difference from upstream's rows is drift.
-const OC_DEBUG_VERBOSITY_ADDITIONS: [&str; 6] =
-    ["", "", "", "SECCOMP,LANDLOCK", "SECCOMP2,LANDLOCK2", ""];
+/// 3, `-vvv`) and detail (row 4, `-vvvv`) levels of the oc-only seccomp layer.
+/// LANDLOCK is in no row; it is reached only through `--debug=LANDLOCK`. Any
+/// other difference from upstream's rows is drift.
+const OC_DEBUG_VERBOSITY_ADDITIONS: [&str; 6] = ["", "", "", "SECCOMP", "SECCOMP2", ""];
 
 /// Replays upstream `set_output_verbosity()` (options.c:533-544): clamp the
 /// level to `MAX_VERBOSITY`, then apply every table row `0..=level` in order,

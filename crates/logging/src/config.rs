@@ -48,11 +48,10 @@ const DEBUG_VERBOSITY: [&[(DebugFlag, u8)]; 6] = {
             (Recv, 1),
             (Send, 1),
             (Time, 1),
-            // oc-only: each sandbox layer's decision line joins where RECV
-            // does, so the `-vvv` that showed the receiver's Landlock lines
-            // under RECV still shows them.
+            // oc-only: the seccomp decision line joins where RECV does.
+            // Landlock is in no row: 3.5.2 prints nothing for it, so it is
+            // reached only through an explicit `--debug=LANDLOCK`.
             (Seccomp, 1),
-            (Landlock, 1),
         ],
         &[
             (Cmd, 2),
@@ -64,9 +63,8 @@ const DEBUG_VERBOSITY: [&[(DebugFlag, u8)]; 6] = {
             (Own, 2),
             (Proto, 1),
             (Time, 2),
-            // oc-only: the sandbox layers' detail lines.
+            // oc-only: the seccomp detail lines.
             (Seccomp, 2),
-            (Landlock, 2),
         ],
         &[
             (Chdir, 1),
@@ -432,9 +430,18 @@ mod tests {
         assert_rises_at_vvv_and_vvvv(DebugFlag::Seccomp);
     }
 
+    /// No `-v` count prints a Landlock line: rsync 3.5.2 has no such output,
+    /// so `-vvv` must not grow an oc-only line a script comparing transcripts
+    /// would trip on. The word itself still works when asked for.
     #[test]
-    fn landlock_rises_at_vvv_and_vvvv() {
-        assert_rises_at_vvv_and_vvvv(DebugFlag::Landlock);
+    fn landlock_is_in_no_verbosity_row() {
+        for verbose in 0..=5 {
+            let config = VerbosityConfig::from_verbose_level(verbose);
+            assert_eq!(config.debug.landlock, 0, "-v x{verbose}");
+        }
+        let mut explicit = VerbosityConfig::default();
+        explicit.apply_debug_flag("landlock2").unwrap();
+        assert_eq!(explicit.debug.landlock, 2);
     }
 
     #[test]

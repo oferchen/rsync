@@ -1024,8 +1024,8 @@ fn engage_seccomp_sandbox(
     Ok(())
 }
 
-/// Traces a Landlock decision for `module` at `Landlock` 1, which `-vvv` and
-/// `--debug=landlock` reach. The daemon-log line beside each call is kept.
+/// Traces a Landlock decision for `module` at `Landlock` 1, which only
+/// `--debug=landlock` reaches. The daemon-log line beside each call is kept.
 fn trace_landlock(module: &str, decision: &str) {
     logging::debug_log!(Landlock, 1, "module '{module}': landlock: {decision}");
 }
@@ -1099,37 +1099,29 @@ mod sandbox_trace_tests {
         trace_landlock_allowlist("m", &[Path::new("/srv/m")]);
     }
 
-    /// Level 0 is silent; `-vvv` and `--debug=landlock` show the decision but
-    /// not the allowlist; `-vvvv` and `landlock2` add it; `seccomp` alone
-    /// enables nothing here.
+    /// No `-v` count prints a Landlock line, since rsync 3.5.2 has none;
+    /// `--debug=landlock` shows the decision but not the allowlist,
+    /// `landlock2` adds it, and `seccomp` alone enables nothing here.
     #[test]
     fn landlock_trace_levels() {
-        let silent = run(VerbosityConfig::from_verbose_level(2), None, landlock_emit);
+        let silent = run(VerbosityConfig::from_verbose_level(5), None, landlock_emit);
         assert!(silent.is_empty(), "{silent:?}");
-        for events in [
-            run(VerbosityConfig::from_verbose_level(3), None, landlock_emit),
-            run(VerbosityConfig::default(), Some("landlock"), landlock_emit),
-        ] {
-            assert_eq!(
-                lines(DebugFlag::Landlock, 1, &events),
-                ["module 'm': landlock: fully enforced over 1 root(s)"],
-                "{events:?}"
-            );
-            assert!(
-                lines(DebugFlag::Landlock, 2, &events).is_empty(),
-                "{events:?}"
-            );
-        }
-        for events in [
-            run(VerbosityConfig::from_verbose_level(4), None, landlock_emit),
-            run(VerbosityConfig::default(), Some("landlock2"), landlock_emit),
-        ] {
-            assert_eq!(
-                lines(DebugFlag::Landlock, 2, &events),
-                ["module 'm': landlock: allowlist: /srv/m"],
-                "{events:?}"
-            );
-        }
+        let events = run(VerbosityConfig::default(), Some("landlock"), landlock_emit);
+        assert_eq!(
+            lines(DebugFlag::Landlock, 1, &events),
+            ["module 'm': landlock: fully enforced over 1 root(s)"],
+            "{events:?}"
+        );
+        assert!(
+            lines(DebugFlag::Landlock, 2, &events).is_empty(),
+            "{events:?}"
+        );
+        let events = run(VerbosityConfig::default(), Some("landlock2"), landlock_emit);
+        assert_eq!(
+            lines(DebugFlag::Landlock, 2, &events),
+            ["module 'm': landlock: allowlist: /srv/m"],
+            "{events:?}"
+        );
         let other = run(VerbosityConfig::default(), Some("seccomp2"), landlock_emit);
         assert!(other.is_empty(), "{other:?}");
     }
