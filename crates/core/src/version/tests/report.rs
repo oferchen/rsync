@@ -1,8 +1,8 @@
 use super::*;
 use crate::branding::Brand;
 use crate::version::report::{
-    compiled_build_features, default_checksum_algorithms, default_compress_algorithms,
-    default_daemon_auth_algorithms,
+    BUILD_FEATURES, compiled_build_features, default_checksum_algorithms,
+    default_compress_algorithms, default_daemon_auth_algorithms,
 };
 use fast_io::platform_io_capabilities;
 use libc::{ino_t, off_t};
@@ -297,4 +297,51 @@ fn version_info_config_to_builder_round_trips() {
     assert!(!updated.supports_socketpairs);
     assert!(!updated.supports_ipv6);
     assert!(updated.supports_prealloc);
+}
+
+/// Every workspace feature has a `Build features` row and is forwarded to
+/// `core`, where `cfg!` can see it; a feature added without both would drop out
+/// of `--version` silently.
+#[test]
+fn build_features_cover_every_workspace_feature() {
+    let manifest =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml"))
+            .expect("read workspace manifest");
+    let manifest: toml::Table = manifest.parse().expect("parse workspace manifest");
+    let features = manifest["features"].as_table().expect("[features] table");
+    let mut workspace: Vec<&str> = features
+        .keys()
+        .map(String::as_str)
+        .filter(|name| *name != "default")
+        .collect();
+    let mut reported: Vec<&str> = BUILD_FEATURES.iter().map(|(name, _)| *name).collect();
+    workspace.sort_unstable();
+    reported.sort_unstable();
+    assert_eq!(
+        reported, workspace,
+        "Build features rows must match the workspace features"
+    );
+
+    for name in workspace {
+        let forwards_to_core = features[name]
+            .as_array()
+            .expect("feature list")
+            .iter()
+            .any(|entry| entry.as_str() == Some(format!("core/{name}").as_str()));
+        assert!(
+            forwards_to_core,
+            "workspace feature `{name}` must forward to `core/{name}`"
+        );
+    }
+}
+
+/// `compress` turns `zlib-ng` on by default, so the backend can be linked
+/// while `core`'s own `zlib-ng` feature is off; the report must follow the
+/// backend, not `core`'s feature.
+#[test]
+fn build_features_report_the_zlib_backend_compress_compiled() {
+    let listed = compiled_build_features()
+        .iter()
+        .any(|feature| feature == "zlib-ng");
+    assert_eq!(listed, compress::ZLIB_NG_BACKEND);
 }

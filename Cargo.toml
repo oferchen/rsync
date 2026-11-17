@@ -70,7 +70,7 @@ idn = ["core/idn"]
 # Requirements: None (pure Rust)
 # Benefits: 2-8x faster on multi-core systems for batch operations
 # Trade-offs: Minimal overhead on single-core systems
-parallel = ["cli/parallel", "checksums/parallel"]
+parallel = ["cli/parallel", "checksums/parallel", "core/parallel"]
 
 # io_uring support for Linux 5.6+ - batched async I/O syscalls
 # Requirements: Linux kernel 5.6+ (runtime fallback on older kernels)
@@ -84,7 +84,7 @@ parallel = ["cli/parallel", "checksums/parallel"]
 #   Promoting that into an end-to-end "faster I/O" promise is what made this
 #   comment false. See the io_uring kernel-tier section in README.md.
 # Trade-offs: Linux-only, requires modern kernel, adds ~100KB to binary
-io_uring = ["transfer/io_uring", "fast_io/io_uring"]
+io_uring = ["transfer/io_uring", "fast_io/io_uring", "core/io_uring"]
 
 # SEND_ZC dispatch for io_uring sockets (Linux 6.0+) - IORING_OP_SEND_ZC.
 # Compiled in by default; dispatched only under an explicit `--zero-copy`.
@@ -92,34 +92,34 @@ io_uring = ["transfer/io_uring", "fast_io/io_uring"]
 # plain socket write path). See SZP-3 / send-zc-5-15-lts.yml.
 # Forwards to fast_io's iouring-send-zc feature, which implicitly enables
 # io_uring as well.
-iouring-send-zc = ["fast_io/iouring-send-zc"]
+iouring-send-zc = ["fast_io/iouring-send-zc", "core/iouring-send-zc"]
 
 # IOCP (I/O Completion Ports) for Windows - async file I/O
 # Requirements: Windows Vista+ (runtime detection, automatic fallback)
 # Benefits: Overlapped async reads/writes via kernel completion ports
 # Trade-offs: Windows-only, adds complexity for async file operations
-iocp = ["transfer/iocp", "fast_io/iocp"]
+iocp = ["transfer/iocp", "fast_io/iocp", "core/iocp"]
 
 # copy_file_range syscall - zero-copy file transfers on same filesystem
 # Requirements: Linux 4.5+ for same-fs, 5.3+ for cross-fs (automatic fallback)
 # Benefits: 30-50% faster local copies by avoiding userspace buffer
 # Trade-offs: Linux-only optimization
-copy_file_range = ["fast_io/copy_file_range"]
+copy_file_range = ["fast_io/copy_file_range", "core/copy_file_range"]
 
 # EXPERIMENTAL: SMR-3a Option 1 (#2288) - drop mmap for the basis-read path,
 # forcing io_uring (where available) or a buffered fallback. Default off; do
 # not enable until SMR-1 hardware numbers validate Option 1. See
 # `docs/design/mmap-vs-sqpoll-conflict-resolution.md` for the rationale.
-mmap-free-basis = ["engine/mmap-free-basis", "fast_io/mmap-free-basis"]
+mmap-free-basis = ["engine/mmap-free-basis", "fast_io/mmap-free-basis", "core/mmap-free-basis"]
 
 # ============================================================================
 # OpenSSL Features
 # ============================================================================
 
 # OpenSSL-accelerated checksums (MD4, MD5) — links to system libssl
-openssl = ["checksums/openssl"]
+openssl = ["checksums/openssl", "core/openssl"]
 # Vendored OpenSSL — statically compiled, no system dependency
-openssl-vendored = ["checksums/openssl-vendored"]
+openssl-vendored = ["checksums/openssl-vendored", "core/openssl-vendored"]
 
 # ============================================================================
 # Transport Features
@@ -156,7 +156,7 @@ quic = ["cli/quic", "core/quic", "daemon/quic", "test-support/quic"]
 async = ["daemon/async", "core/async"]
 
 # systemd sd-notify integration for daemon
-sd-notify = ["daemon/sd-notify"]
+sd-notify = ["daemon/sd-notify", "core/sd-notify"]
 
 # ============================================================================
 # Security Hardening Features
@@ -172,7 +172,7 @@ sd-notify = ["daemon/sd-notify"]
 # release artefacts - carry no filter. Once compiled in, the filter is ON at
 # RUNTIME by default; operators opt out with `OC_RSYNC_NO_SECCOMP=1` or
 # `OC_RSYNC_DAEMON_SECCOMP=0`. See `docs/design/lsm-seccomp-allowlist.md`.
-daemon-seccomp = ["daemon/daemon-seccomp"]
+daemon-seccomp = ["daemon/daemon-seccomp", "core/daemon-seccomp"]
 
 [dependencies]
 cli = { path = "crates/cli", default-features = false }

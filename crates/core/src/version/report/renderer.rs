@@ -563,64 +563,46 @@ pub(crate) fn default_daemon_auth_algorithms() -> Vec<Cow<'static, str>> {
         .collect()
 }
 
-/// Returns the list of Cargo features the binary was compiled with.
+/// Every workspace Cargo feature, in `Cargo.toml` declaration order, paired
+/// with whether this build enabled it.
 ///
-/// Each entry is the canonical Cargo feature name as declared in the
-/// workspace `Cargo.toml`. Only features visible to the `core` crate
-/// Only features **declared on this crate** are visible to `cfg!` here; a test
-/// for a feature `core` does not declare is vacuously false, so it would report
-/// the feature as absent forever regardless of the build. That is why
-/// `iouring-send-zc` is reported by `fast_io::platform_io_capabilities()` (the
-/// crate that declares it) rather than added to the list below.
-///
-/// Reported here: `zstd`, `lz4`, `zlib-ng`, `acl`, `xattr`, `iconv`, `async`,
-/// `embedded-ssh`, `quic`, `sd-notify`.
-///
-/// Reported elsewhere because `core` cannot observe them: `parallel`,
-/// `io_uring`, `copy_file_range`, `openssl`, `mmap-free-basis` and the
-/// allocator via `Optimizations`; `iocp`, `vmsplice` and `send_zc` via
-/// `Platform I/O`.
-///
-/// ⚠ `daemon-seccomp` is reported by NO section today - it is declared on the
-/// workspace root and never reaches a crate that renders `--version`. Closing
-/// that needs the feature propagated (or a reporter in `crates/daemon`), not a
-/// `cfg!` here, which would be inert.
+/// `cfg!` only sees features declared on this crate, so the workspace root
+/// forwards each feature to a same-named `core` feature. `zlib-ng` is the
+/// exception: `compress` enables it by default, so its row asks `compress`
+/// which backend was compiled. The
+/// `build_features_cover_every_workspace_feature` test fails when a workspace
+/// feature is added without a row here or without that forwarding.
+pub(crate) const BUILD_FEATURES: &[(&str, bool)] = &[
+    ("zstd", cfg!(feature = "zstd")),
+    ("lz4", cfg!(feature = "lz4")),
+    ("zlib-ng", compress::ZLIB_NG_BACKEND),
+    ("acl", cfg!(feature = "acl")),
+    ("xattr", cfg!(feature = "xattr")),
+    ("iconv", cfg!(feature = "iconv")),
+    ("idn", cfg!(feature = "idn")),
+    ("parallel", cfg!(feature = "parallel")),
+    ("io_uring", cfg!(feature = "io_uring")),
+    ("iouring-send-zc", cfg!(feature = "iouring-send-zc")),
+    ("iocp", cfg!(feature = "iocp")),
+    ("copy_file_range", cfg!(feature = "copy_file_range")),
+    ("mmap-free-basis", cfg!(feature = "mmap-free-basis")),
+    ("openssl", cfg!(feature = "openssl")),
+    ("openssl-vendored", cfg!(feature = "openssl-vendored")),
+    ("embedded-ssh", cfg!(feature = "embedded-ssh")),
+    ("quic", cfg!(feature = "quic")),
+    ("async", cfg!(feature = "async")),
+    ("sd-notify", cfg!(feature = "sd-notify")),
+    ("daemon-seccomp", cfg!(feature = "daemon-seccomp")),
+];
+
+/// Returns the Cargo features the binary was compiled with.
 #[must_use]
 pub(crate) fn compiled_build_features() -> Vec<Cow<'static, str>> {
-    let mut features: Vec<Cow<'static, str>> = Vec::new();
-
-    if cfg!(feature = "zstd") {
-        features.push(Cow::Borrowed("zstd"));
-    }
-    if cfg!(feature = "lz4") {
-        features.push(Cow::Borrowed("lz4"));
-    }
-    if cfg!(feature = "zlib-ng") {
-        features.push(Cow::Borrowed("zlib-ng"));
-    }
-    if cfg!(feature = "acl") {
-        features.push(Cow::Borrowed("acl"));
-    }
-    if cfg!(feature = "xattr") {
-        features.push(Cow::Borrowed("xattr"));
-    }
-    if cfg!(feature = "iconv") {
-        features.push(Cow::Borrowed("iconv"));
-    }
-    if cfg!(feature = "async") {
-        features.push(Cow::Borrowed("async"));
-    }
-    if cfg!(feature = "embedded-ssh") {
-        features.push(Cow::Borrowed("embedded-ssh"));
-    }
-    if cfg!(feature = "quic") {
-        features.push(Cow::Borrowed("quic"));
-    }
-    if cfg!(feature = "sd-notify") {
-        features.push(Cow::Borrowed("sd-notify"));
-    }
-
-    features
+    BUILD_FEATURES
+        .iter()
+        .filter(|(_, enabled)| *enabled)
+        .map(|(name, _)| Cow::Borrowed(*name))
+        .collect()
 }
 
 #[derive(Clone, Debug)]
