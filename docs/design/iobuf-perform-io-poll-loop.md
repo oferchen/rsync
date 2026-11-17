@@ -250,17 +250,82 @@ the receiver never blocks on output while a reply is outstanding.
 
 - Requests are appended to the mux output without waiting for room
   (`MsgRoom::Grow` semantics for data on this role: `MuxOut::push_unbounded`).
-- A new request is admitted only while the queued output is below a byte
-  cap (1 MiB) and the file window has a free slot. A single request larger
-  than the cap is still queued whole.
+- A new request is admitted only under the byte cap of section 6.3 and
+  while the file window has a free slot.
 - Output leaves through `Core::pump_output` during read waits (M2).
-- The receiver's explicit `writer.flush()` calls become "pump during the
-  next wait"; a blocking flush is allowed only when no reply is outstanding
-  (end of phase after the window is empty, goodbye).
+- The receiver's explicit `writer.flush()` calls become one non-blocking
+  `pump_output` attempt. The receiver has no wait that asks for output
+  alone, at any point before the goodbye: under INC_RECURSE the sender
+  writes sub-lists unprompted (io.c:871-874), so "no reply outstanding" is
+  not enough to make an output-only wait safe.
 
 This holds memory to the cap plus one signature, needs no extra thread, and
 makes `DrainingReader` unnecessary. Once it is in, `DrainingReader`, its
 handle and the stop-before-goodbye ordering are deleted.
+
+### 6.3 The byte cap
+
+What is counted: `queued`, the bytes the receiver has framed but the
+transport has not accepted - the unsent remainder of a part-written frame,
+the message queue and the buffered data run, all inside `MuxOut`. Bytes the
+transport accepted are not counted, whatever the peer has done with them.
+
+The rule: a new request (index, item flags, sum head and block sums) is
+appended only when `queued < OUT_BUFFER_SIZE` (64 KiB) and the file window
+has a free slot. Once admitted it is appended whole, so `queued` peaks at
+64 KiB minus one byte plus one request. Everything else the receiver writes
+(messages, keepalives, phase markers) is appended unconditionally; those
+are small and bounded by the work that produces them.
+
+Where 64 KiB comes from: it is upstream's own bound. The generator's output
+buffer is `2 * IO_BUFFER_SIZE` (io.c:1574, rsync.h:161), and `write_buf`
+stops the generator in `perform_io(len, PIO_NEED_OUTROOM)` as soon as the
+next bytes do not fit (io.c:2494-2495, io.c:733). `generate_and_send_sums`
+writes the sum head and then each block's two sums through that path
+(generator.c:827, generator.c:861-862), so upstream's generator is never
+more than 64 KiB ahead of the socket and has no other limit: no request
+count, no byte window. It needs none, because its input is the receiver's
+pipe, not the socket (main.c:1154-1157).
+
+The one place oc exceeds upstream's bound is the single oversized request.
+Upstream can stop in the middle of a signature; oc's receiver cannot,
+because stopping there would be a wait for output alone. The overshoot is
+one signature: `ceil(len / blength)` sums of `4 + s2length` bytes, with
+`blength` at most `MAX_BLOCK_SIZE` (generator.c:762, rsync.h:162) and
+`s2length` at most 16 (generator.c:748, rsync.h:773). That signature is
+already held in memory by the worker that computed it
+(`receiver/transfer/pipeline.rs:761`), so the queue adds its wire encoding,
+not a new order of memory.
+
+Why it cannot wedge, for any transport capacity: the cap plays no part in
+the argument. It bounds memory only. Liveness comes from the single rule
+that the receiver's wire thread waits in exactly one way,
+`wait(input = true, output = queued > 0)`, and never for output alone.
+Take any moment at which the receiver is in that wait and consider the
+sender:
+
+- The sender is blocked writing. Then its bytes fill the path to the
+  receiver, the receiver's input is readable, the wait returns and the
+  receiver consumes. The sender's write completes.
+- The sender is blocked reading. If `queued > 0`, the path to the sender
+  has room the moment the sender has read what was in it, the receiver's
+  output is writable, the wait returns and `pump_output` moves bytes. If
+  `queued == 0`, everything the receiver produced has been accepted by the
+  transport and will reach the sender, which then stops being blocked.
+- The sender is computing. It will reach one of the two states above.
+
+The only remaining state is both sides waiting for input with nothing in
+flight, which is the protocol's own idle point, not a transport wedge. No
+step refers to how many bytes the path holds, so a 4 KiB pipe, a 64 KiB
+pipe and a socket behave alike; a smaller path only means more passes. The
+argument needs two things from the rest of the design: every transport
+must report readiness truthfully (M1), and `InBuf` must be consumed by the
+receiver's own reads, which holds because the wire thread is the one
+reading.
+
+The same reasoning shows why D1 wedges today: the receiver waits for output
+alone while the sender is blocked writing, which is the first bullet with
+the receiver not listening.
 
 The alternative is upstream's shape: a generator thread and a receiver
 thread, each with its own core, joined by an in-process pipe. It closes the
