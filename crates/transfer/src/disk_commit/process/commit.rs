@@ -246,6 +246,15 @@ pub(super) fn commit_file(
     }
 
     let was_copy = if needs_rename {
+        // upstream: rsync.c:916-917 finish_transfer() - both names as the
+        // receiver holds them, relative to the destination directory.
+        logging::debug_log!(
+            Recv,
+            1,
+            "renaming {} to {}",
+            dest_relative(config, cleanup_guard.path()).display(),
+            dest_relative(config, &begin.file_path).display()
+        );
         let result = commit_rename(
             config,
             cleanup_guard.path(),
@@ -603,6 +612,17 @@ fn commit_rename(
     _partial_dir: Option<&Path>,
 ) -> io::Result<bool> {
     rename_config_sandboxed(config, old_path, new_path)
+}
+
+/// `path` relative to the destination directory, or unchanged when it lies
+/// outside it (an absolute `--temp-dir`), as upstream names files from the
+/// destination as its working directory.
+fn dest_relative<'a>(config: &DiskCommitConfig, path: &'a Path) -> &'a Path {
+    config
+        .dest_dir
+        .as_deref()
+        .and_then(|dest| path.strip_prefix(dest).ok())
+        .unwrap_or(path)
 }
 
 /// The confinement the cross-filesystem copy resolves under: the same sandbox

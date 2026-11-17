@@ -82,6 +82,7 @@ fn line_shapes(text: &str, root: &str) -> BTreeSet<String> {
     text.replace(root, "ROOT")
         .lines()
         .map(|line| {
+            let line = mask_temp_suffix(line);
             let mut shape = String::with_capacity(line.len());
             let mut in_number = false;
             for c in line.chars() {
@@ -98,6 +99,21 @@ fn line_shapes(text: &str, root: &str) -> BTreeSet<String> {
             shape
         })
         .collect()
+}
+
+/// Masks the random six-character suffix of the temp name in a receiver
+/// `renaming .<name>.XXXXXX to <name>` line (rsync.c:917), which differs on
+/// every run of either implementation.
+fn mask_temp_suffix(line: &str) -> String {
+    match line
+        .strip_prefix("renaming ")
+        .and_then(|rest| rest.split_once(" to "))
+    {
+        Some((temp, dest)) if temp.len() > 6 => {
+            format!("renaming {}XXXXXX to {dest}", &temp[..temp.len() - 6])
+        }
+        _ => line.to_owned(),
+    }
 }
 
 #[test]

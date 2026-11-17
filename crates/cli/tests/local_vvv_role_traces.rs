@@ -103,3 +103,35 @@ fn server_receiver_announces_itself_first() {
     let reference = receiver_lines(&run(upstream.binary(), "recv1"));
     assert_eq!(oc.first(), reference.first());
 }
+
+/// The receiver's `renaming` lines with each temp file's random six-character
+/// suffix replaced by `XXXXXX`.
+fn rename_lines(transcript: &str) -> Vec<String> {
+    transcript
+        .lines()
+        .filter_map(|line| line.strip_prefix("renaming "))
+        .map(|rest| {
+            let (temp, dest) = rest.split_once(" to ").expect("renaming X to Y");
+            let stem = temp.get(..temp.len().saturating_sub(6)).unwrap_or(temp);
+            format!("renaming {stem}XXXXXX to {dest}")
+        })
+        .collect()
+}
+
+/// upstream: rsync.c:916-917 finish_transfer() names each temp file and its
+/// destination, both relative to the destination directory, as it moves the
+/// received file into place.
+#[test]
+fn receiver_names_each_temp_file_it_renames() {
+    let oc = rename_lines(&run(&oc_rsync_bin(), "recv1"));
+    assert_eq!(
+        oc,
+        ["renaming .a.XXXXXX to a", "renaming sub/.b.XXXXXX to sub/b"],
+        "{oc:?}"
+    );
+
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    assert_eq!(oc, rename_lines(&run(upstream.binary(), "recv1")));
+}
