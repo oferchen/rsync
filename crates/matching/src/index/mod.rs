@@ -28,6 +28,8 @@ mod chain_bound_tests;
 #[cfg(test)]
 mod compact_key_tests;
 #[cfg(test)]
+mod inplace_alignment_tests;
+#[cfg(test)]
 mod seq_match_tests;
 #[cfg(test)]
 mod sparse_match_tests;
@@ -65,6 +67,25 @@ const TAG_TABLE_SIZE: usize = 1 << 16;
 /// Maximum number of equal-weak-checksum candidates verified at a single
 /// source offset before the matcher gives up and rolls forward a byte.
 ///
+/// The `--inplace` verdict on a confirmed match; see
+/// [`DeltaSignatureIndex::inplace_alignment`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InplaceAlignment {
+    /// Keep the block the chain or the `want_i` hint chose.
+    Keep,
+    /// Take this block, which starts at the match's own offset.
+    Aligned(usize),
+    /// An all-zero window `skip` bytes before the start of `block`, which
+    /// holds the same bytes: match there instead when the source still
+    /// matches `block` at that boundary (match.c:309-329).
+    Realign {
+        /// The block at the next boundary.
+        block: usize,
+        /// Bytes from the window's start to that boundary, `1..block_length`.
+        skip: usize,
+    },
+}
+
 /// upstream: match.c:47-68 `MAX_CHAIN_LEN`, added in rsync 3.5.0 for
 /// CVE-2026-70453. A weak checksum that collides thousands of times turns the
 /// per-offset chain walk into an `O(source_len * chain_len)` scan, and the
@@ -573,6 +594,80 @@ impl DeltaSignatureIndex {
         (None, had_candidate)
     }
 
+    /// The chain walk of upstream's `hash_search()` under `--inplace`.
+    ///
+    /// Two of upstream's rules remove chain entries for the rest of the file,
+    /// so `unlinked` must persist across every offset of one file (all `false`
+    /// at its start):
+    /// - an entry whose basis offset the scan has passed, unless flagged
+    ///   `SUMFLG_SAME_OFFSET` (`same_offset`) - match.c:240-247;
+    /// - an entry whose strong sum equals the one that just failed at this
+    ///   offset, unless it is flagged and the failed one is not -
+    ///   match.c:254-260.
+    ///
+    /// A block removed here can still be matched through the `want_i` hint or
+    /// the aligned-offset rule, which address it directly. Returns the first
+    /// strong match and whether any weak candidate was tested.
+    #[must_use]
+    pub fn find_match_inplace(
+        &self,
+        digest: RollingDigest,
+        first: &[u8],
+        second: &[u8],
+        cursor: u64,
+        same_offset: &[bool],
+        unlinked: &mut [bool],
+    ) -> (Option<usize>, bool) {
+        if first.len() + second.len() != self.block_length
+            || !self.tag_table[digest.sum1() as usize]
+            || !self.bithash.contains(digest.value())
+        {
+            return (None, false);
+        }
+        let mut strong: Option<[u8; 64]> = None;
+        let mut last_false: Option<(&[u8], bool)> = None;
+        let mut chain_len = 0u32;
+        let mut had_candidate = false;
+        for index in self.lookup.find_all(digest.sum1(), digest.sum2()) {
+            if unlinked[index] {
+                continue;
+            }
+            let block = &self.blocks[index];
+            let same = same_offset[index];
+            if block.index() * (self.block_length as u64) < cursor && !same {
+                unlinked[index] = true;
+                continue;
+            }
+            if block.rolling() != digest {
+                continue;
+            }
+            if last_false.is_some_and(|(false_strong, false_same)| {
+                (!same || false_same) && false_strong == block.strong()
+            }) {
+                unlinked[index] = true;
+                continue;
+            }
+            had_candidate = true;
+            chain_len += 1;
+            if chain_len > MAX_CHAIN_LEN {
+                return (None, true);
+            }
+            let target = strong.get_or_insert_with(|| {
+                let computed =
+                    self.algorithm
+                        .compute_truncated_slices(first, second, self.strong_length);
+                let mut buf = [0u8; 64];
+                buf[..self.strong_length].copy_from_slice(computed.as_slice());
+                buf
+            });
+            if &target[..self.strong_length] == block.strong() {
+                return (Some(index), true);
+            }
+            last_false = Some((block.strong(), same));
+        }
+        (None, had_candidate)
+    }
+
     /// Attempts to match a short trailing window against a basis block of the
     /// same (partial) length.
     ///
@@ -682,6 +777,44 @@ impl DeltaSignatureIndex {
             .algorithm
             .compute_truncated_slices(first, second, self.strong_length);
         strong.as_slice() == block.strong()
+    }
+
+    /// What `--inplace` makes of a confirmed match at source `offset`.
+    ///
+    /// upstream: match.c:290-308 `hash_search()` under `updating_basis_file`.
+    /// The basis block at the next block boundary (`aligned_i`) replaces the
+    /// chain's choice when it matches the same window. At a boundary that is
+    /// the block at this very offset; off a boundary upstream only looks when
+    /// the window's weak sum is zero (an all-zero run, match.c:300) and then
+    /// realigns the match onto the boundary. Anything else keeps the chain or
+    /// `want_i` choice (`goto check_want_i`).
+    #[must_use]
+    pub fn inplace_alignment(
+        &self,
+        offset: u64,
+        digest: RollingDigest,
+        first: &[u8],
+        second: &[u8],
+    ) -> InplaceAlignment {
+        let block_len = self.block_length as u64;
+        let aligned_offset = offset.div_ceil(block_len) * block_len;
+        let skip = (aligned_offset - offset) as usize;
+        let Ok(aligned) = usize::try_from(aligned_offset / block_len) else {
+            return InplaceAlignment::Keep;
+        };
+        if (skip != 0 && digest.value() != 0)
+            || !self.check_block_match_slices(aligned, digest, first, second)
+        {
+            return InplaceAlignment::Keep;
+        }
+        if skip == 0 {
+            InplaceAlignment::Aligned(aligned)
+        } else {
+            InplaceAlignment::Realign {
+                block: aligned,
+                skip,
+            }
+        }
     }
 
     /// Attempts to locate a matching block for a non-contiguous window backed by a [`VecDeque`].

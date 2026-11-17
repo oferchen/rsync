@@ -18,7 +18,7 @@ use rayon::prelude::*;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::index::{DeltaSignatureIndex, UpstreamHashTable};
+use crate::index::{DeltaSignatureIndex, InplaceAlignment, UpstreamHashTable};
 use crate::ring_buffer::RingBuffer;
 use crate::scan_buffers::ScanBuffers;
 use crate::script::{DeltaScript, DeltaToken};
@@ -128,6 +128,70 @@ fn flush_seq_match_run(
 /// bound from that one block: `end = len + 1 - s->sums[s->count-1].len`
 /// (`match.c:197`). Returns `None` when the basis divides evenly into full
 /// blocks, in which case there is no short tail to match.
+/// Moves the scan window `skip` bytes forward onto a block boundary when the
+/// source there still matches `block`.
+///
+/// upstream: match.c:309-329 - the zero-run realignment re-reads the source at
+/// the boundary and matches there, sending the bytes before it as literals.
+/// Returns `None` when the source ends before a full block at the boundary
+/// (upstream's `aligned_offset + l <= len` fails, so it never looks), and
+/// `Some(false)` with the window untouched when the bytes there differ.
+#[allow(clippy::too_many_arguments)]
+fn realign_window<R: Read>(
+    index: &DeltaSignatureIndex,
+    block: usize,
+    skip: usize,
+    reader: &mut R,
+    buffer: &mut [u8],
+    buffer_pos: &mut usize,
+    buffer_len: &mut usize,
+    window: &mut RingBuffer,
+    rolling: &mut RollingChecksum,
+    pending_literals: &mut Vec<u8>,
+    emit_literals: bool,
+) -> io::Result<Option<bool>> {
+    if *buffer_len - *buffer_pos < skip {
+        buffer.copy_within(*buffer_pos..*buffer_len, 0);
+        *buffer_len -= *buffer_pos;
+        *buffer_pos = 0;
+        while *buffer_len < skip {
+            let read = reader.read(&mut buffer[*buffer_len..])?;
+            if read == 0 {
+                return Ok(None);
+            }
+            *buffer_len += read;
+        }
+    }
+    let (front, back) = window.as_slices();
+    let mut shifted = Vec::with_capacity(front.len() + back.len());
+    shifted.extend_from_slice(front);
+    shifted.extend_from_slice(back);
+    let ahead = &buffer[*buffer_pos..*buffer_pos + skip];
+    let realigned_digest = {
+        let mut probe = RollingChecksum::new();
+        probe.update(&shifted[skip..]);
+        probe.update(ahead);
+        probe.digest()
+    };
+    if !index.check_block_match_slices(block, realigned_digest, &shifted[skip..], ahead) {
+        return Ok(Some(false));
+    }
+    if emit_literals {
+        pending_literals.extend_from_slice(&shifted[..skip]);
+    }
+    window.clear();
+    window.extend_from_slice(&shifted[skip..]);
+    window.extend_from_slice(ahead);
+    *buffer_pos += skip;
+    rolling.reset();
+    let (front, back) = window.as_slices();
+    rolling.update(front);
+    if !back.is_empty() {
+        rolling.update(back);
+    }
+    Ok(Some(true))
+}
+
 fn short_final_block_len(index: &DeltaSignatureIndex, block_len: usize) -> Option<usize> {
     let count = index.block_count();
     if count == 0 {
@@ -482,6 +546,35 @@ impl DeltaGenerator {
     /// identical offset (`basis_offset == cursor`, upstream's
     /// `SUMFLG_SAME_OFFSET` case) passes because `>=` is not strict.
     #[inline]
+    /// Applies upstream's `--inplace` preference to a confirmed match.
+    ///
+    /// upstream: match.c:290-308. Rewrites `matched` to the block at the
+    /// match's own offset when that block also matches, and returns the
+    /// boundary block and distance when an all-zero window may be realigned
+    /// onto the next boundary (match.c:309-329), which needs the source bytes
+    /// past the window.
+    fn inplace_choice(
+        &self,
+        index: &DeltaSignatureIndex,
+        offset: u64,
+        digest: RollingDigest,
+        first: &[u8],
+        second: &[u8],
+        matched: &mut Option<usize>,
+    ) -> Option<(usize, usize)> {
+        if !self.updating_basis_file || matched.is_none() {
+            return None;
+        }
+        match index.inplace_alignment(offset, digest, first, second) {
+            InplaceAlignment::Keep => None,
+            InplaceAlignment::Aligned(block) => {
+                *matched = Some(block);
+                None
+            }
+            InplaceAlignment::Realign { block, skip } => Some((block, skip)),
+        }
+    }
+
     fn basis_offset_ok(
         &self,
         index: &DeltaSignatureIndex,
@@ -584,6 +677,16 @@ impl DeltaGenerator {
         // (match.c:367-381, :412), so a landing on the short final block's
         // offset leaves that block literal.
         let mut skip_landing: Option<u64> = None;
+        // Chain entries upstream unlinked for the rest of this file under
+        // `--inplace`; see `DeltaSignatureIndex::find_match_inplace`.
+        let mut unlinked = vec![
+            false;
+            if self.updating_basis_file {
+                index.block_count()
+            } else {
+                0
+            }
+        ];
 
         let mut buffer_pos = 0usize;
         let mut buffer_len = 0usize;
@@ -665,15 +768,55 @@ impl DeltaGenerator {
                     || (index.block(idx).index() * block_len as u64) >= offset
                     || same_offset.get(idx).copied().unwrap_or(false)
             };
-            let (matched, had_weak_candidate) = match want_i {
-                Some(hint)
-                    if inplace_ok(hint)
-                        && index.check_block_match_slices(hint, digest, first, second) =>
-                {
-                    (Some(hint), true)
-                }
-                _ => index.find_match_slices_with(digest, first, second, inplace_ok),
+            let (mut matched, had_weak_candidate, hint) = if self.updating_basis_file {
+                let (chain, weak) = index.find_match_inplace(
+                    digest,
+                    first,
+                    second,
+                    offset,
+                    &same_offset,
+                    &mut unlinked,
+                );
+                // upstream: match.c:338-345 - `want_i` only overrides a match
+                // the chain found.
+                let hint = chain.and(want_i).filter(|&hint| {
+                    inplace_ok(hint) && index.check_block_match_slices(hint, digest, first, second)
+                });
+                (hint.or(chain), weak, hint)
+            } else {
+                let hint = want_i
+                    .filter(|&hint| index.check_block_match_slices(hint, digest, first, second));
+                let (matched, weak) = match hint {
+                    Some(hint) => (Some(hint), true),
+                    None => index.find_match_slices_with(digest, first, second, inplace_ok),
+                };
+                (matched, weak, hint)
             };
+            let realign = self.inplace_choice(index, offset, digest, first, second, &mut matched);
+            if let Some((block, skip)) = realign {
+                match realign_window(
+                    index,
+                    block,
+                    skip,
+                    &mut reader,
+                    buffer,
+                    &mut buffer_pos,
+                    &mut buffer_len,
+                    window,
+                    &mut rolling,
+                    &mut pending_literals,
+                    emit_literals,
+                )? {
+                    None => {}
+                    Some(true) => {
+                        offset += skip as u64;
+                        matched = Some(block);
+                    }
+                    // upstream: match.c:302-307 already moved `i` to the
+                    // boundary block; `check_want_i` may still prefer the hint.
+                    Some(false) => matched = Some(hint.unwrap_or(block)),
+                }
+            }
             if matched.is_some() || !had_weak_candidate {
                 consecutive_false_offsets = 0;
             } else {
@@ -884,11 +1027,53 @@ impl DeltaGenerator {
                             || (index.block(idx).index() * block_len as u64) >= offset
                             || same_offset.get(idx).copied().unwrap_or(false)
                     };
-                    let (adj_match, adj_had_weak) =
-                        match index.try_next_match_slices(last_matched, adj_digest, f, s) {
-                            Some(idx) if adj_inplace_ok(idx) => (Some(idx), true),
-                            _ => index.find_match_slices_with(adj_digest, f, s, adj_inplace_ok),
+                    let (mut adj_match, adj_had_weak, adj_hint) = if self.updating_basis_file {
+                        let (chain, weak) = index.find_match_inplace(
+                            adj_digest,
+                            f,
+                            s,
+                            offset,
+                            &same_offset,
+                            &mut unlinked,
+                        );
+                        let hint = chain
+                            .and_then(|_| {
+                                index.try_next_match_slices(last_matched, adj_digest, f, s)
+                            })
+                            .filter(|&idx| adj_inplace_ok(idx));
+                        (hint.or(chain), weak, hint)
+                    } else {
+                        let hint = index.try_next_match_slices(last_matched, adj_digest, f, s);
+                        let (matched, weak) = match hint {
+                            Some(idx) => (Some(idx), true),
+                            None => index.find_match_slices_with(adj_digest, f, s, adj_inplace_ok),
                         };
+                        (matched, weak, hint)
+                    };
+                    let adj_realign =
+                        self.inplace_choice(index, offset, adj_digest, f, s, &mut adj_match);
+                    if let Some((block, skip)) = adj_realign {
+                        match realign_window(
+                            index,
+                            block,
+                            skip,
+                            &mut reader,
+                            buffer,
+                            &mut buffer_pos,
+                            &mut buffer_len,
+                            window,
+                            &mut rolling,
+                            &mut pending_literals,
+                            emit_literals,
+                        )? {
+                            None => {}
+                            Some(true) => {
+                                offset += skip as u64;
+                                adj_match = Some(block);
+                            }
+                            Some(false) => adj_match = Some(adj_hint.unwrap_or(block)),
+                        }
+                    }
                     if let Some(next_idx) = adj_match {
                         match_idx = next_idx;
                     } else {

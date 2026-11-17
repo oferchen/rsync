@@ -321,6 +321,9 @@ impl<'a> CopyContext<'a> {
         } else {
             Vec::new()
         };
+        // Chain entries upstream unlinked for the rest of this file under
+        // `--inplace`; see `DeltaSignatureIndex::find_match_inplace`.
+        let mut unlinked = same_offset.clone();
         // 256KB interval - smaller than regular copy since delta is more
         // CPU-intensive, but still amortizes clock_gettime syscalls.
         const TIMEOUT_CHECK_INTERVAL: usize = 256 * 1024;
@@ -377,9 +380,9 @@ impl<'a> CopyContext<'a> {
                 continue;
             }
 
-            let digest = rolling.digest();
+            let mut digest = rolling.digest();
             // upstream: match.c:214-217 - the per-offset rolling sum.
-            let scan_offset = total_bytes.saturating_add(pending_literals.len() as u64);
+            let mut scan_offset = total_bytes.saturating_add(pending_literals.len() as u64);
             matching::trace_deltasum::trace_scan_offset(scan_offset, digest.sum2(), digest.sum1());
             if let Some(replay) = replay.as_mut() {
                 let (front, back) = window.as_slices();
@@ -390,17 +393,93 @@ impl<'a> CopyContext<'a> {
                     || (index.block(idx).index() * block_len as u64) >= scan_offset
                     || same_offset.get(idx).copied().unwrap_or(false)
             };
-            let (matched_block, had_weak_candidate) = match want_i {
-                Some(hint)
-                    if inplace_ok(hint) && {
-                        let (front, back) = window.as_slices();
-                        index.check_block_match_slices(hint, digest, front, back)
-                    } =>
-                {
-                    (Some(hint), true)
-                }
-                _ => index.find_match_window_with(digest, &window, inplace_ok),
+            let hint_matches = |hint: usize| {
+                let (front, back) = window.as_slices();
+                inplace_ok(hint) && index.check_block_match_slices(hint, digest, front, back)
             };
+            let (mut matched_block, had_weak_candidate, hint) = if inplace_mode {
+                let (front, back) = window.as_slices();
+                let (chain, weak) = index.find_match_inplace(
+                    digest,
+                    front,
+                    back,
+                    scan_offset,
+                    &same_offset,
+                    &mut unlinked,
+                );
+                // upstream: match.c:338-345 - `want_i` only overrides a match
+                // the chain found.
+                let hint = chain.and(want_i).filter(|&hint| hint_matches(hint));
+                (hint.or(chain), weak, hint)
+            } else {
+                let hint = want_i.filter(|&hint| hint_matches(hint));
+                let (matched, weak) = match hint {
+                    Some(hint) => (Some(hint), true),
+                    None => index.find_match_window_with(digest, &window, inplace_ok),
+                };
+                (matched, weak, hint)
+            };
+            // upstream: match.c:290-334 - under --inplace the block at the
+            // match's own offset wins, and an all-zero window off a boundary
+            // is realigned onto the next boundary's matching block.
+            if inplace_mode && matched_block.is_some() {
+                let (front, back) = window.as_slices();
+                match index.inplace_alignment(scan_offset, digest, front, back) {
+                    matching::InplaceAlignment::Keep => {}
+                    matching::InplaceAlignment::Aligned(block) => matched_block = Some(block),
+                    matching::InplaceAlignment::Realign { block, skip } => {
+                        // upstream: match.c:300 `aligned_offset + l <= len` -
+                        // peek the bytes past the window without consuming them.
+                        if buffer_len - buffer_pos < skip {
+                            read_buffer.copy_within(buffer_pos..buffer_len, 0);
+                            buffer_len -= buffer_pos;
+                            buffer_pos = 0;
+                            while buffer_len < skip {
+                                let remaining =
+                                    expected_remaining.saturating_sub(source_bytes_read);
+                                if remaining == 0 {
+                                    break;
+                                }
+                                let chunk_len = (read_buffer.len() - buffer_len)
+                                    .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+                                let read = reader
+                                    .read(&mut read_buffer[buffer_len..buffer_len + chunk_len])
+                                    .map_err(|error| {
+                                        LocalCopyError::io("copy file", source, error)
+                                    })?;
+                                if read == 0 {
+                                    break;
+                                }
+                                source_bytes_read = source_bytes_read.saturating_add(read as u64);
+                                sums.sent(&read_buffer[buffer_len..buffer_len + read]);
+                                buffer_len += read;
+                            }
+                        }
+                        if buffer_len - buffer_pos >= skip {
+                            let mut shifted: Vec<u8> = window.iter().skip(skip).copied().collect();
+                            shifted.extend_from_slice(&read_buffer[buffer_pos..buffer_pos + skip]);
+                            let mut probe = RollingChecksum::new();
+                            probe.update(&shifted);
+                            let shifted_digest = probe.digest();
+                            if index.check_block_match_slices(block, shifted_digest, &shifted, &[])
+                            {
+                                pending_literals.extend(window.drain(..skip));
+                                window.extend(shifted[shifted.len() - skip..].iter().copied());
+                                buffer_pos += skip;
+                                bytes_since_timeout_check += skip;
+                                rolling = probe;
+                                digest = shifted_digest;
+                                scan_offset += skip as u64;
+                                matched_block = Some(block);
+                            } else {
+                                // upstream: match.c:302-307 moved `i` to the
+                                // boundary block; `check_want_i` may prefer the hint.
+                                matched_block = Some(hint.unwrap_or(block));
+                            }
+                        }
+                    }
+                }
+            }
             if let Some(block_index) = matched_block {
                 consecutive_false_offsets = 0;
                 want_i = (block_index + 1 < index.block_count()).then_some(block_index + 1);
@@ -705,7 +784,18 @@ impl<'a> CopyContext<'a> {
                     if !second.is_empty() {
                         rolling.update(second);
                     }
-                    index.find_tail_match_window(rolling.digest(), &window, &mut scratch)
+                    // upstream: match.c:240-247 - under --inplace a block the
+                    // scan has passed is out of the chain unless it was matched
+                    // at its own offset; the short final block is no exception.
+                    let tail_offset = total_bytes.saturating_add(pending_literals.len() as u64);
+                    index
+                        .find_tail_match_window(rolling.digest(), &window, &mut scratch)
+                        .filter(|&idx| {
+                            !inplace_mode
+                                || (!unlinked[idx]
+                                    && (index.block(idx).index() * block_len as u64 >= tail_offset
+                                        || same_offset[idx]))
+                        })
                 } else {
                     None
                 }
