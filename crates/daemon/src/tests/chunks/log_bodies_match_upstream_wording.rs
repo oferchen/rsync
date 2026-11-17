@@ -22,7 +22,11 @@ fn log_bodies_match_upstream_wording() {
     // upstream: clientserver.c:1578 - request for an undefined module.
     log_unknown_module(&log, host, ip, "docs");
     // upstream: clientserver.c:1565 - `#list` / empty module request.
-    log_list_request(&log, host, addr);
+    log_list_request(
+        &log,
+        host,
+        &crate::daemon::peer_address::PeerAddress::from_socket(addr),
+    );
 
     drop(log);
 

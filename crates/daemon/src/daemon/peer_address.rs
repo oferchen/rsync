@@ -40,6 +40,46 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+/// The connecting peer as the daemon reports and checks it.
+///
+/// upstream: clientname.c:55-84 `client_addr()` keeps the peer as a string;
+/// clientserver.c:775 exports it as `RSYNC_HOST_ADDR`, the log and `@ERROR`
+/// lines print it (clientserver.c:778-791), and `allow_access()` parses it
+/// again for the `hosts allow`/`hosts deny` match (access.c:84-130). This
+/// value carries all three facts so no consumer re-derives one from another:
+/// the text that is shown and the address that is matched.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PeerAddress {
+    text: String,
+    ip: IpAddr,
+}
+
+impl PeerAddress {
+    /// A peer named by a socket address, shown as its address.
+    pub(crate) fn from_socket(addr: SocketAddr) -> Self {
+        Self {
+            text: addr.ip().to_string(),
+            ip: addr.ip(),
+        }
+    }
+
+    /// The address `hosts allow`/`hosts deny` and reverse lookups use.
+    pub(crate) const fn ip(&self) -> IpAddr {
+        self.ip
+    }
+
+    /// The peer as `RSYNC_HOST_ADDR` and the log lines show it.
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+impl std::fmt::Display for PeerAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.text())
+    }
+}
+
 /// Peer-address environment variables consulted on the remote-shell path, in
 /// upstream's order. The first one that is set wins, even if a later one would
 /// parse and it does not.

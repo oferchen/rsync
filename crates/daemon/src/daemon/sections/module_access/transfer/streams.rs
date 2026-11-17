@@ -533,7 +533,7 @@ fn execute_transfer(
             fmt_has_o_or_i: log_format_has(fmt, 'i') || log_format_has(fmt, 'o'),
             operation,
             hostname: ctx.host_display().to_string(),
-            remote_addr: ctx.peer_ip.to_string(),
+            remote_addr: ctx.peer.to_string(),
             module_name: ctx.request.to_string(),
             module_path: module.path.display().to_string(),
             // upstream: log.c `case 'u': n = auth_user;` - the name that passed

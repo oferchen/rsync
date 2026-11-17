@@ -72,7 +72,7 @@ fn daemon_request_log_line(
     role: ServerRole,
     auth_user: Option<&str>,
     host_display: &str,
-    peer_ip: IpAddr,
+    peer_ip: impl std::fmt::Display,
 ) -> String {
     let verb = match role {
         ServerRole::Generator => "on",
@@ -97,7 +97,7 @@ fn log_daemon_request(
     let (Some(log), Some(request)) = (ctx.log_sink, daemon_request(client_args)) else {
         return;
     };
-    let text = daemon_request_log_line(&request, role, auth_user, ctx.host_display(), ctx.peer_ip);
+    let text = daemon_request_log_line(&request, role, auth_user, ctx.host_display(), ctx.peer);
     log_message(log, &rsync_info!(text).with_role(Role::Daemon));
 }
 

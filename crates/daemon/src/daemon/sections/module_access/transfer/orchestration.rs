@@ -74,7 +74,7 @@ fn run_post_xfer_finalizer(
     let xfer_ctx = XferExecContext {
         module_name: &module.name,
         module_path: &module.path,
-        host_addr: ctx.peer_ip,
+        host_addr: ctx.peer.ip(),
         host_name,
         user_name,
         request: ctx.request,
@@ -220,12 +220,12 @@ fn process_approved_module(
     };
 
     if let Some(log) = ctx.log_sink {
-        log_module_request(log, ctx.host_display(), ctx.peer_ip, ctx.request);
+        log_module_request(log, ctx.host_display(), ctx.peer, ctx.request);
     }
 
     // upstream: clientserver.c:761/770-771 - RSYNC_MODULE_NAME, RSYNC_HOST_NAME
     // and RSYNC_HOST_ADDR are set before authentication reads `secrets file`.
-    let peer_host_addr = ctx.peer_ip.to_string();
+    let peer_host_addr = ctx.peer.to_string();
     let peer_host_name = ctx.host_display().to_owned();
     let pre_auth_vars = HookVariables {
         module_name: Some(&module.name),
@@ -352,7 +352,7 @@ fn process_approved_module(
     //   parent still observes, and a pre-xfer or name-converter refusal comes
     //   only after early exec has run.
     let hook_module_path = module.path.display().to_string();
-    let hook_host_addr = ctx.peer_ip.to_string();
+    let hook_host_addr = ctx.peer.to_string();
     let hook_host_name = ctx.host_display().to_owned();
     let hook_vars = HookVariables {
         module_name: Some(&module.name),
@@ -393,7 +393,7 @@ fn process_approved_module(
         let early_ctx = XferExecContext {
             module_name: &module.name,
             module_path: &module.path,
-            host_addr: ctx.peer_ip,
+            host_addr: ctx.peer.ip(),
             host_name: ctx.host_display(),
             user_name: auth_user.as_deref(),
             // Early exec runs before the client names a request, so
@@ -596,7 +596,7 @@ fn process_approved_module(
     let xfer_ctx = XferExecContext {
         module_name: &module.name,
         module_path: &module.path,
-        host_addr: ctx.peer_ip,
+        host_addr: ctx.peer.ip(),
         host_name: &host_name_owned,
         user_name: auth_user.as_deref(),
         request: ctx.request,

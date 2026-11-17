@@ -1,19 +1,22 @@
-fn log_connection(log: &SharedLogSink, host: &str, peer_addr: SocketAddr) {
-    let ip = peer_addr.ip();
-    let text = format!("connect from {host} ({ip})");
+fn log_connection(log: &SharedLogSink, host: &str, peer: &PeerAddress) {
+    let text = format!("connect from {host} ({peer})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
-pub(crate) fn log_list_request(log: &SharedLogSink, host: &str, peer_addr: SocketAddr) {
-    let ip = peer_addr.ip();
+pub(crate) fn log_list_request(log: &SharedLogSink, host: &str, peer: &PeerAddress) {
     // upstream: clientserver.c:1565 - `module-list request from %s (%s)`
-    let text = format!("module-list request from {host} ({ip})");
+    let text = format!("module-list request from {host} ({peer})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
-pub(crate) fn log_module_request(log: &SharedLogSink, host: &str, peer_ip: IpAddr, module: &str) {
+pub(crate) fn log_module_request(
+    log: &SharedLogSink,
+    host: &str,
+    peer_ip: impl std::fmt::Display,
+    module: &str,
+) {
     // upstream: clientserver.c:791 - `rsync allowed access on module %s from %s (%s)`
     let text = format!("rsync allowed access on module {module} from {host} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
@@ -34,7 +37,7 @@ pub(crate) fn log_module_request(log: &SharedLogSink, host: &str, peer_ip: IpAdd
 pub(crate) fn log_module_limit(
     log: &SharedLogSink,
     host: &str,
-    peer_ip: IpAddr,
+    peer_ip: impl std::fmt::Display,
     module: &str,
     limit: i32,
     current: u32,
@@ -49,7 +52,7 @@ pub(crate) fn log_module_limit(
 fn log_module_lock_error(
     log: &SharedLogSink,
     host: &str,
-    peer_ip: IpAddr,
+    peer_ip: impl std::fmt::Display,
     module: &str,
     error: &io::Error,
 ) {
@@ -122,7 +125,7 @@ fn log_client_args_failure(log: &SharedLogSink, error: &io::Error) {
 pub(crate) fn log_module_auth_failure(
     log: &SharedLogSink,
     host: &str,
-    peer_ip: IpAddr,
+    peer_ip: impl std::fmt::Display,
     module: &str,
     suffix: Option<&str>,
 ) {
@@ -141,14 +144,24 @@ pub(crate) fn log_module_auth_failure(
     log_message(log, &message);
 }
 
-pub(crate) fn log_module_denied(log: &SharedLogSink, host: &str, peer_ip: IpAddr, module: &str) {
+pub(crate) fn log_module_denied(
+    log: &SharedLogSink,
+    host: &str,
+    peer_ip: impl std::fmt::Display,
+    module: &str,
+) {
     // upstream: clientserver.c:778 - `rsync denied on module %s from %s (%s)`
     let text = format!("rsync denied on module {module} from {host} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
-pub(crate) fn log_unknown_module(log: &SharedLogSink, host: &str, peer_ip: IpAddr, module: &str) {
+pub(crate) fn log_unknown_module(
+    log: &SharedLogSink,
+    host: &str,
+    peer_ip: impl std::fmt::Display,
+    module: &str,
+) {
     // upstream: clientserver.c:1578 - `unknown module '%s' tried from %s (%s)`
     let text = format!("unknown module '{module}' tried from {host} ({peer_ip})");
     let message = rsync_info!(text).with_role(Role::Daemon);

@@ -127,7 +127,7 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
 
     let outcome = handle_legacy_session(
         stream,
-        peer_addr,
+        PeerAddress::from_socket(peer_addr),
         LegacySessionParams {
             modules: &modules,
             motd_lines: &motd_lines,

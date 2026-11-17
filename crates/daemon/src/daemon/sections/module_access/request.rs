@@ -21,7 +21,7 @@ fn transition_error(err: InvalidTransition) -> io::Error {
 struct ModuleRequestContext<'a> {
     reader: &'a mut BufReader<DaemonStream>,
     limiter: &'a mut Option<BandwidthLimiter>,
-    peer_ip: IpAddr,
+    peer: &'a PeerAddress,
     session_peer_host: Option<&'a str>,
     module_peer_host: Option<&'a str>,
     /// Whether a reverse lookup was in scope for this session (global default
@@ -209,7 +209,7 @@ fn send_multiplexed_error_and_exit(
 fn deny_module(
     stream: &mut DaemonStream,
     module: &ModuleDefinition,
-    peer_ip: IpAddr,
+    peer: &PeerAddress,
     host: &str,
     limiter: &mut Option<BandwidthLimiter>,
 ) -> io::Result<()> {
@@ -221,7 +221,7 @@ fn deny_module(
         AtError::AccessDenied {
             module: module_display.into_owned(),
             host: host.to_owned(),
-            addr: peer_ip.to_string(),
+            addr: peer.to_string(),
         }
     };
     send_error(stream, limiter, &error)
@@ -267,7 +267,7 @@ fn handle_max_connections_exceeded(
         log_module_limit(
             log,
             ctx.host_display(),
-            ctx.peer_ip,
+            ctx.peer,
             ctx.request,
             limit,
             active,
@@ -281,7 +281,7 @@ fn handle_max_connections_exceeded(
 /// Sends an error message and logs the lock failure.
 fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> io::Result<()> {
     if let Some(log) = ctx.log_sink {
-        log_module_lock_error(log, ctx.host_display(), ctx.peer_ip, ctx.request, error);
+        log_module_lock_error(log, ctx.host_display(), ctx.peer, ctx.request, error);
     }
     send_error(ctx.reader.get_mut(), ctx.limiter, &AtError::ModuleLockError)?;
     Ok(())
@@ -572,7 +572,7 @@ fn handle_authentication(
         ctx.reader,
         ctx.limiter,
         module,
-        ctx.peer_ip,
+        ctx.peer.ip(),
         ctx.messages,
         protocol_version,
         ctx.client_digests,
@@ -598,7 +598,7 @@ fn handle_authentication(
                 log_module_auth_failure(
                     log,
                     ctx.host_display(),
-                    ctx.peer_ip,
+                    ctx.peer,
                     ctx.request,
                     denial.log_suffix().as_deref(),
                 );
@@ -633,7 +633,7 @@ fn handle_unknown_module(
     stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
     request: &str,
-    peer_ip: IpAddr,
+    peer: &PeerAddress,
     session_peer_host: Option<&str>,
     reverse_lookup: bool,
     log_sink: Option<&SharedLogSink>,
@@ -644,7 +644,7 @@ fn handle_unknown_module(
         log_unknown_module(
             log,
             peer_host_display(session_peer_host, reverse_lookup),
-            peer_ip,
+            peer,
             request,
         );
     }
@@ -661,12 +661,12 @@ fn handle_module_denied(
 ) -> io::Result<()> {
     let host = ctx.host_display().to_owned();
     if let Some(log) = ctx.log_sink {
-        log_module_denied(log, &host, ctx.peer_ip, ctx.request);
+        log_module_denied(log, &host, ctx.peer, ctx.request);
     }
     deny_module(
         ctx.reader.get_mut(),
         module,
-        ctx.peer_ip,
+        ctx.peer,
         &host,
         ctx.limiter,
     )
@@ -688,7 +688,7 @@ fn respond_with_module_request(
     limiter: &mut Option<BandwidthLimiter>,
     modules: &[ModuleRuntime],
     request: &str,
-    peer_ip: IpAddr,
+    peer: &PeerAddress,
     session_peer_host: Option<&str>,
     log_sink: Option<&SharedLogSink>,
     reverse_lookup: bool,
@@ -705,7 +705,7 @@ fn respond_with_module_request(
             reader.get_mut(),
             limiter,
             request,
-            peer_ip,
+            peer,
             session_peer_host,
             reverse_lookup,
             log_sink,
@@ -727,12 +727,12 @@ fn respond_with_module_request(
     // per-module value is therefore the global default OR the module override.
     let module_reverse_lookup = reverse_lookup || module.reverse_lookup;
     let module_peer_host =
-        module_peer_hostname(module, &mut hostname_cache, peer_ip, module_reverse_lookup);
+        module_peer_hostname(module, &mut hostname_cache, peer.ip(), module_reverse_lookup);
 
     let mut ctx = ModuleRequestContext {
         reader,
         limiter,
-        peer_ip,
+        peer,
         session_peer_host,
         module_peer_host,
         reverse_lookup: module_reverse_lookup,
@@ -751,7 +751,7 @@ fn respond_with_module_request(
     // same never-empty host string the log lines use, sentinels included - so a
     // `hosts allow = UNKNOWN` line works as clientname.c:93-95 documents.
     let access_host = PeerHost::new(module_peer_host, module_reverse_lookup);
-    if !module.permits(peer_ip, access_host) {
+    if !module.permits(peer.ip(), access_host) {
         return handle_module_denied(&mut ctx, module);
     }
 

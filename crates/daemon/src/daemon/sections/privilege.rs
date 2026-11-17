@@ -557,10 +557,11 @@ mod privilege_tests {
         let mut session_exit_code: Option<ExitCode> = None;
         let sink = test_log_sink();
         let runtime = ModuleRuntime::new(module, None);
+        let peer = PeerAddress::from_socket(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0));
         let mut ctx = ModuleRequestContext {
             reader: &mut reader,
             limiter: &mut limiter,
-            peer_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            peer: &peer,
             session_peer_host: None,
             module_peer_host: None,
             reverse_lookup: false,
