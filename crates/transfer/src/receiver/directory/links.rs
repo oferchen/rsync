@@ -1022,6 +1022,16 @@ impl ReceiverContext {
                 if self.daemon_refuses_non_dir(daemon_filters.as_mut(), writer, entry) {
                     continue;
                 }
+                if self.existing_only_skips_follower(entry, dest_dir) {
+                    self.emit_existence_skip_notice(
+                        writer,
+                        entry,
+                        dest_dir,
+                        engine::existence_gate::ExistenceSkip::NotCreatingNew,
+                        || "",
+                    );
+                    continue;
+                }
                 let leader_idx = match entry.hardlink_idx() {
                     Some(idx) => idx,
                     None => continue,

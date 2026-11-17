@@ -1079,6 +1079,11 @@ impl ReceiverContext {
             else {
                 continue;
             };
+            // upstream: generator.c:1794-1810 - a follower --existing skips is
+            // never linked, so it has no record.
+            if self.existing_only_skips_follower(entry, dest_dir) {
+                continue;
+            }
             let leader_name = leader.name_bytes();
 
             // upstream: hlink.c:224-241 maybe_hard_link - an up-to-date follower
