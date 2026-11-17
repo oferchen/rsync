@@ -15,7 +15,7 @@ new oracle test is picked up on the next run.
 Usage:
     python3 tools/ci/upstream_oracle_tests.py args
         Print the nextest selection, one argument per line
-        (`-p <pkg>` ... `-E <filterset>`), for `mapfile`.
+        (`-p <pkg>` ... `--test <binary>` ... `-E <filterset>`), for `mapfile`.
     python3 tools/ci/upstream_oracle_tests.py check-log <nextest-output>
         Fail unless the run executed at least one test and no oracle cell
         printed a skip line.
@@ -65,9 +65,18 @@ def oracle_binaries(root: Path) -> list[tuple[str, str]]:
 
 
 def nextest_args(cells: list[tuple[str, str]]) -> list[str]:
+    """Return the nextest selection: packages, test targets, then the filterset.
+
+    `--test` limits what cargo builds. `-p` alone compiles every integration
+    test of each package, several hundred binaries the filterset then skips.
+    The filterset stays because `--test` matches a name in any selected
+    package.
+    """
     args: list[str] = []
     for package in sorted({package for package, _ in cells}):
         args += ["-p", package]
+    for binary in sorted({binary for _, binary in cells}):
+        args += ["--test", binary]
     filterset = " | ".join(f"binary_id({package}::{binary})" for package, binary in cells)
     return args + ["-E", filterset]
 
