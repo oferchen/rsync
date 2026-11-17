@@ -336,6 +336,11 @@ pub fn rerr_for_io_error(error: &io::Error) -> i32 {
     if crate::receiver::DestRootSelectError::of(error).is_some() {
         return 3;
     }
+    // upstream: io.c:961-967 perform_io() - a failed write of the peer's
+    // stream is `exit_cleanup(RERR_SOCKETIO)` whatever the errno.
+    if crate::PeerWriteError::of(error).is_some() {
+        return 10;
+    }
 
     // upstream: rsync.c:897-900 - a denied backup must not be graded by `ErrorKind`
     // like the per-file open failures below. Without this arm the usual `EACCES`

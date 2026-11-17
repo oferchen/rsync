@@ -40,7 +40,7 @@ pub(crate) struct Core<'a> {
     /// perform_io() while `iobuf.in_fd < 0`).
     read_counter: Option<Arc<AtomicU64>>,
     /// The peer closed its output; no more input will arrive
-    /// (upstream: io.c:905-911 sets `iobuf.in_fd = -2`).
+    /// (upstream: io.c:911 sets `iobuf.in_fd = -2`).
     in_eof: bool,
     /// `--timeout`, checked whenever a wait comes back empty.
     timeout: IoTimeout,
@@ -216,7 +216,11 @@ impl<'a> Core<'a> {
     /// same pass).
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         loop {
-            if let Some(n) = self.transport.try_write(buf)? {
+            let written = self
+                .transport
+                .try_write(buf)
+                .map_err(super::PeerWriteError::wrap)?;
+            if let Some(n) = written {
                 if self.buffering() {
                     self.timeout.mark_io();
                 }
@@ -460,6 +464,90 @@ mod tests {
         let mut got = [0u8; 7];
         CoreReader::new(&core).read_exact(&mut got).unwrap();
         assert_eq!(&got, b"refused");
+    }
+
+    /// A peer that is gone: every write fails as the socket reports it.
+    #[cfg(unix)]
+    struct GonePeer;
+
+    #[cfg(unix)]
+    impl Transport for GonePeer {
+        fn try_read(&mut self, _: &mut [u8]) -> io::Result<Option<usize>> {
+            Ok(None)
+        }
+
+        fn try_write(&mut self, _: &[u8]) -> io::Result<Option<usize>> {
+            Err(io::Error::from_raw_os_error(EPIPE))
+        }
+
+        fn wait(
+            &mut self,
+            _: bool,
+            _: bool,
+            _: Option<Duration>,
+        ) -> io::Result<fast_io::transport::Readiness> {
+            Ok(fast_io::transport::Readiness::default())
+        }
+    }
+
+    /// `EPIPE` on every Unix oc builds for.
+    #[cfg(unix)]
+    const EPIPE: i32 = 32;
+
+    /// WHY: upstream reports a failed write as a `write error` with the
+    /// write's own errno (io.c:961-967), so the core must say that it was the
+    /// write that failed while keeping the transport's kind and errno - a
+    /// later classifier cannot tell a write's `ECONNRESET` from a read's.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_write_is_marked_as_the_writes_own_failure() {
+        let core = Core::new(
+            Box::new(GonePeer),
+            Vec::new(),
+            IoTimeout::new(None, "sender"),
+        );
+        let err = CoreWriter::new(&core).write(b"data").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        let failed = super::super::PeerWriteError::of(&err).expect("marked as the write's failure");
+        assert_eq!(failed.raw_os_error(), Some(EPIPE));
+    }
+
+    /// A writer stopped by a shutdown signal: the transport ends the write
+    /// with the signal's error, as the signal wake does.
+    struct SignalledWrite;
+
+    impl Transport for SignalledWrite {
+        fn try_read(&mut self, _: &mut [u8]) -> io::Result<Option<usize>> {
+            Ok(None)
+        }
+
+        fn try_write(&mut self, _: &[u8]) -> io::Result<Option<usize>> {
+            Err(fast_io::signal::shutdown_error())
+        }
+
+        fn wait(
+            &mut self,
+            _: bool,
+            _: bool,
+            _: Option<Duration>,
+        ) -> io::Result<fast_io::transport::Readiness> {
+            Ok(fast_io::transport::Readiness::default())
+        }
+    }
+
+    /// WHY: a signal ends rsync from its handler with code 20 (rsync.c
+    /// sig_int()), never as a write error with code 10, so a write the signal
+    /// wake ended must still read as the signal's shutdown.
+    #[test]
+    fn a_write_ended_by_a_shutdown_signal_is_not_marked_as_its_failure() {
+        let core = Core::new(
+            Box::new(SignalledWrite),
+            Vec::new(),
+            IoTimeout::new(None, "sender"),
+        );
+        let err = CoreWriter::new(&core).write(b"data").unwrap_err();
+        assert!(crate::shared::is_signal_shutdown(&err), "{err:?}");
+        assert!(super::super::PeerWriteError::of(&err).is_none(), "{err:?}");
     }
 
     /// A peer that never answers: every wait comes back empty after the bound

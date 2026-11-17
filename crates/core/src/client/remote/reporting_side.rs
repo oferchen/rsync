@@ -149,6 +149,14 @@ pub(crate) fn local_failure_error(
         let report = connection_unexpectedly_closed_error(bytes_received, own, role);
         return side.finish(report, worse(ExitCode::StreamIo));
     }
+    // upstream: io.c:961-967 perform_io() - a failed write of the peer's
+    // stream is rsyserr(FERROR_SOCKET, errno, "write error") and
+    // exit_cleanup(RERR_SOCKETIO), whatever errno the write returned.
+    if let Some(failed) = crate::server::PeerWriteError::of(error) {
+        let line = format!("[{who}] write error: {}", upstream_io_error(failed));
+        let report = program_line_error(line, worse(ExitCode::SocketIo), role);
+        return side.finish(report, ExitCode::StreamIo);
+    }
     // upstream: io.c:259-266 check_timeout() - no input within --timeout.
     if let Some(seconds) = io_timeout
         && matches!(
@@ -354,6 +362,31 @@ mod tests {
         let line = report.program_line().expect("read error line");
         assert!(line.starts_with("[Receiver] read error: "), "{line}");
         assert!(report.preceding().is_none());
+    }
+
+    /// WHY: io.c:961-967 reports a failed write as `write error` with that
+    /// write's errno and RERR_SOCKETIO, whatever the errno: a reset met by a
+    /// write is not a `read error`, and a broken pipe is not a bare cause.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_write_is_the_writers_write_error() {
+        let reset = if cfg!(target_os = "linux") { 104 } else { 54 };
+        for errno in [32, reset] {
+            for (side, who) in [
+                (ReportingSide::Sender, "sender"),
+                (ReportingSide::PreFork, "Receiver"),
+            ] {
+                let cause = io::Error::from_raw_os_error(errno);
+                let failed =
+                    crate::server::PeerWriteError::wrap(io::Error::from_raw_os_error(errno));
+                let report = local_failure_error(&failed, None, side, 23, None);
+                assert_eq!(report.code(), ExitCode::SocketIo, "{who} errno {errno}");
+                assert_eq!(
+                    report.program_line(),
+                    Some(format!("[{who}] write error: {}", upstream_io_error(&cause)).as_str()),
+                );
+            }
+        }
     }
 
     /// A file-I/O failure after the fork reaches the generator as

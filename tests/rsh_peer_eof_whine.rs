@@ -139,18 +139,19 @@ fn write_truncating_rsh_shim(dir: &Path, cut: usize) -> PathBuf {
 }
 
 /// Pulls a tree whose server output is cut after `cut` bytes.
-/// Returns (exit code, stderr lines).
-fn pull_cut_after(cut: usize) -> (Option<i32>, Vec<String>) {
+/// Returns (exit code, client lines, server lines).
+fn pull_cut_after(cut: usize) -> (Option<i32>, Vec<String>, Vec<String>) {
     pull_files_cut_after(cut, &[("big", 300_000)], &[])
 }
 
 /// Pulls `files` (name, size), with `extra` options, from a server whose
-/// output is cut after `cut` bytes. Returns (exit code, stderr lines).
+/// output is cut after `cut` bytes. Returns (exit code, client lines, server
+/// lines).
 fn pull_files_cut_after(
     cut: usize,
     files: &[(&str, u32)],
     extra: &[&str],
-) -> (Option<i32>, Vec<String>) {
+) -> (Option<i32>, Vec<String>, Vec<String>) {
     let temp = tempfile::tempdir().expect("tempdir");
     let src = temp.path().join("src");
     fs::create_dir_all(&src).expect("create src");
@@ -172,20 +173,19 @@ fn pull_files_cut_after(
         .arg(format!("{}/", temp.path().join("dst").display()))
         .output()
         .expect("run oc-rsync");
-    // The killed server's own stderr reaches the terminal too; only the
-    // client's lines are under test.
+    // The cut server's own stderr reaches the terminal too, interleaved with
+    // the client's; its lines carry its role, the sender, either trailing
+    // (whines, trailers) or leading (io.c:965 rsyserr() prefixes "[sender] ").
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let lines = stderr
-        .lines()
-        .filter(|line| {
-            !line.contains("[server=")
-                && !line.contains("[sender=")
-                && !line.ends_with("[server]")
-                && !line.ends_with("[sender]")
-        })
-        .map(str::to_owned)
-        .collect();
-    (output.status.code(), lines)
+    let (server, client): (Vec<String>, Vec<String>) =
+        stderr.lines().map(str::to_owned).partition(|line| {
+            line.contains("[server=")
+                || line.contains("[sender=")
+                || line.ends_with("[server]")
+                || line.ends_with("[sender]")
+                || line.starts_with("oc-rsync: [sender] ")
+        });
+    (output.status.code(), client, server)
 }
 
 /// Parses N out of the whine's "(N bytes received so far) [role]".
@@ -208,11 +208,27 @@ fn whine_count(line: &str, role: &str) -> u64 {
 /// The cut lands after upstream's fork (main.c:1077 do_recv()), so the
 /// generator follows the receiver with its own whine and trailer, naming the
 /// little it read before the fork.
+///
+/// The server still has most of the file to send when the shim stops reading,
+/// so its next write fails: like rsync 3.5.2's sender it prints `[sender] write
+/// error: ...` with errno 32 and exits RERR_SOCKETIO (io.c:961-967). Those are
+/// the server's lines, not the client's.
 #[test]
 fn pull_cut_mid_transfer_whines_with_the_bytes_read_since_setup() {
     let mut counts = Vec::new();
     for cut in [10_000usize, 50_000] {
-        let (code, lines) = pull_cut_after(cut);
+        let (code, lines, server) = pull_cut_after(cut);
+        assert_eq!(server.len(), 2, "{server:#?}");
+        assert!(
+            server[0].starts_with("oc-rsync: [sender] write error: ")
+                && server[0].ends_with(" (32)"),
+            "{server:#?}"
+        );
+        assert!(
+            server[1].starts_with("oc-rsync error: error in socket IO (code 10) at ")
+                && server[1].contains(" [sender="),
+            "{server:#?}"
+        );
         assert_eq!(code, Some(12), "{lines:#?}");
         assert_eq!(lines.len(), 4, "{lines:#?}");
         for (trailer, role) in [(&lines[1], "receiver"), (&lines[3], "generator")] {

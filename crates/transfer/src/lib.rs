@@ -184,6 +184,7 @@ pub use self::handshake::{
     perform_handshake, perform_handshake_with_max, perform_legacy_handshake,
     perform_server_handshake,
 };
+pub use self::iobuf::PeerWriteError;
 pub use self::reader::RemoteExitError;
 pub use self::receiver::{
     DestRootMkdirError, DestRootSelectError, ListOnlyEntry, ReceiverContext, SelectStep, SumHead,

@@ -91,15 +91,22 @@ fn large_source(root: &Path) -> PathBuf {
 
 /// Writes an rsh wrapper named `name` that replaces the server argument
 /// `from` with `to` and runs `program` with the environment in `env`.
+///
+/// The server's stderr goes to `<name>.stderr` beside the script, not to the
+/// client's. A pull's server is still alive while the client reports, and its
+/// own failed-write line could land between the client's cause line and its
+/// trailer; with the streams apart the client's stderr holds its lines only.
 fn rsh_script(root: &Path, name: &str, from: &str, to: &str, program: &Path, env: &str) -> PathBuf {
     let script = root.join(name);
+    let server_stderr = root.join(format!("{name}.stderr"));
     fs::write(
         &script,
         format!(
             "#!/bin/sh\nn=$#\nwhile [ $n -gt 0 ]; do\n  a=$1; shift; n=$((n-1))\n  \
              [ \"$a\" = '{from}' ] && a='{to}'\n  set -- \"$@\" \"$a\"\ndone\n\
-             exec env {env} '{}' \"$@\"\n",
-            program.display()
+             exec env {env} '{}' \"$@\" 2>>'{}'\n",
+            program.display(),
+            server_stderr.display()
         ),
     )
     .expect("write rsh");
@@ -178,14 +185,12 @@ fn assert_streamio_without_timeout(out: &CliOutput) {
 /// The report `role` closes with: its cause line, then the trailer's message
 /// with the source position and version left out. The cause keeps its program
 /// prefix in upstream's spelling, since oc names itself `oc-rsync`.
+///
+/// The client's stderr carries no server lines (see [`rsh_script`]), so the
+/// line before the trailer is always the client's own cause.
 fn report(out: &CliOutput, role: &str) -> (String, String) {
     let stderr = out.stderr_str();
-    // Filter out interleaved error trailers from the peer process (e.g.
-    // `[server=...]`) so `lines[at - 1]` is always this role's cause line.
-    let lines: Vec<&str> = stderr
-        .lines()
-        .filter(|line| role == "server" || !line.contains("[server="))
-        .collect();
+    let lines: Vec<&str> = stderr.lines().collect();
     let at = lines
         .iter()
         .position(|line| line.contains(&format!("[{role}=")))
