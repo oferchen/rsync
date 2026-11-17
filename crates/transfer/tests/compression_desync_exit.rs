@@ -23,14 +23,30 @@
 //! `rprintf(FERROR, ...)` before `exit_cleanup(RERR_STREAMIO)` (token.c:667,
 //! token.c:902). The pull cells pin both lines and, when a 3.5.1 binary is
 //! installed, compare them with 3.5.1 at both ends.
+//!
+//! On a push the dying server sends the client nothing but the end of its
+//! stream: its receiver exits without flushing (cleanup.c:242-257) and its
+//! generator's report goes to its own stderr. So the pushing client's code
+//! depends only on what it meets first - the end of the stream while it waits
+//! for input (`whine_about_eof()`, 12) or a write that fails (io.c:961-967,
+//! 10) - and rsync itself goes either way with timing. The push cells fix the
+//! order with `order-rsh` and pin each.
+//!
+//! The oracle is 3.5.1, not 3.5.2: the cells need a peer that speaks zstd. The
+//! interop job builds both with zstd (tools/ci/run_interop.sh), but a 3.5.2
+//! built without libzstd refuses the cells' option set with `unknown compress
+//! name: zstd`, and these cells were measured against such a build.
 #![cfg(unix)]
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use test_support::{
     CliOutput, LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, UpstreamVersion, create_tempdir,
-    require_binaries, require_upstream_rsync,
+    require_binaries, require_upstream_rsync, workspace_bin_path,
 };
+
+/// The trampoline that fixes the order a dying server is met in.
+const ORDER_RSH_BIN: &str = "order-rsh";
 
 /// A 300 KB pseudo-random file, so the stream holds several compressed blocks.
 ///
@@ -54,17 +70,36 @@ fn source(root: &Path) -> PathBuf {
     src
 }
 
-/// Writes an rsh wrapper that replaces the server argument `from` with `to`
-/// and runs the lsh stub.
-fn rewriting_rsh(root: &Path, from: &str, to: &str) -> PathBuf {
-    let stub = LshRunnerStub::locate().expect("lsh-stub located");
-    let script = root.join("rsh");
+/// A 16 MB pseudo-random file: more than a pushing client can hand a dying
+/// server before the server is gone, so the client is still writing then.
+fn large_source(root: &Path) -> PathBuf {
+    let src = root.join("large");
+    if src.exists() {
+        return src;
+    }
+    fs::create_dir_all(&src).expect("mkdir large");
+    let mut state: u32 = 0x9e37_79b9;
+    let data: Vec<u8> = (0..16_000_000)
+        .map(|_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 24) as u8
+        })
+        .collect();
+    fs::write(src.join("f"), data).expect("write f");
+    src
+}
+
+/// Writes an rsh wrapper named `name` that replaces the server argument
+/// `from` with `to` and runs `program` with the environment in `env`.
+fn rsh_script(root: &Path, name: &str, from: &str, to: &str, program: &Path, env: &str) -> PathBuf {
+    let script = root.join(name);
     fs::write(
         &script,
         format!(
             "#!/bin/sh\nn=$#\nwhile [ $n -gt 0 ]; do\n  a=$1; shift; n=$((n-1))\n  \
-             [ \"$a\" = '{from}' ] && a='{to}'\n  set -- \"$@\" \"$a\"\ndone\nexec '{}' \"$@\"\n",
-            stub.path().display()
+             [ \"$a\" = '{from}' ] && a='{to}'\n  set -- \"$@\" \"$a\"\ndone\n\
+             exec env {env} '{}' \"$@\"\n",
+            program.display()
         ),
     )
     .expect("write rsh");
@@ -72,9 +107,40 @@ fn rewriting_rsh(root: &Path, from: &str, to: &str) -> PathBuf {
     script
 }
 
-/// Runs `bin` at both ends; the destination is recreated for each run.
+/// Writes an rsh wrapper that replaces the server argument `from` with `to`
+/// and runs the lsh stub.
+fn rewriting_rsh(root: &Path, from: &str, to: &str) -> PathBuf {
+    let stub = LshRunnerStub::locate().expect("lsh-stub located");
+    rsh_script(root, "rsh", from, to, stub.path(), "")
+}
+
+/// An rsh wrapper that runs a zstd server through `order-rsh` in `order`.
+fn ordered_rsh(root: &Path, order: &str) -> PathBuf {
+    rsh_script(
+        root,
+        &format!("rsh-{order}"),
+        "--old-compress",
+        "--compress-choice=zstd",
+        &workspace_bin_path(ORDER_RSH_BIN),
+        &format!("OC_ORDER_RSH_ORDER={order}"),
+    )
+}
+
+/// Runs `bin` at both ends over the 300 KB source; the destination is
+/// recreated for each run.
 fn run(bin: &Path, root: &Path, client_choice: &str, rsh: &Path, pull: bool) -> CliOutput {
-    let src = source(root);
+    run_from(bin, root, &source(root), client_choice, rsh, pull)
+}
+
+/// [`run`] over the source directory `src`.
+fn run_from(
+    bin: &Path,
+    root: &Path,
+    src: &Path,
+    client_choice: &str,
+    rsh: &Path,
+    pull: bool,
+) -> CliOutput {
     let dest = root.join("dest");
     if dest.exists() {
         fs::remove_dir_all(&dest).expect("clear dest");
@@ -206,46 +272,106 @@ fn pull_zlib_client_of_a_zstd_stream_reports_the_inflate_failure() {
     );
 }
 
-/// The server receiver fails to decode the client's zlib stream as zstd; the
-/// push ends with exit 12 and the generator's end-of-file report, as on 3.5.1.
+/// A push client still writing when the dying server's stream ends: its next
+/// write fails, and it reports that write and exits `RERR_SOCKETIO`.
 ///
-/// upstream: cleanup.c:242-257 - the forked server receiver exits
-/// `RERR_STREAMIO` without flushing its queued messages, so its
-/// `ZSTD decomp returned` line (token.c:902) never reaches the client. Its
-/// generator meets end-of-file on the error pipe and reports
-/// `connection unexpectedly closed` with its own read count (io.c:299-303).
+/// upstream: io.c:961-967 perform_io() - `rsyserr(FERROR_SOCKET, errno,
+/// "write error")`, then `exit_cleanup(RERR_SOCKETIO)`. While it writes,
+/// perform_io() only marks the end of the input (io.c:905-911); the drain of
+/// io.c:966 finds no message, since the server sent none.
 #[test]
-fn push_with_mismatched_compressors_reports_the_generators_eof() {
-    require_binaries!("oc-rsync", LSH_STUB_BIN);
+fn push_whose_write_fails_first_reports_the_write_error() {
+    require_binaries!("oc-rsync", ORDER_RSH_BIN);
     let tmp = create_tempdir();
-    let rsh = rewriting_rsh(tmp.path(), "--old-compress", "--compress-choice=zstd");
-    let out = run(
+    let src = large_source(tmp.path());
+    let rsh = ordered_rsh(tmp.path(), "write-first");
+    let ours = run_from(
         &test_support::oc_rsync_bin(),
         tmp.path(),
+        &src,
         "zlib",
         &rsh,
         false,
     );
-    assert_streamio_without_timeout(&out);
-    assert!(
-        !out.stderr_contains("ZSTD decomp returned"),
-        "the server receiver's codec line reached the client, stderr:\n{}",
-        out.stderr_str()
-    );
-    let (cause, message) = report(&out, "generator");
-    assert!(
-        cause.starts_with("rsync: connection unexpectedly closed (")
-            && cause.ends_with(" bytes received so far) [generator]"),
-        "{cause}"
-    );
-    assert_eq!(message, "error in rsync protocol data stream (code 12)");
+    ours.assert_exit(10);
+    let (cause, message) = report(&ours, "sender");
+    assert_eq!(cause, "rsync: [sender] write error: Broken pipe (32)");
+    assert_eq!(message, "error in socket IO (code 10)");
     if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
-        let reference = run(upstream.binary(), tmp.path(), "zlib", &rsh, false);
-        reference.assert_exit(12);
+        let reference = run_from(upstream.binary(), tmp.path(), &src, "zlib", &rsh, false);
+        reference.assert_exit(10);
         assert_eq!(
-            report(&reference, "generator"),
+            report(&reference, "sender"),
             (cause, message),
             "oc push against 3.5.1 push"
         );
     }
+}
+
+/// A push client whose writes never fail meets the end of the dying server's
+/// stream when it next waits for input, and exits `RERR_STREAMIO`.
+///
+/// upstream: io.c:282-304 whine_about_eof() - `connection unexpectedly closed
+/// (N bytes received so far)`, then `exit_cleanup(RERR_STREAMIO)`.
+#[test]
+fn push_that_meets_the_end_of_the_stream_first_reports_it() {
+    require_binaries!("oc-rsync", ORDER_RSH_BIN);
+    let tmp = create_tempdir();
+    let src = large_source(tmp.path());
+    let rsh = ordered_rsh(tmp.path(), "eof-first");
+    let ours = run_from(
+        &test_support::oc_rsync_bin(),
+        tmp.path(),
+        &src,
+        "zlib",
+        &rsh,
+        false,
+    );
+    assert_streamio_without_timeout(&ours);
+    let (cause, message) = report(&ours, "sender");
+    let received = received_so_far(&cause);
+    assert_eq!(message, "error in rsync protocol data stream (code 12)");
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
+        let reference = run_from(upstream.binary(), tmp.path(), &src, "zlib", &rsh, false);
+        reference.assert_exit(12);
+        let (reference_cause, reference_message) = report(&reference, "sender");
+        // A 3.5.1 server run with --timeout sends one empty MSG_DATA
+        // keepalive at its first multiplexed read, as `last_io_out` is still
+        // 0 there (io.c:113, :933-936, :1659-1666); the oc server sends none,
+        // so its client has received 4 bytes fewer when the stream ends.
+        assert_eq!(
+            received_so_far(&reference_cause),
+            received + 4,
+            "the count differs by more than 3.5.1's first keepalive"
+        );
+        assert_eq!(
+            (
+                reference_cause.replace(&received_so_far_text(&reference_cause), ""),
+                reference_message
+            ),
+            (cause.replace(&received_so_far_text(&cause), ""), message),
+            "oc push against 3.5.1 push"
+        );
+    }
+}
+
+/// The `N bytes received so far` text of a `connection unexpectedly closed`
+/// cause line.
+fn received_so_far_text(cause: &str) -> String {
+    let start = cause
+        .find("closed (")
+        .map(|at| at + "closed (".len())
+        .unwrap_or_else(|| panic!("not an end-of-stream cause: {cause}"));
+    let end = cause[start..]
+        .find(" bytes received so far) [sender]")
+        .map(|len| start + len)
+        .unwrap_or_else(|| panic!("no received count: {cause}"));
+    cause[start..end].to_owned()
+}
+
+/// The byte count of a `connection unexpectedly closed` cause line.
+fn received_so_far(cause: &str) -> u64 {
+    received_so_far_text(cause)
+        .parse()
+        .unwrap_or_else(|e| panic!("received count in {cause}: {e}"))
 }

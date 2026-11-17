@@ -102,3 +102,9 @@ path = "src/bin/sigterm-flag-stub.rs"
 [[bin]]
 name = "signal-rsh"
 path = "src/bin/signal-rsh.rs"
+
+# Remote-shell trampoline that fixes whether the client meets a dying server
+# through a failed write or through end of file (see its module docs).
+[[bin]]
+name = "order-rsh"
+path = "src/bin/order-rsh.rs"
