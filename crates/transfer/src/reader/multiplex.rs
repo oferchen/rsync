@@ -450,6 +450,15 @@ impl std::fmt::Display for FileDeclinedError {
 
 impl std::error::Error for FileDeclinedError {}
 
+impl FileDeclinedError {
+    /// Returns the file index a sender declined when `err` carries a decline.
+    pub(crate) fn declined_ndx(err: &io::Error) -> Option<i32> {
+        err.get_ref()?
+            .downcast_ref::<Self>()
+            .map(|declined| declined.ndx)
+    }
+}
+
 /// Default buffer capacity for `MultiplexReader`.
 ///
 /// 64KB matches the `MultiplexWriter` buffer size and upstream rsync's

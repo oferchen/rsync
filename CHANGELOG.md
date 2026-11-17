@@ -421,6 +421,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Flush the file list once, after the id lists and the end marker, as upstream `send_file_list()` does (#8206)
 
 **Remote pulls and pushes**
+- A push to an oc-rsync server no longer ends with exit 11 and nothing transferred when the sender cannot open a source file while the server awaits the echo of an itemized entry that is not transferred (`-ai`, `-vv` and above); the file is skipped and the run exits 23, as rsync 3.5.2 does (#8398)
 - `--parallel-delta` (then named `--parallel-delta-scan`) now engages on remote-shell (ssh) pushes; the flag was accepted and silently ignored there (#8263)
 - A pull or push of a tree deeper than 1023 levels stops where rsync 3.5.1 stops, at its secure-walk depth (`syscall.c:2940` `DS_MAXDEPTH`): the sender refuses the 1024th level with `opendir ... failed: Cannot allocate memory (12)`, and under `-L` the receiver refuses a file or directory below 1024 parents with `recv_generator: failed to stat` / `mkdir ... failed`, both exit 23. oc used to copy every level (#8269)
 - An rsh `--server` now enforces `--timeout`: a client that goes silent ends the server with `[sender]`/`[Receiver] io timeout after N seconds -- exiting` and exit 30, where it used to wait forever. Its stdio is polled as upstream's `perform_io()` polls it (`io.c:229-268` `check_timeout()`) (#8306)
