@@ -365,6 +365,13 @@ jobs:
       - name: Build oc-rsync (release)
         uses: ./.github/actions/build-oc-rsync
 
+      # protected-regular_test.py self-skips unless fs.protected_regular is 1
+      # or 2, and the root manifest expects it to RUN. ubuntu-latest images
+      # differ here (24.04 enables it, 26.04 does not), so set it explicitly.
+      - name: Enable fs.protected_regular
+        run: |
+          sudo sysctl -w fs.protected_regular=2
+          test "$(cat /proc/sys/fs/protected_regular)" = 2
       - name: Run upstream testsuite (root)
         id: testsuite
         env:
