@@ -579,6 +579,11 @@ impl DeltaGenerator {
             Vec::new()
         };
         let mut consecutive_false_offsets = 0u32;
+        // Window-start offset the last collision skip landed on. Upstream never
+        // tests the window at a landing: it rolls one byte and increments
+        // (match.c:367-381, :412), so a landing on the short final block's
+        // offset leaves that block literal.
+        let mut skip_landing: Option<u64> = None;
 
         let mut buffer_pos = 0usize;
         let mut buffer_len = 0usize;
@@ -676,7 +681,10 @@ impl DeltaGenerator {
                 if consecutive_false_offsets >= 4 && block_len > 1 {
                     // upstream 3.5.2 CVE-2026-119741: bound strong-checksum work
                     // on consecutive weak-checksum collisions by skipping
-                    // `block_len - 1` bytes as literals.
+                    // `block_len - 1` bytes as literals. Upstream clamps the
+                    // skip to `end-1-offset` (match.c:369); where that clamp
+                    // bites, fewer than a tail's worth of bytes remain after
+                    // this refill, so the EOF tail probe cannot run either.
                     let (w1, w2) = window.as_slices();
                     let last_byte = if !w2.is_empty() {
                         w2[w2.len() - 1]
@@ -727,6 +735,7 @@ impl DeltaGenerator {
                         rolling.update(s2);
                     }
                     offset += (block_len - 1) as u64;
+                    skip_landing = Some(offset);
                     consecutive_false_offsets = 3;
                 }
             }
@@ -923,9 +932,14 @@ impl DeltaGenerator {
         // compact lookup, which are keyed on full-block rolling sums, so it has
         // to be found by scan. This block sits OUTSIDE the scan loop and so runs
         // at most once per call; probing per window would be quadratic.
+        //
+        // upstream: match.c:369 clamps a collision skip to `end-1-offset`, so a
+        // skip that reaches the tail offset lands on it and leaves it untested.
+        // A skip that would pass it leaves fewer than `tail_len` bytes here.
         if tail_match
             && let Some(tail_len) = short_final_block_len(index, block_len)
             && window.len() >= tail_len
+            && skip_landing != Some(offset + (window.len() - tail_len) as u64)
         {
             while window.len() > tail_len {
                 if let Some(byte) = window.pop_front() {
