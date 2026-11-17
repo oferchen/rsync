@@ -334,3 +334,14 @@ fn build_features_cover_every_workspace_feature() {
         );
     }
 }
+
+/// `compress` turns `zlib-ng` on by default, so the backend can be linked
+/// while `core`'s own `zlib-ng` feature is off; the report must follow the
+/// backend, not `core`'s feature.
+#[test]
+fn build_features_report_the_zlib_backend_compress_compiled() {
+    let listed = compiled_build_features()
+        .iter()
+        .any(|feature| feature == "zlib-ng");
+    assert_eq!(listed, compress::ZLIB_NG_BACKEND);
+}

@@ -567,13 +567,15 @@ pub(crate) fn default_daemon_auth_algorithms() -> Vec<Cow<'static, str>> {
 /// with whether this build enabled it.
 ///
 /// `cfg!` only sees features declared on this crate, so the workspace root
-/// forwards each feature to a same-named `core` feature. The
+/// forwards each feature to a same-named `core` feature. `zlib-ng` is the
+/// exception: `compress` enables it by default, so its row asks `compress`
+/// which backend was compiled. The
 /// `build_features_cover_every_workspace_feature` test fails when a workspace
 /// feature is added without a row here or without that forwarding.
 pub(crate) const BUILD_FEATURES: &[(&str, bool)] = &[
     ("zstd", cfg!(feature = "zstd")),
     ("lz4", cfg!(feature = "lz4")),
-    ("zlib-ng", cfg!(feature = "zlib-ng")),
+    ("zlib-ng", compress::ZLIB_NG_BACKEND),
     ("acl", cfg!(feature = "acl")),
     ("xattr", cfg!(feature = "xattr")),
     ("iconv", cfg!(feature = "iconv")),

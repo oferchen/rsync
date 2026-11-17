@@ -88,6 +88,13 @@ pub mod zlib;
 pub mod zstd;
 
 pub use common::CountingSink;
+
+/// Whether zlib streams go through the `zlib-ng` C backend in this build.
+///
+/// The crate enables the feature by default, so a build can link the
+/// backend without any dependent crate naming it. Version reports read
+/// this constant because only this crate's `cfg` sees that.
+pub const ZLIB_NG_BACKEND: bool = cfg!(feature = "zlib-ng");
 pub use skip_compress::DEFAULT_SKIP_COMPRESS_SUFFIXES;
 #[cfg(feature = "lz4")]
 pub use strategy::Lz4Strategy;
