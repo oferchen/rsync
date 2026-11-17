@@ -21,7 +21,7 @@ use crate::client::error::{
 };
 use crate::exit_code::ExitCode;
 use crate::message::Role;
-use crate::server::{DestRootMkdirError, DestRootStatError, ForkPoint, SafeReadError};
+use crate::server::{DestRootMkdirError, DestRootSelectError, ForkPoint, SafeReadError};
 
 /// The process that reports a failure, by the client's role and, on a pull,
 /// the side of upstream's fork the failure struck.
@@ -125,16 +125,12 @@ pub(crate) fn local_failure_error(
         );
         return program_line_error(line, ExitCode::FileIo, role);
     }
-    // upstream: main.c:798-803 get_local_name() - rsyserr() then
-    // exit_cleanup(RERR_FILESELECT) when the destination cannot be stat()ed
-    // for any reason but its absence.
-    if let Some(failed) = DestRootStatError::of(error) {
-        let line = format!(
-            "[{who}] ERROR: cannot stat destination {}: {}",
-            failed.fname(),
-            upstream_io_error(failed.source_error())
-        );
-        return program_line_error(line, ExitCode::FileSelect, role);
+    // upstream: main.c:798-803 and :865-869 get_local_name() - rsyserr()
+    // then exit_cleanup(RERR_FILESELECT) when the destination cannot be
+    // stat()ed for any reason but its absence, or its parent cannot be
+    // entered.
+    if let Some(failed) = DestRootSelectError::of(error) {
+        return program_line_error(format!("[{who}] {failed}"), ExitCode::FileSelect, role);
     }
     // upstream: token.c - a compression library failure is
     // rprintf(FERROR, ...) of a fixed line, then exit_cleanup(RERR_STREAMIO).
@@ -437,7 +433,11 @@ mod tests {
     #[test]
     fn an_unstatable_destination_is_the_receivers_line_and_code_3() {
         let cause = io::Error::other("stat refused");
-        let refusal = crate::server::DestRootStatError::into_io("\"/d/file/x/\"".to_owned(), cause);
+        let refusal = crate::server::DestRootSelectError::into_io(
+            crate::server::SelectStep::Stat,
+            "\"/d/file/x/\"".to_owned(),
+            cause,
+        );
         let report = local_failure_error(&refusal, None, ReportingSide::PreFork, 0, None);
         assert_eq!(report.code(), ExitCode::FileSelect);
         let line = report.program_line().expect("the receiver's line");

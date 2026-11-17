@@ -186,7 +186,8 @@ pub use self::handshake::{
 };
 pub use self::reader::RemoteExitError;
 pub use self::receiver::{
-    DestRootMkdirError, DestRootStatError, ListOnlyEntry, ReceiverContext, SumHead, TransferStats,
+    DestRootMkdirError, DestRootSelectError, ListOnlyEntry, ReceiverContext, SelectStep, SumHead,
+    TransferStats,
 };
 pub use self::role::ServerRole;
 pub use self::setup::SafeReadError;

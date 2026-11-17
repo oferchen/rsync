@@ -4,7 +4,7 @@
 use std::io;
 
 use engine::local_copy::upstream_io_error;
-use transfer::{DestRootMkdirError, DestRootStatError};
+use transfer::{DestRootMkdirError, DestRootSelectError};
 
 use crate::branding::Brand;
 
@@ -21,7 +21,7 @@ use crate::message::Role;
 pub fn cause_line_exit_code(error: &io::Error) -> Option<ExitCode> {
     if metadata::is_corrupt_fake_super(error) || DestRootMkdirError::of(error).is_some() {
         Some(ExitCode::FileIo)
-    } else if DestRootStatError::of(error).is_some() {
+    } else if DestRootSelectError::of(error).is_some() {
         Some(ExitCode::FileSelect)
     } else if error
         .get_ref()
@@ -70,19 +70,12 @@ pub fn fatal_report_lines(
             )
             .into_bytes(),
         );
-    } else if let Some(failed) = DestRootStatError::of(error) {
-        // upstream: main.c:798-803 - the same get_local_name() call, so the
-        // same pre-fork role and rsyserr() program prefix as the mkdir above.
+    } else if let Some(failed) = DestRootSelectError::of(error) {
+        // upstream: main.c:798-803 and :865-869 - the same get_local_name()
+        // call, so the same pre-fork role and rsyserr() program prefix as the
+        // mkdir above.
         role = Role::PreForkReceiver;
-        lines.push(
-            format!(
-                "{}: [{role}] ERROR: cannot stat destination {}: {}\n",
-                brand.client_program_name(),
-                failed.fname(),
-                upstream_io_error(failed.source_error())
-            )
-            .into_bytes(),
-        );
+        lines.push(format!("{}: [{role}] {failed}\n", brand.client_program_name()).into_bytes());
     } else if cause_line_exit_code(error).is_some() && !bare {
         lines.push(format!("{error}\n").into_bytes());
     }

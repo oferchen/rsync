@@ -737,6 +737,34 @@ impl ReceiverContext {
         // the transfer.
         self.reject_daemon_excluded_staging_dirs()?;
 
+        // upstream: main.c:753-870 get_local_name() - vet the operand as given,
+        // before a lone file's name is split off it below, and create the
+        // destination root when the transfer is multi-file or the operand
+        // carries a trailing slash. Every `--server` receiver entry reaches
+        // this through `setup_transfer`, so the pre-flight runs uniformly
+        // under `--copy-dest`, `--link-dest` and `--compare-dest` over remote
+        // shell. No `MSG_*` frame is emitted: upstream's `do_mkdir()` acts
+        // on the local filesystem directly.
+        //
+        // upstream: main.c:1443-1444 - `get_local_name()` lives inside the
+        // non-empty-list arm of client_run(). A client handed an empty list
+        // must not create the destination directory: `rsync host:/missing
+        // /new/` leaves `/new/` absent. `do_server_recv()` calls
+        // `get_local_name()` unconditionally (main.c:1248-1249), so the gate
+        // is client-side only.
+        let created_dest_root = if self.is_empty_client_flist(file_count) {
+            false
+        } else {
+            ensure_dest_root_exists(
+                &dest_dir,
+                file_count,
+                trailing_slash,
+                self.config.flags.skip_dest_writes(),
+                self.config.flags.mkpath,
+            )
+            .map_err(|e| self.dest_root_refusal(e, &dest_dir, trailing_slash))?
+        };
+
         // upstream: main.c:818-845 get_local_name() - single-file rename
         // semantics. When the transfer is exactly one non-directory entry,
         // the operand carries no trailing slash, and the destination path
@@ -768,76 +796,6 @@ impl ReceiverContext {
                 .to_path_buf();
         }
 
-        // upstream: main.c:757-770 get_local_name() - pre-flight mkdir of the
-        // destination root when the transfer is multi-file or the operand
-        // carries a trailing slash. The local-mode receiver creates the root
-        // implicitly via the file-list-driven mkdir, but `--server` mode
-        // never did, breaking the alt-dest interop test that uses a
-        // non-existent destination over remote shell.
-        //
-        // This site is reachable from every `--server` receiver entry:
-        // `run_pipelined` and `run_pipelined_incremental` both
-        // route through `setup_transfer` before per-entry dispatch, so the
-        // pre-flight runs uniformly under `--copy-dest`, `--link-dest`, and
-        // `--compare-dest` over remote shell. The mkdir is receiver-local;
-        // no `MSG_*` frame is emitted on the wire, matching upstream's
-        // `get_local_name()` which calls `do_mkdir()` directly against the
-        // local filesystem.
-        // upstream: main.c:1443-1444 - `get_local_name()`, and with it the
-        // pre-flight mkdir at main.c:804-818, lives inside the non-empty-list
-        // arm of client_run(). A client handed an empty list must not create
-        // the destination directory: `rsync host:/missing /new/` leaves
-        // `/new/` absent. `do_server_recv()` calls `get_local_name()`
-        // unconditionally (main.c:1248-1249), so the gate is client-side only.
-        let created_dest_root = if self.is_empty_client_flist(file_count) {
-            false
-        } else {
-            ensure_dest_root_exists(
-                &dest_dir,
-                file_count,
-                trailing_slash,
-                self.config.flags.skip_dest_writes(),
-                self.config.flags.mkpath,
-            )
-            .map_err(|e| match crate::receiver::dest_root_failure(e) {
-                // upstream: main.c:798-803 - the stat comes before the slash
-                // is lopped, so full_fname() shows it. full_fname() renders the
-                // components, which drop it; put it back inside the closing
-                // quote, which a daemon's ` (in MODULE)` suffix follows.
-                Ok(crate::receiver::DestRootFailure::Stat(cause)) => {
-                    let mut fname = self.full_fname(dest_dir.components().as_path(), None);
-                    if trailing_slash
-                        && let Some(quote) = fname.rfind('"')
-                        && !fname[..quote].ends_with('/')
-                    {
-                        fname.insert(quote, '/');
-                    }
-                    crate::receiver::DestRootStatError::into_io(fname, cause)
-                }
-                // upstream: main.c:810-811 - the trailing slash is lopped
-                // before do_mkdir(), so full_fname() never shows it. A server
-                // receiver gets here too: its change_dir#4 is into the `.`
-                // operand the client sends ahead of the destination
-                // (main.c:1209-1217, options.c server_options()), and
-                // do_server_recv() then calls get_local_name() (main.c:1248).
-                Ok(crate::receiver::DestRootFailure::Mkdir(cause)) => {
-                    crate::receiver::DestRootMkdirError::into_io(
-                        self.full_fname(dest_dir.components().as_path(), None),
-                        cause,
-                    )
-                }
-                Err(e) => io::Error::new(
-                    e.kind(),
-                    format!(
-                        "failed to create destination root {}: {} {}{}",
-                        dest_dir.display(),
-                        logging::upstream_errno_text(&e),
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver()
-                    ),
-                ),
-            })?
-        };
         // upstream: main.c:826 - record whether the pre-flight mkdir
         // created the dest root so the root entry's itemize row can OR in
         // ITEM_IS_NEW (cd+++++++++ ./) only when it was actually created.
@@ -1177,6 +1135,77 @@ impl ReceiverContext {
             self.deletion_filter_chain.has_per_dir_merge()
         );
         Ok(())
+    }
+
+    /// Renders `path` for a get_local_name() line the way upstream's
+    /// `full_fname()` does, with `slash` restoring the operand's trailing
+    /// slash.
+    ///
+    /// Every get_local_name() refusal names its path through here, so the
+    /// plain and the daemon `"..." (in MODULE)` forms are decided once.
+    /// full_fname() renders the components, which drop a trailing slash; it
+    /// goes back inside the closing quote, which the module suffix follows.
+    fn get_local_name_fname(&self, path: &Path, slash: bool) -> String {
+        let mut fname = self.full_fname(path.components().as_path(), None);
+        if slash
+            && let Some(quote) = fname.rfind('"')
+            && !fname[..quote].ends_with('/')
+        {
+            fname.insert(quote, '/');
+        }
+        fname
+    }
+
+    /// Renders a destination-root pre-flight refusal the way upstream's
+    /// get_local_name() prints it.
+    ///
+    /// `dest_dir` is the operand, which upstream's `full_fname()` names; a
+    /// change_dir#3 refusal names the parent it could not enter.
+    fn dest_root_refusal(
+        &self,
+        error: io::Error,
+        dest_dir: &Path,
+        trailing_slash: bool,
+    ) -> io::Error {
+        use crate::receiver::{DestRootFailure, DestRootSelectError, SelectStep};
+        match crate::receiver::dest_root_failure(error) {
+            // upstream: main.c:798-803 - the stat comes before the slash is
+            // lopped, so full_fname() shows it.
+            Ok(DestRootFailure::Stat(cause)) => DestRootSelectError::into_io(
+                SelectStep::Stat,
+                self.get_local_name_fname(dest_dir, trailing_slash),
+                cause,
+            ),
+            // upstream: main.c:757-762 reports a make_path() failure before
+            // the slash is lopped; main.c:809-821 lops it before do_mkdir().
+            // A server receiver gets here too: its change_dir#4 is into the
+            // `.` operand the client sends ahead of the destination
+            // (main.c:1209-1217, options.c server_options()), and
+            // do_server_recv() then calls get_local_name() (main.c:1248).
+            Ok(DestRootFailure::Mkdir { cause, slash_kept }) => {
+                crate::receiver::DestRootMkdirError::into_io(
+                    self.get_local_name_fname(dest_dir, slash_kept && trailing_slash),
+                    cause,
+                )
+            }
+            // upstream: main.c:865-869 - change_dir#3 names the parent, whose
+            // slash was lopped at :859.
+            Ok(DestRootFailure::ChangeDir3 { cause, parent }) => DestRootSelectError::into_io(
+                SelectStep::ChangeDir3,
+                self.get_local_name_fname(&parent, false),
+                cause,
+            ),
+            Err(e) => io::Error::new(
+                e.kind(),
+                format!(
+                    "failed to create destination root {}: {} {}{}",
+                    dest_dir.display(),
+                    logging::upstream_errno_text(&e),
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                ),
+            ),
+        }
     }
 
     /// Applies upstream's `get_local_name()` single-file rename semantics.

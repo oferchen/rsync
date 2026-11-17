@@ -1,12 +1,13 @@
-//! Destination-root pre-flight helpers for the receiver.
+//! Destination-root pre-flight for the receiver.
 //!
-//! Detects a trailing path separator on the destination operand and creates
-//! the destination root directory when the transfer needs one.
+//! Vets the destination operand the way upstream's get_local_name() does
+//! (main.c:753-870) and creates the destination root directory when the
+//! transfer needs one.
 
 use std::ffi::OsStr;
 use std::fmt;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The failed pre-flight `mkdir` of the destination root.
 ///
@@ -62,132 +63,138 @@ impl std::error::Error for DestRootMkdirError {
     }
 }
 
-/// The failed `stat` of the destination root, for a reason other than its
-/// absence.
+/// The get_local_name() step a [`DestRootSelectError`] failed at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectStep {
+    /// The destination could not be stat()ed for a reason other than its
+    /// absence. upstream: main.c:798-803 - `ERROR: cannot stat destination %s`.
+    Stat,
+    /// A lone non-directory's destination parent could not be entered.
+    /// upstream: main.c:865-869 - `change_dir#3 %s failed`.
+    ChangeDir3,
+}
+
+/// A destination get_local_name() refuses with `RERR_FILESELECT`.
 ///
-/// upstream: main.c:798-803 get_local_name() - `rsyserr(FERROR, errno,
-/// "ERROR: cannot stat destination %s", full_fname(dest_path))`, then
+/// upstream: main.c:798-803 and :865-869 - `rsyserr(FERROR, errno, ...)`, then
 /// `exit_cleanup(RERR_FILESELECT)`. full_fname() keeps the operand's trailing
-/// slash here: it is lopped only later, before the mkdir (main.c:810-811).
+/// slash in the stat refusal: it is lopped only later, before the mkdir
+/// (main.c:809-810).
 #[derive(Debug)]
-pub struct DestRootStatError {
+pub struct DestRootSelectError {
+    step: SelectStep,
     fname: String,
     source: io::Error,
 }
 
-impl DestRootStatError {
-    /// The destination as upstream's `full_fname()` renders it, quoted.
+impl DestRootSelectError {
+    /// The step that failed.
+    #[must_use]
+    pub const fn step(&self) -> SelectStep {
+        self.step
+    }
+
+    /// The path as upstream's `full_fname()` renders it, quoted.
     #[must_use]
     pub fn fname(&self) -> &str {
         &self.fname
     }
 
-    /// The error `stat` failed with.
+    /// The error the step failed with.
     #[must_use]
     pub const fn source_error(&self) -> &io::Error {
         &self.source
     }
 
-    /// Returns the stat failure carried by `error`, if it is one.
+    /// Returns the refusal carried by `error`, if it is one.
     #[must_use]
     pub fn of(error: &io::Error) -> Option<&Self> {
         error.get_ref()?.downcast_ref()
     }
 
-    /// Wraps the failure of `stat` on `fname` (already rendered by
+    /// Wraps the failure of `step` on `fname` (already rendered by
     /// `full_fname()`) as an `io::Error` of the cause's kind.
-    pub fn into_io(fname: String, source: io::Error) -> io::Error {
-        io::Error::new(source.kind(), Self { fname, source })
-    }
-}
-
-impl fmt::Display for DestRootStatError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "ERROR: cannot stat destination {}: {}",
-            self.fname,
-            logging::upstream_errno_text(&self.source)
+    pub fn into_io(step: SelectStep, fname: String, source: io::Error) -> io::Error {
+        io::Error::new(
+            source.kind(),
+            Self {
+                step,
+                fname,
+                source,
+            },
         )
     }
 }
 
-impl std::error::Error for DestRootStatError {
+impl fmt::Display for DestRootSelectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cause = logging::upstream_errno_text(&self.source);
+        match self.step {
+            SelectStep::Stat => write!(f, "ERROR: cannot stat destination {}: {cause}", self.fname),
+            SelectStep::ChangeDir3 => write!(f, "change_dir#3 {} failed: {cause}", self.fname),
+        }
+    }
+}
+
+impl std::error::Error for DestRootSelectError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.source)
     }
 }
 
-/// Marks the `stat` step's own failure (anything but `ENOENT`).
+/// Which step of the destination-root pre-flight refused, with its cause.
+///
+/// Carried inside the `io::Error` that [`ensure_dest_root_exists`] returns, so
+/// the caller can render each with upstream's `full_fname()`.
 #[derive(Debug)]
-struct StatFailed(io::Error);
+pub(in crate::receiver) enum DestRootFailure {
+    /// `stat` failed for a reason other than the destination's absence.
+    Stat(io::Error),
+    /// `mkdir` failed. `slash_kept` is true for the make_path() failure under
+    /// `--mkpath`, which upstream reports before it lops the trailing slash
+    /// (main.c:757-762 vs :809-821).
+    Mkdir { cause: io::Error, slash_kept: bool },
+    /// The destination's parent could not be entered.
+    ChangeDir3 { cause: io::Error, parent: PathBuf },
+}
 
-impl fmt::Display for StatFailed {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+impl DestRootFailure {
+    fn cause(&self) -> &io::Error {
+        match self {
+            Self::Stat(cause) | Self::Mkdir { cause, .. } | Self::ChangeDir3 { cause, .. } => cause,
+        }
+    }
+
+    fn into_io(self) -> io::Error {
+        io::Error::new(self.cause().kind(), self)
     }
 }
 
-impl std::error::Error for StatFailed {}
-
-/// Which step of the destination-root pre-flight failed, with its cause.
-pub(in crate::receiver) enum DestRootFailure {
-    /// `stat` failed for a reason other than the root's absence.
-    Stat(io::Error),
-    /// `mkdir` failed.
-    Mkdir(io::Error),
+impl fmt::Display for DestRootFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.cause().fmt(f)
+    }
 }
 
-/// Splits a [`ensure_dest_root_exists`] failure into the failed step and its
-/// cause, or returns the error unchanged when it is neither.
+impl std::error::Error for DestRootFailure {}
+
+/// Splits a [`ensure_dest_root_exists`] failure into the refused step, or
+/// returns the error unchanged when it is not one.
 pub(in crate::receiver) fn dest_root_failure(
     error: io::Error,
 ) -> Result<DestRootFailure, io::Error> {
     if !error
         .get_ref()
-        .is_some_and(|inner| inner.is::<StatFailed>())
-    {
-        return mkdir_cause(error).map(DestRootFailure::Mkdir);
-    }
-    let kind = error.kind();
-    match error
-        .into_inner()
-        .map(|inner| inner.downcast::<StatFailed>())
-    {
-        Some(Ok(failed)) => Ok(DestRootFailure::Stat(failed.0)),
-        Some(Err(other)) => Err(io::Error::new(kind, other)),
-        None => Err(io::Error::from(kind)),
-    }
-}
-
-/// Marks the `mkdir` step's own failure so the caller can tell it from the
-/// stat-side refusals around it.
-#[derive(Debug)]
-struct MkdirFailed(io::Error);
-
-impl fmt::Display for MkdirFailed {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl std::error::Error for MkdirFailed {}
-
-/// Splits a [`ensure_dest_root_exists`] failure into the `mkdir` cause, when
-/// that is what failed, or the error unchanged.
-fn mkdir_cause(error: io::Error) -> Result<io::Error, io::Error> {
-    if !error
-        .get_ref()
-        .is_some_and(|inner| inner.is::<MkdirFailed>())
+        .is_some_and(|inner| inner.is::<DestRootFailure>())
     {
         return Err(error);
     }
     let kind = error.kind();
     match error
         .into_inner()
-        .map(|inner| inner.downcast::<MkdirFailed>())
+        .map(|inner| inner.downcast::<DestRootFailure>())
     {
-        Some(Ok(failed)) => Ok(failed.0),
+        Some(Ok(failure)) => Ok(*failure),
         Some(Err(other)) => Err(io::Error::new(kind, other)),
         None => Err(io::Error::from(kind)),
     }
@@ -218,17 +225,28 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
     }
 }
 
-/// Creates the destination root directory when the transfer needs one.
+/// Vets the destination operand and creates the destination root directory
+/// when the transfer needs one.
 ///
-/// Mirrors upstream `main.c:808-822` (`get_local_name()`): when the receiver
-/// is about to write more than one file, or the destination operand carries a
-/// trailing slash, the root must exist as a directory before per-entry mkdir
-/// dispatch. The local-mode receiver gets this from the file-list-driven
-/// implicit mkdir; the `--server` receiver relies on this helper.
+/// Mirrors upstream `get_local_name()` (`main.c:753-870`) in its order:
 ///
-/// Returns `Ok(true)` when a new directory was created, `Ok(false)` when the
-/// pre-flight was a no-op (already exists, single-file transfer without
-/// trailing slash, or `dry_run`).
+/// 1. stat the operand (`main.c:753`);
+/// 2. under `--mkpath`, make_path() the missing chain first, so its failure is
+///    `mkdir %s failed` even where the stat would also have refused
+///    (`main.c:757-773`);
+/// 3. accept an existing directory (`main.c:775-785`);
+/// 4. refuse a stat failure other than `ENOENT` (`main.c:798-803`);
+/// 5. for more than one entry or a trailing slash, mkdir the root
+///    (`main.c:808-822`);
+/// 6. otherwise the operand names a lone file: enter its parent, refusing one
+///    that cannot be entered (`main.c:845-870`).
+///
+/// A dry run takes every step but the mkdirs, as upstream's `do_mkdir()` and
+/// make_path() do nothing under `dry_run` (syscall.c:2256, util1.c:233).
+///
+/// `dest_root` is the operand as given, before a lone file's name is split off
+/// it. Returns `Ok(true)` when a directory was created, `Ok(false)` when the
+/// pre-flight created nothing.
 ///
 /// # Symlink resolution
 ///
@@ -244,17 +262,6 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 /// that footgun we lstat first when the stat reports `NotFound`: if the path
 /// is actually a dangling symlink we propagate the stat-side `NotFound`
 /// instead of auto-creating through the link.
-///
-/// # `--mkpath` gating
-///
-/// Upstream creates the destination root with a *single* `do_mkdir(dest_path)`
-/// (`main.c:817`), which fails with `ENOENT` when an ancestor directory is
-/// missing. The whole missing chain is created only under `--mkpath`, via
-/// `make_path(dest_path)` (`main.c:757-773`). This helper mirrors that: with
-/// `mkpath == false` it uses [`std::fs::create_dir`] (single level), with
-/// `mkpath == true` it uses [`std::fs::create_dir_all`] (full chain). Passing
-/// `create_dir_all` unconditionally would auto-create deep destination paths
-/// without `--mkpath`, diverging from upstream.
 ///
 /// # Security model
 ///
@@ -284,13 +291,6 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:775-785` - `get_local_name()` `S_ISDIR(st.st_mode)` branch:
-///   `do_stat()` follows symlinks, `change_dir()` resolves the link and
-///   enters the target.
-/// - `main.c:757-773` - `get_local_name()` `--mkpath` branch:
-///   `make_path(dest_path, ...)` creates the whole missing chain.
-/// - `main.c:817` - `get_local_name()` pre-flight `do_mkdir(dest_path, ACCESSPERMS)`
-///   (single level, no ancestor creation) when `--mkpath` was not requested.
 /// - `main.c:824-826` - sets `FLAG_DIR_CREATED` on the first flist entry when
 ///   its basename is `.`. Deviation from upstream: this helper does not set
 ///   that flag, and oc's delete path does not consume it.
@@ -301,67 +301,164 @@ pub fn ensure_dest_root_exists(
     dry_run: bool,
     mkpath: bool,
 ) -> io::Result<bool> {
-    if dry_run {
-        return Ok(false);
-    }
-    // upstream: main.c:808 - the non-mkpath dir branch only fires for a
-    // multi-file transfer or a trailing-slash operand. A single-file
-    // no-slash operand names the destination file itself (the operand
-    // basename was already split off by `apply_single_file_rename`), so
-    // without `--mkpath` there is no root to pre-create here.
-    //
-    // upstream: main.c:759 - under `--mkpath`, `make_path(dest_path, ...)`
-    // also creates the parent chain of a single-file operand (the
-    // `MKP_DROP_NAME` case), so the early no-op must not swallow the mkpath
-    // path. `dest_root` here is already the parent directory for the
-    // single-file rename, so creating it materializes the missing chain.
-    if file_total <= 1 && !trailing_slash && !mkpath {
-        return Ok(false);
-    }
-    // stat (follows symlinks) so a symlinked dest pointing at a real
-    // directory is accepted, matching upstream main.c:753 do_stat() +
-    // S_ISDIR + change_dir() flow. A non-directory target (regular file,
-    // broken symlink, etc.) is still rejected at the call site below.
-    match dest_root.metadata() {
-        Ok(meta) if meta.is_dir() => Ok(false),
-        Ok(_) => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "destination root '{}' exists but is not a directory",
-                dest_root.display(),
-            ),
-        )),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            // Distinguish "path absent" from "dangling symlink": if lstat
-            // shows a symlink while stat says NotFound, the link target is
-            // missing and create_dir_all would resolve the link and
-            // materialize a directory at the target. Refuse that footgun
-            // by surfacing the original stat error.
-            if dest_root
-                .symlink_metadata()
-                .is_ok_and(|m| m.file_type().is_symlink())
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!(
-                        "destination root '{}' is a dangling symlink",
-                        dest_root.display(),
-                    ),
-                ));
+    let mut stat = dest_root.metadata();
+    // upstream: main.c:754 - `cp = strrchr(dest_path, '/')`.
+    let has_separator = trailing_slash || parent_of(dest_root).is_some();
+    let mut made = 0;
+    if mkpath && stat.is_err() && (has_separator || file_total > 1) {
+        let drop_name = file_total <= 1 || trailing_slash;
+        made = make_path(dest_root, drop_name && !trailing_slash, dry_run).map_err(|cause| {
+            DestRootFailure::Mkdir {
+                cause,
+                slash_kept: true,
             }
-            // upstream: main.c:759 make_path (full chain) only under --mkpath;
-            // otherwise main.c:817 do_mkdir creates a single level and fails
-            // with ENOENT when an ancestor is missing.
-            let created = if mkpath {
-                std::fs::create_dir_all(dest_root)
-            } else {
-                std::fs::create_dir(dest_root)
-            };
-            created
-                .map(|()| true)
-                .map_err(|cause| io::Error::new(cause.kind(), MkdirFailed(cause)))
+            .into_io()
+        })?;
+        if made > 0 {
+            stat = dest_root.metadata();
         }
-        // upstream: main.c:798-803 - any stat failure but ENOENT refuses.
-        Err(err) => Err(io::Error::new(err.kind(), StatFailed(err))),
     }
+    let created = made > 0 && !dry_run;
+    match stat {
+        Ok(meta) if meta.is_dir() => return Ok(created),
+        Ok(_) if file_total > 1 || trailing_slash => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "destination root '{}' exists but is not a directory",
+                    dest_root.display(),
+                ),
+            ));
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() != io::ErrorKind::NotFound => {
+            return Err(DestRootFailure::Stat(err).into_io());
+        }
+        Err(_) => {}
+    }
+    if file_total > 1 || trailing_slash {
+        if dry_run {
+            return Ok(false);
+        }
+        // Distinguish "path absent" from "dangling symlink": if lstat
+        // shows a symlink while stat says NotFound, the link target is
+        // missing and the mkdir would resolve the link and materialize a
+        // directory at the target. Refuse that footgun by surfacing the
+        // original stat error.
+        if dest_root
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "destination root '{}' is a dangling symlink",
+                    dest_root.display(),
+                ),
+            ));
+        }
+        // upstream: main.c:817 - a single do_mkdir(); an ancestor that is
+        // missing fails it with ENOENT unless --mkpath made it above.
+        return std::fs::create_dir(dest_root)
+            .map(|()| true)
+            .map_err(|cause| {
+                DestRootFailure::Mkdir {
+                    cause,
+                    slash_kept: false,
+                }
+                .into_io()
+            });
+    }
+    let Some(parent) = parent_of(dest_root) else {
+        return Ok(created);
+    };
+    // upstream: main.c:856-864 - a dry run under --mkpath does not enter the
+    // parent it would have made.
+    if dry_run && mkpath && parent.metadata().is_err() {
+        return Ok(false);
+    }
+    // upstream: main.c:865 change_dir(dest_path, CD_NORMAL). Stat-ing
+    // `<parent>/.` needs what the chdir needs - a directory the process may
+    // search - and fails with the same errno, without moving the process.
+    parent.join(".").metadata().map_err(|cause| {
+        DestRootFailure::ChangeDir3 {
+            cause,
+            parent: parent.to_path_buf(),
+        }
+        .into_io()
+    })?;
+    Ok(created)
+}
+
+/// The directory part of `path`, or `None` when it has none.
+///
+/// upstream: main.c:852-853 - a leading `/` alone leaves the root, `"/"`.
+fn parent_of(path: &Path) -> Option<&Path> {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+}
+
+/// Creates every missing directory of `path` (of its parent when `drop_name`)
+/// and returns how many it created, or would create under `dry_run`.
+///
+/// upstream: util1.c:210-290 make_path() - find the deepest existing
+/// directory, then make each one below it. An ancestor that exists but is not
+/// a directory fails with that step's errno.
+fn make_path(path: &Path, drop_name: bool, dry_run: bool) -> io::Result<usize> {
+    let target = if drop_name {
+        // upstream: util1.c:223-227 - no separator, or only the leading one.
+        match parent_of(path) {
+            Some(parent) if parent.parent().is_some() => parent,
+            _ => return Ok(0),
+        }
+    } else {
+        path
+    };
+    let mut missing = Vec::new();
+    let mut made = 0;
+    let mut dir = target;
+    loop {
+        let attempt = if dry_run {
+            match dir.metadata() {
+                Ok(meta) if meta.is_dir() => break,
+                // The real ENOTDIR, from asking the file for a directory entry.
+                Ok(_) => Err(dir
+                    .join(".")
+                    .metadata()
+                    .err()
+                    .unwrap_or_else(|| io::Error::from(io::ErrorKind::NotADirectory))),
+                Err(err) => Err(err),
+            }
+        } else {
+            std::fs::create_dir(dir)
+        };
+        match attempt {
+            Ok(()) => {
+                made += 1;
+                break;
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err)
+                if err.kind() == io::ErrorKind::AlreadyExists
+                    && dir.metadata().is_ok_and(|m| m.is_dir()) =>
+            {
+                break;
+            }
+            Err(err) => return Err(err),
+        }
+        missing.push(dir);
+        // upstream: util1.c:252-266 - a relative path with nothing existing
+        // assumes `.`, and an absolute one assumes `/`.
+        match parent_of(dir) {
+            Some(parent) if parent.parent().is_some() => dir = parent,
+            _ => break,
+        }
+    }
+    for dir in missing.into_iter().rev() {
+        if !dry_run {
+            std::fs::create_dir(dir)?;
+        }
+        made += 1;
+    }
+    Ok(made)
 }

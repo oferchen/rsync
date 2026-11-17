@@ -330,9 +330,10 @@ pub fn rerr_for_io_error(error: &io::Error) -> i32 {
     if crate::receiver::DestRootMkdirError::of(error).is_some() {
         return 11;
     }
-    // upstream: main.c:798-803 - a destination that cannot be stat()ed for
-    // any reason but its absence is `exit_cleanup(RERR_FILESELECT)`.
-    if crate::receiver::DestRootStatError::of(error).is_some() {
+    // upstream: main.c:798-803 and :865-869 - a destination that cannot be
+    // stat()ed for any reason but its absence, or whose parent cannot be
+    // entered, is `exit_cleanup(RERR_FILESELECT)`.
+    if crate::receiver::DestRootSelectError::of(error).is_some() {
         return 3;
     }
 
