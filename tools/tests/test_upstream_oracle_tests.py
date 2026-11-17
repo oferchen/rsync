@@ -51,9 +51,18 @@ class OracleBinariesTests(unittest.TestCase):
         args = nextest_args([("bin", "a"), ("bin", "b"), ("cli", "c")])
         self.assertEqual(
             args,
-            ["-p", "bin", "-p", "cli", "-E",
+            ["-p", "bin", "-p", "cli",
+             "--test", "a", "--test", "b", "--test", "c", "-E",
              "binary_id(bin::a) | binary_id(bin::b) | binary_id(cli::c)"],
         )
+
+    def test_args_build_only_the_selected_test_targets(self) -> None:
+        # Without --test, cargo compiles every integration test of each
+        # package before the filterset skips them, which is what pushed the
+        # interop job past its time limit.
+        args = nextest_args([("bin", "a"), ("cli", "a"), ("cli", "c")])
+        targets = [args[i + 1] for i, arg in enumerate(args) if arg == "--test"]
+        self.assertEqual(targets, ["a", "c"])
 
 
 class CheckLogTests(unittest.TestCase):
