@@ -14,6 +14,6 @@ pub use config::{VersionInfoConfig, VersionInfoConfigBuilder};
 pub use renderer::VersionInfoReport;
 #[cfg(test)]
 pub(crate) use renderer::{
-    TimeT, compiled_build_features, default_checksum_algorithms, default_compress_algorithms,
-    default_daemon_auth_algorithms,
+    BUILD_FEATURES, TimeT, compiled_build_features, default_checksum_algorithms,
+    default_compress_algorithms, default_daemon_auth_algorithms,
 };

@@ -804,6 +804,7 @@ dependencies = [
  "test-support",
  "thiserror",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "transfer",

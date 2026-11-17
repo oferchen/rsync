@@ -111,6 +111,19 @@ quic = ["rsync_io/quic", "test-support/quic"]
 # systemd sd-notify integration
 sd-notify = []
 
+# Report-only mirrors of workspace features that `core` would otherwise
+# not see. The workspace root forwards each one here so the `--version`
+# `Build features` line lists every feature the binary was built with.
+parallel = []
+io_uring = []
+iouring-send-zc = []
+iocp = []
+copy_file_range = []
+mmap-free-basis = []
+openssl = []
+openssl-vendored = []
+daemon-seccomp = []
+
 # ============================================================================
 # Debugging Features
 # ============================================================================
@@ -119,6 +132,7 @@ sd-notify = []
 tracing = ["dep:tracing"]
 
 [dev-dependencies]
+toml = { workspace = true }
 filetime = { workspace = true }
 notify = { workspace = true }
 tempfile = { workspace = true }
