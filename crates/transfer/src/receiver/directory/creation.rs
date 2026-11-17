@@ -1356,6 +1356,7 @@ impl ReceiverContext {
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
+        failed_dirs: &FailedDirectories,
     ) {
         if self.config.flags.skip_dest_writes() {
             return;
@@ -1427,6 +1428,16 @@ impl ReceiverContext {
             }
 
             let relative_path = entry.path();
+            // upstream: generator.c:2639 - a directory flagged
+            // FLAG_MISSING_DIR is not retouched: one that could not be made
+            // (generator.c:1923), one `--existing` skipped (generator.c:1799),
+            // or one below either (generator.c:1688). What stands at its path,
+            // if anything, is not the directory this entry describes.
+            if failed_dirs.failed_ancestor(relative_path).is_some()
+                || failed_dirs.is_missing_or_below(relative_path)
+            {
+                continue;
+            }
             let dir_path = if relative_path.as_os_str() == "." {
                 dest_dir.to_path_buf()
             } else {
@@ -1756,6 +1767,77 @@ mod touch_up_dirs_tests {
         }
     }
 
+    /// A directory that could not be made is left alone by the final retouch,
+    /// so whatever still stands at its path keeps its own mode and time.
+    ///
+    /// upstream: generator.c:2639 - `touch_up_dirs()` skips every entry that
+    /// carries `FLAG_MISSING_DIR`, which `skipping_dir_contents` sets
+    /// (generator.c:1923). Retouching it stamped the directory's time, and
+    /// under `-p` its mode, on the file whose removal had been refused.
+    ///
+    /// The removal is refused by a read-only parent. That is reachable here
+    /// because nothing raises the parent first: in a whole transfer the
+    /// parent's own entry is raised to `u+w` before its children are visited.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_that_could_not_be_made_is_not_retouched() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata::am_root() {
+            // root bypasses the directory write bit, so nothing is refused.
+            return;
+        }
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let obstacle = dest.join("d");
+        fs::write(&obstacle, b"not a directory").unwrap();
+        fs::set_permissions(&obstacle, fs::Permissions::from_mode(0o644)).unwrap();
+        let own_time = FileTime::from_unix_time(1_546_300_800, 0);
+        filetime::set_file_mtime(&obstacle, own_time).unwrap();
+
+        let original = fs::metadata(dest).unwrap().permissions();
+        fs::set_permissions(dest, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let mut entry = FileEntry::new_directory("d".into(), 0o555);
+        entry.set_mtime(1_577_836_800, 0);
+        let hs = handshake();
+        let mut config = config_with_times(true);
+        config.flags.perms = true;
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = vec![entry].into();
+
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let mut failed = crate::receiver::directory::FailedDirectories::new();
+        let created = ctx.create_directories(
+            dest,
+            &metadata::MetadataOptions::default(),
+            None,
+            None,
+            &mut failed,
+            &mut writer,
+            None,
+        );
+        fs::set_permissions(dest, original).unwrap();
+        created.expect("create_directories returns the error set, not Err");
+        assert_eq!(failed.count(), 1, "the removal must have been refused");
+
+        ctx.touch_up_dirs(dest, None, &mut writer, &failed);
+
+        let meta = fs::symlink_metadata(&obstacle).unwrap();
+        assert!(meta.is_file(), "the obstacle is still the regular file");
+        assert_eq!(
+            FileTime::from_last_modification_time(&meta),
+            own_time,
+            "the file must keep its own mtime"
+        );
+        assert_eq!(
+            meta.permissions().mode() & 0o7777,
+            0o644,
+            "the file must keep its own mode"
+        );
+    }
+
     /// A directory whose stat fails with anything but ENOENT is not fatal: the
     /// mkdir that follows fails, is reported, and the directory joins the
     /// failed set so its contents are skipped.
@@ -1933,6 +2015,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let meta = fs::metadata(&sub).unwrap();
@@ -1976,6 +2059,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let meta = fs::metadata(&sub).unwrap();
@@ -2060,6 +2144,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
         if !metadata::am_root() {
             let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
@@ -2129,6 +2214,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
         let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
         let _ = fs::set_permissions(&sub, fs::Permissions::from_mode(0o755));
@@ -2178,6 +2264,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let mode = fs::metadata(dest.join("sub")).unwrap().permissions().mode() & 0o777;
@@ -2241,6 +2328,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
         let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
         let _ = fs::set_permissions(&sub, fs::Permissions::from_mode(0o755));
@@ -2274,6 +2362,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let after = FileTime::from_last_modification_time(&fs::metadata(&sub).unwrap());
@@ -2315,6 +2404,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let parent_actual = FileTime::from_last_modification_time(&fs::metadata(&parent).unwrap());
@@ -2351,6 +2441,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let actual = FileTime::from_last_modification_time(&fs::metadata(dir.path()).unwrap());
@@ -2451,6 +2542,7 @@ mod touch_up_dirs_tests {
             #[cfg(unix)]
             None,
             &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            &crate::receiver::directory::FailedDirectories::new(),
         );
 
         let actual = FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());

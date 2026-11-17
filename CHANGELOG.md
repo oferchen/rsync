@@ -675,6 +675,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Public rustdoc no longer links private items in `batch`, `test-support` and `transfer`, so the strict "rustdoc links" job passes (#8276)
 - `-c` with a `none` file checksum (`--checksum-choice=none` or `md5,none`) exits 4 with `Invalid checksum-choice for --checksum: none (0)` at the first regular file, as 3.5.1 does; it used MD4 and exited 0 (#8262)
 - A network receiver replaces a file, FIFO or other non-directory standing where a transferred directory goes, backing it up under `--backup`, like 3.5.2; it used to stamp the directory's mode and time on it and exit 23 (#PRNUM)
+- A directory the receiver could not make is skipped by the final directory retouch, like 3.5.2's `FLAG_MISSING_DIR`; a file whose removal was refused keeps its own mode and time (#PRNUM)
 
 ### Removed
 
