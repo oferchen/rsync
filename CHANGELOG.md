@@ -276,6 +276,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - On Linux, oc-rsync opts out of transparent huge pages at startup. On a host with THP set to `always`, the kernel backed jemalloc extents with 2 MiB pages, adding about 40 MiB to peak memory and making it swing from run to run: a 100k-file pull now peaks at about 24 MiB instead of 61-66 MiB, and a 1 GiB delta pull at 30 MiB (client) and 93 MiB (server) instead of 67-71 MiB and 133-141 MiB, with CPU unchanged (#8342)
 
 ### Fixed
+- A rule refused out of a per-directory merge file prints its text on its own line above the `syntax or usage error` trailer, as rsync 3.5.2 does, on a push and a local copy; a local copy refuses an operand directory's bad merge file before creating the destination (#8407)
 
 - Report OS errors as `strerror (errno)` like 3.5.1's `rsyserr` (#8354)
 - Poll the remote shell with `WNOHANG` on a failed exit and signal it (#8372)
