@@ -211,7 +211,13 @@ impl ReceiverContext {
                     existing.as_ref(),
                     ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_REPORT_CHANGE,
                 ),
-                SpecialDisposition::Create => ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW,
+                // upstream: generator.c:2135-2136 - the base flags are the same
+                // for a new node; itemize() adds ITEM_IS_NEW for statret < 0.
+                SpecialDisposition::Create => {
+                    ItemFlags::ITEM_LOCAL_CHANGE
+                        | ItemFlags::ITEM_REPORT_CHANGE
+                        | ItemFlags::ITEM_IS_NEW
+                }
             };
             let iflags = ItemFlags::from_raw(iflags);
 
