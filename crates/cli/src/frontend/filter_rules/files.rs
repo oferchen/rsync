@@ -90,11 +90,13 @@ mod tests {
         }
     }
 
-    /// A directory that does not exist is still an open failure.
+    /// A directory that does not exist is still an open failure. The name
+    /// is missing both where `..` is walked (Unix) and where it is resolved
+    /// lexically (Windows collapses `nosuch\sub\..` to `nosuch`).
     #[test]
     fn a_missing_directory_name_still_fails_to_open() {
         let temp = test_support::create_tempdir();
-        let missing = temp.path().join("nosuch").join("..");
+        let missing = temp.path().join("nosuch").join("sub").join("..");
         assert!(
             CLIENT_FILES
                 .open(&missing, FilterFileKind::MergeFile, &[])
