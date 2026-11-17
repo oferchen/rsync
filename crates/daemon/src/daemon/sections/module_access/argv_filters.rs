@@ -261,7 +261,10 @@ fn refuse_argv_filters(
             // in its log; the client reads only EOF.
             let _ = io::stderr().write_all(&lines);
             if let Some(log) = ctx.log_sink {
-                for line in lines.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+                for line in lines
+                    .split(|byte| *byte == b'\n')
+                    .filter(|line| !line.is_empty())
+                {
                     log_raw_line(log, line);
                 }
                 let totals = "sent 0 bytes  received 0 bytes  total size 0";
