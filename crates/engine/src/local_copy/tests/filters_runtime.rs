@@ -576,3 +576,92 @@ fn a_merge_files_ordinary_rule_is_kept() {
 
     assert_eq!(entries.rules.len(), 1, "an ordinary rule must be kept");
 }
+
+/// A source tree whose root `.excl` holds an unprefixed line, which
+/// `parse_rule_tok` refuses as `Unknown filter rule` (exclude.c:1362-1363),
+/// plus a second, clean operand. Returns (tree, source, other).
+fn tree_with_a_refused_root_merge_file() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let other = temp.path().join("other");
+    fs::create_dir_all(source.join("bar")).expect("create source");
+    fs::create_dir_all(&other).expect("create other");
+    fs::write(source.join(".excl"), b"file3\n").expect("write .excl");
+    fs::write(source.join("bar").join("f"), b"f").expect("write f");
+    fs::write(other.join("o"), b"o").expect("write o");
+    (temp, source, other)
+}
+
+fn copy_with_root_dir_merge(operands: &[OsString], inc_recurse: bool) -> LocalCopyError {
+    let plan = LocalCopyPlan::from_operands(operands).expect("plan");
+    let program = FilterProgram::new([FilterProgramEntry::DirMerge(DirMergeRule::new(
+        PathBuf::from(".excl"),
+        DirMergeOptions::default(),
+    ))])
+    .expect("compile filter program");
+    let options = LocalCopyOptions::default()
+        .with_filter_program(Some(program))
+        .inc_recurse(inc_recurse);
+    match plan.execute_with_options(LocalCopyExecution::Apply, options) {
+        Ok(_) => panic!("the refused rule must end the copy"),
+        Err(error) => error,
+    }
+}
+
+fn operand(path: &Path, trailing_slash: bool) -> OsString {
+    let mut operand = path.as_os_str().to_owned();
+    if trailing_slash {
+        operand.push("/");
+    }
+    operand
+}
+
+/// upstream: the sender reads a contents operand's merge files while building
+/// the first file list (flist.c:2117 push_local_filters()), and the receiver
+/// creates the destination only once that list arrives (main.c:808-822). A
+/// refused rule there exits RERR_SYNTAX before anything exists, so the
+/// destination must still be absent afterwards.
+#[test]
+fn a_refused_rule_in_an_operand_merge_file_leaves_the_destination_absent() {
+    let (temp, source, _) = tree_with_a_refused_root_merge_file();
+    let dest = temp.path().join("dest");
+    for (contents, slash) in [(true, true), (false, true), (true, false), (false, false)] {
+        let error =
+            copy_with_root_dir_merge(&[operand(&source, contents), operand(&dest, slash)], true);
+        assert!(
+            matches!(error.kind(), LocalCopyErrorKind::FilterSyntax { .. }),
+            "{error}"
+        );
+        assert!(
+            !dest.exists(),
+            "contents={contents} dest/={slash}: the refusal must precede the destination mkdir"
+        );
+    }
+}
+
+/// With INC_RECURSE a named directory among several operands is listed
+/// without its children, which follow in a later file list (flist.c:3096), so
+/// upstream creates the destination before it reads that directory's merge
+/// file. Without INC_RECURSE the whole tree is listed first and nothing is
+/// created. Both arms are pinned so the operand-level read cannot widen or
+/// narrow past upstream's.
+#[test]
+fn a_named_operand_among_several_reads_its_merge_file_after_the_mkdir_only_with_inc_recurse() {
+    for inc_recurse in [true, false] {
+        let (temp, source, other) = tree_with_a_refused_root_merge_file();
+        let dest = temp.path().join("dest");
+        let error = copy_with_root_dir_merge(
+            &[
+                operand(&other, false),
+                operand(&source, false),
+                operand(&dest, true),
+            ],
+            inc_recurse,
+        );
+        assert!(
+            matches!(error.kind(), LocalCopyErrorKind::FilterSyntax { .. }),
+            "{error}"
+        );
+        assert_eq!(dest.exists(), inc_recurse, "inc_recurse={inc_recurse}");
+    }
+}

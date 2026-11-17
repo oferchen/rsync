@@ -25,7 +25,7 @@ use super::super::{
     emit_cannot_convert_filename, name_is_convertible, transcode_filename_component,
 };
 use super::destination::{ensure_destination_directory, query_destination_state};
-use super::file_total::file_total_exceeds_one;
+use super::file_total::{file_total_exceeds_one, parse_operand_merge_files};
 use super::handlers::{
     handle_directory_contents_copy, handle_directory_copy, handle_non_directory_source,
 };
@@ -582,6 +582,7 @@ pub(crate) fn copy_sources(
             // signal here so the CLI itemize gate (rendered in
             // emit_transfer_summary) and the synthesized `cd+++++++++ ./`
             // root record (rendered by copy_directory_recursive) both fire.
+            parse_operand_merge_files(context, plan)?;
             let mut destination_root_created = false;
             let mkpath = context.mkpath_enabled();
             if plan.destination_spec().force_directory() {

@@ -142,6 +142,16 @@ impl LocalCopyOptions {
         self.recursive = recursive;
         self
     }
+    /// Whether the copy models upstream's incremental recursion
+    /// (`CF_INC_RECURSE`), which sends a directory's contents in a later file
+    /// list than the directory itself. On by default, as in upstream.
+    #[must_use]
+    #[doc(alias = "--inc-recursive")]
+    #[doc(alias = "--no-inc-recursive")]
+    pub const fn inc_recurse(mut self, enabled: bool) -> Self {
+        self.inc_recurse = enabled;
+        self
+    }
 
     /// Enables or disables copying directory entries when recursion is disabled.
     #[must_use]
@@ -373,6 +383,11 @@ impl LocalCopyOptions {
     #[doc(alias = "-r")]
     pub const fn recursive_enabled(&self) -> bool {
         self.recursive
+    }
+    /// Reports whether the copy models upstream's incremental recursion.
+    #[must_use]
+    pub const fn inc_recurse_enabled(&self) -> bool {
+        self.inc_recurse
     }
 
     /// Reports whether directory entries should be copied when recursion is disabled.

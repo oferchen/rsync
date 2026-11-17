@@ -594,7 +594,9 @@ fn run_client_internal(
         LocalCopyExecution::Apply
     };
 
-    options = options.wire_totals(config.wire_totals());
+    options = options
+        .wire_totals(config.wire_totals())
+        .inc_recurse(config.local_inc_recurse());
 
     let collect_events = config.collect_events();
 
