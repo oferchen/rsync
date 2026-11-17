@@ -1771,29 +1771,33 @@ mod itemize_order_tests {
     /// whose attributes still differ; the pushing client's sender renders the
     /// `.f...p.....` row from those wire iflags (sender.c:587-588
     /// `maybe_log_item`). A server receiver that drops the record makes every
-    /// metadata-only change invisible under `-i` on a push - against another
-    /// oc peer and against upstream 3.4.4 alike - while a pull stays correct,
-    /// so only the push direction ever exposes the loss.
+    /// metadata-only change invisible under `-i` on a push. A client receiver
+    /// writes the same record on a pull (the generator does not ask which role
+    /// it has), where the server's sender logs it and echoes it into a
+    /// `--write-batch` stream; dropping it there leaves the server's log and
+    /// the batch without the row.
     #[cfg(unix)]
     #[test]
-    fn server_push_candidate_scan_records_metadata_only_wire_row() {
-        use std::os::unix::fs::PermissionsExt;
-
+    fn candidate_scan_records_metadata_only_wire_row_in_both_roles() {
         use crate::generator::ItemFlags;
-
-        let dir = test_support::create_tempdir();
-        let dest = dir.path();
-        let path = dest.join("f.txt");
-        std::fs::write(&path, b"x").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let t = filetime::FileTime::from_unix_time(1_600_000_000, 0);
-        filetime::set_file_times(&path, t, t).unwrap();
-
+        use std::os::unix::fs::PermissionsExt;
+        // Each run applies the entry's mode, so each needs its own file.
+        let fixture = || {
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("f.txt");
+            std::fs::write(&path, b"x").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let t = filetime::FileTime::from_unix_time(1_600_000_000, 0);
+            filetime::set_file_times(&path, t, t).unwrap();
+            dir
+        };
         let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o600);
         entry.set_mtime(1_600_000_000, 0);
 
         let hs = handshake();
         let run = |client_mode: bool| {
+            let dir = fixture();
+            let dest = dir.path();
             let mut config = itemize_server_config();
             config.connection.client_mode = client_mode;
             config.flags.times = true;
@@ -1830,10 +1834,11 @@ mod itemize_order_tests {
             "the server-mode candidate scan must record the metadata-only row \
              for the wire; without it the pushing client prints nothing"
         );
-        assert!(
-            run(true).is_empty(),
-            "a client-mode (pull) receiver prints its row locally; recording \
-             it for the wire too would double every row"
+        assert_eq!(
+            run(true),
+            vec![(0usize, ItemFlags::ITEM_REPORT_PERMS as u16)],
+            "a client-mode (pull) receiver sends the same record; without it \
+             the server's log and a written batch miss the row"
         );
     }
 

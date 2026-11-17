@@ -868,13 +868,16 @@ fn server_push_emits_one_record_per_follower() {
     );
 }
 
-/// A client-mode (pull) receiver renders follower rows locally via
-/// `create_hardlinks`; forwarding them over the wire too would double every
-/// follower against the pull's own row. The server-only emission must stay a
-/// no-op off a push.
+/// A client-mode (pull) receiver sends the follower record too: upstream's
+/// generator writes it whichever role it has (hlink.c:maybe_hard_link() ->
+/// generator.c:itemize()), and the server's sender logs it and echoes it.
+/// The row `create_hardlinks` prints on the client is local output and is not
+/// produced from the echo, so nothing is doubled.
 #[test]
-fn pull_receiver_emits_no_follower_wire_record() {
-    use protocol::codec::create_ndx_codec;
+fn pull_receiver_emits_the_follower_wire_record() {
+    use protocol::codec::{NdxCodec, create_ndx_codec};
+
+    use crate::generator::ItemFlags;
 
     let entries = vec![
         make_hlink_leader("leader.txt", 14, 42),
@@ -886,15 +889,32 @@ fn pull_receiver_emits_no_follower_wire_record() {
     let mut buf: Vec<u8> = Vec::new();
     let mut ndx_codec = create_ndx_codec(32);
     call_emit_follower_itemize(&ctx, dest.path(), &mut buf, &mut ndx_codec)
-        .expect("client-mode call must succeed as a no-op");
-    assert!(
-        buf.is_empty(),
-        "a pull renders follower rows locally; nothing crosses the wire",
-    );
+        .expect("client-mode call must succeed");
     assert_eq!(
         ctx.hardlink_follower_echoes.get(),
-        0,
-        "a pull emits nothing, so there are no echoes to drain",
+        1,
+        "the server echoes the record, so there is one echo to drain",
+    );
+
+    let mut cur = std::io::Cursor::new(buf);
+    let mut rd = create_ndx_codec(32);
+    let ndx = rd.read_ndx(&mut cur).expect("follower NDX must decode");
+    assert_eq!(
+        ndx,
+        ctx.flat_to_wire_ndx(1),
+        "the record names the follower"
+    );
+    let iflags = ItemFlags::read(&mut cur, 32).expect("iflags must decode");
+    let (_ft, xname, _n) = iflags.read_trailing(&mut cur).expect("xname must decode");
+    assert_eq!(
+        xname.as_deref(),
+        Some(b"leader.txt".as_ref()),
+        "the record names the leader",
+    );
+    assert_eq!(
+        cur.position() as usize,
+        cur.get_ref().len(),
+        "the follower record must be fully consumed",
     );
 }
 

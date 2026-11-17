@@ -77,12 +77,26 @@ fn many_follower_records_do_not_stall_the_transfer() {
         ),
     ];
 
-    let cells = [Cell {
-        label: "push from 3.5.2",
-        client: up.clone(),
-        server: oc.clone(),
-        pull: false,
-    }];
+    let cells = [
+        Cell {
+            label: "push from 3.5.2",
+            client: up.clone(),
+            server: oc.clone(),
+            pull: false,
+        },
+        Cell {
+            label: "pull from 3.5.2",
+            client: oc.clone(),
+            server: up.clone(),
+            pull: true,
+        },
+        Cell {
+            label: "pull from this server",
+            client: oc.clone(),
+            server: oc.clone(),
+            pull: true,
+        },
+    ];
     let mut run = 0;
     for cell in &cells {
         for (buffers, shell) in &shells {
