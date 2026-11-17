@@ -150,25 +150,41 @@ fn describe_process(pid: u32) -> String {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
+    use std::io::{BufRead, BufReader};
     use std::os::unix::process::CommandExt;
 
     use super::*;
 
-    /// The report reads the state and group of a live process, so a hang is
-    /// described rather than just killed.
+    /// The report reads the command line, state and group of a live process,
+    /// so a hang is described rather than just killed.
     #[test]
     fn the_report_describes_a_live_process_group() {
-        let mut sleeper = Command::new("sleep")
-            .arg("1000")
+        // `/proc/<pid>/cmdline` is stable only once the child is past its
+        // last exec: before it the entry is this test's forked copy, and
+        // during it the command line is empty. The shell therefore announces
+        // itself after its own exec and then blocks in the `read` builtin on
+        // a stdin this test holds open, so it neither execs again nor forks.
+        let mut blocker = Command::new("sh")
+            .args(["-c", "echo ready; read hold"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
             .process_group(0)
             .spawn()
-            .expect("spawn sleep");
-        let group = sleeper.id();
+            .expect("spawn sh");
+        let mut ready = String::new();
+        BufReader::new(blocker.stdout.take().expect("piped stdout"))
+            .read_line(&mut ready)
+            .expect("read the readiness line");
+        assert_eq!(ready, "ready\n");
+        let group = blocker.id();
         assert_eq!(group_members(group), vec![group]);
         let report = describe_process(group);
-        assert!(report.contains("sleep 1000"), "{report}");
-        assert!(report.contains("state S"), "{report}");
-        sleeper.kill().expect("kill sleep");
-        sleeper.wait().expect("reap sleep");
+        assert!(report.contains("-c echo ready; read hold"), "{report}");
+        // The shell may still be on its way into `read`, so any state the
+        // kernel reports is right; `?` is the placeholder for an unreadable one.
+        assert!(report.contains(&format!("\n  thread {group} ")), "{report}");
+        assert!(!report.contains(" state ? "), "{report}");
+        blocker.kill().expect("kill sh");
+        blocker.wait().expect("reap sh");
     }
 }
