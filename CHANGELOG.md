@@ -18,9 +18,9 @@ upstream's 3.5.2 test suite. One entry per change; see the linked PRs for detail
 
 ### Upstream 3.5.2 Alignment
 
-- **Security (CVE-2026-119741):** Bounded consecutive weak-checksum collision checks in `crates/matching` (`MAX_COLLISION_SKIP = 32`) and fixed duplicate-chain exhaustion in `hash_search`
-- **Enhancements:** Added `--nice=<SPEC>` / `--no-nice` (CPU nice via `rustix` and Linux I/O priority), `--delay-symlinks` / `--no-delay-symlinks` (deferring symlink creation until after file transfers, protocol >= 29), and 3.5.2 human-readable (`48.8Mi`, `782,448B`, `113,295B/s`) and `--stats` / `--max-delete` thousands-separator formatting
-- **Bug fixes:** Fixed interrupted `--append` / `--inplace` trailing buffer duplication, `EMLINK` hard-link fallback recovery, password files with an empty first line, Unix-socket stdin daemon activation, `--files-from` daemon subdirectory confinement, `--max-alloc` delete-queue overflow and quiet-daemon `MSG_DELETED` suppression, terminal control-character escaping, and daemon `--delete -i` upload itemization
+- **Security (CVE-2026-119741):** Bounded consecutive weak-checksum collision checks in `crates/matching` (`MAX_COLLISION_SKIP = 32`) and fixed duplicate-chain exhaustion in `hash_search` (#8383)
+- **Enhancements:** Added `--nice=<SPEC>` / `--no-nice` (CPU nice via `rustix` and Linux I/O priority), `--delay-symlinks` / `--no-delay-symlinks` (deferring symlink creation until after file transfers, protocol >= 29), and 3.5.2 human-readable (`48.8Mi`, `782,448B`, `113,295B/s`) and `--stats` / `--max-delete` thousands-separator formatting (#8383)
+- **Bug fixes:** Fixed interrupted `--append` / `--inplace` trailing buffer duplication, `EMLINK` hard-link fallback recovery, password files with an empty first line, Unix-socket stdin daemon activation, `--files-from` daemon subdirectory confinement, `--max-alloc` delete-queue overflow and quiet-daemon `MSG_DELETED` suppression, terminal control-character escaping, and daemon `--delete -i` upload itemization (#8383)
 
 ### Security
 
@@ -158,6 +158,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Bump `crypto-bigint`, `ctutils` and the `zstd` crates for RUSTSEC-2026-0385, 0387, 0391, 0398, 0403 and 0410; the bundled libzstd stays 1.5.7, so compressed bytes on the wire are unchanged (#8245)
 
 ### Added
+
 - Local `-vvv` role traces and the oc-only `PIPELINE` debug word (#8364)
 - On Windows, wildcard source operands (`*`, `?`, `[...]`) are expanded as a POSIX shell would, since `cmd.exe` and PowerShell do not glob (#8206)
 - Protocol 33 from rsync 3.5.1: `MSG_BLOCK_STATS` and the `--stats` line `Number of 4 KiB logical blocks touched`; newer peers clamp to 33, 3.5.0 and older negotiate down (#8003)
@@ -195,17 +196,20 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Pulls can use the parallel delta scan, which their clients never forward: the daemon module parameter `parallel delta scan = yes` turns it on for a module, and `OC_RSYNC_PARALLEL_DELTA_SCAN=1` for a remote-shell server (#8289)
 
 ### Changed
-- Renamed `--parallel-delta-scan` to `--parallel-delta` (with `--no-parallel-delta` to opt out) and enabled it by default
+
+- Renamed `--parallel-delta-scan` to `--parallel-delta` (with `--no-parallel-delta` to opt out) and enabled it by default (#8382)
 - Split CI into dedicated PR (`ci.yml`), master-push (`ci-master.yml`), and nightly (`ci-nightly.yml`) workflows with shared composite setup actions, and aligned `README.md` badges (#8376, #8377, #8378, #8379)
 - Converted remaining `//` doc comments on `pub` items to `///` rustdoc across workspace crates and removed ASCII divider banners (#8380)
 - Embedded `ssh://` ssh_config parity is now gated on a corpus (bastions with `ProxyJump` and `Match`, `Include` directories, token expansion, algorithm lists, `Tag`, canonicalization) diffed against OpenSSH 10.0p1 `ssh -G`, and the user-visible behaviour changes are listed in `docs/ssh-config-embedded.md` (#8329)
 - A recursive local `--write-batch` records incremental recursion, as 3.5.1 does (header `81 ff`), and writes its file list in the incremental layout: the top level, then one sub-list per directory, placed among the file data by 3.5.1's 1000-entry lookahead. rsync 3.5.1 replays these batches, and `--delete-before`, `--delete-after`, `--delay-updates`, `-m`, `--qsort` and `--no-inc-recursive` still record a flat list (#8261)
-- The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
+- The upstream reference is rsync 3.5.2, reached through 3.5.0 and 3.5.1 (#7305, #7321, #7331, #7607, #7994, #8383); `--version` reports it, and the docs, benchmarks, interop matrix and rustdoc cite it (#8384, #8386)
 - The cross-implementation oracle tests (block-size grammar, empty size values, daemon auth username, hosts-allow sentinels, daemon log host rendering, daemon filter-file whitespace, filter-file open failures, local progress order, and the three upstream read-batch cells) run against an rsync 3.5.1 binary instead of 3.5.0 (#8314)
 - The path-confinement, rrsync and filter-provenance design notes and the legacy-oracle build script cite rsync 3.5.1, including its `--files-from` ownership walk, `/dev/fd` pins and rrsync root-relative paths (#8311)
 - The remaining design notes, comparison docs and code comments that cited rsync 3.5.0 as the source of truth now cite 3.5.1 (protocol 33, `MSG_BLOCK_STATS`), and the `refuse options` drift test reads 3.5.1's `options.c` (#8313)
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down to 33 instead of refused, and a peer outside 28-40 is refused with exit 2 after `@RSYNCD: OK`, as upstream does (#7916, #8209)
-- Every pull request is gated on upstream's 3.5.1 test suite, on Linux and macOS, over a pipe and a TCP daemon, as root and non-root (#7387, #7339, #7405, #7408, #7392, #7391, #7996, #8019)
+- Every pull request is gated on upstream's 3.5.2 test suite, on Linux and macOS, over a pipe and a TCP daemon, as root and non-root (#7387, #7339, #7405, #7408, #7392, #7391, #7996, #8019, #8383)
+- The cross-implementation oracle tests fail in CI when their upstream binary is missing instead of skipping, and the interop job runs every oracle cell (#8320)
+- All six Windows validation suites run on every master push (#8385)
 - Daemon `%` expansion matches upstream's `expand_vars()`: only `%NAME%` references expand, and the oc-only tokens are removed. Replace `%MODULE%`/`%m` with `%RSYNC_MODULE_NAME%`, `%ADDR%`/`%a` with `%RSYNC_HOST_ADDR%`, `%DIFFHOST%`/`%h` with `%RSYNC_HOST_NAME%`, `%P` with `%RSYNC_MODULE_PATH%` and `%u` with `%RSYNC_USER_NAME%`; `%p` has no hook-template equivalent (use `$RSYNC_PID` in the hook's shell), and `%%` is no longer an escape (#8080)
 - rsync 3.5.0 and 3.5.1 join the interop matrix as gating peers, with an upstream-baseline oracle in the harness (#7290, #7337, #8033)
 - Release benchmarks compare against rsync 3.5.1, 3.5.0 and 3.4.4 on Linux and macOS, and report peak RSS for every mode (#7595, #8106)
@@ -240,7 +244,9 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Embedded `ssh://` transfers read ssh_config `Tag` and evaluate `Match tagged` as OpenSSH 10.0p1 does, and `Match !final` now requests the final pass like `Match final`; `CanonicalizeHostname`, `CanonicalDomains`, `CanonicalizeMaxDots`, `CanonicalizeFallbackLocal` and `CanonicalizePermittedCNAMEs` are validated, the host is canonicalized by suffix and the configuration re-read for `Match canonical` blocks, and a final-pass `HostName` no longer replaces the host (#8329)
 - Embedded `ssh://` transfers check the value of every ssh_config keyword the transport does not act on, as OpenSSH 10.0p1's `readconf.c` does, and refuse the file with OpenSSH's own message when it is bad. This covers forwarding specs, multistate options, key-type lists, the log, environment and timeout options, the GSSAPI and PKCS#11 keywords, and extra arguments. The keywords the transport acts on get the same checks: empty values, `Port` (service names such as `Port ssh` now resolve), `IdentitiesOnly`, `IdentityAgent` and the 100-file key limit. Time values use 10.0p1's whole-second `convtime`, so `ConnectTimeout 1.5` is now refused (#8329)
 - Embedded `ssh://` transfers close the remaining ssh_config gaps with OpenSSH 10.0p1: `Match host` and `Match user` lists split on commas only; numeric hosts such as `127.1` are rewritten as `resolve_addr` rewrites them; host-key types already in `known_hosts` are offered first; an algorithm list that cannot be composed warns and falls back as OpenSSH does instead of failing; `CanonicalizePermittedCNAMEs` CNAMEs are followed and an unresolvable bare host is refused; time-based re-keying happens only when `RekeyLimit` names an interval; and the unresolvable-host refusal carries the `ssh:` prefix (#8329)
+
 ### Performance
+
 - Local `--checksum` compares source and destination through the parallel checksum service: same-size pairs of a directory are hashed in one rayon batch, and files of 8 MiB or more as 4 MiB block vectors in parallel; decisions and output are unchanged against rsync 3.5.1 (#8249)
 - A `--checksum` sender hashes the regular files of each file list and INC_RECURSE sub-list in one parallel batch through the same service; each sum is the exact negotiated whole-file digest, and the file-list bytes are unchanged against rsync 3.5.1 (#8312)
 - A sender keeps owner names in its id list instead of on every file entry, looking a name up only when it goes on the wire, as rsync 3.5.1 does (uidlist.c add_uid/add_gid): sender peak RSS on a 1M-file pull drops from 350 MB to 145 MB (3.5.1: 71 MB) with the file-list bytes unchanged (#8359)
@@ -269,6 +275,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - On Linux, oc-rsync opts out of transparent huge pages at startup. On a host with THP set to `always`, the kernel backed jemalloc extents with 2 MiB pages, adding about 40 MiB to peak memory and making it swing from run to run: a 100k-file pull now peaks at about 24 MiB instead of 61-66 MiB, and a 1 GiB delta pull at 30 MiB (client) and 93 MiB (server) instead of 67-71 MiB and 133-141 MiB, with CPU unchanged (#8342)
 
 ### Fixed
+
 - Report OS errors as `strerror (errno)` like 3.5.1's `rsyserr` (#8354)
 - Poll the remote shell with `WNOHANG` on a failed exit and signal it (#8372)
 - Match upstream `**+/***` `wild2` prefix in filter compilation (#8375)
@@ -414,7 +421,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Flush the file list once, after the id lists and the end marker, as upstream `send_file_list()` does (#8206)
 
 **Remote pulls and pushes**
-- `--parallel-delta-scan` now engages on remote-shell (ssh) pushes; the flag was accepted and silently ignored there (#8263)
+- `--parallel-delta` (then named `--parallel-delta-scan`) now engages on remote-shell (ssh) pushes; the flag was accepted and silently ignored there (#8263)
 - A pull or push of a tree deeper than 1023 levels stops where rsync 3.5.1 stops, at its secure-walk depth (`syscall.c:2940` `DS_MAXDEPTH`): the sender refuses the 1024th level with `opendir ... failed: Cannot allocate memory (12)`, and under `-L` the receiver refuses a file or directory below 1024 parents with `recv_generator: failed to stat` / `mkdir ... failed`, both exit 23. oc used to copy every level (#8269)
 - An rsh `--server` now enforces `--timeout`: a client that goes silent ends the server with `[sender]`/`[Receiver] io timeout after N seconds -- exiting` and exit 30, where it used to wait forever. Its stdio is polled as upstream's `perform_io()` polls it (`io.c:229-268` `check_timeout()`) (#8306)
 - An oc sender frames its output as rsync 3.5.1 does: buffered output goes out when a write does not fit, when the sender is about to wait for input, or at upstream's explicit flushes (`io.c:766-768`, `main.c:1005-1011`), no longer after every file and `NDX_DONE` echo. Its frames, and so its `Total bytes sent`, now equal 3.5.1's (#8306)
@@ -618,6 +625,8 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Show changed directories in local `-v` and `--out-format` output (#7946)
 - A local copy reports every source it cannot open as `send_files failed to open`, then ends with upstream's `some files/attrs were not transferred (see previous errors)` or `some files vanished before they could be transferred` summary; before, only the first failure was printed and later ones were lost (#8228)
 - A local copy whose source file cannot be opened still counts it in `--stats` as created and transferred, as upstream does (#8228)
+- The summary speedup and the `--stats` seconds are grouped as upstream's `do_big_dnum` groups them: not at all under `--no-h`, and at every other level (#8392)
+- A missing merge file named with a slash is reported by its cleaned, cwd-relative name on the client and the remote-shell server, as upstream's `parse_merge_name` does (#8392)
 
 **Embedded SSH**
 - `Host` pattern matching, `IdentitiesOnly`, `IdentityAgent`, tilde expansion, tokenising and first-obtained-wins precedence match OpenSSH (#7803, #7791, #7205, #7792, #7814, #7836, #7856)
@@ -630,6 +639,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Compare the read-only bit, open directories for `--fsync`, honour `--one-file-system` across volumes, and warn when metadata cannot be applied (#7163, #7164, #7210, #7054)
 - An auto-inherited (`AI`) Windows DACL is written unprotected, so the destination keeps inheriting from its parent like the source did; protected and POSIX-synthesised DACLs stay protected (#8214)
 - Report the NTFS ACEs the rsync wire format cannot carry (#7267)
+- A Windows local copy identifies hard-linked sources by file identity (`GetFileInformationByHandle`), so `-H` links them at the destination (#8387)
 
 **Output parity**
 - A local copy's `sent`/`received` totals (`--stats`, `-v`, the log-file trailer) now count what 3.5.1's forked halves exchange on their socketpair - the file list in `readdir()` order, items, sum heads, block sums, tokens, whole-file sums, deletions and the frame headers - instead of literal data alone, matching 3.5.1 exactly on single-directory trees; deeper trees can differ by one 4-byte frame header per frame, as 3.5.1 itself does between runs (#8327)
@@ -666,6 +676,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - `-c` with a `none` file checksum (`--checksum-choice=none` or `md5,none`) exits 4 with `Invalid checksum-choice for --checksum: none (0)` at the first regular file, as 3.5.1 does; it used MD4 and exited 0 (#8262)
 
 ### Removed
+
 - The unreachable `transfer::receiver::IncrementalFileListReceiver` streaming file-list reader and its `ReceiverContext::incremental_file_list_receiver` constructor, which only tests used; every live receive path reads the list through `receive_file_list` (#8358)
 - The unreachable `engine::AsyncBatchCopier` and its `RSYNC_MAX_CONCURRENT` environment read (#8236)
 - The planned `--windows-acls`, `--audit-acls` and `--fail-on-windows-acl-loss` options from the man page and Windows ACL docs; the CLI never had them (#8236)

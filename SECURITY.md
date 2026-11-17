@@ -166,19 +166,6 @@ grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uni
 
 `--drop-D` makes a receiver refuse to create device and special files. It exists because `--no-D` on one end only desynchronises the file list: a `-D` sender writes rdev fields that a `--no-D` receiver never reads. `--drop-D` refuses the creation and leaves the wire format alone.
 
-### rsync 3.5.2 fixes (4 Nov 2026)
-
-3.5.2 keeps protocol 33 and fixes CVE-2026-119741 plus the security-relevant issues below:
-
-| 3.5.2 fix | Status | Evidence |
-|---|---|---|
-| CVE-2026-119741: bound strong-checksum work on consecutive weak-checksum collisions | Fixed | `crates/matching/src/index/mod.rs` and `crates/matching/src/delta/mod.rs` bound consecutive weak-checksum collision checks to 32 (`MAX_COLLISION_SKIP`) per offset. `hashsearch-collision-skip` passes. |
-| `--files-from` pull from a daemon module subdirectory read from the module root instead | Fixed | `crates/daemon/src/daemon/sections/module_access/client_args/path_resolution.rs` preserves module-relative paths for `--files-from` pulls. `daemon-files-from-subdir` passes. |
-| Daemon receiver stack/memory overflow when queued deletion messages reach `--max-alloc` | Fixed | `crates/transfer/src/receiver/directory/deletion.rs` and `crates/daemon/src/daemon/sections/module_access/client_args/server_config.rs` track queued delete bytes against `--max-alloc` and suppress `MSG_DELETED` on quiet/non-itemize daemon transfers. `daemon-delete-msg-overflow` passes. |
-| Escape terminal control characters in filenames and diagnostics | Fixed | `crates/logging/src/escape.rs` escapes C0/DEL/C1 control characters in output filenames and diagnostics. `output-control-chars` passes. |
-| IPv6 forward-DNS matching in daemon `hosts allow` / `hosts deny` | Fixed | `crates/daemon/src/daemon/sections/module_access/access_control.rs` compares resolved IPv4/IPv6 addresses cleanly by family. |
-| Daemon `--nice` / `rrsync` priority restriction | Fixed | `crates/core/src/niceness.rs` rejects remote priority requests and non-19/non-idle daemon client requests. `niceness` passes. |
-
 ### rsync 3.5.1 fixes (21 Sep 2026)
 
 3.5.1 raises the protocol to 33 and names no CVE ids. Its security-relevant fixes, from its `NEWS.md`:
@@ -194,6 +181,19 @@ grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uni
 | Partial-directory state is validated | Fixed | A block match with no basis file errors as upstream does (PR #8016), and a sender `NDX_DONE` ends the phase as in upstream `recv_files()` (PR #8075). `strict-basis` passes on every leg. |
 | An alternate-destination leaf symlink is not followed as a basis | Fixed | `alt-dest-symlink-race` passes on every leg. |
 | Undefined shifts in the bundled zlib | Not applicable | oc-rsync does not build upstream's bundled zlib. |
+
+### rsync 3.5.2 fixes (4 Nov 2026)
+
+3.5.2 keeps protocol 33 and fixes CVE-2026-119741 plus the security-relevant issues below:
+
+| 3.5.2 fix | Status | Evidence |
+|---|---|---|
+| CVE-2026-119741: bound strong-checksum work on consecutive weak-checksum collisions | Fixed | `crates/matching/src/index/mod.rs` and `crates/matching/src/delta/mod.rs` bound consecutive weak-checksum collision checks to 32 (`MAX_COLLISION_SKIP`) per offset. `hashsearch-collision-skip` passes. |
+| `--files-from` pull from a daemon module subdirectory read from the module root instead | Fixed | `crates/daemon/src/daemon/sections/module_access/client_args/path_resolution.rs` preserves module-relative paths for `--files-from` pulls. `daemon-files-from-subdir` passes. |
+| Daemon receiver stack/memory overflow when queued deletion messages reach `--max-alloc` | Fixed | `crates/transfer/src/receiver/directory/deletion.rs` and `crates/daemon/src/daemon/sections/module_access/client_args/server_config.rs` track queued delete bytes against `--max-alloc` and suppress `MSG_DELETED` on quiet/non-itemize daemon transfers. `daemon-delete-msg-overflow` passes. |
+| Escape terminal control characters in filenames and diagnostics | Fixed | `crates/logging/src/escape.rs` escapes C0/DEL/C1 control characters in output filenames and diagnostics. `output-control-chars` passes. |
+| IPv6 forward-DNS matching in daemon `hosts allow` / `hosts deny` | Fixed | `crates/daemon/src/daemon/sections/module_access/access_control.rs` compares resolved IPv4/IPv6 addresses cleanly by family. |
+| Daemon `--nice` / `rrsync` priority restriction | Fixed | `crates/core/src/niceness.rs` rejects remote priority requests and non-19/non-idle daemon client requests. `niceness` passes. |
 
 No 3.5.2 testsuite cell fails on any leg. A future `fail` row would be listed, with cause and owner, by `awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.2-expect.*.txt | sort -u`.
 
