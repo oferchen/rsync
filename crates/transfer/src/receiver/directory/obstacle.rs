@@ -74,6 +74,8 @@ use crate::receiver::ReceiverContext;
 pub(in crate::receiver) enum MakeWayFor {
     /// upstream `DEL_FOR_FILE` - `"regular file"`.
     File,
+    /// upstream `DEL_FOR_DIR` - `"directory"`.
+    Directory,
     /// upstream `DEL_FOR_SYMLINK` - `"symlink"`.
     Symlink,
     /// upstream `DEL_FOR_DEVICE` - `"device file"`.
@@ -96,6 +98,7 @@ impl MakeWayFor {
     const fn description(self) -> &'static str {
         match self {
             Self::File => "regular file",
+            Self::Directory => "directory",
             Self::Symlink => "symlink",
             #[cfg(unix)]
             Self::Device => "device file",

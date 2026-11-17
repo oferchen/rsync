@@ -201,8 +201,9 @@ fn confined_remove_backup(backup_path: &Path) -> io::Result<()> {
 
 #[cfg(unix)]
 fn confined_create_dir_all(path: &Path) -> io::Result<()> {
-    // upstream: util1.c make_path - backup parents are created 0700 & ~umask.
-    fast_io::operator_create_dir_all_confined(path, 0o700)
+    // upstream: backup.c:128 copy_valid_path() and util1.c:241 make_path()
+    // both `do_mkdir_at(..., ACCESSPERMS)` - 0777 less the umask.
+    fast_io::operator_create_dir_all_confined(path, 0o777)
 }
 
 #[cfg(windows)]
