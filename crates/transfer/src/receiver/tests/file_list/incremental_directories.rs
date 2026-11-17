@@ -429,7 +429,7 @@ mod create_directory_incremental_tests {
     /// `delete_item(fname, ..., del_opts | DEL_FOR_DIR)` and then
     /// `do_mkdir_at()` (`generator.c:1840-1844`). The receiver's
     /// `classify_dir_destination` reproduces this: it removes the conflicting
-    /// symlink and reports `ReplacedSymlink`, which drives a fresh `mkdir`.
+    /// symlink and reports `ReplacedNonDirectory`, which drives a fresh `mkdir`.
     ///
     /// A dangling symlink is used deliberately: `Path::exists` follows it and
     /// reports "missing", which the old `.exists()` probe mistook for a plain
