@@ -44,15 +44,19 @@ enum Obstacle {
     /// A file at `ro/d1`, inside a directory the receiver cannot write to
     /// until it has raised it for the transfer (generator.c:1941-1949).
     FileInReadOnlyDir,
+    /// Nothing in the way: `ro/` exists, empty and unwritable, and `ro/d1`
+    /// has to be made inside it.
+    EmptyReadOnlyDir,
 }
 
-const OBSTACLES: [Obstacle; 6] = [
+const OBSTACLES: [Obstacle; 7] = [
     Obstacle::File,
     Obstacle::Fifo,
     Obstacle::LinkToDir,
     Obstacle::LinkToFile,
     Obstacle::DanglingLink,
     Obstacle::FileInReadOnlyDir,
+    Obstacle::EmptyReadOnlyDir,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,7 +66,7 @@ enum Direction {
 }
 
 /// Option sets, `{bak}` standing for an absolute backup directory.
-const FLAG_SETS: [&[&str]; 10] = [
+const FLAG_SETS: [&[&str]; 12] = [
     &["-ai"],
     &["-ai", "--delete-during"],
     &["-ai", "--delete-after"],
@@ -74,6 +78,9 @@ const FLAG_SETS: [&[&str]; 10] = [
     &["-a"],
     // Without -p the new directory takes dest_mode()'s "absent" arm.
     &["-rti"],
+    // The receiver driver that makes every directory of the list in one pass.
+    &["-ai", "--no-inc-recursive"],
+    &["-rti", "--no-inc-recursive"],
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -116,7 +123,11 @@ fn build_fixture(cell: &Path, obstacle: Obstacle) {
 
     let dst = cell.join("dst");
     fs::create_dir(&dst).expect("create dst");
-    let d1 = if obstacle == Obstacle::FileInReadOnlyDir {
+    let in_read_only_dir = matches!(
+        obstacle,
+        Obstacle::FileInReadOnlyDir | Obstacle::EmptyReadOnlyDir
+    );
+    let d1 = if in_read_only_dir {
         fs::create_dir(dst.join("ro")).expect("create dst ro");
         dst.join("ro/d1")
     } else {
@@ -145,9 +156,12 @@ fn build_fixture(cell: &Path, obstacle: Obstacle) {
             symlink(cell.join("target-file"), &d1).expect("symlink to file");
         }
         Obstacle::DanglingLink => symlink(cell.join("nowhere"), &d1).expect("dangling symlink"),
+        Obstacle::EmptyReadOnlyDir => {}
     }
-    set_mtime(&d1, DEST_MTIME);
-    if obstacle == Obstacle::FileInReadOnlyDir {
+    if obstacle != Obstacle::EmptyReadOnlyDir {
+        set_mtime(&d1, DEST_MTIME);
+    }
+    if in_read_only_dir {
         set_mtime(&dst.join("ro"), DEST_MTIME);
         fs::set_permissions(dst.join("ro"), fs::Permissions::from_mode(0o555)).expect("chmod ro");
     }
@@ -261,14 +275,6 @@ fn is_kept_dirlink(obstacle: Obstacle, flags: &[&str]) -> bool {
     obstacle == Obstacle::LinkToDir && flags.contains(&"-aiK")
 }
 
-/// `--delete-after` selects the receiver driver that makes every directory
-/// before it raises any of them, and that driver cannot yet create anything
-/// under an existing unwritable directory, obstacle or not. The cell would
-/// measure that, not the replacement.
-fn is_batch_driver_under_unwritable_dir(obstacle: Obstacle, flags: &[&str]) -> bool {
-    obstacle == Obstacle::FileInReadOnlyDir && flags.contains(&"--delete-after")
-}
-
 fn compare_with_upstream(direction: Direction) {
     let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
         return;
@@ -280,9 +286,7 @@ fn compare_with_upstream(direction: Direction) {
     let mut differences = Vec::new();
     for obstacle in OBSTACLES {
         for (index, flags) in FLAG_SETS.into_iter().enumerate() {
-            if is_kept_dirlink(obstacle, flags)
-                || is_batch_driver_under_unwritable_dir(obstacle, flags)
-            {
+            if is_kept_dirlink(obstacle, flags) {
                 continue;
             }
             // The two cells share a name under different parents so that any

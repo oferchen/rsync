@@ -403,7 +403,10 @@ impl ReceiverContext {
                 )
             })
             .collect();
-        for (idx, relative_path, dir_path) in &dir_entries {
+        for (pos, (idx, relative_path, dir_path)) in dir_entries.iter().enumerate() {
+            // `pos` is only read on Unix (the transient owner-rwx raise).
+            #[cfg(not(unix))]
+            let _ = pos;
             // `relative_path` is only read on Unix (mkdirat fast path).
             #[cfg(not(unix))]
             let _ = relative_path;
@@ -477,6 +480,27 @@ impl ReceiverContext {
             };
             let is_new = dir_dest.needs_mkdir();
             dir_was_new.push(is_new);
+            // upstream: generator.c:1941-1949 - a directory its owner cannot
+            // fully use is chmod'ed to `mode | S_IRWXU` when it is visited,
+            // ahead of every entry below it, and touch_up_dirs() puts the real
+            // mode back. The metadata pass further down applies that raise
+            // too, but only once every directory of the list has been made,
+            // which is too late for a child of an existing 0555 directory.
+            #[cfg(unix)]
+            if !is_new
+                && !metadata_opts.fake_super_enabled()
+                && !metadata::am_root()
+                && let Some(existing) = pre_mkdir_meta[pos].as_ref()
+                && existing.is_dir()
+                && existing.mode() & 0o700 != 0o700
+            {
+                let _ = super::dest_chmod(
+                    sandbox,
+                    dest_dir,
+                    dir_path,
+                    (existing.mode() & 0o7777) | 0o700,
+                );
+            }
             if is_new {
                 #[cfg(all(
                     feature = "acl",
@@ -646,11 +670,12 @@ impl ReceiverContext {
         )> = dir_entries
             .into_iter()
             .zip(dir_was_new.iter().copied())
-            .filter(|((_, _, dir_path), _)| {
+            .zip(pre_mkdir_meta)
+            .filter(|(((_, _, dir_path), _), _)| {
                 !failed_dir_paths.contains_key(dir_path)
                     && !skipped_existing_dirs.contains(dir_path)
             })
-            .map(|((idx, _, dir_path), is_new)| {
+            .map(|(((idx, _, dir_path), is_new), pre_mkdir)| {
                 let entry = &self.file_list[idx];
                 let xattr_list = self.resolve_xattr_list(entry);
                 // `mut` is only exercised by the Unix transient-writable-mode
@@ -668,16 +693,9 @@ impl ReceiverContext {
                 // (exists=false). Supply the pre-transfer stat only for a
                 // dir that already existed so the !perms dest_mode() apply
                 // takes the exists=true branch and never rewrites its bits.
-                let pre_transfer = if is_new {
-                    None
-                } else {
-                    pre_transfer_stat(
-                        #[cfg(unix)]
-                        sandbox,
-                        dest_dir,
-                        &dir_path,
-                    )
-                };
+                // It is the stat taken before the pass above raised the
+                // directory, as upstream's `sx` is (generator.c:1782).
+                let pre_transfer = if is_new { None } else { pre_mkdir };
                 (dir_path, entry, xattr_list, pre_transfer)
             })
             .collect();
@@ -1763,6 +1781,65 @@ mod touch_up_dirs_tests {
                     ),
                 ],
                 "obstacle_is_symlink={obstacle_is_symlink}"
+            );
+        }
+    }
+
+    /// A directory is made inside an existing one its owner cannot write to,
+    /// with and without `-p`, and the parent ends with its real mode.
+    ///
+    /// upstream: generator.c:1941-1949 raises a directory to `mode | S_IRWXU`
+    /// when it is visited, before the entries below it, and `touch_up_dirs()`
+    /// restores it (generator.c:2638-2643). This pass makes every directory of
+    /// the list before any of them gets its attributes, so the raise has to
+    /// happen as each existing directory is passed, or the child's mkdir is
+    /// refused.
+    #[cfg(unix)]
+    #[test]
+    fn a_child_is_made_under_an_existing_unwritable_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata::am_root() {
+            // root is never refused, so the cell would pass without the raise.
+            return;
+        }
+
+        for preserve_perms in [true, false] {
+            let dir = test_support::create_tempdir();
+            let dest = dir.path();
+            let parent = dest.join("ro");
+            fs::create_dir(&parent).unwrap();
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
+
+            let hs = handshake();
+            let mut config = config_with_times(false);
+            config.flags.perms = preserve_perms;
+            let mut ctx = ReceiverContext::new_for_test(&hs, config);
+            ctx.file_list = vec![
+                FileEntry::new_directory("ro".into(), 0o555),
+                FileEntry::new_directory("ro/sub".into(), 0o755),
+            ]
+            .into();
+
+            let opts = metadata::MetadataOptions::default().preserve_permissions(preserve_perms);
+            let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+            let mut failed = crate::receiver::directory::FailedDirectories::new();
+            let errors = ctx
+                .create_directories(dest, &opts, None, None, &mut failed, &mut writer, None)
+                .expect("create_directories succeeds");
+            assert!(errors.is_empty(), "perms={preserve_perms}: {errors:?}");
+            assert!(
+                parent.join("sub").is_dir(),
+                "perms={preserve_perms}: the child must be made"
+            );
+
+            ctx.touch_up_dirs(dest, None, &mut writer, &failed);
+            let mode = fs::metadata(&parent).unwrap().permissions().mode() & 0o7777;
+            // Restore before asserting so a failure leaves a removable tempdir.
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(
+                mode, 0o555,
+                "perms={preserve_perms}: the parent must end with its real mode"
             );
         }
     }
