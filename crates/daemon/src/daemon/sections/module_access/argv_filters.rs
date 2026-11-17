@@ -119,14 +119,22 @@ impl core::client::filter_args::FilterFileSource for ModuleArgvFiles<'_> {
         // no slash unchanged, unsanitized, so `..` reaches the confined open
         // and is refused there (ELOOP, MEASURED on 3.5.2) while `.` opens the
         // module root itself.
-        let bare = !name.as_os_str().as_encoded_bytes().contains(&b'/');
-        let open_name = if bare {
+        let open_name = if is_bare_merge_name(name) {
             name.to_string_lossy().into_owned()
         } else {
             relative
         };
         open_module_file(self.root, &open_name)
     }
+}
+
+/// Whether a client-named merge file opens as given rather than sanitized.
+///
+/// Upstream's bare-name rule keys on `/` alone; only on Unix is that the sole
+/// separator, so elsewhere a name such as `..\x` could still climb and every
+/// name keeps its sanitized form.
+fn is_bare_merge_name(name: &Path) -> bool {
+    cfg!(unix) && !name.as_os_str().as_encoded_bytes().contains(&b'/')
 }
 
 /// Builds the rules the client's argv filter options add, in argv order.
@@ -291,6 +299,28 @@ fn argv_parse_role(client_args: &[String]) -> Role {
 #[cfg(test)]
 mod argv_parse_role_tests {
     use super::*;
+
+    #[test]
+    fn a_name_with_a_slash_is_never_bare() {
+        assert!(!is_bare_merge_name(Path::new("sub/rules")));
+        assert!(!is_bare_merge_name(Path::new("../rules")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_slashless_unix_name_opens_as_given() {
+        assert!(is_bare_merge_name(Path::new("..")));
+        assert!(is_bare_merge_name(Path::new("rules")));
+    }
+
+    /// A backslash separates on Windows, so `..\secret` must keep its
+    /// sanitized form instead of climbing out of the module.
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_name_is_never_bare() {
+        assert!(!is_bare_merge_name(Path::new(r"..\secret")));
+        assert!(!is_bare_merge_name(Path::new("..")));
+    }
 
     /// upstream: rsync.c:987-995 - a 3.5.2 daemon prints its argv filter
     /// refusal as `[sender]` on a pull and as the pre-fork `[Receiver]` on a
