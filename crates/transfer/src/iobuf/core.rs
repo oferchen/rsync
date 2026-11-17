@@ -54,6 +54,11 @@ pub(crate) struct Core<'a> {
     /// The multiplexed output buffer, written out before every wait for input
     /// (upstream: io.c:766-768 arms `iobuf.out` whenever it holds data).
     mux: Option<SharedMuxOut>,
+    /// Whether a read that needed input may queue a keepalive on `mux`; only
+    /// the sending side's reads do (upstream: io.c:1656 returns for a process
+    /// that is not yet sender, receiver or generator, and a forked
+    /// receiver's output goes to its generator, not the peer).
+    keepalive_on_read: bool,
 }
 
 /// The handle both stacks hold. Each role runs its connection on one thread,
@@ -80,6 +85,7 @@ impl<'a> Core<'a> {
             write_counter: None,
             limiter: None,
             mux: None,
+            keepalive_on_read: false,
         }))
     }
 
@@ -107,6 +113,12 @@ impl<'a> Core<'a> {
     /// waits for input.
     pub(crate) fn attach_mux(core: &SharedCore<'a>, mux: SharedMuxOut) {
         core.borrow_mut().mux = Some(mux);
+    }
+
+    /// Lets reads that needed input queue a `--timeout` keepalive on the
+    /// attached multiplex output, as upstream's sender does (io.c:933-936).
+    pub(crate) fn keepalive_on_read(core: &SharedCore<'a>) {
+        core.borrow_mut().keepalive_on_read = true;
     }
 
     /// Starts buffered, counted input, as upstream does once protocol setup
@@ -179,12 +191,12 @@ impl<'a> Core<'a> {
                         return Ok(0);
                     }
                     Some(n) => {
-                        self.count_read(n);
+                        self.count_read(n, true)?;
                         return Ok(n);
                     }
                     None => {}
                 }
-            } else if self.fill_input()?.is_some() {
+            } else if self.fill_input(true)?.is_some() {
                 continue;
             }
             // upstream io.c perform_io selects before every read; oc reads
@@ -265,15 +277,17 @@ impl<'a> Core<'a> {
     }
 
     /// Reads whatever the transport has ready into the input buffer. `Some(0)`
-    /// marks end of file; `None` means nothing was ready.
-    fn fill_input(&mut self) -> io::Result<Option<usize>> {
+    /// marks end of file; `None` means nothing was ready. `needed` is true
+    /// when a read is waiting for this input rather than a write collecting
+    /// it (upstream: `flags & PIO_NEED_INPUT` at io.c:935).
+    fn fill_input(&mut self, needed: bool) -> io::Result<Option<usize>> {
         let Self {
             input, transport, ..
         } = self;
         let got = input.fill_with(|span| transport.try_read(span))?;
         match got {
             Some(0) => self.in_eof = true,
-            Some(n) => self.count_read(n),
+            Some(n) => self.count_read(n, needed)?,
             None => {}
         }
         Ok(got)
@@ -309,19 +323,27 @@ impl<'a> Core<'a> {
             return self.timeout.check();
         }
         if ready.readable && self.buffering() {
-            self.fill_input()?;
+            self.fill_input(!want_output)?;
         }
         Ok(())
     }
 
     /// Counts and timestamps buffered-mode input; raw reads are neither
     /// (upstream: safe_read() touches neither `stats.total_read` nor
-    /// `last_io_in`).
-    fn count_read(&mut self, n: usize) {
+    /// `last_io_in`). A read that `needed` the input may then queue a
+    /// keepalive (upstream: io.c:933-936).
+    fn count_read(&mut self, n: usize, needed: bool) -> io::Result<()> {
         if let Some(counter) = &self.read_counter {
             counter.fetch_add(n as u64, Ordering::Relaxed);
             self.timeout.mark_io();
+            if needed
+                && self.keepalive_on_read
+                && let Some(mux) = &self.mux
+            {
+                mux.borrow_mut().keepalive_after_read()?;
+            }
         }
+        Ok(())
     }
 }
 
@@ -661,6 +683,33 @@ mod tests {
         peer.set_nonblocking(false).unwrap();
         got.truncate(n);
         got
+    }
+
+    /// WHY: upstream's sender queues an empty `MSG_DATA` after a read that
+    /// needed input while `last_io_out` is still 0 (io.c:113, io.c:933-936,
+    /// io.c:1665-1668), so with `--timeout` its first frame is that keepalive;
+    /// a core whose role does not read that way queues nothing.
+    #[test]
+    fn a_senders_first_read_queues_the_keepalive_ahead_of_its_output() {
+        for sender in [true, false] {
+            let (core, mut peer, _, mut mux) = core_with_mux();
+            mux.set_allowed_lull(Some(Duration::from_secs(3600)));
+            if sender {
+                Core::keepalive_on_read(&core);
+            }
+            peer.write_all(b"x").unwrap();
+            let mut one = [0u8; 1];
+            CoreReader::new(&core).read_exact(&mut one).unwrap();
+            mux.write_all(b"ab").unwrap();
+            mux.flush().unwrap();
+
+            let expected: &[u8] = if sender {
+                b"\x00\x00\x00\x07\x02\x00\x00\x07ab"
+            } else {
+                b"\x02\x00\x00\x07ab"
+            };
+            assert_eq!(peer_ready(&mut peer), expected, "sender={sender}");
+        }
     }
 
     /// WHY: upstream writes `iobuf.out` whenever perform_io() is about to

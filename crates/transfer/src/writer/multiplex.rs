@@ -83,9 +83,35 @@ pub(crate) struct MuxOut {
     /// `flush()`. Prevents redundant flush syscalls on transfer hot paths where
     /// `flush()` is called per-iteration but many iterations produce no output.
     dirty: bool,
-    /// Instant of the last actual write to the sink, tracking upstream's
-    /// `last_io_out`. A lull is measured from this point.
-    last_io_out: Instant,
+    /// When bytes last reached the sink, upstream's `last_io_out`. A lull is
+    /// measured from it.
+    last_io_out: LastWrite,
+    /// The keep-alive lull interval, `None` when `--timeout` is not set.
+    ///
+    /// upstream: `io.c:set_io_timeout()` sets `allowed_lull = (io_timeout + 1) / 2`
+    /// (io.c:1299); a keepalive is due once this much time has passed with no
+    /// output (io.c:1659).
+    allowed_lull: Option<Duration>,
+}
+
+/// When output last reached the sink: upstream's `last_io_out`.
+#[derive(Clone, Copy, Debug)]
+enum LastWrite {
+    /// Nothing written yet. Upstream's `last_io_out` starts at 0 (io.c:113),
+    /// so a connection's first lull check always finds the lull passed.
+    Never,
+    /// The most recent write.
+    At(Instant),
+}
+
+impl LastWrite {
+    /// Whether `lull` has passed since the last write.
+    fn lull_passed(self, lull: Duration) -> bool {
+        match self {
+            Self::Never => true,
+            Self::At(at) => at.elapsed() >= lull,
+        }
+    }
 }
 
 /// The output buffer shared by a multiplex writer and the transport core
@@ -104,8 +130,31 @@ impl MuxOut {
             msgs: Vec::new(),
             scratch: Vec::new(),
             dirty: false,
-            last_io_out: Instant::now(),
+            last_io_out: LastWrite::Never,
+            allowed_lull: None,
         }
+    }
+
+    /// Queues an empty `MSG_DATA` keepalive after a read that needed input,
+    /// when `--timeout` is set, the lull has passed and nothing is queued.
+    /// Nothing is written here: the frame leaves with the next write-out.
+    ///
+    /// upstream: perform_io() calls `maybe_send_keepalive(last_io_in, 0)`
+    /// after each such read (io.c:933-936); without `MSK_ALLOW_FLUSH` it only
+    /// queues the frame (io.c:1665-1668). Since `last_io_out` is still 0
+    /// before the first write, a sender whose first act is to read puts this
+    /// frame ahead of everything else it sends.
+    pub(crate) fn keepalive_after_read(&mut self) -> io::Result<()> {
+        let Some(lull) = self.allowed_lull else {
+            return Ok(());
+        };
+        if self.has_pending() || !self.last_io_out.lull_passed(lull) {
+            return Ok(());
+        }
+        let header = MessageHeader::new(MessageCode::Data, 0)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        self.msgs.extend_from_slice(&header.encode());
+        Ok(())
     }
 
     /// True when messages or payload bytes are buffered and not yet written.
@@ -175,7 +224,7 @@ impl MuxOut {
         if self.dirty {
             sink.flush()?;
             self.dirty = false;
-            self.last_io_out = Instant::now();
+            self.last_io_out = LastWrite::At(Instant::now());
         }
         Ok(())
     }
@@ -239,7 +288,7 @@ impl MuxOut {
     /// Records that bytes reached the sink, for the flush and lull logic.
     fn mark_written(&mut self) {
         self.dirty = true;
-        self.last_io_out = Instant::now();
+        self.last_io_out = LastWrite::At(Instant::now());
     }
 }
 
@@ -270,12 +319,6 @@ pub(crate) struct MultiplexWriter<W> {
     /// Selects whether recorded bytes are also framed onto the wire.
     /// upstream: `sender.c:510` `f_xfer = write_batch < 0 ? batch_fd : f_out`
     pub(crate) batch_route: BatchRoute,
-    /// The keep-alive lull interval, `None` when `--timeout` is not set.
-    ///
-    /// upstream: `io.c:set_io_timeout()` sets `allowed_lull = (io_timeout + 1) / 2`
-    /// (io.c:1652); a keepalive is emitted once this much time has elapsed with
-    /// no output.
-    allowed_lull: Option<Duration>,
     /// Payload bytes accepted through the `Write` trait and bound for the
     /// wire; bytes diverted to the batch file are not counted.
     /// upstream: io.c:2509 `total_data_written += len` in `write_buf()`.
@@ -299,7 +342,6 @@ impl<W: Write> MultiplexWriter<W> {
             out: Rc::new(RefCell::new(MuxOut::new())),
             batch_recorder: None,
             batch_route: BatchRoute::default(),
-            allowed_lull: None,
             data_written: 0,
             message_routing: None,
             outbox: super::peer_sink::session_outbox(),
@@ -387,11 +429,23 @@ impl<W: Write> MultiplexWriter<W> {
     /// Configures the keep-alive lull interval.
     ///
     /// upstream: `io.c:set_io_timeout()` derives `allowed_lull = (io_timeout + 1) / 2`
-    /// (io.c:1652). Passing `None` (no `--timeout`) disables lull keepalives, so
-    /// the default transfer path stays byte-for-byte identical.
+    /// (io.c:1299) and leaves `last_io_out` alone. Passing `None` (no
+    /// `--timeout`) disables lull keepalives, so the default transfer path
+    /// stays byte-for-byte identical.
     pub(crate) fn set_allowed_lull(&mut self, lull: Option<Duration>) {
-        self.allowed_lull = lull;
-        self.out.borrow_mut().last_io_out = Instant::now();
+        self.out.borrow_mut().allowed_lull = lull;
+    }
+
+    /// Starts the lull now instead of at "never written".
+    ///
+    /// For the receiving side only. Its generator pokes a keepalive before
+    /// each file it checks, ahead of the requests it batches, while
+    /// upstream's generator pokes after `recv_generator()` has buffered the
+    /// entry's request (generator.c:2904-2913). Taking the lull from setup
+    /// keeps those pokes from sending an empty frame where rsync 3.5.2 sends
+    /// that request instead.
+    pub(crate) fn measure_lull_from_now(&mut self) {
+        self.out.borrow_mut().last_io_out = LastWrite::At(Instant::now());
     }
 
     /// Returns the configured keep-alive lull interval, or `None` when
@@ -400,7 +454,7 @@ impl<W: Write> MultiplexWriter<W> {
     /// Callers use this to derive upstream's `lull_mod = allowed_lull * 5`
     /// cadence (sender.c:341) when poking keepalives inside a long read loop.
     pub(crate) fn allowed_lull(&self) -> Option<Duration> {
-        self.allowed_lull
+        self.out.borrow().allowed_lull
     }
 
     /// Emits a lull keepalive if the configured `allowed_lull` has elapsed with
@@ -412,9 +466,9 @@ impl<W: Write> MultiplexWriter<W> {
     /// keepalive is emitted only when a full `allowed_lull` has passed since the
     /// last output and the output buffer sits at a frame boundary. When data is
     /// still buffered, flushing it is itself output activity, so upstream flushes
-    /// instead of emitting the empty frame (io.c:1660-1665).
+    /// instead of emitting the empty frame (io.c:1665-1672).
     pub(crate) fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
-        let Some(lull) = self.allowed_lull else {
+        let Some(lull) = self.allowed_lull() else {
             return Ok(false);
         };
         self.send_keepalive_after_lull(lull)
@@ -425,22 +479,22 @@ impl<W: Write> MultiplexWriter<W> {
     /// Upstream routes the reply through `maybe_send_keepalive()` even when
     /// `--timeout` is not set: `allowed_lull` starts at 0 (io.c:83) and
     /// `set_io_timeout(0)` recomputes it as `(0 + 1) / 2 == 0` (io.c:1299), so
-    /// the `now - last_io_out >= allowed_lull` test (io.c:1652) passes
+    /// the `now - last_io_out >= allowed_lull` test (io.c:1659) passes
     /// unconditionally and the reply goes out immediately. With `--timeout`
     /// the configured half-interval gates the reply exactly as it gates a
     /// spontaneous keepalive, so this treats an unset lull as zero rather
     /// than as "disabled".
     pub(crate) fn answer_keepalive(&mut self) -> io::Result<bool> {
-        let lull = self.allowed_lull.unwrap_or(Duration::ZERO);
+        let lull = self.allowed_lull().unwrap_or(Duration::ZERO);
         self.send_keepalive_after_lull(lull)
     }
 
     /// The shared body of [`Self::maybe_send_keepalive`] and
     /// [`Self::answer_keepalive`]: upstream `io.c:maybe_send_keepalive()`
-    /// (io.c:1639-1667) with `allowed_lull` supplied by the caller.
+    /// (io.c:1646-1674) with `allowed_lull` supplied by the caller.
     fn send_keepalive_after_lull(&mut self, lull: Duration) -> io::Result<bool> {
         let mut out = self.out.borrow_mut();
-        if out.last_io_out.elapsed() < lull {
+        if !out.last_io_out.lull_passed(lull) {
             return Ok(false);
         }
 
@@ -454,14 +508,14 @@ impl<W: Write> MultiplexWriter<W> {
             out.write_messages(&mut self.inner)?;
             self.inner.flush()?;
             out.dirty = false;
-            out.last_io_out = Instant::now();
+            out.last_io_out = LastWrite::At(Instant::now());
             return Ok(false);
         }
         if out.has_pending() {
             out.flush_buffer(&mut self.inner)?;
             self.inner.flush()?;
             out.dirty = false;
-            out.last_io_out = Instant::now();
+            out.last_io_out = LastWrite::At(Instant::now());
             return Ok(false);
         }
 
@@ -470,7 +524,7 @@ impl<W: Write> MultiplexWriter<W> {
         out.write_frame(&mut self.inner, MessageCode::Data, 0, std::iter::empty())?;
         self.inner.flush()?;
         out.dirty = false;
-        out.last_io_out = Instant::now();
+        out.last_io_out = LastWrite::At(Instant::now());
         Ok(true)
     }
 
@@ -550,7 +604,7 @@ impl<W: Write> MultiplexWriter<W> {
         self.inner.write_all(data)?;
         self.inner.flush()?;
         out.dirty = false;
-        out.last_io_out = Instant::now();
+        out.last_io_out = LastWrite::At(Instant::now());
         Ok(())
     }
 }
@@ -653,18 +707,90 @@ mod keepalive_tests {
         );
     }
 
-    /// A lull that has not yet elapsed produces no keepalive (upstream gates on
-    /// `now - last_io_out >= allowed_lull`, io.c:1652).
+    /// A lull that has not yet elapsed since the last write produces no
+    /// keepalive (upstream gates on `now - last_io_out >= allowed_lull`,
+    /// io.c:1659).
     #[test]
     fn lull_not_elapsed_emits_nothing() {
         let mut out: Vec<u8> = Vec::new();
         let mut w = MultiplexWriter::new(&mut out);
         w.set_allowed_lull(Some(Duration::from_secs(3600)));
+        w.write_all(b"x").unwrap();
+        w.flush().unwrap();
+        let written = out_len(&w);
         assert!(!w.maybe_send_keepalive().unwrap());
-        assert!(
-            out.is_empty(),
+        assert_eq!(
+            out_len(&w),
+            written,
             "keepalive must not fire before the lull elapses"
         );
+    }
+
+    /// WHY: upstream's `last_io_out` starts at 0 (io.c:113), so before the
+    /// first write any lull has passed: a connection that has written
+    /// nothing sends its keepalive at once, however long the lull.
+    #[test]
+    fn a_writer_that_never_wrote_has_passed_any_lull() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        w.set_allowed_lull(Some(Duration::from_secs(3600)));
+        assert!(w.maybe_send_keepalive().unwrap());
+        assert_eq!(out, [0, 0, 0, 7]);
+    }
+
+    /// WHY: a read that needed input queues the keepalive upstream's
+    /// `maybe_send_keepalive(last_io_in, 0)` would (io.c:933-936,
+    /// io.c:1665-1668): one frame, written with the next output and not
+    /// before, and only while nothing else is queued.
+    #[test]
+    fn a_read_queues_one_keepalive_before_the_first_write() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        w.set_allowed_lull(Some(Duration::from_secs(3600)));
+        let shared = w.shared_out();
+        shared.borrow_mut().keepalive_after_read().unwrap();
+        shared.borrow_mut().keepalive_after_read().unwrap();
+        assert_eq!(out_len(&w), 0, "queued, not written");
+        w.write_all(b"ab").unwrap();
+        w.flush().unwrap();
+        drop(w);
+        assert_eq!(out, [0, 0, 0, 7, 2, 0, 0, 7, b'a', b'b']);
+    }
+
+    /// WHY: io.c:1665 queues the empty frame only when `iobuf.msg` is empty
+    /// and `iobuf.out` holds no data, and io.c:933 only with `--timeout`.
+    #[test]
+    fn a_read_queues_no_keepalive_behind_pending_output_or_without_timeout() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        let shared = w.shared_out();
+        shared.borrow_mut().keepalive_after_read().unwrap();
+        assert!(!shared.borrow().has_pending(), "no lull, no frame");
+        w.set_allowed_lull(Some(Duration::from_secs(3600)));
+        w.write_all(b"ab").unwrap();
+        shared.borrow_mut().keepalive_after_read().unwrap();
+        w.flush().unwrap();
+        drop(w);
+        assert_eq!(out, [2, 0, 0, 7, b'a', b'b']);
+    }
+
+    /// WHY: the receiving side measures its lull from setup (see
+    /// `measure_lull_from_now`), so a keepalive poke right after setup stays
+    /// silent there, as it did before the never-written state existed.
+    #[test]
+    fn a_lull_measured_from_setup_has_not_passed_yet() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        w.set_allowed_lull(Some(Duration::from_secs(3600)));
+        w.measure_lull_from_now();
+        assert!(!w.maybe_send_keepalive().unwrap());
+        drop(w);
+        assert!(out.is_empty());
+    }
+
+    /// Bytes the writer has put on the sink so far.
+    fn out_len(w: &MultiplexWriter<&mut Vec<u8>>) -> usize {
+        w.inner.len()
     }
 
     /// Once the lull has elapsed at a frame boundary, an empty MSG_DATA keepalive
@@ -724,19 +850,22 @@ mod keepalive_tests {
     }
 
     /// With `--timeout` configured, the reply is gated on the same lull as a
-    /// spontaneous keepalive (`now - last_io_out >= allowed_lull`, io.c:1652):
+    /// spontaneous keepalive (`now - last_io_out >= allowed_lull`, io.c:1659):
     /// nothing goes out before the half-interval elapses.
     #[test]
     fn answer_keepalive_with_unelapsed_lull_stays_silent() {
         let mut out: Vec<u8> = Vec::new();
         let mut w = MultiplexWriter::new(&mut out);
         w.set_allowed_lull(Some(Duration::from_secs(3600)));
+        w.write_all(b"x").unwrap();
+        w.flush().unwrap();
         assert!(!w.answer_keepalive().unwrap());
-        assert!(out.is_empty());
+        drop(w);
+        assert_eq!(out, [1, 0, 0, 7, b'x']);
     }
 
     /// Like the spontaneous path, an answer with data still buffered flushes
-    /// that data instead of emitting an empty frame (io.c:1662-1665).
+    /// that data instead of emitting an empty frame (io.c:1665-1672).
     #[test]
     fn answer_keepalive_flushes_pending_data_instead_of_empty_frame() {
         let mut out: Vec<u8> = Vec::new();
@@ -755,9 +884,9 @@ mod keepalive_tests {
     fn keepalive_resets_lull_timer() {
         let mut out: Vec<u8> = Vec::new();
         let mut w = MultiplexWriter::new(&mut out);
-        // Non-zero lull so the reset is observable.
-        w.set_allowed_lull(Some(Duration::from_millis(50)));
-        std::thread::sleep(Duration::from_millis(60));
+        // A writer that never wrote has passed any lull (io.c:113), so the
+        // first call fires; the long lull makes the reset observable.
+        w.set_allowed_lull(Some(Duration::from_secs(3600)));
         assert!(w.maybe_send_keepalive().unwrap(), "first call fires");
         assert!(
             !w.maybe_send_keepalive().unwrap(),
