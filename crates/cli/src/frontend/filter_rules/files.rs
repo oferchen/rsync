@@ -31,6 +31,12 @@ impl FilterFileSource for ProcessFilterFiles {
             }
             return Ok(Box::new(io::stdin()));
         }
+        // `.`, `..` and `/` name a directory, which upstream opens and then reads
+        // as an empty file (exclude.c:1764-1769): the open still has to succeed.
+        if path.file_name().is_none() {
+            crate::frontend::operator_file::open_dir(path)?;
+            return Ok(Box::new(io::empty()));
+        }
         Ok(Box::new(
             crate::frontend::operator_file::open_read_confined(path)?,
         ))
@@ -48,4 +54,35 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn set_filter_stdin_input(data: Vec<u8>) {
     TEST_STDIN.with(|slot| *slot.borrow_mut() = Some(data));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// upstream: `-f '. ..'` opens the directory and reads it as an empty file,
+    /// so 3.5.2 exits 0 where oc refused it with EINVAL (exit 11).
+    #[test]
+    fn a_merge_name_without_a_final_component_reads_as_empty() {
+        for name in [".", ".."] {
+            let mut reader = ProcessFilterFiles
+                .open(Path::new(name), FilterFileKind::MergeFile, &[])
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            let mut contents = Vec::new();
+            reader.read_to_end(&mut contents).expect("read");
+            assert!(contents.is_empty(), "{name}");
+        }
+    }
+
+    /// A directory that does not exist is still an open failure.
+    #[test]
+    fn a_missing_directory_name_still_fails_to_open() {
+        let temp = test_support::create_tempdir();
+        let missing = temp.path().join("nosuch").join("..");
+        assert!(
+            ProcessFilterFiles
+                .open(&missing, FilterFileKind::MergeFile, &[])
+                .is_err()
+        );
+    }
 }

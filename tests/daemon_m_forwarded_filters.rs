@@ -295,10 +295,11 @@ fn exclude_from_through_a_symlink_leaving_the_module_is_refused() {
 
 #[test]
 fn fatal_argv_filter_errors_end_the_session_silently() {
-    // MEASURED against rsync 3.5.1: each of these exits the daemon inside
-    // parse_arguments(), leaving the client rc 12 and the reason only in the
-    // daemon log - RERR_FILEIO (11) for an open failure, RERR_SYNTAX (1) for a
-    // malformed rule - followed by log_exit()'s totals line (cleanup.c:222-226).
+    // MEASURED against rsync 3.5.2: each of these exits the daemon inside
+    // parse_arguments(), leaving the client rc 12. The daemon logs the cause
+    // line, then log_exit()'s trailer - RERR_FILEIO (11) for an open failure,
+    // RERR_SYNTAX (1) for a malformed rule - then the totals line
+    // (cleanup.c:222-226).
     let fixture = Fixture::new();
     for (arg, cause, code) in [
         (
@@ -327,8 +328,9 @@ fn fatal_argv_filter_errors_end_the_session_silently() {
         assert!(names(&dest).is_empty(), "{arg}: nothing may be transferred");
         let log = fs::read_to_string(fixture.temp.path().join("rsyncd.log")).expect("read log");
         let tail = &log[log.rfind(cause).unwrap_or_else(|| panic!("{arg}: {log}"))..];
-        let (line, rest) = tail.split_once('\n').expect("log line ends");
-        assert!(line.contains(&format!("(code {code})")), "{arg}: {line}");
+        let (_cause, rest) = tail.split_once('\n').expect("log line ends");
+        let trailer = rest.lines().next().unwrap_or_default();
+        assert!(trailer.contains(&format!("(code {code})")), "{arg}: {log}");
         assert!(
             rest.contains("sent 0 bytes  received 0 bytes  total size 0"),
             "{arg}: {log}"

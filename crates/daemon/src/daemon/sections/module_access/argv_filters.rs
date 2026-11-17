@@ -28,7 +28,7 @@ enum ArgvFilterRefusal {
         /// The exit code the session ends with.
         code: ExitCode,
         /// The cause, as the parser reported it.
-        text: String,
+        refusal: Message,
     },
 }
 
@@ -153,7 +153,7 @@ fn build_argv_filter_rules(
                 };
                 ArgvFilterRefusal::Fatal {
                     code,
-                    text: message.text().to_owned(),
+                    refusal: message,
                 }
             }
         },
@@ -219,18 +219,61 @@ fn refuse_argv_filters(
                 client_args,
             )
         }
-        ArgvFilterRefusal::Fatal { code, text } => {
-            let code = *code;
-            *ctx.session_exit_code = Some(code);
+        ArgvFilterRefusal::Fatal { code, refusal } => {
+            *ctx.session_exit_code = Some(*code);
+            let brand = ctx
+                .log_sink
+                .and_then(|log| log.lock().ok().map(|sink| sink.brand()))
+                .unwrap_or(Brand::Oc);
+            let mut lines = Vec::new();
+            let _ = core::client::filter_args::write_refusal(
+                &mut lines,
+                brand,
+                argv_parse_role(client_args),
+                refusal,
+            );
+            // upstream: msgs2stderr keeps its default of 2 until after
+            // parse_arguments() returns (options.c:103, clientserver.c:1164-1182),
+            // so rwrite() puts these lines on the daemon's own stderr as well as
+            // in its log; the client reads only EOF.
+            let _ = io::stderr().write_all(&lines);
             if let Some(log) = ctx.log_sink {
-                log_message(
-                    log,
-                    &rsync_error!(code.as_i32(), text.clone()).with_role(Role::Daemon),
-                );
+                for line in lines.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+                    log_raw_line(log, line);
+                }
                 let totals = "sent 0 bytes  received 0 bytes  total size 0";
                 log_message(log, &rsync_info!(totals).with_role(Role::Daemon));
             }
             Ok(())
         }
+    }
+}
+
+/// The `who_am_i()` a daemon reports while it parses the client's options.
+///
+/// upstream: rsync.c:987-995 - `am_sender` is already set from `--sender` by
+/// then, and a receiving daemon has not forked, so it is the pre-fork
+/// `Receiver`.
+fn argv_parse_role(client_args: &[String]) -> Role {
+    if client_args.iter().any(|arg| arg == "--sender") {
+        Role::Sender
+    } else {
+        Role::PreForkReceiver
+    }
+}
+
+#[cfg(test)]
+mod argv_parse_role_tests {
+    use super::*;
+
+    /// upstream: rsync.c:987-995 - a 3.5.2 daemon prints its argv filter
+    /// refusal as `[sender]` on a pull and as the pre-fork `[Receiver]` on a
+    /// push (measured with `-M--filter='. nope'`).
+    #[test]
+    fn the_refusal_names_the_daemons_side() {
+        let pull = ["--server".to_owned(), "--sender".to_owned(), ".".to_owned()];
+        let push = ["--server".to_owned(), ".".to_owned()];
+        assert_eq!(argv_parse_role(&pull), Role::Sender);
+        assert_eq!(argv_parse_role(&push), Role::PreForkReceiver);
     }
 }

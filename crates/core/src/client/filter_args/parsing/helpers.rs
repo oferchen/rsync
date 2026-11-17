@@ -1,4 +1,4 @@
-use crate::message::{Message, Role};
+use crate::message::Message;
 use crate::rsync_error;
 
 use super::rule_line::RuleLine;
@@ -11,7 +11,7 @@ use super::rule_line::RuleLine;
 /// `line.shown()`: a merged line is one the peer chose, so echoing it verbatim
 /// would make the parser a read-any-line oracle.
 pub(super) fn unknown_filter_rule(line: RuleLine<'_>) -> Message {
-    rsync_error!(1, format!("Unknown filter rule: {}", line.shown())).with_role(Role::Client)
+    rsync_error!(1, format!("Unknown filter rule: {}", line.shown()))
 }
 
 /// Builds upstream's `unexpected end of filter rule` refusal for `line`.
@@ -25,7 +25,6 @@ pub(super) fn unexpected_end_of_filter_rule(line: RuleLine<'_>) -> Message {
         1,
         format!("unexpected end of filter rule: {}", line.shown())
     )
-    .with_role(Role::Client)
 }
 
 /// Consumes exactly one rule separator (a single space, `_`, or `,`) that
@@ -147,7 +146,6 @@ pub(super) fn parse_modifier_run(
                 line.shown()
             )
         )
-        .with_role(Role::Client)
     })
 }
 

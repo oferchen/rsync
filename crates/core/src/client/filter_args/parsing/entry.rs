@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::ffi::OsStr;
 
 use crate::client::{FilterRuleKind, FilterRuleSpec};
-use crate::message::{Message, Role};
+use crate::message::Message;
 use crate::rsync_error;
 use filters::{ClearToken, RuleSource, classify_clear_token};
 
@@ -178,8 +178,7 @@ pub(super) fn parse_rule_directive(line: RuleLine<'_>) -> Result<FilterDirective
     match classify_clear_token(trimmed.as_bytes()) {
         ClearToken::Clear => return Ok(FilterDirective::Clear),
         ClearToken::TrailingCharacters => {
-            let message = rsync_error!(1, "'!' rule has trailing characters: {}", line.shown())
-                .with_role(Role::Client);
+            let message = rsync_error!(1, "'!' rule has trailing characters: {}", line.shown());
             return Err(message);
         }
         ClearToken::NotClearToken => {}
