@@ -363,26 +363,24 @@ pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError 
     ClientError::with_code(code, message)
 }
 
-#[cold]
-/// The diagnostic a locally aborted transfer prints.
+/// The report a locally aborted transfer ends on.
 ///
-/// upstream: exclude.c:133-137 filter_rule_err() prints its message alone, so
-/// a `RERR_SYNTAX` refusal keeps its text unwrapped. A receiver site that
-/// already printed its own line before `exit_cleanup(RERR_FILEIO)` - the
-/// write, seek, fsync, close or backup of a received file - ends on the bare
-/// `log_exit()` trailer, as upstream's does (cleanup.c:249). A shutdown
-/// signal is that trailer alone too: a client sender exits from inside the
-/// handler with `exit_cleanup(RERR_SIGNAL)` (rsync.c:874), which prints
-/// nothing before it. Any other local failure says the transfer failed.
-pub(crate) fn local_abort_text(error: &std::io::Error) -> String {
-    if transfer::shared::is_signal_shutdown(error) {
-        ExitCode::Signal.description().to_owned()
-    } else if ExitCode::from_io_error(error) == ExitCode::Syntax {
-        error.to_string()
-    } else if reported_fatal_commit(error) {
-        ExitCode::from_io_error(error).description().to_owned()
+/// upstream: every fatal site prints its own line with rprintf(FERROR, ...)
+/// and then calls exit_cleanup(code), whose log_exit() adds the
+/// `rsync error: <description> (code N) at file(line) [role]` trailer
+/// (log.c:1025-1051). So the error's text is the cause line and the trailer
+/// follows, as for a refused filter rule (exclude.c:133-137, then
+/// RERR_SYNTAX). Two aborts print the trailer alone: a shutdown signal, which
+/// a client sender's handler ends with exit_cleanup(RERR_SIGNAL)
+/// (rsync.c:874), and a receiver site that already printed its own line
+/// before exit_cleanup(RERR_FILEIO) - the write, seek, fsync, close or backup
+/// of a received file (receiver.c:545-548, :658-681, :1296-1299).
+#[cold]
+pub(crate) fn local_abort_error(error: &io::Error, exit_code: ExitCode, role: Role) -> ClientError {
+    if transfer::shared::is_signal_shutdown(error) || reported_fatal_commit(error) {
+        remote_exit_error(exit_code, role)
     } else {
-        format!("transfer failed: {error}")
+        cause_line_error(error.to_string(), exit_code, role)
     }
 }
 

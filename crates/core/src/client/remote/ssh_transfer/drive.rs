@@ -501,9 +501,10 @@ mod transfer_failure_error_tests {
         );
     }
 
-    /// A rule refused out of a per-directory merge file keeps RERR_SYNTAX and
-    /// upstream's bare text, though the child exits with the higher
-    /// RERR_STREAMIO (exclude.c:133-137 filter_rule_err()).
+    /// A rule refused out of a per-directory merge file keeps RERR_SYNTAX:
+    /// upstream's text on its own line, then the code-1 trailer, though the
+    /// child exits with the higher RERR_STREAMIO (exclude.c:133-137
+    /// filter_rule_err()).
     #[test]
     fn local_syntax_abort_keeps_its_code_and_bare_text() {
         let err = transfer_failure_error(
@@ -513,10 +514,13 @@ mod transfer_failure_error_tests {
             0,
         );
         assert_eq!(err.exit_code(), 1);
-        assert!(!err.to_string().contains("transfer failed"), "{err}");
+        assert_eq!(
+            err.cause_line(),
+            Some("unexpected end of filter rule: <rule from /a/.f>")
+        );
         assert!(
             err.to_string()
-                .contains("unexpected end of filter rule: <rule from /a/.f>"),
+                .starts_with("rsync error: syntax or usage error (code 1) at "),
             "{err}"
         );
     }
@@ -537,9 +541,13 @@ mod transfer_failure_error_tests {
             0,
         );
         assert_eq!(err.exit_code(), 4);
+        assert_eq!(
+            err.cause_line(),
+            Some("Invalid checksum-choice for --checksum: none (0)")
+        );
         assert!(
             err.to_string()
-                .contains("Invalid checksum-choice for --checksum: none (0)"),
+                .starts_with("rsync error: requested action not supported (code 4) at "),
             "{err}"
         );
     }

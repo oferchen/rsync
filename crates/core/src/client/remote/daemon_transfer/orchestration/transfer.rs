@@ -300,8 +300,8 @@ pub(crate) fn run_push_transfer(
 ///
 /// A stream that ends mid-transfer is upstream's end-of-stream whine, exit
 /// `RERR_STREAMIO` (12), naming `bytes_received`. Other failures with no
-/// embedded remote code (local I/O, protocol desync) keep the generic
-/// `transfer failed: ...` (23) diagnostic.
+/// embedded remote code (local I/O, protocol desync) print their own line,
+/// then the trailer for the code they map to.
 ///
 /// upstream: io.c:1899-1932 - `MSG_ERROR_EXIT` drives the NORETURN
 /// `_exit_cleanup(val)`, so the client's final exit code is the peer's code.
@@ -714,7 +714,11 @@ mod map_server_transfer_error_tests {
             None,
         );
         assert_ne!(err.code(), ExitCode::Timeout);
-        assert!(err.cause_line().is_none());
+        assert!(
+            !err.cause_line()
+                .is_some_and(|line| line.contains("io timeout")),
+            "{err}"
+        );
     }
 
     /// upstream: io.c:930-946 perform_io() - a reset socket after the fork is

@@ -16,7 +16,7 @@ use engine::local_copy::upstream_io_error;
 use protocol::wire::CodecFailure;
 
 use crate::client::error::{
-    ClientError, cause_line_error, connection_unexpectedly_closed_error, local_abort_text,
+    ClientError, cause_line_error, connection_unexpectedly_closed_error, local_abort_error,
     program_line_error, remote_exit_error,
 };
 use crate::exit_code::ExitCode;
@@ -212,11 +212,7 @@ pub(crate) fn local_failure_error(
         Some(child) if peer_went_first && child.as_i32() > transfer_exit.as_i32() => {
             remote_exit_error(child, side.exit_role())
         }
-        _ => crate::client::error::invalid_argument_error_typed_with_role(
-            &local_abort_text(error),
-            transfer_exit,
-            role,
-        ),
+        _ => local_abort_error(error, transfer_exit, role),
     };
     side.finish(report, ExitCode::StreamIo)
 }
@@ -384,6 +380,44 @@ mod tests {
                 .starts_with("rsync error: protocol incompatibility (code 2) at "),
             "{report}"
         );
+    }
+
+    /// Every local abort that reaches the fallthrough prints its own text as
+    /// the cause line, then log_exit()'s trailer for the code it maps to
+    /// (log.c:1025-1051), never a `transfer failed: ` prefix. The cases span
+    /// the kinds and codes the fallthrough sees, a refused filter rule
+    /// (RERR_SYNTAX, exclude.c:133-137) among them.
+    #[test]
+    fn a_fallthrough_abort_is_its_cause_line_then_its_codes_trailer() {
+        let cases = [
+            io::Error::other("unexplained local failure"),
+            io::Error::new(io::ErrorKind::InvalidInput, "unexpected end of filter rule"),
+            io::Error::new(io::ErrorKind::InvalidData, "bad index in file list"),
+            io::Error::new(io::ErrorKind::PermissionDenied, "cannot open"),
+            io::Error::new(io::ErrorKind::NotFound, "no such entry"),
+            io::Error::new(io::ErrorKind::StorageFull, "disk full"),
+            io::Error::new(io::ErrorKind::Unsupported, "not supported here"),
+            io::Error::new(io::ErrorKind::OutOfMemory, "allocation refused"),
+            io::Error::new(io::ErrorKind::BrokenPipe, "peer gone"),
+        ];
+        for error in cases {
+            let code = ExitCode::from_io_error(&error);
+            let report = local_failure_error(&error, None, ReportingSide::PreFork, 0, None);
+            let rendered = report.to_string();
+            assert!(!rendered.contains("transfer failed: "), "{rendered}");
+            assert_eq!(
+                report.cause_line(),
+                Some(error.to_string().as_str()),
+                "{rendered}"
+            );
+            assert_eq!(report.code(), code, "{rendered}");
+            let trailer = format!(
+                "rsync error: {} (code {}) at ",
+                code.description(),
+                code.as_i32()
+            );
+            assert!(rendered.starts_with(&trailer), "{rendered} vs {trailer}");
+        }
     }
 
     /// A shutdown signal ends a client sender with the bare RERR_SIGNAL
