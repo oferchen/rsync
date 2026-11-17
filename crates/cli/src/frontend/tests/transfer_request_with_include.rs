@@ -31,7 +31,9 @@ fn transfer_request_with_include_from_reinstate_patterns() {
             from0: false,
         },
         &filters::CvsSession::default(),
-        &crate::frontend::filter_rules::ProcessFilterFiles,
+        &crate::frontend::filter_rules::ProcessFilterFiles {
+            who: core::message::Role::Client,
+        },
     )
     .expect("load include patterns");
     expected_rules.push(FilterRuleSpec::exclude("*".to_owned()));

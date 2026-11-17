@@ -337,3 +337,26 @@ fn fatal_argv_filter_errors_end_the_session_silently() {
         );
     }
 }
+
+#[test]
+fn a_merge_file_naming_a_directory_reads_as_empty() {
+    // MEASURED against rsync 3.5.2: a merge file that names a directory opens
+    // and its first read ends it like an empty file (exclude.c:1764-1769), so
+    // the pull runs with no rule added, for the module root (`.`) and for a
+    // subdirectory alike. A bare `..` is opened unsanitized and the confined
+    // open refuses it, so that session still ends silently.
+    let fixture = Fixture::new();
+    fs::create_dir_all(fixture.module().join("sub")).expect("create sub");
+    for arg in ["-M--filter=. .", "-M--filter=. sub"] {
+        let (output, dest) = fixture.pull(&[arg]);
+        assert_eq!(output.status.code(), Some(0), "{arg}: {}", stderr(&output));
+        assert!(
+            names(&dest).contains(&"keep".to_owned()),
+            "{arg}: the transfer must run: {:?}",
+            names(&dest)
+        );
+    }
+    let (output, dest) = fixture.pull(&["-M--filter=. .."]);
+    assert_silent_daemon_exit(&output, "-M--filter=. ..");
+    assert!(names(&dest).is_empty(), "nothing may be transferred");
+}
