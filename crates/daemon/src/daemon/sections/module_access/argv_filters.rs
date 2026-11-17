@@ -189,26 +189,16 @@ fn build_argv_filter_rules(
 /// The parser reads the file, so a name that opens as a directory ends at its
 /// first read like an empty file, as on the client (exclude.c:1764-1769).
 ///
-/// On Unix the open goes through the confined resolver, so a symlink or `..`
-/// cannot lead outside the module. Elsewhere the sanitized name, which can no
-/// longer be absolute or climb, is joined onto the root.
+/// On Unix the open is upstream's: the ownership walk from the module root,
+/// judged against the module (exclude.c:1677-1690), so a `..` that climbs out
+/// or a symlink that points out is refused with `ELOOP`. Elsewhere the
+/// sanitized name, which can no longer be absolute or climb, is joined onto
+/// the root.
 fn open_module_file(root: &Path, relative: &str) -> io::Result<Box<dyn std::io::Read>> {
     #[cfg(unix)]
     {
-        match fast_io::open_source_confined(
-            root,
-            Path::new(relative),
-            fast_io::LeafPolicy::FollowConfined,
-            false,
-        ) {
-            Ok(file) => Ok(Box::new(file)),
-            // The resolver refuses to hand back the module root itself as a
-            // file; upstream opens it and reads nothing.
-            Err(error) if error.raw_os_error() == Some(libc::EISDIR) => {
-                Ok(Box::new(std::io::empty()))
-            }
-            Err(error) => Err(error),
-        }
+        let file = fast_io::operator_open_read_confined_at(root, Path::new(relative))?;
+        Ok(Box::new(file))
     }
     #[cfg(not(unix))]
     {
