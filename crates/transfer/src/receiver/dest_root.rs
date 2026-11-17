@@ -62,6 +62,104 @@ impl std::error::Error for DestRootMkdirError {
     }
 }
 
+/// The failed `stat` of the destination root, for a reason other than its
+/// absence.
+///
+/// upstream: main.c:798-803 get_local_name() - `rsyserr(FERROR, errno,
+/// "ERROR: cannot stat destination %s", full_fname(dest_path))`, then
+/// `exit_cleanup(RERR_FILESELECT)`. full_fname() keeps the operand's trailing
+/// slash here: it is lopped only later, before the mkdir (main.c:810-811).
+#[derive(Debug)]
+pub struct DestRootStatError {
+    fname: String,
+    source: io::Error,
+}
+
+impl DestRootStatError {
+    /// The destination as upstream's `full_fname()` renders it, quoted.
+    #[must_use]
+    pub fn fname(&self) -> &str {
+        &self.fname
+    }
+
+    /// The error `stat` failed with.
+    #[must_use]
+    pub const fn source_error(&self) -> &io::Error {
+        &self.source
+    }
+
+    /// Returns the stat failure carried by `error`, if it is one.
+    #[must_use]
+    pub fn of(error: &io::Error) -> Option<&Self> {
+        error.get_ref()?.downcast_ref()
+    }
+
+    /// Wraps the failure of `stat` on `fname` (already rendered by
+    /// `full_fname()`) as an `io::Error` of the cause's kind.
+    pub fn into_io(fname: String, source: io::Error) -> io::Error {
+        io::Error::new(source.kind(), Self { fname, source })
+    }
+}
+
+impl fmt::Display for DestRootStatError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ERROR: cannot stat destination {}: {}",
+            self.fname,
+            logging::upstream_errno_text(&self.source)
+        )
+    }
+}
+
+impl std::error::Error for DestRootStatError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Marks the `stat` step's own failure (anything but `ENOENT`).
+#[derive(Debug)]
+struct StatFailed(io::Error);
+
+impl fmt::Display for StatFailed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for StatFailed {}
+
+/// Which step of the destination-root pre-flight failed, with its cause.
+pub(in crate::receiver) enum DestRootFailure {
+    /// `stat` failed for a reason other than the root's absence.
+    Stat(io::Error),
+    /// `mkdir` failed.
+    Mkdir(io::Error),
+}
+
+/// Splits a [`ensure_dest_root_exists`] failure into the failed step and its
+/// cause, or returns the error unchanged when it is neither.
+pub(in crate::receiver) fn dest_root_failure(
+    error: io::Error,
+) -> Result<DestRootFailure, io::Error> {
+    if !error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<StatFailed>())
+    {
+        return mkdir_cause(error).map(DestRootFailure::Mkdir);
+    }
+    let kind = error.kind();
+    match error
+        .into_inner()
+        .map(|inner| inner.downcast::<StatFailed>())
+    {
+        Some(Ok(failed)) => Ok(DestRootFailure::Stat(failed.0)),
+        Some(Err(other)) => Err(io::Error::new(kind, other)),
+        None => Err(io::Error::from(kind)),
+    }
+}
+
 /// Marks the `mkdir` step's own failure so the caller can tell it from the
 /// stat-side refusals around it.
 #[derive(Debug)]
@@ -77,7 +175,7 @@ impl std::error::Error for MkdirFailed {}
 
 /// Splits a [`ensure_dest_root_exists`] failure into the `mkdir` cause, when
 /// that is what failed, or the error unchanged.
-pub(in crate::receiver) fn mkdir_cause(error: io::Error) -> Result<io::Error, io::Error> {
+fn mkdir_cause(error: io::Error) -> Result<io::Error, io::Error> {
     if !error
         .get_ref()
         .is_some_and(|inner| inner.is::<MkdirFailed>())
@@ -263,6 +361,7 @@ pub fn ensure_dest_root_exists(
                 .map(|()| true)
                 .map_err(|cause| io::Error::new(cause.kind(), MkdirFailed(cause)))
         }
-        Err(err) => Err(err),
+        // upstream: main.c:798-803 - any stat failure but ENOENT refuses.
+        Err(err) => Err(io::Error::new(err.kind(), StatFailed(err))),
     }
 }

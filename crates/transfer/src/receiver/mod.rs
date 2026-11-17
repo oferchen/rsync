@@ -61,8 +61,8 @@ pub use self::basis::{
 pub use self::context::ReceiverContext;
 pub(in crate::receiver) use self::daemon_filter::DaemonFilterGate;
 pub(in crate::receiver) use self::dest_root::dest_arg_has_trailing_slash;
-pub(in crate::receiver) use self::dest_root::mkdir_cause;
-pub use self::dest_root::{DestRootMkdirError, ensure_dest_root_exists};
+pub(in crate::receiver) use self::dest_root::{DestRootFailure, dest_root_failure};
+pub use self::dest_root::{DestRootMkdirError, DestRootStatError, ensure_dest_root_exists};
 pub(in crate::receiver) use self::pipeline_setup::{
     PipelineSetup, apply_acls_from_receiver_cache, compile_daemon_filter_set,
     compile_daemon_merge_configs,

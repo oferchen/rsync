@@ -330,6 +330,11 @@ pub fn rerr_for_io_error(error: &io::Error) -> i32 {
     if crate::receiver::DestRootMkdirError::of(error).is_some() {
         return 11;
     }
+    // upstream: main.c:798-803 - a destination that cannot be stat()ed for
+    // any reason but its absence is `exit_cleanup(RERR_FILESELECT)`.
+    if crate::receiver::DestRootStatError::of(error).is_some() {
+        return 3;
+    }
 
     // upstream: rsync.c:897-900 - a denied backup must not be graded by `ErrorKind`
     // like the per-file open failures below. Without this arm the usual `EACCES`
