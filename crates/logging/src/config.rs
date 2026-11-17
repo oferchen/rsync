@@ -48,10 +48,9 @@ const DEBUG_VERBOSITY: [&[(DebugFlag, u8)]; 6] = {
             (Recv, 1),
             (Send, 1),
             (Time, 1),
-            // oc-only: the seccomp decision line joins where RECV does.
-            // Landlock is in no row: 3.5.2 prints nothing for it, so it is
-            // reached only through an explicit `--debug=LANDLOCK`.
-            (Seccomp, 1),
+            // The oc-only SECCOMP and LANDLOCK words are in no row: 3.5.2
+            // prints nothing for them, so they are reached only through an
+            // explicit `--debug` word.
         ],
         &[
             (Cmd, 2),
@@ -63,8 +62,6 @@ const DEBUG_VERBOSITY: [&[(DebugFlag, u8)]; 6] = {
             (Own, 2),
             (Proto, 1),
             (Time, 2),
-            // oc-only: the seccomp detail lines.
-            (Seccomp, 2),
         ],
         &[
             (Chdir, 1),
@@ -416,32 +413,21 @@ mod tests {
         assert!(only.apply_debug_flag("sandbx").is_err());
     }
 
-    /// A sandbox layer's decision line joins at `-vvv` (row 3) and its
-    /// detail at `-vvvv` (row 4); `-vv` keeps it silent.
-    fn assert_rises_at_vvv_and_vvvv(flag: DebugFlag) {
-        for (verbose, want) in [(0, 0), (2, 0), (3, 1), (4, 2), (5, 2)] {
-            let config = VerbosityConfig::from_verbose_level(verbose);
-            assert_eq!(config.debug.get(flag), want, "{flag:?} at -v x{verbose}");
-        }
-    }
-
-    #[test]
-    fn seccomp_rises_at_vvv_and_vvvv() {
-        assert_rises_at_vvv_and_vvvv(DebugFlag::Seccomp);
-    }
-
-    /// No `-v` count prints a Landlock line: rsync 3.5.2 has no such output,
+    /// No `-v` count prints a sandbox line: rsync 3.5.2 has no such output,
     /// so `-vvv` must not grow an oc-only line a script comparing transcripts
-    /// would trip on. The word itself still works when asked for.
+    /// would trip on. Each word still works when asked for.
     #[test]
-    fn landlock_is_in_no_verbosity_row() {
-        for verbose in 0..=5 {
-            let config = VerbosityConfig::from_verbose_level(verbose);
-            assert_eq!(config.debug.landlock, 0, "-v x{verbose}");
+    fn sandbox_layers_are_in_no_verbosity_row() {
+        for flag in [DebugFlag::Seccomp, DebugFlag::Landlock] {
+            for verbose in 0..=5 {
+                let config = VerbosityConfig::from_verbose_level(verbose);
+                assert_eq!(config.debug.get(flag), 0, "{flag:?} at -v x{verbose}");
+            }
         }
         let mut explicit = VerbosityConfig::default();
+        explicit.apply_debug_flag("seccomp2").unwrap();
         explicit.apply_debug_flag("landlock2").unwrap();
-        assert_eq!(explicit.debug.landlock, 2);
+        assert_eq!((explicit.debug.seccomp, explicit.debug.landlock), (2, 2));
     }
 
     #[test]

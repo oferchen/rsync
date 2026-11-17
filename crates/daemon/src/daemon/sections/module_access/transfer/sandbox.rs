@@ -1043,8 +1043,8 @@ fn trace_landlock_allowlist(module: &str, roots: &[&Path]) {
     }
 }
 
-/// Traces a seccomp decision for `module` at `Seccomp` 1, which `-vvv` and
-/// `--debug=seccomp` reach. The daemon-log line beside each call is kept.
+/// Traces a seccomp decision for `module` at `Seccomp` 1, which only
+/// `--debug=seccomp` reaches. The daemon-log line beside each call is kept.
 fn trace_seccomp(module: &str, decision: &str) {
     logging::debug_log!(Seccomp, 1, "module '{module}': seccomp: {decision}");
 }
@@ -1130,10 +1130,9 @@ mod sandbox_trace_tests {
     #[test]
     fn seccomp_trace_levels() {
         let emit = || trace_seccomp("m", "engaged");
-        let silent = run(VerbosityConfig::from_verbose_level(2), None, emit);
+        let silent = run(VerbosityConfig::from_verbose_level(5), None, emit);
         assert!(silent.is_empty(), "{silent:?}");
         for events in [
-            run(VerbosityConfig::from_verbose_level(3), None, emit),
             run(VerbosityConfig::default(), Some("seccomp"), emit),
             run(VerbosityConfig::default(), Some("sandbox"), emit),
         ] {
@@ -1152,11 +1151,11 @@ mod sandbox_trace_tests {
     #[test]
     fn seccomp_allowlist_detail_is_level_two() {
         let emit = || super::trace_seccomp_allowlist("m");
-        let at_three = run(VerbosityConfig::from_verbose_level(3), None, emit);
-        assert!(at_three.is_empty(), "{at_three:?}");
-        let at_four = run(VerbosityConfig::from_verbose_level(4), None, emit);
-        let detail = lines(DebugFlag::Seccomp, 2, &at_four);
-        assert_eq!(detail.len(), 1, "{at_four:?}");
+        let at_one = run(VerbosityConfig::default(), Some("seccomp"), emit);
+        assert!(at_one.is_empty(), "{at_one:?}");
+        let at_two = run(VerbosityConfig::default(), Some("seccomp2"), emit);
+        let detail = lines(DebugFlag::Seccomp, 2, &at_two);
+        assert_eq!(detail.len(), 1, "{at_two:?}");
         assert!(
             detail[0].ends_with("syscalls allowed; any other fails with EPERM"),
             "{detail:?}"

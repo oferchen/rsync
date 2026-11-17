@@ -312,8 +312,8 @@ fn warn_getgroups_failed(err: &io::Error) {
     WARNED.call_once(|| report_getgroups_failed(err));
 }
 
-/// Prints the warning and traces it at `Seccomp` 1, which `-vvv` and
-/// `--debug=seccomp` reach: a seccomp allowlist that denies `getgroups` is
+/// Prints the warning and traces it at `Seccomp` 1, which only
+/// `--debug=seccomp` reaches: a seccomp allowlist that denies `getgroups` is
 /// the usual cause, so the line also lands beside the other sandbox traces.
 #[cfg(unix)]
 fn report_getgroups_failed(err: &io::Error) {
