@@ -434,3 +434,92 @@ extend it to every transport.
   sufficient upstream only because of the process split in section 3.
 - Its staging (daemon first, then the rest, then delete the drain thread) is
   still right and is steps 2 to 6 above.
+
+## 12. Signals while the loop is waiting
+
+Observed on a build of master plus one unrelated change: a push client
+wedged in case D1 stayed blocked in a socket send for 37 minutes after
+SIGTERM, although the handler ran. The wedged pull client exited 20.
+
+### 12.1 Upstream
+
+SIGINT, SIGHUP and SIGTERM share `sig_int` (main.c:1923-1925), installed
+with no `sa_flags`, so a blocked system call returns `EINTR` instead of
+restarting (rsync.h:1310, main.c:133). The handler has two outcomes:
+
+| process | handler does | then |
+|---|---|---|
+| client sender, client generator, or any process before multiplexed output starts | sleeps 400 ms and calls `exit_cleanup(RERR_SIGNAL)` from inside the handler (rsync.c:855, rsync.c:874) | exits 20 wherever it was blocked; nothing is flushed |
+| server, or the forked receiver, once multiplexed output has started | stores the signal in `got_kill_signal` and returns (rsync.c:868-871) | `perform_io` acts on the flag |
+
+The flag is armed only between `io_start_multiplex_out` (io.c:2699) and
+`io_end_multiplex_out` (io.c:2747-2749); outside that window it is -1 and
+the handler exits directly.
+
+`perform_io` reads the flag at three points: before each poll
+(io.c:849-850), after the write step (io.c:997-998) and on the way out
+(io.c:1022-1023). A poll interrupted by the signal returns a negative
+count, which takes the same branch as a timeout (io.c:866-884); the pass
+then reaches io.c:997. Each point calls `handle_kill_signal(True)`, which
+disarms the flag and exits with `RERR_SIGNAL`, allowing one flush
+(io.c:600-605). `exit_cleanup` performs that flush as
+`io_flush(FULL_FLUSH)` (cleanup.c:190-194). Because the flag is disarmed
+first, a second signal during that flush exits from the handler.
+
+Upstream never blocks in `read` or `write` on a transfer descriptor, and it
+is single-threaded, so the signal always interrupts the one poll that
+matters.
+
+### 12.2 oc today
+
+The handlers are installed without `SA_RESTART`, on purpose
+(`fast_io/src/signal/unix.rs:14-23`), and only set a flag
+(`core/src/signal/unix.rs:127-167`). The flag is read by `check_shutdown`
+(`transfer/src/shared/interrupt.rs:43`) at four places, all loop or frame
+boundaries: `generator/transfer/transfer_loop.rs:617`,
+`reader/multiplex.rs:1144`, `receiver/transfer/pipeline.rs:573` and
+`writer/multiplex.rs:516`. Nothing in `iobuf/core.rs` reads it.
+
+Three gaps follow, each sufficient to keep a blocked writer blocked:
+
+1. A blocking transport retries an interrupted call without looking at the
+   flag (`fast_io/src/transport.rs:132-139`), and so do the standard
+   library's `write_all` and `read_exact` above it. The send returns
+   `EINTR` and is issued again.
+2. `Core::wait` passes a poll error straight up (`core.rs:290-292`); an
+   interrupted poll surfaces as `Interrupted`, which the same retry loops
+   swallow, again without a flag check.
+3. oc has more than one thread. A process-directed signal is delivered to
+   one thread that does not block it, which need not be the wire thread,
+   so the wire thread's system call may not be interrupted at all.
+   Upstream's reliance on `EINTR` does not carry over.
+
+Which of the three held the observed client is not established; the first
+is enough to explain it, because that client runs on `BlockingStreams`
+(`lib.rs:883`).
+
+### 12.3 The change
+
+| # | change | mirrors |
+|---|---|---|
+| S1 | `Core::wait` calls `check_shutdown` before it waits and again when the wait returns, and treats an interrupted wait as an empty one instead of an error | io.c:849-850, io.c:997-998, io.c:866-884 |
+| S2 | `fast_io::signal` owns a wake pipe, created when the handlers are installed. Each handler writes one byte to it after setting the flag (`write` is async-signal-safe). `FdTransport::wait` polls the read end as a third row and reports it as `Readiness::interrupted`. The byte is never drained: once a shutdown is requested every wait returns at once | closes gap 3; upstream's third poll row is at io.c:649 |
+| S3 | `PumpTransport` cannot poll a descriptor from a `Condvar` wait. One relay thread in `fast_io::signal` blocks reading the wake pipe and notifies every registered transport `Condvar`. On Windows the console control handler already runs on its own thread and notifies directly; `SocketTransport` adds a loopback wake socket to its `WSAPoll` set | same |
+| S4 | until every path has a pollable transport (plan steps 2 to 4), `retry_interrupted` in `BlockingStreams` returns the `SignalShutdown` error when the flag is set instead of retrying | closes gap 1 on its own; covers the wire thread only when the signal lands on it |
+| S5 | exit path by role, decided where the error is mapped (`lib.rs:1460-1529`): a client sender exits 20 with no flush; a server or receiver gets one flush through the core, abandoned if `fast_io::signal` counts a further signal | rsync.c:868-874, io.c:600-605, cleanup.c:190-194 |
+
+`SignalShutdown` keeps the error kind `Other`, so no retry loop absorbs it
+(`interrupt.rs:38-39`). The 400 ms sleep of rsync.c:855 belongs to the
+existing signal-parity work and is not part of this change.
+
+S1 to S3 are part of plan steps 2 to 4: a transport is not finished until
+its wait can be woken by a signal. S4 is independent and byte-neutral.
+
+### 12.4 Tests
+
+| case | test |
+|---|---|
+| blocked in the core's wait | unit: a scripted transport whose wait never becomes ready except through the wake; mark the shutdown; `CoreWriter::write` returns `SignalShutdown`; the mapped exit code is 20 |
+| signal lands on another thread | unit on Unix: the wire thread blocks the signal with a thread mask, a second thread raises it; the wire thread's wait still returns through the wake pipe |
+| blocked writer, end to end | push through a remote-shell wrapper that never reads its input; SIGTERM to the client; exit code 20 and the upstream trailer text `received SIGINT, SIGTERM, or SIGHUP` (log.c:102). The test waits on the process, with no time bound of its own |
+| server flush | server role with one queued message and a writable transport: the message is written before exit; with a stalled transport and a second signal the exit still happens |
