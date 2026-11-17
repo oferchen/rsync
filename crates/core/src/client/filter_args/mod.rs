@@ -40,7 +40,9 @@ pub use server_argv::server_argv_filter_rules;
 /// the ownership walk; a daemon resolves beneath its module and gates the open
 /// on the module's own rules. That part belongs to the caller.
 pub trait FilterFileSource {
-    /// The directory a relative merge-file name resolves against.
+    /// The directory a relative merge-file name resolves against, upstream's
+    /// `dirbuf`: empty for the client and a remote-shell server (the name
+    /// stays cwd-relative), the module root for a daemon.
     fn base_dir(&self) -> PathBuf;
 
     /// Opens `path` for reading; `-` names standard input.
@@ -91,7 +93,7 @@ pub(crate) fn set_filter_stdin_input(data: Vec<u8>) {
 #[cfg(test)]
 impl FilterFileSource for TestFiles {
     fn base_dir(&self) -> PathBuf {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        PathBuf::new()
     }
 
     fn open(

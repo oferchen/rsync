@@ -225,6 +225,29 @@ fn missing_exclude_from_file_is_a_file_io_exit() {
     );
 }
 
+/// A missing merge file named with a slash is reported by its cleaned name,
+/// not joined onto the server's cwd: upstream's `dirbuf` is still empty while
+/// the server parses its argv (exclude.c:737-747 parse_merge_name()).
+#[test]
+fn missing_merge_file_is_reported_by_its_cleaned_name() {
+    if upstream().is_none() {
+        return;
+    }
+    cell(
+        Direction::Pull,
+        &[],
+        &["-f", ". sub/../nope"],
+        &outcome(
+            12,
+            &[],
+            &[
+                "rsync: [server] failed to open exclude file nope: No such file or directory (2)",
+                "rsync error: error in file IO (code 11)[server",
+            ],
+        ),
+    );
+}
+
 /// An argv protect rule keeps an extraneous destination file from a
 /// `--delete` push, while the unprotected one goes.
 #[test]

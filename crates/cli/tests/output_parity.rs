@@ -17,8 +17,9 @@ use cli::{
     progress_format::{
         OverallProgress, PerFileProgress, calculate_rate, format_eta, format_number, format_rate,
     },
-    stats_format::{format_speed, format_speedup},
+    stats_format::comma_dnum,
 };
+use core::client::HumanReadableMode;
 use std::time::Duration;
 
 #[test]
@@ -66,34 +67,15 @@ fn stats_number_formatting_large_values() {
     );
 }
 
+/// upstream: main.c:473-476 prints the speedup with comma_dnum(_, 2): two
+/// fraction digits, grouped unless `--no-h`.
 #[test]
 fn stats_speedup_formatting_decimal_places() {
-    // Upstream always shows 2 decimal places: "15.38"
-    assert_eq!(
-        format_speedup(15.38),
-        "15.38",
-        "speedup should have exactly 2 decimal places"
-    );
-    assert_eq!(
-        format_speedup(1.5),
-        "1.50",
-        "speedup should pad to 2 decimal places"
-    );
-}
-
-#[test]
-fn stats_speed_formatting_decimal_places() {
-    // Transfer speed always shows 2 decimal places
-    assert_eq!(
-        format_speed(1234.56),
-        "1,234.56",
-        "speed should have exactly 2 decimal places"
-    );
-    assert_eq!(
-        format_speed(100.0),
-        "100.00",
-        "speed should show .00 for whole numbers"
-    );
+    let grouped = HumanReadableMode::Grouped;
+    assert_eq!(comma_dnum(15.38, 2, grouped), "15.38");
+    assert_eq!(comma_dnum(1.5, 2, grouped), "1.50");
+    assert_eq!(comma_dnum(1234.56, 2, grouped), "1,234.56");
+    assert_eq!(comma_dnum(1234.56, 2, HumanReadableMode::Raw), "1234.56");
 }
 
 #[test]
@@ -705,22 +687,6 @@ fn number_formatting_consistency_across_modules() {
     assert_eq!(
         stats_formatted, "1,234,567",
         "all modules should use comma separators"
-    );
-}
-
-#[test]
-fn decimal_formatting_consistency() {
-    // Speed and speedup should both use 2 decimal places
-    let speed = format_speed(1234.5678);
-    let speedup = format_speedup(1234.5678);
-
-    assert!(
-        speed.contains(".56") || speed.contains(".57"),
-        "speed should round to 2 decimal places"
-    );
-    assert!(
-        speedup.contains(".56") || speedup.contains(".57"),
-        "speedup should round to 2 decimal places"
     );
 }
 

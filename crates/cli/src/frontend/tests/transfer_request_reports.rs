@@ -37,3 +37,27 @@ fn transfer_request_reports_filter_file_errors() {
     );
     assert_contains_client_trailer(&rendered);
 }
+
+/// A merge name with a slash is reported cleaned and cwd-relative, never joined
+/// onto an absolute directory: the operator sees the name they typed.
+///
+/// upstream: exclude.c:737-747 parse_merge_name() joins the name onto the still
+/// empty `dirbuf`, so 3.5.2 prints `failed to open exclude file missing.txt`.
+#[test]
+fn transfer_request_reports_a_missing_merge_file_by_its_cleaned_name() {
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-f"),
+        OsString::from(". sub/../missing.txt"),
+        OsString::from("src"),
+        OsString::from("dst"),
+    ]);
+    assert_eq!(code, 11);
+    assert!(stdout.is_empty());
+    let rendered = String::from_utf8(stderr).expect("diagnostic utf8");
+    assert!(
+        rendered.contains("failed to open exclude file missing.txt: No such file or directory (2)"),
+        "unexpected diagnostic: {rendered}"
+    );
+    assert_contains_client_trailer(&rendered);
+}

@@ -121,7 +121,7 @@ pub use log_code::{LogCode, ParseLogCodeError};
 pub use phase_timer::PhaseTimer;
 pub use sequence::{Sequence, Stamped};
 pub use stream::{BadLogCode, MessageStream, Msgs2Stderr, StreamContext, message_stream};
-pub use upstream_text::{comma_num, permstring, timestring_at_offset};
+pub use upstream_text::{comma_dnum, comma_num, permstring, timestring_at_offset};
 pub use verify_failure::{VerifyFailure, verification_failure};
 
 #[cfg(feature = "tracing")]

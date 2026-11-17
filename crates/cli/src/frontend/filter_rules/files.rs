@@ -14,8 +14,14 @@ use core::client::filter_args::{FilterFileKind, FilterFileSource};
 pub(crate) struct ProcessFilterFiles;
 
 impl FilterFileSource for ProcessFilterFiles {
+    /// Empty, so a relative merge name stays relative: opened from the cwd and
+    /// reported as the operator spelled it, cleaned.
+    ///
+    /// upstream: exclude.c:737-747 parse_merge_name() prepends `dirbuf`, which
+    /// set_filter_dir() has not filled while the options are parsed, so
+    /// `-f '. sub/../nope'` fails as `failed to open exclude file nope`.
     fn base_dir(&self) -> PathBuf {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        PathBuf::new()
     }
 
     fn open(

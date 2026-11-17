@@ -15,7 +15,7 @@ pub(crate) fn format_summary_rate(rate: f64, human_readable: HumanReadableMode) 
         // (`--no-h`) renders raw ("1509.61") while the default level 1 groups
         // ("1,509.61"). Grouping the rate at level 0 diverges from upstream.
         return if human_readable.uses_separators() {
-            crate::stats_format::format_speed(rate)
+            logging::comma_dnum(rate, 2)
         } else {
             format!("{rate:.2}")
         };
@@ -35,7 +35,7 @@ pub(crate) fn format_human_rate(rate: f64, base: f64) -> String {
     let mult: u64 = if base >= 1024.0 { 1024 } else { 1000 };
     let abs_int = rate.abs() as u64;
     if abs_int < mult {
-        return crate::stats_format::format_speed(rate);
+        return logging::comma_dnum(rate, 2);
     }
     super::format_human_bytes(abs_int, base)
 }

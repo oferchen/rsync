@@ -1,8 +1,10 @@
 //! Number and rate formatting helpers for rsync statistics output.
 //!
-//! These helpers produce the comma-grouped integers and two-decimal
-//! rate/speedup strings used by the `--stats` and summary output paths, matching
+//! These helpers produce the comma-grouped integers and fractional
+//! statistics used by the `--stats` and summary output paths, matching
 //! upstream rsync's `comma_num`/`comma_dnum` formatting exactly.
+
+use core::client::HumanReadableMode;
 
 /// Formats a number with thousands separators (commas).
 ///
@@ -33,52 +35,30 @@ pub fn format_number(n: u64) -> String {
     result
 }
 
-/// Formats a transfer speed with 2 decimal places.
+/// Formats a fractional statistic (speedup, seconds) as upstream's
+/// `comma_dnum()` does: thousands-grouped at every enabled `--human-readable`
+/// level and plain digits under `--no-h`, never with a unit suffix.
+///
+/// upstream: inums.h `comma_dnum()` is `do_big_dnum(dnum, human_readable != 0,
+/// decimal_digits)`.
 ///
 /// # Examples
 ///
 /// ```
-/// use cli::stats_format::format_speed;
+/// use cli::stats_format::comma_dnum;
+/// use core::client::HumanReadableMode;
 ///
-/// assert_eq!(format_speed(0.0), "0.00");
-/// assert_eq!(format_speed(1234.56), "1,234.56");
-/// assert_eq!(format_speed(1234567.89), "1,234,567.89");
+/// assert_eq!(comma_dnum(15.38, 2, HumanReadableMode::Grouped), "15.38");
+/// assert_eq!(comma_dnum(26_548.67, 2, HumanReadableMode::BinaryUnits), "26,548.67");
+/// assert_eq!(comma_dnum(26_548.67, 2, HumanReadableMode::Raw), "26548.67");
 /// ```
 #[must_use]
-pub fn format_speed(bytes_per_sec: f64) -> String {
-    if bytes_per_sec < 0.0 {
-        return "0.00".to_string();
+pub fn comma_dnum(value: f64, decimal_digits: usize, human_readable: HumanReadableMode) -> String {
+    if human_readable.groups_counts() {
+        logging::comma_dnum(value, decimal_digits)
+    } else {
+        format!("{value:.decimal_digits$}")
     }
-
-    let rounded = (bytes_per_sec * 100.0).round() / 100.0;
-    let integer_part = rounded.floor() as u64;
-    let fractional_part = ((rounded - integer_part as f64) * 100.0).round() as u64;
-
-    format!("{}.{:02}", format_number(integer_part), fractional_part)
-}
-
-/// Formats a speedup ratio with 2 decimal places.
-///
-/// # Examples
-///
-/// ```
-/// use cli::stats_format::format_speedup;
-///
-/// assert_eq!(format_speedup(0.0), "0.00");
-/// assert_eq!(format_speedup(15.38), "15.38");
-/// assert_eq!(format_speedup(1234.567), "1,234.57");
-/// ```
-#[must_use]
-pub fn format_speedup(speedup: f64) -> String {
-    if speedup < 0.0 {
-        return "0.00".to_string();
-    }
-
-    let rounded = (speedup * 100.0).round() / 100.0;
-    let integer_part = rounded.floor() as u64;
-    let fractional_part = ((rounded - integer_part as f64) * 100.0).round() as u64;
-
-    format!("{}.{:02}", format_number(integer_part), fractional_part)
 }
 
 #[cfg(test)]
@@ -123,63 +103,26 @@ mod tests {
         assert_eq!(format_number(9_999_999_999), "9,999,999,999");
     }
 
+    /// upstream: inums.h `comma_dnum()` passes `human_readable != 0`, so the
+    /// speedup groups at -h and -hh (no units) and only `--no-h` is ungrouped:
+    /// 3.5.2 prints `speedup is 26548.67` under `--no-h`.
     #[test]
-    fn format_speed_zero() {
-        assert_eq!(format_speed(0.0), "0.00");
-    }
-
-    #[test]
-    fn format_speed_small() {
-        assert_eq!(format_speed(1.5), "1.50");
-        assert_eq!(format_speed(99.99), "99.99");
-    }
-
-    #[test]
-    fn format_speed_with_separator() {
-        assert_eq!(format_speed(1234.56), "1,234.56");
-        assert_eq!(format_speed(26745.00), "26,745.00");
-    }
-
-    #[test]
-    fn format_speed_large() {
-        assert_eq!(format_speed(1234567.89), "1,234,567.89");
-    }
-
-    #[test]
-    fn format_speed_rounds_correctly() {
-        assert_eq!(format_speed(1234.567), "1,234.57");
-        assert_eq!(format_speed(1234.564), "1,234.56");
-    }
-
-    #[test]
-    fn format_speed_negative_becomes_zero() {
-        assert_eq!(format_speed(-100.0), "0.00");
-    }
-
-    #[test]
-    fn format_speedup_zero() {
-        assert_eq!(format_speedup(0.0), "0.00");
-    }
-
-    #[test]
-    fn format_speedup_small() {
-        assert_eq!(format_speedup(1.5), "1.50");
-        assert_eq!(format_speedup(15.38), "15.38");
-    }
-
-    #[test]
-    fn format_speedup_large() {
-        assert_eq!(format_speedup(1234.56), "1,234.56");
-    }
-
-    #[test]
-    fn format_speedup_rounds_correctly() {
-        assert_eq!(format_speedup(1234.567), "1,234.57");
-        assert_eq!(format_speedup(1234.564), "1,234.56");
-    }
-
-    #[test]
-    fn format_speedup_negative_becomes_zero() {
-        assert_eq!(format_speedup(-100.0), "0.00");
+    fn comma_dnum_groups_at_every_enabled_level_only() {
+        for mode in [
+            HumanReadableMode::Grouped,
+            HumanReadableMode::DecimalUnits,
+            HumanReadableMode::BinaryUnits,
+        ] {
+            assert_eq!(comma_dnum(26_548.672, 2, mode), "26,548.67", "{mode:?}");
+        }
+        assert_eq!(
+            comma_dnum(26_548.672, 2, HumanReadableMode::Raw),
+            "26548.67"
+        );
+        assert_eq!(comma_dnum(1.5, 2, HumanReadableMode::Raw), "1.50");
+        assert_eq!(
+            comma_dnum(1234.5, 3, HumanReadableMode::Grouped),
+            "1,234.500"
+        );
     }
 }

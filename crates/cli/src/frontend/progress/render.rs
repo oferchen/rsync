@@ -794,8 +794,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     let matched_bytes = summary.matched_bytes();
     let file_list_size = summary.file_list_size();
     let file_list_generation_ms = summary.file_list_generation_time().as_millis();
-    let file_list_generation = summary.file_list_generation_time().as_secs_f64();
-    let file_list_transfer = summary.file_list_transfer_time().as_secs_f64();
+    let file_list_transfer_ms = summary.file_list_transfer_time().as_millis();
 
     let special_total = devices_total.saturating_add(fifos_total);
     let total_entries = files_total
@@ -906,18 +905,26 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     // lines. The upstream counter is a millisecond integer, so sub-millisecond
     // durations suppress the lines just as on the C side.
     if file_list_generation_ms > 0 {
+        // upstream: main.c:454-459 - comma_dnum((double)ms / 1000, 3).
         writeln!(
             stdout,
-            "File list generation time: {file_list_generation:.3} seconds"
+            "File list generation time: {} seconds",
+            seconds_from_millis(file_list_generation_ms, human_readable)
         )?;
         writeln!(
             stdout,
-            "File list transfer time: {file_list_transfer:.3} seconds"
+            "File list transfer time: {} seconds",
+            seconds_from_millis(file_list_transfer_ms, human_readable)
         )?;
     }
     writeln!(stdout, "Total bytes sent: {bytes_sent_display}")?;
     writeln!(stdout, "Total bytes received: {bytes_received_display}")?;
     Ok(())
+}
+
+/// Renders a millisecond counter as upstream's `--stats` seconds field.
+fn seconds_from_millis(millis: u128, human_readable: HumanReadableMode) -> String {
+    crate::stats_format::comma_dnum(millis as f64 / 1000.0, 3, human_readable)
 }
 
 /// Computes the summary transfer rate in bytes/sec.
@@ -990,10 +997,8 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
     } else {
         ""
     };
-    // upstream: main.c:473-476 - speedup uses comma_dnum(_, 2), i.e. thousands
-    // grouping. Reuse the same helper the --stats path uses (stats_format.rs)
-    // so both summary paths group identically.
-    let speedup_display = crate::stats_format::format_speedup(speedup);
+    // upstream: main.c:473-476 - speedup uses comma_dnum(_, 2).
+    let speedup_display = crate::stats_format::comma_dnum(speedup, 2, human_readable);
     writeln!(
         stdout,
         "total size is {total_size_display}  speedup is {speedup_display}{speedup_suffix}"
