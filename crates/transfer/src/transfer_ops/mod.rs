@@ -483,14 +483,8 @@ fn read_response_header<R: Read>(
             // request while this front is awaited. Hand `pending` back untouched
             // so the caller retires the named entry by NDX instead of aborting;
             // the front's response is still coming when the decline is not it.
-            if let Some(declined) = err
-                .get_ref()
-                .and_then(|inner| inner.downcast_ref::<crate::reader::FileDeclinedError>())
-            {
-                return Ok(HeaderOutcome::Declined {
-                    ndx: declined.ndx,
-                    pending,
-                });
+            if let Some(ndx) = crate::reader::FileDeclinedError::declined_ndx(&err) {
+                return Ok(HeaderOutcome::Declined { ndx, pending });
             }
             return Err(err);
         }
