@@ -392,3 +392,81 @@ fn daemon_forwarded_rule_modifiers_hide_like_upstream() {
         );
     }
 }
+
+/// The line a daemon logs when `rule`, forwarded by `-M--filter=`, names a
+/// merge file it cannot open. An inetd-run daemon has no stderr to read, but
+/// rwrite() logs every FERROR line (log.c:385-410). The log prefix, program
+/// name and module path are each run's own, so all three are normalized.
+fn daemon_merge_refusal(daemon: &Path, rule: &str) -> String {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let module = root.join("mod");
+    fs::create_dir_all(&module).unwrap();
+    fs::write(module.join("a"), "x\n").unwrap();
+    let config = root.join("rsyncd.conf");
+    let log = root.join("rsyncd.log");
+    fs::write(
+        &config,
+        format!(
+            "use chroot = no\nlog file = {}\n[m]\n    path = {}\n",
+            log.display(),
+            module.display()
+        ),
+    )
+    .unwrap();
+    let listener =
+        bind_test_listener(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).expect("bind daemon");
+    let command = InetdCommand::discarding_stderr(daemon)
+        .expect("open /dev/null")
+        .arg("--config")
+        .arg(&config);
+    let process = InetdServer::start(listener, command).expect("spawn daemon");
+    let mut command = Command::new(upstream().unwrap());
+    command
+        .arg("-r")
+        .arg(format!("-M--filter={rule}"))
+        .arg(format!("rsync://127.0.0.1:{}/m/", process.port()))
+        .arg(format!("{}/", root.join("dst").display()));
+    if let Deadlined::Expired { budget, stderr, .. } = run_deadlined(&mut command, BUDGET).unwrap()
+    {
+        panic!(
+            "TIMEOUT: daemon pull with -M--filter={rule} from {} still running after {budget:?}: {}",
+            daemon.display(),
+            String::from_utf8_lossy(&stderr)
+        );
+    }
+    process.finish().expect("daemon sessions end");
+    let text = fs::read_to_string(&log).unwrap();
+    let line = text
+        .lines()
+        .find(|line| line.contains("failed to open"))
+        .unwrap_or_else(|| panic!("{}: no refusal in {text:?}", daemon.display()));
+    let start = line.find("rsync: [").expect("an rsyserr line");
+    line[start..].replace(&module.display().to_string(), "<module>")
+}
+
+/// A daemon reports an absolute or climbing `-M` merge name by the
+/// module-prefixed name parse_merge_name() sanitizes it to
+/// (exclude.c:715-747), not as the client spelled it.
+#[test]
+fn daemon_merge_refusal_names_the_sanitized_path() {
+    let Some(upstream) = upstream() else { return };
+    for (rule, expected) in [
+        (
+            ". /etc/hostname",
+            "rsync: [sender] failed to open exclude file <module>/etc/hostname: No such file or directory (2)",
+        ),
+        (
+            ". sub/../../outrules",
+            "rsync: [sender] failed to open exclude file <module>/outrules: No such file or directory (2)",
+        ),
+    ] {
+        let reference = daemon_merge_refusal(&upstream, rule);
+        assert_eq!(reference, expected, "3.5.1 itself: {rule:?}");
+        assert_eq!(
+            daemon_merge_refusal(&oc_rsync(), rule),
+            reference,
+            "{rule:?}"
+        );
+    }
+}

@@ -82,6 +82,22 @@ impl core::client::filter_args::FilterFileSource for ModuleArgvFiles<'_> {
         self.root.to_path_buf()
     }
 
+    /// A daemon sanitizes the name before it joins it, because a module
+    /// without chroot sets `sanitize_paths` (clientserver.c:1067-1068). An
+    /// absolute name lands beneath the module root and a leading `..` is
+    /// dropped, so a refusal names the module-prefixed path, as 3.5.2 prints
+    /// it (MEASURED: `. /etc/hostname` -> `<module>/etc/hostname`).
+    ///
+    /// upstream: exclude.c:715-747 parse_merge_name(), util1.c:1235
+    /// sanitize_path() with `rootdir = module_dir` for an absolute name.
+    fn merge_path(&self, name: &Path, _base_dir: &Path) -> std::path::PathBuf {
+        if is_bare_merge_name(name) {
+            return name.to_path_buf();
+        }
+        let sanitized = filters::sanitize_path::sanitize_path(&name.to_string_lossy());
+        filters::collapse_dot_dot_dirs(&self.root.join(sanitized))
+    }
+
     fn who(&self) -> Role {
         self.who
     }
@@ -321,5 +337,56 @@ mod argv_parse_role_tests {
         let push = ["--server".to_owned(), ".".to_owned()];
         assert_eq!(argv_parse_role(&pull), Role::Sender);
         assert_eq!(argv_parse_role(&push), Role::PreForkReceiver);
+    }
+}
+
+#[cfg(test)]
+mod merge_path_tests {
+    use super::*;
+    use core::client::filter_args::FilterFileSource;
+
+    fn files(root: &Path) -> ModuleArgvFiles<'_> {
+        ModuleArgvFiles {
+            root,
+            daemon_rules: &[],
+            rejected: std::cell::Cell::new(false),
+            who: Role::Sender,
+        }
+    }
+
+    /// upstream: exclude.c:715-747 - with `sanitize_paths` a slash-bearing
+    /// merge name is sanitized and lands beneath the module, so 3.5.2 reports
+    /// `. /etc/hostname` as `<module>/etc/hostname` and `. sub/../../x` as
+    /// `<module>/x` (MEASURED); oc reported the names as given.
+    #[test]
+    fn a_slash_bearing_name_resolves_beneath_the_module() {
+        let root = Path::new("/srv/module");
+        let files = files(root);
+        for (name, expected) in [
+            ("/etc/hostname", "/srv/module/etc/hostname"),
+            ("sub/../../outrules", "/srv/module/outrules"),
+            ("a/./b", "/srv/module/a/b"),
+            ("sub/..", "/srv/module"),
+        ] {
+            assert_eq!(
+                files.merge_path(Path::new(name), root),
+                Path::new(expected),
+                "{name}"
+            );
+        }
+    }
+
+    /// A bare name stays as given, so `..` still reaches the confined open
+    /// and is refused there (exclude.c:704-715).
+    #[cfg(unix)]
+    #[test]
+    fn a_bare_name_is_left_as_given() {
+        let root = Path::new("/srv/module");
+        for name in ["..", "rules"] {
+            assert_eq!(
+                files(root).merge_path(Path::new(name), root),
+                Path::new(name)
+            );
+        }
     }
 }
