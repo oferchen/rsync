@@ -386,6 +386,23 @@ mod tests {
         );
     }
 
+    /// A shutdown signal ends a client sender with the bare RERR_SIGNAL
+    /// trailer, as rsync.c:874 exits from inside the handler; it used to read
+    /// `transfer failed: received SIGINT, ...`.
+    #[test]
+    fn a_shutdown_signal_is_the_bare_code_20_trailer() {
+        let signal = fast_io::signal::shutdown_error();
+        let report = local_failure_error(&signal, None, ReportingSide::PreFork, 0, None);
+        assert_eq!(report.code(), ExitCode::Signal);
+        assert!(report.cause_line().is_none(), "{report}");
+        assert!(
+            report
+                .to_string()
+                .starts_with("rsync error: received SIGINT, SIGTERM, or SIGHUP (code 20) at "),
+            "{report}"
+        );
+    }
+
     /// A bare exit_cleanup(RERR_PROTOCOL) prints only the trailer
     /// (sender.c:409-411).
     #[test]

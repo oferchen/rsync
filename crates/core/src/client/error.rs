@@ -370,10 +370,14 @@ pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError 
 /// a `RERR_SYNTAX` refusal keeps its text unwrapped. A receiver site that
 /// already printed its own line before `exit_cleanup(RERR_FILEIO)` - the
 /// write, seek, fsync, close or backup of a received file - ends on the bare
-/// `log_exit()` trailer, as upstream's does (cleanup.c:249). Any other local
-/// failure says the transfer failed.
+/// `log_exit()` trailer, as upstream's does (cleanup.c:249). A shutdown
+/// signal is that trailer alone too: a client sender exits from inside the
+/// handler with `exit_cleanup(RERR_SIGNAL)` (rsync.c:874), which prints
+/// nothing before it. Any other local failure says the transfer failed.
 pub(crate) fn local_abort_text(error: &std::io::Error) -> String {
-    if ExitCode::from_io_error(error) == ExitCode::Syntax {
+    if transfer::shared::is_signal_shutdown(error) {
+        ExitCode::Signal.description().to_owned()
+    } else if ExitCode::from_io_error(error) == ExitCode::Syntax {
         error.to_string()
     } else if reported_fatal_commit(error) {
         ExitCode::from_io_error(error).description().to_owned()

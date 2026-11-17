@@ -40,6 +40,7 @@ use std::time::Duration;
 use rustix::process::{Pid, Signal, kill_process};
 
 use test_support::deadline::{Deadlined, run_deadlined};
+use test_support::{UpstreamVersion, require_upstream_rsync};
 
 /// Bounds each run; a run that reaches it is the hang this test exists for.
 const BUDGET: Duration = Duration::from_secs(60);
@@ -93,13 +94,13 @@ fn write_syscall_number() -> String {
     number
 }
 
-/// Waits until the shim names the stalled client and a client thread sleeps
-/// in `write`, then sends `signal`. Returns `false` if the client finished
-/// first.
+/// Waits until the shim names the stalled client and, with `parked_in`, until
+/// a client thread sleeps in that syscall, then sends `signal`. Returns
+/// `false` if the client finished first.
 fn signal_blocked_client(
     status: &Path,
     signal: Signal,
-    write_number: &str,
+    parked_in: Option<&str>,
     client_done: &thread::JoinHandle<std::io::Result<Deadlined>>,
 ) -> bool {
     let client = loop {
@@ -113,7 +114,7 @@ fn signal_blocked_client(
         thread::yield_now();
     };
     let tasks = Path::new("/proc").join(client.to_string()).join("task");
-    loop {
+    while let Some(number) = parked_in {
         if client_done.is_finished() {
             return false;
         }
@@ -121,7 +122,7 @@ fn signal_blocked_client(
             .into_iter()
             .flatten()
             .flatten()
-            .any(|task| blocked_syscall(&task.path()).as_deref() == Some(write_number));
+            .any(|task| blocked_syscall(&task.path()).as_deref() == Some(number));
         if parked {
             break;
         }
@@ -159,7 +160,17 @@ struct Outcome {
     status: String,
 }
 
-fn run(direction: &Direction, signal: &str) -> Outcome {
+/// When the push client is signalled once the shim has stalled it.
+#[derive(Clone, Copy)]
+enum Readiness {
+    /// Once a client thread sleeps in `write`: the blocked write under test.
+    ParkedInWrite,
+    /// At once: a client that waits in another call (rsync 3.5.2 sleeps in
+    /// `select`) still sees the signal mid-transfer.
+    Stalled,
+}
+
+fn run(direction: &Direction, signal: &str, binary: &Path, readiness: Readiness) -> Outcome {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
     let src = root.join("src");
@@ -169,7 +180,6 @@ fn run(direction: &Direction, signal: &str) -> Outcome {
     write_payload(&src.join("big"));
     let status = root.join("status");
 
-    let oc = test_support::oc_rsync_bin();
     let (from, to, stall) = match direction {
         Direction::Push => (
             format!("{}/", src.display()),
@@ -182,12 +192,12 @@ fn run(direction: &Direction, signal: &str) -> Outcome {
             "out",
         ),
     };
-    let mut cmd = Command::new(&oc);
+    let mut cmd = Command::new(binary);
     cmd.arg("-a")
         .arg("-e")
         .arg(env!("CARGO_BIN_EXE_stall-rsh"))
         .arg("--rsync-path")
-        .arg(&oc)
+        .arg(binary)
         .arg(from)
         .arg(to)
         .env("OC_STALL_RSH_DIR", stall)
@@ -203,7 +213,11 @@ fn run(direction: &Direction, signal: &str) -> Outcome {
                 "TERM" => Signal::TERM,
                 _ => Signal::HUP,
             };
-            signal_blocked_client(&status, signal, &write_number, &client_done)
+            let parked_in = match readiness {
+                Readiness::ParkedInWrite => Some(write_number.as_str()),
+                Readiness::Stalled => None,
+            };
+            signal_blocked_client(&status, signal, parked_in, &client_done)
         }
         Direction::Pull => false,
     };
@@ -219,7 +233,12 @@ fn run(direction: &Direction, signal: &str) -> Outcome {
 }
 
 fn assert_stopped_by(direction: &Direction, signal: &str) {
-    let Outcome { client, status } = run(direction, signal);
+    let Outcome { client, status } = run(
+        direction,
+        signal,
+        &test_support::oc_rsync_bin(),
+        Readiness::ParkedInWrite,
+    );
     let (code, stderr) = match &client {
         Deadlined::Finished { status, stderr, .. } => {
             (status.code(), String::from_utf8_lossy(stderr).into_owned())
@@ -265,5 +284,62 @@ fn a_signal_stops_a_client_sender_blocked_in_a_write() {
 fn a_signal_stops_a_server_sender_blocked_in_a_wait() {
     for signal in ["TERM", "INT", "HUP"] {
         assert_stopped_by(&Direction::Pull, signal);
+    }
+}
+
+/// The lines a run's own role printed, with the program name, the source
+/// location and the version taken out: `rsync error: <text> (code N) [role]`.
+fn own_lines(client: &Deadlined, role: &str) -> Vec<String> {
+    let stderr = match client {
+        Deadlined::Finished { stderr, .. } | Deadlined::Expired { stderr, .. } => {
+            String::from_utf8_lossy(stderr).into_owned()
+        }
+    };
+    let tag = format!(" [{role}=");
+    stderr
+        .lines()
+        .filter(|line| line.contains(&tag))
+        .map(|line| {
+            let line = line.strip_prefix("oc-").unwrap_or(line);
+            let text = line.split(" at ").next().unwrap_or(line);
+            format!("{text} [{role}]")
+        })
+        .collect()
+}
+
+/// Oracle cell: a pushing client signalled while blocked in a write prints
+/// exactly what rsync 3.5.2's does - the bare RERR_SIGNAL trailer
+/// (rsync.c:874), with no `transfer failed: ` prefix.
+#[test]
+fn a_signalled_push_client_prints_what_rsync_3_5_2_prints() {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    for signal in ["TERM", "INT", "HUP"] {
+        let theirs = run(
+            &Direction::Push,
+            signal,
+            upstream.binary(),
+            Readiness::Stalled,
+        );
+        let ours = run(
+            &Direction::Push,
+            signal,
+            &test_support::oc_rsync_bin(),
+            Readiness::Stalled,
+        );
+        let expected = own_lines(&theirs.client, "sender");
+        assert_eq!(
+            expected,
+            ["rsync error: received SIGINT, SIGTERM, or SIGHUP (code 20) [sender]"],
+            "SIG{signal}: rsync 3.5.2's own lines; shim: {:?}",
+            theirs.status
+        );
+        assert_eq!(
+            own_lines(&ours.client, "sender"),
+            expected,
+            "SIG{signal}: oc's sender lines; shim: {:?}",
+            ours.status
+        );
     }
 }
