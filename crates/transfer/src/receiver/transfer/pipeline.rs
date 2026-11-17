@@ -1234,6 +1234,8 @@ impl ReceiverContext {
             writer.flush()?;
 
             // upstream: sender.c:477-494 - sender echoes write_ndx_and_attrs back
+            // A dry-run sender has do_xfers clear and echoes before it opens
+            // anything (sender.c:647-651), so it never declines a file here.
             self.read_non_transfer_echo(reader, ndx_read_codec, preserve_xattrs, want_xattr_optim)?;
 
             // upstream: rsync.c:672-676 set_file_attrs emits the bare-name
@@ -1398,6 +1400,9 @@ impl ReceiverContext {
         )
         .digest_len();
 
+        // One request is outstanding at a time, so this window is empty whenever
+        // an echo is read and a decline can only name the file being awaited.
+        let mut in_flight = InFlightRequests::new(PipelineConfig::synchronous());
         for &(file_idx, ref file_path, base_iflags) in files_to_transfer {
             let file_entry = &self.file_list[file_idx];
             // upstream: generator.c:1998-2006 - compute the basis signature and
@@ -1430,7 +1435,7 @@ impl ReceiverContext {
             let basis = find_basis_file_with_config(&basis_config);
 
             // upstream: generator.c:1976 write_ndx + write_sum_head(f_out, s).
-            let _pending = send_file_request(
+            let pending = send_file_request(
                 writer,
                 &mut *ndx_write_codec,
                 self.flat_to_wire_ndx(file_idx),
@@ -1450,7 +1455,29 @@ impl ReceiverContext {
             writer.flush()?;
 
             // upstream: sender.c:477-494 - write_ndx_and_attrs(f_out, ...) echo.
-            self.read_non_transfer_echo(reader, ndx_read_codec, preserve_xattrs, want_xattr_optim)?;
+            // This sender keeps do_xfers set (main.c:1950 forces dry_run only
+            // after do_xfers is computed), so it opens the file before the echo
+            // and answers one it cannot send with MSG_NO_SEND instead
+            // (sender.c:678, 733, 761). No echo follows; the file is skipped.
+            if let Err(err) = self.read_non_transfer_echo(
+                reader,
+                ndx_read_codec,
+                preserve_xattrs,
+                want_xattr_optim,
+            ) {
+                let Some(ndx) = crate::reader::FileDeclinedError::declined_ndx(&err) else {
+                    return Err(err);
+                };
+                let awaited = self.flat_to_wire_ndx(file_idx);
+                let front = (
+                    file_idx,
+                    file_path.clone(),
+                    self.file_list[file_idx].clone(),
+                    base_iflags,
+                );
+                in_flight.retire_declined(ndx, awaited, pending, front)?;
+                continue;
+            }
 
             if let Some(token_reader) = token_reader.as_mut() {
                 // upstream: sender.c:452 write_sum_head(f_xfer, s) - on a pull

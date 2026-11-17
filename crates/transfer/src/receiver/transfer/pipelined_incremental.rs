@@ -1222,6 +1222,9 @@ impl ReceiverContext {
             range,
             &setup.dest_dir,
         )?;
+        // No decline can arrive here: the segment's request window is drained
+        // before these rows are written, and a sender declines only a transfer
+        // request (sender.c:678, 733, 761).
         for _ in 0..self.hardlink_follower_echoes.take() {
             if read_ndx_and_attrs(reader, ndx_read_codec, self, false, false)?.is_none() {
                 return Err(protocol::protocol_violation(

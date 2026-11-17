@@ -16,6 +16,13 @@
 //!
 //! MEASURED against rsync 3.5.2 on both ends: every cell exits 23 and the
 //! readable file arrives.
+//!
+//! `--only-write-batch` reaches the same decline through a different loop. Its
+//! sender keeps `do_xfers` set (main.c:1950 forces `dry_run` only after
+//! `do_xfers` is computed), so it opens every file and declines the one it
+//! cannot read, on a push and on a pull, while the receiver waits for that
+//! file's echo. MEASURED against rsync 3.5.2 on both ends: exit 23, nothing
+//! written to the destination, and the batch holds the readable file.
 #![cfg(unix)]
 
 use std::fs;
@@ -136,5 +143,118 @@ fn an_upstream_client_pushing_to_an_oc_server_skips_the_unreadable_source() {
     for (index, flags) in CELLS.iter().enumerate() {
         let (code, stderr, dst) = push(&fixture, upstream.binary(), flags, &format!("up{index}"));
         assert_skipped_one_file(flags, code, &stderr, &dst);
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Direction {
+    Push,
+    Pull,
+}
+
+/// Runs `client` against `server` with `--only-write-batch` and returns the
+/// exit code, the client's stderr, the destination and the batch it wrote.
+fn only_write_batch(
+    fixture: &Fixture,
+    client: &Path,
+    server: &Path,
+    direction: Direction,
+    tag: &str,
+) -> (i32, String, PathBuf, Vec<u8>) {
+    let root = fixture.temp.path();
+    let dst = root.join(format!("dst-{tag}"));
+    fs::create_dir(&dst).expect("create dst");
+    let batch = root.join(format!("batch-{tag}"));
+    let mut command = Command::new(client);
+    command
+        .arg("-r")
+        .arg(format!("--only-write-batch={}", batch.display()))
+        .arg("-e")
+        .arg(&fixture.rsh)
+        .arg(format!("--rsync-path={}", server.display()))
+        .current_dir(root);
+    match direction {
+        Direction::Push => command
+            .arg("src/")
+            .arg(format!("localhost:{}/", dst.display())),
+        Direction::Pull => command
+            .arg(format!("localhost:{}/src/", root.display()))
+            .arg(format!("{}/", dst.display())),
+    };
+    match run_deadlined(&mut command, BUDGET).expect("spawn client") {
+        Deadlined::Finished { status, stderr, .. } => (
+            status.code().expect("exit code"),
+            String::from_utf8_lossy(&stderr).into_owned(),
+            dst,
+            fs::read(&batch).unwrap_or_default(),
+        ),
+        Deadlined::Expired { budget, stderr, .. } => panic!(
+            "--only-write-batch {direction:?} did not finish within {budget:?}: {}",
+            String::from_utf8_lossy(&stderr)
+        ),
+    }
+}
+
+/// The run reports a partial transfer, writes nothing to the destination, and
+/// still records the readable file, which follows the declined one.
+fn assert_batch_skipped_one_file(
+    label: &str,
+    (code, stderr, dst, batch): &(i32, String, PathBuf, Vec<u8>),
+) {
+    assert_eq!(*code, RERR_PARTIAL, "{label}: {stderr}");
+    assert_eq!(
+        fs::read_dir(dst).expect("read dst").count(),
+        0,
+        "{label}: --only-write-batch must not touch the destination: {stderr}"
+    );
+    assert!(
+        batch
+            .windows(b"readable\n".len())
+            .any(|window| window == b"readable\n"),
+        "{label}: the batch must hold the readable file ({} bytes): {stderr}",
+        batch.len()
+    );
+}
+
+#[test]
+fn oc_only_write_batch_skips_an_unreadable_source() {
+    let Some(fixture) = fixture() else {
+        return;
+    };
+    let oc = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    for direction in [Direction::Push, Direction::Pull] {
+        let run = only_write_batch(&fixture, &oc, &oc, direction, &format!("oc-{direction:?}"));
+        assert_batch_skipped_one_file(&format!("oc {direction:?}"), &run);
+    }
+}
+
+/// The pairings that put oc on the receiving side of a 3.5.2 sender, next to
+/// the 3.5.2-to-3.5.2 run that defines the expectation.
+#[test]
+fn oc_receiving_an_only_write_batch_from_upstream_skips_the_unreadable_source() {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    let Some(fixture) = fixture() else {
+        return;
+    };
+    let oc = PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"));
+    let up = upstream.binary();
+    for direction in [Direction::Push, Direction::Pull] {
+        let reference =
+            only_write_batch(&fixture, up, up, direction, &format!("ref-{direction:?}"));
+        assert_batch_skipped_one_file(&format!("3.5.2 {direction:?}"), &reference);
+        let (client, server) = match direction {
+            Direction::Push => (up, oc.as_path()),
+            Direction::Pull => (oc.as_path(), up),
+        };
+        let run = only_write_batch(
+            &fixture,
+            client,
+            server,
+            direction,
+            &format!("mix-{direction:?}"),
+        );
+        assert_batch_skipped_one_file(&format!("oc receiving, {direction:?}"), &run);
     }
 }
