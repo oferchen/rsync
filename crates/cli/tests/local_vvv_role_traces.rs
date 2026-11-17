@@ -72,3 +72,34 @@ fn receiver_and_generator_print_their_finished_lines() {
     assert_eq!(receiver.last(), role_lines(&reference, "recv_files").last());
     assert_eq!(generator, role_lines(&reference, "generate_files"));
 }
+
+/// The receiver role's lines, with the process id replaced by `N`.
+fn receiver_lines(transcript: &str) -> Vec<String> {
+    transcript
+        .lines()
+        .filter(|line| line.starts_with("server_recv(") || line.starts_with("recv_files"))
+        .map(|line| match line.split_once(" pid=") {
+            Some((head, _)) => format!("{head} pid=N"),
+            None => line.to_owned(),
+        })
+        .collect()
+}
+
+/// upstream: main.c:1198-1199 - the forked receiver of a local copy runs
+/// do_server_recv(), whose first trace line names its argument count (`.` and
+/// the destination) and pid, before any `recv_files` line.
+#[test]
+fn server_receiver_announces_itself_first() {
+    let oc = receiver_lines(&run(&oc_rsync_bin(), "recv1"));
+    assert_eq!(
+        oc.first().map(String::as_str),
+        Some("server_recv(2) starting pid=N"),
+        "{oc:?}"
+    );
+
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    let reference = receiver_lines(&run(upstream.binary(), "recv1"));
+    assert_eq!(oc.first(), reference.first());
+}
