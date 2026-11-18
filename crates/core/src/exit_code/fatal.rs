@@ -4,7 +4,7 @@
 use std::io;
 
 use engine::local_copy::upstream_io_error;
-use transfer::DestRootMkdirError;
+use transfer::{DestRootMkdirError, DestRootSelectError, PeerWriteError};
 
 use crate::branding::Brand;
 
@@ -21,6 +21,10 @@ use crate::message::Role;
 pub fn cause_line_exit_code(error: &io::Error) -> Option<ExitCode> {
     if metadata::is_corrupt_fake_super(error) || DestRootMkdirError::of(error).is_some() {
         Some(ExitCode::FileIo)
+    } else if DestRootSelectError::of(error).is_some() {
+        Some(ExitCode::FileSelect)
+    } else if PeerWriteError::of(error).is_some() {
+        Some(ExitCode::SocketIo)
     } else if error
         .get_ref()
         .is_some_and(|inner| inner.is::<protocol::MallocFailure>())
@@ -65,6 +69,24 @@ pub fn fatal_report_lines(
                 brand.client_program_name(),
                 failed.fname(),
                 upstream_io_error(failed.source_error())
+            )
+            .into_bytes(),
+        );
+    } else if let Some(failed) = DestRootSelectError::of(error) {
+        // upstream: main.c:798-803 and :865-869 - the same get_local_name()
+        // call, so the same pre-fork role and rsyserr() program prefix as the
+        // mkdir above.
+        role = Role::PreForkReceiver;
+        lines.push(format!("{}: [{role}] {failed}\n", brand.client_program_name()).into_bytes());
+    } else if let Some(failed) = PeerWriteError::of(error) {
+        // upstream: io.c:961-967 perform_io() - `rsyserr(FERROR_SOCKET, errno,
+        // "write error")` with `msgs2stderr = 1`, so the server's own stderr
+        // carries it, under the role that wrote (who_am_i()).
+        lines.push(
+            format!(
+                "{}: [{role}] write error: {}\n",
+                brand.client_program_name(),
+                upstream_io_error(failed)
             )
             .into_bytes(),
         );
@@ -199,5 +221,28 @@ mod tests {
             "{trailer}"
         );
         assert!(trailer.contains("[Receiver="), "{trailer}");
+    }
+
+    /// WHY: a server whose write to the client fails reports it on its own
+    /// stderr as upstream does - `[role] write error: <errno>` under the role
+    /// that wrote, then the RERR_SOCKETIO trailer (io.c:961-967) - instead of
+    /// a bare trailer.
+    #[cfg(unix)]
+    #[test]
+    fn a_servers_failed_write_is_its_write_error_line_and_code_10() {
+        let failed = PeerWriteError::wrap(io::Error::from_raw_os_error(32));
+        assert_eq!(cause_line_exit_code(&failed), Some(ExitCode::SocketIo));
+        let lines = fatal_report_lines(&failed, ExitCode::SocketIo, Role::Sender, Brand::Upstream);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            String::from_utf8(lines[0].clone()).expect("utf-8"),
+            "rsync: [sender] write error: Broken pipe (32)\n"
+        );
+        let trailer = String::from_utf8(lines[1].clone()).expect("utf-8");
+        assert!(
+            trailer.starts_with("rsync error: error in socket IO (code 10) at "),
+            "{trailer}"
+        );
+        assert!(trailer.contains("[sender="), "{trailer}");
     }
 }

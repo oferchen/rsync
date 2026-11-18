@@ -295,6 +295,14 @@ fn run_server_over_ssh_connection(
     batch_ctx: Option<BatchContext>,
     render_out_format_locally: bool,
 ) -> Result<(crate::server::ServerStats, u8, Vec<ClientEvent>), ClientError> {
+    // upstream: io.c:849-850 reads got_kill_signal once the interrupted
+    // poll returns; a multi-threaded client cannot rely on the signal
+    // reaching the thread blocked on the wire, so the signal watcher shuts
+    // the socketpair down instead (the daemon socket does the same,
+    // module_list/connect/mod.rs register_shutdown_wake).
+    let wire_shutdown = connection
+        .wire_shutdown()
+        .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
     let (reader, mut writer, mut child_handle) = connection
         .split()
         .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
@@ -375,6 +383,8 @@ fn run_server_over_ssh_connection(
     // bytes perform_io() read once buffered input started (io.c:938).
     let bytes_read = Arc::new(AtomicU64::new(0));
     let fork_point = Arc::new(crate::server::ForkPoint::default());
+    let wake_guard = wire_shutdown
+        .and_then(|wire| crate::signal::register_io_waker(Arc::new(move || wire.shutdown())));
     let transfer_result = crate::server::run_server_with_handshake_adopting(
         config,
         handshake,
@@ -393,6 +403,9 @@ fn run_server_over_ssh_connection(
             ..Default::default()
         },
     );
+    // The waker holds duplicates of the wire; release them before the
+    // child is waited on, so closing our ends reaches it as end of file.
+    drop(wake_guard);
     let side = ReportingSide::of(local_role, &fork_point);
 
     let stats = match transfer_result {
@@ -488,9 +501,10 @@ mod transfer_failure_error_tests {
         );
     }
 
-    /// A rule refused out of a per-directory merge file keeps RERR_SYNTAX and
-    /// upstream's bare text, though the child exits with the higher
-    /// RERR_STREAMIO (exclude.c:133-137 filter_rule_err()).
+    /// A rule refused out of a per-directory merge file keeps RERR_SYNTAX:
+    /// upstream's text on its own line, then the code-1 trailer, though the
+    /// child exits with the higher RERR_STREAMIO (exclude.c:133-137
+    /// filter_rule_err()).
     #[test]
     fn local_syntax_abort_keeps_its_code_and_bare_text() {
         let err = transfer_failure_error(
@@ -500,10 +514,13 @@ mod transfer_failure_error_tests {
             0,
         );
         assert_eq!(err.exit_code(), 1);
-        assert!(!err.to_string().contains("transfer failed"), "{err}");
+        assert_eq!(
+            err.cause_line(),
+            Some("unexpected end of filter rule: <rule from /a/.f>")
+        );
         assert!(
             err.to_string()
-                .contains("unexpected end of filter rule: <rule from /a/.f>"),
+                .starts_with("rsync error: syntax or usage error (code 1) at "),
             "{err}"
         );
     }
@@ -524,9 +541,13 @@ mod transfer_failure_error_tests {
             0,
         );
         assert_eq!(err.exit_code(), 4);
+        assert_eq!(
+            err.cause_line(),
+            Some("Invalid checksum-choice for --checksum: none (0)")
+        );
         assert!(
             err.to_string()
-                .contains("Invalid checksum-choice for --checksum: none (0)"),
+                .starts_with("rsync error: requested action not supported (code 4) at "),
             "{err}"
         );
     }

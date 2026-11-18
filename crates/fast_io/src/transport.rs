@@ -104,11 +104,14 @@ impl<R: io::Read, W: io::Write> BlockingStreams<R, W> {
 
 impl<R: io::Read, W: io::Write> Transport for BlockingStreams<R, W> {
     fn try_read(&mut self, buf: &mut [u8]) -> io::Result<Option<usize>> {
-        retry_interrupted(|| self.reader.read(buf)).map(Some)
+        match retry_interrupted(|| self.reader.read(buf)) {
+            Ok(0) if crate::signal::shutdown_requested() => Err(crate::signal::shutdown_error()),
+            other => attribute_to_shutdown(other).map(Some),
+        }
     }
 
     fn try_write(&mut self, buf: &[u8]) -> io::Result<Option<usize>> {
-        retry_interrupted(|| self.writer.write(buf)).map(Some)
+        attribute_to_shutdown(retry_interrupted(|| self.writer.write(buf))).map(Some)
     }
 
     fn wait(
@@ -128,11 +131,34 @@ impl<R: io::Read, W: io::Write> Transport for BlockingStreams<R, W> {
     }
 }
 
-/// Retries a call that a signal interrupted.
+/// Reports an I/O failure that follows a shutdown request as the shutdown.
+///
+/// A blocking stream has no descriptor to poll, so a signal taken by another
+/// thread reaches a blocked call only when the signal watcher shuts the wire
+/// down under it (`core::signal::wake_blocked_io`). The call then fails with
+/// `EPIPE` or similar, which is the shutdown's doing, not the peer's.
+fn attribute_to_shutdown<T>(result: io::Result<T>) -> io::Result<T> {
+    match result {
+        Err(_) if crate::signal::shutdown_requested() => Err(crate::signal::shutdown_error()),
+        other => other,
+    }
+}
+
+/// Retries a call that a signal interrupted, unless that signal requested a
+/// shutdown: then the call is not reissued and the shutdown error is returned.
+///
+/// A blocking write interrupted by SIGTERM used to be reissued at once and
+/// block again, so the transfer never stopped (task 757). upstream: the
+/// handler exits from inside the signal (rsync.c:855, rsync.c:874), so a
+/// blocked call never resumes.
 fn retry_interrupted<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     loop {
         match op() {
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {
+                if crate::signal::shutdown_requested() {
+                    return Err(crate::signal::shutdown_error());
+                }
+            }
             other => return other,
         }
     }
@@ -258,20 +284,32 @@ mod unix {
             let in_fd = self.input.as_fd();
             let out_fd = self.output.as_fd();
             // upstream: io.c:787-797 - one descriptor serving both directions
-            // gets a single row carrying both events.
-            let revents = if self.shared {
-                let mut fds = [PollFd::from_borrowed_fd(in_fd, in_events | out_events)];
-                poll(&mut fds, timeout.as_ref())?;
-                let r = fds[0].revents();
-                (r, r)
+            // gets a single row carrying both events. The wake descriptor is
+            // the last row; it turns readable when a shutdown is requested, on
+            // whichever thread the signal landed.
+            let mut fds = if self.shared {
+                vec![PollFd::from_borrowed_fd(in_fd, in_events | out_events)]
             } else {
-                let mut fds = [
+                vec![
                     PollFd::from_borrowed_fd(in_fd, in_events),
                     PollFd::from_borrowed_fd(out_fd, out_events),
-                ];
-                poll(&mut fds, timeout.as_ref())?;
-                (fds[0].revents(), fds[1].revents())
+                ]
             };
+            let wake = crate::signal::wake_fd();
+            if let Some(fd) = wake {
+                fds.push(PollFd::from_borrowed_fd(fd, PollFlags::IN));
+            }
+            match poll(&mut fds, timeout.as_ref()) {
+                Ok(_) => {}
+                // upstream: io.c:866-884 - an interrupted poll is an empty one.
+                Err(rustix::io::Errno::INTR) => {}
+                Err(errno) => return Err(errno.into()),
+            }
+            if crate::signal::shutdown_requested() {
+                return Err(crate::signal::shutdown_error());
+            }
+            let output_row = usize::from(!self.shared);
+            let revents = (fds[0].revents(), fds[output_row].revents());
             // upstream: io.c:858-866 - a bad descriptor is reported through
             // revents, not the return value.
             if revents.0.contains(PollFlags::NVAL) || revents.1.contains(PollFlags::NVAL) {
@@ -522,6 +560,137 @@ mod tests {
         // The flag lives on the open file description, which `alias` shares.
         let flags = fcntl_getfl(&alias).unwrap();
         assert!(flags.contains(OFlags::NONBLOCK));
+    }
+
+    /// Task 757: a write interrupted by the signal that requested a shutdown
+    /// must not be reissued. It used to be, and the reissued write blocked
+    /// for good on a peer that had stopped reading. Without a shutdown an
+    /// interrupted call is still retried.
+    #[test]
+    fn an_interrupted_call_is_not_reissued_once_a_shutdown_is_requested() {
+        let interrupted_twice = |calls: &mut u32| -> std::io::Result<()> {
+            *calls += 1;
+            if *calls < 3 {
+                Err(std::io::ErrorKind::Interrupted.into())
+            } else {
+                Ok(())
+            }
+        };
+        crate::signal::reset_shutdown_for_testing();
+        let mut calls = 0;
+        assert!(super::retry_interrupted(|| interrupted_twice(&mut calls)).is_ok());
+        assert_eq!(calls, 3, "without a shutdown the call is retried");
+
+        crate::signal::mark_shutdown();
+        let mut calls = 0;
+        let err = super::retry_interrupted(|| interrupted_twice(&mut calls)).unwrap_err();
+        assert_eq!(calls, 1, "the interrupted call must not be reissued");
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::signal::SignalShutdown>()),
+            "{err}"
+        );
+        crate::signal::reset_shutdown_for_testing();
+    }
+
+    /// Task 757: a blocking stream has nothing to poll, so when the signal
+    /// lands on another thread the watcher shuts the wire down under the
+    /// blocked write (core's `wake_blocked_io`). The write must then end with
+    /// the shutdown error, not the `EPIPE` the shutdown causes. Here the
+    /// writing thread masks the signal, the test thread takes it and then
+    /// does the watcher's part.
+    #[test]
+    fn a_shut_down_wire_ends_a_blocked_stream_write_with_the_shutdown_error() {
+        use nix::sys::signal::{SigSet, SigmaskHow, Signal, pthread_sigmask, raise};
+        use std::sync::mpsc;
+
+        extern "C" fn on_signal(_: std::os::raw::c_int) {
+            crate::signal::mark_shutdown();
+        }
+
+        crate::signal::reset_shutdown_for_testing();
+        crate::signal::install_signal_handler(libc::SIGUSR1, on_signal).unwrap();
+
+        let (ours, _peer) = UnixStream::pair().unwrap();
+        let watcher_end = ours.try_clone().unwrap();
+        let reader = ours.try_clone().unwrap();
+        let (tx, rx) = mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let mut blocked = SigSet::empty();
+            blocked.add(Signal::SIGUSR1);
+            pthread_sigmask(SigmaskHow::SIG_BLOCK, Some(&blocked), None).unwrap();
+            let mut streams = super::BlockingStreams::new(reader, ours);
+            let chunk = [0u8; 65536];
+            let err = loop {
+                if let Err(err) = streams.try_write(&chunk) {
+                    break err;
+                }
+            };
+            tx.send(err).unwrap();
+        });
+
+        raise(Signal::SIGUSR1).unwrap();
+        watcher_end.shutdown(std::net::Shutdown::Both).unwrap();
+        // The bound only turns the hang this test exists for into a failure.
+        let err = rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("the blocked write never returned");
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::signal::SignalShutdown>()),
+            "{err}"
+        );
+        writer.join().unwrap();
+        crate::signal::reset_shutdown_for_testing();
+    }
+
+    /// Task 757: a process-directed signal reaches one thread that does not
+    /// block it, which need not be the thread waiting on the wire. Here the
+    /// waiting thread blocks the signal and the signal is raised on another
+    /// thread; the wait must still end, through the wake socket, with the
+    /// shutdown error. Without the wake row the wait parks until the peer
+    /// reads, which this peer never does.
+    #[test]
+    fn a_signal_taken_by_another_thread_ends_a_blocked_wait() {
+        use nix::sys::signal::{SigSet, SigmaskHow, Signal, pthread_sigmask, raise};
+        use std::sync::mpsc;
+
+        extern "C" fn on_signal(_: std::os::raw::c_int) {
+            crate::signal::mark_shutdown();
+        }
+
+        crate::signal::arm_wake().unwrap();
+        crate::signal::reset_shutdown_for_testing();
+        crate::signal::install_signal_handler(libc::SIGUSR2, on_signal).unwrap();
+
+        let (ours, _peer) = UnixStream::pair().unwrap();
+        ours.set_nonblocking(true).unwrap();
+        {
+            let mut filler = &ours;
+            while filler.write(&[0u8; 65536]).is_ok() {}
+        }
+        let (tx, rx) = mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            let mut blocked = SigSet::empty();
+            blocked.add(Signal::SIGUSR2);
+            pthread_sigmask(SigmaskHow::SIG_BLOCK, Some(&blocked), None).unwrap();
+            let mut transport = FdTransport::socket(ours).unwrap();
+            tx.send(transport.wait(false, true, None)).unwrap();
+        });
+
+        raise(Signal::SIGUSR2).unwrap();
+        // The bound only turns the hang this test exists for into a failure.
+        let result = rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("the blocked wait never returned");
+        let err = result.unwrap_err();
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<crate::signal::SignalShutdown>()),
+            "{err}"
+        );
+        waiter.join().unwrap();
+        crate::signal::reset_shutdown_for_testing();
     }
 }
 

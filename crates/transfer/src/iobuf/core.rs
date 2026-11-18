@@ -40,7 +40,7 @@ pub(crate) struct Core<'a> {
     /// perform_io() while `iobuf.in_fd < 0`).
     read_counter: Option<Arc<AtomicU64>>,
     /// The peer closed its output; no more input will arrive
-    /// (upstream: io.c:905-911 sets `iobuf.in_fd = -2`).
+    /// (upstream: io.c:911 sets `iobuf.in_fd = -2`).
     in_eof: bool,
     /// `--timeout`, checked whenever a wait comes back empty.
     timeout: IoTimeout,
@@ -216,7 +216,11 @@ impl<'a> Core<'a> {
     /// same pass).
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         loop {
-            if let Some(n) = self.transport.try_write(buf)? {
+            let written = self
+                .transport
+                .try_write(buf)
+                .map_err(super::PeerWriteError::wrap)?;
+            if let Some(n) = written {
                 if self.buffering() {
                     self.timeout.mark_io();
                 }
@@ -281,15 +285,26 @@ impl<'a> Core<'a> {
     /// starts a wait is for one direction only, as upstream's raw
     /// safe_read()/safe_write() are (io.c:310, io.c:387). A wait that ends
     /// with nothing ready checks `--timeout` (upstream: io.c:876, io.c:335).
+    ///
+    /// A requested shutdown ends the wait before it starts and when it
+    /// returns, and an interrupted wait counts as an empty one (upstream:
+    /// io.c:849-850 and io.c:997-998 read `got_kill_signal`; io.c:866-884
+    /// treats an interrupted poll like a timeout).
     fn wait(&mut self, want_output: bool) -> io::Result<()> {
+        crate::shared::check_shutdown()?;
         let poll_input = if self.buffering() {
             !self.in_eof && self.input.has_room()
         } else {
             !want_output
         };
-        let ready = self
+        let ready = match self
             .transport
-            .wait(poll_input, want_output, self.timeout.wait_bound())?;
+            .wait(poll_input, want_output, self.timeout.wait_bound())
+        {
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => Default::default(),
+            other => other?,
+        };
+        crate::shared::check_shutdown()?;
         if !ready.readable && !ready.writable {
             return self.timeout.check();
         }
@@ -449,6 +464,90 @@ mod tests {
         let mut got = [0u8; 7];
         CoreReader::new(&core).read_exact(&mut got).unwrap();
         assert_eq!(&got, b"refused");
+    }
+
+    /// A peer that is gone: every write fails as the socket reports it.
+    #[cfg(unix)]
+    struct GonePeer;
+
+    #[cfg(unix)]
+    impl Transport for GonePeer {
+        fn try_read(&mut self, _: &mut [u8]) -> io::Result<Option<usize>> {
+            Ok(None)
+        }
+
+        fn try_write(&mut self, _: &[u8]) -> io::Result<Option<usize>> {
+            Err(io::Error::from_raw_os_error(EPIPE))
+        }
+
+        fn wait(
+            &mut self,
+            _: bool,
+            _: bool,
+            _: Option<Duration>,
+        ) -> io::Result<fast_io::transport::Readiness> {
+            Ok(fast_io::transport::Readiness::default())
+        }
+    }
+
+    /// `EPIPE` on every Unix oc builds for.
+    #[cfg(unix)]
+    const EPIPE: i32 = 32;
+
+    /// WHY: upstream reports a failed write as a `write error` with the
+    /// write's own errno (io.c:961-967), so the core must say that it was the
+    /// write that failed while keeping the transport's kind and errno - a
+    /// later classifier cannot tell a write's `ECONNRESET` from a read's.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_write_is_marked_as_the_writes_own_failure() {
+        let core = Core::new(
+            Box::new(GonePeer),
+            Vec::new(),
+            IoTimeout::new(None, "sender"),
+        );
+        let err = CoreWriter::new(&core).write(b"data").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        let failed = super::super::PeerWriteError::of(&err).expect("marked as the write's failure");
+        assert_eq!(failed.raw_os_error(), Some(EPIPE));
+    }
+
+    /// A writer stopped by a shutdown signal: the transport ends the write
+    /// with the signal's error, as the signal wake does.
+    struct SignalledWrite;
+
+    impl Transport for SignalledWrite {
+        fn try_read(&mut self, _: &mut [u8]) -> io::Result<Option<usize>> {
+            Ok(None)
+        }
+
+        fn try_write(&mut self, _: &[u8]) -> io::Result<Option<usize>> {
+            Err(fast_io::signal::shutdown_error())
+        }
+
+        fn wait(
+            &mut self,
+            _: bool,
+            _: bool,
+            _: Option<Duration>,
+        ) -> io::Result<fast_io::transport::Readiness> {
+            Ok(fast_io::transport::Readiness::default())
+        }
+    }
+
+    /// WHY: a signal ends rsync from its handler with code 20 (rsync.c
+    /// sig_int()), never as a write error with code 10, so a write the signal
+    /// wake ended must still read as the signal's shutdown.
+    #[test]
+    fn a_write_ended_by_a_shutdown_signal_is_not_marked_as_its_failure() {
+        let core = Core::new(
+            Box::new(SignalledWrite),
+            Vec::new(),
+            IoTimeout::new(None, "sender"),
+        );
+        let err = CoreWriter::new(&core).write(b"data").unwrap_err();
+        assert!(crate::shared::is_signal_shutdown(&err), "{err:?}");
+        assert!(super::super::PeerWriteError::of(&err).is_none(), "{err:?}");
     }
 
     /// A peer that never answers: every wait comes back empty after the bound
@@ -747,5 +846,75 @@ mod stream_tests {
         reader.read_to_end(&mut rest).unwrap();
         assert_eq!(rest, b"adtail");
         assert_eq!(counter.load(Ordering::Relaxed), 6);
+    }
+
+    /// A transport that is never writable, whose waits first report an
+    /// interruption and then output room, and which can request a shutdown
+    /// from inside a wait the way a signal handler would.
+    struct InterruptedWait {
+        waits: u32,
+        shutdown_in_wait: bool,
+    }
+
+    impl Transport for InterruptedWait {
+        fn try_read(&mut self, _: &mut [u8]) -> io::Result<Option<usize>> {
+            Ok(None)
+        }
+
+        fn try_write(&mut self, buf: &[u8]) -> io::Result<Option<usize>> {
+            Ok((self.waits > 1).then_some(buf.len()))
+        }
+
+        fn wait(
+            &mut self,
+            _: bool,
+            output: bool,
+            _: Option<std::time::Duration>,
+        ) -> io::Result<fast_io::transport::Readiness> {
+            self.waits += 1;
+            if self.waits == 1 {
+                if self.shutdown_in_wait {
+                    fast_io::signal::mark_shutdown();
+                }
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            Ok(fast_io::transport::Readiness {
+                readable: false,
+                writable: output,
+            })
+        }
+    }
+
+    fn write_through(shutdown_in_wait: bool) -> io::Result<usize> {
+        fast_io::signal::reset_shutdown_for_testing();
+        let core = Core::new(
+            Box::new(InterruptedWait {
+                waits: 0,
+                shutdown_in_wait,
+            }),
+            Vec::new(),
+            IoTimeout::new(None, "sender"),
+        );
+        Core::start_buffering(&core, Arc::new(AtomicU64::new(0)));
+        let result = CoreWriter::new(&core).write(b"data");
+        fast_io::signal::reset_shutdown_for_testing();
+        result
+    }
+
+    /// Task 757: a signal that requests a shutdown while the core waits for
+    /// output room ends the write with the shutdown error (graded 20), not
+    /// with `Interrupted`, which every `write_all` above would retry
+    /// (upstream: io.c:997-998 reads `got_kill_signal` after the wait).
+    #[test]
+    fn a_shutdown_during_a_wait_ends_the_write_with_the_shutdown_error() {
+        let err = write_through(true).unwrap_err();
+        assert!(crate::shared::is_signal_shutdown(&err), "{err}");
+    }
+
+    /// The control: an interrupted wait with no shutdown requested is an
+    /// empty one, and the write carries on (upstream: io.c:866-884).
+    #[test]
+    fn an_interrupted_wait_without_a_shutdown_is_an_empty_wait() {
+        assert_eq!(write_through(false).unwrap(), 4);
     }
 }

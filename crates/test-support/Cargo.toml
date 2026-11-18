@@ -51,12 +51,23 @@ filetime = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
+# `stall-rsh` polls a pipe, waits on a pidfd and sends a signal, and its test
+# signals the client, all with no unsafe code.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { workspace = true, features = ["event", "process"] }
+
 # Rust port of upstream `support/lsh.sh`. Built as a workspace binary so tests
 # can resolve its path via `CARGO_BIN_EXE_lsh-stub` and drive oc-rsync's
 # remote-shell code paths locally (design section 5).
 [[bin]]
 name = "lsh-stub"
 path = "src/bin/lsh-stub.rs"
+
+# Remote-shell trampoline that stalls one direction and signals the writer
+# once it is blocked (see src/bin/stall-rsh.rs). Linux only.
+[[bin]]
+name = "stall-rsh"
+path = "src/bin/stall-rsh.rs"
 
 # Teeing remote-shell trampoline: relays the client<->server byte streams
 # while appending each direction to a capture file, so tests can assert
@@ -91,3 +102,9 @@ path = "src/bin/sigterm-flag-stub.rs"
 [[bin]]
 name = "signal-rsh"
 path = "src/bin/signal-rsh.rs"
+
+# Remote-shell trampoline that fixes whether the client meets a dying server
+# through a failed write or through end of file (see its module docs).
+[[bin]]
+name = "order-rsh"
+path = "src/bin/order-rsh.rs"

@@ -33,4 +33,5 @@ metadata	nix	2026-12-10	safe nix errno/fcntl/sys/unistd wrappers for metadata sy
 metadata	rustix	2026-12-10	safe rustix::fs / process wrappers for metadata
 metadata	windows	2026-12-10	windows::Win32 ACL / SDDL / fs bindings for NTFS metadata
 test-support	libc	2026-12-10	libc::umask + mode_t for test-fixture setup; test-only crate, not linked into the shipped binary
+test-support	rustix	2026-12-10	poll, pidfd and kill for the stall-rsh test shim and its test (Linux); test-only crate, not linked into the shipped binary
 transfer	libc	2026-12-10	errno constants (EACCES, ELOOP, ENODATA, ...) for receiver / transfer error mapping

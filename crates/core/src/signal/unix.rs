@@ -201,6 +201,8 @@ extern "C" fn handle_sighup(_signum: libc::c_int) {
 /// # }
 /// ```
 pub fn install_signal_handlers() -> io::Result<SignalHandler> {
+    // The handlers ring the wake socket, so it must exist before them.
+    fast_io::signal::arm_wake()?;
     install_signal_handler(libc::SIGINT, handle_sigint)?;
     install_signal_handler(libc::SIGTERM, handle_sigterm)?;
     install_signal_handler(libc::SIGHUP, handle_sighup)?;

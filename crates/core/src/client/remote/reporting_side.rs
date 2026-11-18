@@ -16,12 +16,12 @@ use engine::local_copy::upstream_io_error;
 use protocol::wire::CodecFailure;
 
 use crate::client::error::{
-    ClientError, cause_line_error, connection_unexpectedly_closed_error, local_abort_text,
+    ClientError, cause_line_error, connection_unexpectedly_closed_error, local_abort_error,
     program_line_error, remote_exit_error,
 };
 use crate::exit_code::ExitCode;
 use crate::message::Role;
-use crate::server::{DestRootMkdirError, ForkPoint, SafeReadError};
+use crate::server::{DestRootMkdirError, DestRootSelectError, ForkPoint, SafeReadError};
 
 /// The process that reports a failure, by the client's role and, on a pull,
 /// the side of upstream's fork the failure struck.
@@ -125,6 +125,13 @@ pub(crate) fn local_failure_error(
         );
         return program_line_error(line, ExitCode::FileIo, role);
     }
+    // upstream: main.c:798-803 and :865-869 get_local_name() - rsyserr()
+    // then exit_cleanup(RERR_FILESELECT) when the destination cannot be
+    // stat()ed for any reason but its absence, or its parent cannot be
+    // entered.
+    if let Some(failed) = DestRootSelectError::of(error) {
+        return program_line_error(format!("[{who}] {failed}"), ExitCode::FileSelect, role);
+    }
     // upstream: token.c - a compression library failure is
     // rprintf(FERROR, ...) of a fixed line, then exit_cleanup(RERR_STREAMIO).
     if let Some(failed) = CodecFailure::of(error) {
@@ -141,6 +148,14 @@ pub(crate) fn local_failure_error(
         };
         let report = connection_unexpectedly_closed_error(bytes_received, own, role);
         return side.finish(report, worse(ExitCode::StreamIo));
+    }
+    // upstream: io.c:961-967 perform_io() - a failed write of the peer's
+    // stream is rsyserr(FERROR_SOCKET, errno, "write error") and
+    // exit_cleanup(RERR_SOCKETIO), whatever errno the write returned.
+    if let Some(failed) = crate::server::PeerWriteError::of(error) {
+        let line = format!("[{who}] write error: {}", upstream_io_error(failed));
+        let report = program_line_error(line, worse(ExitCode::SocketIo), role);
+        return side.finish(report, ExitCode::StreamIo);
     }
     // upstream: io.c:259-266 check_timeout() - no input within --timeout.
     if let Some(seconds) = io_timeout
@@ -212,11 +227,7 @@ pub(crate) fn local_failure_error(
         Some(child) if peer_went_first && child.as_i32() > transfer_exit.as_i32() => {
             remote_exit_error(child, side.exit_role())
         }
-        _ => crate::client::error::invalid_argument_error_typed_with_role(
-            &local_abort_text(error),
-            transfer_exit,
-            role,
-        ),
+        _ => local_abort_error(error, transfer_exit, role),
     };
     side.finish(report, ExitCode::StreamIo)
 }
@@ -353,6 +364,31 @@ mod tests {
         assert!(report.preceding().is_none());
     }
 
+    /// WHY: io.c:961-967 reports a failed write as `write error` with that
+    /// write's errno and RERR_SOCKETIO, whatever the errno: a reset met by a
+    /// write is not a `read error`, and a broken pipe is not a bare cause.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_write_is_the_writers_write_error() {
+        let reset = if cfg!(target_os = "linux") { 104 } else { 54 };
+        for errno in [32, reset] {
+            for (side, who) in [
+                (ReportingSide::Sender, "sender"),
+                (ReportingSide::PreFork, "Receiver"),
+            ] {
+                let cause = io::Error::from_raw_os_error(errno);
+                let failed =
+                    crate::server::PeerWriteError::wrap(io::Error::from_raw_os_error(errno));
+                let report = local_failure_error(&failed, None, side, 23, None);
+                assert_eq!(report.code(), ExitCode::SocketIo, "{who} errno {errno}");
+                assert_eq!(
+                    report.program_line(),
+                    Some(format!("[{who}] write error: {}", upstream_io_error(&cause)).as_str()),
+                );
+            }
+        }
+    }
+
     /// A file-I/O failure after the fork reaches the generator as
     /// MSG_ERROR_EXIT, so the receiver's report is the last word and its code
     /// the run's (cleanup.c:241-251).
@@ -382,6 +418,82 @@ mod tests {
             report
                 .to_string()
                 .starts_with("rsync error: protocol incompatibility (code 2) at "),
+            "{report}"
+        );
+    }
+
+    /// Every local abort that reaches the fallthrough prints its own text as
+    /// the cause line, then log_exit()'s trailer for the code it maps to
+    /// (log.c:1025-1051), never a `transfer failed: ` prefix. The cases span
+    /// the kinds and codes the fallthrough sees, a refused filter rule
+    /// (RERR_SYNTAX, exclude.c:133-137) among them.
+    #[test]
+    fn a_fallthrough_abort_is_its_cause_line_then_its_codes_trailer() {
+        let cases = [
+            io::Error::other("unexplained local failure"),
+            io::Error::new(io::ErrorKind::InvalidInput, "unexpected end of filter rule"),
+            io::Error::new(io::ErrorKind::InvalidData, "bad index in file list"),
+            io::Error::new(io::ErrorKind::PermissionDenied, "cannot open"),
+            io::Error::new(io::ErrorKind::NotFound, "no such entry"),
+            io::Error::new(io::ErrorKind::StorageFull, "disk full"),
+            io::Error::new(io::ErrorKind::Unsupported, "not supported here"),
+            io::Error::new(io::ErrorKind::OutOfMemory, "allocation refused"),
+            io::Error::new(io::ErrorKind::BrokenPipe, "peer gone"),
+        ];
+        for error in cases {
+            let code = ExitCode::from_io_error(&error);
+            let report = local_failure_error(&error, None, ReportingSide::PreFork, 0, None);
+            let rendered = report.to_string();
+            assert!(!rendered.contains("transfer failed: "), "{rendered}");
+            assert_eq!(
+                report.cause_line(),
+                Some(error.to_string().as_str()),
+                "{rendered}"
+            );
+            assert_eq!(report.code(), code, "{rendered}");
+            let trailer = format!(
+                "rsync error: {} (code {}) at ",
+                code.description(),
+                code.as_i32()
+            );
+            assert!(rendered.starts_with(&trailer), "{rendered} vs {trailer}");
+        }
+    }
+
+    /// A destination that cannot be stat()ed is refused with rsync's own
+    /// line and RERR_FILESELECT (main.c:798-803), not the mkdir failure's
+    /// RERR_FILEIO.
+    #[test]
+    fn an_unstatable_destination_is_the_receivers_line_and_code_3() {
+        let cause = io::Error::other("stat refused");
+        let refusal = crate::server::DestRootSelectError::into_io(
+            crate::server::SelectStep::Stat,
+            "\"/d/file/x/\"".to_owned(),
+            cause,
+        );
+        let report = local_failure_error(&refusal, None, ReportingSide::PreFork, 0, None);
+        assert_eq!(report.code(), ExitCode::FileSelect);
+        let line = report.program_line().expect("the receiver's line");
+        assert!(
+            line.ends_with("ERROR: cannot stat destination \"/d/file/x/\": stat refused"),
+            "{line}"
+        );
+        assert!(!report.to_string().contains("transfer failed"), "{report}");
+    }
+
+    /// A shutdown signal ends a client sender with the bare RERR_SIGNAL
+    /// trailer, as rsync.c:874 exits from inside the handler; it used to read
+    /// `transfer failed: received SIGINT, ...`.
+    #[test]
+    fn a_shutdown_signal_is_the_bare_code_20_trailer() {
+        let signal = fast_io::signal::shutdown_error();
+        let report = local_failure_error(&signal, None, ReportingSide::PreFork, 0, None);
+        assert_eq!(report.code(), ExitCode::Signal);
+        assert!(report.cause_line().is_none(), "{report}");
+        assert!(
+            report
+                .to_string()
+                .starts_with("rsync error: received SIGINT, SIGTERM, or SIGHUP (code 20) at "),
             "{report}"
         );
     }

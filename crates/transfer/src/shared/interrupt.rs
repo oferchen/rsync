@@ -13,20 +13,11 @@
 //! wake-up into an ordered stop rather than a torn protocol state, and it is
 //! what stops the loops on transports that carry no wakeable socket.
 
-use std::fmt;
 use std::io;
 
 /// Source of the error [`check_shutdown`] returns; graded `RERR_SIGNAL` (20).
-#[derive(Debug)]
-pub struct SignalShutdown;
-
-impl fmt::Display for SignalShutdown {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("received SIGINT, SIGTERM, or SIGHUP")
-    }
-}
-
-impl std::error::Error for SignalShutdown {}
+/// Defined in `fast_io` so the transports can return it too.
+pub use fast_io::signal::SignalShutdown;
 
 /// Returns a [`SignalShutdown`] error when a shutdown signal has been received.
 ///
@@ -42,7 +33,7 @@ impl std::error::Error for SignalShutdown {}
 #[inline]
 pub fn check_shutdown() -> io::Result<()> {
     if fast_io::signal::shutdown_requested() {
-        return Err(io::Error::other(SignalShutdown));
+        return Err(fast_io::signal::shutdown_error());
     }
     Ok(())
 }

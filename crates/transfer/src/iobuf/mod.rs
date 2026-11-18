@@ -19,6 +19,58 @@ use std::io::{self, IoSlice, Read, Write};
 
 pub(crate) use self::core::{Core, CoreReader, CoreWriter, SharedCore};
 pub(crate) use self::timeout::IoTimeout;
+
+/// A write to the peer's stream that failed.
+///
+/// The transport's own error is kept as the source, so its kind and errno
+/// still describe the failure; the wrapper records only that it was the
+/// write, not a read, that returned it. A failed write is reported for what
+/// it is whatever errno it carries: `EPIPE` once the peer is gone, or
+/// `ECONNRESET` when the peer closed with input unread.
+///
+/// upstream: io.c:961-967 perform_io() - `rsyserr(FERROR_SOCKET, errno,
+/// "write error")`, then `exit_cleanup(RERR_SOCKETIO)`.
+#[derive(Debug)]
+pub struct PeerWriteError(io::Error);
+
+impl PeerWriteError {
+    /// Marks `error`, returned by a write of the peer's stream, keeping its
+    /// kind. A shutdown signal that ended the write passes through unmarked:
+    /// it is the signal's exit, not the write's failure (upstream: rsync.c
+    /// sig_int() ends the process from the handler).
+    pub fn wrap(error: io::Error) -> io::Error {
+        if crate::shared::is_signal_shutdown(&error) {
+            return error;
+        }
+        io::Error::new(error.kind(), Self(error))
+    }
+
+    /// The failed write's own error, when `error` or anything in its source
+    /// chain is one.
+    #[must_use]
+    pub fn of(error: &io::Error) -> Option<&io::Error> {
+        let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error.get_ref()?);
+        while let Some(err) = source {
+            if let Some(failed) = err.downcast_ref::<Self>() {
+                return Some(&failed.0);
+            }
+            source = err.source();
+        }
+        None
+    }
+}
+
+impl std::fmt::Display for PeerWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for PeerWriteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
 use crate::reader::{BufferedInputHint, ServerReader};
 use crate::writer::ServerWriter;
 

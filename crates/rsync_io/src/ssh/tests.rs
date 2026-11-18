@@ -2011,3 +2011,62 @@ fn explicit_blocking_io_forces_for_ssh() {
     command.set_blocking_io(Some(true));
     assert!(command.resolved_blocking_io());
 }
+
+/// Task 757: the signal watcher shuts a socketpair wire down, so a write
+/// blocked on it ends with the shutdown error even though the signal went to
+/// another thread. Nothing reads `cat`'s output, so `cat` stops reading its
+/// input and the writer fills the wire and blocks.
+#[cfg(unix)]
+#[test]
+fn shutting_the_wire_down_ends_a_blocked_write_with_the_shutdown_error() {
+    use fast_io::transport::{BlockingStreams, Transport};
+    use std::process::Command;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let mut command = Command::new("cat");
+    let wire = super::wire::configure_wire(&mut command, true);
+    let mut child = command.spawn().expect("spawn cat");
+    drop(command);
+    let wire = wire.into_parent_ends(&mut child).expect("parent ends");
+    let connection = super::SshConnection::new(
+        child,
+        wire,
+        super::wire::WireIoPolicy::default(),
+        None,
+        None,
+    );
+    let shutdown = connection
+        .wire_shutdown()
+        .expect("dup")
+        .expect("a socketpair wire has a shutdown handle");
+    let (reader, writer, _child) = connection.split().expect("split");
+
+    fast_io::signal::reset_shutdown_for_testing();
+    let (tx, rx) = mpsc::channel();
+    let wire_thread = std::thread::spawn(move || {
+        let mut streams = BlockingStreams::new(reader, writer);
+        let chunk = [0u8; 65536];
+        let err = loop {
+            if let Err(err) = streams.try_write(&chunk) {
+                break err;
+            }
+        };
+        tx.send(err).expect("send");
+    });
+
+    // What the signal handler and then the watcher do.
+    fast_io::signal::mark_shutdown();
+    shutdown.shutdown();
+    // The bound only turns the hang this test exists for into a failure.
+    let err = rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the blocked write never returned");
+    assert!(
+        err.get_ref()
+            .is_some_and(|e| e.is::<fast_io::signal::SignalShutdown>()),
+        "{err}"
+    );
+    wire_thread.join().expect("wire thread");
+    fast_io::signal::reset_shutdown_for_testing();
+}
