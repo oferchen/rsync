@@ -1,14 +1,24 @@
 //! Lock-free SPSC (single-producer, single-consumer) channel.
 //!
 //! Built on [`crossbeam_queue::ArrayQueue`] with [`std::sync::atomic::AtomicBool`]
-//! disconnection flags and a bounded-spin-then-park wait strategy.  The
-//! uncontended path stays syscall-free: a ready slot costs one lock-free queue
-//! op plus one atomic flag load.  Only a *failed* probe enters the wait path,
-//! which spins a short fixed budget (absorbing the sub-microsecond gaps of an
-//! active pipeline) and then parks the thread on a per-side [`Condvar`] until
-//! the counterpart signals.  A parked half releases its core entirely, so an
-//! idle or slow-sink stage costs no CPU and no timed-sleep syscalls, and CPU
-//! oversubscription cannot livelock the pipeline.
+//! disconnection flags.  The uncontended path stays syscall-free: a ready slot
+//! costs one lock-free queue op plus one fence and one atomic flag load.  Only
+//! a *failed* probe enters a wait path, and the two sides wait differently:
+//!
+//! - The consumer on an empty queue spins a short fixed budget (absorbing the
+//!   sub-microsecond gaps of an active pipeline), then parks until the
+//!   producer pushes.  Every push wakes it: an item it is waiting for must
+//!   never sit in the queue behind a batching threshold.
+//! - The producer on a full queue parks at once and is woken only when the
+//!   consumer has drained the queue to its low-water mark (half capacity).
+//!   A full queue already holds a backlog for the consumer, so spinning
+//!   cannot raise throughput; re-filling one slot per pop would only trade a
+//!   spin or a futex round trip per item for nothing.  The hysteresis turns
+//!   that into one park and one wake per half-queue of items.
+//!
+//! A parked half releases its core entirely, so a slow stage costs no CPU and
+//! no timed-sleep syscalls, and CPU oversubscription cannot livelock the
+//! pipeline.
 //!
 //! Designed for the network → disk thread pipeline where exactly one producer
 //! (network ingest) and one consumer (disk commit) exchange `FileMessage`
@@ -20,34 +30,42 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 use crossbeam_queue::ArrayQueue;
 
-/// Fixed spin budget before parking, in failed-probe iterations.
-///
-/// When the pipeline is active, the counterpart typically frees a slot within
-/// a few hundred [`std::hint::spin_loop`] hints (roughly single-digit
-/// microseconds), so the budget keeps handoffs off the park path.  The budget
-/// is deliberately static: the park path below makes longer waits free, so
-/// there is nothing for an adaptive controller to optimize.
+/// Consumer spin budget before parking on an empty queue, in failed-probe
+/// iterations.
 const SPIN_LIMIT: u32 = 512;
+
+/// The occupancy at or below which a pop wakes a producer parked on a full
+/// queue: half the capacity, so a woken producer refills half the ring in one
+/// run while the consumer still has the other half to work on.
+const fn low_water(capacity: usize) -> usize {
+    capacity / 2
+}
 
 /// One side's park/wake primitive: a wake token guarded by a mutex plus a
 /// `parked` flag that lets the signaling side skip the mutex entirely on the
 /// hot path.
 ///
-/// Lost-wakeup safety follows the standard park-loop protocol:
+/// Lost-wakeup invariant.  The waiter blocks on a condition `blocked()` over
+/// the queue and the disconnect flags; the waker's `ready()` is its negation.
+/// While a waiter is parked, only the waker moves the queue towards
+/// `ready()`, so once `ready()` holds it holds until the waiter runs.
 ///
-/// 1. The waiter publishes intent (`parked = true`, SeqCst store - a full
-///    barrier), *re-checks* the queue condition, and only then blocks on the
-///    condvar waiting for the token.
-/// 2. The waker performs its queue transition, issues a [`fence`]`(SeqCst)`,
-///    and loads `parked`.  The fence orders the queue op before the flag load,
-///    so the classic store-buffering race is impossible: either the waiter's
-///    re-check observes the transition (and it never parks), or the waker
-///    observes `parked = true` (and delivers the token under the mutex).
-/// 3. The token is set and consumed under the mutex, so a wake issued between
-///    the waiter's re-check and its `Condvar::wait` is never lost.
+/// - Waiter, in order: (W1) store `parked = true`; (W2) full fence; (W3)
+///   evaluate `blocked()`, returning at once if it is false; (W4) under the
+///   mutex, wait until the token is set, consume it, clear `parked`.
+/// - Waker, in order: (K1) its queue or disconnect transition; (K2) full
+///   fence; (K3) load `parked`, returning if false; (K4) evaluate `ready()`,
+///   returning if false; (K5) under the mutex, set the token and notify.
 ///
-/// A stale token (waker saw `parked` but the waiter's re-check succeeded) at
-/// worst causes one spurious pass through the caller's probe loop.
+/// The two fences order W1 before W3 and K1 before K3, so the store-buffering
+/// outcome where W3 misses K1 *and* K3 misses W1 is impossible: either the
+/// waiter's re-check sees the transition and never blocks, or the waker sees
+/// `parked` and goes on to K4.  If K4 finds the queue not yet ready, a later
+/// transition re-runs K1-K5 with `parked` still set, and the one that makes
+/// it ready delivers the token.  The token is set and consumed under the
+/// mutex, so a K5 that lands between W3 and the condvar wait is seen by W4's
+/// check and never lost.  A stale token (K5 ran but W3 had already returned)
+/// costs at most one spurious return to the caller's retry loop.
 struct Waiter {
     parked: AtomicBool,
     token: Mutex<bool>,
@@ -66,20 +84,22 @@ impl Waiter {
         }
     }
 
-    /// Parks the current thread while `blocked()` holds, until [`wake`](Self::wake)
-    /// delivers a token.  Returns immediately if `blocked()` is already false
-    /// after intent is published.
+    /// Parks the current thread while `blocked()` holds, until a wake
+    /// delivers a token (W1-W4 above).  Returns immediately if `blocked()` is
+    /// already false after intent is published.
     fn park_while<F: Fn() -> bool>(&self, blocked: F) {
         self.parked.store(true, Ordering::SeqCst);
-        // Re-check after publishing intent: any queue transition from here on
-        // is guaranteed to observe `parked` and deliver a token.
+        fence(Ordering::SeqCst);
+        checkpoint(Checkpoint::Published);
         if !blocked() {
             self.parked.store(false, Ordering::SeqCst);
             return;
         }
+        checkpoint(Checkpoint::Rechecked);
         self.parks.fetch_add(1, Ordering::Relaxed);
         let mut token = self.token.lock().unwrap_or_else(PoisonError::into_inner);
         while !*token {
+            checkpoint(Checkpoint::Blocking);
             token = self.cv.wait(token).unwrap_or_else(PoisonError::into_inner);
         }
         *token = false;
@@ -87,29 +107,83 @@ impl Waiter {
         self.parked.store(false, Ordering::SeqCst);
     }
 
-    /// Wakes the counterpart if it is parked (or about to park).
+    /// Wakes the counterpart if it is parked (or about to park) and `ready()`
+    /// holds (K2-K5 above).
     ///
-    /// Hot path: one SeqCst fence plus one atomic load; the mutex is touched
-    /// only when the counterpart actually registered intent to park.
-    fn wake(&self) {
+    /// Hot path: one SeqCst fence plus one atomic load; `ready()` and the
+    /// mutex are touched only when the counterpart registered intent to park.
+    fn wake_if(&self, ready: impl FnOnce() -> bool) {
         fence(Ordering::SeqCst);
-        if !self.parked.load(Ordering::SeqCst) {
+        if !self.parked.load(Ordering::SeqCst) || !ready() {
             return;
         }
         let mut token = self.token.lock().unwrap_or_else(PoisonError::into_inner);
         *token = true;
         self.cv.notify_one();
     }
+
+    /// Wakes the counterpart unconditionally if it is parked.
+    fn wake(&self) {
+        self.wake_if(|| true);
+    }
 }
+
+/// Points inside [`Waiter::park_while`] where a test can run the
+/// counterpart's transition on the waiting thread, forcing one interleaving
+/// of the lost-wakeup protocol deterministically.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Checkpoint {
+    /// After W1-W2, before the W3 re-check.
+    Published,
+    /// After W3 found the queue blocked, before taking the mutex.
+    Rechecked,
+    /// Under the mutex with no token: the thread is about to sleep.
+    Blocking,
+}
+
+/// The hook a test installs for [`checkpoint`].
+#[cfg(test)]
+type CheckpointHook = Box<dyn FnMut(Checkpoint)>;
+
+#[cfg(test)]
+thread_local! {
+    static CHECKPOINT_HOOK: std::cell::RefCell<Option<CheckpointHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn checkpoint(at: Checkpoint) {
+    let hook = CHECKPOINT_HOOK.with(|slot| slot.borrow_mut().take());
+    if let Some(mut hook) = hook {
+        hook(at);
+        CHECKPOINT_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+    }
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+const fn checkpoint(_: Checkpoint) {}
 
 struct Shared<T> {
     queue: ArrayQueue<T>,
     producer_alive: AtomicBool,
     consumer_alive: AtomicBool,
-    /// Producer parks here when the queue is full; woken by the consumer.
+    /// Producer parks here when the queue is full; woken by the consumer once
+    /// the queue is at or below `low_water`, or on disconnect.
     send_waiter: Waiter,
-    /// Consumer parks here when the queue is empty; woken by the producer.
+    /// Consumer parks here when the queue is empty; woken by every push, or
+    /// on disconnect.
     recv_waiter: Waiter,
+    low_water: usize,
+}
+
+impl<T> Shared<T> {
+    /// After a pop: wakes a parked producer once the queue has drained to the
+    /// low-water mark.
+    fn popped(&self) {
+        self.send_waiter
+            .wake_if(|| self.queue.len() <= self.low_water);
+    }
 }
 
 /// Error returned by [`Sender::send`] when the receiver has been dropped.
@@ -160,32 +234,25 @@ impl fmt::Display for TryRecvError {
 pub struct Sender<T>(Arc<Shared<T>>);
 
 impl<T> Sender<T> {
-    /// Sends `item` through the channel, blocking if the queue is full: a
-    /// short fixed spin, then a park until the consumer frees a slot.
+    /// Sends `item` through the channel.  On a full queue it parks until
+    /// the consumer has drained the queue to its low-water mark.
     ///
     /// Returns `Err(SendError(item))` if the receiver has been dropped.
     pub fn send(&self, mut item: T) -> Result<(), SendError<T>> {
         loop {
-            let mut spins = 0;
-            loop {
-                if !self.0.consumer_alive.load(Ordering::Acquire) {
-                    return Err(SendError(item));
+            if !self.0.consumer_alive.load(Ordering::Acquire) {
+                return Err(SendError(item));
+            }
+            match self.0.queue.push(item) {
+                Ok(()) => {
+                    self.0.recv_waiter.wake();
+                    return Ok(());
                 }
-                match self.0.queue.push(item) {
-                    Ok(()) => {
-                        self.0.recv_waiter.wake();
-                        return Ok(());
-                    }
-                    Err(returned) => item = returned,
-                }
-                spins += 1;
-                if spins >= SPIN_LIMIT {
-                    break;
-                }
-                std::hint::spin_loop();
+                Err(returned) => item = returned,
             }
             self.0.send_waiter.park_while(|| {
-                self.0.queue.is_full() && self.0.consumer_alive.load(Ordering::Acquire)
+                self.0.queue.len() > self.0.low_water
+                    && self.0.consumer_alive.load(Ordering::Acquire)
             });
         }
     }
@@ -243,7 +310,7 @@ impl<T> Receiver<T> {
             let mut spins = 0;
             loop {
                 if let Some(item) = self.0.queue.pop() {
-                    self.0.send_waiter.wake();
+                    self.0.popped();
                     return Ok(item);
                 }
                 if !self.0.producer_alive.load(Ordering::Acquire) {
@@ -268,7 +335,7 @@ impl<T> Receiver<T> {
     /// queue is drained.
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         if let Some(item) = self.0.queue.pop() {
-            self.0.send_waiter.wake();
+            self.0.popped();
             return Ok(item);
         }
         if !self.0.producer_alive.load(Ordering::Acquire) {
@@ -297,8 +364,8 @@ impl<T> Drop for Receiver<T> {
 /// Creates a bounded SPSC channel backed by a lock-free ring buffer.
 ///
 /// `capacity` is the maximum number of items the channel can hold.
-/// When the channel is full, [`Sender::send`] blocks (spin, then park)
-/// until space is available.
+/// When the channel is full, [`Sender::send`] parks until the consumer has
+/// drained it to half capacity.
 pub fn channel<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     let shared = Arc::new(Shared {
         queue: ArrayQueue::new(capacity),
@@ -306,6 +373,7 @@ pub fn channel<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
         consumer_alive: AtomicBool::new(true),
         send_waiter: Waiter::new(),
         recv_waiter: Waiter::new(),
+        low_water: low_water(capacity),
     });
     (Sender(Arc::clone(&shared)), Receiver(shared))
 }
@@ -313,6 +381,8 @@ pub fn channel<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::rc::Rc;
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -629,5 +699,159 @@ mod tests {
             producer.join().unwrap();
             assert_eq!(consumer.join().unwrap(), expected);
         }
+    }
+
+    /// Runs `act` on this thread the first time it passes `at` inside
+    /// `park_while`, and panics if the thread then reaches the point where it
+    /// would sleep: with the counterpart's transition already done, nothing
+    /// is left to wake it, so reaching `Blocking` is a lost wakeup.
+    fn interleave(at: Checkpoint, act: impl FnOnce() + 'static) {
+        let mut act = Some(act);
+        CHECKPOINT_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move |point| {
+                if point == at
+                    && let Some(act) = act.take()
+                {
+                    act();
+                }
+                assert_ne!(point, Checkpoint::Blocking, "lost wakeup after {at:?}");
+            }));
+        });
+    }
+
+    fn clear_interleave() {
+        CHECKPOINT_HOOK.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    /// The consumer drains to the low-water mark after the producer published
+    /// its intent to park but before its re-check (between W2 and W3): the
+    /// re-check must see the room and the producer must not park at all.
+    #[test]
+    fn a_drain_before_the_producer_recheck_is_seen_by_the_recheck() {
+        let (tx, rx) = channel::<u32>(2);
+        tx.send(1).unwrap();
+        tx.send(2).unwrap();
+        let rx = Rc::new(rx);
+        let consumer = Rc::clone(&rx);
+        interleave(Checkpoint::Published, move || {
+            assert_eq!(consumer.try_recv(), Ok(1));
+        });
+        tx.send(3).unwrap();
+        clear_interleave();
+        assert_eq!(rx.producer_parks(), 0);
+        assert_eq!(rx.try_recv(), Ok(2));
+        assert_eq!(rx.try_recv(), Ok(3));
+    }
+
+    /// The consumer drains to the low-water mark after the producer's
+    /// re-check found the queue full but before it takes the mutex (between
+    /// W3 and W4): the wake must leave a token, so the producer returns
+    /// without sleeping.
+    #[test]
+    fn a_drain_between_the_producer_recheck_and_its_sleep_leaves_a_token() {
+        let (tx, rx) = channel::<u32>(2);
+        tx.send(1).unwrap();
+        tx.send(2).unwrap();
+        let rx = Rc::new(rx);
+        let consumer = Rc::clone(&rx);
+        interleave(Checkpoint::Rechecked, move || {
+            assert_eq!(consumer.try_recv(), Ok(1));
+        });
+        tx.send(3).unwrap();
+        clear_interleave();
+        assert_eq!(rx.producer_parks(), 1);
+        assert_eq!(rx.try_recv(), Ok(2));
+        assert_eq!(rx.try_recv(), Ok(3));
+    }
+
+    /// The producer is woken only once the queue is at its low-water mark
+    /// (half of 4), not by the first pop: one pop leaves it about to sleep,
+    /// and the second pop is the one that wakes it.  This hysteresis is what
+    /// turns one park per item into one park per half-queue when the
+    /// consumer is the slower stage.
+    #[test]
+    fn a_full_producer_wakes_at_low_water_not_on_the_first_pop() {
+        let (tx, rx) = channel::<u32>(4);
+        for i in 0..4 {
+            tx.send(i).unwrap();
+        }
+        let rx = Rc::new(rx);
+
+        let consumer = Rc::clone(&rx);
+        CHECKPOINT_HOOK.with(|slot| {
+            let mut popped = false;
+            *slot.borrow_mut() = Some(Box::new(move |point| match point {
+                Checkpoint::Rechecked if !popped => {
+                    popped = true;
+                    assert_eq!(consumer.try_recv(), Ok(0));
+                }
+                Checkpoint::Blocking => panic!("asleep above low water"),
+                _ => {}
+            }));
+        });
+        let asleep = catch_unwind(AssertUnwindSafe(|| tx.send(4)))
+            .expect_err("one pop above low water must not wake the producer");
+        assert_eq!(
+            asleep.downcast_ref::<&str>(),
+            Some(&"asleep above low water")
+        );
+        clear_interleave();
+
+        let (tx, rx) = channel::<u32>(4);
+        for i in 0..4 {
+            tx.send(i).unwrap();
+        }
+        let rx = Rc::new(rx);
+        let consumer = Rc::clone(&rx);
+        interleave(Checkpoint::Rechecked, move || {
+            assert_eq!(consumer.try_recv(), Ok(0));
+            assert_eq!(consumer.try_recv(), Ok(1));
+        });
+        tx.send(4).unwrap();
+        clear_interleave();
+        let rest: Vec<u32> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert_eq!(rest, [2, 3, 4]);
+    }
+
+    /// The producer pushes after the consumer published its intent to park
+    /// but before its re-check: the consumer must take the item, not park.
+    #[test]
+    fn a_push_before_the_consumer_recheck_is_seen_by_the_recheck() {
+        let (tx, rx) = channel::<u32>(2);
+        interleave(Checkpoint::Published, move || tx.send(7).unwrap());
+        assert_eq!(rx.recv(), Ok(7));
+        clear_interleave();
+        assert_eq!(rx.producer_parks(), 0);
+    }
+
+    /// The producer pushes between the consumer's re-check and its sleep:
+    /// the push's wake must leave a token, so the consumer takes the item.
+    #[test]
+    fn a_push_between_the_consumer_recheck_and_its_sleep_leaves_a_token() {
+        let (tx, rx) = channel::<u32>(2);
+        let producer = Rc::new(tx);
+        let pushes = Rc::clone(&producer);
+        interleave(Checkpoint::Rechecked, move || pushes.send(7).unwrap());
+        assert_eq!(rx.recv(), Ok(7));
+        clear_interleave();
+        assert_eq!(producer.consumer_parks(), 1);
+    }
+
+    /// A disconnect that lands between a waiter's re-check and its sleep
+    /// must wake it: the consumer reports the closed channel and the producer
+    /// gets its item back, neither sleeps.
+    #[test]
+    fn a_disconnect_between_the_recheck_and_the_sleep_wakes_the_waiter() {
+        let (tx, rx) = channel::<u32>(2);
+        interleave(Checkpoint::Rechecked, move || drop(tx));
+        assert_eq!(rx.recv(), Err(RecvError));
+        clear_interleave();
+
+        let (tx, rx) = channel::<u32>(1);
+        tx.send(1).unwrap();
+        interleave(Checkpoint::Rechecked, move || drop(rx));
+        let SendError(item) = tx.send(2).expect_err("a dropped receiver must reject");
+        clear_interleave();
+        assert_eq!(item, 2);
     }
 }
