@@ -56,6 +56,11 @@ fn apply_module_directive(
     path: &Path,
     line_number: usize,
 ) -> Result<(), DaemonError> {
+    if let Some(param) = DeferredParam::from_key(key)
+        && builder.defer(param, value)
+    {
+        return Ok(());
+    }
     match key {
         // upstream: daemon-parm.txt `STRING name` (P_LOCAL) - a `name` line
         // overwrites the section's own name, which is what lp_number() looks a
@@ -68,7 +73,9 @@ fn apply_module_directive(
             let comment = if value.is_empty() {
                 None
             } else {
-                Some(value.to_owned())
+                // upstream: clientserver.c:1390 - read only by the listing,
+                // before any connection variable is set.
+                Some(expand_environment_vars(value))
             };
             builder.set_comment(comment);
         }

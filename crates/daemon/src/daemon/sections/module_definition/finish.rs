@@ -140,12 +140,14 @@ impl ModuleDefinitionBuilder {
         // upstream: authenticate.c:148-150 check_secret() - a module that
         // requires authentication but has no secrets file is not a config
         // error; every login to it fails with "no secrets file".
-        let secrets_file = if auth_users.is_empty() {
-            self.secrets_file
-        } else {
-            self.secrets_file
-                .or_else(|| default_secrets.map(Path::to_path_buf))
-        };
+        let deferred = self.deferred.or(&defaults.deferred);
+        let secrets_file =
+            if auth_users.is_empty() && !deferred.is_deferred(DeferredParam::AuthUsers) {
+                self.secrets_file
+            } else {
+                self.secrets_file
+                    .or_else(|| default_secrets.map(Path::to_path_buf))
+            };
 
         // upstream: daemon-parm.txt:25,27,31 - exclude/filter/include are STRING
         // P_LOCAL parameters.
@@ -181,8 +183,18 @@ impl ModuleDefinitionBuilder {
 
         // upstream: clientserver.c:837-874 resolves `uid` before `gid`, so a
         // `uid` that does not resolve is the one reported.
-        let uid = self.uid.or_else(|| defaults.uid.clone());
-        let gid = self.gid.or_else(|| defaults.gid.clone());
+        // A deferred value supersedes every earlier one, the copied default
+        // included, so an unresolved default must not be reported for it.
+        let uid = if deferred.is_deferred(DeferredParam::Uid) {
+            None
+        } else {
+            self.uid.or_else(|| defaults.uid.clone())
+        };
+        let gid = if deferred.is_deferred(DeferredParam::Gid) {
+            None
+        } else {
+            self.gid.or_else(|| defaults.gid.clone())
+        };
         let unresolved_id = match (&uid, &gid) {
             (Some(Err(name)), _) => Some(UnresolvedId::Uid(name.clone())),
             (_, Some(Err(token))) => Some(UnresolvedId::Gid(token.clone())),
@@ -190,7 +202,10 @@ impl ModuleDefinitionBuilder {
         };
 
         Ok(ModuleDefinition {
-            name: self.name,
+            // upstream: clientserver.c:1577 lp_number() and :1390 send_listing()
+            // are the first reads of `name`, before any connection variable is
+            // set, so only the daemon's own environment resolves a reference.
+            name: expand_environment_vars(&self.name),
             path,
             comment: self.comment.or_else(|| defaults.comment.clone()),
             hosts_allow,
@@ -301,7 +316,10 @@ impl ModuleDefinitionBuilder {
                 .unwrap_or(true),
             // upstream: daemon-parm.txt:34 - a module `lock file` overrides the
             // daemon-wide lock file; `None` inherits it at connection setup.
-            lock_file: self.lock_file,
+            lock_file: self
+                .lock_file
+                .or_else(|| defaults.lock_file_template.clone()),
+            deferred: deferred.into_templates(),
             // upstream: daemon-parm.txt:44,54 syslog_tag/syslog_facility are P_LOCAL, so a
             // global-section value seeds every module's default (init_section
             // copy). A module directive overrides it; otherwise the module

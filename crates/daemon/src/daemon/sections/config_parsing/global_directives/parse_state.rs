@@ -132,6 +132,24 @@ impl GlobalParseState {
     /// module, i.e. after `lp_load()` has read the whole file. A global
     /// declared below a `[section]` therefore still supplies a string the
     /// section never had, but never replaces one the section copied or set.
+    /// Records a global-section assignment of a [`DeferredParam`], returning
+    /// `true` when the value must wait for a connection. A deferred value
+    /// replaces the default stored before it, keeping the directive last-wins.
+    fn defer_module_default(&mut self, param: DeferredParam, value: &str) -> bool {
+        let deferred = self.module_defaults.deferred.record(param, value);
+        if deferred {
+            match param {
+                DeferredParam::HostsAllow => self.module_defaults.hosts_allow = None,
+                DeferredParam::HostsDeny => self.module_defaults.hosts_deny = None,
+                DeferredParam::AuthUsers => self.module_defaults.auth_users = None,
+                DeferredParam::Uid => self.module_defaults.uid = None,
+                DeferredParam::Gid => self.module_defaults.gid = None,
+                DeferredParam::RefuseOptions => self.global_refuse_directives.clear(),
+            }
+        }
+        deferred
+    }
+
     fn into_result(self, sections: Vec<PendingModule>) -> Result<ParsedConfigModules, DaemonError> {
         let latest = &self.module_defaults;
         let latest_secrets = self.global_secrets_file.as_ref().map(|(v, _)| v.as_path());

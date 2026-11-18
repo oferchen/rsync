@@ -68,6 +68,8 @@ struct ModuleDefinitionBuilder {
     ///
     /// upstream: daemon-parm.txt:31 `include` STRING, P_LOCAL.
     include: Vec<String>,
+    /// Assignments of the typed parameters whose value waits for a connection.
+    deferred: DeferredAssignments,
 }
 
 impl ModuleDefinitionBuilder {
@@ -123,6 +125,27 @@ impl ModuleDefinitionBuilder {
             filter: Vec::new(),
             exclude: Vec::new(),
             include: Vec::new(),
+            deferred: DeferredAssignments::new(),
         }
+    }
+
+    /// Records an assignment of a [`DeferredParam`], returning `true` when the
+    /// value holds a `%VAR%` reference and so must not be parsed yet.
+    ///
+    /// A deferred value replaces whatever the section stored for the parameter
+    /// before, keeping the directive last-wins.
+    fn defer(&mut self, param: DeferredParam, value: &str) -> bool {
+        let deferred = self.deferred.record(param, value);
+        if deferred {
+            match param {
+                DeferredParam::HostsAllow => self.hosts_allow = None,
+                DeferredParam::HostsDeny => self.hosts_deny = None,
+                DeferredParam::AuthUsers => self.auth_users = None,
+                DeferredParam::Uid => self.uid = None,
+                DeferredParam::Gid => self.gid = None,
+                DeferredParam::RefuseOptions => self.refuse_options = None,
+            }
+        }
+        deferred
     }
 }

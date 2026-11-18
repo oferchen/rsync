@@ -73,6 +73,11 @@ struct GlobalModuleDefaults {
     /// value is every module's default by the same init_section()/copy_section()
     /// route as `auth users` above.
     auth_digest: Option<String>,
+    /// Global-section assignments of the typed parameters whose value waits
+    /// for a connection.
+    deferred: DeferredAssignments,
+    /// The global `lock file` when it holds a `%VAR%` reference.
+    lock_file_template: Option<PathBuf>,
 }
 
 impl GlobalModuleDefaults {
@@ -120,6 +125,10 @@ impl GlobalModuleDefaults {
             gid: copied_or_latest(&snapshot.gid, &latest.gid),
             auth_users: copied_or_latest(&snapshot.auth_users, &latest.auth_users),
             auth_digest: copied_or_latest(&snapshot.auth_digest, &latest.auth_digest),
+            deferred: snapshot.deferred.clone().or(&latest.deferred),
+            // `lock file` has a non-NULL built-in default, so a section keeps
+            // the value copied at its creation.
+            lock_file_template: snapshot.lock_file_template.clone(),
             // FN_LOCAL_STRING with a non-NULL built-in default.
             log_format: snapshot.log_format.clone(),
             dont_compress: snapshot.dont_compress.clone(),

@@ -34,49 +34,217 @@ fn expand_config_vars(template: &str, vars: &HookVariables<'_>) -> String {
     }
 }
 
-/// Expands the module's path-type parameters the way upstream reads them.
+/// Expands `%NAME%` references from the daemon's own environment only.
 ///
-/// `secrets file` is read by `auth_server()` (clientserver.c:809), before
-/// `RSYNC_USER_NAME` is set, so it is expanded without it; `path` is read at
-/// :877, after it; the rest are read once `RSYNC_MODULE_PATH` is set at :920.
-/// Called before authentication with `user_name` unset, which expands only
-/// `secrets file`, and again after it to expand the rest.
+/// For a parameter upstream first reads before a client has selected a module,
+/// when no `RSYNC_*` connection variable has been set yet.
+fn expand_environment_vars(template: &str) -> String {
+    expand_config_vars(template, &HookVariables::default())
+}
+
+/// Reports whether `value` holds a `%NAME%` reference upstream would look up.
 ///
-/// upstream: `loadparm.c:330` `RETURN_EXPANDED` expands each string parameter
-/// on its first read.
-fn expand_module_vars(module: &mut ModuleDefinition, vars: &HookVariables<'_>) {
-    let expand_path = |path: &Path, vars: &HookVariables<'_>| {
-        PathBuf::from(expand_config_vars(&path.display().to_string(), vars))
-    };
-    if vars.user_name.is_none() {
-        if let Some(path) = module.secrets_file.as_deref() {
-            module.secrets_file = Some(expand_path(path, vars));
-        }
-        return;
+/// upstream: loadparm.c:250-252 - `%`, an uppercase letter, a later `%`.
+fn has_variable_reference(value: &str) -> bool {
+    value
+        .match_indices('%')
+        .any(|(pos, _)| delimited_variable(&value[pos + 1..]).is_some())
+}
+
+/// Assignments of the [`DeferredParam`]s seen while one config section loads.
+///
+/// Each slot is `None` until the section assigns the parameter, then
+/// `Some(None)` for a value parsed at load time and `Some(Some(template))` for
+/// one that waits for a connection. The middle state is what lets a section's
+/// own plain value win over a deferred default it would otherwise inherit.
+#[derive(Clone, Default)]
+struct DeferredAssignments([Option<Option<String>>; DeferredParam::COUNT]);
+
+impl DeferredAssignments {
+    const fn new() -> Self {
+        Self([None, None, None, None, None, None])
     }
 
+    /// Records an assignment, returning `true` when it must be deferred.
+    fn record(&mut self, param: DeferredParam, value: &str) -> bool {
+        let deferred = has_variable_reference(value);
+        self.0[param as usize] = Some(deferred.then(|| value.to_owned()));
+        deferred
+    }
+
+    /// Fills every parameter this section left unassigned from `fallback`.
+    fn or(mut self, fallback: &Self) -> Self {
+        for (slot, inherited) in self.0.iter_mut().zip(&fallback.0) {
+            if slot.is_none() {
+                slot.clone_from(inherited);
+            }
+        }
+        self
+    }
+
+    /// Whether `param` waits for a connection.
+    fn is_deferred(&self, param: DeferredParam) -> bool {
+        matches!(self.0[param as usize], Some(Some(_)))
+    }
+
+    /// Keeps only the values that wait for a connection.
+    fn into_templates(self) -> DeferredTemplates {
+        DeferredTemplates::new(self.0.map(Option::flatten))
+    }
+}
+
+/// Expands, in place, the string parameters upstream first reads at `vars`.
+fn expand_string_params<const N: usize>(
+    params: [&mut Option<String>; N],
+    vars: &HookVariables<'_>,
+) {
+    for param in params {
+        if let Some(value) = param.as_deref() {
+            *param = Some(expand_config_vars(value, vars));
+        }
+    }
+}
+
+/// Expands, in place, the path parameters upstream first reads at `vars`.
+fn expand_path_params<const N: usize>(params: [&mut Option<PathBuf>; N], vars: &HookVariables<'_>) {
+    for param in params {
+        if let Some(path) = param.as_deref() {
+            *param = Some(PathBuf::from(expand_config_vars(
+                &path.display().to_string(),
+                vars,
+            )));
+        }
+    }
+}
+
+/// Expands the parameters upstream reads between selecting a module and
+/// authenticating its client.
+///
+/// `vars` carries `RSYNC_MODULE_NAME`, `RSYNC_HOST_NAME` and `RSYNC_HOST_ADDR`;
+/// `RSYNC_USER_NAME` and `RSYNC_MODULE_PATH` are not set yet, so a reference
+/// to either stays verbatim, exactly as upstream caches it.
+///
+/// upstream: `loadparm.c:330` `RETURN_EXPANDED` expands each string parameter
+/// on its first read - `charset` at clientserver.c:764 (only the module name is
+/// set), `hosts allow`/`hosts deny` at access.c:347-348, `lock file` at
+/// clientserver.c:795, `auth users`, `auth digest` and `secrets file` in
+/// `auth_server()` (authenticate.c:286, :308, :136).
+///
+/// `log file` and `syslog tag` are expanded here too, because oc reopens the
+/// module's log when the module is selected; upstream reads both later, at
+/// clientserver.c:960 `log_init(1)`, when the user name and module path are
+/// also set.
+fn expand_selected_module_vars(module: &mut ModuleDefinition, vars: &HookVariables<'_>) {
+    let name_only = HookVariables {
+        module_name: vars.module_name,
+        ..HookVariables::default()
+    };
+    expand_string_params([&mut module.charset], &name_only);
+    expand_string_params([&mut module.auth_digest, &mut module.syslog_tag], vars);
+    expand_path_params(
+        [
+            &mut module.secrets_file,
+            &mut module.lock_file,
+            &mut module.log_file,
+        ],
+        vars,
+    );
+
+    if let Some(template) = module.deferred.take(DeferredParam::HostsAllow) {
+        module.hosts_allow = parse_host_list(&expand_config_vars(&template, vars));
+    }
+    if let Some(template) = module.deferred.take(DeferredParam::HostsDeny) {
+        module.hosts_deny = parse_host_list(&expand_config_vars(&template, vars));
+    }
+    if let Some(template) = module.deferred.take(DeferredParam::AuthUsers) {
+        let users = expand_config_vars(&template, vars);
+        // upstream: authenticate.c:297 - an empty list lets anyone in, while a
+        // list naming nobody still demands a login that no rule can match.
+        module.auth_users = if users.is_empty() {
+            Vec::new()
+        } else {
+            parse_auth_user_list(&users).unwrap_or_else(|_| vec![AuthUser::new(String::new())])
+        };
+    }
+}
+
+/// Expands the parameters upstream reads once its client has authenticated.
+///
+/// `vars` adds `RSYNC_USER_NAME`. `log format`, `uid`, `gid` and `path` are
+/// read before `RSYNC_MODULE_PATH` is set (clientserver.c:828, :837, :848,
+/// :881); everything else is read after it (:924) - the filter parameters at
+/// :937-954, `temp dir` at :1141, the chmod pair at :1305-1307, `refuse
+/// options` at options.c:1037 and `dont compress` at token.c:192.
+///
+/// upstream: `loadparm.c:330` `RETURN_EXPANDED`.
+fn expand_authenticated_module_vars(module: &mut ModuleDefinition, vars: &HookVariables<'_>) {
     let path_vars = HookVariables {
         module_path: None,
         ..*vars
     };
-    module.path = expand_path(&module.path, &path_vars);
+    expand_string_params([&mut module.log_format], &path_vars);
+    let uid = module.deferred.take(DeferredParam::Uid);
+    let gid = module.deferred.take(DeferredParam::Gid);
+    apply_deferred_ids(
+        module,
+        uid.map(|template| expand_config_vars(&template, &path_vars)),
+        gid.map(|template| expand_config_vars(&template, &path_vars)),
+    );
+    module.path = PathBuf::from(expand_config_vars(
+        &module.path.display().to_string(),
+        &path_vars,
+    ));
 
     let module_path = module.path.display().to_string();
     let later_vars = HookVariables {
         module_path: Some(&module_path),
         ..*vars
     };
-    if let Some(dir) = module.temp_dir.as_deref() {
-        module.temp_dir = Some(expand_config_vars(dir, &later_vars));
+    expand_string_params(
+        [
+            &mut module.temp_dir,
+            &mut module.incoming_chmod,
+            &mut module.outgoing_chmod,
+            &mut module.dont_compress,
+        ],
+        &later_vars,
+    );
+    expand_path_params(
+        [&mut module.exclude_from, &mut module.include_from],
+        &later_vars,
+    );
+    for rules in [&mut module.filter, &mut module.exclude, &mut module.include] {
+        for rule in rules {
+            *rule = expand_config_vars(rule, &later_vars);
+        }
     }
-    if let Some(path) = module.log_file.as_deref() {
-        module.log_file = Some(expand_path(path, &later_vars));
+    if let Some(template) = module.deferred.take(DeferredParam::RefuseOptions) {
+        // upstream: options.c:1037 - an empty list refuses nothing.
+        module.refuse_options =
+            parse_refuse_option_list(&expand_config_vars(&template, &later_vars))
+                .unwrap_or_default();
     }
-    if let Some(path) = module.exclude_from.as_deref() {
-        module.exclude_from = Some(expand_path(path, &later_vars));
+}
+
+/// Resolves a deferred `uid`/`gid` once its references are expanded.
+///
+/// upstream: clientserver.c:837-874 - an empty value means the default, and a
+/// `uid` that does not resolve is reported before any `gid`.
+fn apply_deferred_ids(module: &mut ModuleDefinition, uid: Option<String>, gid: Option<String>) {
+    if let Some(value) = uid.filter(|value| !value.is_empty()) {
+        match parse_uid_setting(&value) {
+            Some(id) => module.uid = Some(id),
+            None => module.unresolved_id = Some(UnresolvedId::Uid(value)),
+        }
     }
-    if let Some(path) = module.include_from.as_deref() {
-        module.include_from = Some(expand_path(path, &later_vars));
+    if let Some(value) = gid.filter(|value| !value.is_empty()) {
+        match parse_gid_setting(&value) {
+            Ok(setting) => module.gid = Some(setting),
+            Err(_) if module.unresolved_id.is_none() => {
+                module.unresolved_id = Some(UnresolvedId::Gid(rejected_gid_token(&value)));
+            }
+            Err(_) => {}
+        }
     }
 }
 
@@ -459,7 +627,7 @@ mod variable_expansion_tests {
             module_path: None,
             ..sample_hook_vars()
         };
-        expand_module_vars(&mut module, &pre_auth);
+        expand_selected_module_vars(&mut module, &pre_auth);
         assert_eq!(
             module.secrets_file,
             Some(PathBuf::from(
@@ -472,7 +640,7 @@ mod variable_expansion_tests {
             "nothing but the secrets file is read before auth"
         );
 
-        expand_module_vars(&mut module, &sample_hook_vars());
+        expand_authenticated_module_vars(&mut module, &sample_hook_vars());
         assert_eq!(module.path, PathBuf::from("/srv/alice/%RSYNC_MODULE_PATH%"));
         assert_eq!(
             module.temp_dir.as_deref(),
@@ -482,6 +650,210 @@ mod variable_expansion_tests {
             module.include_from,
             Some(PathBuf::from("/srv/alice/%RSYNC_MODULE_PATH%/inc"))
         );
+    }
+
+    /// Every reference the 3.5.2 daemon resolves when a module is selected,
+    /// in one template: the user name and module path are not set yet, an
+    /// unset name, `%%`, a lowercase name and an unpaired `%` stay verbatim.
+    const SELECTED_TEMPLATE: &str = "%RSYNC_MODULE_NAME%-%RSYNC_HOST_ADDR%-%RSYNC_HOST_NAME%-\
+%RSYNC_USER_NAME%-%RSYNC_MODULE_PATH%-%OC_UNSET_VAR%-%%-%lower%-%TAIL";
+    const SELECTED_EXPANSION: &str = "backup-192.168.1.100-client.example.com-\
+%RSYNC_USER_NAME%-%RSYNC_MODULE_PATH%-%OC_UNSET_VAR%-%%-%lower%-%TAIL";
+
+    fn selected_vars<'a>() -> HookVariables<'a> {
+        HookVariables {
+            user_name: None,
+            module_path: None,
+            ..sample_hook_vars()
+        }
+    }
+
+    fn deferred(key: &str, value: &str) -> ModuleDefinition {
+        let mut assignments = DeferredAssignments::new();
+        let param = DeferredParam::from_key(key).expect("deferred parameter");
+        assert!(assignments.record(param, value), "{value} must be deferred");
+        ModuleDefinition {
+            deferred: assignments.into_templates(),
+            ..Default::default()
+        }
+    }
+
+    /// Measured on rsync 3.5.2: `lock file = /nonexist/<template>` fails to
+    /// open the name with the module and host variables expanded and the user
+    /// name still verbatim (clientserver.c:795 precedes :819).
+    #[test]
+    fn selecting_a_module_expands_the_parameters_read_before_authentication() {
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _user = crate::test_env::EnvGuard::remove("RSYNC_USER_NAME");
+        let _path = crate::test_env::EnvGuard::remove("RSYNC_MODULE_PATH");
+        let _unset = crate::test_env::EnvGuard::remove("OC_UNSET_VAR");
+        let mut module = ModuleDefinition {
+            auth_digest: Some(SELECTED_TEMPLATE.to_owned()),
+            syslog_tag: Some(SELECTED_TEMPLATE.to_owned()),
+            lock_file: Some(PathBuf::from(SELECTED_TEMPLATE)),
+            log_file: Some(PathBuf::from(SELECTED_TEMPLATE)),
+            ..Default::default()
+        };
+        expand_selected_module_vars(&mut module, &selected_vars());
+        assert_eq!(module.auth_digest.as_deref(), Some(SELECTED_EXPANSION));
+        assert_eq!(module.syslog_tag.as_deref(), Some(SELECTED_EXPANSION));
+        assert_eq!(module.lock_file, Some(PathBuf::from(SELECTED_EXPANSION)));
+        assert_eq!(module.log_file, Some(PathBuf::from(SELECTED_EXPANSION)));
+    }
+
+    /// Measured on rsync 3.5.2: `charset = <template>` reaches `iconv_open`
+    /// with only `RSYNC_MODULE_NAME` expanded, because clientserver.c:764 reads
+    /// it before the host variables are set (:774-775).
+    #[test]
+    fn charset_sees_only_the_module_name() {
+        let mut module = ModuleDefinition {
+            charset: Some("%RSYNC_MODULE_NAME%-%RSYNC_HOST_ADDR%-%RSYNC_HOST_NAME%".to_owned()),
+            ..Default::default()
+        };
+        expand_selected_module_vars(&mut module, &selected_vars());
+        assert_eq!(
+            module.charset.as_deref(),
+            Some("backup-%RSYNC_HOST_ADDR%-%RSYNC_HOST_NAME%")
+        );
+    }
+
+    /// Measured on rsync 3.5.2: `hosts allow = %RSYNC_HOST_ADDR%` admits the
+    /// peer and `hosts deny = %RSYNC_HOST_ADDR%` refuses it.
+    #[test]
+    fn host_lists_are_parsed_after_expansion() {
+        let peer: std::net::IpAddr = "192.168.1.100".parse().expect("peer address");
+        let host = crate::daemon::PeerHost::new(None, false);
+
+        let mut allowed = deferred("hostsallow", "%RSYNC_HOST_ADDR%");
+        assert!(allowed.hosts_allow.is_empty());
+        expand_selected_module_vars(&mut allowed, &selected_vars());
+        assert!(allowed.permits(peer, host));
+        assert!(!allowed.permits("192.168.1.101".parse().expect("other"), host));
+
+        let mut denied = deferred("hostsdeny", "%RSYNC_HOST_ADDR%");
+        expand_selected_module_vars(&mut denied, &selected_vars());
+        assert!(!denied.permits(peer, host));
+    }
+
+    /// Measured on rsync 3.5.2: `auth users = %RSYNC_MODULE_NAME%` admits the
+    /// user named after the module, while `auth users = %RSYNC_USER_NAME%`
+    /// stays verbatim (authenticate.c:286 precedes clientserver.c:819) and
+    /// refuses everyone with "no matching rule".
+    #[test]
+    fn auth_users_are_parsed_after_expansion() {
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _user = crate::test_env::EnvGuard::remove("RSYNC_USER_NAME");
+
+        let mut by_module = deferred("authusers", "%RSYNC_MODULE_NAME% carol:ro");
+        assert!(!by_module.requires_authentication());
+        expand_selected_module_vars(&mut by_module, &selected_vars());
+        assert!(by_module.get_auth_user("backup").is_some());
+        assert!(by_module.get_auth_user("carol").is_some());
+        assert!(by_module.get_auth_user("alice").is_none());
+
+        let mut by_user = deferred("authusers", "%RSYNC_USER_NAME%");
+        expand_selected_module_vars(&mut by_user, &selected_vars());
+        assert!(by_user.requires_authentication());
+        assert!(by_user.get_auth_user("alice").is_none());
+    }
+
+    /// Measured on rsync 3.5.2: `uid = x<template>` answers `@ERROR: invalid
+    /// uid xm-127.0.0.1-UNDETERMINED--%RSYNC_MODULE_PATH%-...` - the user name
+    /// is expanded (empty for an anonymous module) and the module path is not,
+    /// because clientserver.c:837 sits between :819 and :924. `gid` likewise.
+    #[test]
+    fn uid_and_gid_resolve_after_authentication() {
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _path = crate::test_env::EnvGuard::remove("RSYNC_MODULE_PATH");
+        let template = "nosuch-%RSYNC_MODULE_NAME%-%RSYNC_USER_NAME%-%RSYNC_MODULE_PATH%";
+        let expansion = "nosuch-backup-alice-%RSYNC_MODULE_PATH%";
+
+        let mut module = deferred("uid", template);
+        assert_eq!(module.unresolved_id, None);
+        expand_authenticated_module_vars(&mut module, &sample_hook_vars());
+        assert_eq!(
+            module.unresolved_id,
+            Some(UnresolvedId::Uid(expansion.to_owned()))
+        );
+
+        let mut module = deferred("gid", template);
+        expand_authenticated_module_vars(&mut module, &sample_hook_vars());
+        assert_eq!(
+            module.unresolved_id,
+            Some(UnresolvedId::Gid(expansion.to_owned()))
+        );
+
+        let mut module = deferred("uid", "%RSYNC_USER_NAME%");
+        let root = HookVariables {
+            user_name: Some("0"),
+            ..sample_hook_vars()
+        };
+        expand_authenticated_module_vars(&mut module, &root);
+        assert_eq!((module.uid, module.unresolved_id), (Some(0), None));
+    }
+
+    /// Measured on rsync 3.5.2 with the daemon's environment holding the
+    /// value: `exclude = %V%*` hides the file, `outgoing chmod = %V%` and
+    /// `incoming chmod = %V%` apply the mode, `refuse options = %V%` refuses
+    /// the option, and `log format` logs the expanded text.
+    #[test]
+    fn parameters_read_after_authentication_expand_with_every_variable() {
+        let mut module = ModuleDefinition {
+            log_format: Some("%o %RSYNC_USER_NAME% %RSYNC_MODULE_PATH%".to_owned()),
+            incoming_chmod: Some("%RSYNC_USER_NAME%".to_owned()),
+            outgoing_chmod: Some("%RSYNC_MODULE_NAME%".to_owned()),
+            dont_compress: Some("*.%RSYNC_USER_NAME%".to_owned()),
+            filter: vec!["- %RSYNC_USER_NAME%*".to_owned()],
+            exclude: vec!["%RSYNC_MODULE_NAME%*".to_owned()],
+            include: vec!["%RSYNC_HOST_ADDR%".to_owned()],
+            path: PathBuf::from("/srv"),
+            ..deferred("refuseoptions", "%RSYNC_USER_NAME% delete")
+        };
+        expand_authenticated_module_vars(&mut module, &sample_hook_vars());
+        assert_eq!(
+            module.log_format.as_deref(),
+            Some("%o alice %RSYNC_MODULE_PATH%"),
+            "`log format` is read before the module path is set"
+        );
+        assert_eq!(module.incoming_chmod.as_deref(), Some("alice"));
+        assert_eq!(module.outgoing_chmod.as_deref(), Some("backup"));
+        assert_eq!(module.dont_compress.as_deref(), Some("*.alice"));
+        assert_eq!(module.filter, ["- alice*"]);
+        assert_eq!(module.exclude, ["backup*"]);
+        assert_eq!(module.include, ["192.168.1.100"]);
+        assert_eq!(module.refuse_options, ["alice", "delete"]);
+    }
+
+    /// A value without a reference is parsed while the config loads, and one
+    /// assigned after a deferred value replaces it: every directive stays
+    /// last-wins, and a section's plain value beats a deferred default.
+    #[test]
+    fn deferral_is_last_wins_and_section_values_beat_defaults() {
+        let mut section = DeferredAssignments::new();
+        assert!(!section.record(DeferredParam::Uid, "100%"));
+        assert!(section.record(DeferredParam::Gid, "%RSYNC_USER_NAME%"));
+        assert!(!section.record(DeferredParam::Gid, "staff"));
+
+        let mut defaults = DeferredAssignments::new();
+        assert!(defaults.record(DeferredParam::Uid, "%A%"));
+        assert!(defaults.record(DeferredParam::Gid, "%B%"));
+        assert!(defaults.record(DeferredParam::HostsDeny, "%C%"));
+
+        let merged = section.or(&defaults);
+        assert!(!merged.is_deferred(DeferredParam::Uid));
+        assert!(!merged.is_deferred(DeferredParam::Gid));
+        let mut templates = merged.into_templates();
+        assert_eq!(
+            templates.take(DeferredParam::HostsDeny).as_deref(),
+            Some("%C%")
+        );
+        assert_eq!(templates.take(DeferredParam::HostsDeny), None);
     }
 
     fn expanded(command: &str, vars: &HookVariables<'_>) -> String {

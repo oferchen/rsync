@@ -230,6 +230,7 @@ fn parse_module_definition(
         lock_file: None,
         syslog_tag: None,
         syslog_facility: None,
+        deferred: DeferredTemplates::default(),
         filter: Vec::new(),
         exclude: Vec::new(),
         include: Vec::new(),

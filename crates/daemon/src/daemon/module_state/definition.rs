@@ -53,6 +53,64 @@ pub(crate) enum UnresolvedId {
 /// set of parameters accessible via `lp_*()` functions. daemon-parm.txt defines
 /// the parameter table with types, defaults, and scope (Globals vs Locals); the
 /// build generates daemon-parm.h from it.
+/// The string parameters oc parses into typed fields while loading the config.
+///
+/// Upstream keeps every `STRING` parameter as text and expands its `%VAR%`
+/// references on the first read (loadparm.c:330 `RETURN_EXPANDED`), which for
+/// these is when a client selects the module. A value holding a reference
+/// therefore cannot be parsed at load time: it waits in [`DeferredTemplates`]
+/// and is parsed once the connection variables it may name are known.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DeferredParam {
+    /// `hosts allow`, read by `allow_access()` (access.c:347).
+    HostsAllow,
+    /// `hosts deny`, read by `allow_access()` (access.c:348).
+    HostsDeny,
+    /// `auth users`, read by `auth_server()` (authenticate.c:286).
+    AuthUsers,
+    /// `uid`, read at clientserver.c:837.
+    Uid,
+    /// `gid`, read at clientserver.c:848.
+    Gid,
+    /// `refuse options`, read by `set_refuse_options()` (options.c:1037).
+    RefuseOptions,
+}
+
+impl DeferredParam {
+    /// Number of deferred parameters; sizes the per-parameter slot arrays.
+    pub(crate) const COUNT: usize = 6;
+
+    /// Maps a normalized config key to its deferred parameter.
+    pub(crate) fn from_key(key: &str) -> Option<Self> {
+        Some(match key {
+            "hostsallow" => Self::HostsAllow,
+            "hostsdeny" => Self::HostsDeny,
+            "authusers" => Self::AuthUsers,
+            "uid" => Self::Uid,
+            "gid" => Self::Gid,
+            "refuseoptions" => Self::RefuseOptions,
+            _ => return None,
+        })
+    }
+}
+
+/// Unexpanded values of the [`DeferredParam`]s a module still has to parse.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct DeferredTemplates([Option<String>; DeferredParam::COUNT]);
+
+impl DeferredTemplates {
+    /// Wraps one optional template per [`DeferredParam`], in declaration order.
+    pub(crate) const fn new(templates: [Option<String>; DeferredParam::COUNT]) -> Self {
+        Self(templates)
+    }
+
+    /// Removes and returns the template waiting for `param`, so each value is
+    /// expanded exactly once, like upstream's `_EXP` flag.
+    pub(crate) fn take(&mut self, param: DeferredParam) -> Option<String> {
+        self.0[param as usize].take()
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ModuleDefinition {
     pub(crate) name: String,
@@ -268,6 +326,9 @@ pub(crate) struct ModuleDefinition {
     /// daemon-parm.txt:54 `ENUM syslog_facility LOG_DAEMON`; consumed per-module
     /// at log.c:152 `openlog(..., lp_syslog_facility(module_id))`.
     pub(crate) syslog_facility: Option<String>,
+    /// Values of typed parameters that hold a `%VAR%` reference and are parsed
+    /// when a client selects the module.
+    pub(crate) deferred: DeferredTemplates,
 }
 
 impl ModuleDefinition {

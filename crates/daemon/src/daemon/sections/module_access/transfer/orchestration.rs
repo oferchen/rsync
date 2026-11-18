@@ -207,6 +207,7 @@ fn module_settings_usable(
 fn process_approved_module(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
+    selected_vars: &HookVariables<'_>,
     negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<()> {
     let _connection_guard = match module.try_acquire_connection() {
@@ -222,23 +223,6 @@ fn process_approved_module(
     if let Some(log) = ctx.log_sink {
         log_module_request(log, ctx.host_display(), ctx.peer, ctx.request);
     }
-
-    // upstream: clientserver.c:761/770-771 - RSYNC_MODULE_NAME, RSYNC_HOST_NAME
-    // and RSYNC_HOST_ADDR are set before authentication reads `secrets file`.
-    let peer_host_addr = ctx.peer.to_string();
-    let peer_host_name = ctx.host_display().to_owned();
-    let pre_auth_vars = HookVariables {
-        module_name: Some(&module.name),
-        host_name: Some(&peer_host_name),
-        host_addr: Some(&peer_host_addr),
-        ..HookVariables::default()
-    };
-    let effective_module = {
-        let mut definition = module.definition.clone();
-        expand_module_vars(&mut definition, &pre_auth_vars);
-        ModuleRuntime::from(definition)
-    };
-    let module = &effective_module;
 
     // Reconfigure the process-wide syslog handle for this connection when the
     // selected module carries a `syslog tag`/`syslog facility` (its own override
@@ -267,9 +251,9 @@ fn process_approved_module(
         let mut definition = module.definition.clone();
         let vars = HookVariables {
             user_name: Some(auth_user.as_deref().unwrap_or("")),
-            ..pre_auth_vars
+            ..*selected_vars
         };
-        expand_module_vars(&mut definition, &vars);
+        expand_authenticated_module_vars(&mut definition, &vars);
         ModuleRuntime::from(definition)
     };
     let module = &authed_module;
