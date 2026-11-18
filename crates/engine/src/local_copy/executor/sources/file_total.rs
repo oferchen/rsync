@@ -9,22 +9,24 @@ use super::metadata::{
     compute_relative_paths, operand_link_stat, operand_stat_path, resolve_effective_metadata,
 };
 
-/// Whether upstream's `file_total` exceeds one for this copy, which makes
-/// `get_local_name()` create the destination as a directory (main.c:808).
-///
-/// `file_total` counts the first file list (flist.c:3060): every listed
-/// operand, a repeated one included, after the filter rules (flist.c:2958-2961)
-/// and the `skipping directory` gate (flist.c:2963-2966). When that list holds a
-/// single expanded directory, the directory's own contents join it before the
-/// receiver decides (flist.c:3096 `send_extra_file_list()`, main.c:1241
-/// `recv_additional_file_list()`), so a directory none of whose children is
-/// listed stays a single entry.
-pub(super) fn file_total_exceeds_one(
-    context: &CopyContext,
-    plan: &LocalCopyPlan,
-) -> Result<bool, LocalCopyError> {
-    let mut total = 0;
-    let mut expanded = None;
+/// One operand that reaches upstream's first file list.
+struct ListedOperand {
+    path: PathBuf,
+    occurrences: usize,
+    /// Whether the walk descends into it: a directory under `-r`, or a
+    /// trailing-slash directory under `-d`.
+    expands: bool,
+    /// Whether it names its contents (`src/`, `.`) rather than itself.
+    copy_contents: bool,
+    /// Its name in the file list, the prefix of its children.
+    listed: Option<PathBuf>,
+}
+
+/// The operands of upstream's first file list (flist.c:2948-2966), in order:
+/// every operand `link_stat()` can read, minus those the filter rules or the
+/// `skipping directory` gate drop.
+fn listed_operands(context: &CopyContext, plan: &LocalCopyPlan) -> Vec<ListedOperand> {
+    let mut operands = Vec::new();
     for (source, &occurrences) in plan.sources().iter().zip(plan.source_occurrences()) {
         let path = operand_stat_path(context, source);
         // upstream: flist.c:2948-2958 - an operand link_stat() cannot read lists
@@ -55,18 +57,70 @@ pub(super) fn file_total_exceeds_one(
         {
             continue;
         }
-        total += occurrences;
-        if total > 1 {
-            return Ok(true);
-        }
-        expanded = expands.then(|| (path.into_owned(), listed));
+        operands.push(ListedOperand {
+            path: path.into_owned(),
+            occurrences,
+            expands,
+            copy_contents: source.copy_contents(),
+            listed,
+        });
     }
-    match expanded {
-        Some((dir, prefix)) => lists_a_child(context, &dir, prefix.as_deref()),
-        None => Ok(false),
+    operands
+}
+
+/// Whether upstream's `file_total` exceeds one for this copy, which makes
+/// `get_local_name()` create the destination as a directory (main.c:808).
+///
+/// `file_total` counts the first file list (flist.c:3060): every listed
+/// operand, a repeated one included, after the filter rules (flist.c:2958-2961)
+/// and the `skipping directory` gate (flist.c:2963-2966). When that list holds a
+/// single expanded directory, the directory's own contents join it before the
+/// receiver decides (flist.c:3096 `send_extra_file_list()`, main.c:1241
+/// `recv_additional_file_list()`), so a directory none of whose children is
+/// listed stays a single entry.
+pub(super) fn file_total_exceeds_one(
+    context: &CopyContext,
+    plan: &LocalCopyPlan,
+) -> Result<bool, LocalCopyError> {
+    let operands = listed_operands(context, plan);
+    let total: usize = operands.iter().map(|operand| operand.occurrences).sum();
+    if total > 1 {
+        return Ok(true);
+    }
+    match operands.last() {
+        Some(operand) if operand.expands => {
+            lists_a_child(context, &operand.path, operand.listed.as_deref())
+        }
+        _ => Ok(false),
     }
 }
 
+/// Parses the per-directory merge files upstream reads before the receiver
+/// creates the destination, failing as upstream does with nothing created.
+///
+/// upstream: flist.c:2117 send_directory() -> push_local_filters() reads a
+/// directory's merge files as the sender lists its contents, and the
+/// receiver's get_local_name() (main.c:808-822) runs once the first file list
+/// has arrived. That list holds a contents operand's (`src/`) children and,
+/// without INC_RECURSE, the whole tree; with INC_RECURSE a named directory's
+/// children join it only when it is the list's sole entry (flist.c:3096
+/// send_extra_file_list()), otherwise they follow in a later list. Merge files
+/// deeper in the tree are read while the copy is running, as by upstream's
+/// sender; only the operand directories' own are read here.
+pub(super) fn parse_operand_merge_files(
+    context: &CopyContext,
+    plan: &LocalCopyPlan,
+) -> Result<(), LocalCopyError> {
+    let operands = listed_operands(context, plan);
+    let total: usize = operands.iter().map(|operand| operand.occurrences).sum();
+    for operand in operands.iter().filter(|operand| operand.expands) {
+        if context.inc_recurse_enabled() && !operand.copy_contents && total > 1 {
+            continue;
+        }
+        let _rules = context.enter_directory(&operand.path, operand.listed.as_deref())?;
+    }
+    Ok(())
+}
 /// Whether the walk of `dir` would list at least one child, judged by the rules
 /// it applies there, the directory's own per-dir merge files included.
 fn lists_a_child(

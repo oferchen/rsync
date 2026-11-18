@@ -25,6 +25,9 @@ impl<'a> CopyContext<'a> {
     pub(super) fn recursive_enabled(&self) -> bool {
         self.options.sender_half().recursive_enabled()
     }
+    pub(super) const fn inc_recurse_enabled(&self) -> bool {
+        self.options.inc_recurse_enabled()
+    }
 
     pub(super) fn dirs_enabled(&self) -> bool {
         self.options.sender_half().dirs_enabled()
