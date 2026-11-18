@@ -209,12 +209,19 @@ pub fn negotiate_client_daemon_digest(
         return Ok(default_legacy_digest(protocol_version));
     };
 
-    let advertised = parse_daemon_digest_list(list);
-    SUPPORTED_DAEMON_DIGESTS
-        .iter()
-        .copied()
-        .find(|preferred| advertised.contains(preferred))
-        .ok_or(NoMutualDaemonAuthDigest)
+    strongest_mutual_digest(list).ok_or(NoMutualDaemonAuthDigest)
+}
+
+/// Picks, from a peer's advertised list, the name ranked best in our own table.
+///
+/// upstream: compat.c:334-366 `parse_negotiate_str()` walks the peer's names and
+/// keeps the one with the lowest ordinal in `nno->saw`, which
+/// `get_default_nno_list()` filled in `valid_auth_checksums_items[]` order
+/// (checksum.c:71-83). Both roles run it, so the peer's order never decides.
+fn strongest_mutual_digest(peer_list: &str) -> Option<DaemonAuthDigest> {
+    parse_daemon_digest_list(peer_list)
+        .into_iter()
+        .min_by_key(|digest| digest.strength_rank())
 }
 
 /// Returns the digest to use when the peer advertised no list at all.
@@ -281,17 +288,15 @@ pub struct NoMutualDaemonAuthDigest;
 /// `client_digests` is the raw digest name list captured from the client's
 /// `@RSYNCD:` greeting (upstream's `daemon_auth_choices`, clientserver.c:232-243).
 ///
-/// Takes the first name in the client's list that this build supports, so the
-/// client's preference order decides. When the client advertised no list at all
-/// (only reachable at protocol <= 31) upstream substitutes
-/// `protocol_version >= 30 ? "md5" : "md4"` (compat.c:871) and negotiates against
-/// that, which always succeeds because both names are compiled in.
-///
-/// Deviation from upstream: 3.5.1 `auth_server()` calls
-/// `negotiate_daemon_auth(f_out, 0)` (authenticate.c:305), and
-/// `parse_negotiate_str()` (compat.c:333-366) keeps the client-listed name
-/// ranked best in the *server's* table (it no longer breaks on `am_server`), so
-/// the daemon's own strongest mutual digest wins. This picks the client's first.
+/// upstream: authenticate.c:300 `auth_server()` calls
+/// `negotiate_daemon_auth(f_out, 0)` (compat.c:868), whose
+/// `parse_negotiate_str()` (compat.c:334-366) keeps the client-listed name
+/// ranked best in the *server's* table, so the daemon's own strongest mutual
+/// digest wins whatever order the client listed its names in. When the client
+/// advertised no list at all (only reachable at protocol <= 31) upstream
+/// substitutes `protocol_version >= 30 ? "md5" : "md4"` (compat.c:880) and
+/// negotiates against that, which always succeeds because both names are
+/// compiled in.
 ///
 /// An *empty* advertised list is not the same as an absent one: upstream keeps
 /// `strdup("")` non-NULL, skips the substitution, and walks a list that matches
@@ -310,13 +315,7 @@ pub fn negotiate_server_daemon_digest(
         return Ok(default_legacy_digest(protocol_version));
     };
 
-    // `parse_daemon_digest_list` drops names this build does not implement while
-    // preserving the client's order, so the first survivor is exactly upstream's
-    // "first acceptable client choice".
-    parse_daemon_digest_list(list)
-        .first()
-        .copied()
-        .ok_or(NoMutualDaemonAuthDigest)
+    strongest_mutual_digest(list).ok_or(NoMutualDaemonAuthDigest)
 }
 
 /// Verifies a daemon authentication response against the secret and challenge.
@@ -551,28 +550,34 @@ mod tests {
     }
 
     #[test]
-    fn server_negotiation_takes_the_first_client_choice_it_supports() {
-        // Pins the current client-first choice. Deviation from upstream: 3.5.1
-        // `parse_negotiate_str()` (compat.c:333-366) breaks only on `best == 1`,
-        // so the server picks its own strongest mutual digest.
-        assert_eq!(
-            negotiate_server_daemon_digest(AdvertisedDigests::Present("md5 sha512"), 32),
-            Ok(DaemonAuthDigest::Md5)
-        );
-        assert_eq!(
-            negotiate_server_daemon_digest(AdvertisedDigests::Present("sha1 md5"), 32),
-            Ok(DaemonAuthDigest::Sha1)
-        );
+    fn server_negotiation_takes_its_own_strongest_mutual_digest() {
+        // A client that lists a weak digest first must not downgrade the
+        // exchange: rsync 3.5.2's daemon answers each of these lists with the
+        // digest ranked best in its own table (compat.c:334-366).
+        for (client_list, expected) in [
+            ("md5 sha512", DaemonAuthDigest::Sha512),
+            ("md4 md5 sha1 sha256 sha512", DaemonAuthDigest::Sha512),
+            ("sha1 sha256", DaemonAuthDigest::Sha256),
+            ("MD5 SHA256", DaemonAuthDigest::Sha256),
+            ("md5 md5 sha256", DaemonAuthDigest::Sha256),
+            ("sha1 md5", DaemonAuthDigest::Sha1),
+        ] {
+            assert_eq!(
+                negotiate_server_daemon_digest(AdvertisedDigests::Present(client_list), 32),
+                Ok(expected),
+                "client list {client_list:?}"
+            );
+        }
     }
 
     #[test]
     fn server_negotiation_skips_unsupported_client_names() {
         assert_eq!(
             negotiate_server_daemon_digest(
-                AdvertisedDigests::Present("sponge blake3 sha256 md5"),
+                AdvertisedDigests::Present("sponge blake3 md5 sha1"),
                 32
             ),
-            Ok(DaemonAuthDigest::Sha256)
+            Ok(DaemonAuthDigest::Sha1)
         );
     }
 
