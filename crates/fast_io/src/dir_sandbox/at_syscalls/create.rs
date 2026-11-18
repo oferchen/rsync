@@ -584,71 +584,92 @@ pub fn linkat_via_sandbox_or_fallback(
     new_relative: &Path,
     new_path: &Path,
 ) -> io::Result<()> {
-    if let Some(sandbox) = sandbox
-        && let Some(new_leaf) = single_component_leaf(dest_dir, new_relative, new_path)
-    {
-        // The leader endpoint is intentionally resolved against
-        // `AT_FDCWD`: SEC-1.h scopes the sandbox cutover to the
-        // receiver-managed destination parent, and the leader may
-        // live outside it. `BorrowedFd::borrow_raw(AT_FDCWD)` keeps
-        // the call shape uniform without inventing a new helper.
-        let leader_c = CString::new(leader_path.as_os_str().as_bytes())
-            .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
-        let new_c = CString::new(new_leaf.as_bytes())
+    let Some(sandbox) = sandbox else {
+        return crate::hard_link(leader_path, new_path);
+    };
+    // The leader is named beneath the sandbox root when it lies inside the
+    // destination, which spares the kernel the walk from `/` for every link
+    // and ties the lookup to the pinned root. It is resolved as the absolute
+    // path was - intermediate symlinks followed, the final name not - and a
+    // leader outside the destination stays on `AT_FDCWD`.
+    let (old_dirfd, old_name): (libc::c_int, &OsStr) = match leader_beneath(dest_dir, leader_path) {
+        Some(relative) => (sandbox.current_dirfd().as_raw_fd(), relative.as_os_str()),
+        None => (libc::AT_FDCWD, leader_path.as_os_str()),
+    };
+    let leader_c = CString::new(old_name.as_bytes())
+        .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+    let link_into = |new_dirfd: BorrowedFd<'_>, leaf: &OsStr| -> io::Result<()> {
+        let new_c = CString::new(leaf.as_bytes())
             .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
         // SAFETY:
-        // - `sandbox.current_dirfd()` outlives the syscall.
-        // - Both C strings are valid NUL-terminated and borrowed for
-        //   the duration of the call.
+        // - `old_dirfd` is `AT_FDCWD` or the sandbox's descriptor and
+        //   `new_dirfd` is borrowed from its owner; both outlive the syscall.
+        // - Both C strings are valid NUL-terminated and borrowed for the
+        //   duration of the call.
         // - `flags == 0` matches the standard rsync hardlink shape.
         #[allow(unsafe_code)]
         let rc = unsafe {
             libc::linkat(
-                libc::AT_FDCWD,
+                old_dirfd,
                 leader_c.as_ptr(),
-                sandbox.current_dirfd().as_raw_fd(),
+                new_dirfd.as_raw_fd(),
                 new_c.as_ptr(),
                 0,
             )
         };
-        return if rc == 0 {
+        if rc == 0 {
             Ok(())
         } else {
             Err(io::Error::last_os_error())
-        };
+        }
+    };
+    if let Some(leaf) = single_component_leaf(dest_dir, new_relative, new_path) {
+        return link_into(sandbox.current_dirfd(), leaf);
+    }
+    // Consecutive followers in one directory share the held parent instead
+    // of opening it once each. A failure through it is not final: the held
+    // descriptor is dropped and the link is tried again through a fresh
+    // `RESOLVE_BENEATH` open, whose verdict is the one reported.
+    if let Some((parent, leaf)) = held_parent_and_leaf(sandbox, dest_dir, new_relative, new_path) {
+        if link_into(parent.as_fd(), leaf).is_ok() {
+            return Ok(());
+        }
+        sandbox.release_held_parent();
     }
     if let ParentAnchor::Anchored { dirfd, name } =
-        anchor_parent(sandbox, dest_dir, new_relative, new_path)?
+        anchor_parent(Some(sandbox), dest_dir, new_relative, new_path)?
     {
-        // Same shape as the single-component branch: the new parent is
-        // pinned by the RESOLVE_BENEATH-resolved dirfd, the leader stays
-        // on `AT_FDCWD` because it may live outside `dest_dir`.
-        let leader_c = CString::new(leader_path.as_os_str().as_bytes())
-            .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
-        let new_c = CString::new(name.as_bytes())
-            .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
-        // SAFETY:
-        // - `dirfd.as_fd()` outlives the syscall (owned by `dirfd`).
-        // - Both C strings are valid NUL-terminated and borrowed for
-        //   the duration of the call.
-        // - `flags == 0` matches the standard rsync hardlink shape.
-        #[allow(unsafe_code)]
-        let rc = unsafe {
-            libc::linkat(
-                libc::AT_FDCWD,
-                leader_c.as_ptr(),
-                dirfd.as_fd().as_raw_fd(),
-                new_c.as_ptr(),
-                0,
-            )
-        };
-        return if rc == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        };
+        return link_into(dirfd.as_fd(), name);
     }
     crate::hard_link(leader_path, new_path)
+}
+
+/// The held descriptor for `new_relative`'s parent and the leaf name, when
+/// `new_path` is `dest_dir` joined with a multi-component `new_relative` and
+/// [`DirSandbox::held_parent`](crate::dir_sandbox::DirSandbox::held_parent)
+/// reaches the parent.
+fn held_parent_and_leaf<'a>(
+    sandbox: &crate::dir_sandbox::DirSandbox,
+    dest_dir: &Path,
+    new_relative: &'a Path,
+    new_path: &Path,
+) -> Option<(std::sync::Arc<std::os::fd::OwnedFd>, &'a OsStr)> {
+    let parent = new_relative.parent()?;
+    let leaf = new_relative.file_name()?;
+    if parent.as_os_str().is_empty() || dest_dir.join(new_relative) != new_path {
+        return None;
+    }
+    Some((sandbox.held_parent(parent)?, leaf))
+}
+
+/// `leader_path` relative to `dest_dir`, when it lies inside it and every
+/// remaining component is a plain name.
+fn leader_beneath<'a>(dest_dir: &Path, leader_path: &'a Path) -> Option<&'a Path> {
+    let relative = leader_path.strip_prefix(dest_dir).ok()?;
+    let plain = relative
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)));
+    (plain && !relative.as_os_str().is_empty()).then_some(relative)
 }
 
 /// Publish an anonymous `O_TMPFILE` inode at `dest`, confining `dest`'s parent
