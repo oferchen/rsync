@@ -36,8 +36,8 @@ use std::time::Duration;
 ///
 /// This is a smoke test to verify basic daemon functionality before
 /// running protocol-specific tests.
-// The oc-rsync daemon is Unix-only by design: `--daemon` on Windows exits 1 with
-// "daemon mode is not supported on this platform" (daemon.rs:208).
+// The oc-rsync daemon does not start on Windows yet: `--daemon` there exits 1 with
+// "daemon mode is not supported on this platform" (cli `frontend/server/daemon.rs:261`).
 #[test]
 #[cfg(unix)]
 fn test_oc_daemon_starts_and_accepts_connections() {
@@ -52,8 +52,8 @@ fn test_oc_daemon_starts_and_accepts_connections() {
 ///
 /// Verifies the daemon implements the @RSYNCD: protocol greeting correctly.
 /// Upstream reference: clientserver.c:129-148 (daemon greeting format)
-// The oc-rsync daemon is Unix-only by design: `--daemon` on Windows exits 1 with
-// "daemon mode is not supported on this platform" (daemon.rs:208).
+// The oc-rsync daemon does not start on Windows yet: `--daemon` there exits 1 with
+// "daemon mode is not supported on this platform" (cli `frontend/server/daemon.rs:261`).
 #[test]
 #[cfg(unix)]
 fn test_oc_daemon_sends_protocol_greeting() {
@@ -98,8 +98,8 @@ fn test_oc_daemon_sends_protocol_greeting() {
 /// Test daemon shutdown and cleanup.
 ///
 /// Verifies that daemon process terminates cleanly when dropped.
-// The oc-rsync daemon is Unix-only by design: `--daemon` on Windows exits 1 with
-// "daemon mode is not supported on this platform" (daemon.rs:208).
+// The oc-rsync daemon does not start on Windows yet: `--daemon` there exits 1 with
+// "daemon mode is not supported on this platform" (cli `frontend/server/daemon.rs:261`).
 #[test]
 #[cfg(unix)]
 fn test_oc_daemon_shutdown_cleanup() {
@@ -657,8 +657,8 @@ fn test_module_listing_from_upstream_client() {
 /// Verifies low-level protocol implementation directly.
 /// This is similar to test_oc_daemon_sends_protocol_greeting but goes further
 /// into the handshake sequence.
-// The oc-rsync daemon is Unix-only by design: `--daemon` on Windows exits 1 with
-// "daemon mode is not supported on this platform" (daemon.rs:208).
+// The oc-rsync daemon does not start on Windows yet: `--daemon` there exits 1 with
+// "daemon mode is not supported on this platform" (cli `frontend/server/daemon.rs:261`).
 #[test]
 #[cfg(unix)]
 fn test_manual_protocol_handshake_with_oc_daemon() {

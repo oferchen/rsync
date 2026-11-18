@@ -29,7 +29,7 @@ separately (see Cross-references).
 | `--iconv=LOCAL,REMOTE` | `crates/cli/src/frontend/execution/options/iconv.rs:67-74` | `cfg(not(feature = "iconv"))` | `iconv` (defaults off) | `"--iconv requires the iconv feature, which was disabled at build time"` | `crates/core` (iconv module); upstream iconv lib |
 | `--usermap=SPEC` | `crates/cli/src/frontend/execution/drive/metadata/mapping.rs:71-86` | `cfg(windows)` (no feature flag) | n/a (platform gate) | `"--usermap is not supported on Windows builds of oc-rsync"` | `crates/metadata` (POSIX id lookup); `uzers` Unix-only dep |
 | `--groupmap=SPEC` | `crates/cli/src/frontend/execution/drive/metadata/mapping.rs:91-106` | `cfg(windows)` (no feature flag) | n/a (platform gate) | `"--groupmap is not supported on Windows builds of oc-rsync"` | `crates/metadata` (POSIX id lookup); `uzers` Unix-only dep |
-| `--daemon` | `crates/cli/src/frontend/server/daemon.rs:201-220` | `cfg(windows)` (no feature flag) | n/a (platform gate) | `"daemon mode is not supported on this platform; run the oc-rsync daemon on a Unix-like system"` | `crates/daemon` (Unix-only `[target.'cfg(unix)'.dependencies]`) |
+| `--daemon` | `crates/cli/src/frontend/server/daemon.rs:219-272` | `cfg(windows)` (no feature flag) | n/a (platform gate) | `"daemon mode is not supported on this platform; run the oc-rsync daemon on a Unix-like system"` | `crates/daemon` (Unix-only `[target.'cfg(unix)'.dependencies]`) |
 
 Total preflight checks found: **6**.
 
