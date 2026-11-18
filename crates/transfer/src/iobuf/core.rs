@@ -15,7 +15,8 @@
 //! output buffer out itself whenever it is about to wait for input
 //! (upstream: io.c:766-768), with no flush from the code that filled it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -59,6 +60,24 @@ pub(crate) struct Core<'a> {
     /// that is not yet sender, receiver or generator, and a forked
     /// receiver's output goes to its generator, not the peer).
     keepalive_on_read: bool,
+    /// Prototype I/O model A (`OC_RSYNC_TEST_IO_MODEL=a`, receiving side):
+    /// output never waits for the transport. What the transport refuses is
+    /// kept in `outq` and leaves during read waits.
+    model_a: bool,
+    /// Framed bytes the transport has not accepted yet (model A only).
+    outq: VecDeque<u8>,
+}
+
+thread_local! {
+    /// `outq`'s length for the model-A core on this wire thread, `None` when
+    /// no such core exists. The receiver's request admission reads it.
+    static MODEL_A_QUEUED: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+/// Bytes the wire thread's model-A core has framed but the transport has not
+/// accepted; `None` when model A is not active on this thread.
+pub(crate) fn model_a_queued() -> Option<usize> {
+    MODEL_A_QUEUED.with(Cell::get)
 }
 
 /// The handle both stacks hold. Each role runs its connection on one thread,
@@ -86,6 +105,8 @@ impl<'a> Core<'a> {
             limiter: None,
             mux: None,
             keepalive_on_read: false,
+            model_a: false,
+            outq: VecDeque::new(),
         }))
     }
 
@@ -145,6 +166,75 @@ impl<'a> Core<'a> {
         }
     }
 
+    /// Switches this core to prototype I/O model A: writes never wait.
+    pub(crate) fn enable_model_a(core: &SharedCore<'a>) {
+        let mut core = core.borrow_mut();
+        core.model_a = true;
+        core.publish_queued();
+    }
+
+    fn publish_queued(&self) {
+        if self.model_a {
+            MODEL_A_QUEUED.with(|q| q.set(Some(self.outq.len())));
+        }
+    }
+
+    /// Counts and timestamps `n` bytes the transport accepted.
+    fn note_written(&mut self, n: usize) {
+        if self.buffering() {
+            self.timeout.mark_io();
+        }
+        if let Some(counter) = &self.write_counter {
+            counter.fetch_add(n as u64, Ordering::Relaxed);
+        }
+    }
+
+    /// Model A: hands the transport as much queued output as it takes now.
+    fn pump_output(&mut self) -> io::Result<()> {
+        while !self.outq.is_empty() {
+            let (front, _) = self.outq.as_slices();
+            let written = self
+                .transport
+                .try_write(front)
+                .map_err(super::PeerWriteError::wrap)?;
+            match written {
+                Some(n) => {
+                    self.note_written(n);
+                    self.outq.drain(..n);
+                }
+                None => break,
+            }
+        }
+        self.publish_queued();
+        Ok(())
+    }
+
+    /// Model A: accepts all of `buf` without waiting - straight to the
+    /// transport while nothing is queued, the rest onto the queue.
+    fn enqueue(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut done = 0;
+        if self.outq.is_empty() {
+            while done < buf.len() {
+                let written = self
+                    .transport
+                    .try_write(&buf[done..])
+                    .map_err(super::PeerWriteError::wrap)?;
+                match written {
+                    Some(n) => {
+                        self.note_written(n);
+                        done += n;
+                    }
+                    None => break,
+                }
+            }
+        }
+        if done < buf.len() {
+            self.outq.extend(&buf[done..]);
+            self.publish_queued();
+        }
+        Ok(buf.len())
+    }
+
     fn buffering(&self) -> bool {
         self.read_counter.is_some()
     }
@@ -166,7 +256,7 @@ impl<'a> Core<'a> {
             if self.in_eof || out.is_empty() {
                 return Ok(0);
             }
-            if let Err(e) = self.drain_mux() {
+            if let Err(e) = self.drain_mux().and_then(|()| self.pump_output()) {
                 // upstream: perform_io() services a readable descriptor
                 // (io.c:883-921) before a writable one (io.c:948) in the same
                 // pass, so a peer that has gone shows up as the end of its
@@ -176,6 +266,8 @@ impl<'a> Core<'a> {
                     return Err(e);
                 }
                 self.mux = None;
+                self.outq.clear();
+                self.publish_queued();
             }
             // A drain that had to wait for room collected the peer's input
             // meanwhile; serve that rather than wait for more.
@@ -202,7 +294,9 @@ impl<'a> Core<'a> {
             // upstream io.c perform_io selects before every read; oc reads
             // first and polls only on EAGAIN, which saves ~7,000 polls per
             // push. Same wire bytes; a deliberate performance deviation.
-            self.wait(false)?;
+            // Model A: the wait also asks for output room while bytes are
+            // queued, and writes them when it comes (upstream: io.c:767-822).
+            self.wait(!self.outq.is_empty(), true)?;
         }
     }
 
@@ -219,7 +313,7 @@ impl<'a> Core<'a> {
             if let Some(n) = self.transport.try_read(out)? {
                 return Ok(n);
             }
-            self.wait(false)?;
+            self.wait(false, true)?;
         }
     }
 
@@ -238,7 +332,7 @@ impl<'a> Core<'a> {
                 }
                 return Ok(n);
             }
-            self.wait(true)?;
+            self.wait(true, false)?;
         }
     }
 
@@ -246,6 +340,9 @@ impl<'a> Core<'a> {
     /// bandwidth limiter's burst, then counted and paced by what the
     /// transport took (upstream: io.c:952, io.c:977-980).
     fn write_out(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.model_a {
+            return self.enqueue(buf);
+        }
         let len = match &self.limiter {
             Some(limiter) => buf.len().min(limiter.write_max_bytes().max(1)),
             None => buf.len(),
@@ -261,6 +358,7 @@ impl<'a> Core<'a> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        self.pump_output()?;
         self.transport.flush()
     }
 
@@ -304,7 +402,7 @@ impl<'a> Core<'a> {
     /// returns, and an interrupted wait counts as an empty one (upstream:
     /// io.c:849-850 and io.c:997-998 read `got_kill_signal`; io.c:866-884
     /// treats an interrupted poll like a timeout).
-    fn wait(&mut self, want_output: bool) -> io::Result<()> {
+    fn wait(&mut self, want_output: bool, reading: bool) -> io::Result<()> {
         crate::shared::check_shutdown()?;
         let poll_input = if self.buffering() {
             !self.in_eof && self.input.has_room()
@@ -323,7 +421,16 @@ impl<'a> Core<'a> {
             return self.timeout.check();
         }
         if ready.readable && self.buffering() {
-            self.fill_input(!want_output)?;
+            self.fill_input(reading)?;
+        }
+        if ready.writable && !self.outq.is_empty() {
+            match self.pump_output() {
+                Err(e) if reading && crate::is_early_close_error(&e) => {
+                    self.outq.clear();
+                    self.publish_queued();
+                }
+                other => other?,
+            }
         }
         Ok(())
     }
@@ -344,6 +451,25 @@ impl<'a> Core<'a> {
             }
         }
         Ok(())
+    }
+}
+
+impl Drop for Core<'_> {
+    /// Model A: the session's last output has no read wait left to carry it,
+    /// so it is written out here, still collecting input while there is room.
+    fn drop(&mut self) {
+        if !self.model_a {
+            return;
+        }
+        while !self.outq.is_empty() {
+            if self.pump_output().is_err() || self.outq.is_empty() {
+                break;
+            }
+            if self.wait(true, false).is_err() {
+                break;
+            }
+        }
+        MODEL_A_QUEUED.with(|q| q.set(None));
     }
 }
 

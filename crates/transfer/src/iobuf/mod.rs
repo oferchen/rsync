@@ -17,7 +17,7 @@ mod timeout;
 
 use std::io::{self, IoSlice, Read, Write};
 
-pub(crate) use self::core::{Core, CoreReader, CoreWriter, SharedCore};
+pub(crate) use self::core::{Core, CoreReader, CoreWriter, SharedCore, model_a_queued};
 pub(crate) use self::timeout::IoTimeout;
 
 /// A write to the peer's stream that failed.

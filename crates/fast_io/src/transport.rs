@@ -175,7 +175,7 @@ fn non_blocking<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<Option<T
 }
 
 #[cfg(unix)]
-pub use unix::FdTransport;
+pub use unix::{FdTransport, set_blocking};
 
 #[cfg(unix)]
 mod unix {
@@ -249,6 +249,20 @@ mod unix {
         let flags = fcntl_getfl(fd)?;
         if !flags.contains(OFlags::NONBLOCK) {
             fcntl_setfl(fd, flags | OFlags::NONBLOCK)?;
+        }
+        Ok(())
+    }
+
+    /// Clears `O_NONBLOCK` on the descriptor's open file description, for a
+    /// caller that keeps using a handle a transport made non-blocking.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `fcntl(2)` error.
+    pub fn set_blocking(fd: BorrowedFd<'_>) -> io::Result<()> {
+        let flags = fcntl_getfl(fd)?;
+        if flags.contains(OFlags::NONBLOCK) {
+            fcntl_setfl(fd, flags - OFlags::NONBLOCK)?;
         }
         Ok(())
     }

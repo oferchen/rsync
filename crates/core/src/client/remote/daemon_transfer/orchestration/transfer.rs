@@ -132,24 +132,46 @@ pub(crate) fn run_pull_transfer(
     } else {
         None
     };
-    let server_stats = crate::server::run_server_with_handshake_adopting(
-        server_config,
-        handshake,
-        reader,
-        writer,
-        crate::server::ServerTransferHooks {
-            progress,
-            batch: batch_recording,
-            itemize,
-            io_timeout_reapply,
-            // The client end of a daemon transfer never writes the daemon's
-            // module log; that is the remote daemon's own FLOG sink.
-            daemon_log: None,
-            bytes_read: Some(Arc::clone(&bytes_read)),
-            fork_point: Some(Arc::clone(&fork_point)),
-            fatal_report: None,
-        },
-    )
+    let hooks = crate::server::ServerTransferHooks {
+        progress,
+        batch: batch_recording,
+        itemize,
+        io_timeout_reapply,
+        // The client end of a daemon transfer never writes the daemon's
+        // module log; that is the remote daemon's own FLOG sink.
+        daemon_log: None,
+        bytes_read: Some(Arc::clone(&bytes_read)),
+        fork_point: Some(Arc::clone(&fork_point)),
+        fatal_report: None,
+    };
+    // Prototype I/O model A: the pull's receiver polls the daemon socket.
+    #[cfg(unix)]
+    let model_a_socket = if crate::server::io_model_a() {
+        reader.try_clone_tcp()
+    } else {
+        None
+    };
+    #[cfg(not(unix))]
+    let model_a_socket: Option<std::net::TcpStream> = None;
+    let server_stats = match model_a_socket {
+        #[cfg(unix)]
+        Some(socket) => std::io::Write::flush(writer).and_then(|()| {
+            crate::server::run_server_over_fds(
+                server_config,
+                handshake,
+                std::fs::File::from(std::os::fd::OwnedFd::from(socket)),
+                None,
+                hooks,
+            )
+        }),
+        _ => crate::server::run_server_with_handshake_adopting(
+            server_config,
+            handshake,
+            reader,
+            writer,
+            hooks,
+        ),
+    }
     .map_err(|e| {
         map_server_transfer_error(
             e,

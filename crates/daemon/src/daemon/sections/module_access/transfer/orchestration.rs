@@ -1003,6 +1003,14 @@ fn process_approved_module(
     // `setup_transfer_streams`); arming the drain there would spawn a thread that
     // hangs on a half-closed socket clone on Windows.
     let arm_drain = should_arm_delta_drain(&client_args);
+    // Prototype I/O model A: a daemon receiving a push polls its socket in
+    // the transfer core and never waits for output alone, so it needs no
+    // drain thread.
+    let model_a_socket = (core::server::io_model_a() && role == ServerRole::Receiver)
+        .then(|| ctx.reader.get_ref().tcp_stream().and_then(|tcp| tcp.try_clone().ok()))
+        .flatten();
+    let arm_drain = arm_drain && model_a_socket.is_none();
+    MODEL_A_SOCKET.with(|slot| *slot.borrow_mut() = model_a_socket);
     // The daemon-sender's socket write side opts into io_uring SEND_ZC when
     // `fast_io::send_zc_policy_permits` accepts this policy. It is the
     // daemon's own startup policy (`--zero-copy` / `OC_RSYNC_ZERO_COPY`,

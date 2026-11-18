@@ -303,6 +303,15 @@ fn run_server_over_ssh_connection(
     let wire_shutdown = connection
         .wire_shutdown()
         .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
+    // Prototype I/O model A: a pull's receiver polls the wire itself.
+    #[cfg(unix)]
+    let model_a_ends = if crate::server::io_model_a() && config.role == ServerRole::Receiver {
+        connection.dup_wire_ends().map_err(|e| {
+            invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23)
+        })?
+    } else {
+        None
+    };
     let (reader, mut writer, mut child_handle) = connection
         .split()
         .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
@@ -385,23 +394,51 @@ fn run_server_over_ssh_connection(
     let fork_point = Arc::new(crate::server::ForkPoint::default());
     let wake_guard = wire_shutdown
         .and_then(|wire| crate::signal::register_io_waker(Arc::new(move || wire.shutdown())));
+    let hooks = crate::server::ServerTransferHooks {
+        progress,
+        batch: batch_recording,
+        itemize: if wants_client_output {
+            Some(&mut itemize_sink as &mut dyn crate::server::ItemizeCallback)
+        } else {
+            None
+        },
+        bytes_read: Some(Arc::clone(&bytes_read)),
+        fork_point: Some(Arc::clone(&fork_point)),
+        ..Default::default()
+    };
+    #[cfg(unix)]
+    let transfer_result = match model_a_ends {
+        Some((from_child, to_child)) => {
+            // Bytes the handshake's read-ahead holds come first.
+            let mut handshake = handshake;
+            handshake.buffered.extend_from_slice(reader.buffer());
+            let held = reader.buffer().len();
+            std::io::BufRead::consume(&mut reader, held);
+            std::io::Write::flush(&mut writer).and_then(|()| {
+                crate::server::run_server_over_fds(
+                    config,
+                    handshake,
+                    from_child,
+                    Some(to_child),
+                    hooks,
+                )
+            })
+        }
+        None => crate::server::run_server_with_handshake_adopting(
+            config,
+            handshake,
+            &mut reader,
+            &mut writer,
+            hooks,
+        ),
+    };
+    #[cfg(not(unix))]
     let transfer_result = crate::server::run_server_with_handshake_adopting(
         config,
         handshake,
         &mut reader,
         &mut writer,
-        crate::server::ServerTransferHooks {
-            progress,
-            batch: batch_recording,
-            itemize: if wants_client_output {
-                Some(&mut itemize_sink as &mut dyn crate::server::ItemizeCallback)
-            } else {
-                None
-            },
-            bytes_read: Some(Arc::clone(&bytes_read)),
-            fork_point: Some(Arc::clone(&fork_point)),
-            ..Default::default()
-        },
+        hooks,
     );
     // The waker holds duplicates of the wire; release them before the
     // child is waited on, so closing our ends reaches it as end of file.

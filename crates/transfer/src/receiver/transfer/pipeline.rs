@@ -605,6 +605,13 @@ impl ReceiverContext {
             });
             let mut flushed_pending: usize = 0;
             let mut phase_ended = false;
+            // Requests whose signatures are computed but not yet written.
+            // Always empty between iterations unless prototype I/O model A
+            // holds requests back behind its byte cap.
+            let mut ready: std::collections::VecDeque<(
+                (usize, FileEntry, PathBuf, u32),
+                crate::receiver::basis::BasisFileResult,
+            )> = std::collections::VecDeque::new();
 
             loop {
                 // upstream: io.c:768 - perform_io() acts on got_kill_signal at
@@ -629,16 +636,17 @@ impl ReceiverContext {
                     // FileEntry clone as it enters the window (bounded by
                     // available_slots <= window size), releasing the borrow on
                     // `self.file_list` before the rest of the loop body.
+                    let free_slots = pipeline.available_slots().saturating_sub(ready.len());
                     self.fill_candidates(
                         &mut feed,
                         &mut candidates,
-                        pipeline.available_slots(),
+                        free_slots,
                         writer,
                         setup,
                         metadata_errors,
                     )?;
                     let batch: Vec<(usize, FileEntry, PathBuf, u32)> = candidates
-                        .take(pipeline.available_slots())
+                        .take(free_slots)
                         .map(|(idx, path, iflags)| (idx, self.itemize_row_entry(idx), path, iflags))
                         .collect();
 
@@ -753,9 +761,20 @@ impl ReceiverContext {
                                 .collect()
                         };
 
+                        ready.extend(batch.into_iter().zip(sig_results));
+                    }
+                    {
                         // Send requests sequentially (wire order matters).
-                        for ((file_idx, file_entry, file_path, base_iflags), mut basis_result) in
-                            batch.into_iter().zip(sig_results)
+                        // Model A admits a request only while the transport
+                        // has accepted everything framed so far, or when no
+                        // reply is outstanding (design note section 6.3).
+                        while let Some((
+                            (file_idx, file_entry, file_path, base_iflags),
+                            mut basis_result,
+                        )) = (!(pipeline.outstanding() > 0
+                            && crate::iobuf::model_a_queued().is_some_and(|q| q > 0)))
+                        .then(|| ready.pop_front())
+                        .flatten()
                         {
                             if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
                                 self.send_no_transfer_itemize(
@@ -816,7 +835,7 @@ impl ReceiverContext {
                     }
                 }
 
-                if end_phase_after_requests && !phase_ended {
+                if end_phase_after_requests && !phase_ended && ready.is_empty() {
                     // An empty queue may still have a chunk left to decide.
                     if candidates.len() == 0 {
                         self.fill_candidates(

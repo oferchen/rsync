@@ -916,6 +916,48 @@ pub fn run_server_over_transport<'a>(
     run_server_on_core(config, handshake, core, hooks)
 }
 
+/// Whether prototype I/O model A is selected: `OC_RSYNC_TEST_IO_MODEL=a`,
+/// read once per process. Unix only. Measurement switch, not a feature.
+#[must_use]
+pub fn io_model_a() -> bool {
+    static MODEL_A: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *MODEL_A.get_or_init(|| {
+        cfg!(unix) && std::env::var_os("OC_RSYNC_TEST_IO_MODEL").is_some_and(|v| v == "a")
+    })
+}
+
+/// [`run_server_over_transport`] over descriptors the core can poll: `input`
+/// and `output` for a pipe pair, `input` alone for a socket used in both
+/// directions. The descriptors are duplicates the caller made; blocking mode
+/// is restored on their open file descriptions when the transfer ends, since
+/// the caller's own handles share them.
+///
+/// # Errors
+///
+/// As [`run_server_over_transport`], plus the `fcntl(2)`/`dup(2)` errors.
+#[cfg(unix)]
+pub fn run_server_over_fds(
+    config: ServerConfig,
+    handshake: HandshakeResult,
+    input: std::fs::File,
+    output: Option<std::fs::File>,
+    hooks: ServerTransferHooks<'_, '_>,
+) -> ServerResult {
+    use std::os::fd::AsFd;
+    let keep_in = input.try_clone()?;
+    let keep_out = output.as_ref().map(std::fs::File::try_clone).transpose()?;
+    let transport: Box<dyn fast_io::transport::Transport> = match output {
+        Some(output) => Box::new(fast_io::transport::FdTransport::pair(input, output)?),
+        None => Box::new(fast_io::transport::FdTransport::socket(input)?),
+    };
+    let result = run_server_over_transport(config, handshake, transport, hooks);
+    let _ = fast_io::transport::set_blocking(keep_in.as_fd());
+    if let Some(out) = &keep_out {
+        let _ = fast_io::transport::set_blocking(out.as_fd());
+    }
+    result
+}
+
 /// The server transfer from protocol setup on, over `core`.
 fn run_server_on_core(
     mut config: ServerConfig,
@@ -1240,6 +1282,10 @@ fn run_server_on_core(
         }
         if let Some(mux) = writer.mux_out() {
             iobuf::Core::attach_mux(&core, mux);
+        }
+        // Prototype I/O model A: the receiving side never waits for output.
+        if io_model_a() && config.role == ServerRole::Receiver {
+            iobuf::Core::enable_model_a(&core);
         }
     }
 

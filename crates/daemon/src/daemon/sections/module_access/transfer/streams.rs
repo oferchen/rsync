@@ -304,6 +304,14 @@ fn setup_transfer_streams(
     }))
 }
 
+thread_local! {
+    /// Prototype I/O model A: a duplicate of the session's TCP socket for the
+    /// receiving daemon's core to poll, handed from the orchestrator to
+    /// [`run_daemon_transfer`] on the session's own thread.
+    static MODEL_A_SOCKET: std::cell::RefCell<Option<TcpStream>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Builds the handshake result for the transfer.
 fn build_handshake_result(
     reader: &BufReader<DaemonStream>,
@@ -348,6 +356,20 @@ fn run_daemon_transfer(
     // own, from argv[0].
     let role = config.role;
     let fatal_report = move |error: &io::Error, code: i32| fatal_lines(error, code, role);
+    #[cfg(unix)]
+    if let Some(socket) = MODEL_A_SOCKET.with(|slot| slot.borrow_mut().take()) {
+        return core::server::run_server_over_fds(
+            config,
+            handshake,
+            std::fs::File::from(std::os::fd::OwnedFd::from(socket)),
+            None,
+            ServerTransferHooks {
+                daemon_log,
+                fatal_report: Some(&fatal_report),
+                ..ServerTransferHooks::default()
+            },
+        );
+    }
     run_server_with_handshake_adopting(
         config,
         handshake,

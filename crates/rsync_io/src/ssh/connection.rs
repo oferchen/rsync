@@ -207,6 +207,22 @@ impl SshConnection {
         }
     }
 
+    /// Duplicates of the parent ends of the wire, `(from_child, to_child)`,
+    /// for a caller that polls them itself (prototype I/O model A). `None`
+    /// once a half has been taken. The duplicates must be dropped before the
+    /// connection relies on closing its ends.
+    ///
+    /// # Errors
+    ///
+    /// Returns the `dup(2)` error.
+    #[cfg(unix)]
+    pub fn dup_wire_ends(&self) -> io::Result<Option<(std::fs::File, std::fs::File)>> {
+        let (Some(to_child), Some(from_child)) = (&self.stdin, &self.stdout) else {
+            return Ok(None);
+        };
+        Ok(Some((from_child.try_clone()?, to_child.try_clone()?)))
+    }
+
     /// Returns the kernel primitive carrying the child's stdin and stdout.
     #[must_use]
     pub const fn wire_primitive(&self) -> WirePrimitive {
