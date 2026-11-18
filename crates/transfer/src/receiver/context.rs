@@ -595,6 +595,17 @@ pub struct ReceiverContext {
     /// [`execute_delayed_deletions`]: Self::execute_delayed_deletions
     pub(in crate::receiver) delayed_delete_victims:
         Vec<crate::receiver::directory::deletion::DeletedEntry>,
+    /// The candidates a `--delete-delay` run remembered while `--max-delete`
+    /// or `--one-file-system` routes deletion through the serial executor,
+    /// awaiting `execute_remembered_deletions` after the transfer.
+    ///
+    /// A `RefCell` because the delete scan runs behind `&self`.
+    ///
+    /// upstream: generator.c:386-388 - `delete_during == 2` remembers a
+    /// candidate whatever else is set; delete.c:217 applies the cap and
+    /// delete.c:144 the mount check when `do_delayed_deletions()` replays it.
+    pub(in crate::receiver) delayed_capped_deletions:
+        std::cell::RefCell<Vec<crate::receiver::directory::deletion::RememberedDir>>,
     /// Guards the one-shot "IO error encountered -- skipping file deletion"
     /// notice so the whole delete pass is skipped exactly once when the sender's
     /// file list was built after a general I/O error and `--ignore-errors` was
@@ -816,6 +827,7 @@ impl ReceiverContext {
             created_stats: std::cell::Cell::new(protocol::stats::CreatedStats::new()),
             got_xfer_error: std::cell::Cell::new(false),
             delayed_delete_victims: Vec::new(),
+            delayed_capped_deletions: std::cell::RefCell::new(Vec::new()),
             io_error_delete_warning_emitted: false,
             skipped_deletes: std::cell::Cell::new(0),
             // upstream: read_batch defaults off; the network path never sets it.

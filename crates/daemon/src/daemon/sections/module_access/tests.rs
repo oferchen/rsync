@@ -1836,6 +1836,24 @@ mod module_access_tests {
         );
     }
 
+    // WHY: a client's `--max-delete=0` reaches a daemon as `--max-delete=-1`
+    // (options.c:3067-3072) and any negative value means "no deletions"
+    // (options.c:2363-2366). Dropping it lets a push delete without a limit.
+    #[test]
+    fn apply_long_form_args_reads_a_negative_max_delete_as_no_deletions() {
+        for (value, limit) in [("-1", 0), ("-7", 0), ("0", 0), ("3", 3)] {
+            let args = vec![
+                "--server".to_owned(),
+                format!("--max-delete={value}"),
+                ".".to_owned(),
+                "module".to_owned(),
+            ];
+            let mut config = ServerConfig::default();
+            assert!(apply_long_form_args(&args, &mut config).is_none());
+            assert_eq!(config.deletion.max_delete, Some(limit), "{value}");
+        }
+    }
+
     // Positional path arguments past the `.` separator must not be
     // mis-classified as unknown options - they are dispatched through
     // upstream's `glob_expand_module()` (util1.c:807), not popt.

@@ -685,8 +685,7 @@ fn parent_dir(relative: &Path) -> PathBuf {
 impl ReceiverContext {
     /// Deletes extraneous destination entries immediately: scan, unlink, and emit
     /// the `deleting`/`*deleting` lines in one pass. Used by `--delete-before`,
-    /// `--delete-during`, and `--delete-after` (and a capped/`--one-file-system`
-    /// `--delete-delay`, which cannot defer through the serial executor).
+    /// `--delete-during`, and `--delete-after`.
     ///
     /// The sweep's cap continues from the deletions already made to make room,
     /// and the entries it refuses join the run-wide `skipped_deletes`, which the
@@ -939,14 +938,149 @@ impl ReceiverContext {
         Ok((stats, io_bits, removed))
     }
 
+    /// Replays the candidates a `--delete-delay` run remembered through the
+    /// serial executor, applying the `--max-delete` cap and the
+    /// `--one-file-system` boundary as each one is removed.
+    ///
+    /// The cap continues from the entries the transfer cleared to make room,
+    /// and the candidates it refuses join the run-wide `skipped_deletes`.
+    ///
+    /// Returns `(stats, io_error_bits, victims)`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:300-313` - `do_delayed_deletions()` calls
+    ///   `delete_item(delbuf, mode, flags | DEL_RECURSE)` per remembered name
+    /// - `delete.c:217-220` - the cap is tested as each item is removed, so a
+    ///   delayed run spends its budget in replay order
+    pub(in crate::receiver) fn execute_remembered_deletions<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
+        writer: &mut W,
+    ) -> io::Result<(DeleteStats, i32, Vec<DeletedEntry>)> {
+        let remembered = self.delayed_capped_deletions.take();
+        let deletion_chain = self.delete_pass_chain();
+        let mut state = self.capped_delete_state(
+            dest_dir,
+            #[cfg(unix)]
+            sandbox.map(std::sync::Arc::as_ref),
+            #[cfg(unix)]
+            self.mount_boundary_dev(dest_dir),
+            self.config.deletion.max_delete.unwrap_or(u64::MAX),
+            u64::from(self.effective_del_stats().total()),
+            writer,
+        );
+        for RememberedDir {
+            dir,
+            mut chain,
+            candidates,
+        } in remembered
+        {
+            for candidate in candidates {
+                state.delete_item(
+                    &candidate.rel,
+                    &dir.join(&candidate.name),
+                    candidate.is_dir,
+                    candidate.is_symlink,
+                    &mut match chain.as_mut() {
+                        Some(chain) => DeletionFilter::PerDir(chain),
+                        None => DeletionFilter::Flat(deletion_chain),
+                    },
+                )?;
+            }
+        }
+        let CappedDeleteState {
+            combined,
+            skipped,
+            io_err_bits,
+            logged,
+            ..
+        } = state;
+        self.add_skipped_deletes(skipped);
+        Ok((combined, io_err_bits, logged.unwrap_or_default()))
+    }
+
+    /// The filter chain the delete pass consults.
+    ///
+    /// A server-side receiver reads the client's rules off the wire into
+    /// `filter_chain` (setup/context.rs branch A). A client-side pull never
+    /// receives the wire filter list, so its rules live in the dedicated
+    /// `deletion_filter_chain` built from the local CLI rules (branch B) and
+    /// `filter_chain` is empty there. Whichever is populated decides, so a
+    /// plain `- name`, a receiver-side `-r name`, or a perishable `-p name`
+    /// rule protects a matching destination entry from --delete on both sides,
+    /// mirroring upstream generator.c:delete_in_dir() which filters the
+    /// get_dirlist() candidates through the same rule list regardless of
+    /// transfer role.
+    fn delete_pass_chain(&self) -> &filters::FilterChain {
+        if self.deletion_filter_chain.is_empty() {
+            &self.filter_chain
+        } else {
+            &self.deletion_filter_chain
+        }
+    }
+
+    /// The transfer root's device under `--one-file-system`, `None` otherwise.
+    ///
+    /// upstream: generator.c:351-361 - `filesystem_dev` is the device of the
+    /// top directory the delete pass is working under.
+    #[cfg(unix)]
+    fn mount_boundary_dev(&self, dest_dir: &Path) -> Option<u64> {
+        use std::os::unix::fs::MetadataExt;
+        if self.config.flags.one_file_system == 0 {
+            return None;
+        }
+        std::fs::metadata(dest_dir).ok().map(|m| m.dev())
+    }
+
+    /// Builds the serial executor's bookkeeping for one sweep or replay.
+    fn capped_delete_state<'w, W: crate::writer::MsgInfoSender + ?Sized>(
+        &'w self,
+        dest_dir: &'w Path,
+        #[cfg(unix)] sandbox: Option<&'w fast_io::DirSandbox>,
+        #[cfg(unix)] boundary_dev: Option<u64>,
+        limit: u64,
+        deleted: u64,
+        writer: &'w mut W,
+    ) -> CappedDeleteState<'w, W> {
+        CappedDeleteState {
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            #[cfg(unix)]
+            boundary_dev,
+            limit,
+            deleted,
+            skipped: 0,
+            combined: DeleteStats::new(),
+            io_err_bits: 0,
+            emit_itemize: self.should_emit_itemize(),
+            suppress_msg_deleted: self.config.deletion.suppress_msg_deleted,
+            server_mode: !self.config.connection.client_mode,
+            protocol: self.protocol.as_u8(),
+            backup: self.config.flags.backup,
+            backup_dir: self.config.backup_dir.as_deref().map(PathBuf::from),
+            backup_suffix: self.config.effective_backup_suffix().to_owned(),
+            metadata_opts: self.build_metadata_options(),
+            backup_dir_cache: Arc::clone(&self.backup_dir_cache),
+            dry_run: self.config.flags.dry_run,
+            logged: self.captures_victim_modes().then(Vec::new),
+            receiver: self,
+            writer,
+        }
+    }
+
     /// Reports whether the delete pass routes through the serial, leaf-granular
     /// executor (`--max-delete` cap or `--one-file-system` boundary) rather than
     /// the parallel fast path.
     ///
-    /// `--delete-delay` can only collect-then-execute on the parallel path; a
-    /// capped or one-file-system delay run enforces its cap/boundary inline, so
-    /// it stays on the immediate early pass. Mirrors the engine crate's
-    /// `delay_decides_during` gate, which likewise excludes `--max-delete`.
+    /// `--delete-delay` defers on either path: the parallel one records its
+    /// victims ([`collect_delayed_deletions`](Self::collect_delayed_deletions)),
+    /// the serial one its candidates
+    /// ([`execute_remembered_deletions`](Self::execute_remembered_deletions)).
     pub(in crate::receiver) fn delete_pass_uses_serial_executor(&self) -> bool {
         #[cfg(unix)]
         {
@@ -1037,29 +1171,9 @@ impl ReceiverContext {
         // it ("cannot delete mount point") and delete.c:89-97
         // delete_dir_contents() pins the parent directory as non-empty.
         #[cfg(unix)]
-        let boundary_dev: Option<u64> = if self.config.flags.one_file_system >= 1 {
-            use std::os::unix::fs::MetadataExt;
-            std::fs::metadata(dest_dir).ok().map(|m| m.dev())
-        } else {
-            None
-        };
+        let boundary_dev = self.mount_boundary_dev(dest_dir);
 
-        // The deletion decision must consult the chain that actually carries
-        // the filter rules for this role. A server-side receiver reads the
-        // client's rules off the wire into `filter_chain` (setup/context.rs
-        // branch A). A client-side pull never receives the wire filter list,
-        // so its rules live in the dedicated `deletion_filter_chain` built from
-        // the local CLI rules (branch B) and `filter_chain` is empty there.
-        // Pick whichever is populated so a plain `- name`, a receiver-side
-        // `-r name`, or a perishable `-p name` rule protects a matching
-        // destination entry from --delete on both sides, mirroring upstream
-        // generator.c:delete_in_dir() which filters the get_dirlist()
-        // candidates through the same rule list regardless of transfer role.
-        let deletion_chain = if self.deletion_filter_chain.is_empty() {
-            &self.filter_chain
-        } else {
-            &self.deletion_filter_chain
-        };
+        let deletion_chain = self.delete_pass_chain();
 
         // Whether the deletion chain carries per-directory merge configs
         // (`.rsync-filter`, dir-merge `.filt`/`.filt2`). Computed up front so it
@@ -1105,14 +1219,6 @@ impl ReceiverContext {
             // unreachable u64::MAX sentinel keeps the executor's guard-before-
             // delete logic intact without ever tripping the limit warning.
             let limit = max_delete.unwrap_or(u64::MAX);
-            // The serial executor unlinks inline, so a `--delete-delay` run that
-            // reaches it cannot defer; the caller keeps such a run on the
-            // immediate early pass (see `delete_pass_uses_serial_executor`), and
-            // `collect_only` is never set here.
-            debug_assert!(
-                !collect_only,
-                "delayed collection never uses the serial executor"
-            );
             return self.delete_extraneous_files_capped(
                 dest_dir,
                 &dir_children,
@@ -1126,6 +1232,7 @@ impl ReceiverContext {
                 budget_used,
                 #[cfg(unix)]
                 boundary_dev,
+                collect_only,
             );
         }
 
@@ -1810,31 +1917,18 @@ impl ReceiverContext {
         limit: u64,
         budget_used: u64,
         #[cfg(unix)] boundary_dev: Option<u64>,
+        remember: bool,
     ) -> io::Result<(DeleteStats, u64, i32, Vec<DeletedEntry>)> {
-        let mut state = CappedDeleteState {
+        let mut state = self.capped_delete_state(
             dest_dir,
             #[cfg(unix)]
-            sandbox: sandbox.map(std::sync::Arc::as_ref),
+            sandbox.map(std::sync::Arc::as_ref),
             #[cfg(unix)]
             boundary_dev,
             limit,
-            deleted: budget_used,
-            skipped: 0,
-            combined: DeleteStats::new(),
-            io_err_bits: 0,
-            emit_itemize: self.should_emit_itemize(),
-            suppress_msg_deleted: self.config.deletion.suppress_msg_deleted,
-            server_mode: !self.config.connection.client_mode,
-            protocol: self.protocol.as_u8(),
-            backup: self.config.flags.backup,
-            backup_dir: self.config.backup_dir.as_deref().map(PathBuf::from),
-            backup_suffix: self.config.effective_backup_suffix().to_owned(),
-            metadata_opts: self.build_metadata_options(),
-            backup_dir_cache: Arc::clone(&self.backup_dir_cache),
-            dry_run: self.config.flags.dry_run,
-            logged: self.captures_victim_modes().then(Vec::new),
+            budget_used,
             writer,
-        };
+        );
 
         #[cfg(unix)]
         let top_devs = boundary_dev.map(|root| self.top_dir_devices(dest_dir, root));
@@ -1935,9 +2029,29 @@ impl ReceiverContext {
             candidates.sort_by(|a, b| f_name_cmp_full(&a.rel, a.is_dir, &b.rel, b.is_dir));
             candidates.reverse();
 
+            let mut remembered = Vec::new();
             for candidate in candidates {
                 let path = dest_path.join(&candidate.name);
-                state.remove_entry(
+                // upstream: generator.c:372-377 delete_in_dir() - a mount point
+                // is passed over before the remember-or-delete choice, so a
+                // delayed run reports it during the walk.
+                if state.is_mount_point(&path, candidate.is_dir, candidate.is_symlink) {
+                    info_log!(
+                        Mount,
+                        1,
+                        "cannot delete mount point: {}",
+                        candidate.rel.display()
+                    );
+                    continue;
+                }
+                // upstream: generator.c:386-390 - `delete_during == 2` hands the
+                // candidate to remember_delete(), every other mode to
+                // delete_item().
+                if remember {
+                    remembered.push(candidate);
+                    continue;
+                }
+                state.delete_item(
                     &candidate.rel,
                     &path,
                     candidate.is_dir,
@@ -1947,6 +2061,15 @@ impl ReceiverContext {
                         None => DeletionFilter::Flat(deletion_chain),
                     },
                 )?;
+            }
+            if !remembered.is_empty() {
+                self.delayed_capped_deletions
+                    .borrow_mut()
+                    .push(RememberedDir {
+                        dir: dest_path,
+                        chain: local_chain,
+                        candidates: remembered,
+                    });
             }
         }
 
@@ -2052,6 +2175,7 @@ impl ReceiverContext {
             backup_dir_cache: Arc::clone(&self.backup_dir_cache),
             dry_run: self.config.flags.dry_run,
             logged: self.captures_victim_modes().then(Vec::new),
+            receiver: self,
             writer,
         };
         let emptied = state.remove_dir_contents(
@@ -2077,11 +2201,27 @@ impl ReceiverContext {
 }
 
 /// One extraneous destination entry awaiting a capped deletion decision.
+#[derive(Debug)]
 struct CappedCandidate {
     name: std::ffi::OsString,
     rel: PathBuf,
     is_dir: bool,
     is_symlink: bool,
+}
+
+/// The candidates one destination directory's `--delete-delay` scan remembered
+/// for the serial executor, in the order they are to be removed.
+///
+/// `chain` is the directory's per-directory merge state at scan time, so the
+/// replay recurses into a doomed subdirectory under the rules that selected it.
+///
+/// upstream: generator.c:197-218 `remember_delete()` records each candidate's
+/// mode and name; generator.c:300-313 `do_delayed_deletions()` replays them.
+#[derive(Debug)]
+pub(in crate::receiver) struct RememberedDir {
+    dir: PathBuf,
+    chain: Option<filters::FilterChain>,
+    candidates: Vec<CappedCandidate>,
 }
 
 /// Mutable bookkeeping threaded through the recursive capped deletion walk.
@@ -2129,6 +2269,8 @@ struct CappedDeleteState<'w, W: ?Sized> {
     /// Entries removed so far, recorded only when a daemon log will render
     /// them (see [`ReceiverContext::captures_victim_modes`]).
     logged: Option<Vec<DeletedEntry>>,
+    /// Routes the pass's notices the way every other receiver notice goes.
+    receiver: &'w ReceiverContext,
     writer: &'w mut W,
 }
 
@@ -2226,12 +2368,32 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
                 all_removed = false;
                 continue;
             }
-            if !self.remove_entry(
+            // upstream: delete.c:144-152 - a mount point is left alone and
+            // keeps every directory above it.
+            if self.is_mount_point(&child_path, child_is_dir, child_is_symlink) {
+                debug_log!(
+                    Del,
+                    1,
+                    "mount point, {}, pins parent directory",
+                    child_rel.display()
+                );
+                all_removed = false;
+                continue;
+            }
+            // upstream: delete.c:158-161 - a subdirectory is emptied first.
+            let emptied = !child_is_dir
+                || child_is_symlink
+                || self.remove_dir_contents(&child_rel, &child_path, filter)?;
+            if !emptied {
+                self.report_non_empty_dir(&child_rel);
+                all_removed = false;
+            }
+            if !self.delete_child(
                 &child_rel,
                 &child_path,
                 child_is_dir,
                 child_is_symlink,
-                filter,
+                emptied,
             )? {
                 all_removed = false;
             }
@@ -2240,10 +2402,46 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         Ok(all_removed)
     }
 
-    /// Recursively removes one extraneous entry under the cap. Returns `true`
-    /// when the entry was fully removed and `false` when it (or part of its
-    /// subtree) was left in place because the cap was reached.
-    fn remove_entry(
+    /// Removes one child of a directory being emptied. Returns `true` when the
+    /// child is gone.
+    ///
+    /// Upstream removes the child whatever the recursion into it returned: the
+    /// `DEL_DIR_IS_EMPTY` flag skips `delete_item()`'s own content check, so a
+    /// subdirectory that kept an entry is still counted against the cap, and
+    /// below the cap its `rmdir` fails `ENOTEMPTY` and names it a second time.
+    /// That `rmdir` is not issued here: its outcome is known. Under
+    /// `--dry-run` upstream's `do_rmdir()` reports success without looking, so
+    /// the subdirectory is logged as deleted.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `delete.c:126-127`, `delete.c:162-163` - `delete_item()` with
+    ///   `DEL_DIR_IS_EMPTY` after `delete_dir_contents()`
+    /// - `delete.c:259-263` - the `ENOTEMPTY` report
+    /// - `syscall.c:1598-1600` - `do_rmdir()` under `dry_run`
+    fn delete_child(
+        &mut self,
+        rel: &Path,
+        path: &Path,
+        is_dir: bool,
+        is_symlink: bool,
+        emptied: bool,
+    ) -> io::Result<bool> {
+        if emptied || self.dry_run || self.deleted >= self.limit {
+            return self.delete_emptied(rel, path, is_dir, is_symlink);
+        }
+        self.report_non_empty_dir(rel);
+        Ok(false)
+    }
+
+    /// Removes one extraneous entry, emptying a directory first. Returns
+    /// `true` when the entry was removed and `false` when it (or part of its
+    /// subtree) was left in place.
+    ///
+    /// upstream: delete.c:193-215 - `delete_item()` without
+    /// `DEL_DIR_IS_EMPTY`: a directory that cannot be emptied is neither
+    /// removed nor counted against the cap.
+    fn delete_item(
         &mut self,
         rel: &Path,
         path: &Path,
@@ -2251,52 +2449,63 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         is_symlink: bool,
         filter: &mut DeletionFilter<'_>,
     ) -> io::Result<bool> {
-        if is_dir && !is_symlink {
-            // upstream: generator.c:366-371 delete_in_dir() skips a dest dir
-            // flagged FLAG_MOUNT_DIR ("cannot delete mount point"), and
-            // delete.c:89-97 delete_dir_contents() treats such a nested entry
-            // as pinning its parent non-empty. Under `--one-file-system` a
-            // directory whose device differs from the transfer-root boundary is
-            // that mount point: never delete it, and return `false` so the
-            // caller leaves the parent directory in place. The check runs at
-            // every recursion level, so a mount nested inside a doomed subtree
-            // is preserved and pins the whole chain of ancestors.
-            #[cfg(unix)]
-            if let Some(boundary) = self.boundary_dev {
-                use std::os::unix::fs::MetadataExt;
-                if let Ok(meta) = std::fs::symlink_metadata(path)
-                    && crosses_mount_boundary(boundary, meta.dev())
-                {
-                    info_log!(Mount, 1, "cannot delete mount point: {}", rel.display());
-                    return Ok(false);
-                }
-            }
-            // Peel the directory's contents depth-first before considering the
-            // directory itself (upstream delete_dir_contents, reverse order).
-            if !self.remove_dir_contents(rel, path, filter)? {
-                // upstream: delete.c:117 - one notice per non-empty directory,
-                // not counted and not an I/O error.
-                info_log!(
-                    Nonreg,
-                    1,
-                    "cannot delete non-empty directory: {}",
-                    path.display().to_string().replace('\\', "/")
-                );
-                return Ok(false);
-            }
-
-            if self.deleted >= self.limit {
-                self.skipped = self.skipped.saturating_add(1);
-                return Ok(false);
-            }
-            return self.unlink_leaf(rel, path, true, false);
+        if is_dir && !is_symlink && !self.remove_dir_contents(rel, path, filter)? {
+            self.report_non_empty_dir(rel);
+            return Ok(false);
         }
+        self.delete_emptied(rel, path, is_dir, is_symlink)
+    }
 
+    /// Removes a non-directory or an emptied directory under the cap.
+    ///
+    /// upstream: delete.c:217-220 - guard before delete, `skipped_deletes++`
+    /// once the limit is reached.
+    fn delete_emptied(
+        &mut self,
+        rel: &Path,
+        path: &Path,
+        is_dir: bool,
+        is_symlink: bool,
+    ) -> io::Result<bool> {
         if self.deleted >= self.limit {
             self.skipped = self.skipped.saturating_add(1);
             return Ok(false);
         }
-        self.unlink_leaf(rel, path, false, is_symlink)
+        self.unlink_leaf(rel, path, is_dir && !is_symlink, is_symlink)
+    }
+
+    /// True when `path` is a directory on another filesystem than the transfer
+    /// root while `--one-file-system` is active.
+    ///
+    /// upstream: flist.c:1719-1729 sets `FLAG_MOUNT_DIR` on such a dirlist
+    /// entry; the delete pass never removes it.
+    fn is_mount_point(&self, path: &Path, is_dir: bool, is_symlink: bool) -> bool {
+        #[cfg(unix)]
+        if is_dir
+            && !is_symlink
+            && let Some(boundary) = self.boundary_dev
+        {
+            use std::os::unix::fs::MetadataExt;
+            return std::fs::symlink_metadata(path)
+                .is_ok_and(|meta| crosses_mount_boundary(boundary, meta.dev()));
+        }
+        #[cfg(not(unix))]
+        let _ = (path, is_dir, is_symlink);
+        false
+    }
+
+    /// Names a directory the pass could not empty, relative to the destination
+    /// as upstream's generator knows it.
+    ///
+    /// upstream: delete.c:176-179 and delete.c:260-262 - an unconditional
+    /// `rprintf(FINFO, ..)`, not counted and not an I/O error. rwrite() ignores
+    /// the write result.
+    fn report_non_empty_dir(&mut self, rel: &Path) {
+        let name = rel.display().to_string().replace('\\', "/");
+        let _ = self.receiver.emit_info_line(
+            self.writer,
+            &format!("cannot delete non-empty directory: {name}\n"),
+        );
     }
 
     /// Issues the actual removal for one leaf, updates the stats/itemize on

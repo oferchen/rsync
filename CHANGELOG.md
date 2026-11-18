@@ -872,6 +872,7 @@ user-facing work; consult the linked PRs for full detail.
 
 ### Fixed
 
+- `--delete-delay` now holds its deletions until the transfer is over under `--max-delete` and `--one-file-system` too, spending the cap in replay order as upstream does. A subdirectory left non-empty at the cap counts as skipped, a kept directory is named relative to the destination at any verbosity (twice below the cap, as upstream's failed rmdir does), and a daemon no longer ignores a pushed `--max-delete=0` (#8706)
 **Daemon**
 - Survive transient `accept(2)` errors (`ECONNABORTED`/`EMFILE`) under load instead of treating them as fatal (#6763)
 - Enable `SO_KEEPALIVE` on accepted client sockets and align listener socket options with upstream (`SO_REUSEADDR` only by default, honor `--port 0`) (#6720, #6562)
