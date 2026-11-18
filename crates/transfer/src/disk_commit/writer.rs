@@ -2,7 +2,8 @@
 //!
 //! Provides `ReusableBufWriter` which reuses an externally-owned buffer,
 //! matching upstream rsync's static `wf_writeBuf` (fileio.c:262-266). Large
-//! chunks bypass the buffer entirely via `write_all_vectored`.
+//! chunks bypass the buffer entirely via `write_all_vectored`, except under
+//! `--sparse`, where [`SparseBuffered`] keeps every data span in the buffer.
 //!
 //! The [`Writer`] enum dispatches between `ReusableBufWriter`,
 //! [`fast_io::IoUringDiskBatch`] (Linux 5.6+ with the `io_uring` feature),
@@ -34,7 +35,7 @@ const DIRECT_WRITE_THRESHOLD: usize = 8 * 1024;
 
 /// Writes two buffers as a single `writev` syscall, falling back to
 /// sequential `write_all` if vectored I/O is unsupported.
-fn write_all_vectored(file: &mut fs::File, first: &[u8], second: &[u8]) -> io::Result<()> {
+fn write_all_vectored<F: Write>(file: &mut F, first: &[u8], second: &[u8]) -> io::Result<()> {
     let total = first.len() + second.len();
     let mut written = 0usize;
 
@@ -70,18 +71,45 @@ fn write_all_vectored(file: &mut fs::File, first: &[u8], second: &[u8]) -> io::R
 /// per-file allocation. The buffer is allocated once in `disk_thread_main`
 /// and cleared between files - matching upstream rsync's static `wf_writeBuf`
 /// (fileio.c:262-266).
-pub(super) struct ReusableBufWriter<'a> {
-    file: fs::File,
+///
+/// Generic over the destination only so tests can count the calls it makes;
+/// production always writes to an `fs::File`.
+pub(super) struct ReusableBufWriter<'a, F = fs::File> {
+    file: F,
     buf: &'a mut Vec<u8>,
 }
 
-impl<'a> ReusableBufWriter<'a> {
+impl<'a, F> ReusableBufWriter<'a, F> {
     /// Creates a new writer wrapping the given file with a reusable buffer.
-    pub(super) fn new(file: fs::File, buf: &'a mut Vec<u8>) -> Self {
+    pub(super) fn new(file: F, buf: &'a mut Vec<u8>) -> Self {
         buf.clear();
         Self { file, buf }
     }
+}
 
+impl<F: Write> ReusableBufWriter<'_, F> {
+    /// Appends `data` through the buffer whatever its size, writing the buffer
+    /// out each time it fills, so contiguous data costs one `write()` per
+    /// buffer capacity rather than one per chunk.
+    fn write_through_buffer(&mut self, mut data: &[u8]) -> io::Result<()> {
+        let capacity = self.buf.capacity();
+        if capacity == 0 {
+            return self.file.write_all(data);
+        }
+        while !data.is_empty() {
+            let take = (capacity - self.buf.len()).min(data.len());
+            self.buf.extend_from_slice(&data[..take]);
+            data = &data[take..];
+            if self.buf.len() == capacity {
+                self.file.write_all(self.buf)?;
+                self.buf.clear();
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ReusableBufWriter<'_> {
     /// Flushes buffered data and calls `sync_all` on the underlying file.
     pub(super) fn sync(&mut self) -> io::Result<()> {
         self.flush()?;
@@ -94,7 +122,7 @@ impl<'a> ReusableBufWriter<'a> {
     }
 }
 
-impl Write for ReusableBufWriter<'_> {
+impl<F: Write> Write for ReusableBufWriter<'_, F> {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         if data.len() >= DIRECT_WRITE_THRESHOLD {
             if !self.buf.is_empty() {
@@ -128,10 +156,37 @@ impl Write for ReusableBufWriter<'_> {
     }
 }
 
-impl Seek for ReusableBufWriter<'_> {
+impl<F: Write + Seek> Seek for ReusableBufWriter<'_, F> {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
         self.flush()?;
         self.file.seek(pos)
+    }
+}
+
+/// `Write + Seek` view of [`ReusableBufWriter`] for the sparse writer.
+///
+/// Every data span goes through the buffer whatever its size; the buffer is
+/// written out when it fills, before a hole's seek (the seek flushes first)
+/// and at the commit's final flush. A hole-free sparse file therefore costs
+/// one `write()` per buffer instead of one per received chunk. Bytes and
+/// holes land where they would without the buffer; only the number of
+/// `write()` calls changes, and nothing reaches the wire.
+pub(super) struct SparseBuffered<'w, 'a, F = fs::File>(&'w mut ReusableBufWriter<'a, F>);
+
+impl<F: Write> Write for SparseBuffered<'_, '_, F> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.0.write_through_buffer(data)?;
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl<F: Write + Seek> Seek for SparseBuffered<'_, '_, F> {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        self.0.seek(pos)
     }
 }
 
@@ -191,10 +246,11 @@ impl<'a> Writer<'a> {
     /// Sparse writes require `Seek` to punch holes via `seek(Current(n))`,
     /// which neither the io_uring nor IOCP batch writer supports. Sparse
     /// mode therefore always uses the buffered variant; this accessor
-    /// enforces that at the type level.
-    pub(super) fn buffered_for_sparse(&mut self) -> &mut ReusableBufWriter<'a> {
+    /// enforces that at the type level. The view keeps every data span in the
+    /// buffer (see [`SparseBuffered`]).
+    pub(super) fn buffered_for_sparse(&mut self) -> SparseBuffered<'_, 'a> {
         match self {
-            Writer::Buffered(w) => w,
+            Writer::Buffered(w) => SparseBuffered(w),
             #[cfg(all(target_os = "linux", feature = "io_uring"))]
             Writer::IoUring { .. } => {
                 debug_assert!(false, "sparse mode must select buffered writer");
@@ -609,5 +665,133 @@ mod failure_site_tests {
             .expect_err("/dev/full refuses the flush");
 
         assert_eq!(op_of(&error), (CommitOp::Write, None));
+    }
+}
+
+/// Write counts of the sparse view, against a destination that logs every
+/// call it receives.
+#[cfg(test)]
+mod sparse_buffer_tests {
+    use std::io::{Cursor, SeekFrom};
+
+    use super::*;
+    use crate::delta_apply::SparseWriteState;
+
+    /// One call the writer made on its destination.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Call {
+        /// A `write` of this many bytes.
+        Write(usize),
+        /// A forward seek of this many bytes, taken at this file position.
+        Hole { at: u64, len: u64 },
+    }
+
+    #[derive(Default)]
+    struct CallLog {
+        inner: Cursor<Vec<u8>>,
+        calls: Vec<Call>,
+    }
+
+    impl Write for CallLog {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.calls.push(Call::Write(buf.len()));
+            self.inner.write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Seek for CallLog {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            if let SeekFrom::Current(len) = pos
+                && len > 0
+            {
+                self.calls.push(Call::Hole {
+                    at: self.inner.position(),
+                    len: len as u64,
+                });
+            }
+            self.inner.seek(pos)
+        }
+    }
+
+    /// Feeds `data` to the sparse writer in 32 KiB chunks, as the network
+    /// receiver does, and returns the destination with the logical length.
+    fn sparse_receive(data: &[u8]) -> (CallLog, u64) {
+        let mut buf = Vec::with_capacity(WRITE_BUF_SIZE);
+        let mut writer = ReusableBufWriter::new(CallLog::default(), &mut buf);
+        let mut state = SparseWriteState::new();
+        for chunk in data.chunks(32 * 1024) {
+            state
+                .write(&mut SparseBuffered(&mut writer), chunk)
+                .expect("write");
+        }
+        let logical_len = state
+            .finish(&mut SparseBuffered(&mut writer))
+            .expect("finish");
+        writer.flush().expect("final flush");
+        (writer.file, logical_len)
+    }
+
+    fn dense(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8 + 1).collect()
+    }
+
+    /// WHY: each 32 KiB data span went straight to the file, so a hole-free
+    /// 64 MiB pull made 2,048 writes where the plain buffered path made 582.
+    /// Through the sparse view the spans fill the 256 KiB buffer instead:
+    /// ceil(len / buffer) writes.
+    #[test]
+    fn hole_free_data_is_one_write_per_buffer() {
+        let data = dense(3 * WRITE_BUF_SIZE + 5000);
+        let (log, logical_len) = sparse_receive(&data);
+
+        assert_eq!(
+            log.calls,
+            [
+                Call::Write(WRITE_BUF_SIZE),
+                Call::Write(WRITE_BUF_SIZE),
+                Call::Write(WRITE_BUF_SIZE),
+                Call::Write(5000),
+            ]
+        );
+        assert_eq!(logical_len, data.len() as u64);
+        assert_eq!(log.inner.into_inner(), data);
+    }
+
+    /// WHY: a buffered span must reach the file before the seek that makes the
+    /// following hole, or the hole opens at the wrong offset and the span lands
+    /// after it. Every hole is taken exactly where the source's zero run starts.
+    /// upstream: fileio.c:84-99 flush_sparse_hole() seeks from the position
+    /// just past the last data written.
+    #[test]
+    fn every_hole_is_seeked_after_the_data_before_it_is_written() {
+        let mut data = Vec::new();
+        for _ in 0..8 {
+            data.extend(dense(16 * 1024));
+            data.extend(std::iter::repeat_n(0u8, 16 * 1024));
+        }
+        let (log, logical_len) = sparse_receive(&data);
+
+        // The trailing run is left to the commit's set_len (fileio.c:47-66
+        // sparse_end()), so only the seven interior holes are seeked.
+        let mut expected: Vec<Call> = (0..8u64)
+            .flat_map(|i| {
+                [
+                    Call::Write(16 * 1024),
+                    Call::Hole {
+                        at: i * 32 * 1024 + 16 * 1024,
+                        len: 16 * 1024,
+                    },
+                ]
+            })
+            .collect();
+        expected.pop();
+        assert_eq!(log.calls, expected);
+        let mut contents = log.inner.into_inner();
+        contents.resize(logical_len as usize, 0);
+        assert_eq!(contents, data);
     }
 }

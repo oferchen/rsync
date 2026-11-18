@@ -5,8 +5,9 @@
 use std::io::{self, Seek, SeekFrom, Write};
 
 use engine::BlockTouchTracker;
+use fast_io::zero_detect::{SparseSpan, sparse_spans};
 
-use crate::constants::{SPARSE_WRITE_SIZE, leading_zero_count, trailing_zero_count};
+use crate::constants::SPARSE_WRITE_SIZE;
 
 /// Tracks pending runs of zeros so they become holes in the output file rather
 /// than being written as data.
@@ -147,14 +148,11 @@ impl SparseWriteState {
 
     /// Writes data with sparse optimization.
     ///
-    /// Zero runs are tracked and become holes; non-zero data is written normally.
-    /// Scans in `SPARSE_WRITE_SIZE` (1 KiB) windows: each window's leading and
-    /// trailing zeros are deferred as a hole and the rest is written.
+    /// The leading and trailing zero runs of `data`, and every interior zero
+    /// run of at least `SPARSE_WRITE_SIZE` bytes, are deferred as holes; the
+    /// data between two such runs is written in one `write()`.
     ///
-    /// Deviation from upstream: 3.5.1 `write_sparse()` (`fileio.c:130-189`)
-    /// scans the whole span for interior zero runs of at least
-    /// `SPARSE_WRITE_SIZE` and writes the data between them in one `write()`,
-    /// so hole placement can differ at window edges.
+    /// upstream: fileio.c:130-189 `write_sparse()`.
     #[inline]
     pub fn write<W: Write + Seek>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<usize> {
         self.write_spans(writer, data, true)
@@ -190,37 +188,19 @@ impl SparseWriteState {
         // the interior flush() calls never issue a position query.
         self.ensure_offset(writer)?;
 
-        let mut offset = 0;
-
-        while offset < data.len() {
-            let end = (offset + SPARSE_WRITE_SIZE).min(data.len());
-            let chunk = &data[offset..end];
-
-            let leading_zeros = leading_zero_count(chunk);
-            self.accumulate(leading_zeros);
-
-            if leading_zeros == chunk.len() {
-                offset = end;
-                continue;
-            }
-
-            let tail = &chunk[leading_zeros..];
-            let trailing_zeros = trailing_zero_count(tail);
-            let data_start = offset + leading_zeros;
-            let data_end = end - trailing_zeros;
-
-            if data_end > data_start {
-                self.flush(writer)?;
-                let chunk = &data[data_start..data_end];
-                writer.write_all(chunk)?;
-                if credit_touched {
-                    self.touched.record(self.stream_offset, chunk.len() as u64);
+        for span in sparse_spans(data, SPARSE_WRITE_SIZE) {
+            match span {
+                SparseSpan::Zeros(len) => self.accumulate(len),
+                SparseSpan::Data(range) => {
+                    self.flush(writer)?;
+                    let chunk = &data[range];
+                    writer.write_all(chunk)?;
+                    if credit_touched {
+                        self.touched.record(self.stream_offset, chunk.len() as u64);
+                    }
+                    self.stream_offset = self.stream_offset.saturating_add(chunk.len() as u64);
                 }
-                self.stream_offset = self.stream_offset.saturating_add(chunk.len() as u64);
             }
-
-            self.pending_zeros = trailing_zeros as u64;
-            offset = end;
         }
 
         Ok(data.len())
@@ -228,16 +208,19 @@ impl SparseWriteState {
 
     /// Finalizes sparse writing and returns the file's logical end offset.
     ///
-    /// Any trailing zero run becomes a hole (seeked over, and recorded for
-    /// punching when it overlaps the basis). Unlike a plain writer this does
-    /// NOT materialize the final byte; the caller establishes the logical size
-    /// with `set_len(returned_len)`, leaving the trailing region a true hole.
+    /// A trailing zero run is not seeked over: the caller's `set_len` to the
+    /// returned length makes it a hole. When the run overlaps the basis it is
+    /// recorded for punching, since truncating cannot free those blocks.
     ///
-    /// upstream: `fileio.c:47` `sparse_end()` -> `do_ftruncate(f, size)`.
+    /// upstream: `fileio.c:47-66` `sparse_end()` - `do_ftruncate(f, size)` with
+    /// no lseek, after `do_punch_hole()` when updating a basis.
     pub fn finish<W: Write + Seek>(&mut self, writer: &mut W) -> io::Result<u64> {
-        let position = self.ensure_offset(writer)?;
-        let logical_end = position.saturating_add(self.pending_zeros);
-        self.flush(writer)?;
+        let start = self.ensure_offset(writer)?;
+        let logical_end = start.saturating_add(self.pending_zeros);
+        if self.pending_zeros > 0 && start < self.preallocated_len {
+            self.holes.push((start, self.pending_zeros));
+        }
+        self.pending_zeros = 0;
         Ok(logical_end)
     }
 }
@@ -351,9 +334,9 @@ mod tests {
         // by a following data write) starting inside the preallocated basis
         // extent is recorded for punching, so an --inplace update deallocates
         // stale basis blocks instead of leaving them on disk. The run is fed as
-        // a distinct write, mirroring receive_data streaming SPARSE_WRITE_SIZE pieces;
-        // interior zeros within one write are written literally (as upstream)
-        // and correctly overwrite the basis, so only seeked runs are punched.
+        // a distinct write, so it is that write's leading run. A run inside one
+        // write is deferred the same way once it reaches SPARSE_WRITE_SIZE;
+        // shorter ones are written literally (as upstream) and overwrite the basis.
         // upstream: fileio.c:84-99 flush_sparse_hole().
         let mut state = SparseWriteState::new();
         state.set_preallocated_len(1000);
@@ -506,7 +489,8 @@ mod tests {
         // WHY: upstream fileio.c keeps the file offset in a running variable
         // (sparse_past_write) and issues exactly one lseek per zero run - it
         // never queries the OS position. This asserts the Rust port matches
-        // that syscall profile: N distinct zero runs cost N forward seeks and
+        // that syscall profile: N distinct interior zero runs cost N forward
+        // seeks, the trailing run none (sparse_end() ftruncates instead), and
         // at most one position query for the whole file, while the byte output
         // is identical to a plain (non-sparse) writer.
         // upstream: fileio.c:130-189 write_sparse().
@@ -529,8 +513,8 @@ mod tests {
 
         assert_eq!(logical, total, "logical size includes every hole");
         assert_eq!(
-            w.hole_seeks, 3,
-            "one forward seek per zero run (single-seek-per-run invariant)"
+            w.hole_seeks, 2,
+            "one forward seek per interior zero run, none for the trailing one"
         );
         assert!(
             w.position_queries <= 1,
@@ -543,5 +527,117 @@ mod tests {
         let mut produced = w.inner.into_inner();
         produced.resize(logical as usize, 0);
         assert_eq!(produced, reference, "sparse output is byte-identical");
+    }
+
+    /// A writer that records the length of every `write` call.
+    #[derive(Default)]
+    struct WriteLengths {
+        inner: Cursor<Vec<u8>>,
+        writes: Vec<usize>,
+    }
+
+    impl Write for WriteLengths {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.writes.push(buf.len());
+            self.inner.write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    impl Seek for WriteLengths {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    /// WHY: data without a long zero run goes out in one write however large
+    /// it is; the old scan issued one write per 1,024-byte window and relied
+    /// on the caller's buffering to hide it.
+    /// upstream: fileio.c:174-182 - the tail `emit_sparse_span()`.
+    #[test]
+    fn hole_free_data_is_one_write() {
+        let data: Vec<u8> = (0..64 * 1024usize).map(|i| (i % 251) as u8 + 1).collect();
+        let mut state = SparseWriteState::new();
+        let mut w = WriteLengths::default();
+        state.write(&mut w, &data).unwrap();
+        assert_eq!(w.writes, [data.len()]);
+        assert_eq!(w.inner.into_inner(), data);
+    }
+
+    /// WHY: hole placement must match upstream's rule, not a 1,024-byte grid.
+    /// A 600-byte zero run straddling the 1 KiB mark used to be split into a
+    /// trailing and a leading window run and seeked over; upstream keeps a run
+    /// below `SPARSE_WRITE_SIZE` inside the write. A run of exactly
+    /// `SPARSE_WRITE_SIZE` is a hole wherever it falls.
+    /// upstream: fileio.c:163 - `if (z < SPARSE_WRITE_SIZE)`.
+    #[test]
+    fn interior_run_is_a_hole_only_from_the_threshold() {
+        for (run, writes) in [(600usize, vec![2200]), (1024, vec![700, 900])] {
+            let mut data = vec![7u8; 700];
+            data.extend(std::iter::repeat_n(0u8, run));
+            data.extend(std::iter::repeat_n(9u8, 900));
+            let mut state = SparseWriteState::new();
+            let mut w = WriteLengths::default();
+            state.write(&mut w, &data).unwrap();
+            let logical = state.finish(&mut w).unwrap();
+            assert_eq!(w.writes, writes, "run of {run}");
+            let mut produced = w.inner.into_inner();
+            produced.resize(logical as usize, 0);
+            assert_eq!(produced, data, "run of {run}");
+        }
+    }
+
+    /// WHY: rsync 3.5.2 does not seek over a file's trailing zero run; the
+    /// receiver's single `set_len` to the logical length makes it a hole. A
+    /// seek there is one wasted `lseek` per file that ends in a hole.
+    /// upstream: fileio.c:47-66 sparse_end() - `do_ftruncate(f, size)`.
+    #[test]
+    fn trailing_zero_run_is_left_to_set_len() {
+        let mut data = vec![0x5Au8; 3000];
+        data.extend(std::iter::repeat_n(0u8, 8192));
+        let mut state = SparseWriteState::new();
+        let mut w = SeekAccountingWriter {
+            inner: Cursor::new(Vec::new()),
+            hole_seeks: 0,
+            position_queries: 0,
+        };
+        state.write(&mut w, &data).unwrap();
+        let logical = state.finish(&mut w).unwrap();
+
+        assert_eq!(w.hole_seeks, 0, "the trailing run is not seeked over");
+        assert_eq!(logical, data.len() as u64, "set_len target covers the run");
+        assert!(
+            state.take_holes().is_empty(),
+            "nothing to punch on a new file"
+        );
+        let mut produced = w.inner.into_inner();
+        assert_eq!(produced.len(), 3000, "only the data was written");
+        produced.resize(logical as usize, 0);
+        assert_eq!(produced, data);
+    }
+
+    /// WHY: over an existing basis the trailing run still holds stale bytes,
+    /// so it must be punched even though it is not seeked over.
+    /// upstream: fileio.c:51-54 sparse_end() - `do_punch_hole()` when
+    /// updating a basis, then `do_ftruncate()`.
+    #[test]
+    fn trailing_zero_run_over_the_basis_is_recorded_for_punching() {
+        let mut data = vec![0x5Au8; 3000];
+        data.extend(std::iter::repeat_n(0u8, 8192));
+        let mut state = SparseWriteState::new();
+        state.set_preallocated_len(data.len() as u64);
+        let mut w = SeekAccountingWriter {
+            inner: Cursor::new(Vec::new()),
+            hole_seeks: 0,
+            position_queries: 0,
+        };
+        state.write(&mut w, &data).unwrap();
+        state.finish(&mut w).unwrap();
+
+        assert_eq!(w.hole_seeks, 0);
+        assert_eq!(state.take_holes(), [(3000, 8192)]);
     }
 }

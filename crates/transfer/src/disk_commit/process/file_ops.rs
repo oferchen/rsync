@@ -363,9 +363,9 @@ pub(in crate::disk_commit) fn process_file(
                 }
 
                 let written = match sparse_state {
-                    Some(ref mut sparse) => {
-                        sparse.write(output.buffered_for_sparse(), &data).map(drop)
-                    }
+                    Some(ref mut sparse) => sparse
+                        .write(&mut output.buffered_for_sparse(), &data)
+                        .map(drop),
                     None => output.write_chunk(&data),
                 };
                 if let Err(err) = written.map_err(|e| write_failed(&begin.file_path, e)) {
@@ -397,7 +397,7 @@ pub(in crate::disk_commit) fn process_file(
                     // byte-identical for an in-place basis==dest update, and
                     // like upstream's seek it credits no touched blocks.
                     sparse
-                        .skip_matched(output.buffered_for_sparse(), &data)
+                        .skip_matched(&mut output.buffered_for_sparse(), &data)
                         .map(drop)
                         .map_err(|e| write_failed(&begin.file_path, e))
                 } else {
@@ -420,7 +420,7 @@ pub(in crate::disk_commit) fn process_file(
                 // commit step for ftruncate + punch (no materialized byte).
                 let sparse_final = if let Some(ref mut sparse) = sparse_state {
                     let logical = sparse
-                        .finish(output.buffered_for_sparse())
+                        .finish(&mut output.buffered_for_sparse())
                         .map_err(|e| write_failed(&begin.file_path, e))?;
                     Some(SparseFinalize {
                         logical_len: logical,
@@ -666,10 +666,10 @@ pub(in crate::disk_commit) fn process_whole_file(
         let mut sparse = SparseWriteState::default();
         sparse.set_preallocated_len(preallocated_len);
         sparse
-            .write(output.buffered_for_sparse(), &data)
+            .write(&mut output.buffered_for_sparse(), &data)
             .map_err(|e| write_failed(&begin.file_path, e))?;
         let logical = sparse
-            .finish(output.buffered_for_sparse())
+            .finish(&mut output.buffered_for_sparse())
             .map_err(|e| write_failed(&begin.file_path, e))?;
         let touched = sparse.touched_blocks();
         (
