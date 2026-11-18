@@ -447,6 +447,11 @@ pub struct ReceiverContext {
     /// before [`Self::read_expected_ndx_done`] expects the sender's NDX_DONE.
     /// `Cell` because the emit site runs behind a `&self` pipeline closure.
     pub(in crate::receiver) hardlink_follower_echoes: std::cell::Cell<usize>,
+    /// The hard-link followers whose destination name was found missing when
+    /// their itemize record was decided. The link pass links those without
+    /// stat'ing the name a second time; a link that fails anyway takes the
+    /// checked path.
+    pub(in crate::receiver) hardlink_free_names: RefCell<crate::receiver::itemize::FreeNames>,
     /// The hard-link leaders seen so far, extended as file-list segments
     /// arrive. `RefCell` because the follower records are written behind
     /// `&self`.
@@ -791,6 +796,7 @@ impl ReceiverContext {
             name_rows: RefCell::new(BTreeMap::new()),
             progress_active: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
+            hardlink_free_names: RefCell::default(),
             hardlink_leader_index: RefCell::default(),
             early_sender_ndx_dones: std::cell::Cell::new(0),
             phase_end_writes_sent: std::cell::Cell::new(0),

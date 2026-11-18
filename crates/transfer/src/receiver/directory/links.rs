@@ -849,7 +849,9 @@ impl ReceiverContext {
     /// Links `link_path` to its group's recorded leader and returns the
     /// leader's path, for the usual follower: a name that does not exist yet
     /// beside a leader that does. One stat of the name and the link itself
-    /// replace the stat of the leader, the parent lookup and the link.
+    /// replace the stat of the leader, the parent lookup and the link, and
+    /// the stat is skipped too when `name_known_free` says the itemize pass
+    /// already found the name missing.
     ///
     /// `None` when no leader is recorded, when the name is the leader itself
     /// or already exists, or when the link fails for any reason - the leader
@@ -867,18 +869,21 @@ impl ReceiverContext {
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         relative_path: &Path,
         link_path: &Path,
+        name_known_free: bool,
     ) -> Option<PathBuf> {
         let leader = tracker.leader_path(gnum)?;
         if leader == link_path {
             return None;
         }
-        #[cfg(unix)]
-        let name_taken =
-            fast_io::lstat_via_sandbox_or_fallback(sandbox, dest_dir, relative_path, link_path);
-        #[cfg(not(unix))]
-        let name_taken = std::fs::symlink_metadata(link_path);
-        if !matches!(name_taken, Err(ref e) if e.kind() == std::io::ErrorKind::NotFound) {
-            return None;
+        if !name_known_free {
+            #[cfg(unix)]
+            let name_taken =
+                fast_io::lstat_via_sandbox_or_fallback(sandbox, dest_dir, relative_path, link_path);
+            #[cfg(not(unix))]
+            let name_taken = std::fs::symlink_metadata(link_path);
+            if !matches!(name_taken, Err(ref e) if e.kind() == std::io::ErrorKind::NotFound) {
+                return None;
+            }
         }
         #[cfg(unix)]
         let linked = fast_io::linkat_via_sandbox_or_fallback(
@@ -1015,20 +1020,12 @@ impl ReceiverContext {
                     // upstream: hlink.c:601-621 skip_hard_link() sets
                     // FLAG_SKIP_HLINK on a group member that was not transferred
                     // (e.g. its own transfer errored), and check_prior()
-                    // (hlink.c:260-295) then refuses it as a link source. Only
-                    // record a leader whose file actually materialized on disk;
-                    // an absent leader is left unrecorded so the second pass can
-                    // promote the next present group member (hlink.c:313-324
-                    // "virtual first") instead of hard-linking to a path that
-                    // does not exist (ENOENT -> fatal abort).
-                    if !super::dest_entry_exists(
-                        #[cfg(unix)]
-                        sandbox,
-                        dest_dir,
-                        &dest_path,
-                    ) {
-                        continue;
-                    }
+                    // (hlink.c:260-295) then refuses it as a link source. The
+                    // leader is recorded here without asking whether its file
+                    // materialized: a link to an absent one fails, and the
+                    // checked path then verifies the recorded leader and
+                    // promotes the next present group member (hlink.c:313-324
+                    // "virtual first") through promote_hardlink_leader().
                     // No deferred followers expected here since we process
                     // followers in the second pass below.
                     let _ = tracker.record_leader(gnum, dest_path);
@@ -1098,6 +1095,7 @@ impl ReceiverContext {
                     sandbox,
                     relative_path,
                     &link_path,
+                    self.hardlink_free_names.borrow().contains(follower_ndx),
                 );
                 let promoted = match linked_at_once.clone() {
                     Some(leader) => Some(leader),
@@ -1506,6 +1504,7 @@ mod tests {
                 Some(&sandbox),
                 Path::new(rel),
                 &dest.join(rel),
+                false,
             )
         };
         let leader_ino = fs::metadata(dest.join("d/leader")).unwrap().ino();
@@ -1540,6 +1539,32 @@ mod tests {
         assert_eq!(try_link(8, "d/unrecorded"), None, "no recorded leader");
         assert_eq!(try_link(9, "d/orphan"), None, "the recorded leader is gone");
         assert_eq!(try_link(7, "absent/x"), None, "the parent is missing");
+
+        // A name the itemize pass saw missing is linked without a stat, and
+        // one that turned up since is refused by the link itself.
+        let link_known_free = |rel: &str| {
+            ReceiverContext::link_to_recorded_leader(
+                &tracker,
+                7,
+                dest,
+                Some(&sandbox),
+                Path::new(rel),
+                &dest.join(rel),
+                true,
+            )
+        };
+        assert_eq!(link_known_free("d/known"), Some(dest.join("d/leader")));
+        assert_eq!(
+            fs::metadata(dest.join("d/known")).unwrap().ino(),
+            leader_ino
+        );
+        assert_eq!(
+            link_known_free("d/taken"),
+            None,
+            "the link refuses a taken name"
+        );
+        assert_eq!(fs::read(dest.join("d/taken")).unwrap(), b"other");
+
         for untouched in ["d/unrecorded", "d/orphan", "absent"] {
             assert!(
                 fs::symlink_metadata(dest.join(untouched)).is_err(),
