@@ -960,6 +960,141 @@ fn leader_map_examines_each_entry_once_across_segments() {
     );
 }
 
+/// The itemize pass remembers a follower whose name it found missing, so
+/// the link pass links it without a second stat. A name that exists is not
+/// remembered and keeps the link pass's own check.
+#[cfg(unix)]
+#[test]
+fn itemize_pass_remembers_only_followers_whose_name_is_free() {
+    use protocol::codec::create_ndx_codec;
+
+    let ctx = pull_receiver_with_hardlinks(vec![
+        make_hlink_leader("a1", 14, 1),
+        make_hlink_follower("a2", 14, 1),
+        make_hlink_leader("b1", 14, 2),
+        make_hlink_follower("b2", 14, 2),
+    ]);
+    let dest = tempfile::TempDir::new().unwrap();
+    std::fs::write(dest.path().join("b2"), b"already here").unwrap();
+
+    let mut buf: Vec<u8> = Vec::new();
+    let mut ndx_codec = create_ndx_codec(32);
+    call_emit_follower_itemize(&ctx, dest.path(), &mut buf, &mut ndx_codec)
+        .expect("the itemize pass succeeds");
+
+    let free = ctx.hardlink_free_names.borrow();
+    assert!(free.contains(1), "a2 is missing, so it is remembered");
+    assert!(!free.contains(3), "b2 exists, so it is not");
+    assert_eq!(free.len(), 1, "leaders are never remembered");
+}
+
+/// The link pass records a leader without asking whether its file exists.
+/// When it does not - its transfer failed - a follower the itemize pass
+/// remembered as new must still not be linked to the missing name: the link
+/// fails, the checked path verifies the recorded leader, finds it absent and
+/// promotes the member that did land (hlink.c:313-324). Runs the itemize
+/// pass first, as a transfer does, so the remembered names are the real ones.
+#[cfg(unix)]
+#[test]
+fn a_missing_recorded_leader_sends_remembered_followers_to_the_promoted_member() {
+    use std::os::unix::fs::MetadataExt;
+
+    use protocol::codec::create_ndx_codec;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+    std::fs::write(dest.join("present.txt"), "promoted payload").unwrap();
+
+    let mut ctx = receiver_with_hardlinks(vec![
+        make_hlink_leader("leader.txt", 16, 91),
+        make_hlink_follower("orphan-a.txt", 16, 91),
+        make_hlink_follower("present.txt", 16, 91),
+        make_hlink_follower("orphan-z.txt", 16, 91),
+    ]);
+    let mut records: Vec<u8> = Vec::new();
+    let mut ndx_codec = create_ndx_codec(32);
+    call_emit_follower_itemize(&ctx, dest, &mut records, &mut ndx_codec).unwrap();
+    {
+        let free = ctx.hardlink_free_names.borrow();
+        assert!(
+            free.contains(1) && free.contains(3),
+            "both orphans are remembered"
+        );
+        assert!(!free.contains(2), "the member that landed is not");
+    }
+
+    let mut writer = TestDeletionWriter;
+    call_create_hardlinks(&mut ctx, dest, &mut writer);
+
+    assert!(
+        std::fs::symlink_metadata(dest.join("leader.txt")).is_err(),
+        "nothing is created at the missing leader's name"
+    );
+    let present = std::fs::metadata(dest.join("present.txt")).unwrap();
+    for orphan in ["orphan-a.txt", "orphan-z.txt"] {
+        let meta = std::fs::metadata(dest.join(orphan)).unwrap();
+        assert_eq!(
+            meta.ino(),
+            present.ino(),
+            "{orphan} links to the promoted member"
+        );
+    }
+    assert_eq!(
+        present.nlink(),
+        3,
+        "the group is the promoted member and both orphans"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dest.join("orphan-a.txt")).unwrap(),
+        "promoted payload"
+    );
+}
+
+/// A name the itemize pass remembered as missing can exist by the time the
+/// link pass runs. The link then refuses it and the checked path decides,
+/// so the result is the one a run that never remembered the name produces:
+/// the file in the way is replaced by a link to the leader.
+#[cfg(unix)]
+#[test]
+fn a_remembered_name_that_appears_before_the_link_pass_takes_the_checked_path() {
+    use std::os::unix::fs::MetadataExt;
+
+    use protocol::codec::create_ndx_codec;
+
+    let outcome = |remember: bool| {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let dest = temp_dir.path();
+        std::fs::write(dest.join("leader.txt"), "shared content").unwrap();
+        let mut ctx = receiver_with_hardlinks(vec![
+            make_hlink_leader("leader.txt", 14, 42),
+            make_hlink_follower("follower.txt", 14, 42),
+        ]);
+        if remember {
+            let mut records: Vec<u8> = Vec::new();
+            let mut ndx_codec = create_ndx_codec(32);
+            call_emit_follower_itemize(&ctx, dest, &mut records, &mut ndx_codec).unwrap();
+            assert!(ctx.hardlink_free_names.borrow().contains(1));
+        }
+        std::fs::write(dest.join("follower.txt"), "in the way").unwrap();
+
+        let mut writer = TestDeletionWriter;
+        call_create_hardlinks(&mut ctx, dest, &mut writer);
+
+        let leader = std::fs::metadata(dest.join("leader.txt")).unwrap();
+        let follower = std::fs::metadata(dest.join("follower.txt")).unwrap();
+        (
+            follower.ino() == leader.ino(),
+            leader.nlink(),
+            std::fs::read_to_string(dest.join("follower.txt")).unwrap(),
+            ctx.flist_io_error,
+        )
+    };
+
+    let remembered = outcome(true);
+    assert_eq!(remembered, outcome(false));
+    assert_eq!(remembered, (true, 2, "shared content".to_owned(), 0));
+}
+
 /// With no hardlink followers in the file list, a server push must emit nothing
 /// - the emission is scoped strictly to the follower path.
 #[test]

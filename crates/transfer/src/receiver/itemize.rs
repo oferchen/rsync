@@ -21,6 +21,41 @@ pub(in crate::receiver) struct HardlinkLeaderIndex {
     leaders: HardlinkLeaders,
 }
 
+/// A set of flat file-list indices, one bit per entry up to the highest
+/// index stored: 125 KB for a list of 1,000,000 entries.
+#[derive(Debug, Default)]
+pub(in crate::receiver) struct FreeNames {
+    bits: Vec<u64>,
+}
+
+impl FreeNames {
+    /// Adds `idx` to the set.
+    #[cfg(unix)]
+    pub(in crate::receiver) fn insert(&mut self, idx: usize) {
+        let word = idx / 64;
+        if word >= self.bits.len() {
+            self.bits.resize(word + 1, 0);
+        }
+        self.bits[word] |= 1 << (idx % 64);
+    }
+
+    /// Whether `idx` is in the set.
+    pub(in crate::receiver) fn contains(&self, idx: usize) -> bool {
+        self.bits
+            .get(idx / 64)
+            .is_some_and(|word| word & (1 << (idx % 64)) != 0)
+    }
+
+    /// How many indices the set holds.
+    #[cfg(all(test, unix))]
+    pub(in crate::receiver) fn len(&self) -> usize {
+        self.bits
+            .iter()
+            .map(|word| word.count_ones() as usize)
+            .sum()
+    }
+}
+
 /// The smallest transport buffer assumed between the two sides: one page, the
 /// least a Linux pipe holds once a user is over the pipe-pages soft limit
 /// (pipe(7)). The usual transports hold more: 64 KiB for a Linux pipe, 16 KiB
@@ -1095,7 +1130,13 @@ impl ReceiverContext {
             // dev/ino mismatch, the atomic_create path at hlink.c:244-251)
             // carries a non-empty xname and crosses the wire with ITEM_IS_NEW.
             #[cfg(unix)]
-            if self.hardlink_follower_up_to_date(dest_dir, sandbox, entry.path(), leader.path()) {
+            if self.hardlink_follower_up_to_date(
+                flat_idx,
+                dest_dir,
+                sandbox,
+                entry.path(),
+                leader.path(),
+            ) {
                 continue;
             }
 
@@ -1203,9 +1244,13 @@ impl ReceiverContext {
     /// (its itemize xname is empty and its flags are not significant), so the
     /// caller skips it. A missing follower or leader on disk reads as "not yet
     /// linked", so the follower is treated as new and forwarded.
+    ///
+    /// A follower whose name is missing is remembered in
+    /// `hardlink_free_names`, so the link pass need not ask again.
     #[cfg(unix)]
     fn hardlink_follower_up_to_date(
         &self,
+        follower_idx: usize,
         dest_dir: &std::path::Path,
         sandbox: Option<&fast_io::DirSandbox>,
         follower_rel: &std::path::Path,
@@ -1217,10 +1262,19 @@ impl ReceiverContext {
         let leader_path = dest_dir.join(leader_rel);
         // SEC-1.f: route the follower lstat through the sandbox dirfd when the
         // relative path is a single component, matching create_hardlinks.
-        let Ok(follower_meta) =
-            fast_io::lstat_via_sandbox_or_fallback(sandbox, dest_dir, follower_rel, &follower_path)
-        else {
-            return false;
+        let follower_meta = match fast_io::lstat_via_sandbox_or_fallback(
+            sandbox,
+            dest_dir,
+            follower_rel,
+            &follower_path,
+        ) {
+            Ok(meta) => meta,
+            Err(error) => {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    self.hardlink_free_names.borrow_mut().insert(follower_idx);
+                }
+                return false;
+            }
         };
         let Ok(leader_meta) = std::fs::symlink_metadata(&leader_path) else {
             return false;
