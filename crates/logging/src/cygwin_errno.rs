@@ -26,6 +26,10 @@ pub(crate) fn errno_from_win_error(code: u32) -> i32 {
 
 const EACCES: i32 = 13;
 
+/// Win32 `ERROR_DISK_FULL` (winerror.h): what a write to a full volume
+/// reports. Cygwin turns it into `ENOSPC`.
+pub const ERROR_DISK_FULL: u32 = 112;
+
 /// upstream: newlib-cygwin errmap.h - non-zero entries only.
 fn win32_errno(code: u32) -> Option<i32> {
     Some(match code {
@@ -351,7 +355,7 @@ mod tests {
     fn win32_codes_map_like_errmap_h() {
         assert_eq!(errno_from_win_error(2), 2); // ERROR_FILE_NOT_FOUND -> ENOENT
         assert_eq!(errno_from_win_error(5), 13); // ERROR_ACCESS_DENIED -> EACCES
-        assert_eq!(errno_from_win_error(112), 28); // ERROR_DISK_FULL -> ENOSPC
+        assert_eq!(errno_from_win_error(ERROR_DISK_FULL), 28); // -> ENOSPC
         assert_eq!(errno_from_win_error(145), 90); // ERROR_DIR_NOT_EMPTY -> ENOTEMPTY
     }
 

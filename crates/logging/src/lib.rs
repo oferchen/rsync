@@ -109,6 +109,8 @@ pub use context::{
     emit_info_coded, emit_line, emit_warning, enter, finfo_suppressed, groups_counts, info_gte,
     init, limit_output_verbosity, set_groups_counts, set_quiet, xfer_error_reported,
 };
+#[cfg(windows)]
+pub use cygwin_errno::ERROR_DISK_FULL;
 pub use errno_text::{
     rsyserr, rsyserr_io, strerror, upstream_errno, upstream_errno_text, upstream_strerror,
 };
