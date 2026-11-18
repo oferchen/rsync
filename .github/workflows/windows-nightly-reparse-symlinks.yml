@@ -127,7 +127,16 @@ jobs:
       - name: Build oc-rsync (for subprocess integration tests)
         run: cargo build --locked -p bin --bin oc-rsync
 
+      - name: Build per-process temp-dir runner
+        shell: bash
+        run: |
+          cargo build --locked -p test-support --bin tmp-runner
+          cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
+
       - name: Run metadata reparse + symlink Windows tests
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+          OC_REQUIRE_TMP_RUNNER: '1'
         run: cargo nextest run --locked -p metadata --no-fail-fast -E 'test(reparse) or test(symlink) or test(junction) or test(mount_point)'
 
       - name: Upload nextest logs

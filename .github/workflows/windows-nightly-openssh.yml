@@ -83,11 +83,20 @@ jobs:
       - name: Build rsync_io crate
         run: cargo build --locked -p rsync_io
 
+      - name: Build per-process temp-dir runner
+        shell: bash
+        run: |
+          cargo build --locked -p test-support --bin tmp-runner
+          cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
+
       # Run all rsync_io tests on Windows. This covers the WCI-1 gap
       # test (`user_pattern_case_insensitive_on_windows`) plus the
       # broader SSH transport / ssh_config parser test suite that no
       # required Windows cell currently links.
       - name: Run rsync_io tests
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+          OC_REQUIRE_TMP_RUNNER: '1'
         run: cargo nextest run --locked -p rsync_io --no-fail-fast
 
       - name: Upload nextest logs

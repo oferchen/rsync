@@ -1,18 +1,26 @@
 //! Per-process temporary directory for test binaries (Cargo target runner).
 //!
 //! Every test process normally shares one temp root (`%TEMP%` on Windows).
-//! `tempfile` names are drawn from `fastrand`, whose per-thread seed hashes
-//! only the clock and the thread id, so two test processes can draw the same
-//! `.tmpXXXXXX` name. On Windows, creating a file over another process's
-//! delete-pending file of that name fails with `ERROR_ACCESS_DENIED`, which
-//! `tempfile` does not retry (it retries only `AlreadyExists`).
+//! There, with a couple of thousand test processes creating and deleting
+//! `.tmpXXXXXX` entries in that one directory, a `tempfile` create now and
+//! then fails with `ERROR_ACCESS_DENIED`, which `tempfile` does not retry (it
+//! retries only `AlreadyExists`).
+//!
+//! Why the create is refused is not established. One hypothesis is a name
+//! that matches another process's delete-pending file: `fastrand` seeds from
+//! the clock and the thread id only, so two processes can draw the same
+//! name. That does not explain the observed failures, which hit a process's
+//! first create: two processes seeded on the same tick create at the same
+//! moment, and the loser gets `AlreadyExists`, not a delete-pending denial.
+//! The other candidates are a chance case-insensitive match on some other
+//! delete-pending name, and a directory-level or filter-driver refusal under
+//! heavy churn. All of them need the directory to be shared.
 //!
 //! The `tmp-runner` binary wraps each test process: it creates a fresh
 //! directory, points `TMP`, `TEMP` and `TMPDIR` at it, runs the test binary,
-//! forwards its exit status unchanged and removes the directory. Names drawn
-//! by different processes then live in different directories and cannot
-//! collide. CI selects it through `CARGO_TARGET_<TRIPLE>_RUNNER`, which
-//! nextest honours like Cargo does.
+//! forwards its exit status unchanged and removes the directory. No two test
+//! processes then share a temp directory. CI selects it through
+//! `CARGO_TARGET_<TRIPLE>_RUNNER`, which nextest honours like Cargo does.
 
 use std::ffi::OsString;
 use std::io;
@@ -114,7 +122,7 @@ mod tests {
     }
 
     // WHY: the pid in the name is what keeps two live test processes in
-    // different directories; a name without it would reopen the collision.
+    // different directories; a name without it would share one again.
     #[test]
     fn create_private_dir_is_named_after_this_process() {
         let root = tempfile::tempdir().expect("root");

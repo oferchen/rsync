@@ -2,9 +2,9 @@
 #
 # The required `Windows ACL/xattr` cell in ci.yml does compile the
 # metadata crate under `--features acl,xattr`, but its workspace step
-# filters with `-E 'test(acl) | test(xattr) | test(ads) | test(stream)'`
-# which skips Windows-only tests whose names do not start with one of
-# those substrings. WCI-1
+# selects tests by the name tokens `acl`, `xattr`, `ads` and
+# `named_stream`/`ntfs_stream`/`data_stream`, which skips Windows-only
+# tests whose names carry none of them. WCI-1
 # (`docs/audits/wci-1-windows-nextest-coverage-gap.md`) section 4.1
 # enumerates eight such metadata tests:
 #
@@ -105,6 +105,12 @@ jobs:
       - name: Install cargo-nextest (Windows)
         uses: ./.github/actions/install-cargo-nextest-windows
 
+      - name: Build per-process temp-dir runner
+        shell: bash
+        run: |
+          cargo build --locked -p test-support --bin tmp-runner
+          cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
+
       # Run the platform crate unfiltered. This activates the six
       # WCI-1 SID/RID resolver tests that no Windows CI cell links
       # today (`administrator_resolves_to_rid_500`,
@@ -114,12 +120,15 @@ jobs:
       # `windows_administrators_group_returns_some`,
       # `windows_nonexistent_group_returns_none`).
       - name: Run platform-crate Windows tests
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+          OC_REQUIRE_TMP_RUNNER: '1'
         run: cargo nextest run --locked -p platform --no-fail-fast
 
       # Run the full metadata crate test set on Windows under
       # `--features acl` so the eight WCI-1 metadata tests whose
-      # names don't match the workspace `-E 'test(acl) | test(xattr)
-      # | test(ads) | test(stream)'` filter execute end-to-end. This
+      # names don't match the workspace cell's ACL/xattr/ADS name filter
+      # execute end-to-end. This
       # covers DACL read, SDDL read/write, the read-only NTFS
       # attribute path, the `--copy-as` privilege probe, and the
       # stat-cache read-only metadata branch.
@@ -131,6 +140,9 @@ jobs:
         run: cargo build --locked -p bin --bin oc-rsync
 
       - name: Run metadata-crate Windows ACL tests
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+          OC_REQUIRE_TMP_RUNNER: '1'
         run: cargo nextest run --locked -p metadata --features acl --no-fail-fast
 
       - name: Upload nextest logs

@@ -3,8 +3,8 @@
 //! Two properties matter. The runner must hand back the wrapped process's
 //! exit status unchanged, crash codes included, or nextest would misreport a
 //! crashing test. And every process it wraps must see a temp directory no
-//! other process shares, which is what removes the Windows delete-pending
-//! name collision behind task 509.
+//! other process shares: the Windows `Access is denied` temp-file failures
+//! of task 509 have only been seen in a shared `%TEMP%`.
 
 use std::env;
 use std::fs;

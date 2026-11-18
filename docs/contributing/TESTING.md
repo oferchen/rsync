@@ -108,10 +108,11 @@ Create filesystem fixtures with the `test-support` helpers `create_tempdir()`,
 `create_named_tempfile()` and `create_canonical_tempdir()`. They name every path
 with a `.tmp<pid>-` prefix so concurrent nextest processes cannot collide.
 
-Most tests still call `tempfile` directly, whose random names are not unique
-across processes. On Windows a name that collides with another process's
-delete-pending file fails with `Access is denied (os error 5)` instead of being
-retried. The required Windows CI cell therefore wraps every test process in the
+Most tests still call `tempfile` directly. On Windows, when every test process
+shares one `%TEMP%`, a temp-file create now and then fails with
+`Access is denied (os error 5)`, which `tempfile` does not retry. The cause is
+not established; it has only been seen in a shared directory. Every Windows CI
+cell that runs tests therefore wraps each test process in the
 `tmp-runner` Cargo target runner (`crates/test-support/src/tmp_runner.rs`): it
 gives the process a private directory as `TMP`/`TEMP`/`TMPDIR`, forwards its
 exit status unchanged and removes the directory afterwards. To get the same
