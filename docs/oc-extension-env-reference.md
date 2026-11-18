@@ -31,6 +31,10 @@ are intentionally not documented here.
 Unless noted otherwise, each variable is read once per process and cached;
 changing it after startup has no effect on a running process.
 
+For every way oc-rsync differs from rsync 3.5.2, including its extra options
+and daemon parameters, see
+[Differences from rsync 3.5.2](./differences-from-rsync-3.5.2.md).
+
 ## Buffer pool
 
 The process-wide I/O buffer pool is shared by the receiver, generator, disk
