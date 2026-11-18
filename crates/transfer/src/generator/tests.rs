@@ -7447,6 +7447,62 @@ fn inc_recurse_partitions_an_already_materialised_file_list() {
     );
 }
 
+/// `-H` must reach the wire from every sending platform: two names of one
+/// file form a group whose first member sent is the leader and whose other
+/// member names the leader's NDX, and a file with a single name stays out.
+/// Not gated by platform, so a sender that cannot identify hard links (as the
+/// Windows sender could not, having no `st_dev`/`st_ino`) fails here instead
+/// of silently sending two independent files.
+///
+/// upstream: flist.c:1857-1862 make_file() records dev/ino for `st_nlink > 1`;
+/// flist.c:828-835 send_file_entry() turns them into leader and follower.
+#[test]
+fn hard_linked_sources_form_one_group_in_the_senders_file_list() {
+    let temp = create_test_structure(&["a", "solo"]);
+    let root = temp.path();
+    std::fs::hard_link(root.join("a"), root.join("b")).unwrap();
+
+    let handshake = test_handshake_with_protocol(32);
+    let mut config = test_config();
+    config.flags.recursive = true;
+    config.flags.hard_links = true;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    build_file_list_for_contents(&mut ctx, root);
+
+    let flat_of = |name: &str| {
+        (0..ctx.file_list().len())
+            .find(|&i| seg_name(&ctx, i) == name)
+            .unwrap_or_else(|| panic!("{name} missing from the file list"))
+    };
+    let order = ctx.send_order(0..ctx.file_list().len());
+    let sent_ndx = |i: usize| {
+        let rank = order.iter().position(|&j| j == i).unwrap();
+        ctx.incremental.ndx_map.first_ndx_start() as u32 + rank as u32
+    };
+    let (a, b) = (flat_of("a"), flat_of("b"));
+    let (leader, follower) = if sent_ndx(a) < sent_ndx(b) {
+        (a, b)
+    } else {
+        (b, a)
+    };
+
+    assert_eq!(
+        ctx.file_list()[leader].hardlink_idx(),
+        Some(u32::MAX),
+        "the first member sent carries XMIT_HLINK_FIRST"
+    );
+    assert_eq!(
+        ctx.file_list()[follower].hardlink_idx(),
+        Some(sent_ndx(leader)),
+        "the other member names the NDX its leader was sent under"
+    );
+    assert_eq!(
+        ctx.file_list()[flat_of("solo")].hardlink_idx(),
+        None,
+        "a file with one name is not part of any group"
+    );
+}
+
 /// Under INC_RECURSE a hard-link follower names its leader by the sub-list's
 /// first NDX plus the leader's send position in it, and the leader is the
 /// group's first member in send order.
@@ -7458,7 +7514,7 @@ fn inc_recurse_partitions_an_already_materialised_file_list() {
 /// order, and a pre-partition position is not a wire NDX at all: an upstream
 /// receiver rejects it (`hard-link gnum N precedes flist start M`,
 /// hlink.c:125-141).
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn inc_recurse_hardlink_gnum_is_the_leaders_send_order_wire_ndx() {
     use protocol::CompatibilityFlags;

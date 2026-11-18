@@ -326,6 +326,19 @@ impl GeneratorContext {
             entry.set_hardlink_dev(metadata.dev() as i64);
             entry.set_hardlink_ino(metadata.ino() as i64);
         }
+        // Windows `Metadata` carries no device, inode or link count. The
+        // volume serial and file index identify the file the same way, and
+        // are what `st_dev`/`st_ino` hold for rsync under Cygwin.
+        // upstream: flist.c:1857-1862 make_file()
+        #[cfg(windows)]
+        if self.config.flags.hard_links
+            && !metadata.is_dir()
+            && let Some(identity) = fast_io::same_fs::file_identity(full_path)
+            && identity.nlink > 1
+        {
+            entry.set_hardlink_dev(identity.volume_id as i64);
+            entry.set_hardlink_ino(identity.file_index as i64);
+        }
 
         // upstream: flist.c:make_file() -> get_xattr() reads xattrs for -X mode
         #[cfg(any(unix, windows))]

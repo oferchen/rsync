@@ -326,8 +326,8 @@ pub use acl_stub::{
 pub use acl_windows::{
     WINDOWS_SDDL_XATTR_NAME, apply_acls_from_cache, apply_sddl_from_xattrs, dacl_to_posix_mode,
     default_perms_for_dir, find_sddl_in_xattrs, get_rsync_acl, posix_mode_to_dacl, read_dacl_sddl,
-    read_sddl_with_sacl, sddl_xattr_entry, store_acls_via_fake_super, sync_acls,
-    sync_acls_via_fake_super, write_dacl_sddl,
+    sddl_xattr_entry, store_acls_via_fake_super, sync_acls, sync_acls_via_fake_super,
+    write_dacl_sddl,
 };
 
 #[cfg(not(any(

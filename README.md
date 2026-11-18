@@ -293,7 +293,7 @@ Interop scenarios run in CI against the upstream releases listed in [`tools/ci/r
 |---|---|---|
 | Linux x86_64 / aarch64 | **Tier 1** | io_uring, `splice`, `vmsplice`, Landlock. Required CI runs the full nextest workspace. A seccomp syscall allowlist for daemon workers is available with `--features daemon-seccomp`; it is off in default builds and in released binaries. |
 | macOS x86_64 / aarch64 | **Tier 1** | `clonefile`, `fcopyfile`, full metadata, ACL and xattr support including AppleDouble (`._foo`) resource forks. Required CI runs a crate-scoped subset (core, engine, cli, metadata, apple-fs, fast_io) plus the `rsync_io` QUIC tests. |
-| Windows x86_64 | **Tier 2** | IOCP file and socket I/O, `CopyFileExW`, ReFS reflink, NTFS DACLs (partial), xattrs via NTFS Alternate Data Streams. No POSIX device nodes or FIFOs. Required CI tests the core, engine, cli, metadata, fast_io and transfer crates, plus the `rsync_io` QUIC tests. |
+| Windows x86_64 | **Tier 2** | IOCP file I/O for receiver writes and large sender reads ([path map](docs/audits/windows-io-path-map.md)), `CopyFileExW`, ReFS reflink, NTFS DACLs (partial), xattrs via NTFS Alternate Data Streams. No POSIX device nodes or FIFOs. Required CI runs the full nextest workspace (`ci.yml` job `windows-test`). |
 
 Tier definitions and criteria: [Platform support tiers](docs/design/platform-tiers.md). Windows detail: [Windows support matrix](docs/user/windows-support-matrix.md) and the [Windows Tier 2 stub inventory](docs/audits/win-tier2-stub-inventory.md).
 

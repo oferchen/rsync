@@ -38,7 +38,6 @@ with_thread_count	crates/fast_io/src/parallel.rs	2026-12-10	unreviewed baseline 
 process_files	crates/fast_io/src/parallel.rs	2026-12-10	unreviewed baseline row
 init_tracing_with_filter	crates/logging/src/tracing_bridge.rs	2026-12-10	unreviewed baseline row
 set_role	crates/matching/src/index/mod.rs	2026-12-10	unreviewed baseline row
-read_sddl_with_sacl	crates/metadata/src/acl_windows/sddl.rs	2026-12-10	SACL read half awaiting the wire-or-delete decision (task 953)
 read_ndx_from_carry_async	crates/protocol/src/codec/ndx/codec.rs	2026-12-10	unreviewed baseline row
 flist_stats	crates/protocol/src/flist/batched_writer/writer.rs	2026-12-10	unreviewed baseline row
 xattr_cache_mut	crates/protocol/src/flist/read/mod.rs	2026-12-10	unreviewed baseline row

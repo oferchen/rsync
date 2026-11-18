@@ -13,11 +13,10 @@
 //!
 //! # Scope
 //!
-//! - The default read path (`read_dacl_sddl`) covers the owner, group, and
-//!   discretionary ACL (DACL). The system ACL (SACL) requires the
-//!   `SE_SECURITY_NAME` privilege and is read only on the opt-in
-//!   `read_sddl_with_sacl` path, avoiding surprising privilege escalations
-//!   on standard accounts.
+//! - The read path (`read_dacl_sddl`) covers the owner, group, and
+//!   discretionary ACL (DACL). The system ACL (SACL) is never read: it
+//!   requires the `SE_SECURITY_NAME` privilege, and rsync has no audit-ACL
+//!   concept to carry it.
 //! - Applied DACLs set the protected (`P`) bit so the destination does not
 //!   silently inherit ACEs from its parent. SACL entries carried in an SDDL
 //!   payload are written only when the calling token holds
@@ -60,7 +59,7 @@ pub use dacl::{
     apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, store_acls_via_fake_super,
 };
 pub use posix_map::{dacl_to_posix_mode, posix_mode_to_dacl};
-pub use sddl::{read_dacl_sddl, read_sddl_with_sacl, write_dacl_sddl};
+pub use sddl::{read_dacl_sddl, write_dacl_sddl};
 pub use sync::{sync_acls, sync_acls_via_fake_super};
 pub use xattr::{
     WINDOWS_SDDL_XATTR_NAME, apply_sddl_from_xattrs, find_sddl_in_xattrs, sddl_xattr_entry,

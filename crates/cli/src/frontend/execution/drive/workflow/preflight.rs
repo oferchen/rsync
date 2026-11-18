@@ -34,7 +34,7 @@
 //! |----------|-----------------------|---------------|--------------|
 //! | `--usermap` | `cfg(windows)` | `frontend/execution/drive/metadata/mapping.rs:82` | `--usermap is not supported on Windows builds of oc-rsync` |
 //! | `--groupmap` | `cfg(windows)` | `frontend/execution/drive/metadata/mapping.rs:102` | `--groupmap is not supported on Windows builds of oc-rsync` |
-//! | `--daemon` | non-Unix host | `frontend/server/daemon.rs:210,217` | `daemon mode is not supported on this platform; run the oc-rsync daemon on a ...` |
+//! | `--daemon` | non-Unix host | `frontend/server/daemon.rs:261,268` | `daemon mode is not supported on this platform; run the oc-rsync daemon on a ...` |
 //!
 //! Mirror in the parameterized `tests` submodule below extends the
 //! `*-not-supported-on-this-client` coverage to every (platform, feature)

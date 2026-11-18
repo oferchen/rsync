@@ -1098,9 +1098,8 @@ mod tests {
     /// receiver does: `write failed on %s` naming the destination, then
     /// `RERR_FILEIO` from the receiver (receiver.c:658-660).
     ///
-    /// Unix only: raw errno 28 is `ENOSPC` there but Win32
-    /// `ERROR_OUT_OF_PAPER` on Windows, where the reason text comes from the
-    /// Cygwin-style errno rendering of task 630.
+    /// Unix arm: raw errno 28 is `ENOSPC` there but Win32
+    /// `ERROR_OUT_OF_PAPER` on Windows, which has its own arm below.
     #[cfg(unix)]
     #[test]
     fn a_destination_write_failure_aborts_with_the_receivers_write_line() {
@@ -1119,6 +1118,38 @@ mod tests {
                 assert_eq!(
                     message,
                     "rsync: [receiver] write failed on \"/dst/a\": No space left on device (28)"
+                );
+            }
+            other => panic!("expected a file I/O abort, got {other:?}"),
+        }
+    }
+
+    /// Windows arm: a full disk arrives as Win32 `ERROR_DISK_FULL`, and the
+    /// line must end the way rsync under Cygwin ends it, with Cygwin's
+    /// `strerror` text and errno, never the Win32 message or code.
+    #[cfg(windows)]
+    #[test]
+    fn a_destination_write_failure_aborts_with_the_receivers_write_line() {
+        let disk_full = || io::Error::from_raw_os_error(logging::ERROR_DISK_FULL as i32);
+        let error =
+            LocalCopyError::destination_write("copy file", Path::new("/dst/a"), disk_full())
+                .report_commit_failure::<()>(Path::new("/dst"))
+                .expect_err("a failed write ends the copy");
+
+        assert_eq!(error.exit_code(), FILE_IO_EXIT_CODE);
+        match error.kind() {
+            LocalCopyErrorKind::FileIo { side, message } => {
+                assert_eq!(*side, LocalCopySide::Receiver);
+                assert_eq!(
+                    message,
+                    &format!(
+                        "rsync: [receiver] write failed on \"/dst/a\": {}",
+                        logging::upstream_errno_text(&disk_full())
+                    )
+                );
+                assert!(
+                    !message.ends_with(&format!("({})", logging::ERROR_DISK_FULL)),
+                    "the Win32 code must be translated to Cygwin's errno: {message}"
                 );
             }
             other => panic!("expected a file I/O abort, got {other:?}"),

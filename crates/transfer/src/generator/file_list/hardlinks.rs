@@ -10,7 +10,7 @@
 //! - `hlink.c:match_hard_links()` - post-sort hardlink index assignment
 //! - `uidlist.c:add_uid()` / `add_gid()` - ID collection during file list building
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use protocol::flist::{DevIno, HardlinkLookup, HardlinkTable, ProcessRole};
 
 use super::super::GeneratorContext;
@@ -43,7 +43,7 @@ impl GeneratorContext {
     ///   sub-lists and stores `first_ndx + ndx`, `ndx` being `flist->used`
     ///   before the sub-list is sorted
     /// - `hlink.c:idev_find()` - two-level (dev, ino) hashtable lookup
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(in crate::generator) fn assign_hardlink_indices(&mut self) {
         let mut table = HardlinkTable::new();
         let ndx_start = self.incremental.ndx_map.first_ndx_start() as u32;

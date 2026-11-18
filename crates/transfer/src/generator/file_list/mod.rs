@@ -212,7 +212,7 @@ impl GeneratorContext {
         // upstream: flist.c:828-835 - numbered in send order. Under INC_RECURSE
         // the send order only exists once the list is partitioned, so
         // `reorder_and_build_segments` numbers it instead.
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.config.flags.hard_links && !self.inc_recurse() {
             self.assign_hardlink_indices();
         }
@@ -507,7 +507,7 @@ impl GeneratorContext {
         // upstream: flist.c:828-835 - numbered in send order. Under INC_RECURSE
         // the send order only exists once the list is partitioned, so
         // `reorder_and_build_segments` numbers it instead.
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.config.flags.hard_links && !self.inc_recurse() {
             self.assign_hardlink_indices();
         }

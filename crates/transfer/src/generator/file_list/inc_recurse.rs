@@ -151,7 +151,7 @@ impl GeneratorContext {
         // upstream: flist.c:828-835 - hard-link leaders and gnums follow the
         // send order this reorder just fixed, gaps included. The lazy producer
         // never reaches here: `--hard-links` makes it ineligible.
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if self.config.flags.hard_links {
             self.assign_hardlink_indices();
         }
