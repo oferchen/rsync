@@ -473,8 +473,8 @@ candidate follow-up tasks. Each is independently shippable.
   section 6.2 above.
 - **WAS-7 / WAS-8** (SACL audit ACE support, Windows-to-POSIX bulk
   fidelity). See
-  `docs/design/windows-ntfs-acl-support.md:309` and the
-  `acl_windows::sddl::read_sddl_with_sacl` entry point.
+  `docs/design/windows-ntfs-acl-support.md:309`. The SACL is not read;
+  the unused `read_sddl_with_sacl` entry point was removed.
 - **WPC-13** (#2915, PR #4920) - Windows support matrix. The
   inherited-vs-explicit gap is the row at
   `docs/user/windows-support-matrix.md:97-100` referencing WPC-10.

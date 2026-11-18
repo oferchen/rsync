@@ -34,18 +34,14 @@ pub(super) const SDDL_EVERYONE: &str = "WD";
 /// no explicit Everyone ACE is present.
 pub(super) const SDDL_AUTHENTICATED_USERS: &str = "AU";
 
-/// Computes the security-information mask used by SDDL round-trip helpers.
+/// The security-information mask read into an SDDL string: owner, group and
+/// DACL. The SACL is never read; it would require `SE_SECURITY_NAME`, and
+/// rsync has no audit-ACL concept to carry it.
 ///
-/// Always includes DACL, owner, and group; includes SACL when the caller
-/// opts in. SACL access requires `SE_SECURITY_NAME`, so the default keeps
-/// it disabled to match the conservative posture of `read_dacl`.
-fn sddl_security_info(include_sacl: bool) -> OBJECT_SECURITY_INFORMATION {
-    let mut info =
-        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
-    if include_sacl {
-        info |= SACL_SECURITY_INFORMATION;
-    }
-    info
+/// upstream: acls.c:586 get_rsync_acl() reads the access and default ACLs
+/// only.
+fn sddl_security_info() -> OBJECT_SECURITY_INFORMATION {
+    OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
 }
 
 /// Reads the security descriptor at `path` and returns it serialised as
@@ -69,25 +65,9 @@ fn sddl_security_info(include_sacl: bool) -> OBJECT_SECURITY_INFORMATION {
 /// `ConvertSecurityDescriptorToStringSecurityDescriptorW`; see
 /// `docs/design/windows-ntfs-acl-support.md` section 4.2.
 pub fn read_dacl_sddl(path: &Path) -> io::Result<String> {
-    read_sddl_internal(path, false)
-}
-
-/// Reads the security descriptor at `path` including the SACL.
-///
-/// Requires the calling process to hold `SE_SECURITY_NAME`. Without the
-/// privilege the call fails with `ERROR_PRIVILEGE_NOT_HELD`.
-///
-/// # Errors
-///
-/// Returns [`io::Error`] for Win32 failures.
-pub fn read_sddl_with_sacl(path: &Path) -> io::Result<String> {
-    read_sddl_internal(path, true)
-}
-
-fn read_sddl_internal(path: &Path, include_sacl: bool) -> io::Result<String> {
     let wide = to_wide(path);
     let mut psd = PSECURITY_DESCRIPTOR(ptr::null_mut());
-    let info = sddl_security_info(include_sacl);
+    let info = sddl_security_info();
 
     // SAFETY: `wide` is NUL-terminated; `psd` lives for the call and is
     // wrapped in `OwnedSecurityDescriptor` immediately so the allocation
