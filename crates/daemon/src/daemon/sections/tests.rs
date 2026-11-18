@@ -919,6 +919,28 @@ fn refused_client_arg_delete_rule_refuses_remove_source_files_on_a_pull() {
 }
 
 #[test]
+fn refused_client_arg_delete_rule_refuses_remove_sent_files_on_a_pull() {
+    // upstream: options.c:745 stores 2 for the deprecated `--remove-sent-files`
+    // and options.c:2424 tests `remove_source_files` for non-zero, so a module
+    // that refuses `delete` refuses this spelling exactly as it refuses the
+    // other: the daemon would still be deleting its own module contents.
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete".to_owned()],
+        ..Default::default()
+    };
+    let args = vec![
+        "--server".to_owned(),
+        "--sender".to_owned(),
+        "-vlogDtpr".to_owned(),
+        "--remove-sent-files".to_owned(),
+    ];
+    assert_eq!(
+        refused_client_arg(&module, &args),
+        Some("--delete".to_owned()),
+    );
+}
+
+#[test]
 fn refused_client_arg_delete_rule_allows_remove_source_files_on_a_push() {
     // Non-vacuity companion for the pull case above, and the pin on upstream's
     // `am_sender` half of `if (refused_delete && am_sender)`. Without

@@ -393,10 +393,13 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
         // `refused_delete` is set solely by the bare `delete` row
         // (options.c:1128), which is exactly what `is_option_refused(.., "delete")`
         // asks here.
+        // `remove_source_files` is non-zero for the deprecated
+        // `--remove-sent-files` spelling too (options.c:745).
         if daemon_is_sender(client_args)
-            && client_args
-                .iter()
-                .any(|arg| is_long_option(arg, "remove-source-files"))
+            && client_args.iter().any(|arg| {
+                is_long_option(arg, "remove-source-files")
+                    || is_long_option(arg, "remove-sent-files")
+            })
         {
             return Some("--delete".to_owned());
         }

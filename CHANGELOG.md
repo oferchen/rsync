@@ -104,6 +104,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Serve each QUIC session in its own forked child behind a sandboxed QUIC front process, so a `use chroot` / `uid` module reached over QUIC no longer chroots or drops privileges for the whole daemon; the async daemon refuses to start as root for the same reason (#8027, #8028)
 - Enforce `max connections` on every entry point and across forked sessions (#7440, #7917)
 - Close three `refuse options` bypasses, and refuse `--remove-source-files` under `refuse options = delete` (#7262, #7448, #7427)
+- A daemon refuses `--remove-source-files` and `--remove-sent-files` on a read-only module, with rsync 3.5.2's `cannot be used with a read-only module` error, before any file is listed; until now a client could delete the files it pulled from a `read only` module. `refuse options = delete` now refuses the `--remove-sent-files` spelling as well (#8705)
 - Pin the module root before the privilege drop, and the Landlock root after `chroot` (#7605, #7567)
 - One operator opt-out governs both Landlock and seccomp; seccomp admits `mknodat` (#7546, #7547)
 - A malformed client can no longer stop the accept loop (#7579, #7590)

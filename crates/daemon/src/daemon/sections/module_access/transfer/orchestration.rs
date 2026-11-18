@@ -762,6 +762,27 @@ fn process_approved_module(
         );
         return result;
     }
+    // upstream: main.c:966-971 `do_server_sender()` - a sender in a read-only
+    // module refuses to remove its sources, straight after the write-only
+    // check and before any file is listed or opened. `read_only` is the same
+    // auth-adjusted value the push refusal above tests.
+    if effective_read_only
+        && matches!(role, ServerRole::Generator)
+        && let Some(payload) = source_removal_refusal(&client_args)
+    {
+        let host_owned = ctx.host_display().to_owned();
+        let result =
+            handle_access_denied_post_handshake(ctx, payload, negotiated_protocol, &client_args);
+        run_post_xfer_finalizer(
+            ctx,
+            module,
+            &host_owned,
+            auth_user.as_deref(),
+            &client_args,
+            RERR_SYNTAX_EXIT_CODE,
+        );
+        return result;
+    }
 
     // SEC-1.p: harvest the in-module --temp-dir / --partial-dir /
     // --backup-dir / --compare-dest / --copy-dest / --link-dest paths the
@@ -1269,6 +1290,27 @@ fn process_approved_module(
 /// textually from the `/./` marker, so evaluating it after the rewrite reports
 /// "no inside-chroot split" for every partial-chroot module - turning munging
 /// off exactly where upstream turns it on.
+/// The refusal a read-only module gives a client that asked the sender to
+/// remove its sources, or `None` when the client asked for no removal.
+///
+/// Only the option region before the standalone `.` is read, and the last
+/// spelling given decides the text, as it decides `remove_source_files`.
+///
+/// upstream: options.c:745-746 - `--remove-sent-files` stores 2 and
+/// `--remove-source-files` stores 1; main.c:969 names the option by that
+/// value.
+fn source_removal_refusal(client_args: &[String]) -> Option<&'static str> {
+    client_args
+        .iter()
+        .take_while(|arg| arg.as_str() != ".")
+        .filter_map(|arg| match arg.as_str() {
+            "--remove-source-files" => Some(REMOVE_SOURCE_READ_ONLY_PAYLOAD),
+            "--remove-sent-files" => Some(REMOVE_SENT_READ_ONLY_PAYLOAD),
+            _ => None,
+        })
+        .last()
+}
+
 fn chroot_adjusted_definition(
     definition: &ModuleDefinition,
     inner_module_path: Option<&Path>,
@@ -1279,6 +1321,68 @@ fn chroot_adjusted_definition(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("/"));
     adjusted
+}
+
+#[cfg(test)]
+mod source_removal_refusal_tests {
+    use super::{
+        REMOVE_SENT_READ_ONLY_PAYLOAD, REMOVE_SOURCE_READ_ONLY_PAYLOAD, source_removal_refusal,
+    };
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+
+    /// A read-only module must stop a pulling client from removing the files
+    /// it serves, and tell it which option it refused. Either spelling asks
+    /// for removal; a file operand that merely looks like the option, after
+    /// the `.` separator, asks for nothing.
+    ///
+    /// upstream: main.c:966-971 - `remove_source_files == 1 ? "source" :
+    /// "sent"`; options.c:745-746 - the last spelling given sets the value.
+    #[test]
+    fn names_the_spelling_the_client_asked_for() {
+        let cases: [(&[&str], Option<&str>); 6] = [
+            (&["--server", "--sender", "-r", ".", "m/"], None),
+            (
+                &["--server", "--sender", "--remove-source-files", ".", "m/"],
+                Some(REMOVE_SOURCE_READ_ONLY_PAYLOAD),
+            ),
+            (
+                &["--server", "--sender", "--remove-sent-files", ".", "m/"],
+                Some(REMOVE_SENT_READ_ONLY_PAYLOAD),
+            ),
+            (
+                &[
+                    "--server",
+                    "--sender",
+                    "--remove-source-files",
+                    "--remove-sent-files",
+                    ".",
+                    "m/",
+                ],
+                Some(REMOVE_SENT_READ_ONLY_PAYLOAD),
+            ),
+            (
+                &[
+                    "--server",
+                    "--sender",
+                    "--remove-sent-files",
+                    "--remove-source-files",
+                    ".",
+                    "m/",
+                ],
+                Some(REMOVE_SOURCE_READ_ONLY_PAYLOAD),
+            ),
+            (
+                &["--server", "--sender", "-r", ".", "--remove-source-files"],
+                None,
+            ),
+        ];
+        for (list, expected) in cases {
+            assert_eq!(source_removal_refusal(&args(list)), expected, "{list:?}");
+        }
+    }
 }
 
 #[cfg(test)]
