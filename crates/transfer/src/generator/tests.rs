@@ -6215,7 +6215,6 @@ fn remove_source_files_failure_yields_ferror_xfer_text() {
         .expect("the single-file source produces one file entry");
     let wire = ctx.flat_to_wire_ndx(flat);
     let flist_name = ctx.file_list[flat].path().to_path_buf();
-    ctx.pending_source_removals.mark_pending(flat);
 
     // Deny write on the parent so the unlink fails with EACCES - a real
     // permission refusal, not a vanished source (which is upstream's benign
@@ -6262,13 +6261,16 @@ fn remove_source_files_failure_yields_ferror_xfer_text() {
     );
 }
 
-/// A source is removed only after its commit is confirmed by `MSG_SUCCESS`.
+/// A source is removed when `MSG_SUCCESS` names it, whether or not this sender
+/// transmitted it.
 ///
-/// Encodes the crash-safety contract of upstream `successful_send()`
-/// (sender.c:396): the unlink runs from the `MSG_SUCCESS` handler
-/// (io.c:1831-1846), never inline at send time. Here the sender has transmitted
-/// the file (so its removal is marked pending) and the peer then confirms the
-/// commit - only then does the source disappear.
+/// Upstream's `successful_send()` (sender.c:404) runs from the `MSG_SUCCESS`
+/// handler (io.c:1838-1852) and keeps no record of what was sent: the peer's
+/// generator confirms an entry it found already in place, a symlink or a FIFO
+/// it made, or an alternate-directory match (generator.c:2297-2300
+/// `return_with_success`), none of which the sender ever transmits. A sender
+/// that removed only what it sent left all of those behind. Nothing is
+/// transmitted here, so the removal below can only come from the confirmation.
 #[test]
 fn remove_source_files_unlinks_after_msg_success() {
     let temp = create_test_files(&[("keep.txt", b"payload")]);
@@ -6282,14 +6284,7 @@ fn remove_source_files_unlinks_after_msg_success() {
         .expect("the single-file source produces one file entry");
     let wire = ctx.flat_to_wire_ndx(flat);
 
-    // The sender finished transmitting the file: its unlink is deferred, not run.
-    ctx.pending_source_removals.mark_pending(flat);
-    assert!(
-        src.exists(),
-        "the source must survive until the commit is confirmed"
-    );
-
-    // MSG_SUCCESS(ndx) confirms the commit and drives the deferred unlink.
+    // MSG_SUCCESS(ndx) alone drives the unlink.
     let outcome = ctx
         .confirm_source_removal(wire)
         .expect("an in-range confirmation");
@@ -6299,10 +6294,6 @@ fn remove_source_files_unlinks_after_msg_success() {
         "a clean removal queues no FERROR_XFER diagnostic"
     );
     assert!(!src.exists(), "a confirmed source must be removed");
-    assert!(
-        ctx.pending_source_removals.is_empty(),
-        "the confirmed entry must be cleared from the pending set"
-    );
 }
 
 /// An interrupted or failed transfer never deletes the source, because no
@@ -6310,9 +6301,9 @@ fn remove_source_files_unlinks_after_msg_success() {
 ///
 /// This is the data-loss fix: the previous inline unlink removed the source the
 /// instant the bytes were sent, before the receiver committed, so a broken
-/// transfer could destroy a source that never safely landed. With the deferral,
-/// an unconfirmed pending entry leaves its source untouched, and a stray
-/// confirmation for an index the sender never marked is ignored.
+/// transfer could destroy a source that never safely landed. A source is
+/// touched only by its own confirmation, and a confirmation for an index no
+/// list owns is refused.
 #[test]
 fn remove_source_files_defers_until_msg_success() {
     let temp = create_test_files(&[("keep.txt", b"payload")]);
@@ -6325,9 +6316,7 @@ fn remove_source_files_defers_until_msg_success() {
         .find(|&i| ctx.file_list[i].is_file())
         .expect("the single-file source produces one file entry");
 
-    // The sender transmitted the file, then the transfer is interrupted: the
-    // pending removal is recorded but no MSG_SUCCESS is ever consumed.
-    ctx.pending_source_removals.mark_pending(flat);
+    // The transfer is interrupted: no MSG_SUCCESS is ever consumed.
     assert!(src.exists(), "an unconfirmed source must stay in place");
 
     // A confirmation for an index no list owns is refused outright
@@ -6338,19 +6327,12 @@ fn remove_source_files_defers_until_msg_success() {
         src.exists(),
         "a stray MSG_SUCCESS must never delete an unrelated source"
     );
-    assert!(
-        !ctx.pending_source_removals.is_empty(),
-        "the genuine pending entry must remain until its own confirmation"
-    );
 }
 
 /// Three real sources split into two sub-lists the way INC_RECURSE sends
 /// them: `a` alone in the initial list (wire 0), `b` and `c` in the next
-/// (wire 2 and 3, gap slot 1). Every source is pending removal, as after its
-/// transfer. Returns the sources in flist order.
-fn two_list_sender_with_pending_removals(
-    temp: &tempfile::TempDir,
-) -> (GeneratorContext, Vec<PathBuf>) {
+/// (wire 2 and 3, gap slot 1). Returns the sources in flist order.
+fn two_list_remove_source_sender(temp: &tempfile::TempDir) -> (GeneratorContext, Vec<PathBuf>) {
     let paths: Vec<PathBuf> = ["a.txt", "b.txt", "c.txt"]
         .iter()
         .map(|name| temp.path().join(name))
@@ -6370,9 +6352,6 @@ fn two_list_sender_with_pending_removals(
     let sources: Vec<PathBuf> = (0..3)
         .map(|flat| ctx.reconstruct_source_path(flat))
         .collect();
-    for flat in 0..3 {
-        ctx.pending_source_removals.mark_pending(flat);
-    }
     (ctx, sources)
 }
 
@@ -6401,7 +6380,7 @@ fn refuse_success_after(wire: i32, prepare: impl FnOnce(&mut GeneratorContext)) 
         ("b.txt", b"bravo"),
         ("c.txt", b"charlie"),
     ]);
-    let (mut ctx, sources) = two_list_sender_with_pending_removals(&temp);
+    let (mut ctx, sources) = two_list_remove_source_sender(&temp);
     prepare(&mut ctx);
     let Err(err) = ctx.confirm_source_removal(wire) else {
         panic!("a MSG_SUCCESS naming no live entry must be refused");
@@ -6428,7 +6407,7 @@ fn an_item_naming_the_gap_of_a_list_without_a_directory_exits_silently() {
         ("b.txt", b"bravo"),
         ("c.txt", b"charlie"),
     ]);
-    let (ctx, _sources) = two_list_sender_with_pending_removals(&temp);
+    let (ctx, _sources) = two_list_remove_source_sender(&temp);
     let err = ctx
         .flist_for_ndx(-1)
         .expect_err("the initial list has no directory to itemize");
@@ -6486,7 +6465,7 @@ fn msg_success_for_each_live_entry_unlinks_exactly_that_source() {
         ("b.txt", b"bravo"),
         ("c.txt", b"charlie"),
     ]);
-    let (mut ctx, sources) = two_list_sender_with_pending_removals(&temp);
+    let (mut ctx, sources) = two_list_remove_source_sender(&temp);
     for (wire, flat) in [(0, 0), (3, 2)] {
         let outcome = ctx.confirm_source_removal(wire).expect("a live entry");
         assert_eq!(outcome.io_error, 0);
@@ -6504,7 +6483,7 @@ fn msg_success_is_ignored_without_remove_source_files() {
         ("b.txt", b"bravo"),
         ("c.txt", b"charlie"),
     ]);
-    let (mut ctx, sources) = two_list_sender_with_pending_removals(&temp);
+    let (mut ctx, sources) = two_list_remove_source_sender(&temp);
     ctx.config.flags.remove_source_files = false;
     let outcome = ctx
         .confirm_source_removal(i32::MAX)
@@ -6566,11 +6545,6 @@ fn remove_source_files_mid_commit_teardown_retains_unconfirmed_sources() {
         assert!(src.exists(), "each source must exist before the transfer");
     }
 
-    // The sender finished transmitting all three: every unlink is deferred.
-    for &flat in &file_flats {
-        ctx.pending_source_removals.mark_pending(flat);
-    }
-
     // The receiver committed and acked only the first file, then the connection
     // dropped: exactly one MSG_SUCCESS is consumed.
     let wire_first = ctx.flat_to_wire_ndx(file_flats[0]);
@@ -6593,11 +6567,6 @@ fn remove_source_files_mid_commit_teardown_retains_unconfirmed_sources() {
     assert!(
         sources[2].exists(),
         "every unconfirmed source must survive the teardown"
-    );
-    assert_eq!(
-        ctx.pending_source_removals.len(),
-        2,
-        "the two unconfirmed removals stay pending after the drop"
     );
 }
 
@@ -6660,10 +6629,6 @@ fn handshake_confirmed_source_is_still_removed_by_the_second_drain() {
     for src in &sources {
         assert!(src.exists(), "each source must exist before the drain");
     }
-    // The sender finished transmitting both: every unlink is deferred.
-    for &flat in &flats {
-        ctx.pending_source_removals.mark_pending(flat);
-    }
     let wire_early = ctx.flat_to_wire_ndx(flats[0]);
     let wire_late = ctx.flat_to_wire_ndx(flats[1]);
 
@@ -6717,10 +6682,6 @@ fn handshake_confirmed_source_is_still_removed_by_the_second_drain() {
         "a source confirmed DURING the goodbye handshake must still be removed; \
          dropping the post-goodbye drain leaks exactly this file (sender.c:396 \
          successful_send(), dispatched inline by io.c:1831-1845)"
-    );
-    assert!(
-        ctx.pending_source_removals.is_empty(),
-        "both deferred removals must be consumed across the two phases"
     );
     // Then the guard that keeps the assertions above honest.
     assert_eq!(

@@ -40,6 +40,8 @@ use crate::receiver::ReceiverContext;
 use crate::receiver::apply_acls_from_receiver_cache;
 #[cfg(unix)]
 use crate::receiver::directory::obstacle::MakeWayFor;
+#[cfg(unix)]
+use crate::receiver::transfer::Settled;
 
 impl ReceiverContext {
     /// Creates FIFO, socket, and device nodes from the file list entries.
@@ -433,6 +435,8 @@ impl ReceiverContext {
                     self.record_created(entry.mode());
                 }
             }
+            // upstream: generator.c:2101-2102 (identical) and :2144-2145 (made)
+            self.send_generator_success(writer, flist_idx, Settled::InPlace)?;
         }
         Ok(())
     }

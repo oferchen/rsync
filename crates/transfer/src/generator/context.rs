@@ -161,13 +161,6 @@ pub struct GeneratorContext {
     /// orchestrator can reach the wire. Each entry already carries its trailing
     /// newline, matching upstream's `rwrite()` payload.
     pub(crate) pending_flist_diagnostics: Vec<(super::protocol_io::SenderDiagnostic, String)>,
-    /// Flat file-list indices whose `--remove-source-files` unlink is deferred
-    /// until the peer confirms the commit via `MSG_SUCCESS`. Empty and unused
-    /// unless `--remove-source-files` is active.
-    ///
-    /// upstream: sender.c:404 `successful_send()` unlinks on confirmation,
-    /// never inline at send time (io.c:1831-1846 `MSG_SUCCESS` handler).
-    pub(crate) pending_source_removals: super::pending_removal::PendingSourceRemovals,
     /// Incremental recursion (INC_RECURSE) state for segmented file list sending.
     pub(crate) incremental: IncrementalState,
     /// Whether the lazy on-demand INC_RECURSE flist producer is driving
@@ -426,7 +419,6 @@ impl GeneratorContext {
             io_error: 0,
             got_xfer_error: false,
             pending_flist_diagnostics: Vec::new(),
-            pending_source_removals: super::pending_removal::PendingSourceRemovals::default(),
             incremental: IncrementalState::new(initial_ndx_start),
             lazy_producer_active: false,
             lazy_producer: None,
