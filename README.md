@@ -285,6 +285,8 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 
 oc-rsync advertises protocol 33 and uses the lower of its own and the peer's version, so a 3.5.0 or 3.4.x peer runs at 32. A 3.5.1 or 3.5.2 peer runs at 33. Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).
 
+Where oc-rsync differs from rsync 3.5.2 on purpose - behaviour it keeps, its extensions, and platform differences - is listed in [Differences from rsync 3.5.2](docs/differences-from-rsync-3.5.2.md).
+
 Interop scenarios run in CI against the upstream releases listed in [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh): `versions=` for the scenario matrix, `extra_build_versions=` for build-only peers, and `extended_matrix_versions=` for the extended matrix. Push and pull are both covered, across transfer modes, deletion, compression, metadata, reference dirs, file selection, batch round trip, path handling, device nodes and daemon auth. See the [interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for detail.
 
 ### Platform support
