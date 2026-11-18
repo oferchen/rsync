@@ -548,8 +548,12 @@ def _read_rss(rss_out: Path, traced: bool) -> object:
     """Peak RSS in kB from GNU time's output file; blank for a traced run."""
     if traced:
         return ""
-    # A command killed by a signal makes GNU time print a notice line first.
-    return int(rss_out.read_text().split()[-1])
+    # A command killed by a signal makes GNU time print a notice line first;
+    # GNU time itself being killed (a timeout) leaves nothing to read.
+    try:
+        return int(rss_out.read_text().split()[-1])
+    except (OSError, ValueError, IndexError):
+        return ""
 
 
 class Daemon:
