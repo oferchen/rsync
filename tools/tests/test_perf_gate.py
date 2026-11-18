@@ -120,6 +120,33 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(perf_gate.filesystem_of(Path("/home/u/x"), mounts), "ext4")
 
 
+class QuietHostTests(unittest.TestCase):
+    """Numbers taken on a busy host were reported once and had to be thrown
+    away, so the refusal and the reading it rests on are pinned here."""
+
+    PSI = ("some avg10=93.14 avg60=92.88 avg300=91.90 total=9422320974\n"
+           "full avg10=85.50 avg60=84.09 avg300=80.32 total=6455090143\n")
+
+    def test_pressure_is_the_some_line_avg10_not_full_or_avg60(self) -> None:
+        self.assertEqual(perf_gate.parse_pressure_some_avg10(self.PSI), 93.14)
+        self.assertIsNone(perf_gate.parse_pressure_some_avg10(""))
+
+    def test_either_a_high_load_or_high_io_pressure_refuses(self) -> None:
+        self.assertEqual(perf_gate.busy_reason(0.5, 2.0, 1.0, 10.0), "")
+        self.assertIn("--max-load", perf_gate.busy_reason(1.5, 0.0, 1.0, 10.0))
+        self.assertIn("--max-io-pressure", perf_gate.busy_reason(0.5, 10.5, 1.0, 10.0))
+        # A kernel without PSI reports blank; that must not read as busy.
+        self.assertEqual(perf_gate.busy_reason(0.5, "", 1.0, 10.0), "")
+
+    def test_a_busy_host_stops_the_run_before_any_fixture_is_built(self) -> None:
+        with tempfile.TemporaryDirectory() as data, redirect_stderr(io.StringIO()) as err:
+            code = perf_gate.main(["--cell", "sparse-64m", "--data-dir", data, "--oc", "/bin/true",
+                                   "--upstream", "/bin/true", "--no-strace", "--max-load", "-1"])
+            self.assertEqual(code, 2)
+            self.assertIn("--max-load", err.getvalue())
+            self.assertEqual(list(Path(data).iterdir()), [])
+
+
 class SummaryTests(unittest.TestCase):
     def test_median_ignores_warmup_and_traced_runs(self) -> None:
         # A warm-up or a strace run is far slower than a measured one; were

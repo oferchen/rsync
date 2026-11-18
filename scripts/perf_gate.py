@@ -39,8 +39,15 @@ Columns
                   Blank on kind=strace rows.
   srv_maxrss_kb   the same for the daemon process tree (daemon transports only)
   bytes_sent, bytes_recv   from the client's --stats output
+  io_some10, cpu_some10       /proc/pressure `some avg10` when the run starts
+  io_some10_end, cpu_some10_end   and when it ends (blank without PSI)
   sc_*            strace -f -c call counts (kind=strace rows only): total and
                   the write, read, open and stat families, client and server
+
+Quiet host
+  A run is refused (unless --force) when the 1-minute load average is above
+  --max-load or the I/O pressure `some avg10` is above --max-io-pressure:
+  wall-clock numbers taken on a busy host mean nothing.
 
 Data safety
   --data-dir is required. Everything is created inside one new directory
@@ -100,6 +107,7 @@ SYSCALL_FAMILIES = {
 ROW_FIELDS = (
     "cell", "transport", "side", "kind", "iter", "exit", "wall_s", "user_s",
     "sys_s", "maxrss_kb", "srv_maxrss_kb", "bytes_sent", "bytes_recv",
+    "io_some10", "io_some10_end", "cpu_some10", "cpu_some10_end",
     "sc_total", "sc_write", "sc_read", "sc_open", "sc_stat", "verified",
 )
 SUMMARY_FIELDS = (
@@ -450,6 +458,33 @@ def filesystem_of(path: Path, mounts: str) -> str:
     return fstype
 
 
+_PRESSURE_RE = re.compile(r"^some\s.*?\bavg10=([\d.]+)", re.M)
+
+
+def parse_pressure_some_avg10(text: str) -> Optional[float]:
+    """`some avg10` from a /proc/pressure file; None when it is not there."""
+    match = _PRESSURE_RE.search(text)
+    return float(match.group(1)) if match else None
+
+
+def read_pressure(resource: str) -> object:
+    """Current `some avg10` for "io" or "cpu"; blank on a kernel without PSI."""
+    try:
+        value = parse_pressure_some_avg10(Path(f"/proc/pressure/{resource}").read_text())
+    except OSError:
+        value = None
+    return "" if value is None else value
+
+
+def busy_reason(load: float, io_pressure: object, max_load: float, max_io: float) -> str:
+    """Why the host is too busy to measure on, or an empty string."""
+    if load > max_load:
+        return f"1-minute load average {load:.2f} is above --max-load {max_load:.2f}"
+    if io_pressure != "" and io_pressure > max_io:
+        return f"I/O pressure some avg10 {io_pressure:.2f} is above --max-io-pressure {max_io:.2f}"
+    return ""
+
+
 def summarize(rows: Iterable[dict]) -> list[dict]:
     """Medians per (cell, transport, side) and ratios against upstream and oc."""
     groups: dict[tuple, list[dict]] = {}
@@ -520,6 +555,7 @@ def environment_lines(sides: list[Side], src: Path, dst: Path) -> list[str]:
         f"transparent_hugepage: {read_text('/sys/kernel/mm/transparent_hugepage/enabled')}",
         f"cpus: {os.cpu_count()}",
         "loadavg at start: " + " ".join(f"{v:.2f}" for v in os.getloadavg()),
+        f"pressure some avg10 at start: io {read_pressure('io')}  cpu {read_pressure('cpu')}",
         "page cache: hot (fixture just written; caches are not dropped)",
     ]
     return lines
@@ -671,6 +707,7 @@ class Runner:
         rss_out = self.state / "client.rss"
         cmd = _measured(cmd, rss_out, client_trace if traced else None)
         out_path = self.state / "client.out"
+        io_start, cpu_start = read_pressure("io"), read_pressure("cpu")
         with open(out_path, "wb") as out:
             started = time.monotonic()
             proc = subprocess.Popen(cmd, env=_side_env(side), stdin=subprocess.DEVNULL,
@@ -697,6 +734,8 @@ class Runner:
             "user_s": user, "sys_s": system, "maxrss_kb": maxrss, "srv_maxrss_kb": srv_rss,
             "bytes_sent": "" if sent is None else sent,
             "bytes_recv": "" if received is None else received,
+            "io_some10": io_start, "io_some10_end": read_pressure("io"),
+            "cpu_some10": cpu_start, "cpu_some10_end": read_pressure("cpu"),
             "verified": "",
         }
         if traced:
@@ -787,7 +826,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="fixture scale factor (default 1.0; the self-test uses 0.01)")
     parser.add_argument("--max-load", type=float, default=1.0,
                         help="refuse to start when the 1-minute load average is above this (default 1.0)")
-    parser.add_argument("--force", action="store_true", help="run even above --max-load")
+    parser.add_argument("--max-io-pressure", type=float, default=10.0,
+                        help="refuse to start when /proc/pressure/io `some avg10` is above this "
+                             "(default 10.0)")
+    parser.add_argument("--force", action="store_true",
+                        help="run even above --max-load or --max-io-pressure")
     parser.add_argument("--no-strace", action="store_true", help="skip the traced run")
     parser.add_argument("--no-verify", action="store_true",
                         help="do not compare the destination with the source after each run")
@@ -912,16 +955,17 @@ def main(argv: Optional[list[str]] = None) -> int:
             raise HarnessError(f"unknown transport(s): {', '.join(unknown) or '(none given)'}")
         if args.runs < 1:
             raise HarnessError("--runs must be at least 1")
-        load = os.getloadavg()[0]
-        if load > args.max_load and not args.force:
-            raise HarnessError(f"1-minute load average {load:.2f} is above --max-load "
-                               f"{args.max_load:.2f}; wait, or pass --force")
+        busy = busy_reason(os.getloadavg()[0], read_pressure("io"), args.max_load,
+                           args.max_io_pressure)
+        if busy and not args.force:
+            raise HarnessError(f"{busy}; wait, or pass --force")
         text = ""
         for name in cells:
             plan = Plan(CELLS[name], args.scale, sides, transports, args.runs, warmup=1,
                         strace=not args.no_strace, verify=not args.no_verify, timeout=args.timeout)
             env, rows = run_cell(plan, Path(args.data_dir), args.keep, log)
             env.append("loadavg at end: " + " ".join(f"{v:.2f}" for v in os.getloadavg()))
+            env.append(f"pressure some avg10 at end: io {read_pressure('io')}  cpu {read_pressure('cpu')}")
             section = report(env, rows)
             sys.stdout.write(section)
             sys.stdout.flush()
