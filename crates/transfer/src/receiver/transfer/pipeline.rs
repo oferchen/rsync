@@ -146,7 +146,7 @@ impl InFlightRequests {
     /// A decline for `awaited` drops the front, which is already popped. A
     /// decline for a later request retires that entry and puts the front back,
     /// because the front's own reply is still coming: an upstream sender emits
-    /// `MSG_NO_SEND` the moment an open fails (sender.c:670,725,753), ahead of
+    /// `MSG_NO_SEND` the moment an open fails (sender.c:678,733,761), ahead of
     /// the replies it has yet to write.
     ///
     /// The sender has already set its I/O error, which is what makes the run
@@ -1055,22 +1055,33 @@ impl ReceiverContext {
             // pass, which carries no new followers) so a pushing client's
             // sender renders each `hf...` / `=> leader` row.
             if !is_redo_pass && !self.itemize_followers_per_segment {
-                let whole_list = 0..self.file_list.len();
-                #[cfg(unix)]
-                self.emit_server_hardlink_follower_itemize(
-                    writer,
-                    ndx_write_codec.inner_mut(),
-                    whole_list,
-                    &setup.dest_dir,
-                    setup.sandbox.as_deref(),
-                )?;
-                #[cfg(not(unix))]
-                self.emit_server_hardlink_follower_itemize(
-                    writer,
-                    ndx_write_codec.inner_mut(),
-                    whole_list,
-                    &setup.dest_dir,
-                )?;
+                let leaders = self.hardlink_leaders();
+                let end = self.file_list.len();
+                let mut next = 0;
+                while next < end {
+                    #[cfg(unix)]
+                    let resume = self.emit_hardlink_follower_itemize(
+                        writer,
+                        ndx_write_codec.inner_mut(),
+                        &leaders,
+                        next..end,
+                        &setup.dest_dir,
+                        setup.sandbox.as_deref(),
+                    )?;
+                    #[cfg(not(unix))]
+                    let resume = self.emit_hardlink_follower_itemize(
+                        writer,
+                        ndx_write_codec.inner_mut(),
+                        &leaders,
+                        next..end,
+                        &setup.dest_dir,
+                    )?;
+                    next = resume;
+                    // The last batch's echoes are read at the phase boundary.
+                    if next < end {
+                        self.read_follower_echoes(&mut *reader, ndx_read_codec)?;
+                    }
+                }
             }
 
             let redo_indices = pipelined_receiver.take_redo_indices();
@@ -1111,7 +1122,7 @@ impl ReceiverContext {
     /// and queues its pending echo behind the in-flight transfer requests.
     ///
     /// The record produces no sum head, basis byte, or xname - the framing
-    /// bits were stripped at record time (`record_server_no_transfer_itemize`).
+    /// bits were stripped at record time (`record_no_transfer_itemize`).
     /// The sender answers it with a bare `write_ndx_and_attrs()` echo, so a
     /// placeholder pending rides the FIFO queue and the pop side consumes the
     /// echo in order with the transfer replies.
@@ -1141,14 +1152,20 @@ impl ReceiverContext {
         Ok(())
     }
 
-    /// Dry-run transfer loop: sends NDX requests without data transfer.
+    /// The wire loop of a mode that writes nothing to the destination: one
+    /// itemize record per planned entry, each answered by the sender's echo.
     ///
-    /// Mirrors upstream generator.c behavior during `!do_xfers`: sends NDX and
-    /// iflags for each planned item, reads the echoed NDX+iflags from the
-    /// sender. No sum head or file data is exchanged. This is what makes a push
-    /// dry run print anything at all: on a push this side is the server
-    /// receiver, its rows never reach the user's terminal directly, and the
-    /// client sender renders them from exactly these iflags.
+    /// Without `batch` this is the `--dry-run` loop. It mirrors upstream
+    /// generator.c during `!do_xfers`: sends NDX and iflags for each planned
+    /// item, reads the echoed NDX+iflags from the sender. No sum head or file
+    /// data is exchanged. This is what makes a push dry run print anything at
+    /// all: on a push this side is the server receiver, its rows never reach
+    /// the user's terminal directly, and the client sender renders them from
+    /// exactly these iflags.
+    ///
+    /// With `batch` it is the `--only-write-batch` loop: the entries that are
+    /// not transferred are itemized exactly as above, and each transfer item
+    /// becomes a real request through [`OnlyWriteBatchRequests::request`].
     ///
     /// The plan carries non-transfer items too - a new directory, a new symlink,
     /// an attribute-only regular-file change - because upstream's `itemize()`
@@ -1165,7 +1182,7 @@ impl ReceiverContext {
     /// upstream: generator.c:1895-1996 - `!do_xfers` path sends write_ndx() then
     /// goto cleanup, skipping write_sum_head(). sender.c:469-486 - `!do_xfers`
     /// logs the item and echoes write_ndx_and_attrs() without receive_sums().
-    pub(in crate::receiver) fn run_dry_run_loop<
+    pub(in crate::receiver) fn run_plan_loop<
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     >(
@@ -1175,6 +1192,7 @@ impl ReceiverContext {
         plan: &[super::candidates::DryRunItem],
         ndx_write_codec: &mut MonotonicNdxWriter,
         ndx_read_codec: &mut NdxCodecEnum,
+        mut batch: Option<&mut OnlyWriteBatchRequests<'_>>,
     ) -> io::Result<(usize, u64)> {
         if plan.is_empty() {
             writer.flush()?;
@@ -1212,29 +1230,54 @@ impl ReceiverContext {
                 continue;
             }
 
-            // upstream: generator.c:1975 - write_ndx(f_out, ndx); a released
-            // sub-list head goes out on its gap NDX (generator.c:2787).
-            let wire_ndx = self.itemize_wire_ndx(file_idx);
-            ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;
+            let echoed = match batch.as_deref_mut() {
+                // upstream: generator.c:2433-2452 - with do_xfers set the
+                // request goes on to carry a real sum head.
+                Some(batch) if needs_transfer => batch.request(
+                    self,
+                    reader,
+                    writer,
+                    ndx_write_codec,
+                    ndx_read_codec,
+                    file_idx,
+                    item_iflags,
+                )?,
+                _ => {
+                    // upstream: generator.c:1975 - write_ndx(f_out, ndx); a released
+                    // sub-list head goes out on its gap NDX (generator.c:2787).
+                    let wire_ndx = self.itemize_wire_ndx(file_idx);
+                    ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;
 
-            // upstream: generator.c:1974-1984 then itemize() at 581-600 - the
-            // iflags shortint carries the full itemize bits computed against the
-            // pre-transfer destination (ITEM_IS_NEW for an absent one, the
-            // attribute diff for an existing one). Sending a bare ITEM_TRANSFER
-            // here made every pushed file render as `<f.........` instead of
-            // `<f+++++++++` and left the peer's created-file tally at zero.
-            if write_iflags {
-                writer.write_all(&((item_iflags & 0xFFFF) as u16).to_le_bytes())?;
-            }
+                    // upstream: generator.c:1974-1984 then itemize() at 581-600 - the
+                    // iflags shortint carries the full itemize bits computed against the
+                    // pre-transfer destination (ITEM_IS_NEW for an absent one, the
+                    // attribute diff for an existing one). Sending a bare ITEM_TRANSFER
+                    // here made every pushed file render as `<f.........` instead of
+                    // `<f+++++++++` and left the peer's created-file tally at zero.
+                    if write_iflags {
+                        writer.write_all(&((item_iflags & 0xFFFF) as u16).to_le_bytes())?;
+                    }
 
-            // Flush before blocking on the sender's echo. The multiplex
-            // writer's dirty-flag optimization skips the syscall when the
-            // request fits within the 64KB buffer and no prior data was
-            // pending - matching upstream's batched iobuf_out pattern.
-            writer.flush()?;
+                    // Flush before blocking on the sender's echo. The multiplex
+                    // writer's dirty-flag optimization skips the syscall when the
+                    // request fits within the 64KB buffer and no prior data was
+                    // pending - matching upstream's batched iobuf_out pattern.
+                    writer.flush()?;
 
-            // upstream: sender.c:477-494 - sender echoes write_ndx_and_attrs back
-            self.read_non_transfer_echo(reader, ndx_read_codec, preserve_xattrs, want_xattr_optim)?;
+                    // upstream: sender.c:589-591 - the sender echoes a record
+                    // that is not a transfer with write_ndx_and_attrs() and
+                    // never opens a file for it, and a dry-run sender has
+                    // do_xfers clear and echoes a transfer the same way
+                    // (sender.c:647-651), so no decline can arrive here.
+                    self.read_non_transfer_echo(
+                        reader,
+                        ndx_read_codec,
+                        preserve_xattrs,
+                        want_xattr_optim,
+                    )?;
+                    true
+                }
+            };
 
             // upstream: rsync.c:672-676 set_file_attrs emits the bare-name
             // notice AFTER the transfer decision is known. In dry-run the
@@ -1244,8 +1287,9 @@ impl ReceiverContext {
             // already carries the name, so the bare name is suppressed.
             // Transfer items only: a directory's `-v` name line is produced by
             // the deferred `verbose_dir_lines` buffer, so naming it here too
-            // would double it.
-            if needs_transfer
+            // would double it. A file the sender declined is not named.
+            if echoed
+                && needs_transfer
                 && self.config.flags.verbose
                 && self.config.connection.client_mode
                 && !self.should_emit_itemize()
@@ -1296,10 +1340,11 @@ impl ReceiverContext {
 
     /// Receiver loop for `--only-write-batch=X` (upstream `write_batch < 0`).
     ///
-    /// Unlike [`run_dry_run_loop`](Self::run_dry_run_loop), the generator sends
-    /// REAL block checksums (a full sum head + signature per file), because
+    /// Unlike a dry run through [`run_plan_loop`](Self::run_plan_loop), the
+    /// generator sends REAL block checksums (a full sum head + signature per
+    /// file), because
     /// upstream forces `dry_run = 1` only after `do_xfers` is computed
-    /// (main.c:1866), so `do_xfers` stays 1 and the sender needs the checksums
+    /// (main.c:1950), so `do_xfers` stays 1 and the sender needs the checksums
     /// to build its batch. Nothing is written to the destination either way -
     /// upstream's `write_batch < 0` arm logs the item and `continue`s
     /// (receiver.c:827-833) - but where the sender's delta goes differs by
@@ -1307,7 +1352,7 @@ impl ReceiverContext {
     ///
     /// - PUSH (this side is the remote server receiver, `am_server`): the
     ///   client sender diverted its token stream into its own batch fd
-    ///   (sender.c:220 `f_xfer = write_batch < 0 ? batch_fd : f_out`), so only
+    ///   (sender.c:510 `f_xfer = write_batch < 0 ? batch_fd : f_out`), so only
     ///   the bare NDX+attrs echo from `write_ndx_and_attrs(f_out, ...)`
     ///   (sender.c:469-486) reaches the wire. Reading further would block forever.
     /// - PULL (this side is the local client receiver, `!am_server`): upstream
@@ -1324,7 +1369,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1866` - `if (write_batch < 0) dry_run = 1` (do_xfers stays 1)
+    /// - `main.c:1950` - `if (write_batch < 0) dry_run = 1` (do_xfers stays 1)
     /// - `sender.c:768-769` - `write_ndx_and_attrs(f_out); write_sum_head(f_xfer)`
     /// - `receiver.c:827-833` - `write_batch < 0`: log, `if (!am_server)`
     ///   `discard_receive_data()`, no dest write
@@ -1336,12 +1381,13 @@ impl ReceiverContext {
         &mut self,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
+        plan: &[super::candidates::DryRunItem],
         files_to_transfer: &[(usize, PathBuf, u32)],
         setup: &PipelineSetup,
         ndx_write_codec: &mut MonotonicNdxWriter,
         ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<()> {
-        if files_to_transfer.is_empty() {
+        if plan.is_empty() {
             writer.flush()?;
             return Ok(());
         }
@@ -1382,7 +1428,7 @@ impl ReceiverContext {
         // upstream: token.c keeps one decompression context for the whole
         // session (the zstd DCtx must survive file boundaries), so build the
         // reader once and `reset()` it per file.
-        let mut token_reader = if discard_sender_data {
+        let token_reader = if discard_sender_data {
             Some(self.take_session_token_reader(&request_config)?)
         } else {
             None
@@ -1398,91 +1444,176 @@ impl ReceiverContext {
         )
         .digest_len();
 
-        for &(file_idx, ref file_path, base_iflags) in files_to_transfer {
-            let file_entry = &self.file_list[file_idx];
-            // upstream: generator.c:1998-2006 - compute the basis signature and
-            // send a real sum head so the sender can diff against the receiver's
-            // basis (empty when no basis exists, driving a whole-file batch).
-            let basis_config = BasisFileConfig {
-                #[cfg(unix)]
-                sandbox: setup.sandbox.as_deref(),
-                ndx: self.flat_to_wire_ndx(file_idx),
-                file_path,
-                dest_dir: &setup.dest_dir,
-                relative_path: file_entry.path(),
-                target_size: file_entry.size(),
-                target_mtime: file_entry.mtime(),
-                fuzzy_level: self.config.flags.fuzzy_level,
-                reference_directories: &self.config.reference_directories,
-                partial_dir: self.config.partial_dir.as_deref(),
-                protocol: self.protocol,
-                checksum_length: setup.checksum_length,
-                checksum_algorithm: setup.checksum_algorithm,
-                whole_file: self.config.flags.whole_file,
-                compat_flags: self.compat_flags,
-                block_size: self.config.block_size,
-                // upstream: `--only-write-batch` clears do_xfers, so the
-                // generator bails to notify_others before the delta-path
-                // backup branch (generator.c:2277 vs :2328) - no pre-image
-                // copy is made and the basis stays FNAMECMP_FNAME.
-                inplace_backup: None,
-            };
-            let basis = find_basis_file_with_config(&basis_config);
+        let mut requests = OnlyWriteBatchRequests {
+            setup,
+            paths: files_to_transfer
+                .iter()
+                .map(|(file_idx, path, _)| (*file_idx, path.as_path()))
+                .collect(),
+            request_config,
+            token_reader,
+            discard_checksum_len,
+            // One request is outstanding at a time, so this window is empty
+            // whenever an echo is read and a decline can only name the file
+            // being awaited.
+            in_flight: InFlightRequests::new(PipelineConfig::synchronous()),
+        };
+        // upstream: generator.c:625-630 - itemize() writes NDX + iflags for
+        // every entry with significant flags whatever write_batch says, so the
+        // wire is driven from the same plan a dry run uses.
+        self.run_plan_loop(
+            reader,
+            writer,
+            plan,
+            ndx_write_codec,
+            ndx_read_codec,
+            Some(&mut requests),
+        )?;
 
-            // upstream: generator.c:1976 write_ndx + write_sum_head(f_out, s).
-            let _pending = send_file_request(
-                writer,
-                &mut *ndx_write_codec,
-                self.flat_to_wire_ndx(file_idx),
-                file_path.clone(),
-                basis.signature,
-                basis.basis_path,
-                basis.fnamecmp_type,
-                basis.xname.as_deref(),
-                file_entry.size(),
-                base_iflags,
-                &request_config,
-            )?;
-
-            // Flush before blocking on the echo so the sender has the full
-            // request. On a push it reads the sum head, writes the delta into
-            // its own batch fd, and echoes only NDX+attrs back to us.
-            writer.flush()?;
-
-            // upstream: sender.c:477-494 - write_ndx_and_attrs(f_out, ...) echo.
-            self.read_non_transfer_echo(reader, ndx_read_codec, preserve_xattrs, want_xattr_optim)?;
-
-            if let Some(token_reader) = token_reader.as_mut() {
-                // upstream: sender.c:452 write_sum_head(f_xfer, s) - on a pull
-                // `f_xfer == f_out`, so the sum head and the whole delta land
-                // on the wire and must be consumed to keep the sender in
-                // lockstep (receiver.c:829-830 discard_receive_data()).
-                let echoed_sum_head = crate::receiver::wire::SumHead::read(reader)?;
-                token_reader.reset();
-                crate::delta_apply::discard_delta_stream(
-                    reader,
-                    token_reader,
-                    u64::from(echoed_sum_head.count),
-                    discard_checksum_len,
-                )?;
-            }
-
-            // upstream: receiver.c:828 log_item(FCLIENT, file, iflags, NULL) -
-            // the item is still logged even though nothing is written. Under
-            // `-i`/`-vi` the deferred itemize row already carries the name.
-            if self.config.flags.verbose
-                && self.config.connection.client_mode
-                && !self.should_emit_itemize()
-            {
-                info_log!(Name, 1, "{}", self.file_list[file_idx].path().display());
-            }
-        }
-
-        if token_reader.is_some() {
-            self.session_token_reader = token_reader;
+        if requests.token_reader.is_some() {
+            self.session_token_reader = requests.token_reader;
         }
         writer.flush()?;
         Ok(())
+    }
+}
+
+/// The transfer requests of one `--only-write-batch` run.
+///
+/// Holds what stays the same from file to file, so
+/// [`ReceiverContext::run_plan_loop`] can hand it each transfer item of the
+/// plan in turn.
+pub(in crate::receiver) struct OnlyWriteBatchRequests<'a> {
+    setup: &'a PipelineSetup,
+    /// Destination path of every file the candidate pass selected.
+    paths: std::collections::HashMap<usize, &'a std::path::Path>,
+    request_config: RequestConfig,
+    /// Present on a pull, where the sender's delta has to be drained.
+    token_reader: Option<crate::token_reader::TokenReader>,
+    discard_checksum_len: usize,
+    in_flight: InFlightRequests,
+}
+
+impl OnlyWriteBatchRequests<'_> {
+    /// Requests one file with its real itemize flags and a real sum head, and
+    /// consumes the sender's answer. Returns `false` when the sender declined
+    /// the file.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2410-2431` - `notify_others` writes the NDX and calls
+    ///   `itemize()` with the real stat, so the iflags carry the attribute
+    ///   diff and not a bare `ITEM_TRANSFER`
+    /// - `generator.c:2440-2452` - the sum head and block checksums follow
+    #[allow(clippy::too_many_arguments)]
+    fn request<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
+        &mut self,
+        ctx: &mut ReceiverContext,
+        reader: &mut crate::reader::ServerReader<R>,
+        writer: &mut W,
+        ndx_write_codec: &mut MonotonicNdxWriter,
+        ndx_read_codec: &mut NdxCodecEnum,
+        file_idx: usize,
+        iflags: u32,
+    ) -> io::Result<bool> {
+        let Some(&file_path) = self.paths.get(&file_idx) else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("planned transfer of file index {file_idx} has no destination path"),
+            ));
+        };
+        let setup = self.setup;
+        let file_entry = &ctx.file_list[file_idx];
+        // upstream: generator.c:1998-2006 - compute the basis signature and
+        // send a real sum head so the sender can diff against the receiver's
+        // basis (empty when no basis exists, driving a whole-file batch).
+        let basis_config = BasisFileConfig {
+            #[cfg(unix)]
+            sandbox: setup.sandbox.as_deref(),
+            ndx: ctx.flat_to_wire_ndx(file_idx),
+            file_path,
+            dest_dir: &setup.dest_dir,
+            relative_path: file_entry.path(),
+            target_size: file_entry.size(),
+            target_mtime: file_entry.mtime(),
+            fuzzy_level: ctx.config.flags.fuzzy_level,
+            reference_directories: &ctx.config.reference_directories,
+            partial_dir: ctx.config.partial_dir.as_deref(),
+            protocol: ctx.protocol,
+            checksum_length: setup.checksum_length,
+            checksum_algorithm: setup.checksum_algorithm,
+            whole_file: ctx.config.flags.whole_file,
+            compat_flags: ctx.compat_flags,
+            block_size: ctx.config.block_size,
+            // upstream: `--only-write-batch` clears do_xfers, so the
+            // generator bails to notify_others before the delta-path
+            // backup branch (generator.c:2277 vs :2328) - no pre-image
+            // copy is made and the basis stays FNAMECMP_FNAME.
+            inplace_backup: None,
+        };
+        let basis = find_basis_file_with_config(&basis_config);
+
+        // upstream: generator.c:1976 write_ndx + write_sum_head(f_out, s).
+        let pending = send_file_request(
+            writer,
+            &mut *ndx_write_codec,
+            ctx.flat_to_wire_ndx(file_idx),
+            file_path.to_path_buf(),
+            basis.signature,
+            basis.basis_path,
+            basis.fnamecmp_type,
+            basis.xname.as_deref(),
+            file_entry.size(),
+            iflags,
+            &self.request_config,
+        )?;
+
+        // Flush before blocking on the echo so the sender has the full
+        // request. On a push it reads the sum head, writes the delta into
+        // its own batch fd, and echoes only NDX+attrs back to us.
+        writer.flush()?;
+
+        // upstream: sender.c:477-494 - write_ndx_and_attrs(f_out, ...) echo.
+        // This sender keeps do_xfers set (main.c:1950 forces dry_run only
+        // after do_xfers is computed), so it opens the file before the echo
+        // and answers one it cannot send with MSG_NO_SEND instead
+        // (sender.c:678, 733, 761). No echo follows; the file is skipped.
+        if let Err(err) = ctx.read_non_transfer_echo(
+            reader,
+            ndx_read_codec,
+            self.request_config.preserve_xattrs,
+            self.request_config.want_xattr_optim,
+        ) {
+            let Some(ndx) = crate::reader::FileDeclinedError::declined_ndx(&err) else {
+                return Err(err);
+            };
+            let awaited = ctx.flat_to_wire_ndx(file_idx);
+            let front = (
+                file_idx,
+                file_path.to_path_buf(),
+                ctx.file_list[file_idx].clone(),
+                iflags,
+            );
+            self.in_flight
+                .retire_declined(ndx, awaited, pending, front)?;
+            return Ok(false);
+        }
+
+        if let Some(token_reader) = self.token_reader.as_mut() {
+            // upstream: sender.c:452 write_sum_head(f_xfer, s) - on a pull
+            // `f_xfer == f_out`, so the sum head and the whole delta land
+            // on the wire and must be consumed to keep the sender in
+            // lockstep (receiver.c:829-830 discard_receive_data()).
+            let echoed_sum_head = crate::receiver::wire::SumHead::read(reader)?;
+            token_reader.reset();
+            crate::delta_apply::discard_delta_stream(
+                reader,
+                token_reader,
+                u64::from(echoed_sum_head.count),
+                self.discard_checksum_len,
+            )?;
+        }
+        Ok(true)
     }
 }
 

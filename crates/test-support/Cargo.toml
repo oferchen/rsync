@@ -108,3 +108,7 @@ path = "src/bin/signal-rsh.rs"
 [[bin]]
 name = "order-rsh"
 path = "src/bin/order-rsh.rs"
+
+[[bin]]
+name = "small-buffer-rsh"
+path = "src/bin/small-buffer-rsh.rs"

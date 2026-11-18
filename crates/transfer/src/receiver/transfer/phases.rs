@@ -136,7 +136,7 @@ impl ReceiverContext {
     /// records before an NDX_DONE read.
     ///
     /// A server-mode push forwards `NDX + iflags + xname` for each hardlink
-    /// follower (see `emit_server_hardlink_follower_itemize`); the peer's sender
+    /// follower (see `emit_hardlink_follower_itemize`); the peer's sender
     /// echoes every non-transfer item back (upstream `sender.c:589-595`), yet the
     /// request-count-driven pipeline response loop never reads them. The sender
     /// buffers those echoes until it reads the receiver's NDX_DONE, so this runs
@@ -155,12 +155,44 @@ impl ReceiverContext {
         reader: &mut R,
         sink: &mut NoLazyFlist,
     ) -> io::Result<bool> {
+        // No decline can arrive here: these rows are written after every
+        // transfer reply of the phase has been read, and a sender declines
+        // only a transfer request (sender.c:678, 733, 761).
         for _ in 0..self.hardlink_follower_echoes.take() {
             if read_ndx_and_attrs(reader, ndx_read_codec, sink, false, false)?.is_none() {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Reads the echoes of the hard-link follower rows written so far, so
+    /// the next rows can go out without the sender stalling on unread echoes.
+    ///
+    /// When the pass has already written its phase-ending `NDX_DONE`, the
+    /// sender answers that before it echoes rows written after it
+    /// (sender.c:540-549), so the answer is read first and counted for
+    /// [`Self::finish_request_phase`].
+    pub(in crate::receiver) fn read_follower_echoes<R: Read>(
+        &self,
+        reader: &mut R,
+        ndx_read_codec: &mut NdxCodecEnum,
+    ) -> io::Result<()> {
+        let mut sink = self.no_lazy_flist_sink();
+        if self.phase_end_writes_sent.get() > 0
+            && self.sender_phase_dones.get() == 0
+            && self.early_sender_ndx_dones.get() == 0
+        {
+            self.read_sender_ndx_done(ndx_read_codec, reader, &mut sink, "phase transition")?;
+            self.note_sender_ndx_done();
+            self.note_early_sender_ndx_done();
+        }
+        if self.drain_hardlink_follower_echoes(ndx_read_codec, reader, &mut sink)? {
+            return Err(protocol::protocol_violation(
+                "expected the echo of a hard-link follower row, got NDX_DONE",
+            ));
+        }
+        Ok(())
     }
 
     /// Records that a response read consumed the sender's phase-boundary

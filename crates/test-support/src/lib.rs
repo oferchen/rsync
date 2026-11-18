@@ -35,6 +35,7 @@ pub mod transcript_cells;
 #[cfg(unix)]
 pub mod umask;
 pub mod upstream_compat;
+pub mod wire_records;
 
 pub use bin_path::{oc_rsync_bin, target_profile_dir, workspace_bin, workspace_bin_path};
 pub use capabilities::Capabilities;

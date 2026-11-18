@@ -33,7 +33,7 @@ fn call_create_hardlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         .expect("create_hardlinks must succeed in fixture-controlled tempdirs");
 }
 
-/// `emit_server_hardlink_follower_itemize` took a `dest_dir` plus a
+/// `emit_hardlink_follower_itemize` took a `dest_dir` plus a
 /// `#[cfg(unix)]` sandbox so it can skip an already-linked follower
 /// (HL-2 / upstream `hlink.c:215-227`). Route every test call through this
 /// cfg-aware shim rather than gating each site.
@@ -43,20 +43,15 @@ fn call_emit_follower_itemize<W: std::io::Write + ?Sized>(
     buf: &mut W,
     ndx_codec: &mut protocol::codec::NdxCodecEnum,
 ) -> std::io::Result<()> {
+    let leaders = ctx.hardlink_leaders();
+    let whole_list = 0..ctx.file_list.len();
     #[cfg(unix)]
-    {
-        ctx.emit_server_hardlink_follower_itemize(
-            buf,
-            ndx_codec,
-            0..ctx.file_list.len(),
-            dest,
-            None,
-        )
-    }
+    let resume =
+        ctx.emit_hardlink_follower_itemize(buf, ndx_codec, &leaders, whole_list, dest, None)?;
     #[cfg(not(unix))]
-    {
-        ctx.emit_server_hardlink_follower_itemize(buf, ndx_codec, 0..ctx.file_list.len(), dest)
-    }
+    let resume = ctx.emit_hardlink_follower_itemize(buf, ndx_codec, &leaders, whole_list, dest)?;
+    assert_eq!(resume, ctx.file_list.len(), "a short list fits one batch");
+    Ok(())
 }
 
 #[test]
@@ -727,7 +722,7 @@ fn finalize_links_followers_after_delayed_leader_rename() {
 }
 
 /// Builds a client-mode (pull) receiver over the same hardlink fixture so the
-/// scope guard in [`ReceiverContext::emit_server_hardlink_follower_itemize`] can
+/// scope guard in [`ReceiverContext::emit_hardlink_follower_itemize`] can
 /// be exercised. A pull renders follower rows locally in `create_hardlinks`, so
 /// nothing must cross the wire here.
 fn pull_receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContext {
@@ -872,13 +867,16 @@ fn server_push_emits_one_record_per_follower() {
     );
 }
 
-/// A client-mode (pull) receiver renders follower rows locally via
-/// `create_hardlinks`; forwarding them over the wire too would double every
-/// follower against the pull's own row. The server-only emission must stay a
-/// no-op off a push.
+/// A client-mode (pull) receiver sends the follower record too: upstream's
+/// generator writes it whichever role it has (hlink.c:maybe_hard_link() ->
+/// generator.c:itemize()), and the server's sender logs it and echoes it.
+/// The row `create_hardlinks` prints on the client is local output and is not
+/// produced from the echo, so nothing is doubled.
 #[test]
-fn pull_receiver_emits_no_follower_wire_record() {
-    use protocol::codec::create_ndx_codec;
+fn pull_receiver_emits_the_follower_wire_record() {
+    use protocol::codec::{NdxCodec, create_ndx_codec};
+
+    use crate::generator::ItemFlags;
 
     let entries = vec![
         make_hlink_leader("leader.txt", 14, 42),
@@ -890,15 +888,75 @@ fn pull_receiver_emits_no_follower_wire_record() {
     let mut buf: Vec<u8> = Vec::new();
     let mut ndx_codec = create_ndx_codec(32);
     call_emit_follower_itemize(&ctx, dest.path(), &mut buf, &mut ndx_codec)
-        .expect("client-mode call must succeed as a no-op");
-    assert!(
-        buf.is_empty(),
-        "a pull renders follower rows locally; nothing crosses the wire",
-    );
+        .expect("client-mode call must succeed");
     assert_eq!(
         ctx.hardlink_follower_echoes.get(),
-        0,
-        "a pull emits nothing, so there are no echoes to drain",
+        1,
+        "the server echoes the record, so there is one echo to drain",
+    );
+
+    let mut cur = std::io::Cursor::new(buf);
+    let mut rd = create_ndx_codec(32);
+    let ndx = rd.read_ndx(&mut cur).expect("follower NDX must decode");
+    assert_eq!(
+        ndx,
+        ctx.flat_to_wire_ndx(1),
+        "the record names the follower"
+    );
+    let iflags = ItemFlags::read(&mut cur, 32).expect("iflags must decode");
+    let (_ft, xname, _n) = iflags.read_trailing(&mut cur).expect("xname must decode");
+    assert_eq!(
+        xname.as_deref(),
+        Some(b"leader.txt".as_ref()),
+        "the record names the leader",
+    );
+    assert_eq!(
+        cur.position() as usize,
+        cur.get_ref().len(),
+        "the follower record must be fully consumed",
+    );
+}
+
+/// The leader map is asked for once per file-list segment, so it must look
+/// at each entry once: rebuilding it from the whole list on every call cost
+/// 0.3 s of a 2.5 s pull of 50,000 groups in 100 segments. Counts entries
+/// examined, not time.
+#[test]
+fn leader_map_examines_each_entry_once_across_segments() {
+    let mut ctx = pull_receiver_with_hardlinks(vec![
+        make_hlink_leader("a1", 14, 1),
+        make_hlink_follower("a2", 14, 1),
+        make_hlink_leader("b1", 14, 2),
+        make_hlink_follower("b2", 14, 2),
+    ]);
+    assert_eq!(ctx.hardlink_leaders().len(), 2);
+    assert_eq!(ctx.hardlink_leader_index.borrow().visits, 4);
+
+    ctx.file_list.extend(vec![
+        make_hlink_leader("c1", 14, 3),
+        make_hlink_follower("c2", 14, 3),
+    ]);
+    {
+        let leaders = ctx.hardlink_leaders();
+        assert_eq!(leaders.get(&1), Some(&0));
+        assert_eq!(leaders.get(&2), Some(&2));
+        assert_eq!(
+            leaders.get(&3),
+            Some(&4),
+            "the new segment's leader is found"
+        );
+    }
+    assert_eq!(
+        ctx.hardlink_leader_index.borrow().visits,
+        6,
+        "the second segment costs its own two entries, not the whole list again",
+    );
+
+    drop(ctx.hardlink_leaders());
+    assert_eq!(
+        ctx.hardlink_leader_index.borrow().visits,
+        6,
+        "a call with nothing new examines nothing",
     );
 }
 

@@ -211,7 +211,13 @@ impl ReceiverContext {
                     existing.as_ref(),
                     ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_REPORT_CHANGE,
                 ),
-                SpecialDisposition::Create => ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW,
+                // upstream: generator.c:2135-2136 - the base flags are the same
+                // for a new node; itemize() adds ITEM_IS_NEW for statret < 0.
+                SpecialDisposition::Create => {
+                    ItemFlags::ITEM_LOCAL_CHANGE
+                        | ItemFlags::ITEM_REPORT_CHANGE
+                        | ItemFlags::ITEM_IS_NEW
+                }
             };
             let iflags = ItemFlags::from_raw(iflags);
 
@@ -415,11 +421,11 @@ impl ReceiverContext {
                 // upstream: rsync.c:823-828 set_file_attrs() - "%s is uptodate" at
                 // INFO_GTE(NAME, 2)
                 let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
-                self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
+                self.record_no_transfer_itemize(flist_idx, iflags.raw());
                 info_log!(Name, 2, "{} is uptodate", relative_path.display());
             } else {
                 let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
-                self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
+                self.record_no_transfer_itemize(flist_idx, iflags.raw());
                 if !dest_existed {
                     // upstream: receiver.c:925-938 - a newly created device
                     // (created_devices) or FIFO/socket (created_specials),

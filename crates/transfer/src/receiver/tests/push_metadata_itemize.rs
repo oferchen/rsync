@@ -83,9 +83,7 @@ fn server_push_pipeline_forwards_metadata_only_record_and_drains_echo() {
     let mut ctx = push_receiver();
     ctx.file_list = vec![FileEntry::new_file("f".into(), 1, 0o600)].into();
     let iflags = ItemFlags::ITEM_REPORT_PERMS as u16;
-    ctx.server_no_transfer_itemize
-        .borrow_mut()
-        .push((0, iflags));
+    ctx.no_transfer_itemize.borrow_mut().push((0, iflags));
 
     let dir = test_support::create_tempdir();
     let setup = PipelineSetup {
@@ -126,7 +124,7 @@ fn server_push_pipeline_forwards_metadata_only_record_and_drains_echo() {
 
     assert_eq!(result.0, 0, "a metadata-only record transfers no file");
     assert!(
-        ctx.server_no_transfer_itemize.borrow().is_empty(),
+        ctx.no_transfer_itemize.borrow().is_empty(),
         "the phase-1 loop must consume the recorded rows"
     );
 

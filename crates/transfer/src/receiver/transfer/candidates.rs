@@ -1593,7 +1593,7 @@ impl ReceiverContext {
             // metadata-only row interleaves with directory and transfer rows in
             // flist-index order at flush time; emitted immediately otherwise.
             let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
-            self.record_server_no_transfer_itemize(flist_idx, unchanged_iflags);
+            self.record_no_transfer_itemize(flist_idx, unchanged_iflags);
         }
 
         // upstream: generator.c:511 unchanged_attrs() - fast-path check avoids
@@ -1771,29 +1771,33 @@ mod itemize_order_tests {
     /// whose attributes still differ; the pushing client's sender renders the
     /// `.f...p.....` row from those wire iflags (sender.c:587-588
     /// `maybe_log_item`). A server receiver that drops the record makes every
-    /// metadata-only change invisible under `-i` on a push - against another
-    /// oc peer and against upstream 3.4.4 alike - while a pull stays correct,
-    /// so only the push direction ever exposes the loss.
+    /// metadata-only change invisible under `-i` on a push. A client receiver
+    /// writes the same record on a pull (the generator does not ask which role
+    /// it has), where the server's sender logs it and echoes it into a
+    /// `--write-batch` stream; dropping it there leaves the server's log and
+    /// the batch without the row.
     #[cfg(unix)]
     #[test]
-    fn server_push_candidate_scan_records_metadata_only_wire_row() {
-        use std::os::unix::fs::PermissionsExt;
-
+    fn candidate_scan_records_metadata_only_wire_row_in_both_roles() {
         use crate::generator::ItemFlags;
-
-        let dir = test_support::create_tempdir();
-        let dest = dir.path();
-        let path = dest.join("f.txt");
-        std::fs::write(&path, b"x").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        let t = filetime::FileTime::from_unix_time(1_600_000_000, 0);
-        filetime::set_file_times(&path, t, t).unwrap();
-
+        use std::os::unix::fs::PermissionsExt;
+        // Each run applies the entry's mode, so each needs its own file.
+        let fixture = || {
+            let dir = test_support::create_tempdir();
+            let path = dir.path().join("f.txt");
+            std::fs::write(&path, b"x").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let t = filetime::FileTime::from_unix_time(1_600_000_000, 0);
+            filetime::set_file_times(&path, t, t).unwrap();
+            dir
+        };
         let mut entry = FileEntry::new_file("f.txt".into(), 1, 0o600);
         entry.set_mtime(1_600_000_000, 0);
 
         let hs = handshake();
         let run = |client_mode: bool| {
+            let dir = fixture();
+            let dest = dir.path();
             let mut config = itemize_server_config();
             config.connection.client_mode = client_mode;
             config.flags.times = true;
@@ -1821,7 +1825,7 @@ mod itemize_order_tests {
                 files.is_empty(),
                 "a quick-check match must not request a transfer"
             );
-            ctx.server_no_transfer_itemize.borrow().clone()
+            ctx.no_transfer_itemize.borrow().clone()
         };
 
         assert_eq!(
@@ -1830,10 +1834,11 @@ mod itemize_order_tests {
             "the server-mode candidate scan must record the metadata-only row \
              for the wire; without it the pushing client prints nothing"
         );
-        assert!(
-            run(true).is_empty(),
-            "a client-mode (pull) receiver prints its row locally; recording \
-             it for the wire too would double every row"
+        assert_eq!(
+            run(true),
+            vec![(0usize, ItemFlags::ITEM_REPORT_PERMS as u16)],
+            "a client-mode (pull) receiver sends the same record; without it \
+             the server's log and a written batch miss the row"
         );
     }
 
@@ -2171,21 +2176,21 @@ mod itemize_order_tests {
     /// would block reading a basis byte, xname vstring, or xattr request that
     /// never arrives.
     #[test]
-    fn record_server_no_transfer_itemize_strips_framing_and_gates_significance() {
+    fn record_no_transfer_itemize_strips_framing_and_gates_significance() {
         use crate::generator::ItemFlags;
 
         let hs = handshake();
         let ctx = ReceiverContext::new_for_test(&hs, itemize_server_config());
-        ctx.record_server_no_transfer_itemize(
+        ctx.record_no_transfer_itemize(
             2,
             ItemFlags::ITEM_REPORT_PERMS
                 | ItemFlags::ITEM_REPORT_XATTR
                 | ItemFlags::ITEM_BASIS_TYPE_FOLLOWS
                 | ItemFlags::ITEM_XNAME_FOLLOWS,
         );
-        ctx.record_server_no_transfer_itemize(3, 0);
+        ctx.record_no_transfer_itemize(3, 0);
         assert_eq!(
-            ctx.server_no_transfer_itemize.borrow().as_slice(),
+            ctx.no_transfer_itemize.borrow().as_slice(),
             &[(2usize, ItemFlags::ITEM_REPORT_PERMS as u16)],
             "framing bits are stripped and an all-clear record is dropped"
         );
@@ -2193,9 +2198,9 @@ mod itemize_order_tests {
         let mut ii = itemize_server_config();
         ii.flags.info_flags.itemize_unchanged = true;
         let ctx = ReceiverContext::new_for_test(&hs, ii);
-        ctx.record_server_no_transfer_itemize(3, 0);
+        ctx.record_no_transfer_itemize(3, 0);
         assert_eq!(
-            ctx.server_no_transfer_itemize.borrow().as_slice(),
+            ctx.no_transfer_itemize.borrow().as_slice(),
             &[(3usize, 0u16)],
             "-ii (stdout_format_has_i > 1) keeps the unchanged record"
         );

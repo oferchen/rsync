@@ -425,7 +425,7 @@ impl std::error::Error for RemoteExitError {}
 /// # Why this must interrupt a read rather than accumulate silently
 ///
 /// The sender answers `MSG_NO_SEND` and moves straight on to the next file
-/// (`sender.c:725`, and `:670` / `:753` for the other two refusal cases), so no
+/// (`sender.c:733`, and `:678` / `:761` for the other two refusal cases), so no
 /// response for this index will ever arrive. Recording the index and continuing
 /// to wait for a frame is therefore an unconditional hang: the message is
 /// consumed *inside* the very read it needs to abort.
@@ -914,7 +914,7 @@ impl<R> MultiplexReader<R> {
     /// # Upstream Reference
     ///
     /// - `io.c:1847-1856` - `MSG_NO_SEND` retires the entry on the generator.
-    /// - `sender.c:670,725,753` - each emitter `continue`s without a response.
+    /// - `sender.c:678,733,761` - each emitter `continue`s without a response.
     fn check_file_declined(&mut self) -> io::Result<()> {
         if self.no_send_indices.is_empty() {
             return Ok(());

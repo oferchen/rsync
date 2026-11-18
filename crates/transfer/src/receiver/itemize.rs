@@ -7,6 +7,55 @@ use protocol::flist::FileEntry;
 
 use super::ReceiverContext;
 
+/// Hard-link group number to the flat index of the group's leader.
+pub(in crate::receiver) type HardlinkLeaders = std::collections::HashMap<u32, usize>;
+
+/// The leaders found so far and how much of the file list they cover, so
+/// each entry is looked at once however many passes ask for the map.
+#[derive(Debug, Default)]
+pub(in crate::receiver) struct HardlinkLeaderIndex {
+    scanned: usize,
+    /// Entries examined over the whole run; equal to `scanned` unless the
+    /// map is rebuilt.
+    pub(in crate::receiver) visits: usize,
+    leaders: HardlinkLeaders,
+}
+
+/// The smallest transport buffer assumed between the two sides: one page, the
+/// least a Linux pipe holds once a user is over the pipe-pages soft limit
+/// (pipe(7)). The usual transports hold more: 64 KiB for a Linux pipe, 16 KiB
+/// for a macOS one, about 200 KiB for a socket pair.
+const SMALLEST_TRANSPORT_BUFFER: usize = 4096;
+
+/// The phase-ending `NDX_DONE` and its frame header, which may still be in
+/// the buffer when the first batch of follower records is written.
+const PENDING_NDX_DONE: usize = 5;
+
+/// How many bytes of hard-link follower records go out before their echoes
+/// are read.
+///
+/// The sender echoes each record and stops reading when its echoes have
+/// nowhere to go, so the receiver must never block writing records while
+/// echoes are unread. Every echo of the previous batch has been read before a
+/// batch starts, which means the sender has consumed all earlier records and
+/// the buffer in its direction is empty, bar that `NDX_DONE`. A batch that
+/// fits the smallest buffer therefore goes out whole whether or not the
+/// sender is reading, and the receiver is back at its read before the sender
+/// can be left waiting. A single record larger than the budget is a batch of
+/// its own: the sender has no echoes outstanding then, so it is reading.
+///
+/// The cost is one round trip for each budget's worth of records, which
+/// rsync does not pay: its generator writes while its receiver reads. Sending
+/// each record as its link is made, inside the request and reply flow,
+/// removes both the burst and the round trips.
+const FOLLOWER_RECORD_BUDGET: usize = SMALLEST_TRANSPORT_BUFFER - PENDING_NDX_DONE;
+
+/// The most a follower record takes on the wire besides the leader's name: a
+/// five-byte index (io.c:write_ndx()), the two-byte item flags, a two-byte
+/// name length (io.c:write_vstring()) and, should the writer end a frame
+/// after it, a four-byte multiplex header.
+const MAX_RECORD_OVERHEAD: usize = 13;
+
 impl ReceiverContext {
     /// Returns whether itemize-changes output should be produced for this
     /// transfer.
@@ -27,17 +76,18 @@ impl ReceiverContext {
         self.config.flags.info_flags.itemize || self.collect_out_format_events()
     }
 
-    /// Returns whether this receiver itemizes every entry to a pushing
-    /// client's sender, whatever output the client asked for.
+    /// Returns whether this receiver itemizes every entry to the peer's
+    /// sender, whatever output the client asked for.
     ///
     /// upstream: generator.c:2809-2810 - at protocol >= 29 the generator sets
-    /// `itemizing = 1` unconditionally, so each significant entry's `NDX +
-    /// iflags` reaches the sender, which prints it under `-v` as well as `-i`
-    /// (sender.c:292 maybe_log_item()). Only the wire half applies here; a
-    /// client-mode receiver prints its own rows.
+    /// `itemizing = 1` unconditionally, on a client as on a server, so each
+    /// significant entry's `NDX + iflags` reaches the sender. A pushing
+    /// client's sender prints it under `-v` as well as `-i` (sender.c:292
+    /// maybe_log_item()); a server's sender logs it. Only the wire half
+    /// applies here; a client-mode receiver also prints its own rows.
     #[must_use]
     pub(in crate::receiver) const fn forwards_itemize_to_sender(&self) -> bool {
-        !self.config.connection.client_mode && self.protocol.supports_iflags()
+        self.protocol.supports_iflags()
     }
 
     /// Tallies one received file-list entry into the `--stats` counters.
@@ -946,20 +996,18 @@ impl ReceiverContext {
         self.emit_itemize(writer, iflags, entry, xname)
     }
 
-    /// Emits over-the-wire itemize records for every hardlink follower so a
-    /// pushing client's sender renders the `hf...` / `=> leader` row.
+    /// Emits over-the-wire itemize records for every hardlink follower so the
+    /// peer's sender renders or logs the `hf...` / `=> leader` row.
     ///
     /// A hardlink follower is never sent for transfer, so it produces no
     /// `NDX + iflags` request in the per-file loop. Upstream instead itemizes
     /// each follower from `finish_hard_link()` -> `maybe_hard_link()`, which
     /// writes `NDX + write_shortint(iflags) + write_vstring(xname)` to
     /// `sock_f_out`; the peer's sender reads those attrs and logs the row
-    /// (`sender.c:296` `maybe_log_item`). Without this a server-mode receiver
-    /// (the remote end of a push) drops every follower row, because
-    /// [`emit_itemize`](Self::emit_itemize) is a no-op off the client.
-    ///
-    /// This is the server-only counterpart of the client-mode follower rows that
-    /// `create_hardlinks` renders locally, so a pull is left untouched. The
+    /// (`sender.c:296` `maybe_log_item`). Without this the peer never learns
+    /// of a follower: [`emit_itemize`](Self::emit_itemize) is a no-op off the
+    /// client, and the rows `create_hardlinks` renders on a client are local
+    /// output only. The
     /// `iflags` mirror `maybe_hard_link()`'s `ITEM_LOCAL_CHANGE |
     /// ITEM_XNAME_FOLLOWS`, plus `ITEM_IS_NEW` for the new-follower case, and the
     /// xname carries the leader's transfer-relative name the peer renders after
@@ -980,27 +1028,28 @@ impl ReceiverContext {
     ///   `write_shortint(iflags)`, then `write_vstring(xname)`.
     /// - `hlink.c:224-251` - `maybe_hard_link()` itemizes each follower with
     ///   `ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS`, passing the leader realname.
-    pub(in crate::receiver) fn emit_server_hardlink_follower_itemize<W>(
+    ///
+    /// Writes one batch of at most [`FOLLOWER_RECORD_BUDGET`] bytes and
+    /// returns the index to resume from, `range.end` once every follower in
+    /// `range` is done. The caller reads the echoes of one call before it
+    /// makes the next; writing a long list's records in one go leaves both
+    /// sides blocked, each on a buffer the other has stopped reading.
+    pub(in crate::receiver) fn emit_hardlink_follower_itemize<W>(
         &self,
         writer: &mut W,
         ndx_codec: &mut protocol::codec::NdxCodecEnum,
+        leaders: &HardlinkLeaders,
         range: std::ops::Range<usize>,
         dest_dir: &std::path::Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
-    ) -> std::io::Result<()>
+    ) -> std::io::Result<usize>
     where
         W: std::io::Write + ?Sized,
     {
         use protocol::codec::NdxCodec;
-
-        // Client-mode (pull) receivers render follower rows locally in
-        // create_hardlinks; only a server-mode (push) receiver forwards them over
-        // the wire. Pre-iflags protocols (< 29) carry no itemize attrs.
-        if self.config.connection.client_mode
-            || !self.config.flags.hard_links
-            || !self.protocol.supports_iflags()
-        {
-            return Ok(());
+        // Pre-iflags protocols (< 29) carry no itemize attrs.
+        if !self.config.flags.hard_links || !self.protocol.supports_iflags() {
+            return Ok(range.end);
         }
 
         // The dev/ino up-to-date check is Unix-only; on other platforms every
@@ -1008,20 +1057,9 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         let _ = dest_dir;
 
-        // Leader group index -> leader entry, so each follower can name its
-        // leader in the xname the peer renders after "=>" and so its destination
-        // path is known for the up-to-date dev/ino check below.
-        let mut leaders: std::collections::HashMap<u32, &protocol::flist::FileEntry> =
-            std::collections::HashMap::new();
-        for entry in &self.file_list {
-            if entry.hlink_first()
-                && let Some(gnum) = entry.hardlink_idx()
-            {
-                leaders.entry(gnum).or_insert(entry);
-            }
-        }
-
         let mut emitted = 0usize;
+        let mut written = 0usize;
+        let mut resume = range.end;
         for flat_idx in range {
             let Some(entry) = self.file_list.get(flat_idx) else {
                 continue;
@@ -1032,7 +1070,13 @@ impl ReceiverContext {
             let Some(gnum) = entry.hardlink_idx() else {
                 continue;
             };
-            let Some(leader) = leaders.get(&gnum).copied() else {
+            // A leader whose segment has been reclaimed no longer carries its
+            // group, and cannot be named.
+            let Some(leader) = leaders
+                .get(&gnum)
+                .and_then(|&idx| self.file_list.get(idx))
+                .filter(|leader| leader.hlink_first() && leader.hardlink_idx() == Some(gnum))
+            else {
                 continue;
             };
             let leader_name = leader.name_bytes();
@@ -1050,6 +1094,11 @@ impl ReceiverContext {
                 continue;
             }
 
+            let cost = MAX_RECORD_OVERHEAD + leader_name.len();
+            if emitted > 0 && written + cost > FOLLOWER_RECORD_BUDGET {
+                resume = flat_idx;
+                break;
+            }
             let ndx = self.flat_to_wire_ndx(flat_idx);
             ndx_codec.write_ndx(writer, ndx)?;
             // upstream: generator.c:630 write_shortint(sock_f_out, iflags)
@@ -1060,6 +1109,7 @@ impl ReceiverContext {
             // upstream: generator.c:634 write_vstring(sock_f_out, xname, len)
             protocol::write_vstring(writer, &leader_name)?;
             emitted += 1;
+            written += cost;
         }
 
         if emitted > 0 {
@@ -1074,17 +1124,45 @@ impl ReceiverContext {
             self.hardlink_follower_echoes
                 .set(self.hardlink_follower_echoes.get() + emitted);
         }
-        Ok(())
+        Ok(resume)
     }
 
-    /// Flushes any remaining `server_no_transfer_itemize` rows directly to
+    /// Maps each hard-link group to the flat index of its leader, the member
+    /// a follower's record names after `=>`.
+    ///
+    /// Only the entries received since the last call are scanned.
+    pub(in crate::receiver) fn hardlink_leaders(&self) -> std::cell::Ref<'_, HardlinkLeaders> {
+        {
+            let mut index = self.hardlink_leader_index.borrow_mut();
+            let HardlinkLeaderIndex {
+                scanned,
+                visits,
+                leaders,
+            } = &mut *index;
+            if self.config.flags.hard_links {
+                for idx in *scanned..self.file_list.len() {
+                    *visits += 1;
+                    let entry = &self.file_list[idx];
+                    if entry.hlink_first()
+                        && let Some(gnum) = entry.hardlink_idx()
+                    {
+                        leaders.entry(gnum).or_insert(idx);
+                    }
+                }
+                *scanned = self.file_list.len();
+            }
+        }
+        std::cell::Ref::map(self.hardlink_leader_index.borrow(), |index| &index.leaders)
+    }
+
+    /// Flushes any remaining `no_transfer_itemize` rows directly to
     /// `writer` using `ndx_codec` and records their count in
     /// `hardlink_follower_echoes` so `exchange_phase_done` drains the sender's
     /// echoes before reading `NDX_DONE`.
     ///
     /// Used after deferred `--delay-symlinks` creation, which runs after the
     /// candidate feed has already closed.
-    pub(in crate::receiver) fn flush_server_no_transfer_itemize<W>(
+    pub(in crate::receiver) fn flush_no_transfer_itemize<W>(
         &self,
         writer: &mut W,
         ndx_codec: &mut protocol::codec::NdxCodecEnum,
@@ -1094,10 +1172,10 @@ impl ReceiverContext {
     {
         use protocol::codec::NdxCodec;
 
-        if self.config.connection.client_mode || !self.protocol.supports_iflags() {
+        if !self.protocol.supports_iflags() {
             return Ok(());
         }
-        let rows = std::mem::take(&mut *self.server_no_transfer_itemize.borrow_mut());
+        let rows = std::mem::take(&mut *self.no_transfer_itemize.borrow_mut());
         if rows.is_empty() {
             return Ok(());
         }
@@ -1145,14 +1223,16 @@ impl ReceiverContext {
         follower_meta.dev() == leader_meta.dev() && follower_meta.ino() == leader_meta.ino()
     }
 
-    /// Records a metadata-only itemize record a server-mode receiver must
-    /// forward over the wire, so the pushing client's sender prints the row.
+    /// Records a no-transfer itemize record the receiver must send over the
+    /// wire, so the peer's sender prints or logs the row.
     ///
     /// Mirrors the wire half of upstream's `itemize()`: at protocol >= 29 the
     /// generator writes `NDX + write_shortint(iflags)` for a quick-check-matched
-    /// file whose attributes still differ, and the peer's sender - not this
-    /// process - renders the client-visible row. A client-mode receiver (a
-    /// pull) prints locally instead and records nothing here.
+    /// file whose attributes still differ, for a directory, a symlink or a
+    /// special file, in either role. On a push the client's sender renders the
+    /// client-visible row from it; on a pull the server's sender logs it and
+    /// echoes it into a `--write-batch` stream, while the client-mode receiver
+    /// prints its own row separately.
     ///
     /// The framing bits (`ITEM_BASIS_TYPE_FOLLOWS`, `ITEM_XNAME_FOLLOWS`) and
     /// `ITEM_REPORT_XATTR` are stripped: a no-change record carries no basis
@@ -1169,12 +1249,8 @@ impl ReceiverContext {
     ///
     /// - `generator.c:588-599` - `itemize()` wire emission and its gate
     /// - `sender.c:295-297` - the sender logs the row and echoes the attrs
-    pub(in crate::receiver) fn record_server_no_transfer_itemize(
-        &self,
-        flist_idx: usize,
-        iflags: u32,
-    ) {
-        if self.config.connection.client_mode || !self.protocol.supports_iflags() {
+    pub(in crate::receiver) fn record_no_transfer_itemize(&self, flist_idx: usize, iflags: u32) {
+        if !self.protocol.supports_iflags() {
             return;
         }
         const STRIPPED: u32 = crate::generator::ItemFlags::ITEM_REPORT_XATTR
@@ -1192,19 +1268,16 @@ impl ReceiverContext {
         if self.defer_dir_row(flist_idx, u32::from(wire)) {
             return;
         }
-        self.server_no_transfer_itemize
+        self.no_transfer_itemize
             .borrow_mut()
             .push((flist_idx, wire));
     }
 
-    /// Whether this receiver holds directory rows back for their own sub-list:
-    /// a server receiver (its rows are wire records the client's sender prints)
-    /// under INC_RECURSE.
+    /// Whether this receiver holds directory wire records back for their own
+    /// sub-list, which it does under INC_RECURSE in either role.
     fn defers_dir_rows(&self) -> bool {
-        !self.config.connection.client_mode
-            && self
-                .compat_flags
-                .is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE))
+        self.compat_flags
+            .is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE))
     }
 
     /// Holds the row of the directory at `flist_idx` until its sub-list is
@@ -1295,7 +1368,7 @@ impl ReceiverContext {
             .map_or((flist_idx, true), |&(start, _, _)| (start, false))
     }
 
-    /// Puts a server receiver's dry-run plan for `segments` into generator walk
+    /// Puts a receiver's dry-run plan for `segments` into generator walk
     /// order: each directory row is held for its own sub-list and every
     /// sub-list head of `segments` is released ahead of that sub-list.
     pub(in crate::receiver) fn order_plan_for_walk(
