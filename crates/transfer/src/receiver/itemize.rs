@@ -30,6 +30,7 @@ pub(in crate::receiver) struct FreeNames {
 
 impl FreeNames {
     /// Adds `idx` to the set.
+    #[cfg(unix)]
     pub(in crate::receiver) fn insert(&mut self, idx: usize) {
         let word = idx / 64;
         if word >= self.bits.len() {
@@ -46,7 +47,7 @@ impl FreeNames {
     }
 
     /// How many indices the set holds.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(in crate::receiver) fn len(&self) -> usize {
         self.bits
             .iter()
