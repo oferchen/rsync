@@ -846,6 +846,56 @@ impl ReceiverContext {
         None
     }
 
+    /// Links `link_path` to its group's recorded leader and returns the
+    /// leader's path, for the usual follower: a name that does not exist yet
+    /// beside a leader that does. One stat of the name and the link itself
+    /// replace the stat of the leader, the parent lookup and the link.
+    ///
+    /// `None` when no leader is recorded, when the name is the leader itself
+    /// or already exists, or when the link fails for any reason - the leader
+    /// or the parent directory is missing, the filesystem refuses. The caller
+    /// then takes the checked path, which stats both ends, makes way, creates
+    /// the parent and reports, exactly as it does without this attempt. A
+    /// link that succeeds needed none of those answers.
+    ///
+    /// upstream: hlink.c:214-253 maybe_hard_link() - the same end state as
+    /// its stat-then-link for a missing name.
+    fn link_to_recorded_leader(
+        tracker: &engine::HardlinkApplyTracker,
+        gnum: u32,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        relative_path: &Path,
+        link_path: &Path,
+    ) -> Option<PathBuf> {
+        let leader = tracker.leader_path(gnum)?;
+        if leader == link_path {
+            return None;
+        }
+        #[cfg(unix)]
+        let name_taken =
+            fast_io::lstat_via_sandbox_or_fallback(sandbox, dest_dir, relative_path, link_path);
+        #[cfg(not(unix))]
+        let name_taken = std::fs::symlink_metadata(link_path);
+        if !matches!(name_taken, Err(ref e) if e.kind() == std::io::ErrorKind::NotFound) {
+            return None;
+        }
+        #[cfg(unix)]
+        let linked = fast_io::linkat_via_sandbox_or_fallback(
+            sandbox,
+            leader,
+            dest_dir,
+            relative_path,
+            link_path,
+        );
+        #[cfg(not(unix))]
+        let linked = {
+            let _ = (dest_dir, relative_path);
+            fast_io::hard_link(leader, link_path)
+        };
+        linked.ok().map(|()| leader.to_path_buf())
+    }
+
     /// Creates hard links for hardlink follower entries after the leader has been transferred.
     ///
     /// Hardlinked files are grouped by a shared `hardlink_idx`. The first file in
@@ -1038,14 +1088,29 @@ impl ReceiverContext {
                 };
 
                 let entry_name = entry.path().display().to_string();
-                let leader_path = match Self::promote_hardlink_leader(
-                    &self.file_list[..range.end],
-                    &mut tracker,
+                let relative_path = entry.path();
+                let link_path = dest_dir.join(relative_path);
+                let linked_at_once = Self::link_to_recorded_leader(
+                    &tracker,
                     leader_idx,
                     dest_dir,
                     #[cfg(unix)]
                     sandbox,
-                ) {
+                    relative_path,
+                    &link_path,
+                );
+                let promoted = match linked_at_once.clone() {
+                    Some(leader) => Some(leader),
+                    None => Self::promote_hardlink_leader(
+                        &self.file_list[..range.end],
+                        &mut tracker,
+                        leader_idx,
+                        dest_dir,
+                        #[cfg(unix)]
+                        sandbox,
+                    ),
+                };
+                let leader_path = match promoted {
                     Some(p) => p,
                     None => {
                         // upstream: hlink.c:320-331 - when every prior member of
@@ -1080,118 +1145,118 @@ impl ReceiverContext {
                     &leader_path.display().to_string(),
                 );
 
-                let relative_path = entry.path();
-                let link_path = dest_dir.join(relative_path);
-
-                // The promoted "virtual first" (hlink.c:313-324) can be this
-                // very follower when its own file is the only group member that
-                // materialized on disk. There is nothing to link a file to
-                // itself, and removing it to re-link would destroy the group's
-                // sole copy. The Unix quick-check below catches this via a
-                // dev/ino match, but Windows metadata exposes no inode, so guard
-                // the self-link case explicitly on every platform.
-                if link_path == leader_path {
-                    continue;
-                }
-
-                // Quick-check: if destination already hard-links to the leader, skip.
-                //
-                // The `link_path` stat goes through the sandbox
-                // dirfd via `fstatat(AT_SYMLINK_NOFOLLOW)` when the
-                // sandbox is plumbed and the relative path is a single
-                // component. The `leader_path` is owned by the receiver-
-                // managed `HardlinkApplyTracker` (it may live under a
-                // different parent than `dest_dir` for cross-segment
-                // hardlinks) and stays on the path-based stat for now.
-                #[cfg(unix)]
-                let link_meta_outcome = fast_io::lstat_via_sandbox_or_fallback(
-                    sandbox,
-                    dest_dir,
-                    relative_path,
-                    &link_path,
-                );
-                #[cfg(not(unix))]
-                let link_meta_outcome = fs::symlink_metadata(&link_path);
-                if let Ok(link_meta) = link_meta_outcome {
-                    #[cfg(unix)]
-                    let leader_meta_outcome =
-                        super::dest_lstat(sandbox, dest_dir, &leader_path, false);
-                    #[cfg(not(unix))]
-                    let leader_meta_outcome = fs::symlink_metadata(&leader_path);
-                    if let Ok(leader_meta) = leader_meta_outcome {
-                        #[cfg(unix)]
-                        {
-                            if link_meta.dev() == leader_meta.dev()
-                                && link_meta.ino() == leader_meta.ino()
-                            {
-                                // upstream: hlink.c:232-236 - an up-to-date
-                                // hardlink follower itemizes with
-                                // ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS and an
-                                // empty xname. log.c:739-740 renders column 0 as
-                                // 'h' (LOCAL_CHANGE + XNAME_FOLLOWS), and the
-                                // empty xname suppresses the ` => ` suffix
-                                // (log.c:676 / itemize.rs:192 gate on a
-                                // non-empty name).
-                                let iflags = ItemFlags::from_raw(
-                                    ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_XNAME_FOLLOWS,
-                                );
-                                let _ = self.emit_itemize_indexed(
-                                    writer,
-                                    follower_ndx,
-                                    &iflags,
-                                    entry,
-                                    None,
-                                );
-                                // upstream: hlink.c:237-238 - "%s is uptodate"
-                                // emitted at INFO_GTE(NAME, 2) when the
-                                // destination already hard-links to the leader.
-                                info_log!(Name, 2, "{} is uptodate", relative_path.display());
-                                continue;
-                            }
-                        }
-                        #[cfg(not(unix))]
-                        {
-                            let _ = (&link_meta, leader_meta);
-                        }
-                    }
-                    // upstream: hlink.c:244 maybe_hard_link() -> generator.c:2512-2526
-                    // atomic_create(..., DEL_FOR_FILE) - one decision for the
-                    // obstacle: rmdir a directory, back up or unlink anything
-                    // else. The refusal is reported inside.
-                    //
-                    // DEVIATION: for a populated directory, 3.5.1 prints
-                    // delete.c:178-181 "cannot delete non-empty directory" and
-                    // delete.c:273-286 "could not make way for new regular
-                    // file", then hangs (measured). oc reports the same two
-                    // lines and skips the follower, ending the run with 23.
-                    #[cfg(unix)]
-                    let cleared = self.make_way_for_replacement(
-                        writer,
-                        &link_path,
-                        relative_path,
-                        dest_dir,
-                        sandbox,
-                        MakeWayFor::File,
-                    );
-                    #[cfg(not(unix))]
-                    let cleared = self.make_way_for_replacement(
-                        writer,
-                        &link_path,
-                        relative_path,
-                        dest_dir,
-                        MakeWayFor::File,
-                    );
-                    if cleared.is_err() {
+                if linked_at_once.is_none() {
+                    // The promoted "virtual first" (hlink.c:313-324) can be this
+                    // very follower when its own file is the only group member that
+                    // materialized on disk. There is nothing to link a file to
+                    // itself, and removing it to re-link would destroy the group's
+                    // sole copy. The Unix quick-check below catches this via a
+                    // dev/ino match, but Windows metadata exposes no inode, so guard
+                    // the self-link case explicitly on every platform.
+                    if link_path == leader_path {
                         continue;
                     }
-                }
 
-                // Ensure parent directory exists.
-                if let Some(parent) = link_path.parent() {
+                    // Quick-check: if destination already hard-links to the leader, skip.
+                    //
+                    // The `link_path` stat goes through the sandbox
+                    // dirfd via `fstatat(AT_SYMLINK_NOFOLLOW)` when the
+                    // sandbox is plumbed and the relative path is a single
+                    // component. The `leader_path` is owned by the receiver-
+                    // managed `HardlinkApplyTracker` (it may live under a
+                    // different parent than `dest_dir` for cross-segment
+                    // hardlinks) and stays on the path-based stat for now.
                     #[cfg(unix)]
-                    let _ = super::dest_create_dir_all(sandbox, dest_dir, parent);
+                    let link_meta_outcome = fast_io::lstat_via_sandbox_or_fallback(
+                        sandbox,
+                        dest_dir,
+                        relative_path,
+                        &link_path,
+                    );
                     #[cfg(not(unix))]
-                    let _ = fs::create_dir_all(parent);
+                    let link_meta_outcome = fs::symlink_metadata(&link_path);
+                    if let Ok(link_meta) = link_meta_outcome {
+                        #[cfg(unix)]
+                        let leader_meta_outcome =
+                            super::dest_lstat(sandbox, dest_dir, &leader_path, false);
+                        #[cfg(not(unix))]
+                        let leader_meta_outcome = fs::symlink_metadata(&leader_path);
+                        if let Ok(leader_meta) = leader_meta_outcome {
+                            #[cfg(unix)]
+                            {
+                                if link_meta.dev() == leader_meta.dev()
+                                    && link_meta.ino() == leader_meta.ino()
+                                {
+                                    // upstream: hlink.c:232-236 - an up-to-date
+                                    // hardlink follower itemizes with
+                                    // ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS and an
+                                    // empty xname. log.c:739-740 renders column 0 as
+                                    // 'h' (LOCAL_CHANGE + XNAME_FOLLOWS), and the
+                                    // empty xname suppresses the ` => ` suffix
+                                    // (log.c:676 / itemize.rs:192 gate on a
+                                    // non-empty name).
+                                    let iflags = ItemFlags::from_raw(
+                                        ItemFlags::ITEM_LOCAL_CHANGE
+                                            | ItemFlags::ITEM_XNAME_FOLLOWS,
+                                    );
+                                    let _ = self.emit_itemize_indexed(
+                                        writer,
+                                        follower_ndx,
+                                        &iflags,
+                                        entry,
+                                        None,
+                                    );
+                                    // upstream: hlink.c:237-238 - "%s is uptodate"
+                                    // emitted at INFO_GTE(NAME, 2) when the
+                                    // destination already hard-links to the leader.
+                                    info_log!(Name, 2, "{} is uptodate", relative_path.display());
+                                    continue;
+                                }
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                let _ = (&link_meta, leader_meta);
+                            }
+                        }
+                        // upstream: hlink.c:244 maybe_hard_link() -> generator.c:2512-2526
+                        // atomic_create(..., DEL_FOR_FILE) - one decision for the
+                        // obstacle: rmdir a directory, back up or unlink anything
+                        // else. The refusal is reported inside.
+                        //
+                        // DEVIATION: for a populated directory, 3.5.1 prints
+                        // delete.c:178-181 "cannot delete non-empty directory" and
+                        // delete.c:273-286 "could not make way for new regular
+                        // file", then hangs (measured). oc reports the same two
+                        // lines and skips the follower, ending the run with 23.
+                        #[cfg(unix)]
+                        let cleared = self.make_way_for_replacement(
+                            writer,
+                            &link_path,
+                            relative_path,
+                            dest_dir,
+                            sandbox,
+                            MakeWayFor::File,
+                        );
+                        #[cfg(not(unix))]
+                        let cleared = self.make_way_for_replacement(
+                            writer,
+                            &link_path,
+                            relative_path,
+                            dest_dir,
+                            MakeWayFor::File,
+                        );
+                        if cleared.is_err() {
+                            continue;
+                        }
+                    }
+
+                    // Ensure parent directory exists.
+                    if let Some(parent) = link_path.parent() {
+                        #[cfg(unix)]
+                        let _ = super::dest_create_dir_all(sandbox, dest_dir, parent);
+                        #[cfg(not(unix))]
+                        let _ = fs::create_dir_all(parent);
+                    }
                 }
 
                 // upstream: hlink.c:maybe_hard_link() -> atomic_create() -> do_link()
@@ -1208,15 +1273,23 @@ impl ReceiverContext {
                 // `EXDEV` / `EPERM` error semantics. Windows stays on
                 // the path-based fallback.
                 #[cfg(unix)]
-                let link_result = fast_io::linkat_via_sandbox_or_fallback(
-                    sandbox,
-                    &leader_path,
-                    dest_dir,
-                    relative_path,
-                    &link_path,
-                );
+                let link_result = if linked_at_once.is_some() {
+                    Ok(())
+                } else {
+                    fast_io::linkat_via_sandbox_or_fallback(
+                        sandbox,
+                        &leader_path,
+                        dest_dir,
+                        relative_path,
+                        &link_path,
+                    )
+                };
                 #[cfg(not(unix))]
-                let link_result = fast_io::hard_link(&leader_path, &link_path);
+                let link_result = if linked_at_once.is_some() {
+                    Ok(())
+                } else {
+                    fast_io::hard_link(&leader_path, &link_path)
+                };
                 if let Err(e) = link_result {
                     // upstream: hlink.c:492-502 hard_link_one() -
                     // rsyserr(FERROR_XFER, errno, "link %s => %s failed",
@@ -1404,6 +1477,76 @@ fn create_windows_symlink(target: &Path, link_path: &Path) -> std::io::Result<()
 #[cfg(test)]
 mod tests {
     use std::fs;
+
+    /// A follower whose name is free beside a recorded leader is linked at
+    /// once; every other case declines and changes nothing, so the checked
+    /// path still decides those exactly as it did. That split is what lets
+    /// the usual follower skip the leader stat and the parent lookup.
+    #[cfg(unix)]
+    #[test]
+    fn link_to_recorded_leader_takes_only_the_case_that_needs_no_checks() {
+        use std::os::unix::fs::MetadataExt;
+        use std::path::Path;
+
+        use crate::receiver::ReceiverContext;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dest = tmp.path();
+        fs::create_dir(dest.join("d")).unwrap();
+        fs::write(dest.join("d/leader"), b"x").unwrap();
+        let sandbox = fast_io::DirSandbox::open_root(dest).unwrap();
+        let mut tracker = engine::HardlinkApplyTracker::new();
+        let _ = tracker.record_leader(7, dest.join("d/leader"));
+        let _ = tracker.record_leader(9, dest.join("d/gone"));
+        let try_link = |gnum: u32, rel: &str| {
+            ReceiverContext::link_to_recorded_leader(
+                &tracker,
+                gnum,
+                dest,
+                Some(&sandbox),
+                Path::new(rel),
+                &dest.join(rel),
+            )
+        };
+        let leader_ino = fs::metadata(dest.join("d/leader")).unwrap().ino();
+
+        for free in ["d/new", "top"] {
+            assert_eq!(try_link(7, free), Some(dest.join("d/leader")), "{free}");
+            assert_eq!(
+                fs::metadata(dest.join(free)).unwrap().ino(),
+                leader_ino,
+                "{free} is the leader's inode"
+            );
+        }
+
+        fs::write(dest.join("d/taken"), b"other").unwrap();
+        assert_eq!(try_link(7, "d/taken"), None, "an existing name is left");
+        assert_eq!(fs::read(dest.join("d/taken")).unwrap(), b"other");
+
+        std::os::unix::fs::symlink("nowhere", dest.join("d/dangling")).unwrap();
+        assert_eq!(
+            try_link(7, "d/dangling"),
+            None,
+            "a dangling symlink is a name"
+        );
+        assert!(
+            fs::symlink_metadata(dest.join("d/dangling"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+
+        assert_eq!(try_link(7, "d/leader"), None, "the leader itself");
+        assert_eq!(try_link(8, "d/unrecorded"), None, "no recorded leader");
+        assert_eq!(try_link(9, "d/orphan"), None, "the recorded leader is gone");
+        assert_eq!(try_link(7, "absent/x"), None, "the parent is missing");
+        for untouched in ["d/unrecorded", "d/orphan", "absent"] {
+            assert!(
+                fs::symlink_metadata(dest.join(untouched)).is_err(),
+                "{untouched} must not be created"
+            );
+        }
+    }
 
     /// The receiver honours `-J`/`--omit-link-times`: a received symlink's mtime
     /// is preserved only when `--times` is set AND `--omit-link-times` is not.

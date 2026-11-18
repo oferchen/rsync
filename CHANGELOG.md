@@ -248,6 +248,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 ### Performance
 
+- A receiver links a new hard-link name with one stat and the link, without first checking the group's leader and the parent directory again: a pull of 50,000 hard-link groups without incremental recursion 2.09 s to 1.82 s (#8411)
 - Local `--checksum` compares source and destination through the parallel checksum service: same-size pairs of a directory are hashed in one rayon batch, and files of 8 MiB or more as 4 MiB block vectors in parallel; decisions and output are unchanged against rsync 3.5.1 (#8249)
 - A `--checksum` sender hashes the regular files of each file list and INC_RECURSE sub-list in one parallel batch through the same service; each sum is the exact negotiated whole-file digest, and the file-list bytes are unchanged against rsync 3.5.1 (#8312)
 - A sender keeps owner names in its id list instead of on every file entry, looking a name up only when it goes on the wire, as rsync 3.5.1 does (uidlist.c add_uid/add_gid): sender peak RSS on a 1M-file pull drops from 350 MB to 145 MB (3.5.1: 71 MB) with the file-list bytes unchanged (#8359)
