@@ -278,6 +278,10 @@ impl ReceiverContext {
                 self.config.partial_dir.as_deref(),
             );
             for (update, error) in &sweep.failed {
+                // The file never reached its name, so nothing links to it.
+                self.hardlink_verified
+                    .borrow_mut()
+                    .remove(update.file_index);
                 // A diagnostic that cannot be delivered must not abort the
                 // transfer; upstream's rwrite() ignores the write result too.
                 let _ = self.emit_error_xfer_line(
@@ -288,6 +292,9 @@ impl ReceiverContext {
             self.flist_io_error |= sweep.io_error();
             // upstream: receiver.c:730-731 - the confirmation a staged file
             // withheld at commit time goes out only for the renames that landed.
+            for &renamed in &sweep.renamed {
+                self.note_hardlink_verified(renamed);
+            }
             self.send_source_removals(writer, sweep.renamed)?;
         }
 

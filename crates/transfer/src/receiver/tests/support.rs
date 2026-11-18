@@ -142,7 +142,18 @@ pub(super) fn receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContex
     };
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
     ctx.file_list = entries.into();
+    mark_leaders_transferred(&ctx);
     ctx
+}
+
+/// Marks every group's first member as produced by this run, the state a
+/// transfer that committed each of them leaves for the link pass.
+pub(super) fn mark_leaders_transferred(ctx: &ReceiverContext) {
+    for (idx, entry) in ctx.file_list.iter().enumerate() {
+        if entry.hlink_first() {
+            ctx.note_hardlink_verified(idx);
+        }
+    }
 }
 
 /// Helper to create a hardlink leader entry with appropriate flags.

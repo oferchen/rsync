@@ -28,7 +28,7 @@ use crate::receiver::directory::FailedDirectories;
 #[cfg(any(unix, windows))]
 use crate::receiver::directory::obstacle::MakeWayFor;
 use crate::receiver::quick_check::{
-    BasisTrust, dest_mtime_newer, dest_type_matches_source, is_hardlink_follower,
+    BasisTrust, ReferenceOutcome, dest_mtime_newer, dest_type_matches_source, is_hardlink_follower,
     quick_check_matches, try_reference_dest,
 };
 use crate::receiver::stats::{ListOnlyEntry, TransferStats};
@@ -121,6 +121,23 @@ fn dest_blocks_regular_file(meta: &fast_io::EntryMetadata, write_devices: bool) 
 #[cfg(windows)]
 fn dest_blocks_regular_file(meta: &fast_io::EntryMetadata, _write_devices: bool) -> bool {
     !meta.file_type().is_file()
+}
+
+/// What the candidate pass decided for one regular file.
+#[derive(Clone, Copy)]
+enum Decision {
+    /// The file is requested from the sender.
+    Transfer,
+    /// The destination needs no data: the quick check matched, or a
+    /// reference directory supplied the file.
+    UpToDate,
+    /// The file is left alone by a rule that passes a hard-link group on to
+    /// its next member. upstream: generator.c:2585 handle_skipped_hlink().
+    SkippedHardLink,
+    /// An identical `--compare-dest` file stands for it; the name stays absent.
+    LeftInReference,
+    /// The file is left alone for any other reason.
+    Skipped,
 }
 
 impl ReceiverContext {
@@ -271,7 +288,6 @@ impl ReceiverContext {
         let append = self.config.flags.append;
         let has_existence_gate =
             self.config.file_selection.existing_only || self.config.file_selection.ignore_existing;
-        let has_failed_dirs = failed_dirs.is_some();
         let verbose_client = self.config.flags.verbose && self.config.connection.client_mode;
 
         let candidates: Vec<(usize, &FileEntry)> = self.file_list[range.clone()]
@@ -279,41 +295,21 @@ impl ReceiverContext {
             .enumerate()
             .map(|(i, e)| (range.start + i, e))
             .filter(|(_, e)| e.is_file())
-            .filter(|(_, e)| !is_hardlink_follower(e))
-            // upstream: generator.c:1683-1693 - a file below a directory
-            // --existing skipped returns early and silently, before the daemon
-            // filter check; it is neither refused nor counted.
-            .filter(|(_, e)| !failed_dirs.is_some_and(|fd| fd.is_missing_or_below(e.path())))
-            .filter(|(_, e)| {
-                // upstream: generator.c:1699-1713 - check_filter(&daemon_filter_list, ...)
-                // rejects daemon-excluded files before accepting transfer data.
-                // The refusal is never silent: generator.c:1670-1672 reports
-                // `ERROR: daemon refused to receive file "%s"` as FERROR_XFER,
-                // which a server receiver forwards to the pushing client rather
-                // than writing to the daemon's own stderr. Dropping the file
-                // without that frame would let a push of module-excluded files
-                // exit 0 with no diagnostic at all.
-                if self.daemon_refuses_non_dir(daemon_filters.as_mut(), writer, e) {
-                    stats.files_skipped += 1;
-                    return false;
-                }
-                if has_failed_dirs {
-                    let fd = failed_dirs.expect("failed_dirs is Some when has_failed_dirs");
-                    if let Some(failed_parent) = fd.failed_ancestor(e.path()) {
-                        if verbose_client {
-                            info_log!(
-                                Skip,
-                                1,
-                                "skipping {} (parent {} failed)",
-                                e.path().display(),
-                                failed_parent.display()
-                            );
-                        }
-                        stats.files_skipped += 1;
-                        return false;
-                    }
-                }
-                true
+            // upstream: hlink.c:313-324 - a follower is decided like any other
+            // file once every earlier member of its group has been skipped.
+            .filter(|&(idx, e)| {
+                !is_hardlink_follower(e) || self.hardlink_follower_stands_in(idx, e)
+            })
+            .filter(|&(idx, e)| {
+                self.admits_candidate(
+                    idx,
+                    e,
+                    failed_dirs,
+                    daemon_filters.as_mut(),
+                    &mut *writer,
+                    &mut *stats,
+                    verbose_client,
+                )
             })
             .collect();
 
@@ -447,243 +443,419 @@ impl ReceiverContext {
         // Pre-size for the expected minority that need transfer.
         let needs_metadata_apply = metadata_opts.requires_apply();
         let mut files_to_transfer = Vec::with_capacity(stat_results.len() / 4 + 1);
-        for (idx, file_path, stat_result) in stat_results {
-            let entry = &self.file_list[idx];
-            // upstream: generator.c:2254-2265 - a stat that failed for any
-            // reason but ENOENT is reported and the file skipped; only a
-            // missing destination proceeds as new.
-            let mut dest_meta = match stat_result {
-                Ok(meta) => Some(meta),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(error) => {
-                    let what = format!(
-                        "recv_generator: failed to stat {}",
-                        self.full_fname_in_dest(dest_dir, &file_path)
-                    );
-                    // upstream: syscall.c:2991-3002 - a confinement refusal
-                    // prints as ELOOP; EXDEV is oc's internal escape signal.
-                    let shown = fast_io::refusal_errno::reported_refusal(&error);
-                    let _ = self.emit_generator_error_xfer(
-                        writer,
-                        &what,
-                        shown.as_ref().unwrap_or(&error),
-                    );
+        let mut pending = stat_results;
+        let mut stood_in = false;
+        while !pending.is_empty() {
+            let mut resweep = false;
+            for (idx, file_path, stat_result) in std::mem::take(&mut pending) {
+                let entry = &self.file_list[idx];
+                let follower = is_hardlink_follower(entry);
+                // An earlier member settled the group while this one waited.
+                if follower && !self.hardlink_follower_stands_in(idx, entry) {
                     continue;
                 }
-            };
-            // upstream: generator.c:1430-1436 - under --fake-super the
-            // generator's link_stat() goes through x_lstat(), which folds the
-            // %stat record in; a record that does not parse is fatal
-            // (xattrs.c:1253-1258).
-            if self.config.fake_super
-                && let Some(meta) = dest_meta.take()
-            {
-                dest_meta = Some(metadata::fold_fake_super_stat(&file_path, meta).map_err(
-                    |error| {
-                        let name = self.full_fname_in_dest(dest_dir, &file_path);
-                        metadata::rename_corrupt_fake_super(error, name)
-                    },
-                )?);
-            }
-            // upstream: generator.c:2908-2913 generate_files() - the per-file
-            // generate loop pokes maybe_send_keepalive once the I/O lull has
-            // elapsed so a remote sender's --timeout does not fire while the
-            // generator quick-checks a long run of up-to-date files without
-            // writing any NDX request. A strict no-op unless --timeout is set
-            // (allowed_lull None), keeping the default path wire-identical,
-            // and before the first write: the connection's first poke is the
-            // per-entry check where records are written (receiver::loopchk).
-            let _ = writer.maybe_send_keepalive_once_written();
-            if self.skip_regular_by_existence_gate(
-                writer,
-                entry,
-                dest_dir,
-                &file_path,
-                dest_meta.as_ref(),
-                metadata_opts,
-            ) {
-                continue;
-            }
-            if let Some(ref meta) = dest_meta {
-                // upstream: generator.c:2159-2173 - the max/min-size skip is
-                // tested per file after the `--ignore-existing` "exists" notice
-                // (1798) and before the `--update` "is newer" notice (2138), so
-                // the size notices interleave with the other skip notices in
-                // strict flist order rather than as a separate batch.
-                if has_size_bounds && self.emit_size_bound_skip(writer, entry, min_size, max_size) {
-                    continue;
-                }
-                if update_only
-                    && dest_type_matches_source(&file_path, entry)
-                    && dest_mtime_newer(meta, entry, modify_window)
-                {
-                    // upstream: generator.c:2176 - the `-u` skip is guarded by
-                    // `stype == ftype`, so a newer destination only suppresses
-                    // the transfer when it is the SAME file type as the source.
-                    // A type mismatch (e.g. dest symlink vs source regular file)
-                    // always transfers regardless of mtime.
-                    //
-                    // upstream: generator.c:2178-2179 - `if (INFO_GTE(SKIP, 1))
-                    // rprintf(FINFO, "%s is newer\n", fname)`. Report the skip on
-                    // the same sink as itemize so the ordering matches upstream.
-                    if logging::info_gte(logging::InfoFlag::Skip, 1) {
-                        let name = entry.path().to_string_lossy();
-                        let _ = self.emit_info_line(writer, &format!("{name} is newer\n"));
+                let decision = 'decide: {
+                    // upstream: generator.c:2254-2265 - a stat that failed for any
+                    // reason but ENOENT is reported and the file skipped; only a
+                    // missing destination proceeds as new.
+                    let mut dest_meta = match stat_result {
+                        Ok(meta) => Some(meta),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                        Err(error) => {
+                            let what = format!(
+                                "recv_generator: failed to stat {}",
+                                self.full_fname_in_dest(dest_dir, &file_path)
+                            );
+                            // upstream: syscall.c:2991-3002 - a confinement refusal
+                            // prints as ELOOP; EXDEV is oc's internal escape signal.
+                            let shown = fast_io::refusal_errno::reported_refusal(&error);
+                            let _ = self.emit_generator_error_xfer(
+                                writer,
+                                &what,
+                                shown.as_ref().unwrap_or(&error),
+                            );
+                            break 'decide Decision::Skipped;
+                        }
+                    };
+                    // upstream: generator.c:1430-1436 - under --fake-super the
+                    // generator's link_stat() goes through x_lstat(), which folds the
+                    // %stat record in; a record that does not parse is fatal
+                    // (xattrs.c:1253-1258).
+                    if self.config.fake_super
+                        && let Some(meta) = dest_meta.take()
+                    {
+                        dest_meta = Some(
+                            metadata::fold_fake_super_stat(&file_path, meta).map_err(|error| {
+                                let name = self.full_fname_in_dest(dest_dir, &file_path);
+                                metadata::rename_corrupt_fake_super(error, name)
+                            })?,
+                        );
                     }
-                    continue;
-                }
-                if quick_check_matches(
-                    entry,
-                    &file_path,
-                    meta,
-                    ignore_times,
-                    size_only,
-                    always_checksum,
-                    modify_window,
-                ) {
-                    // upstream: generator.c:2290 - itemize() with iflags=0 for an
-                    // up-to-date file; the attr-comparison may still surface a
-                    // metadata-only row (perms/owner/group differing while
-                    // size+mtime match).
-                    // The `x` column is now part of itemize_existing_flags
-                    // itself (upstream generator.c:609-614), and this call
-                    // still runs before the apply below overwrites the
-                    // destination's xattrs.
-                    let unchanged_iflags =
-                        self.itemize_existing_flags(entry, &file_path, Some(meta), 0);
-                    self.apply_no_change_metadata(
+                    // upstream: generator.c:2908-2913 generate_files() - the per-file
+                    // generate loop pokes maybe_send_keepalive once the I/O lull has
+                    // elapsed so a remote sender's --timeout does not fire while the
+                    // generator quick-checks a long run of up-to-date files without
+                    // writing any NDX request. A strict no-op unless --timeout is set
+                    // (allowed_lull None), keeping the default path wire-identical,
+                    // and before the first write: the connection's first poke is the
+                    // per-entry check where records are written (receiver::loopchk).
+                    let _ = writer.maybe_send_keepalive_once_written();
+                    if self.skip_regular_by_existence_gate(
                         writer,
-                        dest_dir,
-                        idx,
-                        &file_path,
-                        entry,
-                        meta,
-                        metadata_opts,
-                        metadata_errors,
-                        acl_cache,
-                        acl_id_map,
-                        emit_itemize,
-                        unchanged_iflags,
-                        has_acls,
-                        has_xattrs,
-                        needs_metadata_apply,
-                    );
-                    // upstream: generator.c:2295-2299
-                    self.send_generator_success(writer, idx, Settled::InPlace)?;
-                    continue;
-                }
-                // upstream: generator.c:2303 - after a failed quick check,
-                // `--append` leaves a regular destination that is already at
-                // least as long as the source untouched: no data request and
-                // no attribute update.
-                if append && meta.is_file() && append_skips(meta.len(), entry.size()) {
-                    continue;
-                }
-            } else {
-                // upstream: generator.c:1741-1755 - a not-yet-existing file
-                // still hits the max/min-size skip (after the not-creating
-                // check at 1368), so the size notice for an absent file appears
-                // in flist order alongside the other per-file notices.
-                if has_size_bounds && self.emit_size_bound_skip(writer, entry, min_size, max_size) {
-                    continue;
-                }
-                if has_reference_dirs
-                    && try_reference_dest(
                         entry,
                         dest_dir,
-                        &self.config.reference_directories,
-                        ignore_times,
-                        size_only,
-                        always_checksum,
-                        modify_window,
-                        metadata_opts,
-                        metadata_errors,
-                        acl_cache,
-                        acl_id_map,
-                        BasisTrust::for_connection(&self.config.connection),
-                    )
-                {
-                    // upstream: generator.c:2197-2201 - try_dests_reg() == -2
-                    self.send_generator_success(writer, idx, Settled::InPlace)?;
-                    continue;
-                }
-            }
-            // upstream: generator.c:2189-2194 -
-            //   `if (statret == 0 && !(stype == FT_REG || (write_devices && stype == FT_DEVICE))) {
-            //        if (delete_item(fname, sx.st.st_mode, del_opts | DEL_FOR_FILE) != 0)
-            //                goto cleanup;
-            //        statret = -1; stat_errno = ENOENT; }`
-            //
-            // A destination that is not a regular file is REMOVED here, before
-            // the delta is requested. Leaving it standing is not equivalent:
-            // the commit's rename replaces a FIFO or a symlink by accident and
-            // fails outright on a directory, `--backup` never sees the
-            // displaced node, and an inplace or appending write goes THROUGH
-            // the obstacle instead of over it.
-            //
-            // This is `delete_item`'s `DEL_FOR_FILE` arm, so it routes to the
-            // same `make_way_for_replacement` the symlink, FIFO, socket, and
-            // device creators use - one removal, one set of diagnostics. A
-            // refusal is reported inside; skipping the entry here is upstream's
-            // `goto cleanup`.
-            #[cfg(any(unix, windows))]
-            if dest_meta
-                .as_ref()
-                .is_some_and(|meta| dest_blocks_regular_file(meta, self.config.write.write_devices))
-            {
-                if self
-                    .make_way_for_replacement(
-                        writer,
                         &file_path,
-                        entry.path(),
-                        dest_dir,
-                        #[cfg(unix)]
-                        sandbox,
-                        MakeWayFor::File,
-                    )
-                    .is_err()
-                {
-                    continue;
-                }
-                // upstream: generator.c:2192-2193 - `statret = -1; stat_errno =
-                // ENOENT;`. The obstacle is gone, so every decision below sees
-                // an absent destination: ITEM_IS_NEW on the itemize row and a
-                // created-file tally rather than a replacement.
-                dest_meta = None;
-            }
+                        dest_meta.as_ref(),
+                        metadata_opts,
+                    ) {
+                        break 'decide Decision::SkippedHardLink;
+                    }
+                    if let Some(ref meta) = dest_meta {
+                        // upstream: generator.c:2159-2173 - the max/min-size skip is
+                        // tested per file after the `--ignore-existing` "exists" notice
+                        // (1798) and before the `--update` "is newer" notice (2138), so
+                        // the size notices interleave with the other skip notices in
+                        // strict flist order rather than as a separate batch.
+                        if has_size_bounds
+                            && self.emit_size_bound_skip(writer, entry, min_size, max_size)
+                        {
+                            break 'decide Decision::Skipped;
+                        }
+                        if update_only
+                            && dest_type_matches_source(&file_path, entry)
+                            && dest_mtime_newer(meta, entry, modify_window)
+                        {
+                            // upstream: generator.c:2176 - the `-u` skip is guarded by
+                            // `stype == ftype`, so a newer destination only suppresses
+                            // the transfer when it is the SAME file type as the source.
+                            // A type mismatch (e.g. dest symlink vs source regular file)
+                            // always transfers regardless of mtime.
+                            //
+                            // upstream: generator.c:2178-2179 - `if (INFO_GTE(SKIP, 1))
+                            // rprintf(FINFO, "%s is newer\n", fname)`. Report the skip on
+                            // the same sink as itemize so the ordering matches upstream.
+                            if logging::info_gte(logging::InfoFlag::Skip, 1) {
+                                let name = entry.path().to_string_lossy();
+                                let _ = self.emit_info_line(writer, &format!("{name} is newer\n"));
+                            }
+                            break 'decide Decision::SkippedHardLink;
+                        }
+                        if quick_check_matches(
+                            entry,
+                            &file_path,
+                            meta,
+                            ignore_times,
+                            size_only,
+                            always_checksum,
+                            modify_window,
+                        ) {
+                            // upstream: generator.c:2290 - itemize() with iflags=0 for an
+                            // up-to-date file; the attr-comparison may still surface a
+                            // metadata-only row (perms/owner/group differing while
+                            // size+mtime match).
+                            // The `x` column is now part of itemize_existing_flags
+                            // itself (upstream generator.c:609-614), and this call
+                            // still runs before the apply below overwrites the
+                            // destination's xattrs.
+                            let unchanged_iflags =
+                                self.itemize_existing_flags(entry, &file_path, Some(meta), 0);
+                            self.apply_no_change_metadata(
+                                writer,
+                                dest_dir,
+                                idx,
+                                &file_path,
+                                entry,
+                                meta,
+                                metadata_opts,
+                                metadata_errors,
+                                acl_cache,
+                                acl_id_map,
+                                emit_itemize,
+                                unchanged_iflags,
+                                has_acls,
+                                has_xattrs,
+                                needs_metadata_apply,
+                            );
+                            // upstream: generator.c:2295-2299
+                            self.send_generator_success(writer, idx, Settled::InPlace)?;
+                            break 'decide Decision::UpToDate;
+                        }
+                        // upstream: generator.c:2303 - after a failed quick check,
+                        // `--append` leaves a regular destination that is already at
+                        // least as long as the source untouched: no data request and
+                        // no attribute update.
+                        if append && meta.is_file() && append_skips(meta.len(), entry.size()) {
+                            break 'decide Decision::SkippedHardLink;
+                        }
+                    } else {
+                        // upstream: generator.c:1741-1755 - a not-yet-existing file
+                        // still hits the max/min-size skip (after the not-creating
+                        // check at 1368), so the size notice for an absent file appears
+                        // in flist order alongside the other per-file notices.
+                        if has_size_bounds
+                            && self.emit_size_bound_skip(writer, entry, min_size, max_size)
+                        {
+                            break 'decide Decision::Skipped;
+                        }
+                        if has_reference_dirs {
+                            match try_reference_dest(
+                                entry,
+                                dest_dir,
+                                &self.config.reference_directories,
+                                ignore_times,
+                                size_only,
+                                always_checksum,
+                                modify_window,
+                                metadata_opts,
+                                metadata_errors,
+                                acl_cache,
+                                acl_id_map,
+                                BasisTrust::for_connection(&self.config.connection),
+                            ) {
+                                // upstream: generator.c:2197-2201 - try_dests_reg() == -2
+                                ReferenceOutcome::Created => {
+                                    self.send_generator_success(writer, idx, Settled::InPlace)?;
+                                    break 'decide Decision::UpToDate;
+                                }
+                                ReferenceOutcome::LeftInReference => {
+                                    self.send_generator_success(writer, idx, Settled::InPlace)?;
+                                    break 'decide Decision::LeftInReference;
+                                }
+                                ReferenceOutcome::Unmatched => {}
+                            }
+                        }
+                    }
+                    // upstream: generator.c:2189-2194 -
+                    //   `if (statret == 0 && !(stype == FT_REG || (write_devices && stype == FT_DEVICE))) {
+                    //        if (delete_item(fname, sx.st.st_mode, del_opts | DEL_FOR_FILE) != 0)
+                    //                goto cleanup;
+                    //        statret = -1; stat_errno = ENOENT; }`
+                    //
+                    // A destination that is not a regular file is REMOVED here, before
+                    // the delta is requested. Leaving it standing is not equivalent:
+                    // the commit's rename replaces a FIFO or a symlink by accident and
+                    // fails outright on a directory, `--backup` never sees the
+                    // displaced node, and an inplace or appending write goes THROUGH
+                    // the obstacle instead of over it.
+                    //
+                    // This is `delete_item`'s `DEL_FOR_FILE` arm, so it routes to the
+                    // same `make_way_for_replacement` the symlink, FIFO, socket, and
+                    // device creators use - one removal, one set of diagnostics. A
+                    // refusal is reported inside; skipping the entry here is upstream's
+                    // `goto cleanup`.
+                    #[cfg(any(unix, windows))]
+                    if dest_meta.as_ref().is_some_and(|meta| {
+                        dest_blocks_regular_file(meta, self.config.write.write_devices)
+                    }) {
+                        if self
+                            .make_way_for_replacement(
+                                writer,
+                                &file_path,
+                                entry.path(),
+                                dest_dir,
+                                #[cfg(unix)]
+                                sandbox,
+                                MakeWayFor::File,
+                            )
+                            .is_err()
+                        {
+                            break 'decide Decision::Skipped;
+                        }
+                        // upstream: generator.c:2192-2193 - `statret = -1; stat_errno =
+                        // ENOENT;`. The obstacle is gone, so every decision below sees
+                        // an absent destination: ITEM_IS_NEW on the itemize row and a
+                        // created-file tally rather than a replacement.
+                        dest_meta = None;
+                    }
 
-            // upstream: generator.c:558-621 itemize() - compute the base itemize
-            // flags before the data transfer so the row reflects attribute
-            // changes against the pre-transfer destination. A non-existent dest
-            // (statret < 0) is ITEM_IS_NEW; an existing one OR-s the per-attr
-            // report bits onto ITEM_TRANSFER.
-            let base_iflags =
-                self.itemize_existing_flags(entry, &file_path, dest_meta.as_ref(), transfer_seed);
-            if base_iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0 {
-                // upstream: receiver.c:969-970 - a regular file being received
-                // whose destination was absent (ITEM_IS_NEW) bumps
-                // stats.created_files; reg is the implicit remainder of the
-                // "Number of created files" breakdown. Counts a new empty file
-                // too, since it is still requested and materialised.
-                self.record_created(entry.mode());
+                    // upstream: generator.c:558-621 itemize() - compute the base itemize
+                    // flags before the data transfer so the row reflects attribute
+                    // changes against the pre-transfer destination. A non-existent dest
+                    // (statret < 0) is ITEM_IS_NEW; an existing one OR-s the per-attr
+                    // report bits onto ITEM_TRANSFER.
+                    let base_iflags = self.itemize_existing_flags(
+                        entry,
+                        &file_path,
+                        dest_meta.as_ref(),
+                        transfer_seed,
+                    );
+                    if base_iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0 {
+                        // upstream: receiver.c:969-970 - a regular file being received
+                        // whose destination was absent (ITEM_IS_NEW) bumps
+                        // stats.created_files; reg is the implicit remainder of the
+                        // "Number of created files" breakdown. Counts a new empty file
+                        // too, since it is still requested and materialised.
+                        self.record_created(entry.mode());
+                    }
+                    // upstream: generator.c:2419-2431 - the generator emits the transfer
+                    // itemize right after write_ndx(ndx), in flist order. With
+                    // log_before_transfer (`!am_server`, i.e. client mode) the row is
+                    // written to stdout before the data moves, so emit it here in the
+                    // linear candidate pass to preserve the interleaving with the
+                    // skip/unchanged rows. Server-mode receivers defer to the pipeline
+                    // (after the transfer completes) to match `log_before_transfer == 0`.
+                    if emit_itemize && self.config.connection.client_mode {
+                        let iflags = crate::generator::ItemFlags::from_raw(base_iflags);
+                        // Deferred on the run_pipelined path so this transfer row
+                        // interleaves with directory rows in flist-index order at flush
+                        // time; emitted immediately on every other path.
+                        let _ = self.emit_or_record_itemize(writer, idx, &iflags, entry);
+                    }
+                    files_to_transfer.push((idx, file_path, base_iflags));
+                    Decision::Transfer
+                };
+                match decision {
+                    // upstream: generator.c:2585-2606 handle_skipped_hlink() -
+                    // the next member of the group is decided in this one's place.
+                    Decision::SkippedHardLink => {
+                        self.note_hardlink_skipped(idx, entry);
+                        resweep |= entry.hlinked();
+                    }
+                    // upstream: generator.c:2197-2202 - the name stays absent
+                    // without FLAG_SKIP_HLINK, so a later member is decided as
+                    // usual and this one is linked to it.
+                    Decision::LeftInReference => {
+                        self.note_hardlink_deferred(idx, entry);
+                        resweep |= entry.hlinked();
+                    }
+                    Decision::UpToDate => {
+                        self.note_hardlink_verified(idx);
+                        if follower {
+                            self.note_hardlink_follower_decided(idx, entry, true);
+                        }
+                    }
+                    Decision::Transfer | Decision::Skipped if follower => {
+                        let leads = matches!(decision, Decision::Transfer);
+                        self.note_hardlink_follower_decided(idx, entry, leads);
+                    }
+                    Decision::Transfer | Decision::Skipped => {}
+                }
             }
-            // upstream: generator.c:2419-2431 - the generator emits the transfer
-            // itemize right after write_ndx(ndx), in flist order. With
-            // log_before_transfer (`!am_server`, i.e. client mode) the row is
-            // written to stdout before the data moves, so emit it here in the
-            // linear candidate pass to preserve the interleaving with the
-            // skip/unchanged rows. Server-mode receivers defer to the pipeline
-            // (after the transfer completes) to match `log_before_transfer == 0`.
-            if emit_itemize && self.config.connection.client_mode {
-                let iflags = crate::generator::ItemFlags::from_raw(base_iflags);
-                // Deferred on the run_pipelined path so this transfer row
-                // interleaves with directory rows in flist-index order at flush
-                // time; emitted immediately on every other path.
-                let _ = self.emit_or_record_itemize(writer, idx, &iflags, entry);
+            if resweep {
+                pending = self.stat_standing_in_followers(
+                    range.clone(),
+                    writer,
+                    dest_dir,
+                    #[cfg(unix)]
+                    sandbox,
+                    failed_dirs,
+                    daemon_filters.as_mut(),
+                    stats,
+                    verbose_client,
+                );
+                stood_in |= !pending.is_empty();
             }
-            files_to_transfer.push((idx, file_path, base_iflags));
+        }
+        // Requests go out in file-list order.
+        if stood_in {
+            files_to_transfer.sort_unstable_by_key(|candidate| candidate.0);
         }
         Ok(files_to_transfer)
+    }
+
+    /// Applies the checks that drop a regular file before its destination is
+    /// looked at: a directory above it that was skipped or failed, and the
+    /// daemon's filter.
+    #[allow(clippy::too_many_arguments)]
+    fn admits_candidate<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        idx: usize,
+        entry: &FileEntry,
+        failed_dirs: Option<&FailedDirectories>,
+        daemon_filters: Option<&mut crate::receiver::daemon_filter::DaemonFilterGate>,
+        writer: &mut W,
+        stats: &mut TransferStats,
+        verbose_client: bool,
+    ) -> bool {
+        // upstream: generator.c:1685-1695 - a file below a directory
+        // --existing skipped returns early and silently, before the daemon
+        // filter check; it is neither refused nor counted. A hard-linked one
+        // is skipped as such.
+        if failed_dirs.is_some_and(|fd| fd.is_missing_or_below(entry.path())) {
+            self.note_hardlink_skipped(idx, entry);
+            return false;
+        }
+        // upstream: generator.c:1699-1713 - check_filter(&daemon_filter_list, ...)
+        // rejects daemon-excluded files before accepting transfer data.
+        // The refusal is never silent: generator.c:1670-1672 reports
+        // `ERROR: daemon refused to receive file "%s"` as FERROR_XFER,
+        // which a server receiver forwards to the pushing client rather
+        // than writing to the daemon's own stderr. Dropping the file
+        // without that frame would let a push of module-excluded files
+        // exit 0 with no diagnostic at all. A refused hard-linked file is
+        // skipped as such first (generator.c:1703-1706).
+        if self.daemon_refuses_non_dir(daemon_filters, writer, entry) {
+            self.note_hardlink_skipped(idx, entry);
+            stats.files_skipped += 1;
+            return false;
+        }
+        if let Some(failed_parent) = failed_dirs.and_then(|fd| fd.failed_ancestor(entry.path())) {
+            if verbose_client {
+                info_log!(
+                    Skip,
+                    1,
+                    "skipping {} (parent {} failed)",
+                    entry.path().display(),
+                    failed_parent.display()
+                );
+            }
+            stats.files_skipped += 1;
+            if is_hardlink_follower(entry) {
+                self.note_hardlink_follower_decided(idx, entry, false);
+            }
+            return false;
+        }
+        true
+    }
+
+    /// Stats the followers in `range` that now stand in for the skipped
+    /// earlier members of their groups, for the candidate pass to decide.
+    ///
+    /// upstream: generator.c:2585-2606 handle_skipped_hlink() - the generator
+    /// reaches the next member as it walks on; this pass has walked past it.
+    #[allow(clippy::too_many_arguments)]
+    fn stat_standing_in_followers<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        range: std::ops::Range<usize>,
+        writer: &mut W,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        failed_dirs: Option<&FailedDirectories>,
+        mut daemon_filters: Option<&mut crate::receiver::daemon_filter::DaemonFilterGate>,
+        stats: &mut TransferStats,
+        verbose_client: bool,
+    ) -> Vec<(usize, PathBuf, std::io::Result<fast_io::EntryMetadata>)> {
+        let mut standing_in = Vec::new();
+        for idx in range {
+            let entry = &self.file_list[idx];
+            if !entry.is_file()
+                || !is_hardlink_follower(entry)
+                || !self.hardlink_follower_stands_in(idx, entry)
+                || !self.admits_candidate(
+                    idx,
+                    entry,
+                    failed_dirs,
+                    daemon_filters.as_deref_mut(),
+                    writer,
+                    stats,
+                    verbose_client,
+                )
+            {
+                continue;
+            }
+            let file_path = dest_dir.join(entry.path());
+            #[cfg(unix)]
+            let meta = match sandbox {
+                Some(sandbox) => {
+                    super::super::directory::dest_lstat(Some(sandbox), dest_dir, &file_path, true)
+                }
+                None => fs::metadata(&file_path).map(fast_io::EntryMetadata::from),
+            };
+            #[cfg(not(unix))]
+            let meta = fs::metadata(&file_path).map(fast_io::EntryMetadata::from);
+            standing_in.push((idx, file_path, meta));
+        }
+        standing_in
     }
 
     /// Reports a `--dry-run` receive and returns the items whose NDX + iflags

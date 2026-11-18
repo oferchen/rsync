@@ -673,6 +673,18 @@ fn best_reference_match<'a>(
     best
 }
 
+/// What a reference directory did for an entry whose destination is missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ReferenceOutcome {
+    /// No reference file stands for the entry: it is transferred.
+    Unmatched,
+    /// An identical `--compare-dest` file stands for the entry, and the
+    /// destination name stays absent.
+    LeftInReference,
+    /// The entry was linked or copied into the destination.
+    Created,
+}
+
 /// Checks reference directories for a file that matches the source entry.
 ///
 /// When the destination file does not exist, this function scans all configured
@@ -691,7 +703,8 @@ fn best_reference_match<'a>(
 /// - `--compare-dest`, [`MatchLevel::Content`]: copy the basis file in so the
 ///   destination reflects the source's attributes.
 ///
-/// Returns `true` if the entry was handled and should not be transferred.
+/// Returns what was done for the entry; anything but
+/// [`ReferenceOutcome::Unmatched`] means it is not transferred.
 ///
 /// # Upstream Reference
 ///
@@ -714,9 +727,9 @@ pub(super) fn try_reference_dest(
     acl_cache: Option<&LiveAclCache>,
     acl_id_map: Option<&AclIdMapper>,
     trust: BasisTrust,
-) -> bool {
+) -> ReferenceOutcome {
     if reference_directories.is_empty() {
-        return false;
+        return ReferenceOutcome::Unmatched;
     }
 
     let relative_path = entry.path();
@@ -731,11 +744,11 @@ pub(super) fn try_reference_dest(
         metadata_opts,
         trust,
     ) else {
-        return false;
+        return ReferenceOutcome::Unmatched;
     };
 
     let dest_path = dest_dir.join(relative_path);
-    match best.ref_dir.kind {
+    let created = match best.ref_dir.kind {
         ReferenceDirectoryKind::Compare => {
             // upstream: generator.c:1186-1192 - a COMPARE_DEST match at level 3 is
             // already correct, so the file finishes with no local copy and the
@@ -743,7 +756,7 @@ pub(super) fn try_reference_dest(
             // through to copy_altdest_file so the destination reflects the
             // source's attributes.
             if best.level == MatchLevel::Exact {
-                true
+                return ReferenceOutcome::LeftInReference;
             } else {
                 copy_reference_file(
                     entry,
@@ -798,6 +811,11 @@ pub(super) fn try_reference_dest(
                 acl_id_map,
             )
         }
+    };
+    if created {
+        ReferenceOutcome::Created
+    } else {
+        ReferenceOutcome::Unmatched
     }
 }
 
@@ -1276,7 +1294,7 @@ mod info_copy_emission_tests {
             None,
             None,
             BasisTrust::LocalReceiver,
-        );
+        ) != crate::receiver::quick_check::ReferenceOutcome::Unmatched;
 
         // Restore writable permissions so tempdir cleanup succeeds.
         let mut restore = fs::metadata(&dest_dir).expect("dest meta").permissions();
@@ -1440,7 +1458,7 @@ mod symlink_basis_tests {
             None,
             None,
             BasisTrust::LocalReceiver,
-        )
+        ) != crate::receiver::quick_check::ReferenceOutcome::Unmatched
     }
 
     /// A basis-dir symlink must NOT match. Upstream returns `-1` from
@@ -1687,7 +1705,7 @@ mod daemon_module_confined_basis_tests {
             None,
             None,
             trust,
-        )
+        ) != crate::receiver::quick_check::ReferenceOutcome::Unmatched
     }
 
     /// THE FIX: a non-chrooted daemon receiver must not reach a basis whose
@@ -2183,7 +2201,7 @@ mod alt_dest_match_level_tests {
             None,
             None,
             BasisTrust::LocalReceiver,
-        )
+        ) != crate::receiver::quick_check::ReferenceOutcome::Unmatched
     }
 
     fn nlink(path: &Path) -> u64 {
@@ -2310,7 +2328,7 @@ mod alt_dest_match_level_tests {
             None,
             None,
             BasisTrust::LocalReceiver,
-        );
+        ) != crate::receiver::quick_check::ReferenceOutcome::Unmatched;
 
         assert!(handled, "identical basis must be handled locally");
         assert_eq!(

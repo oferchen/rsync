@@ -451,7 +451,17 @@ pub struct ReceiverContext {
     /// their itemize record was decided. The link pass links those without
     /// stat'ing the name a second time; a link that fails anyway takes the
     /// checked path.
-    pub(in crate::receiver) hardlink_free_names: RefCell<crate::receiver::itemize::FreeNames>,
+    pub(in crate::receiver) hardlink_free_names: RefCell<crate::receiver::itemize::FlatIndexSet>,
+    /// The entries this run produced or verified: the quick check matched,
+    /// the transfer committed, or an alternate directory supplied the file.
+    /// A hard-link group links to such a member only.
+    pub(in crate::receiver) hardlink_verified: RefCell<crate::receiver::itemize::FlatIndexSet>,
+    /// The hard-linked entries the generator skipped, which the link pass
+    /// leaves as they are. upstream: hlink.c:606 `FLAG_SKIP_HLINK`.
+    pub(in crate::receiver) hardlink_skipped: RefCell<crate::receiver::itemize::FlatIndexSet>,
+    /// The hard-link groups whose first member was skipped, by group number.
+    pub(in crate::receiver) hardlink_virtual_first:
+        RefCell<std::collections::HashMap<u32, crate::receiver::itemize::VirtualFirst>>,
     /// The hard-link leaders seen so far, extended as file-list segments
     /// arrive. `RefCell` because the follower records are written behind
     /// `&self`.
@@ -810,6 +820,9 @@ impl ReceiverContext {
             progress_active: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
             hardlink_free_names: RefCell::default(),
+            hardlink_verified: RefCell::default(),
+            hardlink_skipped: RefCell::default(),
+            hardlink_virtual_first: RefCell::default(),
             hardlink_leader_index: RefCell::default(),
             early_sender_ndx_dones: std::cell::Cell::new(0),
             phase_end_writes_sent: std::cell::Cell::new(0),

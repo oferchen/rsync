@@ -49,6 +49,7 @@ fn receiver(entries: Vec<FileEntry>, segment_starts: &[usize]) -> ReceiverContex
     config.file_selection.delete_missing_args = true;
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.file_list = entries.into();
+    super::support::mark_leaders_transferred(&ctx);
     // Flat start of each segment; the wire ndx component is irrelevant here.
     ctx.ndx_segments = segment_starts
         .iter()
