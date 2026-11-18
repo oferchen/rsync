@@ -62,6 +62,20 @@ fn parse_quic_address(value: &str) -> Result<Vec<IpAddr>, String> {
     Ok(addresses)
 }
 
+/// Global parameters upstream reads before a client has selected a module.
+///
+/// upstream: daemon-parm.txt `Globals:` - the `STRING` entries.
+const EARLY_READ_GLOBALS: &[&str] = &[
+    "address",
+    "daemonchroot",
+    "daemongid",
+    "daemonuid",
+    "motdfile",
+    "pidfile",
+    "proxyprotocolhosts",
+    "socketoptions",
+];
+
 /// Applies a single global-section directive, updating `state` accordingly.
 fn apply_global_directive(
     state: &mut GlobalParseState,
@@ -71,6 +85,22 @@ fn apply_global_directive(
     line_number: usize,
     canonical: &Path,
 ) -> Result<(), DaemonError> {
+    if let Some(param) = DeferredParam::from_key(key)
+        && state.defer_module_default(param, value)
+    {
+        return Ok(());
+    }
+    // upstream: loadparm.c:330 RETURN_EXPANDED - a global string is expanded on
+    // its first read, which for these is before any connection variable is
+    // set (clientserver.c:187, :1480-1519, :1594, :1851; socket.c:610), so
+    // only the daemon's own environment can resolve a reference.
+    let expanded;
+    let value = if EARLY_READ_GLOBALS.contains(&key) {
+        expanded = expand_environment_vars(value);
+        expanded.as_str()
+    } else {
+        value
+    };
     match key {
         // upstream: loadparm.c:do_parameter - every P_STRING/P_PATH parameter
         // accepts an empty value and stores "", which each consumer treats as
@@ -188,6 +218,11 @@ fn apply_global_directive(
         // value is stored as "" (loadparm.c string_set) and replaces the
         // DEFAULT_LOCK_FILE default, so a limited module then fails to open it.
         "lockfile" => {
+            // upstream: clientserver.c:795 reads `lp_lock_file(i)` per module,
+            // so a reference is resolved for each connection; the template
+            // travels to every module that sets no `lock file` of its own.
+            state.module_defaults.lock_file_template =
+                has_variable_reference(value).then(|| daemon_parameter_path(value));
             let resolved = daemon_parameter_path(value.trim());
             store_global_directive(&mut state.lock_file, resolved, canonical, line_number);
         }
@@ -346,7 +381,7 @@ fn apply_global_directive(
             state.module_defaults.syslog_tag = Some(value.to_owned());
             store_global_directive(
                 &mut state.syslog_tag,
-                value.to_owned(),
+                expand_environment_vars(value),
                 canonical,
                 line_number,
             );
@@ -526,9 +561,11 @@ fn apply_global_directive(
         // lost - measured against rsync 3.5.1, which writes three of them here.
         "logfile" => {
             if !value.is_empty() {
-                let resolved = daemon_parameter_path(value);
-                state.module_defaults.log_file = Some(resolved.clone());
-                store_global_directive(&mut state.log_file, resolved, canonical, line_number);
+                state.module_defaults.log_file = Some(daemon_parameter_path(value));
+                // upstream: log.c:224 - the startup `log_init(0)` reads the
+                // global value before any connection variable exists.
+                let startup = daemon_parameter_path(&expand_environment_vars(value));
+                store_global_directive(&mut state.log_file, startup, canonical, line_number);
             }
         }
         "hostsallow" => {
@@ -681,7 +718,8 @@ fn apply_global_directive(
         }
         "comment" => {
             if !value.is_empty() {
-                state.module_defaults.comment = Some(value.to_owned());
+                // upstream: clientserver.c:1390 - read only by the listing.
+                state.module_defaults.comment = Some(expand_environment_vars(value));
             }
         }
         "earlyexec" => {

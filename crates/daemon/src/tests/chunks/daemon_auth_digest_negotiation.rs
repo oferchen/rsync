@@ -74,15 +74,16 @@ fn negotiate_protected_module(
 }
 
 /// The digest the daemon negotiated must drive the challenge it sends *and* the
-/// response it accepts. With `md5 sha512` offered, the server takes the client's
-/// first acceptable name - MD5 - not the strongest one.
+/// response it accepts. With `md5 sha512` offered, the server takes SHA-512 -
+/// the name ranked best in its own table - so a client cannot downgrade the
+/// exchange by listing a weak digest first. Measured against rsync 3.5.2, whose
+/// daemon answers this greeting with an 86-character challenge.
 ///
-/// This is the 3.4.x rule (`if (best == 1 || am_server) break;`). 3.5.1's
-/// compat.c:355 dropped `|| am_server`, so an upstream 3.5.1 server keeps walking
-/// to its own best preference. authenticate.c:104 (`gen_challenge()`) and :128
-/// (`generate_hash()`) both hash with `valid_auth_checksums.negotiated_nni`.
+/// upstream: compat.c:334-366 `parse_negotiate_str()` walks the client's list to
+/// the server's own best preference. authenticate.c:97 (`gen_challenge()`) and
+/// :121 (`generate_hash()`) both hash with `valid_auth_checksums.negotiated_nni`.
 #[test]
-fn daemon_auth_uses_the_first_client_offered_digest_it_supports() {
+fn daemon_auth_uses_its_strongest_mutually_supported_digest() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
@@ -96,18 +97,18 @@ fn daemon_auth_uses_the_first_client_offered_digest_it_supports() {
         .strip_prefix("@RSYNCD: AUTHREQD ")
         .unwrap_or_else(|| panic!("expected auth challenge, got: {answer}"));
 
-    // The challenge itself is MD5-sized, proving the negotiated digest - not the
-    // strongest mutually supported one - generated it.
+    // The challenge itself is SHA-512-sized, proving the daemon's strongest
+    // mutual digest - not the client's first name - generated it.
     assert_eq!(
         challenge.len(),
-        DaemonAuthDigest::Md5.base64_len(),
-        "challenge must come from the negotiated MD5, not SHA-512"
+        DaemonAuthDigest::Sha512.base64_len(),
+        "challenge must come from SHA-512, not the client's first-listed MD5"
     );
 
     let response = core::auth::compute_daemon_auth_response(
         b"correctpassword",
         challenge,
-        DaemonAuthDigest::Md5,
+        DaemonAuthDigest::Sha512,
     );
     stream
         .write_all(format!("alice {response}\n").as_bytes())

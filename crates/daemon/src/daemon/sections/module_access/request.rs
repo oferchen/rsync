@@ -706,14 +706,6 @@ fn respond_with_module_request(
         );
     };
 
-    // upstream: clientserver.c:960 `log_init(1)` reopens the daemon log to
-    // `lp_log_file(module_id)` once the module is selected, so every subsequent
-    // diagnostic for this connection lands in the module's `log file`. Keep the
-    // reopened sink alive for the rest of the request; shadow `log_sink` so the
-    // bandwidth-change log, refusal path, and transfer all use it.
-    let module_log_sink = reopen_module_log_sink(module, log_sink);
-    let log_sink = module_log_sink.as_ref().or(log_sink);
-
     let mut hostname_cache: Option<Option<String>> = None;
     // upstream: clientserver.c:1535 resolves the host when `lp_reverse_lookup(-1)`
     // (the global default = `reverse_lookup`) is set, then rsync_module (:768-769)
@@ -724,6 +716,45 @@ fn respond_with_module_request(
         Some(ip) => module_peer_hostname(module, &mut hostname_cache, ip, module_reverse_lookup),
         None => None,
     };
+
+    // upstream: clientserver.c:761/774-775 - RSYNC_MODULE_NAME, RSYNC_HOST_NAME
+    // and RSYNC_HOST_ADDR are set before the access check reads `hosts allow`.
+    let peer_host_addr = peer.to_string();
+    let peer_host_name = peer_host_display(
+        module_peer_host.or(session_peer_host),
+        module_reverse_lookup,
+    );
+    let selected_vars = HookVariables {
+        module_name: Some(&module.name),
+        host_name: Some(peer_host_name),
+        host_addr: Some(&peer_host_addr),
+        ..HookVariables::default()
+    };
+    let selected_module = {
+        let mut definition = module.definition.clone();
+        expand_selected_module_vars(&mut definition, &selected_vars);
+        // upstream: clientserver.c:795 `claim_connection(lp_lock_file(i), ...)`
+        // opens the expanded name, so a `lock file` that names a connection
+        // variable gets a limiter of its own.
+        let limiter = if definition.lock_file == module.definition.lock_file {
+            module.connection_limiter.clone()
+        } else {
+            definition
+                .lock_file
+                .clone()
+                .map(|path| Arc::new(ConnectionLimiter::open(path)))
+        };
+        ModuleRuntime::new(definition, limiter)
+    };
+    let module = &selected_module;
+
+    // upstream: clientserver.c:960 `log_init(1)` reopens the daemon log to
+    // `lp_log_file(module_id)` once the module is selected, so every subsequent
+    // diagnostic for this connection lands in the module's `log file`. Keep the
+    // reopened sink alive for the rest of the request; shadow `log_sink` so the
+    // bandwidth-change log, refusal path, and transfer all use it.
+    let module_log_sink = reopen_module_log_sink(module, log_sink);
+    let log_sink = module_log_sink.as_ref().or(log_sink);
 
     let mut ctx = ModuleRequestContext {
         reader,
@@ -751,5 +782,5 @@ fn respond_with_module_request(
         return handle_module_denied(&mut ctx, module);
     }
 
-    process_approved_module(&mut ctx, module, negotiated_protocol)
+    process_approved_module(&mut ctx, module, &selected_vars, negotiated_protocol)
 }

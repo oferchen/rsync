@@ -266,8 +266,9 @@ mod module_state;
 #[cfg(test)]
 use self::module_state::TEST_CONFIG_CANDIDATES;
 pub(crate) use self::module_state::{
-    AuthUser, ConnectionLimiter, GidSetting, MaxConnections, ModuleConnectionError,
-    ModuleDefinition, ModuleRuntime, PeerHost, UnresolvedId, UserAccessLevel, module_peer_hostname,
+    AuthUser, ConnectionLimiter, DeferredParam, DeferredTemplates, GidSetting, MaxConnections,
+    ModuleConnectionError, ModuleDefinition, ModuleRuntime, PeerHost, UnresolvedId,
+    UserAccessLevel, module_peer_hostname,
 };
 #[cfg(test)]
 pub(crate) use self::module_state::{

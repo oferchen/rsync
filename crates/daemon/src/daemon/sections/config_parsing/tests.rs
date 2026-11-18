@@ -4486,4 +4486,100 @@ mod config_parsing_tests {
             _ => panic!("an empty module lock file must fail to open, not use the global one"),
         }
     }
+
+    /// Measured on rsync 3.5.2 with `MYV=myval` in the daemon's environment:
+    /// `[%MYV%]` lists as `myval`, `comment = ...%MYV%...` lists the value, and
+    /// `pid file = %MYV%.pid` writes `myval.pid` - while every `RSYNC_*` name
+    /// in a comment stays verbatim, because nothing has set it at that read.
+    #[test]
+    fn parameters_read_before_module_selection_expand_from_the_environment() {
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _value = crate::test_env::EnvGuard::set("OC_CFG_VALUE", std::ffi::OsStr::new("myval"));
+        let _name = crate::test_env::EnvGuard::remove("RSYNC_MODULE_NAME");
+        let file = write_config(
+            "pid file = /run/%OC_CFG_VALUE%.pid\n\
+             socket options = %OC_CFG_VALUE%\n\
+             daemon uid = %OC_CFG_VALUE%\n\
+             [%OC_CFG_VALUE%]\n\
+             path = /srv\n\
+             comment = %RSYNC_MODULE_NAME%-%OC_CFG_VALUE%-%%\n",
+        );
+        let parsed = parse_config_modules(file.path()).expect("config parses");
+        assert_eq!(parsed.modules[0].name, "myval");
+        assert_eq!(
+            parsed.modules[0].comment.as_deref(),
+            Some("%RSYNC_MODULE_NAME%-myval-%%")
+        );
+        assert_eq!(
+            parsed.pid_file.map(|(path, _)| path),
+            Some(PathBuf::from("/run/myval.pid"))
+        );
+        assert_eq!(
+            parsed.socket_options.map(|(value, _)| value).as_deref(),
+            Some("myval")
+        );
+        assert_eq!(
+            parsed.daemon_uid.map(|(value, _)| value).as_deref(),
+            Some("myval")
+        );
+    }
+
+    /// A typed parameter whose value names a variable is not parsed while the
+    /// config loads; a module inherits such a value from the global section
+    /// unless it assigns the parameter itself.
+    ///
+    /// upstream: loadparm.c:526-529 delays the expansion of every string, and
+    /// loadparm.c:347 FN_LOCAL_STRING falls back to the global value.
+    #[test]
+    fn typed_parameters_naming_a_variable_wait_for_the_connection() {
+        let file = write_config(
+            "uid = %RSYNC_USER_NAME%\n\
+             hosts allow = %RSYNC_HOST_ADDR%\n\
+             auth users = %RSYNC_MODULE_NAME%\n\
+             secrets file = /etc/secrets\n\
+             [inherits]\n\
+             path = /srv/a\n\
+             [overrides]\n\
+             path = /srv/b\n\
+             uid = 0\n\
+             hosts allow = 10.0.0.0/8\n\
+             gid = %RSYNC_USER_NAME%\n\
+             gid = 0\n",
+        );
+        let parsed = parse_config_modules(file.path()).expect("config parses");
+
+        let mut inherits = parsed.modules[0].clone();
+        assert!(inherits.hosts_allow.is_empty());
+        assert_eq!(inherits.uid, None);
+        assert_eq!(
+            inherits.secrets_file,
+            Some(PathBuf::from("/etc/secrets")),
+            "a deferred `auth users` still inherits the global secrets file"
+        );
+        assert_eq!(
+            inherits.deferred.take(DeferredParam::Uid).as_deref(),
+            Some("%RSYNC_USER_NAME%")
+        );
+        assert_eq!(
+            inherits.deferred.take(DeferredParam::HostsAllow).as_deref(),
+            Some("%RSYNC_HOST_ADDR%")
+        );
+        assert_eq!(
+            inherits.deferred.take(DeferredParam::AuthUsers).as_deref(),
+            Some("%RSYNC_MODULE_NAME%")
+        );
+
+        let mut overrides = parsed.modules[1].clone();
+        assert_eq!(overrides.uid, Some(0));
+        assert_eq!(overrides.hosts_allow.len(), 1);
+        assert_eq!(overrides.deferred.take(DeferredParam::Uid), None);
+        assert_eq!(overrides.deferred.take(DeferredParam::HostsAllow), None);
+        assert_eq!(
+            overrides.deferred.take(DeferredParam::Gid),
+            None,
+            "the later plain `gid` replaces the deferred one"
+        );
+    }
 }
