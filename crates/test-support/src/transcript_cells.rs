@@ -209,21 +209,37 @@ pub fn capture_cell(
     binaries: CellBinaries<'_>,
     src: &Path,
 ) -> Result<WireTranscript, CellError> {
-    let work = crate::create_tempdir();
-    let dest = work.path().join("dest");
-    fs::create_dir(&dest)?;
-    let mut transcript = match cell {
-        NetworkCell::RshPush | NetworkCell::RshPull => {
-            capture_rsh_cell(cell, binaries, src, &dest, work.path())?
-        }
-        NetworkCell::DaemonPush | NetworkCell::DaemonPull => {
-            capture_daemon_cell(cell, binaries.oc_rsync, src, &dest, work.path())?
-        }
-    };
+    let mut transcript = capture_cell_with(cell, binaries, src, &[])?;
     if cell.is_pull() {
         transcript.mask_pull_flist_times()?;
     }
     Ok(transcript)
+}
+
+/// [`capture_cell`] with `extra` client arguments after `-rt` and nothing
+/// masked: the raw bytes of both directions.
+///
+/// # Errors
+///
+/// Returns [`CellError`] when any part of the run fails; a failed transfer
+/// carries the client's stderr.
+pub fn capture_cell_with(
+    cell: NetworkCell,
+    binaries: CellBinaries<'_>,
+    src: &Path,
+    extra: &[&str],
+) -> Result<WireTranscript, CellError> {
+    let work = crate::create_tempdir();
+    let dest = work.path().join("dest");
+    fs::create_dir(&dest)?;
+    match cell {
+        NetworkCell::RshPush | NetworkCell::RshPull => {
+            capture_rsh_cell(cell, binaries, src, &dest, work.path(), extra)
+        }
+        NetworkCell::DaemonPush | NetworkCell::DaemonPull => {
+            capture_daemon_cell(cell, binaries.oc_rsync, src, &dest, work.path(), extra)
+        }
+    }
 }
 
 fn capture_rsh_cell(
@@ -232,10 +248,11 @@ fn capture_rsh_cell(
     src: &Path,
     dest: &Path,
     work: &Path,
+    extra: &[&str],
 ) -> Result<WireTranscript, CellError> {
     let recorder = TranscriptRecorder::new(work);
     let mut cmd = recorder.command(binaries.oc_rsync, binaries.oc_rsync, binaries.capture_rsh);
-    cmd.arg("-rt");
+    cmd.arg("-rt").args(extra);
     if cell == NetworkCell::RshPush {
         cmd.arg(format!("{}/", src.display()))
             .arg(format!("cellhost:{}", dest.display()));
@@ -252,6 +269,7 @@ fn capture_daemon_cell(
     src: &Path,
     dest: &Path,
     work: &Path,
+    extra: &[&str],
 ) -> Result<WireTranscript, CellError> {
     let module_root = if cell == NetworkCell::DaemonPush {
         dest
@@ -274,7 +292,7 @@ fn capture_daemon_cell(
     let url = format!("rsync://127.0.0.1:{}/{MODULE}/", relay.port);
 
     let mut cmd = normalized_client(oc_rsync);
-    cmd.arg("-rt");
+    cmd.arg("-rt").args(extra);
     if cell == NetworkCell::DaemonPush {
         cmd.arg(format!("{}/", src.display())).arg(&url);
     } else {

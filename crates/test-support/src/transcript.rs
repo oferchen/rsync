@@ -168,6 +168,21 @@ impl WireTranscript {
             .collect())
     }
 
+    /// `(code, payload len)` for every frame the server sent after the
+    /// handshake, in order: the frame layout without the payloads.
+    ///
+    /// # Errors
+    ///
+    /// [`TranscriptError::Malformed`] when the seed is missing or a frame does
+    /// not parse.
+    pub fn server_frames(&self) -> Result<Vec<(u8, usize)>, TranscriptError> {
+        Ok(self
+            .server_frame_spans()?
+            .into_iter()
+            .map(|(code, _, len)| (code, len))
+            .collect())
+    }
+
     /// `(code, payload start, payload len)` for every server frame.
     fn server_frame_spans(&self) -> Result<Vec<(u8, usize, usize)>, TranscriptError> {
         let stream = &self.server_to_client;

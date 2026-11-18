@@ -220,6 +220,15 @@ impl<W: Write> ServerWriter<W> {
         }
     }
 
+    /// Starts the keep-alive lull now rather than at "never written"; see
+    /// `MultiplexWriter::measure_lull_from_now`. A plain writer sends no
+    /// keepalives, so there is nothing to start.
+    pub fn measure_lull_from_now(&mut self) {
+        if let Self::Multiplex(mux) = self {
+            mux.measure_lull_from_now();
+        }
+    }
+
     /// Emits a lull keepalive if the configured lull has elapsed with no output.
     ///
     /// Returns `true` when an empty `MSG_DATA` keepalive was written. A no-op

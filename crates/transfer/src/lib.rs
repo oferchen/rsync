@@ -1251,6 +1251,15 @@ fn run_server_on_core(
         // upstream: (io_timeout + 1) / 2, i.e. ceil(io_timeout / 2).
         let allowed_lull = std::time::Duration::from_secs(timeout_secs.div_ceil(2));
         writer.set_allowed_lull(Some(allowed_lull));
+        // upstream: the sender's reads queue a keepalive while nothing has
+        // been written (io.c:933-936 with last_io_out still 0, io.c:113).
+        // The receiving side's lull runs from setup instead; see
+        // MultiplexWriter::measure_lull_from_now.
+        if config.role == ServerRole::Generator {
+            iobuf::Core::keepalive_on_read(&core);
+        } else {
+            writer.measure_lull_from_now();
+        }
     }
 
     if config.connection.client_mode {
