@@ -21,8 +21,8 @@ Windows support is theoretically possible.
 | Ownership - `--numeric-ids` | yes | yes | no | Passthrough (no NSS) | N/A |
 | Timestamps - mtime (nanosecond) | yes | yes | yes | Via `filetime` crate | - |
 | Timestamps - atime | yes | yes | yes | Via `filetime` crate | - |
-| Extended attributes (`-X`) | yes | yes (2) | no | Warning + `Ok(())` | Partial (3) |
-| POSIX ACLs (`-A`) | yes | yes | no | Warning + `Ok(())` | No (4) |
+| Extended attributes (`-X`) | yes | yes (2) | yes, as NTFS alternate data streams (`crates/metadata/src/xattr_windows.rs:202`, `:268`, `:311`) | A build without the `xattr` feature warns once and skips (`crates/metadata/src/xattr_stub.rs`) | - (3) |
+| POSIX ACLs (`-A`) | yes | yes | lossy: NTFS DACL allow entries only (`crates/metadata/src/acl_windows/dacl.rs:182`) | Each dropped entry is named in a per-file warning (`crates/metadata/src/acl_windows/common.rs:56`); a build without the `acl` feature warns once and skips | Partial (4) |
 | NFSv4 ACLs | yes (via xattr) | yes (via xattr) | no | `Ok(None)`/`Ok(())` | Partial (4) |
 | `--fake-super` (xattr-based) | yes | yes | no | `ErrorKind::Unsupported` | No (5) |
 | `--copy-as=USER[:GROUP]` (euid/egid) | yes | yes | no | No-op guard, `Ok(())` | No |
@@ -79,21 +79,23 @@ Notes:
 
 | Feature | Linux | macOS | Windows | Stub Behavior | Windows Feasible? |
 |---------|:-----:|:-----:|:-------:|---------------|:-----------------:|
-| TCP daemon (`--daemon`) | yes | yes | no | Error message + exit 1 | Partial (9) |
+| TCP daemon (`--daemon`) | yes | yes | no | Refused by the CLI with exit 1 (`crates/cli/src/frontend/server/daemon.rs:261`, `:268`) | Partial (9) |
 | Syslog logging | yes | yes | no | Not compiled | Partial (10) |
-| `uid`/`gid` config directives | yes (NSS) | yes (NSS) | numeric only | `parse::<u32>` only | - |
+| `uid`/`gid` config directives | yes (NSS) | yes (NSS) | refused | A config that sets `uid`, `gid`, `daemon uid` or `daemon gid` is a startup error (`crates/daemon/src/daemon/runtime_options/parsing.rs:240-244`) | - |
 | Group expansion (`auth users`) | yes | yes | no | No `getgrnam` | No |
 | Secrets file permission check | yes | yes | no | No mode bits | Partial |
-| `use chroot` | yes | yes | no | N/A | No |
+| `use chroot` | yes | yes | accepted, no jail | Checked the way Cygwin's `chroot()` checks it, then used as a path prefix (`crates/daemon/src/daemon/sections/privilege.rs:47-57`, `:203-205`) | - |
 | systemd `sd-notify` | yes | no | no | Feature-gated | No |
 | PID file creation | yes | yes | yes (11) | Cross-platform | - |
 
 Notes:
-9. The daemon TCP listener and protocol negotiation are platform-independent.
-   The Windows stub explicitly reports "daemon mode is not available on
-   Windows" with a formatted error message including role trailer. The main
-   blockers are: chroot support, privilege dropping (`setuid`/`setgid`), and
-   syslog integration.
+9. The daemon TCP listener and protocol negotiation are platform-independent,
+   and the daemon crate already serves each Windows connection in its own
+   session process (`crates/daemon/src/daemon/sections/session_process.rs:7`).
+   The CLI still refuses `--daemon` and `--server --daemon` on Windows with
+   "daemon mode is not supported on this platform"
+   (`crates/cli/src/frontend/server/daemon.rs:219-271`), so the mode cannot be
+   started. Privilege dropping to a configured identity is not implemented.
 10. Windows has the Event Log (`ReportEventW`), not syslog. A Windows-native
     logging backend would need to use the `windows` crate or raw Win32 calls.
 11. PID file I/O is cross-platform but permission enforcement is Unix-only.
@@ -231,12 +233,8 @@ On Linux musl targets, `statx` is not available and falls back to standard
 
 ### Could Be Implemented (With Significant Effort)
 
-- **NTFS Alternate Data Streams** as an xattr equivalent - requires Win32
-  `BackupRead`/`BackupWrite` or stream path syntax
-- **Windows DACLs** as an ACL equivalent - requires `GetNamedSecurityInfoW` /
-  `SetNamedSecurityInfoW`
-- **Daemon mode** - TCP listener is cross-platform; would need Event Log
-  instead of syslog, and a Windows Service wrapper instead of systemd
+- **Daemon mode** - the per-connection session process exists; the CLI entry
+  point still refuses to start it (see note 9)
 - **Ctrl+C / Ctrl+Break handling** - `SetConsoleCtrlHandler` for proper
   Windows signal handling beyond the current polling stub
 - **SID-based ownership** - `GetNamedSecurityInfoW` can retrieve file owner
