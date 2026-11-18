@@ -9,7 +9,9 @@ measures and reports; it holds no timing assertion and no threshold.
 
 Sides
   oc        the release binary given by --oc
-  upstream  rsync 3.5.2 (--upstream, default ~/up352/rsync-3.5.2/rsync)
+  upstream  rsync 3.5.2: --upstream, else $OC_RSYNC_UPSTREAM_BIN_3_5_2 (the
+            variable the oracle tests use), else the binary tools/ci/run_interop.sh
+            builds at target/interop/upstream-install/3.5.2/bin/rsync
   third     optional (--third): another binary, or the same oc binary with
             different arguments (--third-args), environment (--third-env) or
             daemon module parameters (--third-daemon-param) for a before/after
@@ -88,7 +90,9 @@ import time
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-DEFAULT_UPSTREAM = "~/up352/rsync-3.5.2/rsync"
+UPSTREAM_ENV = "OC_RSYNC_UPSTREAM_BIN_3_5_2"
+UPSTREAM_INTEROP_PATH = "target/interop/upstream-install/3.5.2/bin/rsync"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 MARKER = ".perf-gate-owned"
 TRANSPORTS = ("local", "daemon-pull", "daemon-push", "rsh-pull", "rsh-push")
 KIB = 1024
@@ -805,8 +809,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-dir", help="REQUIRED. Directory under which this run creates its "
                                            "own working directory (e.g. /dev/shm/perf-gate)")
     parser.add_argument("--oc", help="REQUIRED. oc-rsync release binary")
-    parser.add_argument("--upstream", default=DEFAULT_UPSTREAM,
-                        help=f"upstream rsync binary (default {DEFAULT_UPSTREAM})")
+    parser.add_argument("--upstream",
+                        help=f"rsync 3.5.2 binary (default: ${UPSTREAM_ENV}, then "
+                             f"{UPSTREAM_INTEROP_PATH} in this checkout)")
     parser.add_argument("--oc-args", default="", help="extra arguments for the oc side")
     parser.add_argument("--oc-env", action="append", default=[], metavar="KEY=VALUE",
                         help="environment for the oc side's client, server and daemon")
@@ -853,6 +858,20 @@ def _binary(path: str) -> str:
     return str(resolved)
 
 
+def resolve_upstream(argument: Optional[str], environ: dict, repo_root: Path) -> str:
+    """The rsync 3.5.2 binary: the argument, the oracle variable, the interop build."""
+    if argument:
+        return _binary(argument)
+    if environ.get(UPSTREAM_ENV):
+        return _binary(environ[UPSTREAM_ENV])
+    built = repo_root / UPSTREAM_INTEROP_PATH
+    if built.is_file() and os.access(built, os.X_OK):
+        return str(built)
+    raise HarnessError(
+        f"no rsync 3.5.2 binary: pass --upstream, set {UPSTREAM_ENV}, or build one with "
+        f"tools/ci/run_interop.sh (expected {built})")
+
+
 def _env_pairs(items: list[str], option: str) -> tuple[tuple[str, str], ...]:
     pairs = []
     for item in items:
@@ -868,7 +887,7 @@ def sides_from_args(args: argparse.Namespace) -> list[Side]:
         Side("oc", _binary(args.oc), tuple(shlex.split(args.oc_args)),
              _env_pairs(args.oc_env, "--oc-env"),
              peer=_binary(args.oc_peer) if args.oc_peer else ""),
-        Side("upstream", _binary(args.upstream)),
+        Side("upstream", resolve_upstream(args.upstream, os.environ, REPO_ROOT)),
     ]
     if args.third:
         if args.third_name in ("oc", "upstream"):

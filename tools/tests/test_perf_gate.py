@@ -87,6 +87,53 @@ class RequiredArgumentTests(unittest.TestCase):
         self.assertIn("--oc", err.getvalue())
 
 
+class UpstreamBinaryTests(unittest.TestCase):
+    """The reference side must come from somewhere every checkout can name; a
+    path that exists on one machine only made the harness unusable elsewhere."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name)
+
+    def _executable(self, relative: str) -> Path:
+        path = self.repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/bin/sh\n")
+        path.chmod(0o755)
+        return path.resolve()
+
+    def test_argument_beats_the_variable_which_beats_the_interop_build(self) -> None:
+        given = self._executable("given/rsync")
+        named = self._executable("named/rsync")
+        built = self._executable(perf_gate.UPSTREAM_INTEROP_PATH)
+        env = {perf_gate.UPSTREAM_ENV: str(named)}
+        resolve = perf_gate.resolve_upstream
+        self.assertEqual(resolve(str(given), env, self.repo), str(given))
+        self.assertEqual(resolve(None, env, self.repo), str(named))
+        self.assertEqual(Path(resolve(None, {}, self.repo)).resolve(), built)
+
+    def test_nothing_to_resolve_names_all_three_ways_out(self) -> None:
+        with self.assertRaises(perf_gate.HarnessError) as caught:
+            perf_gate.resolve_upstream(None, {}, self.repo)
+        message = str(caught.exception)
+        for hint in ("--upstream", perf_gate.UPSTREAM_ENV, "tools/ci/run_interop.sh"):
+            self.assertIn(hint, message)
+
+    def test_a_variable_naming_a_missing_file_is_an_error_not_a_fallthrough(self) -> None:
+        # Falling through to another binary would silently measure the wrong
+        # reference.
+        self._executable(perf_gate.UPSTREAM_INTEROP_PATH)
+        with self.assertRaises(perf_gate.HarnessError):
+            perf_gate.resolve_upstream(None, {perf_gate.UPSTREAM_ENV: "/nonexistent/rsync"}, self.repo)
+
+    def test_the_default_matches_the_interop_harness_install_path(self) -> None:
+        script = (perf_gate.REPO_ROOT / "tools" / "ci" / "run_interop.sh").read_text()
+        self.assertIn('upstream_install_root="${workspace_root}/target/interop/upstream-install"', script)
+        self.assertEqual(perf_gate.UPSTREAM_INTEROP_PATH,
+                         "target/interop/upstream-install/3.5.2/bin/rsync")
+
+
 class ParserTests(unittest.TestCase):
     STRACE = (
         "% time     seconds  usecs/call     calls    errors syscall\n"
