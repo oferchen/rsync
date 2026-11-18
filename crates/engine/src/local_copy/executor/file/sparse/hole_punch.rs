@@ -19,6 +19,23 @@ use crate::local_copy::LocalCopyError;
 
 use super::ZERO_WRITE_BUFFER_SIZE;
 
+/// Destination of a sparse write pass: a seekable writer that can also
+/// deallocate a byte range it already holds.
+///
+/// `fs::File` is the only production implementation. The trait exists so the
+/// write pass can run against an in-memory destination that counts the calls
+/// it receives.
+pub(crate) trait SparseSink: Write + Seek {
+    /// Deallocates `len` bytes at `pos`, leaving the position at `pos + len`.
+    fn punch_hole(&mut self, path: &Path, pos: u64, len: u64) -> Result<(), LocalCopyError>;
+}
+
+impl SparseSink for fs::File {
+    fn punch_hole(&mut self, path: &Path, pos: u64, len: u64) -> Result<(), LocalCopyError> {
+        punch_hole(self, path, pos, len)
+    }
+}
+
 /// Punches a hole in the file at the specified position for the given length.
 ///
 /// Mirrors upstream rsync's `do_punch_hole()` function (syscall.c) with a

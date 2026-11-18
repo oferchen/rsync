@@ -93,8 +93,6 @@ impl std::fmt::Display for SparseDetectStrategy {
 
 pub(crate) use state::{SparseWriteState, skip_matched_sparse, write_sparse_chunk};
 
-use detect::{leading_zero_run, trailing_zero_run};
-
 /// Represents a region in a file, either containing data or a hole (sparse region).
 ///
 /// Used by sparse file detection and reading operations to efficiently identify
@@ -147,14 +145,14 @@ impl SparseRegion {
     }
 }
 
-/// Scan window for sparse zero-run detection during file writes.
+/// Shortest zero run inside a written chunk that becomes a hole.
 ///
-/// Upstream `write_file()` hands `write_sparse()` at most this many bytes per
-/// call (`fileio.c:160`, `int len1 = MIN(len, SPARSE_WRITE_SIZE)`), so only the
-/// leading and trailing zeros of each 1 KB window become holes. Matching the
-/// window is required for allocated-block parity with upstream: a larger window
-/// writes sub-window interior zero runs as literal data, leaving them allocated
-/// where upstream deallocates them.
+/// Upstream `write_sparse()` scans the whole chunk it is handed and defers an
+/// interior zero run only when it is at least this long (`fileio.c:163`,
+/// `if (z < SPARSE_WRITE_SIZE)`); shorter runs stay in the surrounding data
+/// span, which goes out in one write. The chunk's leading and trailing runs
+/// are deferred at any length (`fileio.c:134-137`). Using the same threshold
+/// is what gives allocated-block parity with upstream.
 ///
 /// Matches upstream rsync's `SPARSE_WRITE_SIZE` (1024) in `rsync.h`.
 const SPARSE_WRITE_SIZE: usize = 1024;

@@ -7,14 +7,16 @@
 // upstream: fileio.c:write_sparse() - sparse write buffering logic
 
 use std::fs;
-use std::io::{Seek, SeekFrom, Write};
+use std::io::SeekFrom;
 use std::path::Path;
+
+use fast_io::zero_detect::{SparseSpan, sparse_spans};
 
 use crate::block_touch::BlockTouchTracker;
 use crate::local_copy::LocalCopyError;
 
-use super::hole_punch::punch_hole;
-use super::{SPARSE_WRITE_SIZE, leading_zero_run, trailing_zero_run};
+use super::SPARSE_WRITE_SIZE;
+use super::hole_punch::SparseSink;
 
 /// Tracks pending zero runs during sparse file writing.
 ///
@@ -25,10 +27,11 @@ use super::{SPARSE_WRITE_SIZE, leading_zero_run, trailing_zero_run};
 /// seeked over otherwise, matching upstream's `sparse_past_write >=
 /// preallocated_len` decision.
 ///
-/// The start of a pending run is the writer's current stream position (the
-/// point just past the last data write), so callers must not reposition the
-/// writer while a run is pending: a seek past the run makes it start late and
-/// shifts every following byte.
+/// The start of a pending run is the writer's position just past the last data
+/// write. The state reads that position from the writer once and then tracks
+/// it through every write, seek and punch it issues, so callers must not
+/// reposition the writer between sparse calls: the run would start at the
+/// tracked offset, not where the writer was moved to.
 #[derive(Default)]
 pub(crate) struct SparseWriteState {
     /// Accumulated pending zero bytes (upstream `sparse_seek`).
@@ -46,6 +49,12 @@ pub(crate) struct SparseWriteState {
     /// upstream: fileio.c:168-169,179-180 - `if (!use_seek)
     /// track_block_touches(f, offset + start, ...)`.
     touched: BlockTouchTracker,
+    /// The writer's position, read from the writer once and then advanced by
+    /// every write, seek and punch this state issues, so a hole costs one
+    /// `lseek` rather than a position query plus the seek.
+    /// upstream: fileio.c:186 `sparse_past_write = offset + len - l2` - the
+    /// position is tracked, never queried.
+    position: Option<u64>,
 }
 
 impl SparseWriteState {
@@ -75,37 +84,63 @@ impl SparseWriteState {
         self.pending_zero_run = self.pending_zero_run.saturating_add(additional as u64);
     }
 
+    /// Returns the writer's position, querying the writer only the first time.
+    fn position<W: SparseSink>(
+        &mut self,
+        writer: &mut W,
+        destination: &Path,
+    ) -> Result<u64, LocalCopyError> {
+        if let Some(position) = self.position {
+            return Ok(position);
+        }
+        let position = writer.stream_position().map_err(|error| {
+            LocalCopyError::destination_write("seek in destination file", destination, error)
+        })?;
+        self.position = Some(position);
+        Ok(position)
+    }
+
+    /// Advances the tracked position past `len` bytes the writer moved over.
+    fn advance(&mut self, len: usize) {
+        if let Some(position) = self.position.as_mut() {
+            *position = position.saturating_add(len as u64);
+        }
+    }
+
     /// Flushes the pending zero run using upstream's seek-vs-punch rule.
     ///
-    /// The run starts at the writer's current stream position (data writes and
-    /// hole-punches always leave the position just past the last data). Seeks
+    /// The run starts at the writer's position (data writes and hole-punches
+    /// always leave it just past the last data). Seeks
     /// forward when that position is at or beyond the preallocated extent (the
     /// natural-hole case for a fresh file), otherwise punches a hole to
     /// deallocate the blocks that preallocation reserved.
     /// upstream: fileio.c:84-99 flush_sparse_hole()
-    fn flush(&mut self, writer: &mut fs::File, destination: &Path) -> Result<(), LocalCopyError> {
+    fn flush<W: SparseSink>(
+        &mut self,
+        writer: &mut W,
+        destination: &Path,
+    ) -> Result<(), LocalCopyError> {
         if self.pending_zero_run == 0 {
             return Ok(());
         }
 
-        let start = writer.stream_position().map_err(|error| {
-            LocalCopyError::destination_write("seek in destination file", destination, error)
-        })?;
+        let start = self.position(writer, destination)?;
 
         if start >= self.preallocated_len {
             self.seek_over(writer, destination)?;
         } else {
-            punch_hole(writer, destination, start, self.pending_zero_run)?;
+            writer.punch_hole(destination, start, self.pending_zero_run)?;
         }
 
+        self.position = Some(start.saturating_add(self.pending_zero_run));
         self.pending_zero_run = 0;
         Ok(())
     }
 
     /// Seeks forward over the pending zero run, creating a natural hole.
-    fn seek_over(
+    fn seek_over<W: SparseSink>(
         &mut self,
-        writer: &mut fs::File,
+        writer: &mut W,
         destination: &Path,
     ) -> Result<(), LocalCopyError> {
         let mut remaining = self.pending_zero_run;
@@ -125,34 +160,32 @@ impl SparseWriteState {
         Ok(())
     }
 
-    /// Replaces the pending zero run with `next_run` bytes.
-    pub(super) const fn replace(&mut self, next_run: usize) {
-        self.pending_zero_run = next_run as u64;
-    }
-
     /// Returns the pending zero run length.
     #[cfg(test)]
     pub(crate) const fn pending_zeros(&self) -> u64 {
         self.pending_zero_run
     }
 
-    /// Finishes sparse writing by flushing any remaining zeros.
+    /// Finishes sparse writing without seeking over a trailing zero run.
     ///
-    /// Returns the final logical file position (including any trailing hole)
-    /// for the caller's `set_len`.
-    /// upstream: fileio.c:47 sparse_end()
-    pub(crate) fn finish(
+    /// Returns the final logical file position (including any trailing hole);
+    /// the caller's `set_len` makes that run a hole. A run inside the
+    /// preallocated extent is still punched, since truncating cannot free it.
+    /// upstream: fileio.c:47-66 sparse_end() - `do_ftruncate(f, size)`, no
+    /// lseek; `do_punch_hole()` first when updating a basis.
+    pub(crate) fn finish<W: SparseSink>(
         &mut self,
-        writer: &mut fs::File,
+        writer: &mut W,
         destination: &Path,
     ) -> Result<u64, LocalCopyError> {
         // The logical end of file is the current position plus any trailing
         // pending zero run that becomes a hole.
-        let position = writer.stream_position().map_err(|error| {
-            LocalCopyError::destination_write("seek in destination file", destination, error)
-        })?;
+        let position = self.position(writer, destination)?;
         let logical_end = position.saturating_add(self.pending_zero_run);
-        self.flush(writer, destination)?;
+        if position < self.preallocated_len {
+            self.flush(writer, destination)?;
+        }
+        self.pending_zero_run = 0;
         Ok(logical_end)
     }
 }
@@ -175,11 +208,12 @@ pub(crate) enum SpanWrite {
 
 /// Writes a chunk of data with sparse hole detection.
 ///
-/// Zero runs within the chunk are accumulated rather than written, and flushed
-/// as seeks (natural holes) or hole-punches (inside a preallocated extent) when
-/// non-zero data follows. This produces sparse files when the filesystem
-/// supports it.
-/// upstream: fileio.c:write_sparse()
+/// The chunk's leading and trailing zero runs, and every interior zero run of
+/// at least [`SPARSE_WRITE_SIZE`] bytes, are accumulated rather than written,
+/// and flushed as seeks (natural holes) or hole-punches (inside a preallocated
+/// extent) when non-zero data follows. The data between two such runs goes out
+/// in one write.
+/// upstream: fileio.c:130-189 write_sparse()
 pub(crate) fn write_sparse_chunk(
     writer: &mut fs::File,
     state: &mut SparseWriteState,
@@ -207,73 +241,56 @@ pub(crate) fn skip_matched_sparse(
     write_sparse_spans(writer, state, chunk, destination, SpanWrite::Seek)
 }
 
-fn write_sparse_spans(
-    writer: &mut fs::File,
+/// Runs one chunk through upstream's sparse scan and returns its full length,
+/// which is consumed even when large sections become holes.
+///
+/// upstream: fileio.c:130-189 write_sparse() - the chunk's leading and trailing
+/// zero runs are always deferred, an interior run only from `SPARSE_WRITE_SIZE`
+/// bytes up, and each data span between them is emitted in one go.
+pub(super) fn write_sparse_spans<W: SparseSink>(
+    writer: &mut W,
     state: &mut SparseWriteState,
     chunk: &[u8],
     destination: &Path,
     mode: SpanWrite,
 ) -> Result<usize, LocalCopyError> {
-    // Mirror rsync's write_sparse: always report the full chunk length as
-    // consumed even when large sections become holes. Callers that track
-    // literal bytes should account for sparseness separately.
-    if chunk.is_empty() {
-        return Ok(0);
-    }
-
-    let mut offset = 0usize;
-
-    while offset < chunk.len() {
-        let segment_end = (offset + SPARSE_WRITE_SIZE).min(chunk.len());
-        let segment = &chunk[offset..segment_end];
-
-        let leading = leading_zero_run(segment);
-        state.accumulate(leading);
-
-        if leading == segment.len() {
-            offset = segment_end;
-            continue;
-        }
-
-        let trailing = trailing_zero_run(&segment[leading..]);
-        let data_start = offset + leading;
-        let data_end = segment_end - trailing;
-
-        if data_end > data_start {
-            // upstream: fileio.c:123 emit_sparse_span() flushes the pending
-            // zero run (seek or punch) before emitting the data span. The
-            // flush reads the writer's current position as the run start.
-            state.flush(writer, destination)?;
-            match mode {
-                SpanWrite::Data => {
-                    writer
-                        .write_all(&chunk[data_start..data_end])
-                        .map_err(|error| {
-                            LocalCopyError::destination_write("copy file", destination, error)
-                        })?;
-                    state.touched.record(
-                        state.logical_offset + data_start as u64,
-                        (data_end - data_start) as u64,
-                    );
-                }
-                // upstream: fileio.c:125-126 - the bytes are already at this
-                // offset, so advance past them instead of rewriting them.
-                SpanWrite::Seek => {
-                    writer
-                        .seek(SeekFrom::Current((data_end - data_start) as i64))
-                        .map_err(|error| {
-                            LocalCopyError::destination_write(
-                                "seek in destination file",
-                                destination,
-                                error,
-                            )
-                        })?;
-                }
+    for span in sparse_spans(chunk, SPARSE_WRITE_SIZE) {
+        let data = match span {
+            SparseSpan::Zeros(len) => {
+                state.accumulate(len);
+                continue;
+            }
+            SparseSpan::Data(data) => data,
+        };
+        // upstream: fileio.c:123 emit_sparse_span() flushes the pending zero
+        // run (seek or punch) before emitting the data span. The flush reads
+        // the writer's current position as the run start.
+        state.flush(writer, destination)?;
+        match mode {
+            SpanWrite::Data => {
+                writer.write_all(&chunk[data.clone()]).map_err(|error| {
+                    LocalCopyError::destination_write("copy file", destination, error)
+                })?;
+                state.advance(data.len());
+                state
+                    .touched
+                    .record(state.logical_offset + data.start as u64, data.len() as u64);
+            }
+            // upstream: fileio.c:125-126 - the bytes are already at this
+            // offset, so advance past them instead of rewriting them.
+            SpanWrite::Seek => {
+                writer
+                    .seek(SeekFrom::Current(data.len() as i64))
+                    .map_err(|error| {
+                        LocalCopyError::destination_write(
+                            "seek in destination file",
+                            destination,
+                            error,
+                        )
+                    })?;
+                state.advance(data.len());
             }
         }
-
-        state.replace(trailing);
-        offset = segment_end;
     }
 
     state.logical_offset = state.logical_offset.saturating_add(chunk.len() as u64);
