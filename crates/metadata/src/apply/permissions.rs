@@ -56,6 +56,50 @@ fn fchmod_libc(
     .map_err(|errno| MetadataError::new(action, destination, io::Error::from(errno)))
 }
 
+/// Reports whether a failed final mode update is best-effort.
+///
+/// A mode that is only inherited - `dest_mode()` with neither `-p` nor `-E` -
+/// is not something the user asked to preserve, so a destination that refuses
+/// the chmod with `EPERM` or `EACCES` (vfat, exfat, a mount owned by another
+/// user) does not fail the entry: no diagnostic, no exit 23. A refusal under
+/// `-p` or `-E` stays an error. Any other errno is not best-effort by this
+/// rule; the local copy and the `--chmod` paths report it. The network
+/// receiver's inherited-mode chmods, and the metadata apply they share, still
+/// ignore every errno as they did before this rule existed; tightening those
+/// to this rule is tracked separately.
+///
+/// upstream: rsync.c set_file_attrs (PR RsyncProject/rsync#1178, not in 3.5.2)
+#[cfg(unix)]
+fn mode_failure_is_best_effort(
+    error: &io::Error,
+    preserve_perms: bool,
+    preserve_executability: bool,
+) -> bool {
+    !preserve_perms && !preserve_executability && error.kind() == io::ErrorKind::PermissionDenied
+}
+
+/// Settles a final mode update: a best-effort failure
+/// ([`mode_failure_is_best_effort`]) leaves the entry's mode as it is and
+/// succeeds, any other failure is returned.
+#[cfg(unix)]
+fn settle_mode_update(
+    result: Result<(), MetadataError>,
+    options: &MetadataOptions,
+) -> Result<(), MetadataError> {
+    match result {
+        Err(error)
+            if mode_failure_is_best_effort(
+                error.source_error(),
+                options.permissions(),
+                options.executability(),
+            ) =>
+        {
+            Ok(())
+        }
+        other => other,
+    }
+}
+
 /// Process-wide `orig_umask`, captured once. See [`init_orig_umask`].
 #[cfg(unix)]
 static ORIG_UMASK: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -284,7 +328,16 @@ pub fn apply_dest_mode_pre_transfer(
         .map_err(|error| MetadataError::new("inspect destination permissions", destination, error))?
         .mode();
     if (current_mode & 0o7777) != (new_mode & 0o7777) {
-        chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode", None)?;
+        settle_mode_update(
+            chmod_path_honoring_keep_dirlinks(
+                destination,
+                new_mode,
+                options,
+                "apply dest_mode",
+                None,
+            ),
+            options,
+        )?;
     }
     Ok(())
 }
@@ -816,12 +869,15 @@ pub(super) fn apply_permissions_with_chmod(
 
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant
             // anchored on the parent dirfd.
-            chmod_path_honoring_keep_dirlinks(
-                destination,
-                mode,
+            settle_mode_update(
+                chmod_path_honoring_keep_dirlinks(
+                    destination,
+                    mode,
+                    options,
+                    "preserve permissions",
+                    None,
+                ),
                 options,
-                "preserve permissions",
-                None,
             )?;
             return Ok(());
         }
@@ -862,10 +918,9 @@ pub(super) fn apply_permissions_with_chmod(
                     new_mode |= 0o2000;
                 }
                 if (current_mode & 0o7777) != new_mode {
-                    // upstream: syscall.c:do_chmod():1745-1746 - when neither
-                    // --perms nor --executability is active, chmod failure is
-                    // non-fatal. upstream returns 0 so set_file_attrs()
-                    // continues.
+                    // An inherited mode is best-effort (`mode_failure_is_best_effort`).
+                    // This site also still ignores every other errno; tightening
+                    // that is tracked separately.
                     let _ = chmod_path_honoring_keep_dirlinks(
                         destination,
                         new_mode,
@@ -881,9 +936,9 @@ pub(super) fn apply_permissions_with_chmod(
             existing,
             destination.parent(),
         ) {
-            // upstream: syscall.c:do_chmod():1745-1746 - when neither --perms
-            // nor --executability is active, chmod failure is non-fatal.
-            // upstream returns 0 so set_file_attrs() continues.
+            // An inherited mode is best-effort (`mode_failure_is_best_effort`).
+            // This site also still ignores every other errno; tightening
+            // that is tracked separately.
             let _ = chmod_path_honoring_keep_dirlinks(
                 destination,
                 new_mode,
@@ -941,8 +996,8 @@ pub(super) fn apply_permissions_with_chmod_fd(
             return Ok(());
         }
 
-        if let Some(fd) = fd {
-            fchmod_libc(fd, mode, destination, "preserve permissions")?;
+        let applied = if let Some(fd) = fd {
+            fchmod_libc(fd, mode, destination, "preserve permissions")
         } else {
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
             chmod_path_honoring_keep_dirlinks(
@@ -951,8 +1006,9 @@ pub(super) fn apply_permissions_with_chmod_fd(
                 options,
                 "preserve permissions",
                 None,
-            )?;
-        }
+            )
+        };
+        settle_mode_update(applied, options)?;
         return Ok(());
     }
 
@@ -987,9 +1043,9 @@ pub(super) fn apply_permissions_with_chmod_fd(
         existing,
         destination.parent(),
     ) {
-        // upstream: syscall.c:do_chmod():1745-1746 - when neither --perms
-        // nor --executability is active, chmod failure is non-fatal.
-        // upstream returns 0 so set_file_attrs() continues.
+        // An inherited mode is best-effort (`mode_failure_is_best_effort`).
+        // This site also still ignores every other errno; tightening
+        // that is tracked separately.
         if let Some(fd) = fd {
             let _ = fchmod_libc(fd, new_mode, destination, "apply dest_mode");
         } else {
@@ -1636,9 +1692,9 @@ pub(super) fn apply_permissions_from_entry(
                     &fresh_meta
                 };
                 if (current_meta.mode() & 0o7777) != (new_mode & 0o7777) {
-                    // upstream: syscall.c:do_chmod():1745-1746 - when neither
-                    // --perms nor --executability is active, chmod failure is
-                    // non-fatal. upstream returns 0 so set_file_attrs() continues.
+                    // An inherited mode is best-effort (`mode_failure_is_best_effort`).
+                    // This site also still ignores every other errno; tightening
+                    // that is tracked separately.
                     let _ = chmod_path_honoring_keep_dirlinks(
                         destination,
                         new_mode,
@@ -1700,9 +1756,9 @@ pub(super) fn apply_permissions_from_entry(
                     new_mode |= 0o700;
                 }
                 if (current_mode & 0o7777) != (new_mode & 0o7777) {
-                    // upstream: syscall.c:do_chmod():1745-1746 - when neither
-                    // --perms nor --executability is active, chmod failure is
-                    // non-fatal. upstream returns 0 so set_file_attrs() continues.
+                    // An inherited mode is best-effort (`mode_failure_is_best_effort`).
+                    // This site also still ignores every other errno; tightening
+                    // that is tracked separately.
                     let _ = chmod_path_honoring_keep_dirlinks(
                         destination,
                         new_mode,
@@ -1787,12 +1843,15 @@ pub(super) fn apply_permissions_from_entry(
                 // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
                 // Helper follows symlinked parents under `--keep-dirlinks` to
                 // mirror upstream `generator.c:1782`.
-                chmod_path_honoring_keep_dirlinks(
-                    destination,
-                    new_mode,
+                settle_mode_update(
+                    chmod_path_honoring_keep_dirlinks(
+                        destination,
+                        new_mode,
+                        options,
+                        "apply chmod",
+                        parent_dirfd,
+                    ),
                     options,
-                    "apply chmod",
-                    parent_dirfd,
                 )?;
             }
         } else if options.executability()
@@ -1912,30 +1971,200 @@ mod tests {
         );
     }
 
-    /// upstream: syscall.c:do_chmod():1745-1746 - when neither --perms nor
-    /// --executability is active, do_chmod returns 0 on failure.
-    /// Verify that a chmod ENOENT is swallowed in the !perms path.
+    fn errno_error(errno: nix::errno::Errno) -> io::Error {
+        io::Error::from(errno)
+    }
+
+    fn mode_options(perms: bool, executability: bool) -> MetadataOptions {
+        MetadataOptions::new()
+            .preserve_permissions(perms)
+            .preserve_executability(executability)
+            .preserve_times(false)
+            .with_destination_is_new(true)
+    }
+
+    fn failed_chmod(errno: nix::errno::Errno) -> Result<(), MetadataError> {
+        Err(MetadataError::new(
+            "preserve permissions",
+            Path::new("/d/x"),
+            errno_error(errno),
+        ))
+    }
+
+    /// The rule in full: a refused chmod is tolerated only for a mode the
+    /// user did not ask to preserve. Widening it to other errnos would hide
+    /// the confined chmod's path-resolution refusals; widening it to `-p` or
+    /// `-E` would report success for a mode the user asked for and did not
+    /// get.
+    ///
+    /// upstream: rsync.c set_file_attrs (PR RsyncProject/rsync#1178, not in 3.5.2)
     #[test]
-    fn chmod_failure_swallowed_without_perms_or_executability() {
+    fn only_a_refused_inherited_mode_is_best_effort() {
+        use nix::errno::Errno;
+
+        for refusal in [Errno::EPERM, Errno::EACCES] {
+            let error = errno_error(refusal);
+            assert!(
+                mode_failure_is_best_effort(&error, false, false),
+                "{refusal} on an inherited mode must be best-effort"
+            );
+            for (perms, executability) in [(true, false), (false, true), (true, true)] {
+                assert!(
+                    !mode_failure_is_best_effort(&error, perms, executability),
+                    "{refusal} must stay an error with perms={perms} executability={executability}"
+                );
+            }
+        }
+        for other in [
+            Errno::ELOOP,
+            Errno::ENOENT,
+            Errno::ENOTDIR,
+            Errno::EROFS,
+            Errno::EIO,
+        ] {
+            assert!(
+                !mode_failure_is_best_effort(&errno_error(other), false, false),
+                "{other} is not a chmod refusal and must stay an error"
+            );
+        }
+    }
+
+    /// `--no-perms` onto a filesystem that refuses chmod (vfat, exfat):
+    /// the entry succeeds with nothing to report, for both refusal errnos.
+    #[test]
+    fn refused_inherited_mode_settles_as_success() {
+        use nix::errno::Errno;
+
+        for refusal in [Errno::EPERM, Errno::EACCES] {
+            let settled = settle_mode_update(failed_chmod(refusal), &mode_options(false, false));
+            assert!(settled.is_ok(), "{refusal}: expected Ok, got {settled:?}");
+        }
+    }
+
+    /// `-p` asked for the mode, so the same refusal is reported with
+    /// upstream's `set_file_attrs()` line and fails the entry (exit 23).
+    #[test]
+    fn refused_mode_under_perms_keeps_upstreams_diagnostic() {
+        let error = settle_mode_update(
+            failed_chmod(nix::errno::Errno::EPERM),
+            &mode_options(true, false),
+        )
+        .expect_err("-p must report a refused chmod");
+
+        assert_eq!(error.source_error().kind(), io::ErrorKind::PermissionDenied);
+        let text = error
+            .set_file_attrs_text("\"/d/x\"")
+            .expect("the mode step has an rsyserr arm");
+        assert!(
+            text.starts_with("failed to set permissions on \"/d/x\": "),
+            "unexpected diagnostic: {text}"
+        );
+    }
+
+    /// `-E` asked for the executability bits, so a refusal is reported too.
+    #[test]
+    fn refused_mode_under_executability_is_reported() {
+        let settled = settle_mode_update(
+            failed_chmod(nix::errno::Errno::EPERM),
+            &mode_options(false, true),
+        );
+        assert!(settled.is_err(), "-E must report a refused chmod");
+    }
+
+    /// Where the rule is applied (the local copy and the `--chmod` paths), a
+    /// failure that is not a refusal is still reported: `ELOOP` here is the
+    /// confined chmod refusing a symlinked path component.
+    #[test]
+    fn inherited_mode_failure_with_another_errno_is_not_settled() {
+        let error = settle_mode_update(
+            failed_chmod(nix::errno::Errno::ELOOP),
+            &mode_options(false, false),
+        )
+        .expect_err("a path-resolution failure is not a refusal");
+        assert!(error.set_file_attrs_text("\"/d/x\"").is_some());
+    }
+
+    /// The metadata apply shared with the network receiver keeps ignoring a
+    /// non-refusal errno on an inherited mode (`ENOENT` here), so no transfer
+    /// that succeeded before the refusal rule starts failing.
+    #[test]
+    fn inherited_mode_chmod_failure_with_another_errno_is_still_ignored() {
         let dir = test_support::create_tempdir();
         let source = dir.path().join("src.txt");
         std::fs::write(&source, b"data").expect("write");
-
         let source_meta = std::fs::metadata(&source).expect("metadata");
-
-        // Destination that does not exist - chmod will fail with ENOENT.
         let dest = dir.path().join("nonexistent.txt");
 
-        let options = MetadataOptions::new()
-            .preserve_permissions(false)
-            .preserve_executability(false)
-            .preserve_times(false)
-            .with_destination_is_new(true);
-
-        // With the fix, this should succeed because chmod failure is non-fatal
-        // when neither -p nor -E is set.
-        let result = apply_permissions_with_chmod(&dest, &source_meta, &options, None);
+        let result =
+            apply_permissions_with_chmod(&dest, &source_meta, &mode_options(false, false), None);
         assert!(result.is_ok(), "expected Ok, got: {result:?}");
+    }
+
+    /// End to end against a destination that really refuses chmod: procfs
+    /// answers every mode change of a per-process file with `EPERM`, for root
+    /// as well (fs/proc/base.c `proc_setattr`), so no mount and no privilege
+    /// is involved. The `-p` cells prove the refusal is real; the cells
+    /// without `-p`/`-E` are the ones that must not fail a transfer onto a
+    /// filesystem like vfat.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_destination_that_refuses_chmod_fails_only_a_requested_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = test_support::create_tempdir();
+        let source = dir.path().join("src.sh");
+        std::fs::write(&source, b"data").expect("write");
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+        let source_meta = std::fs::metadata(&source).expect("metadata");
+        let entry = protocol::flist::FileEntry::new_file("status".into(), 4, 0o700);
+        let dest = std::path::PathBuf::from(format!("/proc/{}/status", std::process::id()));
+        let refused = |result: Result<(), MetadataError>, cell: &str| {
+            let error = result.expect_err(cell);
+            assert_eq!(
+                error.source_error().kind(),
+                io::ErrorKind::PermissionDenied,
+                "{cell}"
+            );
+            error
+        };
+
+        let inherited = mode_options(false, false);
+        apply_dest_mode_pre_transfer(&dest, &source_meta, &inherited, None)
+            .expect("local copy: an inherited mode is best-effort");
+        apply_permissions_with_chmod(&dest, &source_meta, &inherited, None)
+            .expect("metadata apply: an inherited mode is best-effort");
+        apply_permissions_from_entry(&dest, &entry, &inherited, None, None, None)
+            .expect("receiver: an inherited mode is best-effort");
+
+        let perms = mode_options(true, false);
+        let error = refused(
+            apply_permissions_with_chmod(&dest, &source_meta, &perms, None),
+            "metadata apply: -p must report the refusal",
+        );
+        assert!(
+            error
+                .set_file_attrs_text("\"status\"")
+                .is_some_and(|text| text.starts_with("failed to set permissions on \"status\": ")),
+            "-p must keep upstream's diagnostic"
+        );
+        refused(
+            apply_permissions_from_entry(&dest, &entry, &perms, None, None, None),
+            "receiver: -p must report the refusal",
+        );
+
+        let executability = mode_options(false, true);
+        refused(
+            apply_dest_mode_pre_transfer(&dest, &source_meta, &executability, None),
+            "local copy: -E must report the refusal",
+        );
+        refused(
+            apply_permissions_with_chmod(&dest, &source_meta, &executability, None),
+            "metadata apply: -E must report the refusal",
+        );
+        refused(
+            apply_permissions_from_entry(&dest, &entry, &executability, None, None, None),
+            "receiver: -E must report the refusal",
+        );
     }
 
     /// When --perms IS active, chmod failure must propagate.
