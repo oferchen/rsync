@@ -663,6 +663,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - An auto-inherited (`AI`) Windows DACL is written unprotected, so the destination keeps inheriting from its parent like the source did; protected and POSIX-synthesised DACLs stay protected (#8214)
 - Report the NTFS ACEs the rsync wire format cannot carry (#7267)
 - A Windows local copy identifies hard-linked sources by file identity (`GetFileInformationByHandle`), so `-H` links them at the destination (#8387)
+- A Windows network sender identifies hard-linked sources by file identity, so `-H` sends them as one group instead of as independent files (#8414)
 - A full disk on a Windows receiver (`ERROR_DISK_FULL`) is now tested to end the copy with the line rsync under Cygwin prints, `write failed on ...: No space left on device (28)` (#8414)
 
 **Output parity**
