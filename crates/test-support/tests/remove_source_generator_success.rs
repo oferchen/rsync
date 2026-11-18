@@ -86,6 +86,20 @@ const ALL: &[&str] = &[
     "xfer.txt",
 ];
 
+/// What `--remove-sent-files` leaves when `alt/` is a `--link-dest` or
+/// `--compare-dest` directory: everything but the two transferred files and
+/// the made symlink.
+const SENT_WITH_ALT: &[&str] = &[
+    "alt.txt",
+    "fifo_alt",
+    "fifo_new",
+    "fifo_same",
+    "link_alt",
+    "link_same",
+    "same.txt",
+    "sub/deep.txt",
+];
+
 const TABLE: &[Row] = &[
     Row {
         flags: &["--remove-source-files"],
@@ -118,6 +132,28 @@ const TABLE: &[Row] = &[
     Row {
         flags: &["--remove-source-files", "--compare-dest=../alt"],
         survivors: &["fifo_alt", "link_alt"],
+    },
+    // Under the deprecated spelling an alternate-directory match is never
+    // confirmed; only `--copy-dest` makes `link_alt`, and a made symlink is.
+    Row {
+        flags: &["--remove-sent-files", "--link-dest=../alt"],
+        survivors: SENT_WITH_ALT,
+    },
+    Row {
+        flags: &["--remove-sent-files", "--copy-dest=../alt"],
+        survivors: &[
+            "alt.txt",
+            "fifo_alt",
+            "fifo_new",
+            "fifo_same",
+            "link_same",
+            "same.txt",
+            "sub/deep.txt",
+        ],
+    },
+    Row {
+        flags: &["--remove-sent-files", "--compare-dest=../alt"],
+        survivors: SENT_WITH_ALT,
     },
 ];
 
@@ -324,6 +360,44 @@ fn the_generator_confirms_what_rsync_3_5_2_confirms() {
         LEGS.len() * TABLE.len(),
         differing.join("\n")
     );
+}
+
+/// Each spelling reaches the far end as itself and means the same there.
+///
+/// The client forwards `--remove-source-files` for mode 1 and
+/// `--remove-sent-files` for mode 2 (upstream: options.c:3231-3234), and the
+/// receiving side, local or remote, applies that mode. With oc on one end and
+/// rsync 3.5.2 on the other, in either role, both spellings must leave what
+/// rsync 3.5.2 leaves on its own.
+#[test]
+fn each_spelling_crosses_the_wire_to_and_from_rsync_3_5_2() {
+    let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) else {
+        return;
+    };
+    let (up, oc) = (upstream.binary(), oc_rsync_bin());
+    for row in &TABLE[..2] {
+        for direction in [Direction::Push, Direction::Pull] {
+            let leg = (Transport::RemoteShell, direction);
+            for (client, server, ends) in [
+                (&*oc, up, "oc client, 3.5.2 server"),
+                (up, &*oc, "3.5.2 client, oc server"),
+            ] {
+                let tmp = create_tempdir();
+                seed(tmp.path());
+                assert_eq!(
+                    transfer(client, server, leg, row.flags, tmp.path()),
+                    (
+                        Some(0),
+                        String::new(),
+                        String::new(),
+                        row.survivors.iter().map(|s| (*s).to_owned()).collect()
+                    ),
+                    "{leg:?} {:?}, {ends}",
+                    row.flags
+                );
+            }
+        }
+    }
 }
 
 const DIRS: usize = 150;
