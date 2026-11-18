@@ -85,6 +85,12 @@ jobs:
       - name: Install cargo-nextest (Windows)
         uses: ./.github/actions/install-cargo-nextest-windows
 
+      - name: Build per-process temp-dir runner
+        shell: bash
+        run: |
+          cargo build --locked -p test-support --bin tmp-runner
+          cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
+
       # Run the full `-p platform` crate test set on Windows. The
       # crate is small (~6 Windows-only tests plus a handful of shared
       # ones) and not exercised by any existing Windows CI cell, so a
@@ -94,6 +100,9 @@ jobs:
       # mirrors how the per-PR Windows cell would link the crate after
       # WCI-11 promotion, surfacing any gating drift early.
       - name: Run platform crate tests
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+          OC_REQUIRE_TMP_RUNNER: '1'
         run: cargo nextest run --locked -p platform --no-fail-fast
 
 

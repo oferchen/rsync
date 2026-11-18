@@ -510,9 +510,20 @@ jobs:
       run: cargo build --locked -p fast_io --no-default-features --features iocp
     - name: Build fast_io (--features iocp,transmitfile)
       run: cargo build --locked -p fast_io --features iocp,transmitfile
+    - name: Build per-process temp-dir runner
+      shell: bash
+      run: |
+        cargo build --locked -p test-support --bin tmp-runner
+        cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
     - name: Test fast_io (--features iocp,transmitfile)
+      env:
+        CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+        OC_REQUIRE_TMP_RUNNER: '1'
       run: cargo nextest run --locked -p fast_io --no-default-features --features iocp,transmitfile
     - name: Test transfer (iocp via fast_io defaults)
+      env:
+        CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+        OC_REQUIRE_TMP_RUNNER: '1'
       run: cargo nextest run --locked -p transfer --all-features
   windows-acl-xattr:
     name: Windows ACL/xattr
@@ -531,7 +542,15 @@ jobs:
       run: cargo build --locked -p metadata --features acl,xattr
     - name: Build oc-rsync (for subprocess integration tests)
       run: cargo build --locked -p bin --bin oc-rsync
+    - name: Build per-process temp-dir runner
+      shell: bash
+      run: |
+        cargo build --locked -p test-support --bin tmp-runner
+        cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
     - name: Test metadata (--features acl,xattr)
+      env:
+        CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+        OC_REQUIRE_TMP_RUNNER: '1'
       timeout-minutes: 5
       shell: bash
       run: cargo nextest run --locked --profile ci -p metadata --features acl,xattr 2>&1 | tee nextest-metadata.log
@@ -544,8 +563,18 @@ jobs:
         if-no-files-found: ignore
         retention-days: 30
     - name: Test ACL/xattr/ADS filter (workspace)
+      env:
+        CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+        OC_REQUIRE_TMP_RUNNER: '1'
       shell: bash
-      run: cargo nextest run --locked --workspace --features acl,xattr -E 'test(acl) | test(xattr) | test(ads) | test(stream)'
+      # Whole-token matches. Substring matches also selected every name
+      # containing "loads", "reads", "oracle", "obstacle" or "upstream",
+      # about 1700 tests with no ACL, xattr or stream content. The binary()
+      # arm takes integration files named for the feature, whatever their
+      # test names are.
+      run: |
+        tokens='(^|_|::)([a-z0-9]*acls?|xattrs?|ads|(named|ntfs|data)_streams?)(_|::|$)'
+        cargo nextest run --locked --workspace --features acl,xattr -E "test(/$tokens/) | binary(/$tokens/)"
   windows-gnu-cross-check:
     name: Windows GNU cross-check
     runs-on: ubuntu-latest

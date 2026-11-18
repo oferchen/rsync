@@ -90,6 +90,12 @@ jobs:
       - name: Install cargo-nextest (Windows)
         uses: ./.github/actions/install-cargo-nextest-windows
 
+      - name: Build per-process temp-dir runner
+        shell: bash
+        run: |
+          cargo build --locked -p test-support --bin tmp-runner
+          cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
+
       # Run the full `-p protocol` test set on Windows with no name filter.
       # The `windows_` substring allowlist would silently skip any new
       # `#[cfg(windows)]` protocol test that did not adopt the prefix, so
@@ -100,6 +106,9 @@ jobs:
       # convention. Running with default features mirrors how the per-PR
       # Windows cell would link the crate after promotion.
       - name: Run protocol Windows tests (full package)
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+          OC_REQUIRE_TMP_RUNNER: '1'
         run: cargo nextest run --locked -p protocol --no-fail-fast
 
       # Run the full `-p metadata` test set with acl,xattr on Windows and
@@ -115,6 +124,9 @@ jobs:
         run: cargo build --locked -p bin --bin oc-rsync
 
       - name: Run metadata Windows tests (full package, acl+xattr)
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+          OC_REQUIRE_TMP_RUNNER: '1'
         run: cargo nextest run --locked -p metadata --features acl,xattr --no-fail-fast
 
       - name: Upload nextest logs

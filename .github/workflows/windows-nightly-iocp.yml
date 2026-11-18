@@ -76,12 +76,21 @@ jobs:
       - name: Build fast_io (--features iocp)
         run: cargo build --locked -p fast_io --features iocp
 
+      - name: Build per-process temp-dir runner
+        shell: bash
+        run: |
+          cargo build --locked -p test-support --bin tmp-runner
+          cp target/debug/tmp-runner.exe "$RUNNER_TEMP/tmp-runner.exe"
+
       # Filter targets the `iocp_high_concurrency_stress` integration
       # binary, which carries both `stress_10k_small_writes_distinct_files`
       # and `stress_10k_alternating_files_via_iocp_writer`. Both are
       # cfg-gated to `windows + iocp` and gated again at runtime by
       # OC_RSYNC_IOCP_STRESS=1 (set in the workflow env above).
       - name: Run IOCP high-IOPS stress tests
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER: ${{ runner.temp }}\tmp-runner.exe
+          OC_REQUIRE_TMP_RUNNER: '1'
         run: cargo nextest run --locked -p fast_io --features iocp --no-fail-fast -E 'test(stress_10k)'
 
       - name: Upload nextest logs
