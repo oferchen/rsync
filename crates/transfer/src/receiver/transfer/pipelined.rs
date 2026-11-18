@@ -299,6 +299,9 @@ impl ReceiverContext {
                     true,
                 )?;
                 all_delayed_updates.extend(delayed);
+                // upstream: generate_files() checks every entry before its NDX_DONE
+                // (generator.c:2904-2919): those after the last record are checked here.
+                self.keepalive_checks_before(self.file_list.len(), writer)?;
                 self.finish_request_phase(&mut *reader, writer, &mut ndx_read_codec)?;
 
                 // Phase 2: redo pass for files that failed checksum verification.
@@ -413,6 +416,9 @@ impl ReceiverContext {
         self.flush_itemize_rows(writer)?;
         self.publish_list_only_entries(&mut stats, writer)?;
 
+        // upstream: generate_files() checks every entry before its NDX_DONE
+        // (generator.c:2904-2919): those after the last record are checked here.
+        self.keepalive_checks_before(self.file_list.len(), writer)?;
         self.finalize_transfer(
             reader,
             writer,

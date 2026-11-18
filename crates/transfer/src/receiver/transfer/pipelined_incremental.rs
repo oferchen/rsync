@@ -489,6 +489,9 @@ impl ReceiverContext {
         self.flush_itemize_rows(writer)?;
         self.publish_list_only_entries(&mut stats, writer)?;
 
+        // upstream: generate_files() checks every entry before its NDX_DONE
+        // (generator.c:2904-2919): those after the last record are checked here.
+        self.keepalive_checks_before(self.file_list.len(), writer)?;
         self.finalize_transfer(
             reader,
             writer,
@@ -676,6 +679,10 @@ impl ReceiverContext {
                 if !self.ensure_flat_idx(probe, reader, &mut ndx_read_codec)? {
                     break;
                 }
+                // upstream: generator.c:2925-2928 - the current list is done
+                // and the next is not here yet, so wait_for_receiver() reads;
+                // that read queues a keepalive, unflushed (io.c:933-936).
+                writer.keepalive_after_read()?;
             }
             if segment_idx >= self.ndx_segments.len() {
                 break;
@@ -1009,6 +1016,9 @@ impl ReceiverContext {
 
         // upstream: generator.c:2991-3001 - the delayed deletions, then one
         // --max-delete report for every per-directory delete of the walk.
+        // upstream: generate_files() checks every entry before its NDX_DONE
+        // (generator.c:2904-2919): those after the last record are checked here.
+        self.keepalive_checks_before(self.file_list.len(), writer)?;
         self.finalize_transfer(
             reader,
             writer,

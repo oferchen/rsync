@@ -1019,7 +1019,7 @@ impl ReceiverContext {
         // the poke is emitted at the pass boundaries here (entry, and again after
         // the parallel scan) plus per-directory in the serial capped executor.
         // A strict no-op unless --timeout is set (allowed_lull None).
-        writer.maybe_send_keepalive()?;
+        writer.maybe_send_keepalive_once_written()?;
 
         let max_delete = self.config.deletion.max_delete;
 
@@ -1565,7 +1565,7 @@ impl ReceiverContext {
         // per-directory delete_in_dir work with no writer access, so poke the
         // keepalive here at the far edge of that silent window before the serial
         // emission loop. A strict no-op unless --timeout is set.
-        writer.maybe_send_keepalive()?;
+        writer.maybe_send_keepalive_once_written()?;
 
         let mut combined = DeleteStats::new();
         // UTS-16.b: any worker that hit a fail-loud sandbox class (ELOOP /
@@ -1843,7 +1843,7 @@ impl ReceiverContext {
             // upstream: generator.c:330-331 - poke a keepalive at the start of
             // each per-directory scan, matching delete_in_dir()'s cadence
             // exactly on this serial path. A strict no-op unless --timeout is set.
-            state.writer.maybe_send_keepalive()?;
+            state.writer.maybe_send_keepalive_once_written()?;
             // Stop scanning once the cap is exhausted: every further candidate
             // would only add to the skipped count, and upstream stops issuing
             // deletions the moment the limit is reached.

@@ -1403,7 +1403,7 @@ impl ReceiverContext {
             );
             recorded.sort_by(|a, b| b.0.components().count().cmp(&a.0.components().count()));
             for (dir_path, mode) in recorded {
-                let _ = writer.maybe_send_keepalive();
+                let _ = writer.maybe_send_keepalive_once_written();
                 if let Err(e) = super::dest_chmod(sandbox, dest_dir, &dir_path, mode) {
                     debug_log!(
                         Recv,
@@ -1435,11 +1435,11 @@ impl ReceiverContext {
         // list order. Deviation from upstream: oc walks in reverse.
         let released = self.released_dirs.iter().map(|(_, e)| e);
         for entry in released.chain(self.file_list.iter()).rev() {
-            // upstream: generator.c:2656 - poke a keepalive once the I/O
-            // lull has elapsed so a remote sender does not time out while this
-            // final metadata pass walks a large directory tree. A strict no-op
-            // unless --timeout is set (allowed_lull None).
-            let _ = writer.maybe_send_keepalive();
+            // upstream: generator.c:2625-2659 - touch_up_dirs() counts every
+            // entry it walks and pokes a keepalive each time the count reaches
+            // loopchk_limit, so a remote sender does not time out while this
+            // final metadata pass walks a large tree. A no-op without --timeout.
+            let _ = self.touch_up_keepalive_tick(writer);
             // upstream: generator.c:2630 - implied parents are not re-timed.
             if !entry.is_dir() || self.skips_implied_dir(entry) {
                 continue;

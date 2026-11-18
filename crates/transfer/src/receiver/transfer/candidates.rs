@@ -489,8 +489,10 @@ impl ReceiverContext {
             // elapsed so a remote sender's --timeout does not fire while the
             // generator quick-checks a long run of up-to-date files without
             // writing any NDX request. A strict no-op unless --timeout is set
-            // (allowed_lull None), keeping the default path wire-identical.
-            let _ = writer.maybe_send_keepalive();
+            // (allowed_lull None), keeping the default path wire-identical,
+            // and before the first write: the connection's first poke is the
+            // per-entry check where records are written (receiver::loopchk).
+            let _ = writer.maybe_send_keepalive_once_written();
             if self.skip_regular_by_existence_gate(
                 writer,
                 entry,

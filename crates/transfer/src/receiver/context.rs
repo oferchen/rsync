@@ -472,6 +472,8 @@ pub struct ReceiverContext {
     /// has finished the previous phase, before the replies to the requests
     /// that precede them are read.
     pub(in crate::receiver) phase_end_writes_sent: std::cell::Cell<usize>,
+    /// The generator's keepalive counters; see `receiver::loopchk`.
+    pub(in crate::receiver) loopchk: std::cell::Cell<super::loopchk::LoopChk>,
     /// Sender phase `NDX_DONE`s read so far; each lets the generator's next
     /// phase-ending writes go out.
     pub(in crate::receiver) sender_phase_dones: std::cell::Cell<usize>,
@@ -800,6 +802,7 @@ impl ReceiverContext {
             hardlink_leader_index: RefCell::default(),
             early_sender_ndx_dones: std::cell::Cell::new(0),
             phase_end_writes_sent: std::cell::Cell::new(0),
+            loopchk: std::cell::Cell::default(),
             sender_phase_dones: std::cell::Cell::new(0),
             sender_ndx_dones: std::cell::Cell::new(0),
             no_transfer_itemize: RefCell::new(Vec::new()),

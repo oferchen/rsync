@@ -757,6 +757,12 @@ impl ReceiverContext {
                         for ((file_idx, file_entry, file_path, base_iflags), mut basis_result) in
                             batch.into_iter().zip(sig_results)
                         {
+                            // upstream: generator.c:2904-2913 - the keepalive
+                            // checks of the entries since the last record, which
+                            // wrote nothing (receiver::loopchk).
+                            if !is_redo_pass {
+                                self.keepalive_checks_before(file_idx, writer)?;
+                            }
                             if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
                                 self.send_no_transfer_itemize(
                                     writer,
@@ -767,6 +773,9 @@ impl ReceiverContext {
                                     file_path,
                                     base_iflags,
                                 )?;
+                                if !is_redo_pass {
+                                    self.keepalive_checks_before(file_idx + 1, writer)?;
+                                }
                                 continue;
                             }
                             // upstream: generator.c:606,598 - before requesting
@@ -812,6 +821,11 @@ impl ReceiverContext {
                             )?;
 
                             pipeline.push(pending, (file_idx, file_path, file_entry, base_iflags));
+                            // upstream: generator.c:2908 - the entry's own check,
+                            // now that its request is buffered.
+                            if !is_redo_pass {
+                                self.keepalive_checks_before(file_idx + 1, writer)?;
+                            }
                         }
                     }
                 }
@@ -829,6 +843,9 @@ impl ReceiverContext {
                         )?;
                     }
                     if candidates.is_finished() {
+                        // upstream: generate_files() checks every entry before its NDX_DONE
+                        // (generator.c:2904-2919): those after the last record are checked here.
+                        self.keepalive_checks_before(self.file_list.len(), writer)?;
                         self.write_phase_end(writer)?;
                         phase_ended = true;
                     }
@@ -1230,6 +1247,8 @@ impl ReceiverContext {
                 continue;
             }
 
+            // upstream: generator.c:2904-2913 - see receiver::loopchk.
+            self.keepalive_checks_before(file_idx, writer)?;
             let echoed = match batch.as_deref_mut() {
                 // upstream: generator.c:2433-2452 - with do_xfers set the
                 // request goes on to carry a real sum head.
@@ -1278,6 +1297,7 @@ impl ReceiverContext {
                     true
                 }
             };
+            self.keepalive_checks_before(file_idx + 1, writer)?;
 
             // upstream: rsync.c:672-676 set_file_attrs emits the bare-name
             // notice AFTER the transfer decision is known. In dry-run the

@@ -436,18 +436,6 @@ impl<W: Write> MultiplexWriter<W> {
         self.out.borrow_mut().allowed_lull = lull;
     }
 
-    /// Starts the lull now instead of at "never written".
-    ///
-    /// For the receiving side only. Its generator pokes a keepalive before
-    /// each file it checks, ahead of the requests it batches, while
-    /// upstream's generator pokes after `recv_generator()` has buffered the
-    /// entry's request (generator.c:2904-2913). Taking the lull from setup
-    /// keeps those pokes from sending an empty frame where rsync 3.5.2 sends
-    /// that request instead.
-    pub(crate) fn measure_lull_from_now(&mut self) {
-        self.out.borrow_mut().last_io_out = LastWrite::At(Instant::now());
-    }
-
     /// Returns the configured keep-alive lull interval, or `None` when
     /// `--timeout` is not set.
     ///
@@ -472,6 +460,15 @@ impl<W: Write> MultiplexWriter<W> {
             return Ok(false);
         };
         self.send_keepalive_after_lull(lull)
+    }
+
+    /// [`Self::maybe_send_keepalive`] that does nothing before the first
+    /// write; see `MsgInfoSender::maybe_send_keepalive_once_written`.
+    pub(crate) fn maybe_send_keepalive_once_written(&mut self) -> io::Result<bool> {
+        if matches!(self.out.borrow().last_io_out, LastWrite::Never) {
+            return Ok(false);
+        }
+        self.maybe_send_keepalive()
     }
 
     /// Answers a peer's protocol-29 keep-alive frame (`rsync.c:389-390`).
@@ -772,20 +769,6 @@ mod keepalive_tests {
         w.flush().unwrap();
         drop(w);
         assert_eq!(out, [2, 0, 0, 7, b'a', b'b']);
-    }
-
-    /// WHY: the receiving side measures its lull from setup (see
-    /// `measure_lull_from_now`), so a keepalive poke right after setup stays
-    /// silent there, as it did before the never-written state existed.
-    #[test]
-    fn a_lull_measured_from_setup_has_not_passed_yet() {
-        let mut out: Vec<u8> = Vec::new();
-        let mut w = MultiplexWriter::new(&mut out);
-        w.set_allowed_lull(Some(Duration::from_secs(3600)));
-        w.measure_lull_from_now();
-        assert!(!w.maybe_send_keepalive().unwrap());
-        drop(w);
-        assert!(out.is_empty());
     }
 
     /// Bytes the writer has put on the sink so far.

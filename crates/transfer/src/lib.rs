@@ -1253,12 +1253,11 @@ fn run_server_on_core(
         writer.set_allowed_lull(Some(allowed_lull));
         // upstream: the sender's reads queue a keepalive while nothing has
         // been written (io.c:933-936 with last_io_out still 0, io.c:113).
-        // The receiving side's lull runs from setup instead; see
-        // MultiplexWriter::measure_lull_from_now.
+        // The receiving side's generator starts unwritten too, but its pokes
+        // come from its per-entry checks and file-list waits
+        // (receiver::loopchk), not from reads of the delta stream.
         if config.role == ServerRole::Generator {
             iobuf::Core::keepalive_on_read(&core);
-        } else {
-            writer.measure_lull_from_now();
         }
     }
 

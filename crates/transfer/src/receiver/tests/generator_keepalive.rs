@@ -65,12 +65,20 @@ impl SharedSink {
 /// lull. `Some(Duration::ZERO)` makes every elapsed interval exceed the lull, so
 /// each `maybe_send_keepalive()` deterministically emits; `None` mirrors an
 /// unset `--timeout` and must stay a strict no-op.
+///
+/// The writer has already written once, and that output is dropped from the
+/// capture: these phases only keep a long pass alive and never make the
+/// connection's first poke, which belongs to the per-entry check where records
+/// are written (`receiver::loopchk`).
 fn mux_writer(lull: Option<Duration>) -> (ServerWriter<SharedSink>, SharedSink) {
     let sink = SharedSink::default();
     let mut writer = ServerWriter::new_plain(sink.clone())
         .activate_multiplex()
         .expect("activate multiplex");
     writer.set_allowed_lull(lull);
+    writer.write_all(b"x").expect("first write");
+    writer.flush().expect("first flush");
+    sink.0.lock().unwrap().clear();
     (writer, sink)
 }
 

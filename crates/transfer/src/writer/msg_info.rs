@@ -158,6 +158,26 @@ pub trait MsgInfoSender {
         Ok(false)
     }
 
+    /// [`Self::maybe_send_keepalive`] for a site that only keeps a long pass
+    /// alive: it does nothing until the connection has written something, so
+    /// the first poke is left to the generator's per-entry check
+    /// (generator.c:2904-2913), which sees what the first entry buffered.
+    fn maybe_send_keepalive_once_written(&mut self) -> io::Result<bool> {
+        Ok(false)
+    }
+
+    /// Queues a keepalive after a read that waited for input, without
+    /// flushing (io.c:933-936 with no `MSK_ALLOW_FLUSH`).
+    fn keepalive_after_read(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    /// The allowed lull (`(timeout + 1) / 2`, io.c:1299), or `None` without
+    /// `--timeout` or on a stream that is not multiplexed.
+    fn keepalive_lull(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     /// Selects where a batch-recorded stream lands: teed alongside the wire, or
     /// diverted into the batch instead of it.
     ///
@@ -263,6 +283,24 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
         }
     }
 
+    fn maybe_send_keepalive_once_written(&mut self) -> io::Result<bool> {
+        match self {
+            Self::Multiplex(mux) => mux.maybe_send_keepalive_once_written(),
+            Self::Plain(_) | Self::Taken => Ok(false),
+        }
+    }
+
+    fn keepalive_after_read(&mut self) -> io::Result<()> {
+        match self {
+            Self::Multiplex(mux) => mux.shared_out().borrow_mut().keepalive_after_read(),
+            Self::Plain(_) | Self::Taken => Ok(()),
+        }
+    }
+
+    fn keepalive_lull(&self) -> Option<std::time::Duration> {
+        ServerWriter::allowed_lull(self)
+    }
+
     fn set_batch_route(&mut self, route: BatchRoute) {
         // Duplicating the inherent method's name here keeps the call at the
         // sender unambiguous; the inherent method owns the variant match.
@@ -319,6 +357,18 @@ impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
         (**self).maybe_send_keepalive()
     }
 
+    fn maybe_send_keepalive_once_written(&mut self) -> io::Result<bool> {
+        (**self).maybe_send_keepalive_once_written()
+    }
+
+    fn keepalive_after_read(&mut self) -> io::Result<()> {
+        (**self).keepalive_after_read()
+    }
+
+    fn keepalive_lull(&self) -> Option<std::time::Duration> {
+        (**self).keepalive_lull()
+    }
+
     fn set_batch_route(&mut self, route: BatchRoute) {
         (**self).set_batch_route(route);
     }
@@ -363,6 +413,18 @@ impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
 
     fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         self.inner_ref_mut().maybe_send_keepalive()
+    }
+
+    fn maybe_send_keepalive_once_written(&mut self) -> io::Result<bool> {
+        self.inner_ref_mut().maybe_send_keepalive_once_written()
+    }
+
+    fn keepalive_after_read(&mut self) -> io::Result<()> {
+        self.inner_ref_mut().keepalive_after_read()
+    }
+
+    fn keepalive_lull(&self) -> Option<std::time::Duration> {
+        self.inner_ref().keepalive_lull()
     }
 
     fn set_batch_route(&mut self, route: BatchRoute) {
