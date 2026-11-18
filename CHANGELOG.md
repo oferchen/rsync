@@ -248,6 +248,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 ### Performance
 
+- A receiver stats a new hard-link name once and its group's leader not at all: the same pull 1.74 s to 1.60 s, `newfstatat` calls 300,791 to 200,791 (#8412)
 - Hard links into a nested directory reuse the held parent directory and name the leader beneath the pinned destination root: `openat2` calls on the same pull 55,148 to 5,146, and 1.82 s to 1.76 s (#8411)
 - A receiver links a new hard-link name with one stat and the link, without first checking the group's leader and the parent directory again: a pull of 50,000 hard-link groups without incremental recursion 2.09 s to 1.82 s (#8411)
 - Local `--checksum` compares source and destination through the parallel checksum service: same-size pairs of a directory are hashed in one rayon batch, and files of 8 MiB or more as 4 MiB block vectors in parallel; decisions and output are unchanged against rsync 3.5.1 (#8249)
@@ -280,6 +281,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 ### Fixed
 - Daemon: `%VAR%` references are expanded in every string parameter at the point rsync 3.5.2 first reads it - `uid`, `gid`, `hosts allow`, `hosts deny`, `auth users`, `auth digest`, `lock file`, `charset`, `log format`, `filter`, `include`, `exclude`, `incoming chmod`, `outgoing chmod`, `refuse options`, `dont compress` and `syslog tag` per connection, and `comment`, module names, `address`, `pid file`, `motd file`, `socket options`, `daemon uid`, `daemon gid`, `daemon chroot` and `proxy protocol hosts` from the daemon environment (#8416)
 - A daemon picks the strongest auth digest it shares with the client, as rsync 3.5.2 does, instead of the first name the client lists; a client that lists `md5` before `sha512` is now challenged with SHA-512 (#8416)
+- A sender using the lazy incremental file-list producer reports a refused directory (`opendir ... failed`, past the 1024-deep descriptor stack) before the sub-list, like 3.5.2 (#8415)
 - A rule refused out of a per-directory merge file prints its text on its own line above the `syntax or usage error` trailer, as rsync 3.5.2 does, on a push and a local copy; a local copy refuses an operand directory's bad merge file before creating the destination (#8407)
 
 - Local copy: an existing file is no longer replaced by a directory when the copy would put more than one entry, or a lone directory, in its place (`-r src/dir file`, also under `--force`); it is left alone and the copy exits 3 like rsync 3.5.2. The destination's role now follows the file list's entry count, not the operand count, so a missing operand no longer makes it a directory and `-R` implied directories do; a missing parent of a single-file destination exits 3 (`change_dir#3`), a failed destination mkdir exits 11, and a symlink to a directory is entered without `--keep-dirlinks` (#8410)

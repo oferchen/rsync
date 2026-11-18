@@ -291,7 +291,7 @@ impl GeneratorContext {
             // the next directory just before the scheduler would dispatch, so
             // the same `next_to_send` throttle sees a queued segment. One
             // directory per dispatched sub-list, never ahead of the floor.
-            self.refill_lazy_scheduler(scheduler, MIN_FILECNT_LOOKAHEAD)?;
+            self.refill_lazy_scheduler(&mut *writer, scheduler, MIN_FILECNT_LOOKAHEAD)?;
             let Some(seg) = scheduler.next_to_send() else {
                 break;
             };
@@ -309,8 +309,14 @@ impl GeneratorContext {
     /// exactly one directory is scanned per sub-list the throttle admits -
     /// upstream's `send1extra()` producing one directory per loop turn
     /// (`flist.c:2667`).
-    fn refill_lazy_scheduler(
+    ///
+    /// A refusal the scan queued (an `opendir` failure, a vanished
+    /// directory) goes out before the sub-list it belongs to: upstream's
+    /// `send_directory()` reports it through `rsyserr()` as it scans
+    /// (`flist.c:2385`), ahead of the sub-list `send1extra()` then writes.
+    fn refill_lazy_scheduler<W: Write>(
         &mut self,
+        writer: &mut super::super::super::writer::ServerWriter<W>,
         scheduler: &mut SegmentScheduler,
         ceiling: usize,
     ) -> io::Result<()> {
@@ -323,7 +329,7 @@ impl GeneratorContext {
         if let Some(seg) = self.produce_next_lazy_segment()? {
             scheduler.push_segment(seg);
         }
-        Ok(())
+        self.flush_flist_diagnostics(writer)
     }
 
     /// Emits `NDX_FLIST_EOF` once the scheduler has handed out every sub-list.
@@ -391,7 +397,7 @@ impl GeneratorContext {
         // Scan one directory ahead of the ceiling before growing, so the
         // idle-time top-up has a queued segment to dispatch. Bounded by
         // `MAX_FILECNT_LOOKAHEAD` exactly as `next_when_idle`.
-        self.refill_lazy_scheduler(scheduler, MAX_FILECNT_LOOKAHEAD)?;
+        self.refill_lazy_scheduler(&mut *writer, scheduler, MAX_FILECNT_LOOKAHEAD)?;
         if let Some(seg) = scheduler.next_when_idle() {
             self.encode_and_send_segment(&mut *writer, seg, flist_writer, ndx_codec.inner_mut())?;
             *flist_done_remaining += 1;
@@ -1575,7 +1581,7 @@ impl GeneratorContext {
                 // the lookahead ceiling so the flush scans and sends the whole
                 // rest of the tree before NDX_FLIST_EOF, mirroring
                 // `next_forced` bypassing the throttle on the eager path.
-                self.refill_lazy_scheduler(&mut scheduler, usize::MAX)?;
+                self.refill_lazy_scheduler(io.output(), &mut scheduler, usize::MAX)?;
                 let Some(seg) = scheduler.next_forced() else {
                     break;
                 };

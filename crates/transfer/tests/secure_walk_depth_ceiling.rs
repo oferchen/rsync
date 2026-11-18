@@ -66,6 +66,20 @@ enum Direction {
 }
 
 fn transfer(direction: Direction, src: &Path, dest: &Path, extra: &[&str]) -> CliOutput {
+    transfer_with_env(direction, src, dest, extra, &[])
+}
+
+/// The environment that selects the lazy INC_RECURSE sender producer, which
+/// scans a directory only when its sub-list is due.
+const LAZY_PRODUCER: &[(&str, &str)] = &[("OC_RSYNC_LAZY_FLIST", "1")];
+
+fn transfer_with_env(
+    direction: Direction,
+    src: &Path,
+    dest: &Path,
+    extra: &[&str],
+    env: &[(&str, &str)],
+) -> CliOutput {
     let stub = LshRunnerStub::locate().expect("lsh-stub located");
     let (from, to) = match direction {
         Direction::Pull => (
@@ -77,7 +91,12 @@ fn transfer(direction: Direction, src: &Path, dest: &Path, extra: &[&str]) -> Cl
             format!("localhost:{}/", dest.display()),
         ),
     };
-    OcRsyncCliRunner::new()
+    let runner = env
+        .iter()
+        .fold(OcRsyncCliRunner::new(), |runner, (key, value)| {
+            runner.env(key, value)
+        });
+    runner
         .arg("-r")
         .args(extra)
         .arg(format!("--rsh={}", stub.path().display()))
@@ -111,12 +130,12 @@ fn copies_the_deepest_walkable_tree(direction: Direction) {
 
 /// One level more and the sender's opendir of the 1024th level is refused:
 /// that level's file is missing and the run is partial.
-fn stops_the_sender_at_the_1024th_level(direction: Direction) {
+fn stops_the_sender_at_the_1024th_level(direction: Direction, env: &[(&str, &str)]) {
     require_binaries!("oc-rsync", LSH_STUB_BIN);
     let tmp = create_tempdir();
     let src = deep_chain(tmp.path(), 1024);
     let dest = tmp.path().join("dest");
-    let out = transfer(direction, &src, &dest, &[]);
+    let out = transfer_with_env(direction, &src, &dest, &[], env);
     out.assert_exit(23);
     assert_eq!(files_under(&dest), 1023, "stderr:\n{}", out.stderr_str());
     assert_eq!(
@@ -184,12 +203,26 @@ fn push_copies_a_1023_level_tree_whole() {
 
 #[test]
 fn pull_sender_refuses_the_1024th_level() {
-    stops_the_sender_at_the_1024th_level(Direction::Pull);
+    stops_the_sender_at_the_1024th_level(Direction::Pull, &[]);
 }
 
 #[test]
 fn push_sender_refuses_the_1024th_level() {
-    stops_the_sender_at_the_1024th_level(Direction::Push);
+    stops_the_sender_at_the_1024th_level(Direction::Push, &[]);
+}
+
+/// The lazy producer meets the 1024th level only when that directory's
+/// sub-list is due, mid-transfer. Its refusal must still reach the client,
+/// as send_directory()'s rsyserr() does before send1extra() writes the
+/// sub-list (flist.c:2385).
+#[test]
+fn pull_lazy_sender_refuses_the_1024th_level() {
+    stops_the_sender_at_the_1024th_level(Direction::Pull, LAZY_PRODUCER);
+}
+
+#[test]
+fn push_lazy_sender_refuses_the_1024th_level() {
+    stops_the_sender_at_the_1024th_level(Direction::Push, LAZY_PRODUCER);
 }
 
 #[test]
