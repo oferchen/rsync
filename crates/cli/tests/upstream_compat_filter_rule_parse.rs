@@ -34,12 +34,13 @@ const DEST: &str = "@dst/";
 #[derive(Debug, PartialEq, Eq)]
 struct Outcome {
     exit: i32,
-    /// The first diagnostic, stripped of its framing. Upstream prints the text
-    /// on one line and a separate `rsync error: ... (code N) at FILE(LINE)`
-    /// trailer; oc folds both into `oc-rsync error: TEXT (code N) at ...`. The
-    /// source location and version tag legitimately differ, and the exit code
-    /// is compared on its own, so only TEXT is kept.
+    /// The first diagnostic line. A refusal prints its text bare, then
+    /// log_exit()'s trailer on the next line.
     diagnostic: String,
+    /// The trailer naming the exit code, reduced to
+    /// `rsync error: NAME (code N) [ROLE]`: the program name, source location
+    /// and version legitimately differ.
+    trailer: String,
     /// Sorted relative paths of every file and directory in the destination.
     transferred: Vec<String>,
 }
@@ -74,14 +75,16 @@ fn listing(dir: &Path, prefix: &str, out: &mut Vec<String>) {
     }
 }
 
-/// Reduces the first stderr line to the diagnostic text both binaries share.
-fn diagnostic(stderr: &str) -> String {
-    let line = stderr.lines().next().unwrap_or_default();
-    let line = line.strip_prefix("oc-rsync error: ").unwrap_or(line);
-    match line.rfind(" (code ") {
-        Some(end) if line.contains(") at ") => line[..end].to_owned(),
-        _ => line.to_owned(),
-    }
+/// Reduces log_exit()'s `PROG error: NAME (code N) at FILE(LINE) [ROLE=VER]`
+/// to `rsync error: NAME (code N) [ROLE]`, the part both binaries share.
+fn trailer(line: &str) -> String {
+    let line = line.strip_prefix("oc-").unwrap_or(line);
+    let (Some(at), Some(role)) = (line.find(") at "), line.rfind('[')) else {
+        return line.to_owned();
+    };
+    let role = &line[role..];
+    let role = role.split('=').next().unwrap_or(role);
+    format!("{} {role}]", &line[..=at])
 }
 
 /// How the client reaches the source tree.
@@ -183,9 +186,24 @@ fn run(
     transferred.sort();
     // A per-directory merge file is named by its absolute path
     // (exclude.c:756-775), which holds this run's own temporary tree.
+    let exit = output.status.code().expect("exit code");
+    // Upstream's forked receiver races the sender to stderr with its own
+    // SIGUSR1 trailer (main.c:1687), so the trailer compared is the one that
+    // names the run's exit code.
+    let code = format!("(code {exit})");
     Outcome {
-        exit: output.status.code().expect("exit code"),
-        diagnostic: diagnostic(&stderr).replace(&tree, "<tree>"),
+        exit,
+        diagnostic: stderr
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .replace(&tree, "<tree>"),
+        trailer: stderr
+            .lines()
+            .skip(1)
+            .map(trailer)
+            .find(|line| line.contains(&code))
+            .unwrap_or_default(),
         transferred,
     }
 }

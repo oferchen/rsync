@@ -516,13 +516,15 @@ mod transfer_failure_error_tests {
         assert_eq!(err.exit_code(), 1);
         assert_eq!(
             err.cause_line(),
-            Some("unexpected end of filter rule: <rule from /a/.f>")
+            Some("unexpected end of filter rule: <rule from /a/.f>"),
+            "{err}"
         );
         assert!(
             err.to_string()
                 .starts_with("rsync error: syntax or usage error (code 1) at "),
             "{err}"
         );
+        assert!(err.to_string().contains(" [sender="), "{err}");
     }
 
     /// A push sender refusing its own --checksum-choice keeps RERR_UNSUPPORTED

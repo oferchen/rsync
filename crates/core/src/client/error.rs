@@ -556,10 +556,13 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
                     .with_role(Role::Sender);
             ClientError::with_code(code, message)
         }
+        // upstream: exclude.c:133-137 filter_rule_err() / exclude.c:1373-1379 -
+        // the rule error on its own line, then exit_cleanup(RERR_SYNTAX). The
+        // per-directory merge file is read by the forked sender while it builds
+        // the file list (flist.c:2117 push_local_filters()), so who_am_i()
+        // names the sender.
         LocalCopyErrorKind::FilterSyntax { message } => {
-            let code = ExitCode::Syntax;
-            let msg = rsync_error!(code.as_i32(), "{}", message).with_role(Role::Client);
-            ClientError::with_code(code, msg)
+            fatal_with_cause(message.clone(), ExitCode::Syntax, Role::Sender)
         }
         // upstream: xattrs.c:1253-1258 - the cause is printed on its own line,
         // then exit_cleanup(RERR_FILEIO) adds log_exit()'s trailer, tagged with
@@ -583,7 +586,14 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
 /// then `exit_cleanup(RERR_FILEIO)`.
 #[cold]
 fn file_io_error(cause: String, role: Role) -> ClientError {
-    let code = ExitCode::FileIo;
+    fatal_with_cause(cause, ExitCode::FileIo, role)
+}
+
+/// Builds a fatal failure printed as upstream's `rprintf(FERROR, cause)` then
+/// `exit_cleanup(code)`: the cause on its own line, then log_exit()'s trailer
+/// naming `code` and tagged with `role`.
+#[cold]
+fn fatal_with_cause(cause: String, code: ExitCode, role: Role) -> ClientError {
     let trailer = rsync_error!(code.as_i32(), "{}", code.description()).with_role(role);
     ClientError::with_code(code, trailer).with_cause_line(cause)
 }
@@ -1095,6 +1105,19 @@ mod tests {
             }
         }
 
+        /// upstream: exclude.c:133-137 filter_rule_err() - a rule refused out
+        /// of a per-directory merge file is printed bare, then
+        /// exit_cleanup(RERR_SYNTAX) adds the trailer. The forked sender reads
+        /// that file while building the file list, so who_am_i() is `sender`.
+        #[test]
+        fn a_per_directory_rule_refusal_prints_the_rule_then_the_sender_syntax_trailer() {
+            let cause = "Unknown filter rule: <rule from /t/src/bar/.excl line 1>";
+            let error = map_local_copy_error(LocalCopyError::filter_syntax(cause));
+            assert_eq!(error.code(), ExitCode::Syntax);
+            assert_eq!(error.cause_line(), Some(cause));
+            assert_eq!(error.message().text(), ExitCode::Syntax.description());
+            assert_eq!(error.message().role(), Some(Role::Sender));
+        }
         #[test]
         fn new_and_accessors() {
             let code = ExitCode::StartClient;
