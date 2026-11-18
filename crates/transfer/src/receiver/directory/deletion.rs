@@ -985,6 +985,7 @@ impl ReceiverContext {
                     &dir.join(&candidate.name),
                     candidate.is_dir,
                     candidate.is_symlink,
+                    true,
                     &mut match chain.as_mut() {
                         Some(chain) => DeletionFilter::PerDir(chain),
                         None => DeletionFilter::Flat(deletion_chain),
@@ -1001,6 +1002,78 @@ impl ReceiverContext {
         } = state;
         self.add_skipped_deletes(skipped);
         Ok((combined, io_err_bits, logged.unwrap_or_default()))
+    }
+
+    /// Removes the destination entries named in `names`, each through
+    /// upstream's `delete_item()`: itemized, counted, capped by `--max-delete`
+    /// and backed up like any other deletion, and only reported under
+    /// `--dry-run`. A name with nothing at the destination is passed over.
+    ///
+    /// `DEL_RECURSE` applies only under `--delete` or `--force`; without it a
+    /// directory that lists anything is kept and named.
+    ///
+    /// The deletions join the run's tally through the cell the make-room sites
+    /// use: upstream has one `stats.deleted_*` set for all of them.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1786-1792` - `if (statret == 0) delete_item(fname,
+    ///   sx.st.st_mode, del_opts)` for a `--delete-missing-args` entry
+    /// - `generator.c:1666` - `del_opts = delete_mode || force_delete ?
+    ///   DEL_RECURSE : 0`
+    pub(in crate::receiver) fn delete_named_entries<
+        'n,
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        names: impl IntoIterator<Item = &'n Path>,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        let deletion_chain = self.delete_pass_chain();
+        let recurse = self.del_recurse();
+        let mut state = self.capped_delete_state(
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            #[cfg(unix)]
+            self.mount_boundary_dev(dest_dir),
+            self.config.deletion.max_delete.unwrap_or(u64::MAX),
+            u64::from(self.effective_del_stats().total()),
+            writer,
+        );
+        for name in names {
+            let target = dest_dir.join(name);
+            // upstream: generator.c:1782 gen_entry_stat() is an lstat here, so
+            // a symlink is removed rather than followed, and generator.c:1789
+            // `statret == 0` leaves a missing destination alone.
+            let Ok(kind) = std::fs::symlink_metadata(&target).map(|meta| meta.file_type()) else {
+                continue;
+            };
+            state.delete_item(
+                name,
+                &target,
+                kind.is_dir(),
+                kind.is_symlink(),
+                recurse,
+                &mut DeletionFilter::Flat(deletion_chain),
+            )?;
+        }
+        let CappedDeleteState {
+            combined,
+            skipped,
+            logged,
+            ..
+        } = state;
+        self.add_skipped_deletes(skipped);
+        if let Some(logged) = logged {
+            self.record_daemon_log_deletions(&logged);
+        }
+        let mut total = self.make_room_delete_stats.get();
+        total.merge(&combined);
+        self.make_room_delete_stats.set(total);
+        Ok(())
     }
 
     /// The filter chain the delete pass consults.
@@ -2056,6 +2129,7 @@ impl ReceiverContext {
                     &path,
                     candidate.is_dir,
                     candidate.is_symlink,
+                    true,
                     &mut match local_chain.as_mut() {
                         Some(chain) => DeletionFilter::PerDir(chain),
                         None => DeletionFilter::Flat(deletion_chain),
@@ -2434,26 +2508,53 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         Ok(false)
     }
 
-    /// Removes one extraneous entry, emptying a directory first. Returns
+    /// Removes one entry, dealing with a directory's contents first. Returns
     /// `true` when the entry was removed and `false` when it (or part of its
     /// subtree) was left in place.
     ///
+    /// `recurse` is upstream's `DEL_RECURSE`: with it a directory is emptied,
+    /// without it one that lists anything is kept. Either way a directory left
+    /// non-empty is named, and is neither removed nor counted against the cap.
+    ///
     /// upstream: delete.c:193-215 - `delete_item()` without
-    /// `DEL_DIR_IS_EMPTY`: a directory that cannot be emptied is neither
-    /// removed nor counted against the cap.
+    /// `DEL_DIR_IS_EMPTY`; delete.c:113-118 - `delete_dir_contents()` only
+    /// reports emptiness when `DEL_RECURSE` is not set.
     fn delete_item(
         &mut self,
         rel: &Path,
         path: &Path,
         is_dir: bool,
         is_symlink: bool,
+        recurse: bool,
         filter: &mut DeletionFilter<'_>,
     ) -> io::Result<bool> {
-        if is_dir && !is_symlink && !self.remove_dir_contents(rel, path, filter)? {
-            self.report_non_empty_dir(rel);
-            return Ok(false);
+        if is_dir && !is_symlink {
+            let emptied = if recurse {
+                self.remove_dir_contents(rel, path, filter)?
+            } else {
+                !self.dir_has_entries(rel, path)
+            };
+            if !emptied {
+                self.report_non_empty_dir(rel);
+                return Ok(false);
+            }
         }
         self.delete_emptied(rel, path, is_dir, is_symlink)
+    }
+
+    /// True when the directory at `path` lists at least one entry. A directory
+    /// that cannot be read counts as empty: the `rmdir` that follows reports it.
+    fn dir_has_entries(&self, rel: &Path, path: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            fast_io::read_dir_via_sandbox_or_fallback(self.sandbox, self.dest_dir, rel, path)
+                .is_ok_and(|mut entries| entries.next().is_some())
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = rel;
+            std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_some())
+        }
     }
 
     /// Removes a non-directory or an emptied directory under the cap.
@@ -2566,6 +2667,12 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
             }
             Err(e) => {
                 debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
+                // upstream: delete.c:259-263 - an rmdir that fails ENOTEMPTY
+                // names the directory and moves on.
+                if is_dir && super::obstacle::is_not_empty(&e) {
+                    self.report_non_empty_dir(rel);
+                    return Ok(false);
+                }
                 if let Some(err) = fail_loud_unlink_error(e) {
                     return Err(err);
                 }

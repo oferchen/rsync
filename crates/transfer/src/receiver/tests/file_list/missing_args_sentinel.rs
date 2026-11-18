@@ -158,10 +158,15 @@ fn receiver_sentinel_for_missing_destination_is_noop() {
     .unwrap();
 }
 
-/// `--dry-run` short-circuits all filesystem mutations (mirrors upstream's
-/// receiver.c:709).
+/// `--dry-run` reports the deletion and leaves the destination alone.
+///
+/// Why this matters: upstream still reaches `delete_item()` under `dry_run`;
+/// only `do_unlink()` turns into a no-op (syscall.c:848-850), so
+/// `log_delete()` tells the user what a real run would remove. Staying silent
+/// hides the one effect `--delete-missing-args` has.
+#[cfg(unix)]
 #[test]
-fn receiver_sentinel_dry_run_skips_deletion() {
+fn receiver_sentinel_dry_run_reports_without_deleting() {
     let temp_dir = TempDir::new().unwrap();
     let dest = temp_dir.path();
 
@@ -171,6 +176,7 @@ fn receiver_sentinel_dry_run_skips_deletion() {
     let mut config = test_config();
     config.file_selection.delete_missing_args = true;
     config.flags.dry_run = true;
+    config.connection.client_mode = false;
     config.args = vec![OsString::from(dest.to_str().unwrap())];
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
@@ -178,18 +184,15 @@ fn receiver_sentinel_dry_run_skips_deletion() {
         .push(FileEntry::new_directory(".".into(), 0o755));
     ctx.file_list.push(sentinel_entry("ghost.txt"));
 
-    ctx.process_missing_args_sentinels(
-        dest,
-        #[cfg(unix)]
-        None,
-        &mut TestDeletionWriter,
-    )
-    .unwrap();
+    let mut writer = CapturingDeletionWriter::default();
+    ctx.process_missing_args_sentinels(dest, None, &mut writer)
+        .unwrap();
 
     assert!(
         dest.join("ghost.txt").exists(),
         "dry_run must not perform any deletion",
     );
+    assert_eq!(writer.lines, vec!["*deleting   ghost.txt".to_owned()]);
 }
 
 /// Under `--delete` a mode-0 sentinel naming a populated directory removes
@@ -272,8 +275,13 @@ fn receiver_sentinel_keeps_populated_directory_without_del_recurse() {
         !dest.join("empty-dir").exists(),
         "an empty directory is still removed",
     );
+    // The removal travels as MSG_DELETED like any other deletion
+    // (log.c:866), so a pushing client itemizes it.
     assert_eq!(
         writer.lines,
-        vec!["cannot delete non-empty directory: ghost-dir".to_owned()],
+        vec![
+            "*deleting   empty-dir/".to_owned(),
+            "cannot delete non-empty directory: ghost-dir".to_owned(),
+        ],
     );
 }

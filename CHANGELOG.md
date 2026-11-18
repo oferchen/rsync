@@ -872,6 +872,7 @@ user-facing work; consult the linked PRs for full detail.
 
 ### Fixed
 
+- `--delete-missing-args` now removes what a missing operand names the way upstream's `delete_item()` does: a trailing-slash operand under `--relative` is a missing argument like any other on a local copy, `--delete` / `--force` empty a directory leaf by leaf with one itemized row per entry and the `--max-delete` cap applied inside it, a remote receiver itemizes the removal instead of printing an absolute path, and `--dry-run` reports the rows instead of ending in a protocol error (#8706)
 - `--delete-delay` now holds its deletions until the transfer is over under `--max-delete` and `--one-file-system` too, spending the cap in replay order as upstream does. A subdirectory left non-empty at the cap counts as skipped, a kept directory is named relative to the destination at any verbosity (twice below the cap, as upstream's failed rmdir does), and a daemon no longer ignores a pushed `--max-delete=0` (#8706)
 **Daemon**
 - Survive transient `accept(2)` errors (`ECONNABORTED`/`EMFILE`) under load instead of treating them as fatal (#6763)
