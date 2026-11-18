@@ -71,6 +71,26 @@ impl ReceiverContext {
         true
     }
 
+    /// Reports whether `--existing` keeps the hard-link follower `entry` from
+    /// being linked, because nothing exists at its destination.
+    ///
+    /// upstream: generator.c:1794-1810 - a missing destination returns under
+    /// `ignore_non_existing` before generator.c:1980 `hard_link_check()` is
+    /// reached, so the name is not linked to a member that does exist.
+    pub(in crate::receiver) fn existing_only_skips_follower(
+        &self,
+        entry: &FileEntry,
+        dest_dir: &Path,
+    ) -> bool {
+        if !self.config.file_selection.existing_only {
+            return false;
+        }
+        let stat =
+            fs::symlink_metadata(dest_dir.join(entry.path())).map(fast_io::EntryMetadata::from);
+        self.existence_skip(entry, DestinationEntry::from_lstat(&stat))
+            == Some(ExistenceSkip::NotCreatingNew)
+    }
+
     /// Emits upstream's SKIP notice for an entry the existence gate skipped.
     ///
     /// upstream: generator.c:1804-1808 - `not creating new %s "%s"` names the
