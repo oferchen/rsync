@@ -2739,3 +2739,155 @@ fn inplace_create_beneath_the_sandbox_is_owner_only() {
         test_support::umask_masked(0o600)
     );
 }
+
+// linkat_via_sandbox_or_fallback tests
+
+fn inode(path: &Path) -> u64 {
+    std::fs::symlink_metadata(path).expect("stat").ino()
+}
+
+#[test]
+fn linkat_via_sandbox_links_at_the_root_and_in_a_nested_directory() {
+    let (_keep, root) = test_support::create_canonical_tempdir();
+    std::fs::create_dir(root.join("a")).expect("mkdir a");
+    std::fs::create_dir(root.join("b")).expect("mkdir b");
+    let leader = root.join("a/leader");
+    std::fs::write(&leader, b"x").expect("write leader");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    for name in ["b/one", "b/two", "top"] {
+        linkat_via_sandbox_or_fallback(
+            Some(&sandbox),
+            &leader,
+            &root,
+            Path::new(name),
+            &root.join(name),
+        )
+        .unwrap_or_else(|e| panic!("link {name}: {e}"));
+        assert_eq!(inode(&root.join(name)), inode(&leader), "{name}");
+    }
+}
+
+/// The leader is looked up beneath the pinned root, not by walking the
+/// destination's absolute path again: after the path is re-pointed at
+/// another directory, the link is still made from the leader in the pinned
+/// one, beside it.
+#[test]
+fn linkat_via_sandbox_finds_the_leader_beneath_the_pinned_root() {
+    let (_keep, base) = test_support::create_canonical_tempdir();
+    let dest = base.join("dest");
+    std::fs::create_dir_all(dest.join("sub")).expect("mkdir dest/sub");
+    std::fs::write(dest.join("leader"), b"x").expect("write leader");
+    let sandbox = DirSandbox::open_root(&dest).expect("sandbox");
+
+    let pinned = base.join("pinned");
+    std::fs::rename(&dest, &pinned).expect("move the pinned directory aside");
+    std::fs::create_dir_all(dest.join("sub")).expect("a different directory at the path");
+
+    linkat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &dest.join("leader"),
+        &dest,
+        Path::new("sub/new"),
+        &dest.join("sub/new"),
+    )
+    .expect("the leader is found beneath the pinned root");
+    assert_eq!(
+        inode(&pinned.join("sub/new")),
+        inode(&pinned.join("leader"))
+    );
+    assert!(
+        !dest.join("sub/new").exists(),
+        "nothing lands at the re-pointed path"
+    );
+}
+
+#[test]
+fn linkat_via_sandbox_links_a_leader_outside_the_destination() {
+    let (_keep, base) = test_support::create_canonical_tempdir();
+    let dest = base.join("dest");
+    std::fs::create_dir_all(dest.join("sub")).expect("mkdir dest/sub");
+    let leader = base.join("elsewhere");
+    std::fs::write(&leader, b"x").expect("write leader");
+    let sandbox = DirSandbox::open_root(&dest).expect("sandbox");
+
+    linkat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &leader,
+        &dest,
+        Path::new("sub/new"),
+        &dest.join("sub/new"),
+    )
+    .expect("link from outside the destination");
+    assert_eq!(inode(&dest.join("sub/new")), inode(&leader));
+}
+
+/// A refusal through the held parent is reported as the kernel gave it, and
+/// the directory stays usable for the next name.
+#[test]
+fn linkat_via_sandbox_reports_an_existing_name_and_carries_on() {
+    let (_keep, root) = test_support::create_canonical_tempdir();
+    std::fs::create_dir(root.join("d")).expect("mkdir d");
+    let leader = root.join("d/leader");
+    std::fs::write(&leader, b"x").expect("write leader");
+    std::fs::write(root.join("d/taken"), b"other").expect("write taken");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+    let link = |name: &str| {
+        linkat_via_sandbox_or_fallback(
+            Some(&sandbox),
+            &leader,
+            &root,
+            Path::new(name),
+            &root.join(name),
+        )
+    };
+
+    link("d/first").expect("first link");
+    let err = link("d/taken").expect_err("an existing name is refused");
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(std::fs::read(root.join("d/taken")).expect("read"), b"other");
+    link("d/second").expect("the directory is still usable");
+    assert_eq!(inode(&root.join("d/second")), inode(&leader));
+}
+
+/// A held parent is a descriptor on the directory it was opened on, so it
+/// names that inode whatever its old path names later. After the directory
+/// is renamed away and a symlink to a directory outside the destination is
+/// put in its place, the next link through the same relative path still
+/// lands in the original directory: nothing is created through the symlink.
+#[test]
+fn linkat_via_sandbox_held_parent_is_not_redirected_by_a_symlink_swap() {
+    let (_keep, base) = test_support::create_canonical_tempdir();
+    let dest = base.join("dest");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(dest.join("d")).expect("mkdir dest/d");
+    std::fs::create_dir(&outside).expect("mkdir outside");
+    let leader = dest.join("leader");
+    std::fs::write(&leader, b"x").expect("write leader");
+    let sandbox = DirSandbox::open_root(&dest).expect("sandbox");
+    let link = |name: &str| {
+        linkat_via_sandbox_or_fallback(
+            Some(&sandbox),
+            &leader,
+            &dest,
+            Path::new(name),
+            &dest.join(name),
+        )
+    };
+
+    link("d/first").expect("first link, which holds the parent");
+    std::fs::rename(dest.join("d"), dest.join("moved")).expect("rename the parent away");
+    symlink(&outside, dest.join("d")).expect("symlink in its place");
+
+    link("d/second").expect("the held directory still takes the link");
+    assert_eq!(
+        inode(&dest.join("moved/second")),
+        inode(&leader),
+        "the link lands in the directory the descriptor pins"
+    );
+    assert_eq!(
+        std::fs::read_dir(&outside).expect("read outside").count(),
+        0,
+        "nothing is created outside the destination"
+    );
+}
