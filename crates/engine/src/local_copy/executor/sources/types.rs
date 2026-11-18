@@ -50,13 +50,6 @@ impl<'a> SourceProcessingContext<'a> {
                 .map(|name| PathBuf::from(Path::new(name)))
         }
     }
-
-    /// Determines if a directory destination is required for this source.
-    pub(super) fn requires_directory_destination(&self) -> bool {
-        self.relative_parent.is_some()
-            || (self.relative_root.is_some()
-                && (self.source.copy_contents() || self.file_type.is_dir()))
-    }
 }
 
 /// Result of fetching source metadata with error handling.

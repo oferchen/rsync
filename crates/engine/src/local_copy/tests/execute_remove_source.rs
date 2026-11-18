@@ -271,7 +271,7 @@ fn remove_source_files_with_ignore_existing_preserves_source() {
 
 #[test]
 fn remove_source_files_dry_run_does_not_remove() {
-    let ctx = test_helpers::setup_copy_test();
+    let ctx = test_helpers::setup_copy_test_with_dest();
     fs::write(ctx.source.join("file.txt"), b"content").expect("write file");
 
     let operands = vec![

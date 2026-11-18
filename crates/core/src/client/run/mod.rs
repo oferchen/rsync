@@ -530,23 +530,18 @@ fn run_client_internal(
     // needs search (`x`) permission, not read: a 0644 destination fails it
     // (before any mode preservation could repair it) while an unreadable but
     // searchable one passes, so probe traversability by stat'ing `<dest>/.`
-    // rather than reading the directory. Other errors (e.g. NotFound for a
-    // destination this run will create) proceed normally. Under `list_only`
+    // rather than reading the directory. Any other destination is resolved by
+    // the engine, which knows the file list it must hold. Under `list_only`
     // main.c:725 returns before the chdir, so no destination is probed.
-    if !config.list_only() {
-        let dest_to_check = if plan.destination().is_dir() {
-            plan.destination()
-        } else if let Some(parent) = plan.destination().parent() {
-            parent
-        } else {
-            plan.destination()
-        };
-
-        if let Err(error) = std::fs::metadata(dest_to_check.join("."))
-            && error.kind() == std::io::ErrorKind::PermissionDenied
-        {
-            return Err(super::error::destination_access_error(dest_to_check, error));
-        }
+    if !config.list_only()
+        && plan.destination().is_dir()
+        && let Err(error) = std::fs::metadata(plan.destination().join("."))
+        && error.kind() == std::io::ErrorKind::PermissionDenied
+    {
+        return Err(super::error::destination_access_error(
+            plan.destination(),
+            error,
+        ));
     }
     #[cfg(unix)]
     resolve_destination_like_change_dir(plan.destination())?;

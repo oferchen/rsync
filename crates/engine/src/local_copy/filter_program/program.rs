@@ -22,6 +22,10 @@ pub(crate) const INVALID_OPERAND_EXIT_CODE: i32 = 23;
 ///
 /// Maps to upstream rsync's `RERR_SYNTAX` (1) and `core::exit_code::ExitCode::Syntax`.
 pub(crate) const MISSING_OPERANDS_EXIT_CODE: i32 = 1;
+/// Exit code returned when the destination root cannot receive the file list.
+///
+/// Maps to upstream rsync's `RERR_FILESELECT` (3) and `core::exit_code::ExitCode::FileSelect`.
+pub(crate) const FILE_SELECT_EXIT_CODE: i32 = 3;
 
 /// Exit code returned when the transfer is aborted by SIGINT/SIGTERM/SIGHUP.
 ///

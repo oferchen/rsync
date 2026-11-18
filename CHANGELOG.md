@@ -278,6 +278,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 ### Fixed
 - A rule refused out of a per-directory merge file prints its text on its own line above the `syntax or usage error` trailer, as rsync 3.5.2 does, on a push and a local copy; a local copy refuses an operand directory's bad merge file before creating the destination (#8407)
 
+- Local copy: an existing file is no longer replaced by a directory when the copy would put more than one entry, or a lone directory, in its place (`-r src/dir file`, also under `--force`); it is left alone and the copy exits 3 like rsync 3.5.2. The destination's role now follows the file list's entry count, not the operand count, so a missing operand no longer makes it a directory and `-R` implied directories do; a missing parent of a single-file destination exits 3 (`change_dir#3`), a failed destination mkdir exits 11, and a symlink to a directory is entered without `--keep-dirlinks` (#8410)
 - Report OS errors as `strerror (errno)` like 3.5.1's `rsyserr` (#8354)
 - Poll the remote shell with `WNOHANG` on a failed exit and signal it (#8372)
 - Match upstream `**+/***` `wild2` prefix in filter compilation (#8375)

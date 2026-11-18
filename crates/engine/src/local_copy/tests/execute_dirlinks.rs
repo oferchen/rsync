@@ -135,13 +135,14 @@ fn execute_with_keep_dirlinks_allows_destination_directory_symlink() {
     assert!(summary.directories_created() >= 1);
 }
 
-/// Without `--keep-dirlinks` a destination symlink is an obstruction, so it is
-/// removed and a real directory takes its place - the link is never followed.
-/// upstream: `generator.c:1876-1879` `delete_item(.., DEL_FOR_DIR)`; only
-/// `--keep-dirlinks` makes a symlink-to-directory count as a directory.
+/// The destination operand is stat'd, not lstat'd, so a symlink to a
+/// directory is entered as that directory even without `--keep-dirlinks`.
+/// rsync 3.5.2 (`-r src-dir dest-link`): exit 0, the link kept and
+/// `actual-destination/src-dir/file.txt` written.
+/// upstream: main.c:771 get_local_name() `do_stat(dest_path)`.
 #[cfg(unix)]
 #[test]
-fn execute_without_keep_dirlinks_replaces_destination_symlink_in_place() {
+fn execute_without_keep_dirlinks_enters_a_destination_symlink_to_a_directory() {
     use std::os::unix::fs::symlink;
 
     let temp = tempdir().expect("tempdir");
@@ -161,22 +162,18 @@ fn execute_without_keep_dirlinks_replaces_destination_symlink_in_place() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     plan.execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
-        .expect("obstructing symlink is cleared, not refused");
+        .expect("copy through the destination link succeeds");
 
     assert!(
-        !fs::symlink_metadata(&destination_link)
+        fs::symlink_metadata(&destination_link)
             .expect("destination metadata")
             .file_type()
             .is_symlink(),
-        "symlink replaced by a real directory"
+        "the destination link is kept"
     );
     assert_eq!(
-        fs::read(destination_link.join("src-dir").join("file.txt")).expect("read copied file"),
+        fs::read(actual_destination.join("src-dir").join("file.txt")).expect("read copied file"),
         b"payload"
-    );
-    assert!(
-        !actual_destination.join("src-dir").exists(),
-        "the link target must not be written through"
     );
 }
 

@@ -11,8 +11,8 @@ use crate::commit_failure::{
 
 use super::LocalCopyReport;
 use super::filter_program::{
-    FILE_IO_EXIT_CODE, INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE, MISSING_OPERANDS_EXIT_CODE,
-    SIGNAL_EXIT_CODE, TIMEOUT_EXIT_CODE, VANISHED_EXIT_CODE,
+    FILE_IO_EXIT_CODE, FILE_SELECT_EXIT_CODE, INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE,
+    MISSING_OPERANDS_EXIT_CODE, SIGNAL_EXIT_CODE, TIMEOUT_EXIT_CODE, VANISHED_EXIT_CODE,
 };
 
 /// Formats an [`io::Error`] the way upstream rsync's `rsyserr()` does:
@@ -220,6 +220,26 @@ impl LocalCopyError {
         })
     }
 
+    /// Constructs an error for the parent of a single-file destination that
+    /// cannot be entered.
+    ///
+    /// upstream: `main.c:865-868` `get_local_name()` - `change_dir#3 %s
+    /// failed`, then `exit_cleanup(RERR_FILESELECT)`.
+    #[must_use]
+    pub fn destination_parent_unusable(path: impl Into<PathBuf>, source: io::Error) -> Self {
+        Self::new(LocalCopyErrorKind::DestinationParentUnusable {
+            path: path.into(),
+            source,
+        })
+    }
+
+    /// Constructs an error for an existing non-directory destination that
+    /// cannot take the file list.
+    #[must_use]
+    pub const fn destination_conflict(conflict: DestinationConflict) -> Self {
+        Self::new(LocalCopyErrorKind::DestinationConflict(conflict))
+    }
+
     /// Constructs an error representing an interrupt-signal abort (exit code
     /// 20, `RERR_SIGNAL`).
     ///
@@ -325,6 +345,8 @@ impl LocalCopyError {
             LocalCopyErrorKind::FilterSyntax { .. } => MISSING_OPERANDS_EXIT_CODE,
             LocalCopyErrorKind::FileIo { .. }
             | LocalCopyErrorKind::DestinationMkdirFailed { .. } => FILE_IO_EXIT_CODE,
+            LocalCopyErrorKind::DestinationParentUnusable { .. }
+            | LocalCopyErrorKind::DestinationConflict(_) => FILE_SELECT_EXIT_CODE,
             LocalCopyErrorKind::PartialTransfer => INVALID_OPERAND_EXIT_CODE,
             LocalCopyErrorKind::Vanished => VANISHED_EXIT_CODE,
             LocalCopyErrorKind::Interrupted => SIGNAL_EXIT_CODE,
@@ -355,6 +377,8 @@ impl LocalCopyError {
             LocalCopyErrorKind::FilterSyntax { .. } => "RERR_SYNTAX",
             LocalCopyErrorKind::FileIo { .. }
             | LocalCopyErrorKind::DestinationMkdirFailed { .. } => "RERR_FILEIO",
+            LocalCopyErrorKind::DestinationParentUnusable { .. }
+            | LocalCopyErrorKind::DestinationConflict(_) => "RERR_FILESELECT",
             LocalCopyErrorKind::PartialTransfer => "RERR_PARTIAL",
             LocalCopyErrorKind::Vanished => "RERR_VANISHED",
             LocalCopyErrorKind::Interrupted => "RERR_SIGNAL",
@@ -544,6 +568,20 @@ pub enum LocalCopyErrorKind {
         #[source]
         source: io::Error,
     },
+    /// The parent directory of a single-file destination cannot be entered.
+    /// Exits 3 (`RERR_FILESELECT`) before anything is transferred.
+    #[error("change_dir#3 \"{}\" failed: {}", path.display(), upstream_io_error(source))]
+    DestinationParentUnusable {
+        /// The parent directory the receiver would have entered.
+        path: PathBuf,
+        /// Underlying error.
+        #[source]
+        source: io::Error,
+    },
+    /// An existing non-directory destination cannot take the file list.
+    /// Exits 3 (`RERR_FILESELECT`) before anything is transferred.
+    #[error("{}", .0.message())]
+    DestinationConflict(DestinationConflict),
     /// The transfer exceeded the configured inactivity timeout.
     #[error("transfer timed out after {:.3} seconds without progress", duration.as_secs_f64())]
     Timeout {
@@ -621,6 +659,30 @@ impl LocalCopyErrorKind {
                 source,
             } => Some((action, path.as_path(), source)),
             _ => None,
+        }
+    }
+}
+
+/// Why `get_local_name()` refuses an existing non-directory destination.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DestinationConflict {
+    /// The file list holds more than one entry (`main.c:785-790`).
+    MoreThanOneFile,
+    /// The file list's only entry is a directory (`main.c:791-796`).
+    DirectoryOverNonDirectory,
+}
+
+impl DestinationConflict {
+    /// The line upstream prints, unprefixed, before exiting `RERR_FILESELECT`.
+    #[must_use]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::MoreThanOneFile => {
+                "ERROR: destination must be a directory when copying more than 1 file"
+            }
+            Self::DirectoryOverNonDirectory => {
+                "ERROR: cannot overwrite non-directory with a directory"
+            }
         }
     }
 }

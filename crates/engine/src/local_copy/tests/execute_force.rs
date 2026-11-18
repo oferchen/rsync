@@ -106,69 +106,6 @@ fn force_file_replaces_deeply_nested_directory() {
 }
 
 #[test]
-fn force_directory_replaces_file() {
-    let temp = tempdir().expect("tempdir");
-    let source_root = temp.path().join("srcdir");
-    fs::create_dir_all(&source_root).expect("create source dir");
-    fs::write(source_root.join("inner.txt"), b"inner").expect("write inner");
-
-    let destination = temp.path().join("dest");
-    fs::write(&destination, b"old-file").expect("write existing file");
-
-    let operands = vec![
-        source_root.into_os_string(),
-        destination.clone().into_os_string(),
-    ];
-    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-
-    plan.execute_with_options(
-        LocalCopyExecution::Apply,
-        LocalCopyOptions::default().force_replacements(true),
-    )
-    .expect("forced replacement succeeds");
-
-    assert!(destination.is_dir(), "file should be replaced by directory");
-    assert_eq!(
-        fs::read(destination.join("srcdir").join("inner.txt")).expect("read inner"),
-        b"inner"
-    );
-}
-
-/// Companion to `force_replaces_file_with_directory_during_recursive_copy`:
-/// clearing a non-directory that obstructs a directory is not `--force`'s job.
-/// upstream: `generator.c:1876-1879` runs `delete_item(.., DEL_FOR_DIR)`
-/// unconditionally; `--force` only adds `DEL_RECURSE` (`generator.c:1629`),
-/// which governs recursing into a non-empty *directory*.
-#[test]
-fn force_disabled_directory_still_replaces_file() {
-    let temp = tempdir().expect("tempdir");
-    let source_root = temp.path().join("srcdir");
-    fs::create_dir_all(&source_root).expect("create source dir");
-    fs::write(source_root.join("file.txt"), b"content").expect("write file");
-
-    let destination = temp.path().join("dest");
-    fs::write(&destination, b"existing file").expect("write existing file");
-
-    let operands = vec![
-        source_root.into_os_string(),
-        destination.clone().into_os_string(),
-    ];
-    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-
-    plan.execute_with_options(
-        LocalCopyExecution::Apply,
-        LocalCopyOptions::default().force_replacements(false),
-    )
-    .expect("obstruction cleared without --force");
-
-    assert!(destination.is_dir(), "file replaced by a directory");
-    assert_eq!(
-        fs::read(destination.join("srcdir").join("file.txt")).expect("read copied file"),
-        b"content"
-    );
-}
-
-#[test]
 fn force_replaces_directory_entry_with_file_during_recursive_copy() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
