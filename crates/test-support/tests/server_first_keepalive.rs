@@ -17,12 +17,13 @@
 //!   (main.c:1315-1316), so a message is queued when the read comes;
 //! - a push: the server is the receiver, whose reads before the fork are
 //!   dropped by io.c:1656 and whose forked child writes to its generator, not
-//!   the client. 3.5.2's frame can then only come from the generator's first
-//!   read of the receiver's pipe; with this fixture (`-rt`, a nested tree) the
-//!   generator has already buffered its first file's request by then, so
-//!   nothing is queued. A tree whose generator reads first makes 3.5.2 send
-//!   the frame on a push too; this implementation, whose roles are threads
-//!   with no such pipe, does not.
+//!   the client. The generator's first poke is its per-entry check after the
+//!   first entry (generator.c:2802, :2904-2913): with the clock still at 0 it
+//!   flushes that entry's 3-byte itemize record on its own instead of sending
+//!   a frame (io.c:1670-1672). That early flush is pinned per receiver driver
+//!   below. A tree whose generator reads before its first entry (the `-H`
+//!   lookahead, generator.c:2859-2862) makes 3.5.2 send the frame on a push
+//!   too; that read has no counterpart here yet.
 //!
 //! The cells compare decoded frame layouts, not `--stats` byte totals: flush
 //! timing moves where `MSG_DATA` frames break, and every extra break adds a
@@ -161,5 +162,162 @@ fn a_server_with_timeout_sends_its_first_keepalive_like_rsync() {
         "{} cells differ:\n{}",
         differ.len(),
         differ.join("\n")
+    );
+}
+
+/// The push server's receiver drivers: incremental recursion,
+/// `--no-inc-recursive` and a dry run.
+const PUSH_DRIVERS: [&[&str]; 3] = [&[], &["--no-inc-recursive"], &["-n"]];
+
+/// The server's frames for one push.
+fn push_frames(binary: &Path, cell: &Cell, driver: &[&str], src: &Path) -> Vec<(u8, usize)> {
+    let binaries = CellBinaries {
+        oc_rsync: binary,
+        capture_rsh: Path::new(env!("CARGO_BIN_EXE_capture-rsh")),
+    };
+    let mut args = cell.args();
+    args.extend(driver.iter().map(|arg| (*arg).to_owned()));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let name = format!("{} {driver:?}", cell.name());
+    capture_cell_with(cell.shape, binaries, src, &args)
+        .unwrap_or_else(|e| panic!("{name}: {} capture failed: {e}", binary.display()))
+        .server_frames()
+        .unwrap_or_else(|e| panic!("{name}: server stream does not decode: {e}"))
+}
+
+/// Whether the first `MSG_DATA` frame is the first entry's 3-byte itemize
+/// record flushed on its own, and the indices of the empty frames.
+fn push_keepalive_layout(frames: &[(u8, usize)]) -> (bool, Vec<usize>) {
+    let early_flush = frames
+        .iter()
+        .find(|&&(code, _)| code == MSG_DATA)
+        .is_some_and(|&(_, len)| len == 3);
+    let empty = frames
+        .iter()
+        .enumerate()
+        .filter(|&(_, &(code, len))| code == MSG_DATA && len == 0)
+        .map(|(index, _)| index)
+        .collect();
+    (early_flush, empty)
+}
+
+/// Each push cell compares two things only: the indices of empty `MSG_DATA`
+/// frames, and whether the first `MSG_DATA` frame is the first entry's
+/// 3-byte record flushed on its own. Whole frame lists are deliberately not
+/// compared: the incremental and dry-run drivers break frames differently
+/// from rsync even without `--timeout` (rsync's `maybe_flush_socket(0)`
+/// cadence, generator.c:2912, io.c:1632-1637, is not ported, and the dry run
+/// flushes after every record), so a whole-list comparison would fail for
+/// reasons that are not the keepalive. For the same reason the early flush is
+/// compared only on `--timeout` rows; without it rsync's early flush comes
+/// from that unported path.
+#[test]
+fn a_push_server_with_timeout_flushes_its_first_entry_like_rsync() {
+    let fixture = test_support::create_tempdir();
+    build_fixture(fixture.path(), false).expect("fixture");
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2);
+    let oc = test_support::oc_rsync_bin();
+    let mut differ = Vec::new();
+    for shape in [NetworkCell::RshPush, NetworkCell::DaemonPush] {
+        for protocol in [None, Some(30)] {
+            for timeout in [false, true] {
+                let cell = Cell {
+                    shape,
+                    protocol,
+                    timeout,
+                };
+                let daemon_timeout_message =
+                    shape == NetworkCell::DaemonPush && protocol.is_none_or(|p| p >= 31);
+                for driver in PUSH_DRIVERS {
+                    let name = format!("{} {driver:?}", cell.name());
+                    let dry_run = driver.contains(&"-n");
+                    // upstream: with --timeout the check after the first entry
+                    // flushes it early unless the daemon's MSG_IO_TIMEOUT write
+                    // already stamped the clock (io.c:1659, :1670-1672).
+                    // Without --timeout the same spot calls maybe_flush_socket(0)
+                    // instead (generator.c:2912), which flushes once the whole
+                    // file list is in (io.c:1632-1637), so 3.5.2 flushes early
+                    // under --no-inc-recursive too. That second path is not
+                    // ported, so only the --timeout rows compare the early flush.
+                    let reference_early = if timeout {
+                        Some(!daemon_timeout_message)
+                    } else if dry_run {
+                        None
+                    } else {
+                        Some(driver.contains(&"--no-inc-recursive"))
+                    };
+                    if let Some(upstream) = &upstream {
+                        let frames = push_frames(upstream.binary(), &cell, driver, fixture.path());
+                        let (early, empty) = push_keepalive_layout(&frames);
+                        assert!(
+                            empty.is_empty(),
+                            "{name}: rsync 3.5.2 sent an empty frame; its frames: {frames:?}"
+                        );
+                        if let Some(expected) = reference_early {
+                            assert_eq!(
+                                early, expected,
+                                "{name}: rsync 3.5.2 no longer matches the rule; its frames: {frames:?}"
+                            );
+                        }
+                    }
+                    let frames = push_frames(&oc, &cell, driver, fixture.path());
+                    let (early, empty) = push_keepalive_layout(&frames);
+                    // A dry run here flushes after every record, so its first
+                    // frame is 3 bytes whatever the keepalive does: it can only
+                    // show the early flush where one is expected.
+                    let compared = timeout && !(dry_run && reference_early == Some(false));
+                    let early_differs = compared && Some(early) != reference_early;
+                    if early_differs || !empty.is_empty() {
+                        differ.push(format!(
+                            "{name}: expected early flush {reference_early:?} and no empty frame, got {frames:?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        differ.is_empty(),
+        "{} cells differ:\n{}",
+        differ.len(),
+        differ.join("\n")
+    );
+}
+
+/// Known difference, pinned on both sides: with `-H` and incremental
+/// recursion, rsync's generator reads its receiver pipe before its first
+/// entry, filling the hard-link lookahead (generator.c:2859-2862), and that
+/// read queues an empty `MSG_DATA` while nothing has been written
+/// (io.c:933-936), so rsync 3.5.2 leads with the frame. This implementation
+/// has no lookahead read before its first entry, so it leads with the first
+/// entry's early flush instead. Porting the lookahead makes this test fail,
+/// and it must then become an equality row.
+#[test]
+fn a_hard_link_push_server_lacks_rsyncs_lookahead_keepalive() {
+    let fixture = test_support::create_tempdir();
+    build_fixture(fixture.path(), false).expect("fixture");
+    let cell = Cell {
+        shape: NetworkCell::RshPush,
+        protocol: None,
+        timeout: true,
+    };
+    if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_2) {
+        let frames = push_frames(upstream.binary(), &cell, &["-H"], fixture.path());
+        assert_eq!(
+            push_keepalive_layout(&frames),
+            (false, vec![0]),
+            "rsync 3.5.2 no longer leads a -H push with the lookahead keepalive; its frames: {frames:?}"
+        );
+    }
+    let frames = push_frames(
+        &test_support::oc_rsync_bin(),
+        &cell,
+        &["-H"],
+        fixture.path(),
+    );
+    assert_eq!(
+        push_keepalive_layout(&frames),
+        (true, Vec::new()),
+        "the -H push now differs from the pinned layout; if it leads with an empty frame the lookahead read was ported, so compare with rsync instead: {frames:?}"
     );
 }
