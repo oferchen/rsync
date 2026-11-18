@@ -147,7 +147,11 @@ pub(crate) fn run_pull_transfer(
     // Prototype I/O model A: the pull's receiver polls the daemon socket.
     #[cfg(unix)]
     let model_a_socket = if crate::server::io_model_a() {
-        reader.try_clone_tcp()
+        // The corked writer is bypassed, so small request writes must not
+        // wait behind Nagle for the daemon's delayed ACK.
+        reader
+            .try_clone_tcp()
+            .inspect(|socket| drop(socket.set_nodelay(true)))
     } else {
         None
     };
