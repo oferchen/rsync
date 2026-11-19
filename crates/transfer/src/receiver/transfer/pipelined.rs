@@ -109,6 +109,17 @@ impl ReceiverContext {
         // before generate_files() walks the list, so the walk stats and itemizes
         // each directory with the mtime the pass left behind.
         if self.delete_pass_is_early() && self.config.deletion.delete_before {
+            // upstream: generator.c:336-337 - do_delete_pass()'s first
+            // delete_in_dir() pokes a flushing keepalive ahead of its io_error
+            // test, before anything is written, so a --timeout push leads with
+            // an empty MSG_DATA (io.c:1665-1666). do_delete_pass() returns
+            // early under --list-only, and when a dry run left the
+            // destination absent (`dry_run > 1`, generator.c:406).
+            if !self.config.flags.list_only
+                && self.dest_root != crate::receiver::dest_root::DestRoot::DryRunAbsent
+            {
+                writer.maybe_send_keepalive()?;
+            }
             self.run_receiver_delete_pass(
                 super::DeletePassPhase::Early,
                 &setup.dest_dir,
@@ -299,6 +310,9 @@ impl ReceiverContext {
                     true,
                 )?;
                 all_delayed_updates.extend(delayed);
+                // upstream: generate_files() checks every entry before its NDX_DONE
+                // (generator.c:2904-2919): those after the last record are checked here.
+                self.keepalive_checks_before(self.file_list.len(), writer)?;
                 self.finish_request_phase(&mut *reader, writer, &mut ndx_read_codec)?;
 
                 // Phase 2: redo pass for files that failed checksum verification.
@@ -413,6 +427,9 @@ impl ReceiverContext {
         self.flush_itemize_rows(writer)?;
         self.publish_list_only_entries(&mut stats, writer)?;
 
+        // upstream: generate_files() checks every entry before its NDX_DONE
+        // (generator.c:2904-2919): those after the last record are checked here.
+        self.keepalive_checks_before(self.file_list.len(), writer)?;
         self.finalize_transfer(
             reader,
             writer,
@@ -462,7 +479,7 @@ impl ReceiverContext {
         // root (FLAG_DIR_CREATED -> ITEM_IS_NEW) as a created dir; oc mkdir's it
         // out-of-band so the dir loop treats it as existing. See the incremental
         // path for the full rationale.
-        if self.dest_root_created {
+        if self.dest_root == crate::receiver::dest_root::DestRoot::Created {
             self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
         }
         // Fold the per-type created tally (dirs, symlinks, specials, and new

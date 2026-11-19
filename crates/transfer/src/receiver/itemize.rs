@@ -285,7 +285,7 @@ impl ReceiverContext {
     /// `--list-only` never reaches `get_local_name()`'s mkdir (`main.c:756`),
     /// so no row is added there.
     pub(in crate::receiver) fn root_verbose_name_emit(&self, dest_dir: &std::path::Path) -> bool {
-        if self.dest_root_created {
+        if self.dest_root == crate::receiver::dest_root::DestRoot::Created {
             return true;
         }
         self.file_list
@@ -741,11 +741,12 @@ impl ReceiverContext {
         // `ensure_dest_root_exists` mkdir after the fact, so the root entry
         // arrives here with `iflags == 0`. Force the created-directory glyph
         // ONLY when the pre-flight mkdir actually created the root this run
-        // (`dest_root_created`); when the dest root already existed (e.g.
+        // (`dest_root` is `DestRoot::Created`); when the dest root already existed (e.g.
         // `up1/ -> up2/`), `FLAG_DIR_CREATED` is clear upstream and the root
         // reports a metadata-only row that the significance gate drops.
-        let is_created_root_dir =
-            self.dest_root_created && entry.is_dir() && entry.path().as_os_str() == ".";
+        let is_created_root_dir = (self.dest_root == crate::receiver::dest_root::DestRoot::Created)
+            && entry.is_dir()
+            && entry.path().as_os_str() == ".";
         // upstream: generator.c:625-626 - emit when significant flags are set OR
         // the itemize level requests unchanged rows (`-ii` / `--info=name2` /
         // `-vv`). Without one of those, an all-unchanged entry produces no line.

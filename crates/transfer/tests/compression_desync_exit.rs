@@ -334,49 +334,22 @@ fn push_that_meets_the_end_of_the_stream_first_reports_it() {
     );
     assert_streamio_without_timeout(&ours);
     let (cause, message) = report(&ours, "sender");
-    let received = received_so_far(&cause);
+    assert!(
+        cause.starts_with("rsync: connection unexpectedly closed (")
+            && cause.ends_with(" bytes received so far) [sender]"),
+        "not an end-of-stream cause: {cause}"
+    );
     assert_eq!(message, "error in rsync protocol data stream (code 12)");
     if let Some(upstream) = require_upstream_rsync(UpstreamVersion::V3_5_1) {
         let reference = run_from(upstream.binary(), tmp.path(), &src, "zlib", &rsh, false);
         reference.assert_exit(12);
-        let (reference_cause, reference_message) = report(&reference, "sender");
-        // A 3.5.1 server run with --timeout sends one empty MSG_DATA
-        // keepalive at its first multiplexed read, as `last_io_out` is still
-        // 0 there (io.c:113, :933-936, :1659-1666); the oc server sends none,
-        // so its client has received 4 bytes fewer when the stream ends.
+        // The byte count is compared too: both servers run with --timeout
+        // flush their first entry's record on its own (generator.c:2904-2913,
+        // io.c:1670-1672), so the client has received the same frames.
         assert_eq!(
-            received_so_far(&reference_cause),
-            received + 4,
-            "the count differs by more than 3.5.1's first keepalive"
-        );
-        assert_eq!(
-            (
-                reference_cause.replace(&received_so_far_text(&reference_cause), ""),
-                reference_message
-            ),
-            (cause.replace(&received_so_far_text(&cause), ""), message),
+            report(&reference, "sender"),
+            (cause, message),
             "oc push against 3.5.1 push"
         );
     }
-}
-
-/// The `N bytes received so far` text of a `connection unexpectedly closed`
-/// cause line.
-fn received_so_far_text(cause: &str) -> String {
-    let start = cause
-        .find("closed (")
-        .map(|at| at + "closed (".len())
-        .unwrap_or_else(|| panic!("not an end-of-stream cause: {cause}"));
-    let end = cause[start..]
-        .find(" bytes received so far) [sender]")
-        .map(|len| start + len)
-        .unwrap_or_else(|| panic!("no received count: {cause}"));
-    cause[start..end].to_owned()
-}
-
-/// The byte count of a `connection unexpectedly closed` cause line.
-fn received_so_far(cause: &str) -> u64 {
-    received_so_far_text(cause)
-        .parse()
-        .unwrap_or_else(|e| panic!("received count in {cause}: {e}"))
 }

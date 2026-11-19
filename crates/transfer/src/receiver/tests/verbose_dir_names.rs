@@ -72,7 +72,7 @@ fn names_only_created_or_changed_dirs() {
     ];
     let mut c = ctx_with(entries, true);
     // The pre-flight mkdir created the root this run, so upstream names it.
-    c.dest_root_created = true;
+    c.dest_root = crate::receiver::dest_root::DestRoot::Created;
 
     let lines = c.verbose_dir_name_lines(dest.path());
     assert_eq!(

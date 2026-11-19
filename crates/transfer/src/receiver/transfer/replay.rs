@@ -796,7 +796,7 @@ impl ReceiverContext {
             stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
         }
         stats.metadata_errors = metadata_errors;
-        if self.dest_root_created {
+        if self.dest_root == crate::receiver::dest_root::DestRoot::Created {
             self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
         }
         stats.created_stats = self.created_stats.get();

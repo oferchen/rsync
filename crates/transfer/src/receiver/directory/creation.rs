@@ -601,7 +601,9 @@ impl ReceiverContext {
                 // upstream: generator.c:1890-1891 - the destination root the
                 // receiver pre-flight-mkdir'd carries FLAG_DIR_CREATED, which
                 // forces `statret = -1`: it itemizes as new, like any dir made here.
-                let created_root = self.dest_root_created && entry.path().as_os_str() == ".";
+                let created_root = (self.dest_root
+                    == crate::receiver::dest_root::DestRoot::Created)
+                    && entry.path().as_os_str() == ".";
                 let iflags = if *is_new || created_root {
                     // upstream: generator.c:1907 - new dir is itemize()'d with
                     // statret < 0, which ORs ITEM_LOCAL_CHANGE | ITEM_IS_NEW.
@@ -1132,7 +1134,8 @@ impl ReceiverContext {
         // before apply_metadata_with_pre_transfer_stat below overwrites the mtime.
         // upstream: generator.c:1890-1891 - the destination root the receiver
         // pre-flight-mkdir'd carries FLAG_DIR_CREATED, so it itemizes as new.
-        let created_root = self.dest_root_created && relative_path.as_os_str() == ".";
+        let created_root = (self.dest_root == crate::receiver::dest_root::DestRoot::Created)
+            && relative_path.as_os_str() == ".";
         let iflags: u32 = if is_new || created_root {
             crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
                 | crate::generator::ItemFlags::ITEM_IS_NEW
@@ -1403,7 +1406,7 @@ impl ReceiverContext {
             );
             recorded.sort_by(|a, b| b.0.components().count().cmp(&a.0.components().count()));
             for (dir_path, mode) in recorded {
-                let _ = writer.maybe_send_keepalive();
+                let _ = writer.maybe_send_keepalive_once_written();
                 if let Err(e) = super::dest_chmod(sandbox, dest_dir, &dir_path, mode) {
                     debug_log!(
                         Recv,
@@ -1435,11 +1438,11 @@ impl ReceiverContext {
         // list order. Deviation from upstream: oc walks in reverse.
         let released = self.released_dirs.iter().map(|(_, e)| e);
         for entry in released.chain(self.file_list.iter()).rev() {
-            // upstream: generator.c:2656 - poke a keepalive once the I/O
-            // lull has elapsed so a remote sender does not time out while this
-            // final metadata pass walks a large directory tree. A strict no-op
-            // unless --timeout is set (allowed_lull None).
-            let _ = writer.maybe_send_keepalive();
+            // upstream: generator.c:2625-2659 - touch_up_dirs() counts every
+            // entry it walks and pokes a keepalive each time the count reaches
+            // loopchk_limit, so a remote sender does not time out while this
+            // final metadata pass walks a large tree. A no-op without --timeout.
+            let _ = self.touch_up_keepalive_tick(writer);
             // upstream: generator.c:2630 - implied parents are not re-timed.
             if !entry.is_dir() || self.skips_implied_dir(entry) {
                 continue;

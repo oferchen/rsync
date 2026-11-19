@@ -832,7 +832,7 @@ impl ReceiverContext {
             return Ok(());
         }
         // upstream: generator.c:336-337 - the keepalive precedes the io_error test.
-        writer.maybe_send_keepalive()?;
+        writer.maybe_send_keepalive_once_written()?;
         if self.io_error_blocks_deletion(stats.io_error, writer) {
             return Ok(());
         }
