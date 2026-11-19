@@ -109,6 +109,14 @@ impl ReceiverContext {
         // before generate_files() walks the list, so the walk stats and itemizes
         // each directory with the mtime the pass left behind.
         if self.delete_pass_is_early() && self.config.deletion.delete_before {
+            // upstream: generator.c:336-337 - do_delete_pass()'s first
+            // delete_in_dir() pokes a flushing keepalive ahead of its io_error
+            // test, before anything is written, so a --timeout push leads with
+            // an empty MSG_DATA (io.c:1665-1666). do_delete_pass() returns
+            // early under --list-only (generator.c:406).
+            if !self.config.flags.list_only {
+                writer.maybe_send_keepalive()?;
+            }
             self.run_receiver_delete_pass(
                 super::DeletePassPhase::Early,
                 &setup.dest_dir,

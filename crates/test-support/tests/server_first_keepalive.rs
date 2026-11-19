@@ -321,3 +321,65 @@ fn a_hard_link_push_server_lacks_rsyncs_lookahead_keepalive() {
         "the -H push now differs from the pinned layout; if it leads with an empty frame the lookahead read was ported, so compare with rsync instead: {frames:?}"
     );
 }
+
+/// A push with `--timeout` and a delete pass, against rsync 3.5.2.
+///
+/// upstream: `--delete-before` runs do_delete_pass() before the generator's
+/// first entry (generator.c:2840); its first delete_in_dir() pokes
+/// `maybe_send_keepalive(time(NULL), MSK_ALLOW_FLUSH)` (generator.c:336-337)
+/// while `last_io_out` is still 0 and nothing is buffered, so it sends an
+/// empty `MSG_DATA` first (io.c:1665-1666) and the check after the first
+/// entry then finds the lull not yet passed: no early flush. A daemon at
+/// protocol 31 or later has already written `MSG_IO_TIMEOUT`, so neither
+/// happens. `--delete-during` is the control: its first poke comes after the
+/// first entry's record is buffered, so the layout is the plain push's.
+#[test]
+fn a_push_server_with_timeout_and_a_delete_pass_keeps_alive_like_rsync() {
+    let fixture = test_support::create_tempdir();
+    build_fixture(fixture.path(), false).expect("fixture");
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2);
+    let oc = test_support::oc_rsync_bin();
+    let mut differ = Vec::new();
+    for shape in [NetworkCell::RshPush, NetworkCell::DaemonPush] {
+        for protocol in [None, Some(30)] {
+            let cell = Cell {
+                shape,
+                protocol,
+                timeout: true,
+            };
+            let clock_stamped =
+                shape == NetworkCell::DaemonPush && protocol.is_none_or(|p| p >= 31);
+            for (mode, before) in [("--delete-before", true), ("--delete-during", false)] {
+                let driver: &[&str] = &[mode];
+                let name = format!("{} {driver:?}", cell.name());
+                let expected = if clock_stamped {
+                    (false, Vec::new())
+                } else if before {
+                    (false, vec![0])
+                } else {
+                    (true, Vec::new())
+                };
+                if let Some(upstream) = &upstream {
+                    let frames = push_frames(upstream.binary(), &cell, driver, fixture.path());
+                    assert_eq!(
+                        push_keepalive_layout(&frames),
+                        expected,
+                        "{name}: rsync 3.5.2 no longer matches the rule; its frames: {frames:?}"
+                    );
+                }
+                let frames = push_frames(&oc, &cell, driver, fixture.path());
+                if push_keepalive_layout(&frames) != expected {
+                    differ.push(format!(
+                        "{name}: expected (early flush, empty frames) {expected:?}, got {frames:?}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        differ.is_empty(),
+        "{} cells differ:\n{}",
+        differ.len(),
+        differ.join("\n")
+    );
+}
