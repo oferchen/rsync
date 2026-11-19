@@ -535,7 +535,7 @@ impl IoUringConfig {
             }
         }
         RawIoUring::new(self.sq_entries)
-            .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))
+            .map_err(|e| io::Error::new(e.kind(), format!("io_uring init failed: {e}")))
     }
 }
 

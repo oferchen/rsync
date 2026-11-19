@@ -92,9 +92,9 @@ impl PerThreadRing {
             sq_entries: DEFAULT_RING_DEPTH,
             ..IoUringConfig::default()
         };
-        let ring = config
-            .build_ring()
-            .map_err(|e| io::Error::other(format!("per-thread io_uring init failed: {e}")))?;
+        let ring = config.build_ring().map_err(|e| {
+            io::Error::new(e.kind(), format!("per-thread io_uring init failed: {e}"))
+        })?;
         Ok(Self { ring })
     }
 
@@ -124,9 +124,10 @@ thread_local! {
 ///
 /// # Errors
 ///
-/// - [`io::ErrorKind::Other`] on `io_uring_setup(2)` failure (kernel
-///   rejected the ring; the caller should fall back to per-call rings or
-///   standard I/O per IUR-2 section 5.2).
+/// - The kind of the `io_uring_setup(2)` error when the kernel rejects the
+///   ring (for example [`io::ErrorKind::OutOfMemory`] when the ring is
+///   charged to an exhausted `RLIMIT_MEMLOCK`); the caller should fall back
+///   to per-call rings or standard I/O per IUR-2 section 5.2.
 /// - [`io::ErrorKind::WouldBlock`] when the calling thread already holds
 ///   an outstanding borrow of its per-thread ring (re-entrant
 ///   submit/reap is not supported; the caller must release the outer
