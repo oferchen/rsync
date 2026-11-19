@@ -39,29 +39,10 @@ pub(crate) struct DaemonTransferRequest {
 }
 
 impl DaemonTransferRequest {
-    /// Default daemon port, shared by TCP (873/tcp) and QUIC (873/udp); QUIC
-    /// runs over a distinct UDP namespace so the number carries no clash
-    /// (design: `docs/design/quic-transport-policy.md`, Decision D).
-    const DEFAULT_PORT: u16 = 873;
-
-    /// Resolves the port an operand that names none connects to.
-    ///
-    /// upstream: `main.c:1613-1616` - `--port` seeds `rsync_port`, and only the
-    /// `-1` sentinel (no `--port` and no `:port` in the operand) falls back to
-    /// `RSYNC_PORT`. An explicit `:port` in the operand still wins, because
-    /// `check_for_hostspec()` (`options.c:3310-3336`) overwrites `rsync_port`
-    /// while parsing it.
-    pub(crate) const fn resolve_default_port(configured: Option<u16>) -> u16 {
-        match configured {
-            Some(port) => port,
-            None => Self::DEFAULT_PORT,
-        }
-    }
-
     /// Parses an rsync:// URL into a transfer request.
     ///
     /// Format: `rsync://[user@]host[:port]/module/path`. `default_port` applies
-    /// when the authority names no port; see [`Self::resolve_default_port`].
+    /// when the authority names no port; see `ModuleListRequest::default_port`.
     pub(crate) fn parse_rsync_url(url: &OsStr, default_port: u16) -> Result<Self, ClientError> {
         // The scheme is ASCII, so detect it on the lossy view; the operand's
         // path bytes are preserved by slicing the raw `OsStr` past the prefix
@@ -146,7 +127,7 @@ impl DaemonTransferRequest {
     /// Parses a double-colon daemon operand into a transfer request.
     ///
     /// Format: `[user@]host::module[/path]`. `default_port` applies when the
-    /// host names no port; see [`Self::resolve_default_port`].
+    /// host names no port; see `ModuleListRequest::default_port`.
     ///
     /// upstream: `options.c:3378` `check_for_hostspec()` - `host::module` is
     /// equivalent to `rsync://host/module`.

@@ -40,7 +40,7 @@ use super::super::error::{
 use super::super::module_list::Transport;
 use super::super::module_list::{
     ConnectDeadlineReader, DaemonConnectTimeouts, DaemonStreamGuard, DaemonStreamReader,
-    DaemonStreamWriter, QuicDialParams, RshDaemonSpawn, open_daemon_stream,
+    DaemonStreamWriter, ModuleListRequest, QuicDialParams, RshDaemonSpawn, open_daemon_stream,
     resolve_connect_timeout, spawn_rsh_daemon_stream,
 };
 use super::super::progress::ClientProgressObserver;
@@ -77,8 +77,12 @@ fn is_daemon_url(operand: &str) -> bool {
 /// Shared by the socket and the remote-shell daemon paths: upstream's
 /// `check_for_hostspec()` sets `rsync_port` for both spellings, and whether a
 /// remote shell is configured only decides how the connection is made
-/// (main.c:1501 `daemon_connection = shell_cmd ? 1 : -1`).
-fn parse_daemon_operand(config: &ClientConfig) -> Result<DaemonTransferRequest, ClientError> {
+/// (main.c:1501 `daemon_connection = shell_cmd ? 1 : -1`) and, through
+/// `ModuleListRequest::default_port`, the port an operand naming none takes.
+fn parse_daemon_operand(
+    config: &ClientConfig,
+    over_remote_shell: bool,
+) -> Result<DaemonTransferRequest, ClientError> {
     let daemon_operand = config
         .transfer_args()
         .iter()
@@ -89,7 +93,7 @@ fn parse_daemon_operand(config: &ClientConfig) -> Result<DaemonTransferRequest, 
         .ok_or_else(|| invalid_argument_error("no daemon URL or host::module operand found", 1))?;
 
     let daemon_operand_str = daemon_operand.to_string_lossy();
-    let default_port = DaemonTransferRequest::resolve_default_port(config.daemon_port());
+    let default_port = ModuleListRequest::default_port(config.daemon_port(), over_remote_shell);
     if daemon_operand_str.starts_with("rsync://") || daemon_operand_str.starts_with("RSYNC://") {
         return DaemonTransferRequest::parse_rsync_url(daemon_operand, default_port);
     }
@@ -144,7 +148,7 @@ pub fn run_daemon_transfer(
     };
 
     #[cfg_attr(not(feature = "quic"), allow(unused_mut))]
-    let mut request = parse_daemon_operand(config)?;
+    let mut request = parse_daemon_operand(config, false)?;
 
     // The `--quic` modifier upgrades an ordinary `rsync://` / `host::` target to
     // QUIC; a `quic://` target already carries the transport, so this is
@@ -372,9 +376,8 @@ pub fn run_daemon_over_remote_shell(
     };
 
     // upstream: main.c:1654 - a daemon-over-remote-shell connection carries the
-    // port to the child as RSYNC_PORT rather than dialling it, but the value is
-    // the same `rsync_port` the socket path uses.
-    let request = parse_daemon_operand(config)?;
+    // port to the child as RSYNC_PORT rather than dialling it.
+    let request = parse_daemon_operand(config, true)?;
 
     // upstream: main.c:620-628 - when daemon_connection > 0, the remote
     // command is `rsync_path --server --daemon .` with no server_options().

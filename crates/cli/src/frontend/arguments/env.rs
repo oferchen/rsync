@@ -20,13 +20,50 @@ pub(crate) fn env_protect_args_default() -> Option<bool> {
     Some(atoi_leading(&value.to_string_lossy()) != 0)
 }
 
+/// Resolves `--secluded-args` and `--old-args` against `RSYNC_OLD_ARGS` and
+/// `RSYNC_PROTECT_ARGS` in upstream's order, returning `(protect_args, old_args)`.
+///
+/// `RSYNC_OLD_ARGS` is read first, and only when neither `--old-args` nor
+/// `--secluded-args` was given; a non-empty value pins secluded args off even
+/// at level 0, so `RSYNC_PROTECT_ARGS` is then never read. An explicit
+/// `--old-args` turns secluded args off too, unless `--secluded-args` was also
+/// given, in which case both are kept for the config builder's conflict error.
+///
+/// upstream: options.c:2124-2152.
+pub(crate) fn resolve_arg_protection(
+    protect_args: Option<bool>,
+    old_args: Option<u8>,
+) -> (Option<bool>, Option<u8>) {
+    let (protect_args, old_args) = match old_args {
+        None if protect_args != Some(true) => match env_old_args_level() {
+            Some(level) => (Some(false), (level > 0).then_some(level)),
+            None => (protect_args, None),
+        },
+        Some(level) if level > 0 && protect_args != Some(true) => (Some(false), old_args),
+        _ => (protect_args, old_args),
+    };
+    (protect_args.or_else(env_protect_args_default), old_args)
+}
+
+/// Returns the `--old-args` level `RSYNC_OLD_ARGS` sets, or `None` when the
+/// variable is unset or empty. A set value that `atoi` reads as 0 is `Some(0)`.
+///
+/// The level is capped at 2, the highest state safe_arg distinguishes.
+///
+/// upstream: options.c:2125-2127 - `(arg = getenv("RSYNC_OLD_ARGS")) != NULL
+/// && *arg` then `old_style_args = atoi(arg)`.
+fn env_old_args_level() -> Option<u8> {
+    let value = env::var_os("RSYNC_OLD_ARGS").filter(|value| !value.is_empty())?;
+    Some(atoi_leading(&value.to_string_lossy()).clamp(0, 2) as u8)
+}
+
 /// Parses a leading base-10 integer like C's `atoi`, ignoring leading
 /// whitespace and any trailing non-digit suffix. Returns 0 when no digits lead.
 ///
 /// Shared leading-integer parser for the CLI's environment defaults:
 /// `RSYNC_PROTECT_ARGS` (options.c:2107 `protect_args = atoi(arg) ? 1 : 0`) and
-/// `RSYNC_OLD_ARGS` (options.c:2091 `old_style_args = atoi(arg)`, via
-/// `run.rs::resolve_old_args`).
+/// `RSYNC_OLD_ARGS` (options.c:2127 `old_style_args = atoi(arg)`, via
+/// `env_old_args_level`).
 ///
 /// upstream: options.c:2127 & 2107 call libc `atoi(3)` (stdlib.h); this mirrors
 /// its optional-sign, leading-decimal parse.
@@ -335,5 +372,97 @@ mod tests {
             env_max_alloc_default(),
             Some(std::ffi::OsString::from("2G"))
         );
+    }
+
+    fn protection_env(old: Option<&str>, protect: Option<&str>) -> [EnvGuard; 2] {
+        let guard = |key, value: Option<&str>| match value {
+            Some(value) => EnvGuard::set(key, value),
+            None => EnvGuard::remove(key),
+        };
+        [
+            guard("RSYNC_OLD_ARGS", old),
+            guard("RSYNC_PROTECT_ARGS", protect),
+        ]
+    }
+
+    /// upstream: options.c:2124-2129 runs before options.c:2139-2152, so a set
+    /// `RSYNC_OLD_ARGS` pins secluded args off and `RSYNC_PROTECT_ARGS` is never
+    /// read - even when `RSYNC_OLD_ARGS` is `0`. Reading `RSYNC_PROTECT_ARGS`
+    /// first would send secluded args to a peer the user asked for old args.
+    #[test]
+    fn env_old_args_wins_over_env_protect_args() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _env = protection_env(Some("1"), Some("1"));
+        assert_eq!(resolve_arg_protection(None, None), (Some(false), Some(1)));
+        let _env = protection_env(Some("0"), Some("1"));
+        assert_eq!(resolve_arg_protection(None, None), (Some(false), None));
+    }
+
+    /// upstream: options.c:2130-2135 - an explicit `--old-args` forces
+    /// `protect_args = 0` before the env default is consulted, so
+    /// `RSYNC_PROTECT_ARGS=1` must not turn into a conflict with `--old-args`.
+    #[test]
+    fn explicit_old_args_suppresses_env_protect_args() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _env = protection_env(None, Some("1"));
+        assert_eq!(
+            resolve_arg_protection(None, Some(2)),
+            (Some(false), Some(2))
+        );
+    }
+
+    /// upstream: options.c:2130-2134 - `--secluded-args --old-args` stays a
+    /// conflict; both survive so the config builder can refuse the pair.
+    #[test]
+    fn explicit_pair_is_kept_for_the_conflict_check() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _env = protection_env(Some("2"), None);
+        assert_eq!(
+            resolve_arg_protection(Some(true), Some(1)),
+            (Some(true), Some(1))
+        );
+    }
+
+    /// upstream: options.c:2125 - `protect_args <= 0` gates the env read, so an
+    /// explicit `--secluded-args` ignores `RSYNC_OLD_ARGS` while
+    /// `--no-secluded-args` still honours it.
+    #[test]
+    fn env_old_args_is_read_unless_secluded_args_was_given() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _env = protection_env(Some("2"), None);
+        assert_eq!(resolve_arg_protection(Some(true), None), (Some(true), None));
+        assert_eq!(
+            resolve_arg_protection(Some(false), None),
+            (Some(false), Some(2))
+        );
+    }
+
+    /// An explicit `--old-args`/`--no-old-args` level is never replaced by the
+    /// env, and `--no-old-args` still lets `RSYNC_PROTECT_ARGS` decide.
+    #[test]
+    fn explicit_old_args_level_ignores_env_old_args() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _env = protection_env(Some("2"), Some("1"));
+        assert_eq!(
+            resolve_arg_protection(None, Some(1)),
+            (Some(false), Some(1))
+        );
+        assert_eq!(resolve_arg_protection(None, Some(0)), (Some(true), Some(0)));
+    }
+
+    /// upstream: options.c:2127 `old_style_args = atoi(arg)` - the level is an
+    /// integer (2 disables all safe_arg escaping), and an empty value counts
+    /// as unset, leaving `RSYNC_PROTECT_ARGS` in charge.
+    #[test]
+    fn env_old_args_level_follows_atoi() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        let _env = protection_env(Some("2"), None);
+        assert_eq!(resolve_arg_protection(None, None), (Some(false), Some(2)));
+        let _env = protection_env(Some("yes"), None);
+        assert_eq!(resolve_arg_protection(None, None), (Some(false), None));
+        let _env = protection_env(Some(""), Some("1"));
+        assert_eq!(resolve_arg_protection(None, None), (Some(true), None));
+        let _env = protection_env(None, None);
+        assert_eq!(resolve_arg_protection(None, None), (None, None));
     }
 }

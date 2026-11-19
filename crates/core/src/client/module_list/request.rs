@@ -28,8 +28,27 @@ pub struct ModuleListRequest {
 }
 
 impl ModuleListRequest {
-    /// Default TCP port used by rsync daemons when a port is not specified.
+    /// Default port used by rsync daemons when a port is not specified, shared
+    /// by TCP (873/tcp) and QUIC (873/udp; `docs/design/quic-transport-policy.md`).
     pub const DEFAULT_PORT: u16 = 873;
+
+    /// Resolves the port of a daemon operand that names none.
+    ///
+    /// Over a socket it is `--port`, else [`Self::DEFAULT_PORT`]. Over a
+    /// remote shell the port is never dialled, only exported as `RSYNC_PORT`,
+    /// and with no `--port` that export is 0 rather than 873.
+    ///
+    /// upstream: main.c:1474 captures `env_port = rsync_port` (the `--port`
+    /// value) before parsing operands, and main.c:1613-1616 applies the
+    /// `RSYNC_PORT` (873) fallback to `rsync_port` only.
+    #[must_use]
+    pub const fn default_port(configured: Option<u16>, over_remote_shell: bool) -> u16 {
+        match configured {
+            Some(port) => port,
+            None if over_remote_shell => 0,
+            None => Self::DEFAULT_PORT,
+        }
+    }
 
     /// Attempts to derive a module listing request from CLI-style operands.
     pub fn from_operands(operands: &[OsString]) -> Result<Option<Self>, ClientError> {
@@ -475,6 +494,41 @@ impl ModuleListOptions {
 impl Default for ModuleListOptions {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod default_port_tests {
+    use super::ModuleListRequest;
+
+    /// upstream: main.c:1474 + main.c:1613-1616 - over a remote shell the
+    /// child sees `RSYNC_PORT` as the port the user named, or 0 when none was
+    /// named; the 873 fallback belongs to the socket path only. A helper that
+    /// keys off `RSYNC_PORT` must not be told 873 when nobody asked for it.
+    #[test]
+    fn remote_shell_exports_zero_unless_a_port_was_named() {
+        assert_eq!(ModuleListRequest::default_port(None, true), 0);
+        assert_eq!(ModuleListRequest::default_port(Some(99), true), 99);
+    }
+
+    /// The socket path dials `--port`, else the well-known daemon port.
+    #[test]
+    fn socket_dials_the_configured_port_or_873() {
+        assert_eq!(ModuleListRequest::default_port(None, false), 873);
+        assert_eq!(ModuleListRequest::default_port(Some(99), false), 99);
+    }
+
+    /// An operand that names its own port keeps it over a remote shell too.
+    #[test]
+    fn operand_port_overrides_the_remote_shell_default() {
+        let operands = [std::ffi::OsString::from("rsync://host:2222/")];
+        let request = ModuleListRequest::from_operands_with_port(
+            &operands,
+            ModuleListRequest::default_port(None, true),
+        )
+        .expect("parse")
+        .expect("listing request");
+        assert_eq!(request.address().port(), 2222);
     }
 }
 

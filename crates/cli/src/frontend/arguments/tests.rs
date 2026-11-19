@@ -3619,16 +3619,22 @@ mod env_option_defaults {
         assert_eq!(parsed.iconv, Some(OsString::from(".")));
     }
 
-    // upstream: options.c:1509 - `protect_args <= 0` guard: an explicitly
-    // enabled protect_args suppresses the RSYNC_ICONV default.
+    // upstream: options.c:1509 reads RSYNC_ICONV before popt parses argv, while
+    // `protect_args` is still -1, so neither `-s` nor RSYNC_PROTECT_ARGS can
+    // suppress it. Measured: rsync 3.5.2 `-s` with RSYNC_ICONV=BOGUS-CS fails
+    // in iconv_open, proving the charset was applied.
     #[test]
-    fn protect_args_suppresses_rsync_iconv_env() {
+    fn protect_args_does_not_suppress_rsync_iconv_env() {
         let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
-        let _protect = EnvGuard::remove("RSYNC_PROTECT_ARGS");
         let _iconv = EnvGuard::set("RSYNC_ICONV", "utf-8,latin1");
-
-        let parsed = parse_test_args(["--protect-args", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.iconv, None);
+        {
+            let _protect = EnvGuard::remove("RSYNC_PROTECT_ARGS");
+            let parsed = parse_test_args(["--protect-args", "src/", "dst/"]).expect("parse");
+            assert_eq!(parsed.iconv, Some(OsString::from("utf-8,latin1")));
+        }
+        let _protect = EnvGuard::set("RSYNC_PROTECT_ARGS", "1");
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.iconv, Some(OsString::from("utf-8,latin1")));
     }
 
     // upstream: options.c:2103-2107 - RSYNC_MAX_ALLOC supplies the default cap

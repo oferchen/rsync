@@ -104,10 +104,9 @@ impl ConverterStream {
 
 #[cfg(unix)]
 impl NameConverter {
-    /// Spawns the converter subprocess via `sh -c`.
+    /// Spawns the converter subprocess through [`hook_shell_command`].
     fn spawn(command: &str) -> io::Result<Self> {
-        let mut child = ProcessCommand::new("sh")
-            .args(["-c", command])
+        let mut child = hook_shell_command(command)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
