@@ -82,6 +82,7 @@ fn line_shapes(text: &str, root: &str) -> BTreeSet<String> {
     text.replace(root, "ROOT")
         .lines()
         .map(|line| {
+            let line = mask_temp_suffix(line);
             let mut shape = String::with_capacity(line.len());
             let mut in_number = false;
             for c in line.chars() {
@@ -98,6 +99,21 @@ fn line_shapes(text: &str, root: &str) -> BTreeSet<String> {
             shape
         })
         .collect()
+}
+
+/// Masks the random six-character suffix of the temp name in a receiver
+/// `renaming .<name>.XXXXXX to <name>` line (rsync.c:917), which differs on
+/// every run of either implementation.
+fn mask_temp_suffix(line: &str) -> String {
+    match line
+        .strip_prefix("renaming ")
+        .and_then(|rest| rest.split_once(" to "))
+    {
+        Some((temp, dest)) if temp.len() > 6 => {
+            format!("renaming {}XXXXXX to {dest}", &temp[..temp.len() - 6])
+        }
+        _ => line.to_owned(),
+    }
 }
 
 #[test]
@@ -132,11 +148,11 @@ fn the_pipeline_word_prints_its_lines_by_level() {
     }
 }
 
-/// Every line a local `-vvv` copy prints, 3.5.1 prints too, except the
-/// kernel sandbox decisions: SECCOMP and LANDLOCK join the `-vvv` and
-/// `-vvvv` rows by the 2026-10-14 decision, and 3.5.1 has no sandbox.
+/// Every line a local `-vvv` copy prints, 3.5.1 prints too. The oc-only
+/// SECCOMP and LANDLOCK words are in no `-v` row, so a sandbox line here is
+/// a regression.
 #[test]
-fn local_vvv_prints_no_oc_only_line_but_the_sandbox_ones() {
+fn local_vvv_prints_no_oc_only_line() {
     if !upstream_compat_enabled() {
         return;
     }
@@ -150,7 +166,6 @@ fn local_vvv_prints_no_oc_only_line_but_the_sandbox_ones() {
         let oc_only: Vec<String> = line_shapes(&oc, &oc_root)
             .into_iter()
             .filter(|line| !upstream_shapes.contains(line))
-            .filter(|line| !line.starts_with("landlock: ") && !line.starts_with("seccomp: "))
             .collect();
         assert!(
             oc_only.is_empty(),

@@ -1247,11 +1247,14 @@ impl ReceiverContext {
             // drained before these rows are written, and a sender declines
             // only a transfer request (sender.c:678, 733, 761).
             for _ in 0..self.hardlink_follower_echoes.take() {
-                if read_ndx_and_attrs(reader, ndx_read_codec, self, false, false)?.is_none() {
+                let Some((ndx, _)) =
+                    read_ndx_and_attrs(reader, ndx_read_codec, self, false, false)?
+                else {
                     return Err(protocol::protocol_violation(
                         "expected the echo of a hard-link follower row, got NDX_DONE",
                     ));
-                }
+                };
+                self.trace_recv_files(ndx);
             }
         }
         Ok(())

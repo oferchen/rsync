@@ -159,8 +159,9 @@ impl ReceiverContext {
         // transfer reply of the phase has been read, and a sender declines
         // only a transfer request (sender.c:678, 733, 761).
         for _ in 0..self.hardlink_follower_echoes.take() {
-            if read_ndx_and_attrs(reader, ndx_read_codec, sink, false, false)?.is_none() {
-                return Ok(true);
+            match read_ndx_and_attrs(reader, ndx_read_codec, sink, false, false)? {
+                Some((ndx, _)) => self.trace_recv_files(ndx),
+                None => return Ok(true),
             }
         }
         Ok(false)
@@ -589,6 +590,13 @@ impl ReceiverContext {
             self.reclaim_oldest_segment();
         }
 
+        // upstream: receiver.c:1393-1394 and generator.c:3020 print these as
+        // recv_files() and generate_files() return, before main.c:1110-1126
+        // runs the goodbye exchange. Emitted here, they leave ahead of the
+        // goodbye NDX_DONE, so a client still reading the stream prints them.
+        debug_log!(Recv, 1, "recv_files finished");
+        debug_log!(Genr, 1, "generate_files finished");
+
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, ndx_read_codec)?;
 
         // upstream: main.c:1103 do_recv() child path and main.c:1170/1176
@@ -612,13 +620,6 @@ impl ReceiverContext {
         {
             return Err(e);
         }
-
-        // upstream: receiver.c:1393-1394 DEBUG_GTE(RECV, 1)
-        debug_log!(Recv, 1, "recv_files finished");
-
-        // upstream: generator.c:3020-3021 - "generate_files finished" emitted at
-        // the bottom of generate_files() after the final goodbye handshake.
-        debug_log!(Genr, 1, "generate_files finished");
 
         // INC_RECURSE diagnostic: emit cumulative NDX conversion
         // call count and partition_point comparison depth from the receiver

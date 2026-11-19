@@ -104,14 +104,6 @@ impl ReceiverContext {
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
     ) -> io::Result<(usize, PipelineSetup)> {
-        // upstream: generator.c:2849-2852 - emitted at the top of generate_files,
-        // just before the per-segment dispatch loop. The receiver-side transfer
-        // setup is the closest analog (every `run*` entry point routes through
-        // setup_transfer).
-        debug_log!(Genr, 1, "generator starting pid={}", std::process::id());
-
-        self.emit_delta_transmission_notice(writer);
-
         reader.set_local_role(self.reader_role());
         if self.should_activate_input_multiplex() {
             reader.activate_multiplex_in_place().map_err(|e| {
@@ -204,6 +196,11 @@ impl ReceiverContext {
         // it the fork, only for a non-empty list.
         if !self.is_empty_client_flist(file_count) {
             self.mark_fork();
+            // upstream: generator.c:2836-2854 - generate_files() runs in the
+            // child do_recv() forks, so its first lines follow the file list
+            // and get_local_name().
+            debug_log!(Genr, 1, "generator starting pid={}", std::process::id());
+            self.emit_delta_transmission_notice(writer);
         }
 
         Ok((file_count, setup))

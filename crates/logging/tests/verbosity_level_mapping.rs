@@ -596,30 +596,23 @@ const UPSTREAM_INFO_VERBOSITY: [&str; 6] = [
     "",
 ];
 
-/// The only words oc adds to `debug_verbosity[]`, by row: the decision (row
-/// 3, `-vvv`) and detail (row 4, `-vvvv`) levels of the two oc-only kernel
-/// sandbox layers. Any other difference from upstream's rows is drift.
-const OC_DEBUG_VERBOSITY_ADDITIONS: [&str; 6] =
-    ["", "", "", "SECCOMP,LANDLOCK", "SECCOMP2,LANDLOCK2", ""];
-
 /// Replays upstream `set_output_verbosity()` (options.c:533-544): clamp the
 /// level to `MAX_VERBOSITY`, then apply every table row `0..=level` in order,
-/// each word overwriting the previous level of its flag. Each debug row is
-/// followed by its [`OC_DEBUG_VERBOSITY_ADDITIONS`] entry.
+/// each word overwriting the previous level of its flag. oc adds no word to
+/// any row: its oc-only debug words are reached only when named.
 fn expected_set_output_verbosity(level: usize) -> VerbosityConfig {
     let mut config = VerbosityConfig::default();
     let rows = level.min(UPSTREAM_DEBUG_VERBOSITY.len() - 1) + 1;
     let words = |row: &'static str| row.split(',').filter(|w| !w.is_empty());
-    for ((info, debug), oc) in UPSTREAM_INFO_VERBOSITY
+    for (info, debug) in UPSTREAM_INFO_VERBOSITY
         .into_iter()
         .zip(UPSTREAM_DEBUG_VERBOSITY)
-        .zip(OC_DEBUG_VERBOSITY_ADDITIONS)
         .take(rows)
     {
         for word in words(info) {
             config.apply_info_flag(word).expect("upstream info word");
         }
-        for word in words(debug).chain(words(oc)) {
+        for word in words(debug) {
             config.apply_debug_flag(word).expect("debug word");
         }
     }
