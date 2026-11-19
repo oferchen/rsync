@@ -516,13 +516,11 @@ impl ReceiverContext {
     /// |------|-------|------|
     /// | `--delete-before` / `--delete-during` | immediate sweep | - |
     /// | `--delete-after` | - | immediate sweep |
-    /// | `--delete-delay` (parallel path) | collect victims | execute victims |
-    /// | `--delete-delay` (+`--max-delete`/`-x`) | immediate sweep | - |
+    /// | `--delete-delay` | remember victims | remove them |
     ///
-    /// A `--delete-delay` run that would route through the serial, leaf-granular
-    /// executor (`--max-delete` cap or `--one-file-system` boundary) cannot defer
-    /// through the collect/execute split, so it stays on the immediate early pass,
-    /// mirroring the engine crate's `delay_decides_during` gate.
+    /// `--delete-delay` defers whatever else is set: a `--max-delete` cap or a
+    /// `--one-file-system` boundary is applied as each remembered entry is
+    /// removed (delete.c:217, delete.c:144), not while it is remembered.
     ///
     /// # Upstream Reference
     ///
@@ -571,13 +569,12 @@ impl ReceiverContext {
         }
 
         // `--delete-delay` (`delete_during == 2`): late_delete without the
-        // `delete_after` decision-deferral. Deferrable only on the parallel path.
+        // `delete_after` decision-deferral.
         let delay = self.config.deletion.late_delete && !self.config.deletion.delete_after;
-        let deferrable_delay = delay && !self.delete_pass_uses_serial_executor();
 
         match phase {
             DeletePassPhase::Early => {
-                if deferrable_delay {
+                if delay {
                     // upstream: generator.c:380 remember_delete() records each
                     // victim during the walk; the unlink is deferred.
                     let (victims, io_bits) = self.collect_delayed_deletions(
@@ -612,18 +609,31 @@ impl ReceiverContext {
                         writer,
                         stats,
                     )?;
-                } else if deferrable_delay {
-                    // upstream: generator.c:2462 do_delayed_deletions() unlinks the
-                    // remembered victims after the whole transfer has completed.
-                    let victims = std::mem::take(&mut self.delayed_delete_victims);
-                    let (delete_stats, io_bits, removed) = self.execute_delayed_deletions(
-                        dest_dir,
-                        #[cfg(unix)]
-                        sandbox,
-                        &victims,
-                        writer,
-                    )?;
-                    self.record_daemon_log_deletions(removed);
+                } else if delay {
+                    // upstream: generator.c:2991-2992 do_delayed_deletions()
+                    // unlinks the remembered victims after the whole transfer
+                    // has completed.
+                    let (delete_stats, io_bits) = if self.delete_pass_uses_serial_executor() {
+                        let (delete_stats, io_bits, removed) = self.execute_remembered_deletions(
+                            dest_dir,
+                            #[cfg(unix)]
+                            sandbox,
+                            writer,
+                        )?;
+                        self.record_daemon_log_deletions(&removed);
+                        (delete_stats, io_bits)
+                    } else {
+                        let victims = std::mem::take(&mut self.delayed_delete_victims);
+                        let (delete_stats, io_bits, removed) = self.execute_delayed_deletions(
+                            dest_dir,
+                            #[cfg(unix)]
+                            sandbox,
+                            &victims,
+                            writer,
+                        )?;
+                        self.record_daemon_log_deletions(removed);
+                        (delete_stats, io_bits)
+                    };
                     stats.io_error |= io_bits;
                     stats.delete_stats = delete_stats;
                     // Carry the per-type counters into the receiver context so the
@@ -749,8 +759,7 @@ impl ReceiverContext {
     /// The segment is the directory's complete sub-list, so the keep-set built
     /// from it alone classifies every destination entry exactly (see
     /// `DeleteScope::Dir`). `--delete-delay` records the victims for the late
-    /// site instead of unlinking them, unless `--max-delete` or `-x` needs the
-    /// serial executor, which unlinks inline as the whole-list pass does.
+    /// site instead of unlinking them.
     /// Deletions accumulate across segments into the `NDX_DEL_STATS` counters
     /// and one `--max-delete` budget; the driver settles the budget once, after
     /// the walk, through `finish_delete_limit`.
@@ -832,8 +841,7 @@ impl ReceiverContext {
             dir: &dir,
             range: self.ndx_segments[segment_idx].0..self.segment_end(segment_idx),
         };
-        let collect_only =
-            self.config.deletion.late_delete && !self.delete_pass_uses_serial_executor();
+        let collect_only = self.config.deletion.late_delete;
         let budget_used = u64::from(self.effective_del_stats().total());
         let (delete_stats, skipped, io_bits, victims) = self.run_delete_scan(
             dest_dir,
@@ -861,8 +869,7 @@ impl ReceiverContext {
     }
 
     /// Immediate delete sweep: scan, unlink, emit, and fold the stats into
-    /// `stats`. Used by `--delete-before` / `--delete-during` / `--delete-after`
-    /// and a capped/`--one-file-system` `--delete-delay`.
+    /// `stats`. Used by `--delete-before` / `--delete-during` / `--delete-after`.
     fn run_immediate_delete_pass<W>(
         &mut self,
         dest_dir: &Path,

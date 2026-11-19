@@ -756,6 +756,11 @@ impl ReceiverContext {
             .enumerate()
             .map(|(i, e)| (range.start + i, e))
         {
+            // upstream: generator.c:1786-1792 - a `--delete-missing-args`
+            // entry returns before any itemize(), so it is never requested.
+            if self.config.file_selection.delete_missing_args && entry.mode() == 0 {
+                continue;
+            }
             let is_candidate = !entry.is_file() || requestable.contains(&idx);
             if !is_candidate && !is_hardlink_follower(entry) {
                 continue;

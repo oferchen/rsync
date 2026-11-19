@@ -379,12 +379,12 @@ fn apply_long_form_args(
                         config.connection.compression_level =
                             Some(compress::zlib::CompressionLevel::from_signed(level));
                     }
-                // upstream: options.c:3067-3072
+                // upstream: options.c:3067-3072 - a client's `--max-delete=0`
+                // arrives as `--max-delete=-1`, and options.c:2363-2366 reads
+                // any negative value as "no deletions".
                 } else if let Some(val) = arg.strip_prefix("--max-delete=") {
-                    if let Ok(n) = val.parse::<i64>()
-                        && n >= 0
-                    {
-                        config.deletion.max_delete = Some(n as u64);
+                    if let Ok(n) = val.parse::<i64>() {
+                        config.deletion.max_delete = Some(u64::try_from(n).unwrap_or(0));
                     }
                 // upstream: options.c:3073-3076 - `server_options()` forwards
                 // `--min-size`/`--max-size` (as one `--opt=VALUE` token, see

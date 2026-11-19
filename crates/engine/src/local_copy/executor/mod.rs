@@ -12,8 +12,8 @@ mod special;
 mod util;
 
 pub(crate) use cleanup::{
-    decide_and_defer_delayed_deletions, delete_extraneous_entries, execute_decided_deletion,
-    record_directory_subtree, remove_source_entry_if_requested,
+    decide_and_defer_delayed_deletions, delete_extraneous_entries, delete_named_entry,
+    execute_decided_deletion, record_directory_subtree, remove_source_entry_if_requested,
 };
 #[cfg(unix)]
 pub(crate) use create_failure::report_mknod_failure;

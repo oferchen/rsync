@@ -19,6 +19,7 @@ use crate::local_copy::{
     SourceSpec, delete_extraneous_entries,
 };
 
+use super::super::delete_named_entry;
 use super::super::non_empty_path;
 use super::super::refuse_populated_directory;
 use super::super::{
@@ -1608,7 +1609,11 @@ pub(super) fn delete_missing_source_entry(
     destination_behaves_like_directory: bool,
     relative_root: Option<&Path>,
 ) -> Result<(), LocalCopyError> {
-    if source.copy_contents() {
+    // upstream: flist.c:2903-2946 - without --relative a trailing-slash operand
+    // is entered with change_dir(), whose failure is the error; under
+    // --relative the whole name is stat'ed, so a missing one is a missing arg
+    // like any other.
+    if source.copy_contents() && relative_root.is_none() {
         return Ok(());
     }
 
@@ -1664,67 +1669,8 @@ pub(super) fn delete_missing_source_entry(
         return Ok(());
     }
 
-    // upstream: delete.c:217-219 - the capped `delete_item()` counts the
-    // refusal in `skipped_deletes` and returns DR_AT_LIMIT; the run goes on.
-    if let Some(limit) = context.options().max_deletion_limit()
-        && context.summary().items_deleted() >= limit
-    {
-        context.record_skipped_deletes(1);
-        return Ok(());
-    }
-
-    let record_path = non_empty_path(relative.as_path());
-
-    if context.mode().is_dry_run() {
-        context.summary_mut().record_deletion(file_type);
-        if let Some(path) = record_path {
-            context.record(LocalCopyRecord::new(
-                path.to_path_buf(),
-                LocalCopyAction::EntryDeleted,
-                0,
-                None,
-                Duration::default(),
-                None,
-            ));
-        }
-        context.register_progress();
-        return Ok(());
-    }
-
-    // upstream: delete.c:230 - prefer_rename=True; the item is unlinked
-    // outright right after, so skip the hard-link tier.
-    context.backup_existing_entry(&target, record_path, file_type, true)?;
-    let removal = if file_type.is_dir() {
-        fs::remove_dir_all(&target)
-    } else {
-        fs::remove_file(&target)
-    };
-
-    match removal {
-        Ok(()) => {
-            context.summary_mut().record_deletion(file_type);
-            if let Some(path) = record_path {
-                context.record(LocalCopyRecord::new(
-                    path.to_path_buf(),
-                    LocalCopyAction::EntryDeleted,
-                    0,
-                    None,
-                    Duration::default(),
-                    None,
-                ));
-            }
-            context.register_progress();
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => {
-            let action = if file_type.is_dir() {
-                "remove destination directory"
-            } else {
-                "remove destination entry"
-            };
-            return Err(LocalCopyError::io(action, target, error));
-        }
-    }
-
-    Ok(())
+    // upstream: delete.c:193-266 - from here on it is delete_item(): the
+    // contents first when the directory may be emptied, the cap leaf by leaf,
+    // one itemized row per removal, and nothing removed under --dry-run.
+    delete_named_entry(context, &target, &relative)
 }

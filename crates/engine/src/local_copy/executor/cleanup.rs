@@ -785,6 +785,27 @@ pub(crate) fn clear_make_room_contents_capped(
     Ok(cleared)
 }
 
+/// Removes the destination entry at `path`, emptying a directory first, the
+/// way upstream's `delete_item()` does under `DEL_RECURSE`: each removal is
+/// itemized and counted, the `--max-delete` cap is spent leaf by leaf, and a
+/// refusal joins the run's `skipped_deletes`.
+///
+/// # Upstream Reference
+///
+/// - `delete.c:193-266` - `delete_item()`
+/// - `generator.c:1786-1792` - the `--delete-missing-args` caller
+pub(crate) fn delete_named_entry(
+    context: &mut CopyContext,
+    path: &Path,
+    relative: &Path,
+) -> Result<(), LocalCopyError> {
+    let boundary_dev = delete_boundary_device(context);
+    let mut skipped = 0u64;
+    remove_entry_capped(context, path, relative, &mut skipped, false, boundary_dev)?;
+    context.record_skipped_deletes(skipped);
+    Ok(())
+}
+
 /// Returns `true` when the running deletion count has reached the configured
 /// `--max-delete` limit. upstream: delete.c:217 `stats.deleted_files >= max_delete`.
 fn cap_reached(context: &CopyContext) -> bool {
