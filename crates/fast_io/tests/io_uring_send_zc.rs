@@ -141,13 +141,65 @@ fn zero_copy_sender_roundtrips_1mib_over_tcp_loopback() {
         "received byte count must match sent count"
     );
     assert_eq!(received, payload, "round-tripped bytes must match");
-    // Each byte went out either zero-copy or, where the kernel had no
-    // pinnable memory left for this user, through the counted copying send.
-    assert_eq!(
-        (after.bytes - before.bytes) + (after.copied_bytes - before.copied_bytes),
-        payload.len() as u64,
-        "every byte must be counted as a SEND_ZC or a copying send: {before:?} -> {after:?}"
-    );
+    assert_bytes_went_through_send_zc(TEST, before, after, payload.len() as u64, 0);
+}
+
+/// Returns `true` when this thread holds `CAP_IPC_LOCK` in its effective set.
+fn holds_ipc_lock() -> bool {
+    rustix::thread::capabilities(None)
+        .expect("read this thread's capabilities")
+        .effective
+        .contains(rustix::thread::CapabilitySet::IPC_LOCK)
+}
+
+/// Asserts how the `len` payload bytes were sent, given the counter snapshots
+/// taken around the send. `plain_tail` is the number of trailing bytes the
+/// sender may put on a plain send by design (a writer's final flush below the
+/// SEND_ZC dispatch floor); zero for a caller that only sends through SEND_ZC.
+///
+/// A thread holding `CAP_IPC_LOCK` creates rings the kernel never charges for
+/// pinned pages (Linux `io_uring/io_uring.c` `io_uring_create` sets
+/// `ctx->user` only without the capability), so its SEND_ZC cannot be refused
+/// for memory: every byte must go zero-copy and none may be copied. That is
+/// the root CI job, and it is what catches a regression that always falls
+/// back. Without the capability the pages are charged to the user's
+/// `RLIMIT_MEMLOCK` budget, which other processes share, so a refused SEND_ZC
+/// is legitimately resent as a copying send and only the sum is fixed. The
+/// branch taken is printed so a run states which assertion it made.
+fn assert_bytes_went_through_send_zc(
+    test: &str,
+    before: fast_io::SendZcStats,
+    after: fast_io::SendZcStats,
+    len: u64,
+    plain_tail: u64,
+) {
+    let zero_copy = after.bytes - before.bytes;
+    let copied = after.copied_bytes - before.copied_bytes;
+    if holds_ipc_lock() {
+        eprintln!(
+            "[send_zc env] {test}: CAP_IPC_LOCK held - pinned pages are never charged, \
+             asserting every byte went zero-copy"
+        );
+        assert_eq!(
+            copied, 0,
+            "with CAP_IPC_LOCK no SEND_ZC can be refused for memory, so nothing may be \
+             copied: {before:?} -> {after:?}"
+        );
+        assert!(
+            zero_copy <= len && zero_copy + plain_tail >= len,
+            "with CAP_IPC_LOCK the payload must travel through SEND_ZC: {before:?} -> {after:?}"
+        );
+    } else {
+        eprintln!(
+            "[send_zc env] {test}: no CAP_IPC_LOCK - pinned pages are charged to \
+             RLIMIT_MEMLOCK, asserting zero-copy + copied bytes cover the payload"
+        );
+        let counted = zero_copy + copied;
+        assert!(
+            counted <= len && counted + plain_tail >= len,
+            "every byte must be counted as a SEND_ZC or a copying send: {before:?} -> {after:?}"
+        );
+    }
 }
 
 /// Sends all of `payload` through `sender`. The environment probe said
@@ -396,11 +448,10 @@ fn explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback() {
             submitted > 0,
             "no IORING_OP_SEND_ZC submission was counted: {before:?} -> {after:?}"
         );
-        let via_zc = (after.bytes - before.bytes) + (after.copied_bytes - before.copied_bytes);
-        assert!(
-            via_zc >= len as u64 / 2,
-            "most of the payload must travel through SEND_ZC: {before:?} -> {after:?}"
-        );
+        // A final buffered tail shorter than the dispatch floor goes out on a
+        // plain IORING_OP_SEND by design and is counted nowhere.
+        let plain_tail = fast_io::SEND_ZC_DISPATCH_MIN_BYTES as u64 - 1;
+        assert_bytes_went_through_send_zc(TEST, before, after, len as u64, plain_tail);
     } else {
         assert!(
             !engaged,
