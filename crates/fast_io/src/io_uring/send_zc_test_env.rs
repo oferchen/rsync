@@ -2,9 +2,10 @@
 //
 // Shared by the crate's unit tests and `tests/io_uring_send_zc.rs` (pulled in
 // there with `#[path]`), so every SEND_ZC test states on stderr whether it
-// exercised the real opcode or why it could not: io_uring unavailable, opcode
-// unsupported, or a setup failure that RLIMIT_MEMLOCK explains. Reads
-// `/proc/self` instead of calling libc so it needs no unsafe code.
+// exercised the real opcode or why it could not: io_uring unavailable or the
+// opcode unsupported. A ring the locked-memory budget refused is an asserted
+// arm, not a skip. Reads `/proc` instead of calling libc so it needs no
+// unsafe code.
 
 use std::io;
 
@@ -41,19 +42,88 @@ pub fn report(test: &str, env: SendZcEnv) -> SendZcEnv {
     env
 }
 
-/// Prints a loud skip for a setup step that failed with `err`, naming
-/// RLIMIT_MEMLOCK when it is finite and the error is the one it produces.
-pub fn report_setup_failure(test: &str, step: &str, err: &io::Error) {
-    let memlock_errno = matches!(err.raw_os_error(), Some(1 | 12)); // EPERM | ENOMEM
-    let class = if memlock_errno && memlock_soft_limit().is_some_and(|l| l != "unlimited") {
-        "memlock-limited"
-    } else {
-        "setup failed"
-    };
-    eprintln!(
-        "[send_zc env] SKIP {test}: {class} - {step}: {err} ({})",
+/// Asserts that a setup step failed only because the kernel refused to
+/// charge a ring to this user's locked-memory budget, and prints that the
+/// refusal arm ran.
+///
+/// Some kernels charge a new ring's own pages to `RLIMIT_MEMLOCK` (Linux
+/// v6.17 `io_uring/memmap.c` `io_create_region`), and the budget is per user,
+/// shared by every process of that user, so under a parallel test run a ring
+/// can be refused with `ENOMEM`. Production answers that by not using
+/// io_uring; this is the only setup failure a test accepts. Any other error
+/// fails the test, and so does an `ENOMEM` on a thread holding `CAP_IPC_LOCK`,
+/// whose rings the kernel never charges (`io_uring/io_uring.c`
+/// `io_uring_create`) - so the root CI job can only ever take the full arm.
+pub fn assert_setup_refused_by_memlock(test: &str, step: &str, err: &io::Error) {
+    assert_eq!(
+        err.kind(),
+        io::ErrorKind::OutOfMemory,
+        "{test}: {step} failed for a reason other than the locked-memory budget: {err} ({})",
         context()
     );
+    assert!(
+        !thread_holds_ipc_lock(),
+        "{test}: {step} returned ENOMEM on a thread holding CAP_IPC_LOCK, whose rings are \
+         never charged: {err} ({})",
+        context()
+    );
+    eprintln!(
+        "[send_zc env] {test}: {step} refused with ENOMEM by the locked-memory budget - \
+         asserted the refusal arm ({})",
+        context()
+    );
+}
+
+/// Asserts that a socket writer asked for SEND_ZC on a socket that accepts it
+/// dropped SEND_ZC only because one of its rings was refused, and prints that
+/// the refusal arm ran.
+///
+/// The socket-writer factory answers a ring it cannot build with the plain
+/// writer, and the writer answers a SEND_ZC pipeline it cannot build with
+/// plain sends; neither surfaces the error, so the test cannot read the errno.
+/// A refusal is only possible without `CAP_IPC_LOCK` (rings are charged to the
+/// user's shared budget only then), so a thread holding it fails here: the
+/// root CI job always takes the full SEND_ZC arm.
+///
+/// Call it after the payload was written: `send_zc_bytes` is how many bytes
+/// the SEND_ZC counters (zero-copy plus copied resends) gained during the
+/// writes, and must be zero - a writer without SEND_ZC cannot submit it. The
+/// caller asserts the payload arrived byte for byte.
+pub fn assert_writer_ring_refused(test: &str, send_zc_bytes: u64) {
+    assert!(
+        !thread_holds_ipc_lock(),
+        "{test}: the writer dropped SEND_ZC on a thread holding CAP_IPC_LOCK, whose rings \
+         are never charged ({})",
+        context()
+    );
+    assert_eq!(
+        send_zc_bytes, 0,
+        "{test}: a writer whose ring was refused sent bytes through SEND_ZC"
+    );
+    eprintln!(
+        "[send_zc env] {test}: the writer's ring was refused - asserted the plain-send \
+         fallback delivered the payload with no SEND_ZC bytes ({})",
+        context()
+    );
+}
+
+/// Bytes the SEND_ZC counters gained between two snapshots, zero-copy and
+/// copied resends together, given as `(bytes, copied_bytes)` pairs.
+pub fn send_zc_bytes_between(before: (u64, u64), after: (u64, u64)) -> u64 {
+    (after.0 + after.1) - (before.0 + before.1)
+}
+
+/// Reads this thread's effective capability set from `/proc/thread-self` and
+/// reports whether `CAP_IPC_LOCK` (bit 14) is in it.
+fn thread_holds_ipc_lock() -> bool {
+    const CAP_IPC_LOCK: u32 = 14;
+    std::fs::read_to_string("/proc/thread-self/status")
+        .ok()
+        .and_then(|status| {
+            let line = status.lines().find(|l| l.starts_with("CapEff:"))?;
+            u64::from_str_radix(line["CapEff:".len()..].trim(), 16).ok()
+        })
+        .is_some_and(|caps| caps & (1 << CAP_IPC_LOCK) != 0)
 }
 
 fn context() -> String {

@@ -27,6 +27,20 @@
 //!
 //! See `docs/design/iouring-send-zc.md` for the full design.
 //!
+//! # Running out of pinnable memory
+//!
+//! The kernel charges the pages a SEND_ZC pins to the ring creator's locked
+//! memory, `user->locked_vm`, against `RLIMIT_MEMLOCK`, and refuses the send
+//! with `ENOMEM` once the budget is spent (Linux `io_uring/net.c`
+//! `io_send_zc_import` -> `io_uring/notif.h` `io_notif_account_mem` ->
+//! `io_uring/rsrc.c` `__io_account_mem`). `locked_vm` is shared by every
+//! process of the same user, so the refusal depends on what else that user
+//! is running. A creator holding `CAP_IPC_LOCK` is never charged
+//! (`io_uring/io_uring.c` `io_uring_create`). Zero copy is only an
+//! optimisation, so [`try_send_zc`] and the pipeline answer `ENOMEM` and
+//! `ENOBUFS` by sending the same bytes with a copying `IORING_OP_SEND`, which
+//! pins nothing, and count it in `SendZcStats::copied_sends`.
+//!
 //! # `ZeroCopySender`
 //!
 //! `ZeroCopySender` is the higher-level wrapper exposed when the
@@ -75,6 +89,33 @@ pub(super) const IORING_CQE_F_NOTIF: u32 = 1 << 3;
 /// `OpTag::SendZc` tag. Keeping the encoding internal lets the probe-helper
 /// route both CQEs through the same `user_data` match.
 const USER_DATA_MASK: u64 = (1u64 << 56) - 1;
+
+/// Returns `true` when `errno` is the kernel refusing a SEND_ZC because it
+/// cannot pin (`ENOMEM`) or account (`ENOBUFS`) the payload pages - a refusal
+/// a copying send of the same bytes does not hit.
+pub(super) fn is_pin_refusal(errno: i32) -> bool {
+    matches!(errno, libc::ENOMEM | libc::ENOBUFS)
+}
+
+/// The send opcode a submission uses.
+#[derive(Clone, Copy)]
+pub(super) enum SendOp {
+    /// `IORING_OP_SEND_ZC`: pins the payload pages and posts a notification
+    /// once the kernel releases them.
+    ZeroCopy,
+    /// `IORING_OP_SEND`: copies the payload into the socket and posts one CQE.
+    Copy,
+}
+
+impl SendOp {
+    /// Builds the SQE for `len` bytes at `ptr` on socket `fd`.
+    pub(super) fn entry(self, fd: RawFd, ptr: *const u8, len: usize) -> io_uring::squeue::Entry {
+        match self {
+            Self::ZeroCopy => opcode::SendZc::new(types::Fd(fd), ptr, len as u32).build(),
+            Self::Copy => opcode::Send::new(types::Fd(fd), ptr, len as u32).build(),
+        }
+    }
+}
 
 /// Cached `IORING_OP_SEND_ZC` support, populated lazily by [`is_supported`].
 ///
@@ -163,7 +204,9 @@ fn probe_send_zc() -> bool {
 ///   semantics: SEND_ZC with `len = 0` is documented as
 ///   implementation-defined and is not exercised by any production caller).
 /// - The OS error from the transfer CQE if the kernel reports a negative
-///   result.
+///   result. `ENOMEM` and `ENOBUFS` are not returned for the SEND_ZC: the
+///   same bytes are sent with a copying `IORING_OP_SEND` instead (see the
+///   module docs), and only that send's error can surface.
 ///
 /// `user_data` is masked to 56 bits internally; the high byte is reserved
 /// for a future `OpTag::SendZc` tag.
@@ -198,7 +241,27 @@ pub fn try_send_zc(
             "IORING_OP_SEND_ZC is not supported on this kernel",
         ));
     }
-    submit_and_drain(ring, fd, buf.as_ptr(), buf.len(), user_data)
+    let result = submit_and_drain(
+        ring,
+        fd,
+        SendOp::ZeroCopy,
+        buf.as_ptr(),
+        buf.len(),
+        user_data,
+    )?;
+    if result >= 0 {
+        crate::send_zc_stats::record_send(result as usize);
+        return Ok(result as usize);
+    }
+    if !is_pin_refusal(-result) {
+        return Err(io::Error::from_raw_os_error(-result));
+    }
+    let copied = submit_and_drain(ring, fd, SendOp::Copy, buf.as_ptr(), buf.len(), user_data)?;
+    if copied < 0 {
+        return Err(io::Error::from_raw_os_error(-copied));
+    }
+    crate::send_zc_stats::record_copied_send(copied as usize);
+    Ok(copied as usize)
 }
 
 /// Asks the kernel whether socket `fd` accepts `IORING_OP_SEND_ZC`.
@@ -213,31 +276,37 @@ pub fn try_send_zc(
 /// transfer CQE carried otherwise - `EOPNOTSUPP` for a socket family without
 /// zero-copy support.
 pub(super) fn probe_socket(ring: &mut RawIoUring, fd: RawFd) -> io::Result<()> {
-    submit_and_drain(ring, fd, std::ptr::NonNull::<u8>::dangling().as_ptr(), 0, 0).map(|_| ())
+    let ptr = std::ptr::NonNull::<u8>::dangling().as_ptr();
+    let result = submit_and_drain(ring, fd, SendOp::ZeroCopy, ptr, 0, 0)?;
+    if result < 0 {
+        return Err(io::Error::from_raw_os_error(-result));
+    }
+    crate::send_zc_stats::record_send(result as usize);
+    Ok(())
 }
 
-/// Submits one `IORING_OP_SEND_ZC` SQE over `len` bytes at `ptr` and drains
-/// both its CQEs.
+/// Submits one `op` SQE over `len` bytes at `ptr`, drains every CQE it
+/// posts, and returns the transfer CQE's raw result (`-errno` on failure).
 ///
 /// The caller guarantees `ptr..ptr + len` stays valid for the duration of the
 /// call; a zero `len` never dereferences `ptr`.
 fn submit_and_drain(
     ring: &mut RawIoUring,
     fd: RawFd,
+    op: SendOp,
     ptr: *const u8,
     len: usize,
     user_data: u64,
-) -> io::Result<usize> {
+) -> io::Result<i32> {
     let tagged = user_data & USER_DATA_MASK;
-    let entry = opcode::SendZc::new(types::Fd(fd), ptr, len as u32)
-        .build()
-        .user_data(tagged);
+    let entry = op.entry(fd, ptr, len).user_data(tagged);
 
     // SAFETY: the caller keeps `ptr..ptr + len` valid for the full lifetime
     // of this call. We drain both CQEs (transfer + notification) below before
     // returning, so the kernel is guaranteed to have released the page
-    // reference by the time the caller regains control. The SQE references
-    // no other memory.
+    // reference by the time the caller regains control (a copying SEND posts
+    // one CQE, without IORING_CQE_F_MORE, once it has copied the bytes). The
+    // SQE references no other memory.
     unsafe {
         ring.submission()
             .push(&entry)
@@ -277,12 +346,7 @@ fn submit_and_drain(
         }
     }
 
-    let result = transfer_result.expect("transfer CQE present once loop exits");
-    if result < 0 {
-        return Err(io::Error::from_raw_os_error(-result));
-    }
-    crate::send_zc_stats::record_send(result as usize);
-    Ok(result as usize)
+    Ok(transfer_result.expect("transfer CQE present once loop exits"))
 }
 
 /// Classifies a SEND_ZC CQE into the transfer or notification slot.
@@ -655,7 +719,9 @@ mod tests {
     /// observed (the call would not return otherwise).
     #[test]
     fn send_zc_roundtrip_64kib_loopback() {
-        use super::super::send_zc_test_env::{SendZcEnv, classify, report, report_setup_failure};
+        use super::super::send_zc_test_env::{
+            SendZcEnv, assert_setup_refused_by_memlock, classify, report,
+        };
         const TEST: &str = "send_zc_roundtrip_64kib_loopback";
         let env = classify(
             super::super::config::is_io_uring_available(),
@@ -693,7 +759,7 @@ mod tests {
         let mut ring = match IoUringConfig::default().build_ring() {
             Ok(ring) => ring,
             Err(e) => {
-                report_setup_failure(TEST, "build ring", &e);
+                assert_setup_refused_by_memlock(TEST, "build ring", &e);
                 return;
             }
         };
@@ -703,7 +769,7 @@ mod tests {
         let mut sent_total = 0usize;
         while sent_total < payload.len() {
             let n = try_send_zc(&mut ring, sender.as_raw_fd(), &payload[sent_total..], 0x42)
-                .expect("SEND_ZC succeeds on loopback");
+                .expect("the send succeeds on loopback");
             assert!(n > 0, "kernel reported zero bytes sent");
             sent_total += n;
         }
@@ -713,9 +779,12 @@ mod tests {
         let received = reader_thread.join().unwrap();
         assert_eq!(received.len(), payload.len());
         assert_eq!(received, payload, "round-tripped bytes must match");
+        // A SEND_ZC the kernel refuses for lack of pinnable memory is resent
+        // as a copying send, so each byte is counted under one of the two.
         assert!(
-            after.bytes - before.bytes >= payload.len() as u64,
-            "every SEND_ZC byte must be counted: before {before:?}, after {after:?}"
+            (after.bytes - before.bytes) + (after.copied_bytes - before.copied_bytes)
+                >= payload.len() as u64,
+            "every byte must be counted: before {before:?}, after {after:?}"
         );
     }
 }
