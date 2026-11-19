@@ -24,19 +24,25 @@ pub(in crate::receiver) struct HardlinkLeaderIndex {
 /// A set of flat file-list indices, one bit per entry up to the highest
 /// index stored: 125 KB for a list of 1,000,000 entries.
 #[derive(Debug, Default)]
-pub(in crate::receiver) struct FreeNames {
+pub(in crate::receiver) struct FlatIndexSet {
     bits: Vec<u64>,
 }
 
-impl FreeNames {
+impl FlatIndexSet {
     /// Adds `idx` to the set.
-    #[cfg(unix)]
     pub(in crate::receiver) fn insert(&mut self, idx: usize) {
         let word = idx / 64;
         if word >= self.bits.len() {
             self.bits.resize(word + 1, 0);
         }
         self.bits[word] |= 1 << (idx % 64);
+    }
+
+    /// Takes `idx` out of the set.
+    pub(in crate::receiver) fn remove(&mut self, idx: usize) {
+        if let Some(word) = self.bits.get_mut(idx / 64) {
+            *word &= !(1 << (idx % 64));
+        }
     }
 
     /// Whether `idx` is in the set.
@@ -53,6 +59,144 @@ impl FreeNames {
             .iter()
             .map(|word| word.count_ones() as usize)
             .sum()
+    }
+}
+
+/// A hard-link group whose first member the generator skipped, so that a
+/// later member stands in for it.
+///
+/// upstream: hlink.c:313-324 hard_link_check() - a member whose earlier
+/// members all carry `FLAG_SKIP_HLINK` is the group's "virtual first".
+#[derive(Debug, Clone, Copy)]
+pub(in crate::receiver) struct VirtualFirst {
+    /// The highest flat index of the group decided so far.
+    decided: usize,
+    /// The member standing in for the first one, once one has been found.
+    leader: Option<usize>,
+}
+
+impl ReceiverContext {
+    /// Records that this run produced or verified the entry at `idx`: its
+    /// quick check matched, its transfer committed, or an alternate
+    /// directory supplied it. A hard-link group links to such a member only;
+    /// one that merely exists holds whatever an earlier run left there.
+    pub(in crate::receiver) fn note_hardlink_verified(&self, idx: usize) {
+        if self.config.flags.hard_links {
+            self.hardlink_verified.borrow_mut().insert(idx);
+        }
+    }
+
+    /// Records that the generator skipped the hard-linked entry at `idx`, so
+    /// the next member of its group is decided in its place and the link
+    /// pass leaves this one as it is.
+    ///
+    /// upstream: generator.c:2585-2606 handle_skipped_hlink() ->
+    /// hlink.c:601-607 skip_hard_link() sets `FLAG_SKIP_HLINK`.
+    pub(in crate::receiver) fn note_hardlink_skipped(&self, idx: usize, entry: &FileEntry) {
+        if self.config.flags.hard_links && entry.hlinked() && entry.hardlink_idx().is_some() {
+            self.hardlink_skipped.borrow_mut().insert(idx);
+            self.note_hardlink_deferred(idx, entry);
+        }
+    }
+
+    /// Records that the hard-linked entry at `idx` stays absent without being
+    /// skipped as a hard link: an identical `--compare-dest` file stands for
+    /// it. The next member of its group is decided as usual, and this one is
+    /// linked to whichever member ends up at the destination.
+    ///
+    /// upstream: generator.c:2197-2202 - `try_dests_reg()` returning -2 goes
+    /// to `cleanup` without `handle_skipped_hlink()`.
+    pub(in crate::receiver) fn note_hardlink_deferred(&self, idx: usize, entry: &FileEntry) {
+        if !self.config.flags.hard_links || !entry.hlinked() {
+            return;
+        }
+        let Some(gnum) = entry.hardlink_idx() else {
+            return;
+        };
+        self.hardlink_virtual_first
+            .borrow_mut()
+            .entry(gnum)
+            .or_insert(VirtualFirst {
+                decided: idx,
+                leader: None,
+            })
+            .decided = idx;
+    }
+
+    /// Whether the first member at `idx` is linked to a later member of its
+    /// group: the generator left it absent without skipping it, and a later
+    /// member was decided in its place.
+    pub(in crate::receiver) fn hardlink_first_awaits_link(
+        &self,
+        idx: usize,
+        entry: &FileEntry,
+    ) -> bool {
+        let groups = self.hardlink_virtual_first.borrow();
+        !groups.is_empty()
+            && entry
+                .hardlink_idx()
+                .is_some_and(|gnum| groups.contains_key(&gnum))
+            && !self.hardlink_skipped.borrow().contains(idx)
+    }
+
+    /// Whether the follower at `idx` is next in line to stand in for the
+    /// skipped earlier members of its group.
+    pub(in crate::receiver) fn hardlink_follower_stands_in(
+        &self,
+        idx: usize,
+        entry: &FileEntry,
+    ) -> bool {
+        let groups = self.hardlink_virtual_first.borrow();
+        !groups.is_empty()
+            && entry
+                .hardlink_idx()
+                .and_then(|gnum| groups.get(&gnum))
+                .is_some_and(|group| group.leader.is_none() && idx > group.decided)
+    }
+
+    /// Records that the follower at `idx` was decided without being skipped
+    /// as a hard link. `leads` when it is transferred or up to date, which
+    /// makes it the member the rest of its group links to.
+    pub(in crate::receiver) fn note_hardlink_follower_decided(
+        &self,
+        idx: usize,
+        entry: &FileEntry,
+        leads: bool,
+    ) {
+        let Some(gnum) = entry.hardlink_idx() else {
+            return;
+        };
+        if let Some(group) = self.hardlink_virtual_first.borrow_mut().get_mut(&gnum) {
+            group.decided = idx;
+            if leads {
+                group.leader = Some(idx);
+            }
+        }
+    }
+
+    /// The member the `follower` of group `gnum` links to: the group's first
+    /// member, or the one standing in for it, and only when this run
+    /// produced or verified it. Batch replay keeps the first member
+    /// unconditionally, and so does a group of symlinks, devices or special
+    /// files.
+    fn hardlink_link_source(
+        &self,
+        gnum: u32,
+        follower: &FileEntry,
+        leaders: &HardlinkLeaders,
+    ) -> Option<usize> {
+        let first = leaders.get(&gnum).copied();
+        if self.local_replay || !follower.is_file() {
+            return first;
+        }
+        let source = match self.hardlink_virtual_first.borrow().get(&gnum) {
+            Some(group) => group.leader?,
+            None => first?,
+        };
+        self.hardlink_verified
+            .borrow()
+            .contains(source)
+            .then_some(source)
     }
 }
 
@@ -1100,18 +1244,29 @@ impl ReceiverContext {
             let Some(entry) = self.file_list.get(flat_idx) else {
                 continue;
             };
-            if !entry.hlinked() || entry.hlink_first() {
+            if !entry.hlinked()
+                || (entry.hlink_first() && !self.hardlink_first_awaits_link(flat_idx, entry))
+            {
                 continue;
             }
             let Some(gnum) = entry.hardlink_idx() else {
                 continue;
             };
+            // upstream: hlink.c:260-295 check_prior() - a follower is linked
+            // to a finished member only, and a member the generator skipped
+            // (FLAG_SKIP_HLINK) is not linked at all.
+            let Some(source) = self.hardlink_link_source(gnum, entry, leaders) else {
+                continue;
+            };
+            if source == flat_idx || self.hardlink_skipped.borrow().contains(flat_idx) {
+                continue;
+            }
             // A leader whose segment has been reclaimed no longer carries its
             // group, and cannot be named.
-            let Some(leader) = leaders
-                .get(&gnum)
-                .and_then(|&idx| self.file_list.get(idx))
-                .filter(|leader| leader.hlink_first() && leader.hardlink_idx() == Some(gnum))
+            let Some(leader) = self
+                .file_list
+                .get(source)
+                .filter(|leader| leader.hardlink_idx() == Some(gnum))
             else {
                 continue;
             };

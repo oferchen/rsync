@@ -349,6 +349,7 @@ impl ReceiverContext {
                     self.emit_pipeline_messages(writer, vec![(code, text)]);
                 }
                 PeerEvent::Success(flat_idx) => {
+                    self.note_hardlink_verified(flat_idx);
                     self.send_source_removals(writer, vec![flat_idx])?
                 }
             }
@@ -1112,6 +1113,13 @@ impl ReceiverContext {
             // sender unlinks their --remove-source-files sources.
             self.emit_drain_events(writer, &mut pipelined_receiver)?;
 
+            // A file staged by --delay-updates has passed verification; the
+            // sweep withdraws it again if its rename fails.
+            let delayed = pipelined_receiver.take_delayed_updates();
+            for update in &delayed {
+                self.note_hardlink_verified(update.file_index);
+            }
+
             // upstream: generator.c:2210 finish_hard_link() itemizes every
             // follower once the leader completes, before the phase-1 NDX_DONE.
             // Emit through the request-phase NDX diff-state (never the redo
@@ -1148,7 +1156,6 @@ impl ReceiverContext {
             }
 
             let redo_indices = pipelined_receiver.take_redo_indices();
-            let delayed = pipelined_receiver.take_delayed_updates();
             self.record_touched_blocks(pipelined_receiver.touched_blocks_4k());
 
             Ok((

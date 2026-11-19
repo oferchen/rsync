@@ -7,8 +7,8 @@ use protocol::ProtocolVersion;
 use protocol::flist::FileEntry;
 
 use super::support::{
-    TestDeletionWriter, make_hlink_follower, make_hlink_leader, receiver_with_hardlinks,
-    test_handshake,
+    TestDeletionWriter, make_hlink_follower, make_hlink_leader, mark_leaders_transferred,
+    receiver_with_hardlinks, test_handshake,
 };
 use crate::config::ServerConfig;
 use crate::flags::ParsedServerFlags;
@@ -164,23 +164,20 @@ fn create_hardlinks_multiple_groups() {
     );
 }
 
-/// When a `-H` group's leader is absent on disk (its own transfer errored or
-/// was skipped) but another group member did materialize, upstream promotes
-/// that present member to a "virtual first" and links the rest to it rather
-/// than aborting. This mirrors upstream `hlink.c`: `skip_hard_link()`
-/// (hlink.c:567-586) flags the absent leader `FLAG_SKIP_HLINK`, `check_prior()`
-/// (hlink.c:246-282) walks past it to the next present member, and
-/// `hard_link_check()` (hlink.c:300-320) promotes it. Before this fix the
-/// receiver recorded the absent leader unconditionally and `fast_io::hard_link`
-/// returned ENOENT, which propagated as a fatal receiver abort.
+/// A member that merely exists at the destination is never linked to: this
+/// run neither transferred nor checked it, so its data is whatever an earlier
+/// run left. The group's first member was not transferred here (its transfer
+/// failed, or `--max-size` skipped it), and `present.txt` is a leftover.
+/// Linking `orphan.txt` to it would give a new name old data.
+///
+/// upstream: hlink.c:260-295 `check_prior()` links to a finished member
+/// only; with none, hlink.c:313-324 leaves the follower to be transferred,
+/// and adds no error of its own.
 #[test]
-fn create_hardlinks_promotes_present_member_when_leader_absent() {
+fn create_hardlinks_never_links_to_a_member_that_merely_exists() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let dest = temp_dir.path();
-
-    // The leader's transfer errored: its file is absent. A later group member
-    // ("present.txt") did land on disk and must become the promoted leader.
-    std::fs::write(dest.join("present.txt"), "promoted payload").unwrap();
+    std::fs::write(dest.join("present.txt"), "left by an earlier run").unwrap();
 
     let entries = vec![
         make_hlink_leader("leader.txt", 16, 91),
@@ -189,34 +186,27 @@ fn create_hardlinks_promotes_present_member_when_leader_absent() {
     ];
 
     let mut ctx = receiver_with_hardlinks(entries);
+    ctx.hardlink_verified = Default::default();
     let mut writer = TestDeletionWriter;
-    // Must NOT abort: create_hardlinks returns Ok even though leader.txt is gone.
     call_create_hardlinks(&mut ctx, dest, &mut writer);
 
     assert!(
         !dest.join("leader.txt").exists(),
-        "absent leader must not be resurrected"
+        "nothing is created at the first member's name"
     );
-    let orphan = dest.join("orphan.txt");
     assert!(
-        orphan.exists(),
-        "remaining follower must be linked to the promoted member"
+        !dest.join("orphan.txt").exists(),
+        "a new name is not linked to the leftover member"
     );
     assert_eq!(
-        std::fs::read_to_string(&orphan).unwrap(),
-        "promoted payload"
+        std::fs::read_to_string(dest.join("present.txt")).unwrap(),
+        "left by an earlier run",
+        "the leftover member is untouched"
     );
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let present_ino = std::fs::metadata(dest.join("present.txt")).unwrap().ino();
-        let orphan_ino = std::fs::metadata(&orphan).unwrap().ino();
-        assert_eq!(
-            present_ino, orphan_ino,
-            "orphan must hard-link to the promoted member's inode"
-        );
-    }
+    assert_eq!(
+        ctx.flist_io_error, 0,
+        "a group nothing was transferred for adds no error of its own"
+    );
 }
 
 /// When a `-H` group's leader is absent and no other member materialized, the
@@ -744,6 +734,7 @@ fn pull_receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContext {
     };
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
     ctx.file_list = entries.into();
+    mark_leaders_transferred(&ctx);
     ctx
 }
 
@@ -988,66 +979,81 @@ fn itemize_pass_remembers_only_followers_whose_name_is_free() {
     assert_eq!(free.len(), 1, "leaders are never remembered");
 }
 
-/// The link pass records a leader without asking whether its file exists.
-/// When it does not - its transfer failed - a follower the itemize pass
-/// remembered as new must still not be linked to the missing name: the link
-/// fails, the checked path verifies the recorded leader, finds it absent and
-/// promotes the member that did land (hlink.c:313-324). Runs the itemize
-/// pass first, as a transfer does, so the remembered names are the real ones.
+/// A group whose first members the generator skipped is linked to the member
+/// that stood in for them, and the skipped ones are left as they are
+/// (hlink.c:601-607 `FLAG_SKIP_HLINK`, hlink.c:313-324 "virtual first").
+/// `leader.txt` and `skipped.txt` were skipped; `stand-in.txt` was transferred
+/// in their place, so `orphan.txt` links to it and its record names it.
 #[cfg(unix)]
 #[test]
-fn a_missing_recorded_leader_sends_remembered_followers_to_the_promoted_member() {
+fn a_skipped_first_member_hands_the_group_to_the_member_that_stood_in() {
     use std::os::unix::fs::MetadataExt;
 
     use protocol::codec::create_ndx_codec;
 
     let temp_dir = tempfile::TempDir::new().unwrap();
     let dest = temp_dir.path();
-    std::fs::write(dest.join("present.txt"), "promoted payload").unwrap();
+    std::fs::write(dest.join("skipped.txt"), "kept by --update").unwrap();
+    std::fs::write(dest.join("stand-in.txt"), "transferred data").unwrap();
 
     let mut ctx = receiver_with_hardlinks(vec![
         make_hlink_leader("leader.txt", 16, 91),
-        make_hlink_follower("orphan-a.txt", 16, 91),
-        make_hlink_follower("present.txt", 16, 91),
-        make_hlink_follower("orphan-z.txt", 16, 91),
+        make_hlink_follower("skipped.txt", 16, 91),
+        make_hlink_follower("stand-in.txt", 16, 91),
+        make_hlink_follower("orphan.txt", 16, 91),
     ]);
+    ctx.hardlink_verified = Default::default();
+    for skipped in [0, 1] {
+        assert!(skipped == 0 || ctx.hardlink_follower_stands_in(skipped, &ctx.file_list[skipped]));
+        ctx.note_hardlink_skipped(skipped, &ctx.file_list[skipped]);
+    }
+    assert!(ctx.hardlink_follower_stands_in(2, &ctx.file_list[2]));
+    ctx.note_hardlink_follower_decided(2, &ctx.file_list[2], true);
+    ctx.note_hardlink_verified(2);
+    assert!(
+        !ctx.hardlink_follower_stands_in(3, &ctx.file_list[3]),
+        "the group is settled once a member stands in"
+    );
+
     let mut records: Vec<u8> = Vec::new();
     let mut ndx_codec = create_ndx_codec(32);
     call_emit_follower_itemize(&ctx, dest, &mut records, &mut ndx_codec).unwrap();
-    {
-        let free = ctx.hardlink_free_names.borrow();
-        assert!(
-            free.contains(1) && free.contains(3),
-            "both orphans are remembered"
-        );
-        assert!(!free.contains(2), "the member that landed is not");
-    }
+    assert_eq!(
+        ctx.hardlink_follower_echoes.get(),
+        1,
+        "only the orphan is itemized"
+    );
+    assert!(
+        records.ends_with(b"stand-in.txt"),
+        "the record names the member that stood in: {records:?}"
+    );
 
     let mut writer = TestDeletionWriter;
     call_create_hardlinks(&mut ctx, dest, &mut writer);
 
     assert!(
         std::fs::symlink_metadata(dest.join("leader.txt")).is_err(),
-        "nothing is created at the missing leader's name"
+        "nothing is created at the skipped first member's name"
     );
-    let present = std::fs::metadata(dest.join("present.txt")).unwrap();
-    for orphan in ["orphan-a.txt", "orphan-z.txt"] {
-        let meta = std::fs::metadata(dest.join(orphan)).unwrap();
-        assert_eq!(
-            meta.ino(),
-            present.ino(),
-            "{orphan} links to the promoted member"
-        );
-    }
+    let skipped = std::fs::metadata(dest.join("skipped.txt")).unwrap();
+    assert_eq!(skipped.nlink(), 1, "a skipped member is left as it is");
     assert_eq!(
-        present.nlink(),
-        3,
-        "the group is the promoted member and both orphans"
+        std::fs::read_to_string(dest.join("skipped.txt")).unwrap(),
+        "kept by --update"
+    );
+    let stand_in = std::fs::metadata(dest.join("stand-in.txt")).unwrap();
+    let orphan = std::fs::metadata(dest.join("orphan.txt")).unwrap();
+    assert_eq!(
+        orphan.ino(),
+        stand_in.ino(),
+        "the orphan links to the stand-in"
     );
     assert_eq!(
-        std::fs::read_to_string(dest.join("orphan-a.txt")).unwrap(),
-        "promoted payload"
+        stand_in.nlink(),
+        2,
+        "the group is the stand-in and the orphan"
     );
+    assert_eq!(ctx.flist_io_error, 0);
 }
 
 /// A name the itemize pass remembered as missing can exist by the time the

@@ -806,6 +806,12 @@ impl ReceiverContext {
     /// remaining followers reuse it - or `None` when no member of the group
     /// materialized on disk.
     ///
+    /// The walk past the recorded leader runs only with `any_present_member`,
+    /// which batch replay and groups of symlinks, devices and special files
+    /// set. A live group of regular files links to a recorded member or to
+    /// nothing: a member that merely exists was neither produced nor verified
+    /// by this run.
+    ///
     /// `file_list` is the prefix up to the caller's range end: upstream
     /// `check_prior()` only ever walks members before the follower, and a
     /// reclaimed segment's entries carry no `hardlink_idx`, so they are skipped
@@ -818,6 +824,7 @@ impl ReceiverContext {
         gnum: u32,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        any_present_member: bool,
     ) -> Option<PathBuf> {
         // A previously recorded leader is only valid while its file is still
         // present (its transfer may have errored after we recorded it).
@@ -830,6 +837,13 @@ impl ReceiverContext {
             )
         {
             return Some(recorded.to_path_buf());
+        }
+        // A live transfer of regular files records every member it produced
+        // or verified before linking. A member that merely exists is
+        // neither: its data is whatever an earlier run left, so it is never
+        // a link source.
+        if !any_present_member {
+            return None;
         }
         // upstream: hlink.c:266-279 - walk the group in list (ndx) order and
         // promote the first member whose file materialized on disk.
@@ -1011,8 +1025,20 @@ impl ReceiverContext {
             // Leaders committed during pipelined transfer are already recorded;
             // this covers leaders that matched quick-check (not transferred) or
             // were processed via the sync path.
-            for entry in &self.file_list[range.clone()] {
-                if entry.hlink_first() {
+            let verified = self.hardlink_verified.borrow();
+            for (offset, entry) in self.file_list[range.clone()].iter().enumerate() {
+                // A group of regular files links to the first member this
+                // run produced or verified - its first member, or the one
+                // that stood in for it when the generator skipped that one
+                // (hlink.c:313-324). Batch replay keeps the recorded stream's
+                // first member, and so does a group of symlinks, devices or
+                // special files, which their own passes create.
+                let leads = if local_replay || !entry.is_file() {
+                    entry.hlink_first()
+                } else {
+                    entry.hlinked() && verified.contains(range.start + offset)
+                };
+                if leads {
                     let gnum = match entry.hardlink_idx() {
                         Some(idx) => idx,
                         None => continue,
@@ -1032,15 +1058,14 @@ impl ReceiverContext {
                     // (e.g. its own transfer errored), and check_prior()
                     // (hlink.c:260-295) then refuses it as a link source. The
                     // leader is recorded here without asking whether its file
-                    // materialized: a link to an absent one fails, and the
-                    // checked path then verifies the recorded leader and
-                    // promotes the next present group member (hlink.c:313-324
-                    // "virtual first") through promote_hardlink_leader().
+                    // is still there: a link to an absent one fails, and the
+                    // checked path then looks at the recorded leader itself.
                     // No deferred followers expected here since we process
                     // followers in the second pass below.
                     let _ = tracker.record_leader(gnum, dest_path);
                 }
             }
+            drop(verified);
 
             // Second pass: link every non-source member to the group's source.
             //
@@ -1071,7 +1096,15 @@ impl ReceiverContext {
                 // it IS the recorded data-holder the guard skips it, otherwise
                 // (an absent or stale pre-existing sorted-first member) it is
                 // re-linked to the fresh data-holder like any follower.
-                if entry.hlink_first() && !local_replay {
+                if entry.hlink_first()
+                    && !local_replay
+                    && !self.hardlink_first_awaits_link(follower_ndx, entry)
+                {
+                    continue;
+                }
+                // upstream: hlink.c:601-607 skip_hard_link() - a member the
+                // generator skipped (FLAG_SKIP_HLINK) is left as it is.
+                if self.hardlink_skipped.borrow().contains(follower_ndx) {
                     continue;
                 }
                 // upstream: generator.c:1699-1713 - a follower is refused by
@@ -1107,6 +1140,7 @@ impl ReceiverContext {
                     &link_path,
                     self.hardlink_free_names.borrow().contains(follower_ndx),
                 );
+                let leader_recorded = tracker.leader_path(leader_idx).is_some();
                 let promoted = match linked_at_once.clone() {
                     Some(leader) => Some(leader),
                     None => Self::promote_hardlink_leader(
@@ -1116,6 +1150,7 @@ impl ReceiverContext {
                         dest_dir,
                         #[cfg(unix)]
                         sandbox,
+                        local_replay || !entry.is_file(),
                     ),
                 };
                 let leader_path = match promoted {
@@ -1127,9 +1162,12 @@ impl ReceiverContext {
                         // hard_link_check() treats the member as a "virtual
                         // first" that upstream would transfer anew. In this
                         // post-transfer apply pass there is no data left to link,
-                        // so the group is left unlinked with a soft I/O error
-                        // (IOERR_GENERAL -> RERR_PARTIAL, exit 23) - never a fatal
-                        // receiver abort.
+                        // so the group is left unlinked. A group no member of
+                        // which was produced or verified adds no error of its
+                        // own: a deliberate skip (--max-size) is not one, and
+                        // a failed transfer has already reported itself. A
+                        // recorded leader that has gone missing is a soft I/O
+                        // error (IOERR_GENERAL -> RERR_PARTIAL, exit 23).
                         trace_virtual_first(follower_ndx as i32, &entry_name, leader_idx as i32);
                         debug_log!(
                             Recv,
@@ -1138,7 +1176,9 @@ impl ReceiverContext {
                             leader_idx,
                             entry.name()
                         );
-                        self.flist_io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
+                        if leader_recorded {
+                            self.flist_io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
+                        }
                         continue;
                     }
                 };
