@@ -344,7 +344,9 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use super::super::send_zc_test_env::{SendZcEnv, classify, report, report_setup_failure};
+    use super::super::send_zc_test_env::{
+        SendZcEnv, assert_setup_refused_by_memlock, classify, report,
+    };
 
     /// Payload for the tests whose peer never reads. Sized to fit entirely in
     /// the socket buffers [`widen_socket_buffers`] asks for, so the transfer
@@ -433,7 +435,7 @@ mod tests {
         let mut pipeline = match SendZcPipeline::new(client.as_raw_fd(), UNREAD_CHUNK) {
             Ok(p) => p,
             Err(e) => {
-                report_setup_failure(TEST, "build the SEND_ZC ring", &e);
+                assert_setup_refused_by_memlock(TEST, "build the SEND_ZC ring", &e);
                 return;
             }
         };
@@ -503,7 +505,7 @@ mod tests {
         let mut pipeline = match SendZcPipeline::new(client.as_raw_fd(), CHUNK) {
             Ok(p) => p,
             Err(e) => {
-                report_setup_failure(TEST, "build the SEND_ZC ring", &e);
+                assert_setup_refused_by_memlock(TEST, "build the SEND_ZC ring", &e);
                 return;
             }
         };
@@ -554,7 +556,7 @@ mod tests {
         let mut pipeline = match SendZcPipeline::new(client.as_raw_fd(), UNREAD_CHUNK) {
             Ok(p) => p,
             Err(e) => {
-                report_setup_failure(TEST, "build the SEND_ZC ring", &e);
+                assert_setup_refused_by_memlock(TEST, "build the SEND_ZC ring", &e);
                 return;
             }
         };

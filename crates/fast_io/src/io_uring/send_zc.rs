@@ -719,7 +719,9 @@ mod tests {
     /// observed (the call would not return otherwise).
     #[test]
     fn send_zc_roundtrip_64kib_loopback() {
-        use super::super::send_zc_test_env::{SendZcEnv, classify, report, report_setup_failure};
+        use super::super::send_zc_test_env::{
+            SendZcEnv, assert_setup_refused_by_memlock, classify, report,
+        };
         const TEST: &str = "send_zc_roundtrip_64kib_loopback";
         let env = classify(
             super::super::config::is_io_uring_available(),
@@ -757,7 +759,7 @@ mod tests {
         let mut ring = match IoUringConfig::default().build_ring() {
             Ok(ring) => ring,
             Err(e) => {
-                report_setup_failure(TEST, "build ring", &e);
+                assert_setup_refused_by_memlock(TEST, "build ring", &e);
                 return;
             }
         };

@@ -957,7 +957,7 @@ fn zero_copy_large_payload_roundtrip() {
     use std::net::{TcpListener, TcpStream};
     use std::os::unix::io::AsRawFd;
 
-    use super::send_zc_test_env::{SendZcEnv, classify, report};
+    use super::send_zc_test_env::{SendZcEnv, assert_writer_ring_refused, classify, report};
 
     let send_zc_available = super::send_zc::is_supported();
     let env = report(
@@ -993,11 +993,15 @@ fn zero_copy_large_payload_roundtrip() {
     let mut writer =
         socket_writer_from_fd_zero_copy(sender_fd, 64 * 1024, crate::ZeroCopyPolicy::Enabled)
             .unwrap();
-    assert_eq!(
-        matches!(writer, IoUringOrStdSocketWriter::IoUring(ref w) if w.send_zc_active()),
-        send_zc_available,
-        "the writer must engage SEND_ZC iff the opcode probe reports it available"
-    );
+    let engaged = matches!(writer, IoUringOrStdSocketWriter::IoUring(ref w) if w.send_zc_active());
+    if send_zc_available && !engaged {
+        assert_writer_ring_refused("zero_copy_large_payload_roundtrip");
+    } else {
+        assert_eq!(
+            engaged, send_zc_available,
+            "the writer must engage SEND_ZC iff the opcode probe reports it available"
+        );
+    }
 
     let write_thread = std::thread::spawn(move || {
         writer.write_all(&payload_clone).unwrap();
@@ -1042,10 +1046,15 @@ fn zero_copy_on_unix_socketpair_falls_back_at_setup() {
     let (fd_a, fd_b) = make_socket_pair();
     let mut writer =
         socket_writer_from_fd_zero_copy(fd_a, 64 * 1024, crate::ZeroCopyPolicy::Enabled).unwrap();
-    assert!(
-        matches!(writer, IoUringOrStdSocketWriter::IoUring(ref w) if !w.send_zc_active()),
-        "an AF_UNIX socket must resolve to the io_uring SEND writer with SEND_ZC off"
-    );
+    match writer {
+        IoUringOrStdSocketWriter::IoUring(ref w) => assert!(
+            !w.send_zc_active(),
+            "an AF_UNIX socket must resolve to the io_uring SEND writer with SEND_ZC off"
+        ),
+        IoUringOrStdSocketWriter::Std(_) => super::send_zc_test_env::assert_writer_ring_refused(
+            "zero_copy_on_unix_socketpair_falls_back_at_setup",
+        ),
+    }
 
     let payload: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
     let expected = payload.clone();

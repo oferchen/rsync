@@ -18,7 +18,7 @@
 
 #![cfg(all(target_os = "linux", feature = "iouring-send-zc"))]
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::os::fd::FromRawFd;
 use std::os::unix::io::{AsRawFd, OwnedFd, RawFd};
 use std::thread;
@@ -33,7 +33,9 @@ use fast_io::io_uring::{is_io_uring_available, send_zc};
 #[path = "../src/io_uring/send_zc_test_env.rs"]
 mod send_zc_test_env;
 
-use send_zc_test_env::{SendZcEnv, classify, report, report_setup_failure};
+use send_zc_test_env::{
+    SendZcEnv, assert_setup_refused_by_memlock, assert_writer_ring_refused, classify, report,
+};
 
 /// Classifies the environment for `test` on stderr; `true` when the real
 /// opcode can be exercised.
@@ -120,7 +122,8 @@ fn zero_copy_sender_roundtrips_1mib_over_tcp_loopback() {
     let mut sender = match ZeroCopySender::new(send_fd.as_raw_fd()) {
         Ok(s) => s,
         Err(e) => {
-            report_setup_failure(TEST, "ZeroCopySender::new", &e);
+            assert_setup_refused_by_memlock(TEST, "ZeroCopySender::new", &e);
+            deliver_through_plain_send(TEST, send_fd.into(), &payload, reader);
             return;
         }
     };
@@ -142,6 +145,26 @@ fn zero_copy_sender_roundtrips_1mib_over_tcp_loopback() {
     );
     assert_eq!(received, payload, "round-tripped bytes must match");
     assert_bytes_went_through_send_zc(TEST, before, after, payload.len() as u64, 0);
+}
+
+/// The caller's answer to a `ZeroCopySender::new` the locked-memory budget
+/// refused: send the payload through the plain socket, as the socket-writer
+/// factory does when it cannot build its ring, and assert the peer received
+/// it byte for byte.
+fn deliver_through_plain_send(
+    test: &str,
+    mut stream: std::net::TcpStream,
+    payload: &[u8],
+    reader: thread::JoinHandle<Vec<u8>>,
+) {
+    stream.write_all(payload).expect("plain send");
+    drop(stream);
+    assert_eq!(
+        reader.join().expect("reader thread"),
+        payload,
+        "{test}: the plain-send fallback must deliver the payload byte for byte"
+    );
+    eprintln!("[send_zc env] {test}: asserted the plain-send fallback delivered the payload");
 }
 
 /// Returns `true` when this thread holds `CAP_IPC_LOCK` in its effective set.
@@ -291,15 +314,15 @@ fn exhaust_pinned_page_budget() {
 ///
 /// With an unlimited budget nothing in setup can be refused for memory, so a
 /// failure is a real failure and panics - that is the root CI job, which must
-/// never pass without exercising the refusal. Without one the user's budget
-/// is shared with every other process of the user, so the step is reported as
-/// a named skip.
+/// always take the full arm. Without one the user's budget is shared with
+/// every other process of the user, so the ring may be refused with `ENOMEM`;
+/// that refusal, and only that one, is asserted as its own arm.
 fn setup_failed(test: &str, step: &str, err: &std::io::Error, unlimited: bool) {
     assert!(
         !unlimited,
         "{test}: {step} failed with an unlimited RLIMIT_MEMLOCK: {err}"
     );
-    report_setup_failure(test, step, err);
+    assert_setup_refused_by_memlock(test, step, err);
 }
 
 /// With no pinnable memory the kernel refuses every SEND_ZC with `ENOMEM`
@@ -334,9 +357,14 @@ fn zero_copy_sender_copies_what_the_kernel_cannot_pin() {
         Ok(s) => s,
         Err(e) => {
             setup_failed(TEST, "ZeroCopySender::new", &e, unlimited);
+            deliver_through_plain_send(TEST, send_stream, &payload, reader);
             return;
         }
     };
+    eprintln!(
+        "[send_zc env] {TEST}: ring built - asserting every SEND_ZC refused after the \
+         budget is spent is resent as a copying send"
+    );
     exhaust_pinned_page_budget();
     let before = fast_io::send_zc_stats();
     send_all(&mut sender, &payload);
@@ -376,7 +404,7 @@ fn zero_copy_sender_rejects_empty_buffer() {
     let mut sender = match ZeroCopySender::new(send_fd.as_raw_fd()) {
         Ok(s) => s,
         Err(e) => {
-            report_setup_failure(TEST, "ZeroCopySender::new", &e);
+            assert_setup_refused_by_memlock(TEST, "ZeroCopySender::new", &e);
             return;
         }
     };
@@ -401,7 +429,7 @@ fn zero_copy_sender_reports_raw_fd() {
     let sender = match ZeroCopySender::new(raw) {
         Ok(s) => s,
         Err(e) => {
-            report_setup_failure(TEST, "ZeroCopySender::new", &e);
+            assert_setup_refused_by_memlock(TEST, "ZeroCopySender::new", &e);
             return;
         }
     };
@@ -421,7 +449,6 @@ fn loopback_write(
     policy: fast_io::ZeroCopyPolicy,
     write_size: usize,
 ) -> (bool, fast_io::SendZcStats, fast_io::SendZcStats, usize) {
-    use std::io::Write;
     use std::net::{TcpListener, TcpStream};
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
@@ -488,8 +515,10 @@ fn default_auto_writer_never_sends_through_send_zc() {
 /// SEND_ZC the kernel refused for lack of pinnable memory is resent as a
 /// counted copying send, so those count too: they exist only because SEND_ZC
 /// was submitted.
-/// Where it cannot (no io_uring, pre-6.0 kernel), the bytes must still arrive
-/// and exactly one fallback must be counted.
+/// Where a ring was refused under the user's locked-memory budget, the writer
+/// runs on plain sends with the fallback counted. Where SEND_ZC cannot run
+/// (no io_uring, pre-6.0 kernel), the bytes must still arrive and exactly one
+/// fallback must be counted.
 #[test]
 fn explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback() {
     const TEST: &str = "explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback";
@@ -497,8 +526,7 @@ fn explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback() {
     let (engaged, before, after, len) =
         loopback_write(fast_io::ZeroCopyPolicy::Enabled, usize::MAX);
 
-    if runnable {
-        assert!(engaged, "--zero-copy must engage SEND_ZC on this kernel");
+    if runnable && engaged {
         let submitted = (after.sends - before.sends) + (after.copied_sends - before.copied_sends);
         assert!(
             submitted > 0,
@@ -508,6 +536,13 @@ fn explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback() {
         // plain IORING_OP_SEND by design and is counted nowhere.
         let plain_tail = fast_io::SEND_ZC_DISPATCH_MIN_BYTES as u64 - 1;
         assert_bytes_went_through_send_zc(TEST, before, after, len as u64, plain_tail);
+    } else if runnable {
+        assert_writer_ring_refused(TEST);
+        assert_eq!(after.sends, before.sends, "no SEND_ZC may be counted here");
+        assert!(
+            after.fallbacks > before.fallbacks,
+            "a writer that dropped SEND_ZC must count the fallback: {before:?} -> {after:?}"
+        );
     } else {
         assert!(
             !engaged,
@@ -543,9 +578,10 @@ fn zero_copy_writer_copies_what_the_kernel_cannot_pin() {
 
     for write_size in [16 * 1024, 256 * 1024] {
         let unlimited = open_pinned_page_budget();
-        let Some((before, after, len)) = exhausted_loopback_write(TEST, write_size, unlimited)
+        let WriterArm::ZeroCopy { before, after, len } =
+            exhausted_loopback_write(TEST, write_size, unlimited)
         else {
-            return;
+            continue;
         };
         assert_eq!(
             after.bytes, before.bytes,
@@ -563,16 +599,32 @@ fn zero_copy_writer_copies_what_the_kernel_cannot_pin() {
     }
 }
 
+/// Which path [`exhausted_loopback_write`] took.
+enum WriterArm {
+    /// The writer kept SEND_ZC through its warm-up; the counters are the
+    /// snapshots around the writes made after the budget was spent, and `len`
+    /// is their byte count.
+    ZeroCopy {
+        before: fast_io::SendZcStats,
+        after: fast_io::SendZcStats,
+        len: u64,
+    },
+    /// The locked-memory budget refused a ring at setup, so the writer runs
+    /// on plain sends; the fallback was counted and the payload still arrived
+    /// byte for byte.
+    Refused,
+}
+
 /// Writes 2 MiB through an `Enabled` socket writer in `write_size` calls,
 /// spending the pinned-page budget after a warm-up that builds the writer's
-/// rings. Returns the counter snapshots around the post-warm-up writes and
-/// their length, or `None` after a reported setup skip.
-fn exhausted_loopback_write(
-    test: &str,
-    write_size: usize,
-    unlimited: bool,
-) -> Option<(fast_io::SendZcStats, fast_io::SendZcStats, u64)> {
-    use std::io::Write;
+/// rings, and asserts the peer received every byte.
+///
+/// Returns [`WriterArm::ZeroCopy`] when the writer kept SEND_ZC through the
+/// warm-up. When a ring was refused instead, asserts that the refusal can
+/// only be the user's shared budget (never with an unlimited budget or
+/// `CAP_IPC_LOCK`) and that the writer counted its fallback, then returns
+/// [`WriterArm::Refused`] - the production path a budget-limited user gets.
+fn exhausted_loopback_write(test: &str, write_size: usize, unlimited: bool) -> WriterArm {
     use std::net::{TcpListener, TcpStream};
 
     const WARM_UP: usize = 16 * 1024;
@@ -590,6 +642,7 @@ fn exhausted_loopback_write(
     });
 
     let sender = TcpStream::connect(addr).expect("connect");
+    let at_setup = fast_io::send_zc_stats();
     let mut writer = fast_io::socket_writer_from_fd_zero_copy(
         sender.as_raw_fd(),
         64 * 1024,
@@ -605,12 +658,26 @@ fn exhausted_loopback_write(
         fast_io::IoUringOrStdSocketWriter::IoUring(ref w) if w.send_zc_active()
     );
     if !engaged {
-        let err = std::io::Error::other("the writer did not keep SEND_ZC after its warm-up");
-        setup_failed(test, "zero-copy socket writer", &err, unlimited);
-        return None;
+        assert!(
+            !unlimited && !holds_ipc_lock(),
+            "{test}: {write_size}-byte writes: the writer dropped SEND_ZC at setup although \
+             no ring of this thread can be refused for memory"
+        );
+        assert!(
+            fast_io::send_zc_stats().fallbacks > at_setup.fallbacks,
+            "{test}: {write_size}-byte writes: a writer that dropped SEND_ZC must count the fallback"
+        );
+        eprintln!(
+            "[send_zc env] {test}: {write_size}-byte writes: a ring was refused by the \
+             locked-memory budget - asserting the plain-send fallback delivers the payload"
+        );
+    } else {
+        eprintln!(
+            "[send_zc env] {test}: {write_size}-byte writes: rings built - asserting every \
+             SEND_ZC refused after the budget is spent is resent as a copying send"
+        );
+        exhaust_pinned_page_budget();
     }
-
-    exhaust_pinned_page_budget();
     let before = fast_io::send_zc_stats();
     for chunk in payload[WARM_UP..].chunks(write_size) {
         writer.write_all(chunk).expect("write payload");
@@ -625,5 +692,13 @@ fn exhausted_loopback_write(
         received, payload,
         "{write_size}-byte writes: loopback transcript must equal the payload"
     );
-    Some((before, after, (payload.len() - WARM_UP) as u64))
+    if engaged {
+        WriterArm::ZeroCopy {
+            before,
+            after,
+            len: (payload.len() - WARM_UP) as u64,
+        }
+    } else {
+        WriterArm::Refused
+    }
 }
