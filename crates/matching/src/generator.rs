@@ -1241,7 +1241,8 @@ impl DeltaGenerator {
     /// A block matched at source offset `o` against basis block `j` is trusted
     /// only when the window at `o + block_len` matches basis block `j + 1` -
     /// its rolling and strong sums, with no hash-table lookup - as zsync's
-    /// `seq_matches` does (`librcksum/rsum.c` `next_match`). Extending a run to
+    /// `seq_matches` does (zsync 0.8.0 `internal/rcksum/seed_sink.go:183`,
+    /// `:195-213` `checkChecksumsOnHashChain`). Extending a run to
     /// ANY matching block would give `len * nb^2 * p^2` expected false runs,
     /// up to `2^27` times upstream's `len * nb * 2^-(32+8*s2)`. Requiring the
     /// successor gives `len * nb * p^2 + 2 * nb * p`, which never exceeds
@@ -1512,7 +1513,8 @@ impl DeltaGenerator {
                 if let Some(replay) = replay.as_mut() {
                     replay.probe_window(index, adj_digest, offset, f, s);
                 }
-                // zsync `librcksum/rsum.c` `next_match`: the run extends only to
+                // zsync 0.8.0 `internal/rcksum/seed_sink.go:183`, `:195-213`: the
+                // run extends only to
                 // the successor of the block just matched. Any other block that
                 // matches here starts a new run instead.
                 let adj = index

@@ -134,9 +134,12 @@ The gated scan trusts a block matched at source offset `o` against basis
 block `j` only when the window at `o + block_len` matches basis block `j + 1`
 on its rolling and strong sums (`try_next_match_slices`, no hash lookup);
 runs of two or more become `Copy` tokens, a lone match becomes a literal.
-This is zsync's rule: `seq_matches` pairs a match with the `next_match`
-successor, never with an arbitrary block. When the successor check fails, the
-window at `o + block_len` is searched again as a possible run start.
+This is zsync's rule. zsync 0.8.0 (`internal/rcksum/seed_sink.go`,
+`checkChecksumsOnHashChain`) accepts candidate block `id` only when the rolling
+sums of `id` and `id + 1` both match (`:183`) and then the strong sums of both
+match (`:195-213`, block `id + 1` checked against `strongChecksums[id + 1]`);
+it never pairs a match with an arbitrary block. When the successor check fails,
+the window at `o + block_len` is searched again as a possible run start.
 
 Why the successor matters, in upstream's model (`generator.c:733`
 `sum_sizes_sqroot`: every source offset against every basis block,
@@ -155,6 +158,24 @@ Why the successor matters, in upstream's model (`generator.c:733`
 
 The whole-file checksum and the phase-2 redo stay the backstop for any
 residual collision, as for upstream's short phase-1 sums.
+
+Possible follow-up, not ported: zsync keys its hash table on the PAIR of
+rolling sums (`internal/rcksum/hash.go:17-60`, `rs[0].B ^ rs[1].B << 16`) and
+indexes only blocks `id < blocks - 1`, so the successor's weak sum filters
+candidates before any strong sum is computed. oc keys on one block's rolling
+sum and checks the successor afterwards.
+
+Risk. zsync 0.8.0 no longer shortens checksums at all: `zsyncmake` always
+sends 4-byte rolling sums and full-length strong sums, and turns
+`seq_matches = 2` on only above about 400 MB as extra weak-sum confidence
+(`cmd/zsyncmake/main.go:255-276`; NEWS 0.8.0: "Shortened checksums could
+expose the client to collision attacks"). In oc a halved sum that collides can
+only cost a phase-2 redo, caught by the whole-file checksum - never wrong
+data. But a source file crafted to collide with an `h`-byte strong sum is cheap
+to build when `h` is 1-2 bytes (the forged-window cell in
+`crates/matching/tests/consecutive_match_successor.rs` needs at most a few
+hundred tries for `h = 1`), so a sender of hostile content can force redos.
+The extension therefore stays opt-in on both peers and off by default.
 
 ### Matched-block hash removal
 
