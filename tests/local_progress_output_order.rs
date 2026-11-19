@@ -139,12 +139,52 @@ fn is_progress_tick(line: &str) -> bool {
 /// [`PROGRESS`] (in-flight ticks without the `(xfr#...)` trailer are dropped),
 /// and the numeric tails of the `sent` / `total size` trailer are cut.
 fn normalize(output: &str) -> Vec<String> {
+    normalize_with(output, false)
+}
+
+/// [`normalize`] for a run of `flags`.
+///
+/// Under `--info=progress2` upstream also prints the overall progress line
+/// each time its sender reads an `NDX_DONE` (sender.c:533-537, receiver.c:
+/// 852-857, both gated on `INFO_GTE(PROGRESS, 2)`). That line ends no file:
+/// `xfr#` advances only at sender.c:642, once per transferred file, before
+/// the file's own `end_progress()` (sender.c:787-788). Whether a generator
+/// directory line reaches stdout before it - putting it on a line of its own -
+/// or not - leaving it behind the previous tick's `\r` - depends on process
+/// scheduling: rsync 3.5.2 printed the split form in 5 of 200 runs on a loaded
+/// host. Only a tick that advances `xfr#` is a file's progress block, so the
+/// others are dropped; each file's block still has to follow its own name.
+fn normalize_for(flags: &str, output: &str) -> Vec<String> {
+    let progress2 = flags
+        .split_whitespace()
+        .any(|flag| flag == "--info=progress2");
+    normalize_with(output, progress2)
+}
+
+/// The `xfr#N` count a final progress tick carries.
+fn xfr_count(tick: &str) -> Option<u64> {
+    let (_, rest) = tick.split_once("(xfr#")?;
+    rest.split(',').next()?.parse().ok()
+}
+
+fn normalize_with(output: &str, drop_ndx_done_ticks: bool) -> Vec<String> {
+    let mut last_xfr = 0;
     output
         .lines()
         .filter_map(|line| {
             let last_tick = line.rsplit('\r').next().unwrap_or(line);
             if is_progress_tick(last_tick) {
-                return last_tick.contains("(xfr#").then(|| PROGRESS.to_owned());
+                if !last_tick.contains("(xfr#") {
+                    return None;
+                }
+                if drop_ndx_done_ticks {
+                    let xfr = xfr_count(last_tick).expect("a final tick carries xfr#N");
+                    if xfr <= last_xfr {
+                        return None;
+                    }
+                    last_xfr = xfr;
+                }
+                return Some(PROGRESS.to_owned());
             }
             if line.starts_with("sent ") {
                 return Some("sent <stats>".to_owned());
@@ -237,7 +277,7 @@ fn assert_sequence(flags: &str, expected: &[String]) {
     let temp = setup();
     let output = run_merged(&oc_rsync_binary(), flags, temp.path());
     assert_eq!(
-        normalize(&output),
+        normalize_for(flags, &output),
         expected,
         "{flags}: upstream prints the banner, then `created directory`, then every \
          entry line - directories included - in the order the generator reaches it, \
@@ -301,6 +341,57 @@ fn itemized_progress_interleaves_itemized_lines_with_progress() {
 #[test]
 fn verbose_overall_progress_names_every_entry() {
     assert_upstream_order("-av --info=progress2", true);
+}
+
+/// rsync 3.5.2's `-av --info=progress2` output in the form it prints when the
+/// `bad/` line reaches stdout before the sender's `NDX_DONE` tick for the root
+/// list: that tick (`xfr#1, to-chk=4/10`) then opens a line of its own between
+/// `bad/` and `bad/Album A/`. Captured verbatim on a loaded host.
+const UPSTREAM_PROGRESS2_NDX_DONE_SPLIT: &str = "sending incremental file list\n\
+created directory qqq\n./\ntop.txt\n\
+\r              2B  10%       0B/s    0:00:00  \
+\r              2B  10%       0B/s    0:00:00 (xfr#1, to-chk=8/10)\nbad/\n\
+\r              2B  10%       0B/s    0:00:00 (xfr#1, to-chk=4/10)\n\
+bad/Album A/\nbad/Album A/01 - t.opus\n\
+\r              7B  36%   2.50KB/s    0:00:00 (xfr#2, to-chk=3/10)\
+\r              7B  36%   2.50KB/s    0:00:00 (xfr#2, to-chk=2/10)\n\
+bad/Album A/02 - u.opus\n\
+\r             14B  73%   6.00KB/s    0:00:00 (xfr#3, to-chk=2/10)\n\
+bad/Album B/\nbad/Album B/01 - v.opus\n\
+\r             17B  89%   7.50KB/s    0:00:00 (xfr#4, to-chk=1/10)\n\
+good/\ngood/x.txt\n\
+\r             19B 100%   8.50KB/s    0:00:00 (xfr#5, to-chk=0/10)\
+\r             19B 100%   8.50KB/s    0:00:00 (xfr#5, to-chk=0/10)\n\n\
+sent 529 bytes  received 160 bytes  1,378.00 bytes/sec\n\
+total size is 19  speedup is 0.03\n";
+
+/// The `NDX_DONE` tick is scheduling, not a file: upstream's split form
+/// normalizes to the same sequence as its common form, so the live oracle
+/// pins only what upstream guarantees.
+#[test]
+fn progress2_ndx_done_tick_is_not_a_file_block() {
+    assert_eq!(
+        normalize_for("-av --info=progress2", UPSTREAM_PROGRESS2_NDX_DONE_SPLIT),
+        upstream_sequence(true),
+    );
+}
+
+/// The dropped ticks are only the ones that do not advance `xfr#`: a file
+/// whose block is missing, or printed ahead of its name, still differs.
+#[test]
+fn progress2_normalization_keeps_each_file_block_after_its_name() {
+    let moved = UPSTREAM_PROGRESS2_NDX_DONE_SPLIT.replace(
+        "bad/Album A/02 - u.opus\n\r             14B",
+        "\r             14B",
+    );
+    let moved = moved.replace(
+        "(xfr#3, to-chk=2/10)\n",
+        "(xfr#3, to-chk=2/10)\nbad/Album A/02 - u.opus\n",
+    );
+    assert_ne!(
+        normalize_for("-av --info=progress2", &moved),
+        upstream_sequence(true),
+    );
 }
 
 /// A dry run moves no data, so upstream prints no progress block: under
@@ -528,15 +619,15 @@ fn local_copy_output_order_matches_live_upstream_oracle() {
         let upstream_temp = setup();
         let upstream_output = run_merged(&upstream, flags, upstream_temp.path());
         assert_eq!(
-            normalize(&upstream_output),
+            normalize_for(flags, &upstream_output),
             expected,
             "{flags}: the pinned sequence must be upstream's own output\n{upstream_output}",
         );
         let oc_temp = setup();
         let oc_output = run_merged(&oc_rsync_binary(), flags, oc_temp.path());
         assert_eq!(
-            normalize(&oc_output),
-            normalize(&upstream_output),
+            normalize_for(flags, &oc_output),
+            normalize_for(flags, &upstream_output),
             "{flags}: oc must print the same line sequence as upstream\n\
              oc:\n{oc_output}\nupstream:\n{upstream_output}",
         );
