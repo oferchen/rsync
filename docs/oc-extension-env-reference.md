@@ -383,10 +383,16 @@ optimization. Set to `1` or `true` to enable; unset or any other value leaves
 it off (the default). **Both** peers must opt in - and both must be oc - for
 it to engage.
 
-When engaged, the delta matcher requires a block match to be preceded by a
-matching neighbour, which halves the per-block false-alarm probability and
-lets the per-file strong-sum length (`s2length`) be halved, saving signature
-bytes on the receiver-to-sender channel.
+When engaged, the receiver halves the per-file strong-sum length (`s2length`
+to `s2length / 2`, at least 1), saving signature bytes on the
+receiver-to-sender channel. To pay for the shorter sum, the sender trusts a
+block matched against basis block `j` only when the next source window
+matches basis block `j + 1`, as zsync's `seq_matches` does. A window that
+does not match the successor starts a new search there. With that rule the
+expected number of falsely trusted blocks per file is
+`len * nblocks * p^2 + 2 * nblocks * p`, with `p = 2^-(32 + 8 * s2length / 2)`,
+which never exceeds upstream's `len * nblocks * 2^-(32 + 8 * s2length)` for
+any file length or block size (`crates/matching/tests/consecutive_match_bound.rs`).
 
 - **Negotiated, oc-peer only.** An opted-in client advertises a private
   capability letter (`Z`) in the `-e.<...>` string. Upstream rsync ignores

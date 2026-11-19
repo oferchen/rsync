@@ -122,6 +122,40 @@ zsync librcksum (gianm/zsync mirror, line-equivalent to 0.6.2):
 - `next_match` is cleared on miss (`rsum.c:190`); a misprediction
   costs nothing beyond one wasted strong-checksum.
 
+### Consecutive-match extension (`OC_CONSECUTIVE_MATCH`, opt-in)
+
+Both oc peers opt in; the receiver then sends `h = s2length / 2` strong-sum
+bytes (`effective_s2length`) and the sender runs the gated scan
+(`DeltaGenerator::generate_gated`). One window then matches a given basis
+block by chance with probability `p = 2^-(32 + 8h)` instead of
+`2^-(32 + 8 * s2length)`.
+
+The gated scan trusts a block matched at source offset `o` against basis
+block `j` only when the window at `o + block_len` matches basis block `j + 1`
+on its rolling and strong sums (`try_next_match_slices`, no hash lookup);
+runs of two or more become `Copy` tokens, a lone match becomes a literal.
+This is zsync's rule: `seq_matches` pairs a match with the `next_match`
+successor, never with an arbitrary block. When the successor check fails, the
+window at `o + block_len` is searched again as a possible run start.
+
+Why the successor matters, in upstream's model (`generator.c:733`
+`sum_sizes_sqroot`: every source offset against every basis block,
+`E_up = len * nb * 2^-(32 + 8 * s2length)`):
+
+- successor rule: `E = len * nb * p^2 + 2 * nb * p` - two chance collisions,
+  the second on one fixed block, plus a genuine run edge followed by one
+  chance collision on the successor. It never exceeds `E_up` for file
+  lengths 2^10..2^44 and block lengths 64..128K, with 16- and 8-byte digests
+  (`crates/matching/tests/consecutive_match_bound.rs`); the worst case is 2x
+  below.
+- any-block rule: `E = len * nb^2 * p^2 + 2 * nb^2 * p`. oc's gated scan used
+  this rule before (the run extension called `find_match_slices`); it did not
+  match zsync, and it exceeded `E_up` by up to 2^27 (4 TB file, `-B 64`) and
+  already at default block sizes for 64 MiB-1 GiB and >= 64 GiB files.
+
+The whole-file checksum and the phase-2 redo stay the backstop for any
+residual collision, as for upstream's short phase-1 sums.
+
 ### Matched-block hash removal
 
 - Triggered at `write_blocks` (`rsum.c:109-119`), AFTER the data has
