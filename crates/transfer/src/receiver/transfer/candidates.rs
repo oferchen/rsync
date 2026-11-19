@@ -32,6 +32,7 @@ use crate::receiver::quick_check::{
     quick_check_matches, try_reference_dest,
 };
 use crate::receiver::stats::{ListOnlyEntry, TransferStats};
+use crate::receiver::transfer::Settled;
 use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
 
 /// One entry as a `--dry-run` reports it: its flist index and the itemize flags
@@ -565,6 +566,8 @@ impl ReceiverContext {
                         has_xattrs,
                         needs_metadata_apply,
                     );
+                    // upstream: generator.c:2295-2299
+                    self.send_generator_success(writer, idx, Settled::InPlace)?;
                     continue;
                 }
                 // upstream: generator.c:2303 - after a failed quick check,
@@ -598,6 +601,8 @@ impl ReceiverContext {
                         BasisTrust::for_connection(&self.config.connection),
                     )
                 {
+                    // upstream: generator.c:2197-2201 - try_dests_reg() == -2
+                    self.send_generator_success(writer, idx, Settled::InPlace)?;
                     continue;
                 }
             }

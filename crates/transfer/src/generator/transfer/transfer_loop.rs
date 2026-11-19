@@ -1487,20 +1487,6 @@ impl GeneratorContext {
             // matching upstream which sets the flag only after a real send.
             sent_files.mark_sent(ndx);
 
-            // upstream: sender.c:404 successful_send() - the source unlink is
-            // DEFERRED, never run inline at send time. Upstream waits for the
-            // receiver/generator to confirm the commit with MSG_SUCCESS(ndx)
-            // (io.c:1831-1846) and only then unlinks in successful_send().
-            // Recording this entry as pending - instead of unlinking now - is
-            // what makes --remove-source-files crash-safe: an interrupted,
-            // failed, or redone transfer never deletes a source that did not
-            // safely land at the destination. The re-stat and changed-file
-            // guards still run later, at confirmation time, inside
-            // confirm_source_removal() -> remove_source_file_if_requested().
-            if self.config.flags.remove_source_files && !self.config.flags.dry_run {
-                self.pending_source_removals.mark_pending(ndx);
-            }
-
             // upstream: sender.c:809-810
             // rprintf(FINFO, "sender finished %s%s%s\n", path,slash,fname)
             debug_log!(Send, 1, "sender finished {}", self.send_trace_name(ndx));
@@ -1712,11 +1698,10 @@ impl GeneratorContext {
     /// This is the sender-side reaction to a received `MSG_SUCCESS`, mirroring
     /// upstream's `successful_send()` being invoked from the message handler
     /// (`io.c:1663`). The wire index is mapped back to its flat file-list entry
-    /// and the source is unlinked only if this sender actually deferred a
-    /// removal for it - an index the sender never marked pending (a duplicate
-    /// confirmation, or an up-to-date entry the sender never transmitted) is
-    /// ignored, so a stray `MSG_SUCCESS` can never trigger a spurious deletion.
-    /// The re-stat and changed-file guards in
+    /// and that source is unlinked whether or not this sender transmitted it:
+    /// the peer's generator also confirms the entries it settled without a
+    /// transfer (generator.c:2297-2300 `return_with_success`), and upstream
+    /// keeps no record of what it sent. The re-stat and changed-file guards in
     /// [`remove_source_file_if_requested`](Self::remove_source_file_if_requested)
     /// still gate the unlink, so a source that vanished or changed since it
     /// entered the file list is never removed. Returns the `io_error` bits and
@@ -1748,9 +1733,6 @@ impl GeneratorContext {
             return Ok(SourceRemovalOutcome::clean());
         }
         let flat_ndx = self.successful_send_ndx(wire_ndx)?;
-        if !self.pending_source_removals.confirm(flat_ndx) {
-            return Ok(SourceRemovalOutcome::clean());
-        }
         let source_path = self.reconstruct_source_path(flat_ndx);
         let entry = &self.file_list[flat_ndx];
         let display_name = entry.path().to_path_buf();

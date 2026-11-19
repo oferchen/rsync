@@ -337,6 +337,16 @@ pub struct ParsedServerFlags {
     /// - `sender.c:396` `successful_send()` - performs the unlink
     /// - `options.c:86` - `remove_source_files` global definition
     pub remove_source_files: bool,
+    /// The removal was asked for with the deprecated `--remove-sent-files`
+    /// spelling (upstream `remove_source_files == 2`); only ever set together
+    /// with [`remove_source_files`](Self::remove_source_files).
+    ///
+    /// The generator then confirms only what was sent, not the entries it
+    /// found already in place.
+    ///
+    /// upstream: options.c:745 - `--remove-sent-files` stores 2;
+    /// generator.c:2011, :2101, :2144, :2199, :2295 test `== 1`.
+    pub remove_sent_files: bool,
 
     /// Treat device files as regular files and stream their contents
     /// (long-form `--copy-devices`).
@@ -1337,6 +1347,7 @@ mod delivery_classification {
             //    the string cannot deliver it and a bridge is mandatory). ---
             preallocate,
             remove_source_files,
+            remove_sent_files,
             no_implied_dirs,
             copy_unsafe_links,
             safe_links,

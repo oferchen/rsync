@@ -256,6 +256,7 @@ fn apply_long_form_args(
             // daemon pull that asked for them to be moved.
             "--remove-source-files" | "--remove-sent-files" => {
                 config.flags.remove_source_files = true;
+                config.flags.remove_sent_files = arg == "--remove-sent-files";
             }
             // upstream: options.c:3239-3240 - `if (preallocate_files &&
             // am_sender)` forwards `--preallocate` (options.c:729) to a server

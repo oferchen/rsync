@@ -21,6 +21,8 @@ use crate::generator::ItemFlags;
 use crate::receiver::ReceiverContext;
 #[cfg(any(unix, windows))]
 use crate::receiver::directory::obstacle::MakeWayFor;
+#[cfg(any(unix, windows))]
+use crate::receiver::transfer::Settled;
 
 impl ReceiverContext {
     /// Reports whether a received symlink's mtime should be preserved.
@@ -288,6 +290,8 @@ impl ReceiverContext {
                     // upstream: rsync.c:823-828 set_file_attrs() - "%s is uptodate"
                     // at INFO_GTE(NAME, 2)
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
+                    // upstream: generator.c:2011-2012
+                    self.send_generator_success(writer, flist_idx, Settled::InPlace)?;
                     continue;
                 }
                 pre_replace_symlink_meta =
@@ -461,6 +465,8 @@ impl ReceiverContext {
                 // stats.created_files / created_symlinks.
                 self.record_created(entry.mode());
             }
+            // upstream: generator.c:2057-2061
+            self.send_generator_success(writer, flist_idx, Settled::SymlinkCreated)?;
         }
         Ok(())
     }
@@ -628,6 +634,8 @@ impl ReceiverContext {
                     // upstream: rsync.c:823-828 set_file_attrs() - "%s is uptodate"
                     // at INFO_GTE(NAME, 2)
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
+                    // upstream: generator.c:2011-2012
+                    self.send_generator_success(writer, flist_idx, Settled::InPlace)?;
                     continue;
                 }
                 pre_replace_symlink_meta = fs::symlink_metadata(&link_path)
@@ -753,6 +761,8 @@ impl ReceiverContext {
                 // stats.created_files / created_symlinks.
                 self.record_created(entry.mode());
             }
+            // upstream: generator.c:2057-2061
+            self.send_generator_success(writer, flist_idx, Settled::SymlinkCreated)?;
         }
 
         if unsupported_skip {

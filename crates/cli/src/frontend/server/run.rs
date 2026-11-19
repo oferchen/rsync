@@ -700,6 +700,7 @@ where
     // consumed by the sender's `successful_send()` after each transferred
     // file is acknowledged.
     config.flags.remove_source_files = long_flags.remove_source_files;
+    config.flags.remove_sent_files = long_flags.remove_sent_files;
     // upstream: options.c:3236-3237 / flist.c:1794 - `--copy-devices` is forwarded to
     // the remote sender on a pull. As the server-side sender, this process must
     // convert each block/char device into a regular file and stream its bytes.

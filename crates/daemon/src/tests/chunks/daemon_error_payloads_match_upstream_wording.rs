@@ -94,6 +94,17 @@ fn daemon_error_payloads_match_upstream_wording() {
         crate::daemon::MODULE_WRITE_ONLY_PAYLOAD,
         "ERROR: module is write only",
     );
+
+    // upstream: main.c:966-971 - a read-only module refuses a sender asked to
+    // remove its sources, naming the spelling the client used.
+    assert_eq!(
+        crate::daemon::REMOVE_SOURCE_READ_ONLY_PAYLOAD,
+        "ERROR: --remove-source-files cannot be used with a read-only module",
+    );
+    assert_eq!(
+        crate::daemon::REMOVE_SENT_READ_ONLY_PAYLOAD,
+        "ERROR: --remove-sent-files cannot be used with a read-only module",
+    );
 }
 
 /// Verifies that `send_error` writes exactly the payload followed by `\n`

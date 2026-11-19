@@ -255,6 +255,11 @@ pub(super) struct ServerLongFlags {
     /// `remove_source_files` to decide whether to unlink each file after
     /// the receiver acknowledges a successful transfer.
     pub(super) remove_source_files: bool,
+    /// The removal arrived as the deprecated `--remove-sent-files`.
+    ///
+    /// upstream: options.c:745 - that spelling stores 2, which the generator
+    /// tells apart from `--remove-source-files` (generator.c:2295).
+    pub(super) remove_sent_files: bool,
     /// Stream device contents as regular files (upstream: `--copy-devices`).
     ///
     /// upstream: options.c:3236-3237 - `if (copy_devices && !am_sender) args[ac++] =
@@ -570,6 +575,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         delete_before: false,
         delete_excluded: false,
         remove_source_files: false,
+        remove_sent_files: false,
         copy_devices: false,
         copy_unsafe_links: false,
         safe_links: false,
@@ -776,6 +782,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // the same option in `parse_arguments()`.
             "--remove-source-files" | "--remove-sent-files" => {
                 flags.remove_source_files = true;
+                flags.remove_sent_files = s == "--remove-sent-files";
             }
             // upstream: options.c:3236-3237 - `--copy-devices` is forwarded to the
             // remote sender (pull) so it streams device contents as a regular

@@ -537,6 +537,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // Without carrying it here the removal is silently skipped for every remote
     // transfer, so it must ride onto the local config exactly like `--preallocate`.
     server_config.flags.remove_source_files = config.remove_source_files();
+    server_config.flags.remove_sent_files = config.remove_sent_files();
     server_config.has_partial_dir = config.partial_directory().is_some();
     server_config.partial_dir = config.partial_directory().map(std::path::Path::to_path_buf);
     server_config.file_selection.min_file_size = config.min_file_size();

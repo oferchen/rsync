@@ -262,6 +262,19 @@ pub(crate) const MODULE_READ_ONLY_PAYLOAD: &str = "ERROR: module is read only";
 /// module is write only\n")`, delivered post-multiplex like the read-only
 /// rejection above.
 pub(crate) const MODULE_WRITE_ONLY_PAYLOAD: &str = "ERROR: module is write only";
+/// Error payload returned when a client pulls from a read-only module with
+/// `--remove-source-files`.
+///
+/// upstream: main.c:966-971 `do_server_sender()` - `rprintf(FERROR, "ERROR:
+/// --remove-%s-files cannot be used with a read-only module\n", ...)`,
+/// delivered post-multiplex like the two rejections above.
+pub(crate) const REMOVE_SOURCE_READ_ONLY_PAYLOAD: &str =
+    "ERROR: --remove-source-files cannot be used with a read-only module";
+/// The same refusal for the deprecated `--remove-sent-files` spelling, which
+/// upstream names in the message (`remove_source_files == 1 ? "source" :
+/// "sent"`, main.c:969).
+pub(crate) const REMOVE_SENT_READ_ONLY_PAYLOAD: &str =
+    "ERROR: --remove-sent-files cannot be used with a read-only module";
 mod module_state;
 #[cfg(test)]
 use self::module_state::TEST_CONFIG_CANDIDATES;

@@ -218,6 +218,25 @@ fn sparse_enabled_for_pass(sparse: bool, append: bool, is_redo_pass: bool) -> bo
     sparse && !(is_redo_pass && append)
 }
 
+/// How `recv_generator()` settled an entry it did not request from the sender,
+/// which selects the `remove_source_files` test upstream applies before
+/// `goto return_with_success`.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::receiver) enum Settled {
+    /// Already in place, found in an alternate directory, or a device or
+    /// special file made here: confirmed under `--remove-source-files` only.
+    ///
+    /// upstream: generator.c:2011, :2101, :2144, :2199, :2295 -
+    /// `remove_source_files == 1`.
+    InPlace,
+    /// A symlink made here: "one of the items that the old
+    /// `--remove-sent-files` option would remove", so either spelling
+    /// confirms it.
+    ///
+    /// upstream: generator.c:2057-2061 - `if (remove_source_files)`.
+    SymlinkCreated,
+}
+
 impl ReceiverContext {
     /// Sends `MSG_SUCCESS(ndx)` for each confirmed flat index when
     /// `--remove-source-files` is active; otherwise discards them.
@@ -236,6 +255,33 @@ impl ReceiverContext {
             return Ok(());
         }
         for flat_idx in confirmed {
+            writer.send_msg_success(self.flat_to_wire_ndx(flat_idx))?;
+        }
+        Ok(())
+    }
+
+    /// Sends `MSG_SUCCESS(ndx)` for an entry the generator settled without
+    /// requesting it, so the sender removes its source.
+    ///
+    /// upstream: generator.c:2297-2300 `return_with_success:` -
+    /// `if (!dry_run) send_msg_success(fname, ndx)`, reached from every
+    /// `goto return_with_success`; io.c:1207 keeps a batch-only generator
+    /// silent.
+    pub(in crate::receiver) fn send_generator_success<W>(
+        &self,
+        writer: &mut W,
+        flat_idx: usize,
+        settled: Settled,
+    ) -> io::Result<()>
+    where
+        W: crate::writer::MsgInfoSender + ?Sized,
+    {
+        let flags = &self.config.flags;
+        let wanted = match settled {
+            Settled::InPlace => flags.remove_source_files && !flags.remove_sent_files,
+            Settled::SymlinkCreated => flags.remove_source_files,
+        };
+        if wanted && !flags.dry_run && !flags.only_write_batch {
             writer.send_msg_success(self.flat_to_wire_ndx(flat_idx))?;
         }
         Ok(())

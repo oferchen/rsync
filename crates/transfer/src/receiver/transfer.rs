@@ -24,6 +24,7 @@ mod pipelined_incremental;
 mod replay;
 mod setup;
 
+pub(in crate::receiver) use pipeline::Settled;
 pub(in crate::receiver) use setup::{dir_merge_config_from_wire, parse_wire_filters_for_receiver};
 
 use std::io::{self, Read, Write};
@@ -1933,6 +1934,98 @@ mod tests {
 
         assert!(writer.0.is_empty());
         assert!(dest.join("landed").exists());
+    }
+
+    /// The generator confirms an entry it settled without a transfer exactly
+    /// where upstream's `recv_generator()` reaches `return_with_success`.
+    ///
+    /// `--remove-source-files` moves a tree, so a source the destination
+    /// already holds must go too; `--remove-sent-files` keeps it and gives up
+    /// only what this run sent or a symlink it made. A dry run and a
+    /// batch-only run changed nothing on the receiving side, so neither may
+    /// confirm anything: the sender would delete the only copy.
+    ///
+    /// upstream: generator.c:2295-2300 (`remove_source_files != 1`, then
+    /// `if (!dry_run) send_msg_success()`), generator.c:2057-2061 (a made
+    /// symlink, either spelling), io.c:1207 (`write_batch < 0`).
+    #[test]
+    fn the_generator_confirms_a_settled_entry_as_upstream_does() {
+        #[derive(Clone, Copy, Default)]
+        struct Mode {
+            remove_source: bool,
+            remove_sent: bool,
+            dry_run: bool,
+            only_write_batch: bool,
+        }
+        const SOURCE: Mode = Mode {
+            remove_source: true,
+            remove_sent: false,
+            dry_run: false,
+            only_write_batch: false,
+        };
+        const SENT: Mode = Mode {
+            remove_sent: true,
+            ..SOURCE
+        };
+        let off = Mode::default();
+        let dry = Mode {
+            dry_run: true,
+            ..SOURCE
+        };
+        let batch_only = Mode {
+            only_write_batch: true,
+            ..SOURCE
+        };
+        for (mode, settled, confirmed, what) in [
+            (
+                SOURCE,
+                Settled::InPlace,
+                true,
+                "--remove-source-files, in place",
+            ),
+            (
+                SOURCE,
+                Settled::SymlinkCreated,
+                true,
+                "--remove-source-files, symlink made",
+            ),
+            (
+                SENT,
+                Settled::InPlace,
+                false,
+                "--remove-sent-files, in place",
+            ),
+            (
+                SENT,
+                Settled::SymlinkCreated,
+                true,
+                "--remove-sent-files, symlink made",
+            ),
+            (off, Settled::InPlace, false, "no removal asked for"),
+            (
+                off,
+                Settled::SymlinkCreated,
+                false,
+                "no removal asked for, symlink made",
+            ),
+            (dry, Settled::InPlace, false, "dry run"),
+            (dry, Settled::SymlinkCreated, false, "dry run, symlink made"),
+            (batch_only, Settled::InPlace, false, "--only-write-batch"),
+        ] {
+            let mut ctx = replay_client_ctx();
+            ctx.config.flags.remove_source_files = mode.remove_source;
+            ctx.config.flags.remove_sent_files = mode.remove_sent;
+            ctx.config.flags.dry_run = mode.dry_run;
+            ctx.config.flags.only_write_batch = mode.only_write_batch;
+            // The second sub-list starts at wire NDX 5 (one gap slot).
+            ctx.ndx_segments = vec![(0, 1), (3, 5)];
+            let mut writer = SuccessRecorder::default();
+
+            ctx.send_generator_success(&mut writer, 4, settled).unwrap();
+
+            let expected: &[i32] = if confirmed { &[6] } else { &[] };
+            assert_eq!(writer.0, expected, "{what}");
+        }
     }
 
     /// Verifies a fully successful sweep returns 0, so a clean
