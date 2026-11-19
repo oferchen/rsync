@@ -1234,10 +1234,21 @@ impl DeltaGenerator {
     /// This path is engaged only when the mutually negotiated
     /// `CAP_CONSECUTIVE_MATCH` capability is present (both peers are oc and both
     /// opted in), which is the same condition under which the receiver halves
-    /// the per-block strong-sum length. Halving the strong sum roughly doubles
-    /// the per-block false-alarm probability; requiring a matching neighbour
-    /// before trusting a block restores the effective collision resistance,
-    /// mirroring zsync's `seq_matches` heuristic (`librcksum/rsum.c`).
+    /// the per-block strong-sum length from `s2` to `h = s2 / 2` bytes, which
+    /// raises the per-window false-alarm probability from `2^-(32+8*s2)` to
+    /// `p = 2^-(32+8*h)`.
+    ///
+    /// A block matched at source offset `o` against basis block `j` is trusted
+    /// only when the window at `o + block_len` matches basis block `j + 1` -
+    /// its rolling and strong sums, with no hash-table lookup - as zsync's
+    /// `seq_matches` does (zsync 0.8.0 `internal/rcksum/seed_sink.go:183`,
+    /// `:195-213` `checkChecksumsOnHashChain`). Extending a run to
+    /// ANY matching block would give `len * nb^2 * p^2` expected false runs,
+    /// up to `2^27` times upstream's `len * nb * 2^-(32+8*s2)`. Requiring the
+    /// successor gives `len * nb * p^2 + 2 * nb * p`, which never exceeds
+    /// upstream's bound (`tests/consecutive_match_bound.rs` checks every file
+    /// length and block length). When the successor check fails, the window
+    /// at `o + block_len` is searched again as a possible run start.
     ///
     /// A run of consecutive matching source blocks is buffered together with
     /// each block's source bytes. When the run ends:
@@ -1310,31 +1321,40 @@ impl DeltaGenerator {
             };
         }
 
+        // Set when a run ends because the full window after it did not match
+        // the successor block: that window is searched as a run start before
+        // the scan rolls on. The run extension already probed it for the
+        // replay counters, so the replay probe is not repeated.
+        let mut recheck_window = false;
+
         loop {
-            if buffer_pos == buffer_len {
-                buffer_len = reader.read(buffer)?;
-                buffer_pos = 0;
-                if buffer_len == 0 {
-                    break;
+            let rechecking = std::mem::take(&mut recheck_window);
+            if !rechecking {
+                if buffer_pos == buffer_len {
+                    buffer_len = reader.read(buffer)?;
+                    buffer_pos = 0;
+                    if buffer_len == 0 {
+                        break;
+                    }
                 }
-            }
 
-            let byte = buffer[buffer_pos];
-            buffer_pos += 1;
+                let byte = buffer[buffer_pos];
+                buffer_pos += 1;
 
-            let evicted = window.push_back(byte);
-            if let Some(outgoing_byte) = evicted {
-                rolling
-                    .roll(outgoing_byte, byte)
-                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-                pending_literals.push(outgoing_byte);
-                offset += 1;
-            } else {
-                rolling.update_byte(byte);
-            }
+                let evicted = window.push_back(byte);
+                if let Some(outgoing_byte) = evicted {
+                    rolling
+                        .roll(outgoing_byte, byte)
+                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                    pending_literals.push(outgoing_byte);
+                    offset += 1;
+                } else {
+                    rolling.update_byte(byte);
+                }
 
-            if !window.is_full() {
-                continue;
+                if !window.is_full() {
+                    continue;
+                }
             }
 
             let digest = rolling.digest();
@@ -1343,7 +1363,7 @@ impl DeltaGenerator {
             let (first, second) = window.as_slices();
             // upstream: match.c:243 - under --inplace, suppress a candidate whose
             // basis offset precedes the write cursor so it demotes to a literal.
-            if let Some(replay) = replay.as_mut() {
+            if !rechecking && let Some(replay) = replay.as_mut() {
                 replay.probe_window(index, digest, offset, first, second);
             }
             let inplace_ok = |idx: usize| -> bool {
@@ -1493,12 +1513,19 @@ impl DeltaGenerator {
                 if let Some(replay) = replay.as_mut() {
                     replay.probe_window(index, adj_digest, offset, f, s);
                 }
+                // zsync 0.8.0 `internal/rcksum/seed_sink.go:183`, `:195-213`: the
+                // run extends only to
+                // the successor of the block just matched. Any other block that
+                // matches here starts a new run instead.
                 let adj = index
-                    .find_match_slices(adj_digest, f, s)
+                    .try_next_match_slices(match_idx, adj_digest, f, s)
                     .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
                 match adj {
                     Some(next_idx) => match_idx = next_idx,
-                    None => break,
+                    None => {
+                        recheck_window = true;
+                        break;
+                    }
                 }
             }
 

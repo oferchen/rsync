@@ -127,8 +127,8 @@ bytes.
 ### Consecutive-match delta (opt-in, oc-rsync to oc-rsync)
 
 `OC_CONSECUTIVE_MATCH=1` is the one extension that changes wire bytes. It
-shortens the per-block strong checksum by requiring a block match to follow a
-matching neighbour. It engages only when both ends are oc-rsync and both set
+shortens the per-block strong checksum by trusting a matched block only when
+the next source window matches the next basis block. It engages only when both ends are oc-rsync and both set
 the variable. It is off by default. Against rsync, or against an oc-rsync that
 has not set it, the transfer is byte-identical to rsync's. Details are in the
 [environment reference](./oc-extension-env-reference.md#oc_consecutive_match)
