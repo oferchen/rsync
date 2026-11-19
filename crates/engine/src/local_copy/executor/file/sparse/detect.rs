@@ -154,29 +154,3 @@ impl SparseDetector {
 pub(super) fn leading_zero_run(bytes: &[u8]) -> usize {
     fast_io::zero_detect::find_first_nonzero(bytes)
 }
-
-/// Returns the number of trailing zero bytes in `bytes` using 16-byte `u128` scanning.
-#[inline]
-pub(super) fn trailing_zero_run(bytes: &[u8]) -> usize {
-    let mut offset = 0usize;
-    let mut iter = bytes.rchunks_exact(16);
-
-    for chunk in &mut iter {
-        // SAFETY: rchunks_exact(16) guarantees exactly 16-byte slices, so try_into cannot fail.
-        let chunk: &[u8; 16] = chunk.try_into().expect("chunks_exact guarantees 16 bytes");
-        if u128::from_ne_bytes(*chunk) == 0 {
-            offset += 16;
-            continue;
-        }
-
-        let trailing = chunk.iter().rev().take_while(|&&byte| byte == 0).count();
-        return offset + trailing;
-    }
-
-    offset + trailing_zero_run_scalar(iter.remainder())
-}
-
-#[inline]
-fn trailing_zero_run_scalar(bytes: &[u8]) -> usize {
-    bytes.iter().rev().take_while(|&&byte| byte == 0).count()
-}

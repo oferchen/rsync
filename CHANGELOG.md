@@ -254,6 +254,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 
 ### Performance
 
+- **`--sparse` write coalescing:** sparse writes no longer go out one per 1,024-byte window. Holes follow rsync 3.5.2's rule (`fileio.c:130-189`) on the local copy and the network receiver alike: a chunk's leading and trailing zero runs at any length, interior runs from 1,024 bytes. The data between holes is written in one go, and the network receiver keeps it in its 256 KiB write buffer: a hole-free 64 MiB file takes 512 writes on a local copy (was 65,536) and 264 on a pull (was 582; rsync 3.5.2: 2,048), and a hole costs one `lseek` instead of two on a local copy. The run scan is shared in `fast_io::zero_detect::sparse_spans`. (#8714)
 - A receiver stats a new hard-link name once and its group's leader not at all: the same pull 1.74 s to 1.60 s, `newfstatat` calls 300,791 to 200,791 (#8412)
 - Hard links into a nested directory reuse the held parent directory and name the leader beneath the pinned destination root: `openat2` calls on the same pull 55,148 to 5,146, and 1.82 s to 1.76 s (#8411)
 - A receiver links a new hard-link name with one stat and the link, without first checking the group's leader and the parent directory again: a pull of 50,000 hard-link groups without incremental recursion 2.09 s to 1.82 s (#8411)

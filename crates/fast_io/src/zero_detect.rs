@@ -19,6 +19,9 @@
 //!
 //! - [`crate::zero_detect::find_first_nonzero`] - Returns index of the first non-zero byte
 //! - [`crate::zero_detect::is_all_zeros`] - Fast check whether an entire buffer is zero
+//! - [`crate::zero_detect::trailing_zero_len`] - Length of the zero run ending a buffer
+//! - [`crate::zero_detect::sparse_spans`] - Splits a write into the data spans and
+//!   zero runs upstream rsync's sparse writer produces
 //!
 //! # Safety
 //!
@@ -35,6 +38,7 @@
 //! - **No data races**: All operations work on local variables or immutable
 //!   slice references.
 
+use std::ops::Range;
 use std::sync::OnceLock;
 
 /// Returns the index of the first non-zero byte in `buf`, or `buf.len()` if
@@ -76,6 +80,173 @@ pub fn find_first_nonzero(buf: &[u8]) -> usize {
 #[inline]
 pub fn is_all_zeros(buf: &[u8]) -> bool {
     find_first_nonzero(buf) == buf.len()
+}
+
+/// Returns the length of the zero run that ends `buf`, or `buf.len()` if all
+/// bytes are zero.
+///
+/// Scans backwards 16 bytes at a time via `u128`.
+///
+/// # Examples
+///
+/// ```
+/// use fast_io::zero_detect::trailing_zero_len;
+///
+/// assert_eq!(trailing_zero_len(&[1, 0, 0, 0]), 3);
+/// assert_eq!(trailing_zero_len(&[0; 4096]), 4096);
+/// assert_eq!(trailing_zero_len(&[0, 0, 1]), 0);
+/// assert_eq!(trailing_zero_len(&[]), 0);
+/// ```
+#[inline]
+pub fn trailing_zero_len(buf: &[u8]) -> usize {
+    let mut len = 0;
+    let mut iter = buf.rchunks_exact(16);
+
+    for chunk in &mut iter {
+        let word = u128::from_ne_bytes(chunk.try_into().expect("chunk is exactly 16 bytes"));
+        if word != 0 {
+            return len + chunk.iter().rev().take_while(|&&b| b == 0).count();
+        }
+        len += 16;
+    }
+
+    len + iter
+        .remainder()
+        .iter()
+        .rev()
+        .take_while(|&&b| b == 0)
+        .count()
+}
+
+/// One piece of a buffer handed to a sparse writer, in buffer order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SparseSpan {
+    /// A zero run of this many bytes that the writer defers as a hole.
+    Zeros(usize),
+    /// A byte range of the buffer the writer emits in a single write. It
+    /// starts and ends on a non-zero byte and may contain zero runs shorter
+    /// than the hole threshold.
+    Data(Range<usize>),
+}
+
+/// Splits `buf` into the spans upstream rsync's sparse writer acts on.
+///
+/// The leading and the trailing zero run of the buffer are always
+/// [`SparseSpan::Zeros`], whatever their length, because they may merge with
+/// the zeros of the neighbouring buffers. Between them, only a zero run of at
+/// least `min_hole` bytes is a [`SparseSpan::Zeros`]; everything else,
+/// shorter zero runs included, is coalesced into [`SparseSpan::Data`] spans.
+/// The spans cover `buf` exactly, alternate between the two kinds, and never
+/// have zero length.
+///
+/// An interior run of `min_hole` zeros must cover every `min_hole`-th byte, so
+/// the scan probes one byte per `min_hole` and measures a run only around a
+/// zero probe. A buffer without long zero runs costs one byte read per
+/// `min_hole` bytes.
+///
+/// upstream: fileio.c:130-189 `write_sparse()` - `l1`/`l2` are the leading and
+/// trailing runs, and the `z < SPARSE_WRITE_SIZE` test keeps short interior
+/// runs inside the data span.
+///
+/// # Examples
+///
+/// ```
+/// use fast_io::zero_detect::{SparseSpan, sparse_spans};
+///
+/// let buf = [0, 7, 0, 7, 0, 0, 0, 7, 0];
+/// let spans: Vec<_> = sparse_spans(&buf, 3).collect();
+/// assert_eq!(
+///     spans,
+///     [
+///         SparseSpan::Zeros(1),
+///         SparseSpan::Data(1..4),
+///         SparseSpan::Zeros(3),
+///         SparseSpan::Data(7..8),
+///         SparseSpan::Zeros(1),
+///     ]
+/// );
+/// ```
+#[must_use]
+pub fn sparse_spans(buf: &[u8], min_hole: usize) -> SparseSpans<'_> {
+    let leading = find_first_nonzero(buf);
+    let trailing = trailing_zero_len(&buf[leading..]);
+    SparseSpans {
+        buf,
+        min_hole: min_hole.max(1),
+        leading,
+        data_start: leading,
+        data_end: buf.len() - trailing,
+        interior_hole: 0,
+        trailing,
+    }
+}
+
+/// Iterator returned by [`sparse_spans`].
+#[derive(Debug, Clone)]
+pub struct SparseSpans<'a> {
+    buf: &'a [u8],
+    min_hole: usize,
+    /// Leading zero run not yet yielded.
+    leading: usize,
+    /// Start of the data not yet yielded; always a non-zero byte while
+    /// `data_start < data_end`.
+    data_start: usize,
+    /// One past the last non-zero byte of the buffer.
+    data_end: usize,
+    /// Interior hole found behind the data span just yielded.
+    interior_hole: usize,
+    /// Trailing zero run not yet yielded.
+    trailing: usize,
+}
+
+impl SparseSpans<'_> {
+    /// Finds the first zero run of at least `min_hole` bytes inside the
+    /// unyielded data, as a `start..end` byte range.
+    fn next_interior_hole(&self) -> Option<Range<usize>> {
+        let mut scan = self.data_start;
+        loop {
+            let probe = scan + self.min_hole - 1;
+            if probe >= self.data_end {
+                return None;
+            }
+            if self.buf[probe] != 0 {
+                scan = probe + 1;
+                continue;
+            }
+            // `buf[data_start]` and `buf[data_end - 1]` are non-zero, so the
+            // run around the probe ends inside `data_start + 1..data_end`.
+            let start = probe - trailing_zero_len(&self.buf[scan..probe]);
+            let end = probe + find_first_nonzero(&self.buf[probe..self.data_end]);
+            if end - start >= self.min_hole {
+                return Some(start..end);
+            }
+            scan = end;
+        }
+    }
+}
+
+impl Iterator for SparseSpans<'_> {
+    type Item = SparseSpan;
+
+    fn next(&mut self) -> Option<SparseSpan> {
+        for run in [&mut self.leading, &mut self.interior_hole] {
+            if *run > 0 {
+                return Some(SparseSpan::Zeros(std::mem::take(run)));
+            }
+        }
+        if self.data_start < self.data_end {
+            let hole = self.next_interior_hole();
+            let span_end = hole.as_ref().map_or(self.data_end, |hole| hole.start);
+            let span = self.data_start..span_end;
+            self.data_start = hole.as_ref().map_or(self.data_end, |hole| hole.end);
+            self.interior_hole = hole.map_or(0, |hole| hole.len());
+            return Some(SparseSpan::Data(span));
+        }
+        if self.trailing > 0 {
+            return Some(SparseSpan::Zeros(std::mem::take(&mut self.trailing)));
+        }
+        None
+    }
 }
 
 type FindFn = fn(&[u8]) -> usize;
@@ -277,6 +448,156 @@ unsafe fn find_first_nonzero_neon_inner(buf: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Byte-at-a-time transcription of upstream `write_sparse()`'s scan.
+    /// upstream: fileio.c:130-189
+    fn reference_spans(buf: &[u8], min_hole: usize) -> Vec<SparseSpan> {
+        let len = buf.len();
+        let mut l1 = 0;
+        while l1 < len && buf[l1] == 0 {
+            l1 += 1;
+        }
+        let mut l2 = 0;
+        while l2 < len - l1 && buf[len - (l2 + 1)] == 0 {
+            l2 += 1;
+        }
+        let mut spans = Vec::new();
+        if l1 > 0 {
+            spans.push(SparseSpan::Zeros(l1));
+        }
+        if l1 == len {
+            return spans;
+        }
+        let (mut start, end) = (l1, len - l2);
+        let mut i = l1;
+        while i < end {
+            if buf[i] != 0 {
+                i += 1;
+                continue;
+            }
+            let mut z = 1;
+            while i + z < end && buf[i + z] == 0 {
+                z += 1;
+            }
+            if z >= min_hole {
+                spans.push(SparseSpan::Data(start..i));
+                spans.push(SparseSpan::Zeros(z));
+                start = i + z;
+            }
+            i += z;
+        }
+        spans.push(SparseSpan::Data(start..end));
+        if l2 > 0 {
+            spans.push(SparseSpan::Zeros(l2));
+        }
+        spans
+    }
+
+    fn spans(buf: &[u8], min_hole: usize) -> Vec<SparseSpan> {
+        sparse_spans(buf, min_hole).collect()
+    }
+
+    #[test]
+    fn trailing_zero_len_matches_a_byte_scan() {
+        for len in 0..80 {
+            for nonzero_at in 0..len {
+                let mut buf = vec![0u8; len];
+                buf[nonzero_at] = 1;
+                assert_eq!(trailing_zero_len(&buf), len - nonzero_at - 1);
+            }
+            assert_eq!(trailing_zero_len(&vec![0u8; len]), len);
+        }
+    }
+
+    #[test]
+    fn sparse_spans_of_an_empty_buffer_is_empty() {
+        assert_eq!(spans(&[], 1024), []);
+    }
+
+    #[test]
+    fn sparse_spans_of_zeros_is_one_run() {
+        assert_eq!(spans(&[0; 5000], 1024), [SparseSpan::Zeros(5000)]);
+    }
+
+    /// The point of the coalescing rule: data without a long zero run is one
+    /// span however large it is, so the writer issues one write for it.
+    #[test]
+    fn sparse_spans_of_dense_data_is_one_span() {
+        let buf: Vec<u8> = (0..65_536u32).map(|i| (i % 251) as u8 + 1).collect();
+        assert_eq!(spans(&buf, 1024), [SparseSpan::Data(0..65_536)]);
+    }
+
+    /// upstream: fileio.c:163 - `if (z < SPARSE_WRITE_SIZE)` keeps the run in
+    /// the data span; a run of exactly the threshold is a hole.
+    #[test]
+    fn sparse_spans_interior_run_threshold_is_inclusive() {
+        for (run, is_hole) in [(1023, false), (1024, true), (1025, true)] {
+            let mut buf = vec![7u8; 100];
+            buf.extend(std::iter::repeat_n(0u8, run));
+            buf.extend([7u8; 100]);
+            let expected = if is_hole {
+                vec![
+                    SparseSpan::Data(0..100),
+                    SparseSpan::Zeros(run),
+                    SparseSpan::Data(100 + run..200 + run),
+                ]
+            } else {
+                vec![SparseSpan::Data(0..200 + run)]
+            };
+            assert_eq!(spans(&buf, 1024), expected, "interior run of {run}");
+        }
+    }
+
+    /// upstream: fileio.c:134-137 - `l1` and `l2` are deferred whatever their
+    /// length, so they can merge with the neighbouring writes' zeros.
+    #[test]
+    fn sparse_spans_edge_runs_are_zeros_at_any_length() {
+        let buf = [0, 0, 5, 5, 5, 0];
+        assert_eq!(
+            spans(&buf, 1024),
+            [
+                SparseSpan::Zeros(2),
+                SparseSpan::Data(2..5),
+                SparseSpan::Zeros(1),
+            ]
+        );
+    }
+
+    #[test]
+    fn sparse_spans_matches_the_upstream_scan() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for min_hole in [1usize, 2, 3, 16, 17, 64] {
+            for _ in 0..400 {
+                let len = (next() % 400) as usize;
+                let mut buf = Vec::with_capacity(len);
+                while buf.len() < len {
+                    let run = (next() % (3 * min_hole as u64 + 2)) as usize;
+                    let byte = if next() % 2 == 0 { 0 } else { 9 };
+                    buf.extend(std::iter::repeat_n(byte, run.min(len - buf.len())));
+                }
+                let got = spans(&buf, min_hole);
+                assert_eq!(
+                    got,
+                    reference_spans(&buf, min_hole),
+                    "min_hole {min_hole}, {buf:?}"
+                );
+                let covered: usize = got
+                    .iter()
+                    .map(|span| match span {
+                        SparseSpan::Zeros(len) => *len,
+                        SparseSpan::Data(range) => range.len(),
+                    })
+                    .sum();
+                assert_eq!(covered, buf.len());
+            }
+        }
+    }
 
     #[test]
     fn zero_empty_buffer() {

@@ -1,7 +1,10 @@
-use super::detect::{leading_zero_run, trailing_zero_run};
-use super::hole_punch::{punch_hole, write_zeros_fallback};
-use super::state::{SparseWriteState, write_sparse_chunk};
-use std::io::{Read, Seek, SeekFrom, Write};
+use super::detect::leading_zero_run;
+use super::hole_punch::{SparseSink, punch_hole, write_zeros_fallback};
+use super::state::{SpanWrite, SparseWriteState, write_sparse_chunk, write_sparse_spans};
+use crate::local_copy::LocalCopyError;
+use fast_io::zero_detect::trailing_zero_len as trailing_zero_run;
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
+use std::path::Path;
 use tempfile::NamedTempFile;
 
 #[test]
@@ -661,23 +664,6 @@ fn sparse_writer_single_byte_surrounded_by_zeros() {
     assert!(buffer[..2048].iter().all(|&b| b == 0));
     assert_eq!(buffer[2048], b'M');
     assert!(buffer[2049..].iter().all(|&b| b == 0));
-}
-
-#[test]
-fn sparse_state_replace_vs_accumulate() {
-    let mut state = SparseWriteState::default();
-
-    // Accumulate some zeros
-    state.accumulate(500);
-    assert_eq!(state.pending_zeros(), 500);
-
-    // Replace resets to new value
-    state.replace(200);
-    assert_eq!(state.pending_zeros(), 200);
-
-    // Further accumulation adds to the replacement value
-    state.accumulate(100);
-    assert_eq!(state.pending_zeros(), 300);
 }
 
 /// Without a preallocated extent, `write_sparse_chunk` seeks over interior zero
@@ -1866,10 +1852,6 @@ fn sparse_state_const_methods() {
     state.accumulate(10);
     assert_eq!(state.pending_zeros(), 10);
 
-    // replace is const
-    state.replace(5);
-    assert_eq!(state.pending_zeros(), 5);
-
     // pending_zeros is const
     let _pending: u64 = state.pending_zeros();
 }
@@ -2503,10 +2485,9 @@ fn sparse_write_size_matches_upstream_1k_window() {
 #[cfg(target_os = "linux")]
 #[test]
 fn sub_window_interior_zero_run_is_punched() {
-    // A 4 KB..8 KB..4 KB layout has an 8 KB interior zero run smaller than the
-    // former 32 KB scan window. With the upstream 1 KB window the interior run
-    // is seeked over and left unallocated; the old 32 KB window wrote it as
-    // literal data, allocating the blocks upstream deallocates.
+    // A 4 KB..8 KB..4 KB layout has an 8 KB interior zero run. Upstream defers
+    // any interior run of at least SPARSE_WRITE_SIZE (fileio.c:163), so the run
+    // is seeked over and left unallocated rather than written as literal data.
     use std::os::unix::fs::MetadataExt;
     let tmp = NamedTempFile::new().expect("tempfile");
     let mut file = tmp.reopen().expect("reopen");
@@ -2566,4 +2547,243 @@ fn sparse_skip_matched_credits_nothing() {
     super::state::skip_matched_sparse(writer, &mut state, &[3u8; 8192], &path)
         .expect("skip matched");
     assert_eq!(state.touched_blocks(), 0);
+}
+
+/// In-memory sparse destination that records every call the write pass makes.
+#[derive(Default)]
+struct CountingSink {
+    inner: Cursor<Vec<u8>>,
+    /// Length of each `write` call, in order.
+    writes: Vec<usize>,
+    /// Distance of each forward seek, in order.
+    forward_seeks: Vec<u64>,
+    /// `(pos, len)` of each punched range, in order.
+    punches: Vec<(u64, u64)>,
+    /// Number of position queries (`seek(Current(0))`).
+    position_queries: usize,
+}
+
+impl CountingSink {
+    /// Bytes the destination reads back as, extended to `logical_len` the way
+    /// the caller's `set_len` extends the file.
+    fn contents(&self, logical_len: u64) -> Vec<u8> {
+        let mut bytes = self.inner.get_ref().clone();
+        bytes.resize(logical_len as usize, 0);
+        bytes
+    }
+}
+
+impl Write for CountingSink {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.writes.push(buf.len());
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl Seek for CountingSink {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        match pos {
+            SeekFrom::Current(distance) if distance > 0 => {
+                self.forward_seeks.push(distance as u64);
+            }
+            SeekFrom::Current(0) => self.position_queries += 1,
+            _ => {}
+        }
+        self.inner.seek(pos)
+    }
+}
+
+impl SparseSink for CountingSink {
+    fn punch_hole(&mut self, _path: &Path, pos: u64, len: u64) -> Result<(), LocalCopyError> {
+        self.punches.push((pos, len));
+        self.inner
+            .seek(SeekFrom::Start(pos + len))
+            .expect("in-memory seek");
+        Ok(())
+    }
+}
+
+/// Writes `chunks` through the sparse pass into a fresh sink and returns the
+/// sink together with the logical length `finish` reports.
+fn write_sparse_pass(chunks: &[&[u8]]) -> (CountingSink, u64) {
+    let mut sink = CountingSink::default();
+    let mut state = SparseWriteState::default();
+    let path = Path::new("counting-sink");
+    for chunk in chunks {
+        let consumed =
+            write_sparse_spans(&mut sink, &mut state, chunk, path, SpanWrite::Data).expect("write");
+        assert_eq!(consumed, chunk.len());
+    }
+    let logical_len = state.finish(&mut sink, path).expect("finish");
+    (sink, logical_len)
+}
+
+/// Deterministic bytes with no zero byte at all.
+fn dense(len: usize) -> Vec<u8> {
+    (0..len).map(|i| (i % 251) as u8 + 1).collect()
+}
+
+/// WHY: the defect was one `write()` per 1,024 bytes of hole-free data (65,536
+/// writes for 64 MiB). Upstream emits everything between two holes in one go.
+/// upstream: fileio.c:174-182 - the tail `emit_sparse_span()` after the scan.
+#[test]
+fn hole_free_chunk_is_one_write() {
+    let chunk = dense(256 * 1024);
+    let (sink, logical_len) = write_sparse_pass(&[&chunk]);
+
+    assert_eq!(sink.writes, [chunk.len()]);
+    assert!(sink.forward_seeks.is_empty());
+    assert_eq!(sink.contents(logical_len), chunk);
+}
+
+/// WHY: a zero run shorter than the hole threshold is not worth a hole, so it
+/// must stay inside the surrounding write instead of splitting it in two.
+/// upstream: fileio.c:163 - `if (z < SPARSE_WRITE_SIZE) { i += z; continue; }`.
+#[test]
+fn interior_run_below_the_threshold_stays_in_the_write() {
+    let mut chunk = dense(3000);
+    chunk.extend(std::iter::repeat_n(0u8, 1023));
+    chunk.extend(dense(3000));
+    let (sink, logical_len) = write_sparse_pass(&[&chunk]);
+
+    assert_eq!(sink.writes, [chunk.len()]);
+    assert!(sink.forward_seeks.is_empty());
+    assert_eq!(sink.contents(logical_len), chunk);
+}
+
+/// WHY: an interior run of at least the threshold is a hole - one seek for the
+/// whole run, one write on each side - at any alignment in the chunk.
+/// upstream: fileio.c:166-172 - span, then `sparse_seek += z`.
+#[test]
+fn interior_run_from_the_threshold_is_one_seek_between_two_writes() {
+    for run in [1024usize, 1025, 5000] {
+        let mut chunk = dense(3001);
+        chunk.extend(std::iter::repeat_n(0u8, run));
+        chunk.extend(dense(2999));
+        let (sink, logical_len) = write_sparse_pass(&[&chunk]);
+
+        assert_eq!(sink.writes, [3001, 2999], "run of {run}");
+        assert_eq!(sink.forward_seeks, [run as u64], "run of {run}");
+        assert_eq!(sink.contents(logical_len), chunk, "run of {run}");
+    }
+}
+
+/// WHY: a chunk's leading and trailing zeros are deferred at any length, so a
+/// run split across two chunks is still one seek, however short each half is.
+/// upstream: fileio.c:134-139 `l1`/`l2`, fileio.c:185 `sparse_seek = l2`.
+#[test]
+fn run_crossing_a_chunk_boundary_is_one_seek() {
+    let mut first = dense(2000);
+    first.extend(std::iter::repeat_n(0u8, 10));
+    let mut second = vec![0u8; 20];
+    second.extend(dense(2000));
+    let (sink, logical_len) = write_sparse_pass(&[&first, &second]);
+
+    assert_eq!(sink.writes, [2000, 2000]);
+    assert_eq!(sink.forward_seeks, [30]);
+    let mut expected = first.clone();
+    expected.extend(&second);
+    assert_eq!(sink.contents(logical_len), expected);
+}
+
+/// WHY: the leading hole costs one seek and the data one write; the trailing
+/// hole costs no seek at all - it is only reported through the logical length
+/// that the caller hands to `set_len`.
+/// upstream: fileio.c:47-76 sparse_end() - `do_ftruncate(f, size)`.
+#[test]
+fn holes_at_both_ends_of_the_file_surround_one_write() {
+    let mut chunk = vec![0u8; 4096];
+    chunk.extend(dense(3000));
+    chunk.extend(std::iter::repeat_n(0u8, 8192));
+    let (sink, logical_len) = write_sparse_pass(&[&chunk]);
+
+    assert_eq!(sink.writes, [3000]);
+    assert_eq!(sink.forward_seeks, [4096]);
+    assert_eq!(logical_len, chunk.len() as u64);
+    assert_eq!(sink.contents(logical_len), chunk);
+}
+
+/// WHY: an in-place matched block is seeked over, never rewritten, but it runs
+/// through the same scan: a long interior run is punched out of the basis and
+/// a short one is skipped together with the data around it.
+/// upstream: fileio.c:121-128 emit_sparse_span() with `use_seek`, and
+/// fileio.c:84-99 flush_sparse_hole() punching below `preallocated_len`.
+#[test]
+fn matched_block_is_seeked_over_and_only_long_runs_are_punched() {
+    let mut block = dense(4096);
+    block.extend(std::iter::repeat_n(0u8, 500));
+    block.extend(dense(1000));
+    block.extend(std::iter::repeat_n(0u8, 4096));
+    block.extend(dense(4096));
+
+    let mut sink = CountingSink {
+        inner: Cursor::new(vec![0xEEu8; block.len()]),
+        ..CountingSink::default()
+    };
+    let mut state = SparseWriteState::default();
+    state.set_preallocated_len(block.len() as u64);
+    let path = Path::new("counting-sink");
+    write_sparse_spans(&mut sink, &mut state, &block, path, SpanWrite::Seek).expect("skip");
+    state.finish(&mut sink, path).expect("finish");
+
+    assert!(sink.writes.is_empty());
+    assert_eq!(sink.forward_seeks, [4096 + 500 + 1000, 4096]);
+    assert_eq!(sink.punches, [(5596, 4096)]);
+}
+
+/// WHY: every hole queried the writer's position before seeking over it, so a
+/// local copy with 2,048 holes made 4,106 `lseek` calls where rsync 3.5.2
+/// makes 2,047. The position is read once and then tracked, so each hole
+/// costs exactly its own seek.
+/// upstream: fileio.c:84-99 flush_sparse_hole() - one do_lseek() per hole,
+/// from the position tracked in `sparse_past_write`.
+#[test]
+fn each_hole_costs_one_seek_and_the_position_is_read_once() {
+    let mut data = Vec::new();
+    for _ in 0..16 {
+        data.extend(dense(4096));
+        data.extend(std::iter::repeat_n(0u8, 4096));
+    }
+    let chunks: Vec<&[u8]> = data.chunks(10_000).collect();
+    let (sink, logical_len) = write_sparse_pass(&chunks);
+
+    // 15 interior holes; the trailing one is left to the caller's set_len.
+    assert_eq!(sink.forward_seeks, [4096u64; 15]);
+    assert_eq!(sink.position_queries, 1);
+    assert_eq!(sink.writes.iter().sum::<usize>(), 16 * 4096);
+    assert_eq!(sink.contents(logical_len), data);
+}
+
+/// WHY: rsync 3.5.2 never seeks over a trailing zero run; the caller's single
+/// `set_len` to the returned length makes it a hole. Seeking first was one
+/// extra `lseek` per file ending in a hole. Inside a preallocated extent the
+/// run is still punched, since truncating would leave those blocks allocated.
+/// upstream: fileio.c:47-66 sparse_end() - `do_ftruncate(f, size)`.
+#[test]
+fn trailing_zero_run_costs_no_seek() {
+    let mut chunk = dense(3000);
+    chunk.extend(std::iter::repeat_n(0u8, 8192));
+    let (sink, logical_len) = write_sparse_pass(&[&chunk]);
+
+    assert_eq!(sink.writes, [3000]);
+    assert!(sink.forward_seeks.is_empty());
+    assert!(sink.punches.is_empty());
+    assert_eq!(logical_len, chunk.len() as u64);
+    assert_eq!(sink.contents(logical_len), chunk);
+
+    let mut sink = CountingSink {
+        inner: Cursor::new(vec![0xEEu8; chunk.len()]),
+        ..CountingSink::default()
+    };
+    let mut state = SparseWriteState::default();
+    state.set_preallocated_len(chunk.len() as u64);
+    let path = Path::new("counting-sink");
+    write_sparse_spans(&mut sink, &mut state, &chunk, path, SpanWrite::Data).expect("write");
+    state.finish(&mut sink, path).expect("finish");
+    assert!(sink.forward_seeks.is_empty());
+    assert_eq!(sink.punches, [(3000, 8192)]);
 }
