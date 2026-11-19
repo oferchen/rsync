@@ -35,6 +35,7 @@ mod send_zc_test_env;
 
 use send_zc_test_env::{
     SendZcEnv, assert_setup_refused_by_memlock, assert_writer_ring_refused, classify, report,
+    send_zc_bytes_between,
 };
 
 /// Classifies the environment for `test` on stderr; `true` when the real
@@ -537,8 +538,7 @@ fn explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback() {
         let plain_tail = fast_io::SEND_ZC_DISPATCH_MIN_BYTES as u64 - 1;
         assert_bytes_went_through_send_zc(TEST, before, after, len as u64, plain_tail);
     } else if runnable {
-        assert_writer_ring_refused(TEST);
-        assert_eq!(after.sends, before.sends, "no SEND_ZC may be counted here");
+        assert_writer_ring_refused(TEST, sent_through_send_zc(before, after));
         assert!(
             after.fallbacks > before.fallbacks,
             "a writer that dropped SEND_ZC must count the fallback: {before:?} -> {after:?}"
@@ -659,17 +659,13 @@ fn exhausted_loopback_write(test: &str, write_size: usize, unlimited: bool) -> W
     );
     if !engaged {
         assert!(
-            !unlimited && !holds_ipc_lock(),
+            !unlimited,
             "{test}: {write_size}-byte writes: the writer dropped SEND_ZC at setup although \
-             no ring of this thread can be refused for memory"
+             RLIMIT_MEMLOCK is unlimited"
         );
         assert!(
             fast_io::send_zc_stats().fallbacks > at_setup.fallbacks,
             "{test}: {write_size}-byte writes: a writer that dropped SEND_ZC must count the fallback"
-        );
-        eprintln!(
-            "[send_zc env] {test}: {write_size}-byte writes: a ring was refused by the \
-             locked-memory budget - asserting the plain-send fallback delivers the payload"
         );
     } else {
         eprintln!(
@@ -699,6 +695,18 @@ fn exhausted_loopback_write(test: &str, write_size: usize, unlimited: bool) -> W
             len: (payload.len() - WARM_UP) as u64,
         }
     } else {
+        assert_writer_ring_refused(
+            &format!("{test}: {write_size}-byte writes"),
+            sent_through_send_zc(at_setup, after),
+        );
         WriterArm::Refused
     }
+}
+
+/// Bytes the SEND_ZC counters gained between two process snapshots.
+fn sent_through_send_zc(before: fast_io::SendZcStats, after: fast_io::SendZcStats) -> u64 {
+    send_zc_bytes_between(
+        (before.bytes, before.copied_bytes),
+        (after.bytes, after.copied_bytes),
+    )
 }

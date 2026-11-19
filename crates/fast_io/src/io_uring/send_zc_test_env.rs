@@ -83,20 +83,34 @@ pub fn assert_setup_refused_by_memlock(test: &str, step: &str, err: &io::Error) 
 /// plain sends; neither surfaces the error, so the test cannot read the errno.
 /// A refusal is only possible without `CAP_IPC_LOCK` (rings are charged to the
 /// user's shared budget only then), so a thread holding it fails here: the
-/// root CI job always takes the full SEND_ZC arm. The caller still asserts
-/// the payload arrived byte for byte.
-pub fn assert_writer_ring_refused(test: &str) {
+/// root CI job always takes the full SEND_ZC arm.
+///
+/// Call it after the payload was written: `send_zc_bytes` is how many bytes
+/// the SEND_ZC counters (zero-copy plus copied resends) gained during the
+/// writes, and must be zero - a writer without SEND_ZC cannot submit it. The
+/// caller asserts the payload arrived byte for byte.
+pub fn assert_writer_ring_refused(test: &str, send_zc_bytes: u64) {
     assert!(
         !thread_holds_ipc_lock(),
         "{test}: the writer dropped SEND_ZC on a thread holding CAP_IPC_LOCK, whose rings \
          are never charged ({})",
         context()
     );
+    assert_eq!(
+        send_zc_bytes, 0,
+        "{test}: a writer whose ring was refused sent bytes through SEND_ZC"
+    );
     eprintln!(
-        "[send_zc env] {test}: the writer's ring was refused - asserting the plain-send \
-         fallback delivers the payload ({})",
+        "[send_zc env] {test}: the writer's ring was refused - asserted the plain-send \
+         fallback delivered the payload with no SEND_ZC bytes ({})",
         context()
     );
+}
+
+/// Bytes the SEND_ZC counters gained between two snapshots, zero-copy and
+/// copied resends together, given as `(bytes, copied_bytes)` pairs.
+pub fn send_zc_bytes_between(before: (u64, u64), after: (u64, u64)) -> u64 {
+    (after.0 + after.1) - (before.0 + before.1)
 }
 
 /// Reads this thread's effective capability set from `/proc/thread-self` and

@@ -957,7 +957,9 @@ fn zero_copy_large_payload_roundtrip() {
     use std::net::{TcpListener, TcpStream};
     use std::os::unix::io::AsRawFd;
 
-    use super::send_zc_test_env::{SendZcEnv, assert_writer_ring_refused, classify, report};
+    use super::send_zc_test_env::{
+        SendZcEnv, assert_writer_ring_refused, classify, report, send_zc_bytes_between,
+    };
 
     let send_zc_available = super::send_zc::is_supported();
     let env = report(
@@ -987,6 +989,7 @@ fn zero_copy_large_payload_roundtrip() {
     peer.set_read_timeout(Some(std::time::Duration::from_secs(30)))
         .unwrap();
     let sender_fd = sender.as_raw_fd();
+    let before = crate::send_zc_stats();
 
     // The writer construction with `Enabled` resolves `send_zc_active` from the
     // same probe; when the opcode is absent the writer never submits SEND_ZC.
@@ -994,9 +997,8 @@ fn zero_copy_large_payload_roundtrip() {
         socket_writer_from_fd_zero_copy(sender_fd, 64 * 1024, crate::ZeroCopyPolicy::Enabled)
             .unwrap();
     let engaged = matches!(writer, IoUringOrStdSocketWriter::IoUring(ref w) if w.send_zc_active());
-    if send_zc_available && !engaged {
-        assert_writer_ring_refused("zero_copy_large_payload_roundtrip");
-    } else {
+    let refused = send_zc_available && !engaged;
+    if !refused {
         assert_eq!(
             engaged, send_zc_available,
             "the writer must engage SEND_ZC iff the opcode probe reports it available"
@@ -1029,6 +1031,16 @@ fn zero_copy_large_payload_roundtrip() {
         received, payload,
         "round-trip corrupted the payload (send_zc_available={send_zc_available})"
     );
+    if refused {
+        let after = crate::send_zc_stats();
+        assert_writer_ring_refused(
+            "zero_copy_large_payload_roundtrip",
+            send_zc_bytes_between(
+                (before.bytes, before.copied_bytes),
+                (after.bytes, after.copied_bytes),
+            ),
+        );
+    }
 }
 
 // The ssh wire is an AF_UNIX socketpair, which the kernel refuses for SEND_ZC
@@ -1044,17 +1056,19 @@ fn zero_copy_on_unix_socketpair_falls_back_at_setup() {
         return;
     }
     let (fd_a, fd_b) = make_socket_pair();
+    let before = crate::send_zc_stats();
     let mut writer =
         socket_writer_from_fd_zero_copy(fd_a, 64 * 1024, crate::ZeroCopyPolicy::Enabled).unwrap();
-    match writer {
-        IoUringOrStdSocketWriter::IoUring(ref w) => assert!(
-            !w.send_zc_active(),
-            "an AF_UNIX socket must resolve to the io_uring SEND writer with SEND_ZC off"
-        ),
-        IoUringOrStdSocketWriter::Std(_) => super::send_zc_test_env::assert_writer_ring_refused(
-            "zero_copy_on_unix_socketpair_falls_back_at_setup",
-        ),
-    }
+    let refused = match writer {
+        IoUringOrStdSocketWriter::IoUring(ref w) => {
+            assert!(
+                !w.send_zc_active(),
+                "an AF_UNIX socket must resolve to the io_uring SEND writer with SEND_ZC off"
+            );
+            false
+        }
+        IoUringOrStdSocketWriter::Std(_) => true,
+    };
 
     let payload: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
     let expected = payload.clone();
@@ -1069,6 +1083,16 @@ fn zero_copy_on_unix_socketpair_falls_back_at_setup() {
     write_thread.join().unwrap();
     close_fd(fd_a);
     close_fd(fd_b);
+    if refused {
+        let after = crate::send_zc_stats();
+        super::send_zc_test_env::assert_writer_ring_refused(
+            "zero_copy_on_unix_socketpair_falls_back_at_setup",
+            super::send_zc_test_env::send_zc_bytes_between(
+                (before.bytes, before.copied_bytes),
+                (after.bytes, after.copied_bytes),
+            ),
+        );
+    }
     let first_diff = received.iter().zip(&expected).position(|(a, b)| a != b);
     assert_eq!(
         first_diff, None,
