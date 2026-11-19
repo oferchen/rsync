@@ -65,8 +65,9 @@ fn hook_shell_command_with(shell: Option<OsString>, command: &str) -> ProcessCom
 /// Builds a shell command with the exec-hook environment variables that
 /// upstream sets for *every* hook phase (early, pre, and post).
 ///
-/// The shell comes from [`hook_shell_command`]. This is the shared base: the module/connection identity that upstream sets
-/// in the daemon process before forking any hook child. It deliberately omits
+/// The shell comes from [`hook_shell_command`]. This is the shared base: the
+/// module/connection identity that upstream sets in the daemon process before
+/// forking any hook child. It deliberately omits
 /// `RSYNC_REQUEST` and `RSYNC_ARG<n>`, which upstream sets only in the pre-exec
 /// child (see `build_pre_xfer_command`).
 ///

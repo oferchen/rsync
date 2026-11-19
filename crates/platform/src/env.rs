@@ -87,6 +87,7 @@ pub fn unset_display_without_askpass() {
         }
     }
 }
+
 /// The local host's name, as `gethostname(2)` reports it.
 ///
 /// `None` when the kernel cannot supply a name or it is not valid UTF-8.
@@ -122,6 +123,7 @@ mod tests {
         unset_display_without_askpass();
         assert!(env::var_os("DISPLAY").is_none());
     }
+
     #[test]
     fn display_is_kept_when_askpass_is_set_even_empty() {
         let _lock = TEST_LOCK.lock().unwrap();
@@ -132,6 +134,7 @@ mod tests {
             assert_eq!(env::var_os("DISPLAY").as_deref(), Some(OsStr::new(":9")));
         }
     }
+
     #[test]
     fn set_restores_on_drop() {
         let _lock = TEST_LOCK.lock().unwrap();
