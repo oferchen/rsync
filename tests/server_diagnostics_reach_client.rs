@@ -250,31 +250,40 @@ fn daemon_sender_debug_reaches_client_and_daemon_log() {
 }
 
 /// Asserts that the daemon worker's decision line for one kernel sandbox
-/// `layer` (`--debug=seccomp` or `--debug=landlock` level 1, which `-vvv`
-/// reaches) arrives on the client of a push and of a pull when `max
-/// verbosity` admits row 3, and that `-vv` and the per-flag cap
-/// (options.c:546-572) at the default `max verbosity = 1` both withhold it.
+/// `layer` reaches a client only through the explicit `--debug={layer}` word.
+///
+/// `seccomp` and `landlock` are oc-only debug words that no `-v` row sets, so
+/// `-vvv` prints no sandbox line, as in rsync 3.5.2. The client never
+/// forwards `--debug=` (options.c:3126-3130); it arrives via `-M`. The module's
+/// `max verbosity` then caps each word at the highest level any row
+/// `0..=max` gives it (options.c:546-572, applied at clientserver.c:1232), so
+/// a word in no row is zeroed at any `max verbosity` up to `MAX_VERBOSITY`
+/// (5) and survives only above it, where nothing is capped.
 fn assert_daemon_sandbox_decision_reaches_client(layer: &str) {
     let needle = format!("module 'm': {layer}: ");
-    let Some((push, _)) = daemon_push(3, &["-vvv"]) else {
+    let word = format!("-M--debug={layer}");
+    let Some((vvv, _)) = daemon_push(3, &["-vvv"]) else {
         println!("SKIP: no loopback port available");
         return;
     };
-    assert!(push.contains(&needle), "push at -vvv:\n{push}");
-    let (pull, _) = daemon_pull(3, &["-vvv"]).expect("loopback port");
-    assert!(pull.contains(&needle), "pull at -vvv:\n{pull}");
-    let (capped, _) = daemon_push(1, &["-vvv"]).expect("loopback port");
-    assert!(!capped.contains(&needle), "capped:\n{capped}");
-    let (below, _) = daemon_push(3, &["-vv"]).expect("loopback port");
-    assert!(!below.contains(&needle), "-vv:\n{below}");
+    assert!(!vvv.contains(&needle), "push at -vvv:\n{vvv}");
+    let (push, _) = daemon_push(6, &["-v", &word]).expect("loopback port");
+    assert!(push.contains(&needle), "push with {word} uncapped:\n{push}");
+    let (pull, _) = daemon_pull(6, &["-v", &word]).expect("loopback port");
+    assert!(pull.contains(&needle), "pull with {word} uncapped:\n{pull}");
+    let (capped, _) = daemon_push(5, &["-v", &word]).expect("loopback port");
+    assert!(
+        !capped.contains(&needle),
+        "push with {word} at max 5:\n{capped}"
+    );
 }
 
 #[test]
-fn daemon_seccomp_decision_reaches_client_at_vvv_within_the_cap() {
+fn daemon_seccomp_decision_reaches_client_only_by_debug_word_above_the_cap() {
     assert_daemon_sandbox_decision_reaches_client("seccomp");
 }
 
 #[test]
-fn daemon_landlock_decision_reaches_client_at_vvv_within_the_cap() {
+fn daemon_landlock_decision_reaches_client_only_by_debug_word_above_the_cap() {
     assert_daemon_sandbox_decision_reaches_client("landlock");
 }
