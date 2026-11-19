@@ -217,35 +217,89 @@ fn send_all(sender: &mut ZeroCopySender, payload: &[u8]) {
     }
 }
 
-/// Leaves this thread with no locked memory to pin SEND_ZC pages from.
+/// Makes the kernel charge this thread's rings for the pages SEND_ZC pins.
 ///
-/// Sets the process's soft `RLIMIT_MEMLOCK` to zero and drops `CAP_IPC_LOCK`
-/// from this thread's effective set: the kernel charges SEND_ZC pages to a
-/// ring's creator only when that creator lacks `CAP_IPC_LOCK` (Linux
-/// `io_uring/io_uring.c` `io_uring_create`), and refuses the send with
-/// `ENOMEM` once the charge would exceed `RLIMIT_MEMLOCK` (`io_uring/rsrc.c`
-/// `__io_account_mem`). Every ring this thread creates afterwards therefore
-/// has a SEND_ZC refused, whatever the runner's real budget - including the
-/// root CI job, where the capability would otherwise exempt it.
+/// The charge applies only to rings created by a thread without
+/// `CAP_IPC_LOCK` (Linux `io_uring/io_uring.c` `io_uring_create` sets
+/// `ctx->user` only then), so the capability is dropped from this thread's
+/// effective set - which matters in the root CI job. Call it before creating
+/// any ring the test sends through.
+fn charge_this_thread_for_pinned_pages() {
+    use rustix::thread::{CapabilitySet, capabilities, set_capabilities};
+
+    let mut caps = capabilities(None).expect("read this thread's capabilities");
+    caps.effective.remove(CapabilitySet::IPC_LOCK);
+    set_capabilities(None, caps).expect("clearing an effective capability is always permitted");
+}
+
+/// Raises the soft `RLIMIT_MEMLOCK` as far as this process may, for creating
+/// rings. Returns `true` when the budget is now unlimited.
+///
+/// Some kernels charge a ring's own pages to the same budget when it is
+/// created (v6.17 `io_uring/memmap.c` `io_create_region`; newer kernels pass
+/// no ctx for the ring regions and do not). Creating the rings before the
+/// budget is spent keeps setup out of the refusal the test is about. With
+/// `CAP_SYS_RESOURCE` (root) the limit becomes unlimited and setup cannot be
+/// refused for memory at all; without it the soft limit rises to the hard one.
+fn open_pinned_page_budget() -> bool {
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+
+    let unlimited = Rlimit {
+        current: None,
+        maximum: None,
+    };
+    if setrlimit(Resource::Memlock, unlimited).is_ok() {
+        return true;
+    }
+    let hard = getrlimit(Resource::Memlock).maximum;
+    setrlimit(
+        Resource::Memlock,
+        Rlimit {
+            current: hard,
+            maximum: hard,
+        },
+    )
+    .expect("raising the soft RLIMIT_MEMLOCK to the hard limit is always permitted");
+    hard.is_none()
+}
+
+/// Spends the budget: sets the soft `RLIMIT_MEMLOCK` to zero.
+///
+/// Rings created earlier keep working, but every SEND_ZC through a ring this
+/// thread created after [`charge_this_thread_for_pinned_pages`] is now refused
+/// with `ENOMEM` (`io_uring/net.c` `io_send_zc_import` ->
+/// `io_uring/notif.h` `io_notif_account_mem` -> `io_uring/rsrc.c`
+/// `__io_account_mem`), whatever the runner's real budget.
 ///
 /// nextest runs each test in its own process, so the lowered limit cannot
 /// reach another test.
 fn exhaust_pinned_page_budget() {
     use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
-    use rustix::thread::{CapabilitySet, capabilities, set_capabilities};
 
-    let limit = getrlimit(Resource::Memlock);
+    let hard = getrlimit(Resource::Memlock).maximum;
     setrlimit(
         Resource::Memlock,
         Rlimit {
             current: Some(0),
-            maximum: limit.maximum,
+            maximum: hard,
         },
     )
     .expect("lowering the soft RLIMIT_MEMLOCK is always permitted");
-    let mut caps = capabilities(None).expect("read this thread's capabilities");
-    caps.effective.remove(CapabilitySet::IPC_LOCK);
-    set_capabilities(None, caps).expect("clearing an effective capability is always permitted");
+}
+
+/// Handles a setup step that failed before the budget was spent.
+///
+/// With an unlimited budget nothing in setup can be refused for memory, so a
+/// failure is a real failure and panics - that is the root CI job, which must
+/// never pass without exercising the refusal. Without one the user's budget
+/// is shared with every other process of the user, so the step is reported as
+/// a named skip.
+fn setup_failed(test: &str, step: &str, err: &std::io::Error, unlimited: bool) {
+    assert!(
+        !unlimited,
+        "{test}: {step} failed with an unlimited RLIMIT_MEMLOCK: {err}"
+    );
+    report_setup_failure(test, step, err);
 }
 
 /// With no pinnable memory the kernel refuses every SEND_ZC with `ENOMEM`
@@ -258,7 +312,8 @@ fn zero_copy_sender_copies_what_the_kernel_cannot_pin() {
     if !send_zc_runnable(TEST) {
         return;
     }
-    exhaust_pinned_page_budget();
+    charge_this_thread_for_pinned_pages();
+    let unlimited = open_pinned_page_budget();
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
     let send_stream = std::net::TcpStream::connect(listener.local_addr().expect("loopback addr"))
@@ -278,10 +333,11 @@ fn zero_copy_sender_copies_what_the_kernel_cannot_pin() {
     let mut sender = match ZeroCopySender::new(send_stream.as_raw_fd()) {
         Ok(s) => s,
         Err(e) => {
-            report_setup_failure(TEST, "ZeroCopySender::new", &e);
+            setup_failed(TEST, "ZeroCopySender::new", &e, unlimited);
             return;
         }
     };
+    exhaust_pinned_page_budget();
     let before = fast_io::send_zc_stats();
     send_all(&mut sender, &payload);
     let after = fast_io::send_zc_stats();
@@ -470,30 +526,104 @@ fn explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback() {
 /// paths: buffered 16 KiB writes reach the pipeline's flush and 256 KiB writes
 /// go straight through `try_send_zc`. Every SEND_ZC is refused with `ENOMEM`,
 /// and the transfer must still complete byte for byte on counted copying sends.
+///
+/// The writer's rings - the per-thread ring, built with the writer, and the
+/// pipeline's ring, built on its first zero-copy flush - are created while the
+/// budget is open: a warm-up write and flush builds the pipeline before
+/// [`exhaust_pinned_page_budget`]. On a kernel that charges ring creation,
+/// spending the budget first leaves the writer no ring at all, and it falls
+/// back to a plain socket writer before SEND_ZC is ever submitted.
 #[test]
 fn zero_copy_writer_copies_what_the_kernel_cannot_pin() {
     const TEST: &str = "zero_copy_writer_copies_what_the_kernel_cannot_pin";
     if !send_zc_runnable(TEST) {
         return;
     }
-    exhaust_pinned_page_budget();
+    charge_this_thread_for_pinned_pages();
 
     for write_size in [16 * 1024, 256 * 1024] {
-        let (engaged, before, after, len) =
-            loopback_write(fast_io::ZeroCopyPolicy::Enabled, write_size);
-        assert!(
-            engaged,
-            "{write_size}-byte writes: an ENOMEM must not turn SEND_ZC off at setup"
-        );
+        let unlimited = open_pinned_page_budget();
+        let Some((before, after, len)) = exhausted_loopback_write(TEST, write_size, unlimited)
+        else {
+            return;
+        };
         assert_eq!(
             after.bytes, before.bytes,
             "{write_size}-byte writes: nothing can go zero-copy: {before:?} -> {after:?}"
         );
-        assert_eq!(
-            after.copied_bytes - before.copied_bytes,
-            len as u64,
+        // A final buffered tail shorter than the dispatch floor goes out on a
+        // plain IORING_OP_SEND by design and is counted nowhere.
+        let copied = after.copied_bytes - before.copied_bytes;
+        let plain_tail = fast_io::SEND_ZC_DISPATCH_MIN_BYTES as u64 - 1;
+        assert!(
+            copied <= len && copied + plain_tail >= len,
             "{write_size}-byte writes: every byte must be a counted copying send: \
              {before:?} -> {after:?}"
         );
     }
+}
+
+/// Writes 2 MiB through an `Enabled` socket writer in `write_size` calls,
+/// spending the pinned-page budget after a warm-up that builds the writer's
+/// rings. Returns the counter snapshots around the post-warm-up writes and
+/// their length, or `None` after a reported setup skip.
+fn exhausted_loopback_write(
+    test: &str,
+    write_size: usize,
+    unlimited: bool,
+) -> Option<(fast_io::SendZcStats, fast_io::SendZcStats, u64)> {
+    use std::io::Write;
+    use std::net::{TcpListener, TcpStream};
+
+    const WARM_UP: usize = 16 * 1024;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let addr = listener.local_addr().expect("loopback addr");
+    let payload: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    let expected_len = payload.len();
+    let reader = thread::spawn(move || {
+        let (mut peer, _) = listener.accept().expect("accept");
+        peer.set_read_timeout(Some(Duration::from_secs(30)))
+            .expect("read timeout");
+        let mut received = Vec::with_capacity(expected_len);
+        peer.read_to_end(&mut received).expect("read to end");
+        received
+    });
+
+    let sender = TcpStream::connect(addr).expect("connect");
+    let mut writer = fast_io::socket_writer_from_fd_zero_copy(
+        sender.as_raw_fd(),
+        64 * 1024,
+        fast_io::ZeroCopyPolicy::Enabled,
+    )
+    .expect("factory never errors");
+    writer
+        .write_all(&payload[..WARM_UP])
+        .expect("warm-up write");
+    writer.flush().expect("warm-up flush");
+    let engaged = matches!(
+        writer,
+        fast_io::IoUringOrStdSocketWriter::IoUring(ref w) if w.send_zc_active()
+    );
+    if !engaged {
+        let err = std::io::Error::other("the writer did not keep SEND_ZC after its warm-up");
+        setup_failed(test, "zero-copy socket writer", &err, unlimited);
+        return None;
+    }
+
+    exhaust_pinned_page_budget();
+    let before = fast_io::send_zc_stats();
+    for chunk in payload[WARM_UP..].chunks(write_size) {
+        writer.write_all(chunk).expect("write payload");
+    }
+    writer.flush().expect("flush");
+    drop(writer);
+    drop(sender);
+    let after = fast_io::send_zc_stats();
+
+    let received = reader.join().expect("reader thread");
+    assert_eq!(
+        received, payload,
+        "{write_size}-byte writes: loopback transcript must equal the payload"
+    );
+    Some((before, after, (payload.len() - WARM_UP) as u64))
 }
