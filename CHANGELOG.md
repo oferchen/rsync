@@ -198,6 +198,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - The sender can build its incremental-recursion file list on demand, one directory at a time as upstream's `send_extra_file_list()` does, instead of walking the whole tree first; staged behind `OC_RSYNC_LAZY_FLIST` and off by default (#7949)
 - Groundwork for a native Windows daemon: each accepted connection is served in its own `oc-rsync --daemon-session` process that inherits only its own socket and re-reads the configuration, as upstream's per-connection fork does; `--daemon` itself is still refused on Windows (#8341)
 - On Windows, a daemon session's `use chroot` anchors it below the module path as rsync 3.5.1 under Cygwin does, as a path prefix rather than a jail; a missing target fails as not-found and a non-directory as not-a-directory (#8349)
+- `scripts/perf_gate.py`: same-run A/B of oc-rsync against rsync 3.5.2 (and an optional third side) per cell and transport, recording wall, CPU, peak RSS, `--stats` wire bytes and `strace -c` syscall counts as TSV, with a 1/100-scale `--self-test` (#8702)
 
 ### Changed
 
