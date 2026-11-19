@@ -783,3 +783,218 @@ fn default_perms_for_dir_no_emission_when_disabled() {
         "ACL debug must be suppressed at level 0, got {messages:?}"
     );
 }
+
+/// A destination whose default ACL (`user::rwx,group::r-x,other::---`) gives
+/// 0o750, pinned and then swapped for a symlink to a directory without one,
+/// whose umask default under 0o022 would be 0o755. `None` when the filesystem
+/// takes no default ACL.
+#[cfg(target_os = "linux")]
+fn pinned_default_acl_dir_swapped() -> Option<(tempfile::TempDir, std::path::PathBuf)> {
+    let temp = test_support::create_tempdir();
+    let base = std::fs::canonicalize(temp.path()).expect("canonicalize");
+    let dest = base.join("dest");
+    std::fs::create_dir(&dest).expect("mkdir dest");
+    std::fs::create_dir(base.join("outside")).expect("mkdir outside");
+    let default_entries = vec![
+        exacl::AclEntry::allow_user("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+        exacl::AclEntry::allow_group("", Perm::READ | Perm::EXECUTE, None),
+        exacl::AclEntry::allow_other(Perm::empty(), None),
+    ];
+    if setfacl(&[&dest], &default_entries, Some(AclOption::DEFAULT_ACL)).is_err() {
+        return None;
+    }
+    let anchor = fast_io::operator_open_destination(&dest).expect("walk dest");
+    fast_io::confinement::pin_destination_root(&dest, anchor).expect("pin dest");
+    std::fs::rename(&dest, base.join("entered")).expect("move dest aside");
+    std::os::unix::fs::symlink(base.join("outside"), &dest).expect("plant symlink");
+    Some((temp, dest))
+}
+
+/// Clears the process-wide pin when a test ends, even on a failed assertion.
+#[cfg(target_os = "linux")]
+struct PinGuard;
+
+#[cfg(target_os = "linux")]
+impl Drop for PinGuard {
+    fn drop(&mut self) {
+        fast_io::confinement::clear_destination_root();
+    }
+}
+
+/// The default ACL is read from the directory the receiver entered, as
+/// upstream's cwd-relative `sys_acl_get_file()` reads it (acls.c:1464), not
+/// from where a swapped-in symlink points.
+#[cfg(target_os = "linux")]
+#[test]
+fn default_perms_for_dir_reads_the_pinned_directory_after_a_swap() {
+    let Some((_temp, dest)) = pinned_default_acl_dir_swapped() else {
+        return;
+    };
+    let _guard = PinGuard;
+
+    assert_eq!(default_perms_for_dir(&dest, 0o022), 0o750);
+}
+
+/// Without a `/proc/self/fd` spelling of the pin, the default ACL is read
+/// through a descriptor opened beneath the pin, as upstream's
+/// `xacl_get_fd()` reads it (lib/acl.c:317-342), never replaced by the
+/// umask default.
+#[cfg(target_os = "linux")]
+#[test]
+fn default_acl_beneath_pin_reads_the_pinned_directory_after_a_swap() {
+    let Some((_temp, dest)) = pinned_default_acl_dir_swapped() else {
+        return;
+    };
+    let _guard = PinGuard;
+
+    let object = super::default_perms::default_acl_beneath_pin(&dest).expect("read default ACL");
+
+    assert_eq!(object.perms(), Some(0o750));
+}
+
+/// Diagnostic events of one kind emitted since the last drain.
+#[cfg(target_os = "linux")]
+fn drained_messages(want: fn(&logging::DiagnosticEvent) -> Option<String>) -> Vec<String> {
+    logging::drain_events().iter().filter_map(want).collect()
+}
+
+/// Pins a fresh destination and returns it, its tempdir and the pin guard.
+#[cfg(target_os = "linux")]
+fn pinned_destination() -> (tempfile::TempDir, std::path::PathBuf, PinGuard) {
+    let temp = test_support::create_tempdir();
+    let dest = std::fs::canonicalize(temp.path())
+        .expect("canonicalize")
+        .join("dest");
+    std::fs::create_dir(&dest).expect("mkdir dest");
+    let anchor = fast_io::operator_open_destination(&dest).expect("walk dest");
+    fast_io::confinement::pin_destination_root(&dest, anchor).expect("pin dest");
+    (temp, dest, PinGuard)
+}
+
+/// An unreadable default ACL warns with upstream's text before the umask
+/// default applies (acls.c:1483-1485), naming the directory as upstream's
+/// `dn` - relative to the destination it entered (receiver.c:1201) - and
+/// `ENOENT` outside a dry run is not one of the silent errnos.
+#[cfg(target_os = "linux")]
+#[test]
+fn default_perms_for_dir_warns_when_the_default_acl_cannot_be_read() {
+    use logging::{DiagnosticEvent, LogCode, VerbosityConfig, init};
+
+    let (_temp, dest, _guard) = pinned_destination();
+    std::fs::create_dir(dest.join("sub")).expect("mkdir sub");
+    init(VerbosityConfig::default());
+    let _ = logging::drain_events();
+
+    assert_eq!(
+        default_perms_for_dir(&dest.join("sub/missing"), 0o022),
+        0o755
+    );
+
+    let warnings = drained_messages(|event| match event {
+        DiagnosticEvent::Info {
+            code: LogCode::Warning,
+            message,
+            ..
+        } => Some(message.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        warnings,
+        vec![format!(
+            "default_perms_for_dir: sys_acl_get_file(sub/missing, ACL_TYPE_DEFAULT): {}, falling back on umask",
+            logging::strerror(libc::ENOENT)
+        )]
+    );
+}
+
+/// `--debug=ACL` names the directory as upstream's `dn`: `.` for the
+/// destination itself and its relative name below it (acls.c:1502-1503,
+/// generator.c:1777).
+#[cfg(target_os = "linux")]
+#[test]
+fn default_perms_trace_names_the_directory_relative_to_the_destination() {
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, init};
+
+    let (_temp, dest, _guard) = pinned_destination();
+    let sub = dest.join("sub");
+    std::fs::create_dir(&sub).expect("mkdir sub");
+    let default_entries = vec![
+        exacl::AclEntry::allow_user("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+        exacl::AclEntry::allow_group("", Perm::READ | Perm::EXECUTE, None),
+        exacl::AclEntry::allow_other(Perm::empty(), None),
+    ];
+    if setfacl(
+        &[&dest, &sub],
+        &default_entries,
+        Some(AclOption::DEFAULT_ACL),
+    )
+    .is_err()
+    {
+        return;
+    }
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.acl = 1;
+    init(cfg);
+    let _ = logging::drain_events();
+
+    assert_eq!(default_perms_for_dir(&dest, 0o022), 0o750);
+    assert_eq!(default_perms_for_dir(&sub, 0o022), 0o750);
+
+    let lines = drained_messages(|event| match event {
+        DiagnosticEvent::Debug {
+            flag: DebugFlag::Acl,
+            message,
+            ..
+        } => Some(message.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        lines,
+        vec![
+            "got ACL-based default perms 750 for directory .".to_owned(),
+            "got ACL-based default perms 750 for directory sub".to_owned(),
+        ]
+    );
+}
+
+/// An exacl error keeps only its ErrorKind (failx.rs `path_err()`): the
+/// kinds of ENOTSUP, ENOSYS and EINVAL stay silent like those errnos
+/// (acls.c:1471-1477), and any other kind still warns.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[test]
+fn a_kind_only_default_acl_error_warns_unless_it_is_unsupported() {
+    use logging::{DiagnosticEvent, LogCode, VerbosityConfig, init};
+    use std::io::{Error, ErrorKind};
+
+    let dir = test_support::create_tempdir();
+    init(VerbosityConfig::default());
+    let _ = logging::drain_events();
+
+    for kind in [ErrorKind::Unsupported, ErrorKind::InvalidInput] {
+        super::default_perms::warn_unreadable_default_acl(dir.path(), &Error::new(kind, "acl"));
+    }
+    super::default_perms::warn_unreadable_default_acl(
+        dir.path(),
+        &Error::new(ErrorKind::PermissionDenied, "acl"),
+    );
+
+    let warnings: Vec<String> = logging::drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                code: LogCode::Warning,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        warnings,
+        vec![format!(
+            "default_perms_for_dir: sys_acl_get_file({}, ACL_TYPE_DEFAULT): {}, falling back on umask",
+            dir.path().display(),
+            ErrorKind::PermissionDenied
+        )]
+    );
+}

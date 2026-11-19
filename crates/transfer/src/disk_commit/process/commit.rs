@@ -1344,10 +1344,11 @@ pub(crate) fn make_backup_copy(
     // The backup path is operator-named and resolves through the ownership
     // walk: generator.c:2283 raises `operator_path_resolve` around this copy
     // precisely because the in-place backup bypasses `make_backup()`.
-    // Stat before the copy so the read is of the pre-image, not of whatever a
-    // concurrent write may leave behind afterwards.
-    let source_meta = fs::symlink_metadata(file_path)?;
-    copy_pre_image_to_backup(file_path, &backup_path)?;
+    // The pre-image is read beneath the pinned destination (util1.c:411-412
+    // opens it by a name relative to the entered destination), and its stat
+    // is taken from that descriptor before the copy, so it describes the bytes
+    // copied rather than whatever a concurrent write leaves behind.
+    let source_meta = copy_pre_image_to_backup(file_path, &backup_path)?;
     // upstream: generator.c:2491 set_file_attrs(backupptr, back_file, ...) - the
     // in-place backup is a COPY, so it carries no inode identity of its own.
     apply_copied_backup_metadata(&backup_path, &source_meta, env);

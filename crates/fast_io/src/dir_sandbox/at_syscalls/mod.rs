@@ -64,6 +64,7 @@ pub use open::{
     open_write_via_sandbox_or_fallback, openat, openat_via_sandbox_or_fallback, readlinkat,
     readlinkat_via_sandbox_or_fallback,
 };
+pub(crate) use read_dir::list_dir_fd;
 pub use read_dir::{DirEntryView, EntryKind, ReadDirOutcome, read_dir_via_sandbox_or_fallback};
 pub use rename::{
     confined_copy_then_unlink, confined_rename, renameat, renameat_via_sandbox_or_fallback,

@@ -161,7 +161,9 @@ pub(crate) fn build_delta_signature(
         return Ok(None);
     };
 
-    let basis = fs::File::open(destination).map_err(|error| {
+    // upstream: receiver.c:1086-1093 - the basis opens by a name relative to
+    // the entered destination, so it resolves from the pinned root.
+    let basis = fast_io::destination_at::open_read(destination).map_err(|error| {
         LocalCopyError::io(
             "read existing destination",
             destination.to_path_buf(),
@@ -473,6 +475,45 @@ mod tests {
     /// Returns the default checksum algorithm used across comparison tests.
     fn default_checksum_algorithm() -> SignatureAlgorithm {
         SignatureAlgorithm::Xxh3_128 { seed: 0 }
+    }
+
+    /// The local copy's delta basis opens beneath the pinned destination, as
+    /// upstream's receiver opens it by a relative name
+    /// (receiver.c:1086-1093). After the destination is swapped for a symlink
+    /// to a directory without the file, a by-path open finds nothing.
+    #[cfg(unix)]
+    #[test]
+    fn build_delta_signature_reads_the_pinned_destination_after_a_swap() {
+        struct PinGuard;
+        impl Drop for PinGuard {
+            fn drop(&mut self) {
+                fast_io::confinement::clear_destination_root();
+            }
+        }
+        let temp = create_tempdir();
+        let base = fs::canonicalize(temp.path()).expect("canonicalize");
+        let dest = base.join("dest");
+        fs::create_dir(&dest).expect("mkdir dest");
+        fs::create_dir(base.join("outside")).expect("mkdir outside");
+        fs::write(dest.join("data.bin"), vec![7u8; 16384]).expect("write basis");
+        let metadata = fs::metadata(dest.join("data.bin")).expect("metadata");
+        let anchor = fast_io::operator_open_destination(&dest).expect("walk dest");
+        fast_io::confinement::pin_destination_root(&dest, anchor).expect("pin dest");
+        let _guard = PinGuard;
+        fs::rename(&dest, base.join("entered")).expect("move dest aside");
+        std::os::unix::fs::symlink(base.join("outside"), &dest).expect("plant symlink");
+
+        let index = build_delta_signature(
+            &dest.join("data.bin"),
+            &fast_io::EntryMetadata::from(metadata),
+            None,
+            default_checksum_algorithm(),
+            block_sum_length(false),
+        )
+        .expect("the pinned basis opens")
+        .expect("index");
+
+        assert!(index.block_count() > 0);
     }
 
     #[test]
