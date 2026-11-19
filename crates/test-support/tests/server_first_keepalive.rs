@@ -33,7 +33,9 @@
 
 use std::path::Path;
 
-use test_support::transcript_cells::{CellBinaries, NetworkCell, build_fixture, capture_cell_with};
+use test_support::transcript_cells::{
+    CellBinaries, NetworkCell, build_fixture, capture_cell_with, capture_push_into_missing_dir,
+};
 use test_support::{UpstreamVersion, require_upstream_rsync};
 
 /// `MSG_DATA`'s code (upstream: rsync.h `MSG_DATA = 0`).
@@ -371,6 +373,81 @@ fn a_push_server_with_timeout_and_a_delete_pass_keeps_alive_like_rsync() {
                 if push_keepalive_layout(&frames) != expected {
                     differ.push(format!(
                         "{name}: expected (early flush, empty frames) {expected:?}, got {frames:?}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        differ.is_empty(),
+        "{} cells differ:\n{}",
+        differ.len(),
+        differ.join("\n")
+    );
+}
+
+/// A dry-run push with `--timeout` and `--delete-before`, into a destination
+/// that exists and into one that does not, against rsync 3.5.2.
+///
+/// upstream: get_local_name() does not create a missing destination under a
+/// dry run but bumps `dry_run` (main.c:831-834), and do_delete_pass() returns
+/// at once when `dry_run > 1` (generator.c:406), so no delete_in_dir() pokes
+/// and no empty `MSG_DATA` leads the stream. Into an existing destination the
+/// pass runs and the frame leads, as on a real run (unless the daemon's
+/// `MSG_IO_TIMEOUT` has stamped the clock).
+#[test]
+fn a_dry_run_push_into_a_missing_destination_skips_the_delete_pass_keepalive() {
+    let fixture = test_support::create_tempdir();
+    build_fixture(fixture.path(), false).expect("fixture");
+    let upstream = require_upstream_rsync(UpstreamVersion::V3_5_2);
+    let oc = test_support::oc_rsync_bin();
+    let driver = ["-n", "--delete-before"];
+    let mut differ = Vec::new();
+    for shape in [NetworkCell::RshPush, NetworkCell::DaemonPush] {
+        for protocol in [None, Some(30)] {
+            let cell = Cell {
+                shape,
+                protocol,
+                timeout: true,
+            };
+            let clock_stamped =
+                shape == NetworkCell::DaemonPush && protocol.is_none_or(|p| p >= 31);
+            for missing in [false, true] {
+                let name = format!("{} {driver:?} missing={missing}", cell.name());
+                let leads_with_keepalive = !missing && !clock_stamped;
+                let capture = |binary: &Path| {
+                    let binaries = CellBinaries {
+                        oc_rsync: binary,
+                        capture_rsh: Path::new(env!("CARGO_BIN_EXE_capture-rsh")),
+                    };
+                    let mut args = cell.args();
+                    args.extend(driver.iter().map(|arg| (*arg).to_owned()));
+                    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                    let transcript = if missing {
+                        capture_push_into_missing_dir(shape, binaries, fixture.path(), &args)
+                    } else {
+                        capture_cell_with(shape, binaries, fixture.path(), &args)
+                    };
+                    transcript
+                        .unwrap_or_else(|e| {
+                            panic!("{name}: {} capture failed: {e}", binary.display())
+                        })
+                        .server_frames()
+                        .unwrap_or_else(|e| panic!("{name}: server stream does not decode: {e}"))
+                };
+                let leads = |frames: &[(u8, usize)]| frames.first() == Some(&(MSG_DATA, 0));
+                if let Some(upstream) = &upstream {
+                    let frames = capture(upstream.binary());
+                    assert_eq!(
+                        leads(&frames),
+                        leads_with_keepalive,
+                        "{name}: rsync 3.5.2 no longer matches the rule; its frames: {frames:?}"
+                    );
+                }
+                let frames = capture(&oc);
+                if leads(&frames) != leads_with_keepalive {
+                    differ.push(format!(
+                        "{name}: expected a leading empty MSG_DATA {leads_with_keepalive}, got {frames:?}"
                     ));
                 }
             }

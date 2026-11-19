@@ -113,8 +113,11 @@ impl ReceiverContext {
             // delete_in_dir() pokes a flushing keepalive ahead of its io_error
             // test, before anything is written, so a --timeout push leads with
             // an empty MSG_DATA (io.c:1665-1666). do_delete_pass() returns
-            // early under --list-only (generator.c:406).
-            if !self.config.flags.list_only {
+            // early under --list-only, and when a dry run left the
+            // destination absent (`dry_run > 1`, generator.c:406).
+            if !self.config.flags.list_only
+                && self.dest_root != crate::receiver::dest_root::DestRoot::DryRunAbsent
+            {
                 writer.maybe_send_keepalive()?;
             }
             self.run_receiver_delete_pass(
@@ -476,7 +479,7 @@ impl ReceiverContext {
         // root (FLAG_DIR_CREATED -> ITEM_IS_NEW) as a created dir; oc mkdir's it
         // out-of-band so the dir loop treats it as existing. See the incremental
         // path for the full rationale.
-        if self.dest_root_created {
+        if self.dest_root == crate::receiver::dest_root::DestRoot::Created {
             self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
         }
         // Fold the per-type created tally (dirs, symlinks, specials, and new

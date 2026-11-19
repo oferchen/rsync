@@ -301,6 +301,39 @@ pub fn ensure_dest_root_exists(
     dry_run: bool,
     mkpath: bool,
 ) -> io::Result<bool> {
+    ensure_dest_root(dest_root, file_total, trailing_slash, dry_run, mkpath)
+        .map(|root| root == DestRoot::Created)
+}
+
+/// What [`ensure_dest_root`] found at the destination root.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::receiver) enum DestRoot {
+    /// The root existed, or names a single file's destination.
+    #[default]
+    Present,
+    /// The pre-flight mkdir created the root (`FLAG_DIR_CREATED`).
+    Created,
+    /// A dry run would have created the root or its `--mkpath` parent, so it
+    /// is not there: upstream bumps `dry_run` past 1 (main.c:833, :863).
+    DryRunAbsent,
+}
+
+/// [`ensure_dest_root_exists`], also telling a root a dry run left absent
+/// from one that is present.
+pub(in crate::receiver) fn ensure_dest_root(
+    dest_root: &Path,
+    file_total: usize,
+    trailing_slash: bool,
+    dry_run: bool,
+    mkpath: bool,
+) -> io::Result<DestRoot> {
+    let made_root = |created: bool| {
+        if created {
+            DestRoot::Created
+        } else {
+            DestRoot::Present
+        }
+    };
     let mut stat = dest_root.metadata();
     // upstream: main.c:754 - `cp = strrchr(dest_path, '/')`.
     let has_separator = trailing_slash || parent_of(dest_root).is_some();
@@ -320,7 +353,7 @@ pub fn ensure_dest_root_exists(
     }
     let created = made > 0 && !dry_run;
     match stat {
-        Ok(meta) if meta.is_dir() => return Ok(created),
+        Ok(meta) if meta.is_dir() => return Ok(made_root(created)),
         Ok(_) if file_total > 1 || trailing_slash => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -338,7 +371,7 @@ pub fn ensure_dest_root_exists(
     }
     if file_total > 1 || trailing_slash {
         if dry_run {
-            return Ok(false);
+            return Ok(DestRoot::DryRunAbsent);
         }
         // Distinguish "path absent" from "dangling symlink": if lstat
         // shows a symlink while stat says NotFound, the link target is
@@ -360,7 +393,7 @@ pub fn ensure_dest_root_exists(
         // upstream: main.c:817 - a single do_mkdir(); an ancestor that is
         // missing fails it with ENOENT unless --mkpath made it above.
         return std::fs::create_dir(dest_root)
-            .map(|()| true)
+            .map(|()| DestRoot::Created)
             .map_err(|cause| {
                 DestRootFailure::Mkdir {
                     cause,
@@ -370,12 +403,12 @@ pub fn ensure_dest_root_exists(
             });
     }
     let Some(parent) = parent_of(dest_root) else {
-        return Ok(created);
+        return Ok(made_root(created));
     };
     // upstream: main.c:856-864 - a dry run under --mkpath does not enter the
     // parent it would have made.
     if dry_run && mkpath && parent.metadata().is_err() {
-        return Ok(false);
+        return Ok(DestRoot::DryRunAbsent);
     }
     // upstream: main.c:865 change_dir(dest_path, CD_NORMAL). Stat-ing
     // `<parent>/.` needs what the chdir needs - a directory the process may
@@ -387,7 +420,7 @@ pub fn ensure_dest_root_exists(
         }
         .into_io()
     })?;
-    Ok(created)
+    Ok(made_root(created))
 }
 
 /// The directory part of `path`, or `None` when it has none.

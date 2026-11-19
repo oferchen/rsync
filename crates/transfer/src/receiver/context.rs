@@ -369,7 +369,7 @@ pub struct ReceiverContext {
     /// the root reports a metadata-only row that the standard significance
     /// gate drops. `emit_itemize` reads this to decide whether to force the
     /// created-directory glyph for the root entry.
-    pub(in crate::receiver) dest_root_created: bool,
+    pub(in crate::receiver) dest_root: super::dest_root::DestRoot,
     /// Whether the sender has finished transmitting the file list.
     ///
     /// Set to `true` once `receive_file_list` completes on a non-INC_RECURSE
@@ -788,7 +788,7 @@ impl ReceiverContext {
             pending_del_stats: DeleteStats::new(),
             make_room_delete_stats: std::cell::Cell::new(DeleteStats::new()),
             pipeline,
-            dest_root_created: false,
+            dest_root: super::dest_root::DestRoot::Present,
             flist_eof: false,
             defer_itemize: false,
             itemize_followers_per_segment: false,

@@ -229,16 +229,53 @@ pub fn capture_cell_with(
     src: &Path,
     extra: &[&str],
 ) -> Result<WireTranscript, CellError> {
+    capture_cell_into(cell, binaries, src, extra, None)
+}
+
+/// [`capture_cell_with`] for a push whose destination is `new`, a directory
+/// that does not exist yet below the destination root.
+///
+/// # Errors
+///
+/// Returns [`CellError`] when any part of the run fails; a failed transfer
+/// carries the client's stderr.
+///
+/// # Panics
+///
+/// Panics when `cell` is a pull.
+pub fn capture_push_into_missing_dir(
+    cell: NetworkCell,
+    binaries: CellBinaries<'_>,
+    src: &Path,
+    extra: &[&str],
+) -> Result<WireTranscript, CellError> {
+    assert!(!cell.is_pull(), "{cell:?} is not a push");
+    capture_cell_into(cell, binaries, src, extra, Some("new"))
+}
+
+fn capture_cell_into(
+    cell: NetworkCell,
+    binaries: CellBinaries<'_>,
+    src: &Path,
+    extra: &[&str],
+    missing: Option<&str>,
+) -> Result<WireTranscript, CellError> {
     let work = crate::create_tempdir();
     let dest = work.path().join("dest");
     fs::create_dir(&dest)?;
     match cell {
         NetworkCell::RshPush | NetworkCell::RshPull => {
-            capture_rsh_cell(cell, binaries, src, &dest, work.path(), extra)
+            capture_rsh_cell(cell, binaries, src, &dest, work.path(), extra, missing)
         }
-        NetworkCell::DaemonPush | NetworkCell::DaemonPull => {
-            capture_daemon_cell(cell, binaries.oc_rsync, src, &dest, work.path(), extra)
-        }
+        NetworkCell::DaemonPush | NetworkCell::DaemonPull => capture_daemon_cell(
+            cell,
+            binaries.oc_rsync,
+            src,
+            &dest,
+            work.path(),
+            extra,
+            missing,
+        ),
     }
 }
 
@@ -249,13 +286,15 @@ fn capture_rsh_cell(
     dest: &Path,
     work: &Path,
     extra: &[&str],
+    missing: Option<&str>,
 ) -> Result<WireTranscript, CellError> {
     let recorder = TranscriptRecorder::new(work);
     let mut cmd = recorder.command(binaries.oc_rsync, binaries.oc_rsync, binaries.capture_rsh);
     cmd.arg("-rt").args(extra);
     if cell == NetworkCell::RshPush {
+        let target = missing.map_or_else(|| dest.to_path_buf(), |name| dest.join(name));
         cmd.arg(format!("{}/", src.display()))
-            .arg(format!("cellhost:{}", dest.display()));
+            .arg(format!("cellhost:{}", target.display()));
     } else {
         cmd.arg(format!("cellhost:{}/", src.display())).arg(dest);
     }
@@ -270,6 +309,7 @@ fn capture_daemon_cell(
     dest: &Path,
     work: &Path,
     extra: &[&str],
+    missing: Option<&str>,
 ) -> Result<WireTranscript, CellError> {
     let module_root = if cell == NetworkCell::DaemonPush {
         dest
@@ -289,7 +329,11 @@ fn capture_daemon_cell(
             .arg("/dev/null"),
     )?;
     let relay = TeeRelay::start(SocketAddr::from((Ipv4Addr::LOCALHOST, daemon.port())))?;
-    let url = format!("rsync://127.0.0.1:{}/{MODULE}/", relay.port);
+    let url = format!(
+        "rsync://127.0.0.1:{}/{MODULE}/{}",
+        relay.port,
+        missing.map_or_else(String::new, |name| format!("{name}/"))
+    );
 
     let mut cmd = normalized_client(oc_rsync);
     cmd.arg("-rt").args(extra);

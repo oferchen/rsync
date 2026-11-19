@@ -105,12 +105,12 @@ fn render_itemize_root_directory_emits_creation_glyph_when_freshly_created() {
     // The root entry (path == ".") arrives with iflags == 0 because oc-rsync's
     // create_directory_incremental cannot observe the pre-flight mkdir
     // performed by `ensure_dest_root_exists`. When that pre-flight actually
-    // created the root (`dest_root_created == true`), mirror upstream
+    // created the root (`dest_root` is `DestRoot::Created`), mirror upstream
     // main.c:829-831 FLAG_DIR_CREATED by forcing the created-directory glyph.
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.dest_root_created = true;
+    ctx.dest_root = crate::receiver::dest_root::DestRoot::Created;
 
     let entry = FileEntry::new_directory(".".into(), 0o755);
     let iflags = ItemFlags::from_raw(0);
@@ -132,7 +132,7 @@ fn render_itemize_root_directory_no_glyph_when_dest_root_preexisted() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
     let ctx = ReceiverContext::new_for_test(&handshake, config);
-    // dest_root_created defaults to false (root pre-existed).
+    // dest_root defaults to `DestRoot::Present` (root pre-existed).
 
     let entry = FileEntry::new_directory(".".into(), 0o755);
     let iflags = ItemFlags::from_raw(0);

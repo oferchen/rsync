@@ -18,9 +18,9 @@ use protocol::filters::{FilterRuleWireFormat, read_filter_list};
 use filters::FilterChain;
 
 use crate::flist_banner::{FlistBanner, FlistSide, with_client_stream};
+use crate::receiver::dest_root::{DestRoot, ensure_dest_root};
 use crate::receiver::{
     PHASE1_CHECKSUM_LENGTH, PipelineSetup, ReceiverContext, dest_arg_has_trailing_slash,
-    ensure_dest_root_exists,
 };
 use crate::shared::ChecksumFactory;
 use crate::transfer_state::TransferPhase;
@@ -194,7 +194,7 @@ impl ReceiverContext {
         // upstream: main.c:820-821 - the receiver prints `created directory
         // <dest>` right after the file list arrives, before generate_files()
         // drives the per-entry itemize rows. Emit it here, after the dest-root
-        // pre-flight mkdir recorded `dest_root_created` and before the drivers
+        // pre-flight mkdir recorded `dest_root` and before the drivers
         // enter their transfer loops, so the notice precedes the per-file
         // output on every driver (`run_pipelined`,
         // `run_pipelined_incremental`).
@@ -292,7 +292,7 @@ impl ReceiverContext {
         writer: &mut W,
         dest_dir: &std::path::Path,
     ) -> io::Result<()> {
-        if !self.dest_root_created {
+        if self.dest_root != DestRoot::Created {
             return Ok(());
         }
         if !(logging::info_gte(logging::InfoFlag::Name, 1)
@@ -752,10 +752,10 @@ impl ReceiverContext {
         // /new/` leaves `/new/` absent. `do_server_recv()` calls
         // `get_local_name()` unconditionally (main.c:1248-1249), so the gate
         // is client-side only.
-        let created_dest_root = if self.is_empty_client_flist(file_count) {
-            false
+        let dest_root = if self.is_empty_client_flist(file_count) {
+            DestRoot::Present
         } else {
-            ensure_dest_root_exists(
+            ensure_dest_root(
                 &dest_dir,
                 file_count,
                 trailing_slash,
@@ -799,7 +799,7 @@ impl ReceiverContext {
         // upstream: main.c:826 - record whether the pre-flight mkdir
         // created the dest root so the root entry's itemize row can OR in
         // ITEM_IS_NEW (cd+++++++++ ./) only when it was actually created.
-        self.dest_root_created = created_dest_root;
+        self.dest_root = dest_root;
         // upstream: main.c:1259 - with get_local_name() done, curr_dir is
         // `dest_dir`, and check_alt_basis_dirs() rewrites a relative basis
         // onto it (main.c:898-911). A daemon module sets sanitize_paths
@@ -1523,7 +1523,11 @@ mod created_directory_notice_tests {
 
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.dest_root_created = created;
+        ctx.dest_root = if created {
+            crate::receiver::dest_root::DestRoot::Created
+        } else {
+            crate::receiver::dest_root::DestRoot::Present
+        };
         ctx
     }
 

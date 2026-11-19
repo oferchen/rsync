@@ -472,7 +472,7 @@ impl ReceiverContext {
         // entry is seen as "existing" in the dir loop above and not counted
         // there; count it here so the created-dir total includes the synthesized
         // root (dir:N+1 for a pull into a fresh directory), matching upstream.
-        if self.dest_root_created {
+        if self.dest_root == crate::receiver::dest_root::DestRoot::Created {
             self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
         }
         // Fold the per-type created tally accumulated across the directory,
@@ -1005,7 +1005,7 @@ impl ReceiverContext {
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
         stats.segments_released_mid_walk = self.segments_released_mid_walk;
-        if self.dest_root_created {
+        if self.dest_root == crate::receiver::dest_root::DestRoot::Created {
             self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
         }
         stats.created_stats = self.created_stats.get();
