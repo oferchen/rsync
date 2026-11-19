@@ -127,13 +127,27 @@ impl BandwidthLimiter {
     /// A zero-byte call is a no-op and returns immediately.
     /// upstream: io.c:sleep_for_bwlimit() - debt accumulation and sleep logic
     pub fn register(&mut self, bytes: usize) -> super::super::LimiterSleep {
+        self.register_with_clock(bytes, Instant::now)
+    }
+
+    /// [`register`](Self::register) with the clock supplied by the caller.
+    ///
+    /// `now` is read once before the sleep decision and, when the limiter
+    /// sleeps, once after it - the two `gettimeofday()` calls of upstream's
+    /// `sleep_for_bwlimit()`. Tests pass a fixed or scripted clock so the debt
+    /// arithmetic does not depend on how long the host took between calls.
+    pub(crate) fn register_with_clock(
+        &mut self,
+        bytes: usize,
+        mut now: impl FnMut() -> Instant,
+    ) -> super::super::LimiterSleep {
         if bytes == 0 {
             return super::super::LimiterSleep::default();
         }
 
         self.total_written = self.total_written.saturating_add(bytes as u128);
 
-        let start = Instant::now();
+        let start = now();
         let bytes_per_second = u128::from(self.limit_bytes.get());
 
         let mut elapsed_us = self.simulated_elapsed_us;
@@ -164,7 +178,7 @@ impl BandwidthLimiter {
             sleep_for(requested);
         }
 
-        let end = Instant::now();
+        let end = now();
         let elapsed_us = end
             .checked_duration_since(start)
             .map_or(0, |duration| duration.as_micros().min(u128::from(u64::MAX)));

@@ -15,7 +15,7 @@
 use super::super::MINIMUM_SLEEP_MICROS;
 use super::{BandwidthLimiter, recorded_sleep_session};
 use std::num::NonZeroU64;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn nz(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).expect("non-zero value required")
@@ -1262,33 +1262,57 @@ fn zero_byte_registration_does_not_advance_timing() {
     );
 }
 
-#[test]
-fn debt_decreases_toward_zero_over_steady_state() {
+/// Debt left after each of ten steady chunks that follow a 3 s burst, with
+/// `step` added to the clock on every read.
+fn steady_debts_after_burst(step: Duration) -> (u64, usize, Vec<u128>) {
     let mut session = recorded_sleep_session();
     session.clear();
 
     let rate = 2000_u64;
     let chunk = (rate / 4) as usize;
     let mut limiter = BandwidthLimiter::new(nz(rate));
+    let mut t = Instant::now();
+    let mut clock = || {
+        let now = t;
+        t += step;
+        now
+    };
 
-    // Create initial debt
-    let _ = limiter.register(rate as usize * 3);
+    let burst = limiter.register_with_clock(rate as usize * 3, &mut clock);
+    assert_eq!(burst.requested(), Duration::from_secs(3));
 
-    // Track debt over successive steady-state chunks
-    let mut debts = Vec::new();
-    for _ in 0..10 {
-        let _ = limiter.register(chunk);
-        debts.push(limiter.accumulated_debt_for_testing());
+    let debts = (0..10)
+        .map(|_| {
+            let _ = limiter.register_with_clock(chunk, &mut clock);
+            limiter.accumulated_debt_for_testing()
+        })
+        .collect();
+    (rate, chunk, debts)
+}
+
+/// upstream: io.c:sleep_for_bwlimit() - after a sleep `total_written` keeps
+/// only the part of the debt the sleep did not cover, and the next call
+/// subtracts the time elapsed since. So a burst is repaid once and each
+/// steady chunk leaves at most that chunk outstanding: the debt is bounded,
+/// it does not keep falling. Under a fixed clock (test builds only record
+/// sleeps) the bound is exact; a clock that advances between reads - what a
+/// real host does, by a varying amount - can only lower it. The earlier
+/// version compared the two halves of a wall-clock run and failed on a
+/// 499-vs-500 tie decided by host timing.
+#[test]
+fn debt_after_a_burst_settles_at_one_chunk() {
+    let (_, chunk, fixed) = steady_debts_after_burst(Duration::ZERO);
+    assert_eq!(fixed, vec![chunk as u128; 10], "fixed clock");
+
+    let (rate, chunk, moving) = steady_debts_after_burst(Duration::from_millis(1));
+    // Each read advances 1 ms, which credits 2 bytes at 2000 B/s.
+    let credit = u128::from(rate) / 1000;
+    for (i, debt) in moving.iter().enumerate() {
+        assert!(
+            (chunk as u128 - 2 * credit..=chunk as u128).contains(debt),
+            "moving clock, chunk {i}: debt {debt} outside one chunk"
+        );
     }
-
-    // After the initial burst recovery, debt should stabilize at a low level.
-    // The last few entries should be smaller than the first few.
-    let first_half_max = debts[..5].iter().copied().max().unwrap_or(0);
-    let second_half_max = debts[5..].iter().copied().max().unwrap_or(0);
-    assert!(
-        second_half_max <= first_half_max,
-        "debt should decay: first-half max {first_half_max}, second-half max {second_half_max}"
-    );
 }
 
 #[test]
