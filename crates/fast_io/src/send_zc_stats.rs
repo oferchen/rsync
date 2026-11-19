@@ -16,6 +16,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static SENDS: AtomicU64 = AtomicU64::new(0);
 static BYTES: AtomicU64 = AtomicU64::new(0);
 static FALLBACKS: AtomicU64 = AtomicU64::new(0);
+static COPIED_SENDS: AtomicU64 = AtomicU64::new(0);
+static COPIED_BYTES: AtomicU64 = AtomicU64::new(0);
 
 /// Snapshot of the process-wide SEND_ZC counters, read by [`send_zc_stats`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -28,6 +30,12 @@ pub struct SendZcStats {
     /// Socket writers whose policy permitted SEND_ZC but which were built
     /// without it, or lost it mid-stream, and used a plain send instead.
     pub fallbacks: u64,
+    /// `IORING_OP_SEND_ZC` submissions the kernel refused for lack of
+    /// pinnable memory (`ENOMEM`, `ENOBUFS`) whose bytes were then sent with a
+    /// copying `IORING_OP_SEND` instead.
+    pub copied_sends: u64,
+    /// Total bytes those copying sends reported.
+    pub copied_bytes: u64,
 }
 
 /// Returns the process-wide SEND_ZC counters.
@@ -37,6 +45,8 @@ pub fn send_zc_stats() -> SendZcStats {
         sends: SENDS.load(Ordering::Relaxed),
         bytes: BYTES.load(Ordering::Relaxed),
         fallbacks: FALLBACKS.load(Ordering::Relaxed),
+        copied_sends: COPIED_SENDS.load(Ordering::Relaxed),
+        copied_bytes: COPIED_BYTES.load(Ordering::Relaxed),
     }
 }
 
@@ -45,6 +55,14 @@ pub fn send_zc_stats() -> SendZcStats {
 pub(crate) fn record_send(bytes: usize) {
     SENDS.fetch_add(1, Ordering::Relaxed);
     BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
+}
+
+/// Records one copying send of `bytes` bytes that replaced a SEND_ZC the
+/// kernel refused for lack of pinnable memory.
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+pub(crate) fn record_copied_send(bytes: usize) {
+    COPIED_SENDS.fetch_add(1, Ordering::Relaxed);
+    COPIED_BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
 }
 
 /// Records one SEND_ZC-permitted writer that ended up on a plain send.

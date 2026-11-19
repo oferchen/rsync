@@ -223,8 +223,9 @@ nix = { workspace = true, features = ["signal"] }
 # The dir_sandbox descriptor-exhaustion test lowers RLIMIT_NOFILE to provoke a
 # real EMFILE from the kernel. rustix's `process` feature exposes a safe
 # setrlimit/getrlimit pair, so the test needs no `unsafe` libc call; the crate
-# is already a production dependency here under the `fs` feature.
-rustix = { workspace = true, features = ["process", "stdio"] }
+# is already a production dependency here under the `fs` feature. The SEND_ZC
+# ENOMEM tests also drop CAP_IPC_LOCK through rustix's safe capset (`thread`).
+rustix = { workspace = true, features = ["process", "stdio", "thread"] }
 
 # The heap_stats tests must run under the SAME global allocator the binary
 # installs (src/bin/oc-rsync.rs). Without it jemalloc is linked but unused in

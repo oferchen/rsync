@@ -58,9 +58,9 @@
 use std::io;
 use std::os::unix::io::RawFd;
 
-use io_uring::{IoUring as RawIoUring, opcode, types};
+use io_uring::IoUring as RawIoUring;
 
-use super::send_zc::{IORING_CQE_F_MORE, IORING_CQE_F_NOTIF};
+use super::send_zc::{IORING_CQE_F_MORE, IORING_CQE_F_NOTIF, SendOp, is_pin_refusal};
 
 /// Number of send buffers the pipeline keeps, and therefore the maximum
 /// number of buffers the kernel may hold pinned at once.
@@ -208,17 +208,22 @@ impl SendZcPipeline {
 
     /// Submits `len` bytes from `slots[slot]`, resubmitting the remainder on a
     /// short send, and waits only for each submission's transfer CQE.
+    ///
+    /// When the kernel refuses a SEND_ZC for lack of pinnable memory
+    /// (`ENOMEM`, `ENOBUFS`; see the `send_zc` module docs) the rest of this
+    /// buffer goes out as copying `IORING_OP_SEND`s instead. The next buffer
+    /// starts on SEND_ZC again, since the budget is shared and may have been
+    /// released in the meantime.
     fn send_slot(&mut self, slot: usize, len: usize) -> io::Result<()> {
         let Self { ring, fd, slots } = self;
+        let mut op = SendOp::ZeroCopy;
         let mut sent = 0usize;
         while sent < len {
             let remaining = len - sent;
             // SAFETY: `sent < len <= buf.len()`, so the offset stays inside
             // the buffer's allocation and `remaining` bytes from it do too.
             let ptr = unsafe { slots[slot].buf.as_ptr().add(sent) };
-            let entry = opcode::SendZc::new(types::Fd(*fd), ptr, remaining as u32)
-                .build()
-                .user_data(slot as u64);
+            let entry = op.entry(*fd, ptr, remaining).user_data(slot as u64);
 
             slots[slot].pending += 1;
             // SAFETY: `entry` points into `slots[slot].buf`, which this
@@ -228,9 +233,11 @@ impl SendZcPipeline {
             // (or told us via a cleared `IORING_CQE_F_MORE` that it will not
             // post one). No caller can observe, refill, or free a buffer with
             // `pending > 0`: `acquire_free_slot` skips it and
-            // `SendZcPipeline::drop` drains before any deallocation. The SQE
-            // also references `fd`, which the caller keeps open for at least
-            // the pipeline's lifetime.
+            // `SendZcPipeline::drop` drains before any deallocation. A copying
+            // SEND is counted the same way: its single CQE carries no
+            // `IORING_CQE_F_MORE`, so `reap_queued` settles it on arrival. The
+            // SQE also references `fd`, which the caller keeps open for at
+            // least the pipeline's lifetime.
             let pushed = unsafe { ring.submission().push(&entry) };
             if pushed.is_err() {
                 slots[slot].pending -= 1;
@@ -239,6 +246,10 @@ impl SendZcPipeline {
 
             let result = wait_for_transfer(ring, slots)?;
             if result < 0 {
+                if matches!(op, SendOp::ZeroCopy) && is_pin_refusal(-result) {
+                    op = SendOp::Copy;
+                    continue;
+                }
                 return Err(io::Error::from_raw_os_error(-result));
             }
             if result == 0 {
@@ -247,7 +258,10 @@ impl SendZcPipeline {
                     "SEND_ZC reported zero bytes sent",
                 ));
             }
-            crate::send_zc_stats::record_send(result as usize);
+            match op {
+                SendOp::ZeroCopy => crate::send_zc_stats::record_send(result as usize),
+                SendOp::Copy => crate::send_zc_stats::record_copied_send(result as usize),
+            }
             sent += result as usize;
         }
         Ok(())

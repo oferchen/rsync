@@ -227,8 +227,8 @@ pub fn io_uring_capability_matrix() -> String {
     }
     let zc = crate::send_zc_stats();
     lines.push(format!(
-        "  send_zc counters:   {} sends, {} bytes, {} fallbacks (this process)",
-        zc.sends, zc.bytes, zc.fallbacks
+        "  send_zc counters:   {} sends, {} bytes, {} fallbacks, {} copied sends, {} copied bytes (this process)",
+        zc.sends, zc.bytes, zc.fallbacks, zc.copied_sends, zc.copied_bytes
     ));
 
     // Feature gates (rendered from the single IO_URING_FEATURE_GATES source).

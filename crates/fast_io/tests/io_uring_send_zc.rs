@@ -8,6 +8,13 @@
 //! state on stderr why they skip when the running kernel does not advertise
 //! `IORING_OP_SEND_ZC` (kernel < 6.0, seccomp-restricted environments,
 //! container runtimes that block the opcode).
+//!
+//! The kernel refuses a SEND_ZC with `ENOMEM` when the user's locked-memory
+//! budget (`RLIMIT_MEMLOCK`, shared by every process of that user) cannot
+//! cover the pinned pages, so whether a send goes zero-copy depends on what
+//! else the runner is doing. The tests below therefore accept either a SEND_ZC
+//! or the counted copying send that replaces a refused one, and two of them
+//! empty the budget on purpose so the copying send is what runs.
 
 #![cfg(all(target_os = "linux", feature = "iouring-send-zc"))]
 
@@ -118,18 +125,9 @@ fn zero_copy_sender_roundtrips_1mib_over_tcp_loopback() {
         }
     };
 
-    let mut sent_total = 0usize;
-    while sent_total < payload.len() {
-        let chunk = &payload[sent_total..];
-        // The environment probe said SEND_ZC runs here, so a rejected
-        // submission is a real failure, not a skip. (Over a socketpair this
-        // used to be EOPNOTSUPP on every kernel and the test never ran.)
-        let n = sender
-            .send_zc(chunk)
-            .unwrap_or_else(|e| panic!("SEND_ZC rejected on a SEND_ZC-capable host: {e}"));
-        assert!(n > 0, "kernel reported zero bytes sent");
-        sent_total += n;
-    }
+    let before = fast_io::send_zc_stats();
+    send_all(&mut sender, &payload);
+    let after = fast_io::send_zc_stats();
 
     // Drop the send endpoint so the read thread observes EOF after
     // draining the last byte; this collapses the receive loop cleanly.
@@ -143,6 +141,115 @@ fn zero_copy_sender_roundtrips_1mib_over_tcp_loopback() {
         "received byte count must match sent count"
     );
     assert_eq!(received, payload, "round-tripped bytes must match");
+    // Each byte went out either zero-copy or, where the kernel had no
+    // pinnable memory left for this user, through the counted copying send.
+    assert_eq!(
+        (after.bytes - before.bytes) + (after.copied_bytes - before.copied_bytes),
+        payload.len() as u64,
+        "every byte must be counted as a SEND_ZC or a copying send: {before:?} -> {after:?}"
+    );
+}
+
+/// Sends all of `payload` through `sender`. The environment probe said
+/// SEND_ZC runs here, so any error is a real failure: running out of
+/// pinnable memory is not one, because the sender answers it with a copying
+/// send.
+fn send_all(sender: &mut ZeroCopySender, payload: &[u8]) {
+    let mut sent_total = 0usize;
+    while sent_total < payload.len() {
+        let n = sender
+            .send_zc(&payload[sent_total..])
+            .unwrap_or_else(|e| panic!("send failed on a SEND_ZC-capable host: {e}"));
+        assert!(n > 0, "kernel reported zero bytes sent");
+        sent_total += n;
+    }
+}
+
+/// Leaves this thread with no locked memory to pin SEND_ZC pages from.
+///
+/// Sets the process's soft `RLIMIT_MEMLOCK` to zero and drops `CAP_IPC_LOCK`
+/// from this thread's effective set: the kernel charges SEND_ZC pages to a
+/// ring's creator only when that creator lacks `CAP_IPC_LOCK` (Linux
+/// `io_uring/io_uring.c` `io_uring_create`), and refuses the send with
+/// `ENOMEM` once the charge would exceed `RLIMIT_MEMLOCK` (`io_uring/rsrc.c`
+/// `__io_account_mem`). Every ring this thread creates afterwards therefore
+/// has a SEND_ZC refused, whatever the runner's real budget - including the
+/// root CI job, where the capability would otherwise exempt it.
+///
+/// nextest runs each test in its own process, so the lowered limit cannot
+/// reach another test.
+fn exhaust_pinned_page_budget() {
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+    use rustix::thread::{CapabilitySet, capabilities, set_capabilities};
+
+    let limit = getrlimit(Resource::Memlock);
+    setrlimit(
+        Resource::Memlock,
+        Rlimit {
+            current: Some(0),
+            maximum: limit.maximum,
+        },
+    )
+    .expect("lowering the soft RLIMIT_MEMLOCK is always permitted");
+    let mut caps = capabilities(None).expect("read this thread's capabilities");
+    caps.effective.remove(CapabilitySet::IPC_LOCK);
+    set_capabilities(None, caps).expect("clearing an effective capability is always permitted");
+}
+
+/// With no pinnable memory the kernel refuses every SEND_ZC with `ENOMEM`
+/// (the nightly musl failure under a full parallel nextest run). The sender
+/// must deliver the payload anyway, through copying sends, and say so in the
+/// counters - zero copy is an optimisation, never a reason to fail a transfer.
+#[test]
+fn zero_copy_sender_copies_what_the_kernel_cannot_pin() {
+    const TEST: &str = "zero_copy_sender_copies_what_the_kernel_cannot_pin";
+    if !send_zc_runnable(TEST) {
+        return;
+    }
+    exhaust_pinned_page_budget();
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let send_stream = std::net::TcpStream::connect(listener.local_addr().expect("loopback addr"))
+        .expect("connect");
+    let (mut recv_stream, _) = listener.accept().expect("accept");
+    let payload: Vec<u8> = (0..1024 * 1024).map(|i| (i % 253) as u8).collect();
+    let expected_len = payload.len();
+    let reader = thread::spawn(move || {
+        recv_stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .expect("set_read_timeout");
+        let mut received = Vec::with_capacity(expected_len);
+        recv_stream.read_to_end(&mut received).expect("read to end");
+        received
+    });
+
+    let mut sender = match ZeroCopySender::new(send_stream.as_raw_fd()) {
+        Ok(s) => s,
+        Err(e) => {
+            report_setup_failure(TEST, "ZeroCopySender::new", &e);
+            return;
+        }
+    };
+    let before = fast_io::send_zc_stats();
+    send_all(&mut sender, &payload);
+    let after = fast_io::send_zc_stats();
+    drop(sender);
+    drop(send_stream);
+
+    assert_eq!(
+        reader.join().expect("reader thread"),
+        payload,
+        "the copying sends must deliver the payload byte for byte"
+    );
+    assert_eq!(
+        after.bytes, before.bytes,
+        "no byte can go zero-copy without pinnable memory: {before:?} -> {after:?}"
+    );
+    assert_eq!(
+        after.copied_bytes - before.copied_bytes,
+        payload.len() as u64,
+        "every byte must be counted as a copying send: {before:?} -> {after:?}"
+    );
 }
 
 #[test]
@@ -195,11 +302,16 @@ fn zero_copy_sender_reports_raw_fd() {
 }
 
 /// Drives `socket_writer_from_fd_zero_copy` under `policy` over a real TCP
-/// loopback pair with a 2 MiB payload. Asserts the peer received the exact
-/// bytes and returns whether the writer claimed SEND_ZC plus the counter
-/// snapshots taken around the write.
+/// loopback pair with a 2 MiB payload, written as `write_size`-byte calls.
+/// Asserts the peer received the exact bytes and returns whether the writer
+/// claimed SEND_ZC plus the counter snapshots taken around the write.
+///
+/// A `write_size` below the writer's 64 KiB buffer sends through the buffered
+/// flush (the SEND_ZC pipeline); a larger one through the synchronous
+/// `try_send_zc` on the caller's slice.
 fn loopback_write(
     policy: fast_io::ZeroCopyPolicy,
+    write_size: usize,
 ) -> (bool, fast_io::SendZcStats, fast_io::SendZcStats, usize) {
     use std::io::Write;
     use std::net::{TcpListener, TcpStream};
@@ -226,7 +338,9 @@ fn loopback_write(
         writer,
         fast_io::IoUringOrStdSocketWriter::IoUring(ref w) if w.send_zc_active()
     );
-    writer.write_all(&payload).expect("write payload");
+    for chunk in payload.chunks(write_size) {
+        writer.write_all(chunk).expect("write payload");
+    }
     writer.flush().expect("flush");
     drop(writer);
     drop(sender);
@@ -250,7 +364,7 @@ fn loopback_write(
 fn default_auto_writer_never_sends_through_send_zc() {
     const TEST: &str = "default_auto_writer_never_sends_through_send_zc";
     send_zc_runnable(TEST);
-    let (engaged, before, after, _) = loopback_write(fast_io::ZeroCopyPolicy::Auto);
+    let (engaged, before, after, _) = loopback_write(fast_io::ZeroCopyPolicy::Auto, usize::MAX);
     assert!(!engaged, "the default Auto policy must not engage SEND_ZC");
     assert_eq!(
         after, before,
@@ -262,23 +376,29 @@ fn default_auto_writer_never_sends_through_send_zc() {
 ///
 /// Where SEND_ZC can run, the writer must engage it and the process counters
 /// must show the payload went through `IORING_OP_SEND_ZC` - a writer that
-/// silently fell back to plain sends would pass a byte comparison alone.
+/// silently fell back to plain sends would pass a byte comparison alone. A
+/// SEND_ZC the kernel refused for lack of pinnable memory is resent as a
+/// counted copying send, so those count too: they exist only because SEND_ZC
+/// was submitted.
 /// Where it cannot (no io_uring, pre-6.0 kernel), the bytes must still arrive
 /// and exactly one fallback must be counted.
 #[test]
 fn explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback() {
     const TEST: &str = "explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback";
     let runnable = send_zc_runnable(TEST);
-    let (engaged, before, after, len) = loopback_write(fast_io::ZeroCopyPolicy::Enabled);
+    let (engaged, before, after, len) =
+        loopback_write(fast_io::ZeroCopyPolicy::Enabled, usize::MAX);
 
     if runnable {
         assert!(engaged, "--zero-copy must engage SEND_ZC on this kernel");
+        let submitted = (after.sends - before.sends) + (after.copied_sends - before.copied_sends);
         assert!(
-            after.sends > before.sends,
-            "no IORING_OP_SEND_ZC completion was counted: {before:?} -> {after:?}"
+            submitted > 0,
+            "no IORING_OP_SEND_ZC submission was counted: {before:?} -> {after:?}"
         );
+        let via_zc = (after.bytes - before.bytes) + (after.copied_bytes - before.copied_bytes);
         assert!(
-            after.bytes - before.bytes >= len as u64 / 2,
+            via_zc >= len as u64 / 2,
             "most of the payload must travel through SEND_ZC: {before:?} -> {after:?}"
         );
     } else {
@@ -291,6 +411,38 @@ fn explicit_zero_copy_writer_sends_through_send_zc_over_tcp_loopback() {
             after.fallbacks - before.fallbacks,
             1,
             "the requested-but-unavailable SEND_ZC must be counted as one fallback"
+        );
+    }
+}
+
+/// The production writer with no pinnable memory, on both of its SEND_ZC
+/// paths: buffered 16 KiB writes reach the pipeline's flush and 256 KiB writes
+/// go straight through `try_send_zc`. Every SEND_ZC is refused with `ENOMEM`,
+/// and the transfer must still complete byte for byte on counted copying sends.
+#[test]
+fn zero_copy_writer_copies_what_the_kernel_cannot_pin() {
+    const TEST: &str = "zero_copy_writer_copies_what_the_kernel_cannot_pin";
+    if !send_zc_runnable(TEST) {
+        return;
+    }
+    exhaust_pinned_page_budget();
+
+    for write_size in [16 * 1024, 256 * 1024] {
+        let (engaged, before, after, len) =
+            loopback_write(fast_io::ZeroCopyPolicy::Enabled, write_size);
+        assert!(
+            engaged,
+            "{write_size}-byte writes: an ENOMEM must not turn SEND_ZC off at setup"
+        );
+        assert_eq!(
+            after.bytes, before.bytes,
+            "{write_size}-byte writes: nothing can go zero-copy: {before:?} -> {after:?}"
+        );
+        assert_eq!(
+            after.copied_bytes - before.copied_bytes,
+            len as u64,
+            "{write_size}-byte writes: every byte must be a counted copying send: \
+             {before:?} -> {after:?}"
         );
     }
 }
