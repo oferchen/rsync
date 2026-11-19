@@ -888,13 +888,14 @@ fn test_socket_reader_writer_roundtrip() {
     let payload = b"hello from io_uring socket writer";
     writer.write_all(payload).unwrap();
     writer.flush().unwrap();
-
-    let mut buf = vec![0u8; payload.len()];
-    reader.read_exact(&mut buf).unwrap();
-    assert_eq!(buf, payload);
-
+    // Close the write side so the read below ends at EOF: a short delivery
+    // then fails the comparison at once instead of blocking the reader.
     drop(writer);
     close_fd(fd_a);
+
+    let mut received = Vec::new();
+    reader.read_to_end(&mut received).unwrap();
+    assert_eq!(received, payload);
     close_fd(fd_b);
 }
 
@@ -1072,17 +1073,25 @@ fn zero_copy_on_unix_socketpair_falls_back_at_setup() {
 
     let payload: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
     let expected = payload.clone();
+    // The writer thread closes its end when done, so the reader drains to EOF
+    // and a short delivery fails the length check at once instead of hanging.
     let write_thread = std::thread::spawn(move || {
         writer.write_all(&payload).unwrap();
         writer.flush().unwrap();
+        drop(writer);
+        close_fd(fd_a);
     });
 
     let mut reader = FdReader(fd_b);
-    let mut received = vec![0u8; expected.len()];
-    reader.read_exact(&mut received).unwrap();
+    let mut received = Vec::with_capacity(expected.len());
+    reader.read_to_end(&mut received).unwrap();
     write_thread.join().unwrap();
-    close_fd(fd_a);
     close_fd(fd_b);
+    assert_eq!(
+        received.len(),
+        expected.len(),
+        "the peer received a short stream"
+    );
     if refused {
         let after = crate::send_zc_stats();
         super::send_zc_test_env::assert_writer_ring_refused(
@@ -1367,12 +1376,13 @@ fn test_fd_reader_writer_basic() {
 
     writer.write_all(b"fd adapter test").unwrap();
     writer.flush().unwrap();
-
-    let mut buf = vec![0u8; 15];
-    reader.read_exact(&mut buf).unwrap();
-    assert_eq!(buf, b"fd adapter test");
-
+    // Close the write side so the read ends at EOF rather than blocking on a
+    // short delivery.
     close_fd(fd_a);
+
+    let mut received = Vec::new();
+    reader.read_to_end(&mut received).unwrap();
+    assert_eq!(received, b"fd adapter test");
     close_fd(fd_b);
 }
 
