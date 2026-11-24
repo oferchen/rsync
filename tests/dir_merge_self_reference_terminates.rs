@@ -19,7 +19,9 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use filetime::FileTime;
 use tempfile::TempDir;
+use test_support::file_times::set_file_mtime;
 use test_support::oc_rsync_bin;
 
 /// Generous enough that a loaded CI runner never trips it, short enough that a
@@ -46,6 +48,7 @@ fn wait_bounded(child: &mut Child) -> Option<i32> {
 }
 
 /// Builds `src/{a.txt,sub/f.txt}` plus a `.rsync-filter` holding `contents`.
+/// The src/ and dst/ roots get fixed, distinct mtimes.
 fn fixture(contents: &str) -> TempDir {
     let root = TempDir::new().expect("tempdir");
     let src = root.path().join("src");
@@ -54,6 +57,15 @@ fn fixture(contents: &str) -> TempDir {
     fs::write(src.join("a.txt"), b"a\n").expect("write a.txt");
     fs::write(src.join("sub/f.txt"), b"f\n").expect("write f.txt");
     fs::write(src.join(".rsync-filter"), contents).expect("write .rsync-filter");
+    // `-a` lists the root "./" only when the src/ and dst/ mtimes differ. Pin
+    // both, distinct, so every run lists it instead of depending on whether
+    // the two directories were stamped within one timestamp tick.
+    set_file_mtime(&src, FileTime::from_unix_time(1_700_000_000, 0)).expect("stamp src");
+    set_file_mtime(
+        root.path().join("dst"),
+        FileTime::from_unix_time(1_600_000_000, 0),
+    )
+    .expect("stamp dst");
     root
 }
 
