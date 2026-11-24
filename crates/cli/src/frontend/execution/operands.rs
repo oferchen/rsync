@@ -20,6 +20,10 @@ pub(crate) const SYNTAX_ERROR: ExitCodeMessage = exit_template(1);
 /// RERR_STREAMIO).
 pub(crate) const STREAM_IO_ERROR: ExitCodeMessage = exit_template(12);
 
+/// The `requested action not supported` trailer (upstream: errcode.h
+/// RERR_UNSUPPORTED).
+pub(crate) const UNSUPPORTED_ERROR: ExitCodeMessage = exit_template(4);
+
 /// Resolves an exit-code template at compile time, so a code missing from the
 /// table fails the build instead of panicking at runtime.
 const fn exit_template(code: i32) -> ExitCodeMessage {

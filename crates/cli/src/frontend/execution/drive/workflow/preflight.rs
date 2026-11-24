@@ -54,8 +54,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::super::super::{
-    ProtocolArg, legacy_remote_rejection, parse_bind_address_argument, parse_protocol_version_arg,
-    parse_timeout_argument,
+    ProtocolArg, UNSUPPORTED_ERROR, exit_trailer, legacy_remote_rejection,
+    parse_bind_address_argument, parse_protocol_version_arg, parse_timeout_argument,
 };
 #[cfg(any(
     not(all(any(unix, windows), feature = "acl")),
@@ -202,6 +202,30 @@ where
     } else {
         None
     }
+}
+
+/// Refuses `--munge-links` when `<root>/rsyncd-munged` is a directory, since
+/// a munged symlink would then resolve through it.
+///
+/// upstream: options.c:2435-2443 `parse_arguments()` - stats `SYMLINK_PREFIX`
+/// with its trailing slash trimmed and exits `RERR_UNSUPPORTED`.
+pub(crate) fn refuse_unsafe_munge_links<Err: Write>(
+    munge_links: bool,
+    root: &Path,
+    stderr: &mut MessageSink<Err>,
+) -> Result<(), i32> {
+    let prefix = ::metadata::SYMLINK_MUNGE_PREFIX.trim_end_matches('/');
+    if !munge_links || !root.join(prefix.trim_start_matches('/')).is_dir() {
+        return Ok(());
+    }
+    let _ = writeln!(
+        stderr.writer_mut(),
+        "Symlink munging is unsafe when a {prefix} directory exists."
+    );
+    Err(fail_with_message(
+        exit_trailer(UNSUPPORTED_ERROR, Role::Client),
+        stderr,
+    ))
 }
 
 /// Parses the `--address` argument into a [`BindAddress`].
@@ -402,5 +426,52 @@ mod tests {
             XATTR_REJECTION,
             "xattrs=Some(1) without xattr feature",
         );
+    }
+
+    /// upstream: options.c:2435-2443 - a client with `--munge-links` refuses
+    /// to run while `/rsyncd-munged` is a directory, with RERR_UNSUPPORTED.
+    #[test]
+    fn munge_links_refuses_when_the_prefix_dir_exists() {
+        let root = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(root.path().join("rsyncd-munged")).expect("prefix dir");
+        let mut sink = MessageSink::new(Vec::<u8>::new());
+        let code = super::refuse_unsafe_munge_links(true, root.path(), &mut sink)
+            .expect_err("a /rsyncd-munged directory must refuse --munge-links");
+        assert_eq!(code, 4);
+        let stderr = String::from_utf8_lossy(sink.writer()).into_owned();
+        let mut lines = stderr.lines();
+        assert_eq!(
+            lines.next(),
+            Some("Symlink munging is unsafe when a /rsyncd-munged directory exists.")
+        );
+        let trailer = lines.next().expect("exit trailer");
+        assert!(
+            trailer.contains("error: requested action not supported (code 4) at ")
+                && trailer.contains("[client="),
+            "unexpected trailer: {trailer}"
+        );
+    }
+
+    /// The refusal needs both `--munge-links` and a directory at the prefix.
+    #[test]
+    fn munge_links_proceeds_without_the_prefix_dir() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let mut sink = MessageSink::new(Vec::<u8>::new());
+        assert_eq!(
+            super::refuse_unsafe_munge_links(true, root.path(), &mut sink),
+            Ok(())
+        );
+        std::fs::write(root.path().join("rsyncd-munged"), b"x").expect("prefix file");
+        assert_eq!(
+            super::refuse_unsafe_munge_links(true, root.path(), &mut sink),
+            Ok(())
+        );
+        std::fs::remove_file(root.path().join("rsyncd-munged")).expect("remove file");
+        std::fs::create_dir(root.path().join("rsyncd-munged")).expect("prefix dir");
+        assert_eq!(
+            super::refuse_unsafe_munge_links(false, root.path(), &mut sink),
+            Ok(())
+        );
+        assert!(sink.writer().is_empty());
     }
 }

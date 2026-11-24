@@ -40,8 +40,8 @@ pub(crate) use flags::{
 };
 pub(crate) use module_list::render_module_list;
 pub(crate) use operands::{
-    STREAM_IO_ERROR, SYNTAX_ERROR, UnsupportedOption, exit_trailer, extract_operands,
-    parse_bind_address_argument,
+    STREAM_IO_ERROR, SYNTAX_ERROR, UNSUPPORTED_ERROR, UnsupportedOption, exit_trailer,
+    extract_operands, parse_bind_address_argument,
 };
 pub(crate) use options::{
     ProtocolArg, empty_size_means_zero, legacy_remote_rejection, parse_block_size_argument,

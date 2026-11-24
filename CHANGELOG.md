@@ -118,6 +118,7 @@ The other seven have no PR to list: CVE-2026-53801, 70455, 70457 and 70460 are f
 - Escape newlines and non-UTF-8 bytes in daemon option values (#7884, #7882, #7889)
 - Reject a pre-existing munged-symlink directory in the module root (#7080), and resolve munged symlinks before the chroot path rewrite (#7518)
 - Warn when a Windows privilege drop is a no-op (#7165)
+- Symlink munging follows rsync 3.5.2's safety checks: a client given `--munge-links` refuses to run while `/rsyncd-munged` is a directory (`Symlink munging is unsafe when a /rsyncd-munged directory exists.`, exit 4); a `munge symlinks` module checks `/rsyncd-munged` - the jail's entry when chrooted, the host's otherwise - instead of a `rsyncd-munged` directory inside the module (#7080); and a rootless daemon whose chroot probe fails takes its `munge symlinks` and `numeric ids` defaults from the probed `use chroot`, so it munges symlinks as an unchrooted module must (#8747)
 - Bound the handshake with upstream's absolute deadline, and end a silent transfer at the reconciled `io_timeout` (#7688, #7689)
 - Resolve a module `temp dir` inside the module, as upstream does (#8078)
 - Refuse the option combinations that upstream's `refuse options` patterns cover (#8074)
