@@ -170,6 +170,22 @@ pub(in crate::client::remote) fn map_child_exit_status(
     }
 }
 
+/// Reaps a remote shell after a finished transfer and returns its status when
+/// that status decides the client's exit.
+///
+/// A non-zero status wins outright: the client exits with it, and the local
+/// partial-transfer result (`io_error`, `got_xfer_error`) is only consulted when
+/// the status is zero. A `waitpid()` failure is `RERR_WAITCHILD`.
+///
+/// upstream: main.c:1408-1416 (push) and :1452-1461 (pull) `client_run()`,
+/// main.c:198-226 `wait_process_with_flush()`, cleanup.c:208-216.
+pub(in crate::client::remote) fn finished_remote_shell_exit(
+    wait: std::io::Result<std::process::ExitStatus>,
+) -> Option<ExitCode> {
+    let code = wait.map_or(ExitCode::WaitChild, map_child_exit_status);
+    (!code.is_success()).then_some(code)
+}
+
 /// Maps an SSH child exit status the way an aborting client folds it in.
 ///
 /// A client that fails exits through `_exit_cleanup()`, which takes

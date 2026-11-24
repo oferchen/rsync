@@ -42,6 +42,7 @@ pub use local_child::run_local_child_transfer;
 pub(super) use drive::{local_client_role, transfer_failure_error};
 #[cfg(any(feature = "async-ssh", feature = "embedded-ssh"))]
 pub(super) use exit_status::convert_server_stats_to_summary;
+pub(super) use exit_status::finished_remote_shell_exit;
 #[cfg(feature = "embedded-ssh")]
 pub(super) use exit_status::map_remote_exit;
 #[cfg(feature = "async-ssh")]
