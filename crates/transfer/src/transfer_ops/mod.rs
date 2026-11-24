@@ -311,91 +311,67 @@ fn block_match_without_basis(file: &str) -> io::Error {
     ))
 }
 
+/// Upstream's `one_inplace`, less its `fd1 != -1` term: the negotiated
+/// `CF_INPLACE_PARTIAL_DIR` capability, a partial dir in effect on this
+/// receiver, and a basis the sender reports as the partial-dir file.
+///
+/// `inplace_partial` is the negotiated capability alone, so a peer that claims
+/// a partial-dir basis cannot turn off `--inplace` on a receiver with no
+/// partial dir. The streaming receiver adds the `fd1 != -1` term once it knows
+/// whether the basis opened.
+///
+/// upstream: rsync-3.5.2/receiver.c:1153-1155
+fn is_one_inplace(
+    inplace_partial: bool,
+    partial_dir: bool,
+    fnamecmp_type: Option<protocol::FnameCmpType>,
+) -> bool {
+    inplace_partial && partial_dir && fnamecmp_type == Some(protocol::FnameCmpType::PartialDir)
+}
+
+/// Upstream's `updating_basis_or_equiv`: the output is the basis being read,
+/// so a matched block already at its output offset is seeked past instead of
+/// rewritten. That is a `one_inplace` update, or `--inplace` with the
+/// destination as its own basis.
+///
+/// upstream: rsync-3.5.2/receiver.c:1156-1157
+fn updates_basis_in_place(
+    one_inplace: bool,
+    inplace: bool,
+    basis: Option<&std::path::Path>,
+    output: &std::path::Path,
+) -> bool {
+    one_inplace || (inplace && basis == Some(output))
+}
+
 /// Decides whether the receiver writes this file straight to its final
-/// destination (inplace) or reconstructs it into a temp file that is renamed on
-/// commit.
+/// destination (inplace) instead of a temp file renamed on commit.
 ///
 /// `--inplace` and `--append` write to the destination in place, preserving
 /// existing content (append implies inplace, and the sender only transmits the
 /// data beyond the existing length).
 ///
-/// A `--partial-dir` resume returns `false` here, and the reason is narrower
-/// than an earlier revision of this comment claimed.
-///
-/// That revision argued the exclusion on data-integrity grounds: that taking the
-/// in-place path for a partial-dir resume "would write the reconstruction
-/// directly to the live destination and leave a full-size but incomplete file
-/// there on interrupt". **That misread upstream.** Upstream's in-place target
-/// under `one_inplace` is not the destination at all:
-///
-/// ```c
-/// /* receiver.c:1212-1213 */
-/// if (inplace || one_inplace)  {
-///         fnametmp = one_inplace ? partialptr : fname;
-/// ```
-///
-/// `partialptr` is the file inside the `--partial-dir`, so the reconstruction
-/// grows there and only `finish_transfer(fname, fnametmp, ...)`
-/// (`receiver.c:1305`) puts it at the destination name. An interrupt therefore
-/// leaves the grown partial in the partial dir and never a truncated file at the
-/// live name - the hazard the old rationale described was a property of writing
-/// to `fname`, which upstream does not do on this branch. It is upstream's whole
-/// design goal, not a risk it takes.
-///
-/// What is actually true is that this receiver has no third output mode. It can
-/// open the destination (`is_inplace`) or a temp it renames, and nothing else;
-/// the partial-dir path reaches it only as an interrupt destination
-/// (`retain_partial_file`) and a `--delay-updates` staging dir. Returning `true`
-/// here would therefore be wrong - not because upstream's design is unsafe, but
-/// because oc would carry out the *other* half of upstream's ternary. Until the
-/// partial-dir staging target is threaded through `BeginMessage` and the disk
-/// commit, falling back to temp+rename is the correct subset: it reaches the
-/// same observable end state, and an interrupt still relocates the in-flight
-/// temp into the partial dir (`retain_partial_file`'s `PartialDir` branch,
-/// `cleanup.c:169-170`).
-///
-/// The local-copy executor does implement upstream's shape - see
-/// `engine::local_copy`'s `WriteStrategy::InplacePartialDir` and
-/// `DestinationWriteGuard::new_one_inplace`, which open `partialptr` through the
-/// three-arm chain with `InplaceResolution::OperatorWalk` and rename it onto the
-/// destination on commit. This function is the wire receiver's half of the same
-/// gap and is still open.
-///
-/// Note that the suppression is currently unreachable either way:
-/// `inplace_partial` is only ever set alongside `--partial-dir`
-/// (`transfer/src/lib.rs`), and `--inplace`/`--append` with `--partial-dir` is
-/// rejected during config validation, so `inplace` and `one_inplace_partial_dir`
-/// cannot both be true. Do not read a green suite as evidence that this arm
-/// works.
+/// A `one_inplace` update ([`is_one_inplace`]) returns `false`: it is written
+/// in place too, but into the partial-dir basis, never the destination
+/// (`BeginMessage::one_inplace_target`). `--inplace`/`--append` with
+/// `--partial-dir` is rejected during config validation, so on this receiver
+/// the two cannot both be true.
 ///
 /// # Upstream Reference
 ///
 /// `inplace` already carries `--append`: `ServerConfig::apply_append_implies_inplace`
-/// materialises upstream's `options.c:2474` promotion before the transfer starts,
+/// materialises upstream's `options.c:2419` promotion before the transfer starts,
 /// so this reads the single flag exactly as `receiver.c:1212` does.
 ///
-/// - `rsync-3.5.2/receiver.c:1212` - `if (inplace || one_inplace)`.
-/// - `rsync-3.5.2/receiver.c:1153-1155` - `one_inplace = inplace_partial &&
-///   partial_dir && fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`.
-///   `inplace_partial` is the negotiated capability alone, so a peer that
-///   claims a partial-dir basis cannot turn off `--inplace` on a receiver with
-///   no partial dir.
-/// - `rsync-3.5.2/receiver.c:1213` - `fnametmp = one_inplace ? partialptr : fname`.
-/// - `rsync-3.5.2/receiver.c:1305-1316` - `finish_transfer(fname, fnametmp, ...)`
-///   then `handle_partial_dir(partialptr, PDIR_DELETE)`, with the
-///   `do_unlink_at(partialptr)` skipped under `one_inplace`.
-/// - `rsync-3.5.2/cleanup.c:170-171` - `_exit_cleanup()` calls
-///   `handle_partial_dir(cleanup_new_fname, PDIR_CREATE)` on the abort path; that
-///   is what moves an interrupted temp into the partial dir.
+/// - `rsync-3.5.2/receiver.c:1212-1213` - `if (inplace || one_inplace)`, then
+///   `fnametmp = one_inplace ? partialptr : fname`.
 fn resolve_use_inplace(
     inplace: bool,
     inplace_partial: bool,
     partial_dir: bool,
     fnamecmp_type: Option<protocol::FnameCmpType>,
 ) -> bool {
-    let one_inplace_partial_dir =
-        inplace_partial && partial_dir && fnamecmp_type == Some(protocol::FnameCmpType::PartialDir);
-    inplace && !one_inplace_partial_dir
+    inplace && !is_one_inplace(inplace_partial, partial_dir, fnamecmp_type)
 }
 
 /// Keeps a wire-named basis only if it opens as a regular file.
@@ -551,6 +527,12 @@ fn read_response_header<R: Read>(
         ctx.config.partial_dir,
         sender_attrs.fnamecmp_type,
     );
+    let one_inplace = basis_path.is_some()
+        && is_one_inplace(
+            ctx.config.inplace_partial,
+            ctx.config.partial_dir,
+            sender_attrs.fnamecmp_type,
+        );
 
     // upstream: receiver.c:524-549 - in append mode, seek output fd to existing file length
     // (derived from echoed sum_head) before writing new data
@@ -567,6 +549,7 @@ fn read_response_header<R: Read>(
         sum_head: echoed_sum_head,
         target_size,
         use_inplace,
+        one_inplace,
         append_offset,
         xattr_values: sender_attrs.xattr_values,
         data_read_start,
@@ -588,6 +571,9 @@ pub(crate) struct ResponseHeader {
     target_size: u64,
     /// Whether to write directly to the destination (inplace mode).
     use_inplace: bool,
+    /// Whether upstream's `one_inplace` applies to the named basis, less the
+    /// check that it opens ([`is_one_inplace`]).
+    one_inplace: bool,
     /// Byte offset at which to start writing in append mode.
     ///
     /// Derived from the echoed sum_head: existing file length that the sender
@@ -631,11 +617,9 @@ mod tests {
 
     #[test]
     fn resolve_use_inplace_partial_dir_resume_stays_temp_rename() {
-        // The one_inplace case (inplace_partial negotiated + partial-dir basis)
-        // must NOT take the inplace path: staying temp+rename keeps
-        // needs_rename == true so an interrupt relocates the in-flight temp into
-        // the partial dir (retain_partial_file's PartialDir branch) instead of
-        // leaving a full-size but incomplete file at the live destination name.
+        // A one_inplace update (inplace_partial negotiated + partial-dir basis)
+        // never writes the destination in place: its in-place target is the
+        // partial-dir file (BeginMessage::one_inplace_target).
         // upstream: receiver.c:1212-1213 write one_inplace to partialptr, never fname.
         assert!(!resolve_use_inplace(
             false,
@@ -653,6 +637,19 @@ mod tests {
         ));
         assert!(!resolve_use_inplace(false, true, true, None));
     }
+    /// A one_inplace update reads and writes the same partial file, so a
+    /// block the sender matches at its own offset must be skipped, not
+    /// rewritten; an ordinary temp output never updates its basis.
+    #[test]
+    fn one_inplace_updates_its_basis_in_place() {
+        let partial = std::path::Path::new("pd/f");
+        let dest = std::path::Path::new("f");
+        assert!(updates_basis_in_place(true, false, Some(partial), dest));
+        assert!(updates_basis_in_place(false, true, Some(dest), dest));
+        assert!(!updates_basis_in_place(false, true, Some(partial), dest));
+        assert!(!updates_basis_in_place(false, false, Some(dest), dest));
+    }
+
     #[test]
     fn resolve_use_inplace_partial_dir_claim_without_partial_dir_keeps_inplace() {
         // upstream: receiver.c:1153 - one_inplace needs a local partial_dir. With

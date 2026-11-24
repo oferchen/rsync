@@ -125,6 +125,21 @@ pub struct BeginMessage {
     /// (created if absent) and truncated to target size after delta
     /// application. Preserves the destination inode.
     pub is_inplace: bool,
+    /// The `--partial-dir` basis this file is rewritten in, when upstream's
+    /// `one_inplace` applies: the capability was negotiated, a partial dir is
+    /// in effect and the sender used the partial-dir file as the basis.
+    ///
+    /// The file is opened through the ownership walk, so a partial dir reached
+    /// through a symlink owned by an untrusted user is refused, and it is
+    /// renamed onto `file_path` on commit. No temp file is made.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:1153-1155` - `one_inplace = inplace_partial && partial_dir
+    ///   && fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`
+    /// - `receiver.c:1212-1223` - `fnametmp = partialptr`, opened with
+    ///   `secure_recv_open(fnametmp, O_WRONLY|O_CREAT, 0600, one_inplace)`
+    pub one_inplace_target: Option<PathBuf>,
     /// Byte offset at which to start writing in append mode.
     ///
     /// When non-zero, the output file is seeked to this offset before writing

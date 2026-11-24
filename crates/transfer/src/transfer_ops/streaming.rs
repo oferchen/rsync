@@ -136,13 +136,6 @@ pub fn process_file_response_streaming<R: Read>(
         super::HeaderOutcome::PhaseEnd => return Ok(ResponseProgress::PhaseEnd),
     };
 
-    // upstream: receiver.c:1156-1157 - updating_basis_or_equiv is set when the
-    // basis file IS the destination being updated in place (fnamecmp == fname).
-    // We take the provably-safe subset: --inplace with the basis path equal to
-    // the output path. Matched blocks whose basis offset equals the output
-    // position are then seeked past rather than rewritten.
-    let updating_basis =
-        header.use_inplace && header.basis_path.as_deref() == Some(header.file_path.as_path());
     let is_inplace = header.use_inplace;
     let data_read_start = header.data_read_start;
 
@@ -188,6 +181,20 @@ pub fn process_file_response_streaming<R: Read>(
         None
     };
 
+    // upstream: receiver.c:1153-1155 - one_inplace also needs the basis open
+    // (fd1 != -1); the file it rewrites is that basis.
+    let one_inplace_target = header
+        .basis_path
+        .as_ref()
+        .filter(|_| header.one_inplace && basis_map.is_some())
+        .cloned();
+    let updating_basis = super::updates_basis_in_place(
+        one_inplace_target.is_some(),
+        header.use_inplace,
+        header.basis_path.as_deref(),
+        &header.file_path,
+    );
+
     // upstream: receiver.c:1158-1208 - without --perms, dest_mode() reads the
     // fstat of the basis the receiver opened (fnamecmp: a --partial-dir,
     // --fuzzy or alt-dest file, else the destination itself). Captured here,
@@ -206,9 +213,8 @@ pub fn process_file_response_streaming<R: Read>(
         file_entry_index,
         checksum_verifier: Some(disk_verifier),
         is_device_target,
-        // upstream: receiver.c:1153-1155 - one_inplace = inplace_partial &&
-        // fnamecmp_type == FNAMECMP_PARTIAL_DIR
         is_inplace: header.use_inplace,
+        one_inplace_target,
         append_offset: header.append_offset,
         xattr_list,
         // upstream: xattrs.c:1175 rsync_xal_set(fname, ..., fnamecmp, ...) - the

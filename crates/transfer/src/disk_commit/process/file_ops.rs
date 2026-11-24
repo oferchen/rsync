@@ -23,7 +23,8 @@ use crate::temp_guard::{CommitOp, TempFileGuard, attach_commit_op};
 use super::super::config::{DiskCommitConfig, PartialMode};
 use super::super::writer::{ReusableBufWriter, Writer, close_received_file, write_failed};
 use super::commit::{
-    SparseFinalize, commit_file, finalize_sparse, make_backup_copy, retain_partial_file,
+    SparseFinalize, commit_file, finalize_sparse, finalize_sparse_file, make_backup_copy,
+    retain_partial_file,
 };
 use super::metadata::{apply_file_metadata, finalize_checksum};
 
@@ -175,7 +176,12 @@ fn withhold_failed_commit(
     touched_blocks_4k: u64,
     computed_checksum: Option<ComputedChecksum>,
 ) -> CommitResult {
-    retain_partial_file(config, &mut cleanup_guard, &begin.file_path, false);
+    // upstream: receiver.c:1318-1335 - a one_inplace update that fails
+    // verification is neither kept nor unlinked: it stays in the partial file
+    // it was written in, and the destination is untouched.
+    if begin.one_inplace_target.is_none() {
+        retain_partial_file(config, &mut cleanup_guard, &begin.file_path, false);
+    }
     drop(cleanup_guard);
     CommitResult {
         bytes_written,
@@ -241,6 +247,10 @@ pub(in crate::disk_commit) fn process_file(
         }
     };
     log_name_after_open(&mut begin);
+    // A one_inplace output is renamed on commit like a temp, but it is the
+    // partial file itself: upstream registers no temp name for it
+    // (receiver.c:1245-1246), so an abort leaves it where it is.
+    let temp_output = needs_rename && begin.one_inplace_target.is_none();
     // Register the temp file with the global cleanup manager so an abort that
     // bypasses Drop still removes orphaned temp files (and honours --partial
     // once literal data arrives). Only temp+rename paths produce actual temp
@@ -248,14 +258,14 @@ pub(in crate::disk_commit) fn process_file(
     // guard records its registration so its Drop unregisters the path on both
     // success and error, preventing a per-errored-file PathBuf leak into the
     // global set.
-    if needs_rename {
+    if temp_output {
         register_temp_with_cleanup(config, &mut cleanup_guard, &begin.file_path, false);
     }
 
     // Pre-existing basis length for sparse hole-punching: only in-place writes
     // reuse existing bytes, so a zero run there must be punched rather than
     // merely seeked over. upstream: receiver.c:491-508 preallocated_len.
-    let basis_len = if config.use_sparse && begin.is_inplace {
+    let basis_len = if config.use_sparse && writes_in_place(&begin) {
         file.metadata().map(|m| m.len()).unwrap_or(0)
     } else {
         0
@@ -273,7 +283,7 @@ pub(in crate::disk_commit) fn process_file(
         iocp_batch,
         config.use_sparse,
         begin.append_offset,
-        begin.is_inplace,
+        writes_in_place(&begin),
         begin.target_size,
     ) {
         Ok(output) => output,
@@ -333,7 +343,7 @@ pub(in crate::disk_commit) fn process_file(
                 // rename+mtime stamp (Windows resets mtime on handle close).
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - retain partial on unexpected disconnect
-                if literal_bytes > 0 && needs_rename {
+                if literal_bytes > 0 && temp_output {
                     // Interrupt path (cleanup.c:174-180): zero the mtime so an
                     // aborted partial stands out and --update will not skip it.
                     retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
@@ -434,7 +444,13 @@ pub(in crate::disk_commit) fn process_file(
                     .map_or(touched.total(), SparseWriteState::touched_blocks);
 
                 output.flush_and_sync(config.do_fsync, &begin.file_path)?;
-                let file = output.finish(config.do_fsync, &begin.file_path)?;
+                let mut file = output.finish(config.do_fsync, &begin.file_path)?;
+                size_one_inplace_output(
+                    file.as_mut(),
+                    &begin,
+                    sparse_final.as_ref(),
+                    bytes_written,
+                )?;
                 close_received_file(file, cleanup_guard.path())?;
 
                 // upstream: receiver.c:677-691 - compute the whole-file checksum
@@ -462,7 +478,7 @@ pub(in crate::disk_commit) fn process_file(
                 // Truncate/punch the temp file first so the ftruncate + punch
                 // (both of which touch mtime) cannot clobber the timestamp the
                 // metadata step is about to apply.
-                if needs_rename && let Some(ref sparse) = sparse_final {
+                if temp_output && let Some(ref sparse) = sparse_final {
                     finalize_sparse(config.backup_env(), cleanup_guard.path(), sparse)?;
                 }
 
@@ -470,8 +486,12 @@ pub(in crate::disk_commit) fn process_file(
                 // permissions before putting the file into place."
                 // Apply metadata to the temp file before rename so the
                 // file is already correct when it appears at the final
-                // path. For inplace/device, metadata is applied after.
-                let pre_meta_error = if needs_rename {
+                // path. For inplace/device, metadata is applied after, and
+                // so for a one_inplace output: its partial-dir path may run
+                // through an operator symlink that the confined metadata
+                // resolver does not follow, while the destination name it is
+                // renamed to does not.
+                let pre_meta_error = if temp_output {
                     apply_file_metadata(cleanup_guard.path(), &begin, config)
                 } else {
                     None
@@ -507,7 +527,7 @@ pub(in crate::disk_commit) fn process_file(
                         .as_ref()
                         .expect("delayed_path is Some on the staged-partial path");
                     apply_file_metadata(staged, &begin, config)
-                } else if needs_rename && !outcome.was_copy {
+                } else if temp_output && !outcome.was_copy {
                     pre_meta_error
                 } else {
                     apply_file_metadata(&begin.file_path, &begin, config)
@@ -538,7 +558,7 @@ pub(in crate::disk_commit) fn process_file(
                 // branch (receiver.c:564-583), so a temp built entirely from
                 // basis blocks is unlinked (cleanup.c:200-201) rather than
                 // renamed over an intact destination.
-                if literal_bytes > 0 && needs_rename {
+                if literal_bytes > 0 && temp_output {
                     // Interrupt path (cleanup.c:174-180): zero the mtime so an
                     // aborted partial stands out and --update will not skip it.
                     retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
@@ -554,7 +574,7 @@ pub(in crate::disk_commit) fn process_file(
                 // rename+mtime stamp (Windows resets mtime on handle close).
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - same partial retention on shutdown
-                if literal_bytes > 0 && needs_rename {
+                if literal_bytes > 0 && temp_output {
                     // Interrupt path (cleanup.c:174-180): zero the mtime so an
                     // aborted partial stands out and --update will not skip it.
                     retain_partial_file(config, &mut cleanup_guard, &begin.file_path, true);
@@ -580,7 +600,7 @@ pub(in crate::disk_commit) fn process_file(
         // gate the Abort/Shutdown/disconnect branches above apply; recorded in
         // the registry here so the process-wide abort path reaches the same
         // decision without the disk thread unwinding.
-        if needs_rename && !partial_registered && literal_bytes > 0 {
+        if temp_output && !partial_registered && literal_bytes > 0 {
             register_temp_with_cleanup(config, &mut cleanup_guard, &begin.file_path, true);
             partial_registered = true;
         }
@@ -881,6 +901,45 @@ fn make_inplace_backup(
         .map(|made| made.map(|(_, notice)| notice))
 }
 
+/// Whether this file is written into an existing file rather than a fresh
+/// temp: the destination under `--inplace`, or the partial-dir basis of a
+/// `one_inplace` update.
+///
+/// upstream: receiver.c:1283 - `receive_data(..., inplace || one_inplace)`,
+/// the `inplace_sizing` argument.
+fn writes_in_place(begin: &BeginMessage) -> bool {
+    begin.is_inplace || begin.one_inplace_target.is_some()
+}
+
+/// Cuts a `one_inplace` output to the received length on its open handle:
+/// the partial file it rewrote may be longer than the new data. A sparse
+/// output also has its stale basis ranges punched. Runs before verification,
+/// as in upstream, so a file that then fails it is left at its received
+/// length.
+///
+/// The `--inplace` destination is sized at commit instead
+/// ([`super::commit::commit_file`]).
+///
+/// `file` is the buffered writer's handle; an in-place write never takes a
+/// batched backend ([`make_writer`]), so it is always present here.
+///
+/// upstream: receiver.c:668-671 - `if (inplace_sizing ...) do_ftruncate(fd,
+/// offset)` inside `receive_data()`; fileio.c:47 `sparse_end()`.
+fn size_one_inplace_output(
+    file: Option<&mut fs::File>,
+    begin: &BeginMessage,
+    sparse: Option<&SparseFinalize>,
+    received_len: u64,
+) -> io::Result<()> {
+    let Some(file) = file.filter(|_| begin.one_inplace_target.is_some()) else {
+        return Ok(());
+    };
+    match sparse {
+        Some(sparse) => finalize_sparse_file(file, sparse),
+        None => file.set_len(received_len),
+    }
+}
+
 /// Opens the in-place destination, anchored beneath the destination sandbox
 /// when the destination lies inside the destination tree.
 ///
@@ -955,6 +1014,19 @@ fn open_output_file(
             TempFileGuard::keep_dest(begin.file_path.clone()),
             false,
         ))
+    } else if let Some(partial) = begin.one_inplace_target.as_deref() {
+        // upstream: receiver.c:1212-1241 - the same three-arm chain as
+        // --inplace, at partialptr, with every arm walking the path through
+        // the ownership check (`secure_recv_open(..., one_inplace)`). A partial
+        // dir reached through a symlink owned by an untrusted user is refused
+        // with ELOOP after the walk prints its diagnostic.
+        let file =
+            fast_io::open_inplace_output(partial, false, fast_io::InplaceResolution::OperatorWalk)
+                .map_err(|e| attach_commit_op(CommitOp::Open, partial, e))?;
+        // The partial file is the basis being rewritten. An error leaves it in
+        // place, and the commit renames it onto the destination
+        // (receiver.c:1305 `finish_transfer(fname, fnametmp, ...)`).
+        Ok((file, TempFileGuard::keep_dest(partial.to_path_buf()), true))
     } else if begin.is_inplace {
         // upstream: receiver.c:1212-1241 - the whole three-arm chain, owned by
         // `fast_io`. The receiver never truncates: the destination it opens IS
@@ -1041,12 +1113,12 @@ fn maybe_preallocate(
     }
     // upstream: receiver.c:492 - size_r is the existing basis length; only an
     // in-place write reuses it, otherwise the temp file starts empty.
-    let existing_len = if begin.is_inplace {
+    let existing_len = if writes_in_place(begin) {
         file.metadata().map(|m| m.len()).unwrap_or(0)
     } else {
         0
     };
-    if begin.target_size == 0 || (begin.is_inplace && begin.target_size <= existing_len) {
+    if begin.target_size == 0 || (writes_in_place(begin) && begin.target_size <= existing_len) {
         return fallback_preallocated_len;
     }
     match fast_io::preallocate(file, begin.target_size) {

@@ -46,10 +46,14 @@ pub(super) fn finalize_sparse(
     target: &Path,
     sparse: &SparseFinalize,
 ) -> io::Result<()> {
-    let mut file = open_dest_for_write(env, target)?;
+    finalize_sparse_file(&mut open_dest_for_write(env, target)?, sparse)
+}
+
+/// [`finalize_sparse`] on an already open handle.
+pub(super) fn finalize_sparse_file(file: &mut fs::File, sparse: &SparseFinalize) -> io::Result<()> {
     file.set_len(sparse.logical_len)?;
     for &(pos, len) in &sparse.holes {
-        fast_io::punch_hole(&mut file, pos, len)?;
+        fast_io::punch_hole(file, pos, len)?;
     }
     Ok(())
 }
