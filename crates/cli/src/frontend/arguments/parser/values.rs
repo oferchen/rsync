@@ -1,6 +1,6 @@
 //! Helpers for combining repeatable `OsString` argument values.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 /// Joins multiple `OsString` values with commas into a single `OsString`.
 ///
@@ -19,4 +19,44 @@ pub(crate) fn join_os_values(values: Option<impl Iterator<Item = OsString>>) -> 
         joined.push(&value);
     }
     Some(joined)
+}
+
+/// Strips leading `./` pairs and then a lone `.` from a `--backup-dir` value.
+///
+/// Only that ASCII prefix is removed; the rest of the value is kept byte for
+/// byte, so a non-UTF-8 name survives. An empty result means the value named
+/// the destination directory itself. No other normalisation is applied: a
+/// value such as `.//` becomes `/`, exactly as in upstream.
+// upstream: options.c:2514-2517
+pub(crate) fn strip_backup_dir_dot_prefix(dir: OsString) -> OsString {
+    let bytes = dir.as_encoded_bytes();
+    let mut skip = 0;
+    while bytes[skip..].starts_with(b"./") {
+        skip += 2;
+    }
+    if &bytes[skip..] == b"." {
+        skip += 1;
+    }
+    if skip == 0 {
+        dir
+    } else {
+        drop_ascii_prefix(&dir, skip)
+    }
+}
+
+/// Returns `value` without its first `len` bytes, which must all be ASCII.
+#[cfg(unix)]
+fn drop_ascii_prefix(value: &OsStr, len: usize) -> OsString {
+    use std::os::unix::ffi::OsStrExt;
+    OsStr::from_bytes(&value.as_bytes()[len..]).to_os_string()
+}
+
+/// Returns `value` without its first `len` bytes, which must all be ASCII.
+///
+/// Each ASCII byte is one UTF-16 unit, so skipping `len` units is exact.
+#[cfg(windows)]
+fn drop_ascii_prefix(value: &OsStr, len: usize) -> OsString {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    let units: Vec<u16> = value.encode_wide().skip(len).collect();
+    OsString::from_wide(&units)
 }

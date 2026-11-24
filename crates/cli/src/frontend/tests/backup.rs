@@ -138,3 +138,90 @@ fn backup_suffix_flag_overrides_default_suffix() {
     let backup_path = dest_root.join("file.txt.bak");
     assert_eq!(std::fs::read(&backup_path).expect("read backup"), b"stale");
 }
+
+/// Seeds `dest/file.txt` with stale content older than `source/file.txt`.
+fn seed_backup_self_fixture(root: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let source_dir = root.join("source");
+    let dest_dir = root.join("dest");
+    std::fs::create_dir_all(&source_dir).expect("create source dir");
+    std::fs::create_dir_all(&dest_dir).expect("create dest dir");
+    std::fs::write(source_dir.join("file.txt"), b"new data").expect("write source");
+    std::fs::write(dest_dir.join("file.txt"), b"old data").expect("seed dest");
+    let one_hour_ago = filetime::FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    test_support::file_times::set_file_mtime(dest_dir.join("file.txt"), one_hour_ago)
+        .expect("backdate dest");
+    (source_dir, dest_dir)
+}
+
+/// A `--backup-dir` that names the destination itself would back every file
+/// up onto itself, so the old content is lost. rsync 3.5.2 refuses it before
+/// any transfer, exit 1 (RERR_SYNTAX), and the destination stays untouched.
+// upstream: options.c:2514-2527 strips "./" and "." to an empty dir, then
+// options.c:2536-2540 refuses the empty default suffix.
+#[test]
+fn backup_dir_naming_the_destination_is_refused_before_any_transfer() {
+    for spelling in [".", "./", "././", "./.", ""] {
+        let tmp = test_support::create_tempdir();
+        let (source_dir, dest_dir) = seed_backup_self_fixture(tmp.path());
+        let mut source_arg = source_dir.into_os_string();
+        source_arg.push("/");
+        let (code, stdout, stderr) = run_with_args([
+            OsString::from(RSYNC),
+            OsString::from("-r"),
+            OsString::from(format!("--backup-dir={spelling}")),
+            source_arg,
+            dest_dir.clone().into_os_string(),
+        ]);
+        let rendered = String::from_utf8_lossy(&stderr);
+        assert_eq!(code, 1, "--backup-dir={spelling:?}: {rendered}");
+        assert!(stdout.is_empty(), "--backup-dir={spelling:?}");
+        assert!(
+            rendered
+                .contains("--suffix cannot be empty when --backup-dir is the same as the dest dir"),
+            "--backup-dir={spelling:?}: {rendered}"
+        );
+        assert_eq!(
+            std::fs::read(dest_dir.join("file.txt")).expect("read dest"),
+            b"old data",
+            "--backup-dir={spelling:?} must not transfer"
+        );
+    }
+}
+
+/// With an explicit suffix the same spellings are accepted: rsync 3.5.2 drops
+/// the backup dir and backs up beside the file, like `-b --suffix=~`.
+// upstream: options.c:2525-2527,2534-2535
+#[test]
+fn backup_dir_naming_the_destination_with_a_suffix_backs_up_beside_the_file() {
+    for spelling in [".", ""] {
+        let tmp = test_support::create_tempdir();
+        let (source_dir, dest_dir) = seed_backup_self_fixture(tmp.path());
+        let mut source_arg = source_dir.into_os_string();
+        source_arg.push("/");
+        let (code, _stdout, stderr) = run_with_args([
+            OsString::from(RSYNC),
+            OsString::from("-r"),
+            OsString::from(format!("--backup-dir={spelling}")),
+            OsString::from("--suffix=~"),
+            source_arg,
+            dest_dir.clone().into_os_string(),
+        ]);
+        assert_eq!(
+            code,
+            0,
+            "--backup-dir={spelling:?}: {}",
+            String::from_utf8_lossy(&stderr)
+        );
+        assert_eq!(
+            std::fs::read(dest_dir.join("file.txt")).expect("read dest"),
+            b"new data"
+        );
+        assert_eq!(
+            std::fs::read(dest_dir.join("file.txt~")).expect("read backup"),
+            b"old data",
+            "--backup-dir={spelling:?} --suffix=~"
+        );
+    }
+}

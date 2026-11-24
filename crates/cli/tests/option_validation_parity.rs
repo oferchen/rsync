@@ -224,3 +224,67 @@ fn suffix_alone_does_not_enable_backup() {
     assert!(!args.backup, "--suffix must not imply --backup");
     assert_eq!(args.backup_suffix, Some(".bak".into()));
 }
+
+// upstream: options.c:2514-2527,2536-2540 - "./" pairs and a lone "." are
+// stripped from --backup-dir; an empty result is the destination itself and,
+// with the "" default suffix, is refused with this exact text.
+#[test]
+fn backup_dir_naming_the_destination_is_refused() {
+    for spelling in [".", "./", "././", "./.", ""] {
+        let arg = format!("--backup-dir={spelling}");
+        let err = parse_args(["oc-rsync", arg.as_str(), "src", "dest"]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--suffix cannot be empty when --backup-dir is the same as the dest dir"),
+            "{arg}: wrong wording: {err}"
+        );
+    }
+}
+
+// upstream: options.c:2525-2527 - with a non-empty suffix the destination-named
+// backup dir is dropped while --backup stays on (make_backups = 1).
+#[test]
+fn backup_dir_naming_the_destination_with_a_suffix_drops_the_dir() {
+    let args = parse_args(["oc-rsync", "--backup-dir=./.", "--suffix=~", "src", "dest"]).unwrap();
+    assert!(args.backup);
+    assert_eq!(args.backup_dir, None);
+    assert_eq!(args.backup_suffix, Some("~".into()));
+}
+
+// upstream: options.c:2514-2517 - only the leading "./" pairs and a trailing
+// lone "." are removed. ".//" therefore becomes "/", which rsync 3.5.2 then
+// uses as an absolute backup dir (measured: exit 11 for a non-root user).
+#[test]
+fn backup_dir_keeps_what_follows_the_dot_prefix() {
+    let cases = [
+        ("././b", "b"),
+        ("./b/./c", "b/./c"),
+        ("b/.", "b/."),
+        (".//", "/"),
+    ];
+    for (given, kept) in cases {
+        let arg = format!("--backup-dir={given}");
+        let args = parse_args(["oc-rsync", arg.as_str(), "src", "dest"]).unwrap();
+        assert_eq!(args.backup_dir, Some(kept.into()), "{arg}");
+    }
+}
+
+// The strip keeps non-UTF-8 bytes after the prefix verbatim.
+#[cfg(unix)]
+#[test]
+fn backup_dir_dot_prefix_strip_keeps_non_utf8_bytes() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let arg = OsStr::from_bytes(b"--backup-dir=./b\xff");
+    let args = parse_args([
+        OsStr::new("oc-rsync"),
+        arg,
+        OsStr::new("src"),
+        OsStr::new("dest"),
+    ])
+    .unwrap();
+    assert_eq!(
+        args.backup_dir.as_deref().map(OsStrExt::as_bytes),
+        Some(&b"b\xff"[..])
+    );
+}
