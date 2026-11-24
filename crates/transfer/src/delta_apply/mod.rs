@@ -34,8 +34,8 @@ mod sparse;
 
 pub use crate::token_reader::{DeltaToken, LiteralData, TokenReader};
 pub use applicator::{
-    BasisWriterKind, DeltaApplicator, DeltaApplyConfig, DeltaApplyResult, apply_delta_stream,
-    discard_delta_stream,
+    BasisWriterKind, DeltaApplicator, DeltaApplyConfig, DeltaApplyResult, VerificationFailure,
+    apply_delta_stream, discard_delta_stream,
 };
 pub(crate) use block::block_span;
 pub use checksum::ChecksumVerifier;

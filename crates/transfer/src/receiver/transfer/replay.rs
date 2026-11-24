@@ -42,35 +42,138 @@ use crate::transfer_ops::wire_basis::WireBasis;
 /// `batch_gen_fd` and `gen_wants_ndx()` reads back (`receiver.c:772-803`).
 #[derive(Default)]
 struct GeneratorWants {
-    /// Requested flat indices, ascending: file lists arrive in flat-index
-    /// order and each list's requests are sorted.
-    files: Vec<usize>,
+    /// Requested flat indices with their hard-link group, ascending: file
+    /// lists arrive in flat-index order and each list's requests are sorted.
+    files: Vec<(usize, Option<u32>)>,
+    /// How many of `files` the rows have read: upstream's `next_ndx`.
+    next: usize,
     /// Hard-link groups with a requested member.
     hlink_groups: HashSet<u32>,
+    /// Hard-link groups a recorded row updated.
+    hlink_rows: HashSet<u32>,
+    /// Requests of hard-linked members the rows went past, settled once the
+    /// rows of every list are in (see [`Self::take`]).
+    hlink_passed: Vec<(usize, u32)>,
 }
 
 impl GeneratorWants {
     fn request(&mut self, flat_idx: usize, entry: &protocol::flist::FileEntry) {
-        self.files.push(flat_idx);
-        if let Some(group) = entry.hardlink_idx() {
+        let group = entry.hardlink_idx();
+        self.files.push((flat_idx, group));
+        if let Some(group) = group {
             self.hlink_groups.insert(group);
         }
     }
 
-    /// Whether the recorded update for `entry` was asked for.
+    /// Whether the recorded update for `entry` was asked for. Every request
+    /// the rows went past without an update lands in `missed`.
+    ///
+    /// upstream: receiver.c:772-803 gen_wants_ndx() - requests are read in
+    /// order up to the row's index, and each one passed is reported by
+    /// no_batched_update() (receiver.c:738-751).
     ///
     /// Deliberate, temporary deviation: a hard-link group is decided as a
-    /// whole, where upstream asks per file index (receiver.c:772-803). The
-    /// recording carries the group's data under the member rsync 3.5.2
-    /// transfers (the last), while oc's generator requests another member, so
-    /// a per-file check would skip the group's only data row and leave every
-    /// member unwritten. Task 772 makes oc transfer upstream's member; this
-    /// rule then reverts to the per-file check.
-    fn wants(&self, flat_idx: usize, entry: &protocol::flist::FileEntry) -> bool {
-        self.files.binary_search(&flat_idx).is_ok()
-            || entry
-                .hardlink_idx()
-                .is_some_and(|group| self.hlink_groups.contains(&group))
+    /// whole, where upstream asks per file index. The recording carries the
+    /// group's data under the member rsync 3.5.2 transfers (the last), while
+    /// oc's generator requests another member, so a per-file check would skip
+    /// the group's only data row and leave every member unwritten. For the
+    /// same reason a passed request of a hard-linked member is held until
+    /// [`Self::settle_hlinks`] and reported only when no row updated its
+    /// group. Task 772 makes oc transfer upstream's member; this rule then
+    /// reverts to the per-file check.
+    fn take(
+        &mut self,
+        flat_idx: usize,
+        entry: &protocol::flist::FileEntry,
+        missed: &mut Vec<usize>,
+    ) -> bool {
+        self.pass_below(flat_idx, missed);
+        let requested = self.files.get(self.next).map(|&(idx, _)| idx) == Some(flat_idx);
+        if requested {
+            self.next += 1;
+        }
+        let group = entry.hardlink_idx();
+        let wanted = requested || group.is_some_and(|g| self.hlink_groups.contains(&g));
+        if wanted && let Some(group) = group {
+            self.hlink_rows.insert(group);
+        }
+        wanted
+    }
+
+    /// Passes every request below `end`, as a list's `NDX_DONE` does.
+    ///
+    /// upstream: receiver.c:858-869 - `gen_wants_ndx(first_flist->used +
+    /// first_flist->ndx_start)` when a list is done.
+    fn pass_below(&mut self, end: usize, missed: &mut Vec<usize>) {
+        while let Some(&(idx, group)) = self.files.get(self.next) {
+            if idx >= end {
+                break;
+            }
+            self.next += 1;
+            match group {
+                Some(group) => self.hlink_passed.push((idx, group)),
+                None => missed.push(idx),
+            }
+        }
+    }
+
+    /// Reports the passed hard-linked requests whose group no row updated.
+    fn settle_hlinks(&mut self, missed: &mut Vec<usize>) {
+        let rows = &self.hlink_rows;
+        missed.extend(
+            self.hlink_passed
+                .drain(..)
+                .filter(|(_, group)| !rows.contains(group))
+                .map(|(idx, _)| idx),
+        );
+    }
+}
+
+/// The replay's redo bookkeeping: which rows it already obeyed and which
+/// files failed verification and wait for a recorded resend.
+#[derive(Default)]
+struct BatchRedo {
+    /// Flat indices whose row was obeyed: upstream's `FLAG_FILE_SENT`
+    /// (receiver.c:990, :1339-1340). A later row for one of them is a resend.
+    sent: Vec<bool>,
+    /// upstream's `batch_redo_list`: files that failed verification, in
+    /// failure order (receiver.c:1373-1374).
+    queue: std::collections::VecDeque<usize>,
+    /// upstream's `redo_ndx`: the entry popped and not yet matched.
+    pending: Option<usize>,
+}
+
+impl BatchRedo {
+    fn was_sent(&self, flat_idx: usize) -> bool {
+        self.sent.get(flat_idx).copied().unwrap_or(false)
+    }
+
+    fn mark_sent(&mut self, flat_idx: usize) {
+        if flat_idx >= self.sent.len() {
+            self.sent.resize(flat_idx + 1, false);
+        }
+        self.sent[flat_idx] = true;
+    }
+
+    /// Whether a resend row for `flat_idx` was asked for. Every queued file
+    /// the rows went past lands in `missed`.
+    ///
+    /// upstream: receiver.c:753-770 we_want_redo().
+    fn take(&mut self, flat_idx: usize, missed: &mut Vec<usize>) -> bool {
+        while self.pending.is_none_or(|idx| idx < flat_idx) {
+            if let Some(idx) = self.pending {
+                missed.push(idx);
+            }
+            self.pending = self.queue.pop_front();
+            if self.pending.is_none() {
+                return false;
+            }
+        }
+        if self.pending == Some(flat_idx) {
+            self.pending = None;
+            return true;
+        }
+        false
     }
 }
 
@@ -282,6 +385,8 @@ impl ReceiverContext {
         )
         .digest_len();
         let mut skip_notice: Vec<u8> = Vec::new();
+        let mut redo = BatchRedo::default();
+        let mut missed: Vec<usize> = Vec::new();
 
         let preserve_xattrs = self.config.flags.xattrs;
         let want_xattr_optim = self.protocol.as_u8() >= 31
@@ -332,11 +437,22 @@ impl ReceiverContext {
                 gap_heads = self.gap_ndx_heads();
             }
             let Some((ndx, attrs)) = row else {
+                // upstream: receiver.c:858-869 - a done list passes every
+                // request still unread in it.
                 if inc_recurse && freed_lists < self.ndx_segments.len() {
+                    wanted.pass_below(self.segment_end(freed_lists), &mut missed);
+                    self.report_no_batched_updates(writer, &mut missed, false)?;
                     freed_lists += 1;
                     if freed_lists < self.ndx_segments.len() {
                         continue;
                     }
+                } else if !inc_recurse {
+                    wanted.pass_below(self.file_list.len(), &mut missed);
+                    self.report_no_batched_updates(writer, &mut missed, false)?;
+                }
+                if phase == 0 {
+                    wanted.settle_hlinks(&mut missed);
+                    self.report_no_batched_updates(writer, &mut missed, false)?;
                 }
                 // upstream: receiver.c:870-875 - NDX_DONE advances the phase;
                 // the loop ends once phase > max_phase.
@@ -417,15 +533,28 @@ impl ReceiverContext {
                     "got transfer request in phase 2 [receiver]",
                 ));
             }
-            // upstream: receiver.c:975-993 - a recorded update the replaying
-            // generator did not ask for still counts as transferred, is
-            // announced, and has its data discarded; the destination is left
-            // alone. Redo-phase rows (we_want_redo) are applied as recorded.
-            if phase == 0 && !wanted.wants(flat_idx, &file_entry) {
+            // upstream: receiver.c:948-993 - a row for a file already obeyed
+            // is a resend, decided by we_want_redo(); any other row by
+            // gen_wants_ndx(). An update not asked for still counts as
+            // transferred, is announced, and has its data discarded; the
+            // destination is left alone.
+            let redoing = redo.was_sent(flat_idx);
+            let wants = if redoing {
+                redo.take(flat_idx, &mut missed)
+            } else {
+                wanted.take(flat_idx, &file_entry, &mut missed)
+            };
+            self.report_no_batched_updates(writer, &mut missed, redoing)?;
+            if !wants {
+                redo.mark_sent(flat_idx);
                 files_transferred += 1;
                 transferred_file_size += file_entry.size();
                 skip_notice.clear();
-                skip_notice.extend_from_slice(b"(Skipping batched update for \"");
+                skip_notice.extend_from_slice(if redoing {
+                    b"(Skipping batched update for resend of \"".as_slice()
+                } else {
+                    b"(Skipping batched update for \"".as_slice()
+                });
                 skip_notice.extend_from_slice(relative_path.as_os_str().as_encoded_bytes());
                 skip_notice.extend_from_slice(b"\")\n");
                 self.emit_info_bytes(writer, &skip_notice)?;
@@ -575,7 +704,31 @@ impl ReceiverContext {
             .with_updating_basis(updating_basis);
 
             crate::delta_apply::apply_delta_stream(reader, &mut applicator, &mut token_reader)?;
-            let (file, result) = applicator.finish(reader, None)?;
+            let (file, result) = match applicator.finish(reader, None) {
+                Ok(done) => done,
+                Err(e) => {
+                    let failure = e.downcast::<crate::delta_apply::VerificationFailure>()?;
+                    // upstream: receiver.c:1342-1376 - the update is
+                    // discarded (dropping the guard unlinks the temp; an
+                    // in-place update is retained), the file is queued for a
+                    // recorded resend unless this row was one, and the run
+                    // goes on.
+                    redo.mark_sent(flat_idx);
+                    let result = failure.result;
+                    self.record_touched_blocks(result.touched_blocks_4k);
+                    bytes_received += result.literal_bytes;
+                    literal_data += result.literal_bytes;
+                    matched_data += result.bytes_written.saturating_sub(result.literal_bytes);
+                    files_transferred += 1;
+                    transferred_file_size += file_entry.size();
+                    self.report_failed_verification(writer, relative_path, redoing, inplace)?;
+                    if !redoing {
+                        redo.queue.push_back(flat_idx);
+                    }
+                    continue;
+                }
+            };
+            redo.mark_sent(flat_idx);
             self.record_touched_blocks(result.touched_blocks_4k);
 
             if let Some(final_pos) = result.final_pos {
@@ -856,6 +1009,10 @@ impl ReceiverContext {
             stats.num_symlinks = num_symlinks;
             stats.num_devices = num_devices;
             stats.num_specials = num_specials;
+            // upstream: flist.c recv_file_list() counts every received entry,
+            // sub-lists included, into stats.num_files.
+            stats.files_listed = self.file_list.len();
+            stats.entries_received = self.file_list.len() as u64;
             stats.io_error |= self.flist_reader_io_error() | self.flist_io_error;
         }
         stats.got_xfer_error = reader.xfer_error_count() > 0
@@ -866,6 +1023,15 @@ impl ReceiverContext {
         stats.bytes_received = bytes_received;
         stats.literal_data = literal_data;
         stats.matched_data = matched_data;
+        // upstream: main.c:366-376 handle_stats() - the replaying client takes
+        // the byte counters and file-list times from the recorded trailer,
+        // with read and write swapped as on any client receiver.
+        if let Some(sender) = self.sender_stats.as_ref() {
+            stats.bytes_sent = sender.total_read;
+            stats.bytes_received = sender.total_written;
+            stats.flist_buildtime_ms = sender.flist_buildtime_ms.unwrap_or(0);
+            stats.flist_xfertime_ms = sender.flist_xfertime_ms.unwrap_or(0);
+        }
         stats.touched_blocks_4k = self.touched_blocks_4k;
         stats.total_source_bytes = self.total_source_size();
         if !metadata_errors.is_empty() {
@@ -986,6 +1152,73 @@ impl ReceiverContext {
             }
         }
         Ok(())
+    }
+
+    /// Reports each requested update the recorded stream did not carry, and
+    /// empties `missed`.
+    ///
+    /// upstream: receiver.c:738-751 no_batched_update() - an `FERROR_XFER`
+    /// line per file, so the run ends with exit 23. Its `MSG_NO_SEND` under
+    /// INC_RECURSE is not sent: it only tells upstream's forked generator to
+    /// stop waiting for the file, and this replay's generator half has
+    /// already finished with it. Deliberate deviation: on an INC_RECURSE
+    /// replay rsync 3.5.2 hangs after reporting a requested file (not a
+    /// resend); oc completes with exit 23.
+    fn report_no_batched_updates<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        missed: &mut Vec<usize>,
+        is_redo: bool,
+    ) -> io::Result<()> {
+        for flat_idx in missed.drain(..) {
+            let mut line: Vec<u8> = Vec::new();
+            line.extend_from_slice(if is_redo {
+                b"(No batched update for resend of \"".as_slice()
+            } else {
+                b"(No batched update for \"".as_slice()
+            });
+            line.extend_from_slice(
+                self.file_list[flat_idx]
+                    .path()
+                    .as_os_str()
+                    .as_encoded_bytes(),
+            );
+            line.extend_from_slice(b"\")\n");
+            self.emit_error_xfer_line(writer, &line)?;
+        }
+        Ok(())
+    }
+
+    /// Reports a recorded update whose whole-file checksum failed.
+    ///
+    /// upstream: receiver.c:1349-1371 - `WARNING: ... (may try again)` when
+    /// `-v` or `%i` asks for it, or an unconditional `FERROR_XFER` `ERROR:`
+    /// line on a resend. A replay keeps no partial file, so the update is
+    /// "discarded" unless it was written in place.
+    fn report_failed_verification<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        name: &std::path::Path,
+        redoing: bool,
+        inplace: bool,
+    ) -> io::Result<()> {
+        let state = logging::VerifyFailure {
+            redoing,
+            read_batch: true,
+            stdout_format_has_i: self.config.flags.info_flags.out_format_forwards_i,
+            keep_partial: false,
+            has_partial_path: false,
+            partial_dir: false,
+            inplace,
+        };
+        let Some((code, text)) = logging::verification_failure(name, state) else {
+            return Ok(());
+        };
+        let line = format!("{text}\n");
+        match code {
+            logging::LogCode::ErrorXfer => self.emit_error_xfer_line(writer, &line),
+            _ => self.emit_warning_line(writer, &line),
+        }
     }
 
     fn finalize_replay<R: Read, W: Write + ?Sized>(
