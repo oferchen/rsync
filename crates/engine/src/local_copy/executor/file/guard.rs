@@ -30,11 +30,14 @@ enum PartialKind {
     /// will not skip the unfinished file. upstream: `cleanup.c` `tweak_modtime`.
     Keep,
     /// `--partial-dir=DIR`: on failure the temp is moved onto the partial-dir
-    /// entry `file`; on success that entry is removed and, for a relative dir,
-    /// the now-empty `remove_dir` is rmdir'd. upstream: `handle_partial_dir()`.
+    /// entry `file`. On success, when that entry was the transfer's basis
+    /// (`basis`), it is removed and, for a relative dir, the now-empty
+    /// `remove_dir` is rmdir'd. upstream: `receiver.c:1307-1316` gates both on
+    /// `fnamecmp == partialptr`, then `handle_partial_dir()`.
     Dir {
         file: PathBuf,
         remove_dir: Option<PathBuf>,
+        basis: bool,
     },
     /// upstream's `one_inplace`: the reconstruction was written straight into
     /// the `--partial-dir` entry, so that entry IS the staging file and there is
@@ -568,7 +571,11 @@ impl DestinationWriteGuard {
                     } else {
                         None
                     };
-                    PartialKind::Dir { file, remove_dir }
+                    PartialKind::Dir {
+                        file,
+                        remove_dir,
+                        basis: false,
+                    }
                 }
                 None => PartialKind::Keep,
             }
@@ -822,6 +829,19 @@ impl DestinationWriteGuard {
         Ok(Some(staged))
     }
 
+    /// Records that the `--partial-dir` entry is this transfer's basis, so a
+    /// successful commit removes it (upstream's `fnamecmp == partialptr`,
+    /// `receiver.c:1307`). Without it the commit leaves the partial dir alone.
+    pub fn set_partial_dir_basis(&mut self) {
+        if let GuardStrategy::NamedTempFile {
+            partial: PartialKind::Dir { basis, .. },
+            ..
+        } = &mut self.strategy
+        {
+            *basis = true;
+        }
+    }
+
     /// The `--partial-dir` entry a relative partial dir should be rmdir'd from
     /// once the entry has been moved out of it.
     ///
@@ -885,14 +905,28 @@ impl DestinationWriteGuard {
                     Some(PartialKind::Keep) => {
                         CleanupManager::global().unregister_partial(&temp_path);
                     }
-                    // upstream: handle_partial_dir(partialptr, PDIR_DELETE) after
-                    // a successful finish_transfer removes the partial-dir basis
-                    // entry and rmdir's a now-empty relative partial dir. Only
-                    // rmdir when we actually consumed a partial from the dir, so
-                    // an empty, unused partial dir the user pre-created survives.
-                    Some(PartialKind::Dir { file, remove_dir }) => {
+                    // upstream: receiver.c:1307-1316 - only when the partial-dir
+                    // entry was the basis (`fnamecmp == partialptr`) does a
+                    // successful finish_transfer unlink it and
+                    // handle_partial_dir(partialptr, PDIR_DELETE) rmdir a
+                    // now-empty relative partial dir. An empty, unused partial
+                    // dir the user pre-created survives.
+                    Some(PartialKind::Dir {
+                        file,
+                        remove_dir,
+                        basis,
+                    }) => {
                         CleanupManager::global().unregister_partial(&temp_path);
-                        let consumed = fs::remove_file(&file).is_ok();
+                        // A relative partial dir (`remove_dir` is set) lies
+                        // below the destination, so the entry is removed through
+                        // the secure walk: a partial dir symlinked out of the
+                        // tree must not cost a file outside it.
+                        let consumed = basis
+                            && if remove_dir.is_some() {
+                                fast_io::destination_at::remove_file_secure(&file).is_ok()
+                            } else {
+                                fs::remove_file(&file).is_ok()
+                            };
                         if consumed && let Some(dir) = remove_dir {
                             let _ = fs::remove_dir(dir);
                         }

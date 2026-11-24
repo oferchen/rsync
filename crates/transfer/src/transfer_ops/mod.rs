@@ -265,6 +265,19 @@ impl ResponseContext<'_> {
         }
         crate::map_file::MapFile::open(path)
     }
+
+    /// Opens the delta basis, or returns `None` when it does not open - the
+    /// file is then received without a basis, as upstream receives it with
+    /// `fd1 == -1`. A match token arriving without a basis is still the
+    /// protocol error [`block_match_without_basis`] reports.
+    ///
+    /// upstream: receiver.c:1083-1087 opens a relative `--partial-dir` basis
+    /// with `secure_relative_open()`; receiver.c:1110-1122 drops a refused one
+    /// back to `fnamecmp = fname` and receiver.c:1158-1160 continues with no
+    /// basis whenever `fd1 == -1`.
+    fn open_delta_basis(&self, path: &std::path::Path) -> Option<crate::map_file::MapFile> {
+        self.open_basis_map(path).ok()
+    }
 }
 
 impl ResponseContext<'_> {
@@ -1222,6 +1235,32 @@ mod tests {
         assert!(
             ctx.open_basis_map(&dest.join("a/f")).is_err(),
             "the receiver read a basis through the swapped parent"
+        );
+    }
+
+    /// upstream: receiver.c:1110-1122, :1158-1160 - a basis the confined open
+    /// refuses leaves the file to be received with no basis (`fd1 == -1`);
+    /// it is not a fatal I/O error.
+    #[cfg(unix)]
+    #[test]
+    fn refused_delta_basis_means_no_basis() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("dest");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(dest.join("a")).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("f"), b"bait").unwrap();
+        std::fs::write(dest.join("a/f"), b"basis").unwrap();
+        let sandbox = std::sync::Arc::new(fast_io::DirSandbox::open_root(&dest).unwrap());
+        let config = iflags_request_config();
+        let ctx = basis_ctx(&config, &sandbox, &dest);
+        assert!(ctx.open_delta_basis(&dest.join("a/f")).is_some());
+        std::fs::remove_file(dest.join("a/f")).unwrap();
+        std::fs::remove_dir(dest.join("a")).unwrap();
+        std::os::unix::fs::symlink(&outside, dest.join("a")).unwrap();
+        assert!(
+            ctx.open_delta_basis(&dest.join("a/f")).is_none(),
+            "a refused basis must leave the file without one"
         );
     }
 

@@ -842,23 +842,24 @@ fn nofollow_hit_symlink(err: &io::Error) -> bool {
 
 /// One confined walk in progress: upstream's `struct dirstack`.
 ///
-/// `anchor` is the operator-trusted base. Unlike upstream, which borrows
-/// `fds[0]` and must `dup()` it in `ds_take()`, this walk owns its anchor, so
-/// the leaf can be handed back directly.
+/// `anchor` is the operator-trusted base, borrowed like upstream's `fds[0]`:
+/// a walk costs one `openat` per component and no `dup()` of the anchor.
+/// Only a walk that never leaves the anchor needs a descriptor of its own,
+/// which is upstream's `ds_take()` `dup()`.
 ///
 /// # Upstream Reference
 ///
 /// - `rsync-3.5.2/syscall.c:3013-3021` `struct dirstack`
 #[cfg(unix)]
-struct ConfinedWalk<'oracle, O: ConfinementOracle> {
-    anchor: OwnedFd,
+struct ConfinedWalk<'a, O: ConfinementOracle> {
+    anchor: BorrowedFd<'a>,
     pushed: Vec<OwnedFd>,
     /// Absolute path of the current directory, maintained across descents so
     /// the oracle sees where a followed symlink actually landed. Empty when
     /// the anchor is relative, which disables the check exactly as upstream
     /// disables it for an unseeded `ds.abspath`.
     abspath: PathBuf,
-    exclude: &'oracle O,
+    exclude: &'a O,
     /// Shared across the whole walk. See [`SECURE_OPEN_MAXSYMLINKS`].
     hops: u32,
 }
@@ -868,7 +869,7 @@ impl<O: ConfinementOracle> ConfinedWalk<'_, O> {
     fn cur(&self) -> std::os::fd::BorrowedFd<'_> {
         match self.pushed.last() {
             Some(fd) => fd.as_fd(),
-            None => self.anchor.as_fd(),
+            None => self.anchor,
         }
     }
 
@@ -1004,12 +1005,10 @@ impl<O: ConfinementOracle> ConfinedWalk<'_, O> {
         Ok(())
     }
 
-    /// Hand back the directory the walk finished on.
-    fn into_leaf(self) -> OwnedFd {
-        let Self {
-            anchor, mut pushed, ..
-        } = self;
-        pushed.pop().unwrap_or(anchor)
+    /// Hand back the directory the walk finished on, or `None` when it
+    /// finished on the anchor itself.
+    fn into_leaf(mut self) -> Option<OwnedFd> {
+        self.pushed.pop()
     }
 }
 
@@ -1043,7 +1042,7 @@ impl DirSandbox {
         let anchor_fd = crate::secure_dir::open_trusted_dir(anchor)?;
 
         let mut walk = ConfinedWalk {
-            anchor: anchor_fd,
+            anchor: anchor_fd.as_fd(),
             pushed: Vec::new(),
             // Seeded only for an absolute anchor. A relative one leaves the
             // tracker empty and the exclude check inert, mirroring upstream's
@@ -1059,9 +1058,10 @@ impl DirSandbox {
         };
 
         walk.walk_relative(peer_tail)?;
+        let root = walk.into_leaf().unwrap_or(anchor_fd);
 
         Ok(Self {
-            root: Arc::new(walk.into_leaf()),
+            root: Arc::new(root),
             stack: Vec::new(),
             secondaries: DashMap::new(),
             held: Arc::new(HeldDir::new()),
@@ -1114,14 +1114,17 @@ impl DirSandbox {
 pub(crate) fn walk_beneath(anchor: BorrowedFd<'_>, relative: &Path) -> io::Result<OwnedFd> {
     let exclude = NoExclude;
     let mut walk = ConfinedWalk {
-        anchor: anchor.try_clone_to_owned()?,
+        anchor,
         pushed: Vec::new(),
         abspath: PathBuf::new(),
         exclude: &exclude,
         hops: SECURE_OPEN_MAXSYMLINKS,
     };
     walk.walk_relative(relative)?;
-    Ok(walk.into_leaf())
+    match walk.into_leaf() {
+        Some(leaf) => Ok(leaf),
+        None => anchor.try_clone_to_owned(),
+    }
 }
 
 /// Open the directory `tail` names beneath an already-open `anchor`, refusing

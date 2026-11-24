@@ -191,9 +191,11 @@ pub(in crate::local_copy) fn execute_transfer_once(
         super::write_strategy::one_inplace_partial_file(context, destination);
     let partial_dir_basis: Option<(&Path, fast_io::EntryMetadata)> = match one_inplace_partial_file
     {
-        Some(ref leaf) if !whole_file_enabled => fast_io::destination_at::symlink_metadata(leaf)
-            .ok()
-            .map(|meta| (leaf.as_path(), meta)),
+        Some(ref leaf) if !whole_file_enabled => {
+            fast_io::destination_at::symlink_metadata_secure(leaf)
+                .ok()
+                .map(|meta| (leaf.as_path(), meta))
+        }
         _ => None,
     };
 

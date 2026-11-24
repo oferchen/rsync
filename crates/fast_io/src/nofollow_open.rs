@@ -98,6 +98,30 @@ pub fn open_basis_nofollow(path: &Path) -> io::Result<File> {
     require_regular_basis(file)
 }
 
+/// Opens a `--partial-dir` basis named relative to the destination: its
+/// directory components resolve through upstream's secure walk beneath the
+/// pinned destination, so a partial dir that is a symlink to an absolute path,
+/// or one climbing above the destination, is refused rather than read; the
+/// leaf is never followed. An unpinned path opens as
+/// [`open_basis_nofollow`] opens it.
+///
+/// upstream: `rsync-3.5.2/generator.c:2214-2220` only takes `partialptr` when
+/// `link_stat()` - the secure walk for a relative name, `syscall.c:2471` -
+/// succeeds; `rsync-3.5.2/receiver.c:1083-1087` opens it with
+/// `secure_relative_open()`.
+///
+/// # Errors
+///
+/// `ELOOP` when the walk refuses a component or the leaf is a symlink, and
+/// otherwise as [`open_basis_nofollow`].
+pub fn open_basis_secure(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    if let Some(fd) = crate::destination_at::open_secure(path, libc::O_RDONLY | libc::O_NONBLOCK)? {
+        return require_regular_basis(File::from(fd));
+    }
+    open_basis_nofollow(path)
+}
+
 /// Refuses a non-regular basis and hands a regular one back with
 /// `O_NONBLOCK` cleared.
 ///

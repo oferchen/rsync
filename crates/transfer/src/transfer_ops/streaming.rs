@@ -166,16 +166,16 @@ pub fn process_file_response_streaming<R: Read>(
         ChecksumVerifier::for_algorithm_seeded(algo, ctx.config.checksum_seed, ctx.config.protocol),
     );
 
-    let mut basis_map = if let Some(ref path) = header.basis_path {
-        let map = ctx.open_basis_map(path).map_err(|e| {
-            io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
-        })?;
+    let mut basis_map = if let Some(map) = header
+        .basis_path
+        .as_deref()
+        .and_then(|path| ctx.open_delta_basis(path))
+    {
         // upstream: receiver.c:515-517 - `receive_data()` names the basis it
         // mapped, and its size, before consuming the first token. Upstream's
         // `fname_r` is the flist-relative name (it chdir'd into the destination
         // root), so print that spelling rather than the absolute path. The size
         // is the signature's file length: the basis this delta was built against.
-        let _ = path;
         matching::trace_deltasum::trace_recv_mapped(
             &ctx.wire_basis.entry_relative_path.display(),
             header

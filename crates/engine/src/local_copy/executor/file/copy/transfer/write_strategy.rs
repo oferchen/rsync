@@ -44,8 +44,17 @@ pub(in crate::local_copy) fn one_inplace_partial_file(
 ) -> Option<PathBuf> {
     let dir = context.partial_directory_path()?;
     let candidate = partial_dir_fname(destination, dir);
-    let metadata = fs::symlink_metadata(&candidate).ok()?;
-    metadata.is_file().then_some(candidate)
+    // upstream: generator.c:2215 `link_stat()` resolves a relative partial dir
+    // with the secure walk (syscall.c:2471 `do_lstat_at()`), so a partial dir
+    // that is a symlink out of the destination is no `partialptr` at all.
+    let is_file = if dir.is_absolute() {
+        fs::symlink_metadata(&candidate).ok()?.is_file()
+    } else {
+        fast_io::destination_at::symlink_metadata_secure(&candidate)
+            .ok()?
+            .is_file()
+    };
+    is_file.then_some(candidate)
 }
 
 /// The write strategy for transferring a file to disk.
@@ -194,16 +203,20 @@ fn open_named_temp(
     destination: &Path,
     record_path: &Path,
     partial_enabled: bool,
+    partial_dir_basis: bool,
     guard: &mut Option<DestinationWriteGuard>,
     staging_path: &mut Option<PathBuf>,
 ) -> Result<fs::File, LocalCopyError> {
-    let (new_guard, file) = DestinationWriteGuard::new_confined(
+    let (mut new_guard, file) = DestinationWriteGuard::new_confined(
         destination,
         partial_enabled,
         context.partial_directory_path(),
         context.temp_directory_path(),
         Some(context.destination_root()),
     )?;
+    if partial_dir_basis {
+        new_guard.set_partial_dir_basis();
+    }
     *staging_path = Some(new_guard.staging_path().to_path_buf());
     debug_log!(
         Io,
@@ -379,6 +392,7 @@ pub(in crate::local_copy) fn open_destination_writer(
                         destination,
                         record_path,
                         partial_enabled,
+                        one_inplace_partial_file.is_some(),
                         guard,
                         staging_path,
                     )
@@ -420,6 +434,7 @@ pub(in crate::local_copy) fn open_destination_writer(
                 destination,
                 record_path,
                 partial_enabled,
+                one_inplace_partial_file.is_some(),
                 guard,
                 staging_path,
             )
@@ -429,6 +444,7 @@ pub(in crate::local_copy) fn open_destination_writer(
             destination,
             record_path,
             partial_enabled,
+            one_inplace_partial_file.is_some(),
             guard,
             staging_path,
         ),

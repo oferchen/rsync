@@ -472,7 +472,7 @@ pub use kernel_version::{
 };
 #[cfg(unix)]
 pub use linux_capabilities::openat2_supported;
-pub use nofollow_open::open_basis_nofollow;
+pub use nofollow_open::{open_basis_nofollow, open_basis_secure};
 #[cfg(unix)]
 pub use owner_walk::{
     operator_create_dir_all, operator_create_dir_all_confined, operator_link,
