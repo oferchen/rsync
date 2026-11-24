@@ -302,19 +302,29 @@ fn write_limited(
 /// daemon's trailer reaches its stderr. A transfer that ran has already sent
 /// its own diagnostics to the peer, and the trailer it ends with is queued
 /// behind the final goodbye where nothing reads it: the client never sees it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SessionExit {
     /// The session was refused or aborted before any transfer ran.
     Refused(ExitCode),
+    /// The session was refused before the server arguments were parsed, after
+    /// an FERROR `cause` line. Both the cause and the trailer reach an
+    /// rsh-run daemon's stderr, and the trailer carries who_am_i()'s
+    /// pre-fork `Receiver` role.
+    ///
+    /// upstream: exclude.c:136 rprintf(FERROR), then exit_cleanup() and
+    /// log_exit() (log.c:1025-1051); rsync.c who_am_i().
+    RefusedWithCause { exit: ExitCode, cause: String },
     /// The transfer ran and finished with this status.
     Transferred(ExitCode),
 }
 
 impl SessionExit {
     /// The status the session's process exits with.
-    pub(crate) const fn code(self) -> ExitCode {
+    pub(crate) const fn code(&self) -> ExitCode {
         match self {
-            Self::Refused(code) | Self::Transferred(code) => code,
+            Self::Refused(code)
+            | Self::RefusedWithCause { exit: code, .. }
+            | Self::Transferred(code) => *code,
         }
     }
 }
@@ -337,6 +347,14 @@ pub(crate) fn single_session_exit(
                 code,
                 rsync_error!(code, exit.description()).with_role(Role::Daemon),
             ))
+        }
+        Ok(Some(SessionExit::RefusedWithCause { exit, cause })) => {
+            let code = exit.as_i32();
+            Err(DaemonError::new(
+                code,
+                rsync_error!(code, exit.description()).with_role(Role::PreForkReceiver),
+            )
+            .with_preamble(cause))
         }
         Ok(Some(SessionExit::Transferred(exit))) => Err(DaemonError::exit_status(exit)),
         Err(error) => Err(DaemonError::new(

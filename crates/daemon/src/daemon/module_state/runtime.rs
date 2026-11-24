@@ -89,9 +89,8 @@ pub(crate) enum ModuleConnectionError {
     ///
     /// `configured` carries the configured number verbatim, so a module
     /// disabled with a negative `max connections` reports its minus sign
-    /// exactly as upstream's `%d` does. `active` is the number of slots the lock
-    /// file showed held when it refused.
-    Limit { configured: i32, active: u32 },
+    /// exactly as upstream's `%d` does.
+    Limit { configured: i32 },
     /// An I/O error occurred while managing connection state.
     Io(io::Error),
 }
@@ -102,12 +101,10 @@ impl ModuleConnectionError {
         Self::Io(error)
     }
 
-    /// Creates a `Limit` refusal from the mechanism that observed `active`
-    /// connections while enforcing `configured`.
-    pub(in crate::daemon) const fn limit(configured: MaxConnections, active: u32) -> Self {
+    /// Creates a `Limit` refusal by the configured `max connections`.
+    pub(in crate::daemon) const fn limit(configured: MaxConnections) -> Self {
         Self::Limit {
             configured: configured.display_value(),
-            active,
         }
     }
 }
@@ -155,9 +152,9 @@ impl ModuleRuntime {
         };
 
         match configured {
-            // A disabling limit holds no slots, so nothing is active: the
-            // module is refused by its own configuration, not by capacity.
-            MaxConnections::Disabled(_) => Err(ModuleConnectionError::limit(configured, 0)),
+            // A disabling limit holds no slots: the module is refused by its
+            // own configuration, not by capacity.
+            MaxConnections::Disabled(_) => Err(ModuleConnectionError::limit(configured)),
             _ => Ok(ModuleConnectionGuard { _slot: lock_guard }),
         }
     }

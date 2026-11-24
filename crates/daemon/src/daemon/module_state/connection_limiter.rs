@@ -100,6 +100,11 @@ impl ConnectionLimiter {
         Self { path }
     }
 
+    /// The lock file this limiter claims slots in.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Opens the lock file for read/write access.
     ///
     /// Creates it when absent, as upstream does on every `claim_connection()`:
@@ -159,7 +164,7 @@ impl ConnectionLimiter {
         // Every slot in `[0, slot_count)` was held, so that count is exactly
         // how many connections the lock file - the cross-process owner of the
         // decision - observes.
-        Err(ModuleConnectionError::limit(limit, limit.slot_count()))
+        Err(ModuleConnectionError::limit(limit))
     }
 }
 
@@ -237,6 +242,6 @@ impl ConnectionLimiter {
             }
         }
 
-        Err(ModuleConnectionError::limit(limit, limit.slot_count()))
+        Err(ModuleConnectionError::limit(limit))
     }
 }

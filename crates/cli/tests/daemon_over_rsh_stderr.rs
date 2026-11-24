@@ -108,3 +108,20 @@ fn refusal_prints_one_unwrapped_trailer() {
     assert_eq!(daemon.matches("rsync error").count(), 1, "{daemon}");
     assert_eq!(daemon.matches("(code ").count(), 1, "{daemon}");
 }
+
+/// The filter refusal reaches stderr the way rsync 3.5.2's does: the parser's
+/// cause line, then the trailer tagged with the pre-fork `Receiver` role,
+/// because the server arguments have not been parsed yet.
+#[test]
+fn filter_refusal_prints_its_cause_then_a_receiver_trailer() {
+    let fx = Fixture::new("filter = - foo clear,- keep\n");
+    fx.push();
+    let daemon = fx.daemon_stderr();
+    let lines: Vec<&str> = daemon.lines().collect();
+    assert_eq!(lines.len(), 2, "{daemon}");
+    assert_eq!(lines[0], "'!' rule has trailing characters: clear,- keep");
+    assert!(
+        lines[1].contains("syntax or usage error (code 1)") && lines[1].contains("[Receiver="),
+        "{daemon}"
+    );
+}

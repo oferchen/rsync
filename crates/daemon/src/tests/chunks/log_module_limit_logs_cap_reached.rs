@@ -1,3 +1,7 @@
+/// A module refused by its `max connections` cap logs upstream's line, with
+/// the configured number and nothing oc-specific.
+///
+/// upstream: clientserver.c:801-802 - `max connections (%d) reached`.
 #[test]
 fn log_module_limit_logs_cap_reached() {
     let dir = tempdir().expect("log dir");
@@ -6,46 +10,24 @@ fn log_module_limit_logs_cap_reached() {
     let limit =
         MaxConnections::Limited(NonZeroU32::new(4).expect("non-zero limit")).display_value();
 
-    log_module_limit(
-        &log,
-        "client.example",
-        IpAddr::V4(Ipv4Addr::new(192, 0, 2, 17)),
-        "docs",
-        limit,
-        4,
-    );
+    log_module_limit(&log, limit);
+    log_module_limit(&log, -1);
 
     drop(log);
 
     let contents = fs::read_to_string(&path).expect("read log");
     // upstream: log.c:132-142 logit() stamps `%Y/%m/%d %H:%M:%S [pid] ` ahead
-    // of the rendered warning body.
-    let body = contents
-        .split_once("] ")
-        .map_or(contents.as_str(), |(_, body)| body);
-    assert!(
-        body.starts_with("oc-rsync warning:"),
-        "expected warning-level message, got: {contents}"
-    );
-    assert!(
-        contents.contains("max-connections cap reached"),
-        "missing structured prefix: {contents}"
-    );
-    assert!(
-        contents.contains("which=docs"),
-        "missing which= field: {contents}"
-    );
-    assert!(
-        contents.contains("peer=client.example"),
-        "missing peer= field: {contents}"
-    );
-    assert!(
-        contents.contains("(192.0.2.17)"),
-        "missing peer ip: {contents}"
-    );
-    assert!(contents.contains("cap=4"), "missing cap= field: {contents}");
-    assert!(
-        contents.contains("current=4"),
-        "missing current= field: {contents}"
+    // of the rendered body.
+    let bodies: Vec<&str> = contents
+        .lines()
+        .map(|line| line.split_once("] ").map_or(line, |(_, body)| body))
+        .collect();
+    assert_eq!(
+        bodies,
+        [
+            "max connections (4) reached",
+            "max connections (-1) reached"
+        ],
+        "log: {contents}"
     );
 }

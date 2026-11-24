@@ -377,30 +377,27 @@ fn validate_module_path(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
 ) -> io::Result<Option<PathBuf>> {
-    if let Ok(resolved) = crate::posix_path::resolve_module_path(&module.path)
-        && resolved.exists()
-    {
-        return Ok(Some(resolved));
-    }
+    let failure = match crate::posix_path::resolve_module_path(&module.path) {
+        Ok(resolved) => match fs::metadata(&resolved) {
+            Ok(_) => return Ok(Some(resolved)),
+            Err(error) => error,
+        },
+        Err(error) => error,
+    };
 
-    let error = AtError::message(format!(
-        "module '{}' path does not exist: {}",
-        sanitize_module_identifier(ctx.request),
-        module.path.display()
-    ));
-    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-
+    // upstream: clientserver.c:692-699 path_failure() - the log names the
+    // directory and the errno; the peer only learns that the chdir failed.
+    // The role is who_am_i() before the server arguments are parsed.
     if let Some(log) = ctx.log_sink {
-        let text = format!(
-            "module '{}' path validation failed for {} ({}): path does not exist: {}",
-            ctx.request,
-            ctx.host_display(),
-            ctx.peer,
-            module.path.display()
+        let text = logging::rsyserr_io(
+            "rsync",
+            "Receiver",
+            format_args!("chdir {} failed", module.path.display()),
+            &failure,
         );
-        let message = rsync_error!(1, text).with_role(Role::Daemon);
-        log_message(log, &message);
+        log_message(log, &rsync_info!(text).with_role(Role::Daemon));
     }
+    send_error(ctx.reader.get_mut(), ctx.limiter, &AtError::ChdirFailed)?;
 
     Ok(None)
 }

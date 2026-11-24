@@ -202,6 +202,9 @@ fn module_settings_usable(
 
 /// Processes an approved module request.
 ///
+/// `ECHILD`, the same number on Linux, macOS, the BSDs and Cygwin.
+const ECHILD: i32 = 10;
+
 /// Handles the full transfer flow: connection acquisition, authentication,
 /// reading client arguments, building configuration, and executing transfer.
 fn process_approved_module(
@@ -210,19 +213,25 @@ fn process_approved_module(
     selected_vars: &HookVariables<'_>,
     negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<()> {
-    let _connection_guard = match module.try_acquire_connection() {
-        Ok(guard) => guard,
-        Err(ModuleConnectionError::Limit { configured, active }) => {
-            return handle_max_connections_exceeded(ctx, configured, active);
-        }
-        Err(ModuleConnectionError::Io(error)) => {
-            return handle_lock_error(ctx, &error);
-        }
-    };
-
+    // upstream: clientserver.c:787-790 - access is logged before the slot is
+    // claimed, so a refusal by the cap or the lock file follows the line.
     if let Some(log) = ctx.log_sink {
         log_module_request(log, ctx.host_display(), ctx.peer, ctx.request);
     }
+
+    let _connection_guard = match module.try_acquire_connection() {
+        Ok(guard) => guard,
+        Err(ModuleConnectionError::Limit { configured, .. }) => {
+            return handle_max_connections_exceeded(ctx, configured);
+        }
+        Err(ModuleConnectionError::Io(error)) => {
+            let lock_file = module
+                .connection_limiter
+                .as_deref()
+                .map(ConnectionLimiter::path);
+            return handle_lock_error(ctx, lock_file, &error);
+        }
+    };
 
     // Reconfigure the process-wide syslog handle for this connection when the
     // selected module carries a `syslog tag`/`syslog facility` (its own override
@@ -311,13 +320,20 @@ fn process_approved_module(
         Ok(rules) => rules,
         Err(refusal) => {
             let code = refusal.exit_code();
-            *ctx.session_exit_code = Some(SessionExit::Refused(code));
+            let cause = refusal.to_string();
+            // upstream: exclude.c:136 - the cause is rprintf(FERROR) as is,
+            // then exit_cleanup(RERR_SYNTAX) logs the trailer through
+            // log_exit() (log.c:1025-1051). who_am_i() is still Receiver: the
+            // server arguments have not been parsed.
             if let Some(log) = ctx.log_sink {
+                log_message(log, &rsync_info!(cause.clone()).with_role(Role::Daemon));
                 log_message(
                     log,
-                    &rsync_error!(code.as_i32(), refusal.to_string()).with_role(Role::Daemon),
+                    &rsync_error!(code.as_i32(), code.description())
+                        .with_role(Role::PreForkReceiver),
                 );
             }
+            *ctx.session_exit_code = Some(SessionExit::RefusedWithCause { exit: code, cause });
             return Ok(());
         }
     };
@@ -392,21 +408,17 @@ fn process_approved_module(
             &early_ctx,
             ctx.early_input_data.as_deref(),
         ) {
-            Ok(Ok(())) => {
-                if let Some(log) = ctx.log_sink {
-                    let text = format!("early exec succeeded for module '{}'", ctx.request);
-                    let message = rsync_info!(text).with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-            }
-            Ok(Err(error_msg)) => {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {
                 // upstream: clientserver.c:1009-1012 - a hook that ran and
-                // exited non-zero logs `rsyserr(FLOG, ..., "early exec
+                // exited non-zero logs `rsyserr(FLOG, errno, "early exec
                 // failed")` and sends the fixed `@ERROR: early exec failed`
-                // line; the exit-code/stderr detail stays in the daemon log.
+                // line. finish_pre_exec()'s description of the exit is
+                // discarded, and errno is the ECHILD its waitpid() met because
+                // the SIGCHLD handler had already reaped the hook (main.c:152-166).
                 if let Some(log) = ctx.log_sink {
-                    let message = rsync_error!(1, error_msg.to_string()).with_role(Role::Daemon);
-                    log_message(log, &message);
+                    let text = logging::rsyserr("rsync", "Receiver", "early exec failed", ECHILD);
+                    log_message(log, &rsync_info!(text).with_role(Role::Daemon));
                 }
                 let error = AtError::message("early exec failed".to_string());
                 send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
@@ -431,12 +443,13 @@ fn process_approved_module(
                 // exec preparation failed` line; the OS error detail stays
                 // in the daemon log.
                 if let Some(log) = ctx.log_sink {
-                    let text = format!(
-                        "early exec preparation failed: {}",
-                        logging::upstream_errno_text(&err)
+                    let text = logging::rsyserr_io(
+                        "rsync",
+                        "Receiver",
+                        "early exec preparation failed",
+                        &err,
                     );
-                    let message = rsync_error!(1, text).with_role(Role::Daemon);
-                    log_message(log, &message);
+                    log_message(log, &rsync_info!(text).with_role(Role::Daemon));
                 }
                 let error = AtError::message("early exec preparation failed".to_string());
                 send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;

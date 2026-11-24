@@ -23,44 +23,29 @@ pub(crate) fn log_module_request(
     log_message(log, &message);
 }
 
-/// Emits a structured warning when a module rejects a connection because
-/// its per-module `max connections` cap has been reached.
+/// Logs a refusal by the module's `max connections` cap.
 ///
-/// Mirrors the global cap warning emitted from
-/// [`log_max_connections_rejection`] so operators see one consistent
-/// shape across both admission paths. Fields are stable and named:
-/// `which` carries the module name verbatim - the log sink escapes it,
-/// `peer` records the rejected client IP, `cap` is the configured limit
-/// that triggered the refusal (negative when the directive disables the
-/// module), and `current` is the active connection count observed at the
-/// refusal moment.
-pub(crate) fn log_module_limit(
-    log: &SharedLogSink,
-    host: &str,
-    peer_ip: impl std::fmt::Display,
-    module: &str,
-    limit: i32,
-    current: u32,
-) {
-    let text = format!(
-        "max-connections cap reached: which={module} peer={host} ({peer_ip}) cap={limit} current={current}"
-    );
-    let message = rsync_warning!(text).with_role(Role::Daemon);
+/// upstream: clientserver.c:801-802 - `rprintf(FLOG, "max connections (%d)
+/// reached\n", lp_max_connections(i))`. `limit` is the configured number, so a
+/// module disabled with a negative value keeps its minus sign.
+pub(crate) fn log_module_limit(log: &SharedLogSink, limit: i32) {
+    let message = rsync_info!(format!("max connections ({limit}) reached")).with_role(Role::Daemon);
     log_message(log, &message);
 }
 
-fn log_module_lock_error(
-    log: &SharedLogSink,
-    host: &str,
-    peer_ip: impl std::fmt::Display,
-    module: &str,
-    error: &io::Error,
-) {
-    let text = format!(
-        "failed to update lock for module '{module}' requested from {host} ({peer_ip}): {error}"
+/// Logs a failure to open the module's lock file.
+///
+/// upstream: clientserver.c:797-798 - `rsyserr(FLOG, errno, "failed to open
+/// lock file %s", lp_lock_file(i))`. The role is who_am_i() before the server
+/// arguments are parsed.
+fn log_module_lock_error(log: &SharedLogSink, lock_file: &Path, error: &io::Error) {
+    let text = logging::rsyserr_io(
+        "rsync",
+        "Receiver",
+        format_args!("failed to open lock file {}", lock_file.display()),
+        error,
     );
-    let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
-    log_message(log, &message);
+    log_message(log, &rsync_info!(text).with_role(Role::Daemon));
 }
 
 /// The refusal text upstream builds once and delivers to BOTH the peer and the

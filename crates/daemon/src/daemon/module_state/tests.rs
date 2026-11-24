@@ -304,10 +304,8 @@ fn negative_max_connections_refuses_every_connection() {
     let runtime: ModuleRuntime = def.into();
 
     match runtime.try_acquire_connection() {
-        Err(ModuleConnectionError::Limit { configured, active }) => {
+        Err(ModuleConnectionError::Limit { configured }) => {
             assert_eq!(configured, -1);
-            // A disabling limit contributes no slots, so nothing is active.
-            assert_eq!(active, 0);
         }
         _ => panic!("a disabled module must refuse the first connection"),
     }
@@ -399,10 +397,7 @@ fn module_connection_error_from_io() {
 
 #[test]
 fn module_connection_error_debug() {
-    let err = ModuleConnectionError::Limit {
-        configured: 5,
-        active: 5,
-    };
+    let err = ModuleConnectionError::Limit { configured: 5 };
     let debug = format!("{err:?}");
     assert!(debug.contains("Limit"));
 }
@@ -449,10 +444,7 @@ fn aborted_transfer_releases_connection_slot() {
     }
     assert!(matches!(
         runtime.try_acquire_connection(),
-        Err(ModuleConnectionError::Limit {
-            configured: 4,
-            active: 4
-        })
+        Err(ModuleConnectionError::Limit { configured: 4 })
     ));
     guards.pop();
     runtime
