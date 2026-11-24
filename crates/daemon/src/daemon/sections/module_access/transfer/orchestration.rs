@@ -505,7 +505,7 @@ fn process_approved_module(
     let resolved_module = ModuleRuntime::new(
         ModuleDefinition {
             path: module_root,
-            ..module.definition.clone()
+            ..settle_use_chroot(&module.definition, ctx.log_sink, probe_chroot_capability)
         },
         module.connection_limiter.clone(),
     );
@@ -520,10 +520,8 @@ fn process_approved_module(
     // mirroring upstream's abort with `@ERROR: daemon security issue --
     // contact admin` and exit_cleanup(RERR_UNSUPPORTED).
     if module.effective_munge_symlinks() {
-        let munged_dir = module.path.join("rsyncd-munged");
-        let is_dir = std::fs::metadata(&munged_dir)
-            .map(|meta| meta.is_dir())
-            .unwrap_or(false);
+        let is_dir =
+            std::fs::metadata(munge_prefix_dir(&module.definition)).is_ok_and(|meta| meta.is_dir());
         if is_dir {
             send_error(
                 ctx.reader.get_mut(),

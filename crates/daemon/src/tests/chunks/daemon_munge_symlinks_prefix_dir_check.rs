@@ -1,25 +1,22 @@
-/// Daemon defense-in-depth: a module with `munge symlinks = yes` must refuse
-/// to serve when a `rsyncd-munged` directory already exists in the module
-/// root, because an attacker who planted it could make munged
-/// `/rsyncd-munged/...` symlinks resolve through real on-disk paths and so
-/// escape the module - defeating the whole point of symlink munging.
+/// Daemon `munge symlinks = yes` refuses a session only for the
+/// `/rsyncd-munged` directory a munged link would resolve through: the host's
+/// root entry for an unchrooted module. A `rsyncd-munged` directory inside the
+/// module is ordinary data and must not refuse the session.
 ///
-/// The check runs after path validation and before `@RSYNCD: OK`, so the
+/// The check runs after path validation and before `@RSYNCD: OK`; on a hit the
 /// daemon replies with the raw pre-OK line
 /// `@ERROR: daemon security issue -- contact admin` and exits
-/// `RERR_UNSUPPORTED` (4) instead of acknowledging the session.
+/// `RERR_UNSUPPORTED` (4).
 ///
 /// # Upstream Reference
 ///
-/// - `clientserver.c:rsync_module` (1072-1081) - after `change_dir()` into the
-///   module and resolving `munge_symlinks`, upstream stats the
-///   `SYMLINK_PREFIX` name with its trailing slash trimmed (`rsyncd-munged`);
-///   an existing directory triggers `@ERROR: daemon security issue --
-///   contact admin` + `exit_cleanup(RERR_UNSUPPORTED)`.
+/// - `clientserver.c:1076-1084` - after the chroot (`:1044-1052`) upstream
+///   stats `SYMLINK_PREFIX` with its trailing slash trimmed, the absolute
+///   `/rsyncd-munged`, so an unchrooted module consults the host root.
 /// - `rsync.h:36` - `SYMLINK_PREFIX "/rsyncd-munged/"`.
 #[cfg(unix)]
 #[test]
-fn daemon_munge_symlinks_rejects_preexisting_munged_dir() {
+fn daemon_munge_symlinks_ignores_a_munged_dir_inside_the_module() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
@@ -28,7 +25,8 @@ fn daemon_munge_symlinks_rejects_preexisting_munged_dir() {
     let module_dir = dir.path().join("module");
     fs::create_dir_all(&module_dir).expect("module dir");
 
-    // Plant the attacker-controlled directory the safety check must catch.
+    // A directory named like the prefix, but inside the module: not the one
+    // a munged `/rsyncd-munged/...` link resolves through.
     fs::create_dir(module_dir.join("rsyncd-munged")).expect("plant rsyncd-munged dir");
 
     let config_path = dir.path().join("rsyncd.conf");
@@ -74,35 +72,31 @@ fn daemon_munge_symlinks_rejects_preexisting_munged_dir() {
         .expect("send module request");
     stream.flush().expect("flush module request");
 
-    // The safety check fires before `@RSYNCD: OK`, so the very next line the
-    // client sees is the security-issue error rather than an acknowledgement.
+    // Only the host's `/rsyncd-munged` decides; the module's entry never does.
+    let host_has_prefix_dir = Path::new("/rsyncd-munged").is_dir();
     line.clear();
-    reader.read_line(&mut line).expect("security error message");
+    reader.read_line(&mut line).expect("module reply");
+    let expected = if host_has_prefix_dir {
+        "@ERROR: daemon security issue -- contact admin\n"
+    } else {
+        "@RSYNCD: OK\n"
+    };
     assert_eq!(
-        line, "@ERROR: daemon security issue -- contact admin\n",
-        "a pre-existing `rsyncd-munged` directory must abort the session with \
-         upstream's security-issue error before the transfer begins",
-    );
-
-    // upstream: the abort happens before `@RSYNCD: OK`, so no OK is ever sent
-    // and the socket closes right after the error (next read is EOF).
-    line.clear();
-    let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(
-        read, 0,
-        "no trailing line after the security error, got: {line:?}"
+        line, expected,
+        "an unchrooted module's own `rsyncd-munged` directory must not decide \
+         the munging safety check; only the host's /rsyncd-munged does",
     );
 
     drop(reader);
+    drop(stream);
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok(), "daemon returned error: {result:?}");
 }
 
-/// Control case for [`daemon_munge_symlinks_rejects_preexisting_munged_dir`]:
+/// Control case for [`daemon_munge_symlinks_ignores_a_munged_dir_inside_the_module`]:
 /// the identical `munge symlinks = yes` module with NO pre-existing
-/// `rsyncd-munged` directory proceeds to `@RSYNCD: OK` normally. This pins the
-/// safety check to the attacker-planted directory rather than to munging being
-/// enabled, so enabling munging alone never breaks a legitimate module.
+/// `rsyncd-munged` directory proceeds to `@RSYNCD: OK` normally. Enabling
+/// munging alone never breaks a legitimate module.
 #[cfg(unix)]
 #[test]
 fn daemon_munge_symlinks_without_munged_dir_proceeds_to_ok() {

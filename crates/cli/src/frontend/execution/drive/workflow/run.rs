@@ -2,8 +2,9 @@
 
 use super::operands::ensure_transfer_operands_present;
 use super::preflight::{
-    maybe_print_help_or_version, resolve_bind_address, resolve_desired_protocol, resolve_timeout,
-    validate_feature_support, validate_stdin_sources_conflict,
+    maybe_print_help_or_version, refuse_unsafe_munge_links, resolve_bind_address,
+    resolve_desired_protocol, resolve_timeout, validate_feature_support,
+    validate_stdin_sources_conflict,
 };
 use crate::frontend::execution::drive::messages::fail_with_message;
 use crate::frontend::execution::drive::metadata::MetadataSettings;
@@ -647,6 +648,8 @@ where
     ) {
         return Err(code);
     }
+
+    refuse_unsafe_munge_links(munge_links.unwrap_or(false), Path::new("/"), stderr)?;
 
     let bind_address = resolve_bind_address(bind_address_raw.as_ref(), stderr)?;
 

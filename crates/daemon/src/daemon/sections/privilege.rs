@@ -171,24 +171,68 @@ fn split_chroot_path(path: &Path) -> (PathBuf, PathBuf) {
 ///   upstream's wording.
 ///
 /// upstream: clientserver.c:755,883-895 `rsync_module()`.
-fn resolve_use_chroot(module: &ModuleDefinition, log_sink: &SharedLogSink) -> bool {
+fn resolve_use_chroot(
+    module: &ModuleDefinition,
+    log_sink: Option<&SharedLogSink>,
+    probe: impl FnOnce() -> io::Result<()>,
+) -> bool {
     if module.use_chroot_explicit {
         return module.use_chroot;
     }
     if module.path.to_str().is_some_and(|s| s.contains("/./")) {
         return true;
     }
-    match probe_chroot_capability() {
+    match probe() {
         Ok(()) => true,
         Err(err) => {
-            let notice = format!(
-                "chroot test failed: {}. Switching 'use chroot' from unset to false.",
-                logging::upstream_strerror(&err)
-            );
-            let message = rsync_warning!(notice).with_role(Role::Daemon);
-            log_message(log_sink, &message);
+            if let Some(log_sink) = log_sink {
+                let notice = format!(
+                    "chroot test failed: {}. Switching 'use chroot' from unset to false.",
+                    logging::upstream_strerror(&err)
+                );
+                let message = rsync_warning!(notice).with_role(Role::Daemon);
+                log_message(log_sink, &message);
+            }
             false
         }
+    }
+}
+
+/// Returns `definition` with its `use chroot` settled, the value every later
+/// step of the session reads.
+///
+/// upstream: clientserver.c:886-899 settles an unset `use_chroot` once, before
+/// the module is entered; the chroot (:1044), the `munge symlinks` default
+/// (:1074-1075) and the forced `numeric ids` (:1292-1295) all read the settled
+/// value, so a rootless daemon whose probe fails munges symlinks and keeps
+/// names, as an unchrooted module does.
+fn settle_use_chroot(
+    definition: &ModuleDefinition,
+    log_sink: Option<&SharedLogSink>,
+    probe: impl FnOnce() -> io::Result<()>,
+) -> ModuleDefinition {
+    ModuleDefinition {
+        use_chroot: resolve_use_chroot(definition, log_sink, probe),
+        use_chroot_explicit: true,
+        ..definition.clone()
+    }
+}
+
+/// The directory whose existence makes symlink munging unsafe for a module
+/// whose `use chroot` is settled.
+///
+/// Upstream stats `SYMLINK_PREFIX` without its trailing slash after the
+/// `chroot()`, so `/rsyncd-munged` names the jail's own entry - at the outer
+/// half of a `/./` path - for a chrooted module, and the host's root entry
+/// otherwise; never one inside an unchrooted module.
+///
+/// upstream: clientserver.c:1044-1052 (the chroot), :1076-1081 (the stat).
+fn munge_prefix_dir(definition: &ModuleDefinition) -> PathBuf {
+    let name = ::metadata::SYMLINK_MUNGE_PREFIX.trim_matches('/');
+    if definition.use_chroot {
+        split_chroot_path(&definition.path).0.join(name)
+    } else {
+        Path::new("/").join(name)
     }
 }
 
@@ -219,7 +263,7 @@ fn chroot_or_fallback(
     module: &ModuleDefinition,
     log_sink: &SharedLogSink,
 ) -> io::Result<ChrootDecision> {
-    if !resolve_use_chroot(module, log_sink) {
+    if !resolve_use_chroot(module, Some(log_sink), probe_chroot_capability) {
         return Ok(ChrootDecision::Skipped);
     }
 
@@ -1093,7 +1137,7 @@ mod privilege_tests {
         };
         let sink = test_log_sink();
         assert!(
-            resolve_use_chroot(&module, &sink),
+            resolve_use_chroot(&module, Some(&sink), probe_chroot_capability),
             "a /./ marker must resolve to chroot-enabled without probing"
         );
     }
@@ -1111,7 +1155,7 @@ mod privilege_tests {
         };
         let sink = test_log_sink();
         assert!(
-            !resolve_use_chroot(&module, &sink),
+            !resolve_use_chroot(&module, Some(&sink), probe_chroot_capability),
             "explicit 'use chroot = no' must not be overridden by a /./ marker"
         );
     }
@@ -1178,5 +1222,73 @@ mod privilege_tests {
             resolve_nobody_gid().is_ok(),
             "a host carrying 'nobody' or 'nogroup' must resolve a default group"
         );
+    }
+
+    /// upstream: clientserver.c:1076-1081 - after the chroot, `/rsyncd-munged`
+    /// is the jail's own entry, at the outer half of a `/./` path.
+    #[test]
+    fn munge_prefix_dir_is_the_chroot_jails_entry() {
+        let split = ModuleDefinition {
+            path: PathBuf::from("/srv/outer/./inner"),
+            use_chroot: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            munge_prefix_dir(&split),
+            Path::new("/srv/outer/rsyncd-munged")
+        );
+        let whole = ModuleDefinition {
+            path: PathBuf::from("/srv/mod"),
+            use_chroot: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            munge_prefix_dir(&whole),
+            Path::new("/srv/mod/rsyncd-munged")
+        );
+    }
+
+    /// upstream: clientserver.c:1076-1081 - without a chroot the stat of the
+    /// absolute `/rsyncd-munged` reaches the host root, never the module.
+    #[test]
+    fn munge_prefix_dir_is_the_host_root_entry_without_chroot() {
+        let module = ModuleDefinition {
+            path: PathBuf::from("/srv/mod"),
+            use_chroot: false,
+            ..Default::default()
+        };
+        assert_eq!(munge_prefix_dir(&module), Path::new("/rsyncd-munged"));
+    }
+
+    /// upstream: clientserver.c:886-899, 1074-1075 - a failed probe switches
+    /// an unset `use chroot` to false before the munge default reads it.
+    #[test]
+    fn settle_use_chroot_takes_the_probe_result_for_an_unset_use_chroot() {
+        let unset = ModuleDefinition {
+            path: PathBuf::from("/srv/mod"),
+            use_chroot: true,
+            use_chroot_explicit: false,
+            ..Default::default()
+        };
+        let sink = test_log_sink();
+        let refused =
+            settle_use_chroot(&unset, Some(&sink), || Err(io::Error::from_raw_os_error(1)));
+        assert!(!refused.use_chroot);
+        assert!(refused.use_chroot_explicit, "settled once, never re-probed");
+        assert!(refused.effective_munge_symlinks());
+
+        let granted = settle_use_chroot(&unset, None, || Ok(()));
+        assert!(granted.use_chroot);
+        assert!(!granted.effective_munge_symlinks());
+
+        let explicit_no = ModuleDefinition {
+            use_chroot: false,
+            use_chroot_explicit: true,
+            ..unset
+        };
+        let kept = settle_use_chroot(&explicit_no, None, || {
+            panic!("an explicit `use chroot` must not be probed")
+        });
+        assert!(!kept.use_chroot);
     }
 }

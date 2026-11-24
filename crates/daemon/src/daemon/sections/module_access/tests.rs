@@ -6339,6 +6339,22 @@ mod module_access_tests {
     // name-list read and misreads those bytes as the next NDX. This test pins
     // the daemon-forced state to `DaemonForced` so a future refactor cannot
     // silently reintroduce the wire desync.
+    /// upstream: clientserver.c:886-899, 1292-1295 - a rootless daemon whose
+    /// chroot probe fails runs the module unchrooted, so an unset `numeric ids`
+    /// is not forced and names still map.
+    #[test]
+    fn failed_chroot_probe_leaves_unset_numeric_ids_unforced() {
+        let unset = ModuleDefinition {
+            use_chroot: true,
+            use_chroot_explicit: false,
+            ..Default::default()
+        };
+        let settled = settle_use_chroot(&unset, None, || Err(io::Error::from_raw_os_error(1)));
+        let mut cfg = ServerConfig::default();
+        apply_module_transfer_directives(&settled, &mut cfg);
+        assert!(cfg.flags.numeric_ids.is_off());
+    }
+
     #[test]
     fn module_numeric_ids_forces_daemon_forced_state() {
         let module = ModuleDefinition {
